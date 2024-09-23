@@ -10,10 +10,13 @@ license.workspace = true
 actix-cors = "0.7.0"
 actix-web = "4.6.0"
 aes-prng = "0.2.1"
-alloy-primitives = "0.7.6"
-alloy-signer = "0.1.3"
-alloy-signer-local = "0.1.3"
-alloy-sol-types = "0.7.6"
+
+# Alloy packages are based on alloy 0.8.3
+alloy-primitives = "0.8.3"
+alloy-signer = "0.3.6"
+alloy-signer-local = "0.3.6"
+alloy-sol-types = "0.8.3"
+
 anyhow.workspace = true
 async-trait.workspace = true
 bincode.workspace = true
@@ -53,8 +56,6 @@ tracing = { workspace = true, features = ["log"] }
 typed-builder.workspace = true
 
 [dev-dependencies]
-alloy-primitives = "0.7.6"
-alloy-sol-types = "0.7.6"
 rand.workspace = true
 serial_test = "3.1.1"
 temp-env = "0.3"

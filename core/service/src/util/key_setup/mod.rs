@@ -7,12 +7,12 @@ use crate::cryptography::central_kms::{
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::cryptography::internal_crypto_types::PrivateSigKeyVersioned;
 use crate::kms::{ParamChoice, RequestId};
-use crate::rpc::rpc_types::PubDataType;
-use crate::rpc::rpc_types::{PrivDataType, PublicParameterWithParamID};
-use crate::storage::Storage;
+use crate::rpc::rpc_types::{PrivDataType, WrappedPublicKey};
+use crate::rpc::rpc_types::{PubDataType, PublicParameterWithParamID};
 use crate::storage::StorageReader;
 use crate::storage::{read_all_data, store_text_at_request_id};
-use crate::storage::{store_at_request_id, FileStorage, StorageType};
+use crate::storage::{store_pk_at_request_id, Storage};
+use crate::storage::{store_versioned_at_request_id, FileStorage, StorageType};
 use crate::threshold::threshold_kms::{compute_all_info, ThresholdFheKeys};
 use crate::util::file_handling::read_as_json;
 use crate::{
@@ -29,7 +29,7 @@ use rand::SeedableRng;
 use std::collections::HashMap;
 use std::path::Path;
 use tfhe::Seed;
-use tfhe::{Unversionize, Versionize};
+use tfhe::Unversionize;
 use tfhe_versionable::VersionizeOwned;
 
 pub type FhePublicKey = tfhe::CompactPublicKey;
@@ -86,10 +86,10 @@ pub async fn ensure_client_keys_exist(
     }
     let mut rng = get_rng(deterministic, None);
     let (client_pk, client_sk) = gen_sig_keys(&mut rng);
-    store_at_request_id(
+    store_versioned_at_request_id(
         &mut client_storage,
         req_id,
-        &client_sk.versionize(),
+        &client_sk,
         &ClientDataType::SigningKey.to_string(),
     )
     .await
@@ -99,10 +99,10 @@ pub async fn ensure_client_keys_exist(
         req_id,
         client_storage.info()
     );
-    store_at_request_id(
+    store_versioned_at_request_id(
         &mut client_storage,
         req_id,
-        &client_pk.versionize(),
+        &client_pk,
         &ClientDataType::VerfKey.to_string(),
     )
     .await
@@ -143,14 +143,9 @@ where
     let (pk, sk) = gen_sig_keys(&mut rng);
 
     // store public verification key
-    store_at_request_id(
-        pub_storage,
-        req_id,
-        &pk.versionize(),
-        &PubDataType::VerfKey.to_string(),
-    )
-    .await
-    .unwrap();
+    store_versioned_at_request_id(pub_storage, req_id, &pk, &PubDataType::VerfKey.to_string())
+        .await
+        .unwrap();
     tracing::info!(
         "Successfully stored public server signing key under the handle {} in storage \"{}\"",
         req_id,
@@ -176,10 +171,10 @@ where
     );
 
     // store private signing key
-    store_at_request_id(
+    store_versioned_at_request_id(
         priv_storage,
         req_id,
-        &sk.versionize(),
+        &sk,
         &PrivDataType::SigningKey.to_string(),
     )
     .await
@@ -235,10 +230,10 @@ where
     let mut rng = get_rng(deterministic, Some(0));
     let (pp, crs_info) = gen_centralized_crs(&sk, param_choice, &params, None, &mut rng).unwrap();
 
-    store_at_request_id(
+    store_versioned_at_request_id(
         priv_storage,
         crs_handle,
-        &crs_info.versionize(),
+        &crs_info,
         &PrivDataType::CrsInfo.to_string(),
     )
     .await
@@ -248,14 +243,9 @@ where
         crs_handle,
         priv_storage.info()
     );
-    store_at_request_id(
-        pub_storage,
-        crs_handle,
-        &pp.versionize(),
-        &PubDataType::CRS.to_string(),
-    )
-    .await
-    .unwrap();
+    store_versioned_at_request_id(pub_storage, crs_handle, &pp, &PubDataType::CRS.to_string())
+        .await
+        .unwrap();
     tracing::info!(
         "Successfully stored public CRS data under the handle {} in storage {}",
         crs_handle,
@@ -323,10 +313,10 @@ where
         (other_key_id.clone(), fhe_pub_keys_2),
     ]);
     for (req_id, key_info) in &priv_fhe_map {
-        store_at_request_id(
+        store_versioned_at_request_id(
             priv_storage,
             req_id,
-            &key_info.versionize(),
+            key_info,
             &PrivDataType::FheKeyInfo.to_string(),
         )
         .await
@@ -338,10 +328,10 @@ where
         );
         // when the flag [write_privkey] is set, store the private key separately
         if write_privkey {
-            store_at_request_id(
+            store_versioned_at_request_id(
                 priv_storage,
                 req_id,
-                &key_info.client_key.versionize(),
+                &key_info.client_key,
                 &PrivDataType::FhePrivateKey.to_string(),
             )
             .await
@@ -354,11 +344,10 @@ where
         }
     }
     for (req_id, cur_keys) in &pub_fhe_map {
-        store_at_request_id(
+        store_pk_at_request_id(
             pub_storage,
             req_id,
-            &cur_keys.public_key.versionize(),
-            &PubDataType::PublicKey.to_string(),
+            WrappedPublicKey::Compact(&cur_keys.public_key),
         )
         .await
         .unwrap();
@@ -367,10 +356,10 @@ where
             req_id,
             pub_storage.info()
         );
-        store_at_request_id(
+        store_versioned_at_request_id(
             pub_storage,
             req_id,
-            &cur_keys.server_key.versionize(),
+            &cur_keys.server_key,
             &PubDataType::ServerKey.to_string(),
         )
         .await
@@ -415,10 +404,10 @@ where
         let (pk, sk) = gen_sig_keys(&mut rng);
 
         // store public verification key
-        store_at_request_id(
+        store_versioned_at_request_id(
             &mut pub_storages[i - 1],
             request_id,
-            &pk.versionize(),
+            &pk,
             &PubDataType::VerfKey.to_string(),
         )
         .await
@@ -448,10 +437,10 @@ where
         );
 
         // store private signing key
-        store_at_request_id(
+        store_versioned_at_request_id(
             &mut priv_storages[i - 1],
             request_id,
-            &sk.versionize(),
+            &sk,
             &PrivDataType::SigningKey.to_string(),
         )
         .await
@@ -536,11 +525,10 @@ where
             sns_key: sns_key.clone(),
             pk_meta_data: info,
         };
-        store_at_request_id(
+        store_pk_at_request_id(
             &mut pub_storages[i - 1],
             key_id,
-            &key_set.public_keys.public_key.versionize(),
-            &PubDataType::PublicKey.to_string(),
+            WrappedPublicKey::Compact(&key_set.public_keys.public_key),
         )
         .await
         .unwrap();
@@ -549,10 +537,10 @@ where
             key_id,
             pub_storages[i - 1].info()
         );
-        store_at_request_id(
+        store_versioned_at_request_id(
             &mut pub_storages[i - 1],
             key_id,
-            &key_set.public_keys.server_key.versionize(),
+            &key_set.public_keys.server_key,
             &PubDataType::ServerKey.to_string(),
         )
         .await
@@ -562,10 +550,10 @@ where
             key_id,
             pub_storages[i-1].info()
         );
-        store_at_request_id(
+        store_versioned_at_request_id(
             &mut priv_storages[i - 1],
             key_id,
-            &threshold_fhe_keys.versionize(),
+            &threshold_fhe_keys,
             &PrivDataType::FheKeyInfo.to_string(),
         )
         .await
@@ -637,10 +625,10 @@ where
     {
         let crs_info = compute_info(cur_sk, &pp_id).unwrap();
 
-        store_at_request_id(
+        store_versioned_at_request_id(
             cur_priv,
             crs_handle,
-            &crs_info.versionize(),
+            &crs_info,
             &PrivDataType::CrsInfo.to_string(),
         )
         .await
@@ -650,14 +638,9 @@ where
             crs_handle,
             cur_priv.info()
         );
-        store_at_request_id(
-            cur_pub,
-            crs_handle,
-            &pp_id.versionize(),
-            &PubDataType::CRS.to_string(),
-        )
-        .await
-        .unwrap();
+        store_versioned_at_request_id(cur_pub, crs_handle, &pp_id, &PubDataType::CRS.to_string())
+            .await
+            .unwrap();
         println!(
             "Successfully stored public threshold CRS data under the handle {} in storage {}",
             crs_handle,

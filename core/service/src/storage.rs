@@ -1,6 +1,6 @@
 use crate::cryptography::central_kms::{compute_handle, SoftwareKmsKeys};
 use crate::kms::RequestId;
-use crate::rpc::rpc_types::PrivDataType;
+use crate::rpc::rpc_types::{PrivDataType, PublicKeyType, WrappedPublicKey, WrappedPublicKeyOwned};
 use crate::util::file_handling::{read_element, write_element, write_text};
 use crate::{anyhow_error_and_log, some_or_err};
 use crate::{consts::KEY_PATH_PREFIX, rpc::rpc_types::PubDataType};
@@ -12,7 +12,7 @@ use std::fmt::{self};
 use std::path::{Path, PathBuf};
 use std::{env, fs, path::MAIN_SEPARATOR};
 use strum::{EnumIter, IntoEnumIterator};
-use tfhe::Versionize;
+use tfhe::{Unversionize, Versionize};
 use url::Url;
 
 // TODO add a wrapper struct for both public and private storage.
@@ -61,7 +61,7 @@ pub trait Storage: StorageReader {
 
 // Helper method for storing data based on a data type and request ID.
 // An error will be returned if the data already exists.
-pub async fn store_at_request_id<S: Storage, Ser: Serialize + Send + Sync + ?Sized>(
+async fn store_at_request_id<S: Storage, Ser: Serialize + Send + Sync + ?Sized>(
     storage: &mut S,
     request_id: &RequestId,
     data: &Ser,
@@ -74,6 +74,22 @@ pub async fn store_at_request_id<S: Storage, Ser: Serialize + Send + Sync + ?Siz
             request_id, data_type, e
         ))
     })
+}
+
+pub async fn store_versioned_at_request_id<
+    'a,
+    S: Storage,
+    Data: Versionize + Send + Sync + ?Sized,
+>(
+    storage: &mut S,
+    request_id: &RequestId,
+    data: &'a Data,
+    data_type: &str,
+) -> anyhow::Result<()>
+where
+    <Data as Versionize>::Versioned<'a>: Send + Sync,
+{
+    store_at_request_id(storage, request_id, &data.versionize(), data_type).await
 }
 
 // Helper method for storing text under a request ID.
@@ -121,14 +137,90 @@ pub async fn delete_at_request_id<S: Storage>(
     })
 }
 
+// Helper method to remove data based on a data type and request ID.
+pub async fn delete_pk_at_request_id<S: Storage>(
+    storage: &mut S,
+    request_id: &RequestId,
+) -> anyhow::Result<()> {
+    let _ = delete_at_request_id(storage, request_id, &PubDataType::PublicKey.to_string()).await;
+    let _ = delete_at_request_id(
+        storage,
+        request_id,
+        &PubDataType::PublicKeyMetadata.to_string(),
+    )
+    .await;
+    // Don't report errors
+    Ok(())
+}
+
 /// Helper method for reading data based on a data type and request ID.
-pub async fn read_at_request_id<S: Storage, Ser: DeserializeOwned + Send>(
+async fn read_at_request_id<S: StorageReader, Ser: DeserializeOwned + Send>(
     storage: &S,
     request_id: &RequestId,
     data_type: &str,
 ) -> anyhow::Result<Ser> {
     let url = storage.compute_url(&request_id.to_string(), data_type)?;
     storage.read_data(&url).await
+}
+
+pub async fn read_versioned_at_request_id<S: StorageReader, Data: Unversionize + Send>(
+    storage: &S,
+    request_id: &RequestId,
+    data_type: &str,
+) -> anyhow::Result<Data>
+where
+    <Data as tfhe_versionable::VersionizeOwned>::VersionedOwned: Send,
+{
+    Data::unversionize(read_at_request_id(storage, request_id, data_type).await?)
+        .map_err(|e| anyhow::anyhow!("unversionize failed with error {e}"))
+}
+
+/// This function will perform verionize on the type.
+pub async fn store_pk_at_request_id<'a, S: Storage>(
+    storage: &mut S,
+    request_id: &RequestId,
+    pk: WrappedPublicKey<'a>,
+) -> anyhow::Result<()> {
+    match pk {
+        WrappedPublicKey::Compact(inner_pk) => {
+            store_at_request_id(
+                storage,
+                request_id,
+                &inner_pk.versionize(),
+                &PubDataType::PublicKey.to_string(),
+            )
+            .await?;
+            store_at_request_id(
+                storage,
+                request_id,
+                &PublicKeyType::Compact.versionize(),
+                &PubDataType::PublicKeyMetadata.to_string(),
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+pub async fn read_pk_at_request_id<S: Storage>(
+    storage: &S,
+    request_id: &RequestId,
+) -> anyhow::Result<WrappedPublicKeyOwned> {
+    let pk_type: PublicKeyType = read_versioned_at_request_id(
+        storage,
+        request_id,
+        &PubDataType::PublicKeyMetadata.to_string(),
+    )
+    .await?;
+
+    let out = match pk_type {
+        PublicKeyType::Compact => WrappedPublicKeyOwned::Compact(
+            read_versioned_at_request_id(storage, request_id, &PubDataType::PublicKey.to_string())
+                .await?,
+        ),
+    };
+
+    Ok(out)
 }
 
 /// Helper method for reading all data of a specific type.

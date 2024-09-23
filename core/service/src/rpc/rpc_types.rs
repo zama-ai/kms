@@ -26,10 +26,10 @@ cfg_if::cfg_if! {
         use alloy_primitives::Bytes;
         use alloy_sol_types::SolStruct;
         use rand::{CryptoRng, RngCore};
-        use alloy::dyn_abi::DynSolValue;
+        use alloy_dyn_abi::DynSolValue;
         use crate::cryptography::signcryption::DecryptionResult;
-        use alloy::signers::local::PrivateKeySigner;
-        use alloy::signers::SignerSync;
+        use alloy_signer_local::PrivateKeySigner;
+        use alloy_signer::SignerSync;
     }
 }
 
@@ -98,6 +98,7 @@ pub enum PubDataTypeVersioned {
 #[versionize(PubDataTypeVersioned)]
 pub enum PubDataType {
     PublicKey,
+    PublicKeyMetadata,
     ServerKey,
     SnsKey,
     CRS,
@@ -109,6 +110,7 @@ impl fmt::Display for PubDataType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             PubDataType::PublicKey => write!(f, "PublicKey"),
+            PubDataType::PublicKeyMetadata => write!(f, "PublicKeyMetadata"),
             PubDataType::ServerKey => write!(f, "ServerKey"),
             PubDataType::SnsKey => write!(f, "SnsKey"),
             PubDataType::CRS => write!(f, "CRS"),
@@ -861,6 +863,27 @@ pub struct PublicParameterWithParamID {
     // We simply use the i32 instead of ParamChoice because ParamChoice is
     // a grpc type and cannot be versioned easily.
     pub param_id: i32,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, VersionsDispatch)]
+pub enum PublicKeyTypeVersioned {
+    V0(PublicKeyType),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Versionize)]
+#[versionize(PublicKeyTypeVersioned)]
+pub enum PublicKeyType {
+    Compact,
+}
+
+pub enum WrappedPublicKey<'a> {
+    Compact(&'a tfhe::CompactPublicKey),
+}
+
+#[derive(Debug, Clone)]
+#[cfg_attr(test, derive(Serialize))]
+pub enum WrappedPublicKeyOwned {
+    Compact(tfhe::CompactPublicKey),
 }
 
 #[cfg(test)]

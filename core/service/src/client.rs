@@ -50,14 +50,18 @@ cfg_if::cfg_if! {
         };
         use crate::rpc::rpc_types::BaseKms;
         use crate::rpc::rpc_types::PubDataType;
+        use crate::rpc::rpc_types::{
+            PublicKeyType, WrappedPublicKeyOwned,
+        };
         use crate::storage::read_all_data;
         use crate::storage::Storage;
         use crate::util::file_handling::read_as_json;
-        use crate::{storage::StorageReader, util::key_setup::FhePublicKey};
+        use crate::{storage::StorageReader};
         use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
         use serde::de::DeserializeOwned;
         use std::collections::HashMap;
         use std::fmt;
+        use tfhe::CompactPublicKey;
         use tfhe::ProvenCompactCiphertextList;
         use tfhe::ServerKey;
         use tfhe_versionable::{Unversionize, VersionizeOwned};
@@ -1024,7 +1028,7 @@ impl Client {
         }
 
         for (result, storage) in results.into_iter().zip(storage_readers) {
-            let (pp, info) = if let Some(info) = result.crs_results {
+            let (pp_w_id, info) = if let Some(info) = result.crs_results {
                 let url =
                     storage.compute_url(&request_id.to_string(), &PubDataType::CRS.to_string())?;
                 let pp = storage.read_data(&url).await?;
@@ -1046,8 +1050,7 @@ impl Client {
             }
 
             // check the digest
-            let ser = bincode::serialize(&pp)?;
-            let hex_digest = compute_handle(&ser)?;
+            let hex_digest = compute_handle(&pp_w_id)?;
             if info.key_handle != hex_digest {
                 tracing::warn!("crs_handle does not match the computed digest; discarding the CRS");
                 continue;
@@ -1072,7 +1075,7 @@ impl Client {
                     hash_counter_map.insert(hex_digest.clone(), 1usize);
                 }
             }
-            pp_map.insert(hex_digest, pp);
+            pp_map.insert(hex_digest, pp_w_id);
         }
 
         // find the digest that has the most votes
@@ -1212,15 +1215,12 @@ impl Client {
         &self,
         resp: &KeyGenResult,
         storage: &R,
-    ) -> anyhow::Result<(FhePublicKey, ServerKey)> {
-        let pk: FhePublicKey = self
-            .retrieve_key(resp, PubDataType::PublicKey, storage)
-            .await?
-            .unwrap();
-        let server_key: ServerKey = match self
-            .retrieve_key(resp, PubDataType::ServerKey, storage)
-            .await?
-        {
+    ) -> anyhow::Result<(WrappedPublicKeyOwned, ServerKey)> {
+        let pk = some_or_err(
+            self.retrieve_public_key(resp, storage).await?,
+            "Could not validate public key".to_string(),
+        )?;
+        let server_key: ServerKey = match self.retrieve_server_key(resp, storage).await? {
             Some(server_key) => server_key,
             None => {
                 return Err(anyhow_error_and_log("Could not validate server key"));
@@ -1229,15 +1229,76 @@ impl Client {
         Ok((pk, server_key))
     }
 
-    /// Retrieve and validate a public key based on the result from a server.
+    /// Retrieve and validate a server key based on the result from storage.
     /// The method will return the key if retrieval and validation is successful,
     /// but will return None in case the signature is invalid or does not match the actual key
     /// handle.
     #[cfg(feature = "non-wasm")]
-    pub async fn retrieve_key<
-        S: serde::Serialize + DeserializeOwned + Send + Unversionize,
-        R: StorageReader,
-    >(
+    pub async fn retrieve_server_key<R: StorageReader>(
+        &self,
+        key_gen_result: &KeyGenResult,
+        storage: &R,
+    ) -> anyhow::Result<Option<ServerKey>> {
+        if let Some(server_key) = self
+            .retrieve_key(key_gen_result, PubDataType::ServerKey, storage)
+            .await?
+        {
+            Ok(Some(ServerKey::unversionize(server_key)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Retrieve and validate a public key based on the result from storage.
+    /// The method will return the key if retrieval and validation is successful,
+    /// but will return None in case the signature is invalid or does not match the actual key
+    /// handle.
+    #[cfg(feature = "non-wasm")]
+    pub async fn retrieve_public_key<R: StorageReader>(
+        &self,
+        key_gen_result: &KeyGenResult,
+        storage: &R,
+    ) -> anyhow::Result<Option<WrappedPublicKeyOwned>> {
+        // first we need to read the key type
+        let request_id = some_or_err(
+            key_gen_result.request_id.clone(),
+            "No request id".to_string(),
+        )?;
+        tracing::debug!(
+            "getting public key metadata using storage {} with request id {}",
+            storage.info(),
+            &request_id
+        );
+        let pk_type: PublicKeyType = crate::storage::read_versioned_at_request_id(
+            storage,
+            &request_id,
+            &PubDataType::PublicKeyMetadata.to_string(),
+        )
+        .await?;
+        tracing::debug!(
+            "getting wrapped public key using storage {} with request id {}",
+            storage.info(),
+            &request_id
+        );
+        let wrapped_pk = match pk_type {
+            PublicKeyType::Compact => {
+                if let Some(k) = self
+                    .retrieve_key(key_gen_result, PubDataType::PublicKey, storage)
+                    .await?
+                {
+                    Some(WrappedPublicKeyOwned::Compact(
+                        CompactPublicKey::unversionize(k)?,
+                    ))
+                } else {
+                    None
+                }
+            }
+        };
+        Ok(wrapped_pk)
+    }
+
+    #[cfg(feature = "non-wasm")]
+    async fn retrieve_key<S: serde::Serialize + DeserializeOwned + Send, R: StorageReader>(
         &self,
         key_gen_result: &KeyGenResult,
         key_type: PubDataType,
@@ -1252,8 +1313,7 @@ impl Client {
             "No request id".to_string(),
         )?;
         let key: S = self.get_key(&request_id, key_type, storage).await?;
-        let serialized_key = bincode::serialize(&key)?;
-        let key_handle = compute_handle(&serialized_key)?;
+        let key_handle = compute_handle(&key)?;
         if key_handle != pki.key_handle {
             tracing::warn!(
                 "Computed key handle {} of retrieved key does not match expected key handle {}",
@@ -1275,12 +1335,9 @@ impl Client {
         Ok(Some(key))
     }
 
-    /// Get a public key from a public storage
+    /// Get a key from a public storage depending on the data type
     #[cfg(feature = "non-wasm")]
-    pub async fn get_key<
-        S: serde::Serialize + DeserializeOwned + Send + Unversionize,
-        R: StorageReader,
-    >(
+    async fn get_key<S: serde::Serialize + DeserializeOwned + Send, R: StorageReader>(
         &self,
         key_id: &RequestId,
         key_type: PubDataType,
@@ -1312,8 +1369,7 @@ impl Client {
             "No request id".to_string(),
         )?;
         let (crs, pp) = self.get_crs(&request_id, storage).await?;
-        let serialized_crs = bincode::serialize(&crs)?;
-        let crs_handle = compute_handle(&serialized_crs)?;
+        let crs_handle = compute_handle(&crs)?;
         if crs_handle != crs_info.key_handle {
             tracing::warn!(
                 "Computed crs handle {} of retrieved crs does not match expected crs handle {}",
@@ -2184,7 +2240,7 @@ pub fn recover_ecdsa_public_key_from_signature(
 
     let signature = alloy_primitives::Signature::try_from(sig)?;
     check_normalized(&Signature {
-        sig: signature.inner().to_owned(),
+        sig: signature.to_k256()?,
     })?;
 
     // Define the EIP-712 domain
@@ -2492,7 +2548,6 @@ pub(crate) mod tests {
     use crate::util::key_setup::test_tools::{
         compute_cipher_from_stored_key, load_pk_from_storage, purge, TypedPlaintext,
     };
-    use crate::util::key_setup::FhePublicKey;
     use crate::{
         client::num_blocks,
         kms::{Empty, RequestId},
@@ -2654,13 +2709,13 @@ pub(crate) mod tests {
         }
         let inner_resp = response.unwrap().into_inner();
         let pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
-        let pk: Option<FhePublicKey> = internal_client
-            .retrieve_key(&inner_resp, PubDataType::PublicKey, &pub_storage)
+        let pk = internal_client
+            .retrieve_public_key(&inner_resp, &pub_storage)
             .await
             .unwrap();
         assert!(pk.is_some());
         let server_key: Option<tfhe::ServerKey> = internal_client
-            .retrieve_key(&inner_resp, PubDataType::ServerKey, &pub_storage)
+            .retrieve_server_key(&inner_resp, &pub_storage)
             .await
             .unwrap();
         assert!(server_key.is_some());
@@ -2735,8 +2790,7 @@ pub(crate) mod tests {
         // check that CRS signature is verified correctly for the current version
         let crs_raw = read_element(&crs_path).await.unwrap();
         let crs_unversioned = PublicParameterWithParamID::unversionize(crs_raw).unwrap();
-        let crs_serialized = bincode::serialize(&crs_unversioned).unwrap();
-        let client_handle = compute_handle(&crs_serialized).unwrap();
+        let client_handle = compute_handle(&crs_unversioned).unwrap();
         assert_eq!(&client_handle, &crs_info.key_handle);
 
         // try verification with each of the server keys; at least one must pass
@@ -4706,8 +4760,8 @@ pub(crate) mod tests {
         let mut serialized_ref_server_key = Vec::new();
         for (idx, kg_res) in finished.into_iter().enumerate() {
             let storage = FileStorage::new_threshold(None, StorageType::PUB, idx + 1).unwrap();
-            let pk: Option<FhePublicKey> = internal_client
-                .retrieve_key(&kg_res, PubDataType::PublicKey, &storage)
+            let pk = internal_client
+                .retrieve_public_key(&kg_res, &storage)
                 .await
                 .unwrap();
             assert!(pk.is_some());
@@ -4720,7 +4774,7 @@ pub(crate) mod tests {
                 )
             }
             let server_key: Option<tfhe::ServerKey> = internal_client
-                .retrieve_key(&kg_res, PubDataType::ServerKey, &storage)
+                .retrieve_server_key(&kg_res, &storage)
                 .await
                 .unwrap();
             assert!(server_key.is_some());

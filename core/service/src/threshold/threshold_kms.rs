@@ -22,11 +22,12 @@ use crate::rpc::central_rpc::{
 };
 use crate::rpc::rpc_types::{
     compute_external_pt_signature, BaseKms, Plaintext, PrivDataType, PubDataType,
-    PublicParameterWithParamID, SigncryptionPayload, SignedPubDataHandleInternal,
+    PublicParameterWithParamID, SigncryptionPayload, SignedPubDataHandleInternal, WrappedPublicKey,
     CURRENT_FORMAT_VERSION,
 };
 use crate::storage::{
-    delete_at_request_id, read_all_data, read_at_request_id, store_at_request_id, Storage,
+    delete_at_request_id, delete_pk_at_request_id, read_all_data, read_versioned_at_request_id,
+    store_pk_at_request_id, store_versioned_at_request_id, Storage,
 };
 use crate::util::meta_store::{handle_res_mapping, HandlerStatus, MetaStore};
 use crate::{anyhow_error_and_log, get_exactly_one};
@@ -294,8 +295,8 @@ pub fn compute_all_info(
     fhe_key_set: &FhePubKeySet,
 ) -> anyhow::Result<DkgMetaStore> {
     //Compute all the info required for storing
-    let pub_key_info = compute_info(sig_key, &fhe_key_set.public_key);
-    let serv_key_info = compute_info(sig_key, &fhe_key_set.server_key);
+    let pub_key_info = compute_info(sig_key, &fhe_key_set.public_key.versionize());
+    let serv_key_info = compute_info(sig_key, &fhe_key_set.server_key.versionize());
 
     //Make sure we did manage to compute the info
     Ok(match (pub_key_info, serv_key_info) {
@@ -696,11 +697,8 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
 
         let prss_setup_from_file = {
             let guarded_private_storage = self.private_storage.lock().await;
-            read_at_request_id::<
-                PrivS,
-                <PRSSSetup<ResiduePoly128> as VersionizeOwned>::VersionedOwned,
-            >(
-                &guarded_private_storage,
+            read_versioned_at_request_id(
+                &(*guarded_private_storage),
                 &RequestId::from(epoch_id),
                 &PrivDataType::PrssSetup.to_string(),
             )
@@ -715,7 +713,7 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
         match prss_setup_from_file {
             Some(prss_setup) => {
                 let mut guarded_prss_setup = self.prss_setup.write().await;
-                *guarded_prss_setup = Some(PRSSSetup::unversionize(prss_setup)?);
+                *guarded_prss_setup = Some(prss_setup);
                 tracing::info!("Initializing threshold KMS server with PRSS Setup from disk",)
             }
             None => tracing::info!(
@@ -752,10 +750,10 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
         // serialize and write PRSS Setup to disk into private storage
         let private_storage = Arc::clone(&self.private_storage);
         let mut priv_storage = private_storage.lock().await;
-        store_at_request_id(
+        store_versioned_at_request_id(
             &mut (*priv_storage),
             &RequestId::from(epoch_id),
-            &prss_setup_obj.versionize(),
+            &prss_setup_obj,
             &PrivDataType::PrssSetup.to_string(),
         )
         .await?;
@@ -1410,23 +1408,23 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 pk_meta_data: info.clone(),
             };
             //Try to store the new data
-            if store_at_request_id(
+            if store_versioned_at_request_id(
                 &mut (*priv_storage),
                 &req_id,
-                &unversioned_keys.versionize(),
+                &unversioned_keys,
                 &PrivDataType::FheKeyInfo.to_string(),
             )
             .await
             .is_ok()
             // Only store the public keys if no other server has already stored them
-                && store_at_request_id(
+                && store_pk_at_request_id(
                     &mut (*pub_storage),
                     &req_id,
-                    &pub_key_set.public_key,
-                    &PubDataType::PublicKey.to_string(),
-                ).await
+                    WrappedPublicKey::Compact(&pub_key_set.public_key),
+                )
+                .await
                 .is_ok()
-                && store_at_request_id(
+                && store_versioned_at_request_id(
                     &mut (*pub_storage),
                     &req_id,
                     &pub_key_set.server_key,
@@ -1434,10 +1432,10 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 )
                 .await
                 .is_ok()
-                && store_at_request_id(
+                && store_versioned_at_request_id(
                     &mut (*pub_storage),
                     &req_id,
-                    &unversioned_keys.sns_key.versionize(),
+                    &unversioned_keys.sns_key,
                     &PubDataType::SnsKey.to_string(),
                 )
                 .await
@@ -1459,12 +1457,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 // Try to delete stored data to avoid anything dangling
                 // Ignore any failure to delete something since it might be because the data did not get created
                 // In any case, we can't do much.
-                let _ = delete_at_request_id(
-                    &mut (*pub_storage),
-                    &req_id,
-                    &PubDataType::PublicKey.to_string(),
-                )
-                .await;
+                let _ = delete_pk_at_request_id(&mut (*pub_storage), &req_id).await;
                 let _ = delete_at_request_id(
                     &mut (*pub_storage),
                     &req_id,
@@ -1874,19 +1867,19 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                     }
                 };
 
-                if store_at_request_id(
+                if store_versioned_at_request_id(
                     &mut (*priv_storage),
                     &owned_req_id,
-                    &meta_data.versionize(),
+                    &meta_data,
                     &PrivDataType::CrsInfo.to_string(),
                 )
                 .await
                 .is_ok()
                 // Only store the CRS if no other server has already stored it
-                    && store_at_request_id(
+                    && store_versioned_at_request_id(
                         &mut (*pub_storage),
                         &owned_req_id,
-                        &pp_id.versionize(),
+                        &pp_id,
                         &PubDataType::CRS.to_string(),
                     )
                     .await

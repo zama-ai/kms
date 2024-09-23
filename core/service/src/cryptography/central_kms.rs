@@ -295,7 +295,7 @@ pub(crate) fn verify_eip712(request: &ReencryptionRequest) -> anyhow::Result<()>
         .inspect_err(|e| tracing::error!("Failed to parse alloy signature with error: {e}"))?;
 
     check_normalized(&Signature {
-        sig: alloy_signature.inner().to_owned(),
+        sig: alloy_signature.to_k256()?,
     })?;
 
     let recovered_address = alloy_signature.recover_address_from_prehash(&message_hash)?;
@@ -352,6 +352,8 @@ pub struct KmsFheKeyHandles {
 
 #[cfg(feature = "non-wasm")]
 impl KmsFheKeyHandles {
+    /// Compute key handles for the public key materials.
+    /// Note that the handles include a signature on the versionized keys.
     pub fn new(
         sig_key: &PrivateSigKey,
         client_key: FhePrivateKey,
@@ -360,14 +362,17 @@ impl KmsFheKeyHandles {
         let mut public_key_info = HashMap::new();
         public_key_info.insert(
             PubDataType::PublicKey,
-            compute_info(sig_key, &public_keys.public_key)?,
+            compute_info(sig_key, &public_keys.public_key.versionize())?,
         );
         public_key_info.insert(
             PubDataType::ServerKey,
-            compute_info(sig_key, &public_keys.server_key)?,
+            compute_info(sig_key, &public_keys.server_key.versionize())?,
         );
         if let Some(sns) = &public_keys.sns_key {
-            public_key_info.insert(PubDataType::SnsKey, compute_info(sig_key, sns)?);
+            public_key_info.insert(
+                PubDataType::SnsKey,
+                compute_info(sig_key, &sns.versionize())?,
+            );
         }
         Ok(KmsFheKeyHandles {
             client_key,
@@ -697,9 +702,7 @@ pub(crate) fn compute_info<S: Serialize>(
     sk: &PrivateSigKey,
     element: &S,
 ) -> anyhow::Result<SignedPubDataHandleInternal> {
-    // TODO not needed to serialize here
-    let ser = serialize(element)?;
-    let handle = compute_handle(&ser)?;
+    let handle = compute_handle(element)?;
     let signature = sign(&handle, sk)?;
     Ok(SignedPubDataHandleInternal {
         key_handle: handle,

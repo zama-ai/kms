@@ -20,9 +20,12 @@ use crate::kms::{
     ReencryptionResponsePayload, RequestId, SignedPubDataHandle, TypedCiphertext, ZkVerifyRequest,
     ZkVerifyResponse, ZkVerifyResponsePayload,
 };
-use crate::rpc::rpc_types::PubDataType;
-use crate::storage::{delete_at_request_id, read_at_request_id};
-use crate::storage::{store_at_request_id, Storage};
+use crate::rpc::rpc_types::{PubDataType, WrappedPublicKey, WrappedPublicKeyOwned};
+use crate::storage::{
+    delete_at_request_id, delete_pk_at_request_id, read_pk_at_request_id, store_pk_at_request_id,
+    store_versioned_at_request_id,
+};
+use crate::storage::{read_versioned_at_request_id, Storage};
 use crate::util::file_handling::read_as_json;
 use crate::util::meta_store::{handle_res_mapping, HandlerStatus};
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
@@ -37,7 +40,7 @@ use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
 use tfhe::zk::CompactPkePublicParams;
-use tfhe::{CompactPublicKey, ProvenCompactCiphertextList, Unversionize, Versionize};
+use tfhe::ProvenCompactCiphertextList;
 use tokio::sync::{Mutex, RwLock};
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
@@ -116,11 +119,11 @@ impl<
     #[tracing::instrument(skip(self, request))]
     async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
         let inner = request.into_inner();
-        let request_id = tonic_some_or_err(
+        let req_id = tonic_some_or_err(
             inner.request_id,
             "No request ID present in request".to_string(),
         )?;
-        validate_request_id(&request_id)?;
+        validate_request_id(&req_id)?;
         let (params, _) = tonic_handle_potential_err(
             retrieve_parameters_sync(inner.params, self.param_file_map.clone()).await,
             "Parameter choice is not recognized".to_string(),
@@ -129,7 +132,7 @@ impl<
             let mut guarded_meta_store = self.key_meta_map.write().await;
             // Insert [HandlerStatus::Started] into the meta store. Note that this will fail if the request ID is already in the meta store
             tonic_handle_potential_err(
-                guarded_meta_store.insert(&request_id),
+                guarded_meta_store.insert(&req_id),
                 "Could not insert key generation into meta store".to_string(),
             )?;
         }
@@ -145,12 +148,12 @@ impl<
                 {
                     // Check if the key already exists
                     let key_handles = fhe_keys.read().await;
-                    if key_handles.contains_key(&request_id) {
+                    if key_handles.contains_key(&req_id) {
                         let mut guarded_meta_store = meta_store.write().await;
                         let _ = guarded_meta_store.update(
-                            &request_id,
+                            &req_id,
                             HandlerStatus::Error(format!(
-                                "Failed key generation: Key with ID {request_id} already exists!"
+                                "Failed key generation: Key with ID {req_id} already exists!"
                             )),
                         );
                         return;
@@ -162,9 +165,9 @@ impl<
                     Err(_e) => {
                         let mut guarded_meta_store = meta_store.write().await;
                         let _ = guarded_meta_store.update(
-                            &request_id,
+                            &req_id,
                             HandlerStatus::Error(format!(
-                                "Failed key generation: Key with ID {request_id}!"
+                                "Failed key generation: Key with ID {req_id}!"
                             )),
                         );
                         return;
@@ -174,25 +177,24 @@ impl<
                 let mut pub_storage = public_storage.lock().await;
                 let mut priv_storage = private_storage.lock().await;
                 //Try to store the new data
-                if store_at_request_id(
+                if store_versioned_at_request_id(
                     &mut (*priv_storage),
-                    &request_id,
-                    &key_info.versionize(),
+                    &req_id,
+                    &key_info,
                     &PrivDataType::FheKeyInfo.to_string(),
                 )
                 .await
                 .is_ok()
-                    && store_at_request_id(
+                    && store_pk_at_request_id(
                         &mut (*pub_storage),
-                        &request_id,
-                        &fhe_key_set.public_key,
-                        &PubDataType::PublicKey.to_string(),
+                        &req_id,
+                        WrappedPublicKey::Compact(&fhe_key_set.public_key),
                     )
                     .await
                     .is_ok()
-                    && store_at_request_id(
+                    && store_versioned_at_request_id(
                         &mut (*pub_storage),
-                        &request_id,
+                        &req_id,
                         &fhe_key_set.server_key,
                         &PubDataType::ServerKey.to_string(),
                     )
@@ -202,49 +204,44 @@ impl<
                     {
                         let mut fhe_key_map = fhe_keys.write().await;
                         // If something is already in the map, then there is a bug as we already checked for the key not existing
-                        fhe_key_map.insert(request_id.clone(), key_info.clone());
+                        fhe_key_map.insert(req_id.clone(), key_info.clone());
                     };
                     {
                         let mut guarded_meta_store = meta_store.write().await;
                         let _ = guarded_meta_store.update(
-                            &request_id,
+                            &req_id,
                             HandlerStatus::Done(key_info.public_key_info.to_owned()),
                         );
                     }
                 } else {
-                    tracing::error!("Could not store all the key data from request ID {request_id}. Deleting any dangling data.");
+                    tracing::error!("Could not store all the key data from request ID {req_id}. Deleting any dangling data.");
                     // Try to delete stored data to avoid anything dangling
                     // Ignore any failure to delete something since it might be because the data did not get created
                     // In any case, we can't do much.
+                    let _ = delete_pk_at_request_id(&mut (*pub_storage), &req_id).await;
                     let _ = delete_at_request_id(
                         &mut (*pub_storage),
-                        &request_id,
-                        &PubDataType::PublicKey.to_string(),
-                    )
-                    .await;
-                    let _ = delete_at_request_id(
-                        &mut (*pub_storage),
-                        &request_id,
+                        &req_id,
                         &PubDataType::ServerKey.to_string(),
                     )
                     .await;
                     let _ = delete_at_request_id(
                         &mut (*pub_storage),
-                        &request_id,
+                        &req_id,
                         &PubDataType::SnsKey.to_string(),
                     )
                     .await;
                     let _ = delete_at_request_id(
                         &mut (*priv_storage),
-                        &request_id,
+                        &req_id,
                         &PrivDataType::FheKeyInfo.to_string(),
                     )
                     .await;
                     let mut guarded_meta_store = meta_store.write().await;
                     let _ = guarded_meta_store.update(
-                            &request_id,
+                            &req_id,
                             HandlerStatus::Error(format!(
-                                "Failed key generation: Key with ID {request_id}, could not insert result persistant storage!"
+                                "Failed key generation: Key with ID {req_id}, could not insert result persistant storage!"
                             )),
                         );
                 }
@@ -612,18 +609,18 @@ impl<
                 let mut pub_storage = public_storage.lock().await;
                 let mut priv_storage = private_storage.lock().await;
                 //Try to store the new data
-                if store_at_request_id(
+                if store_versioned_at_request_id(
                     &mut (*priv_storage),
                     &request_id,
-                    &crs_info.versionize(),
+                    &crs_info,
                     &PrivDataType::CrsInfo.to_string(),
                 )
                 .await
                 .is_ok()
-                    && crate::storage::store_at_request_id(
+                    && store_versioned_at_request_id(
                         &mut (*pub_storage),
                         &request_id,
-                        &pp.versionize(),
+                        &pp,
                         &PubDataType::CRS.to_string(),
                     )
                     .await
@@ -836,30 +833,19 @@ where
         })?;
 
     let pub_storage = public_storage.lock().await;
-    let pp_with_id = PublicParameterWithParamID::unversionize(
-        read_at_request_id(&(*pub_storage), &crs_handle, &PubDataType::CRS.to_string())
+    let pp_with_id: PublicParameterWithParamID =
+        read_versioned_at_request_id(&(*pub_storage), &crs_handle, &PubDataType::CRS.to_string())
             .await
             .inspect_err(|e| {
-                tracing::error!("No CRS with the handle {} ({e})", crs_handle);
-            })?,
-    )
-    .inspect_err(|e| {
-        tracing::error!("unversionize failed for CRS handle {} ({e})", crs_handle);
-    })?;
-    let public_key = CompactPublicKey::unversionize(
-        read_at_request_id(
-            &(*pub_storage),
-            &key_handle,
-            &PubDataType::PublicKey.to_string(),
-        )
+                tracing::error!("Failed to read CRS with the handle {} ({e})", crs_handle);
+            })?;
+
+    let wrapped_pk = read_pk_at_request_id(&(*pub_storage), &key_handle)
         .await
         .inspect_err(|e| {
-            tracing::error!("No public key with the handle {} ({e})", key_handle);
-        })?,
-    )
-    .inspect_err(|e| {
-        tracing::error!("unversionize failed for key handle {} ({e})", key_handle);
-    })?;
+            tracing::error!("Failed to fetch pk with handle {} ({e})", key_handle);
+        })?;
+
     let (params, _) = retrieve_parameters_sync(pp_with_id.param_id, param_file_map.clone())
         .await
         .inspect_err(|e| {
@@ -876,7 +862,7 @@ where
         })?;
     let (send, recv) = tokio::sync::oneshot::channel();
     rayon::spawn(move || {
-        let out = verify_and_hash(&proven_ct, &pp, &public_key);
+        let out = verify_and_hash(&proven_ct, &pp, &wrapped_pk);
         let _ = send.send(out);
     });
     let res = recv.await.inspect_err(|e| {
@@ -908,13 +894,16 @@ where
 fn verify_and_hash(
     proven_ct: &ProvenCompactCiphertextList,
     pp: &CompactPkePublicParams,
-    pk: &CompactPublicKey,
+    wrapped_pk: &WrappedPublicKeyOwned,
 ) -> anyhow::Result<Vec<u8>> {
-    if let tfhe::zk::ZkVerificationOutCome::Invalid = proven_ct.verify(pp, pk, &[]) {
-        Err(anyhow::anyhow!("zk verification failed"))
-    } else {
-        serialize_hash_element(proven_ct)
+    match wrapped_pk {
+        WrappedPublicKeyOwned::Compact(pk) => {
+            if let tfhe::zk::ZkVerificationOutCome::Invalid = proven_ct.verify(pp, pk, &[]) {
+                return Err(anyhow::anyhow!("zk verification failed"));
+            }
+        }
     }
+    serialize_hash_element(proven_ct)
 }
 
 /// Validates a request ID and returns an appropriate tonic error if it is invalid.

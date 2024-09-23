@@ -118,7 +118,7 @@ mod tests {
 
     #[test]
     fn test_gateway_config() {
-        let env_conf: [(&str, Option<&str>); 23] = [
+        let env_conf: [(&str, Option<&str>); 24] = [
             ("GATEWAY__DEBUG", None),
             ("GATEWAY__MODE", None),
             ("GATEWAY__ETHEREUM__CHAIN_ID", None),
