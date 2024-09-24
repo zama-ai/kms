@@ -33,8 +33,8 @@ tracing = { workspace = true, features = ["log"] }
 typed-builder = { workspace = true }
 
 [dev-dependencies]
-alloy-primitives = "0.7.6"
-alloy-sol-types = "0.7.6"
+alloy-primitives = "0.8.3"
+alloy-sol-types = "0.8.3"
 kms = { path = "../../core/service", features = ["testing"] , version = "0.9.0-rc4" }
 rand.workspace = true
 serial_test = "3.1.1"

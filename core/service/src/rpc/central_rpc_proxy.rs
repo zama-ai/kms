@@ -137,6 +137,28 @@ impl CoreServiceEndpoint for KmsProxy {
         Ok(response)
     }
 
+    #[cfg(feature = "insecure")]
+    #[tracing::instrument(skip(self, request))]
+    async fn insecure_key_gen(
+        &self,
+        request: Request<KeyGenRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let mut kms_client = self.kms_client.lock().await;
+        let response = kms_client.insecure_key_gen(request).await?;
+        Ok(response)
+    }
+
+    #[cfg(feature = "insecure")]
+    #[tracing::instrument(skip(self, request))]
+    async fn get_insecure_key_gen_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<KeyGenResult>, Status> {
+        let mut kms_client = self.kms_client.lock().await;
+        let response = kms_client.get_insecure_key_gen_result(request).await?;
+        Ok(response)
+    }
+
     #[tracing::instrument(skip(self, request))]
     async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
         let mut kms_client = self.kms_client.lock().await;

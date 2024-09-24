@@ -13,7 +13,7 @@ jobs:
     uses: ./.github/workflows/common-build-big-instance.yml
     with:
       working-directory: './core/service'
-      args-tests: '-F slow_tests'
+      args-tests: '-F slow_tests -F insecure'
       run-wasm: true
       package-name: 'kms'
     permissions:

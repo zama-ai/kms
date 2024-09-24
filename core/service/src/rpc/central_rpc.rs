@@ -115,6 +115,24 @@ impl<
         )
     }
 
+    #[cfg(feature = "insecure")]
+    #[tracing::instrument(skip(self, request))]
+    async fn insecure_key_gen(
+        &self,
+        request: Request<KeyGenRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        self.key_gen(request).await
+    }
+
+    #[cfg(feature = "insecure")]
+    #[tracing::instrument(skip(self, request))]
+    async fn get_insecure_key_gen_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<KeyGenResult>, Status> {
+        self.get_key_gen_result(request).await
+    }
+
     /// starts the centralized KMS key generation
     #[tracing::instrument(skip(self, request))]
     async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {

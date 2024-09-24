@@ -3081,7 +3081,7 @@ pub(crate) mod tests {
     // The requests from the `reqs` argument need to implement `RequestIdGetter`.
     macro_rules! par_poll_responses {
         ($parallelism:expr,$kms_clients:expr,$reqs:expr,$f_to_poll:ident) => {{
-            const TRIES: usize = 10;
+            const TRIES: usize = 20;
             let mut joined_responses = vec![];
             for count in 0..TRIES {
                 joined_responses = vec![];
@@ -4638,18 +4638,33 @@ pub(crate) mod tests {
     }
 
     //Helper function to launch dkg
-    #[cfg(feature = "slow_tests")]
+    #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     async fn launch_dkg(
         req_keygen: crate::kms::KeyGenRequest,
         kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+        insecure: bool,
     ) -> Vec<Result<tonic::Response<Empty>, tonic::Status>> {
         let mut tasks_gen = JoinSet::new();
         for i in 1..=AMOUNT_PARTIES as u32 {
             //Send kg request
             let mut cur_client = kms_clients.get(&i).unwrap().clone();
             let req_clone = req_keygen.clone();
-            tasks_gen
-                .spawn(async move { cur_client.key_gen(tonic::Request::new(req_clone)).await });
+            tasks_gen.spawn(async move {
+                if insecure {
+                    #[cfg(feature = "insecure")]
+                    {
+                        cur_client
+                            .insecure_key_gen(tonic::Request::new(req_clone))
+                            .await
+                    }
+                    #[cfg(not(feature = "insecure"))]
+                    {
+                        panic!("cannot perform insecure keygen")
+                    }
+                } else {
+                    cur_client.key_gen(tonic::Request::new(req_clone)).await
+                }
+            });
         }
 
         let mut responses_gen = Vec::new();
@@ -4657,6 +4672,42 @@ pub(crate) mod tests {
             responses_gen.push(resp.unwrap());
         }
         responses_gen
+    }
+
+    #[cfg(feature = "insecure")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
+    async fn test_insecure_dkg() {
+        let req_preproc = RequestId::derive("test_dkg-preproc").unwrap();
+        let req_key = RequestId::derive("test_dkg-key").unwrap();
+        purge(None, None, &req_key.to_string()).await;
+
+        let (kms_servers, kms_clients, internal_client) =
+            threshold_handles(StorageVersion::Dev, TEST_PARAM_PATH).await;
+
+        let req_keygen = internal_client
+            .key_gen_request(&req_key, Some(req_preproc.clone()), Some(ParamChoice::Test))
+            .unwrap();
+        let responses = launch_dkg(req_keygen.clone(), &kms_clients, true).await;
+        for response in responses {
+            assert!(response.is_ok());
+        }
+
+        wait_for_keygen_result(
+            req_keygen.request_id.clone().unwrap(),
+            req_preproc,
+            &kms_clients,
+            &internal_client,
+            true,
+        )
+        .await;
+
+        for handle in kms_servers.values() {
+            handle.abort()
+        }
+        for (_, handle) in kms_servers {
+            assert!(handle.await.unwrap_err().is_cancelled());
+        }
     }
 
     #[cfg(feature = "slow_tests")]
@@ -4716,16 +4767,46 @@ pub(crate) mod tests {
         let req_keygen = internal_client
             .key_gen_request(&req_key, Some(req_preproc.clone()), Some(ParamChoice::Test))
             .unwrap();
-        let responses = launch_dkg(req_keygen.clone(), &kms_clients).await;
+        let responses = launch_dkg(req_keygen.clone(), &kms_clients, false).await;
         for response in responses {
             assert!(response.is_ok());
         }
 
-        //Wait 5 min max (should be enough here too)
         let req_get_keygen = req_keygen.request_id.clone().unwrap();
+        wait_for_keygen_result(
+            req_get_keygen,
+            req_preproc,
+            &kms_clients,
+            &internal_client,
+            false,
+        )
+        .await;
+
+        for handle in kms_servers.values() {
+            handle.abort()
+        }
+        for (_, handle) in kms_servers {
+            assert!(handle.await.unwrap_err().is_cancelled());
+        }
+    }
+
+    #[cfg(any(feature = "slow_tests", feature = "insecure"))]
+    async fn wait_for_keygen_result(
+        req_get_keygen: RequestId,
+        req_preproc: RequestId,
+        kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+        internal_client: &Client,
+        insecure: bool,
+    ) {
+        //Wait 5 min max (should be enough here too)
         let mut finished = Vec::new();
         for _ in 0..20 {
-            tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(if insecure {
+                1
+            } else {
+                15
+            }))
+            .await;
 
             let mut tasks = JoinSet::new();
             for i in 1..=AMOUNT_PARTIES as u32 {
@@ -4734,9 +4815,22 @@ pub(crate) mod tests {
                 tasks.spawn(async move {
                     (
                         i,
-                        cur_client
-                            .get_key_gen_result(tonic::Request::new(req_clone))
-                            .await,
+                        if insecure {
+                            #[cfg(feature = "insecure")]
+                            {
+                                cur_client
+                                    .get_insecure_key_gen_result(tonic::Request::new(req_clone))
+                                    .await
+                            }
+                            #[cfg(not(feature = "insecure"))]
+                            {
+                                panic!("cannot perform insecure keygen")
+                            }
+                        } else {
+                            cur_client
+                                .get_key_gen_result(tonic::Request::new(req_clone))
+                                .await
+                        },
                     )
                 });
             }
@@ -4745,7 +4839,10 @@ pub(crate) mod tests {
                 responses.push(resp.unwrap());
             }
 
-            finished = responses.into_iter().filter(|x| x.1.is_ok()).collect_vec();
+            finished = responses
+                .into_iter()
+                .filter(|x| x.1.is_ok())
+                .collect::<Vec<_>>();
             if finished.len() == AMOUNT_PARTIES {
                 break;
             }
@@ -4754,7 +4851,7 @@ pub(crate) mod tests {
         let finished = finished
             .into_iter()
             .map(|x| x.1.unwrap().into_inner())
-            .collect_vec();
+            .collect::<Vec<_>>();
 
         let mut serialized_ref_pk = Vec::new();
         let mut serialized_ref_server_key = Vec::new();
@@ -4788,25 +4885,25 @@ pub(crate) mod tests {
             }
         }
 
-        //Try to request another kg with the same preproc but another request id
-        let other_key_gen_id = RequestId::derive("test_dkg other key id").unwrap();
-        let keygen_req_data = internal_client
-            .key_gen_request(
-                &other_key_gen_id,
-                Some(req_preproc),
-                Some(ParamChoice::Test),
-            )
-            .unwrap();
-        let responses = launch_dkg(keygen_req_data.clone(), &kms_clients).await;
-        for response in responses {
-            assert_eq!(response.unwrap_err().code(), tonic::Code::NotFound);
-        }
-
-        for handle in kms_servers.values() {
-            handle.abort()
-        }
-        for (_, handle) in kms_servers {
-            assert!(handle.await.unwrap_err().is_cancelled());
+        if !insecure {
+            // Try to request another kg with the same preproc but another request id,
+            // we should see that it fails because the preproc material is consumed.
+            //
+            // We only test for the secure variant of the dkg because the insecure
+            // variant does not use preprocessing material.
+            tracing::debug!("starting another dkg with a used preproc ID");
+            let other_key_gen_id = RequestId::derive("test_dkg other key id").unwrap();
+            let keygen_req_data = internal_client
+                .key_gen_request(
+                    &other_key_gen_id,
+                    Some(req_preproc),
+                    Some(ParamChoice::Test),
+                )
+                .unwrap();
+            let responses = launch_dkg(keygen_req_data.clone(), kms_clients, insecure).await;
+            for response in responses {
+                assert_eq!(response.unwrap_err().code(), tonic::Code::NotFound);
+            }
         }
     }
 }

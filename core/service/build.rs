@@ -1,14 +1,11 @@
+use tonic_build::Builder;
+
 const DERIVES: &str = "#[derive(serde::Deserialize, serde::Serialize)]";
 const EXTENDED_DERIVES: &str =
     "#[derive(serde::Deserialize, serde::Serialize, Hash, Eq, Ord, PartialOrd)]";
 
-// Adding doc
-#[cfg(all(not(feature = "non-wasm"), not(feature = "grpc-client")))]
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn default_builder() -> Builder {
     tonic_build::configure()
-        .build_client(false)
-        .build_server(false)
-        .build_transport(false)
         .type_attribute("DecryptionRequest", DERIVES)
         .type_attribute("DecryptionResponsePayload", DERIVES)
         .type_attribute("ExternalDecryptionResult", DERIVES)
@@ -27,6 +24,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .type_attribute("CrsGenResult", DERIVES)
         .type_attribute("ZkVerifyResponse", DERIVES)
         .type_attribute("ZkVerifyResponsePayload", DERIVES)
+}
+
+// Adding doc
+#[cfg(all(not(feature = "non-wasm"), not(feature = "grpc-client")))]
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    default_builder()
+        .build_client(false)
+        .build_server(false)
+        .build_transport(false)
         .type_attribute("FheType", "#[wasm_bindgen::prelude::wasm_bindgen]")
         .type_attribute(
             "RequestId",
@@ -56,27 +62,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[cfg(any(feature = "non-wasm", feature = "grpc-client"))]
+#[cfg(all(
+    any(feature = "non-wasm", feature = "grpc-client"),
+    not(feature = "insecure")
+))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tonic_build::configure()
-        .type_attribute("DecryptionRequest", DERIVES)
-        .type_attribute("DecryptionResponsePayload", DERIVES)
-        .type_attribute("ExternalDecryptionResult", DERIVES)
-        .type_attribute("ReencryptionRequest", DERIVES)
-        .type_attribute("ReencryptionRequestPayload", DERIVES)
-        .type_attribute("ReencryptionResponse", DERIVES)
-        .type_attribute("ReencryptionResponsePayload", DERIVES)
-        .type_attribute("Eip712DomainMsg", DERIVES)
-        .type_attribute("KeyGenRequest", DERIVES)
-        .type_attribute("TypedCiphertext", DERIVES)
-        .type_attribute("KeyGenResult", DERIVES)
-        .type_attribute("RequestId", EXTENDED_DERIVES)
-        .type_attribute("Config", EXTENDED_DERIVES)
-        .type_attribute("SignedPubDataHandle", EXTENDED_DERIVES)
-        .type_attribute("CrsGenRequest", DERIVES)
-        .type_attribute("CrsGenResult", DERIVES)
-        .type_attribute("ZkVerifyResponse", DERIVES)
-        .type_attribute("ZkVerifyResponsePayload", DERIVES)
-        .compile(&["proto/kms.proto"], &["proto"])?;
+    default_builder().compile(&["proto/kms.proto"], &["proto"])?;
+    Ok(())
+}
+
+#[cfg(feature = "insecure")]
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    default_builder().compile(&["proto/kms-insecure.proto"], &["proto"])?;
     Ok(())
 }

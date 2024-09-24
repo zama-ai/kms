@@ -40,11 +40,24 @@ pub async fn setup_mock_kms(n: usize) -> HashMap<u32, JoinHandle<()>> {
 
 /// This is a mock threshold KMS that doesn't do anything and only
 /// returns dummy values on grpc calls.
+#[cfg(not(feature = "insecure"))]
 type DummyThresholdKms = GenericKms<
     DummyInitiator,
     DummyReencryptor,
     DummyDecryptor,
     DummyKeyGenerator,
+    DummyPreprocessor,
+    DummyCrsGenerator,
+    DummyZkVerifier,
+>;
+
+#[cfg(feature = "insecure")]
+type DummyThresholdKms = GenericKms<
+    DummyInitiator,
+    DummyReencryptor,
+    DummyDecryptor,
+    DummyKeyGenerator,
+    DummyKeyGenerator, // the insecure one is the same as the dummy one
     DummyPreprocessor,
     DummyCrsGenerator,
     DummyZkVerifier,
@@ -56,6 +69,8 @@ fn new_dummy_threshold_kms() -> DummyThresholdKms {
         DummyInitiator {},
         DummyReencryptor { degree: 1 },
         DummyDecryptor {},
+        DummyKeyGenerator {},
+        #[cfg(feature = "insecure")]
         DummyKeyGenerator {},
         DummyPreprocessor {},
         DummyCrsGenerator {},
@@ -140,6 +155,34 @@ struct DummyKeyGenerator;
 
 #[tonic::async_trait]
 impl KeyGenerator for DummyKeyGenerator {
+    async fn key_gen(&self, _request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn get_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<KeyGenResult>, Status> {
+        let dummy_info = SignedPubDataHandle {
+            key_handle: "12".to_string(),
+            signature: vec![1, 2],
+        };
+
+        let pk = PubDataType::PublicKey;
+        let sk = PubDataType::ServerKey;
+        Ok(Response::new(KeyGenResult {
+            request_id: Some(request.into_inner()),
+            key_results: HashMap::from_iter(vec![
+                (pk.to_string(), dummy_info.clone()),
+                (sk.to_string(), dummy_info),
+            ]),
+        }))
+    }
+}
+
+#[cfg(feature = "insecure")]
+#[tonic::async_trait]
+impl InsecureKeyGenerator for DummyKeyGenerator {
     async fn key_gen(&self, _request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
         Ok(Response::new(Empty {}))
     }

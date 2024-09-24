@@ -1,3 +1,5 @@
+#[cfg(feature = "insecure")]
+use super::generic::InsecureKeyGenerator;
 use super::generic::{
     CrsGenerator, Decryptor, GenericKms, Initiator, KeyGenPreprocessor, KeyGenerator, Reencryptor,
     ZkVerifier,
@@ -53,9 +55,10 @@ use distributed_decryption::execution::runtime::session::{
 };
 use distributed_decryption::execution::small_execution::prss::PRSSSetup;
 use distributed_decryption::execution::tfhe_internals::parameters::{
-    Ciphertext64, DKGParams, DKGParamsRegular, DKGParamsSnS,
+    Ciphertext64, DKGParams, DKGParamsRegular, DKGParamsSnS, NoiseFloodParameters,
 };
 use distributed_decryption::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
+use distributed_decryption::execution::tfhe_internals::test_feature::initialize_key_material;
 use distributed_decryption::execution::zk::ceremony::{
     compute_witness_dim, Ceremony, RealCeremony,
 };
@@ -314,11 +317,24 @@ pub fn compute_all_info(
     })
 }
 
+#[cfg(not(feature = "insecure"))]
 pub type RealThresholdKms<PubS, PrivS> = GenericKms<
     RealInitiator<PrivS>,
     RealReencryptor,
     RealDecryptor,
     RealKeyGenerator<PubS, PrivS>,
+    RealPreprocessor,
+    RealCrsGenerator<PubS, PrivS>,
+    RealZkVerifier<PubS>,
+>;
+
+#[cfg(feature = "insecure")]
+pub type RealThresholdKms<PubS, PrivS> = GenericKms<
+    RealInitiator<PrivS>,
+    RealReencryptor,
+    RealDecryptor,
+    RealKeyGenerator<PubS, PrivS>,
+    RealInsecureKeyGenerator<PubS, PrivS>,
     RealPreprocessor,
     RealCrsGenerator<PubS, PrivS>,
     RealZkVerifier<PubS>,
@@ -553,6 +569,9 @@ where
         session_preparer: session_preparer.new_instance().await,
     };
 
+    #[cfg(feature = "insecure")]
+    let insecureerator = RealInsecureKeyGenerator::from_real_keygen(&keygenerator).await;
+
     let preprocessor = RealPreprocessor {
         prss_setup,
         preproc_buckets,
@@ -583,6 +602,8 @@ where
         reencryptor,
         decryptor,
         keygenerator,
+        #[cfg(feature = "insecure")]
+        insecureerator,
         preprocessor,
         crsgenerator,
         zkverifier,
@@ -1320,13 +1341,69 @@ pub struct RealKeyGenerator<
     session_preparer: SessionPreparer,
 }
 
+#[cfg(feature = "insecure")]
+pub struct RealInsecureKeyGenerator<
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
+> {
+    real_key_generator: RealKeyGenerator<PubS, PrivS>,
+}
+
+#[cfg(feature = "insecure")]
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
+    RealInsecureKeyGenerator<PubS, PrivS>
+{
+    async fn from_real_keygen(value: &RealKeyGenerator<PubS, PrivS>) -> Self {
+        Self {
+            real_key_generator: RealKeyGenerator {
+                fhe_keys: Arc::clone(&value.fhe_keys),
+                base_kms: value.base_kms.new_instance().await,
+                preproc_buckets: Arc::clone(&value.preproc_buckets),
+                public_storage: Arc::clone(&value.public_storage),
+                private_storage: Arc::clone(&value.private_storage),
+                dkg_pubinfo_meta_store: Arc::clone(&value.dkg_pubinfo_meta_store),
+                param_file_map: Arc::clone(&value.param_file_map),
+                session_preparer: value.session_preparer.new_instance().await,
+            },
+        }
+    }
+}
+
+#[cfg(feature = "insecure")]
+#[tonic::async_trait]
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
+    InsecureKeyGenerator for RealInsecureKeyGenerator<PubS, PrivS>
+{
+    async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
+        self.real_key_generator.inner_key_gen(request, true).await
+    }
+
+    async fn get_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<KeyGenResult>, Status> {
+        self.real_key_generator.inner_get_result(request).await
+    }
+}
+
+// This is an enum to determine whether to start the dkg
+// in a secure mode. If the secure mode is selected,
+// a preprocessing handle must be given.
+// This is essentially the same as an Option, but it's
+// more clear to label the variants as `Secure`
+// and `Insecure`.
+enum PreprocHandleWithMode {
+    Secure(Box<dyn DKGPreprocessing<ResiduePoly128>>),
+    Insecure,
+}
+
 impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
     RealKeyGenerator<PubS, PrivS>
 {
     async fn launch_dkg(
         &self,
         dkg_params: DKGParams,
-        mut preproc_handle: Box<dyn DKGPreprocessing<ResiduePoly128>>,
+        preproc_handle_w_mode: PreprocHandleWithMode,
         req_id: RequestId,
     ) -> anyhow::Result<()> {
         // Update status
@@ -1350,13 +1427,28 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         let sig_key = Arc::clone(&self.base_kms.sig_key);
         let fhe_keys = Arc::clone(&self.fhe_keys);
 
-        //Start the async dkg job
-        // TODO the following code could be simplified with a helper method similar to inner_decrypt
         let _handle = tokio::spawn(async move {
-            //Actually do the dkg
-            let dkg_res =
-                distributed_keygen_z128(&mut base_session, preproc_handle.as_mut(), dkg_params)
-                    .await;
+            let dkg_res = match preproc_handle_w_mode {
+                PreprocHandleWithMode::Insecure => {
+                    let sns_parameters = match dkg_params {
+                        DKGParams::WithoutSnS(_dkgparams_regular) => {
+                            panic!("eventually we do not need to construct noiseflood parameters like this")
+                        }
+                        DKGParams::WithSnS(dkgparams_sn_s) => dkgparams_sn_s.sns_params,
+                    };
+                    let params = NoiseFloodParameters {
+                        ciphertext_parameters: dkg_params
+                            .get_params_basics_handle()
+                            .to_classic_pbs_parameters(),
+                        sns_parameters,
+                    };
+                    initialize_key_material(&mut base_session, params).await
+                }
+                PreprocHandleWithMode::Secure(mut preproc_handle) => {
+                    distributed_keygen_z128(&mut base_session, preproc_handle.as_mut(), dkg_params)
+                        .await
+                }
+            };
 
             //Make sure the dkg ended nicely
             let (pub_key_set, private_keys) = match dkg_res {
@@ -1491,13 +1583,12 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         });
         Ok(())
     }
-}
 
-#[tonic::async_trait]
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> KeyGenerator
-    for RealKeyGenerator<PubS, PrivS>
-{
-    async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
+    async fn inner_key_gen(
+        &self,
+        request: Request<KeyGenRequest>,
+        insecure: bool,
+    ) -> Result<Response<Empty>, Status> {
         let inner = request.into_inner();
         let request_id = tonic_some_or_err(
             inner.request_id.clone(),
@@ -1580,14 +1671,20 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             "Request ID is not set".to_string(),
         )?;
 
-        //separate scope to get mutex on preproc storage
-        let preproc_entry = {
+        let preproc_handle = if insecure {
+            PreprocHandleWithMode::Insecure
+        } else {
             let mut map = self.preproc_buckets.write().await;
             let preproc = map.delete(&preproc_id);
-            handle_res_mapping(preproc, &preproc_id, "Preprocessing")?
+            PreprocHandleWithMode::Secure(handle_res_mapping(
+                preproc,
+                &preproc_id,
+                "Preprocessing",
+            )?)
         };
+
         tonic_handle_potential_err(
-            self.launch_dkg(dkg_params, preproc_entry, request_id.clone())
+            self.launch_dkg(dkg_params, preproc_handle, request_id.clone())
                 .await,
             format!("Error launching dkg for request ID {request_id}"),
         )?;
@@ -1596,7 +1693,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         Ok(Response::new(Empty {}))
     }
 
-    async fn get_result(
+    async fn inner_get_result(
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<KeyGenResult>, Status> {
@@ -1612,6 +1709,22 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             request_id: Some(request_id),
             key_results: convert_key_response(res),
         }))
+    }
+}
+
+#[tonic::async_trait]
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> KeyGenerator
+    for RealKeyGenerator<PubS, PrivS>
+{
+    async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
+        self.inner_key_gen(request, false).await
+    }
+
+    async fn get_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<KeyGenResult>, Status> {
+        self.inner_get_result(request).await
     }
 }
 
