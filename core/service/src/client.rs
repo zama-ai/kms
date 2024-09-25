@@ -107,13 +107,21 @@ fn decrypted_blocks_to_plaintext(
     res_pt.map_err(|error| anyhow_error_and_log(format!("Panicked in combining {error}")))
 }
 
+/// For reencryption, we only use the Addr variant,
+/// for everything else, we use the Pk variant.
+#[derive(Clone)]
+pub enum ServerIdentities {
+    Pks(Vec<PublicSigKey>),
+    Addrs(Vec<alloy_primitives::Address>),
+}
+
 /// Simple client to interact with the KMS servers. This can be seen as a proof-of-concept
 /// and reference code for validating the KMS. The logic supplied by the client will be
 /// distributed across the aggregator/proxy and smart contracts.
 #[wasm_bindgen]
 pub struct Client {
     rng: Box<AesRng>,
-    server_pks: Vec<PublicSigKey>,
+    server_identities: ServerIdentities,
     client_address: alloy_primitives::Address,
     client_sk: Option<PrivateSigKey>,
     params: ClassicPBSParameters,
@@ -126,7 +134,7 @@ pub struct Client {
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct TestingReencryptionTranscript {
     // client
-    server_pks: Vec<PublicSigKey>,
+    server_addrs: Vec<alloy_primitives::Address>,
     client_address: alloy_primitives::Address,
     client_sk: Option<PrivateSigKey>,
     degree: u32,
@@ -261,7 +269,7 @@ pub mod js_api {
     /// The "default" parameter choice is selected if no matching string is found.
     #[wasm_bindgen]
     pub fn new_client(
-        server_pks: Vec<PublicSigKey>,
+        server_addrs: Vec<String>,
         client_address_hex: &str,
         param_choice: &str,
     ) -> Result<Client, JsError> {
@@ -286,9 +294,19 @@ pub mod js_api {
         let client_address = alloy_primitives::Address::parse_checksummed(client_address_hex, None)
             .map_err(|e| JsError::new(&e.to_string()))?;
 
+        let server_identities = ServerIdentities::Addrs(
+            server_addrs
+                .into_iter()
+                .map(|s| {
+                    alloy_primitives::Address::parse_checksummed(s, None)
+                        .map_err(|e| JsError::new(&e.to_string()))
+                })
+                .collect::<Result<Vec<_>, JsError>>()?,
+        );
+
         Ok(Client {
             rng: Box::new(AesRng::from_entropy()),
-            server_pks,
+            server_identities,
             client_address,
             client_sk: None,
             params: params.ciphertext_parameters,
@@ -296,8 +314,13 @@ pub mod js_api {
     }
 
     #[wasm_bindgen]
-    pub fn get_server_public_keys(client: &Client) -> Vec<PublicSigKey> {
-        client.server_pks.clone()
+    pub fn get_server_addrs(client: &Client) -> Vec<String> {
+        client
+            .get_server_addrs()
+            .unwrap()
+            .iter()
+            .map(|addr| addr.to_string())
+            .collect()
     }
 
     #[wasm_bindgen]
@@ -387,7 +410,7 @@ pub mod js_api {
     pub fn transcript_to_client(transcript: &TestingReencryptionTranscript) -> Client {
         Client {
             rng: Box::new(AesRng::from_entropy()),
-            server_pks: transcript.server_pks.clone(),
+            server_identities: ServerIdentities::Addrs(transcript.server_addrs.clone()),
             client_address: transcript.client_address,
             client_sk: transcript.client_sk.clone(),
             params: transcript.params,
@@ -825,7 +848,7 @@ impl Client {
     ) -> Self {
         Client {
             rng: Box::new(AesRng::from_entropy()), // todo should be argument
-            server_pks,
+            server_identities: ServerIdentities::Pks(server_pks),
             client_address,
             client_sk,
             params,
@@ -880,10 +903,22 @@ impl Client {
         ))
     }
 
+    /// This is used for tests to convert public keys into addresses
+    /// because when processing reencryption response, only addresses are allowed.
+    #[cfg(test)]
+    fn convert_to_addresses(&mut self) {
+        let pks = self.get_server_pks().unwrap();
+        let addrs = pks
+            .iter()
+            .map(|pk| alloy_signer::utils::public_key_to_address(pk.pk()))
+            .collect::<Vec<_>>();
+        self.server_identities = ServerIdentities::Addrs(addrs);
+    }
+
     /// Verify the signature received from the server on keys or other data objects.
     /// This verification will pass if one of the public keys can verify the signature.
     #[cfg(feature = "non-wasm")]
-    pub fn verify_server_signature<T: serde::Serialize + AsRef<[u8]>>(
+    fn verify_server_signature<T: serde::Serialize + AsRef<[u8]>>(
         &self,
         data: &T,
         signature: &[u8],
@@ -906,12 +941,20 @@ impl Client {
         let signature_struct: Signature = match bincode::deserialize(signature) {
             Ok(signature_struct) => signature_struct,
             Err(_) => {
-                tracing::warn!("Could not deserialize signature");
+                tracing::error!("Could not deserialize signature");
                 return None;
             }
         };
 
-        for verf_key in &self.server_pks {
+        let server_pks = match self.get_server_pks() {
+            Ok(pks) => pks,
+            Err(e) => {
+                tracing::error!("failed to get server pks ({})", e);
+                return None;
+            }
+        };
+
+        for verf_key in server_pks {
             let ok = BaseKmsStruct::verify_sig(&data, &signature_struct, verf_key).is_ok();
             if ok {
                 return Some(verf_key.clone());
@@ -1796,22 +1839,33 @@ impl Client {
         if resp.signature.is_empty() {
             return Err(anyhow_error_and_log("empty signature"));
         }
-        if self.server_pks.len() != 1 {
-            return Err(anyhow_error_and_log(
-                "incorrect length for server public keys",
-            ));
-        }
+
+        let stored_server_addrs = match &self.server_identities {
+            ServerIdentities::Pks(_) => {
+                return Err(anyhow_error_and_log(
+                    "expected addresses but got public keys",
+                ));
+            }
+            ServerIdentities::Addrs(vec) => {
+                if vec.len() != 1 {
+                    return Err(anyhow_error_and_log("incorrect length for addresses"));
+                } else {
+                    vec
+                }
+            }
+        };
+
         let cur_verf_key: PublicSigKey = deserialize(&payload.verification_key)?;
-        if self.server_pks[0] != cur_verf_key {
+
+        if stored_server_addrs[0] != alloy_signer::utils::public_key_to_address(cur_verf_key.pk()) {
             return Err(anyhow_error_and_log("verification key is not consistent"));
         }
         let sig = Signature {
             sig: k256::ecdsa::Signature::from_slice(&resp.signature)?,
         };
-        internal_verify_sig(&bincode::serialize(&payload)?, &sig, &self.server_pks[0])
-            .inspect_err(|e| {
-                tracing::warn!("signature on received response is not valid ({})", e)
-            })?;
+        internal_verify_sig(&bincode::serialize(&payload)?, &sig, &cur_verf_key).inspect_err(
+            |e| tracing::warn!("signature on received response is not valid ({})", e),
+        )?;
 
         decrypt_signcryption(
             &payload.signcrypted_ciphertext,
@@ -2018,6 +2072,23 @@ impl Client {
     }
 
     #[cfg(feature = "non-wasm")]
+    pub fn get_server_pks(&self) -> anyhow::Result<&Vec<PublicSigKey>> {
+        match &self.server_identities {
+            ServerIdentities::Pks(vec) => Ok(vec),
+            ServerIdentities::Addrs(_) => {
+                Err(anyhow::anyhow!("expected public keys, got addresses"))
+            }
+        }
+    }
+
+    pub fn get_server_addrs(&self) -> anyhow::Result<&Vec<alloy_primitives::Address>> {
+        match &self.server_identities {
+            ServerIdentities::Pks(_) => Err(anyhow::anyhow!("expected addresses, got public keys")),
+            ServerIdentities::Addrs(vec) => Ok(vec),
+        }
+    }
+
+    #[cfg(feature = "non-wasm")]
     fn validate_dec_meta_data<T: MetaResponse + serde::Serialize>(
         &self,
         pivot_resp: &T,
@@ -2045,7 +2116,8 @@ impl Client {
             return Ok(false);
         }
         let resp_verf_key: PublicSigKey = deserialize(&other_resp.verification_key())?;
-        if !&self.server_pks.contains(&resp_verf_key) {
+        let server_pks = self.get_server_pks()?;
+        if !server_pks.contains(&resp_verf_key) {
             tracing::warn!("Server key is unknown or incorrect.");
             return Ok(false);
         }
@@ -2098,9 +2170,13 @@ impl Client {
                 );
             return Ok(false);
         }
+
         let resp_verf_key: PublicSigKey = deserialize(&other_resp.verification_key())?;
-        if !&self.server_pks.contains(&resp_verf_key) {
-            tracing::warn!("Server key is incorrect in reencryption request");
+        let resp_addr = alloy_signer::utils::public_key_to_address(resp_verf_key.pk());
+
+        let stored_server_addrs = self.get_server_addrs()?;
+        if !stored_server_addrs.contains(&resp_addr) {
+            tracing::warn!("Server address is incorrect in reencryption request");
             return Ok(false);
         }
 
@@ -2147,7 +2223,8 @@ impl Client {
         responses: &[ZkVerifyResponse],
         min_agree_count: u32,
     ) -> anyhow::Result<Vec<(Signature, PublicSigKey)>> {
-        let mut remaining_pk_idx: HashSet<usize> = HashSet::from_iter(0..self.server_pks.len());
+        let server_pks = self.get_server_pks()?;
+        let mut remaining_pk_idx: HashSet<usize> = HashSet::from_iter(0..server_pks.len());
         let mut out = Vec::new();
 
         for response in responses {
@@ -2164,7 +2241,7 @@ impl Client {
 
             let to_remove = (|| -> Option<usize> {
                 for pk_idx in &remaining_pk_idx {
-                    let pk = &self.server_pks[*pk_idx];
+                    let pk = &server_pks[*pk_idx];
                     match internal_verify_sig(&payload_serialized, &zk_sig, pk) {
                         Ok(()) => {
                             return Some(*pk_idx);
@@ -2178,7 +2255,7 @@ impl Client {
                 None
             })();
             if let Some(i) = to_remove {
-                out.push((zk_sig, self.server_pks[i].clone()));
+                out.push((zk_sig, server_pks[i].clone()));
                 remaining_pk_idx.remove(&i);
             };
         }
@@ -2519,9 +2596,9 @@ pub mod test_tools {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{recover_ecdsa_public_key_from_signature, Client};
-    use crate::client::ParsedReencryptionRequest;
     #[cfg(feature = "wasm_tests")]
     use crate::client::TestingReencryptionTranscript;
+    use crate::client::{ParsedReencryptionRequest, ServerIdentities};
     #[cfg(feature = "wasm_tests")]
     use crate::consts::TEST_CENTRAL_KEY_ID;
     #[cfg(feature = "slow_tests")]
@@ -2796,7 +2873,8 @@ pub(crate) mod tests {
         // try verification with each of the server keys; at least one must pass
         let crs_sig: Signature = bincode::deserialize(&crs_info.signature).unwrap();
         let mut verified = false;
-        for vk in &internal_client.server_pks {
+        let server_pks = internal_client.get_server_pks().unwrap();
+        for vk in server_pks {
             let v = BaseKmsStruct::verify_sig(&client_handle, &crs_sig, vk).is_ok();
             verified = verified || v;
         }
@@ -3764,6 +3842,8 @@ pub(crate) mod tests {
         let (ct, fhe_type) = compute_cipher_from_stored_key(None, msg, key_id).await;
         let req_key_id = key_id.to_owned().try_into().unwrap();
 
+        internal_client.convert_to_addresses();
+
         // The following lines are used to generate integration test-code with javascript for test `new client` in test.js
         // println!(
         //     "Client PK {:?}",
@@ -3862,7 +3942,7 @@ pub(crate) mod tests {
                 // be instantiated easily without a seeder and we don't
                 // want to introduce extra npm dependency.
                 let transcript = TestingReencryptionTranscript {
-                    server_pks: internal_client.server_pks.clone(),
+                    server_addrs: internal_client.get_server_addrs().unwrap().clone(),
                     client_address: internal_client.client_address,
                     client_sk: internal_client.client_sk.clone(),
                     degree: 0,
@@ -3919,7 +3999,7 @@ pub(crate) mod tests {
                     )
                     .unwrap()
             } else {
-                internal_client.server_pks = Vec::new();
+                internal_client.server_identities = ServerIdentities::Addrs(Vec::new());
                 internal_client
                     .insecure_process_reencryption_resp(&responses, enc_pk, enc_sk)
                     .unwrap()
@@ -4242,6 +4322,8 @@ pub(crate) mod tests {
             threshold_handles(StorageVersion::Dev, param_path).await;
         let (ct, fhe_type) = compute_cipher_from_stored_key(None, msg, key_id).await;
 
+        internal_client.convert_to_addresses();
+
         // make requests
         let reqs: Vec<_> = (0..parallelism)
             .map(|j| {
@@ -4351,7 +4433,7 @@ pub(crate) mod tests {
                 let agg_resp = response_map.values().last().unwrap().clone();
 
                 let transcript = TestingReencryptionTranscript {
-                    server_pks: internal_client.server_pks.clone(),
+                    server_addrs: internal_client.get_server_addrs().unwrap().clone(),
                     client_address: internal_client.client_address,
                     client_sk: internal_client.client_sk.clone(),
                     degree: THRESHOLD as u32,
@@ -4385,7 +4467,7 @@ pub(crate) mod tests {
                     .process_reencryption_resp(&client_req, &domain, responses, enc_pk, enc_sk)
                     .unwrap()
             } else {
-                internal_client.server_pks = Vec::new();
+                internal_client.server_identities = ServerIdentities::Addrs(Vec::new());
                 internal_client
                     .insecure_process_reencryption_resp(responses, enc_pk, enc_sk)
                     .unwrap()

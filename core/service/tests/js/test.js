@@ -14,10 +14,6 @@ const {
     u8vec_to_cryptobox_sk,
     new_client,
     u8vec_to_public_sig_key,
-    agg_resp_to_js,
-    get_client_secret_key,
-    get_client_address,
-    private_sig_key_to_u8vec,
     buf_to_transcript,
     transcript_to_client,
     transcript_to_eip712domain,
@@ -150,16 +146,9 @@ test('threshold reencryption response with js', (_t) => {
 });
 
 test('new client', (_t) => {
-    const kms_key_buf = new Uint8Array([
-        2, 202, 118, 214, 19, 106, 39, 216, 225, 169, 207, 51, 129, 179, 226, 0, 109, 197, 49, 143, 238, 4, 214, 34, 188, 182, 30,
-        67, 235, 13, 224, 104, 147
-
-    ]);
-    let kms_keys = [u8vec_to_public_sig_key(kms_key_buf)];
-
     // make a generic client
     let address = "0x66f9664f97F2b50F62D13eA064982f936dE76657";
-    new_client(kms_keys, address, 'default');
+    new_client([address], address, 'default');
 
     // we only need to test the constructor, no need to test is further
     // as they are handled by the other tests
