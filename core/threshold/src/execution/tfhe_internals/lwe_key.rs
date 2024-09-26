@@ -29,9 +29,8 @@ use crate::{
 };
 
 use super::{
-    glwe_ciphertext::GlweCiphertextShare,
-    randomness::{EncryptionType, MPCEncryptionRandomGenerator},
-    utils::slice_semi_reverse_negacyclic_convolution,
+    glwe_ciphertext::GlweCiphertextShare, parameters::EncryptionType,
+    randomness::MPCEncryptionRandomGenerator, utils::slice_semi_reverse_negacyclic_convolution,
 };
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
@@ -345,7 +344,6 @@ mod tests {
         );
         let plaintext = Plaintext(msg << scaling);
 
-        //Using parameters from the config files in temp/default_params.json
         let mut seeder = new_seeder();
         let mut encryption_random_generator: EncryptionRandomGenerator<ActivatedRandomGenerator> =
             EncryptionRandomGenerator::new(seeder.seed(), seeder.as_mut());

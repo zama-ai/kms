@@ -30,6 +30,7 @@ use kms_blockchain_connector::infrastructure::blockchain::KmsBlockchain;
 use kms_blockchain_connector::infrastructure::core::{KmsCore, KmsEventHandler};
 use kms_blockchain_connector::infrastructure::metrics::OpenTelemetryMetrics;
 use kms_lib::consts::TEST_CRS_ID;
+use kms_lib::consts::TEST_PARAM;
 use kms_lib::kms::{ZkVerifyResponse, ZkVerifyResponsePayload};
 use kms_lib::util::key_setup::test_tools::compute_zkp_from_stored_key;
 use kms_lib::util::key_setup::{ensure_central_crs_exists, ensure_threshold_crs_exists};
@@ -37,7 +38,7 @@ use kms_lib::{
     client::{test_tools, ParsedReencryptionRequest},
     consts::{
         AMOUNT_PARTIES, BASE_PORT, DEFAULT_PROT, DEFAULT_URL, OTHER_CENTRAL_TEST_ID,
-        SIGNING_KEY_ID, TEST_CENTRAL_KEY_ID, TEST_PARAM_PATH, TEST_THRESHOLD_KEY_ID, THRESHOLD,
+        SIGNING_KEY_ID, TEST_CENTRAL_KEY_ID, TEST_THRESHOLD_KEY_ID, THRESHOLD,
     },
     kms::{
         DecryptionResponsePayload, ReencryptionResponse, ReencryptionResponsePayload, RequestId,
@@ -384,7 +385,7 @@ async fn setup_threshold_keys() {
     ensure_threshold_keys_exist(
         &mut threshold_pub_storages,
         &mut threshold_priv_storages,
-        TEST_PARAM_PATH,
+        TEST_PARAM,
         &TEST_THRESHOLD_KEY_ID,
         true,
     )
@@ -393,7 +394,7 @@ async fn setup_threshold_keys() {
         &mut threshold_pub_storages,
         &mut threshold_priv_storages,
         kms_lib::kms::ParamChoice::Test,
-        TEST_PARAM_PATH,
+        TEST_PARAM,
         &TEST_CRS_ID,
         true,
     )
@@ -415,7 +416,7 @@ async fn setup_central_keys() {
     ensure_central_keys_exist(
         &mut central_pub_storage,
         &mut central_priv_storage,
-        TEST_PARAM_PATH,
+        TEST_PARAM,
         &TEST_CENTRAL_KEY_ID,
         &OTHER_CENTRAL_TEST_ID,
         true,
@@ -426,7 +427,7 @@ async fn setup_central_keys() {
         &mut central_pub_storage,
         &mut central_priv_storage,
         kms_lib::kms::ParamChoice::Test,
-        TEST_PARAM_PATH,
+        TEST_PARAM,
         &TEST_CRS_ID,
         true,
     )
@@ -797,7 +798,7 @@ async fn reenc_sunshine(slow: bool) {
     }
     let client_storage = FileStorage::new_centralized(None, StorageType::CLIENT).unwrap();
     let mut kms_client =
-        kms_lib::client::Client::new_client(client_storage, pub_storage, TEST_PARAM_PATH)
+        kms_lib::client::Client::new_client(client_storage, pub_storage, &TEST_PARAM)
             .await
             .unwrap();
 
@@ -864,6 +865,7 @@ async fn reenc_sunshine(slow: bool) {
 
         let eip712_domain = protobuf_to_alloy_domain(kms_req.domain.as_ref().unwrap()).unwrap();
         let client_request = ParsedReencryptionRequest::try_from(&kms_req).unwrap();
+        kms_client.convert_to_addresses();
         let pt = kms_client
             .process_reencryption_resp(&client_request, &eip712_domain, &agg_resp, &enc_pk, &enc_sk)
             .unwrap();
@@ -908,10 +910,9 @@ async fn zkp_sunshine(slow: bool) {
         pub_storage.push(FileStorage::new_threshold(None, StorageType::PUB, i).unwrap());
     }
     let client_storage = FileStorage::new_centralized(None, StorageType::CLIENT).unwrap();
-    let kms_client =
-        kms_lib::client::Client::new_client(client_storage, pub_storage, TEST_PARAM_PATH)
-            .await
-            .unwrap();
+    let kms_client = kms_lib::client::Client::new_client(client_storage, pub_storage, &TEST_PARAM)
+        .await
+        .unwrap();
 
     let request_id = RequestId {
         request_id: "2222000000000000000000000000000000001111".to_string(),

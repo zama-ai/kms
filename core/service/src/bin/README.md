@@ -16,8 +16,8 @@ We're assuming that you're running the KMS Core(s) locally.
 For this, KMS keys must exist. To generate them you can do the following:
 
 ```bash
-cargo run --bin kms-gen-keys -F testing -- centralized --param-path parameters/default_params.json
-cargo run --bin kms-gen-keys -F testing -- threshold --param-path parameters/default_params.json
+cargo run --bin kms-gen-keys -F testing -- centralized  
+cargo run --bin kms-gen-keys -F testing -- threshold  
 ```
 
 #### Threshold KMS TLS Certificates

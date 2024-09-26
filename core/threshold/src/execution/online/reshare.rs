@@ -16,7 +16,10 @@ use crate::{
             shamir::ShamirSharings,
             share::Share,
         },
-        tfhe_internals::{glwe_key::GlweSecretKeyShare, lwe_key::LweSecretKeyShare},
+        tfhe_internals::{
+            compression_decompression_key::CompressionPrivateKeyShares,
+            glwe_key::GlweSecretKeyShare, lwe_key::LweSecretKeyShare,
+        },
     },
     networking::value::BroadcastValue,
 };
@@ -112,12 +115,31 @@ pub async fn reshare_sk_same_sets<
         .await?,
         polynomial_size: input_share.glwe_secret_key_share.polynomial_size(),
     };
+
+    let glwe_secret_key_share_compression =
+        if let Some(compression_secret_key) = &mut input_share.glwe_secret_key_share_compression {
+            Some(CompressionPrivateKeyShares {
+                post_packing_ks_key: GlweSecretKeyShare {
+                    data: reshare_same_sets(
+                        preproc64,
+                        session,
+                        &mut compression_secret_key.post_packing_ks_key.data,
+                    )
+                    .await?,
+                    polynomial_size: compression_secret_key.polynomial_size(),
+                },
+                params: compression_secret_key.params,
+            })
+        } else {
+            None
+        };
     Ok(PrivateKeySet {
         lwe_encryption_secret_key_share,
         lwe_compute_secret_key_share,
         glwe_secret_key_share,
         glwe_secret_key_share_sns_as_lwe,
         parameters: input_share.parameters,
+        glwe_secret_key_share_compression,
     })
 }
 
@@ -461,6 +483,7 @@ mod tests {
                     ],
                 }),
                 parameters: key_shares[1].parameters,
+                glwe_secret_key_share_compression: None,
             }
         }
         // sanity check that we can still reconstruct

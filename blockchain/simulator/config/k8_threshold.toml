@@ -1,9 +1,8 @@
 # Assuming port forwarding at least one validator node and the kv-store
-# TODO:  add optional faucet address to the configuration
 # key_endpoint="https://kms-dev-v1.s3.eu-west-3.amazonaws.com/threshold/PUB-p3/PublicKey"
-key_endpoint="/Users/luismontero/Documents/work/zama/kms-core/blockchain/simulator/aws/threshold/PUB-p1/PublicKey"
+s3_endpoint="/Users/luismontero/Documents/work/zama/kms-core/blockchain/simulator/aws/threshold/"
 key_id = "d4d17a412a6533599b010c8ffc3d6ebdc6b1cfad"
-key_folder = ""
+key_folder = "PUB-p1"
 validator_addresses = ["http://localhost:9090"]
 http_validator_endpoints = ["http://localhost:36657"]
 kv_store_address = "http://localhost:8088"
@@ -13,5 +12,4 @@ contract = "wasm1jndytr2cgecdhqtxtlyfmmyf8dd5tuzdt8rvzkmfaysev7wafpkqwxy9ev"
 
 mnemonic = "whisper stereo great helmet during hollow nominee skate frown daughter donor pool ozone few find risk cigar practice essay sketch rhythm novel dumb host"
 faucet_address = "http://localhost:8000"
-
 

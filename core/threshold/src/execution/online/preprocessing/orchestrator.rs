@@ -50,9 +50,9 @@ pub struct PreprocessingOrchestrator<Z> {
 }
 
 #[derive(Debug)]
-struct TUniformProduction {
-    bound: NoiseBounds,
-    amount: usize,
+pub struct TUniformProduction {
+    pub bound: NoiseBounds,
+    pub amount: usize,
 }
 
 impl PreprocessingOrchestrator<ResiduePoly64> {
@@ -237,8 +237,15 @@ where
 
         //Join on the triple producers as they finish before bit producers
         let mut res_sessions = Vec::new();
-        while let Some(Ok(Ok(session))) = triple_producer_handles.join_next().await {
-            res_sessions.push(session);
+        while let Some(session) = triple_producer_handles.join_next().await {
+            match session {
+                Ok(Ok(session)) => {
+                    res_sessions.push(session);
+                }
+                other => {
+                    let _ = other.unwrap();
+                }
+            }
         }
 
         res_sessions.sort_by_key(|session| session.session_id());
@@ -851,14 +858,16 @@ where
         let mut tuniform_productions = Vec::new();
         let params_basics_handle = self.params.get_params_basics_handle();
 
-        //Depending on encryption type, pksk requires either LweNoise noise or GlweNoise
-        let (amount_pksk_lwe_noise, amount_pksk_glwe_noise) =
-            match params_basics_handle.encryption_key_choice() {
-                //type = LWE case
-                EncryptionKeyChoice::Small => (params_basics_handle.num_needed_noise_pksk(), 0),
-                //type = F-GLWE case
-                EncryptionKeyChoice::Big => (0, params_basics_handle.num_needed_noise_pksk()),
-            };
+        //Depending on encryption type of destination, pksk requires either LweNoise noise or GlweNoise
+        let (amount_pksk_lwe_noise, amount_pksk_glwe_noise) = match params_basics_handle
+            .get_pksk_destination()
+        {
+            //type = LWE case
+            Some(EncryptionKeyChoice::Small) => (params_basics_handle.num_needed_noise_pksk(), 0),
+            //type = F-GLWE case
+            Some(EncryptionKeyChoice::Big) => (0, params_basics_handle.num_needed_noise_pksk()),
+            _ => (0, 0),
+        };
 
         tuniform_productions.push(TUniformProduction {
             bound: NoiseBounds::LweNoise(params_basics_handle.lwe_tuniform_bound()),
@@ -866,8 +875,17 @@ where
         });
         tuniform_productions.push(TUniformProduction {
             bound: NoiseBounds::GlweNoise(params_basics_handle.glwe_tuniform_bound()),
-            amount: params_basics_handle.num_needed_noise_bk() + amount_pksk_glwe_noise,
+            amount: params_basics_handle.num_needed_noise_bk()
+                + amount_pksk_glwe_noise
+                + params_basics_handle.num_needed_noise_decompression_key(),
         });
+
+        if let Some(bound) = params_basics_handle.compression_key_tuniform_bound() {
+            tuniform_productions.push(TUniformProduction {
+                bound: NoiseBounds::CompressionKSKNoise(bound),
+                amount: params_basics_handle.num_needed_noise_compression_key(),
+            });
+        }
 
         match self.params {
             DKGParams::WithSnS(sns_params) => tuniform_productions.push(TUniformProduction {
@@ -887,6 +905,7 @@ where
         let num_bits_required = params_basics_handle.lwe_dimension().0
             + params_basics_handle.lwe_hat_dimension().0
             + params_basics_handle.glwe_sk_num_bits()
+            + params_basics_handle.compression_sk_num_bits()
             + match self.params {
                 DKGParams::WithSnS(sns_params) => sns_params.glwe_sk_num_bits_sns(),
                 DKGParams::WithoutSnS(_) => 0,

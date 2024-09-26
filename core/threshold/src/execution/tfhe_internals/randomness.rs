@@ -14,6 +14,8 @@ use tfhe::{
     shortint::parameters::{DecompositionLevelCount, GlweDimension, LweDimension, PolynomialSize},
     Seed,
 };
+
+use super::parameters::EncryptionType;
 //Question:
 //For now there's a single noise vector which should be filled with the values we want
 //however different parts of the protocol require different noise distribution
@@ -37,12 +39,6 @@ pub struct MPCNoiseRandomGenerator<Z: BaseRing> {
 
 pub struct MPCMaskRandomGenerator<Gen: ByteRandomGenerator> {
     pub gen: RandomGenerator<Gen>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EncryptionType {
-    Bits64,
-    Bits128,
 }
 
 impl<Z: BaseRing> MPCNoiseRandomGenerator<Z> {

@@ -8,9 +8,8 @@ use crate::algebra::{
 };
 
 use super::{
-    glwe_key::GlweSecretKeyShare,
-    randomness::{EncryptionType, MPCEncryptionRandomGenerator},
-    utils::polynomial_wrapping_add_multisum_assign,
+    glwe_key::GlweSecretKeyShare, parameters::EncryptionType,
+    randomness::MPCEncryptionRandomGenerator, utils::polynomial_wrapping_add_multisum_assign,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -93,6 +92,57 @@ where
     )
 }
 
+pub fn encrypt_glwe_ciphertext<Gen, Z>(
+    glwe_secret_key_share: &GlweSecretKeyShare<Z>,
+    output: &mut GlweCiphertextShare<Z>,
+    input_plaintext_list: &[ResiduePoly<Z>],
+    generator: &mut MPCEncryptionRandomGenerator<Z, Gen>,
+    encryption_type: EncryptionType,
+) -> anyhow::Result<()>
+where
+    Gen: ByteRandomGenerator,
+    Z: BaseRing,
+{
+    let (mask, body) = output.get_mut_mask_and_body();
+    *body = input_plaintext_list.to_vec();
+
+    fill_glwe_mask_and_body_for_encryption_assign(
+        glwe_secret_key_share,
+        mask,
+        body,
+        generator,
+        encryption_type,
+    )?;
+    Ok(())
+}
+
+pub fn encrypt_glwe_ciphertext_list<Gen, Z>(
+    glwe_secret_key: &GlweSecretKeyShare<Z>,
+    output_glwe_ciphertext_list: &mut [GlweCiphertextShare<Z>],
+    input_plaintext_list: &[ResiduePoly<Z>],
+    generator: &mut MPCEncryptionRandomGenerator<Z, Gen>,
+    encryption_type: EncryptionType,
+) -> anyhow::Result<()>
+where
+    Gen: ByteRandomGenerator,
+    Z: BaseRing,
+{
+    let polynomial_size = glwe_secret_key.polynomial_size();
+    for (ciphertext, encoded) in output_glwe_ciphertext_list
+        .iter_mut()
+        .zip(input_plaintext_list.chunks_exact(polynomial_size.0))
+    {
+        encrypt_glwe_ciphertext(
+            glwe_secret_key,
+            ciphertext,
+            encoded,
+            generator,
+            encryption_type,
+        )?;
+    }
+    Ok(())
+}
+
 fn fill_glwe_mask_and_body_for_encryption_assign<Z, Gen>(
     glwe_secret_key_share: &GlweSecretKeyShare<Z>,
     output_mask: &mut [Z],
@@ -165,8 +215,8 @@ mod tests {
             },
             sharing::{shamir::ShamirSharings, share::Share},
             tfhe_internals::{
-                parameters::TUniformBound,
-                randomness::{EncryptionType, MPCMaskRandomGenerator, MPCNoiseRandomGenerator},
+                parameters::{EncryptionType, TUniformBound},
+                randomness::{MPCMaskRandomGenerator, MPCNoiseRandomGenerator},
                 utils::tests::{reconstruct_bit_vec, reconstruct_glwe_body_vec},
             },
         },

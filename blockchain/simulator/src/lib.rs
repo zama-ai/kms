@@ -41,7 +41,7 @@ use typed_builder::TypedBuilder;
 
 #[derive(Deserialize, Serialize, Clone, Default, Debug)]
 pub struct SimConfig {
-    pub key_endpoint: String,
+    pub s3_endpoint: String,
     pub key_id: String,
     pub key_folder: String,
     pub validator_addresses: Vec<String>,
@@ -561,7 +561,7 @@ fn join_vars(args: &[&str]) -> String {
 
 // TODO: handle auth
 // TODO: add option to either use local  key or remote key
-pub async fn fetch_public_key(
+pub async fn fetch_key(
     endpoint: &str,
     folder: &str,
     key_id: &str,
@@ -732,15 +732,31 @@ pub async fn main_from_config(
 
     // Fetch pub-key from storage and dump it for later use
     // TODO: handle local file
-    let key_content = fetch_public_key(
-        &sim_conf.key_endpoint,
-        &sim_conf.key_folder,
+    let public_key_folder = keys_folder.join("PUB/PublicKey/");
+    let public_key_content = fetch_key(
+        &sim_conf.s3_endpoint,
+        &format!("{}/{}", sim_conf.key_folder, "PublicKey"),
         &sim_conf.key_id,
     )
     .await?;
+    let _ = write_bytes_to_file(
+        &public_key_folder,
+        &sim_conf.key_id,
+        public_key_content.as_ref(),
+    );
 
-    let pub_key_folder = keys_folder.join("PUB/PublicKey/");
-    let _ = write_bytes_to_file(&pub_key_folder, &sim_conf.key_id, key_content.as_ref());
+    let server_key_folder = keys_folder.join("PUB/ServerKey/");
+    let server_key_content = fetch_key(
+        &sim_conf.s3_endpoint,
+        &format!("{}/{}", sim_conf.key_folder, "ServerKey"),
+        &sim_conf.key_id,
+    )
+    .await?;
+    let _ = write_bytes_to_file(
+        &server_key_folder,
+        &sim_conf.key_id,
+        server_key_content.as_ref(),
+    );
 
     // Build KMS Client
     let validator_addresses = sim_conf

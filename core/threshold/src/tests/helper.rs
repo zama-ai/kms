@@ -254,7 +254,7 @@ pub mod tests {
                 test_runtime::{generate_fixed_identities, DistributedTestRuntime},
             },
             tfhe_internals::{
-                parameters::{Ciphertext64, NoiseFloodParameters},
+                parameters::{Ciphertext64, DKGParams},
                 test_feature::{gen_key_set, KeySet},
             },
         },
@@ -264,10 +264,7 @@ pub mod tests {
         tests::test_data_setup::tests::DEFAULT_SEED,
     };
     use crate::{
-        execution::constants::{
-            PARAMS_DIR, REAL_KEY_PATH, REAL_PARAM_PATH, SMALL_TEST_PARAM_PATH, TEMP_DKG_DIR,
-        },
-        file_handling::write_as_json,
+        execution::constants::{PARAMS_DIR, REAL_KEY_PATH, TEMP_DKG_DIR},
         tests::test_data_setup::tests::{ensure_keys_exist, REAL_PARAMETERS, TEST_PARAMETERS},
     };
     use aes_prng::AesRng;
@@ -406,7 +403,7 @@ pub mod tests {
     }
 
     /// Deterministic key generation
-    pub fn generate_keys(params: NoiseFloodParameters) -> KeySet {
+    pub fn generate_keys(params: DKGParams) -> KeySet {
         let mut seeded_rng = AesRng::seed_from_u64(DEFAULT_SEED);
         gen_key_set(params, &mut seeded_rng)
     }
@@ -569,10 +566,6 @@ pub mod tests {
         if let Err(e) = fs::create_dir_all(PARAMS_DIR) {
             println!("Error creating parameters directory {PARAMS_DIR}: {e:?}");
         }
-
-        // write parameter JSON files
-        write_as_json(SMALL_TEST_PARAM_PATH.to_string(), &TEST_PARAMETERS).unwrap();
-        write_as_json(REAL_PARAM_PATH.to_string(), &REAL_PARAMETERS).unwrap();
 
         // make sure keys exist (generate them if they do not)
         ensure_keys_exist(SMALL_TEST_KEY_PATH, TEST_PARAMETERS);

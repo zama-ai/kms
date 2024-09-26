@@ -217,16 +217,22 @@ where
         const BIT_FLAG: u64 = 0xB542074E84A9D88E;
         let mut rng = AesRng::seed_from_u64(BIT_FLAG ^ self.seed);
         let mut res = Vec::with_capacity(amount);
-        for _ in 0..amount {
-            let bit = rng.gen_bool(1.0 / 2.0);
-            let secret = if bit { Z::ONE } else { Z::ZERO };
-            let shared_secret = DummyPreprocessing::<Z, Rnd, Ses>::share(
-                self.session.num_parties(),
-                self.session.threshold(),
-                secret,
-                &mut rng,
-            )?[self.session.my_role()?.zero_based()];
-            res.push(shared_secret);
+        let my_share_zero = DummyPreprocessing::<Z, Rnd, Ses>::share(
+            self.session.num_parties(),
+            self.session.threshold(),
+            Z::ZERO,
+            &mut rng,
+        )?[self.session.my_role()?.zero_based()];
+        let my_share_one = DummyPreprocessing::<Z, Rnd, Ses>::share(
+            self.session.num_parties(),
+            self.session.threshold(),
+            Z::ONE,
+            &mut rng,
+        )?[self.session.my_role()?.zero_based()];
+        for i in 0..amount {
+            let bit = i % 2 == 0;
+            let secret = if bit { my_share_one } else { my_share_zero };
+            res.push(secret);
         }
         Ok(res)
     }

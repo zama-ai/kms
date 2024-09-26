@@ -291,14 +291,14 @@ mod tests {
     use crate::{
         algebra::base_ring::Z128,
         execution::{
-            constants::{SMALL_TEST_KEY_PATH, SMALL_TEST_PARAM_PATH},
+            constants::SMALL_TEST_KEY_PATH,
             tfhe_internals::{
-                parameters::{AugmentedCiphertextParameters, NoiseFloodParameters},
+                parameters::{AugmentedCiphertextParameters, DKGParams, PARAMS_TEST_BK_SNS},
                 switch_and_squash::from_expanded_msg,
                 test_feature::KeySet,
             },
         },
-        file_handling::{read_as_json, read_element},
+        file_handling::read_element,
     };
 
     /// Map a real message, of a few bits, to the encryption domain, by applying the appropriate shift, delta.
@@ -368,35 +368,27 @@ mod tests {
     /// in the encryption ends up being negative
     #[test]
     fn negative_wrapping() {
-        let params: NoiseFloodParameters = read_as_json(SMALL_TEST_PARAM_PATH.to_string()).unwrap();
-        let delta_half = 1
-            << ((u128::BITS as u128 - 1_u128)
-                - params.ciphertext_parameters.total_block_bits() as u128);
-        // Should be rounded to 0, since it is the negative part of the numbers that should round to 0
-        let msg = u128::MAX - delta_half + 1;
-        let res = from_expanded_msg(
-            msg,
-            params.ciphertext_parameters.total_block_bits() as usize,
-        );
-        assert_eq!(0, res.0);
+        if let DKGParams::WithSnS(params) = PARAMS_TEST_BK_SNS {
+            let ciphertext_parameters = params.regular_params.ciphertext_parameters;
+            let delta_half = 1
+                << ((u128::BITS as u128 - 1_u128)
+                    - ciphertext_parameters.total_block_bits() as u128);
+            // Should be rounded to 0, since it is the negative part of the numbers that should round to 0
+            let msg = u128::MAX - delta_half + 1;
+            let res = from_expanded_msg(msg, ciphertext_parameters.total_block_bits() as usize);
+            assert_eq!(0, res.0);
 
-        // Check that this is where the old code failed
-        let res = old_from_expanded_msg(
-            msg,
-            params.ciphertext_parameters.total_block_bits() as usize,
-        );
-        assert_ne!(0, res.0);
+            // Check that this is where the old code failed
+            let res = old_from_expanded_msg(msg, ciphertext_parameters.total_block_bits() as usize);
+            assert_ne!(0, res.0);
 
-        // Should not be 0, but instead the maximal message allowed
-        let msg = u128::MAX - delta_half - 1;
-        let res = from_expanded_msg(
-            msg,
-            params.ciphertext_parameters.total_block_bits() as usize,
-        );
-        assert_eq!(
-            (1 << params.ciphertext_parameters.total_block_bits()) - 1,
-            res.0
-        );
+            // Should not be 0, but instead the maximal message allowed
+            let msg = u128::MAX - delta_half - 1;
+            let res = from_expanded_msg(msg, ciphertext_parameters.total_block_bits() as usize);
+            assert_eq!((1 << ciphertext_parameters.total_block_bits()) - 1, res.0);
+        } else {
+            panic!("Wrong type of parameters, expected one with SnS")
+        }
     }
 
     fn old_from_expanded_msg<Scalar: UnsignedInteger + AsPrimitive<u128>>(

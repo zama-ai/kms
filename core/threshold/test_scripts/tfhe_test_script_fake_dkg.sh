@@ -5,7 +5,7 @@ MOBYGO_EXEC="${ROOT_DIR}/target/debug/mobygo"
 CURR_SID=1
 KEY_PATH="./temp/tfhe-key"
 NUM_CTXTS=10
-PARAMS="nist-params-p32-sns-fglwe"
+PARAMS="bc-params-sam-sns"
 
 exec 2>&1
 set -x
@@ -28,7 +28,7 @@ $MOBYGO_EXEC -c $1 threshold-key-gen-result --sid $CURR_SID --storage-path $KEY_
 CURR_SID=$(( CURR_SID + 1 ))
 
 ###Perform 10 dec of each types
-for DDEC_MODE in prss-decrypt bit-dec-small-decrypt large-decrypt bit-dec-large-decrypt
+for DDEC_MODE in prss-decrypt 
 do
     echo "### STARTING REQUESTS ON DDEC MODE $DDEC_MOD ###"
     ##Bool

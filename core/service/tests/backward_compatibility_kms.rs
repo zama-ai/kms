@@ -198,6 +198,10 @@ fn test_threshold_fhe_keys(
     let new_versionized = ThresholdFheKeys {
         private_keys: private_key_set,
         sns_key,
+        //NOTE: Set decompression_key to None just so that it compiles
+        //this woud need to be changed when releasing 0.9 and actually
+        //running those backward compatibility tests
+        decompression_key: None,
         pk_meta_data: info,
     };
 

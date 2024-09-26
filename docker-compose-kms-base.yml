@@ -89,8 +89,8 @@ services:
       echo $$SECRET_KEY > /minio_secrets/secret_key &&
       cat /minio_secrets/access_key &&
       cat /minio_secrets/secret_key &&
-      mc mb --with-lock --ignore-existing myminio/publickeys &&
-      mc anonymous set public myminio/publickeys
+      mc mb --with-lock --ignore-existing myminio/kms &&
+      mc anonymous set public myminio/kms
       "
     volumes:
       - minio_secrets:/minio_secrets

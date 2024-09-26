@@ -1,5 +1,5 @@
-use crate::kms::{FheType, ParamChoice, RequestId};
-use crate::rpc::central_rpc::{default_param_file_map, retrieve_parameters};
+use crate::kms::{FheType, RequestId};
+use crate::rpc::central_rpc::retrieve_parameters;
 use crate::rpc::rpc_types::PubDataType;
 use crate::rpc::rpc_types::{Plaintext, PublicParameterWithParamID};
 use crate::storage::{FileStorage, StorageReader, StorageType};
@@ -7,21 +7,20 @@ use crate::util::key_setup::FhePublicKey;
 use crate::{consts::AMOUNT_PARTIES, storage::delete_all_at_request_id};
 use distributed_decryption::execution::tfhe_internals::utils::expanded_encrypt;
 use serde::Serialize;
-use std::collections::HashMap;
 use std::path::Path;
 use tfhe::core_crypto::prelude::Numeric;
 use tfhe::integer::ciphertext::{Compactable, Expandable};
 use tfhe::prelude::Tagged;
 use tfhe::{
-    FheBool, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32, FheUint64,
-    FheUint8, ProvenCompactCiphertextList, Unversionize,
+    set_server_key, FheBool, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32,
+    FheUint64, FheUint8, ProvenCompactCiphertextList, ServerKey, Unversionize,
 };
 
 // TODD The code here should be split s.t. that generation code stays in production and everything else goes to the test package
 
 //Treat bool specifically because it doesn't work well with the ciphertext list builder
 //as it is not Numeric
-//TODO(PKSK): If we have an encryption key different from the compute key, then call to expand() requires
+//NOTE: If we have an encryption key different from the compute key, then call to expand() requires
 //that the ServerKey (which contains the PKSK) is set, otherwise the unwrap will panic
 fn serialize_ctxt<M: Compactable + Numeric, T: Expandable + Tagged + Serialize>(
     msg: M,
@@ -248,19 +247,37 @@ pub async fn compute_zkp_from_stored_key(
                 .unwrap(),
         };
     }
-    let param_file_map = HashMap::from_iter(
-        default_param_file_map()
-            .into_iter()
-            .filter_map(|(k, v)| ParamChoice::from_str_name(&k).map(|x| (x, v))),
-    );
-    let (noiseflood_params, _) = retrieve_parameters(crs.param_id, &param_file_map)
-        .await
-        .unwrap();
-    let fhe_params = noiseflood_params.ciphertext_parameters;
-    let pp = crs.pp.try_into_tfhe_zk_pok_pp(&fhe_params).unwrap();
+
+    let (dkg_params, _) = retrieve_parameters(crs.param_id).unwrap();
+    let crs_params = dkg_params
+        .get_params_basics_handle()
+        .get_compact_pk_enc_params();
+    let pp = crs.pp.try_into_tfhe_zk_pok_pp(&crs_params).unwrap();
     compact_list_builder
         .build_with_proof_packed(&pp, &[], tfhe::zk::ZkComputeLoad::Proof)
         .unwrap()
+}
+
+async fn set_server_key_from_storage(pub_path: Option<&Path>, key_id: &str) {
+    let storage = FileStorage::new_centralized(pub_path, StorageType::PUB).unwrap();
+    let url = storage
+        .compute_url(key_id, &PubDataType::ServerKey.to_string())
+        .unwrap();
+    tracing::info!("🚧 Using key: {}", url);
+    let server_key = if storage.data_exists(&url).await.unwrap() {
+        tracing::info!("Trying centralized storage");
+        let content = storage.read_data(&url).await.unwrap();
+        ServerKey::unversionize(content).unwrap()
+    } else {
+        // Try with the threshold storage
+        tracing::info!("Fallback to threshold file storage");
+        let storage = FileStorage::new_threshold(pub_path, StorageType::PUB, 1).unwrap();
+        let url = storage
+            .compute_url(key_id, &PubDataType::ServerKey.to_string())
+            .unwrap();
+        ServerKey::unversionize(storage.read_data(&url).await.unwrap()).unwrap()
+    };
+    set_server_key(server_key)
 }
 
 /// This function should be used for testing only and it can panic.
@@ -270,6 +287,8 @@ pub async fn compute_cipher_from_stored_key(
     key_id: &str,
 ) -> (Vec<u8>, FheType) {
     let pk = load_pk_from_storage(pub_path, key_id).await;
+    //Setting the server key as we may need id to expand the ciphertext during compute_cipher
+    set_server_key_from_storage(pub_path, key_id).await;
     compute_cipher(msg, &pk)
 }
 
@@ -301,8 +320,7 @@ pub(crate) mod setup {
     use crate::{
         consts::{
             AMOUNT_PARTIES, KEY_PATH_PREFIX, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID,
-            TEST_CENTRAL_KEY_ID, TEST_CRS_ID, TEST_PARAM_PATH, TEST_THRESHOLD_KEY_ID,
-            TMP_PATH_PREFIX,
+            TEST_CENTRAL_KEY_ID, TEST_CRS_ID, TEST_PARAM, TEST_THRESHOLD_KEY_ID, TMP_PATH_PREFIX,
         },
         util::key_setup::ensure_central_server_signing_keys_exist,
     };
@@ -348,7 +366,7 @@ pub(crate) mod setup {
         ensure_central_keys_exist(
             &mut central_pub_storage,
             &mut central_priv_storage,
-            TEST_PARAM_PATH,
+            TEST_PARAM,
             &TEST_CENTRAL_KEY_ID,
             &OTHER_CENTRAL_TEST_ID,
             true,
@@ -359,7 +377,7 @@ pub(crate) mod setup {
             &mut central_pub_storage,
             &mut central_priv_storage,
             crate::kms::ParamChoice::Test,
-            TEST_PARAM_PATH,
+            TEST_PARAM,
             &TEST_CRS_ID,
             true,
         )
@@ -375,7 +393,7 @@ pub(crate) mod setup {
         ensure_threshold_keys_exist(
             &mut threshold_pub_storages,
             &mut threshold_priv_storages,
-            TEST_PARAM_PATH,
+            TEST_PARAM,
             &TEST_THRESHOLD_KEY_ID,
             true,
         )
@@ -384,7 +402,7 @@ pub(crate) mod setup {
             &mut threshold_pub_storages,
             &mut threshold_priv_storages,
             ParamChoice::Test,
-            TEST_PARAM_PATH,
+            TEST_PARAM,
             &TEST_CRS_ID,
             true,
         )
@@ -398,7 +416,7 @@ pub(crate) mod setup {
     #[cfg(feature = "slow_tests")]
     async fn default_material() {
         use crate::consts::{
-            DEFAULT_CENTRAL_KEY_ID, DEFAULT_CRS_ID, DEFAULT_PARAM_PATH, DEFAULT_THRESHOLD_KEY_ID,
+            DEFAULT_CENTRAL_KEY_ID, DEFAULT_CRS_ID, DEFAULT_PARAM, DEFAULT_THRESHOLD_KEY_ID,
             OTHER_CENTRAL_DEFAULT_ID,
         };
         ensure_dir_exist().await;
@@ -427,7 +445,7 @@ pub(crate) mod setup {
         ensure_central_keys_exist(
             &mut central_pub_storage,
             &mut central_priv_storage,
-            DEFAULT_PARAM_PATH,
+            DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID,
             &OTHER_CENTRAL_DEFAULT_ID,
             true,
@@ -438,7 +456,7 @@ pub(crate) mod setup {
             &mut central_pub_storage,
             &mut central_priv_storage,
             crate::kms::ParamChoice::Default,
-            DEFAULT_PARAM_PATH,
+            DEFAULT_PARAM,
             &DEFAULT_CRS_ID,
             true,
         )
@@ -454,7 +472,7 @@ pub(crate) mod setup {
         ensure_threshold_keys_exist(
             &mut threshold_pub_storages,
             &mut threshold_priv_storages,
-            DEFAULT_PARAM_PATH,
+            DEFAULT_PARAM,
             &DEFAULT_THRESHOLD_KEY_ID,
             true,
         )
@@ -463,7 +481,7 @@ pub(crate) mod setup {
             &mut threshold_pub_storages,
             &mut threshold_priv_storages,
             crate::kms::ParamChoice::Default,
-            DEFAULT_PARAM_PATH,
+            DEFAULT_PARAM,
             &DEFAULT_CRS_ID,
             true,
         )

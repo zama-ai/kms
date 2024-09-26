@@ -33,7 +33,6 @@ RUN --mount=target=/var/lib/apt/lists,type=cache,sharing=locked \
 RUN mkdir -p -m 0600 /etc/ssl/certs
 RUN mkdir -p -m 0600 /app/parameters
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=builder /usr/src/kms-server/core/service/parameters /app/parameters
 
 COPY --from=builder /usr/local/bin/vsock-proxy /usr/local/bin/vsock-proxy
 COPY --from=builder /usr/src/kms-server/core/service/bin/kms-server /usr/local/bin/kms-server

@@ -54,11 +54,6 @@ mod tests {
         assert_eq!(config.rest.listen_port_core, 50001);
         assert_eq!(config.rest.threshold, 1);
         assert_eq!(config.rest.num_sessions_preproc, Some(2));
-        assert_eq!(config.rest.param_file_map.len(), 2);
-        assert_eq!(
-            config.rest.param_file_map.get("test").unwrap(),
-            "parameters/small_test_params.json"
-        );
 
         assert_eq!(config.rest.peer_confs.len(), 4);
         assert_eq!(config.rest.peer_confs[0].address, "p1");
@@ -74,10 +69,6 @@ mod tests {
         assert_eq!(config.rest.peer_confs[3].port, 50004);
         assert_eq!(config.rest.peer_confs[3].party_id, 4);
 
-        assert_eq!(
-            config.rest.param_file_map.get("default").unwrap(),
-            "parameters/default_params.json"
-        );
         assert!(config.rest.preproc_redis_conf.is_none());
         assert_eq!(config.private_storage_url.unwrap(), "file://./keys");
         assert_eq!(config.public_storage_url.unwrap(), "file://./keys");
@@ -100,15 +91,7 @@ mod tests {
         let config: StorageConfigWith<CentralizedConfig> =
             init_conf("config/default_centralized").unwrap();
         assert_eq!(config.rest.url, "http://0.0.0.0:50051");
-        assert_eq!(config.rest.param_file_map.len(), 2);
-        assert_eq!(
-            config.rest.param_file_map.get("test").unwrap(),
-            "parameters/small_test_params.json"
-        );
-        assert_eq!(
-            config.rest.param_file_map.get("default").unwrap(),
-            "parameters/default_params.json"
-        );
+
         assert_eq!(config.private_storage_url.unwrap(), "file://./keys");
         assert_eq!(config.public_storage_url.unwrap(), "file://./keys");
     }

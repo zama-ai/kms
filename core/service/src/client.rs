@@ -30,7 +30,9 @@ use distributed_decryption::execution::runtime::party::Role;
 use distributed_decryption::execution::sharing::shamir::{
     fill_indexed_shares, reconstruct_w_errors_sync, ShamirSharings,
 };
-use distributed_decryption::execution::tfhe_internals::parameters::AugmentedCiphertextParameters;
+use distributed_decryption::execution::tfhe_internals::parameters::{
+    AugmentedCiphertextParameters, DKGParams,
+};
 use rand::SeedableRng;
 use std::collections::HashSet;
 use tfhe::shortint::ClassicPBSParameters;
@@ -55,9 +57,7 @@ cfg_if::cfg_if! {
         };
         use crate::storage::read_all_data;
         use crate::storage::Storage;
-        use crate::util::file_handling::read_as_json;
         use crate::{storage::StorageReader};
-        use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
         use serde::de::DeserializeOwned;
         use std::collections::HashMap;
         use std::fmt;
@@ -124,7 +124,7 @@ pub struct Client {
     server_identities: ServerIdentities,
     client_address: alloy_primitives::Address,
     client_sk: Option<PrivateSigKey>,
-    params: ClassicPBSParameters,
+    params: DKGParams,
 }
 
 // This testing struct needs to be outside of js_api module
@@ -138,7 +138,7 @@ pub struct TestingReencryptionTranscript {
     client_address: alloy_primitives::Address,
     client_sk: Option<PrivateSigKey>,
     degree: u32,
-    params: ClassicPBSParameters,
+    params: DKGParams,
     // example pt and ct
     fhe_type: FheType,
     pt: Vec<u8>,
@@ -230,7 +230,7 @@ pub mod js_api {
     use crate::rpc::rpc_types::protobuf_to_alloy_domain;
     use crypto_box::aead::{Aead, AeadCore};
     use crypto_box::{Nonce, SalsaBox};
-    use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
+    use distributed_decryption::execution::tfhe_internals::parameters::BC_PARAMS_SAM_SNS;
 
     use super::*;
 
@@ -275,21 +275,10 @@ pub mod js_api {
     ) -> Result<Client, JsError> {
         console_error_panic_hook::set_once();
 
-        // NOTE: we cannot use the consts like TEST_PARAM_PATH
-        // here because include_str! only accepts literals.
-        let default_params = include_str!("../parameters/default_params.json");
-        let test_params = include_str!("../parameters/small_test_params.json");
-
-        let params_json = match ParamChoice::from_str_name(param_choice) {
-            Some(choice) => match choice {
-                ParamChoice::Default => default_params,
-                ParamChoice::Test => test_params,
-            },
-            None => default_params,
+        let params = match ParamChoice::from_str_name(param_choice) {
+            Some(choice) => choice.into(),
+            None => BC_PARAMS_SAM_SNS,
         };
-        let params: NoiseFloodParameters =
-            serde_json::from_str::<NoiseFloodParameters>(params_json)
-                .map_err(|e| JsError::new(&e.to_string()))?;
 
         let client_address = alloy_primitives::Address::parse_checksummed(client_address_hex, None)
             .map_err(|e| JsError::new(&e.to_string()))?;
@@ -309,7 +298,7 @@ pub mod js_api {
             server_identities,
             client_address,
             client_sk: None,
-            params: params.ciphertext_parameters,
+            params: params,
         })
     }
 
@@ -844,7 +833,7 @@ impl Client {
         server_pks: Vec<PublicSigKey>,
         client_address: alloy_primitives::Address,
         client_sk: Option<PrivateSigKey>,
-        params: ClassicPBSParameters,
+        params: DKGParams,
     ) -> Self {
         Client {
             rng: Box::new(AesRng::from_entropy()), // todo should be argument
@@ -862,7 +851,7 @@ impl Client {
     pub async fn new_client<ClientS: Storage, PubS: StorageReader>(
         client_storage: ClientS,
         pub_storages: Vec<PubS>,
-        param_path: &str,
+        params: &DKGParams,
     ) -> anyhow::Result<Client> {
         let mut pks: Vec<PublicSigKey> = Vec::new();
         for cur_storage in pub_storages {
@@ -893,20 +882,14 @@ impl Client {
             PrivateSigKey::unversionize(get_exactly_one(client_sk_map).inspect_err(|e| {
                 tracing::error!("client sk hashmap is not exactly 1: {}", e);
             })?)?;
-        let params: NoiseFloodParameters = read_as_json(param_path).await?;
 
-        Ok(Client::new(
-            pks,
-            client_address,
-            Some(client_sk),
-            params.ciphertext_parameters,
-        ))
+        Ok(Client::new(pks, client_address, Some(client_sk), *params))
     }
 
     /// This is used for tests to convert public keys into addresses
     /// because when processing reencryption response, only addresses are allowed.
-    #[cfg(test)]
-    fn convert_to_addresses(&mut self) {
+    #[cfg(any(test, feature = "testing"))]
+    pub fn convert_to_addresses(&mut self) {
         let pks = self.get_server_pks().unwrap();
         let addrs = pks
             .iter()
@@ -1444,7 +1427,12 @@ impl Client {
         let url = storage.compute_url(&crs_id.to_string(), &PubDataType::CRS.to_string())?;
         let crs_versioned = storage.read_data(&url).await?;
         let crs = PublicParameterWithParamID::unversionize(crs_versioned)?;
-        let pp = crs.pp.try_into_tfhe_zk_pok_pp(&self.params)?;
+        let pp = crs.pp.try_into_tfhe_zk_pok_pp(
+            &self
+                .params
+                .get_params_basics_handle()
+                .get_compact_pk_enc_params(),
+        )?;
         Ok((crs, pp))
     }
 
@@ -1922,8 +1910,13 @@ impl Client {
                 return Err(anyhow_error_and_log("Could not reconstruct all blocks"));
             }
         }
-        let recon_blocks = reconstruct_message(Some(decrypted_blocks), &self.params)?;
-        decrypted_blocks_to_plaintext(&self.params, fhe_type, recon_blocks)
+        let pbs_params = self
+            .params
+            .get_params_basics_handle()
+            .to_classic_pbs_parameters();
+
+        let recon_blocks = reconstruct_message(Some(decrypted_blocks), &pbs_params)?;
+        decrypted_blocks_to_plaintext(&pbs_params, fhe_type, recon_blocks)
     }
 
     /// Decrypt the reencryption response from the threshold KMS.
@@ -1979,10 +1972,14 @@ impl Client {
                 return Err(anyhow_error_and_log("Could not reconstruct all blocks"));
             }
         }
-        let recon_blocks = reconstruct_message(Some(decrypted_blocks), &self.params)?;
+        let pbs_params = self
+            .params
+            .get_params_basics_handle()
+            .to_classic_pbs_parameters();
+        let recon_blocks = reconstruct_message(Some(decrypted_blocks), &pbs_params)?;
 
         //Deduce fhe_type from recon_blocks and message_modulus
-        let bits_in_block = self.params.message_modulus_log() as usize;
+        let bits_in_block = pbs_params.message_modulus_log() as usize;
         let num_blocks = recon_blocks.len();
 
         let total_num_bits = bits_in_block * num_blocks;
@@ -2011,7 +2008,7 @@ impl Client {
             panic!("Unexpected type: total_num_bits {total_num_bits}")
         };
 
-        decrypted_blocks_to_plaintext(&self.params, fhe_type, recon_blocks)
+        decrypted_blocks_to_plaintext(&pbs_params, fhe_type, recon_blocks)
     }
 
     /// Decrypts the reencryption responses and decodes the responses onto the Shamir shares
@@ -2022,7 +2019,13 @@ impl Client {
         fhe_type: FheType,
         client_keys: &SigncryptionPair,
     ) -> anyhow::Result<Vec<ShamirSharings<ResiduePoly<Z128>>>> {
-        let num_blocks = num_blocks(fhe_type, &self.params);
+        let num_blocks = num_blocks(
+            fhe_type,
+            &self
+                .params
+                .get_params_basics_handle()
+                .to_classic_pbs_parameters(),
+        );
         let mut sharings = Vec::new();
         for _i in 0..num_blocks {
             sharings.push(ShamirSharings::new());
@@ -2071,7 +2074,6 @@ impl Client {
         Ok(sharings)
     }
 
-    #[cfg(feature = "non-wasm")]
     pub fn get_server_pks(&self) -> anyhow::Result<&Vec<PublicSigKey>> {
         match &self.server_identities {
             ServerIdentities::Pks(vec) => Ok(vec),
@@ -2352,10 +2354,11 @@ pub mod test_tools {
     use crate::conf::threshold::{PeerConf, ThresholdConfig};
     use crate::consts::{BASE_PORT, DEC_CAPACITY, DEFAULT_PROT, DEFAULT_URL, MIN_DEC_CACHE};
     use crate::kms::core_service_endpoint_client::CoreServiceEndpointClient;
-    use crate::rpc::central_rpc::{default_param_file_map, server_handle};
+    use crate::rpc::central_rpc::server_handle;
     use crate::storage::{FileStorage, RamStorage, Storage, StorageType, StorageVersion};
     use crate::threshold::threshold_kms::{threshold_server_init, threshold_server_start};
     use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
+    use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
     use itertools::Itertools;
     use std::str::FromStr;
     use tokio::task::JoinHandle;
@@ -2392,7 +2395,7 @@ pub mod test_tools {
         tracing::info!("Spawning servers...");
         let amount = priv_storage.len();
         let timeout_secs = 60u64;
-        let grpc_max_message_size = 10 * 1024 * 1024; // 10 MiB
+        let grpc_max_message_size = 2 * 10 * 1024 * 1024; // 20 MiB
         for i in 1..=amount {
             let cur_pub_storage = pub_storage[i - 1].to_owned();
             let cur_priv_storage = priv_storage[i - 1].to_owned();
@@ -2415,7 +2418,6 @@ pub mod test_tools {
                     tls_key_path: None,
                     peer_confs: peer_configs,
                     core_to_core_net_conf: None,
-                    param_file_map: default_param_file_map(),
                 };
                 // TODO pass in cert_paths for testing TLS
                 let server = threshold_server_init(
@@ -2536,8 +2538,7 @@ pub mod test_tools {
             let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", BASE_PORT + 1);
             let config = CentralizedConfig {
                 url,
-                param_file_map: default_param_file_map(),
-                grpc_max_message_size: 10 * 1024 * 1024, // 10 MiB to allow for 2048 bit encryptions
+                grpc_max_message_size: 2 * 10 * 1024 * 1024, // 20 MiB to allow for 2048 bit encryptions
             };
             let _ = server_handle(config, pub_storage, priv_storage).await;
         });
@@ -2569,7 +2570,7 @@ pub mod test_tools {
     /// an internal client (for constructing requests and validating responses).
     pub async fn centralized_handles(
         storage_version: StorageVersion,
-        param_path: &str,
+        param: &DKGParams,
     ) -> (JoinHandle<()>, CoreServiceEndpointClient<Channel>, Client) {
         let (kms_server, kms_client) = match storage_version {
             StorageVersion::Dev => {
@@ -2586,7 +2587,7 @@ pub mod test_tools {
         // TODO why are these FileStorage and not depend on the StorageVersion?
         let pub_storage = vec![FileStorage::new_centralized(None, StorageType::PUB).unwrap()];
         let client_storage = FileStorage::new_centralized(None, StorageType::CLIENT).unwrap();
-        let internal_client = Client::new_client(client_storage, pub_storage, param_path)
+        let internal_client = Client::new_client(client_storage, pub_storage, param)
             .await
             .unwrap();
         (kms_server, kms_client, internal_client)
@@ -2601,8 +2602,10 @@ pub(crate) mod tests {
     use crate::client::{ParsedReencryptionRequest, ServerIdentities};
     #[cfg(feature = "wasm_tests")]
     use crate::consts::TEST_CENTRAL_KEY_ID;
+    use crate::consts::TEST_PARAM;
+    use crate::consts::TEST_THRESHOLD_KEY_ID;
     #[cfg(feature = "slow_tests")]
-    use crate::consts::{DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM_PATH, DEFAULT_THRESHOLD_KEY_ID};
+    use crate::consts::{DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_KEY_ID};
     #[cfg(feature = "slow_tests")]
     use crate::cryptography::central_kms::tests::get_default_keys;
     use crate::cryptography::central_kms::{compute_handle, gen_sig_keys, BaseKmsStruct};
@@ -2612,7 +2615,6 @@ pub(crate) mod tests {
     #[cfg(feature = "slow_tests")]
     use crate::kms::CrsGenResult;
     use crate::kms::{FheType, ParamChoice, TypedCiphertext};
-    use crate::rpc::central_rpc::default_param_file_map;
     use crate::rpc::rpc_types::RequestIdGetter;
     use crate::rpc::rpc_types::{
         protobuf_to_alloy_domain, BaseKms, PubDataType, PublicParameterWithParamID,
@@ -2629,16 +2631,17 @@ pub(crate) mod tests {
         client::num_blocks,
         kms::{Empty, RequestId},
     };
-    use crate::{consts::TEST_THRESHOLD_KEY_ID, util::file_handling::read_as_json};
     use crate::{
-        consts::{AMOUNT_PARTIES, TEST_PARAM_PATH, THRESHOLD},
+        consts::{AMOUNT_PARTIES, THRESHOLD},
         kms::ReencryptionResponse,
     };
     use alloy_primitives::Bytes;
     use alloy_signer::Signer;
     use alloy_signer_local::PrivateKeySigner;
     use alloy_sol_types::SolStruct;
-    use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
+    use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
+    #[cfg(feature = "wasm_tests")]
+    use distributed_decryption::execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
     use distributed_decryption::execution::zk::constants::ZK_DEFAULT_MAX_NUM_CLEARTEXT;
     use rand::SeedableRng;
     use serial_test::serial;
@@ -2666,7 +2669,7 @@ pub(crate) mod tests {
     /// responses).
     async fn threshold_handles(
         storage_version: StorageVersion,
-        param_path: &str,
+        params: DKGParams,
     ) -> (
         HashMap<u32, JoinHandle<()>>,
         HashMap<u32, CoreServiceEndpointClient<Channel>>,
@@ -2699,7 +2702,7 @@ pub(crate) mod tests {
             pub_storage.push(FileStorage::new_threshold(None, StorageType::PUB, i).unwrap());
         }
         let client_storage = FileStorage::new_centralized(None, StorageType::CLIENT).unwrap();
-        let internal_client = Client::new_client(client_storage, pub_storage, param_path)
+        let internal_client = Client::new_client(client_storage, pub_storage, &params)
             .await
             .unwrap();
         (kms_servers, kms_clients, internal_client)
@@ -2743,26 +2746,28 @@ pub(crate) mod tests {
         let request_id = RequestId::derive("test_key_gen_centralized").unwrap();
         // Delete potentially old data
         purge(None, None, &request_id.to_string()).await;
-        key_gen_centralized(TEST_PARAM_PATH, &request_id, Some(ParamChoice::Test)).await;
+        key_gen_centralized(TEST_PARAM, &request_id, Some(ParamChoice::Test)).await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn default_key_gen_centralized() {
+        use crate::consts::DEFAULT_PARAM;
+
         let request_id = RequestId::derive("default_key_gen_centralized").unwrap();
         // Delete potentially old data
         purge(None, None, &request_id.to_string()).await;
-        key_gen_centralized(DEFAULT_PARAM_PATH, &request_id, Some(ParamChoice::Default)).await;
+        key_gen_centralized(DEFAULT_PARAM, &request_id, Some(ParamChoice::Default)).await;
     }
 
     async fn key_gen_centralized(
-        param_path: &str,
+        dkg_params: DKGParams,
         request_id: &RequestId,
         params: Option<ParamChoice>,
     ) {
         let (kms_server, mut kms_client, internal_client) =
-            super::test_tools::centralized_handles(StorageVersion::Dev, param_path).await;
+            super::test_tools::centralized_handles(StorageVersion::Dev, &dkg_params).await;
 
         let gen_req = internal_client
             .key_gen_request(request_id, None, params)
@@ -2806,17 +2811,17 @@ pub(crate) mod tests {
         let crs_req_id = RequestId::derive("test_crs_gen_manual").unwrap();
         // Delete potentially old data
         purge(None, None, &crs_req_id.to_string()).await;
-        crs_gen_centralized_manual(TEST_PARAM_PATH, &crs_req_id, Some(ParamChoice::Test)).await;
+        crs_gen_centralized_manual(&TEST_PARAM, &crs_req_id, Some(ParamChoice::Test)).await;
     }
 
     /// test centralized crs generation and do all the reading, processing and verification manually
     async fn crs_gen_centralized_manual(
-        param_path: &str,
+        dkg_params: &DKGParams,
         request_id: &RequestId,
         params: Option<ParamChoice>,
     ) {
         let (kms_server, mut kms_client, internal_client) =
-            super::test_tools::centralized_handles(StorageVersion::Dev, param_path).await;
+            super::test_tools::centralized_handles(StorageVersion::Dev, dkg_params).await;
 
         let max_num_bits = if params.unwrap() == ParamChoice::Test {
             Some(1)
@@ -2893,7 +2898,12 @@ pub(crate) mod tests {
         let crs_req_id = RequestId::derive("default_crs_gen_centralized").unwrap();
         // Delete potentially old data
         purge(None, None, &crs_req_id.to_string()).await;
-        crs_gen_centralized(DEFAULT_PARAM_PATH, &crs_req_id, Some(ParamChoice::Default)).await;
+        crs_gen_centralized(
+            &crate::consts::DEFAULT_PARAM,
+            &crs_req_id,
+            Some(ParamChoice::Default),
+        )
+        .await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
@@ -2902,17 +2912,17 @@ pub(crate) mod tests {
         let crs_req_id = RequestId::derive("test_crs_gen_centralized").unwrap();
         // Delete potentially old data
         purge(None, None, &crs_req_id.to_string()).await;
-        crs_gen_centralized(TEST_PARAM_PATH, &crs_req_id, Some(ParamChoice::Test)).await;
+        crs_gen_centralized(&TEST_PARAM, &crs_req_id, Some(ParamChoice::Test)).await;
     }
 
     /// test centralized crs generation via client interface
     async fn crs_gen_centralized(
-        param_path: &str,
+        dkg_params: &DKGParams,
         crs_req_id: &RequestId,
         params: Option<ParamChoice>,
     ) {
         let (kms_server, mut kms_client, internal_client) =
-            super::test_tools::centralized_handles(StorageVersion::Dev, param_path).await;
+            super::test_tools::centralized_handles(StorageVersion::Dev, dkg_params).await;
 
         let max_num_bits = if params.unwrap() == ParamChoice::Test {
             Some(1)
@@ -2963,7 +2973,7 @@ pub(crate) mod tests {
     async fn default_zk_verify_centralized() {
         let zkp_req_id = RequestId::derive("default_zk_verify_centralized").unwrap();
         zk_verify_centralized(
-            DEFAULT_PARAM_PATH,
+            &crate::consts::DEFAULT_PARAM,
             &zkp_req_id,
             &crate::consts::DEFAULT_CRS_ID,
             &DEFAULT_CENTRAL_KEY_ID.to_string(),
@@ -2976,7 +2986,7 @@ pub(crate) mod tests {
     async fn test_zk_verify_centralized() {
         let zkp_req_id = RequestId::derive("test_zk_verify_centralized").unwrap();
         zk_verify_centralized(
-            TEST_PARAM_PATH,
+            &TEST_PARAM,
             &zkp_req_id,
             &crate::consts::TEST_CRS_ID,
             &crate::consts::TEST_CENTRAL_KEY_ID.to_string(),
@@ -2986,14 +2996,14 @@ pub(crate) mod tests {
 
     /// test centralized ZK probing via client interface
     async fn zk_verify_centralized(
-        param_path: &str,
+        dkg_params: &DKGParams,
         zkp_req_id: &RequestId,
         crs_req_id: &RequestId,
         key_handle: &str,
     ) {
         let message = 32;
         let (kms_server, mut kms_client, internal_client) =
-            super::test_tools::centralized_handles(StorageVersion::Dev, param_path).await;
+            super::test_tools::centralized_handles(StorageVersion::Dev, dkg_params).await;
 
         // next use the verify endpoint to check the proof
         // for this we need to read the key
@@ -3051,23 +3061,52 @@ pub(crate) mod tests {
     }
 
     async fn verify_pp(crs: Option<PublicParameterWithParamID>) -> CompactPkePublicParams {
-        let param_file_map = HashMap::from_iter(
-            default_param_file_map()
-                .into_iter()
-                .filter_map(|(k, v)| ParamChoice::from_str_name(&k).map(|x| (x, v))),
-        );
         let unwrapped_crs = crs.unwrap();
-        let (noiseflood_params, _) =
-            crate::rpc::central_rpc::retrieve_parameters(unwrapped_crs.param_id, &param_file_map)
-                .await
-                .unwrap();
-        let fhe_params = noiseflood_params.ciphertext_parameters;
+        let (dkg_params, _) =
+            crate::rpc::central_rpc::retrieve_parameters(unwrapped_crs.param_id).unwrap();
+        let dkg_params_handle = dkg_params.get_params_basics_handle();
+
+        let crs_params = dkg_params_handle.get_compact_pk_enc_params();
+
         let pp = unwrapped_crs
             .pp
-            .try_into_tfhe_zk_pok_pp(&fhe_params)
+            .try_into_tfhe_zk_pok_pp(&crs_params)
             .unwrap();
-        let cks = tfhe::shortint::ClientKey::new(fhe_params);
-        let pk = tfhe::shortint::CompactPublicKey::new(&cks);
+
+        let cks = tfhe::integer::ClientKey::new(dkg_params_handle.to_classic_pbs_parameters());
+        let sks = tfhe::integer::ServerKey::new_radix_server_key(&cks);
+
+        // If there is indeed a dedicated compact pk, we need to generate the corresponding
+        // keys to expand when encrypting later on
+        let (pk, casting_key) = if dkg_params_handle.has_dedicated_compact_pk_params() {
+            // Generate the secret key PKE encrypts to
+            let compact_private_key = tfhe::integer::public_key::CompactPrivateKey::new(
+                dkg_params_handle.get_compact_pk_enc_params(),
+            );
+            // Generate the corresponding public key
+            let pk = tfhe::integer::public_key::CompactPublicKey::new(&compact_private_key);
+
+            //Finally, generate the KSK
+            let casting_key = {
+                let (_, ks_params) = dkg_params_handle.get_dedicated_pk_params().unwrap();
+
+                Some(
+                    tfhe::integer::key_switching_key::KeySwitchingKey::new(
+                        (&compact_private_key, None),
+                        (&cks, &sks),
+                        ks_params,
+                    )
+                    .into_raw_parts(),
+                )
+            };
+            (pk, casting_key)
+        } else {
+            let cks = cks.clone().into_raw_parts();
+            let pk = tfhe::shortint::CompactPublicKey::new(&cks);
+            let pk = tfhe::integer::CompactPublicKey::from_raw_parts(pk);
+
+            (pk, None)
+        };
 
         let max_msg_len = if unwrapped_crs.param_id == ParamChoice::Test as i32 {
             1
@@ -3075,9 +3114,10 @@ pub(crate) mod tests {
             ZK_DEFAULT_MAX_NUM_CLEARTEXT
         };
         let msgs = (0..max_msg_len)
-            .map(|i| (i % fhe_params.message_modulus.0) as u64)
+            .map(|i| (i % dkg_params_handle.get_message_modulus().0) as u64)
             .collect::<Vec<_>>();
 
+        let pk = pk.into_raw_parts();
         let proven_ct = pk
             .encrypt_and_prove_slice(
                 &msgs,
@@ -3089,9 +3129,19 @@ pub(crate) mod tests {
             .unwrap();
         assert!(proven_ct.verify(&pp, &pk, &[]).is_valid());
 
-        let expanded = proven_ct
-            .verify_and_expand(&pp, &pk, &[], CompactCiphertextListCastingMode::NoCasting)
-            .unwrap();
+        let expanded = {
+            if let Some(casting_key) = casting_key {
+                let casting =
+                    CompactCiphertextListCastingMode::CastIfNecessary(casting_key.as_view());
+                proven_ct.verify_and_expand(&pp, &pk, &[], casting).unwrap()
+            } else {
+                let casting = CompactCiphertextListCastingMode::NoCasting;
+
+                proven_ct.verify_and_expand(&pp, &pk, &[], casting).unwrap()
+            }
+        };
+
+        let cks = cks.into_raw_parts();
         let decrypted = expanded
             .iter()
             .map(|ciphertext| cks.decrypt(ciphertext))
@@ -3124,7 +3174,7 @@ pub(crate) mod tests {
     async fn test_crs_gen_threshold(#[case] parallelism: usize) {
         // NOTE: the test parameter has 300 witness size
         // so we set this as a slow test
-        crs_gen_threshold(parallelism, TEST_PARAM_PATH).await
+        crs_gen_threshold(parallelism, &TEST_PARAM).await
     }
 
     #[cfg(feature = "slow_tests")]
@@ -3203,7 +3253,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
-    async fn crs_gen_threshold(parallelism: usize, param_path: &str) {
+    async fn crs_gen_threshold(parallelism: usize, param: &DKGParams) {
         assert!(parallelism > 0);
         let req_ids: Vec<RequestId> = (0..parallelism)
             .map(|j| RequestId::derive(&format!("crs_gen_threshold{j}")).unwrap())
@@ -3217,7 +3267,7 @@ pub(crate) mod tests {
         // The threshold handle should only be started after the storage is purged
         // since the threshold parties will load the CRS from private storage
         let (kms_servers, kms_clients, internal_client) =
-            threshold_handles(StorageVersion::Dev, param_path).await;
+            threshold_handles(StorageVersion::Dev, *param).await;
 
         let param_choice = ParamChoice::Test;
         let max_num_bits = 1;
@@ -3414,7 +3464,7 @@ pub(crate) mod tests {
             1,
             &crate::consts::TEST_CRS_ID,
             &crate::consts::TEST_THRESHOLD_KEY_ID,
-            TEST_PARAM_PATH,
+            TEST_PARAM,
         )
         .await
     }
@@ -3430,7 +3480,7 @@ pub(crate) mod tests {
             parallelism,
             &crate::consts::DEFAULT_CRS_ID,
             &crate::consts::DEFAULT_THRESHOLD_KEY_ID,
-            DEFAULT_PARAM_PATH,
+            crate::consts::DEFAULT_PARAM,
         )
         .await
     }
@@ -3439,14 +3489,14 @@ pub(crate) mod tests {
         parallelism: usize,
         crs_handle: &RequestId,
         key_handle: &RequestId,
-        param_path: &str,
+        dkg_params: DKGParams,
     ) {
         assert!(parallelism > 0);
 
         // The threshold handle should only be started after the storage is purged
         // since the threshold parties will load the CRS from private storage
         let (kms_servers, kms_clients, internal_client) =
-            threshold_handles(StorageVersion::Dev, param_path).await;
+            threshold_handles(StorageVersion::Dev, dkg_params).await;
 
         let pub_storage = FileStorage::new_threshold(None, StorageType::PUB, 1).unwrap();
         let (crs, pp) = internal_client
@@ -3537,7 +3587,7 @@ pub(crate) mod tests {
     #[serial]
     async fn test_decryption_central() {
         decryption_centralized(
-            TEST_PARAM_PATH,
+            &TEST_PARAM,
             &crate::consts::TEST_CENTRAL_KEY_ID.to_string(),
             vec![
                 TypedPlaintext::U8(42),
@@ -3573,8 +3623,10 @@ pub(crate) mod tests {
         #[case] msgs: Vec<TypedPlaintext>,
         #[case] parallelism: usize,
     ) {
+        use crate::consts::DEFAULT_PARAM;
+
         decryption_centralized(
-            DEFAULT_PARAM_PATH,
+            &DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID.to_string(),
             msgs,
             parallelism,
@@ -3583,14 +3635,14 @@ pub(crate) mod tests {
     }
 
     async fn decryption_centralized(
-        param_path: &str,
+        dkg_params: &DKGParams,
         key_id: &str,
         msgs: Vec<TypedPlaintext>,
         parallelism: usize,
     ) {
         assert!(parallelism > 0);
         let (kms_server, kms_client, mut internal_client) =
-            super::test_tools::centralized_handles(StorageVersion::Dev, param_path).await;
+            super::test_tools::centralized_handles(StorageVersion::Dev, dkg_params).await;
         let req_key_id = key_id.to_owned().try_into().unwrap();
 
         let mut cts = Vec::new();
@@ -3739,7 +3791,7 @@ pub(crate) mod tests {
     #[serial]
     async fn test_reencryption_centralized(#[values(true, false)] secure: bool) {
         reencryption_centralized(
-            TEST_PARAM_PATH,
+            &TEST_PARAM,
             &crate::consts::TEST_CENTRAL_KEY_ID.to_string(),
             false,
             TypedPlaintext::U8(48),
@@ -3757,7 +3809,7 @@ pub(crate) mod tests {
         #[values(true, false)] secure: bool,
     ) {
         reencryption_centralized(
-            TEST_PARAM_PATH,
+            &TEST_PARAM,
             &TEST_CENTRAL_KEY_ID.to_string(),
             true,
             TypedPlaintext::U8(48),
@@ -3784,8 +3836,10 @@ pub(crate) mod tests {
         #[case] msg: TypedPlaintext,
         #[values(true, false)] secure: bool,
     ) {
+        use crate::consts::DEFAULT_PARAM;
+
         reencryption_centralized(
-            DEFAULT_PARAM_PATH,
+            &DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID.to_string(),
             true,
             msg,
@@ -3817,8 +3871,10 @@ pub(crate) mod tests {
         #[case] parallelism: usize,
         #[values(true, false)] secure: bool,
     ) {
+        use crate::consts::DEFAULT_PARAM;
+
         reencryption_centralized(
-            DEFAULT_PARAM_PATH,
+            &DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID.to_string(),
             false,
             msg,
@@ -3829,7 +3885,7 @@ pub(crate) mod tests {
     }
 
     async fn reencryption_centralized(
-        param_path: &str,
+        dkg_params: &DKGParams,
         key_id: &str,
         _write_transcript: bool,
         msg: TypedPlaintext,
@@ -3838,7 +3894,7 @@ pub(crate) mod tests {
     ) {
         assert!(parallelism > 0);
         let (kms_server, kms_client, mut internal_client) =
-            super::test_tools::centralized_handles(StorageVersion::Dev, param_path).await;
+            super::test_tools::centralized_handles(StorageVersion::Dev, dkg_params).await;
         let (ct, fhe_type) = compute_cipher_from_stored_key(None, msg, key_id).await;
         let req_key_id = key_id.to_owned().try_into().unwrap();
 
@@ -3956,7 +4012,7 @@ pub(crate) mod tests {
                     agg_resp: vec![resp_response_vec.first().unwrap().1.clone()],
                 };
 
-                let path_prefix = if param_path.contains("default") {
+                let path_prefix = if *dkg_params != PARAMS_TEST_BK_SNS {
                     crate::consts::DEFAULT_CENTRAL_WASM_TRANSCRIPT_PATH
                 } else {
                     crate::consts::TEST_CENTRAL_WASM_TRANSCRIPT_PATH
@@ -4028,7 +4084,7 @@ pub(crate) mod tests {
     #[serial]
     async fn test_decryption_threshold() {
         decryption_threshold(
-            TEST_PARAM_PATH,
+            TEST_PARAM,
             &TEST_THRESHOLD_KEY_ID.to_string(),
             vec![
                 TypedPlaintext::U8(42),
@@ -4058,8 +4114,10 @@ pub(crate) mod tests {
         #[case] msg: Vec<TypedPlaintext>,
         #[case] parallelism: usize,
     ) {
+        use crate::consts::DEFAULT_PARAM;
+
         decryption_threshold(
-            DEFAULT_PARAM_PATH,
+            DEFAULT_PARAM,
             &DEFAULT_THRESHOLD_KEY_ID.to_string(),
             msg,
             parallelism,
@@ -4068,14 +4126,14 @@ pub(crate) mod tests {
     }
 
     async fn decryption_threshold(
-        params: &str,
+        dkg_params: DKGParams,
         key_id: &str,
         msgs: Vec<TypedPlaintext>,
         parallelism: usize,
     ) {
         assert!(parallelism > 0);
         let (kms_servers, kms_clients, mut internal_client) =
-            threshold_handles(StorageVersion::Dev, params).await;
+            threshold_handles(StorageVersion::Dev, dkg_params).await;
         let key_id_req = key_id.to_string().try_into().unwrap();
 
         let mut cts = Vec::new();
@@ -4222,7 +4280,7 @@ pub(crate) mod tests {
     #[serial]
     async fn test_reencryption_threshold(#[values(true, false)] secure: bool) {
         reencryption_threshold(
-            TEST_PARAM_PATH,
+            TEST_PARAM,
             &TEST_THRESHOLD_KEY_ID.to_string(),
             false,
             TypedPlaintext::U8(42),
@@ -4238,7 +4296,7 @@ pub(crate) mod tests {
     #[serial]
     async fn test_reencryption_threshold_and_write_transcript(#[values(true, false)] secure: bool) {
         reencryption_threshold(
-            TEST_PARAM_PATH,
+            TEST_PARAM,
             &TEST_THRESHOLD_KEY_ID.to_string(),
             true,
             TypedPlaintext::U8(42),
@@ -4266,8 +4324,10 @@ pub(crate) mod tests {
         #[case] msg: TypedPlaintext,
         #[values(true, false)] secure: bool,
     ) {
+        use crate::consts::DEFAULT_PARAM;
+
         reencryption_threshold(
-            DEFAULT_PARAM_PATH,
+            DEFAULT_PARAM,
             &DEFAULT_THRESHOLD_KEY_ID.to_string(),
             true,
             msg,
@@ -4296,8 +4356,10 @@ pub(crate) mod tests {
         #[case] parallelism: usize,
         #[values(true, false)] secure: bool,
     ) {
+        use crate::consts::DEFAULT_PARAM;
+
         reencryption_threshold(
-            DEFAULT_PARAM_PATH,
+            DEFAULT_PARAM,
             &DEFAULT_THRESHOLD_KEY_ID.to_string(),
             false,
             msg,
@@ -4308,7 +4370,7 @@ pub(crate) mod tests {
     }
 
     async fn reencryption_threshold(
-        param_path: &str,
+        dkg_params: DKGParams,
         key_id: &str,
         write_transcript: bool,
         msg: TypedPlaintext,
@@ -4319,7 +4381,7 @@ pub(crate) mod tests {
         _ = write_transcript;
 
         let (kms_servers, kms_clients, mut internal_client) =
-            threshold_handles(StorageVersion::Dev, param_path).await;
+            threshold_handles(StorageVersion::Dev, dkg_params).await;
         let (ct, fhe_type) = compute_cipher_from_stored_key(None, msg, key_id).await;
 
         internal_client.convert_to_addresses();
@@ -4446,7 +4508,7 @@ pub(crate) mod tests {
                     eph_pk: reqs[0].clone().1,
                     agg_resp,
                 };
-                let path_prefix = if param_path.contains("default") {
+                let path_prefix = if dkg_params != PARAMS_TEST_BK_SNS {
                     crate::consts::DEFAULT_THRESHOLD_WASM_TRANSCRIPT_PATH
                 } else {
                     crate::consts::TEST_THRESHOLD_WASM_TRANSCRIPT_PATH
@@ -4507,7 +4569,7 @@ pub(crate) mod tests {
             keys.server_keys.clone(),
             client_address,
             Some(keys.client_sk.clone()),
-            keys.params.ciphertext_parameters,
+            keys.params,
         );
         let request_id = RequestId::derive("TEST_REENC_ID_123").unwrap();
         let (req, _enc_pk, _enc_sk) = internal_client
@@ -4550,8 +4612,10 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn num_blocks_sunshine() {
-        let params: NoiseFloodParameters = read_as_json(TEST_PARAM_PATH).await.unwrap();
-        let params = &params.ciphertext_parameters;
+        let params: DKGParams = TEST_PARAM;
+        let params = &params
+            .get_params_basics_handle()
+            .to_classic_pbs_parameters();
         // 2 bits per block, using Euint8 as internal representation
         assert_eq!(num_blocks(FheType::Ebool, params), 4);
         // 2 bits per block, using Euint8 as internal representation
@@ -4611,7 +4675,7 @@ pub(crate) mod tests {
         use crate::kms::{KeyGenPreprocRequest, KeyGenPreprocStatusEnum};
 
         let (kms_servers, kms_clients, internal_client) =
-            threshold_handles(StorageVersion::Dev, TEST_PARAM_PATH).await;
+            threshold_handles(StorageVersion::Dev, TEST_PARAM).await;
 
         let request_ids: Vec<_> = (0..parallelism)
             .map(|j| RequestId::derive(&format!("test_preproc_{j}")).unwrap())
@@ -4765,7 +4829,7 @@ pub(crate) mod tests {
         purge(None, None, &req_key.to_string()).await;
 
         let (kms_servers, kms_clients, internal_client) =
-            threshold_handles(StorageVersion::Dev, TEST_PARAM_PATH).await;
+            threshold_handles(StorageVersion::Dev, TEST_PARAM).await;
 
         let req_keygen = internal_client
             .key_gen_request(&req_key, Some(req_preproc.clone()), Some(ParamChoice::Test))
@@ -4804,7 +4868,7 @@ pub(crate) mod tests {
         purge(None, None, &req_key.to_string()).await;
 
         let (kms_servers, kms_clients, internal_client) =
-            threshold_handles(StorageVersion::Dev, TEST_PARAM_PATH).await;
+            threshold_handles(StorageVersion::Dev, TEST_PARAM).await;
 
         let preprocessing_req_data = internal_client
             .preproc_request(&req_preproc, Some(ParamChoice::Test))

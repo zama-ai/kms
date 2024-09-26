@@ -159,6 +159,7 @@ pub fn slice_wrapping_scalar_mul_assign<Z: BaseRing>(lhs: &mut [ResiduePoly<Z>],
     lhs.iter_mut().for_each(|lhs| *lhs = *lhs * rhs);
 }
 
+//NOTE: This may require the server key to be set to be able to expand
 pub fn expanded_encrypt<M: Compactable + Numeric, T: Expandable + Tagged>(
     pk: &CompactPublicKey,
     msg: M,

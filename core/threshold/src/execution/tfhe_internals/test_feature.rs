@@ -22,7 +22,9 @@ use tfhe::{
         seeders::Seeder,
     },
     integer::{block_decomposition::BlockRecomposer, parameters::PolynomialSize},
-    shortint::{self, ClassicPBSParameters, ShortintParameterSet},
+    shortint::{
+        self, list_compression::CompressionPrivateKeys, ClassicPBSParameters, ShortintParameterSet,
+    },
     ClientKey,
 };
 use tokio::{task::JoinSet, time::timeout_at};
@@ -47,7 +49,8 @@ use crate::{
 
 use super::{
     parameters::{
-        AugmentedCiphertextParameters, Ciphertext128, Ciphertext128Block, NoiseFloodParameters,
+        AugmentedCiphertextParameters, Ciphertext128, Ciphertext128Block, DKGParams,
+        DKGParamsBasics, DKGParamsRegular,
     },
     switch_and_squash::{from_expanded_msg, SwitchAndSquashKey},
 };
@@ -76,37 +79,63 @@ impl KeySet {
     }
 }
 
-//TODO(PKSK): This is called from core/service to generate the key
-//needs to be updated to generate the new PKSK when updating core/service
-//probably requires getting rid of this NoiseFloodParameters struct and use DKGParams instead
-pub fn gen_key_set<R: Rng + CryptoRng>(
-    threshold_lwe_parameters: NoiseFloodParameters,
-    rng: &mut R,
-) -> KeySet {
-    let input_param = threshold_lwe_parameters.ciphertext_parameters;
+// This is called from core/service to generate the key
+pub fn gen_key_set<R: Rng + CryptoRng>(parameters: DKGParams, rng: &mut R) -> KeySet {
+    let basics_params = parameters.get_params_basics_handle();
     let mut secret_rng = secret_rng_from_seed(seed_from_rng(rng).0);
 
     let input_lwe_secret_key: LweSecretKey<Vec<u64>> =
         allocate_and_generate_new_binary_lwe_secret_key(
-            threshold_lwe_parameters.ciphertext_parameters.lwe_dimension,
+            basics_params.lwe_dimension(),
             &mut secret_rng,
         );
     let input_glwe_secret_key: GlweSecretKey<Vec<u64>> =
         allocate_and_generate_new_binary_glwe_secret_key(
-            input_param.glwe_dimension,
-            input_param.polynomial_size,
+            basics_params.glwe_dimension(),
+            basics_params.polynomial_size(),
             &mut secret_rng,
         );
 
+    let dedicated_compact_private_key = if basics_params.has_dedicated_compact_pk_params() {
+        Some(allocate_and_generate_new_binary_lwe_secret_key(
+            basics_params.lwe_hat_dimension(),
+            &mut secret_rng,
+        ))
+    } else {
+        None
+    };
+
+    let compression_key =
+        if let Some(compression_params) = basics_params.get_compression_decompression_params() {
+            Some(allocate_and_generate_new_binary_glwe_secret_key(
+                compression_params
+                    .raw_compression_parameters
+                    .packing_ks_glwe_dimension,
+                compression_params
+                    .raw_compression_parameters
+                    .packing_ks_polynomial_size,
+                &mut secret_rng,
+            ))
+        } else {
+            None
+        };
+
+    let regular_params = match parameters {
+        DKGParams::WithSnS(p) => p.regular_params,
+        DKGParams::WithoutSnS(p) => p,
+    };
+
     let client_key = to_hl_client_key(
-        threshold_lwe_parameters.ciphertext_parameters,
+        &regular_params,
         input_lwe_secret_key,
         input_glwe_secret_key,
+        dedicated_compact_private_key,
+        compression_key,
     );
+
     let public_key = tfhe::CompactPublicKey::new(&client_key);
     let server_key = tfhe::ServerKey::new(&client_key);
-    let (sns_secret_key, fbsk_out) =
-        generate_large_keys(threshold_lwe_parameters, client_key.clone(), rng);
+    let (sns_secret_key, fbsk_out) = generate_large_keys(parameters, client_key.clone(), rng);
 
     let sns_key = SwitchAndSquashKey::new(
         fbsk_out,
@@ -127,22 +156,70 @@ pub fn gen_key_set<R: Rng + CryptoRng>(
 
 /// Helper method for converting a low level client key into a high level client key.
 pub fn to_hl_client_key(
-    params: ClassicPBSParameters,
+    params: &DKGParamsRegular,
     lwe_secret_key: LweSecretKey<Vec<u64>>,
     glwe_secret_key: GlweSecretKey<Vec<u64>>,
+    dedicated_compact_private_key: Option<LweSecretKey<Vec<u64>>>,
+    compression_key: Option<GlweSecretKey<Vec<u64>>>,
 ) -> tfhe::ClientKey {
-    let sps = ShortintParameterSet::new_pbs_param_set(tfhe::shortint::PBSParameters::PBS(params));
+    let sps = ShortintParameterSet::new_pbs_param_set(tfhe::shortint::PBSParameters::PBS(
+        params.ciphertext_parameters,
+    ));
     let sck = shortint::ClientKey::from_raw_parts(glwe_secret_key, lwe_secret_key, sps);
-    ClientKey::from_raw_parts(sck.into(), None, None, tfhe::Tag::default())
+
+    //If necessary generate a dedicated compact private key
+    let dedicated_compact_private_key =
+        if let (Some(dedicated_compact_private_key), Some(pk_params)) = (
+            dedicated_compact_private_key,
+            params.dedicated_compact_public_key_parameters,
+        ) {
+            Some((
+                tfhe::integer::CompactPrivateKey::from_raw_parts(
+                    tfhe::shortint::CompactPrivateKey::from_raw_parts(
+                        dedicated_compact_private_key,
+                        pk_params.0,
+                    )
+                    .unwrap(),
+                ),
+                pk_params.1,
+            ))
+        } else {
+            None
+        };
+
+    //If necessary generate a dedicated compression private key
+    let compression_key = if let (Some(compression_private_key), Some(params)) =
+        (compression_key, params.compression_decompression_parameters)
+    {
+        let polynomial_size = compression_private_key.polynomial_size();
+        Some(
+            tfhe::integer::compression_keys::CompressionPrivateKeys::from_raw_parts(
+                CompressionPrivateKeys {
+                    post_packing_ks_key: GlweSecretKey::from_container(
+                        compression_private_key.into_container(),
+                        polynomial_size,
+                    ),
+                    params,
+                },
+            ),
+        )
+    } else {
+        None
+    };
+    ClientKey::from_raw_parts(
+        sck.into(),
+        dedicated_compact_private_key,
+        compression_key,
+        tfhe::Tag::default(),
+    )
 }
 
-//TODO(PKSK): Need to change this to account for difference between encryption and compute key,
-//and PKSK to KS between the 2
 pub async fn initialize_key_material<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     session: &mut S,
-    params: NoiseFloodParameters,
+    params: DKGParams,
 ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet)> {
     let own_role = session.my_role()?;
+    let params_basic_handle = params.get_params_basics_handle();
 
     let keyset = if own_role.one_based() == INPUT_PARTY_ID {
         tracing::info!("Keyset generated by input party {}", own_role);
@@ -160,23 +237,26 @@ pub async fn initialize_key_material<R: Rng + CryptoRng, S: BaseSessionHandles<R
             // and distribute the lwe secret key vector to the rest. Otherwise if we would have set
             // Vec::new() here, the other parties would have continued to transfer_pk and would
             // have panicked because they would have received something different from a PK.
-            vec![Numeric::ZERO; params.ciphertext_parameters.lwe_dimension.0]
+            vec![Numeric::ZERO; params_basic_handle.lwe_dimension().0]
         });
 
-    let sns_sk_container128: Vec<u128> = keyset
-        .as_ref()
-        .map(|s| s.clone().sns_secret_key.key.into_container())
-        .unwrap_or_else(|| {
-            // TODO: This needs to be refactor, since we have done this hack in order all the
-            // parties that are not INPUT_PARTY_ID wait for INPUT_PARTY_ID to generate the keyset
-            // and distribute the lwe secret key vector to the rest. Otherwise if we would have set
-            // Vec::new() here, the other parties would have continued to transfer_pk and would
-            // have panicked because they would have received something different from a PK.
-            vec![
-                Numeric::ZERO;
-                params.sns_parameters.polynomial_size.0 * params.sns_parameters.glwe_dimension.0
-            ]
-        });
+    let sns_sk_container128: Option<Vec<u128>> = if let DKGParams::WithSnS(params_sns) = params {
+        Some(
+            keyset
+                .as_ref()
+                .map(|s| s.clone().sns_secret_key.key.into_container())
+                .unwrap_or_else(|| {
+                    // TODO: This needs to be refactor, since we have done this hack in order all the
+                    // parties that are not INPUT_PARTY_ID wait for INPUT_PARTY_ID to generate the keyset
+                    // and distribute the lwe secret key vector to the rest. Otherwise if we would have set
+                    // Vec::new() here, the other parties would have continued to transfer_pk and would
+                    // have panicked because they would have received something different from a PK.
+                    vec![Numeric::ZERO; params_sns.glwe_sk_num_bits_sns()]
+                }),
+        )
+    } else {
+        None
+    };
 
     // iterate through sk and share each element
 
@@ -194,18 +274,25 @@ pub async fn initialize_key_material<R: Rng + CryptoRng, S: BaseSessionHandles<R
         lwe_key_shares64.push(Share::new(own_role, share));
     }
 
-    let mut sns_key_shares128 = Vec::new();
-    // TODO(Dragos) this sharing can be done in a single round
-    tracing::info!("Sharing key128 to be send {}", sns_sk_container128.len());
-    for cur in sns_sk_container128 {
-        let secret = match own_role.one_based() {
-            1 => Some(ResiduePoly::from_scalar(Wrapping::<u128>(cur))),
-            _ => None,
-        };
-        let share = robust_input(session, &secret, &own_role, INPUT_PARTY_ID).await?; //TODO(Daniel) batch this for all big_ell
+    let sns_key_shares128 = if let Some(sns_sk_container128) = sns_sk_container128 {
+        let mut sns_key_shares128 = Vec::new();
+        // TODO(Dragos) this sharing can be done in a single round
+        tracing::info!("Sharing key128 to be send {}", sns_sk_container128.len());
+        for cur in sns_sk_container128 {
+            let secret = match own_role.one_based() {
+                1 => Some(ResiduePoly::from_scalar(Wrapping::<u128>(cur))),
+                _ => None,
+            };
+            let share = robust_input(session, &secret, &own_role, INPUT_PARTY_ID).await?; //TODO(Daniel) batch this for all big_ell
 
-        sns_key_shares128.push(Share::new(own_role, share));
-    }
+            sns_key_shares128.push(Share::new(own_role, share));
+        }
+        Some(LweSecretKeyShare {
+            data: sns_key_shares128,
+        })
+    } else {
+        None
+    };
 
     let transferred_pub_key = transfer_pub_key(
         session,
@@ -219,17 +306,17 @@ pub async fn initialize_key_material<R: Rng + CryptoRng, S: BaseSessionHandles<R
         lwe_compute_secret_key_share: LweSecretKeyShare {
             data: lwe_key_shares64,
         },
-        //USING DUMMY ENC SECRET KEY AS IT SI NOT NEEDE IN TESTS
+        // Using dummy enc secret key as it is not needed in tests
         lwe_encryption_secret_key_share: LweSecretKeyShare { data: vec![] },
-        //USING A DUMMY GLWE SECRET KEY AS IT IS NOT NEEDED IN TESTS
+        // Using a dummy glwe secret key as it is not needed in tests
         glwe_secret_key_share: GlweSecretKeyShare {
             data: vec![],
             polynomial_size: PolynomialSize(0),
         },
-        glwe_secret_key_share_sns_as_lwe: Some(LweSecretKeyShare {
-            data: sns_key_shares128,
-        }),
-        parameters: params.ciphertext_parameters,
+        glwe_secret_key_share_sns_as_lwe: sns_key_shares128,
+        parameters: params_basic_handle.to_classic_pbs_parameters(),
+        // Always using None here as we never need the compression secret key in tests
+        glwe_secret_key_share_compression: None,
     };
 
     Ok((transferred_pub_key, shared_sk))
@@ -331,12 +418,18 @@ impl SnsClientKey {
 /// Then, the method constructs a key switching key to convert ciphertext encrypted with the key over u64,
 /// to ciphertexts encrypted over u128.
 pub fn generate_large_keys<R: Rng + CryptoRng>(
-    threshold_lwe_parameters: NoiseFloodParameters,
+    params: DKGParams,
     input_sk: ClientKey,
     rng: &mut R,
 ) -> (SnsClientKey, Fourier128LweBootstrapKey<ABox<[f64]>>) {
-    let output_param = threshold_lwe_parameters.sns_parameters;
-    let input_param = threshold_lwe_parameters.ciphertext_parameters;
+    let params = if let DKGParams::WithSnS(params) = params {
+        params
+    } else {
+        panic!("Can not generate large keys without SnS params")
+    };
+
+    let output_param = params.sns_params;
+    let input_param = params.to_classic_pbs_parameters();
 
     let mut secret_rng = secret_rng_from_seed(seed_from_rng(rng).0);
     let mut deterministic_seeder =
@@ -400,9 +493,10 @@ pub fn generate_large_keys<R: Rng + CryptoRng>(
     (client_output_key, fbsk_out)
 }
 
-//TODO(PKSK): Need to change this to account for difference between encryption and compute key,
-//and PKSK to KS between the 2
-/// keygen that generates secret key shares for many parties
+/// Keygen that generates secret key shares for many parties
+///
+/// __NOTE__: Some secret keys are actually dummy or None, what we really need here are the key
+/// passed as input.
 pub fn keygen_all_party_shares<R: Rng + CryptoRng>(
     lwe_secret_key: LweSecretKey<Vec<u64>>,
     glwe_secret_key: GlweSecretKey<Vec<u64>>,
@@ -494,6 +588,7 @@ pub fn keygen_all_party_shares<R: Rng + CryptoRng>(
                 data: vv128[p].clone(),
             }),
             parameters,
+            glwe_secret_key_share_compression: None,
         })
         .collect();
 
@@ -553,8 +648,8 @@ mod tests {
         execution::{
             constants::REAL_KEY_PATH,
             tfhe_internals::{
+                parameters::DKGParamsRegular,
                 test_feature::{to_hl_client_key, KeySet},
-                utils::expanded_encrypt,
             },
         },
         file_handling::read_element,
@@ -570,11 +665,17 @@ mod tests {
         let (glwe_key, lwe_key, params) = raw_sk.into_raw_parts().into_raw_parts();
 
         let input_param = match params.pbs_parameters() {
-            Some(PBS(param)) => param,
+            Some(PBS(param)) => DKGParamsRegular {
+                sec: 1,
+                ciphertext_parameters: param,
+                dedicated_compact_public_key_parameters: None,
+                compression_decompression_parameters: None,
+                flag: true,
+            },
             _ => panic!("Only support for ClassicPBSParameters"),
         };
 
-        let hl_client_key = to_hl_client_key(input_param, lwe_key, glwe_key);
+        let hl_client_key = to_hl_client_key(&input_param, lwe_key, glwe_key, None, None);
         assert_eq!(
             hl_client_key.into_raw_parts().0,
             client_key.clone().into_raw_parts().0
@@ -600,16 +701,37 @@ mod tests {
     /// that the results are correct and consistent.
     fn sunshine_hl_keys(path: &str) {
         let keyset: KeySet = read_element(path.to_string()).unwrap();
-        let ct_a = FheUint8::encrypt(42_u8, &keyset.client_key);
+
+        let ctxt_build = tfhe::CompactCiphertextListBuilder::new(&keyset.public_keys.public_key)
+            .push(42_u8)
+            .push(55_u8)
+            .push(5_u8)
+            .build();
+
+        set_server_key(keyset.public_keys.server_key);
+        let expanded_ctxt_build = ctxt_build.expand().unwrap();
+
+        let ct_a: FheUint8 = expanded_ctxt_build.get(0).unwrap().unwrap();
+        let ct_b: FheUint8 = expanded_ctxt_build.get(1).unwrap().unwrap();
+        let ct_c: FheUint8 = expanded_ctxt_build.get(2).unwrap().unwrap();
+
+        let compressed_list = tfhe::CompressedCiphertextListBuilder::new()
+            .push(ct_a)
+            .push(ct_b)
+            .push(ct_c)
+            .build()
+            .unwrap();
+
+        let ct_a: FheUint8 = compressed_list.get(0).unwrap().unwrap();
+        let ct_b: FheUint8 = compressed_list.get(1).unwrap().unwrap();
+        let ct_c: FheUint8 = compressed_list.get(2).unwrap().unwrap();
+
         let decrypted_a: u8 = ct_a.decrypt(&keyset.client_key);
         assert_eq!(42, decrypted_a);
-        set_server_key(keyset.public_keys.server_key);
 
-        let ct_b: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, 55_u8, 8);
         let ct_sum = ct_a.clone() + ct_b;
         let sum: u8 = ct_sum.decrypt(&keyset.client_key);
         assert_eq!(42 + 55, sum);
-        let ct_c = FheUint8::encrypt(5_u8, &keyset.client_key);
         let ct_product = ct_a * ct_c;
         let product: u8 = ct_product.decrypt(&keyset.client_key);
         assert_eq!(42 * 5, product);

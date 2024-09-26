@@ -38,6 +38,7 @@ services:
       start_period: 20s
   redis-p{{ i+1 }}:
     image: redis/redis-stack:latest
+    command: redis-server --save "" --appendonly no --protected-mode no
     ports:
       - {{6379 + i+1}}:6379
 {% endfor %}

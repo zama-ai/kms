@@ -148,6 +148,7 @@ impl NoiseBounds {
             NoiseBounds::LweHatNoise(bound) => *bound,
             NoiseBounds::GlweNoise(bound) => *bound,
             NoiseBounds::GlweNoiseSnS(bound) => *bound,
+            NoiseBounds::CompressionKSKNoise(bound) => *bound,
         }
     }
 
@@ -157,6 +158,7 @@ impl NoiseBounds {
             NoiseBounds::LweHatNoise(_) => CorrelatedRandomnessType::NoiseLweHat,
             NoiseBounds::GlweNoise(_) => CorrelatedRandomnessType::NoiseGlwe,
             NoiseBounds::GlweNoiseSnS(_) => CorrelatedRandomnessType::NoiseGlweSnS,
+            NoiseBounds::CompressionKSKNoise(_) => CorrelatedRandomnessType::NoiseCompressionKSK,
         }
     }
 }

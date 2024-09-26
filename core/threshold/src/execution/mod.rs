@@ -63,6 +63,8 @@ pub mod sharing {
 
 pub mod tfhe_internals {
     #[cfg(feature = "non-wasm")]
+    pub mod compression_decompression_key;
+    #[cfg(feature = "non-wasm")]
     pub mod ggsw_ciphertext;
     #[cfg(feature = "non-wasm")]
     pub mod glwe_ciphertext;
@@ -80,6 +82,10 @@ pub mod tfhe_internals {
     pub mod lwe_keyswitch_key;
     #[cfg(feature = "non-wasm")]
     pub mod lwe_keyswitch_key_generation;
+    #[cfg(feature = "non-wasm")]
+    pub mod lwe_packing_keyswitch_key;
+    #[cfg(feature = "non-wasm")]
+    pub mod lwe_packing_keyswitch_key_generation;
     pub mod parameters;
     #[cfg(feature = "non-wasm")]
     pub mod randomness;

@@ -8,7 +8,7 @@ use kms_lib::rpc::rpc_types::protobuf_to_alloy_domain;
 use kms_lib::util::key_setup::ensure_client_keys_exist;
 use kms_lib::{
     conf::init_trace,
-    consts::{DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM_PATH, DEFAULT_THRESHOLD_KEY_ID},
+    consts::{DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM, DEFAULT_THRESHOLD_KEY_ID},
     kms::InitRequest,
     storage::{FileStorage, StorageType},
     util::key_setup::test_tools::compute_cipher_from_stored_key,
@@ -100,7 +100,7 @@ async fn central_requests(address: String) -> anyhow::Result<()> {
     )?;
     let pub_storage = vec![FileStorage::new_centralized(None, StorageType::PUB).unwrap()];
     let client_storage = FileStorage::new_centralized(None, StorageType::CLIENT).unwrap();
-    let mut internal_client = Client::new_client(client_storage, pub_storage, DEFAULT_PARAM_PATH)
+    let mut internal_client = Client::new_client(client_storage, pub_storage, &DEFAULT_PARAM)
         .await
         .unwrap();
     let msg = rng.gen::<u32>();
@@ -429,7 +429,7 @@ async fn threshold_requests(addresses: Vec<String>, init: bool) -> anyhow::Resul
         pub_storage.push(FileStorage::new_threshold(None, StorageType::PUB, i + 1).unwrap());
     }
 
-    let mut internal_client = Client::new_client(client_storage, pub_storage, DEFAULT_PARAM_PATH)
+    let mut internal_client = Client::new_client(client_storage, pub_storage, &DEFAULT_PARAM)
         .await
         .unwrap();
 

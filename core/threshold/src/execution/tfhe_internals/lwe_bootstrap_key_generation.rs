@@ -20,7 +20,8 @@ use super::{
     glwe_key::GlweSecretKeyShare,
     lwe_bootstrap_key::LweBootstrapKeyShare,
     lwe_key::LweSecretKeyShare,
-    randomness::{EncryptionType, MPCEncryptionRandomGenerator},
+    parameters::EncryptionType,
+    randomness::MPCEncryptionRandomGenerator,
 };
 
 pub async fn generate_lwe_bootstrap_key<Z, Gen, Rnd, S, P>(
@@ -164,10 +165,10 @@ mod tests {
             tfhe_internals::{
                 glwe_key::GlweSecretKeyShare,
                 lwe_key::LweSecretKeyShare,
+                parameters::EncryptionType,
                 parameters::TUniformBound,
                 randomness::{
-                    EncryptionType, MPCEncryptionRandomGenerator, MPCMaskRandomGenerator,
-                    MPCNoiseRandomGenerator,
+                    MPCEncryptionRandomGenerator, MPCMaskRandomGenerator, MPCNoiseRandomGenerator,
                 },
                 utils::tests::reconstruct_bit_vec,
             },

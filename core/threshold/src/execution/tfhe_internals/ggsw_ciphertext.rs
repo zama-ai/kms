@@ -31,7 +31,8 @@ use super::{
         encrypt_glwe_ciphertext_assign, get_batch_param_glwe_enc, GlweCiphertextShare,
     },
     glwe_key::GlweSecretKeyShare,
-    randomness::{EncryptionType, MPCEncryptionRandomGenerator},
+    parameters::EncryptionType,
+    randomness::MPCEncryptionRandomGenerator,
 };
 use itertools::{EitherOrBoth, Itertools};
 use rand::{CryptoRng, Rng};
@@ -390,9 +391,9 @@ mod tests {
             sharing::{shamir::ShamirSharings, share::Share},
             tfhe_internals::{
                 glwe_key::GlweSecretKeyShare,
+                parameters::EncryptionType,
                 randomness::{
-                    EncryptionType, MPCEncryptionRandomGenerator, MPCMaskRandomGenerator,
-                    MPCNoiseRandomGenerator,
+                    MPCEncryptionRandomGenerator, MPCMaskRandomGenerator, MPCNoiseRandomGenerator,
                 },
                 utils::tests::{reconstruct_bit_vec, reconstruct_glwe_body_vec},
             },

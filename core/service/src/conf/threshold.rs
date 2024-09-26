@@ -4,7 +4,6 @@ use distributed_decryption::execution::online::preprocessing::redis::RedisConf;
 use distributed_decryption::execution::runtime::party::{Identity, Role};
 use distributed_decryption::networking::grpc::CoreToCoreNetworkConfig;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ThresholdConfig {
@@ -24,7 +23,6 @@ pub struct ThresholdConfig {
     pub tls_key_path: Option<String>,
     pub peer_confs: Vec<PeerConf>,
     pub core_to_core_net_conf: Option<CoreToCoreNetworkConfig>,
-    pub param_file_map: HashMap<String, String>, // TODO parameters should be loaded once during boot
 }
 
 impl ThresholdConfig {

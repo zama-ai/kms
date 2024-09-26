@@ -10,12 +10,13 @@ use tfhe::{
     integer::{ciphertext::BaseRadixCiphertext, parameters::DynamicDistribution},
     shortint::{
         parameters::{
+            list_compression::COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
             CompactCiphertextListExpansionKind, CompactPublicKeyEncryptionParameters,
-            DecompositionBaseLog, DecompositionLevelCount, GlweDimension, LweDimension,
-            PolynomialSize, ShortintKeySwitchingParameters,
+            CompressionParameters, DecompositionBaseLog, DecompositionLevelCount, GlweDimension,
+            LweDimension, PolynomialSize, ShortintKeySwitchingParameters,
         },
         CarryModulus, ClassicPBSParameters, EncryptionKeyChoice, MaxNoiseLevel, MessageModulus,
-        PBSOrder,
+        PBSOrder, PBSParameters,
     },
 };
 
@@ -27,6 +28,12 @@ pub type Ciphertext64Block = tfhe::shortint::Ciphertext;
 pub type Ciphertext128 = Vec<Ciphertext128Block>;
 pub type Ciphertext128Block = LweCiphertextOwned<u128>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EncryptionType {
+    Bits64,
+    Bits128,
+}
+
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Debug)]
 pub struct TUniformBound(pub usize);
 
@@ -36,6 +43,7 @@ pub enum NoiseBounds {
     LweHatNoise(TUniformBound),
     GlweNoise(TUniformBound),
     GlweNoiseSnS(TUniformBound),
+    CompressionKSKNoise(TUniformBound),
 }
 
 #[derive(Serialize, Copy, Clone, Deserialize, Debug, PartialEq)]
@@ -54,6 +62,22 @@ pub struct KSKParams {
     pub noise_bound: NoiseBounds,
     pub decomposition_base_log: DecompositionBaseLog,
     pub decomposition_level_count: DecompositionLevelCount,
+}
+
+#[derive(Debug)]
+pub struct BKParams {
+    pub num_needed_noise: usize,
+    pub noise_bound: NoiseBounds,
+    pub decomposition_base_log: DecompositionBaseLog,
+    pub decomposition_level_count: DecompositionLevelCount,
+    pub enc_type: EncryptionType,
+}
+
+pub struct DistributedCompressionParameters {
+    pub raw_compression_parameters: CompressionParameters,
+    pub ksk_num_noise: usize,
+    pub ksk_noisebound: NoiseBounds,
+    pub bk_params: BKParams,
 }
 
 pub trait AugmentedCiphertextParameters {
@@ -100,12 +124,6 @@ impl AugmentedCiphertextParameters for ClassicPBSParameters {
     }
 }
 
-#[derive(Serialize, Copy, Clone, Deserialize, Debug, PartialEq)]
-pub struct NoiseFloodParameters {
-    pub ciphertext_parameters: ClassicPBSParameters,
-    pub sns_parameters: SwitchAndSquashParameters,
-}
-
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq)]
 pub enum DKGParams {
     WithoutSnS(DKGParamsRegular),
@@ -135,24 +153,23 @@ impl DKGParams {
     }
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq)]
-#[allow(non_snake_case)]
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
 pub struct DKGParamsRegular {
     ///Security parameter (related to the size of the XOF seed)
     pub sec: u64,
     pub ciphertext_parameters: ClassicPBSParameters,
-    //TODO(PKSK): This should probably not be optional anymore once the whole kms codebase
+    //NOTE: This should probably not be optional anymore once the whole kms codebase
     //has transitioned over to tfhe-rs.v0.8
     pub dedicated_compact_public_key_parameters: Option<(
         CompactPublicKeyEncryptionParameters,
         ShortintKeySwitchingParameters,
     )>,
+    pub compression_decompression_parameters: Option<CompressionParameters>,
     ///States whether we want compressed ciphertexts
     pub flag: bool,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq)]
-#[allow(non_snake_case)]
 pub struct DKGParamsSnS {
     pub regular_params: DKGParamsRegular,
     pub sns_params: SwitchAndSquashParameters,
@@ -186,8 +203,10 @@ pub trait DKGParamsBasics: Sync {
     fn lwe_tuniform_bound(&self) -> TUniformBound;
     fn lwe_hat_tuniform_bound(&self) -> TUniformBound;
     fn glwe_tuniform_bound(&self) -> TUniformBound;
+    fn compression_key_tuniform_bound(&self) -> Option<TUniformBound>;
     fn polynomial_size(&self) -> PolynomialSize;
     fn glwe_sk_num_bits(&self) -> usize;
+    fn compression_sk_num_bits(&self) -> usize;
     fn decomposition_base_log_ksk(&self) -> DecompositionBaseLog;
     fn decomposition_base_log_pksk(&self) -> DecompositionBaseLog;
     fn decomposition_base_log_bk(&self) -> DecompositionBaseLog;
@@ -198,14 +217,24 @@ pub trait DKGParamsBasics: Sync {
     fn num_needed_noise_ksk(&self) -> usize;
     fn num_needed_noise_pksk(&self) -> usize;
     fn num_needed_noise_bk(&self) -> usize;
+    fn num_needed_noise_compression_key(&self) -> usize;
+    fn num_needed_noise_decompression_key(&self) -> usize;
     fn encryption_key_choice(&self) -> EncryptionKeyChoice;
     fn pbs_order(&self) -> PBSOrder;
     fn to_dkg_params(&self) -> DKGParams;
+    fn get_dedicated_pk_params(
+        &self,
+    ) -> Option<(
+        CompactPublicKeyEncryptionParameters,
+        ShortintKeySwitchingParameters,
+    )>;
     fn get_compact_pk_enc_params(&self) -> CompactPublicKeyEncryptionParameters;
     fn get_pksk_destination(&self) -> Option<EncryptionKeyChoice>;
     fn has_dedicated_compact_pk_params(&self) -> bool;
     fn get_ksk_params(&self) -> KSKParams;
     fn get_pksk_params(&self) -> Option<KSKParams>;
+    fn get_bk_params(&self) -> BKParams;
+    fn get_compression_decompression_params(&self) -> Option<DistributedCompressionParameters>;
 }
 
 impl DKGParamsBasics for DKGParamsRegular {
@@ -231,9 +260,10 @@ impl DKGParamsBasics for DKGParamsRegular {
         serialized.hash(&mut h);
         let hash = h.finish();
         format!(
-            "temp/dkg/MSGMOD_{}_CARRYMOD_{}_SNS_false_{}",
+            "temp/dkg/MSGMOD_{}_CARRYMOD_{}_SNS_false_compression_{}_{}",
             self.get_message_modulus().0,
             self.get_carry_modulus().0,
+            self.compression_decompression_parameters.is_some(),
             hash
         )
     }
@@ -269,16 +299,38 @@ impl DKGParamsBasics for DKGParamsRegular {
 
         //For pksk
         num_bits_needed += self.num_needed_noise_pksk()
-            * match self.encryption_key_choice() {
-                EncryptionKeyChoice::Big => self.glwe_tuniform_bound().0 + 2,
-                EncryptionKeyChoice::Small => self.lwe_tuniform_bound().0 + 2,
+            * match self.get_pksk_destination() {
+                Some(EncryptionKeyChoice::Big) => self.glwe_tuniform_bound().0 + 2,
+                Some(EncryptionKeyChoice::Small) => self.lwe_tuniform_bound().0 + 2,
+                _ => 0,
             };
+
+        //For (de)compression keys
+        // using let Some instead of unwrap
+        if let Some(compression_key_tuniform_bound) = self.compression_key_tuniform_bound() {
+            //For (de)compression private key
+            num_bits_needed += self.compression_sk_num_bits();
+            //For compression keys
+            num_bits_needed +=
+                self.num_needed_noise_compression_key() * (compression_key_tuniform_bound.0 + 2);
+            //For decompression keys
+            num_bits_needed +=
+                self.num_needed_noise_decompression_key() * (self.glwe_tuniform_bound().0 + 2);
+        };
 
         num_bits_needed
     }
 
     fn total_triples_required(&self) -> usize {
-        let num_triples_needed = self.lwe_dimension().0 * self.glwe_sk_num_bits();
+        //Required for the "normal" BK
+        let mut num_triples_needed = self.lwe_dimension().0 * self.glwe_sk_num_bits();
+
+        //Required for the compression BK
+        if let Some(comp_params) = self.compression_decompression_parameters {
+            num_triples_needed += self.glwe_sk_num_bits()
+                * (comp_params.packing_ks_glwe_dimension.0
+                    * comp_params.packing_ks_polynomial_size.0)
+        }
 
         self.total_bits_required() + num_triples_needed
     }
@@ -404,15 +456,11 @@ impl DKGParamsBasics for DKGParamsRegular {
     fn get_compact_pk_enc_params(&self) -> CompactPublicKeyEncryptionParameters {
         //If we are using old style keys, there's no separate CompactPublicKeyEncryptionParameters
         self.dedicated_compact_public_key_parameters.map_or(
-            CompactPublicKeyEncryptionParameters {
-                encryption_lwe_dimension: self.ciphertext_parameters.lwe_dimension,
-                encryption_noise_distribution: self.ciphertext_parameters.lwe_noise_distribution,
-                message_modulus: self.ciphertext_parameters.message_modulus,
-                carry_modulus: self.ciphertext_parameters.carry_modulus,
-                ciphertext_modulus: self.ciphertext_parameters.ciphertext_modulus,
-                //If we encrypt directly to the "compute" key, then we have no casting
-                expansion_kind: CompactCiphertextListExpansionKind::NoCasting(self.pbs_order()),
-            },
+            (<ClassicPBSParameters as std::convert::Into<PBSParameters>>::into(
+                self.ciphertext_parameters,
+            ))
+            .try_into()
+            .unwrap(),
             |(p, _)| p,
         )
     }
@@ -451,6 +499,103 @@ impl DKGParamsBasics for DKGParamsRegular {
             }),
             None => None,
         }
+    }
+
+    fn get_bk_params(&self) -> BKParams {
+        BKParams {
+            num_needed_noise: self.num_needed_noise_bk(),
+            noise_bound: NoiseBounds::GlweNoise(self.glwe_tuniform_bound()),
+            decomposition_base_log: self.decomposition_base_log_bk(),
+            decomposition_level_count: self.decomposition_level_count_bk(),
+            enc_type: EncryptionType::Bits64,
+        }
+    }
+
+    fn compression_sk_num_bits(&self) -> usize {
+        if let Some(comp_params) = self.compression_decompression_parameters {
+            comp_params.packing_ks_glwe_dimension.0 * comp_params.packing_ks_polynomial_size.0
+        } else {
+            0
+        }
+    }
+
+    fn num_needed_noise_compression_key(&self) -> usize {
+        if let Some(comp_params) = self.compression_decompression_parameters {
+            self.glwe_dimension().0
+                * self.polynomial_size().0
+                * comp_params.packing_ks_level.0
+                * comp_params.packing_ks_polynomial_size.0
+        } else {
+            0
+        }
+    }
+
+    fn num_needed_noise_decompression_key(&self) -> usize {
+        if let Some(comp_params) = self.compression_decompression_parameters {
+            comp_params.packing_ks_polynomial_size.0
+                * comp_params.packing_ks_glwe_dimension.0
+                * (self.glwe_dimension().0 + 1)
+                * self.polynomial_size().0
+                * comp_params.br_level.0
+        } else {
+            0
+        }
+    }
+
+    fn compression_key_tuniform_bound(&self) -> Option<TUniformBound> {
+        if let Some(comp_params) = self.compression_decompression_parameters {
+            if let DynamicDistribution::TUniform(bound) =
+                comp_params.packing_ks_key_noise_distribution
+            {
+                Some(TUniformBound(bound.bound_log2() as usize))
+            } else {
+                panic!("We do not support non-Tuniform noise distribution")
+            }
+        } else {
+            None
+        }
+    }
+
+    fn get_compression_decompression_params(&self) -> Option<DistributedCompressionParameters> {
+        if let Some(comp_params) = self.compression_decompression_parameters {
+            let ksk_num_noise = self.num_needed_noise_compression_key();
+
+            let ksk_noisebound = if let DynamicDistribution::TUniform(bound) =
+                comp_params.packing_ks_key_noise_distribution
+            {
+                NoiseBounds::CompressionKSKNoise(TUniformBound(bound.bound_log2() as usize))
+            } else {
+                panic!("We do not support non TUniform noise distribution for compression keys.",);
+            };
+
+            let bk_num_needed_noise = self.num_needed_noise_decompression_key();
+
+            let bk_params = BKParams {
+                num_needed_noise: bk_num_needed_noise,
+                noise_bound: NoiseBounds::GlweNoise(self.glwe_tuniform_bound()),
+                decomposition_base_log: comp_params.br_base_log,
+                decomposition_level_count: comp_params.br_level,
+                enc_type: EncryptionType::Bits64,
+            };
+
+            Some(DistributedCompressionParameters {
+                raw_compression_parameters: comp_params,
+                ksk_num_noise,
+                ksk_noisebound,
+                bk_params,
+            })
+        } else {
+            None
+        }
+    }
+
+    fn get_dedicated_pk_params(
+        &self,
+    ) -> Option<(
+        CompactPublicKeyEncryptionParameters,
+        ShortintKeySwitchingParameters,
+    )> {
+        self.dedicated_compact_public_key_parameters
     }
 }
 
@@ -506,8 +651,16 @@ impl DKGParamsBasics for DKGParamsSnS {
     }
 
     fn total_triples_required(&self) -> usize {
-        let num_triples_needed =
+        // Raw triples necessary for the 2 BK
+        let mut num_triples_needed =
             self.lwe_dimension().0 * (self.glwe_sk_num_bits() + self.glwe_sk_num_bits_sns());
+
+        //Required for the compression BK
+        if let Some(comp_params) = self.regular_params.compression_decompression_parameters {
+            num_triples_needed += self.glwe_sk_num_bits()
+                * (comp_params.packing_ks_glwe_dimension.0
+                    * comp_params.packing_ks_polynomial_size.0)
+        }
 
         self.total_bits_required() + num_triples_needed
     }
@@ -621,6 +774,37 @@ impl DKGParamsBasics for DKGParamsSnS {
     fn get_pksk_params(&self) -> Option<KSKParams> {
         self.regular_params.get_pksk_params()
     }
+    fn get_bk_params(&self) -> BKParams {
+        self.regular_params.get_bk_params()
+    }
+
+    fn get_compression_decompression_params(&self) -> Option<DistributedCompressionParameters> {
+        self.regular_params.get_compression_decompression_params()
+    }
+
+    fn num_needed_noise_compression_key(&self) -> usize {
+        self.regular_params.num_needed_noise_compression_key()
+    }
+
+    fn num_needed_noise_decompression_key(&self) -> usize {
+        self.regular_params.num_needed_noise_decompression_key()
+    }
+
+    fn compression_key_tuniform_bound(&self) -> Option<TUniformBound> {
+        self.regular_params.compression_key_tuniform_bound()
+    }
+
+    fn compression_sk_num_bits(&self) -> usize {
+        self.regular_params.compression_sk_num_bits()
+    }
+    fn get_dedicated_pk_params(
+        &self,
+    ) -> Option<(
+        CompactPublicKeyEncryptionParameters,
+        ShortintKeySwitchingParameters,
+    )> {
+        self.regular_params.get_dedicated_pk_params()
+    }
 }
 
 impl DKGParamsSnS {
@@ -655,10 +839,13 @@ impl DKGParamsSnS {
             * self.polynomial_size_sns().0
     }
 
-    pub fn to_noiseflood_parameters(&self) -> NoiseFloodParameters {
-        NoiseFloodParameters {
-            ciphertext_parameters: self.regular_params.to_classic_pbs_parameters(),
-            sns_parameters: self.sns_params,
+    pub fn get_bk_sns_params(&self) -> BKParams {
+        BKParams {
+            num_needed_noise: self.num_needed_noise_bk_sns(),
+            noise_bound: NoiseBounds::GlweNoiseSnS(self.glwe_tuniform_bound_sns()),
+            decomposition_base_log: self.decomposition_base_log_bk_sns(),
+            decomposition_level_count: self.decomposition_level_count_bk_sns(),
+            enc_type: EncryptionType::Bits128,
         }
     }
 }
@@ -706,15 +893,16 @@ const BC_PARAMS_SAM : DKGParamsRegular = DKGParamsRegular {
     sec: 128,
     ciphertext_parameters: tfhe::shortint::parameters::PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
     dedicated_compact_public_key_parameters: Some((tfhe::shortint::parameters::compact_public_key_only::p_fail_2_minus_64::ks_pbs::PARAM_PKE_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,tfhe::shortint::parameters::key_switching::p_fail_2_minus_64::ks_pbs::PARAM_KEYSWITCH_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64 )),
+    compression_decompression_parameters: Some(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64),
     flag: true
 };
 
 /// Blokchain Parameters without SnS (with pfail `2^-64`), using parameters in tfhe-rs codebase
-pub(crate) const BC_PARAMS_SAM_NO_SNS: DKGParams = DKGParams::WithoutSnS(BC_PARAMS_SAM);
+pub const BC_PARAMS_SAM_NO_SNS: DKGParams = DKGParams::WithoutSnS(BC_PARAMS_SAM);
 
 /// Blokchain Parameters with SnS (with pfail `2^-64`), using parameters in tfhe-rs codebase
 /// and SnS params taken from Nigel's script (PARAMS_P32_SNS_LWE)
-pub(crate) const BC_PARAMS_SAM_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
+pub const BC_PARAMS_SAM_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
     regular_params: BC_PARAMS_SAM,
     sns_params: SwitchAndSquashParameters {
         glwe_dimension: GlweDimension(2),
@@ -762,15 +950,16 @@ const BC_PARAMS_NIGEL: DKGParamsRegular = DKGParamsRegular {
             destination_key: EncryptionKeyChoice::Big,
         },
     )),
+    compression_decompression_parameters: None,
     flag: true,
 };
 
 /// Blokchain Parameters without SnS (with pfail `2^-64`), using parameters generated by Nigel's script
-pub(crate) const BC_PARAMS_NIGEL_NO_SNS: DKGParams = DKGParams::WithoutSnS(BC_PARAMS_NIGEL);
+pub const BC_PARAMS_NIGEL_NO_SNS: DKGParams = DKGParams::WithoutSnS(BC_PARAMS_NIGEL);
 
 /// Blokchain Parameters with SnS (with pfail `2^-64`), using parameters generated by Nigel's script
 /// and SnS params taken from Nigel's script (PARAMS_P32_SNS_LWE)
-pub(crate) const BC_PARAMS_NIGEL_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
+pub const BC_PARAMS_NIGEL_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
     regular_params: BC_PARAMS_NIGEL,
     sns_params: SwitchAndSquashParameters {
         glwe_dimension: GlweDimension(2),
@@ -798,15 +987,16 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
             ks_base_log: DecompositionBaseLog(8),
             ks_level: DecompositionLevelCount(4),
             message_modulus: MessageModulus(4),
-            carry_modulus: CarryModulus(2),
+            carry_modulus: CarryModulus(4),
             max_noise_level: MaxNoiseLevel::from_msg_carry_modulus(
                 MessageModulus(4),
-                CarryModulus(2),
+                CarryModulus(4),
             ),
             log2_p_fail: -80., // dummy parameter
             ciphertext_modulus: CiphertextModulus::new_native(),
             encryption_key_choice: EncryptionKeyChoice::Small,
         },
+        compression_decompression_parameters: None,
         dedicated_compact_public_key_parameters: None,
         flag: true,
     },
@@ -844,6 +1034,7 @@ pub const OLD_PARAMS_P32_REAL_WITH_SNS: DKGParams = DKGParams::WithSnS(DKGParams
             ciphertext_modulus: CiphertextModulus::new_native(),
             encryption_key_choice: EncryptionKeyChoice::Small,
         },
+        compression_decompression_parameters: None,
         dedicated_compact_public_key_parameters: None,
         flag: true,
     },
@@ -865,6 +1056,7 @@ pub const NIST_PARAMS_P8_INTERNAL_LWE: DKGParamsRegular = DKGParamsRegular {
         super::raw_parameters::NIST_PARAM_PKE_MESSAGE_1_CARRY_1_PBS_KS_TUNIFORM_2M128,
         super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_1_CARRY_1_PBS_KS_TUNIFORM_2M128,
     )),
+    compression_decompression_parameters: None,
     flag: true,
 };
 
@@ -890,6 +1082,7 @@ pub const NIST_PARAMS_P32_INTERNAL_LWE: DKGParamsRegular = DKGParamsRegular {
         super::raw_parameters::NIST_PARAM_PKE_MESSAGE_2_CARRY_2_PBS_KS_TUNIFORM_2M128,
         super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_2_CARRY_2_PBS_KS_TUNIFORM_2M128,
     )),
+    compression_decompression_parameters: None,
     flag: true,
 };
 
@@ -916,6 +1109,7 @@ pub const NIST_PARAMS_P8_INTERNAL_FGLWE: DKGParamsRegular = DKGParamsRegular {
         super::raw_parameters::NIST_PARAM_PKE_MESSAGE_1_CARRY_1_KS_PBS_TUNIFORM_2M128,
         super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_1_CARRY_1_KS_PBS_TUNIFORM_2M128,
     )),
+    compression_decompression_parameters: None,
     flag: true,
 };
 
@@ -943,6 +1137,7 @@ pub const NIST_PARAMS_P32_INTERNAL_FGLWE: DKGParamsRegular = DKGParamsRegular {
         super::raw_parameters::NIST_PARAM_PKE_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
         super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
     )),
+    compression_decompression_parameters: None,
     flag: true,
 };
 

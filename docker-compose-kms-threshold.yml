@@ -38,7 +38,7 @@ services:
       /bin/sh -c "
       sleep 2 &&
       echo \"Threshold core setup\" &&
-      kms-gen-keys threshold --param-path parameters/small_test_params.json &&
+      kms-gen-keys threshold --param-test &&
       chmod +x /app/scripts/pub_key_to_minio.sh &&
       /app/scripts/pub_key_to_minio.sh &&
       kms-gen-tls-certs --ca-names dev-kms-core-1 dev-kms-core-2 dev-kms-core-3 dev-kms-core-4  &&

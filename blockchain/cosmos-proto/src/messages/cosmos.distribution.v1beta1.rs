@@ -38,7 +38,7 @@ impl ::prost::Name for Params {
 ///     number of outstanding delegations which ended the associated period (and
 ///     might need to read that record)
 ///   + number of slashes which ended the associated period (and might need to
-///     read that record)
+///   read that record)
 ///   + one per validator for the zeroeth period, set on initialization
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

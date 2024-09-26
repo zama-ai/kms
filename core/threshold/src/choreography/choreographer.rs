@@ -398,7 +398,7 @@ impl ChoreoRuntime {
             &dkg_params
                 .to_param()
                 .get_params_basics_handle()
-                .to_classic_pbs_parameters(),
+                .get_compact_pk_enc_params(),
             None,
         )? as u128;
         let crs_gen_params = bincode::serialize(&CrsGenParams {

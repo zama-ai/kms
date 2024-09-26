@@ -10,9 +10,8 @@ use crate::{
 };
 
 use super::{
-    lwe_key::LweSecretKeyShare,
-    randomness::{EncryptionType, MPCEncryptionRandomGenerator},
-    utils::slice_wrapping_dot_product,
+    lwe_key::LweSecretKeyShare, parameters::EncryptionType,
+    randomness::MPCEncryptionRandomGenerator, utils::slice_wrapping_dot_product,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]

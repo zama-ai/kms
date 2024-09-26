@@ -7,13 +7,7 @@ public_storage_url = "file://./keys"
 private_storage_url = "file://./keys"
 
 # maximum grpc message size in bytes
-grpc_max_message_size = 10485760 # 10 MiB
-
-# The keys must match the keys of the ParamChoice type, in kms.proto.
-# More specifically, names must all be lower-case; e.g. "test" or "default"
-[param_file_map]
-test = "parameters/small_test_params.json"
-default = "parameters/default_params.json"
+grpc_max_message_size = 20971520 # 20 MiB
 
 [tracing]
 service_name = "kms-centralized"

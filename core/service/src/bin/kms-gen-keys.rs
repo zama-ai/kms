@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use core::fmt;
+use kms_lib::consts::{DEFAULT_PARAM, TEST_PARAM};
 use kms_lib::kms::ParamChoice;
 use kms_lib::{
     conf::init_trace, consts::SIGNING_KEY_ID, kms::RequestId,
@@ -39,7 +40,7 @@ use serde::{Deserialize, Serialize};
     Use the threshold protocols to generate FHE key shares. \
     But observe that threshold mode should only be used for testing since keys will get generated centrally. \n
     For example, to generate centralized keys with the default parameters \
-    (from parameters/default_params.json) run: \n
+    run: \n
     ./kms-gen-keys centralized \n
     Multiple options are supported which can be explored with \
     kms-key-gen --help")]
@@ -61,9 +62,9 @@ enum ConstructCommand {
 enum Mode {
     /// Generate centralized FHE keys, signing keys and the CRS.
     Centralized {
-        /// Path to the parameters file.
-        #[clap(long, default_value = "parameters/default_params.json")]
-        param_path: String,
+        /// Specify whether to use test parameters or not.
+        #[clap(long, default_value_t = false)]
+        param_test: bool,
         /// AWS region to use for S3 storage
         #[clap(long, default_value = "eu-west-3")]
         aws_region: String,
@@ -96,9 +97,9 @@ enum Mode {
     /// The FHE key shares should only be used for testing.
     /// At the moment it's only limited to 4 parties.
     Threshold {
-        /// Path to the parameters file
-        #[clap(long, default_value = "parameters/default_params.json")]
-        param_path: String,
+        /// Specify whether to use test parameters or not.
+        #[clap(long, default_value_t = false)]
+        param_test: bool,
         /// AWS region to use for S3 storage
         #[clap(long, default_value = "eu-west-3")]
         aws_region: String,
@@ -128,7 +129,6 @@ enum Mode {
 struct CentralCmdArgs<'a, S: Storage> {
     pub_storage: &'a mut S,
     priv_storage: &'a mut S,
-    param_path: &'a str,
     deterministic: bool,
     overwrite: bool,
     write_privkey: bool,
@@ -138,7 +138,6 @@ struct CentralCmdArgs<'a, S: Storage> {
 struct ThresholdCmdArgs<'a, S: Storage> {
     pub_storages: &'a mut [S],
     priv_storages: &'a mut [S],
-    param_path: &'a str,
     deterministic: bool,
     overwrite: bool,
     show_existing: bool,
@@ -148,8 +147,8 @@ struct ThresholdCmdArgs<'a, S: Storage> {
 /// Key generation is supported for 2 different modes; centralized and threshold.
 /// However, the threshold mode should only be used for testing since keys will get generated centrally.
 ///
-/// For example, to generate centralized keys with the default parameters
-/// (from parameters/default_params.json) run:
+/// For example, to generate centralized keys with the default blockchain parameters
+///  run:
 /// ```
 /// ./kms-gen-keys centralized
 /// ```
@@ -167,7 +166,6 @@ async fn main() {
     let args = Args::parse();
     match args.mode {
         Mode::Centralized {
-            param_path,
             aws_region,
             priv_url,
             pub_url,
@@ -176,6 +174,7 @@ async fn main() {
             write_privkey,
             show_existing,
             cmd,
+            param_test,
         } => {
             let mut pub_storage =
                 make_central_proxy_storage(pub_url, &aws_region, StorageType::PUB)
@@ -189,7 +188,6 @@ async fn main() {
             let mut cmdargs = CentralCmdArgs {
                 pub_storage: &mut pub_storage,
                 priv_storage: &mut priv_storage,
-                param_path: param_path.as_str(),
                 deterministic,
                 overwrite,
                 write_privkey,
@@ -197,15 +195,14 @@ async fn main() {
             };
 
             if cmd == ConstructCommand::All {
-                handle_central_cmd(&mut cmdargs, ConstructCommand::SigningKeys).await;
-                handle_central_cmd(&mut cmdargs, ConstructCommand::FheKeys).await;
-                handle_central_cmd(&mut cmdargs, ConstructCommand::Crs).await;
+                handle_central_cmd(param_test, &mut cmdargs, ConstructCommand::SigningKeys).await;
+                handle_central_cmd(param_test, &mut cmdargs, ConstructCommand::FheKeys).await;
+                handle_central_cmd(param_test, &mut cmdargs, ConstructCommand::Crs).await;
             } else {
-                handle_central_cmd(&mut cmdargs, cmd).await;
+                handle_central_cmd(param_test, &mut cmdargs, cmd).await;
             }
         }
         Mode::Threshold {
-            param_path,
             aws_region,
             priv_url,
             pub_url,
@@ -213,6 +210,7 @@ async fn main() {
             overwrite,
             show_existing,
             cmd,
+            param_test,
         } => {
             let mut pub_storages = make_threshold_proxy_storage(
                 pub_url,
@@ -234,27 +232,33 @@ async fn main() {
             let mut cmdargs = ThresholdCmdArgs {
                 pub_storages: &mut pub_storages,
                 priv_storages: &mut priv_storages,
-                param_path: param_path.as_str(),
                 deterministic,
                 overwrite,
                 show_existing,
             };
 
             if cmd == ConstructCommand::All {
-                handle_threshold_cmd(&mut cmdargs, ConstructCommand::SigningKeys).await;
-                handle_threshold_cmd(&mut cmdargs, ConstructCommand::FheKeys).await;
-                handle_threshold_cmd(&mut cmdargs, ConstructCommand::Crs).await;
+                handle_threshold_cmd(param_test, &mut cmdargs, ConstructCommand::SigningKeys).await;
+                handle_threshold_cmd(param_test, &mut cmdargs, ConstructCommand::FheKeys).await;
+                handle_threshold_cmd(param_test, &mut cmdargs, ConstructCommand::Crs).await;
             } else {
-                handle_threshold_cmd(&mut cmdargs, cmd).await;
+                handle_threshold_cmd(param_test, &mut cmdargs, cmd).await;
             }
         }
     }
 }
 
 async fn handle_central_cmd<'a, S: Storage>(
+    param_test: bool,
     args: &mut CentralCmdArgs<'a, S>,
     cmd: ConstructCommand,
 ) {
+    let params = if param_test {
+        TEST_PARAM
+    } else {
+        DEFAULT_PARAM
+    };
+
     match cmd {
         ConstructCommand::All => {
             panic!("\"All\" command must be handled in an outer call");
@@ -291,7 +295,7 @@ async fn handle_central_cmd<'a, S: Storage>(
             if !ensure_central_keys_exist(
                 args.pub_storage,
                 args.priv_storage,
-                args.param_path,
+                params,
                 &DEFAULT_CENTRAL_KEY_ID,
                 &OTHER_CENTRAL_DEFAULT_ID,
                 args.deterministic,
@@ -318,7 +322,7 @@ async fn handle_central_cmd<'a, S: Storage>(
                 args.pub_storage,
                 args.priv_storage,
                 ParamChoice::Default,
-                args.param_path,
+                params,
                 &DEFAULT_CRS_ID,
                 args.deterministic,
             )
@@ -334,9 +338,16 @@ async fn handle_central_cmd<'a, S: Storage>(
 }
 
 async fn handle_threshold_cmd<'a, S: Storage>(
+    param_test: bool,
     args: &mut ThresholdCmdArgs<'a, S>,
     cmd: ConstructCommand,
 ) {
+    let params = if param_test {
+        TEST_PARAM
+    } else {
+        DEFAULT_PARAM
+    };
+
     match cmd {
         ConstructCommand::All => panic!("\"All\" command must be handled in an outer call"),
         ConstructCommand::SigningKeys => {
@@ -387,7 +398,7 @@ async fn handle_threshold_cmd<'a, S: Storage>(
             if !ensure_threshold_keys_exist(
                 args.pub_storages,
                 args.priv_storages,
-                args.param_path,
+                params,
                 &DEFAULT_THRESHOLD_KEY_ID,
                 args.deterministic,
             )
@@ -418,7 +429,7 @@ async fn handle_threshold_cmd<'a, S: Storage>(
                 args.pub_storages,
                 args.priv_storages,
                 ParamChoice::Default,
-                args.param_path,
+                params,
                 &DEFAULT_CRS_ID,
                 args.deterministic,
             )

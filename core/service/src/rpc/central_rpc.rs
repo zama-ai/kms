@@ -3,8 +3,6 @@ use super::rpc_types::{
     PublicParameterWithParamID, SignedPubDataHandleInternal, CURRENT_FORMAT_VERSION,
 };
 use crate::conf::centralized::CentralizedConfig;
-#[cfg(any(test, feature = "testing"))]
-use crate::consts::{DEFAULT_PARAM_PATH, TEST_PARAM_PATH};
 use crate::cryptography::central_kms::verify_eip712;
 use crate::cryptography::central_kms::{
     async_generate_crs, async_generate_fhe_keys, async_reencrypt, central_decrypt, BaseKmsStruct,
@@ -26,7 +24,6 @@ use crate::storage::{
     store_versioned_at_request_id,
 };
 use crate::storage::{read_versioned_at_request_id, Storage};
-use crate::util::file_handling::read_as_json;
 use crate::util::meta_store::{handle_res_mapping, HandlerStatus};
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
 use alloy_primitives::Address;
@@ -34,7 +31,7 @@ use alloy_sol_types::Eip712Domain;
 use conf_trace::telemetry::accept_trace;
 use conf_trace::telemetry::make_span;
 use conf_trace::telemetry::record_trace_id;
-use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
+use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
@@ -55,7 +52,7 @@ pub async fn server_handle<
     private_storage: PrivS,
 ) -> anyhow::Result<()> {
     let socket = config.get_socket_addr()?;
-    let kms = SoftwareKms::new(config.param_file_map, public_storage, private_storage).await?;
+    let kms = SoftwareKms::new(public_storage, private_storage).await?;
     tracing::info!("Starting centralized KMS server ...");
     let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
     health_reporter
@@ -143,7 +140,7 @@ impl<
         )?;
         validate_request_id(&req_id)?;
         let (params, _) = tonic_handle_potential_err(
-            retrieve_parameters_sync(inner.params, self.param_file_map.clone()).await,
+            retrieve_parameters(inner.params),
             "Parameter choice is not recognized".to_string(),
         )?;
         {
@@ -589,7 +586,7 @@ impl<
         let request_id = tonic_some_or_err(inner.request_id, "Request ID is not set".to_string())?;
         validate_request_id(&request_id)?;
         let (params, param_choice) = tonic_handle_potential_err(
-            retrieve_parameters_sync(inner.params, self.param_file_map.clone()).await,
+            retrieve_parameters(inner.params),
             "Parameter choice is not recognized".to_string(),
         )?;
         {
@@ -725,12 +722,10 @@ impl<
         validate_request_id(&request_id)?;
 
         let public_storage = Arc::clone(&self.public_storage);
-        let param_file_map = Arc::clone(&self.param_file_map);
 
         non_blocking_zk_verify(
             meta_store,
             public_storage,
-            param_file_map,
             request_id.clone(),
             request.into_inner(),
         )
@@ -757,7 +752,6 @@ impl<
 pub(crate) async fn non_blocking_zk_verify<PubS>(
     meta_store: Arc<RwLock<crate::util::meta_store::MetaStore<ZkVerifyResponsePayload>>>,
     public_storage: Arc<Mutex<PubS>>,
-    param_file_map: Arc<RwLock<HashMap<ParamChoice, String>>>,
     request_id: RequestId,
     request: ZkVerifyRequest,
 ) -> anyhow::Result<()>
@@ -769,7 +763,7 @@ where
         guarded_meta_store.insert(&request_id)?;
     }
     let _handle = tokio::spawn(async move {
-        let res = zk_verify(request, public_storage, param_file_map).await;
+        let res = zk_verify(request, public_storage).await;
 
         let mut guarded_meta_store = meta_store.write().await;
         match res {
@@ -830,7 +824,6 @@ where
 async fn zk_verify<PubS>(
     inner: ZkVerifyRequest,
     public_storage: Arc<Mutex<PubS>>,
-    param_file_map: Arc<RwLock<HashMap<ParamChoice, String>>>,
 ) -> anyhow::Result<ZkVerifyResponsePayload>
 where
     PubS: Storage + Sync + Send + 'static,
@@ -864,17 +857,19 @@ where
             tracing::error!("Failed to fetch pk with handle {} ({e})", key_handle);
         })?;
 
-    let (params, _) = retrieve_parameters_sync(pp_with_id.param_id, param_file_map.clone())
-        .await
-        .inspect_err(|e| {
-            tracing::error!(
-                "Parameter {} choice is not recognized ({e})",
-                pp_with_id.param_id
-            );
-        })?;
+    let (params, _) = retrieve_parameters(pp_with_id.param_id).inspect_err(|e| {
+        tracing::error!(
+            "Parameter {} choice is not recognized ({e})",
+            pp_with_id.param_id
+        );
+    })?;
     let pp = pp_with_id
         .pp
-        .try_into_tfhe_zk_pok_pp(&params.ciphertext_parameters)
+        .try_into_tfhe_zk_pok_pp(
+            &params
+                .get_params_basics_handle()
+                .get_compact_pk_enc_params(),
+        )
         .inspect_err(|e| {
             tracing::error!("could not cast pp for handle {} ({e})", crs_handle);
         })?;
@@ -954,38 +949,9 @@ pub(crate) fn convert_key_response(
         .collect()
 }
 
-#[cfg(any(test, feature = "testing"))]
-pub(crate) fn default_param_file_map() -> HashMap<String, String> {
-    HashMap::from_iter(vec![
-        (
-            ParamChoice::as_str_name(&ParamChoice::Test).to_string(),
-            TEST_PARAM_PATH.to_string(),
-        ),
-        (
-            ParamChoice::as_str_name(&ParamChoice::Default).to_string(),
-            DEFAULT_PARAM_PATH.to_string(),
-        ),
-    ])
-}
-
-pub(crate) async fn retrieve_parameters(
-    param_choice: i32,
-    param_file_map: &HashMap<ParamChoice, String>,
-) -> anyhow::Result<(NoiseFloodParameters, ParamChoice)> {
+pub(crate) fn retrieve_parameters(param_choice: i32) -> anyhow::Result<(DKGParams, ParamChoice)> {
     let param_choice = ParamChoice::try_from(param_choice)?;
-    let param_path = param_file_map
-        .get(&param_choice)
-        .ok_or_else(|| anyhow::anyhow!("parameter does not exist"))?;
-    let params: NoiseFloodParameters = read_as_json(param_path).await?;
-    Ok((params, param_choice))
-}
-
-pub(crate) async fn retrieve_parameters_sync(
-    param_choice: i32,
-    param_file_map: Arc<RwLock<HashMap<ParamChoice, String>>>,
-) -> anyhow::Result<(NoiseFloodParameters, ParamChoice)> {
-    let guarded_map = param_file_map.read().await;
-    retrieve_parameters(param_choice, &guarded_map).await
+    Ok((param_choice.into(), param_choice))
 }
 
 /// Validates a reencryption request and returns ciphertext, FheType, request digest, client

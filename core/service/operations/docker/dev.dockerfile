@@ -57,12 +57,11 @@ ENV PATH="$PATH:/app/kms/core/service/bin"
 # Copy the binaries from the base stage
 COPY --from=base /app/kms/core/service/bin/ /app/kms/core/service/bin/
 COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/kms/core/service/bin/
-COPY ./core/service/parameters/ /app/kms/core/service/parameters/
 COPY ./core/service/config/ /app/kms/core/service/config/
 
 # For dev purposes
 COPY ./blockchain/scripts/pub_key_to_minio.sh /app/scripts/pub_key_to_minio.sh
 
-RUN /app/kms/core/service/bin/kms-gen-keys centralized --param-path /app/kms/core/service/parameters/default_params.json --overwrite --write-privkey
+RUN /app/kms/core/service/bin/kms-gen-keys centralized --overwrite --write-privkey
 
 CMD ["kms-server", "centralized"]

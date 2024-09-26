@@ -43,7 +43,6 @@ use crate::execution::runtime::session::SmallSession;
 use crate::execution::runtime::session::{BaseSessionStruct, ParameterHandles};
 use crate::execution::runtime::session::{DecryptionMode, LargeSession, SessionParameters};
 use crate::execution::tfhe_internals::parameters::DKGParams;
-use crate::execution::tfhe_internals::parameters::NoiseFloodParameters;
 use crate::execution::zk::ceremony::{Ceremony, PublicParameter, RealCeremony};
 use crate::networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
 use crate::networking::{NetworkMode, NetworkingStrategy};
@@ -645,45 +644,41 @@ impl Choreography for GrpcChoreography {
         let dkg_params = kg_result_params.dkg_params;
 
         if let Some(dkg_params) = dkg_params {
-            if let DKGParams::WithSnS(dkg_params) = dkg_params {
-                let role_assignments: HashMap<Role, Identity> =
-                    bincode::deserialize(&request.role_assignment).map_err(|e| {
-                        tonic::Status::new(
-                            tonic::Code::Aborted,
-                            format!("Failed to parse role assignment: {:?}", e),
-                        )
-                    })?;
-                let params = SessionParameters::new(
-                    0,
-                    session_id,
-                    self.own_identity.clone(),
-                    role_assignments.clone(),
-                )
-                .map_err(|e| {
+            let role_assignments: HashMap<Role, Identity> =
+                bincode::deserialize(&request.role_assignment).map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
-                        format!("Failed to create a base session parameters: {:?}", e),
+                        format!("Failed to parse role assignment: {:?}", e),
                     )
                 })?;
-
-                //We are running a fake dkg, network mode doesn't matter here
-                let networking =
-                    (self.networking_strategy)(session_id, role_assignments, NetworkMode::Async);
-
-                //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
-                let mut base_session =
-                    BaseSessionStruct::new(params, networking, AesRng::from_entropy()).map_err(
-                        |e| {
-                            tonic::Status::new(
-                                tonic::Code::Aborted,
-                                format!("Failed to create Base Session: {:?}", e),
-                            )
-                        },
-                    )?;
-                let keys = local_initialize_key_material(
-                    &mut base_session,
-                    dkg_params.to_noiseflood_parameters(),
+            let params = SessionParameters::new(
+                0,
+                session_id,
+                self.own_identity.clone(),
+                role_assignments.clone(),
+            )
+            .map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("Failed to create a base session parameters: {:?}", e),
                 )
+            })?;
+
+            //We are running a fake dkg, network mode doesn't matter here
+            let networking =
+                (self.networking_strategy)(session_id, role_assignments, NetworkMode::Async);
+
+            //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
+            let mut base_session =
+                BaseSessionStruct::new(params, networking, AesRng::from_entropy()).map_err(
+                    |e| {
+                        tonic::Status::new(
+                            tonic::Code::Aborted,
+                            format!("Failed to create Base Session: {:?}", e),
+                        )
+                    },
+                )?;
+            let keys = local_initialize_key_material(&mut base_session, dkg_params)
                 .await
                 .map_err(|e| {
                     tonic::Status::new(
@@ -691,20 +686,17 @@ impl Choreography for GrpcChoreography {
                         format!("Failed to do centralised key generation {:?}", e),
                     )
                 })?;
-                self.data
-                    .key_store
-                    .insert(session_id, Arc::new(keys.clone()));
-                return Ok(tonic::Response::new(ThresholdKeyGenResultResponse {
-                    pub_keyset: bincode::serialize(&keys.0).map_err(|e| {
-                        tonic::Status::new(
-                            tonic::Code::Aborted,
-                            format!("Failed to serialize pubkey: {:?}", e),
-                        )
-                    })?,
-                }));
-            } else {
-                return Err(tonic::Status::new(tonic::Code::Aborted,"Centralised key generation is only available for parameters with Switch and Squash. Please retry".to_string()));
-            }
+            self.data
+                .key_store
+                .insert(session_id, Arc::new(keys.clone()));
+            return Ok(tonic::Response::new(ThresholdKeyGenResultResponse {
+                pub_keyset: bincode::serialize(&keys.0).map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("Failed to serialize pubkey: {:?}", e),
+                    )
+                })?,
+            }));
         } else {
             let keys = self.data.key_store.get(&session_id);
             if let Some(keys) = keys {
@@ -1285,7 +1277,7 @@ impl Choreography for GrpcChoreography {
 #[cfg(feature = "testing")]
 async fn local_initialize_key_material(
     session: &mut BaseSession,
-    params: NoiseFloodParameters,
+    params: DKGParams,
 ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet)> {
     let _tracing_subscribe =
         tracing::subscriber::set_default(tracing::subscriber::NoSubscriber::new());
@@ -1295,7 +1287,7 @@ async fn local_initialize_key_material(
 #[cfg(not(feature = "testing"))]
 async fn local_initialize_key_material(
     _session: &mut BaseSession,
-    _params: NoiseFloodParameters,
+    _params: DKGParams,
 ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet)> {
     panic!("Require the testing feature on the moby cluster to perform a local intialization of the keys")
 }

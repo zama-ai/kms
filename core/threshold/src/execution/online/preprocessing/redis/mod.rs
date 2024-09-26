@@ -79,6 +79,7 @@ pub enum CorrelatedRandomnessType {
     NoiseLweHat,
     NoiseGlwe,
     NoiseGlweSnS,
+    NoiseCompressionKSK,
 }
 
 impl CorrelatedRandomnessType {
@@ -108,6 +109,7 @@ impl CorrelatedRandomnessType {
             CorrelatedRandomnessType::NoiseLweHat => "_noise_lwe_hat",
             CorrelatedRandomnessType::NoiseGlwe => "_noise_glwe",
             CorrelatedRandomnessType::NoiseGlweSnS => "_noise_glwe_sns",
+            CorrelatedRandomnessType::NoiseCompressionKSK => "_noise_compression_ksk",
         }
     }
 }

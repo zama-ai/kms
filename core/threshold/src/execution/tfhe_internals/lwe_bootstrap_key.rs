@@ -27,7 +27,7 @@ use crate::{
     },
 };
 
-use super::{ggsw_ciphertext::GgswCiphertextShare, randomness::EncryptionType};
+use super::{ggsw_ciphertext::GgswCiphertextShare, parameters::EncryptionType};
 
 //Note: We assume all the ggsw ctxt in the list have same parameters
 #[derive(Clone)]

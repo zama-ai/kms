@@ -1,13 +1,11 @@
 use crate::conf::storage::StorageConfigWith;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use url::Url;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct CentralizedConfig {
     pub url: String,
-    pub param_file_map: HashMap<String, String>,
     pub grpc_max_message_size: usize,
 }
 

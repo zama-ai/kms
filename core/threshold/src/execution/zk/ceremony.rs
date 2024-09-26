@@ -13,7 +13,7 @@ use rand::{CryptoRng, Rng};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, Mul, Neg};
-use tfhe::shortint::ClassicPBSParameters;
+use tfhe::shortint::parameters::CompactPublicKeyEncryptionParameters;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use tfhe_zk_pok::{
     curve_api::{bls12_446 as curve, CurveGroupOps},
@@ -48,23 +48,12 @@ struct MetaParameter {
 }
 
 fn compute_meta_parameter(
-    params: &ClassicPBSParameters,
+    params: &CompactPublicKeyEncryptionParameters,
     max_num_bits: Option<u32>,
 ) -> anyhow::Result<MetaParameter> {
-    let params: tfhe::shortint::PBSParameters = (*params).into();
-    let (size, noise_distribution) = match params.encryption_key_choice() {
-        tfhe::shortint::EncryptionKeyChoice::Big => {
-            let size = params
-                .glwe_dimension()
-                .to_equivalent_lwe_dimension(params.polynomial_size());
-            (size, params.glwe_noise_distribution())
-        }
-        tfhe::shortint::EncryptionKeyChoice::Small => {
-            (params.lwe_dimension(), params.lwe_noise_distribution())
-        }
-    };
-
-    let mut plaintext_modulus = (params.message_modulus().0 * params.carry_modulus().0) as u64;
+    let size = params.encryption_lwe_dimension;
+    let noise_distribution = params.encryption_noise_distribution;
+    let mut plaintext_modulus = (params.message_modulus.0 * params.carry_modulus.0) as u64;
     // Our plaintext modulus does not take into account the bit of padding
     plaintext_modulus *= 2;
 
@@ -76,7 +65,7 @@ fn compute_meta_parameter(
         size,
         max_num_cleartext,
         noise_distribution,
-        params.ciphertext_modulus(),
+        params.ciphertext_modulus,
         plaintext_modulus,
     )?;
     let (n, big_d, b_r) = tfhe_zk_pok::proofs::pke::compute_crs_params(d.0, k, b, q, t);
@@ -95,7 +84,7 @@ fn compute_meta_parameter(
 }
 
 pub fn compute_witness_dim(
-    params: &ClassicPBSParameters,
+    params: &CompactPublicKeyEncryptionParameters,
     max_num_bits: Option<u32>,
 ) -> anyhow::Result<usize> {
     Ok(compute_meta_parameter(params, max_num_bits)?.n)
@@ -157,7 +146,7 @@ where
 impl PublicParameter {
     pub fn try_into_tfhe_zk_pok_pp(
         &self,
-        params: &ClassicPBSParameters,
+        params: &CompactPublicKeyEncryptionParameters,
     ) -> anyhow::Result<pke::PublicParams<tfhe_zk_pok::curve_api::Bls12_446>> {
         let MetaParameter {
             big_d,
@@ -224,7 +213,7 @@ impl PublicParameter {
     }
 
     pub fn new_from_tfhe_param(
-        params: &ClassicPBSParameters,
+        params: &CompactPublicKeyEncryptionParameters,
         max_num_bits: Option<u32>,
     ) -> anyhow::Result<Self> {
         let meta_param = compute_meta_parameter(params, max_num_bits)?;
@@ -340,7 +329,7 @@ fn make_partial_proof_deterministic(
 }
 
 pub fn make_centralized_public_parameters<R: Rng + CryptoRng>(
-    params: &ClassicPBSParameters,
+    params: &CompactPublicKeyEncryptionParameters,
     max_num_bits: Option<u32>,
     rng: &mut R,
 ) -> anyhow::Result<PublicParameter> {

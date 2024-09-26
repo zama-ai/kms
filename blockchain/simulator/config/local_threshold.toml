@@ -1,9 +1,10 @@
 key_id = "d4d17a412a6533599b010c8ffc3d6ebdc6b1cfad"
 key_folder = "PUB-p1"
-key_endpoint = "http://localhost:9000/publickeys"
+s3_endpoint = "http://localhost:9000/kms"
 validator_addresses = ["http://localhost:9090"]
 http_validator_endpoints = ["http://localhost:36657"]
 kv_store_address = "http://localhost:8088"
 contract = "wasm14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9s0phg4d"
 mnemonic = "whisper stereo great helmet during hollow nominee skate frown daughter donor pool ozone few find risk cigar practice essay sketch rhythm novel dumb host"
 faucet_address = "http://localhost:8000"
+

@@ -5,10 +5,10 @@ use super::{
 };
 use crate::consts::RND_SIZE;
 use crate::cryptography::signcryption::Reencrypt;
+use crate::kms::FheType;
 use crate::kms::ReencryptionRequest;
 #[cfg(feature = "non-wasm")]
-use crate::kms::RequestId;
-use crate::kms::{FheType, ParamChoice};
+use crate::kms::{ParamChoice, RequestId};
 use crate::kms::{TypedCiphertext, ZkVerifyResponsePayload};
 use crate::rpc::rpc_types::PublicParameterWithParamID;
 use crate::rpc::rpc_types::SignedPubDataHandleInternal;
@@ -33,7 +33,7 @@ use anyhow::Context;
 use bincode::{deserialize, serialize};
 #[cfg(feature = "non-wasm")]
 use distributed_decryption::execution::endpoints::keygen::FhePubKeySet;
-use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
+use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 #[cfg(feature = "non-wasm")]
 use distributed_decryption::execution::zk::ceremony::make_centralized_public_parameters;
 use k256::ecdsa::SigningKey;
@@ -74,7 +74,7 @@ pub fn gen_sig_keys<R: CryptoRng + Rng>(rng: &mut R) -> (PublicSigKey, PrivateSi
 #[cfg(feature = "non-wasm")]
 pub async fn async_generate_fhe_keys(
     sk: &PrivateSigKey,
-    params: NoiseFloodParameters,
+    params: DKGParams,
     seed: Option<Seed>,
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
     let (send, recv) = tokio::sync::oneshot::channel();
@@ -91,7 +91,7 @@ pub async fn async_generate_crs(
     sk: &PrivateSigKey,
     rng: AesRng,
     param_choice: ParamChoice,
-    params: NoiseFloodParameters,
+    params: DKGParams,
     max_num_bits: Option<u32>,
 ) -> anyhow::Result<(PublicParameterWithParamID, SignedPubDataHandleInternal)> {
     let (send, recv) = tokio::sync::oneshot::channel();
@@ -103,13 +103,10 @@ pub async fn async_generate_crs(
     recv.await?
 }
 
-//TODO(PKSK): Need to change this function when we want KMS to support the new parameters
-//that involve a new set of dedicated encryption keys and corresponding PKSK
-//also requires moving away from NoiseFloodParameters and use DKGParams everywhere
 #[cfg(feature = "non-wasm")]
 pub fn generate_fhe_keys(
     sk: &PrivateSigKey,
-    params: NoiseFloodParameters,
+    params: DKGParams,
     seed: Option<Seed>,
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
     let f = || -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
@@ -133,9 +130,19 @@ pub fn generate_fhe_keys(
 }
 
 #[cfg(feature = "non-wasm")]
-pub fn generate_client_fhe_key(params: NoiseFloodParameters, seed: Option<Seed>) -> ClientKey {
-    let pbs_params: ClassicPBSParameters = params.ciphertext_parameters;
+pub fn generate_client_fhe_key(params: DKGParams, seed: Option<Seed>) -> ClientKey {
+    let pbs_params: ClassicPBSParameters = params
+        .get_params_basics_handle()
+        .to_classic_pbs_parameters();
+
     let config = ConfigBuilder::with_custom_parameters(pbs_params);
+    let config = if let Some(dedicated_pk_params) =
+        params.get_params_basics_handle().get_dedicated_pk_params()
+    {
+        config.use_dedicated_compact_public_key_parameters(dedicated_pk_params)
+    } else {
+        config
+    };
     match seed {
         Some(seed) => ClientKey::generate_with_seed(config, seed),
         None => ClientKey::generate(config),
@@ -147,12 +154,17 @@ pub fn generate_client_fhe_key(params: NoiseFloodParameters, seed: Option<Seed>)
 pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     sk: &PrivateSigKey,
     param_choice: ParamChoice,
-    params: &NoiseFloodParameters,
+    params: &DKGParams,
     max_num_bits: Option<u32>,
     mut rng: R,
 ) -> anyhow::Result<(PublicParameterWithParamID, SignedPubDataHandleInternal)> {
-    let pp =
-        make_centralized_public_parameters(&params.ciphertext_parameters, max_num_bits, &mut rng)?;
+    let pp = make_centralized_public_parameters(
+        &params
+            .get_params_basics_handle()
+            .get_compact_pk_enc_params(),
+        max_num_bits,
+        &mut rng,
+    )?;
     let pp_id = PublicParameterWithParamID {
         pp,
         param_id: param_choice.into(),
@@ -325,7 +337,7 @@ pub struct SoftwareKmsKeys {
 #[cfg(test)]
 #[derive(Serialize, Deserialize)]
 pub struct CentralizedTestingKeys {
-    pub params: NoiseFloodParameters,
+    pub params: DKGParams,
     pub software_kms_keys: SoftwareKmsKeys,
     pub pub_fhe_keys: HashMap<RequestId, FhePubKeySet>,
     pub client_pk: PublicSigKey,
@@ -419,8 +431,6 @@ pub struct SoftwareKms<PubS: Storage, PrivS: Storage> {
     pub(crate) crs_meta_map: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
     // Map storing the completed zero-knowledge verification tasks.
     pub(crate) zk_payload_meta_map: Arc<RwLock<MetaStore<ZkVerifyResponsePayload>>>,
-    // Map storing the identity of parameters and the parameter file paths
-    pub(crate) param_file_map: Arc<RwLock<HashMap<ParamChoice, String>>>, // TODO this should be loaded once during boot
 }
 
 /// Perform asynchronous decryption and serialize the result
@@ -620,11 +630,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
     SoftwareKms<PubS, PrivS>
 {
-    pub async fn new(
-        param_file_map: HashMap<String, String>,
-        public_storage: PubS,
-        private_storage: PrivS,
-    ) -> anyhow::Result<Self> {
+    pub async fn new(public_storage: PubS, private_storage: PrivS) -> anyhow::Result<Self> {
         let sks: HashMap<RequestId, <PrivateSigKey as VersionizeOwned>::VersionedOwned> =
             read_all_data(&private_storage, &PrivDataType::SigningKey.to_string()).await?;
         let sk = PrivateSigKey::unversionize(get_exactly_one(sks).inspect_err(|_e| {
@@ -675,11 +681,6 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             );
         }
 
-        let param_file_map = Arc::new(RwLock::new(HashMap::from_iter(
-            param_file_map
-                .into_iter()
-                .filter_map(|(k, v)| ParamChoice::from_str_name(&k).map(|x| (x, v))),
-        )));
         Ok(SoftwareKms {
             base_kms: BaseKmsStruct::new(sk)?,
             public_storage: Arc::new(Mutex::new(public_storage)),
@@ -690,7 +691,6 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             reenc_meta_map: Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE))),
             crs_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(cs_w_status))),
             zk_payload_meta_map: Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE))),
-            param_file_map,
         })
     }
 }
@@ -727,11 +727,10 @@ pub(crate) mod tests {
     use super::{KmsFheKeyHandles, Storage};
     #[cfg(feature = "slow_tests")]
     use crate::consts::{
-        DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM_PATH,
-        OTHER_CENTRAL_DEFAULT_ID,
+        DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM, OTHER_CENTRAL_DEFAULT_ID,
     };
     use crate::consts::{OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID};
-    use crate::consts::{TEST_CENTRAL_KEYS_PATH, TEST_PARAM_PATH};
+    use crate::consts::{TEST_CENTRAL_KEYS_PATH, TEST_PARAM};
     use crate::cryptography::central_kms::CentralizedTestingKeys;
     use crate::cryptography::central_kms::SoftwareKmsKeys;
     use crate::cryptography::central_kms::{gen_sig_keys, SoftwareKms};
@@ -740,21 +739,18 @@ pub(crate) mod tests {
         decrypt_signcryption, ephemeral_signcryption_key_generation,
     };
     use crate::kms::{FheType, RequestId};
-    use crate::rpc::central_rpc::default_param_file_map;
     use crate::rpc::rpc_types::Kms;
     use crate::storage::{FileStorage, RamStorage, StorageType};
     use crate::util::file_handling::read_element;
     use crate::util::key_setup::test_tools::compute_cipher;
-    use crate::{
-        cryptography::central_kms::generate_fhe_keys,
-        util::file_handling::{read_as_json, write_element},
-    };
+    use crate::{cryptography::central_kms::generate_fhe_keys, util::file_handling::write_element};
     use aes_prng::AesRng;
-    use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
+    use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
     use rand::{RngCore, SeedableRng};
     use serial_test::serial;
     use std::collections::HashMap;
     use std::{path::Path, sync::Arc};
+    use tfhe::set_server_key;
     use tfhe::{shortint::ClassicPBSParameters, ConfigBuilder, Seed};
     use tokio::sync::OnceCell;
 
@@ -785,7 +781,7 @@ pub(crate) mod tests {
 
     async fn ensure_kms_test_keys() -> CentralizedTestingKeys {
         setup(
-            TEST_PARAM_PATH,
+            TEST_PARAM,
             &TEST_CENTRAL_KEY_ID.to_string(),
             &OTHER_CENTRAL_TEST_ID.to_string(),
             TEST_CENTRAL_KEYS_PATH,
@@ -796,7 +792,7 @@ pub(crate) mod tests {
     #[cfg(feature = "slow_tests")]
     pub(crate) async fn ensure_kms_default_keys() -> CentralizedTestingKeys {
         setup(
-            DEFAULT_PARAM_PATH,
+            DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID.to_string(),
             &OTHER_CENTRAL_DEFAULT_ID.to_string(),
             DEFAULT_CENTRAL_KEYS_PATH,
@@ -805,7 +801,7 @@ pub(crate) mod tests {
     }
 
     async fn setup(
-        param_path: &str,
+        dkg_params: DKGParams,
         key_id: &str,
         other_key_id: &str,
         key_path: &str,
@@ -816,13 +812,12 @@ pub(crate) mod tests {
 
         let mut rng = AesRng::seed_from_u64(100);
         let seed = Some(Seed(42));
-        let params: NoiseFloodParameters = read_as_json(param_path).await.unwrap();
         let (sig_pk, sig_sk) = gen_sig_keys(&mut rng);
-        let (pub_fhe_keys, key_info) = generate_fhe_keys(&sig_sk, params, seed).unwrap();
+        let (pub_fhe_keys, key_info) = generate_fhe_keys(&sig_sk, dkg_params, seed).unwrap();
         let mut key_info_map = HashMap::from([(key_id.to_string().try_into().unwrap(), key_info)]);
 
         let (other_pub_fhe_keys, other_key_info) =
-            generate_fhe_keys(&sig_sk, params, seed).unwrap();
+            generate_fhe_keys(&sig_sk, dkg_params, seed).unwrap();
 
         // Insert a key with another handle to setup a KMS with multiple keys
         key_info_map.insert(other_key_id.to_string().try_into().unwrap(), other_key_info);
@@ -836,7 +831,7 @@ pub(crate) mod tests {
         let server_keys = vec![sig_pk.clone()];
         let (client_pk, client_sk) = gen_sig_keys(&mut rng);
         let centralized_test_keys = CentralizedTestingKeys {
-            params,
+            params: dkg_params,
             client_pk,
             client_sk,
             server_keys,
@@ -928,13 +923,13 @@ pub(crate) mod tests {
         key_id: &RequestId,
     ) {
         let msg = 523u64;
-        let (ct, fhe_type) = compute_cipher(
-            msg.into(),
-            &keys.pub_fhe_keys.get(key_id).unwrap().public_key,
-        );
+        let (ct, fhe_type) = {
+            let pub_keys = keys.pub_fhe_keys.get(key_id).unwrap();
+            set_server_key(pub_keys.server_key.clone());
+            compute_cipher(msg.into(), &pub_keys.public_key)
+        };
         let kms = {
             let inner = SoftwareKms::new(
-                default_param_file_map(),
                 RamStorage::new(StorageType::PUB),
                 RamStorage::from_existing_keys(&keys.software_kms_keys)
                     .await
@@ -1036,9 +1031,11 @@ pub(crate) mod tests {
     >(
         inner: &SoftwareKms<PubS, PrivS>,
         key_handle: &RequestId,
-        params: NoiseFloodParameters,
+        params: DKGParams,
     ) {
-        let pbs_params: ClassicPBSParameters = params.ciphertext_parameters;
+        let pbs_params: ClassicPBSParameters = params
+            .get_params_basics_handle()
+            .to_classic_pbs_parameters();
         let config = ConfigBuilder::with_custom_parameters(pbs_params);
         let wrong_client_key = tfhe::ClientKey::generate(config);
         let mut key_info = inner.fhe_keys.write().await;
@@ -1071,13 +1068,14 @@ pub(crate) mod tests {
     ) {
         let msg = 42305u64;
         let mut rng = AesRng::seed_from_u64(1);
-        let (ct, fhe_type) = compute_cipher(
-            msg.into(),
-            &keys.pub_fhe_keys.get(key_handle).unwrap().public_key,
-        );
+        let (ct, fhe_type) = {
+            let pub_keys = keys.pub_fhe_keys.get(key_handle).unwrap();
+            set_server_key(pub_keys.server_key.clone());
+            compute_cipher(msg.into(), &pub_keys.public_key)
+        };
+
         let kms = {
             let mut inner = SoftwareKms::new(
-                default_param_file_map(),
                 RamStorage::new(StorageType::PUB),
                 RamStorage::from_existing_keys(&keys.software_kms_keys)
                     .await
@@ -1166,7 +1164,6 @@ pub(crate) mod tests {
         let keys = get_test_keys().await;
         let kms = {
             SoftwareKms::new(
-                default_param_file_map(),
                 RamStorage::new(StorageType::PUB),
                 RamStorage::from_existing_keys(&keys.software_kms_keys)
                     .await

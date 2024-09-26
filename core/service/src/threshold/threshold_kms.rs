@@ -5,7 +5,7 @@ use super::generic::{
     ZkVerifier,
 };
 use crate::conf::threshold::{PeerConf, ThresholdConfig};
-use crate::consts::{MINIMUM_SESSIONS_PREPROC, PRSS_EPOCH_ID, SEC_PAR};
+use crate::consts::{MINIMUM_SESSIONS_PREPROC, PRSS_EPOCH_ID};
 use crate::cryptography::central_kms::{compute_info, BaseKmsStruct};
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey};
 use crate::cryptography::signcryption::signcrypt;
@@ -18,7 +18,7 @@ use crate::kms::{
     ZkVerifyResponse, ZkVerifyResponsePayload,
 };
 use crate::rpc::central_rpc::{
-    convert_key_response, get_zk_verify_result, non_blocking_zk_verify, retrieve_parameters_sync,
+    convert_key_response, get_zk_verify_result, non_blocking_zk_verify, retrieve_parameters,
     tonic_handle_potential_err, tonic_some_or_err, validate_decrypt_req, validate_reencrypt_req,
     validate_request_id,
 };
@@ -54,9 +54,7 @@ use distributed_decryption::execution::runtime::session::{
     BaseSessionStruct, DecryptionMode, ParameterHandles, SessionParameters, SmallSession,
 };
 use distributed_decryption::execution::small_execution::prss::PRSSSetup;
-use distributed_decryption::execution::tfhe_internals::parameters::{
-    Ciphertext64, DKGParams, DKGParamsRegular, DKGParamsSnS, NoiseFloodParameters,
-};
+use distributed_decryption::execution::tfhe_internals::parameters::{Ciphertext64, DKGParams};
 use distributed_decryption::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
 use distributed_decryption::execution::tfhe_internals::test_feature::initialize_key_material;
 use distributed_decryption::execution::zk::ceremony::{
@@ -75,6 +73,7 @@ use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use tfhe::integer::ciphertext::BaseRadixCiphertext;
 use tfhe::integer::IntegerCiphertext;
+use tfhe::shortint::list_compression::DecompressionKey;
 use tfhe::{
     FheBool, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32, FheUint4,
     FheUint64, FheUint8, Unversionize, Versionize,
@@ -142,7 +141,6 @@ pub async fn threshold_server_init<
         config.peer_confs,
         public_storage,
         private_storage,
-        config.param_file_map,
         cert_paths,
         config.core_to_core_net_conf,
         run_prss,
@@ -279,6 +277,7 @@ pub enum ThresholdFheKeysVersioned {
 pub struct ThresholdFheKeys {
     pub private_keys: PrivateKeySet,
     pub sns_key: SwitchAndSquashKey,
+    pub decompression_key: Option<DecompressionKey>,
     pub pk_meta_data: DkgMetaStore,
 }
 
@@ -366,7 +365,6 @@ async fn new_real_threshold_kms<PubS, PrivS>(
     peer_configs: Vec<PeerConf>,
     public_storage: PubS,
     private_storage: PrivS,
-    param_file_map: HashMap<String, String>,
     cert_paths: Option<CertificatePaths>,
     core_to_core_net_conf: Option<CoreToCoreNetworkConfig>,
     run_prss: bool,
@@ -491,12 +489,6 @@ where
         }
     });
 
-    let param_file_map = Arc::new(RwLock::new(HashMap::from_iter(
-        param_file_map
-            .into_iter()
-            .filter_map(|(k, v)| ParamChoice::from_str_name(&k).map(|x| (x, v))),
-    )));
-
     let networking_strategy: Arc<RwLock<NetworkingStrategy>> = Arc::new(RwLock::new(Box::new(
         move |session_id, roles, network_mode| {
             networking_manager.make_session(session_id, roles, network_mode)
@@ -565,7 +557,6 @@ where
         public_storage: Arc::clone(&public_storage),
         private_storage: Arc::clone(&private_storage),
         dkg_pubinfo_meta_store,
-        param_file_map: Arc::clone(&param_file_map),
         session_preparer: session_preparer.new_instance().await,
     };
 
@@ -577,7 +568,6 @@ where
         preproc_buckets,
         preproc_factory,
         num_sessions_preproc,
-        param_file_map: param_file_map.clone(),
         session_preparer: session_preparer.new_instance().await,
     };
 
@@ -586,13 +576,11 @@ where
         public_storage: Arc::clone(&public_storage),
         private_storage,
         crs_meta_store,
-        param_file_map: Arc::clone(&param_file_map),
         session_preparer,
     };
 
     let zkverifier = RealZkVerifier {
         base_kms,
-        param_file_map,
         zk_payload_meta_store,
         public_storage,
     };
@@ -1336,8 +1324,6 @@ pub struct RealKeyGenerator<
     public_storage: Arc<Mutex<PubS>>,
     private_storage: Arc<Mutex<PrivS>>,
     dkg_pubinfo_meta_store: Arc<RwLock<MetaStore<DkgMetaStore>>>,
-    // Map storing the identity of parameters and the parameter file paths
-    param_file_map: Arc<RwLock<HashMap<ParamChoice, String>>>,
     session_preparer: SessionPreparer,
 }
 
@@ -1362,7 +1348,6 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 public_storage: Arc::clone(&value.public_storage),
                 private_storage: Arc::clone(&value.private_storage),
                 dkg_pubinfo_meta_store: Arc::clone(&value.dkg_pubinfo_meta_store),
-                param_file_map: Arc::clone(&value.param_file_map),
                 session_preparer: value.session_preparer.new_instance().await,
             },
         }
@@ -1430,19 +1415,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         let _handle = tokio::spawn(async move {
             let dkg_res = match preproc_handle_w_mode {
                 PreprocHandleWithMode::Insecure => {
-                    let sns_parameters = match dkg_params {
-                        DKGParams::WithoutSnS(_dkgparams_regular) => {
-                            panic!("eventually we do not need to construct noiseflood parameters like this")
-                        }
-                        DKGParams::WithSnS(dkgparams_sn_s) => dkgparams_sn_s.sns_params,
-                    };
-                    let params = NoiseFloodParameters {
-                        ciphertext_parameters: dkg_params
-                            .get_params_basics_handle()
-                            .to_classic_pbs_parameters(),
-                        sns_parameters,
-                    };
-                    initialize_key_material(&mut base_session, params).await
+                    initialize_key_material(&mut base_session, dkg_params).await
                 }
                 PreprocHandleWithMode::Secure(mut preproc_handle) => {
                     distributed_keygen_z128(&mut base_session, preproc_handle.as_mut(), dkg_params)
@@ -1451,7 +1424,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             };
 
             //Make sure the dkg ended nicely
-            let (pub_key_set, private_keys) = match dkg_res {
+            let (mut pub_key_set, private_keys) = match dkg_res {
                 Ok((pk, sk)) => (pk, sk),
                 Err(e) => {
                     //If dkg errored out, update status
@@ -1490,6 +1463,24 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 }
             };
 
+            //Retrieve decompression key if there's one
+            let (
+                raw_server_key,
+                raw_ksk_material,
+                raw_compression_key,
+                raw_decompression_key,
+                raw_tag,
+            ) = pub_key_set.server_key.into_raw_parts();
+            let decompression_key = raw_decompression_key.clone().map(|dk| dk.into_raw_parts());
+
+            pub_key_set.server_key = tfhe::ServerKey::from_raw_parts(
+                raw_server_key,
+                raw_ksk_material,
+                raw_compression_key,
+                raw_decompression_key,
+                raw_tag,
+            );
+
             //Take lock on all the storage at once, so we either update everything or nothing
             let mut pub_storage = public_storage.lock().await;
             let mut priv_storage = private_storage.lock().await;
@@ -1497,6 +1488,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             let unversioned_keys = ThresholdFheKeys {
                 private_keys,
                 sns_key,
+                decompression_key,
                 pk_meta_data: info.clone(),
             };
             //Try to store the new data
@@ -1652,19 +1644,10 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         }
 
         //Retrieve kg params and preproc_id
-        let (params, _) = tonic_handle_potential_err(
-            retrieve_parameters_sync(inner.params, self.param_file_map.clone()).await,
+        let (dkg_params, _) = tonic_handle_potential_err(
+            retrieve_parameters(inner.params),
             "Parameter choice is not recognized".to_string(),
         )?;
-        let dkg_params = DKGParams::WithSnS(DKGParamsSnS {
-            regular_params: DKGParamsRegular {
-                sec: SEC_PAR,
-                ciphertext_parameters: params.ciphertext_parameters,
-                dedicated_compact_public_key_parameters: None,
-                flag: true,
-            },
-            sns_params: params.sns_parameters,
-        });
 
         let preproc_id = tonic_some_or_err(
             inner.preproc_id.clone(),
@@ -1734,7 +1717,6 @@ pub struct RealPreprocessor {
     preproc_buckets: Arc<RwLock<MetaStore<BucketMetaStore>>>,
     preproc_factory: Arc<Mutex<Box<dyn PreprocessorFactory>>>,
     num_sessions_preproc: u16,
-    param_file_map: Arc<RwLock<HashMap<ParamChoice, String>>>,
     session_preparer: SessionPreparer,
 }
 
@@ -1834,20 +1816,10 @@ impl KeyGenPreprocessor for RealPreprocessor {
         }
 
         //Retrieve the DKG parameters
-        let (params, _) = tonic_handle_potential_err(
-            retrieve_parameters_sync(inner.params, self.param_file_map.clone()).await,
+        let (dkg_params, _) = tonic_handle_potential_err(
+            retrieve_parameters(inner.params),
             "Parameter choice is not recognized".to_string(),
         )?;
-
-        let dkg_params = DKGParams::WithSnS(DKGParamsSnS {
-            regular_params: DKGParamsRegular {
-                sec: SEC_PAR,
-                ciphertext_parameters: params.ciphertext_parameters,
-                dedicated_compact_public_key_parameters: None,
-                flag: true,
-            },
-            sns_params: params.sns_parameters,
-        });
 
         //Ensure there's no entry in preproc buckets for that request_id
         let entry_exists = {
@@ -1912,7 +1884,6 @@ pub struct RealCrsGenerator<
     public_storage: Arc<Mutex<PubS>>,
     private_storage: Arc<Mutex<PrivS>>,
     crs_meta_store: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
-    param_file_map: Arc<RwLock<HashMap<ParamChoice, String>>>,
     session_preparer: SessionPreparer,
 }
 
@@ -2056,20 +2027,18 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             req_inner.request_id
         );
 
-        let (noiseflood_params, param_choice) = crate::rpc::central_rpc::retrieve_parameters_sync(
-            req_inner.params,
-            self.param_file_map.clone(),
-        )
-        .await
-        .map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::NotFound,
-                format!("Can not retrieve fhe parameters with error {e}"),
-            )
-        })?;
-        let fhe_params = noiseflood_params.ciphertext_parameters;
+        let (dkg_params, param_choice) =
+            crate::rpc::central_rpc::retrieve_parameters(req_inner.params).map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::NotFound,
+                    format!("Can not retrieve fhe parameters with error {e}"),
+                )
+            })?;
+        let crs_params = dkg_params
+            .get_params_basics_handle()
+            .get_compact_pk_enc_params();
         let witness_dim = tonic_handle_potential_err(
-            compute_witness_dim(&fhe_params, req_inner.max_num_bits),
+            compute_witness_dim(&crs_params, req_inner.max_num_bits),
             "witness dimension computation failed".to_string(),
         )?;
 
@@ -2106,7 +2075,6 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 
 pub struct RealZkVerifier<PubS: Storage + Sync + Send + 'static> {
     base_kms: BaseKmsStruct,
-    param_file_map: Arc<RwLock<HashMap<ParamChoice, String>>>,
     zk_payload_meta_store: Arc<RwLock<MetaStore<ZkVerifyResponsePayload>>>,
     public_storage: Arc<Mutex<PubS>>,
 }
@@ -2131,12 +2099,10 @@ impl<PubS: Storage + Sync + Send + 'static> ZkVerifier for RealZkVerifier<PubS> 
         validate_request_id(&request_id)?;
 
         let public_storage = Arc::clone(&self.public_storage);
-        let param_file_map = Arc::clone(&self.param_file_map);
 
         non_blocking_zk_verify(
             meta_store,
             public_storage,
-            param_file_map,
             request_id.clone(),
             request.into_inner(),
         )

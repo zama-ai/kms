@@ -1,8 +1,23 @@
+use distributed_decryption::execution::tfhe_internals::parameters::{
+    DKGParams, BC_PARAMS_SAM_SNS, PARAMS_TEST_BK_SNS,
+};
+
+use crate::kms::ParamChoice;
+
 // The amount of bytes in an ID (key handle, request ID etc.)
 pub const ID_LENGTH: usize = 20;
 pub const KEY_PATH_PREFIX: &str = "keys";
-pub const DEFAULT_PARAM_PATH: &str = "parameters/default_params.json";
-pub const TEST_PARAM_PATH: &str = "parameters/small_test_params.json";
+pub const DEFAULT_PARAM: DKGParams = BC_PARAMS_SAM_SNS;
+pub const TEST_PARAM: DKGParams = PARAMS_TEST_BK_SNS;
+
+impl From<ParamChoice> for DKGParams {
+    fn from(value: ParamChoice) -> Self {
+        match value {
+            ParamChoice::Test => TEST_PARAM,
+            ParamChoice::Default => DEFAULT_PARAM,
+        }
+    }
+}
 
 pub const SIG_SIZE: usize = 64; // a 32 byte r value and a 32 byte s value
 pub const RND_SIZE: usize = 128 / 8; // the amount of bytes used for sampling random values to stop brute-forcing or statistical attacks

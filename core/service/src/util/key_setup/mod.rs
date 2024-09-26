@@ -14,17 +14,16 @@ use crate::storage::{read_all_data, store_text_at_request_id};
 use crate::storage::{store_pk_at_request_id, Storage};
 use crate::storage::{store_versioned_at_request_id, FileStorage, StorageType};
 use crate::threshold::threshold_kms::{compute_all_info, ThresholdFheKeys};
-use crate::util::file_handling::read_as_json;
 use crate::{
     client::ClientDataType,
     consts::{AMOUNT_PARTIES, THRESHOLD},
 };
 use aes_prng::AesRng;
-use distributed_decryption::execution::tfhe_internals::{
-    parameters::NoiseFloodParameters,
-    test_feature::{gen_key_set, keygen_all_party_shares},
+use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
+use distributed_decryption::execution::{
+    tfhe_internals::test_feature::{gen_key_set, keygen_all_party_shares},
+    zk::ceremony::make_centralized_public_parameters,
 };
-use distributed_decryption::execution::zk::ceremony::make_centralized_public_parameters;
 use rand::SeedableRng;
 use std::collections::HashMap;
 use std::path::Path;
@@ -195,7 +194,7 @@ pub async fn ensure_central_crs_exists<S>(
     pub_storage: &mut S,
     priv_storage: &mut S,
     param_choice: ParamChoice,
-    param_path: &str,
+    dkg_params: DKGParams,
     crs_handle: &RequestId,
     deterministic: bool,
 ) -> bool
@@ -226,9 +225,9 @@ where
         return false;
     }
     let sk = get_signing_key(priv_storage).await;
-    let params: NoiseFloodParameters = read_as_json(param_path).await.unwrap();
     let mut rng = get_rng(deterministic, Some(0));
-    let (pp, crs_info) = gen_centralized_crs(&sk, param_choice, &params, None, &mut rng).unwrap();
+    let (pp, crs_info) =
+        gen_centralized_crs(&sk, param_choice, &dkg_params, None, &mut rng).unwrap();
 
     store_versioned_at_request_id(
         priv_storage,
@@ -262,7 +261,7 @@ where
 pub async fn ensure_central_keys_exist<S>(
     pub_storage: &mut S,
     priv_storage: &mut S,
-    param_path: &str,
+    dkg_params: DKGParams,
     key_id: &RequestId,
     other_key_id: &RequestId,
     deterministic: bool,
@@ -295,15 +294,14 @@ where
         return false;
     }
 
-    let params: NoiseFloodParameters = read_as_json(param_path).await.unwrap();
     let sk = get_signing_key(priv_storage).await;
     let seed = match deterministic {
         true => Some(Seed(42)),
         false => None,
     };
 
-    let (fhe_pub_keys_1, key_info_1) = generate_fhe_keys(&sk, params, seed).unwrap();
-    let (fhe_pub_keys_2, key_info_2) = generate_fhe_keys(&sk, params, seed).unwrap();
+    let (fhe_pub_keys_1, key_info_1) = generate_fhe_keys(&sk, dkg_params, seed).unwrap();
+    let (fhe_pub_keys_2, key_info_2) = generate_fhe_keys(&sk, dkg_params, seed).unwrap();
     let priv_fhe_map = HashMap::from([
         (key_id.clone(), key_info_1),
         (other_key_id.clone(), key_info_2),
@@ -461,7 +459,7 @@ where
 pub async fn ensure_threshold_keys_exist<S>(
     pub_storages: &mut [S],
     priv_storages: &mut [S],
-    param_path: &str,
+    dkg_params: DKGParams,
     key_id: &RequestId,
     deterministic: bool,
 ) -> bool
@@ -495,27 +493,34 @@ where
 
     let mut rng = get_rng(deterministic, Some(AMOUNT_PARTIES as u64));
 
-    let params: NoiseFloodParameters = match read_as_json(param_path).await {
-        Ok(x) => x,
-        Err(e) => panic!("Error opening params at {}: {}", param_path, e),
-    };
     let mut signing_keys = Vec::new();
     for cur_storage in priv_storages.iter() {
         signing_keys.push(get_signing_key(cur_storage).await);
     }
 
-    let key_set = gen_key_set(params, &mut rng);
+    let key_set = gen_key_set(dkg_params, &mut rng);
     let key_shares = keygen_all_party_shares(
         key_set.get_raw_lwe_client_key(),
         key_set.get_raw_glwe_client_key(),
         key_set.sns_secret_key.key,
-        params.ciphertext_parameters,
+        dkg_params
+            .get_params_basics_handle()
+            .to_classic_pbs_parameters(),
         &mut rng,
         AMOUNT_PARTIES,
         THRESHOLD,
     )
     .unwrap();
     let sns_key = key_set.public_keys.sns_key.to_owned().unwrap();
+
+    let decompression_key = key_set
+        .public_keys
+        .server_key
+        .to_owned()
+        .into_raw_parts()
+        .3
+        .map(|dk| dk.into_raw_parts());
+
     for i in 1..=AMOUNT_PARTIES {
         // Get first signing key
         let sk = &signing_keys[i - 1];
@@ -523,6 +528,7 @@ where
         let threshold_fhe_keys = ThresholdFheKeys {
             private_keys: key_shares[i - 1].to_owned(),
             sns_key: sns_key.clone(),
+            decompression_key: decompression_key.clone(),
             pk_meta_data: info,
         };
         store_pk_at_request_id(
@@ -575,7 +581,7 @@ pub async fn ensure_threshold_crs_exists<S>(
     pub_storages: &mut [S],
     priv_storages: &mut [S],
     param_choice: ParamChoice,
-    param_path: &str,
+    dkg_params: DKGParams,
     crs_handle: &RequestId,
     deterministic: bool,
 ) -> bool
@@ -610,11 +616,16 @@ where
         signing_keys.push(get_signing_key(cur_storage).await);
     }
 
-    let params: NoiseFloodParameters = read_as_json(param_path).await.unwrap();
     let mut rng = get_rng(deterministic, Some(AMOUNT_PARTIES as u64));
 
-    let pp =
-        make_centralized_public_parameters(&params.ciphertext_parameters, None, &mut rng).unwrap();
+    let pp = make_centralized_public_parameters(
+        &dkg_params
+            .get_params_basics_handle()
+            .get_compact_pk_enc_params(),
+        None,
+        &mut rng,
+    )
+    .unwrap();
     let pp_id = PublicParameterWithParamID {
         pp,
         param_id: param_choice.into(),

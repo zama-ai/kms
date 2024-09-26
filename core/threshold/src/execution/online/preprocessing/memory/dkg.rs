@@ -31,6 +31,7 @@ pub struct InMemoryDKGPreprocessing<Z: Ring> {
     available_noise_lwe_hat: Vec<Share<Z>>,
     available_noise_glwe: Vec<Share<Z>>,
     available_noise_oglwe: Vec<Share<Z>>,
+    available_noise_compression_key: Vec<Share<Z>>,
 }
 
 impl<Z: Ring> TriplePreprocessing<Z> for InMemoryDKGPreprocessing<Z> {
@@ -94,12 +95,14 @@ where
             NoiseBounds::LweHatNoise(_) => self.available_noise_lwe_hat.extend(noises),
             NoiseBounds::GlweNoise(_) => self.available_noise_glwe.extend(noises),
             NoiseBounds::GlweNoiseSnS(_) => self.available_noise_oglwe.extend(noises),
+            NoiseBounds::CompressionKSKNoise(_) => {
+                self.available_noise_compression_key.extend(noises)
+            }
         }
     }
 
     //Note that storing in noise format rather than raw bits saves space (and bandwidth for read/write)
     //We may want to store the noise depending on their distribution
-    //(2 or 3 diff distribution required for DKG depending on whether we need Switch and Squash keys)
     fn next_noise_vec(
         &mut self,
         amount: usize,
@@ -110,6 +113,7 @@ where
             NoiseBounds::LweHatNoise(_) => &mut self.available_noise_lwe_hat,
             NoiseBounds::GlweNoise(_) => &mut self.available_noise_glwe,
             NoiseBounds::GlweNoiseSnS(_) => &mut self.available_noise_oglwe,
+            NoiseBounds::CompressionKSKNoise(_) => &mut self.available_noise_compression_key,
         };
 
         if noise_distrib.len() >= amount {
