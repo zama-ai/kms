@@ -1,0 +1,105 @@
+syntax = "proto3";
+
+option java_multiple_files = true;
+option java_package = "io.grpc.fhevmcoprocessor";
+option java_outer_classname = "FhevmCoprocessor";
+option go_package = "./fhevm";
+
+package fhevm.coprocessor;
+
+import "common.proto";
+
+service FhevmCoprocessor {
+  rpc AsyncCompute (AsyncComputeRequest) returns (GenericResponse) {}
+  rpc WaitComputations (AsyncComputeRequest) returns (FhevmResponses) {}
+  rpc UploadInputs (InputUploadBatch) returns (InputUploadResponse) {}
+  rpc GetCiphertexts (GetCiphertextBatch) returns (GetCiphertextResponse) {}
+  rpc TrivialEncryptCiphertexts (TrivialEncryptBatch) returns (GenericResponse) {}
+}
+
+message GetCiphertextBatch {
+  repeated bytes handles = 1;
+}
+
+message GetCiphertextResponse {
+  repeated GetCiphertextSingleResponse responses = 1;
+}
+
+message GetCiphertextSingleResponse {
+  bytes handle = 1;
+  optional FetchedCiphertext ciphertext = 2;
+}
+
+message FetchedCiphertext {
+  bytes ciphertext_bytes = 1;
+  int32 ciphertext_version = 2;
+  int32 ciphertext_type = 3;
+}
+
+message TrivialEncryptBatch {
+  repeated TrivialEncryptRequestSingle values = 1;
+}
+
+message TrivialEncryptRequestSingle {
+  bytes handle = 1;
+  bytes be_value = 2;
+  int32 output_type = 3;
+}
+
+message AsyncComputation {
+  fhevm.common.FheOperation operation = 1;
+  bytes output_handle = 3;
+  repeated AsyncComputationInput inputs = 4;
+}
+
+message AsyncComputationInput {
+  oneof input {
+    bytes input_handle = 1;
+    bytes scalar = 2;
+  }
+}
+
+message InputToUpload {
+  bytes input_payload = 1;
+  string contract_address = 2;
+  string caller_address = 3;
+  bytes signature = 4;
+}
+
+message InputCiphertextResponseHandle {
+  bytes handle = 1;
+  int32 ciphertext_type = 2;
+}
+
+message InputCiphertextResponse {
+  repeated InputCiphertextResponseHandle input_handles = 1;
+  string eip712ContractAddress = 2;
+  string eip712CallerAddress = 3;
+  string eip712SignerAddress = 4;
+  bytes eip712Signature = 5;
+}
+
+message InputUploadResponse {
+  repeated InputCiphertextResponse upload_responses = 1;
+}
+
+// The request message containing the user's name.
+message AsyncComputeRequest {
+  repeated AsyncComputation computations = 1;
+}
+
+message InputUploadBatch {
+  repeated InputToUpload input_ciphertexts = 1;
+}
+
+message WaitBatch {
+  repeated string ciphertext_handles = 1;
+}
+
+message GenericResponse {
+  int32 responseCode = 1;
+}
+
+message FhevmResponses {
+  repeated string ciphertext_handles = 1;
+}

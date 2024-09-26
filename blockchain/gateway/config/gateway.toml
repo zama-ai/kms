@@ -16,12 +16,11 @@ api_url = "0.0.0.0:7077"
 # chain id
 chain_id = 9000
 
-# Listener type, one of FHEVM_V1, FHEVM_V1_1, or COPROCESSOR.
+# Listener type, one of FHEVM_NATIVE or COPROCESSOR.
 # Specifies the type of listener to be used for processing Ethereum events.
-# - FHEVM_V1: Use the FHEVM version 1 listener.
-# - FHEVM_V1_1: Use the FHEVM version 1.1 listener.
+# - FHEVM_NATIVE: Use the FHEVM native listener.
 # - COPROCESSOR: Use the Coprocessor listener.
-listener_type = "FHEVM_V1_1"
+listener_type = "FHEVM_NATIVE"
 
 # URL of the Ethereum WebSocket server.
 # Used for establishing a WebSocket connection to an Ethereum node.
@@ -33,6 +32,9 @@ http_url = "http://localhost:8545"
 # Address of the FHE library smart contract on the Ethereum blockchain.
 # Used for interactions with the FHE library contract.
 fhe_lib_address = "000000000000000000000000000000000000005d"
+
+# Api key used to retrieve the ciphertext using gRPC call for Coprocessor architecture
+coprocessor_api_key = "api-key"
 
 # Address of the OraclePredeploy or GatewayPredeploy contract on the
 # Ethereum blockchain. Used for pre-deployment operations related to the oracle.
@@ -53,8 +55,8 @@ kmsverifier_name = "KMSVerifier"
 # address of the ACL contract
 acl_address = "66f9664f97F2b50F62D13eA064982f936dE76657"
 
-# Address of the coprocessor to query for ciphertexts
-coprocessor_url = "http://127.0.0.1:8745/"
+# Address of the coprocessor to query for ciphertexts (gRPC)
+coprocessor_url = "http://127.0.0.1:50051"
 
 # optionally explicitly set the gas price
 # gas_price = 1_000_000_000

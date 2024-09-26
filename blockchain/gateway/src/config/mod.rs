@@ -19,12 +19,9 @@ pub enum KmsMode {
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, EnumString)]
 pub enum ListenerType {
-    #[strum(serialize = "FHEVM_V1")]
-    #[serde(rename = "FHEVM_V1")]
-    Fhevm1,
-    #[strum(serialize = "FHEVM_V1_1")]
-    #[serde(rename = "FHEVM_V1_1")]
-    Fhevm1_1,
+    #[strum(serialize = "FHEVM_NATIVE")]
+    #[serde(rename = "FHEVM_NATIVE")]
+    FhevmNative,
     #[strum(serialize = "COPROCESSOR")]
     #[serde(rename = "COPROCESSOR")]
     Coprocessor,
@@ -46,6 +43,7 @@ pub struct EthereumConfig {
     pub chain_id: u64,
     pub listener_type: ListenerType,
     pub wss_url: String,
+    pub coprocessor_api_key: String,
     pub http_url: String,
     pub fhe_lib_address: H160,
     pub oracle_predeploy_address: H160,
@@ -118,7 +116,7 @@ mod tests {
 
     #[test]
     fn test_gateway_config() {
-        let env_conf: [(&str, Option<&str>); 24] = [
+        let env_conf: [(&str, Option<&str>); 25] = [
             ("GATEWAY__DEBUG", None),
             ("GATEWAY__MODE", None),
             ("GATEWAY__ETHEREUM__CHAIN_ID", None),
@@ -126,6 +124,7 @@ mod tests {
             ("GATEWAY__ETHEREUM__WSS_URL", None),
             ("GATEWAY__ETHEREUM__HTTP_URL", None),
             ("GATEWAY__ETHEREUM__FHE_LIB_ADDRESS", None),
+            ("GATEWAY__ETHEREUM__COPROCESSOR_API_KEY", None),
             ("GATEWAY__ETHEREUM__RELAYER_ADDRESS", None),
             ("GATEWAY__ETHEREUM__ORACLE_PREDEPLOY_ADDRESS", None),
             ("GATEWAY__ETHEREUM__TEST_ASYNC_DECRYPT_ADDRESS", None),
@@ -144,6 +143,7 @@ mod tests {
             ("GATEWAY__KMS__KEY_ID", None),
             ("GATEWAY__KMS__CRS_IDS", None),
         ];
+
         temp_env::with_vars(env_conf, || {
             let gateway_config: GatewayConfig = init_conf_gateway("config/gateway").unwrap();
             assert!(!gateway_config.debug);
@@ -161,7 +161,7 @@ mod tests {
             );
             assert_eq!(
                 gateway_config.ethereum.listener_type,
-                ListenerType::Fhevm1_1
+                ListenerType::FhevmNative
             );
             assert_eq!(gateway_config.ethereum.wss_url, "ws://localhost:8546");
             assert_eq!(gateway_config.ethereum.http_url, "http://localhost:8545");
@@ -169,6 +169,7 @@ mod tests {
                 gateway_config.ethereum.fhe_lib_address,
                 H160::from_str("000000000000000000000000000000000000005d").unwrap()
             );
+            assert_eq!(gateway_config.ethereum.coprocessor_api_key, "api-key");
             assert_eq!(
                 gateway_config.ethereum.oracle_predeploy_address,
                 H160::from_str("c8c9303Cd7F337fab769686B593B87DC3403E0ce").unwrap()
@@ -213,7 +214,7 @@ mod tests {
             ("GATEWAY__DEBUG", Some("true")),
             ("GATEWAY__MODE", Some("threshold")),
             ("GATEWAY__ETHEREUM__CHAIN_ID", Some("42")),
-            ("GATEWAY__ETHEREUM__LISTENER_TYPE", Some("FHEVM_V1")),
+            ("GATEWAY__ETHEREUM__LISTENER_TYPE", Some("FHEVM_NATIVE")),
             (
                 "GATEWAY__ETHEREUM__WSS_URL",
                 Some("ws://test_with_var:8546"),
@@ -225,6 +226,10 @@ mod tests {
             (
                 "GATEWAY__ETHEREUM__FHE_LIB_ADDRESS",
                 Some("000000000000000000000000000000000000005e"),
+            ),
+            (
+                "GATEWAY__ETHEREUM__COPROCESSOR_API_KEY",
+                Some("api-key-env"),
             ),
             (
                 "GATEWAY__ETHEREUM__RELAYER_ADDRESS",
@@ -278,7 +283,6 @@ mod tests {
             assert!(gateway_config.debug);
             assert_eq!(gateway_config.mode, KmsMode::Threshold);
             assert_eq!(gateway_config.ethereum.chain_id, 42);
-            assert_eq!(gateway_config.ethereum.listener_type, ListenerType::Fhevm1);
             assert_eq!(gateway_config.ethereum.wss_url, "ws://test_with_var:8546");
             assert_eq!(
                 gateway_config.ethereum.http_url,

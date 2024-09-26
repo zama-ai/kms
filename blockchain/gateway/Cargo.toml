@@ -54,6 +54,10 @@ thiserror = "1.0.61"
 tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["log"] }
 typed-builder.workspace = true
+tonic = "0.11"
+
+[build-dependencies]
+tonic-build = "0.11" 
 
 [dev-dependencies]
 rand.workspace = true

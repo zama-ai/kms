@@ -4360,6 +4360,8 @@ dependencies = [
  "tendermint-rpc",
  "thiserror",
  "tokio",
+ "tonic 0.11.0",
+ "tonic-build",
  "tracing",
  "typed-builder",
 ]
