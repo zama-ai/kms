@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use core::fmt;
 use kms_lib::consts::{DEFAULT_PARAM, TEST_PARAM};
 use kms_lib::kms::ParamChoice;
+use kms_lib::storage::StorageForText;
 use kms_lib::{
     conf::init_trace, consts::SIGNING_KEY_ID, kms::RequestId,
     util::key_setup::ensure_central_crs_exists,
@@ -248,7 +249,7 @@ async fn main() {
     }
 }
 
-async fn handle_central_cmd<'a, S: Storage>(
+async fn handle_central_cmd<'a, S: StorageForText>(
     param_test: bool,
     args: &mut CentralCmdArgs<'a, S>,
     cmd: ConstructCommand,
@@ -337,7 +338,7 @@ async fn handle_central_cmd<'a, S: Storage>(
     }
 }
 
-async fn handle_threshold_cmd<'a, S: Storage>(
+async fn handle_threshold_cmd<'a, S: StorageForText>(
     param_test: bool,
     args: &mut ThresholdCmdArgs<'a, S>,
     cmd: ConstructCommand,
@@ -560,8 +561,8 @@ async fn show_key<S: Storage>(storage: &S, data_type: &str) {
     let urlmap = storage.all_urls(data_type).await.unwrap();
     for (k, v) in urlmap {
         // TODO read the key material and print extra info
-        let buf: Vec<u8> = storage.read_data(&v).await.unwrap();
-        println!("{data_type}, {k}, {v}, {}", buf.len());
+        let exists = storage.data_exists(&v).await.unwrap();
+        println!("{data_type}, {k}, {v}, exists={exists}");
     }
 }
 

@@ -1,9 +1,11 @@
-use super::signcryption::{internal_verify_sig, serialize_hash_element, sign, signcrypt};
+use super::signcryption::{
+    internal_verify_sig, safe_serialize_hash_element_versioned, sign, signcrypt,
+};
 use super::{
     internal_crypto_types::{PrivateSigKey, PublicEncKey, PublicSigKey},
     signcryption::hash_element,
 };
-use crate::consts::RND_SIZE;
+use crate::consts::{RND_SIZE, SAFE_SER_SIZE_LIMIT};
 use crate::cryptography::signcryption::Reencrypt;
 use crate::kms::FheType;
 use crate::kms::ReencryptionRequest;
@@ -15,7 +17,7 @@ use crate::rpc::rpc_types::SignedPubDataHandleInternal;
 use crate::rpc::rpc_types::{
     BaseKms, Kms, Plaintext, PrivDataType, PubDataType, SigncryptionPayload,
 };
-use crate::storage::read_all_data;
+use crate::storage::read_all_data_versioned;
 #[cfg(feature = "non-wasm")]
 use crate::storage::Storage;
 #[cfg(feature = "non-wasm")]
@@ -30,7 +32,7 @@ use crate::{
 use aes_prng::AesRng;
 use alloy_sol_types::SolStruct;
 use anyhow::Context;
-use bincode::{deserialize, serialize};
+use bincode::serialize;
 #[cfg(feature = "non-wasm")]
 use distributed_decryption::execution::endpoints::keygen::FhePubKeySet;
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
@@ -45,15 +47,17 @@ use std::sync::Arc;
 use std::{fmt, panic};
 use tfhe::integer::bigint::U2048;
 use tfhe::integer::U256;
+use tfhe::named::Named;
 use tfhe::prelude::FheDecrypt;
+use tfhe::safe_deserialization::safe_deserialize_versioned;
 #[cfg(feature = "non-wasm")]
 use tfhe::Seed;
-use tfhe_versionable::{VersionizeOwned, VersionsDispatch};
+use tfhe_versionable::VersionsDispatch;
 
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::{
     ClientKey, ConfigBuilder, FheBool, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256,
-    FheUint32, FheUint4, FheUint64, FheUint8, Unversionize, Versionize,
+    FheUint32, FheUint4, FheUint64, FheUint8, Versionize,
 };
 use tokio::sync::{Mutex, RwLock};
 
@@ -362,6 +366,10 @@ pub struct KmsFheKeyHandles {
     pub public_key_info: HashMap<PubDataType, SignedPubDataHandleInternal>,
 }
 
+impl Named for KmsFheKeyHandles {
+    const NAME: &'static str = "KmsFheKeyHandles";
+}
+
 #[cfg(feature = "non-wasm")]
 impl KmsFheKeyHandles {
     /// Compute key handles for the public key materials.
@@ -374,17 +382,14 @@ impl KmsFheKeyHandles {
         let mut public_key_info = HashMap::new();
         public_key_info.insert(
             PubDataType::PublicKey,
-            compute_info(sig_key, &public_keys.public_key.versionize())?,
+            compute_info(sig_key, &public_keys.public_key)?,
         );
         public_key_info.insert(
             PubDataType::ServerKey,
-            compute_info(sig_key, &public_keys.server_key.versionize())?,
+            compute_info(sig_key, &public_keys.server_key)?,
         );
         if let Some(sns) = &public_keys.sns_key {
-            public_key_info.insert(
-                PubDataType::SnsKey,
-                compute_info(sig_key, &sns.versionize())?,
-            );
+            public_key_info.insert(PubDataType::SnsKey, compute_info(sig_key, sns)?);
         }
         Ok(KmsFheKeyHandles {
             client_key,
@@ -531,49 +536,68 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         fhe_type: FheType,
     ) -> anyhow::Result<Plaintext> {
         let f = || -> anyhow::Result<Plaintext> {
+            let mut ct_buf = std::io::Cursor::new(high_level_ct);
             Ok(match fhe_type {
                 FheType::Ebool => {
-                    let cipher: FheBool = deserialize(high_level_ct)?;
+                    let cipher: FheBool =
+                        safe_deserialize_versioned(&mut ct_buf, SAFE_SER_SIZE_LIMIT)
+                            .map_err(|e| anyhow::anyhow!(e))?;
                     let plaintext = cipher.decrypt(client_key);
                     Plaintext::from_bool(plaintext)
                 }
                 FheType::Euint4 => {
-                    let cipher: FheUint4 = deserialize(high_level_ct)?;
+                    let cipher: FheUint4 =
+                        safe_deserialize_versioned(&mut ct_buf, SAFE_SER_SIZE_LIMIT)
+                            .map_err(|e| anyhow::anyhow!(e))?;
                     let plaintext: u8 = cipher.decrypt(client_key);
                     Plaintext::from_u4(plaintext)
                 }
                 FheType::Euint8 => {
-                    let cipher: FheUint8 = deserialize(high_level_ct)?;
+                    let cipher: FheUint8 =
+                        safe_deserialize_versioned(&mut ct_buf, SAFE_SER_SIZE_LIMIT)
+                            .map_err(|e| anyhow::anyhow!(e))?;
                     let plaintext: u8 = cipher.decrypt(client_key);
                     Plaintext::from_u8(plaintext)
                 }
                 FheType::Euint16 => {
-                    let cipher: FheUint16 = deserialize(high_level_ct)?;
+                    let cipher: FheUint16 =
+                        safe_deserialize_versioned(&mut ct_buf, SAFE_SER_SIZE_LIMIT)
+                            .map_err(|e| anyhow::anyhow!(e))?;
                     let plaintext: u16 = cipher.decrypt(client_key);
                     Plaintext::from_u16(plaintext)
                 }
                 FheType::Euint32 => {
-                    let cipher: FheUint32 = deserialize(high_level_ct)?;
+                    let cipher: FheUint32 =
+                        safe_deserialize_versioned(&mut ct_buf, SAFE_SER_SIZE_LIMIT)
+                            .map_err(|e| anyhow::anyhow!(e))?;
                     let plaintext: u32 = cipher.decrypt(client_key);
                     Plaintext::from_u32(plaintext)
                 }
                 FheType::Euint64 => {
-                    let cipher: FheUint64 = bincode::deserialize(high_level_ct)?;
+                    let cipher: FheUint64 =
+                        safe_deserialize_versioned(&mut ct_buf, SAFE_SER_SIZE_LIMIT)
+                            .map_err(|e| anyhow::anyhow!(e))?;
                     let plaintext: u64 = cipher.decrypt(client_key);
                     Plaintext::from_u64(plaintext)
                 }
                 FheType::Euint128 => {
-                    let cipher: FheUint128 = bincode::deserialize(high_level_ct)?;
+                    let cipher: FheUint128 =
+                        safe_deserialize_versioned(&mut ct_buf, SAFE_SER_SIZE_LIMIT)
+                            .map_err(|e| anyhow::anyhow!(e))?;
                     let plaintext: u128 = cipher.decrypt(client_key);
                     Plaintext::from_u128(plaintext)
                 }
                 FheType::Euint160 => {
-                    let cipher: FheUint160 = bincode::deserialize(high_level_ct)?;
+                    let cipher: FheUint160 =
+                        safe_deserialize_versioned(&mut ct_buf, SAFE_SER_SIZE_LIMIT)
+                            .map_err(|e| anyhow::anyhow!(e))?;
                     let plaintext: U256 = cipher.decrypt(client_key);
                     Plaintext::from_u160(plaintext)
                 }
                 FheType::Euint256 => {
-                    let cipher: FheUint256 = bincode::deserialize(high_level_ct)?;
+                    let cipher: FheUint256 =
+                        safe_deserialize_versioned(&mut ct_buf, SAFE_SER_SIZE_LIMIT)
+                            .map_err(|e| anyhow::anyhow!(e))?;
                     let plaintext: U256 = cipher.decrypt(client_key);
                     Plaintext::from_u256(plaintext)
                 }
@@ -584,7 +608,9 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                     todo!("Implement Euint1024 decryption")
                 }
                 FheType::Euint2048 => {
-                    let cipher: FheUint2048 = bincode::deserialize(high_level_ct)?;
+                    let cipher: FheUint2048 =
+                        safe_deserialize_versioned(&mut ct_buf, SAFE_SER_SIZE_LIMIT)
+                            .map_err(|e| anyhow::anyhow!(e))?;
                     let plaintext: U2048 = cipher.decrypt(client_key);
                     Plaintext::from_u2048(plaintext)
                 }
@@ -631,11 +657,12 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
     SoftwareKms<PubS, PrivS>
 {
     pub async fn new(public_storage: PubS, private_storage: PrivS) -> anyhow::Result<Self> {
-        let sks: HashMap<RequestId, <PrivateSigKey as VersionizeOwned>::VersionedOwned> =
-            read_all_data(&private_storage, &PrivDataType::SigningKey.to_string()).await?;
-        let sk = PrivateSigKey::unversionize(get_exactly_one(sks).inspect_err(|_e| {
+        let sks: HashMap<RequestId, PrivateSigKey> =
+            read_all_data_versioned(&private_storage, &PrivDataType::SigningKey.to_string())
+                .await?;
+        let sk = get_exactly_one(sks).inspect_err(|_e| {
             tracing::error!("signing key hashmap is not exactly 1");
-        })?)?;
+        })?;
 
         // compute corresponding public key from private sig key
         let pk = SigningKey::verifying_key(sk.sk());
@@ -644,13 +671,12 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             alloy_signer::utils::public_key_to_address(pk)
         );
 
-        let key_info_versioned: HashMap<
-            RequestId,
-            <KmsFheKeyHandles as VersionizeOwned>::VersionedOwned,
-        > = read_all_data(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
+        let key_info_versioned: HashMap<RequestId, KmsFheKeyHandles> =
+            read_all_data_versioned(&private_storage, &PrivDataType::FheKeyInfo.to_string())
+                .await?;
         let mut key_info = HashMap::new();
         for (id, versioned_handles) in key_info_versioned {
-            key_info.insert(id, KmsFheKeyHandles::unversionize(versioned_handles)?);
+            key_info.insert(id, versioned_handles);
         }
         tracing::info!(
             "loaded key_info with key_ids: {:?}",
@@ -668,17 +694,12 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 )
             })
             .collect();
-        let cs: HashMap<
-            RequestId,
-            <SignedPubDataHandleInternal as VersionizeOwned>::VersionedOwned,
-        > = read_all_data(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
+        let cs: HashMap<RequestId, SignedPubDataHandleInternal> =
+            read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
         let mut cs_w_status: HashMap<RequestId, HandlerStatus<SignedPubDataHandleInternal>> =
             HashMap::new();
         for (id, crs) in cs {
-            cs_w_status.insert(
-                id.to_owned(),
-                HandlerStatus::Done(SignedPubDataHandleInternal::unversionize(crs)?),
-            );
+            cs_w_status.insert(id.to_owned(), HandlerStatus::Done(crs));
         }
 
         Ok(SoftwareKms {
@@ -698,7 +719,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 /// Computes the public into on a serializable `element`.
 /// More specifically, computes the unique handle of the `element` and signs this handle using the
 /// `kms`.
-pub(crate) fn compute_info<S: Serialize>(
+pub(crate) fn compute_info<S: Versionize + Named>(
     sk: &PrivateSigKey,
     element: &S,
 ) -> anyhow::Result<SignedPubDataHandleInternal> {
@@ -712,11 +733,11 @@ pub(crate) fn compute_info<S: Serialize>(
 
 /// Compute a handle of an element, based on its digest
 /// More specifically compute the hash digest, truncate it and convert it to a hex string
-pub fn compute_handle<S>(bytes: &S) -> anyhow::Result<String>
+pub fn compute_handle<S>(element: &S) -> anyhow::Result<String>
 where
-    S: Serialize,
+    S: Versionize + Named,
 {
-    let mut digest = serialize_hash_element(bytes)?;
+    let mut digest = safe_serialize_hash_element_versioned(element)?;
     // Truncate and convert to hex
     digest.truncate(ID_LENGTH);
     Ok(hex::encode(digest))
@@ -747,11 +768,15 @@ pub(crate) mod tests {
     use aes_prng::AesRng;
     use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
     use rand::{RngCore, SeedableRng};
+    use serde::{Deserialize, Serialize};
     use serial_test::serial;
     use std::collections::HashMap;
     use std::{path::Path, sync::Arc};
+    use tfhe::named::Named;
     use tfhe::set_server_key;
+    use tfhe::Versionize;
     use tfhe::{shortint::ClassicPBSParameters, ConfigBuilder, Seed};
+    use tfhe_versionable::VersionsDispatch;
     use tokio::sync::OnceCell;
 
     static ONCE_TEST_KEY: OnceCell<CentralizedTestingKeys> = OnceCell::const_new();
@@ -1156,6 +1181,21 @@ pub(crate) mod tests {
         assert_eq!(plaintext.fhe_type(), FheType::Euint64);
     }
 
+    #[derive(Serialize, Deserialize, Eq, PartialEq, Debug, VersionsDispatch)]
+    enum TestTypeVersioned {
+        V0(TestType),
+    }
+
+    impl Named for TestType {
+        const NAME: &'static str = "TestType";
+    }
+
+    #[derive(Serialize, Deserialize, Eq, PartialEq, Debug, Versionize)]
+    #[versionize(TestTypeVersioned)]
+    struct TestType {
+        i: u32,
+    }
+
     #[tokio::test]
     async fn ensure_compute_info_consistency() {
         // we need compute info to work without calling the sign function from KMS,
@@ -1173,7 +1213,7 @@ pub(crate) mod tests {
             .unwrap()
         };
 
-        let value = "bonjour".to_string();
+        let value = TestType { i: 32 };
         let expected = super::compute_info(&kms.base_kms.sig_key, &value).unwrap();
         let actual = super::compute_info(&kms.base_kms.sig_key, &value).unwrap();
         assert_eq!(expected, actual);

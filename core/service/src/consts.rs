@@ -38,6 +38,8 @@ pub const PRSS_EPOCH_ID: u128 = 1;
 pub const AMOUNT_PARTIES: usize = 4;
 pub const THRESHOLD: usize = 1;
 
+pub const SAFE_SER_SIZE_LIMIT: u64 = 1024 * 1024 * 1024 * 2;
+
 cfg_if::cfg_if! {
     if #[cfg(any(test, feature = "testing"))] {
         use crate::kms::RequestId;

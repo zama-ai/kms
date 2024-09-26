@@ -316,6 +316,25 @@ where
     Ok(hash_element(&to_hash))
 }
 
+#[cfg(feature = "non-wasm")]
+pub(crate) fn safe_serialize_hash_element_versioned<T>(msg: &T) -> anyhow::Result<Vec<u8>>
+where
+    T: tfhe::Versionize + tfhe::named::Named,
+{
+    let mut buf = Vec::new();
+    match tfhe::safe_deserialization::safe_serialize_versioned(
+        msg,
+        &mut buf,
+        crate::consts::SAFE_SER_SIZE_LIMIT,
+    ) {
+        Ok(()) => Ok(hash_element(&buf)),
+        Err(e) => Err(anyhow_error_and_warn_log(format!(
+            "Could not encode message due to error: {:?}",
+            e
+        ))),
+    }
+}
+
 /// Decrypt a signcrypted message and verify the signature.
 ///
 /// This fn also checks that the provided link parameter corresponds to the link in the signcryption

@@ -1,3 +1,4 @@
+use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::kms::{FheType, RequestId};
 use crate::rpc::central_rpc::retrieve_parameters;
 use crate::rpc::rpc_types::PubDataType;
@@ -6,14 +7,15 @@ use crate::storage::{FileStorage, StorageReader, StorageType};
 use crate::util::key_setup::FhePublicKey;
 use crate::{consts::AMOUNT_PARTIES, storage::delete_all_at_request_id};
 use distributed_decryption::execution::tfhe_internals::utils::expanded_encrypt;
-use serde::Serialize;
 use std::path::Path;
 use tfhe::core_crypto::prelude::Numeric;
 use tfhe::integer::ciphertext::{Compactable, Expandable};
+use tfhe::named::Named;
 use tfhe::prelude::Tagged;
+use tfhe::safe_deserialization::safe_serialize_versioned;
 use tfhe::{
     set_server_key, FheBool, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32,
-    FheUint64, FheUint8, ProvenCompactCiphertextList, ServerKey, Unversionize,
+    FheUint64, FheUint8, ProvenCompactCiphertextList, ServerKey, Versionize,
 };
 
 // TODD The code here should be split s.t. that generation code stays in production and everything else goes to the test package
@@ -22,14 +24,14 @@ use tfhe::{
 //as it is not Numeric
 //NOTE: If we have an encryption key different from the compute key, then call to expand() requires
 //that the ServerKey (which contains the PKSK) is set, otherwise the unwrap will panic
-fn serialize_ctxt<M: Compactable + Numeric, T: Expandable + Tagged + Serialize>(
+fn serialize_ctxt<M: Compactable + Numeric, T: Expandable + Tagged + Versionize + Named>(
     msg: M,
     pk: &FhePublicKey,
     num_bits: usize,
 ) -> Vec<u8> {
     let ct: T = expanded_encrypt(pk, msg, num_bits);
     let mut serialized_ct = Vec::new();
-    bincode::serialize_into(&mut serialized_ct, &ct).unwrap();
+    safe_serialize_versioned(&ct, &mut serialized_ct, SAFE_SER_SIZE_LIMIT).unwrap();
     serialized_ct
 }
 
@@ -157,9 +159,9 @@ pub async fn load_pk_from_storage(pub_path: Option<&Path>, key_id: &str) -> FheP
         .unwrap();
     if storage.data_exists(&url).await.unwrap() {
         tracing::info!("Trying centralized storage");
-        let content = storage.read_data(&url).await.unwrap();
+        let content: FhePublicKey = storage.read_data(&url).await.unwrap();
         tracing::info!("🚧 Using key: {}", url);
-        FhePublicKey::unversionize(content).unwrap()
+        content
     } else {
         // Try with the threshold storage
         tracing::info!("Fallback to threshold file storage");
@@ -167,9 +169,9 @@ pub async fn load_pk_from_storage(pub_path: Option<&Path>, key_id: &str) -> FheP
         let url = storage
             .compute_url(key_id, &PubDataType::PublicKey.to_string())
             .unwrap();
-        let content = storage.read_data(&url).await.unwrap();
+        let content: FhePublicKey = storage.read_data(&url).await.unwrap();
         tracing::info!("🚧 Using key: {}", url);
-        FhePublicKey::unversionize(content).unwrap()
+        content
     }
 }
 
@@ -189,10 +191,8 @@ pub async fn compute_zkp_from_stored_key(
         .compute_url(crs_id, &PubDataType::CRS.to_string())
         .unwrap();
     let (pk, crs) = if storage.data_exists(&key_url).await.unwrap() {
-        let pk = FhePublicKey::unversionize(storage.read_data(&key_url).await.unwrap()).unwrap();
-        let crs =
-            PublicParameterWithParamID::unversionize(storage.read_data(&crs_url).await.unwrap())
-                .unwrap();
+        let pk: FhePublicKey = storage.read_data(&key_url).await.unwrap();
+        let crs: PublicParameterWithParamID = storage.read_data(&crs_url).await.unwrap();
         (pk, crs)
     } else {
         // Try with the threshold storage
@@ -203,10 +203,8 @@ pub async fn compute_zkp_from_stored_key(
         let crs_url = storage
             .compute_url(crs_id, &PubDataType::CRS.to_string())
             .unwrap();
-        let pk = FhePublicKey::unversionize(storage.read_data(&key_url).await.unwrap()).unwrap();
-        let crs =
-            PublicParameterWithParamID::unversionize(storage.read_data(&crs_url).await.unwrap())
-                .unwrap();
+        let pk: FhePublicKey = storage.read_data(&key_url).await.unwrap();
+        let crs: PublicParameterWithParamID = storage.read_data(&crs_url).await.unwrap();
         (pk, crs)
     };
 
@@ -264,10 +262,9 @@ async fn set_server_key_from_storage(pub_path: Option<&Path>, key_id: &str) {
         .compute_url(key_id, &PubDataType::ServerKey.to_string())
         .unwrap();
     tracing::info!("🚧 Using key: {}", url);
-    let server_key = if storage.data_exists(&url).await.unwrap() {
+    let server_key: ServerKey = if storage.data_exists(&url).await.unwrap() {
         tracing::info!("Trying centralized storage");
-        let content = storage.read_data(&url).await.unwrap();
-        ServerKey::unversionize(content).unwrap()
+        storage.read_data(&url).await.unwrap()
     } else {
         // Try with the threshold storage
         tracing::info!("Fallback to threshold file storage");
@@ -275,7 +272,7 @@ async fn set_server_key_from_storage(pub_path: Option<&Path>, key_id: &str) {
         let url = storage
             .compute_url(key_id, &PubDataType::ServerKey.to_string())
             .unwrap();
-        ServerKey::unversionize(storage.read_data(&url).await.unwrap()).unwrap()
+        storage.read_data(&url).await.unwrap()
     };
     set_server_key(server_key)
 }

@@ -1,6 +1,10 @@
 use anyhow::anyhow;
 use std::fmt;
 use std::panic::Location;
+#[cfg(feature = "non-wasm")]
+use storage::StorageForText;
+#[cfg(feature = "non-wasm")]
+use tfhe::{named::Named, Unversionize, Versionize};
 
 // copied from tonic since we're cannot pull in tonic for wasm
 macro_rules! my_include_proto {
@@ -102,8 +106,6 @@ pub(crate) fn anyhow_error_and_warn_log<S: AsRef<str> + fmt::Display>(msg: S) ->
 }
 
 #[cfg(feature = "non-wasm")]
-use serde::{de::DeserializeOwned, Serialize};
-#[cfg(feature = "non-wasm")]
 use std::collections::HashMap;
 #[cfg(feature = "non-wasm")]
 use storage::{FileStorage, RamStorage, Storage, StorageReader};
@@ -141,7 +143,7 @@ impl StorageReader for StorageProxy {
         }
     }
 
-    async fn read_data<Ser: DeserializeOwned + Send>(&self, url: &Url) -> anyhow::Result<Ser> {
+    async fn read_data<T: Unversionize + Named + Send>(&self, url: &Url) -> anyhow::Result<T> {
         match &self {
             StorageProxy::File(s) => s.read_data(url).await,
             StorageProxy::Ram(s) => s.read_data(url).await,
@@ -181,9 +183,9 @@ impl StorageReader for StorageProxy {
 #[cfg(feature = "non-wasm")]
 #[tonic::async_trait]
 impl Storage for StorageProxy {
-    async fn store_data<Ser: Serialize + Send + Sync + ?Sized>(
+    async fn store_data<T: Versionize + Named + Send + Sync>(
         &mut self,
-        data: &Ser,
+        data: &T,
         url: &Url,
     ) -> anyhow::Result<()> {
         match &mut self {
@@ -194,21 +196,27 @@ impl Storage for StorageProxy {
         }
     }
 
-    async fn store_text(&mut self, data: &str, url: &Url) -> anyhow::Result<()> {
-        match &mut self {
-            StorageProxy::File(s) => s.store_text(data, url).await,
-            StorageProxy::Ram(s) => s.store_text(data, url).await,
-            StorageProxy::S3(s) => s.store_text(data, url).await,
-            StorageProxy::EnclaveS3(s) => s.store_text(data, url).await,
-        }
-    }
-
     async fn delete_data(&mut self, url: &Url) -> anyhow::Result<()> {
         match &mut self {
             StorageProxy::File(s) => s.delete_data(url).await,
             StorageProxy::Ram(s) => s.delete_data(url).await,
             StorageProxy::S3(s) => s.delete_data(url).await,
             StorageProxy::EnclaveS3(s) => s.delete_data(url).await,
+        }
+    }
+}
+
+#[cfg(feature = "non-wasm")]
+#[tonic::async_trait]
+impl StorageForText for StorageProxy {
+    async fn store_text(&mut self, text: &str, url: &Url) -> anyhow::Result<()> {
+        match &mut self {
+            StorageProxy::File(s) => s.store_text(text, url).await,
+            StorageProxy::Ram(s) => s.store_text(text, url).await,
+            StorageProxy::S3(s) => s.store_text(text, url).await,
+            StorageProxy::EnclaveS3(_s) => {
+                Err(anyhow::anyhow!("store_text is not supported for EnclaveS3"))
+            }
         }
     }
 }

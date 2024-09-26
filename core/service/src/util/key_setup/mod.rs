@@ -5,14 +5,13 @@ use crate::cryptography::central_kms::{
     compute_handle, gen_centralized_crs, gen_sig_keys, generate_fhe_keys,
 };
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
-use crate::cryptography::internal_crypto_types::PrivateSigKeyVersioned;
 use crate::kms::{ParamChoice, RequestId};
 use crate::rpc::rpc_types::{PrivDataType, WrappedPublicKey};
 use crate::rpc::rpc_types::{PubDataType, PublicParameterWithParamID};
-use crate::storage::StorageReader;
-use crate::storage::{read_all_data, store_text_at_request_id};
+use crate::storage::{read_all_data_versioned, store_text_at_request_id};
 use crate::storage::{store_pk_at_request_id, Storage};
 use crate::storage::{store_versioned_at_request_id, FileStorage, StorageType};
+use crate::storage::{StorageForText, StorageReader};
 use crate::threshold::threshold_kms::{compute_all_info, ThresholdFheKeys};
 use crate::{
     client::ClientDataType,
@@ -28,8 +27,6 @@ use rand::SeedableRng;
 use std::collections::HashMap;
 use std::path::Path;
 use tfhe::Seed;
-use tfhe::Unversionize;
-use tfhe_versionable::VersionizeOwned;
 
 pub type FhePublicKey = tfhe::CompactPublicKey;
 pub type FhePrivateKey = tfhe::ClientKey;
@@ -43,8 +40,8 @@ fn get_rng(deterministic: bool, seed: Option<u64>) -> AesRng {
 }
 
 async fn get_signing_key<S: Storage>(priv_storage: &S) -> PrivateSigKey {
-    let mut sk_map: HashMap<RequestId, <PrivateSigKey as VersionizeOwned>::VersionedOwned> =
-        read_all_data(priv_storage, &PrivDataType::SigningKey.to_string())
+    let mut sk_map: HashMap<RequestId, PrivateSigKey> =
+        read_all_data_versioned(priv_storage, &PrivDataType::SigningKey.to_string())
             .await
             .unwrap();
     if sk_map.values().len() != 1 {
@@ -53,11 +50,8 @@ async fn get_signing_key<S: Storage>(priv_storage: &S) -> PrivateSigKey {
             sk_map.values().len(), priv_storage.info()
         );
     }
-    PrivateSigKey::unversionize({
-        let req_id = sk_map.keys().last().unwrap().clone();
-        sk_map.remove(&req_id).unwrap()
-    })
-    .unwrap()
+    let req_id = sk_map.keys().last().unwrap().clone();
+    sk_map.remove(&req_id).unwrap()
 }
 
 /// Generates a new client signing and verification keys and stores them in the given storage if they do not already exist.
@@ -71,8 +65,8 @@ pub async fn ensure_client_keys_exist(
 ) -> bool {
     let mut client_storage =
         FileStorage::new_centralized(optional_path, StorageType::CLIENT).unwrap();
-    let temp: HashMap<RequestId, PrivateSigKeyVersioned> =
-        read_all_data(&client_storage, &ClientDataType::SigningKey.to_string())
+    let temp: HashMap<RequestId, PrivateSigKey> =
+        read_all_data_versioned(&client_storage, &ClientDataType::SigningKey.to_string())
             .await
             .unwrap();
     if !temp.is_empty() {
@@ -124,10 +118,10 @@ pub async fn ensure_central_server_signing_keys_exist<S>(
     deterministic: bool,
 ) -> bool
 where
-    S: Storage,
+    S: StorageForText,
 {
-    let temp: HashMap<RequestId, PrivateSigKeyVersioned> =
-        read_all_data(priv_storage, &PrivDataType::SigningKey.to_string())
+    let temp: HashMap<RequestId, PrivateSigKey> =
+        read_all_data_versioned(priv_storage, &PrivDataType::SigningKey.to_string())
             .await
             .unwrap();
     if !temp.is_empty() {
@@ -383,12 +377,12 @@ pub async fn ensure_threshold_server_signing_keys_exist<S>(
     amount: usize,
 ) -> bool
 where
-    S: Storage,
+    S: StorageForText,
 {
     for i in 1..=amount {
         let mut rng = get_rng(deterministic, Some(i as u64));
-        let temp: HashMap<RequestId, PrivateSigKeyVersioned> =
-            read_all_data(&priv_storages[i - 1], &PrivDataType::SigningKey.to_string())
+        let temp: HashMap<RequestId, PrivateSigKey> =
+            read_all_data_versioned(&priv_storages[i - 1], &PrivDataType::SigningKey.to_string())
                 .await
                 .unwrap();
         if !temp.is_empty() {

@@ -1,6 +1,11 @@
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::path::Path;
+use tfhe::named::Named;
+use tfhe::safe_deserialization::{safe_deserialize_versioned, safe_serialize_versioned};
+use tfhe::{Unversionize, Versionize};
+
+use crate::consts::SAFE_SER_SIZE_LIMIT;
 
 // // TODO remove this file and use ddec instead or vice versa
 
@@ -16,17 +21,34 @@ pub async fn write_as_json<T: Serialize>(file_path: &str, to_store: &T) -> anyho
     Ok(())
 }
 
-/// Same method as [read_as_json] but async and hence can be used for multi-threaded reads.
+/// Read a json file and deserialize it into an object.
 pub async fn read_as_json<T: DeserializeOwned>(file_path: &str) -> anyhow::Result<T> {
     let read_json = tokio::fs::read(file_path).await?;
     let res = serde_json::from_slice::<T>(&read_json)?;
     Ok(res)
 }
 
-/// Same method as [write_element] but async and hence can be used for multi-threaded writes.
+/// Serialize and write an element to a file.
 pub async fn write_element<T: Serialize>(file_path: &str, element: &T) -> anyhow::Result<()> {
     let mut serialized_data = Vec::new();
     let _ = bincode::serialize_into(&mut serialized_data, &element);
+    let path = Path::new(&file_path);
+    // Create the parent directories of the file path if they don't exist
+    if let Some(p) = path.parent() {
+        tokio::fs::create_dir_all(p).await?
+    };
+    tokio::fs::write(path, serialized_data.as_slice()).await?;
+    Ok(())
+}
+
+/// This is a wrapper around safe_serialize_versioned for the async use case.
+pub async fn safe_write_element_versioned<T: Versionize + Named + Send>(
+    file_path: &str,
+    element: &T,
+) -> anyhow::Result<()> {
+    let mut serialized_data = Vec::new();
+    safe_serialize_versioned(element, &mut serialized_data, SAFE_SER_SIZE_LIMIT)?;
+
     let path = Path::new(&file_path);
     // Create the parent directories of the file path if they don't exist
     if let Some(p) = path.parent() {
@@ -60,10 +82,17 @@ pub async fn write_bytes<S: AsRef<std::ffi::OsStr> + ?Sized, B: AsRef<[u8]>>(
     tokio::fs::write(path, bytes).await?;
     Ok(())
 }
-/// Same method as [read_element] but async and hence can be used for multi-threaded reads.
+/// Read an element from `file_path` and deserialize it to the return type.
 pub async fn read_element<T: DeserializeOwned>(file_path: &str) -> anyhow::Result<T> {
     let read_element = tokio::fs::read(file_path).await?;
     Ok(bincode::deserialize_from(read_element.as_slice())?)
+}
+
+pub async fn safe_read_element_versioned<T: Unversionize + Named + Send>(
+    file_path: &str,
+) -> anyhow::Result<T> {
+    let mut buf = std::io::Cursor::new(tokio::fs::read(file_path).await?);
+    safe_deserialize_versioned(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| anyhow::anyhow!(e))
 }
 
 #[cfg(test)]

@@ -1,17 +1,20 @@
+use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::central_kms::{compute_handle, SoftwareKmsKeys};
 use crate::kms::RequestId;
 use crate::rpc::rpc_types::{PrivDataType, PublicKeyType, WrappedPublicKey, WrappedPublicKeyOwned};
-use crate::util::file_handling::{read_element, write_element, write_text};
+use crate::util::file_handling::{
+    safe_read_element_versioned, safe_write_element_versioned, write_text,
+};
 use crate::{anyhow_error_and_log, some_or_err};
 use crate::{consts::KEY_PATH_PREFIX, rpc::rpc_types::PubDataType};
 use anyhow::anyhow;
-use serde::de::DeserializeOwned;
-use serde::Serialize;
 use std::collections::HashMap;
 use std::fmt::{self};
 use std::path::{Path, PathBuf};
 use std::{env, fs, path::MAIN_SEPARATOR};
 use strum::{EnumIter, IntoEnumIterator};
+use tfhe::named::Named;
+use tfhe::safe_deserialization::{safe_deserialize_versioned, safe_serialize_versioned};
 use tfhe::{Unversionize, Versionize};
 use url::Url;
 
@@ -24,7 +27,8 @@ pub trait StorageReader {
     async fn data_exists(&self, url: &Url) -> anyhow::Result<bool>;
 
     /// Read some data from a given `url`.
-    async fn read_data<Ser: DeserializeOwned + Send>(&self, url: &Url) -> anyhow::Result<Ser>;
+    /// On return, the data is unversioned.
+    async fn read_data<T: Unversionize + Named + Send>(&self, url: &Url) -> anyhow::Result<T>;
 
     /// Compute an URL for some specific data given its `data_id` and of a given `data_type`.
     /// Depending on how the underlying functionality is realized one of these parameters might not
@@ -46,27 +50,35 @@ pub trait StorageReader {
 // Warning: There is no compiler validation that the data being stored are of a versioned type!
 #[tonic::async_trait]
 pub trait Storage: StorageReader {
-    /// store the given `data`` serialized at the given `url`
-    async fn store_data<Ser: Serialize + Send + Sync + ?Sized>(
+    /// Store the given `data` at the given `url`
+    /// Under the hood, the versioned data is stored.
+    async fn store_data<T: Versionize + Named + Send + Sync>(
         &mut self,
-        data: &Ser,
+        data: &T,
         url: &Url,
     ) -> anyhow::Result<()>;
 
-    /// store the given `text`` at the given `url`
-    async fn store_text(&mut self, text: &str, url: &Url) -> anyhow::Result<()>;
-
+    /// Delete the given `data` stored at `url`.
     async fn delete_data(&mut self, url: &Url) -> anyhow::Result<()>;
 }
 
-// Helper method for storing data based on a data type and request ID.
-// An error will be returned if the data already exists.
-async fn store_at_request_id<S: Storage, Ser: Serialize + Send + Sync + ?Sized>(
+#[tonic::async_trait]
+pub trait StorageForText: Storage {
+    /// Store the given `text` at the given `url`
+    async fn store_text(&mut self, text: &str, url: &Url) -> anyhow::Result<()>;
+}
+
+/// Store some data at a location defined by `request_id` and `data_type`.
+/// Under the hood, the versioned data will be stored.
+pub async fn store_versioned_at_request_id<'a, S: Storage, Data: Versionize + Named + Send + Sync>(
     storage: &mut S,
     request_id: &RequestId,
-    data: &Ser,
+    data: &'a Data,
     data_type: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<()>
+where
+    <Data as Versionize>::Versioned<'a>: Send + Sync,
+{
     let url = storage.compute_url(&request_id.to_string(), data_type)?;
     storage.store_data(data, &url).await.map_err(|e| {
         anyhow_error_and_log(format!(
@@ -76,25 +88,9 @@ async fn store_at_request_id<S: Storage, Ser: Serialize + Send + Sync + ?Sized>(
     })
 }
 
-pub async fn store_versioned_at_request_id<
-    'a,
-    S: Storage,
-    Data: Versionize + Send + Sync + ?Sized,
->(
-    storage: &mut S,
-    request_id: &RequestId,
-    data: &'a Data,
-    data_type: &str,
-) -> anyhow::Result<()>
-where
-    <Data as Versionize>::Versioned<'a>: Send + Sync,
-{
-    store_at_request_id(storage, request_id, &data.versionize(), data_type).await
-}
-
 // Helper method for storing text under a request ID.
 // An error will be returned if the data already exists.
-pub async fn store_text_at_request_id<S: Storage>(
+pub async fn store_text_at_request_id<S: StorageForText>(
     storage: &mut S,
     request_id: &RequestId,
     data: &str,
@@ -153,17 +149,9 @@ pub async fn delete_pk_at_request_id<S: Storage>(
     Ok(())
 }
 
-/// Helper method for reading data based on a data type and request ID.
-async fn read_at_request_id<S: StorageReader, Ser: DeserializeOwned + Send>(
-    storage: &S,
-    request_id: &RequestId,
-    data_type: &str,
-) -> anyhow::Result<Ser> {
-    let url = storage.compute_url(&request_id.to_string(), data_type)?;
-    storage.read_data(&url).await
-}
-
-pub async fn read_versioned_at_request_id<S: StorageReader, Data: Unversionize + Send>(
+/// Read some data stored in a location defined by `request_id` and `data_type`.
+/// The returned result is automatically unversioned.
+pub async fn read_versioned_at_request_id<S: StorageReader, Data: Unversionize + Named + Send>(
     storage: &S,
     request_id: &RequestId,
     data_type: &str,
@@ -171,8 +159,8 @@ pub async fn read_versioned_at_request_id<S: StorageReader, Data: Unversionize +
 where
     <Data as tfhe_versionable::VersionizeOwned>::VersionedOwned: Send,
 {
-    Data::unversionize(read_at_request_id(storage, request_id, data_type).await?)
-        .map_err(|e| anyhow::anyhow!("unversionize failed with error {e}"))
+    let url = storage.compute_url(&request_id.to_string(), data_type)?;
+    storage.read_data(&url).await
 }
 
 /// This function will perform verionize on the type.
@@ -183,17 +171,17 @@ pub async fn store_pk_at_request_id<'a, S: Storage>(
 ) -> anyhow::Result<()> {
     match pk {
         WrappedPublicKey::Compact(inner_pk) => {
-            store_at_request_id(
+            store_versioned_at_request_id(
                 storage,
                 request_id,
-                &inner_pk.versionize(),
+                inner_pk,
                 &PubDataType::PublicKey.to_string(),
             )
             .await?;
-            store_at_request_id(
+            store_versioned_at_request_id(
                 storage,
                 request_id,
-                &PublicKeyType::Compact.versionize(),
+                &PublicKeyType::Compact,
                 &PubDataType::PublicKeyMetadata.to_string(),
             )
             .await?;
@@ -224,14 +212,14 @@ pub async fn read_pk_at_request_id<S: Storage>(
 }
 
 /// Helper method for reading all data of a specific type.
-pub async fn read_all_data<S: StorageReader, Ser: DeserializeOwned + Serialize + Send>(
+pub async fn read_all_data_versioned<S: StorageReader, T: Unversionize + Named + Send>(
     storage: &S,
     data_type: &str,
-) -> anyhow::Result<HashMap<RequestId, Ser>> {
+) -> anyhow::Result<HashMap<RequestId, T>> {
     let url_map = storage.all_urls(data_type).await?;
     let mut res = HashMap::with_capacity(url_map.len());
     for (data_ptr, url) in url_map.iter() {
-        let data: Ser = storage
+        let data: T = storage
             .read_data(url)
             .await
             .map_err(|e| anyhow!("reading failed on url {url}: {e}"))?;
@@ -367,8 +355,8 @@ impl StorageReader for FileStorage {
         Ok(res)
     }
 
-    async fn read_data<T: DeserializeOwned + Send>(&self, url: &Url) -> anyhow::Result<T> {
-        let res: T = read_element(
+    async fn read_data<T: Unversionize + Named + Send>(&self, url: &Url) -> anyhow::Result<T> {
+        let res: T = safe_read_element_versioned(
             url_to_pathbuf(url)
                 .to_str()
                 .ok_or(anyhow!("Could not convert path to string"))?,
@@ -455,31 +443,7 @@ impl FileStorage {
 }
 
 #[tonic::async_trait]
-impl Storage for FileStorage {
-    /// Store data with a specific [url], giving a warning if the data already exists and exits _without_ writing
-    async fn store_data<T: Serialize + Send + Sync + ?Sized>(
-        &mut self,
-        data: &T,
-        url: &Url,
-    ) -> anyhow::Result<()> {
-        let url_path = url_to_pathbuf(url);
-
-        self.setup_dirs(&url_path).await?;
-
-        write_element(
-            url_path
-                .to_str()
-                .ok_or(anyhow!("Could not convert path to string"))?,
-            &data,
-        )
-        .await
-        .map_err(|e| {
-            tracing::warn!("Could not write to URL {}: {}", url, e);
-            e
-        })?;
-        Ok(())
-    }
-
+impl StorageForText for FileStorage {
     /// Store text with a specific [url], giving a warning if the data already exists and exits _without_ writing
     async fn store_text(&mut self, text: &str, url: &Url) -> anyhow::Result<()> {
         let url_path = url_to_pathbuf(url);
@@ -491,6 +455,33 @@ impl Storage for FileStorage {
                 .to_str()
                 .ok_or(anyhow!("Could not convert path to string"))?,
             text,
+        )
+        .await
+        .map_err(|e| {
+            tracing::warn!("Could not write to URL {}: {}", url, e);
+            e
+        })?;
+        Ok(())
+    }
+}
+
+#[tonic::async_trait]
+impl Storage for FileStorage {
+    /// Store data with a specific [url], giving a warning if the data already exists and exits _without_ writing
+    async fn store_data<T: Versionize + Named + Send + Sync>(
+        &mut self,
+        data: &T,
+        url: &Url,
+    ) -> anyhow::Result<()> {
+        let url_path = url_to_pathbuf(url);
+
+        self.setup_dirs(&url_path).await?;
+
+        safe_write_element_versioned(
+            url_path
+                .to_str()
+                .ok_or(anyhow!("Could not convert path to string"))?,
+            data,
         )
         .await
         .map_err(|e| {
@@ -531,10 +522,10 @@ impl RamStorage {
     pub async fn from_existing_keys(keys: &SoftwareKmsKeys) -> anyhow::Result<Self> {
         let mut ram_storage = Self::new(StorageType::PRIV);
         for (cur_req_id, cur_keys) in &keys.key_info {
-            store_at_request_id(
+            store_versioned_at_request_id(
                 &mut ram_storage,
                 cur_req_id,
-                &cur_keys.versionize(),
+                cur_keys,
                 &PrivDataType::FheKeyInfo.to_string(),
             )
             .await?;
@@ -542,7 +533,7 @@ impl RamStorage {
         let sk_handle = compute_handle(&keys.sig_pk)?;
         ram_storage
             .store_data(
-                &keys.sig_sk.versionize(),
+                &keys.sig_sk,
                 &ram_storage.compute_url(&sk_handle, &PrivDataType::SigningKey.to_string())?,
             )
             .await?;
@@ -556,13 +547,13 @@ impl StorageReader for RamStorage {
         Ok(self.internal_storage.contains_key(url))
     }
 
-    async fn read_data<Ser: DeserializeOwned + Send>(&self, url: &Url) -> anyhow::Result<Ser> {
+    async fn read_data<T: Unversionize + Named + Send>(&self, url: &Url) -> anyhow::Result<T> {
         let raw_data = match self.internal_storage.get(url) {
             Some((_data_id, _data_type, raw_data)) => raw_data,
             None => return Err(anyhow!("Could not decode data at url {}", url)),
         };
-        let res: Ser = bincode::deserialize(raw_data)?;
-        Ok(res)
+        let mut buf = std::io::Cursor::new(raw_data);
+        safe_deserialize_versioned(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| anyhow::anyhow!(e))
     }
 
     fn compute_url(&self, data_id: &str, data_type: &str) -> anyhow::Result<Url> {
@@ -602,8 +593,28 @@ pub fn url_to_pathbuf(url: &Url) -> PathBuf {
 }
 
 #[tonic::async_trait]
+impl StorageForText for RamStorage {
+    async fn store_text(&mut self, text: &str, url: &Url) -> anyhow::Result<()> {
+        let url_string = url.to_owned().to_string();
+        let components: Vec<&str> = url_string.split('/').collect();
+        let data_type = components
+            .get(components.len() - 2)
+            .ok_or_else(|| anyhow_error_and_log("URL does not contain data id"))?
+            .to_string();
+        let data_id = components
+            .last()
+            .ok_or_else(|| anyhow_error_and_log("URL does not contain data type"))?
+            .to_string();
+        let serialized = text.as_bytes().to_vec();
+        self.internal_storage
+            .insert(url.to_owned(), (data_id, data_type, serialized));
+        Ok(())
+    }
+}
+
+#[tonic::async_trait]
 impl Storage for RamStorage {
-    async fn store_data<T: serde::Serialize + Send + Sync + ?Sized>(
+    async fn store_data<T: Versionize + Named + Send + Sync>(
         &mut self,
         data: &T,
         url: &Url,
@@ -618,24 +629,8 @@ impl Storage for RamStorage {
             .last()
             .ok_or_else(|| anyhow_error_and_log("URL does not contain data type"))?
             .to_string();
-        let serialized = bincode::serialize(&data)?;
-        self.internal_storage
-            .insert(url.to_owned(), (data_id, data_type, serialized));
-        Ok(())
-    }
-
-    async fn store_text(&mut self, text: &str, url: &Url) -> anyhow::Result<()> {
-        let url_string = url.to_owned().to_string();
-        let components: Vec<&str> = url_string.split('/').collect();
-        let data_type = components
-            .get(components.len() - 2)
-            .ok_or_else(|| anyhow_error_and_log("URL does not contain data id"))?
-            .to_string();
-        let data_id = components
-            .last()
-            .ok_or_else(|| anyhow_error_and_log("URL does not contain data type"))?
-            .to_string();
-        let serialized = text.as_bytes().to_vec();
+        let mut serialized = Vec::new();
+        safe_serialize_versioned(data, &mut serialized, SAFE_SER_SIZE_LIMIT)?;
         self.internal_storage
             .insert(url.to_owned(), (data_id, data_type, serialized));
         Ok(())
@@ -659,13 +654,17 @@ pub enum StorageVersion {
 pub mod tests {
     use super::*;
     use crate::rpc::rpc_types::PubDataType;
-    use serde::Deserialize;
+    use serde::{Deserialize, Serialize};
     use strum::IntoEnumIterator;
     use tfhe_versionable::VersionsDispatch;
 
     #[derive(Serialize, Deserialize, Eq, PartialEq, Debug, VersionsDispatch)]
     enum TestTypeVersioned {
         V0(TestType),
+    }
+
+    impl Named for TestType {
+        const NAME: &'static str = "TestType";
     }
 
     #[derive(Serialize, Deserialize, Eq, PartialEq, Debug, Versionize)]
@@ -709,13 +708,13 @@ pub mod tests {
                 .is_empty());
         }
 
-        let data = "data";
+        let data = TestType { i: 13 };
         let url = storage1
             .compute_url("ID", &PubDataType::CRS.to_string())
             .unwrap();
 
         // make sure we can put it in storage1
-        assert!(storage1.store_data(data, &url).await.is_ok());
+        assert!(storage1.store_data(&data, &url).await.is_ok());
         assert!(storage1.data_exists(&url).await.unwrap());
         let wrong = Url::from_file_path(format!(
             "{MAIN_SEPARATOR}some{MAIN_SEPARATOR}wrong{MAIN_SEPARATOR}path{MAIN_SEPARATOR}file.txt"
@@ -739,7 +738,7 @@ pub mod tests {
             FileStorage::new_centralized(Some(path), StorageType::PUB).unwrap()
         };
 
-        let data = vec![1, 2, 3];
+        let data = TestType { i: 23 };
         let data_id = "ID";
         let url = storage
             .compute_url(data_id, &PubDataType::CRS.to_string())
@@ -798,10 +797,12 @@ pub mod tests {
 
         // Ensure no old data is present
         let _ = delete_at_request_id(storage, &req_id, data_type).await;
-        assert!(store_at_request_id(storage, &req_id, &data, data_type)
-            .await
-            .is_ok());
-        let retrieved_store: TestType = read_at_request_id(storage, &req_id, data_type)
+        assert!(
+            store_versioned_at_request_id(storage, &req_id, &data, data_type)
+                .await
+                .is_ok()
+        );
+        let retrieved_store: TestType = read_versioned_at_request_id(storage, &req_id, data_type)
             .await
             .unwrap();
         assert_eq!(data, retrieved_store);
@@ -809,7 +810,7 @@ pub mod tests {
             .await
             .is_ok());
         let reretrieved_store: anyhow::Result<TestType> =
-            read_at_request_id(storage, &req_id, data_type).await;
+            read_versioned_at_request_id(storage, &req_id, data_type).await;
         assert!(reretrieved_store.is_err());
     }
 
@@ -844,17 +845,18 @@ pub mod tests {
         // Check data retrieval
         println!("retrieving.. {}", storage.info());
         let req_id_1_pk: anyhow::Result<TestType> =
-            read_at_request_id(storage, &req_id_1, &PubDataType::PublicKey.to_string()).await;
+            read_versioned_at_request_id(storage, &req_id_1, &PubDataType::PublicKey.to_string())
+                .await;
         assert_eq!(&req_id_1_pk.unwrap(), &data_1_pk);
         let pks: HashMap<RequestId, TestType> =
-            read_all_data(storage, &PubDataType::PublicKey.to_string())
+            read_all_data_versioned(storage, &PubDataType::PublicKey.to_string())
                 .await
                 .unwrap();
         assert_eq!(pks.len(), 2);
         assert_eq!(pks.get(&req_id_1).unwrap(), &data_1_pk);
         assert_eq!(pks.get(&req_id_2).unwrap(), &data_2_pk);
         let verfs: HashMap<RequestId, TestType> =
-            read_all_data(storage, &PubDataType::VerfKey.to_string())
+            read_all_data_versioned(storage, &PubDataType::VerfKey.to_string())
                 .await
                 .unwrap();
         assert_eq!(verfs.len(), 1);
@@ -865,18 +867,19 @@ pub mod tests {
 
         // Check data retrieval again
         let pks: HashMap<RequestId, TestType> =
-            read_all_data(storage, &PubDataType::PublicKey.to_string())
+            read_all_data_versioned(storage, &PubDataType::PublicKey.to_string())
                 .await
                 .unwrap();
         assert_eq!(pks.len(), 1);
         assert_eq!(pks.get(&req_id_2).unwrap(), &data_2_pk);
         let req_id_1_pk: anyhow::Result<TestType> =
-            read_at_request_id(storage, &req_id_1, &PubDataType::PublicKey.to_string()).await;
+            read_versioned_at_request_id(storage, &req_id_1, &PubDataType::PublicKey.to_string())
+                .await;
         // Check there is no longer a pk for req_id_1
         assert!(req_id_1_pk.is_err());
 
         let verfs: HashMap<RequestId, TestType> =
-            read_all_data(storage, &PubDataType::VerfKey.to_string())
+            read_all_data_versioned(storage, &PubDataType::VerfKey.to_string())
                 .await
                 .unwrap();
         assert!(verfs.is_empty());
@@ -886,7 +889,7 @@ pub mod tests {
 
         // Check data retrieval again
         let pks: HashMap<RequestId, TestType> =
-            read_all_data(storage, &PubDataType::PublicKey.to_string())
+            read_all_data_versioned(storage, &PubDataType::PublicKey.to_string())
                 .await
                 .unwrap();
         assert!(pks.is_empty());

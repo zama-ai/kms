@@ -5,6 +5,7 @@ use kms_core_common::impl_generic_versionize;
 use nom::AsBytes;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
+use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use wasm_bindgen::prelude::wasm_bindgen;
 
@@ -113,6 +114,10 @@ pub struct PublicSigKey {
     pk: WrappedVerifyingKey,
 }
 
+impl Named for PublicSigKey {
+    const NAME: &'static str = "PublicSigKey";
+}
+
 impl PublicSigKey {
     pub fn new(pk: k256::ecdsa::VerifyingKey) -> Self {
         Self {
@@ -196,6 +201,10 @@ pub enum PrivateSigKeyVersioned {
 #[versionize(PrivateSigKeyVersioned)]
 pub struct PrivateSigKey {
     sk: WrappedSigningKey,
+}
+
+impl Named for PrivateSigKey {
+    const NAME: &'static str = "PrivateSigKey";
 }
 
 impl PrivateSigKey {

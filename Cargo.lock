@@ -2419,7 +2419,7 @@ dependencies = [
 [[package]]
 name = "concrete-csprng"
 version = "0.4.1"
-source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.8#b93c23e5f87b29b3519712ae8071f435d9cf207a"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.9#5db5aba24a87d3274f0b11d4fd31ded0e34a9137"
 dependencies = [
  "aes",
  "libc",
@@ -8795,8 +8795,8 @@ dependencies = [
 
 [[package]]
 name = "tfhe"
-version = "0.8.0-alpha.8"
-source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.8#b93c23e5f87b29b3519712ae8071f435d9cf207a"
+version = "0.8.0-alpha.9"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.9#5db5aba24a87d3274f0b11d4fd31ded0e34a9137"
 dependencies = [
  "aligned-vec",
  "bincode",
@@ -8885,8 +8885,8 @@ dependencies = [
 
 [[package]]
 name = "tfhe-versionable"
-version = "0.2.1"
-source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.8#b93c23e5f87b29b3519712ae8071f435d9cf207a"
+version = "0.3.0"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.9#5db5aba24a87d3274f0b11d4fd31ded0e34a9137"
 dependencies = [
  "aligned-vec",
  "num-complex",
@@ -8896,8 +8896,8 @@ dependencies = [
 
 [[package]]
 name = "tfhe-versionable-derive"
-version = "0.2.1"
-source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.8#b93c23e5f87b29b3519712ae8071f435d9cf207a"
+version = "0.3.0"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.9#5db5aba24a87d3274f0b11d4fd31ded0e34a9137"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -8907,7 +8907,7 @@ dependencies = [
 [[package]]
 name = "tfhe-zk-pok"
 version = "0.3.0-alpha.1"
-source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.8#b93c23e5f87b29b3519712ae8071f435d9cf207a"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.9#5db5aba24a87d3274f0b11d4fd31ded0e34a9137"
 dependencies = [
  "ark-serialize 0.4.2",
  "num-bigint",

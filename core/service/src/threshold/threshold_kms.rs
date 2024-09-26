@@ -5,7 +5,7 @@ use super::generic::{
     ZkVerifier,
 };
 use crate::conf::threshold::{PeerConf, ThresholdConfig};
-use crate::consts::{MINIMUM_SESSIONS_PREPROC, PRSS_EPOCH_ID};
+use crate::consts::{MINIMUM_SESSIONS_PREPROC, PRSS_EPOCH_ID, SAFE_SER_SIZE_LIMIT};
 use crate::cryptography::central_kms::{compute_info, BaseKmsStruct};
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey};
 use crate::cryptography::signcryption::signcrypt;
@@ -28,8 +28,8 @@ use crate::rpc::rpc_types::{
     CURRENT_FORMAT_VERSION,
 };
 use crate::storage::{
-    delete_at_request_id, delete_pk_at_request_id, read_all_data, read_versioned_at_request_id,
-    store_pk_at_request_id, store_versioned_at_request_id, Storage,
+    delete_at_request_id, delete_pk_at_request_id, read_all_data_versioned,
+    read_versioned_at_request_id, store_pk_at_request_id, store_versioned_at_request_id, Storage,
 };
 use crate::util::meta_store::{handle_res_mapping, HandlerStatus, MetaStore};
 use crate::{anyhow_error_and_log, get_exactly_one};
@@ -73,12 +73,14 @@ use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use tfhe::integer::ciphertext::BaseRadixCiphertext;
 use tfhe::integer::IntegerCiphertext;
+use tfhe::named::Named;
+use tfhe::safe_deserialization::safe_deserialize_versioned;
 use tfhe::shortint::list_compression::DecompressionKey;
 use tfhe::{
     FheBool, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32, FheUint4,
-    FheUint64, FheUint8, Unversionize, Versionize,
+    FheUint64, FheUint8, Versionize,
 };
-use tfhe_versionable::{VersionizeOwned, VersionsDispatch};
+use tfhe_versionable::VersionsDispatch;
 use tokio::sync::{Mutex, RwLock, RwLockReadGuard};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
@@ -205,49 +207,59 @@ impl FheType {
         &self,
         serialized_high_level: &[u8],
     ) -> anyhow::Result<Ciphertext64> {
+        let mut buf = std::io::Cursor::new(serialized_high_level);
         let radix_ct = match self {
             FheType::Ebool => {
-                let hl_ct: FheBool = bincode::deserialize(serialized_high_level)?;
+                let hl_ct: FheBool = safe_deserialize_versioned(&mut buf, SAFE_SER_SIZE_LIMIT)
+                    .map_err(|e| anyhow::anyhow!(e))?;
                 let radix_ct = hl_ct.into_raw_parts();
                 BaseRadixCiphertext::from_blocks(vec![radix_ct])
             }
             FheType::Euint4 => {
-                let hl_ct: FheUint4 = bincode::deserialize(serialized_high_level)?;
+                let hl_ct: FheUint4 = safe_deserialize_versioned(&mut buf, SAFE_SER_SIZE_LIMIT)
+                    .map_err(|e| anyhow::anyhow!(e))?;
                 let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
                 radix_ct
             }
             FheType::Euint8 => {
-                let hl_ct: FheUint8 = bincode::deserialize(serialized_high_level)?;
+                let hl_ct: FheUint8 = safe_deserialize_versioned(&mut buf, SAFE_SER_SIZE_LIMIT)
+                    .map_err(|e| anyhow::anyhow!(e))?;
                 let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
                 radix_ct
             }
             FheType::Euint16 => {
-                let hl_ct: FheUint16 = bincode::deserialize(serialized_high_level)?;
+                let hl_ct: FheUint16 = safe_deserialize_versioned(&mut buf, SAFE_SER_SIZE_LIMIT)
+                    .map_err(|e| anyhow::anyhow!(e))?;
                 let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
                 radix_ct
             }
             FheType::Euint32 => {
-                let hl_ct: FheUint32 = bincode::deserialize(serialized_high_level)?;
+                let hl_ct: FheUint32 = safe_deserialize_versioned(&mut buf, SAFE_SER_SIZE_LIMIT)
+                    .map_err(|e| anyhow::anyhow!(e))?;
                 let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
                 radix_ct
             }
             FheType::Euint64 => {
-                let hl_ct: FheUint64 = bincode::deserialize(serialized_high_level)?;
+                let hl_ct: FheUint64 = safe_deserialize_versioned(&mut buf, SAFE_SER_SIZE_LIMIT)
+                    .map_err(|e| anyhow::anyhow!(e))?;
                 let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
                 radix_ct
             }
             FheType::Euint128 => {
-                let hl_ct: FheUint128 = bincode::deserialize(serialized_high_level)?;
+                let hl_ct: FheUint128 = safe_deserialize_versioned(&mut buf, SAFE_SER_SIZE_LIMIT)
+                    .map_err(|e| anyhow::anyhow!(e))?;
                 let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
                 radix_ct
             }
             FheType::Euint160 => {
-                let hl_ct: FheUint160 = bincode::deserialize(serialized_high_level)?;
+                let hl_ct: FheUint160 = safe_deserialize_versioned(&mut buf, SAFE_SER_SIZE_LIMIT)
+                    .map_err(|e| anyhow::anyhow!(e))?;
                 let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
                 radix_ct
             }
             FheType::Euint256 => {
-                let hl_ct: FheUint256 = bincode::deserialize(serialized_high_level)?;
+                let hl_ct: FheUint256 = safe_deserialize_versioned(&mut buf, SAFE_SER_SIZE_LIMIT)
+                    .map_err(|e| anyhow::anyhow!(e))?;
                 let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
                 radix_ct
             }
@@ -258,7 +270,8 @@ impl FheType {
                 todo!("Implement deserialization for Euint1024")
             }
             FheType::Euint2048 => {
-                let hl_ct: FheUint2048 = bincode::deserialize(serialized_high_level)?;
+                let hl_ct: FheUint2048 = safe_deserialize_versioned(&mut buf, SAFE_SER_SIZE_LIMIT)
+                    .map_err(|e| anyhow::anyhow!(e))?;
                 let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
                 radix_ct
             }
@@ -281,6 +294,10 @@ pub struct ThresholdFheKeys {
     pub pk_meta_data: DkgMetaStore,
 }
 
+impl Named for ThresholdFheKeys {
+    const NAME: &'static str = "ThresholdFheKeys";
+}
+
 // Request digest, and resultant plaintext
 type DecMetaStore = (Vec<u8>, Vec<Plaintext>, Vec<u8>);
 // Request digest, fhe type of encryption and resultant partial decryption
@@ -297,8 +314,8 @@ pub fn compute_all_info(
     fhe_key_set: &FhePubKeySet,
 ) -> anyhow::Result<DkgMetaStore> {
     //Compute all the info required for storing
-    let pub_key_info = compute_info(sig_key, &fhe_key_set.public_key.versionize());
-    let serv_key_info = compute_info(sig_key, &fhe_key_set.server_key.versionize());
+    let pub_key_info = compute_info(sig_key, &fhe_key_set.public_key);
+    let serv_key_info = compute_info(sig_key, &fhe_key_set.server_key);
 
     //Make sure we did manage to compute the info
     Ok(match (pub_key_info, serv_key_info) {
@@ -373,35 +390,26 @@ where
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
 {
-    let sks: HashMap<RequestId, <PrivateSigKey as VersionizeOwned>::VersionedOwned> =
-        read_all_data(&private_storage, &PrivDataType::SigningKey.to_string()).await?;
-    let sk = PrivateSigKey::unversionize(get_exactly_one(sks).inspect_err(|e| {
+    let sks: HashMap<RequestId, PrivateSigKey> =
+        read_all_data_versioned(&private_storage, &PrivDataType::SigningKey.to_string()).await?;
+    let sk = get_exactly_one(sks).inspect_err(|e| {
         tracing::error!("signing key hashmap is not exactly 1, {}", e);
-    })?)?;
+    })?;
 
-    let key_info_versioned: HashMap<
-        RequestId,
-        <ThresholdFheKeys as VersionizeOwned>::VersionedOwned,
-    > = read_all_data(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
+    let key_info_versioned: HashMap<RequestId, ThresholdFheKeys> =
+        read_all_data_versioned(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
     let mut key_info = HashMap::new();
     let mut key_info_w_status = HashMap::new();
     for (id, info) in key_info_versioned.into_iter() {
-        let unversioned = ThresholdFheKeys::unversionize(info)?;
-        key_info_w_status.insert(
-            id.clone(),
-            HandlerStatus::Done(unversioned.pk_meta_data.clone()),
-        );
-        key_info.insert(id, unversioned);
+        key_info_w_status.insert(id.clone(), HandlerStatus::Done(info.pk_meta_data.clone()));
+        key_info.insert(id, info);
     }
-    let cs: HashMap<RequestId, <SignedPubDataHandleInternal as VersionizeOwned>::VersionedOwned> =
-        read_all_data(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
+    let cs: HashMap<RequestId, SignedPubDataHandleInternal> =
+        read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
     let mut cs_w_status: HashMap<RequestId, HandlerStatus<SignedPubDataHandleInternal>> =
         HashMap::new();
     for (id, crs) in cs {
-        cs_w_status.insert(
-            id.to_owned(),
-            HandlerStatus::Done(SignedPubDataHandleInternal::unversionize(crs)?),
-        );
+        cs_w_status.insert(id.to_owned(), HandlerStatus::Done(crs));
     }
     let role_assignments: RoleAssignment = peer_configs
         .into_iter()

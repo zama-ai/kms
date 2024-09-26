@@ -55,16 +55,14 @@ cfg_if::cfg_if! {
         use crate::rpc::rpc_types::{
             PublicKeyType, WrappedPublicKeyOwned,
         };
-        use crate::storage::read_all_data;
+        use crate::storage::read_all_data_versioned;
         use crate::storage::Storage;
         use crate::{storage::StorageReader};
-        use serde::de::DeserializeOwned;
         use std::collections::HashMap;
         use std::fmt;
-        use tfhe::CompactPublicKey;
         use tfhe::ProvenCompactCiphertextList;
         use tfhe::ServerKey;
-        use tfhe_versionable::{Unversionize, VersionizeOwned};
+        use tfhe_versionable::{Versionize, Unversionize};
     }
 }
 
@@ -855,10 +853,10 @@ impl Client {
     ) -> anyhow::Result<Client> {
         let mut pks: Vec<PublicSigKey> = Vec::new();
         for cur_storage in pub_storages {
-            let cur_map = read_all_data(&cur_storage, &PubDataType::VerfKey.to_string()).await?;
-            for (cur_req_id, cur_pk) in cur_map {
+            let cur_map =
+                read_all_data_versioned(&cur_storage, &PubDataType::VerfKey.to_string()).await?;
+            for (cur_req_id, new_pk) in cur_map {
                 // ensure that the inserted pk did not exist before / is not inserted twice
-                let new_pk = PublicSigKey::unversionize(cur_pk)?;
                 if pks.contains(&new_pk) {
                     return Err(anyhow_error_and_log(format!(
                         "Public key for request id {} is already in the map",
@@ -868,20 +866,19 @@ impl Client {
                 pks.push(new_pk);
             }
         }
-        let client_pk_map: HashMap<RequestId, <PublicSigKey as VersionizeOwned>::VersionedOwned> =
-            read_all_data(&client_storage, &ClientDataType::VerfKey.to_string()).await?;
-        let client_pk =
-            PublicSigKey::unversionize(get_exactly_one(client_pk_map).inspect_err(|e| {
-                tracing::error!("client pk hashmap is not exactly 1: {}", e);
-            })?)?;
+        let client_pk_map: HashMap<RequestId, PublicSigKey> =
+            read_all_data_versioned(&client_storage, &ClientDataType::VerfKey.to_string()).await?;
+        let client_pk = get_exactly_one(client_pk_map).inspect_err(|e| {
+            tracing::error!("client pk hashmap is not exactly 1: {}", e);
+        })?;
         let client_address = alloy_primitives::Address::from_public_key(client_pk.pk());
 
-        let client_sk_map: HashMap<RequestId, <PrivateSigKey as VersionizeOwned>::VersionedOwned> =
-            read_all_data(&client_storage, &ClientDataType::SigningKey.to_string()).await?;
-        let client_sk =
-            PrivateSigKey::unversionize(get_exactly_one(client_sk_map).inspect_err(|e| {
-                tracing::error!("client sk hashmap is not exactly 1: {}", e);
-            })?)?;
+        let client_sk_map: HashMap<RequestId, PrivateSigKey> =
+            read_all_data_versioned(&client_storage, &ClientDataType::SigningKey.to_string())
+                .await?;
+        let client_sk = get_exactly_one(client_sk_map).inspect_err(|e| {
+            tracing::error!("client sk hashmap is not exactly 1: {}", e);
+        })?;
 
         Ok(Client::new(pks, client_address, Some(client_sk), *params))
     }
@@ -1058,7 +1055,7 @@ impl Client {
                 let url =
                     storage.compute_url(&request_id.to_string(), &PubDataType::CRS.to_string())?;
                 let pp = storage.read_data(&url).await?;
-                (PublicParameterWithParamID::unversionize(pp)?, info)
+                (pp, info)
             } else {
                 tracing::warn!("empty SignedPubDataHandle");
                 continue;
@@ -1269,7 +1266,7 @@ impl Client {
             .retrieve_key(key_gen_result, PubDataType::ServerKey, storage)
             .await?
         {
-            Ok(Some(ServerKey::unversionize(server_key)?))
+            Ok(Some(server_key))
         } else {
             Ok(None)
         }
@@ -1307,24 +1304,19 @@ impl Client {
             &request_id
         );
         let wrapped_pk = match pk_type {
-            PublicKeyType::Compact => {
-                if let Some(k) = self
-                    .retrieve_key(key_gen_result, PubDataType::PublicKey, storage)
-                    .await?
-                {
-                    Some(WrappedPublicKeyOwned::Compact(
-                        CompactPublicKey::unversionize(k)?,
-                    ))
-                } else {
-                    None
-                }
-            }
+            PublicKeyType::Compact => self
+                .retrieve_key(key_gen_result, PubDataType::PublicKey, storage)
+                .await?
+                .map(WrappedPublicKeyOwned::Compact),
         };
         Ok(wrapped_pk)
     }
 
     #[cfg(feature = "non-wasm")]
-    async fn retrieve_key<S: serde::Serialize + DeserializeOwned + Send, R: StorageReader>(
+    async fn retrieve_key<
+        S: Versionize + Unversionize + tfhe::named::Named + Send,
+        R: StorageReader,
+    >(
         &self,
         key_gen_result: &KeyGenResult,
         key_type: PubDataType,
@@ -1363,7 +1355,7 @@ impl Client {
 
     /// Get a key from a public storage depending on the data type
     #[cfg(feature = "non-wasm")]
-    async fn get_key<S: serde::Serialize + DeserializeOwned + Send, R: StorageReader>(
+    async fn get_key<S: Unversionize + tfhe::named::Named + Send, R: StorageReader>(
         &self,
         key_id: &RequestId,
         key_type: PubDataType,
@@ -1425,8 +1417,7 @@ impl Client {
         storage: &R,
     ) -> anyhow::Result<(PublicParameterWithParamID, CompactPkePublicParams)> {
         let url = storage.compute_url(&crs_id.to_string(), &PubDataType::CRS.to_string())?;
-        let crs_versioned = storage.read_data(&url).await?;
-        let crs = PublicParameterWithParamID::unversionize(crs_versioned)?;
+        let crs: PublicParameterWithParamID = storage.read_data(&url).await?;
         let pp = crs.pp.try_into_tfhe_zk_pok_pp(
             &self
                 .params
@@ -2621,7 +2612,7 @@ pub(crate) mod tests {
     };
     use crate::storage::StorageReader;
     use crate::storage::{FileStorage, RamStorage, StorageType, StorageVersion};
-    use crate::util::file_handling::read_element;
+    use crate::util::file_handling::safe_read_element_versioned;
     #[cfg(feature = "wasm_tests")]
     use crate::util::file_handling::write_element;
     use crate::util::key_setup::test_tools::{
@@ -2649,7 +2640,6 @@ pub(crate) mod tests {
     use tfhe::shortint::parameters::compact_public_key_only::CompactCiphertextListCastingMode;
     use tfhe::zk::CompactPkePublicParams;
     use tfhe::ProvenCompactCiphertextList;
-    use tfhe_versionable::Unversionize;
     use tokio::task::{JoinHandle, JoinSet};
     use tonic::transport::Channel;
 
@@ -2870,8 +2860,8 @@ pub(crate) mod tests {
         crs_path.replace_range(0..7, ""); // remove leading "file:/" from URI, so we can read the file
 
         // check that CRS signature is verified correctly for the current version
-        let crs_raw = read_element(&crs_path).await.unwrap();
-        let crs_unversioned = PublicParameterWithParamID::unversionize(crs_raw).unwrap();
+        let crs_unversioned: PublicParameterWithParamID =
+            safe_read_element_versioned(&crs_path).await.unwrap();
         let client_handle = compute_handle(&crs_unversioned).unwrap();
         assert_eq!(&client_handle, &crs_info.key_handle);
 

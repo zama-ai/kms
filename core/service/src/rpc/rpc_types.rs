@@ -9,6 +9,7 @@ use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;
 use strum_macros::EnumIter;
+use tfhe::named::Named;
 use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -57,6 +58,10 @@ pub struct SignedPubDataHandleInternal {
     pub key_handle: String,
     // The signature on the handle
     pub signature: Vec<u8>,
+}
+
+impl Named for SignedPubDataHandleInternal {
+    const NAME: &'static str = "SignedPubDataHandleInternal";
 }
 
 impl SignedPubDataHandleInternal {
@@ -865,6 +870,11 @@ pub struct PublicParameterWithParamID {
     pub param_id: i32,
 }
 
+#[cfg(feature = "non-wasm")]
+impl Named for PublicParameterWithParamID {
+    const NAME: &'static str = "PublicParameterWithParamID";
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, VersionsDispatch)]
 pub enum PublicKeyTypeVersioned {
     V0(PublicKeyType),
@@ -874,6 +884,10 @@ pub enum PublicKeyTypeVersioned {
 #[versionize(PublicKeyTypeVersioned)]
 pub enum PublicKeyType {
     Compact,
+}
+
+impl Named for PublicKeyType {
+    const NAME: &'static str = "PublicKeyType";
 }
 
 pub enum WrappedPublicKey<'a> {

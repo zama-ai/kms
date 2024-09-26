@@ -23,6 +23,7 @@ use tfhe::{
         prelude::{keyswitch_lwe_ciphertext, LweKeyswitchKey},
     },
     integer::{parameters::PolynomialSize, IntegerCiphertext},
+    named::Named,
     shortint::PBSOrder,
     Versionize,
 };
@@ -52,6 +53,10 @@ pub struct SwitchAndSquashKey {
     pub fbsk_out: Fourier128LweBootstrapKey<ABox<[f64]>>,
     //ksk is needed if PBSOrder is KS-PBS
     pub ksk: LweKeyswitchKey<Vec<u64>>,
+}
+
+impl Named for SwitchAndSquashKey {
+    const NAME: &'static str = "SwitchAndSquashKey";
 }
 
 impl Debug for SwitchAndSquashKey {

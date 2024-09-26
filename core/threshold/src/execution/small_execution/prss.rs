@@ -29,6 +29,7 @@ use rand::{CryptoRng, Rng};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::clone::Clone;
 use std::collections::{HashMap, HashSet};
+use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use tracing::instrument;
 
@@ -82,6 +83,10 @@ pub struct PRSSSetup<Z: Default + Clone + Serialize> {
     // all possible subsets of n-t parties (A) that contain Pi and their shared PRF keys
     sets: Vec<PrssSet<Z>>,
     alpha_powers: AlphaPowers<Z>,
+}
+
+impl<Z: Default + Clone + Serialize> Named for PRSSSetup<Z> {
+    const NAME: &'static str = "PRSSSetup";
 }
 
 // TODO that this type has a non-versioned implementation.
