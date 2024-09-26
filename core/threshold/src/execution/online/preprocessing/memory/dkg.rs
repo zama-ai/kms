@@ -191,13 +191,15 @@ where
         let params_basics_handles = params.get_params_basics_handle();
 
         //Depending on encryption type, pksk requires either LweNoise noise or GlweNoise
-        let (amount_pksk_lwe_noise, amount_pksk_glwe_noise) =
-            match params_basics_handles.encryption_key_choice() {
-                //type = LWE case
-                EncryptionKeyChoice::Small => (params_basics_handles.num_needed_noise_pksk(), 0),
-                //type = F-GLWE case
-                EncryptionKeyChoice::Big => (0, params_basics_handles.num_needed_noise_pksk()),
-            };
+        let (amount_pksk_lwe_noise, amount_pksk_glwe_noise) = match params_basics_handles
+            .get_pksk_destination()
+        {
+            //type = LWE case
+            Some(EncryptionKeyChoice::Small) => (params_basics_handles.num_needed_noise_pksk(), 0),
+            //type = F-GLWE case
+            Some(EncryptionKeyChoice::Big) => (0, params_basics_handles.num_needed_noise_pksk()),
+            _ => (0, 0),
+        };
 
         //Generate noise needed for the pksk (if needed) and the key switch key
         fill_noise(
@@ -206,12 +208,24 @@ where
             NoiseBounds::LweNoise(params_basics_handles.lwe_tuniform_bound()),
         )?;
 
-        //Generate noise needed for pksk (if needed) and the bootstrap key
+        //Generate noise needed for pksk (if needed), the bootstrap key
+        //and the decompression key
         fill_noise(
             prss_state,
-            amount_pksk_glwe_noise + params_basics_handles.num_needed_noise_bk(),
+            amount_pksk_glwe_noise
+                + params_basics_handles.num_needed_noise_bk()
+                + params_basics_handles.num_needed_noise_decompression_key(),
             NoiseBounds::GlweNoise(params_basics_handles.glwe_tuniform_bound()),
         )?;
+
+        //Generate noise needed for compression key
+        if let Some(bound) = params_basics_handles.compression_key_tuniform_bound() {
+            fill_noise(
+                prss_state,
+                params_basics_handles.num_needed_noise_compression_key(),
+                NoiseBounds::CompressionKSKNoise(bound),
+            )?;
+        }
 
         //Generate noise needed for Switch and Squash bootstrap key if needed
         match params {
@@ -234,7 +248,9 @@ where
 
         //Fill in the required number of _raw_ bits
         let num_bits_needed = params_basics_handles.lwe_dimension().0
+            + params_basics_handles.lwe_hat_dimension().0
             + params_basics_handles.glwe_sk_num_bits()
+            + params_basics_handles.compression_sk_num_bits()
             + match params {
                 DKGParams::WithSnS(sns_params) => sns_params.glwe_sk_num_bits_sns(),
                 DKGParams::WithoutSnS(_) => 0,
@@ -288,13 +304,15 @@ where
         preprocessing_bits: &mut dyn BitPreprocessing<Z>,
     ) -> anyhow::Result<()> {
         let params_basics_handles = params.get_params_basics_handle();
-        let (amount_pksk_lwe_noise, amount_pksk_glwe_noise) =
-            match params_basics_handles.encryption_key_choice() {
-                //type = LWE case
-                EncryptionKeyChoice::Small => (params_basics_handles.num_needed_noise_pksk(), 0),
-                //type = F-GLWE case
-                EncryptionKeyChoice::Big => (0, params_basics_handles.num_needed_noise_pksk()),
-            };
+        let (amount_pksk_lwe_noise, amount_pksk_glwe_noise) = match params_basics_handles
+            .get_pksk_destination()
+        {
+            //type = LWE case
+            Some(EncryptionKeyChoice::Small) => (params_basics_handles.num_needed_noise_pksk(), 0),
+            //type = F-GLWE case
+            Some(EncryptionKeyChoice::Big) => (0, params_basics_handles.num_needed_noise_pksk()),
+            _ => (0, 0),
+        };
 
         //Generate noise needed for pksk (if needed) and the key switch key
         self.append_noises(
@@ -306,15 +324,30 @@ where
             NoiseBounds::LweNoise(params_basics_handles.lwe_tuniform_bound()),
         );
 
-        //Generate noise needed for the pksk (if needed) and the bootstrap key
+        //Generate noise needed for the pksk (if needed), the bootstrap key
+        //and the decompression key
         self.append_noises(
             RealSecretDistributions::t_uniform(
-                params_basics_handles.num_needed_noise_bk() + amount_pksk_glwe_noise,
+                params_basics_handles.num_needed_noise_bk()
+                    + amount_pksk_glwe_noise
+                    + params_basics_handles.num_needed_noise_decompression_key(),
                 params_basics_handles.glwe_tuniform_bound(),
                 preprocessing_bits,
             )?,
             NoiseBounds::GlweNoise(params_basics_handles.glwe_tuniform_bound()),
         );
+
+        //Generate noise needed for compression key
+        if let Some(bound) = params_basics_handles.compression_key_tuniform_bound() {
+            self.append_noises(
+                RealSecretDistributions::t_uniform(
+                    params_basics_handles.num_needed_noise_compression_key(),
+                    bound,
+                    preprocessing_bits,
+                )?,
+                NoiseBounds::CompressionKSKNoise(bound),
+            );
+        }
 
         //Generate noise needed for Switch and Squash bootstrap key if needed
         match params {
@@ -345,6 +378,7 @@ where
         let num_bits_required = params_basics_handles.lwe_dimension().0
             + params_basics_handles.glwe_sk_num_bits()
             + params_basics_handles.lwe_hat_dimension().0
+            + params_basics_handles.compression_sk_num_bits()
             + match params {
                 DKGParams::WithSnS(sns_params) => sns_params.glwe_sk_num_bits_sns(),
                 DKGParams::WithoutSnS(_) => 0,

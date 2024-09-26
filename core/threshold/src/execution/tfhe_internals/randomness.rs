@@ -216,8 +216,6 @@ impl<Z: BaseRing, Gen: ByteRandomGenerator> MPCEncryptionRandomGenerator<Z, Gen>
                 .pop()
                 .ok_or_else(|| anyhow_error_and_log("Not enough noise in store"))?;
         }
-        //There shouldnt be any noise left in there
-        debug_assert_eq!(self.noise.vec.len(), 0);
         Ok(())
     }
 

@@ -455,12 +455,14 @@ impl DKGParamsBasics for DKGParamsRegular {
 
     fn get_compact_pk_enc_params(&self) -> CompactPublicKeyEncryptionParameters {
         //If we are using old style keys, there's no separate CompactPublicKeyEncryptionParameters
-        self.dedicated_compact_public_key_parameters.map_or(
-            (<ClassicPBSParameters as std::convert::Into<PBSParameters>>::into(
-                self.ciphertext_parameters,
-            ))
-            .try_into()
-            .unwrap(),
+        self.dedicated_compact_public_key_parameters.map_or_else(
+            || {
+                (<ClassicPBSParameters as std::convert::Into<PBSParameters>>::into(
+                    self.ciphertext_parameters,
+                ))
+                .try_into()
+                .unwrap()
+            },
             |(p, _)| p,
         )
     }
@@ -618,9 +620,12 @@ impl DKGParamsBasics for DKGParamsSnS {
         serialized.hash(&mut h);
         let hash = h.finish();
         format!(
-            "temp/dkg/MSGMOD_{}_CARRYMOD_{}_SNS_true_{}",
+            "temp/dkg/MSGMOD_{}_CARRYMOD_{}_SNS_true_compression_{}_{}",
             self.get_message_modulus().0,
             self.get_carry_modulus().0,
+            self.regular_params
+                .compression_decompression_parameters
+                .is_some(),
             hash
         )
     }
@@ -971,40 +976,60 @@ pub const BC_PARAMS_NIGEL_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
     },
 });
 
-/// This parameter set somewhat match the ones in [`distributed_decryption::tests::test_data_setup::TEST_PARAMETERS`]
-/// Used for testing BK_SNS generation and Switch and Squash
+/// __INSECURE__ Used for testing only
 pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
     regular_params: DKGParamsRegular {
         sec: 128,
         ciphertext_parameters: ClassicPBSParameters {
-            lwe_dimension: LweDimension(32),
+            lwe_dimension: LweDimension(10),
             glwe_dimension: GlweDimension(1),
-            polynomial_size: PolynomialSize(64),
-            lwe_noise_distribution: DynamicDistribution::TUniform(TUniform::new(0)),
-            glwe_noise_distribution: DynamicDistribution::TUniform(TUniform::new(0)),
-            pbs_base_log: DecompositionBaseLog(21),
+            polynomial_size: PolynomialSize(256),
+            lwe_noise_distribution: DynamicDistribution::new_t_uniform(0),
+            glwe_noise_distribution: DynamicDistribution::new_t_uniform(0),
+            pbs_base_log: DecompositionBaseLog(16),
             pbs_level: DecompositionLevelCount(1),
-            ks_base_log: DecompositionBaseLog(8),
-            ks_level: DecompositionLevelCount(4),
+            ks_base_log: DecompositionBaseLog(14),
+            ks_level: DecompositionLevelCount(1),
             message_modulus: MessageModulus(4),
             carry_modulus: CarryModulus(4),
-            max_noise_level: MaxNoiseLevel::from_msg_carry_modulus(
-                MessageModulus(4),
-                CarryModulus(4),
-            ),
-            log2_p_fail: -80., // dummy parameter
+            max_noise_level: MaxNoiseLevel::new(5),
+            log2_p_fail: -49.5137,
             ciphertext_modulus: CiphertextModulus::new_native(),
-            encryption_key_choice: EncryptionKeyChoice::Small,
+            encryption_key_choice: EncryptionKeyChoice::Big,
         },
-        compression_decompression_parameters: None,
-        dedicated_compact_public_key_parameters: None,
+        compression_decompression_parameters: Some(CompressionParameters {
+            br_level: DecompositionLevelCount(1),
+            br_base_log: DecompositionBaseLog(25),
+            packing_ks_level: DecompositionLevelCount(1),
+            packing_ks_base_log: DecompositionBaseLog(13),
+            packing_ks_polynomial_size: PolynomialSize(64),
+            packing_ks_glwe_dimension: GlweDimension(2),
+            lwe_per_glwe: tfhe::core_crypto::prelude::LweCiphertextCount(32),
+            storage_log_modulus: tfhe::core_crypto::prelude::CiphertextModulusLog(9),
+            packing_ks_key_noise_distribution: DynamicDistribution::new_t_uniform(0),
+        }),
+        dedicated_compact_public_key_parameters: Some((
+            CompactPublicKeyEncryptionParameters {
+                encryption_lwe_dimension: LweDimension(128),
+                encryption_noise_distribution: DynamicDistribution::new_t_uniform(0),
+                message_modulus: MessageModulus(4),
+                carry_modulus: CarryModulus(4),
+                ciphertext_modulus: CiphertextModulus::new_native(),
+                expansion_kind: CompactCiphertextListExpansionKind::RequiresCasting,
+            },
+            ShortintKeySwitchingParameters {
+                ks_level: DecompositionLevelCount(1),
+                ks_base_log: DecompositionBaseLog(14),
+                destination_key: EncryptionKeyChoice::Small,
+            },
+        )),
         flag: true,
     },
     sns_params: SwitchAndSquashParameters {
-        glwe_dimension: GlweDimension(2),
+        glwe_dimension: GlweDimension(1),
         glwe_noise_distribution: TUniform::new(0),
         polynomial_size: PolynomialSize(256),
-        pbs_base_log: DecompositionBaseLog(33),
+        pbs_base_log: DecompositionBaseLog(32),
         pbs_level: DecompositionLevelCount(2),
         ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
     },

@@ -229,8 +229,8 @@ where
             Z::ONE,
             &mut rng,
         )?[self.session.my_role()?.zero_based()];
-        for i in 0..amount {
-            let bit = i % 2 == 0;
+        for _ in 0..amount {
+            let bit = rng.get_bit() == 1;
             let secret = if bit { my_share_one } else { my_share_zero };
             res.push(secret);
         }

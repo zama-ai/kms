@@ -290,7 +290,7 @@ mod tests {
     use tfhe::{
         core_crypto::{commons::traits::UnsignedInteger, entities::Plaintext},
         prelude::{FheDecrypt, FheEncrypt},
-        CompactCiphertextList, FheUint8,
+        set_server_key, CompactCiphertextList, FheUint8,
     };
 
     use crate::{
@@ -345,6 +345,7 @@ mod tests {
     #[test]
     fn sunshine_enc_dec() {
         let keys: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
+        set_server_key(keys.public_keys.server_key);
         let mut compact_list_builder = CompactCiphertextList::builder(&keys.public_keys.public_key);
         for msg in 0_u8..8 {
             compact_list_builder.push(msg);

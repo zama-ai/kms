@@ -800,7 +800,7 @@ mod tests {
     use sha3::digest::{ExtendableOutput, Update, XofReader};
     use sha3::Shake256;
     use std::sync::Arc;
-    use tfhe::FheUint8;
+    use tfhe::{set_server_key, FheUint8};
     use tokio::task::JoinSet;
     use tracing_test::traced_test;
 
@@ -990,6 +990,7 @@ mod tests {
         )
         .unwrap();
 
+        set_server_key(keys.public_keys.server_key);
         let ct: FheUint8 = expanded_encrypt(&keys.public_keys.public_key, msg, 8);
         let (raw_ct, _id, _tag) = ct.into_raw_parts();
 

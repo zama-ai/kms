@@ -986,13 +986,11 @@ pub mod tests {
             structure_traits::{BaseRing, ErrorCorrect},
         },
         execution::{
-            config::BatchParams,
-            online::preprocessing::{create_memory_factory, dummy::DummyPreprocessing},
-            runtime::session::{LargeSession, ParameterHandles, SmallSession, ToBaseSession},
-            small_execution::{agree_random::DummyAgreeRandom, offline::SmallPreprocessing},
+            online::preprocessing::dummy::DummyPreprocessing,
+            runtime::session::{LargeSession, ParameterHandles},
             tfhe_internals::parameters::{DKGParamsBasics, DKGParamsRegular, DKGParamsSnS},
         },
-        tests::helper::tests_and_benches::{execute_protocol_large, execute_protocol_small},
+        tests::helper::tests_and_benches::execute_protocol_large,
     };
     #[cfg(feature = "slow_tests")]
     use crate::{
@@ -1200,12 +1198,25 @@ pub mod tests {
             run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
         }
 
-        run_switch_and_squash(prefix_path, num_parties, threshold);
+        run_switch_and_squash(prefix_path.clone(), num_parties, threshold);
+
+        run_tfhe_computation_shortint::<Z128, DKGParamsSnS>(
+            prefix_path.clone(),
+            num_parties,
+            threshold,
+            true,
+        );
+        run_tfhe_computation_fheuint::<Z128, DKGParamsSnS>(
+            prefix_path,
+            num_parties,
+            threshold,
+            true,
+        );
     }
 
     ///Tests related to [`PARAMS_TEST_BK_SNS`] using _less fake_ preprocessing
+    #[cfg(feature = "slow_tests")]
     #[test]
-    #[ignore]
     fn integration_keygen_params_bk_sns() {
         let params = PARAMS_TEST_BK_SNS;
         let params_basics_handles = params.get_params_basics_handle();
@@ -1221,7 +1232,20 @@ pub mod tests {
             run_real_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
         }
 
-        run_switch_and_squash(prefix_path.clone(), num_parties, threshold.into());
+        run_switch_and_squash(prefix_path.clone(), num_parties, threshold);
+
+        run_tfhe_computation_shortint::<Z128, DKGParamsSnS>(
+            prefix_path.clone(),
+            num_parties,
+            threshold,
+            true,
+        );
+        run_tfhe_computation_fheuint::<Z128, DKGParamsSnS>(
+            prefix_path,
+            num_parties,
+            threshold,
+            true,
+        );
     }
 
     ///Tests related to [`PARAMS_P32_SNS_FGLWE`]
@@ -1319,18 +1343,35 @@ pub mod tests {
         );
     }
 
+    #[cfg(feature = "slow_tests")]
     fn run_real_dkg_and_save(
         params: DKGParams,
         num_parties: usize,
-        threshold: u8,
+        threshold: usize,
         prefix_path: String,
     ) {
+        use std::time::Duration;
+
+        use crate::{
+            execution::{
+                config::BatchParams,
+                online::preprocessing::create_memory_factory,
+                runtime::session::{BaseSessionHandles, SmallSession, ToBaseSession},
+                small_execution::{agree_random::DummyAgreeRandom, offline::SmallPreprocessing},
+            },
+            tests::helper::tests_and_benches::execute_protocol_small,
+        };
+
         let params_basics_handles = params.get_params_basics_handle();
         params_basics_handles
             .write_to_file(format!("{}/params.json", prefix_path))
             .unwrap();
 
         let mut task = |mut session: SmallSession<ResiduePoly128>| async move {
+            session
+                .network()
+                .set_timeout_for_next_round(Duration::from_secs(120))
+                .unwrap();
             let batch_size = BatchParams {
                 triples: params.get_params_basics_handle().total_triples_required(),
                 randoms: params
@@ -1373,7 +1414,7 @@ pub mod tests {
         // Sync network because we also init the PRSS in the task
         let results = execute_protocol_small::<ResiduePoly128, _, _>(
             num_parties,
-            threshold,
+            threshold as u8,
             None,
             NetworkMode::Sync,
             None,
@@ -1532,6 +1573,9 @@ pub mod tests {
             big_sk_glwe.clone().unwrap(),
         );
         let pk = RawPubKeySet::read_from_file(format!("{}/pk.der", prefix_path)).unwrap();
+        let pub_key_set = pk.to_pubkeyset(DKGParams::WithSnS(params));
+
+        set_server_key(pub_key_set.server_key);
 
         let ddec_pk = pk.compute_tfhe_hl_api_compact_public_key(DKGParams::WithSnS(params));
         let ddec_sk = to_hl_client_key(&params.regular_params, sk_lwe.clone(), sk_glwe, None, None);
@@ -1616,6 +1660,9 @@ pub mod tests {
             .to_dkg_params();
         let (shortint_sk, pk) =
             retrieve_keys_from_files::<Z>(params, num_parties, threshold, prefix_path);
+        let pub_key_set = pk.to_pubkeyset(params);
+
+        set_server_key(pub_key_set.server_key);
         let shortint_pk = pk.compute_tfhe_shortint_server_key(params);
         for _ in 0..100 {
             try_tfhe_shortint_computation(&shortint_sk, &shortint_pk);
@@ -1651,6 +1698,11 @@ pub mod tests {
             .to_dkg_params();
         let (shortint_sk, pk) =
             retrieve_keys_from_files::<Z>(params, num_parties, threshold, prefix_path);
+
+        let pub_key_set = pk.to_pubkeyset(params);
+
+        set_server_key(pub_key_set.server_key);
+
         let shortint_pk = pk.compute_tfhe_shortint_server_key(params);
         for _ in 0..100 {
             try_tfhe_shortint_computation(&shortint_sk, &shortint_pk);
@@ -1658,11 +1710,10 @@ pub mod tests {
 
         let tfhe_sk =
             tfhe::ClientKey::from_raw_parts(shortint_sk.into(), None, None, tfhe::Tag::default());
-        let pub_key_set = pk.to_pubkeyset(params);
 
-        try_tfhe_fheuint_computation(&tfhe_sk, &pub_key_set.server_key);
+        try_tfhe_fheuint_computation(&tfhe_sk);
         if do_compression_test {
-            try_tfhe_compression_computation(&tfhe_sk, &pub_key_set.server_key);
+            try_tfhe_compression_computation(&tfhe_sk);
         }
     }
 
@@ -1759,7 +1810,7 @@ pub mod tests {
     }
 
     //TFHE-rs doctest for fheuint
-    fn try_tfhe_fheuint_computation(client_key: &tfhe::ClientKey, server_keys: &tfhe::ServerKey) {
+    fn try_tfhe_fheuint_computation(client_key: &tfhe::ClientKey) {
         //// Key generation
         let clear_a = 1344u32;
         let clear_b = 5u32;
@@ -1772,9 +1823,6 @@ pub mod tests {
 
         // FheUint8: Encrypted equivalent to u8
         let encrypted_c = FheUint8::try_encrypt(clear_c, client_key).unwrap();
-
-        // On the server side:
-        set_server_key(server_keys.clone());
 
         // Clear equivalent computations: 1344 * 5 = 6720
         let encrypted_res_mul = &encrypted_a * &encrypted_b;
@@ -1805,15 +1853,11 @@ pub mod tests {
         assert_eq!(clear_res, 1);
     }
 
-    fn try_tfhe_compression_computation(
-        client_key: &tfhe::ClientKey,
-        server_keys: &tfhe::ServerKey,
-    ) {
+    fn try_tfhe_compression_computation(client_key: &tfhe::ClientKey) {
         let clear_a = 1344u32;
         let clear_b = 5u32;
         let clear_c = 7u8;
 
-        set_server_key(server_keys.clone());
         // Encrypting the input data using the (private) client_key
         // FheUint32: Encrypted equivalent to u32
         let encrypted_a = FheUint32::try_encrypt(clear_a, client_key).unwrap();
@@ -1849,7 +1893,7 @@ pub mod tests {
     #[cfg(feature = "slow_tests")]
     #[test]
     fn keygen_params32_no_sns_fglwe_w_homprf() {
-        let params = NIST_PARAMS_P32_NO_SNS_FGLWE;
+        let params = PARAMS_TEST_BK_SNS.get_params_without_sns();
         let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 2;
         let threshold = 0;
