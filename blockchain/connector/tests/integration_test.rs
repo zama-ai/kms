@@ -4,7 +4,7 @@ use events::kms::{
     CrsGenValues, FheParameter, KeyGenPreprocValues, KmsCoreConf, KmsCoreParty,
     KmsCoreThresholdConf, KmsEvent, TransactionId, ZkpValues,
 };
-use events::kms::{DecryptResponseValues, DecryptValues, FheType, KmsMessage, Proof, Transaction};
+use events::kms::{DecryptResponseValues, DecryptValues, FheType, KmsMessage, Transaction};
 use events::kms::{KmsOperation, OperationValue};
 use events::{
     kms::{KeyGenValues, ReencryptValues},
@@ -324,12 +324,7 @@ async fn send_decrypt_request(client: &RwLock<Client>) -> String {
     );
 
     let request = ExecuteContractRequest::builder()
-        .message(
-            KmsMessage::builder()
-                .value(operation)
-                .proof(Proof::default())
-                .build(),
-        )
+        .message(KmsMessage::builder().value(operation).build())
         .gas_limit(200000u64)
         .funds(vec![ProtoCoin::builder()
             .denom("ucosm".to_string())

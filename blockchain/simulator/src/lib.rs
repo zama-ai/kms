@@ -11,9 +11,7 @@ use dashmap::DashMap;
 use ethers::abi::Token;
 use ethers::types::{Address, U256};
 use events::kms::TransactionId;
-use events::kms::{
-    DecryptValues, FheType, KmsEvent, KmsMessage, KmsOperation, OperationValue, Proof,
-};
+use events::kms::{DecryptValues, FheType, KmsEvent, KmsMessage, KmsOperation, OperationValue};
 use events::HexVector;
 use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractRequest, ProtoCoin};
 use kms_blockchain_client::query_client::{
@@ -438,12 +436,7 @@ pub async fn execute_decryption_contract(
     );
 
     let request = ExecuteContractRequest::builder()
-        .message(
-            KmsMessage::builder()
-                .value(value)
-                .proof(Proof::default()) // We are running in debug mode for now
-                .build(),
-        )
+        .message(KmsMessage::builder().value(value).build())
         .gas_limit(3_100_000)
         .funds(vec![ProtoCoin::builder()
             .amount(64_000_000) // Arbitrary value -> how do we get the proper value the first

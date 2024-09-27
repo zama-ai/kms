@@ -7,8 +7,6 @@ use events::kms::{
 pub struct KmsContractStorage {
     core_conf: Item<KmsCoreConf>,
     transactions: Map<Vec<u8>, Transaction>,
-    id_replies: Item<u64>,
-    pending_transactions: Map<u64, OperationValue>,
     debug_proof: Item<bool>,
 }
 
@@ -17,8 +15,6 @@ impl Default for KmsContractStorage {
         Self {
             core_conf: Item::new("core_conf"),
             transactions: Map::new("transactions"),
-            id_replies: Item::new("id_replies"),
-            pending_transactions: Map::new("pending_transactions"),
             debug_proof: Item::new("debug_proof"),
         }
     }
@@ -109,45 +105,11 @@ impl KmsContractStorage {
         Ok(())
     }
 
-    pub fn next_id(&self, storage: &mut dyn Storage) -> StdResult<u64> {
-        if self.id_replies.may_load(storage)?.is_none() {
-            self.id_replies.save(storage, &0)?;
-        }
-        self.id_replies
-            .update(storage, |count| -> StdResult<u64> { Ok(count + 1) })
-    }
-
-    pub fn add_pending_transaction<T: Into<OperationValue>>(
-        &self,
-        storage: &mut dyn Storage,
-        reply_id: u64,
-        operation: T,
-    ) -> StdResult<()> {
-        self.pending_transactions
-            .save(storage, reply_id, &operation.into())
-    }
-
-    pub fn get_pending_transaction(
-        &self,
-        storage: &dyn Storage,
-        reply_id: u64,
-    ) -> StdResult<OperationValue> {
-        self.pending_transactions.load(storage, reply_id)
-    }
-
-    pub fn remove_pending_transaction(
-        &self,
-        storage: &mut dyn Storage,
-        reply_id: u64,
-    ) -> StdResult<()> {
-        self.pending_transactions.remove(storage, reply_id);
-        Ok(())
-    }
-
     pub fn set_debug_proof(&self, storage: &mut dyn Storage, value: bool) -> StdResult<()> {
         self.debug_proof.save(storage, &value)
     }
 
+    #[allow(dead_code)]
     pub fn get_debug_proof(&self, storage: &dyn Storage) -> StdResult<bool> {
         self.debug_proof.load(storage)
     }

@@ -2,7 +2,6 @@ use super::conversions::*;
 use core::hash::Hash;
 use core::hash::Hasher;
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::to_json_binary;
 use cosmwasm_std::{Attribute, Event};
 use serde::ser::SerializeMap;
 use serde::Serialize;
@@ -851,59 +850,31 @@ impl KmsOperation {
     }
 }
 
-#[cw_serde]
-#[derive(Eq, Default, TypedBuilder)]
-pub struct Proof<T> {
-    pub proof: T,
-    pub contract_address: String,
-}
-
 #[derive(Eq, PartialEq, Clone, Debug, TypedBuilder)]
-pub struct KmsMessage<T = ()> {
+pub struct KmsMessage {
     #[builder(setter(into), default = None)]
     txn_id: Option<TransactionId>,
-    #[builder(setter(into), default = None)]
-    proof: Option<Proof<T>>,
     #[builder(setter(into))]
     value: OperationValue,
 }
 
-pub type KmsMessageWithoutProof = KmsMessage<()>;
+pub type KmsMessageWithoutProof = KmsMessage;
 
 #[derive(Serialize)]
-struct InnerKmsMessage<'a, T> {
+struct InnerKmsMessage<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     txn_id: Option<&'a TransactionId>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    proof: Option<&'a Proof<T>>,
     #[serde(flatten, skip_serializing_if = "OperationValue::has_no_inner_value")]
     value: &'a OperationValue,
 }
 
-impl<T> Serialize for KmsMessage<T>
-where
-    T: Serialize,
-{
+impl Serialize for KmsMessage {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        let proof: Option<Proof<Vec<u8>>> = self
-            .proof
-            .as_ref()
-            .map(|p| {
-                let proof = to_json_binary(&p.proof).map_err(|e| {
-                    serde::ser::Error::custom(format!("Failed to serialize proof: {}", e))
-                })?;
-                Ok(Proof {
-                    proof: proof.to_vec(),
-                    contract_address: p.contract_address.clone(),
-                })
-            })
-            .transpose()?;
         let data = InnerKmsMessage {
             txn_id: self.txn_id.as_ref(),
-            proof: proof.as_ref(),
             value: &self.value,
         };
         let operation = Box::leak(self.value.to_string().into_boxed_str());
@@ -913,20 +884,13 @@ where
     }
 }
 
-impl<T> KmsMessage<T>
-where
-    T: Serialize,
-{
+impl KmsMessage {
     pub fn txn_id(&self) -> Option<&TransactionId> {
         self.txn_id.as_ref()
     }
 
     pub fn value(&self) -> &OperationValue {
         &self.value
-    }
-
-    pub fn proof(&self) -> Option<&Proof<T>> {
-        self.proof.as_ref()
     }
 
     pub fn to_json(&self) -> Result<Value, serde_json::error::Error> {
@@ -1287,11 +1251,7 @@ mod tests {
             .eip712_salt(vec![7])
             .acl_address("acl_address".to_string())
             .build();
-        let proof_values = Proof::default();
-        let message: KmsMessageWithoutProof = KmsMessage::builder()
-            .value(decrypt_values)
-            .proof(proof_values)
-            .build();
+        let message: KmsMessageWithoutProof = KmsMessage::builder().value(decrypt_values).build();
 
         let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
@@ -1308,10 +1268,6 @@ mod tests {
                     "eip712_verifying_contract": "contract",
                     "eip712_salt": hex::encode([7]),
                     "acl_address": "acl_address",
-                },
-                "proof": {
-                    "proof": [110,117,108,108],
-                    "contract_address": ""
                 }
             }
         });
@@ -1359,11 +1315,7 @@ mod tests {
             .eip712_verifying_contract("contract".to_string())
             .eip712_salt(vec![7])
             .build();
-        let proof_values = Proof::default();
-        let message: KmsMessageWithoutProof = KmsMessage::builder()
-            .value(reencrypt_values)
-            .proof(proof_values)
-            .build();
+        let message: KmsMessageWithoutProof = KmsMessage::builder().value(reencrypt_values).build();
 
         let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
@@ -1382,10 +1334,6 @@ mod tests {
                     "eip712_chain_id": hex::encode([6]),
                     "eip712_verifying_contract": "contract",
                     "eip712_salt": hex::encode([7]),
-                },
-                "proof": {
-                    "proof": [110,117,108,108],
-                    "contract_address": ""
                 }
             }
         });
@@ -1478,21 +1426,14 @@ mod tests {
 
     #[test]
     fn test_keygen_event_to_json() {
-        let proof_values = Proof::default();
-        let message: KmsMessageWithoutProof = KmsMessage::builder()
-            .value(KeyGenValues::default())
-            .proof(proof_values)
-            .build();
+        let message: KmsMessageWithoutProof =
+            KmsMessage::builder().value(KeyGenValues::default()).build();
 
         let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
             "keygen": {
                 "keygen": {
                     "preproc_id": ""
-                },
-                "proof": {
-                    "proof": [110, 117, 108, 108],
-                    "contract_address": ""
                 }
             }
         });
