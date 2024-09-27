@@ -2199,7 +2199,10 @@ impl Client {
         acl_address: &alloy_primitives::Address,
         request_id: &RequestId,
     ) -> anyhow::Result<ZkVerifyRequest> {
-        let ct_buf = bincode::serialize(proven_ct)?;
+        let mut ct_buf = Vec::new();
+        tfhe::safe_serialize(proven_ct, &mut ct_buf, crate::consts::SAFE_SER_SIZE_LIMIT)
+            .map_err(|e| anyhow::anyhow!(e))?;
+
         let domain_msg = alloy_to_protobuf_domain(domain)?;
 
         Ok(ZkVerifyRequest {

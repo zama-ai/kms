@@ -575,7 +575,7 @@ pub async fn nitro_enclave_decrypt_app_key<T: Unversionize + Named>(
         &app_key_blob.iv,
         &app_key_blob.auth_tag,
     )?;
-    let mut buf = std::io::Cursor::new(app_key_blob.ciphertext.clone());
+    let mut buf = std::io::Cursor::new(&app_key_blob.ciphertext);
     safe_deserialize_versioned(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| anyhow::anyhow!(e))
 }
 

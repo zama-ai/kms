@@ -3,13 +3,13 @@ use super::rpc_types::{
     PublicParameterWithParamID, SignedPubDataHandleInternal, CURRENT_FORMAT_VERSION,
 };
 use crate::conf::centralized::CentralizedConfig;
+use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::central_kms::verify_eip712;
 use crate::cryptography::central_kms::{
     async_generate_crs, async_generate_fhe_keys, async_reencrypt, central_decrypt, BaseKmsStruct,
     SoftwareKms,
 };
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey};
-use crate::cryptography::signcryption::serialize_hash_element;
 use crate::kms::core_service_endpoint_server::{CoreServiceEndpoint, CoreServiceEndpointServer};
 use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
@@ -28,7 +28,7 @@ use crate::storage::{
 use crate::storage::{read_versioned_at_request_id, Storage};
 use crate::util::meta_store::{handle_res_mapping, HandlerStatus, MetaStore};
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
-use alloy_primitives::Address;
+use alloy_primitives::{keccak256, Address};
 use alloy_sol_types::Eip712Domain;
 use conf_trace::telemetry::accept_trace;
 use conf_trace::telemetry::make_span;
@@ -38,6 +38,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
+use tfhe::safe_deserialization::safe_deserialize;
 use tfhe::zk::CompactPkePublicParams;
 use tfhe::ProvenCompactCiphertextList;
 use tokio::sync::{Mutex, RwLock};
@@ -845,8 +846,10 @@ where
     validate_request_id(request_id)?;
 
     tracing::info!("starting proof verification for request {}", request_id);
-    let proven_ct: ProvenCompactCiphertextList =
-        bincode::deserialize(&req.ct_bytes).inspect_err(|e| {
+    let mut cursor = std::io::Cursor::new(&req.ct_bytes);
+    let proven_ct: ProvenCompactCiphertextList = safe_deserialize(&mut cursor, SAFE_SER_SIZE_LIMIT)
+        .map_err(|e| anyhow::anyhow!(e))
+        .inspect_err(|e| {
             tracing::error!("could not deserialize the ciphertext list ({e})");
         })?;
 
@@ -882,54 +885,55 @@ where
         })?;
     let (send, recv) = tokio::sync::oneshot::channel();
     rayon::spawn(move || {
-        let out = verify_and_hash(&proven_ct, &pp, &wrapped_pk);
-        let _ = send.send(out);
+        let ok = verify_ct_proofs(&proven_ct, &pp, &wrapped_pk);
+        let _ = send.send(ok);
     });
-    let res = recv.await.inspect_err(|e| {
+    let signature_ok = recv.await.inspect_err(|e| {
         tracing::error!("channel error for key handle {} ({e})", key_handle);
     })?;
 
-    match res {
-        Ok(ct_digest) => {
-            let external_signature =
-                compute_external_zkp_verf_signature(client_sk, &ct_digest, &req)?;
+    if signature_ok {
+        // REMARK: usually we should use `serialize_hash_element(proven_ct)`
+        // but because the hash is checked on chain, we'll use keccak,
+        // which is what is supported in solidity.
+        let ct_digest = keccak256(&req.ct_bytes).to_vec();
 
-            tracing::info!("finished proof verification for request {}", request_id);
+        let external_signature = compute_external_zkp_verf_signature(client_sk, &ct_digest, &req)?;
 
-            let payload = ZkVerifyResponsePayload {
-                request_id: req.request_id,
-                contract_address: req.contract_address,
-                client_address: req.client_address,
-                ct_digest,
-                external_signature,
-            };
+        tracing::info!("finished proof verification for request {}", request_id);
 
-            Ok(payload)
-        }
-        Err(e) => {
-            tracing::error!(
-                "zk verification failed for ciphertext request: {} ({e})",
-                request_id
-            );
-            Err(e)
-        }
+        let payload = ZkVerifyResponsePayload {
+            request_id: req.request_id,
+            contract_address: req.contract_address,
+            client_address: req.client_address,
+            ct_digest,
+            external_signature,
+        };
+
+        Ok(payload)
+    } else {
+        let e = format!(
+            "zk verification failed for ciphertext request: {}",
+            request_id
+        );
+        tracing::error!(e);
+        Err(anyhow::anyhow!(e))
     }
 }
 
-fn verify_and_hash(
+fn verify_ct_proofs(
     proven_ct: &ProvenCompactCiphertextList,
     pp: &CompactPkePublicParams,
     wrapped_pk: &WrappedPublicKeyOwned,
-) -> anyhow::Result<Vec<u8>> {
+) -> bool {
     match wrapped_pk {
         WrappedPublicKeyOwned::Compact(pk) => {
             if let tfhe::zk::ZkVerificationOutCome::Invalid = proven_ct.verify(pp, pk, &[]) {
-                return Err(anyhow::anyhow!("zk verification failed"));
+                return false;
             }
         }
     }
-    //TODO: Change hash to Keccak256 and use fhevm-compatible serialization for proven_ct
-    serialize_hash_element(proven_ct)
+    true
 }
 
 /// Validates a request ID and returns an appropriate tonic error if it is invalid.
