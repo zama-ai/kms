@@ -236,9 +236,12 @@ message ZkVerifyRequest {
   string contract_address = 3;
   string client_address = 4;
   bytes ct_bytes = 5;
-  RequestId request_id = 6;
+  string acl_address = 6;
+  Eip712DomainMsg domain = 7;
+  RequestId request_id = 8;
 }
 
+// KMS-internal ZKVerifyResponse
 message ZkVerifyResponse {
   ZkVerifyResponsePayload payload = 1;
   bytes signature = 2;
@@ -249,4 +252,6 @@ message ZkVerifyResponsePayload {
   string contract_address = 2;
   string client_address = 3;
   bytes ct_digest = 4;
+  // the signature for the external recipient (e.g. the fhevm)
+  bytes external_signature = 5;
 }

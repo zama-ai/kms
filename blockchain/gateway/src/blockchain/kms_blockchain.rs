@@ -619,6 +619,8 @@ impl Blockchain for KmsBlockchainImpl {
         ct_proof: Vec<u8>,
         max_num_bits: u32,
         chain_id: U256,
+        eip712_domain: Eip712DomainMsg,
+        acl_address: String,
     ) -> anyhow::Result<Vec<ZkpResponseValues>> {
         tracing::info!(
             "🔒 ZKP ciphertext with client_address: {:?}, contract_address: {:?}, max_num_bits: {:?}, chain_id: {:?}",
@@ -665,6 +667,12 @@ impl Blockchain for KmsBlockchainImpl {
             .contract_address(contract_address)
             .key_id(key_id)
             .crs_id(crs_id)
+            .eip712_name(eip712_domain.name)
+            .eip712_version(eip712_domain.version)
+            .eip712_chain_id(eip712_domain.chain_id)
+            .eip712_verifying_contract(eip712_domain.verifying_contract)
+            .eip712_salt(eip712_domain.salt)
+            .acl_address(acl_address)
             .build();
 
         let operation = events::kms::OperationValue::Zkp(zkp_values);

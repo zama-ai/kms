@@ -26,8 +26,8 @@ impl Blockchain for MockchainImpl {
     async fn decrypt(
         &self,
         typed_cts: Vec<(Vec<u8>, FheType, Vec<u8>)>,
-        _eip712_domain: Eip712DomainMsg,
-        _acl_address: String,
+        eip712_domain: Eip712DomainMsg,
+        acl_address: String,
     ) -> anyhow::Result<(Vec<Token>, Vec<Vec<u8>>)> {
         let mut ptxts = Vec::new();
 
@@ -49,6 +49,9 @@ impl Blockchain for MockchainImpl {
             tracing::info!("🍊 plaintext: {:#?}", res);
             ptxts.push(res);
         }
+
+        tracing::debug!("🍊 eip712_domain: {:?}", eip712_domain);
+        tracing::debug!("🍊 acl_address: {:?}", acl_address);
 
         let mock_sig = vec![0u8; 65];
         Ok((ptxts, vec![mock_sig]))
@@ -86,6 +89,8 @@ impl Blockchain for MockchainImpl {
         ct_proof: Vec<u8>,
         max_num_bits: u32,
         chain_id: U256,
+        eip712_domain: Eip712DomainMsg,
+        acl_address: String,
     ) -> anyhow::Result<Vec<ZkpResponseValues>> {
         tracing::debug!("🐛 Mockchain zkp");
         tracing::debug!("🐛 client_address: {:?}", client_address);
@@ -93,6 +98,8 @@ impl Blockchain for MockchainImpl {
         tracing::debug!("🐛 ct_proof: {:?}", ct_proof);
         tracing::debug!("🐛 max_num_bits: {:?}", max_num_bits);
         tracing::debug!("🐛 chain_id: {:?}", chain_id);
+        tracing::debug!("🐛 eip712_domain: {:?}", eip712_domain);
+        tracing::debug!("🐛 acl_address: {:?}", acl_address);
 
         Ok(vec![])
     }

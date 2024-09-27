@@ -786,6 +786,16 @@ async fn ddec_sunshine(slow: bool) {
     }
 }
 
+/// an Eip-712 domain for testing
+fn dummy_domain() -> alloy_sol_types::Eip712Domain {
+    alloy_sol_types::eip712_domain!(
+        name: "dummy",
+        version: "1",
+        chain_id: 1,
+        verifying_contract: alloy_primitives::Address::ZERO,
+    )
+}
+
 async fn reenc_sunshine(slow: bool) {
     setup_threshold_keys().await;
     let msg = 111u8;
@@ -801,15 +811,6 @@ async fn reenc_sunshine(slow: bool) {
         kms_lib::client::Client::new_client(client_storage, pub_storage, &TEST_PARAM)
             .await
             .unwrap();
-
-    fn dummy_domain() -> alloy_sol_types::Eip712Domain {
-        alloy_sol_types::eip712_domain!(
-            name: "dummy",
-            version: "1",
-            chain_id: 1,
-            verifying_contract: alloy_primitives::Address::ZERO,
-        )
-    }
 
     let request_id = RequestId {
         request_id: "1111000000000000000000000000000000001111".to_string(),
@@ -917,17 +918,25 @@ async fn zkp_sunshine(slow: bool) {
     let request_id = RequestId {
         request_id: "2222000000000000000000000000000000001111".to_string(),
     };
+
+    let dummy_acl_address = alloy_primitives::address!("ffda6bf26964af9d7eed9e03e53415d37aa96045");
+
     let key_id = &TEST_THRESHOLD_KEY_ID;
     let crs_id = &TEST_CRS_ID;
     let kms_req = kms_client
         .zk_verify_request(
             crs_id,
             key_id,
-            dummy_contract_address,
+            &dummy_contract_address,
             &ct_proof,
+            &dummy_domain(),
+            &dummy_acl_address,
             &request_id,
         )
         .unwrap();
+
+    let eip712 = kms_req.domain.clone().unwrap();
+
     let op = OperationValue::Zkp(
         ZkpValues::builder()
             .contract_address(kms_req.contract_address)
@@ -935,6 +944,12 @@ async fn zkp_sunshine(slow: bool) {
             .key_id(HexVector::from_hex(kms_req.key_handle.unwrap().request_id.as_str()).unwrap())
             .crs_id(HexVector::from_hex(kms_req.crs_handle.unwrap().request_id.as_str()).unwrap())
             .ct_proof_handle(MOCK_CT_HANDLES[0].to_vec())
+            .eip712_name(eip712.name)
+            .eip712_version(eip712.version)
+            .eip712_chain_id(eip712.chain_id)
+            .eip712_verifying_contract(eip712.verifying_contract)
+            .eip712_salt(eip712.salt)
+            .acl_address(kms_req.acl_address)
             .build(),
     );
     let (results, txn_id, _) =

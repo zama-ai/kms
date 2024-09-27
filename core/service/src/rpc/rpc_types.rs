@@ -15,22 +15,22 @@ use tfhe_versionable::VersionsDispatch;
 use wasm_bindgen::prelude::wasm_bindgen;
 
 #[cfg(test)]
-use crate::kms::{CrsGenRequest, ZkVerifyRequest};
+use crate::kms::CrsGenRequest;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
-        use crate::cryptography::internal_crypto_types::PrivateSigKey;
-        use crate::cryptography::internal_crypto_types::{PublicEncKey, PublicSigKey, Signature};
-        use crate::cryptography::signcryption::{hash_element, Reencrypt};
+        use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey, PublicSigKey, Signature};
+        use crate::cryptography::signcryption::{hash_element, Reencrypt,DecryptionResult, CiphertextVerificationForKMS};
         use crate::util::key_setup::FhePrivateKey;
         use distributed_decryption::execution::zk::ceremony::PublicParameter;
+        use alloy_dyn_abi::DynSolValue;
         use alloy_primitives::Bytes;
+        use alloy_signer::SignerSync;
+        use alloy_signer_local::PrivateKeySigner;
         use alloy_sol_types::SolStruct;
         use rand::{CryptoRng, RngCore};
-        use alloy_dyn_abi::DynSolValue;
-        use crate::cryptography::signcryption::DecryptionResult;
-        use alloy_signer_local::PrivateKeySigner;
-        use alloy_signer::SignerSync;
+        use crate::kms::ZkVerifyRequest;
+        use std::str::FromStr;
     }
 }
 
@@ -270,7 +270,7 @@ fn abi_encode_plaintexts(ptxts: &[Plaintext]) -> Bytes {
 }
 
 #[cfg(feature = "non-wasm")]
-/// take external handles and plaintext in the form of bytes, convert them to the required solidity types and sign them
+/// take external handles and plaintext in the form of bytes, convert them to the required solidity types and sign them using EIP-712 for external verification (e.g. in the fhevm).
 pub(crate) fn compute_external_pt_signature(
     client_sk: &PrivateSigKey,
     ext_handles_bytes: Vec<Option<Vec<u8>>>,
@@ -300,7 +300,7 @@ pub(crate) fn compute_external_pt_signature(
     tracing::info!("Signer address: {:?}", signer_address);
 
     let message_hash = message.eip712_signing_hash(&eip712_domain);
-    tracing::info!("Message hash: {:?}", message_hash);
+    tracing::info!("PT Message hash: {:?}", message_hash);
 
     // Sign the hash synchronously with the wallet.
     let signature = signer
@@ -309,9 +309,53 @@ pub(crate) fn compute_external_pt_signature(
         .as_bytes()
         .to_vec();
 
-    tracing::info!("Signature: {:?}", hex::encode(signature.clone()));
+    tracing::info!("PT Signature: {:?}", hex::encode(signature.clone()));
 
     signature
+}
+
+#[cfg(feature = "non-wasm")]
+/// Take the ZK proof verification metadata, convert it to the required solidity types and sign them using EIP-712 for external verification (e.g. in the fhevm).
+pub(crate) fn compute_external_zkp_verf_signature(
+    client_sk: &PrivateSigKey,
+    ct_digest: &Vec<u8>,
+    req: &ZkVerifyRequest,
+) -> anyhow::Result<Vec<u8>> {
+    let eip712_domain = match req.domain.as_ref() {
+        Some(domain) => protobuf_to_alloy_domain(domain)?,
+        None => {
+            return Err(anyhow::anyhow!(
+                "EIP-712 domain is not set for ZK verification signature!"
+            ));
+        }
+    };
+
+    // the solidity structure to sign with EIP-712
+    let message = CiphertextVerificationForKMS {
+        aclAddress: alloy_primitives::Address::from_str(&req.acl_address)?,
+        hashOfCiphertext: ct_digest.as_slice().try_into()?,
+        userAddress: alloy_primitives::Address::from_str(&req.client_address)?,
+        contractAddress: alloy_primitives::Address::from_str(&req.contract_address)?,
+    };
+
+    let signer = PrivateKeySigner::from_signing_key(client_sk.sk().clone());
+    let signer_address = signer.address();
+
+    tracing::info!("Signer address: {:?}", signer_address);
+
+    let message_hash = message.eip712_signing_hash(&eip712_domain);
+    tracing::info!("ZKP Verf Message hash: {:?}", message_hash);
+
+    // Sign the hash synchronously with the wallet.
+    let signature = signer
+        .sign_hash_sync(&message_hash)
+        .unwrap()
+        .as_bytes()
+        .to_vec();
+
+    tracing::info!("ZKP Verf Signature: {:?}", hex::encode(signature.clone()));
+
+    Ok(signature)
 }
 
 #[cfg(feature = "non-wasm")]

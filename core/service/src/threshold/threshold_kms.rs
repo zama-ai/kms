@@ -2091,6 +2091,7 @@ pub struct RealZkVerifier<PubS: Storage + Sync + Send + 'static> {
 impl<PubS: Storage + Sync + Send + 'static> ZkVerifier for RealZkVerifier<PubS> {
     async fn verify(&self, request: Request<ZkVerifyRequest>) -> Result<Response<Empty>, Status> {
         let meta_store = Arc::clone(&self.zk_payload_meta_store);
+        let sigkey = Arc::clone(&self.base_kms.sig_key);
 
         // Check well-formedness of the request and return an error early if there's an error
         let request_id = request
@@ -2113,6 +2114,7 @@ impl<PubS: Storage + Sync + Send + 'static> ZkVerifier for RealZkVerifier<PubS> 
             public_storage,
             request_id.clone(),
             request.into_inner(),
+            sigkey,
         )
         .await
         .map_err(|e| {

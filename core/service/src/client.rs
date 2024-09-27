@@ -2188,22 +2188,29 @@ impl Client {
     /// Make a verification request for the given `proven_ct` with some metadata.
     /// NOTE: eventually we want to integrate the metadata into the zk proof.
     #[cfg(feature = "non-wasm")]
+    #[expect(clippy::too_many_arguments)]
     pub fn zk_verify_request(
         &self,
         crs_handle: &RequestId,
         key_handle: &RequestId,
-        contract_address: alloy_primitives::Address,
+        contract_address: &alloy_primitives::Address,
         proven_ct: &ProvenCompactCiphertextList,
+        domain: &Eip712Domain,
+        acl_address: &alloy_primitives::Address,
         request_id: &RequestId,
     ) -> anyhow::Result<ZkVerifyRequest> {
         let ct_buf = bincode::serialize(proven_ct)?;
+        let domain_msg = alloy_to_protobuf_domain(domain)?;
+
         Ok(ZkVerifyRequest {
             crs_handle: Some(crs_handle.to_owned()),
             key_handle: Some(key_handle.to_owned()),
             contract_address: contract_address.to_string(),
             client_address: self.client_address.to_string(),
             ct_bytes: ct_buf,
+            acl_address: acl_address.to_string(),
             request_id: Some(request_id.to_owned()),
+            domain: Some(domain_msg),
         })
     }
 
@@ -3019,8 +3026,10 @@ pub(crate) mod tests {
             .zk_verify_request(
                 crs_req_id,
                 &key_id,
-                dummy_contract_address,
+                &dummy_contract_address,
                 &proven_ct,
+                &dummy_domain(),
+                &dummy_contract_address,
                 zkp_req_id,
             )
             .unwrap();
@@ -3512,8 +3521,10 @@ pub(crate) mod tests {
                     .zk_verify_request(
                         crs_handle,
                         key_handle,
-                        dummy_contract_address,
+                        &dummy_contract_address,
                         &proven_ct,
+                        &dummy_domain(),
+                        &dummy_contract_address,
                         &request_id,
                     )
                     .unwrap()

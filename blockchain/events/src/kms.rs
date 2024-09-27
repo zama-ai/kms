@@ -314,26 +314,38 @@ pub enum KmsEventAttributeKey {
 #[cw_serde]
 #[derive(Eq, TypedBuilder, Default)]
 pub struct DecryptValues {
-    /// key_id refers to the key that should be used for decryption
-    /// created at key generation.
+    /// The ID of the FHE public key used
     #[builder(setter(into))]
     key_id: HexVector,
+    /// The list of KV store ciphertext handles to be decrypted
     #[builder(setter(into))]
     ciphertext_handles: RedactedHexVectorList,
+    /// The list of FHE types of the above ciphertexts
     fhe_types: Vec<FheType>,
+    /// The list of external handles of the above ciphertexts (e.g. from fheVM)
     external_handles: Option<HexVectorList>,
+    /// The version number
     version: u32,
+    /// The address of the ACL contract
+    #[builder(setter(into))]
+    acl_address: String,
 
-    // eip712
+    // EIP-712
+    /// The name of the EIP-712 domain
+    #[builder(setter(into))]
     eip712_name: String,
+    /// The version of the EIP-712 domain
+    #[builder(setter(into))]
     eip712_version: String,
+    /// The chain-id used for EIP-712
     #[builder(setter(into))]
     eip712_chain_id: HexVector,
+    /// The contract verifying the EIP-712 signature
+    #[builder(setter(into))]
     eip712_verifying_contract: String,
+    /// The optional EIP-712 salt
     #[builder(setter(into))]
     eip712_salt: HexVector,
-
-    acl_address: String,
 }
 
 impl DecryptValues {
@@ -394,25 +406,40 @@ pub struct ReencryptValues {
     #[builder(setter(into))]
     signature: HexVector,
 
-    // payload
+    // Payload
+    /// The version number
     version: u32,
+    /// The address of the client receiving the reencryption output
     client_address: String,
+    /// The encyption key of the client
     #[builder(setter(into))]
     enc_key: RedactedHexVector,
+    /// The FHE type of the value to be reencrypted
     fhe_type: FheType,
+    /// The ID of the FHE public key used
     #[builder(setter(into))]
     key_id: HexVector,
+    /// The KV-store handle of the ciphertext to be reencrypted
     #[builder(setter(into))]
     ciphertext_handle: RedactedHexVector,
+    /// The SHA3 digest of the ciphertext to be reencrypted
     #[builder(setter(into))]
     ciphertext_digest: RedactedHexVector,
 
-    // eip712
+    // EIP-712:
+    /// The name of the EIP-712 domain
+    #[builder(setter(into))]
     eip712_name: String,
+    /// The version of the EIP-712 domain
+    #[builder(setter(into))]
     eip712_version: String,
+    /// The chain-id used for EIP-712
     #[builder(setter(into))]
     eip712_chain_id: HexVector,
+    /// The contract verifying the EIP-712 signature
+    #[builder(setter(into))]
     eip712_verifying_contract: String,
+    /// The optional EIP-712 salt
     #[builder(setter(into))]
     eip712_salt: HexVector,
 }
@@ -480,16 +507,41 @@ impl From<ReencryptValues> for OperationValue {
 #[cw_serde]
 #[derive(Eq, TypedBuilder, Default)]
 pub struct ZkpValues {
+    /// The ID of the CRS used
     #[builder(setter(into))]
     crs_id: HexVector,
+    /// The ID of the FHE public key used
     #[builder(setter(into))]
     key_id: HexVector,
+    /// The address of the dapp the input is used for
     #[builder(setter(into))]
     contract_address: String,
+    /// The address of the client providing the input
     #[builder(setter(into))]
     client_address: String,
+    /// The KV-store handle of the ciphertext and proof to be verified
     #[builder(setter(into))]
     ct_proof_handle: RedactedHexVector,
+    /// The address of the ACL contract
+    #[builder(setter(into))]
+    acl_address: String,
+
+    // EIP-712:
+    /// The name of the EIP-712 domain
+    #[builder(setter(into))]
+    eip712_name: String,
+    /// The version of the EIP-712 domain
+    #[builder(setter(into))]
+    eip712_version: String,
+    /// The chain-id used for EIP-712
+    #[builder(setter(into))]
+    eip712_chain_id: HexVector,
+    /// The contract verifying the EIP-712 signature
+    #[builder(setter(into))]
+    eip712_verifying_contract: String,
+    /// The optional EIP-712 salt
+    #[builder(setter(into))]
+    eip712_salt: HexVector,
 }
 
 impl ZkpValues {
@@ -505,12 +557,36 @@ impl ZkpValues {
         &self.contract_address
     }
 
+    pub fn acl_address(&self) -> &str {
+        &self.acl_address
+    }
+
     pub fn client_address(&self) -> &str {
         &self.client_address
     }
 
     pub fn ct_proof_handle(&self) -> &RedactedHexVector {
         &self.ct_proof_handle
+    }
+
+    pub fn eip712_name(&self) -> &str {
+        &self.eip712_name
+    }
+
+    pub fn eip712_version(&self) -> &str {
+        &self.eip712_version
+    }
+
+    pub fn eip712_chain_id(&self) -> &HexVector {
+        &self.eip712_chain_id
+    }
+
+    pub fn eip712_verifying_contract(&self) -> &str {
+        &self.eip712_verifying_contract
+    }
+
+    pub fn eip712_salt(&self) -> &HexVector {
+        &self.eip712_salt
     }
 }
 
@@ -1084,6 +1160,12 @@ mod tests {
                 contract_address: String::arbitrary(g),
                 client_address: String::arbitrary(g),
                 ct_proof_handle: HexVector::arbitrary(g).into(),
+                acl_address: String::arbitrary(g),
+                eip712_name: String::arbitrary(g),
+                eip712_version: String::arbitrary(g),
+                eip712_chain_id: HexVector::arbitrary(g),
+                eip712_verifying_contract: String::arbitrary(g),
+                eip712_salt: HexVector::arbitrary(g),
             }
         }
     }
@@ -1341,6 +1423,12 @@ mod tests {
             .crs_id("cid".as_bytes().to_vec())
             .key_id("kid".as_bytes().to_vec())
             .ct_proof_handle(vec![5])
+            .acl_address("0xfedc".to_string())
+            .eip712_name("eip712name".to_string())
+            .eip712_version("version".to_string())
+            .eip712_chain_id(vec![6])
+            .eip712_verifying_contract("contract".to_string())
+            .eip712_salt(vec![7])
             .build();
         let message: KmsMessageWithoutProof = KmsMessage::builder().value(zkp_values).build();
 
@@ -1350,9 +1438,15 @@ mod tests {
                 "zkp": {
                     "client_address": "0x1234",
                     "contract_address": "0x4321",
+                    "acl_address": "0xfedc",
                     "crs_id": hex::encode("cid".as_bytes()),
                     "key_id": hex::encode("kid".as_bytes()),
                     "ct_proof_handle": hex::encode(vec![5]),
+                    "eip712_name": "eip712name",
+                    "eip712_version": "version",
+                    "eip712_chain_id": hex::encode([6]),
+                    "eip712_verifying_contract": "contract",
+                    "eip712_salt": hex::encode([7]),
                 },
             }
         });

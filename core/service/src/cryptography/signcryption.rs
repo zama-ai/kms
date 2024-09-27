@@ -71,6 +71,16 @@ alloy_sol_types::sol! {
     }
 }
 
+// Solidity struct for ZK proof verification result signature
+alloy_sol_types::sol! {
+    struct CiphertextVerificationForKMS {
+        address aclAddress;
+        bytes32 hashOfCiphertext;
+        address userAddress;
+        address contractAddress;
+    }
+}
+
 /// Compute the signature on message based on the server's signing key for a given EIP712 domain.
 ///
 /// Returns the [Signature]. Concretely r || s.

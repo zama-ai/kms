@@ -8,7 +8,7 @@ use crate::cryptography::central_kms::{
     async_generate_crs, async_generate_fhe_keys, async_reencrypt, central_decrypt, BaseKmsStruct,
     SoftwareKms,
 };
-use crate::cryptography::internal_crypto_types::PublicEncKey;
+use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey};
 use crate::cryptography::signcryption::serialize_hash_element;
 use crate::kms::core_service_endpoint_server::{CoreServiceEndpoint, CoreServiceEndpointServer};
 use crate::kms::{
@@ -18,13 +18,15 @@ use crate::kms::{
     ReencryptionResponsePayload, RequestId, SignedPubDataHandle, TypedCiphertext, ZkVerifyRequest,
     ZkVerifyResponse, ZkVerifyResponsePayload,
 };
-use crate::rpc::rpc_types::{PubDataType, WrappedPublicKey, WrappedPublicKeyOwned};
+use crate::rpc::rpc_types::{
+    compute_external_zkp_verf_signature, PubDataType, WrappedPublicKey, WrappedPublicKeyOwned,
+};
 use crate::storage::{
     delete_at_request_id, delete_pk_at_request_id, read_pk_at_request_id, store_pk_at_request_id,
     store_versioned_at_request_id,
 };
 use crate::storage::{read_versioned_at_request_id, Storage};
-use crate::util::meta_store::{handle_res_mapping, HandlerStatus};
+use crate::util::meta_store::{handle_res_mapping, HandlerStatus, MetaStore};
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
 use alloy_primitives::Address;
 use alloy_sol_types::Eip712Domain;
@@ -706,6 +708,7 @@ impl<
         request: Request<ZkVerifyRequest>,
     ) -> Result<Response<Empty>, Status> {
         let meta_store = Arc::clone(&self.zk_payload_meta_map);
+        let sigkey = Arc::clone(&self.base_kms.sig_key);
 
         // Check well-formedness of the request and return an error early if there's an error
         let request_id = request
@@ -728,6 +731,7 @@ impl<
             public_storage,
             request_id.clone(),
             request.into_inner(),
+            sigkey,
         )
         .await
         .map_err(|e| {
@@ -750,10 +754,11 @@ impl<
 }
 
 pub(crate) async fn non_blocking_zk_verify<PubS>(
-    meta_store: Arc<RwLock<crate::util::meta_store::MetaStore<ZkVerifyResponsePayload>>>,
+    meta_store: Arc<RwLock<MetaStore<ZkVerifyResponsePayload>>>,
     public_storage: Arc<Mutex<PubS>>,
     request_id: RequestId,
     request: ZkVerifyRequest,
+    client_sk: Arc<PrivateSigKey>,
 ) -> anyhow::Result<()>
 where
     PubS: Storage + Sync + Send + 'static,
@@ -762,8 +767,9 @@ where
         let mut guarded_meta_store = meta_store.write().await;
         guarded_meta_store.insert(&request_id)?;
     }
+    let sigkey = Arc::clone(&client_sk);
     let _handle = tokio::spawn(async move {
-        let res = zk_verify(request, public_storage).await;
+        let res = zk_verify_and_sign(request, public_storage, &sigkey).await;
 
         let mut guarded_meta_store = meta_store.write().await;
         match res {
@@ -787,7 +793,7 @@ where
 
 pub(crate) async fn get_zk_verify_result<KMS>(
     base_kms: &KMS,
-    meta_store: Arc<RwLock<crate::util::meta_store::MetaStore<ZkVerifyResponsePayload>>>,
+    meta_store: Arc<RwLock<MetaStore<ZkVerifyResponsePayload>>>,
     request: Request<RequestId>,
 ) -> Result<Response<ZkVerifyResponse>, Status>
 where
@@ -820,38 +826,39 @@ where
     }))
 }
 
-// NOTE: this does not have the signature
-async fn zk_verify<PubS>(
-    inner: ZkVerifyRequest,
+// Verifies the ZK proof and returns the metadata payload, including a KMS signature, if the proof is valid
+async fn zk_verify_and_sign<PubS>(
+    req: ZkVerifyRequest,
     public_storage: Arc<Mutex<PubS>>,
+    client_sk: &PrivateSigKey,
 ) -> anyhow::Result<ZkVerifyResponsePayload>
 where
     PubS: Storage + Sync + Send + 'static,
 {
-    let crs_handle = tonic_some_or_err(inner.crs_handle, "CRS handle is not set".to_string())?;
-    validate_request_id(&crs_handle)?;
+    let crs_handle = tonic_some_or_err_ref(&req.crs_handle, "CRS handle is not set".to_string())?;
+    validate_request_id(crs_handle)?;
 
-    let key_handle = tonic_some_or_err(inner.key_handle, "Key handle is not set".to_string())?;
-    validate_request_id(&key_handle)?;
+    let key_handle = tonic_some_or_err_ref(&req.key_handle, "Key handle is not set".to_string())?;
+    validate_request_id(key_handle)?;
 
-    let request_id = tonic_some_or_err(inner.request_id, "Key handle is not set".to_string())?;
-    validate_request_id(&request_id)?;
+    let request_id = tonic_some_or_err_ref(&req.request_id, "Request ID is not set".to_string())?;
+    validate_request_id(request_id)?;
 
     tracing::info!("starting proof verification for request {}", request_id);
-    let proven_ct: ProvenCompactCiphertextList = bincode::deserialize(&inner.ct_bytes)
-        .inspect_err(|e| {
+    let proven_ct: ProvenCompactCiphertextList =
+        bincode::deserialize(&req.ct_bytes).inspect_err(|e| {
             tracing::error!("could not deserialize the ciphertext list ({e})");
         })?;
 
     let pub_storage = public_storage.lock().await;
     let pp_with_id: PublicParameterWithParamID =
-        read_versioned_at_request_id(&(*pub_storage), &crs_handle, &PubDataType::CRS.to_string())
+        read_versioned_at_request_id(&(*pub_storage), crs_handle, &PubDataType::CRS.to_string())
             .await
             .inspect_err(|e| {
                 tracing::error!("Failed to read CRS with the handle {} ({e})", crs_handle);
             })?;
 
-    let wrapped_pk = read_pk_at_request_id(&(*pub_storage), &key_handle)
+    let wrapped_pk = read_pk_at_request_id(&(*pub_storage), key_handle)
         .await
         .inspect_err(|e| {
             tracing::error!("Failed to fetch pk with handle {} ({e})", key_handle);
@@ -884,12 +891,17 @@ where
 
     match res {
         Ok(ct_digest) => {
-            tracing::info!("finishing proof verification for request {}", request_id);
+            let external_signature =
+                compute_external_zkp_verf_signature(client_sk, &ct_digest, &req)?;
+
+            tracing::info!("finished proof verification for request {}", request_id);
+
             let payload = ZkVerifyResponsePayload {
-                request_id: Some(request_id),
-                contract_address: inner.contract_address,
-                client_address: inner.client_address,
+                request_id: req.request_id,
+                contract_address: req.contract_address,
+                client_address: req.client_address,
                 ct_digest,
+                external_signature,
             };
 
             Ok(payload)
@@ -916,6 +928,7 @@ fn verify_and_hash(
             }
         }
     }
+    //TODO: Change hash to Keccak256 and use fhevm-compatible serialization for proven_ct
     serialize_hash_element(proven_ct)
 }
 
@@ -1114,6 +1127,13 @@ pub fn process_response<T: fmt::Debug>(resp: anyhow::Result<Option<T>>) -> Resul
 
 pub fn tonic_some_or_err<T>(input: Option<T>, error: String) -> Result<T, tonic::Status> {
     input.ok_or_else(|| {
+        tracing::warn!(error);
+        tonic::Status::new(tonic::Code::Aborted, top_n_chars(error))
+    })
+}
+
+pub fn tonic_some_or_err_ref<T>(input: &Option<T>, error: String) -> Result<&T, tonic::Status> {
+    input.as_ref().ok_or_else(|| {
         tracing::warn!(error);
         tonic::Status::new(tonic::Code::Aborted, top_n_chars(error))
     })

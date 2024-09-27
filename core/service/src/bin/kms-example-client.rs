@@ -72,6 +72,7 @@ macro_rules! retry {
     };
 }
 
+/// an Eip-712 domain for testing
 fn dummy_domain() -> alloy_sol_types::Eip712Domain {
     alloy_sol_types::eip712_domain!(
         name: "Authorization token",

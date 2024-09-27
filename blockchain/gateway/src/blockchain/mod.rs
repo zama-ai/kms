@@ -75,5 +75,7 @@ pub(crate) trait Blockchain: KmsEventSubscriber {
         ct_proof: Vec<u8>,
         max_num_bits: u32,
         chain_id: U256,
+        eip712_domain: Eip712DomainMsg,
+        acl_address: String,
     ) -> anyhow::Result<Vec<ZkpResponseValues>>;
 }

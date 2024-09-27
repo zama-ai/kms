@@ -264,6 +264,7 @@ impl ZkVerifier for DummyZkVerifier {
             contract_address: "0xEe344eeDA74E25D746dd1853Bb65C800D1674264".to_string(),
             client_address: "0x355d755538C0310D725b589eA45fB17F320f707B".to_string(),
             ct_digest: "dummy digest".as_bytes().to_vec(),
+            external_signature: vec![23_u8; 65],
         });
         Ok(Response::new(ZkVerifyResponse {
             payload,

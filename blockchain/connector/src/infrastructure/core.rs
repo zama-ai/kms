@@ -450,7 +450,7 @@ where
         let _resp = client.reencrypt(request).await.inspect_err(|e| {
             let err_msg = e.to_string();
             tracing::error!(
-                "Error communicating decryption to core. Error message:\n{}\nRequest:\n{:?}",
+                "Error communicating reencryption to core. Error message:\n{}\nRequest:\n{:?}",
                 err_msg,
                 req,
             );
@@ -463,7 +463,7 @@ where
             match res {
                 Ok(res) => {
                     let inner = res.into_inner();
-                    let payload: ReencryptionResponsePayload = inner.payload.ok_or_else(||anyhow!("empty decryption payload"))?;
+                    let payload: ReencryptionResponsePayload = inner.payload.ok_or_else(||anyhow!("empty reencryption payload"))?;
                     Ok(PollerStatus::Done(KmsOperationResponse::ReencryptResponse(
                         ReencryptResponseVal {
                             reencrypt_response: ReencryptResponseValues::builder()
@@ -534,6 +534,14 @@ where
             client_address: zkp.client_address().to_string(),
             contract_address: zkp.contract_address().to_string(),
             ct_bytes: ct_proof,
+            acl_address: self.zkp.acl_address().to_string(),
+            domain: Some(Eip712DomainMsg {
+                name: self.zkp.eip712_name().to_string(),
+                version: self.zkp.eip712_version().to_string(),
+                chain_id: self.zkp.eip712_chain_id().into(),
+                verifying_contract: self.zkp.eip712_verifying_contract().to_string(),
+                salt: self.zkp.eip712_salt().into(),
+            }),
         };
 
         let metrics = self.operation_val.kms_client.metrics.clone();
@@ -625,7 +633,7 @@ where
         let _resp = client.key_gen_preproc(request).await.inspect_err(|e| {
             let err_msg = e.to_string();
             tracing::error!(
-                "Error communicating decryption to core. Error message:\n{}\nRequest:\n{:?}",
+                "Error communicating Keygen Preproc to core. Error message:\n{}\nRequest:\n{:?}",
                 err_msg,
                 req,
             );
@@ -719,7 +727,7 @@ where
         let _resp = client.key_gen(request).await.inspect_err(|e| {
             let err_msg = e.to_string();
             tracing::error!(
-                "Error communicating decryption to core. Error message:\n{}\nRequest:\n{:?}",
+                "Error communicating Keygen to core. Error message:\n{}\nRequest:\n{:?}",
                 err_msg,
                 req,
             );
@@ -732,7 +740,7 @@ where
                 match res {
                     Ok(response) => {
                         let inner = response.into_inner();
-                        let request_id = inner.request_id.ok_or_else(||anyhow!("empty request_id"))?;
+                        let request_id = inner.request_id.ok_or_else(||anyhow!("empty request_id for keygen"))?;
                         let pk_info = inner
                             .key_results
                             .get(&PubDataType::PublicKey.to_string())
@@ -814,7 +822,7 @@ where
         let _resp = client.crs_gen(request).await.inspect_err(|e| {
             let err_msg = e.to_string();
             tracing::error!(
-                "Error communicating decryption to core. Error message:\n{}\nRequest:\n{:?}",
+                "Error communicating CRS generation to core. Error message:\n{}\nRequest:\n{:?}",
                 err_msg,
                 req,
             );
@@ -827,7 +835,7 @@ where
                 match res {
                     Ok(response) => {
                         let inner = response.into_inner();
-                        let request_id = inner.request_id.ok_or_else(||anyhow!("empty request_id"))?;
+                        let request_id = inner.request_id.ok_or_else(||anyhow!("empty request_id for CRS generation"))?;
                         let crs_results = inner.crs_results.ok_or_else(||anyhow!("empty crs result"))?;
                         Ok(PollerStatus::Done(KmsOperationResponse::CrsGenResponse(
                             crate::domain::blockchain::CrsGenResponseVal {
