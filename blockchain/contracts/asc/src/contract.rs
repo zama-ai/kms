@@ -9,8 +9,8 @@ use cw_utils::must_pay;
 use events::kms::{
     CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues,
     KeyGenPreprocResponseValues, KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues,
-    KmsCoreConf, KmsEvent, OperationValue, ReencryptResponseValues, ReencryptValues, Transaction,
-    TransactionId,
+    KmsCoreConf, KmsEvent, KmsOperation, OperationValue, ReencryptResponseValues, ReencryptValues,
+    Transaction, TransactionId,
 };
 use sha3::{Digest, Sha3_256};
 use std::ops::Deref;
@@ -67,6 +67,8 @@ impl KmsContract {
         result[..20].to_vec()
     }
 
+    // TODO: makes sense to propagate a `TransactionId` instead of a `Vec<u8>` for consistency with
+    // load methods
     fn process_transaction<T>(
         &self,
         storage: &mut dyn Storage,
@@ -200,6 +202,21 @@ impl KmsContract {
         event: KmsEvent,
     ) -> StdResult<Vec<OperationValue>> {
         self.storage.get_operations_value(ctx.deps.storage, event)
+    }
+
+    #[sv::msg(query)]
+    pub fn get_all_operations_values(&self, ctx: QueryCtx) -> StdResult<Vec<OperationValue>> {
+        self.storage.get_all_operations_values(ctx.deps.storage)
+    }
+
+    #[sv::msg(query)]
+    pub fn get_all_values_from_operation(
+        &self,
+        ctx: QueryCtx,
+        operation: KmsOperation,
+    ) -> StdResult<Vec<OperationValue>> {
+        self.storage
+            .get_all_values_from_operation(ctx.deps.storage, operation)
     }
 
     /// return ciphertext size from handle. Size is encoded as u32 in the first 4 bytes of the handle
@@ -1073,7 +1090,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_operations_value() {
+    fn test_get_operation_values_functions() {
         let caller = Addr::unchecked("caller");
         let app = cw_multi_test::App::new(|router, _api, storage| {
             router
@@ -1099,9 +1116,90 @@ mod tests {
             .call(&owner)
             .unwrap();
 
+        // First, trigger a keygen operation
+        let preproc_id = "preproc_id".as_bytes().to_vec().into();
+        let keygen = KeyGenValues::builder().preproc_id(preproc_id).build();
+        let response = contract.keygen(keygen.clone()).call(&owner).unwrap();
+
+        // Transaction id: 0
+        let txn_id: TransactionId = KmsContract::hash_transaction_id(12345, 0).into();
+        assert_eq!(response.events.len(), 2);
+
+        let keygen_response = KeyGenResponseValues::builder()
+            .request_id(txn_id.to_vec())
+            .public_key_digest("digest1".to_string())
+            .public_key_signature(vec![4, 5, 6])
+            .server_key_digest("digest2".to_string())
+            .server_key_signature(vec![7, 8, 9])
+            .build();
+
+        // Two keygen response event
+        let response = contract
+            .keygen_response(txn_id.clone(), keygen_response.clone())
+            .call(&owner)
+            .unwrap();
+        assert_eq!(response.events.len(), 1);
+
+        let response = contract
+            .keygen_response(txn_id.clone(), keygen_response.clone())
+            .call(&owner)
+            .unwrap();
+        assert_eq!(response.events.len(), 2);
+
+        let expected_event = KmsEvent::builder()
+            .operation(KmsOperation::KeyGenResponse)
+            .txn_id(txn_id.clone())
+            .build();
+
+        assert_event(&response.events, &expected_event);
+
+        // Test `get_operations_value` function
+        let keygen_data = contract.get_operations_value(expected_event).unwrap();
+        assert_eq!(keygen_data.len(), 2);
+
+        let not_expected_event = KmsEvent::builder()
+            .operation(KmsOperation::Decrypt)
+            .txn_id(txn_id.clone())
+            .build();
+
+        // There should not be any decrypt operation
+        let not_expected_data = contract.get_operations_value(not_expected_event);
+        assert!(not_expected_data.is_err());
+
+        // Test `get_all_values_from_operation` function for KeyGenResponse
+        let keygen_response_operation = KmsOperation::KeyGenResponse;
+        let keygen_response_values =
+            contract.get_all_values_from_operation(keygen_response_operation);
+        assert!(keygen_response_values.is_ok());
+
+        // Two keygen operations give two KeyGenResponseValues
+        let keygen_response_values = keygen_response_values.unwrap();
+        assert_eq!(
+            keygen_response_values.len(),
+            2,
+            "Unexpected number of keygen response values: {:?}",
+            keygen_response_values
+        );
+
+        // Check that values are actually KeyGenResponse
+        for keygen_response_value in keygen_response_values {
+            assert!(
+                matches!(keygen_response_value, OperationValue::KeyGenResponse(_)),
+                "Unexpected keygen response value: {:?}",
+                keygen_response_value
+            );
+        }
+
+        // There should not be any Decrypt operation
+        let not_expected_operation = KmsOperation::Decrypt;
+        let not_expected_values = contract.get_all_values_from_operation(not_expected_operation);
+        assert!(not_expected_values.is_err());
+
+        // Then, trigger a decrypt operation
         let ciphertext_handle =
             hex::decode("000a17c82f8cd9fe41c871f12b391a2afaf5b640ea4fdd0420a109aa14c674d3e385b955")
                 .unwrap();
+
         let batch_size = 2_usize;
 
         let data_size = extract_ciphertext_size(&ciphertext_handle) * batch_size as u32;
@@ -1120,30 +1218,62 @@ mod tests {
             .eip712_salt(vec![8])
             .acl_address("acl_address".to_string())
             .build();
+
         let response = contract
             .decrypt(decrypt.clone())
             .with_funds(&[coin(data_size.into(), UCOSM)])
             .call(&caller)
             .unwrap();
-        let txn_id: TransactionId = KmsContract::hash_transaction_id(12345, 0).into();
+        println!("response: {:#?}", response);
+
+        // Transaction id: 1
+        let txn_id: TransactionId = KmsContract::hash_transaction_id(12345, 1).into();
         assert_eq!(response.events.len(), 2);
 
-        let expected_event = KmsEvent::builder()
-            .operation(KmsOperation::Decrypt)
-            .txn_id(txn_id.clone())
+        let decrypt_response = DecryptResponseValues::builder()
+            .signature(vec![4, 5, 6])
+            .payload(vec![6, 7, 8])
             .build();
 
-        assert_event(&response.events, &expected_event);
+        // Decrypt response event
+        let response = contract
+            .decrypt_response(txn_id.clone(), decrypt_response.clone())
+            .call(&owner)
+            .unwrap();
+        assert_eq!(response.events.len(), 1);
 
-        let response = contract.get_operations_value(expected_event).unwrap();
-        assert_eq!(response.len(), 1);
+        // Test `get_all_operations_values` function
+        let operations_response_values = contract.get_all_operations_values();
+        assert!(operations_response_values.is_ok());
 
-        let not_expected_event = KmsEvent::builder()
-            .operation(KmsOperation::KeyGen)
-            .txn_id(txn_id.clone())
-            .build();
+        // Two keygen and one decrypt operations give two (KeyGenValues + KeyGenResponseValues) and
+        // one (DecryptValues + DecryptResponseValues) = 5 response values
+        let operations_response_values = operations_response_values.unwrap();
+        assert_eq!(
+            operations_response_values.len(),
+            5,
+            "Unexpected number of operation values: {:?}",
+            operations_response_values
+        );
 
-        let response = contract.get_operations_value(not_expected_event);
-        assert!(response.is_err());
+        // Check that values are actually either KeyGen, Decrypt or one of their responses
+        for operations_response_value in operations_response_values {
+            assert!(
+                matches!(
+                    operations_response_value,
+                    OperationValue::KeyGen(_)
+                        | OperationValue::KeyGenResponse(_)
+                        | OperationValue::Decrypt(_)
+                        | OperationValue::DecryptResponse(_)
+                ),
+                "Unexpected operation value: {:?}",
+                operations_response_value
+            );
+        }
+
+        // There should not be any Reencrypt operation
+        let not_expected_operation = KmsOperation::Reencrypt;
+        let not_expected_values = contract.get_all_values_from_operation(not_expected_operation);
+        assert!(not_expected_values.is_err());
     }
 }

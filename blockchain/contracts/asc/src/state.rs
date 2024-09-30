@@ -1,4 +1,4 @@
-use cosmwasm_std::{Env, Response, StdError, StdResult, Storage};
+use cosmwasm_std::{Env, Order, Response, StdError, StdResult, Storage};
 use cw_storage_plus::{Item, Map};
 use events::kms::{
     KmsCoreConf, KmsEvent, KmsOperation, OperationValue, Transaction, TransactionId,
@@ -42,36 +42,13 @@ impl KmsContractStorage {
     pub fn load_transaction(
         &self,
         storage: &dyn Storage,
-        key: TransactionId,
+        txn_id: TransactionId,
     ) -> StdResult<Transaction> {
-        self.transactions.load(storage, key.to_vec())
+        self.transactions.load(storage, txn_id.to_vec())
     }
 
-    pub fn get_operations_value(
-        &self,
-        storage: &dyn Storage,
-        event: KmsEvent,
-    ) -> StdResult<Vec<OperationValue>> {
-        let tx = self.transactions.load(storage, event.txn_id().to_vec())?;
-        let result = tx
-            .operations()
-            .iter()
-            .filter(|op| {
-                <OperationValue as Into<KmsOperation>>::into((*op).clone())
-                    == event.operation().clone()
-            })
-            .cloned()
-            .collect::<Vec<OperationValue>>();
-        if result.is_empty() {
-            return Err(StdError::not_found(format!(
-                "Operation not found for txn_id: {:?} and operation: {}",
-                event.txn_id(),
-                event.operation()
-            )));
-        }
-        Ok(result)
-    }
-
+    // TODO: makes sense to propagate a `TransactionId` instead of a `Vec<u8>` for consistency with
+    // load methods
     pub fn update_transaction<T>(
         &self,
         storage: &mut dyn Storage,
@@ -103,6 +80,78 @@ impl KmsContractStorage {
             Ok(tx_updated) as Result<Transaction, StdError>
         })?;
         Ok(())
+    }
+
+    pub fn get_operations_value(
+        &self,
+        storage: &dyn Storage,
+        event: KmsEvent,
+    ) -> StdResult<Vec<OperationValue>> {
+        let tx = self.transactions.load(storage, event.txn_id().to_vec())?;
+        let result = tx
+            .operations()
+            .iter()
+            .filter(|op| {
+                <OperationValue as Into<KmsOperation>>::into((*op).clone())
+                    == event.operation().clone()
+            })
+            .cloned()
+            .collect::<Vec<OperationValue>>();
+        if result.is_empty() {
+            return Err(StdError::not_found(format!(
+                "Operation not found for txn_id: {:?} and operation: {}",
+                event.txn_id(),
+                event.operation()
+            )));
+        }
+        Ok(result)
+    }
+
+    pub fn get_all_values_from_operation(
+        &self,
+        storage: &dyn Storage,
+        operation: KmsOperation,
+    ) -> StdResult<Vec<OperationValue>> {
+        let mut operation_values = Vec::new();
+
+        self.transactions
+            .range(storage, None, None, Order::Ascending)
+            .for_each(|tx| {
+                if let Ok((_, tx)) = tx {
+                    let ops = tx
+                        .operations()
+                        .iter()
+                        .filter(|&op| {
+                            <OperationValue as Into<KmsOperation>>::into((*op).clone()) == operation
+                        })
+                        .cloned();
+                    operation_values.extend(ops);
+                }
+            });
+        if operation_values.is_empty() {
+            return Err(StdError::not_found(format!(
+                "Operation {} not found in any transaction",
+                operation
+            )));
+        }
+        Ok(operation_values)
+    }
+
+    pub fn get_all_operations_values(
+        &self,
+        storage: &dyn Storage,
+    ) -> StdResult<Vec<OperationValue>> {
+        let mut operation_values = Vec::new();
+
+        self.transactions
+            .range(storage, None, None, Order::Ascending)
+            .for_each(|tx| {
+                if let Ok((_, tx)) = tx {
+                    let ops = tx.operations().iter().cloned();
+                    operation_values.extend(ops);
+                }
+            });
+        Ok(operation_values)
     }
 
     pub fn set_debug_proof(&self, storage: &mut dyn Storage, value: bool) -> StdResult<()> {

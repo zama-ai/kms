@@ -1861,6 +1861,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "concrete-csprng"
+version = "0.4.1"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.9#5db5aba24a87d3274f0b11d4fd31ded0e34a9137"
+dependencies = [
+ "aes",
+ "libc",
+ "rayon",
+]
+
+[[package]]
 name = "concrete-fft"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2348,7 +2358,7 @@ dependencies = [
  "bincode",
  "cfg-if",
  "clap",
- "concrete-csprng",
+ "concrete-csprng 0.4.1 (git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.7)",
  "conf-trace",
  "const_format",
  "crypto_box",
@@ -2379,8 +2389,8 @@ dependencies = [
  "signature 2.2.0",
  "strum",
  "strum_macros",
- "tfhe",
- "tfhe-versionable",
+ "tfhe 0.8.0-alpha.7",
+ "tfhe-versionable 0.2.1",
  "tfhe-zk-pok",
  "tokio",
  "tonic",
@@ -3339,8 +3349,8 @@ dependencies = [
  "signature 2.2.0",
  "strum",
  "strum_macros",
- "tfhe",
- "tfhe-versionable",
+ "tfhe 0.8.0-alpha.7",
+ "tfhe-versionable 0.2.1",
  "tfhe-zk-pok",
  "tokio",
  "tonic",
@@ -3367,8 +3377,8 @@ dependencies = [
  "semver 1.0.23",
  "serde",
  "strum",
- "tfhe",
- "tfhe-versionable",
+ "tfhe 0.8.0-alpha.9",
+ "tfhe-versionable 0.3.0",
  "tokio",
 ]
 
@@ -3379,7 +3389,7 @@ source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=42e42497ec953c56b165
 dependencies = [
  "anyhow",
  "serde",
- "tfhe-versionable",
+ "tfhe-versionable 0.2.1",
 ]
 
 [[package]]
@@ -5470,7 +5480,7 @@ dependencies = [
  "aligned-vec",
  "bincode",
  "bytemuck",
- "concrete-csprng",
+ "concrete-csprng 0.4.1 (git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.7)",
  "concrete-fft",
  "concrete-ntt",
  "dyn-stack",
@@ -5481,8 +5491,30 @@ dependencies = [
  "rayon",
  "serde",
  "sha3",
- "tfhe-versionable",
+ "tfhe-versionable 0.2.1",
  "tfhe-zk-pok",
+]
+
+[[package]]
+name = "tfhe"
+version = "0.8.0-alpha.9"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.9#5db5aba24a87d3274f0b11d4fd31ded0e34a9137"
+dependencies = [
+ "aligned-vec",
+ "bincode",
+ "bytemuck",
+ "concrete-csprng 0.4.1 (git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.9)",
+ "concrete-fft",
+ "concrete-ntt",
+ "dyn-stack",
+ "itertools 0.11.0",
+ "paste",
+ "pulp",
+ "rand_core",
+ "rayon",
+ "serde",
+ "sha3",
+ "tfhe-versionable 0.3.0",
 ]
 
 [[package]]
@@ -5560,13 +5592,34 @@ dependencies = [
  "aligned-vec",
  "num-complex",
  "serde",
- "tfhe-versionable-derive",
+ "tfhe-versionable-derive 0.2.1",
+]
+
+[[package]]
+name = "tfhe-versionable"
+version = "0.3.0"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.9#5db5aba24a87d3274f0b11d4fd31ded0e34a9137"
+dependencies = [
+ "aligned-vec",
+ "num-complex",
+ "serde",
+ "tfhe-versionable-derive 0.3.0",
 ]
 
 [[package]]
 name = "tfhe-versionable-derive"
 version = "0.2.1"
 source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.7#c0878f1600ca1f5c5d0fbcfdb24c778bbe421f05"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.77",
+]
+
+[[package]]
+name = "tfhe-versionable-derive"
+version = "0.3.0"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.9#5db5aba24a87d3274f0b11d4fd31ded0e34a9137"
 dependencies = [
  "proc-macro2",
  "quote",
