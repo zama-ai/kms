@@ -66,6 +66,7 @@ impl Blockchain for MockchainImpl {
         ciphertext: Vec<u8>,
         eip712_verifying_contract: String,
         chain_id: U256,
+        acl_address: String,
     ) -> anyhow::Result<Vec<ReencryptResponseValues>> {
         tracing::debug!("🐛 Mockchain reencrypting ciphertext");
         tracing::debug!("🐛 signature: {:?}", signature);
@@ -78,6 +79,7 @@ impl Blockchain for MockchainImpl {
             eip712_verifying_contract
         );
         tracing::debug!("🐛 chain_id: {:?}", chain_id);
+        tracing::debug!("🐛 acl_address: {:?}", acl_address);
 
         Ok(vec![])
     }

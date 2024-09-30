@@ -832,6 +832,7 @@ async fn reenc_sunshine(slow: bool) {
             .eip712_chain_id(eip712.chain_id)
             .eip712_verifying_contract(eip712.verifying_contract)
             .eip712_salt(eip712.salt)
+            .acl_address("dummy_acl_address".to_string())
             .build(),
     );
     let (results, txn_id, _) = generic_sunshine_test(slow, vec![ct], op).await;

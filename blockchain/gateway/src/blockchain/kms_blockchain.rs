@@ -476,15 +476,17 @@ impl Blockchain for KmsBlockchainImpl {
         ciphertext: Vec<u8>,
         eip712_verifying_contract: String,
         chain_id: U256,
+        acl_address: String,
     ) -> anyhow::Result<Vec<ReencryptResponseValues>> {
         tracing::info!(
-            "🔒 Reencrypting ciphertext with signature: {:?}, user_address: {:?}, enc_key: {:?}, fhe_type: {:?}, eip712_verifying_contract: {:?}, chain_id: {:?}",
+            "🔒 Reencrypting ciphertext with signature: {:?}, user_address: {:?}, enc_key: {:?}, fhe_type: {:?}, eip712_verifying_contract: {:?}, chain_id: {:?}, acl_address: {:?}",
             hex::encode(&signature),
             hex::encode(&client_address),
             hex::encode(&enc_key),
             fhe_type,
             eip712_verifying_contract,
-            chain_id
+            chain_id,
+            acl_address
         );
 
         let ctxt_handle = self.store_ciphertext(ciphertext.clone()).await?;
@@ -498,8 +500,7 @@ impl Blockchain for KmsBlockchainImpl {
             hex::encode(&ctxt_digest)
         );
 
-        let eip712_name = "Authorization token".to_string();
-        let eip712_version = "1".to_string();
+        // TODO this is currently not set, but might be in the future
         let eip712_salt = HexVector(vec![]);
 
         // chain ID is 32 bytes
@@ -524,11 +525,12 @@ impl Blockchain for KmsBlockchainImpl {
             .key_id(key_id)
             .ciphertext_handle(ctxt_handle.clone())
             .ciphertext_digest(ctxt_digest)
-            .eip712_name(eip712_name)
-            .eip712_version(eip712_version)
+            .eip712_name(&self.config.ethereum.reenc_domain_name)
+            .eip712_version(&self.config.ethereum.reenc_domain_version)
             .eip712_chain_id(eip712_chain_id)
             .eip712_verifying_contract(eip712_verifying_contract)
             .eip712_salt(eip712_salt)
+            .acl_address(acl_address)
             .build();
 
         tracing::info!(

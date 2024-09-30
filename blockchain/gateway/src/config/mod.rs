@@ -58,6 +58,8 @@ pub struct EthereumConfig {
     pub kmsverifier_version: String,
     pub kmsverifier_vc_address: H160,
     pub acl_address: H160,
+    pub reenc_domain_name: String,
+    pub reenc_domain_version: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder)]
@@ -116,7 +118,7 @@ mod tests {
 
     #[test]
     fn test_gateway_config() {
-        let env_conf: [(&str, Option<&str>); 25] = [
+        let env_conf: [(&str, Option<&str>); 27] = [
             ("GATEWAY__DEBUG", None),
             ("GATEWAY__MODE", None),
             ("GATEWAY__ETHEREUM__CHAIN_ID", None),
@@ -136,6 +138,8 @@ mod tests {
             ("GATEWAY__ETHEREUM__KMSVERIFIER_NAME", None),
             ("GATEWAY__ETHEREUM__KMSVERIFIER_VERSION", None),
             ("GATEWAY__ETHEREUM__KMSVERIFIER_VC_ADDRESS", None),
+            ("GATEWAY__ETHEREUM__REENC_DOMAIN_NAME", None),
+            ("GATEWAY__ETHEREUM__REENC_DOMAIN_VERSION", None),
             ("GATEWAY__ETHEREUM__ACL_ADDRESS", None),
             ("GATEWAY__KMS__CONTRACT_ADDRESS", None),
             ("GATEWAY__KMS__MNEMONIC", None),
@@ -155,6 +159,11 @@ mod tests {
             );
             assert_eq!(gateway_config.ethereum.kmsverifier_name, "KMSVerifier");
             assert_eq!(gateway_config.ethereum.kmsverifier_version, "1");
+            assert_eq!(
+                gateway_config.ethereum.reenc_domain_name,
+                "Authorization token"
+            );
+            assert_eq!(gateway_config.ethereum.reenc_domain_version, "1");
             assert_eq!(
                 gateway_config.ethereum.acl_address,
                 H160::from_str("66f9664f97F2b50F62D13eA064982f936dE76657").unwrap()
@@ -269,6 +278,8 @@ mod tests {
             ),
             ("GATEWAY__ETHEREUM__KMSVERIFIER_NAME", Some("name")),
             ("GATEWAY__ETHEREUM__KMSVERIFIER_VERSION", Some("1")),
+            ("GATEWAY__ETHEREUM__REENC_DOMAIN_NAME", Some("rname")),
+            ("GATEWAY__ETHEREUM__REENC_DOMAIN_VERSION", Some("1")),
             (
                 "GATEWAY__ETHEREUM__KMSVERIFIER_VC_ADDRESS",
                 Some("66f9664f97F2b50F62D13eA064982f936dE76657"),
@@ -333,6 +344,8 @@ mod tests {
             );
             assert_eq!(gateway_config.ethereum.kmsverifier_name, "name");
             assert_eq!(gateway_config.ethereum.kmsverifier_version, "1");
+            assert_eq!(gateway_config.ethereum.reenc_domain_name, "rname");
+            assert_eq!(gateway_config.ethereum.reenc_domain_version, "1");
             assert_eq!(
                 gateway_config.ethereum.acl_address,
                 H160::from_str("66f9664f97F2b50F62D13eA064982f936dE76657").unwrap()

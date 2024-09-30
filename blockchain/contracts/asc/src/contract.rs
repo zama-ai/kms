@@ -940,6 +940,7 @@ mod tests {
             .eip712_chain_id(vec![7])
             .eip712_verifying_contract("contract".to_string())
             .eip712_salt(vec![8])
+            .acl_address("dummy_acl_address".to_string())
             .build();
 
         let _failed_response = contract

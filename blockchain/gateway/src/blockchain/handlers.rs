@@ -180,6 +180,8 @@ pub(crate) async fn handle_reencryption_event(
     _ = alloy_primitives::Address::parse_checksummed(&event.client_address, None)?;
     _ = alloy_primitives::Address::parse_checksummed(&event.eip712_verifying_contract, None)?;
 
+    let acl_address = hex::encode(config.ethereum.acl_address);
+
     let response = blockchain_impl(config)
         .await
         .reencrypt(
@@ -190,6 +192,7 @@ pub(crate) async fn handle_reencryption_event(
             ciphertext,
             event.eip712_verifying_contract.clone(),
             chain_id,
+            acl_address,
         )
         .await;
     let duration = start.elapsed();

@@ -52,6 +52,13 @@ kmsverifier_version = "1"
 # Name for KMSVerifier EIP712
 kmsverifier_name = "KMSVerifier"
 
+# Reencryption EIP712 domain info from https://github.com/zama-ai/fhevmjs/blob/19fd3b8d63b587f45a3cf1e53c443999d8865de6/src/sdk/keypair.ts#L53-L62
+# Version for Reencryption EIP712
+reenc_domain_version = "1"
+
+# Name for Reencryption EIP712
+reenc_domain_name = "Authorization token"
+
 # address of the ACL contract
 acl_address = "66f9664f97F2b50F62D13eA064982f936dE76657"
 

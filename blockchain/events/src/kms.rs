@@ -424,6 +424,9 @@ pub struct ReencryptValues {
     /// The SHA3 digest of the ciphertext to be reencrypted
     #[builder(setter(into))]
     ciphertext_digest: RedactedHexVector,
+    /// The address of the ACL contract
+    #[builder(setter(into))]
+    acl_address: String,
 
     // EIP-712:
     /// The name of the EIP-712 domain
@@ -474,6 +477,10 @@ impl ReencryptValues {
 
     pub fn ciphertext_digest(&self) -> &RedactedHexVector {
         &self.ciphertext_digest
+    }
+
+    pub fn acl_address(&self) -> &str {
+        &self.acl_address
     }
 
     pub fn eip712_name(&self) -> &str {
@@ -1112,6 +1119,7 @@ mod tests {
                 eip712_chain_id: HexVector::arbitrary(g),
                 eip712_verifying_contract: String::arbitrary(g),
                 eip712_salt: HexVector::arbitrary(g),
+                acl_address: String::arbitrary(g),
             }
         }
     }
@@ -1314,6 +1322,7 @@ mod tests {
             .eip712_chain_id(vec![6])
             .eip712_verifying_contract("contract".to_string())
             .eip712_salt(vec![7])
+            .acl_address("0xfe11".to_string())
             .build();
         let message: KmsMessageWithoutProof = KmsMessage::builder().value(reencrypt_values).build();
 
@@ -1334,6 +1343,7 @@ mod tests {
                     "eip712_chain_id": hex::encode([6]),
                     "eip712_verifying_contract": "contract",
                     "eip712_salt": hex::encode([7]),
+                    "acl_address": "0xfe11",
                 }
             }
         });
