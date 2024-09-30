@@ -29,8 +29,8 @@ use kms_blockchain_connector::domain::storage::Storage;
 use kms_blockchain_connector::infrastructure::blockchain::KmsBlockchain;
 use kms_blockchain_connector::infrastructure::core::{KmsCore, KmsEventHandler};
 use kms_blockchain_connector::infrastructure::metrics::OpenTelemetryMetrics;
-use kms_lib::consts::TEST_CRS_ID;
 use kms_lib::consts::TEST_PARAM;
+use kms_lib::consts::{SAFE_SER_SIZE_LIMIT, TEST_CRS_ID};
 use kms_lib::kms::{ZkVerifyResponse, ZkVerifyResponsePayload};
 use kms_lib::util::key_setup::test_tools::compute_zkp_from_stored_key;
 use kms_lib::util::key_setup::{ensure_central_crs_exists, ensure_threshold_crs_exists};
@@ -696,6 +696,7 @@ async fn generic_sunshine_test(
     }
     let mut results = vec![];
     let mut ids = vec![];
+
     while let Some(Ok((i, Ok(res)))) = tasks.join_next().await {
         results.push(res);
         ids.push(i);
@@ -947,8 +948,9 @@ async fn zkp_sunshine(slow: bool) {
             .acl_address(kms_req.acl_address)
             .build(),
     );
-    let (results, txn_id, _) =
-        generic_sunshine_test(slow, vec![bincode::serialize(&ct_proof).unwrap()], op).await;
+    let mut ct_buf = Vec::new();
+    tfhe::safe_serialize(&ct_proof, &mut ct_buf, SAFE_SER_SIZE_LIMIT).unwrap();
+    let (results, txn_id, _) = generic_sunshine_test(slow, vec![ct_buf], op).await;
     assert_eq!(results.len(), AMOUNT_PARTIES);
 
     if slow {

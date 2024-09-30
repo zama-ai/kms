@@ -1,9 +1,9 @@
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::kms::{FheType, RequestId};
 use crate::rpc::central_rpc::retrieve_parameters;
-use crate::rpc::rpc_types::PubDataType;
 use crate::rpc::rpc_types::{Plaintext, PublicParameterWithParamID};
-use crate::storage::{FileStorage, StorageReader, StorageType};
+use crate::rpc::rpc_types::{PubDataType, WrappedPublicKeyOwned};
+use crate::storage::{read_pk_at_request_id, FileStorage, StorageReader, StorageType};
 use crate::util::key_setup::FhePublicKey;
 use crate::{consts::AMOUNT_PARTIES, storage::delete_all_at_request_id};
 use distributed_decryption::execution::tfhe_internals::utils::expanded_encrypt;
@@ -191,19 +191,32 @@ pub async fn compute_zkp_from_stored_key(
         .compute_url(crs_id, &PubDataType::CRS.to_string())
         .unwrap();
     let (pk, crs) = if storage.data_exists(&key_url).await.unwrap() {
-        let pk: FhePublicKey = storage.read_data(&key_url).await.unwrap();
+        let wrapped_pk = read_pk_at_request_id(
+            &storage,
+            &RequestId {
+                request_id: key_id.to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+        let WrappedPublicKeyOwned::Compact(pk) = wrapped_pk;
         let crs: PublicParameterWithParamID = storage.read_data(&crs_url).await.unwrap();
         (pk, crs)
     } else {
         // Try with the threshold storage
         let storage = FileStorage::new_threshold(pub_path, StorageType::PUB, 1).unwrap();
-        let key_url = storage
-            .compute_url(key_id, &PubDataType::PublicKey.to_string())
-            .unwrap();
         let crs_url = storage
             .compute_url(crs_id, &PubDataType::CRS.to_string())
             .unwrap();
-        let pk: FhePublicKey = storage.read_data(&key_url).await.unwrap();
+        let wrapped_pk = read_pk_at_request_id(
+            &storage,
+            &RequestId {
+                request_id: key_id.to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+        let WrappedPublicKeyOwned::Compact(pk) = wrapped_pk;
         let crs: PublicParameterWithParamID = storage.read_data(&crs_url).await.unwrap();
         (pk, crs)
     };

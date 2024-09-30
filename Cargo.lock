@@ -5227,6 +5227,7 @@ dependencies = [
  "temp-env",
  "test-context",
  "test-utilities",
+ "tfhe",
  "tokio",
  "tonic 0.11.0",
  "tracing",

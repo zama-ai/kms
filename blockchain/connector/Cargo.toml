@@ -31,6 +31,7 @@ tokio = { workspace = true , features = ["full"] }
 tonic = { workspace = true, features = ["transport","tls","tls-roots"] }
 tracing = { workspace = true, features = ["log"] }
 typed-builder = { workspace = true }
+tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", tag = "tfhe-rs-0.8.0-alpha.9" }
 
 [dev-dependencies]
 alloy-primitives = "0.8.3"
