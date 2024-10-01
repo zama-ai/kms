@@ -48,6 +48,11 @@ initial_wait_time = 0
 retry_interval = 0
 max_poll_count = 1
 
+[core.timeout_config.zkp]
+initial_wait_time = 0
+retry_interval = 0
+max_poll_count = 1
+
 [tracing]
 service_name = "kms-asc-connector"
 endpoint = "http://localhost:4317"

@@ -1,8 +1,10 @@
 use crate::blockchain::blockchain_impl;
 use crate::blockchain::handlers::handle_event_decryption;
+use crate::blockchain::handlers::handle_keyurl_event;
 use crate::blockchain::handlers::handle_reencryption_event;
 use crate::blockchain::handlers::handle_zkp_event;
 use crate::blockchain::Blockchain;
+use crate::common::provider::get_provider;
 use crate::common::provider::EventDecryptionFilter;
 use crate::config::init_conf_with_trace_connector;
 use crate::config::GatewayConfig;
@@ -14,11 +16,13 @@ use actix_web::middleware::Logger;
 use actix_web::App;
 use actix_web::HttpServer;
 use actix_web::Responder;
+use actix_web::Route;
 use actix_web::{web, HttpResponse};
 use async_trait::async_trait;
 use ethers::prelude::*;
 use ethers::providers::{Provider, Ws};
 use ethers::types::U256;
+use events::kms::KeyUrlResponseValues;
 use events::kms::KmsEvent;
 use events::kms::ReencryptResponseValues;
 use events::kms::ZkpResponseValues;
@@ -31,10 +35,71 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
 use std::sync::Arc;
+use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info};
 
+pub const HTTP_PAYLOAD_LIMIT: usize = 10 * 1024 * 1024; // 10 MB
+pub const HTTP_WORKERS: usize = 20;
+
+pub fn get_cors() -> Cors {
+    Cors::default()
+        .allow_any_origin()
+        .allowed_methods(vec!["GET", "POST", "OPTIONS"])
+        .allowed_headers(vec!["Content-Type"])
+        .max_age(3600)
+}
+
+pub fn get_options() -> Route {
+    web::method(Method::OPTIONS).to(|| async {
+        HttpResponse::Ok()
+            .append_header(("Allow", "OPTIONS, GET, POST"))
+            .append_header(("Access-Control-Allow-Origin", "*"))
+            .append_header(("Access-Control-Allow-Methods", "GET, POST, OPTIONS"))
+            .append_header(("Access-Control-Allow-Headers", "Content-Type"))
+            .finish()
+    })
+}
+
+/// Starts an http server on the gateway with support for all the REST endpoints.
+/// For now this includes health, reencryption, keyurl and zkp.
+pub async fn start_http_server(api_url: String, sender: mpsc::Sender<GatewayEvent>) {
+    let _handle = HttpServer::new(move || {
+        let reencrypt_publisher = ReencryptionEventPublisher::new(sender.clone());
+        let zkp_publisher = ZkpEventPublisher::new(sender.clone());
+        let keyurl_publisher = KeyUrlEventPublisher::new(sender.clone());
+        App::new()
+            .wrap(Logger::default())
+            .wrap(get_cors())
+            .route("/health", web::get().to(health_check)) // Add health endpoint
+            .app_data(web::PayloadConfig::new(HTTP_PAYLOAD_LIMIT))
+            .app_data(web::Data::new(Arc::new(reencrypt_publisher)))
+            .route(
+                &ReencryptionEventPublisher::path(),
+                web::post().to(reencrypt_payload),
+            )
+            .route(&ReencryptionEventPublisher::path(), get_options())
+            .app_data(web::Data::new(Arc::new(zkp_publisher)))
+            .route(&ZkpEventPublisher::path(), web::post().to(zkp_payload))
+            .route(&ZkpEventPublisher::path(), get_options())
+            .app_data(web::Data::new(Arc::new(keyurl_publisher)))
+            .route(&KeyUrlEventPublisher::path(), web::get().to(keyurl_payload))
+            .route(&KeyUrlEventPublisher::path(), get_options())
+    })
+    .workers(HTTP_WORKERS)
+    .bind(api_url)
+    .unwrap()
+    .run()
+    .await;
+}
+
+async fn health_check() -> impl Responder {
+    HttpResponse::Ok().body("Gateway is listening for reencryption requests")
+}
+
+// TODO don't we miss publishers for key and crs generation?
 #[derive(Debug, Clone)]
 pub struct DecryptionEvent {
     pub(crate) filter: EventDecryptionFilter,
@@ -66,8 +131,6 @@ pub struct ReencryptionEvent {
     pub(crate) sender: oneshot::Sender<Vec<ReencryptResponseValues>>,
 }
 
-// Note that `client_address` and `eip712_verifying_contract`
-// are encoded using EIP-55.
 #[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq)]
 pub(crate) struct ApiZkpValues {
     pub(crate) client_address: String,
@@ -82,19 +145,34 @@ pub struct ZkpEvent {
     pub(crate) sender: oneshot::Sender<Vec<ZkpResponseValues>>,
 }
 
+#[derive(Debug)]
+pub struct KeyUrlEvent {
+    pub(crate) sender: oneshot::Sender<KeyUrlResponseValues>,
+}
+
 // Define different event types
 pub enum GatewayEvent {
     Decryption(DecryptionEvent),
     Reencryption(ReencryptionEvent),
     Zkp(ZkpEvent),
+    KeyUrl(KeyUrlEvent),
     KmsEvent(KmsEvent),
 }
 
-// Define a trait for publishers
+// Define a trait for all publishers
+pub trait Publisher<Event> {
+    fn publish(&self, event: Event);
+}
+
+// Define a trait for runnable publishers
 #[async_trait]
-pub trait Publisher<E> {
+pub trait RunnablePublisher<Event>: Publisher<Event> {
     async fn run(&self) -> anyhow::Result<()>;
-    fn publish(&self, event: E);
+}
+
+// Define a trait for HTTP publishers
+pub trait HttpPublisher<Event>: Publisher<Event> {
+    fn path() -> String;
 }
 
 // Publisher for DecryptionEvent events
@@ -122,14 +200,16 @@ impl DecryptionEventPublisher {
     }
 }
 
-#[async_trait]
 impl Publisher<DecryptionEvent> for DecryptionEventPublisher {
     fn publish(&self, event: DecryptionEvent) {
         self.sender
             .try_send(GatewayEvent::Decryption(event))
             .unwrap();
     }
+}
 
+#[async_trait]
+impl RunnablePublisher<DecryptionEvent> for DecryptionEventPublisher {
     async fn run(&self) -> anyhow::Result<()> {
         let mut last_block = self
             .provider
@@ -191,6 +271,39 @@ impl Publisher<DecryptionEvent> for DecryptionEventPublisher {
         Ok(())
     }
 }
+
+pub async fn start_decryption_publisher(sender: Sender<GatewayEvent>, config: GatewayConfig) {
+    let provider = get_provider(&config.ethereum).await.unwrap_or_else(|e| {
+        tracing::error!("Failed to set up provider: {:?}", e);
+        std::process::exit(1);
+    });
+    let atomic_height = Arc::new(
+        AtomicBlockHeight::new(
+            &Provider::<Ws>::connect(config.ethereum.wss_url.to_string())
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::error!("Failed to connect to provider for atomic height: {:?}", e);
+                    std::process::exit(1);
+                }),
+        )
+        .await
+        .unwrap_or_else(|e| {
+            tracing::error!("Failed to initialize atomic height: {:?}", e);
+            std::process::exit(1);
+        }),
+    );
+    let decryption_publisher =
+        DecryptionEventPublisher::new(sender.clone(), &provider, &atomic_height, config.clone())
+            .await;
+    tokio::spawn(async move {
+        if let Err(e) = decryption_publisher.run().await {
+            tracing::error!("Failed to run DecryptionEventPublisher: {:?}", e);
+            std::process::exit(1);
+        }
+    });
+    tracing::info!("DecryptionEventPublisher created");
+}
+
 #[derive(Clone)]
 pub struct KmsEventPublisher {
     sender: mpsc::Sender<GatewayEvent>,
@@ -211,12 +324,14 @@ impl KmsEventPublisher {
     }
 }
 
-#[async_trait]
 impl Publisher<KmsEvent> for KmsEventPublisher {
     fn publish(&self, event: KmsEvent) {
         self.sender.try_send(GatewayEvent::KmsEvent(event)).unwrap();
     }
+}
 
+#[async_trait]
+impl RunnablePublisher<KmsEvent> for KmsEventPublisher {
     async fn run(&self) -> anyhow::Result<()> {
         let config: ConnectorConfig = init_conf_with_trace_connector("config/default.toml")?;
 
@@ -228,15 +343,25 @@ impl Publisher<KmsEvent> for KmsEventPublisher {
     }
 }
 
+pub async fn start_kms_event_publisher(sender: Sender<GatewayEvent>) {
+    let kms_publisher = KmsEventPublisher::new(sender.clone()).await;
+    tokio::spawn(async move {
+        if let Err(e) = kms_publisher.run().await {
+            tracing::error!("Failed to run KeyUrlEventPublisher: {:?}", e);
+            std::process::exit(1);
+        }
+    });
+    tracing::info!("KeyUrlEventPublisher created");
+}
+
 #[derive(Clone)]
 pub struct ReencryptionEventPublisher {
     sender: mpsc::Sender<GatewayEvent>,
-    config: GatewayConfig,
 }
 
 impl ReencryptionEventPublisher {
-    pub async fn new(sender: mpsc::Sender<GatewayEvent>, config: GatewayConfig) -> Self {
-        Self { sender, config }
+    pub fn new(sender: mpsc::Sender<GatewayEvent>) -> Self {
+        Self { sender }
     }
 }
 
@@ -247,50 +372,12 @@ impl Publisher<ReencryptionEvent> for ReencryptionEventPublisher {
             .try_send(GatewayEvent::Reencryption(event))
             .unwrap();
     }
-
-    async fn run(&self) -> anyhow::Result<()> {
-        let publisher = Arc::new(self.clone());
-        let api_url = self.config.api_url.clone();
-        let payload_limit = 10 * 1024 * 1024; // 10 MB
-
-        let _handle = HttpServer::new(move || {
-            let cors = Cors::default()
-                .allow_any_origin()
-                .allowed_methods(vec!["GET", "POST", "OPTIONS"])
-                .allowed_headers(vec!["Content-Type"])
-                .max_age(3600);
-
-            App::new()
-                .wrap(Logger::default())
-                .wrap(cors)
-                .app_data(web::PayloadConfig::new(payload_limit))
-                .app_data(web::Data::new(publisher.clone()))
-                .route("/reencrypt", web::post().to(reencrypt_payload))
-                .route(
-                    "/reencrypt",
-                    web::method(Method::OPTIONS).to(|| async {
-                        HttpResponse::Ok()
-                            .append_header(("Allow", "OPTIONS, POST"))
-                            .append_header(("Access-Control-Allow-Origin", "*"))
-                            .append_header(("Access-Control-Allow-Methods", "POST, OPTIONS"))
-                            .append_header(("Access-Control-Allow-Headers", "Content-Type"))
-                            .finish()
-                    }),
-                )
-                .route("/health", web::get().to(health_check)) // Add health check endpoint
-        })
-        .workers(20)
-        .bind(api_url)
-        .unwrap()
-        .run()
-        .await;
-
-        Ok(())
-    }
 }
 
-async fn health_check() -> impl Responder {
-    HttpResponse::Ok().body("Gateway is listening for reencryption requests")
+impl HttpPublisher<ReencryptionEvent> for ReencryptionEventPublisher {
+    fn path() -> String {
+        "/reencrypt".to_string()
+    }
 }
 
 async fn reencrypt_payload(
@@ -323,12 +410,17 @@ async fn reencrypt_payload(
 #[derive(Clone)]
 pub struct ZkpEventPublisher {
     sender: mpsc::Sender<GatewayEvent>,
-    config: GatewayConfig,
 }
 
 impl ZkpEventPublisher {
-    pub async fn new(sender: mpsc::Sender<GatewayEvent>, config: GatewayConfig) -> Self {
-        Self { sender, config }
+    pub fn new(sender: mpsc::Sender<GatewayEvent>) -> Self {
+        Self { sender }
+    }
+}
+
+impl HttpPublisher<ZkpEvent> for ZkpEventPublisher {
+    fn path() -> String {
+        "/zkp".to_string()
     }
 }
 
@@ -337,48 +429,9 @@ impl Publisher<ZkpEvent> for ZkpEventPublisher {
     fn publish(&self, event: ZkpEvent) {
         self.sender.try_send(GatewayEvent::Zkp(event)).unwrap();
     }
-
-    async fn run(&self) -> anyhow::Result<()> {
-        let publisher = Arc::new(self.clone());
-        let api_url = self.config.api_url.clone();
-        let payload_limit = 10 * 1024 * 1024; // 10 MB
-        let _handle = HttpServer::new(move || {
-            let cors = Cors::default()
-                .allow_any_origin()
-                .allowed_methods(vec!["GET", "POST", "OPTIONS"])
-                .allowed_headers(vec!["Content-Type"])
-                .max_age(3600);
-
-            App::new()
-                .wrap(Logger::default())
-                .wrap(cors)
-                .app_data(web::PayloadConfig::new(payload_limit))
-                .app_data(web::Data::new(publisher.clone()))
-                .route("/zkp", web::post().to(zkp_payload))
-                .route(
-                    "/zkp",
-                    web::method(Method::OPTIONS).to(|| async {
-                        HttpResponse::Ok()
-                            .append_header(("Allow", "OPTIONS, POST"))
-                            .append_header(("Access-Control-Allow-Origin", "*"))
-                            .append_header(("Access-Control-Allow-Methods", "POST, OPTIONS"))
-                            .append_header(("Access-Control-Allow-Headers", "Content-Type"))
-                            .finish()
-                    }),
-                )
-                .route("/health", web::get().to(health_check)) // Add health check endpoint
-        })
-        .workers(20)
-        .bind(api_url)
-        .unwrap()
-        .run()
-        .await;
-
-        Ok(())
-    }
 }
 
-async fn zkp_payload(
+pub(crate) async fn zkp_payload(
     payload: web::Json<ApiZkpValues>,
     publisher: web::Data<Arc<ZkpEventPublisher>>,
 ) -> HttpResponse {
@@ -393,13 +446,54 @@ async fn zkp_payload(
     info!("🍓🍓🍓 Published ZKP request");
 
     match receiver.await {
-        Ok(reencryption_response) => {
+        Ok(zkp_response) => {
             info!("🍓🍓🍓 <= Received ZKP response");
-            HttpResponse::Ok()
-                .json(json!({ "status": "success", "response": reencryption_response }))
+            HttpResponse::Ok().json(json!({ "status": "success", "response": zkp_response }))
         }
         Err(e) => {
             error!("Error receiving ZKP response: {:?}", e);
+            HttpResponse::InternalServerError().json(json!({ "status": "failure" }))
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct KeyUrlEventPublisher {
+    sender: mpsc::Sender<GatewayEvent>,
+}
+
+impl KeyUrlEventPublisher {
+    pub fn new(sender: mpsc::Sender<GatewayEvent>) -> Self {
+        Self { sender }
+    }
+}
+
+impl HttpPublisher<KeyUrlEvent> for KeyUrlEventPublisher {
+    fn path() -> String {
+        "/keyurl".to_string()
+    }
+}
+
+#[async_trait]
+impl Publisher<KeyUrlEvent> for KeyUrlEventPublisher {
+    fn publish(&self, event: KeyUrlEvent) {
+        self.sender.try_send(GatewayEvent::KeyUrl(event)).unwrap();
+    }
+}
+
+async fn keyurl_payload(publisher: web::Data<Arc<KeyUrlEventPublisher>>) -> HttpResponse {
+    info!("🍓🍓🍓 => Received KeyUrl request");
+    let (sender, receiver) = oneshot::channel();
+
+    publisher.publish(KeyUrlEvent { sender });
+    info!("🍓🍓🍓 Published KeyUrl request");
+    match receiver.await {
+        Ok(keyurl_response) => {
+            info!("🍓🍓🍓 <= Received KeyUrl response");
+            HttpResponse::Ok().json(json!({ "status": "success", "response": keyurl_response }))
+        }
+        Err(e) => {
+            error!("Error receiving KeyUrl response: {:?}", e);
             HttpResponse::InternalServerError().json(json!({ "status": "failure" }))
         }
     }
@@ -434,7 +528,6 @@ impl GatewaySubscriber {
                 let event = receiver.lock().await.recv().await.unwrap();
                 let config = config.clone();
                 let kms = Arc::clone(&kms);
-
                 tokio::task::spawn(async move {
                     let start = std::time::Instant::now();
                     match event {
@@ -461,6 +554,11 @@ impl GatewaySubscriber {
                                 handle_zkp_event(&zkp_event.values, &config).await.unwrap();
                             let _ = zkp_event.sender.send(zkp_response);
                         }
+                        GatewayEvent::KeyUrl(keyurl_event) => {
+                            debug!("🫐🫐🫐 Received KeyUrl Event");
+                            let keyurl_response = handle_keyurl_event(&config).await.unwrap();
+                            let _ = keyurl_event.sender.send(keyurl_response);
+                        }
                         GatewayEvent::KmsEvent(kms_event) => {
                             debug!("🫐🫐🫐 Received KmsEvent: {:?}", kms_event);
                             kms.receive(kms_event).await.unwrap();
@@ -472,6 +570,12 @@ impl GatewaySubscriber {
             }
         });
     }
+}
+
+pub async fn start_gateway(receiver: Receiver<GatewayEvent>, config: GatewayConfig) {
+    let subscriber = GatewaySubscriber::new(Arc::new(Mutex::new(receiver)), config).await;
+    subscriber.listen();
+    tracing::info!("GatewaySubscriber started");
 }
 
 // write a test for serialization and deserialization of the ApiReencryptValues struct

@@ -6,11 +6,12 @@ use cosmwasm_std::{
 };
 use cw_controllers::Admin;
 use cw_utils::must_pay;
+use events::kms::ZkpResponseValues;
 use events::kms::{
     CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues,
     KeyGenPreprocResponseValues, KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues,
     KmsCoreConf, KmsEvent, KmsOperation, OperationValue, ReencryptResponseValues, ReencryptValues,
-    Transaction, TransactionId,
+    Transaction, TransactionId, ZkpValues,
 };
 use sha3::{Digest, Sha3_256};
 use std::ops::Deref;
@@ -346,6 +347,21 @@ impl KmsContract {
             &txn_id.to_vec(),
             reencrypt_response,
         )
+    }
+
+    pub fn zkp(&self, ctx: ExecCtx, zkp: ZkpValues) -> StdResult<Response> {
+        let txn_id = self.derive_transaction_id(&ctx.env)?;
+        self.process_transaction(ctx.deps.storage, &ctx.env, &txn_id, zkp)
+    }
+
+    #[sv::msg(exec)]
+    pub fn zkp_response(
+        &self,
+        ctx: ExecCtx,
+        txn_id: TransactionId,
+        zkp_response: ZkpResponseValues,
+    ) -> StdResult<Response> {
+        self.process_transaction(ctx.deps.storage, &ctx.env, &txn_id.to_vec(), zkp_response)
     }
 
     #[sv::msg(exec)]

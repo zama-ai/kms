@@ -69,6 +69,7 @@ pub struct KmsConfig {
     pub address: String,
     pub key_id: String,
     pub crs_ids: HashMap<u32, String>,
+    pub public_storage: HashMap<u32, String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder)]

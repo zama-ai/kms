@@ -6,6 +6,7 @@ use cosmwasm_std::{Attribute, Event};
 use serde::ser::SerializeMap;
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::ops::Deref;
 use std::str::FromStr;
 use strum::EnumProperty;
@@ -106,6 +107,12 @@ pub enum OperationValue {
     #[strum(serialize = "zkp_response")]
     #[serde(rename = "zkp_response")]
     ZkpResponse(ZkpResponseValues),
+    #[strum(serialize = "keyurl")]
+    #[serde(rename = "keyurl")]
+    KeyUrl(KeyUrlValues),
+    #[strum(serialize = "keyurl_response")]
+    #[serde(rename = "keyurl_response")]
+    KeyUrlResponse(KeyUrlResponseValues),
     #[strum(serialize = "keygen")]
     #[serde(rename = "keygen")]
     KeyGen(KeyGenValues),
@@ -156,7 +163,9 @@ impl From<OperationValue> for KmsOperation {
             OperationValue::Reencrypt(_) => KmsOperation::Reencrypt,
             OperationValue::ReencryptResponse(_) => KmsOperation::ReencryptResponse,
             OperationValue::Zkp(_) => KmsOperation::Zkp,
-            OperationValue::ZkpResponse(_) => KmsOperation::Zkp,
+            OperationValue::ZkpResponse(_) => KmsOperation::ZkpResponse,
+            OperationValue::KeyUrl(_) => KmsOperation::KeyUrl,
+            OperationValue::KeyUrlResponse(_) => KmsOperation::KeyUrlResponse,
             OperationValue::KeyGen(_) => KmsOperation::KeyGen,
             OperationValue::KeyGenResponse(_) => KmsOperation::KeyGenResponse,
             OperationValue::KeyGenPreproc(_) => KmsOperation::KeyGenPreproc,
@@ -601,6 +610,26 @@ impl From<ZkpValues> for OperationValue {
         OperationValue::Zkp(value)
     }
 }
+
+#[cw_serde]
+#[derive(Eq, TypedBuilder, Default)]
+pub struct KeyUrlValues {
+    #[builder(setter(into))]
+    data_id: HexVector,
+}
+
+impl KeyUrlValues {
+    pub fn data_id(&self) -> &HexVector {
+        &self.data_id
+    }
+}
+
+impl From<KeyUrlValues> for OperationValue {
+    fn from(value: KeyUrlValues) -> Self {
+        OperationValue::KeyUrl(value)
+    }
+}
+
 #[cw_serde]
 #[derive(Default, Eq, TypedBuilder)]
 pub struct DecryptResponseValues {
@@ -740,6 +769,125 @@ impl From<ZkpResponseValues> for OperationValue {
     }
 }
 
+/// An entry containing all URL and signature info for a key or CRS.
+#[cw_serde]
+#[derive(Default, Eq, TypedBuilder)]
+pub struct KeyUrlInfo {
+    // The ID/handle of the key or CRS.
+    data_id: HexVector,
+    // The enum choice of parameters used for the key or CRS. TODO should maybe import ParamChoice
+    param_choice: i32,
+    // List of URLs to fetch the data element from.
+    urls: Vec<String>,
+    // List of signatures for the data element.
+    signatures: Vec<HexVector>,
+}
+
+impl KeyUrlInfo {
+    pub fn data_id(&self) -> &HexVector {
+        &self.data_id
+    }
+    pub fn param_choice(&self) -> i32 {
+        self.param_choice
+    }
+    pub fn urls(&self) -> &Vec<String> {
+        &self.urls
+    }
+    pub fn signatures(&self) -> &Vec<HexVector> {
+        &self.signatures
+    }
+}
+
+/// Struct containing information about a single conceptual key (and hence ID)
+#[cw_serde]
+#[derive(Default, Eq, TypedBuilder)]
+pub struct FheKeyUrlInfo {
+    // Info aboout the public key used for FHE encryption.
+    #[builder(setter(into))]
+    fhe_public_key: KeyUrlInfo,
+    // Info about the public key used for FHE computation.
+    #[builder(setter(into))]
+    fhe_server_key: KeyUrlInfo,
+}
+
+impl FheKeyUrlInfo {
+    pub fn fhe_public_key(&self) -> &KeyUrlInfo {
+        &self.fhe_public_key
+    }
+    pub fn fhe_server_key(&self) -> &KeyUrlInfo {
+        &self.fhe_server_key
+    }
+}
+
+/// Struct containing information about a single conceptual verfication key.
+/// There is exactly one of these for each KMS server.
+#[cw_serde]
+#[derive(Default, Eq, TypedBuilder)]
+pub struct VerfKeyUrlInfo {
+    // The ID of the verification key.
+    #[builder(setter(into))]
+    key_id: HexVector,
+    // The integer ID of the server who owns the key.
+    #[builder(setter(into))]
+    server_id: u32,
+    // The URL where the verification key can be found.
+    #[builder(setter(into))]
+    verf_public_key_url: String,
+    // The URL where the Ethereum associated address can be found.
+    #[builder(setter(into))]
+    verf_public_key_address: String,
+}
+
+impl VerfKeyUrlInfo {
+    pub fn key_id(&self) -> &HexVector {
+        &self.key_id
+    }
+    pub fn server_id(&self) -> u32 {
+        self.server_id
+    }
+    pub fn verf_public_key_url(&self) -> &str {
+        &self.verf_public_key_url
+    }
+    pub fn verf_public_key_address(&self) -> &str {
+        &self.verf_public_key_address
+    }
+}
+
+#[cw_serde]
+#[derive(Default, Eq, TypedBuilder)]
+pub struct KeyUrlResponseValues {
+    // All the FHE public key info from this gateway and associated ASC.
+    #[builder(setter(into))]
+    fhe_key_info: Vec<FheKeyUrlInfo>,
+    // All the CRS info from this gateway and associated ASC.
+    // The map maps the max_amount_of_bits a given CRS supports to the CRS information.
+    // For now we assume there is only one CRS per max_amount_of_bits.
+    #[builder(setter(into))]
+    crs: HashMap<u32, KeyUrlInfo>,
+    // The public verification information for the KMS servers.
+    // The vector will conatin one entry for each KMS server.
+    #[builder(setter(into))]
+    verf_public_key: Vec<VerfKeyUrlInfo>,
+}
+
+impl KeyUrlResponseValues {
+    pub fn fhe_key_info(&self) -> &Vec<FheKeyUrlInfo> {
+        &self.fhe_key_info
+    }
+    pub fn crs(&self) -> &HashMap<u32, KeyUrlInfo> {
+        &self.crs
+    }
+    pub fn verf_public_key(&self) -> &Vec<VerfKeyUrlInfo> {
+        &self.verf_public_key
+    }
+}
+
+impl From<KeyUrlResponseValues> for OperationValue {
+    fn from(value: KeyUrlResponseValues) -> Self {
+        OperationValue::KeyUrlResponse(value)
+    }
+}
+
 #[cw_serde]
 #[derive(Default, Eq, TypedBuilder)]
 pub struct CrsGenResponseValues {
@@ -828,6 +976,10 @@ pub enum KmsOperation {
     Zkp,
     #[strum(serialize = "zkp_response", props(response = "true"))]
     ZkpResponse,
+    #[strum(serialize = "keyurl", props(request = "true"))]
+    KeyUrl,
+    #[strum(serialize = "keyurl_response", props(response = "true"))]
+    KeyUrlResponse,
     #[strum(serialize = "keygen_preproc", props(request = "true"))]
     #[serde(rename = "keygen_preproc")]
     KeyGenPreproc,
