@@ -20,7 +20,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 strum = "0.26"
 strum_macros = "0.26"
-thiserror = { version = "1.0.58", optional = true }
+thiserror = { version = "1.0.64", optional = true }
 tokio = { workspace = true, features = ["full"], optional = true }
 tonic = { workspace = true, features = ["transport","tls","tls-roots"], optional = true }
 tracing = { workspace = true, features = ["log"] }

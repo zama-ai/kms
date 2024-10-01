@@ -50,7 +50,7 @@ strum = { version = "0.26", features = ["derive"] }
 strum_macros = "0.26"
 tendermint.workspace = true
 tendermint-rpc = { workspace = true, features = ["websocket-client"] }
-thiserror = "1.0.61"
+thiserror = "1.0.64"
 tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["log"] }
 typed-builder.workspace = true

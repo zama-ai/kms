@@ -20,7 +20,7 @@ path = "src/bin.rs"
 bytes = "^1.6.1"
 reqwest = { version = "0.12.4", features = ["json"] }
 async-trait.workspace = true 
-thiserror = "1.0.61"
+thiserror = "1.0.64"
 ethers = { version = "2.0.14", features = ["abigen", "rustls", "ws", "ethers-solc", "legacy"] }
 dashmap = "6.0.1"
 retrying = {version = "0.1.0", features = ["tokio"]}
