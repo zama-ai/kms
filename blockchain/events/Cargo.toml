@@ -9,7 +9,7 @@ license.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 async-trait = {workspace = true, optional = true}
-cosmwasm-std = { version = "2.0.2" }
+cosmwasm-std = { version = "2.1.4" }
 cosmwasm-schema = "2.0.2"
 cosmos-proto = { path = "../cosmos-proto", optional = true , version = "0.9.0-rc5" }
 hex = "0.4.3"
