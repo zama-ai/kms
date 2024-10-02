@@ -5,7 +5,8 @@ use super::{
     internal_crypto_types::{PrivateSigKey, PublicEncKey, PublicSigKey},
     signcryption::hash_element,
 };
-use crate::consts::{RND_SIZE, SAFE_SER_SIZE_LIMIT};
+use crate::consts::RND_SIZE;
+use crate::cryptography::decompression;
 use crate::cryptography::signcryption::Reencrypt;
 use crate::kms::FheType;
 use crate::kms::ReencryptionRequest;
@@ -45,19 +46,18 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::{fmt, panic};
-use tfhe::integer::bigint::U2048;
-use tfhe::integer::U256;
+use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::named::Named;
 use tfhe::prelude::FheDecrypt;
-use tfhe::safe_deserialization::safe_deserialize_versioned;
 #[cfg(feature = "non-wasm")]
 use tfhe::Seed;
+use tfhe::ServerKey;
 use tfhe_versionable::VersionsDispatch;
 
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::{
-    ClientKey, ConfigBuilder, FheBool, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256,
-    FheUint32, FheUint4, FheUint64, FheUint8, Versionize,
+    ClientKey, ConfigBuilder, FheBool, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048,
+    FheUint256, FheUint32, FheUint4, FheUint512, FheUint64, FheUint8, Versionize,
 };
 use tokio::sync::{Mutex, RwLock};
 
@@ -116,13 +116,22 @@ pub fn generate_fhe_keys(
     let f = || -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
         let client_key = generate_client_fhe_key(params, seed);
         let server_key = client_key.generate_server_key();
+        let server_key = server_key.into_raw_parts();
+        let decompression_key = server_key.3.clone();
+        let server_key = ServerKey::from_raw_parts(
+            server_key.0,
+            server_key.1,
+            server_key.2,
+            server_key.3,
+            server_key.4,
+        );
         let public_key = FhePublicKey::new(&client_key);
         let pks = FhePubKeySet {
             public_key,
             server_key,
             sns_key: None,
         };
-        let handles = KmsFheKeyHandles::new(sk, client_key, &pks)?;
+        let handles = KmsFheKeyHandles::new(sk, client_key, &pks, decompression_key)?;
         Ok((pks, handles))
     };
     match panic::catch_unwind(f) {
@@ -138,12 +147,19 @@ pub fn generate_client_fhe_key(params: DKGParams, seed: Option<Seed>) -> ClientK
     let pbs_params: ClassicPBSParameters = params
         .get_params_basics_handle()
         .to_classic_pbs_parameters();
-
+    let compression_params = params
+        .get_params_basics_handle()
+        .get_compression_decompression_params();
     let config = ConfigBuilder::with_custom_parameters(pbs_params);
     let config = if let Some(dedicated_pk_params) =
         params.get_params_basics_handle().get_dedicated_pk_params()
     {
         config.use_dedicated_compact_public_key_parameters(dedicated_pk_params)
+    } else {
+        config
+    };
+    let config = if let Some(params) = compression_params {
+        config.enable_compression(params.raw_compression_parameters)
     } else {
         config
     };
@@ -362,6 +378,7 @@ pub enum KmsFheKeyHandlesVersioned {
 #[versionize(KmsFheKeyHandlesVersioned)]
 pub struct KmsFheKeyHandles {
     pub client_key: FhePrivateKey,
+    pub decompression_key: Option<DecompressionKey>,
     /// Mapping key type to information
     pub public_key_info: HashMap<PubDataType, SignedPubDataHandleInternal>,
 }
@@ -378,6 +395,7 @@ impl KmsFheKeyHandles {
         sig_key: &PrivateSigKey,
         client_key: FhePrivateKey,
         public_keys: &FhePubKeySet,
+        decompression_key: Option<DecompressionKey>,
     ) -> anyhow::Result<Self> {
         let mut public_key_info = HashMap::new();
         public_key_info.insert(
@@ -393,6 +411,7 @@ impl KmsFheKeyHandles {
         }
         Ok(KmsFheKeyHandles {
             client_key,
+            decompression_key,
             public_key_info,
         })
     }
@@ -444,7 +463,7 @@ pub fn central_decrypt<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
 >(
-    client_key: &FhePrivateKey,
+    keys: &KmsFheKeyHandles,
     cts: &Vec<TypedCiphertext>,
 ) -> anyhow::Result<Vec<Plaintext>> {
     use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
@@ -453,7 +472,11 @@ pub fn central_decrypt<
     // run the decryption of each ct in the batch in parallel
     cts.par_iter()
         .map(|ct| {
-            SoftwareKms::<PubS, PrivS>::decrypt(client_key, &ct.ciphertext, ct.fhe_type.try_into()?)
+            SoftwareKms::<PubS, PrivS>::decrypt(
+                keys,
+                &ct.ciphertext,
+                FheType::try_from(ct.fhe_type)?,
+            )
         })
         .collect::<Result<Vec<_>, _>>()
 }
@@ -465,7 +488,7 @@ pub async fn async_reencrypt<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
 >(
-    client_key: &FhePrivateKey,
+    keys: &KmsFheKeyHandles,
     sig_key: &PrivateSigKey,
     rng: &mut (impl CryptoRng + RngCore),
     high_level_ct: &[u8],
@@ -475,7 +498,7 @@ pub async fn async_reencrypt<
     client_address: &alloy_primitives::Address,
 ) -> anyhow::Result<Vec<u8>> {
     SoftwareKms::<PubS, PrivS>::reencrypt(
-        client_key,
+        keys,
         sig_key,
         rng,
         high_level_ct,
@@ -526,104 +549,80 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
     }
 }
 
+fn unsafe_decrypt(
+    keys: &KmsFheKeyHandles,
+    bytes_ct: &[u8],
+    fhe_type: FheType,
+) -> anyhow::Result<Plaintext> {
+    Ok(match fhe_type {
+        FheType::Ebool => Plaintext::from_bool(
+            decompression::from_bytes::<FheBool>(&keys.decompression_key, bytes_ct)?
+                .decrypt(&keys.client_key),
+        ),
+        FheType::Euint4 => Plaintext::from_u4(
+            decompression::from_bytes::<FheUint4>(&keys.decompression_key, bytes_ct)?
+                .decrypt(&keys.client_key),
+        ),
+        FheType::Euint8 => Plaintext::from_u8(
+            decompression::from_bytes::<FheUint8>(&keys.decompression_key, bytes_ct)?
+                .decrypt(&keys.client_key),
+        ),
+        FheType::Euint16 => Plaintext::from_u16(
+            decompression::from_bytes::<FheUint16>(&keys.decompression_key, bytes_ct)?
+                .decrypt(&keys.client_key),
+        ),
+        FheType::Euint32 => Plaintext::from_u32(
+            decompression::from_bytes::<FheUint32>(&keys.decompression_key, bytes_ct)?
+                .decrypt(&keys.client_key),
+        ),
+        FheType::Euint64 => Plaintext::from_u64(
+            decompression::from_bytes::<FheUint64>(&keys.decompression_key, bytes_ct)?
+                .decrypt(&keys.client_key),
+        ),
+        FheType::Euint128 => Plaintext::from_u128(
+            decompression::from_bytes::<FheUint128>(&keys.decompression_key, bytes_ct)?
+                .decrypt(&keys.client_key),
+        ),
+        FheType::Euint160 => Plaintext::from_u160(
+            decompression::from_bytes::<FheUint160>(&keys.decompression_key, bytes_ct)?
+                .decrypt(&keys.client_key),
+        ),
+        FheType::Euint256 => Plaintext::from_u256(
+            decompression::from_bytes::<FheUint256>(&keys.decompression_key, bytes_ct)?
+                .decrypt(&keys.client_key),
+        ),
+        FheType::Euint512 => Plaintext::from_u512(
+            decompression::from_bytes::<FheUint512>(&keys.decompression_key, bytes_ct)?
+                .decrypt(&keys.client_key),
+        ),
+        FheType::Euint1024 => Plaintext::from_u1024(
+            decompression::from_bytes::<FheUint1024>(&keys.decompression_key, bytes_ct)?
+                .decrypt(&keys.client_key),
+        ),
+        FheType::Euint2048 => Plaintext::from_u2048(
+            decompression::from_bytes::<FheUint2048>(&keys.decompression_key, bytes_ct)?
+                .decrypt(&keys.client_key),
+        ),
+    })
+}
+
 #[cfg(feature = "non-wasm")]
 impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> Kms
     for SoftwareKms<PubS, PrivS>
 {
     fn decrypt(
-        client_key: &FhePrivateKey,
+        keys: &KmsFheKeyHandles,
         high_level_ct: &[u8],
         fhe_type: FheType,
     ) -> anyhow::Result<Plaintext> {
-        let f = || -> anyhow::Result<Plaintext> {
-            let mut ct_buf = std::io::Cursor::new(high_level_ct);
-            Ok(match fhe_type {
-                FheType::Ebool => {
-                    let cipher: FheBool =
-                        safe_deserialize_versioned(&mut ct_buf, SAFE_SER_SIZE_LIMIT)
-                            .map_err(|e| anyhow::anyhow!(e))?;
-                    let plaintext = cipher.decrypt(client_key);
-                    Plaintext::from_bool(plaintext)
-                }
-                FheType::Euint4 => {
-                    let cipher: FheUint4 =
-                        safe_deserialize_versioned(&mut ct_buf, SAFE_SER_SIZE_LIMIT)
-                            .map_err(|e| anyhow::anyhow!(e))?;
-                    let plaintext: u8 = cipher.decrypt(client_key);
-                    Plaintext::from_u4(plaintext)
-                }
-                FheType::Euint8 => {
-                    let cipher: FheUint8 =
-                        safe_deserialize_versioned(&mut ct_buf, SAFE_SER_SIZE_LIMIT)
-                            .map_err(|e| anyhow::anyhow!(e))?;
-                    let plaintext: u8 = cipher.decrypt(client_key);
-                    Plaintext::from_u8(plaintext)
-                }
-                FheType::Euint16 => {
-                    let cipher: FheUint16 =
-                        safe_deserialize_versioned(&mut ct_buf, SAFE_SER_SIZE_LIMIT)
-                            .map_err(|e| anyhow::anyhow!(e))?;
-                    let plaintext: u16 = cipher.decrypt(client_key);
-                    Plaintext::from_u16(plaintext)
-                }
-                FheType::Euint32 => {
-                    let cipher: FheUint32 =
-                        safe_deserialize_versioned(&mut ct_buf, SAFE_SER_SIZE_LIMIT)
-                            .map_err(|e| anyhow::anyhow!(e))?;
-                    let plaintext: u32 = cipher.decrypt(client_key);
-                    Plaintext::from_u32(plaintext)
-                }
-                FheType::Euint64 => {
-                    let cipher: FheUint64 =
-                        safe_deserialize_versioned(&mut ct_buf, SAFE_SER_SIZE_LIMIT)
-                            .map_err(|e| anyhow::anyhow!(e))?;
-                    let plaintext: u64 = cipher.decrypt(client_key);
-                    Plaintext::from_u64(plaintext)
-                }
-                FheType::Euint128 => {
-                    let cipher: FheUint128 =
-                        safe_deserialize_versioned(&mut ct_buf, SAFE_SER_SIZE_LIMIT)
-                            .map_err(|e| anyhow::anyhow!(e))?;
-                    let plaintext: u128 = cipher.decrypt(client_key);
-                    Plaintext::from_u128(plaintext)
-                }
-                FheType::Euint160 => {
-                    let cipher: FheUint160 =
-                        safe_deserialize_versioned(&mut ct_buf, SAFE_SER_SIZE_LIMIT)
-                            .map_err(|e| anyhow::anyhow!(e))?;
-                    let plaintext: U256 = cipher.decrypt(client_key);
-                    Plaintext::from_u160(plaintext)
-                }
-                FheType::Euint256 => {
-                    let cipher: FheUint256 =
-                        safe_deserialize_versioned(&mut ct_buf, SAFE_SER_SIZE_LIMIT)
-                            .map_err(|e| anyhow::anyhow!(e))?;
-                    let plaintext: U256 = cipher.decrypt(client_key);
-                    Plaintext::from_u256(plaintext)
-                }
-                FheType::Euint512 => {
-                    todo!("Implement Euint512 decryption")
-                }
-                FheType::Euint1024 => {
-                    todo!("Implement Euint1024 decryption")
-                }
-                FheType::Euint2048 => {
-                    let cipher: FheUint2048 =
-                        safe_deserialize_versioned(&mut ct_buf, SAFE_SER_SIZE_LIMIT)
-                            .map_err(|e| anyhow::anyhow!(e))?;
-                    let plaintext: U2048 = cipher.decrypt(client_key);
-                    Plaintext::from_u2048(plaintext)
-                }
-            })
-        };
-        match panic::catch_unwind(f) {
+        match panic::catch_unwind(|| unsafe_decrypt(keys, high_level_ct, fhe_type)) {
             Ok(x) => x,
             Err(_) => Err(anyhow_error_and_log("decryption panicked".to_string())),
         }
     }
 
     fn reencrypt(
-        client_key: &FhePrivateKey,
+        keys: &KmsFheKeyHandles,
         sig_key: &PrivateSigKey,
         rng: &mut (impl CryptoRng + RngCore),
         ct: &[u8],
@@ -632,7 +631,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         client_enc_key: &PublicEncKey,
         client_address: &alloy_primitives::Address,
     ) -> anyhow::Result<Vec<u8>> {
-        let plaintext = Self::decrypt(client_key, ct, fhe_type)?;
+        let plaintext = Self::decrypt(keys, ct, fhe_type)?;
         // Observe that we encrypt the plaintext itself, this is different from the threshold case
         // where it is first mapped to a Vec<Residuepoly<Z128>> element
         let signcryption_msg = SigncryptionPayload {
@@ -951,7 +950,7 @@ pub(crate) mod tests {
         let (ct, fhe_type) = {
             let pub_keys = keys.pub_fhe_keys.get(key_id).unwrap();
             set_server_key(pub_keys.server_key.clone());
-            compute_cipher(msg.into(), &pub_keys.public_key)
+            compute_cipher(msg.into(), &pub_keys.public_key, None, false)
         };
         let kms = {
             let inner = SoftwareKms::new(
@@ -968,7 +967,7 @@ pub(crate) mod tests {
             inner
         };
         let raw_plaintext = SoftwareKms::<FileStorage, FileStorage>::decrypt(
-            &kms.fhe_keys.read().await.get(key_id).unwrap().client_key,
+            kms.fhe_keys.read().await.get(key_id).unwrap(),
             &ct,
             fhe_type,
         );
@@ -1067,6 +1066,7 @@ pub(crate) mod tests {
         let x: &mut KmsFheKeyHandles = key_info.get_mut(key_handle).unwrap();
         let wrong_handles = KmsFheKeyHandles {
             client_key: wrong_client_key,
+            decompression_key: None,
             public_key_info: x.public_key_info.clone(),
         };
         *x = wrong_handles;
@@ -1096,7 +1096,7 @@ pub(crate) mod tests {
         let (ct, fhe_type) = {
             let pub_keys = keys.pub_fhe_keys.get(key_handle).unwrap();
             set_server_key(pub_keys.server_key.clone());
-            compute_cipher(msg.into(), &pub_keys.public_key)
+            compute_cipher(msg.into(), &pub_keys.public_key, None, false)
         };
 
         let kms = {
@@ -1128,12 +1128,7 @@ pub(crate) mod tests {
         };
         let mut rng = kms.base_kms.new_rng().await;
         let raw_cipher = SoftwareKms::<FileStorage, FileStorage>::reencrypt(
-            &kms.fhe_keys
-                .read()
-                .await
-                .get(key_handle)
-                .unwrap()
-                .client_key,
+            kms.fhe_keys.read().await.get(key_handle).unwrap(),
             &kms.base_kms.sig_key,
             &mut rng,
             &ct,

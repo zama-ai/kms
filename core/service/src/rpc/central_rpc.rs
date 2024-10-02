@@ -337,7 +337,7 @@ impl<
                 &request_id
             );
             match async_reencrypt::<PubS, PrivS>(
-                &keys.client_key,
+                keys,
                 &sig_key,
                 &mut rng,
                 &ciphertext,
@@ -478,7 +478,7 @@ impl<
             // run the computation in a separate rayon thread to avoid blocking the tokio runtime
             let (send, recv) = tokio::sync::oneshot::channel();
             rayon::spawn(move || {
-                let decryptions = central_decrypt::<PubS, PrivS>(&keys.client_key, &ciphertexts);
+                let decryptions = central_decrypt::<PubS, PrivS>(&keys, &ciphertexts);
                 let _ = send.send(decryptions);
             });
             let decryptions = recv.await;

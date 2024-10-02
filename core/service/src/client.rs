@@ -2626,7 +2626,8 @@ pub(crate) mod tests {
     #[cfg(feature = "wasm_tests")]
     use crate::util::file_handling::write_element;
     use crate::util::key_setup::test_tools::{
-        compute_cipher_from_stored_key, load_pk_from_storage, purge, TypedPlaintext,
+        compute_cipher_from_stored_key, compute_compressed_cipher_from_stored_key,
+        load_pk_from_storage, purge, TypedPlaintext,
     };
     use crate::{
         client::num_blocks,
@@ -3600,6 +3601,25 @@ pub(crate) mod tests {
                 TypedPlaintext::U8(1),
             ],
             3, // 3 parallel requests
+            true,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_decryption_central_no_decompression() {
+        decryption_centralized(
+            &TEST_PARAM,
+            &crate::consts::TEST_CENTRAL_KEY_ID.to_string(),
+            vec![
+                TypedPlaintext::U8(42),
+                TypedPlaintext::U32(9876),
+                TypedPlaintext::U16(420),
+                TypedPlaintext::U8(1),
+            ],
+            3, // 3 parallel requests
+            false,
         )
         .await;
     }
@@ -3634,6 +3654,7 @@ pub(crate) mod tests {
             &DEFAULT_CENTRAL_KEY_ID.to_string(),
             msgs,
             parallelism,
+            false,
         )
         .await;
     }
@@ -3643,6 +3664,7 @@ pub(crate) mod tests {
         key_id: &str,
         msgs: Vec<TypedPlaintext>,
         parallelism: usize,
+        compression: bool,
     ) {
         assert!(parallelism > 0);
         let (kms_server, kms_client, mut internal_client) =
@@ -3651,7 +3673,11 @@ pub(crate) mod tests {
 
         let mut cts = Vec::new();
         for msg in msgs.clone() {
-            let (ct, fhe_type) = compute_cipher_from_stored_key(None, msg, key_id).await;
+            let (ct, fhe_type) = if compression {
+                compute_compressed_cipher_from_stored_key(None, msg, key_id).await
+            } else {
+                compute_cipher_from_stored_key(None, msg, key_id).await
+            };
             let ctt = TypedCiphertext {
                 ciphertext: ct,
                 fhe_type: fhe_type.into(),
@@ -3723,8 +3749,8 @@ pub(crate) mod tests {
                     && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
                 {
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                    // we may wait up to 5s, for big ciphertexts
-                    if ctr >= 100 {
+                    // we may wait up to 50s for tests (include slow profiles), for big ciphertexts
+                    if ctr >= 1000 {
                         panic!("timeout while waiting for decryption result");
                     }
                     ctr += 1;
@@ -3899,7 +3925,7 @@ pub(crate) mod tests {
         assert!(parallelism > 0);
         let (kms_server, kms_client, mut internal_client) =
             super::test_tools::centralized_handles(StorageVersion::Dev, dkg_params).await;
-        let (ct, fhe_type) = compute_cipher_from_stored_key(None, msg, key_id).await;
+        let (ct, fhe_type) = compute_compressed_cipher_from_stored_key(None, msg, key_id).await;
         let req_key_id = key_id.to_owned().try_into().unwrap();
 
         internal_client.convert_to_addresses();
@@ -3972,8 +3998,8 @@ pub(crate) mod tests {
                     && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
                 {
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                    // we may wait up to 5s, for big ciphertexts
-                    if ctr >= 100 {
+                    // we may wait up to 50s for tests (include slow profiles), for big ciphertexts
+                    if ctr >= 1000 {
                         panic!("timeout while waiting for reencryption result");
                     }
                     ctr += 1;
@@ -4086,6 +4112,23 @@ pub(crate) mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
+    async fn test_decryption_threshold_no_decompresion() {
+        decryption_threshold(
+            TEST_PARAM,
+            &TEST_THRESHOLD_KEY_ID.to_string(),
+            vec![
+                TypedPlaintext::U8(42),
+                TypedPlaintext::U8(2),
+                TypedPlaintext::U16(444),
+            ],
+            2,
+            false,
+        )
+        .await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
     async fn test_decryption_threshold() {
         decryption_threshold(
             TEST_PARAM,
@@ -4096,6 +4139,7 @@ pub(crate) mod tests {
                 TypedPlaintext::U16(444),
             ],
             2,
+            true,
         )
         .await;
     }
@@ -4125,6 +4169,7 @@ pub(crate) mod tests {
             &DEFAULT_THRESHOLD_KEY_ID.to_string(),
             msg,
             parallelism,
+            true,
         )
         .await;
     }
@@ -4134,6 +4179,7 @@ pub(crate) mod tests {
         key_id: &str,
         msgs: Vec<TypedPlaintext>,
         parallelism: usize,
+        compression: bool,
     ) {
         assert!(parallelism > 0);
         let (kms_servers, kms_clients, mut internal_client) =
@@ -4143,7 +4189,11 @@ pub(crate) mod tests {
         let mut cts = Vec::new();
         let mut bits = 0;
         for msg in msgs.clone() {
-            let (ct, fhe_type) = compute_cipher_from_stored_key(None, msg, key_id).await;
+            let (ct, fhe_type) = if compression {
+                compute_compressed_cipher_from_stored_key(None, msg, key_id).await
+            } else {
+                compute_cipher_from_stored_key(None, msg, key_id).await
+            };
             let ctt = TypedCiphertext {
                 ciphertext: ct,
                 fhe_type: fhe_type.into(),

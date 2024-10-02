@@ -507,13 +507,7 @@ where
     .unwrap();
     let sns_key = key_set.public_keys.sns_key.to_owned().unwrap();
 
-    let decompression_key = key_set
-        .public_keys
-        .server_key
-        .to_owned()
-        .into_raw_parts()
-        .3
-        .map(|dk| dk.into_raw_parts());
+    let decompression_key = key_set.public_keys.server_key.to_owned().into_raw_parts().3;
 
     for i in 1..=AMOUNT_PARTIES {
         // Get first signing key

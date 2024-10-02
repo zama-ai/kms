@@ -27,6 +27,7 @@ pub mod util {
 pub mod cryptography {
     #[cfg(feature = "non-wasm")]
     pub mod central_kms;
+    pub mod decompression;
     pub mod internal_crypto_types;
     pub mod nitro_enclave;
     pub mod signcryption;

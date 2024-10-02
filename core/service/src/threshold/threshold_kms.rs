@@ -5,8 +5,9 @@ use super::generic::{
     ZkVerifier,
 };
 use crate::conf::threshold::{PeerConf, ThresholdConfig};
-use crate::consts::{MINIMUM_SESSIONS_PREPROC, PRSS_EPOCH_ID, SAFE_SER_SIZE_LIMIT};
+use crate::consts::{MINIMUM_SESSIONS_PREPROC, PRSS_EPOCH_ID};
 use crate::cryptography::central_kms::{compute_info, BaseKmsStruct};
+use crate::cryptography::decompression;
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey};
 use crate::cryptography::signcryption::signcrypt;
 use crate::kms::core_service_endpoint_server::CoreServiceEndpointServer;
@@ -72,13 +73,12 @@ use std::collections::HashMap;
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use tfhe::integer::ciphertext::BaseRadixCiphertext;
+use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::integer::IntegerCiphertext;
 use tfhe::named::Named;
-use tfhe::safe_deserialization::safe_deserialize_versioned;
-use tfhe::shortint::list_compression::DecompressionKey;
 use tfhe::{
-    FheBool, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32, FheUint4,
-    FheUint64, FheUint8, Versionize,
+    FheBool, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32,
+    FheUint4, FheUint512, FheUint64, FheUint8, Versionize,
 };
 use tfhe_versionable::VersionsDispatch;
 use tokio::sync::{Mutex, RwLock, RwLockReadGuard};
@@ -206,72 +206,100 @@ impl FheType {
     pub fn deserialize_to_low_level(
         &self,
         serialized_high_level: &[u8],
+        decompression_key: &Option<DecompressionKey>,
     ) -> anyhow::Result<Ciphertext64> {
-        let mut buf = std::io::Cursor::new(serialized_high_level);
         let radix_ct = match self {
             FheType::Ebool => {
-                let hl_ct: FheBool = safe_deserialize_versioned(&mut buf, SAFE_SER_SIZE_LIMIT)
-                    .map_err(|e| anyhow::anyhow!(e))?;
+                let hl_ct: FheBool =
+                    decompression::from_bytes::<FheBool>(decompression_key, serialized_high_level)?;
                 let radix_ct = hl_ct.into_raw_parts();
                 BaseRadixCiphertext::from_blocks(vec![radix_ct])
             }
             FheType::Euint4 => {
-                let hl_ct: FheUint4 = safe_deserialize_versioned(&mut buf, SAFE_SER_SIZE_LIMIT)
-                    .map_err(|e| anyhow::anyhow!(e))?;
+                let hl_ct: FheUint4 = decompression::from_bytes::<FheUint4>(
+                    decompression_key,
+                    serialized_high_level,
+                )?;
                 let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
                 radix_ct
             }
             FheType::Euint8 => {
-                let hl_ct: FheUint8 = safe_deserialize_versioned(&mut buf, SAFE_SER_SIZE_LIMIT)
-                    .map_err(|e| anyhow::anyhow!(e))?;
+                let hl_ct: FheUint8 = decompression::from_bytes::<FheUint8>(
+                    decompression_key,
+                    serialized_high_level,
+                )?;
                 let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
                 radix_ct
             }
             FheType::Euint16 => {
-                let hl_ct: FheUint16 = safe_deserialize_versioned(&mut buf, SAFE_SER_SIZE_LIMIT)
-                    .map_err(|e| anyhow::anyhow!(e))?;
+                let hl_ct: FheUint16 = decompression::from_bytes::<FheUint16>(
+                    decompression_key,
+                    serialized_high_level,
+                )?;
                 let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
                 radix_ct
             }
             FheType::Euint32 => {
-                let hl_ct: FheUint32 = safe_deserialize_versioned(&mut buf, SAFE_SER_SIZE_LIMIT)
-                    .map_err(|e| anyhow::anyhow!(e))?;
+                let hl_ct: FheUint32 = decompression::from_bytes::<FheUint32>(
+                    decompression_key,
+                    serialized_high_level,
+                )?;
                 let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
                 radix_ct
             }
             FheType::Euint64 => {
-                let hl_ct: FheUint64 = safe_deserialize_versioned(&mut buf, SAFE_SER_SIZE_LIMIT)
-                    .map_err(|e| anyhow::anyhow!(e))?;
+                let hl_ct: FheUint64 = decompression::from_bytes::<FheUint64>(
+                    decompression_key,
+                    serialized_high_level,
+                )?;
                 let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
                 radix_ct
             }
             FheType::Euint128 => {
-                let hl_ct: FheUint128 = safe_deserialize_versioned(&mut buf, SAFE_SER_SIZE_LIMIT)
-                    .map_err(|e| anyhow::anyhow!(e))?;
+                let hl_ct: FheUint128 = decompression::from_bytes::<FheUint128>(
+                    decompression_key,
+                    serialized_high_level,
+                )?;
                 let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
                 radix_ct
             }
             FheType::Euint160 => {
-                let hl_ct: FheUint160 = safe_deserialize_versioned(&mut buf, SAFE_SER_SIZE_LIMIT)
-                    .map_err(|e| anyhow::anyhow!(e))?;
+                let hl_ct: FheUint160 = decompression::from_bytes::<FheUint160>(
+                    decompression_key,
+                    serialized_high_level,
+                )?;
                 let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
                 radix_ct
             }
             FheType::Euint256 => {
-                let hl_ct: FheUint256 = safe_deserialize_versioned(&mut buf, SAFE_SER_SIZE_LIMIT)
-                    .map_err(|e| anyhow::anyhow!(e))?;
+                let hl_ct: FheUint256 = decompression::from_bytes::<FheUint256>(
+                    decompression_key,
+                    serialized_high_level,
+                )?;
                 let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
                 radix_ct
             }
             FheType::Euint512 => {
-                todo!("Implement deserialization for Euint512")
+                let hl_ct: FheUint512 = decompression::from_bytes::<FheUint512>(
+                    decompression_key,
+                    serialized_high_level,
+                )?;
+                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
+                radix_ct
             }
             FheType::Euint1024 => {
-                todo!("Implement deserialization for Euint1024")
+                let hl_ct: FheUint1024 = decompression::from_bytes::<FheUint1024>(
+                    decompression_key,
+                    serialized_high_level,
+                )?;
+                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
+                radix_ct
             }
             FheType::Euint2048 => {
-                let hl_ct: FheUint2048 = safe_deserialize_versioned(&mut buf, SAFE_SER_SIZE_LIMIT)
-                    .map_err(|e| anyhow::anyhow!(e))?;
+                let hl_ct: FheUint2048 = decompression::from_bytes::<FheUint2048>(
+                    decompression_key,
+                    serialized_high_level,
+                )?;
                 let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
                 radix_ct
             }
@@ -285,7 +313,7 @@ pub enum ThresholdFheKeysVersioned {
     V0(ThresholdFheKeys),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Versionize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
 #[versionize(ThresholdFheKeysVersioned)]
 pub struct ThresholdFheKeys {
     pub private_keys: PrivateKeySet,
@@ -817,11 +845,11 @@ impl RealReencryptor {
         sig_key: Arc<PrivateSigKey>,
         fhe_keys: RwLockReadGuard<'_, HashMap<RequestId, ThresholdFheKeys>>,
     ) -> anyhow::Result<Vec<u8>> {
-        let low_level_ct = fhe_type.deserialize_to_low_level(ct)?;
         let keys = match fhe_keys.get(key_handle) {
             Some(keys) => keys,
             None => return Err(anyhow!("Could not deserialize meta store")),
         };
+        let low_level_ct = fhe_type.deserialize_to_low_level(ct, &keys.decompression_key)?;
         let partial_signcryption = match partial_decrypt_using_noiseflooding(
             session,
             protocol,
@@ -1024,7 +1052,6 @@ impl RealDecryptor {
             + tfhe::core_crypto::commons::traits::CastFrom<u128>,
     {
         tracing::info!("{:?} started inner_decrypt", session.own_identity());
-        let low_level_ct = fhe_type.deserialize_to_low_level(ct)?;
         let keys = match fhe_keys.get(key_handle) {
             Some(keys) => keys,
             None => {
@@ -1033,6 +1060,7 @@ impl RealDecryptor {
                 )))
             }
         };
+        let low_level_ct = fhe_type.deserialize_to_low_level(ct, &keys.decompression_key)?;
         let raw_decryption = match decrypt_using_noiseflooding(
             session,
             protocol,
@@ -1479,7 +1507,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 raw_decompression_key,
                 raw_tag,
             ) = pub_key_set.server_key.into_raw_parts();
-            let decompression_key = raw_decompression_key.clone().map(|dk| dk.into_raw_parts());
+            let decompression_key = raw_decompression_key.clone();
 
             pub_key_set.server_key = tfhe::ServerKey::from_raw_parts(
                 raw_server_key,

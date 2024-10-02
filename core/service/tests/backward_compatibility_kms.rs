@@ -142,7 +142,7 @@ fn test_kms_fhe_key_handles(
     };
 
     let new_versionized =
-        KmsFheKeyHandles::new(&private_sig_key, client_key, &fhe_pub_key_set).unwrap();
+        KmsFheKeyHandles::new(&private_sig_key, client_key, &fhe_pub_key_set, None).unwrap();
 
     // Retrieve the key parameters from the new KMS handle
     let (new_integer_key, _, _, _) = new_versionized.client_key.clone().into_raw_parts();
@@ -205,11 +205,26 @@ fn test_threshold_fhe_keys(
         pk_meta_data: info,
     };
 
-    if original_versionized != new_versionized {
+    // Retrieve the key parameters from the new KMS handle
+    let new_key_params = new_versionized.private_keys.parameters;
+    let original_key_params = original_versionized.private_keys.parameters;
+
+    // Compare the key parameters and the public key info. We cannot directly compare ThresholdFheKeys
+    // by adding the `PartialEq` trait because TFHE-rs' Decompression keys are not able to be directly
+    // compared. Instead, we compare the parameters, as done in TFHE-rs' tests
+    if new_key_params != original_key_params {
         Err(test.failure(
             format!(
-                "Invalid threshold fhe keys:\n Expected :\n{:?}\nGot:\n{:?}",
-                original_versionized, new_versionized
+                "Invalid KMS FHE key handles because of different parameters:\n Expected :\n{:?}\nGot:\n{:?}",
+                original_key_params, new_key_params
+            ),
+            format,
+        ))
+    } else if original_versionized.pk_meta_data != new_versionized.pk_meta_data {
+        Err(test.failure(
+            format!(
+                "Invalid KMS FHE key handles because of different public key info:\n Expected :\n{:?}\nGot:\n{:?}",
+                original_versionized.pk_meta_data, new_versionized.pk_meta_data
             ),
             format,
         ))

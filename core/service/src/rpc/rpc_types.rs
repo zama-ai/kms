@@ -9,6 +9,7 @@ use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;
 use strum_macros::EnumIter;
+use tfhe::integer::bigint::StaticUnsignedBigInt;
 use tfhe::named::Named;
 use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
@@ -21,7 +22,7 @@ cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
         use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey, PublicSigKey, Signature};
         use crate::cryptography::signcryption::{hash_element, Reencrypt,DecryptionResult, CiphertextVerificationForKMS};
-        use crate::util::key_setup::FhePrivateKey;
+        use crate::cryptography::central_kms::KmsFheKeyHandles;
         use distributed_decryption::execution::zk::ceremony::PublicParameter;
         use alloy_dyn_abi::DynSolValue;
         use alloy_primitives::Bytes;
@@ -372,14 +373,10 @@ pub trait BaseKms {
 /// The [Kms] trait represents either a dummy KMS, an HSM, or an MPC network.
 #[cfg(feature = "non-wasm")]
 pub trait Kms: BaseKms {
-    fn decrypt(
-        client_key: &FhePrivateKey,
-        ct: &[u8],
-        fhe_type: FheType,
-    ) -> anyhow::Result<Plaintext>;
+    fn decrypt(keys: &KmsFheKeyHandles, ct: &[u8], fhe_type: FheType) -> anyhow::Result<Plaintext>;
     #[allow(clippy::too_many_arguments)]
     fn reencrypt(
-        client_key: &FhePrivateKey,
+        keys: &KmsFheKeyHandles,
         sig_key: &PrivateSigKey,
         rng: &mut (impl CryptoRng + RngCore),
         ct: &[u8],
@@ -679,6 +676,24 @@ impl Plaintext {
         self.fhe_type
     }
     // TODO: Implement something that does something like `as_<fhe_type>`
+
+    pub fn from_u512(value: StaticUnsignedBigInt<8>) -> Plaintext {
+        let mut bytes = vec![0_u8; 8];
+        value.copy_to_le_byte_slice(&mut bytes);
+        Plaintext {
+            bytes,
+            fhe_type: FheType::Euint512,
+        }
+    }
+
+    pub fn from_u1024(value: StaticUnsignedBigInt<16>) -> Plaintext {
+        let mut bytes = vec![0_u8; 16];
+        value.copy_to_le_byte_slice(&mut bytes);
+        Plaintext {
+            bytes,
+            fhe_type: FheType::Euint1024,
+        }
+    }
 }
 
 impl From<Plaintext> for Vec<u8> {
