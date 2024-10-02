@@ -1,47 +1,42 @@
 use crate::kms::{FheType, RequestId};
-use crate::rpc::central_rpc::retrieve_parameters;
-use crate::rpc::rpc_types::{Plaintext, PublicParameterWithParamID};
+use crate::rpc::rpc_types::Plaintext;
 use crate::rpc::rpc_types::{PubDataType, WrappedPublicKeyOwned};
 use crate::storage::{read_pk_at_request_id, FileStorage, StorageReader, StorageType};
 use crate::util::key_setup::FhePublicKey;
 use crate::{consts::AMOUNT_PARTIES, storage::delete_all_at_request_id};
-use distributed_decryption::execution::tfhe_internals::utils::expanded_encrypt;
+use distributed_decryption::expanded_encrypt;
 use std::path::Path;
-use tfhe::core_crypto::prelude::Numeric;
-use tfhe::integer::ciphertext::{Compactable, Compressible, Expandable};
-use tfhe::named::Named;
-use tfhe::prelude::Tagged;
+use tfhe::safe_serialization::safe_serialize;
+use tfhe::zk::CompactPkePublicParams;
 use tfhe::{
     set_server_key, FheBool, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32,
-    FheUint64, FheUint8, ProvenCompactCiphertextList, ServerKey, Versionize,
+    FheUint64, FheUint8, ProvenCompactCiphertextList, ServerKey,
 };
 
-use crate::cryptography::decompression::test_tools::{
-    compress_serialize_versioned, safe_serialize_versioned,
-};
-
-//Treat bool specifically because it doesn't work well with the ciphertext list builder
-//as it is not Numeric
-//NOTE: If we have an encryption key different from the compute key, then call to expand() requires
-//that the ServerKey (which contains the PKSK) is set, otherwise the unwrap will panic
-fn serialize_ctxt<
-    M: Compactable + Numeric,
-    T: Expandable + Tagged + Versionize + Named + Compressible,
->(
-    msg: M,
-    pk: &FhePublicKey,
-    server_key: Option<&ServerKey>,
-    num_bits: usize,
-    compression: bool,
-) -> Vec<u8> {
-    let ct: T = expanded_encrypt(pk, msg, num_bits);
-    let compression_key = server_key.and_then(|k| k.clone().into_raw_parts().2);
-    if let Some(compression_key) = compression_key {
-        if compression {
-            return compress_serialize_versioned(ct, &compression_key);
+macro_rules! serialize_ctxt {
+    ($t:ty,$msg:expr,$pk:expr,$server_key:expr,$num_bits:expr,$compression:expr) => {{
+        let ct: $t = expanded_encrypt!($pk, $msg, $num_bits);
+        let compression_key = $server_key.and_then(|k| k.clone().into_raw_parts().2);
+        if let Some(compression_key) = compression_key {
+            if $compression {
+                crate::cryptography::decompression::test_tools::compress_serialize_versioned(
+                    ct,
+                    &compression_key,
+                )
+            } else {
+                // NOTE: we have to copy this chunk of code because we can't write
+                // if let Some(x) = y && z
+                let mut serialized_ct = Vec::new();
+                safe_serialize(&ct, &mut serialized_ct, crate::consts::SAFE_SER_SIZE_LIMIT)
+                    .unwrap();
+                serialized_ct
+            }
+        } else {
+            let mut serialized_ct = Vec::new();
+            safe_serialize(&ct, &mut serialized_ct, crate::consts::SAFE_SER_SIZE_LIMIT).unwrap();
+            serialized_ct
         }
-    }
-    safe_serialize_versioned(&ct)
+    }};
 }
 
 pub fn compute_cipher(
@@ -53,64 +48,79 @@ pub fn compute_cipher(
     let fhe_type = msg.to_fhe_type();
     (
         match msg {
-            TypedPlaintext::Bool(x) => serialize_ctxt::<_, FheBool>(
+            TypedPlaintext::Bool(x) => serialize_ctxt!(
+                FheBool,
                 x as u8,
                 pk,
                 server_key,
                 FheBool::num_bits(),
-                compression,
+                compression
             ),
             TypedPlaintext::U8(x) => {
-                serialize_ctxt::<_, FheUint8>(x, pk, server_key, FheUint8::num_bits(), compression)
+                serialize_ctxt!(
+                    FheUint8,
+                    x,
+                    pk,
+                    server_key,
+                    FheUint8::num_bits(),
+                    compression
+                )
             }
-            TypedPlaintext::U16(x) => serialize_ctxt::<_, FheUint16>(
+            TypedPlaintext::U16(x) => serialize_ctxt!(
+                FheUint16,
                 x,
                 pk,
                 server_key,
                 FheUint16::num_bits(),
-                compression,
+                compression
             ),
-            TypedPlaintext::U32(x) => serialize_ctxt::<_, FheUint32>(
+            TypedPlaintext::U32(x) => serialize_ctxt!(
+                FheUint32,
                 x,
                 pk,
                 server_key,
                 FheUint32::num_bits(),
-                compression,
+                compression
             ),
-            TypedPlaintext::U64(x) => serialize_ctxt::<_, FheUint64>(
+            TypedPlaintext::U64(x) => serialize_ctxt!(
+                FheUint64,
                 x,
                 pk,
                 server_key,
                 FheUint64::num_bits(),
-                compression,
+                compression
             ),
-            TypedPlaintext::U128(x) => serialize_ctxt::<_, FheUint128>(
+            TypedPlaintext::U128(x) => serialize_ctxt!(
+                FheUint128,
                 x,
                 pk,
                 server_key,
                 FheUint128::num_bits(),
-                compression,
+                compression
             ),
-            TypedPlaintext::U160(x) => serialize_ctxt::<_, FheUint160>(
+            TypedPlaintext::U160(x) => serialize_ctxt!(
+                FheUint160,
                 x,
                 pk,
                 server_key,
                 FheUint160::num_bits(),
-                compression,
+                compression
             ),
-            TypedPlaintext::U256(x) => serialize_ctxt::<_, FheUint256>(
+            TypedPlaintext::U256(x) => serialize_ctxt!(
+                FheUint256,
                 x,
                 pk,
                 server_key,
                 FheUint256::num_bits(),
-                compression,
+                compression
             ),
-            TypedPlaintext::U2048(x) => serialize_ctxt::<_, FheUint2048>(
+            TypedPlaintext::U2048(x) => serialize_ctxt!(
+                FheUint2048,
                 x,
                 pk,
                 server_key,
                 FheUint2048::num_bits(),
-                compression,
+                compression
             ),
         },
         fhe_type,
@@ -245,7 +255,7 @@ pub async fn compute_zkp_from_stored_key(
     let crs_url = storage
         .compute_url(crs_id, &PubDataType::CRS.to_string())
         .unwrap();
-    let (pk, crs) = if storage.data_exists(&key_url).await.unwrap() {
+    let (pk, pp) = if storage.data_exists(&key_url).await.unwrap() {
         let wrapped_pk = read_pk_at_request_id(
             &storage,
             &RequestId {
@@ -255,8 +265,8 @@ pub async fn compute_zkp_from_stored_key(
         .await
         .unwrap();
         let WrappedPublicKeyOwned::Compact(pk) = wrapped_pk;
-        let crs: PublicParameterWithParamID = storage.read_data(&crs_url).await.unwrap();
-        (pk, crs)
+        let pp: CompactPkePublicParams = storage.read_data(&crs_url).await.unwrap();
+        (pk, pp)
     } else {
         // Try with the threshold storage
         let storage = FileStorage::new_threshold(pub_path, StorageType::PUB, 1).unwrap();
@@ -272,8 +282,8 @@ pub async fn compute_zkp_from_stored_key(
         .await
         .unwrap();
         let WrappedPublicKeyOwned::Compact(pk) = wrapped_pk;
-        let crs: PublicParameterWithParamID = storage.read_data(&crs_url).await.unwrap();
-        (pk, crs)
+        let pp: CompactPkePublicParams = storage.read_data(&crs_url).await.unwrap();
+        (pk, pp)
     };
 
     let mut compact_list_builder = ProvenCompactCiphertextList::builder(&pk);
@@ -313,12 +323,6 @@ pub async fn compute_zkp_from_stored_key(
                 .unwrap(),
         };
     }
-
-    let (dkg_params, _) = retrieve_parameters(crs.param_id).unwrap();
-    let crs_params = dkg_params
-        .get_params_basics_handle()
-        .get_compact_pk_enc_params();
-    let pp = crs.pp.try_into_tfhe_zk_pok_pp(&crs_params).unwrap();
     compact_list_builder
         .build_with_proof_packed(&pp, metadata, tfhe::zk::ZkComputeLoad::Proof)
         .unwrap()
@@ -399,7 +403,6 @@ pub async fn purge(pub_path: Option<&Path>, priv_path: Option<&Path>, id: &str) 
 
 #[cfg(any(test, feature = "testing"))]
 pub(crate) mod setup {
-    use crate::kms::ParamChoice;
     use crate::util::key_setup::{
         ensure_central_crs_exists, ensure_central_keys_exist, ensure_client_keys_exist,
     };
@@ -462,7 +465,6 @@ pub(crate) mod setup {
         ensure_central_crs_exists(
             &mut central_pub_storage,
             &mut central_priv_storage,
-            crate::kms::ParamChoice::Test,
             TEST_PARAM,
             &TEST_CRS_ID,
             true,
@@ -487,7 +489,6 @@ pub(crate) mod setup {
         ensure_threshold_crs_exists(
             &mut threshold_pub_storages,
             &mut threshold_priv_storages,
-            ParamChoice::Test,
             TEST_PARAM,
             &TEST_CRS_ID,
             true,
@@ -541,7 +542,6 @@ pub(crate) mod setup {
         ensure_central_crs_exists(
             &mut central_pub_storage,
             &mut central_priv_storage,
-            crate::kms::ParamChoice::Default,
             DEFAULT_PARAM,
             &DEFAULT_CRS_ID,
             true,
@@ -566,7 +566,6 @@ pub(crate) mod setup {
         ensure_threshold_crs_exists(
             &mut threshold_pub_storages,
             &mut threshold_priv_storages,
-            crate::kms::ParamChoice::Default,
             DEFAULT_PARAM,
             &DEFAULT_CRS_ID,
             true,

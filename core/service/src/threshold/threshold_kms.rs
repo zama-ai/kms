@@ -14,7 +14,7 @@ use crate::kms::core_service_endpoint_server::CoreServiceEndpointServer;
 use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus,
-    KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult, ParamChoice, ReencryptionRequest,
+    KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult, ReencryptionRequest,
     ReencryptionResponse, ReencryptionResponsePayload, RequestId, ZkVerifyRequest,
     ZkVerifyResponse, ZkVerifyResponsePayload,
 };
@@ -25,8 +25,7 @@ use crate::rpc::central_rpc::{
 };
 use crate::rpc::rpc_types::{
     compute_external_pt_signature, BaseKms, Plaintext, PrivDataType, PubDataType,
-    PublicParameterWithParamID, SigncryptionPayload, SignedPubDataHandleInternal, WrappedPublicKey,
-    CURRENT_FORMAT_VERSION,
+    SigncryptionPayload, SignedPubDataHandleInternal, WrappedPublicKey, CURRENT_FORMAT_VERSION,
 };
 use crate::storage::{
     delete_at_request_id, delete_pk_at_request_id, read_all_data_versioned,
@@ -1680,7 +1679,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         }
 
         //Retrieve kg params and preproc_id
-        let (dkg_params, _) = tonic_handle_potential_err(
+        let dkg_params = tonic_handle_potential_err(
             retrieve_parameters(inner.params),
             "Parameter choice is not recognized".to_string(),
         )?;
@@ -1852,7 +1851,7 @@ impl KeyGenPreprocessor for RealPreprocessor {
         }
 
         //Retrieve the DKG parameters
-        let (dkg_params, _) = tonic_handle_potential_err(
+        let dkg_params = tonic_handle_potential_err(
             retrieve_parameters(inner.params),
             "Parameter choice is not recognized".to_string(),
         )?;
@@ -1931,7 +1930,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         req_id: &RequestId,
         witness_dim: usize,
         max_num_bits: Option<u32>,
-        param_choice: ParamChoice,
+        dkg_params: &DKGParams,
     ) -> anyhow::Result<()> {
         {
             let mut guarded_meta_store = self.crs_meta_store.write().await;
@@ -1958,18 +1957,18 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 
         // we do not need to hold the handle,
         // the result of the computation is tracked the crs_meta_store
+
+        let pke_params = dkg_params
+            .get_params_basics_handle()
+            .get_compact_pk_enc_params();
         let _handle = tokio::spawn(async move {
             let crs_start_timer = Instant::now();
             let real_ceremony = RealCeremony::default();
-            let pp = real_ceremony
+            let internal_pp = real_ceremony
                 .execute::<Z64, _, _>(&mut session, witness_dim, max_num_bits)
                 .await;
-            let pp_id = pp.map(|pp| PublicParameterWithParamID {
-                pp,
-                param_id: param_choice.into(),
-            });
-            let res_info_pp =
-                pp_id.and_then(|pp_id| compute_info(&sig_key, &pp_id).map(|info| (info, pp_id)));
+            let pp = internal_pp.and_then(|internal| internal.try_into_tfhe_zk_pok_pp(&pke_params));
+            let res_info_pp = pp.and_then(|pp| compute_info(&sig_key, &pp).map(|info| (info, pp)));
             let f = || async {
                 // we take these two locks at the same time in case there are races
                 // on return, the two locks should be dropped in the correct order also
@@ -2063,7 +2062,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             req_inner.request_id
         );
 
-        let (dkg_params, param_choice) =
+        let dkg_params =
             crate::rpc::central_rpc::retrieve_parameters(req_inner.params).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::NotFound,
@@ -2074,7 +2073,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             .get_params_basics_handle()
             .get_compact_pk_enc_params();
         let witness_dim = tonic_handle_potential_err(
-            compute_witness_dim(&crs_params, req_inner.max_num_bits),
+            compute_witness_dim(&crs_params, req_inner.max_num_bits.map(|x| x as usize)),
             "witness dimension computation failed".to_string(),
         )?;
 
@@ -2085,7 +2084,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             )
         })?;
 
-        self.inner_crs_gen(&req_id, witness_dim, req_inner.max_num_bits, param_choice)
+        self.inner_crs_gen(&req_id, witness_dim, req_inner.max_num_bits, &dkg_params)
             .await
             .map_err(|e| tonic::Status::new(tonic::Code::Aborted, e.to_string()))?;
         Ok(Response::new(Empty {}))

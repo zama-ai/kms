@@ -959,26 +959,12 @@ pub mod tests {
             entities::{Fourier128LweBootstrapKey, GlweSecretKey, LweBootstrapKey, LweSecretKey},
         },
         integer::parameters::DynamicDistribution,
-        prelude::{FheDecrypt, FheMin, FheTryEncrypt},
+        prelude::{CiphertextList, FheDecrypt, FheMin, FheTryEncrypt},
         set_server_key,
         shortint::parameters::CoreCiphertextModulus,
         CompressedCiphertextListBuilder, FheUint32, FheUint64, FheUint8,
     };
 
-    use crate::execution::{
-        random::{get_rng, seed_from_rng},
-        tfhe_internals::{
-            parameters::{
-                BC_PARAMS_SAM_NO_SNS, NIST_PARAMS_P32_INTERNAL_FGLWE, NIST_PARAMS_P32_NO_SNS_FGLWE,
-                NIST_PARAMS_P32_NO_SNS_LWE, NIST_PARAMS_P32_SNS_FGLWE, NIST_PARAMS_P8_NO_SNS_FGLWE,
-                NIST_PARAMS_P8_NO_SNS_LWE, NIST_PARAMS_P8_SNS_FGLWE, OLD_PARAMS_P32_REAL_WITH_SNS,
-                PARAMS_TEST_BK_SNS,
-            },
-            switch_and_squash::SwitchAndSquashKey,
-            test_feature::to_hl_client_key,
-            utils::{expanded_encrypt, tests::reconstruct_glwe_secret_key_from_file},
-        },
-    };
     use crate::{
         algebra::{
             base_ring::Z128,
@@ -1007,6 +993,24 @@ pub mod tests {
             },
         },
         networking::NetworkMode,
+    };
+    use crate::{
+        execution::{
+            random::{get_rng, seed_from_rng},
+            tfhe_internals::{
+                parameters::{
+                    BC_PARAMS_SAM_NO_SNS, NIST_PARAMS_P32_INTERNAL_FGLWE,
+                    NIST_PARAMS_P32_NO_SNS_FGLWE, NIST_PARAMS_P32_NO_SNS_LWE,
+                    NIST_PARAMS_P32_SNS_FGLWE, NIST_PARAMS_P8_NO_SNS_FGLWE,
+                    NIST_PARAMS_P8_NO_SNS_LWE, NIST_PARAMS_P8_SNS_FGLWE,
+                    OLD_PARAMS_P32_REAL_WITH_SNS, PARAMS_TEST_BK_SNS,
+                },
+                switch_and_squash::SwitchAndSquashKey,
+                test_feature::to_hl_client_key,
+                utils::tests::reconstruct_glwe_secret_key_from_file,
+            },
+        },
+        expanded_encrypt,
     };
 
     #[cfg(feature = "slow_tests")]
@@ -1632,7 +1636,7 @@ pub mod tests {
 
         let ck_bis = SwitchAndSquashKey::new(fbsk_out, ck.ksk.clone());
 
-        let small_ct: FheUint64 = expanded_encrypt(&ddec_pk, message as u64, 64);
+        let small_ct: FheUint64 = expanded_encrypt!(&ddec_pk, message as u64, 64);
         let (raw_ct, _id, _tag) = small_ct.clone().into_raw_parts();
         let large_ct = ck.to_large_ciphertext(&raw_ct).unwrap();
         let large_ct_bis = ck_bis.to_large_ciphertext(&raw_ct).unwrap();

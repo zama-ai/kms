@@ -8,43 +8,20 @@ use distributed_decryption::{
         residue_poly::{ResiduePoly128, ResiduePoly64},
         structure_traits::{Invert, Ring, RingEmbed},
     },
-    execution::{
-        runtime::party::Role, small_execution::prss::PRSSSetup, zk::ceremony::PublicParameter,
-    },
+    execution::{runtime::party::Role, small_execution::prss::PRSSSetup},
     tests::helper::testing::{get_dummy_prss_setup, get_networkless_base_session_for_parties},
 };
 use kms_core_backward_compatibility::{
     data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{run_all_tests, TestedModule},
-    PRSSSetupTest, PublicParameterTest, TestMetadataDD, TestType, Testcase,
+    PRSSSetupTest, TestMetadataDD, TestType, Testcase,
 };
 use kms_core_common::load_and_unversionize;
 use serde::Serialize;
 use std::{env, path::Path};
 
 use tfhe_versionable::Unversionize;
-
-fn test_public_parameter(
-    dir: &Path,
-    test: &PublicParameterTest,
-    format: DataFormat,
-) -> Result<TestSuccess, TestFailure> {
-    let original_versionized: PublicParameter = load_and_unversionize(dir, test, format)?;
-    let new_versionized = PublicParameter::new(test.witness_dim, test.max_num_bits);
-
-    if original_versionized != new_versionized {
-        Err(test.failure(
-            format!(
-                "Invalid public parameter:\n Expected :\n{:?}\nGot:\n{:?}",
-                original_versionized, new_versionized
-            ),
-            format,
-        ))
-    } else {
-        Ok(test.success(format))
-    }
-}
 
 fn compare_prss_setup<Z>(
     dir: &Path,
@@ -103,9 +80,6 @@ impl TestedModule for DistributedDecryption {
         format: DataFormat,
     ) -> TestResult {
         match &testcase.metadata {
-            Self::Metadata::PublicParameter(test) => {
-                test_public_parameter(test_dir.as_ref(), test, format).into()
-            }
             Self::Metadata::PRSSSetup(test) => {
                 test_prss_setup(test_dir.as_ref(), test, format).into()
             }

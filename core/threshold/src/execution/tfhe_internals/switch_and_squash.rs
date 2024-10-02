@@ -289,7 +289,7 @@ mod tests {
     use num_traits::AsPrimitive;
     use tfhe::{
         core_crypto::{commons::traits::UnsignedInteger, entities::Plaintext},
-        prelude::{FheDecrypt, FheEncrypt},
+        prelude::{CiphertextList, FheDecrypt, FheEncrypt},
         set_server_key, CompactCiphertextList, FheUint8,
     };
 

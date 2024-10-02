@@ -638,7 +638,7 @@ impl std::fmt::Debug for FhePubKeySet {
 mod tests {
     use tfhe::{
         generate_keys,
-        prelude::{FheDecrypt, FheEncrypt},
+        prelude::{CiphertextList, FheDecrypt, FheEncrypt},
         set_server_key,
         shortint::PBSParameters::PBS,
         ConfigBuilder, FheUint8,

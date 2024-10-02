@@ -9,11 +9,9 @@ use distributed_decryption::{
             session::DecryptionMode,
             test_runtime::{generate_fixed_identities, DistributedTestRuntime},
         },
-        tfhe_internals::{
-            test_feature::{keygen_all_party_shares, KeySet},
-            utils::expanded_encrypt,
-        },
+        tfhe_internals::test_feature::{keygen_all_party_shares, KeySet},
     },
+    expanded_encrypt,
     file_handling::read_element,
     networking::NetworkMode,
 };
@@ -75,7 +73,7 @@ fn ddec_nsmall(c: &mut Criterion) {
             config.t,
         )
         .unwrap();
-        let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8);
+        let ct: FheUint8 = expanded_encrypt!(&keyset.public_keys.public_key, message, 8);
         let (raw_ct, _id, _tag) = ct.into_raw_parts();
 
         let identities = generate_fixed_identities(config.n);
@@ -140,7 +138,7 @@ fn ddec_bitdec_nsmall(c: &mut Criterion) {
             config.t,
         )
         .unwrap();
-        let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8);
+        let ct: FheUint8 = expanded_encrypt!(&keyset.public_keys.public_key, message, 8);
         let (raw_ct, _id, _tag) = ct.into_raw_parts();
 
         let identities = generate_fixed_identities(config.n);
@@ -205,7 +203,7 @@ fn ddec_nlarge(c: &mut Criterion) {
         )
         .unwrap();
 
-        let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8);
+        let ct: FheUint8 = expanded_encrypt!(&keyset.public_keys.public_key, message, 8);
         let (raw_ct, _id, _tag) = ct.into_raw_parts();
 
         let identities = generate_fixed_identities(config.n);
@@ -271,7 +269,7 @@ fn ddec_bitdec_nlarge(c: &mut Criterion) {
         )
         .unwrap();
 
-        let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8);
+        let ct: FheUint8 = expanded_encrypt!(&keyset.public_keys.public_key, message, 8);
         let (raw_ct, _id, _tag) = ct.into_raw_parts();
 
         let identities = generate_fixed_identities(config.n);

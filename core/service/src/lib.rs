@@ -1,4 +1,6 @@
 use anyhow::anyhow;
+#[cfg(feature = "non-wasm")]
+use serde::{de::DeserializeOwned, ser::Serialize};
 use std::fmt;
 use std::panic::Location;
 #[cfg(feature = "non-wasm")]
@@ -84,7 +86,7 @@ pub(crate) fn top_n_chars(mut s: String) -> String {
 
 /// Helper method for returning the optional value of `input` if it exists, otherwise
 /// returning a custom anyhow error.
-pub fn some_or_err<T: fmt::Debug>(input: Option<T>, error: String) -> anyhow::Result<T> {
+pub fn some_or_err<T>(input: Option<T>, error: String) -> anyhow::Result<T> {
     input.ok_or_else(|| {
         tracing::warn!(error);
         anyhow!("Missing value: {}", top_n_chars(error.to_string()))
@@ -144,7 +146,10 @@ impl StorageReader for StorageProxy {
         }
     }
 
-    async fn read_data<T: Unversionize + Named + Send>(&self, url: &Url) -> anyhow::Result<T> {
+    async fn read_data<T: DeserializeOwned + Unversionize + Named + Send>(
+        &self,
+        url: &Url,
+    ) -> anyhow::Result<T> {
         match &self {
             StorageProxy::File(s) => s.read_data(url).await,
             StorageProxy::Ram(s) => s.read_data(url).await,
@@ -184,7 +189,7 @@ impl StorageReader for StorageProxy {
 #[cfg(feature = "non-wasm")]
 #[tonic::async_trait]
 impl Storage for StorageProxy {
-    async fn store_data<T: Versionize + Named + Send + Sync>(
+    async fn store_data<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
         data: &T,
         url: &Url,

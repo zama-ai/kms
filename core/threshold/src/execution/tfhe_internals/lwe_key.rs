@@ -372,7 +372,7 @@ mod tests {
     #[cfg(feature = "slow_tests")]
     #[test]
     fn hl_pk_key_conversion() {
-        use crate::execution::tfhe_internals::utils::expanded_encrypt;
+        use crate::expanded_encrypt;
 
         let config = ConfigBuilder::default().build();
         let (client_key, _server_key) = tfhe::generate_keys(config);
@@ -382,7 +382,7 @@ mod tests {
 
         let hl_client_key = to_tfhe_hl_api_compact_public_key(lcpk, params);
         assert_eq!(hl_client_key.into_raw_parts(), pk.clone().into_raw_parts());
-        let ct: FheUint8 = expanded_encrypt(&pk, 42_u8, 8);
+        let ct: FheUint8 = expanded_encrypt!(&pk, 42_u8, 8);
         let msg: u8 = ct.decrypt(&client_key);
         assert_eq!(42, msg);
     }

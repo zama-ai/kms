@@ -141,14 +141,11 @@ mod tests {
                 traits::{ContiguousEntityContainer, ContiguousEntityContainerMut},
             },
             entities::{GlweSecretKeyOwned, LweSecretKeyOwned, PlaintextList},
+            prelude::PlaintextCount,
         },
         integer::parameters::DynamicDistribution,
-        shortint::{
-            parameters::{
-                CoreCiphertextModulus, DecompositionBaseLog, DecompositionLevelCount,
-                PolynomialSize,
-            },
-            wopbs::PlaintextCount,
+        shortint::parameters::{
+            CoreCiphertextModulus, DecompositionBaseLog, DecompositionLevelCount, PolynomialSize,
         },
     };
 

@@ -5,9 +5,9 @@ use crate::cryptography::central_kms::{
     compute_handle, gen_centralized_crs, gen_sig_keys, generate_fhe_keys,
 };
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
-use crate::kms::{ParamChoice, RequestId};
+use crate::kms::RequestId;
+use crate::rpc::rpc_types::PubDataType;
 use crate::rpc::rpc_types::{PrivDataType, WrappedPublicKey};
-use crate::rpc::rpc_types::{PubDataType, PublicParameterWithParamID};
 use crate::storage::{read_all_data_versioned, store_text_at_request_id};
 use crate::storage::{store_pk_at_request_id, Storage};
 use crate::storage::{store_versioned_at_request_id, FileStorage, StorageType};
@@ -187,7 +187,6 @@ where
 pub async fn ensure_central_crs_exists<S>(
     pub_storage: &mut S,
     priv_storage: &mut S,
-    param_choice: ParamChoice,
     dkg_params: DKGParams,
     crs_handle: &RequestId,
     deterministic: bool,
@@ -220,8 +219,7 @@ where
     }
     let sk = get_signing_key(priv_storage).await;
     let mut rng = get_rng(deterministic, Some(0));
-    let (pp, crs_info) =
-        gen_centralized_crs(&sk, param_choice, &dkg_params, None, &mut rng).unwrap();
+    let (pp, crs_info) = gen_centralized_crs(&sk, &dkg_params, None, &mut rng).unwrap();
 
     store_versioned_at_request_id(
         priv_storage,
@@ -568,7 +566,6 @@ where
 pub async fn ensure_threshold_crs_exists<S>(
     pub_storages: &mut [S],
     priv_storages: &mut [S],
-    param_choice: ParamChoice,
     dkg_params: DKGParams,
     crs_handle: &RequestId,
     deterministic: bool,
@@ -606,7 +603,7 @@ where
 
     let mut rng = get_rng(deterministic, Some(AMOUNT_PARTIES as u64));
 
-    let pp = make_centralized_public_parameters(
+    let internal_pp = make_centralized_public_parameters(
         &dkg_params
             .get_params_basics_handle()
             .get_compact_pk_enc_params(),
@@ -614,15 +611,16 @@ where
         &mut rng,
     )
     .unwrap();
-    let pp_id = PublicParameterWithParamID {
-        pp,
-        param_id: param_choice.into(),
-    };
+    let pke_params = dkg_params
+        .get_params_basics_handle()
+        .get_compact_pk_enc_params();
+    let pp = internal_pp.try_into_tfhe_zk_pok_pp(&pke_params).unwrap();
+
     for (cur_pub, (cur_priv, cur_sk)) in pub_storages
         .iter_mut()
         .zip(priv_storages.iter_mut().zip(signing_keys.iter()))
     {
-        let crs_info = compute_info(cur_sk, &pp_id).unwrap();
+        let crs_info = compute_info(cur_sk, &pp).unwrap();
 
         store_versioned_at_request_id(
             cur_priv,
@@ -637,7 +635,7 @@ where
             crs_handle,
             cur_priv.info()
         );
-        store_versioned_at_request_id(cur_pub, crs_handle, &pp_id, &PubDataType::CRS.to_string())
+        store_versioned_at_request_id(cur_pub, crs_handle, &pp, &PubDataType::CRS.to_string())
             .await
             .unwrap();
         println!(

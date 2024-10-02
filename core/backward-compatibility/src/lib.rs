@@ -174,28 +174,6 @@ impl TestType for KmsFheKeyHandlesTest {
 
 // Distributed Decryption test
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct PublicParameterTest {
-    pub test_filename: Cow<'static, str>,
-    pub witness_dim: usize,
-    pub max_num_bits: Option<u32>,
-}
-
-impl TestType for PublicParameterTest {
-    fn module(&self) -> String {
-        DISTRIBUTED_DECRYPTION_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "PublicParameter".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-// Distributed Decryption test
-#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PRSSSetupTest {
     pub test_filename: Cow<'static, str>,
     pub amount: usize,
@@ -259,7 +237,6 @@ pub enum TestMetadataKMS {
 // Distributed Decryption metadata
 #[derive(Serialize, Deserialize, Clone, Debug, Display)]
 pub enum TestMetadataDD {
-    PublicParameter(PublicParameterTest),
     PRSSSetup(PRSSSetupTest),
 }
 

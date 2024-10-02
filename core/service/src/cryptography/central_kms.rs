@@ -11,9 +11,9 @@ use crate::cryptography::signcryption::Reencrypt;
 use crate::kms::FheType;
 use crate::kms::ReencryptionRequest;
 #[cfg(feature = "non-wasm")]
-use crate::kms::{ParamChoice, RequestId};
+use crate::kms::RequestId;
 use crate::kms::{TypedCiphertext, ZkVerifyResponsePayload};
-use crate::rpc::rpc_types::PublicParameterWithParamID;
+#[cfg(feature = "non-wasm")]
 use crate::rpc::rpc_types::SignedPubDataHandleInternal;
 use crate::rpc::rpc_types::{
     BaseKms, Kms, Plaintext, PrivDataType, PubDataType, SigncryptionPayload,
@@ -49,6 +49,8 @@ use std::{fmt, panic};
 use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::named::Named;
 use tfhe::prelude::FheDecrypt;
+#[cfg(feature = "non-wasm")]
+use tfhe::zk::CompactPkePublicParams;
 #[cfg(feature = "non-wasm")]
 use tfhe::Seed;
 use tfhe::ServerKey;
@@ -94,14 +96,13 @@ pub async fn async_generate_fhe_keys(
 pub async fn async_generate_crs(
     sk: &PrivateSigKey,
     rng: AesRng,
-    param_choice: ParamChoice,
     params: DKGParams,
     max_num_bits: Option<u32>,
-) -> anyhow::Result<(PublicParameterWithParamID, SignedPubDataHandleInternal)> {
+) -> anyhow::Result<(CompactPkePublicParams, SignedPubDataHandleInternal)> {
     let (send, recv) = tokio::sync::oneshot::channel();
     let sk_copy = sk.to_owned();
     rayon::spawn(move || {
-        let out = gen_centralized_crs(&sk_copy, param_choice, &params, max_num_bits, rng);
+        let out = gen_centralized_crs(&sk_copy, &params, max_num_bits, rng);
         let _ = send.send(out);
     });
     recv.await?
@@ -173,24 +174,23 @@ pub fn generate_client_fhe_key(params: DKGParams, seed: Option<Seed>) -> ClientK
 #[cfg(feature = "non-wasm")]
 pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     sk: &PrivateSigKey,
-    param_choice: ParamChoice,
     params: &DKGParams,
     max_num_bits: Option<u32>,
     mut rng: R,
-) -> anyhow::Result<(PublicParameterWithParamID, SignedPubDataHandleInternal)> {
-    let pp = make_centralized_public_parameters(
+) -> anyhow::Result<(CompactPkePublicParams, SignedPubDataHandleInternal)> {
+    let internal_pp = make_centralized_public_parameters(
         &params
             .get_params_basics_handle()
             .get_compact_pk_enc_params(),
-        max_num_bits,
+        max_num_bits.map(|x| x as usize),
         &mut rng,
     )?;
-    let pp_id = PublicParameterWithParamID {
-        pp,
-        param_id: param_choice.into(),
-    };
-    let crs_info = compute_info(sk, &pp_id)?;
-    Ok((pp_id, crs_info))
+    let pke_params = params
+        .get_params_basics_handle()
+        .get_compact_pk_enc_params();
+    let pp = internal_pp.try_into_tfhe_zk_pok_pp(&pke_params)?;
+    let crs_info = compute_info(sk, &pp)?;
+    Ok((pp, crs_info))
 }
 
 pub struct BaseKmsStruct {
@@ -722,7 +722,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 /// Computes the public into on a serializable `element`.
 /// More specifically, computes the unique handle of the `element` and signs this handle using the
 /// `kms`.
-pub(crate) fn compute_info<S: Versionize + Named>(
+pub(crate) fn compute_info<S: Serialize + Versionize + Named>(
     sk: &PrivateSigKey,
     element: &S,
 ) -> anyhow::Result<SignedPubDataHandleInternal> {
@@ -738,7 +738,7 @@ pub(crate) fn compute_info<S: Versionize + Named>(
 /// More specifically compute the hash digest, truncate it and convert it to a hex string
 pub fn compute_handle<S>(element: &S) -> anyhow::Result<String>
 where
-    S: Versionize + Named,
+    S: Serialize + Versionize + Named,
 {
     let mut digest = safe_serialize_hash_element_versioned(element)?;
     // Truncate and convert to hex

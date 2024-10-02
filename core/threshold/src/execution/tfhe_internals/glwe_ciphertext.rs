@@ -191,12 +191,12 @@ mod tests {
                 traits::ContiguousEntityContainerMut,
             },
             entities::{GlweCiphertextOwned, GlweSecretKeyOwned, PlaintextList},
+            prelude::PlaintextCount,
         },
         shortint::{
             parameters::{
                 DecompositionBaseLog, DecompositionLevelCount, GlweDimension, PolynomialSize,
             },
-            wopbs::PlaintextCount,
             CiphertextModulus,
         },
     };

@@ -1,7 +1,6 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use core::fmt;
 use kms_lib::consts::{DEFAULT_PARAM, TEST_PARAM};
-use kms_lib::kms::ParamChoice;
 use kms_lib::storage::StorageForText;
 use kms_lib::{
     conf::init_trace, consts::SIGNING_KEY_ID, kms::RequestId,
@@ -322,7 +321,6 @@ async fn handle_central_cmd<'a, S: StorageForText>(
             if !ensure_central_crs_exists(
                 args.pub_storage,
                 args.priv_storage,
-                ParamChoice::Default,
                 params,
                 &DEFAULT_CRS_ID,
                 args.deterministic,
@@ -429,7 +427,6 @@ async fn handle_threshold_cmd<'a, S: StorageForText>(
             if !ensure_threshold_crs_exists(
                 args.pub_storages,
                 args.priv_storages,
-                ParamChoice::Default,
                 params,
                 &DEFAULT_CRS_ID,
                 args.deterministic,

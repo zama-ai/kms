@@ -329,10 +329,10 @@ where
 #[cfg(feature = "non-wasm")]
 pub(crate) fn safe_serialize_hash_element_versioned<T>(msg: &T) -> anyhow::Result<Vec<u8>>
 where
-    T: tfhe::Versionize + tfhe::named::Named,
+    T: Serialize + tfhe::Versionize + tfhe::named::Named,
 {
     let mut buf = Vec::new();
-    match tfhe::safe_deserialization::safe_serialize_versioned(
+    match tfhe::safe_serialization::safe_serialize(
         msg,
         &mut buf,
         crate::consts::SAFE_SER_SIZE_LIMIT,

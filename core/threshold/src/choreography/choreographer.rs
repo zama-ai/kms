@@ -17,7 +17,7 @@ use crate::{
     choreography::grpc::gen::choreography_client::ChoreographyClient,
     execution::{
         runtime::party::{Identity, Role},
-        zk::ceremony::PublicParameter,
+        zk::ceremony::InternalPublicParameter,
     },
     networking::constants::{MAX_EN_DECODE_MESSAGE_SIZE, NETWORK_TIMEOUT_LONG},
     session_id::SessionId,
@@ -439,7 +439,7 @@ impl ChoreoRuntime {
     pub async fn initiate_crs_gen_result(
         &self,
         session_id: SessionId,
-    ) -> anyhow::Result<PublicParameter> {
+    ) -> anyhow::Result<InternalPublicParameter> {
         let serialized_sid = bincode::serialize(&session_id)?;
         let mut join_set = JoinSet::new();
         self.channels.values().for_each(|channel| {
@@ -454,7 +454,7 @@ impl ChoreoRuntime {
             );
         });
 
-        let mut responses: Vec<PublicParameter> = Vec::new();
+        let mut responses: Vec<InternalPublicParameter> = Vec::new();
         while let Some(response) = join_set.join_next().await {
             responses.push(bincode::deserialize(&(response??.into_inner()).crs).unwrap());
         }

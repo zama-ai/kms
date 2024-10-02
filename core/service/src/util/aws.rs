@@ -13,10 +13,11 @@ use aws_sdk_kms::types::{KeyEncryptionMechanism, RecipientInfo as KMSRecipientIn
 use aws_sdk_kms::Client as AmazonKMSClient;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::Client as S3Client;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tfhe::named::Named;
-use tfhe::safe_deserialization::{safe_deserialize_versioned, safe_serialize_versioned};
+use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tfhe::Unversionize;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use tokio::io::AsyncReadExt;
@@ -143,7 +144,10 @@ impl StorageReader for S3Storage {
         }
     }
 
-    async fn read_data<T: Unversionize + Named + Send>(&self, url: &Url) -> anyhow::Result<T> {
+    async fn read_data<T: DeserializeOwned + Unversionize + Named + Send>(
+        &self,
+        url: &Url,
+    ) -> anyhow::Result<T> {
         let (bucket, key) = S3Storage::parse_url(url)?;
 
         tracing::info!("Reading object from bucket {} under key {}", bucket, key);
@@ -199,7 +203,7 @@ impl Storage for S3Storage {
     /// If one reads "public" not as in "public key" but as in "not a secret", it makes sense to
     /// implement storage of encrypted private keys in the `PublicStorage` trait. Encrypted secrets
     /// can be published, if the root key stays secret.
-    async fn store_data<T: Versionize + Named + Send + Sync>(
+    async fn store_data<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
         data: &T,
         url: &Url,
@@ -321,7 +325,10 @@ impl StorageReader for EnclaveS3Storage {
         self.s3_storage.data_exists(url).await
     }
 
-    async fn read_data<T: Unversionize + Named + Send>(&self, url: &Url) -> anyhow::Result<T> {
+    async fn read_data<T: DeserializeOwned + Unversionize + Named + Send>(
+        &self,
+        url: &Url,
+    ) -> anyhow::Result<T> {
         let mut encrypted_data = self.s3_storage.read_data(url).await?;
         nitro_enclave_decrypt_app_key(
             &self.aws_kms_client,
@@ -348,7 +355,7 @@ impl Storage for EnclaveS3Storage {
     /// If one reads "public" not as in "public key" but as in "not a secret", it makes sense to
     /// implement storage of encrypted private keys in the `PublicStorage` trait. Encrypted secrets
     /// can be published, if the root key stays secret.
-    async fn store_data<T: Versionize + Named + Send + Sync>(
+    async fn store_data<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
         data: &T,
         url: &Url,
@@ -402,14 +409,14 @@ pub async fn build_s3_client(region: String, proxy: Option<String>) -> S3Client 
     S3Client::new(&s3_config)
 }
 
-pub async fn s3_get_blob<T: Unversionize + Named>(
+pub async fn s3_get_blob<T: DeserializeOwned + Unversionize + Named>(
     s3_client: &S3Client,
     bucket: &str,
     path: &str,
 ) -> anyhow::Result<T> {
     let blob_bytes = s3_get_blob_bytes(s3_client, bucket, path).await?;
     let mut buf = std::io::Cursor::new(blob_bytes);
-    safe_deserialize_versioned(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| anyhow::anyhow!(e))
+    safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| anyhow::anyhow!(e))
 }
 
 async fn s3_get_blob_bytes(
@@ -429,14 +436,14 @@ async fn s3_get_blob_bytes(
     Ok(blob_bytes)
 }
 
-pub async fn s3_put_blob<T: Versionize + Named>(
+pub async fn s3_put_blob<T: Serialize + Versionize + Named>(
     s3_client: &S3Client,
     bucket: &str,
     path: &str,
     blob: &T,
 ) -> anyhow::Result<()> {
     let mut buf = Vec::new();
-    safe_serialize_versioned(blob, &mut buf, SAFE_SER_SIZE_LIMIT)?;
+    safe_serialize(blob, &mut buf, SAFE_SER_SIZE_LIMIT)?;
     s3_put_blob_bytes(s3_client, bucket, path, buf).await
 }
 
@@ -504,14 +511,14 @@ async fn aws_kms_decrypt_blob(
 /// Request a data key from AWS KMS and encrypt an application key (such as the FHE private key) on
 /// it. Stores a copy of the data key encrypted on the root key (stored in AWS KMS) together with
 /// the encrypted application key.
-pub async fn nitro_enclave_encrypt_app_key<T: Versionize + Named>(
+pub async fn nitro_enclave_encrypt_app_key<T: Serialize + Versionize + Named>(
     aws_kms_client: &AmazonKMSClient,
     nitro_enclave_keys: &NitroEnclaveKeys,
     root_key_id: &String,
     app_key: &T,
 ) -> anyhow::Result<AppKeyBlob> {
     let mut blob_bytes = Vec::new();
-    safe_serialize_versioned(app_key, &mut blob_bytes, SAFE_SER_SIZE_LIMIT)?;
+    safe_serialize(app_key, &mut blob_bytes, SAFE_SER_SIZE_LIMIT)?;
 
     // request the data key from AWS KMS to encrypt the blob on
     let gen_data_key_response = aws_kms_client
@@ -557,7 +564,7 @@ pub async fn nitro_enclave_encrypt_app_key<T: Versionize + Named>(
 
 /// Requests the AWS KMS to decrypt a data key using a root key (managed by AWS KMS) and uses that
 /// data key to decrypt an application key (such as an FHE private key).
-pub async fn nitro_enclave_decrypt_app_key<T: Unversionize + Named>(
+pub async fn nitro_enclave_decrypt_app_key<T: DeserializeOwned + Unversionize + Named>(
     aws_kms_client: &AmazonKMSClient,
     nitro_enclave_keys: &NitroEnclaveKeys,
     app_key_blob: &mut AppKeyBlob,
@@ -576,7 +583,7 @@ pub async fn nitro_enclave_decrypt_app_key<T: Unversionize + Named>(
         &app_key_blob.auth_tag,
     )?;
     let mut buf = std::io::Cursor::new(&app_key_blob.ciphertext);
-    safe_deserialize_versioned(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| anyhow::anyhow!(e))
+    safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| anyhow::anyhow!(e))
 }
 
 cfg_if::cfg_if! {

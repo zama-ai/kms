@@ -22,15 +22,14 @@ cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
         use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey, PublicSigKey, Signature};
         use crate::cryptography::signcryption::{hash_element, Reencrypt,DecryptionResult, CiphertextVerificationForKMS};
+        use crate::kms::ZkVerifyRequest;
         use crate::cryptography::central_kms::KmsFheKeyHandles;
-        use distributed_decryption::execution::zk::ceremony::PublicParameter;
         use alloy_dyn_abi::DynSolValue;
         use alloy_primitives::Bytes;
         use alloy_signer::SignerSync;
         use alloy_signer_local::PrivateKeySigner;
         use alloy_sol_types::SolStruct;
         use rand::{CryptoRng, RngCore};
-        use crate::kms::ZkVerifyRequest;
         use std::str::FromStr;
     }
 }
@@ -911,27 +910,6 @@ impl From<u128> for RequestId {
             request_id: "00000000".to_string() + hex_string.as_str(), // fill up to 160 bits / 40 bytes with 8 leading hex zeros
         }
     }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash, VersionsDispatch)]
-#[cfg(feature = "non-wasm")]
-pub enum PublicParameterWithParamIDVersioned {
-    V0(PublicParameterWithParamID),
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash, Versionize)]
-#[versionize(PublicParameterWithParamIDVersioned)]
-#[cfg(feature = "non-wasm")]
-pub struct PublicParameterWithParamID {
-    pub pp: PublicParameter,
-    // We simply use the i32 instead of ParamChoice because ParamChoice is
-    // a grpc type and cannot be versioned easily.
-    pub param_id: i32,
-}
-
-#[cfg(feature = "non-wasm")]
-impl Named for PublicParameterWithParamID {
-    const NAME: &'static str = "PublicParameterWithParamID";
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, VersionsDispatch)]

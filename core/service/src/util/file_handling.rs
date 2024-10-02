@@ -2,7 +2,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::path::Path;
 use tfhe::named::Named;
-use tfhe::safe_deserialization::{safe_deserialize_versioned, safe_serialize_versioned};
+use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tfhe::{Unversionize, Versionize};
 
 use crate::consts::SAFE_SER_SIZE_LIMIT;
@@ -42,12 +42,12 @@ pub async fn write_element<T: Serialize>(file_path: &str, element: &T) -> anyhow
 }
 
 /// This is a wrapper around safe_serialize_versioned for the async use case.
-pub async fn safe_write_element_versioned<T: Versionize + Named + Send>(
+pub async fn safe_write_element_versioned<T: Serialize + Versionize + Named + Send>(
     file_path: &str,
     element: &T,
 ) -> anyhow::Result<()> {
     let mut serialized_data = Vec::new();
-    safe_serialize_versioned(element, &mut serialized_data, SAFE_SER_SIZE_LIMIT)?;
+    safe_serialize(element, &mut serialized_data, SAFE_SER_SIZE_LIMIT)?;
 
     let path = Path::new(&file_path);
     // Create the parent directories of the file path if they don't exist
@@ -88,11 +88,11 @@ pub async fn read_element<T: DeserializeOwned>(file_path: &str) -> anyhow::Resul
     Ok(bincode::deserialize_from(read_element.as_slice())?)
 }
 
-pub async fn safe_read_element_versioned<T: Unversionize + Named + Send>(
+pub async fn safe_read_element_versioned<T: DeserializeOwned + Unversionize + Named + Send>(
     file_path: &str,
 ) -> anyhow::Result<T> {
     let mut buf = std::io::Cursor::new(tokio::fs::read(file_path).await?);
-    safe_deserialize_versioned(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| anyhow::anyhow!(e))
+    safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| anyhow::anyhow!(e))
 }
 
 #[cfg(test)]

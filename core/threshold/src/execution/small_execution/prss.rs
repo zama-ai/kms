@@ -764,7 +764,6 @@ mod tests {
     use crate::execution::sharing::shamir::RevealOp;
     use crate::execution::small_execution::agree_random::DSEP_AR;
     use crate::execution::tfhe_internals::test_feature::KeySet;
-    use crate::execution::tfhe_internals::utils::expanded_encrypt;
     use crate::networking::NetworkMode;
     use crate::{
         algebra::{
@@ -991,7 +990,7 @@ mod tests {
         .unwrap();
 
         set_server_key(keys.public_keys.server_key);
-        let ct: FheUint8 = expanded_encrypt(&keys.public_keys.public_key, msg, 8);
+        let ct: FheUint8 = crate::expanded_encrypt!(&keys.public_keys.public_key, msg, 8);
         let (raw_ct, _id, _tag) = ct.into_raw_parts();
 
         //Could probably be run Async, but NIST doc says all offline is Sync

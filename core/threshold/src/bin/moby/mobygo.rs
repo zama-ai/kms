@@ -16,10 +16,10 @@ use distributed_decryption::{
     },
     conf::choreo::ChoreoConf,
     execution::{
-        endpoints::keygen::FhePubKeySet,
-        runtime::session::DecryptionMode,
-        tfhe_internals::{parameters::DkgParamsAvailable, utils::expanded_encrypt},
+        endpoints::keygen::FhePubKeySet, runtime::session::DecryptionMode,
+        tfhe_internals::parameters::DkgParamsAvailable,
     },
+    expanded_encrypt,
     session_id::SessionId,
 };
 use itertools::Itertools;
@@ -378,7 +378,7 @@ async fn threshold_decrypt_command(
             messages
                 .iter()
                 .map(|msg| {
-                    let ct: FheBool = expanded_encrypt(&compact_key, *msg, 1);
+                    let ct: FheBool = expanded_encrypt!(&compact_key, *msg, 1);
                     BaseRadixCiphertext::from_blocks(vec![ct.into_raw_parts()])
                 })
                 .collect_vec()
@@ -392,7 +392,7 @@ async fn threshold_decrypt_command(
             messages
                 .iter()
                 .map(|msg| {
-                    let ct: FheUint4 = expanded_encrypt(&compact_key, *msg, 4);
+                    let ct: FheUint4 = expanded_encrypt!(&compact_key, *msg, 4);
                     ct.into_raw_parts().0
                 })
                 .collect_vec()
@@ -406,7 +406,7 @@ async fn threshold_decrypt_command(
             messages
                 .iter()
                 .map(|msg| {
-                    let ct: FheUint8 = expanded_encrypt(&compact_key, *msg, 8);
+                    let ct: FheUint8 = expanded_encrypt!(&compact_key, *msg, 8);
                     ct.into_raw_parts().0
                 })
                 .collect_vec()
@@ -420,7 +420,7 @@ async fn threshold_decrypt_command(
             messages
                 .iter()
                 .map(|msg| {
-                    let ct: FheUint16 = expanded_encrypt(&compact_key, *msg, 16);
+                    let ct: FheUint16 = expanded_encrypt!(&compact_key, *msg, 16);
                     ct.into_raw_parts().0
                 })
                 .collect_vec()
@@ -434,7 +434,7 @@ async fn threshold_decrypt_command(
             messages
                 .iter()
                 .map(|msg| {
-                    let ct: FheUint32 = expanded_encrypt(&compact_key, *msg, 32);
+                    let ct: FheUint32 = expanded_encrypt!(&compact_key, *msg, 32);
                     ct.into_raw_parts().0
                 })
                 .collect_vec()
@@ -448,7 +448,7 @@ async fn threshold_decrypt_command(
             messages
                 .iter()
                 .map(|msg| {
-                    let ct: FheUint64 = expanded_encrypt(&compact_key, *msg, 64);
+                    let ct: FheUint64 = expanded_encrypt!(&compact_key, *msg, 64);
                     ct.into_raw_parts().0
                 })
                 .collect_vec()
@@ -463,7 +463,7 @@ async fn threshold_decrypt_command(
             messages
                 .iter()
                 .map(|msg| {
-                    let ct: FheUint128 = expanded_encrypt(&compact_key, *msg, 128);
+                    let ct: FheUint128 = expanded_encrypt!(&compact_key, *msg, 128);
                     ct.into_raw_parts().0
                 })
                 .collect_vec()
@@ -478,7 +478,7 @@ async fn threshold_decrypt_command(
             messages
                 .iter()
                 .map(|msg| {
-                    let ct: FheUint160 = expanded_encrypt(&compact_key, *msg, 160);
+                    let ct: FheUint160 = expanded_encrypt!(&compact_key, *msg, 160);
                     ct.into_raw_parts().0
                 })
                 .collect_vec()
@@ -493,7 +493,7 @@ async fn threshold_decrypt_command(
             messages
                 .iter()
                 .map(|msg| {
-                    let ct: FheUint256 = expanded_encrypt(&compact_key, *msg, 256);
+                    let ct: FheUint256 = expanded_encrypt!(&compact_key, *msg, 256);
                     ct.into_raw_parts().0
                 })
                 .collect_vec()
@@ -508,7 +508,7 @@ async fn threshold_decrypt_command(
             messages
                 .iter()
                 .map(|msg| {
-                    let ct: FheUint2048 = expanded_encrypt(&compact_key, *msg, 2048);
+                    let ct: FheUint2048 = expanded_encrypt!(&compact_key, *msg, 2048);
                     ct.into_raw_parts().0
                 })
                 .collect_vec()

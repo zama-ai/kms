@@ -1,6 +1,6 @@
 use super::rpc_types::{
     compute_external_pt_signature, protobuf_to_alloy_domain, BaseKms, PrivDataType,
-    PublicParameterWithParamID, SignedPubDataHandleInternal, CURRENT_FORMAT_VERSION,
+    SignedPubDataHandleInternal, CURRENT_FORMAT_VERSION,
 };
 use crate::client::assemble_metadata_req;
 use crate::conf::centralized::CentralizedConfig;
@@ -39,7 +39,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
-use tfhe::safe_deserialization::safe_deserialize;
+use tfhe::safe_serialization::safe_deserialize;
 use tfhe::zk::CompactPkePublicParams;
 use tfhe::ProvenCompactCiphertextList;
 use tokio::sync::{Mutex, RwLock};
@@ -143,7 +143,7 @@ impl<
             "No request ID present in request".to_string(),
         )?;
         validate_request_id(&req_id)?;
-        let (params, _) = tonic_handle_potential_err(
+        let params = tonic_handle_potential_err(
             retrieve_parameters(inner.params),
             "Parameter choice is not recognized".to_string(),
         )?;
@@ -589,7 +589,7 @@ impl<
         let inner = request.into_inner();
         let request_id = tonic_some_or_err(inner.request_id, "Request ID is not set".to_string())?;
         validate_request_id(&request_id)?;
-        let (params, param_choice) = tonic_handle_potential_err(
+        let params = tonic_handle_potential_err(
             retrieve_parameters(inner.params),
             "Parameter choice is not recognized".to_string(),
         )?;
@@ -610,9 +610,7 @@ impl<
         let _handle = tokio::spawn(async move {
             {
                 let (pp, crs_info) =
-                    match async_generate_crs(&sk, rng, param_choice, params, inner.max_num_bits)
-                        .await
-                    {
+                    match async_generate_crs(&sk, rng, params, inner.max_num_bits).await {
                         Ok((pp, crs_info)) => (pp, crs_info),
                         Err(_) => {
                             let mut guarded_meta_store = meta_store.write().await;
@@ -855,7 +853,7 @@ where
         })?;
 
     let pub_storage = public_storage.lock().await;
-    let pp_with_id: PublicParameterWithParamID =
+    let pp: CompactPkePublicParams =
         read_versioned_at_request_id(&(*pub_storage), crs_handle, &PubDataType::CRS.to_string())
             .await
             .inspect_err(|e| {
@@ -868,28 +866,10 @@ where
             tracing::error!("Failed to fetch pk with handle {} ({e})", key_handle);
         })?;
 
-    let (params, _) = retrieve_parameters(pp_with_id.param_id).inspect_err(|e| {
-        tracing::error!(
-            "Parameter {} choice is not recognized ({e})",
-            pp_with_id.param_id
-        );
-    })?;
-    let pp = pp_with_id
-        .pp
-        .try_into_tfhe_zk_pok_pp(
-            &params
-                .get_params_basics_handle()
-                .get_compact_pk_enc_params(),
-        )
-        .inspect_err(|e| {
-            tracing::error!("could not cast pp for handle {} ({e})", crs_handle);
-        })?;
-
     let metadata = tonic_handle_potential_err(
         assemble_metadata_req(&req),
         "Error assembling ZKP metadata".to_string(),
     )?;
-
     let (send, recv) = tokio::sync::oneshot::channel();
     rayon::spawn(move || {
         let ok = verify_ct_proofs(&proven_ct, &pp, &wrapped_pk, &metadata);
@@ -974,9 +954,9 @@ pub(crate) fn convert_key_response(
         .collect()
 }
 
-pub(crate) fn retrieve_parameters(param_choice: i32) -> anyhow::Result<(DKGParams, ParamChoice)> {
+pub(crate) fn retrieve_parameters(param_choice: i32) -> anyhow::Result<DKGParams> {
     let param_choice = ParamChoice::try_from(param_choice)?;
-    Ok((param_choice.into(), param_choice))
+    Ok(param_choice.into())
 }
 
 /// Validates a reencryption request and returns ciphertext, FheType, request digest, client

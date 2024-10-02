@@ -8,13 +8,15 @@ use crate::util::file_handling::{
 use crate::{anyhow_error_and_log, some_or_err};
 use crate::{consts::KEY_PATH_PREFIX, rpc::rpc_types::PubDataType};
 use anyhow::anyhow;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::fmt::{self};
 use std::path::{Path, PathBuf};
 use std::{env, fs, path::MAIN_SEPARATOR};
 use strum::{EnumIter, IntoEnumIterator};
 use tfhe::named::Named;
-use tfhe::safe_deserialization::{safe_deserialize_versioned, safe_serialize_versioned};
+use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tfhe::{Unversionize, Versionize};
 use url::Url;
 
@@ -28,7 +30,10 @@ pub trait StorageReader {
 
     /// Read some data from a given `url`.
     /// On return, the data is unversioned.
-    async fn read_data<T: Unversionize + Named + Send>(&self, url: &Url) -> anyhow::Result<T>;
+    async fn read_data<T: DeserializeOwned + Unversionize + Named + Send>(
+        &self,
+        url: &Url,
+    ) -> anyhow::Result<T>;
 
     /// Compute an URL for some specific data given its `data_id` and of a given `data_type`.
     /// Depending on how the underlying functionality is realized one of these parameters might not
@@ -52,7 +57,7 @@ pub trait StorageReader {
 pub trait Storage: StorageReader {
     /// Store the given `data` at the given `url`
     /// Under the hood, the versioned data is stored.
-    async fn store_data<T: Versionize + Named + Send + Sync>(
+    async fn store_data<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
         data: &T,
         url: &Url,
@@ -70,14 +75,18 @@ pub trait StorageForText: Storage {
 
 /// Store some data at a location defined by `request_id` and `data_type`.
 /// Under the hood, the versioned data will be stored.
-pub async fn store_versioned_at_request_id<'a, S: Storage, Data: Versionize + Named + Send + Sync>(
+pub async fn store_versioned_at_request_id<
+    'a,
+    S: Storage,
+    T: Serialize + Versionize + Named + Send + Sync,
+>(
     storage: &mut S,
     request_id: &RequestId,
-    data: &'a Data,
+    data: &'a T,
     data_type: &str,
 ) -> anyhow::Result<()>
 where
-    <Data as Versionize>::Versioned<'a>: Send + Sync,
+    <T as Versionize>::Versioned<'a>: Send + Sync,
 {
     let url = storage.compute_url(&request_id.to_string(), data_type)?;
     storage.store_data(data, &url).await.map_err(|e| {
@@ -151,13 +160,16 @@ pub async fn delete_pk_at_request_id<S: Storage>(
 
 /// Read some data stored in a location defined by `request_id` and `data_type`.
 /// The returned result is automatically unversioned.
-pub async fn read_versioned_at_request_id<S: StorageReader, Data: Unversionize + Named + Send>(
+pub async fn read_versioned_at_request_id<
+    S: StorageReader,
+    T: DeserializeOwned + Unversionize + Named + Send,
+>(
     storage: &S,
     request_id: &RequestId,
     data_type: &str,
-) -> anyhow::Result<Data>
+) -> anyhow::Result<T>
 where
-    <Data as tfhe_versionable::VersionizeOwned>::VersionedOwned: Send,
+    <T as tfhe_versionable::VersionizeOwned>::VersionedOwned: Send,
 {
     let url = storage.compute_url(&request_id.to_string(), data_type)?;
     storage.read_data(&url).await
@@ -212,7 +224,10 @@ pub async fn read_pk_at_request_id<S: Storage>(
 }
 
 /// Helper method for reading all data of a specific type.
-pub async fn read_all_data_versioned<S: StorageReader, T: Unversionize + Named + Send>(
+pub async fn read_all_data_versioned<
+    S: StorageReader,
+    T: DeserializeOwned + Unversionize + Named + Send,
+>(
     storage: &S,
     data_type: &str,
 ) -> anyhow::Result<HashMap<RequestId, T>> {
@@ -355,7 +370,10 @@ impl StorageReader for FileStorage {
         Ok(res)
     }
 
-    async fn read_data<T: Unversionize + Named + Send>(&self, url: &Url) -> anyhow::Result<T> {
+    async fn read_data<T: DeserializeOwned + Unversionize + Named + Send>(
+        &self,
+        url: &Url,
+    ) -> anyhow::Result<T> {
         let res: T = safe_read_element_versioned(
             url_to_pathbuf(url)
                 .to_str()
@@ -468,7 +486,7 @@ impl StorageForText for FileStorage {
 #[tonic::async_trait]
 impl Storage for FileStorage {
     /// Store data with a specific [url], giving a warning if the data already exists and exits _without_ writing
-    async fn store_data<T: Versionize + Named + Send + Sync>(
+    async fn store_data<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
         data: &T,
         url: &Url,
@@ -547,13 +565,16 @@ impl StorageReader for RamStorage {
         Ok(self.internal_storage.contains_key(url))
     }
 
-    async fn read_data<T: Unversionize + Named + Send>(&self, url: &Url) -> anyhow::Result<T> {
+    async fn read_data<T: DeserializeOwned + Unversionize + Named + Send>(
+        &self,
+        url: &Url,
+    ) -> anyhow::Result<T> {
         let raw_data = match self.internal_storage.get(url) {
             Some((_data_id, _data_type, raw_data)) => raw_data,
             None => return Err(anyhow!("Could not decode data at url {}", url)),
         };
         let mut buf = std::io::Cursor::new(raw_data);
-        safe_deserialize_versioned(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| anyhow::anyhow!(e))
+        safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| anyhow::anyhow!(e))
     }
 
     fn compute_url(&self, data_id: &str, data_type: &str) -> anyhow::Result<Url> {
@@ -614,7 +635,7 @@ impl StorageForText for RamStorage {
 
 #[tonic::async_trait]
 impl Storage for RamStorage {
-    async fn store_data<T: Versionize + Named + Send + Sync>(
+    async fn store_data<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
         data: &T,
         url: &Url,
@@ -630,7 +651,7 @@ impl Storage for RamStorage {
             .ok_or_else(|| anyhow_error_and_log("URL does not contain data type"))?
             .to_string();
         let mut serialized = Vec::new();
-        safe_serialize_versioned(data, &mut serialized, SAFE_SER_SIZE_LIMIT)?;
+        safe_serialize(data, &mut serialized, SAFE_SER_SIZE_LIMIT)?;
         self.internal_storage
             .insert(url.to_owned(), (data_id, data_type, serialized));
         Ok(())

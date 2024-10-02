@@ -389,7 +389,6 @@ async fn setup_threshold_keys() {
     ensure_threshold_crs_exists(
         &mut threshold_pub_storages,
         &mut threshold_priv_storages,
-        kms_lib::kms::ParamChoice::Test,
         TEST_PARAM,
         &TEST_CRS_ID,
         true,
@@ -422,7 +421,6 @@ async fn setup_central_keys() {
     ensure_central_crs_exists(
         &mut central_pub_storage,
         &mut central_priv_storage,
-        kms_lib::kms::ParamChoice::Test,
         TEST_PARAM,
         &TEST_CRS_ID,
         true,
@@ -960,7 +958,7 @@ async fn zkp_sunshine(slow: bool) {
             .build(),
     );
     let mut ct_buf = Vec::new();
-    tfhe::safe_serialize(&ct_proof, &mut ct_buf, SAFE_SER_SIZE_LIMIT).unwrap();
+    tfhe::safe_serialization::safe_serialize(&ct_proof, &mut ct_buf, SAFE_SER_SIZE_LIMIT).unwrap();
     let (results, txn_id, _) = generic_sunshine_test(slow, vec![ct_buf], op).await;
     assert_eq!(results.len(), AMOUNT_PARTIES);
 

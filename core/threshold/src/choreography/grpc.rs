@@ -43,7 +43,7 @@ use crate::execution::runtime::session::SmallSession;
 use crate::execution::runtime::session::{BaseSessionStruct, ParameterHandles};
 use crate::execution::runtime::session::{DecryptionMode, LargeSession, SessionParameters};
 use crate::execution::tfhe_internals::parameters::DKGParams;
-use crate::execution::zk::ceremony::{Ceremony, PublicParameter, RealCeremony};
+use crate::execution::zk::ceremony::{Ceremony, InternalPublicParameter, RealCeremony};
 use crate::networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
 use crate::networking::{NetworkMode, NetworkingStrategy};
 use crate::{execution::small_execution::prss::PRSSSetup, session_id::SessionId};
@@ -103,7 +103,7 @@ type KeyStore = DashMap<SessionId, Arc<(FhePubKeySet, PrivateKeySet)>>;
 type DDecPreprocNFStore = DashMap<SessionId, Box<dyn NoiseFloodPreprocessing>>;
 type DDecPreprocBitDecStore = DashMap<SessionId, Box<dyn BitDecPreprocessing>>;
 type DDecResultStore = DashMap<SessionId, Vec<Z64>>;
-type CrsStore = DashMap<SessionId, PublicParameter>;
+type CrsStore = DashMap<SessionId, InternalPublicParameter>;
 type StatusStore = DashMap<SessionId, JoinHandle<()>>;
 
 #[derive(Default)]

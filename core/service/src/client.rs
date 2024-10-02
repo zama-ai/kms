@@ -40,7 +40,6 @@ use wasm_bindgen::prelude::*;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
-        use crate::rpc::rpc_types::PublicParameterWithParamID;
         use tfhe::zk::CompactPkePublicParams;
         use crate::cryptography::central_kms::{compute_handle, BaseKmsStruct};
         use crate::get_exactly_one;
@@ -1038,7 +1037,7 @@ impl Client {
         results: Vec<CrsGenResult>,
         storage_readers: &[S],
         min_agree_count: u32,
-    ) -> anyhow::Result<PublicParameterWithParamID> {
+    ) -> anyhow::Result<CompactPkePublicParams> {
         let mut verifying_pks = std::collections::HashSet::new();
         // counter of digest (digest -> usize)
         let mut hash_counter_map = HashMap::new();
@@ -1055,7 +1054,7 @@ impl Client {
             let (pp_w_id, info) = if let Some(info) = result.crs_results {
                 let url =
                     storage.compute_url(&request_id.to_string(), &PubDataType::CRS.to_string())?;
-                let pp = storage.read_data(&url).await?;
+                let pp: CompactPkePublicParams = storage.read_data(&url).await?;
                 (pp, info)
             } else {
                 tracing::warn!("empty SignedPubDataHandle");
@@ -1315,7 +1314,12 @@ impl Client {
 
     #[cfg(feature = "non-wasm")]
     async fn retrieve_key<
-        S: Versionize + Unversionize + tfhe::named::Named + Send,
+        S: serde::de::DeserializeOwned
+            + serde::Serialize
+            + Versionize
+            + Unversionize
+            + tfhe::named::Named
+            + Send,
         R: StorageReader,
     >(
         &self,
@@ -1356,7 +1360,10 @@ impl Client {
 
     /// Get a key from a public storage depending on the data type
     #[cfg(feature = "non-wasm")]
-    async fn get_key<S: Unversionize + tfhe::named::Named + Send, R: StorageReader>(
+    async fn get_key<
+        S: serde::de::DeserializeOwned + Unversionize + tfhe::named::Named + Send,
+        R: StorageReader,
+    >(
         &self,
         key_id: &RequestId,
         key_type: PubDataType,
@@ -1378,7 +1385,7 @@ impl Client {
         &self,
         crs_gen_result: &CrsGenResult,
         storage: &R,
-    ) -> anyhow::Result<Option<(PublicParameterWithParamID, CompactPkePublicParams)>> {
+    ) -> anyhow::Result<Option<CompactPkePublicParams>> {
         let crs_info = some_or_err(
             crs_gen_result.crs_results.clone(),
             "Could not find CRS info".to_string(),
@@ -1387,8 +1394,8 @@ impl Client {
             crs_gen_result.request_id.clone(),
             "No request id".to_string(),
         )?;
-        let (crs, pp) = self.get_crs(&request_id, storage).await?;
-        let crs_handle = compute_handle(&crs)?;
+        let pp = self.get_crs(&request_id, storage).await?;
+        let crs_handle = compute_handle(&pp)?;
         if crs_handle != crs_info.key_handle {
             tracing::warn!(
                 "Computed crs handle {} of retrieved crs does not match expected crs handle {}",
@@ -1407,7 +1414,7 @@ impl Client {
             );
             return Ok(None);
         }
-        Ok(Some((crs, pp)))
+        Ok(Some(pp))
     }
 
     /// Get a CRS from a public storage
@@ -1416,16 +1423,10 @@ impl Client {
         &self,
         crs_id: &RequestId,
         storage: &R,
-    ) -> anyhow::Result<(PublicParameterWithParamID, CompactPkePublicParams)> {
+    ) -> anyhow::Result<CompactPkePublicParams> {
         let url = storage.compute_url(&crs_id.to_string(), &PubDataType::CRS.to_string())?;
-        let crs: PublicParameterWithParamID = storage.read_data(&url).await?;
-        let pp = crs.pp.try_into_tfhe_zk_pok_pp(
-            &self
-                .params
-                .get_params_basics_handle()
-                .get_compact_pk_enc_params(),
-        )?;
-        Ok((crs, pp))
+        let pp: CompactPkePublicParams = storage.read_data(&url).await?;
+        Ok(pp)
     }
 
     /// Validates the aggregated decryption response `agg_resp` against the
@@ -2205,8 +2206,12 @@ impl Client {
         request_id: &RequestId,
     ) -> anyhow::Result<ZkVerifyRequest> {
         let mut ct_buf = Vec::new();
-        tfhe::safe_serialize(proven_ct, &mut ct_buf, crate::consts::SAFE_SER_SIZE_LIMIT)
-            .map_err(|e| anyhow::anyhow!(e))?;
+        tfhe::safe_serialization::safe_serialize(
+            proven_ct,
+            &mut ct_buf,
+            crate::consts::SAFE_SER_SIZE_LIMIT,
+        )
+        .map_err(|e| anyhow::anyhow!(e))?;
 
         let domain_msg = alloy_to_protobuf_domain(domain)?;
 
@@ -2670,9 +2675,7 @@ pub(crate) mod tests {
     use crate::kms::CrsGenResult;
     use crate::kms::{FheType, ParamChoice, TypedCiphertext};
     use crate::rpc::rpc_types::RequestIdGetter;
-    use crate::rpc::rpc_types::{
-        protobuf_to_alloy_domain, BaseKms, PubDataType, PublicParameterWithParamID,
-    };
+    use crate::rpc::rpc_types::{protobuf_to_alloy_domain, BaseKms, PubDataType};
     use crate::storage::StorageReader;
     use crate::storage::{FileStorage, RamStorage, StorageType, StorageVersion};
     use crate::util::file_handling::safe_read_element_versioned;
@@ -2697,13 +2700,12 @@ pub(crate) mod tests {
     use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
     #[cfg(feature = "wasm_tests")]
     use distributed_decryption::execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
-    use distributed_decryption::execution::zk::constants::ZK_DEFAULT_MAX_NUM_CLEARTEXT;
     use rand::SeedableRng;
     use serial_test::serial;
     use std::collections::{hash_map::Entry, HashMap};
-    use tfhe::shortint::parameters::compact_public_key_only::CompactCiphertextListCastingMode;
     use tfhe::zk::CompactPkePublicParams;
     use tfhe::ProvenCompactCiphertextList;
+    use tfhe::Tag;
     use tokio::task::{JoinHandle, JoinSet};
     use tonic::transport::Channel;
 
@@ -2924,7 +2926,7 @@ pub(crate) mod tests {
         crs_path.replace_range(0..7, ""); // remove leading "file:/" from URI, so we can read the file
 
         // check that CRS signature is verified correctly for the current version
-        let crs_unversioned: PublicParameterWithParamID =
+        let crs_unversioned: CompactPkePublicParams =
             safe_read_element_versioned(&crs_path).await.unwrap();
         let client_handle = compute_handle(&crs_unversioned).unwrap();
         assert_eq!(&client_handle, &crs_info.key_handle);
@@ -3007,15 +3009,14 @@ pub(crate) mod tests {
         }
         let inner_resp = response.unwrap().into_inner();
         let pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
-        let (crs, pp) = internal_client
+        let pp = internal_client
             .process_get_crs_resp(&inner_resp, &pub_storage)
             .await
             .unwrap()
             .unwrap();
 
         // Validate the CRS as a sanity check
-        let pp_recovered = verify_pp(Some(crs)).await;
-        assert_eq!(format!("{:?}", pp_recovered), format!("{:?}", pp));
+        verify_pp(dkg_params, &pp).await;
 
         kms_server.abort();
         assert!(kms_server.await.unwrap_err().is_cancelled());
@@ -3066,7 +3067,7 @@ pub(crate) mod tests {
             request_id: key_handle.to_owned(),
         };
         let pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
-        let (_crs, pp) = internal_client
+        let pp = internal_client
             .get_crs(crs_req_id, &pub_storage)
             .await
             .unwrap();
@@ -3127,101 +3128,43 @@ pub(crate) mod tests {
         assert!(kms_server.await.unwrap_err().is_cancelled());
     }
 
-    async fn verify_pp(crs: Option<PublicParameterWithParamID>) -> CompactPkePublicParams {
-        let unwrapped_crs = crs.unwrap();
-        let (dkg_params, _) =
-            crate::rpc::central_rpc::retrieve_parameters(unwrapped_crs.param_id).unwrap();
+    async fn verify_pp(dkg_params: &DKGParams, pp: &CompactPkePublicParams) {
         let dkg_params_handle = dkg_params.get_params_basics_handle();
 
-        let crs_params = dkg_params_handle.get_compact_pk_enc_params();
-
-        let pp = unwrapped_crs
-            .pp
-            .try_into_tfhe_zk_pok_pp(&crs_params)
-            .unwrap();
-
         let cks = tfhe::integer::ClientKey::new(dkg_params_handle.to_classic_pbs_parameters());
-        let sks = tfhe::integer::ServerKey::new_radix_server_key(&cks);
 
         // If there is indeed a dedicated compact pk, we need to generate the corresponding
         // keys to expand when encrypting later on
-        let (pk, casting_key) = if dkg_params_handle.has_dedicated_compact_pk_params() {
+        let pk = if dkg_params_handle.has_dedicated_compact_pk_params() {
             // Generate the secret key PKE encrypts to
             let compact_private_key = tfhe::integer::public_key::CompactPrivateKey::new(
                 dkg_params_handle.get_compact_pk_enc_params(),
             );
             // Generate the corresponding public key
             let pk = tfhe::integer::public_key::CompactPublicKey::new(&compact_private_key);
-
-            //Finally, generate the KSK
-            let casting_key = {
-                let (_, ks_params) = dkg_params_handle.get_dedicated_pk_params().unwrap();
-
-                Some(
-                    tfhe::integer::key_switching_key::KeySwitchingKey::new(
-                        (&compact_private_key, None),
-                        (&cks, &sks),
-                        ks_params,
-                    )
-                    .into_raw_parts(),
-                )
-            };
-            (pk, casting_key)
+            tfhe::CompactPublicKey::from_raw_parts(pk, Tag::default())
         } else {
             let cks = cks.clone().into_raw_parts();
             let pk = tfhe::shortint::CompactPublicKey::new(&cks);
             let pk = tfhe::integer::CompactPublicKey::from_raw_parts(pk);
 
-            (pk, None)
+            tfhe::CompactPublicKey::from_raw_parts(pk, Tag::default())
         };
 
-        let max_msg_len = if unwrapped_crs.param_id == ParamChoice::Test as i32 {
-            1
-        } else {
-            ZK_DEFAULT_MAX_NUM_CLEARTEXT
-        };
+        let max_msg_len = pp.k;
         let msgs = (0..max_msg_len)
             .map(|i| (i % dkg_params_handle.get_message_modulus().0) as u64)
             .collect::<Vec<_>>();
 
         let metadata = vec![23_u8, 42];
-
-        let pk = pk.into_raw_parts();
-        let proven_ct = pk
-            .encrypt_and_prove_slice(
-                &msgs,
-                &pp,
-                &metadata,
-                tfhe::zk::ZkComputeLoad::Proof,
-                (pk.parameters.message_modulus.0 * pk.parameters.message_modulus.0) as u64,
-            )
+        let mut compact_list_builder = ProvenCompactCiphertextList::builder(&pk);
+        for msg in msgs {
+            compact_list_builder.push_with_num_bits(msg, 64).unwrap();
+        }
+        let proven_ct = compact_list_builder
+            .build_with_proof_packed(pp, &metadata, tfhe::zk::ZkComputeLoad::Proof)
             .unwrap();
-        assert!(proven_ct.verify(&pp, &pk, &metadata).is_valid());
-
-        let expanded = {
-            if let Some(casting_key) = casting_key {
-                let casting =
-                    CompactCiphertextListCastingMode::CastIfNecessary(casting_key.as_view());
-                proven_ct
-                    .verify_and_expand(&pp, &pk, &metadata, casting)
-                    .unwrap()
-            } else {
-                let casting = CompactCiphertextListCastingMode::NoCasting;
-
-                proven_ct
-                    .verify_and_expand(&pp, &pk, &metadata, casting)
-                    .unwrap()
-            }
-        };
-
-        let cks = cks.into_raw_parts();
-        let decrypted = expanded
-            .iter()
-            .map(|ciphertext| cks.decrypt(ciphertext))
-            .collect::<Vec<_>>();
-        assert_eq!(msgs, decrypted);
-
-        pp
+        assert!(proven_ct.verify(pp, &pk, &metadata).is_valid());
     }
 
     async fn encrypt_and_prove(
@@ -3376,7 +3319,6 @@ pub(crate) mod tests {
 
         // first check the happy path
         // the public parameter is checked in ddec tests, so we don't specifically check _pp
-        let mut tfhe_pp = None;
         for req in reqs {
             let req_id = req.request_id.unwrap();
             let joined_responses: Vec<_> = joined_responses
@@ -3416,9 +3358,7 @@ pub(crate) mod tests {
                 )
                 .await
                 .unwrap();
-            if tfhe_pp.is_none() {
-                tfhe_pp = Some(verify_pp(Some(pp)).await);
-            }
+            verify_pp(param, &pp).await;
 
             // if there are [THRESHOLD] result missing, we can still recover the result
             let _pp = internal_client
@@ -3573,13 +3513,12 @@ pub(crate) mod tests {
             threshold_handles(StorageVersion::Dev, dkg_params).await;
 
         let pub_storage = FileStorage::new_threshold(None, StorageType::PUB, 1).unwrap();
-        let (crs, pp) = internal_client
+        let pp = internal_client
             .get_crs(crs_handle, &pub_storage)
             .await
             .unwrap();
         // Sanity check the pp
-        let pp_recovered = verify_pp(Some(crs)).await;
-        assert_eq!(format!("{:?}", pp_recovered), format!("{:?}", pp));
+        verify_pp(&dkg_params, &pp).await;
 
         let message = 42;
         let dummy_contract_address =

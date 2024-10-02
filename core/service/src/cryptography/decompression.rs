@@ -3,7 +3,7 @@ use serde::de::DeserializeOwned;
 use tfhe::integer::ciphertext::Expandable;
 use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::named::Named;
-use tfhe::safe_deserialization::safe_deserialize_versioned;
+use tfhe::safe_serialization::safe_deserialize;
 use tfhe::{CompressedCiphertextList as HLCompressedCiphertextList, Unversionize, Versionize};
 
 use crate::anyhow_error_and_log;
@@ -12,7 +12,7 @@ use crate::consts::SAFE_SER_SIZE_LIMIT;
 pub fn deserialize<T: Named + Versionize + Unversionize + DeserializeOwned>(
     bytes: &[u8],
 ) -> anyhow::Result<T> {
-    let r = safe_deserialize_versioned::<T>(std::io::Cursor::new(bytes), SAFE_SER_SIZE_LIMIT);
+    let r = safe_deserialize::<T>(std::io::Cursor::new(bytes), SAFE_SER_SIZE_LIMIT);
     r.map_err(|err| anyhow!("{}", err))
 }
 
@@ -53,6 +53,7 @@ where
 }
 
 pub mod test_tools {
+    use serde::Serialize;
     use tfhe::integer::ciphertext::{CompressedCiphertextListBuilder, Compressible};
     use tfhe::integer::compression_keys::CompressionKey;
     use tfhe::named::Named;
@@ -60,17 +61,13 @@ pub mod test_tools {
 
     use crate::consts::SAFE_SER_SIZE_LIMIT;
 
-    pub fn safe_serialize_versioned<T>(ct: &T) -> Vec<u8>
+    fn safe_serialize_versioned<T>(ct: &T) -> Vec<u8>
     where
-        T: Versionize + Named,
+        T: Serialize + Versionize + Named,
     {
         let mut serialized_ct = Vec::new();
-        tfhe::safe_deserialization::safe_serialize_versioned(
-            ct,
-            &mut serialized_ct,
-            SAFE_SER_SIZE_LIMIT,
-        )
-        .unwrap();
+        tfhe::safe_serialization::safe_serialize(ct, &mut serialized_ct, SAFE_SER_SIZE_LIMIT)
+            .unwrap();
         serialized_ct
     }
 
@@ -92,8 +89,10 @@ pub mod test_tools {
 
 #[cfg(test)]
 mod test {
+    use crate::consts::SAFE_SER_SIZE_LIMIT;
+
     use super::from_bytes;
-    use super::test_tools::{compress_serialize_versioned, safe_serialize_versioned};
+    use super::test_tools::compress_serialize_versioned;
     use tfhe::integer::bigint::StaticUnsignedBigInt;
     use tfhe::integer::ciphertext::{CompressedCiphertextListBuilder, Compressible};
     use tfhe::named::Named;
@@ -128,7 +127,10 @@ mod test {
             .build(&compression_key.unwrap());
         let hl_compressed =
             HLCompressedCiphertextList::from_raw_parts(compressed, tfhe::Tag::default());
-        let bytes = safe_serialize_versioned(&hl_compressed);
+
+        let mut bytes = Vec::new();
+        tfhe::safe_serialization::safe_serialize(&hl_compressed, &mut bytes, SAFE_SER_SIZE_LIMIT)
+            .unwrap();
         let result = from_bytes::<FheUint4>(&decompression_key, &bytes);
         assert!(result.is_err());
     }
@@ -167,10 +169,21 @@ mod test {
         let (client_key, _) = generate_keys(config);
         let clear = 15_u8;
         let not_compressed = FheUint4::encrypt(clear, &client_key);
-        let bytes = safe_serialize_versioned(&not_compressed);
+
+        let mut bytes = Vec::new();
+        tfhe::safe_serialization::safe_serialize(&not_compressed, &mut bytes, SAFE_SER_SIZE_LIMIT)
+            .unwrap();
         let result = from_bytes::<FheUint4>(&None, &bytes);
         assert!(result.is_ok());
-        assert!(safe_serialize_versioned(&result.unwrap()) == bytes);
+
+        let mut bytes2 = Vec::new();
+        tfhe::safe_serialization::safe_serialize(
+            &result.unwrap(),
+            &mut bytes2,
+            SAFE_SER_SIZE_LIMIT,
+        )
+        .unwrap();
+        assert!(bytes2 == bytes);
     }
 
     #[test]
