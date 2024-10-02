@@ -90,7 +90,6 @@ impl Blockchain for MockchainImpl {
         caller_address: String,
         ct_proof: Vec<u8>,
         max_num_bits: u32,
-        chain_id: U256,
         eip712_domain: Eip712DomainMsg,
         acl_address: String,
     ) -> anyhow::Result<Vec<ZkpResponseValues>> {
@@ -99,7 +98,6 @@ impl Blockchain for MockchainImpl {
         tracing::debug!("🐛 caller_address: {:?}", caller_address);
         tracing::debug!("🐛 ct_proof: {:?}", ct_proof);
         tracing::debug!("🐛 max_num_bits: {:?}", max_num_bits);
-        tracing::debug!("🐛 chain_id: {:?}", chain_id);
         tracing::debug!("🐛 eip712_domain: {:?}", eip712_domain);
         tracing::debug!("🐛 acl_address: {:?}", acl_address);
 

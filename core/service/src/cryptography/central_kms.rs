@@ -298,22 +298,26 @@ pub(crate) fn verify_eip712(request: &ReencryptionRequest) -> anyhow::Result<()>
         .as_ref()
         .context("Failed to get domain message from request")?;
     tracing::debug!("🔒 wrapped_domain: {:?}", wrapped_domain);
-    let chain_id = u64::from_le_bytes(
-        wrapped_domain.chain_id.as_slice()[0..8]
-            .try_into()
-            .context("Failed to convert chain id slice")?,
-    );
 
+    let chain_id = alloy_primitives::U256::try_from_be_slice(&wrapped_domain.chain_id)
+        .context("invalid chain ID")?;
     tracing::debug!("🔒 chain_id: {:?}", chain_id);
     let verifying_contract_address =
         alloy_primitives::Address::from_str(wrapped_domain.verifying_contract.as_str())
             .context("Failed to convert wrappted domain message into address")?;
-    let domain = alloy_sol_types::eip712_domain! {
-        name: wrapped_domain.name.clone(),
-        version: wrapped_domain.version.clone(),
-        chain_id: chain_id,
-        verifying_contract: verifying_contract_address,
+
+    let salt = if wrapped_domain.salt.is_empty() {
+        None
+    } else {
+        Some(alloy_primitives::B256::from_slice(&wrapped_domain.salt))
     };
+    let domain = alloy_sol_types::Eip712Domain::new(
+        Some(wrapped_domain.name.clone().into()),
+        Some(wrapped_domain.version.clone().into()),
+        Some(chain_id),
+        Some(verifying_contract_address),
+        salt,
+    );
 
     // Derive the EIP-712 signing hash.
     let message_hash = message.eip712_signing_hash(&domain);

@@ -29,6 +29,7 @@ use kms_blockchain_connector::domain::storage::Storage;
 use kms_blockchain_connector::infrastructure::blockchain::KmsBlockchain;
 use kms_blockchain_connector::infrastructure::core::{KmsCore, KmsEventHandler};
 use kms_blockchain_connector::infrastructure::metrics::OpenTelemetryMetrics;
+use kms_lib::client::assemble_metadata_alloy;
 use kms_lib::consts::TEST_PARAM;
 use kms_lib::consts::{SAFE_SER_SIZE_LIMIT, TEST_CRS_ID};
 use kms_lib::kms::{ZkVerifyResponse, ZkVerifyResponsePayload};
@@ -891,17 +892,8 @@ async fn reenc_sunshine(slow: bool) {
 async fn zkp_sunshine(slow: bool) {
     setup_threshold_keys().await;
 
-    let dummy_contract_address =
-        alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
     println!("test CRS {:?}", TEST_CRS_ID.to_string());
     let msg = vec![42u32.into(), 111u8.into()];
-    let ct_proof = compute_zkp_from_stored_key(
-        None,
-        msg,
-        &TEST_THRESHOLD_KEY_ID.to_string(),
-        &TEST_CRS_ID.to_string(),
-    )
-    .await;
 
     let mut pub_storage = Vec::with_capacity(AMOUNT_PARTIES);
     for i in 1..=AMOUNT_PARTIES {
@@ -916,7 +908,25 @@ async fn zkp_sunshine(slow: bool) {
         request_id: "2222000000000000000000000000000000001111".to_string(),
     };
 
+    let dummy_contract_address =
+        alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
     let dummy_acl_address = alloy_primitives::address!("ffda6bf26964af9d7eed9e03e53415d37aa96045");
+
+    let metadata = assemble_metadata_alloy(
+        &dummy_contract_address,
+        &kms_client.get_client_address(),
+        &dummy_acl_address,
+        &dummy_domain().chain_id.unwrap(),
+    );
+
+    let ct_proof = compute_zkp_from_stored_key(
+        None,
+        msg,
+        &TEST_THRESHOLD_KEY_ID.to_string(),
+        &TEST_CRS_ID.to_string(),
+        &metadata,
+    )
+    .await;
 
     let key_id = &TEST_THRESHOLD_KEY_ID;
     let crs_id = &TEST_CRS_ID;

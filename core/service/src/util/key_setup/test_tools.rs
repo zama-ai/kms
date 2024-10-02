@@ -235,6 +235,7 @@ pub async fn compute_zkp_from_stored_key(
     msgs: Vec<TypedPlaintext>,
     key_id: &str,
     crs_id: &str,
+    metadata: &[u8],
 ) -> ProvenCompactCiphertextList {
     // Try first with centralized storage
     let storage = FileStorage::new_centralized(pub_path, StorageType::PUB).unwrap();
@@ -319,7 +320,7 @@ pub async fn compute_zkp_from_stored_key(
         .get_compact_pk_enc_params();
     let pp = crs.pp.try_into_tfhe_zk_pok_pp(&crs_params).unwrap();
     compact_list_builder
-        .build_with_proof_packed(&pp, &[], tfhe::zk::ZkComputeLoad::Proof)
+        .build_with_proof_packed(&pp, metadata, tfhe::zk::ZkComputeLoad::Proof)
         .unwrap()
 }
 

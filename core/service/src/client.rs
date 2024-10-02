@@ -60,6 +60,7 @@ cfg_if::cfg_if! {
         use crate::{storage::StorageReader};
         use std::collections::HashMap;
         use std::fmt;
+        use std::str::FromStr;
         use tfhe::ProvenCompactCiphertextList;
         use tfhe::ServerKey;
         use tfhe_versionable::{Versionize, Unversionize};
@@ -2081,6 +2082,10 @@ impl Client {
         }
     }
 
+    pub fn get_client_address(&self) -> alloy_primitives::Address {
+        self.client_address
+    }
+
     #[cfg(feature = "non-wasm")]
     fn validate_dec_meta_data<T: MetaResponse + serde::Serialize>(
         &self,
@@ -2271,6 +2276,53 @@ impl Client {
             Ok(out)
         }
     }
+}
+
+/// creates the metadata (auxiliary data) for proving/verifying the input ZKPs from the individual inputs
+///
+/// metadata is `contract_addr || user_addr || acl_addr || chain_id` i.e. 92 bytes since chain ID is encoded as a 32 byte big endian integer
+pub fn assemble_metadata_alloy(
+    contract_address: &alloy_primitives::Address,
+    client_address: &alloy_primitives::Address,
+    acl_address: &alloy_primitives::Address,
+    chain_id: &alloy_primitives::U256,
+) -> [u8; 92] {
+    let mut metadata = [0_u8; 92];
+
+    let contract_bytes = contract_address.into_array();
+    let client_bytes = client_address.into_array();
+    let acl_bytes = acl_address.into_array();
+    let chain_id_bytes: [u8; 32] = chain_id.to_be_bytes();
+    let front = [contract_bytes, client_bytes, acl_bytes].concat();
+    metadata[..60].copy_from_slice(front.as_slice());
+    metadata[60..].copy_from_slice(&chain_id_bytes);
+
+    metadata
+}
+
+/// creates the metadata (auxiliary data) for proving/verifying the input ZKPs from a `ZkVerifyRequest`
+///
+/// metadata is `contract_addr || user_addr || acl_addr || chain_id` i.e. 92 bytes since chain ID is encoded as a 32 byte big endian integer
+#[cfg(feature = "non-wasm")]
+pub fn assemble_metadata_req(req: &ZkVerifyRequest) -> anyhow::Result<[u8; 92]> {
+    let contract_address = alloy_primitives::Address::from_str(&req.contract_address)?;
+    let client_address = alloy_primitives::Address::from_str(&req.client_address)?;
+    let acl_address = alloy_primitives::Address::from_str(&req.acl_address)?;
+
+    let domain = req
+        .domain
+        .as_ref()
+        .ok_or_else(|| anyhow_error_and_log("empty domain"))?;
+
+    let chain_id = alloy_primitives::U256::try_from_be_slice(&domain.chain_id)
+        .ok_or_else(|| anyhow_error_and_log("invalid chain ID"))?;
+
+    Ok(assemble_metadata_alloy(
+        &contract_address,
+        &client_address,
+        &acl_address,
+        &chain_id,
+    ))
 }
 
 /// Calculates the number of blocks needed to encode a message of the given FHE
@@ -2598,6 +2650,7 @@ pub mod test_tools {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{recover_ecdsa_public_key_from_signature, Client};
+    use crate::client::assemble_metadata_alloy;
     #[cfg(feature = "wasm_tests")]
     use crate::client::TestingReencryptionTranscript;
     use crate::client::{ParsedReencryptionRequest, ServerIdentities};
@@ -3021,10 +3074,21 @@ pub(crate) mod tests {
         // try to make a proof and check that it works
         let dummy_contract_address =
             alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
-        let proven_ct = encrypt_and_prove(message, &pp, key_handle).await;
+
+        let dummy_acl_address =
+            alloy_primitives::address!("01da6bf26964af9d7eed9e03e53415d37aa960ff");
+
+        let metadata = assemble_metadata_alloy(
+            &dummy_contract_address,
+            &internal_client.get_client_address(),
+            &dummy_acl_address,
+            &dummy_domain().chain_id.unwrap(),
+        );
+
+        let proven_ct = encrypt_and_prove(message, &pp, key_handle, &metadata).await;
         // Sanity check that the proof is valid
         let pk = load_pk_from_storage(None, key_handle).await;
-        assert!(tfhe::zk::ZkVerificationOutCome::Valid == proven_ct.verify(&pp, &pk, &[]));
+        assert!(tfhe::zk::ZkVerificationOutCome::Valid == proven_ct.verify(&pp, &pk, &metadata));
 
         let zk_req = internal_client
             .zk_verify_request(
@@ -3033,7 +3097,7 @@ pub(crate) mod tests {
                 &dummy_contract_address,
                 &proven_ct,
                 &dummy_domain(),
-                &dummy_contract_address,
+                &dummy_acl_address,
                 zkp_req_id,
             )
             .unwrap();
@@ -3120,27 +3184,33 @@ pub(crate) mod tests {
             .map(|i| (i % dkg_params_handle.get_message_modulus().0) as u64)
             .collect::<Vec<_>>();
 
+        let metadata = vec![23_u8, 42];
+
         let pk = pk.into_raw_parts();
         let proven_ct = pk
             .encrypt_and_prove_slice(
                 &msgs,
                 &pp,
-                &[],
+                &metadata,
                 tfhe::zk::ZkComputeLoad::Proof,
                 (pk.parameters.message_modulus.0 * pk.parameters.message_modulus.0) as u64,
             )
             .unwrap();
-        assert!(proven_ct.verify(&pp, &pk, &[]).is_valid());
+        assert!(proven_ct.verify(&pp, &pk, &metadata).is_valid());
 
         let expanded = {
             if let Some(casting_key) = casting_key {
                 let casting =
                     CompactCiphertextListCastingMode::CastIfNecessary(casting_key.as_view());
-                proven_ct.verify_and_expand(&pp, &pk, &[], casting).unwrap()
+                proven_ct
+                    .verify_and_expand(&pp, &pk, &metadata, casting)
+                    .unwrap()
             } else {
                 let casting = CompactCiphertextListCastingMode::NoCasting;
 
-                proven_ct.verify_and_expand(&pp, &pk, &[], casting).unwrap()
+                proven_ct
+                    .verify_and_expand(&pp, &pk, &metadata, casting)
+                    .unwrap()
             }
         };
 
@@ -3158,13 +3228,14 @@ pub(crate) mod tests {
         msg: u8,
         pp: &CompactPkePublicParams,
         key_id: &str,
+        metadata: &[u8],
     ) -> ProvenCompactCiphertextList {
         let pk = load_pk_from_storage(None, key_id).await;
 
         let mut compact_list_builder = ProvenCompactCiphertextList::builder(&pk);
         compact_list_builder.push_with_num_bits(msg, 8).unwrap();
         compact_list_builder
-            .build_with_proof_packed(pp, &[], tfhe::zk::ZkComputeLoad::Proof)
+            .build_with_proof_packed(pp, metadata, tfhe::zk::ZkComputeLoad::Proof)
             .unwrap()
     }
 
@@ -3513,10 +3584,21 @@ pub(crate) mod tests {
         let message = 42;
         let dummy_contract_address =
             alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
-        let proven_ct = encrypt_and_prove(message, &pp, &key_handle.to_string()).await;
+
+        let dummy_acl_address =
+            alloy_primitives::address!("eeda6bf26964af9d7eed9e03e53415d37aa960ee");
+
+        let metadata = assemble_metadata_alloy(
+            &dummy_contract_address,
+            &internal_client.get_client_address(),
+            &dummy_acl_address,
+            &dummy_domain().chain_id.unwrap(),
+        );
+
+        let proven_ct = encrypt_and_prove(message, &pp, &key_handle.to_string(), &metadata).await;
         // Sanity check that the proof is valid
         let pk = load_pk_from_storage(None, &key_handle.to_string()).await;
-        assert!(tfhe::zk::ZkVerificationOutCome::Valid == proven_ct.verify(&pp, &pk, &[]));
+        assert!(tfhe::zk::ZkVerificationOutCome::Valid == proven_ct.verify(&pp, &pk, &metadata));
 
         let reqs: Vec<_> = (0..parallelism)
             .map(|j| {
@@ -3528,7 +3610,7 @@ pub(crate) mod tests {
                         &dummy_contract_address,
                         &proven_ct,
                         &dummy_domain(),
-                        &dummy_contract_address,
+                        &dummy_acl_address,
                         &request_id,
                     )
                     .unwrap()

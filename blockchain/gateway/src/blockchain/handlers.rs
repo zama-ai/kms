@@ -151,9 +151,9 @@ async fn decrypt(
     }
 
     // Get chain-id and verifying contract for EIP-712 signature
-    let chain_id_le = config.ethereum.chain_id.to_le_bytes();
+    let chain_id_be = config.ethereum.chain_id.to_be_bytes();
     let mut chain_id_bytes = vec![0u8; 32];
-    chain_id_bytes[..8].copy_from_slice(&chain_id_le);
+    chain_id_bytes[24..].copy_from_slice(&chain_id_be);
 
     let vc_hex = hex::encode(config.ethereum.kmsverifier_vc_address);
     let acl_address = hex::encode(config.ethereum.acl_address);
@@ -225,12 +225,12 @@ pub(crate) async fn handle_zkp_event(
     _ = alloy_primitives::Address::parse_checksummed(&event.caller_address, None)?;
 
     // Get chain-id and verifying contract for EIP-712 signature
-    let chain_id_le = config.ethereum.chain_id.to_le_bytes();
+    let chain_id_be = config.ethereum.chain_id.to_be_bytes();
     let mut chain_id_bytes = vec![0u8; 32];
-    chain_id_bytes[..8].copy_from_slice(&chain_id_le);
+    chain_id_bytes[24..].copy_from_slice(&chain_id_be);
 
     // sanity check that the U256 and byte chain_id are identical
-    if U256::from_little_endian(&chain_id_bytes) != chain_id {
+    if U256::from_big_endian(&chain_id_bytes) != chain_id {
         let err_str = format!("chain_id mismatch: {:?} vs. {:?}", chain_id, chain_id_bytes);
         tracing::error!(err_str);
         return Err(anyhow::anyhow!(err_str));
@@ -253,7 +253,6 @@ pub(crate) async fn handle_zkp_event(
             event.caller_address.clone(),
             event.ct_proof.0.clone(),
             event.max_num_bits,
-            chain_id,
             domain,
             acl_address,
         )

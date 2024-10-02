@@ -2,6 +2,7 @@ use super::rpc_types::{
     compute_external_pt_signature, protobuf_to_alloy_domain, BaseKms, PrivDataType,
     PublicParameterWithParamID, SignedPubDataHandleInternal, CURRENT_FORMAT_VERSION,
 };
+use crate::client::assemble_metadata_req;
 use crate::conf::centralized::CentralizedConfig;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::central_kms::verify_eip712;
@@ -883,9 +884,15 @@ where
         .inspect_err(|e| {
             tracing::error!("could not cast pp for handle {} ({e})", crs_handle);
         })?;
+
+    let metadata = tonic_handle_potential_err(
+        assemble_metadata_req(&req),
+        "Error assembling ZKP metadata".to_string(),
+    )?;
+
     let (send, recv) = tokio::sync::oneshot::channel();
     rayon::spawn(move || {
-        let ok = verify_ct_proofs(&proven_ct, &pp, &wrapped_pk);
+        let ok = verify_ct_proofs(&proven_ct, &pp, &wrapped_pk, &metadata);
         let _ = send.send(ok);
     });
     let signature_ok = recv.await.inspect_err(|e| {
@@ -925,10 +932,11 @@ fn verify_ct_proofs(
     proven_ct: &ProvenCompactCiphertextList,
     pp: &CompactPkePublicParams,
     wrapped_pk: &WrappedPublicKeyOwned,
+    metadata: &[u8],
 ) -> bool {
     match wrapped_pk {
         WrappedPublicKeyOwned::Compact(pk) => {
-            if let tfhe::zk::ZkVerificationOutCome::Invalid = proven_ct.verify(pp, pk, &[]) {
+            if let tfhe::zk::ZkVerificationOutCome::Invalid = proven_ct.verify(pp, pk, metadata) {
                 return false;
             }
         }

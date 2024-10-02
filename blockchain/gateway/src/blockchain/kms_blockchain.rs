@@ -505,7 +505,7 @@ impl Blockchain for KmsBlockchainImpl {
 
         // chain ID is 32 bytes
         let mut eip712_chain_id = vec![0u8; 32];
-        chain_id.to_little_endian(&mut eip712_chain_id);
+        chain_id.to_big_endian(&mut eip712_chain_id);
 
         // convert user_address to verification_key
         if client_address.len() != 20 {
@@ -620,7 +620,6 @@ impl Blockchain for KmsBlockchainImpl {
         contract_address: String,
         ct_proof: Vec<u8>,
         max_num_bits: u32,
-        chain_id: U256,
         eip712_domain: Eip712DomainMsg,
         acl_address: String,
     ) -> anyhow::Result<Vec<ZkpResponseValues>> {
@@ -629,7 +628,7 @@ impl Blockchain for KmsBlockchainImpl {
             hex::encode(&client_address),
             hex::encode(&contract_address),
             max_num_bits,
-            chain_id
+            eip712_domain.chain_id
         );
 
         let ct_proof_handle = self.store_ciphertext(ct_proof.clone()).await?;
@@ -650,10 +649,6 @@ impl Blockchain for KmsBlockchainImpl {
             crs_id.to_hex(),
             hex::encode(&ct_proof_handle),
         );
-
-        // chain ID is 32 bytes
-        let mut chain_id_bytes = vec![0u8; 32];
-        chain_id.to_little_endian(&mut chain_id_bytes);
 
         // convert user_address to verification_key
         if client_address.len() != 20 {

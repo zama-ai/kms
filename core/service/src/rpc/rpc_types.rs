@@ -162,7 +162,7 @@ pub fn protobuf_to_alloy_domain(pb_domain: &Eip712DomainMsg) -> anyhow::Result<E
         Some(pb_domain.name.clone().into()),
         Some(pb_domain.version.clone().into()),
         Some(
-            U256::try_from_le_slice(&pb_domain.chain_id)
+            U256::try_from_be_slice(&pb_domain.chain_id)
                 .ok_or_else(|| anyhow_error_and_log("invalid chain ID"))?,
         ),
         Some(Address::parse_checksummed(
@@ -188,7 +188,7 @@ pub(crate) fn alloy_to_protobuf_domain(domain: &Eip712Domain) -> anyhow::Result<
     let chain_id = domain
         .chain_id
         .ok_or_else(|| anyhow_error_and_log("missing domain chain_id"))?
-        .to_le_bytes_vec();
+        .to_be_bytes_vec();
     let verifying_contract = domain
         .verifying_contract
         .as_ref()
