@@ -2,8 +2,11 @@
 # permanently specified in this file.
 
 [advisories]
-ignore = ["RUSTSEC-2023-0071"]
+# The ignored vulnerability RUSTSEC-2024-0376 is tracked by #1162
+# The ignored vulnerability RUSTSEC-2023-0071 is not applicable in our use-case
+ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2024-0376"]
 informational_warnings = ["unmaintained"]
+severity_threshold = "medium"
 
 # Advisory Database Configuration
 [database]

@@ -25,10 +25,8 @@ jobs:
 
       - run: cargo deny check license
 
-      # The ignored vulnerability is tracked by #1162
-      - run: cargo audit --ignore RUSTSEC-2024-0376
+      - run: cargo audit
 
 permissions:
   contents: read
   checks: write
-
