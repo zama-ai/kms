@@ -4,25 +4,39 @@ use core::hash::Hasher;
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Attribute, Event};
 use serde::ser::SerializeMap;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::str::FromStr;
 use strum::EnumProperty;
 use strum_macros::{Display, EnumIs, EnumIter, EnumString};
+use tfhe_versionable::{Versionize, VersionsDispatch};
 use typed_builder::TypedBuilder;
 
+#[derive(VersionsDispatch)]
+pub enum KmsCoreConfVersioned {
+    V0(KmsCoreConf),
+}
+
 #[cw_serde]
+#[derive(Versionize)]
+#[versionize(KmsCoreConfVersioned)]
 pub enum KmsCoreConf {
     Centralized(FheParameter),
     Threshold(KmsCoreThresholdConf),
 }
 
+#[derive(VersionsDispatch)]
+pub enum FheParameterVersioned {
+    V0(FheParameter),
+}
+
 /// This type needs to match the protobuf type
 /// called [ParamChoice].
 #[cw_serde]
-#[derive(Copy, Default, EnumString, Eq, Display, EnumIter)]
+#[derive(Copy, Default, EnumString, Eq, Display, EnumIter, Versionize)]
+#[versionize(FheParameterVersioned)]
 pub enum FheParameter {
     #[default]
     #[strum(serialize = "default")]
@@ -31,7 +45,14 @@ pub enum FheParameter {
     Test,
 }
 
+#[derive(VersionsDispatch)]
+pub enum KmsCoreThresholdConfVersioned {
+    V0(KmsCoreThresholdConf),
+}
+
 #[cw_serde]
+#[derive(Versionize)]
+#[versionize(KmsCoreThresholdConfVersioned)]
 pub struct KmsCoreThresholdConf {
     pub parties: Vec<KmsCoreParty>,
     pub response_count_for_majority_vote: usize,
@@ -77,8 +98,14 @@ impl KmsCoreConf {
     }
 }
 
+#[derive(VersionsDispatch)]
+pub enum KmsCorePartyVersioned {
+    V0(KmsCoreParty),
+}
+
 #[cw_serde]
-#[derive(Default)]
+#[derive(Default, Versionize)]
+#[versionize(KmsCorePartyVersioned)]
 pub struct KmsCoreParty {
     pub party_id: HexVector,
     pub public_key: Option<RedactedHexVector>,
@@ -86,8 +113,14 @@ pub struct KmsCoreParty {
     pub tls_pub_key: Option<HexVector>,
 }
 
+#[derive(Serialize, Deserialize, VersionsDispatch)]
+pub enum OperationValueVersioned {
+    V0(OperationValue),
+}
+
 #[cw_serde]
-#[derive(Eq, EnumString, Display, EnumIter, strum_macros::EnumProperty, EnumIs)]
+#[derive(Eq, EnumString, Display, EnumIter, strum_macros::EnumProperty, EnumIs, Versionize)]
+#[versionize(OperationValueVersioned)]
 pub enum OperationValue {
     #[serde(rename = "decrypt")]
     #[strum(serialize = "decrypt")]
@@ -190,16 +223,28 @@ impl OperationValue {
     }
 }
 
+#[derive(Serialize, Deserialize, VersionsDispatch)]
+pub enum TransactionVersioned {
+    V0(Transaction),
+}
+
 #[cw_serde]
-#[derive(Eq, TypedBuilder, Default)]
+#[derive(Eq, Default, Versionize)]
+#[versionize(TransactionVersioned)]
 pub struct Transaction {
     block_height: u64,
     transaction_index: u32,
-    #[builder(setter(into), default)]
     operations: Vec<OperationValue>,
 }
 
 impl Transaction {
+    pub fn new(block_height: u64, transaction_index: u32, operations: Vec<OperationValue>) -> Self {
+        Self {
+            block_height,
+            transaction_index,
+            operations,
+        }
+    }
     pub fn block_height(&self) -> u64 {
         self.block_height
     }
@@ -218,8 +263,14 @@ impl Transaction {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, VersionsDispatch)]
+pub enum FheTypeVersioned {
+    V0(FheType),
+}
+
 #[cw_serde]
-#[derive(Copy, Default, EnumString, Eq, Display)]
+#[derive(Copy, Default, EnumString, Eq, Display, Versionize)]
+#[versionize(FheTypeVersioned)]
 pub enum FheType {
     #[default]
     #[strum(serialize = "ebool")]
@@ -319,14 +370,18 @@ pub enum KmsEventAttributeKey {
     TransactionId,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, VersionsDispatch)]
+pub enum DecryptValuesVersioned {
+    V0(DecryptValues),
+}
+
 #[cw_serde]
-#[derive(Eq, TypedBuilder, Default)]
+#[derive(Eq, Default, Versionize)]
+#[versionize(DecryptValuesVersioned)]
 pub struct DecryptValues {
     /// The ID of the FHE public key used
-    #[builder(setter(into))]
     key_id: HexVector,
     /// The list of KV store ciphertext handles to be decrypted
-    #[builder(setter(into))]
     ciphertext_handles: RedactedHexVectorList,
     /// The list of FHE types of the above ciphertexts
     fhe_types: Vec<FheType>,
@@ -335,28 +390,51 @@ pub struct DecryptValues {
     /// The version number
     version: u32,
     /// The address of the ACL contract
-    #[builder(setter(into))]
     acl_address: String,
 
     // EIP-712
     /// The name of the EIP-712 domain
-    #[builder(setter(into))]
     eip712_name: String,
     /// The version of the EIP-712 domain
-    #[builder(setter(into))]
     eip712_version: String,
     /// The chain-id used for EIP-712
-    #[builder(setter(into))]
     eip712_chain_id: HexVector,
     /// The contract verifying the EIP-712 signature
-    #[builder(setter(into))]
     eip712_verifying_contract: String,
     /// The optional EIP-712 salt
-    #[builder(setter(into))]
     eip712_salt: HexVector,
 }
 
 impl DecryptValues {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        key_id: impl Into<HexVector>,
+        ciphertext_handles: impl Into<RedactedHexVectorList>,
+        fhe_types: Vec<FheType>,
+        external_handles: Option<impl Into<HexVectorList>>,
+        version: u32,
+        acl_address: String,
+        eip712_name: String,
+        eip712_version: String,
+        eip712_chain_id: impl Into<HexVector>,
+        eip712_verifying_contract: String,
+        eip712_salt: impl Into<HexVector>,
+    ) -> Self {
+        Self {
+            key_id: key_id.into(),
+            ciphertext_handles: ciphertext_handles.into(),
+            fhe_types,
+            external_handles: external_handles.map(Into::into),
+            version,
+            acl_address,
+            eip712_name,
+            eip712_version,
+            eip712_chain_id: eip712_chain_id.into(),
+            eip712_verifying_contract,
+            eip712_salt: eip712_salt.into(),
+        }
+    }
+
     pub fn version(&self) -> u32 {
         self.version
     }
@@ -408,10 +486,15 @@ impl From<DecryptValues> for OperationValue {
     }
 }
 
+#[derive(Serialize, Deserialize, VersionsDispatch)]
+pub enum ReencryptValuesVersioned {
+    V0(ReencryptValues),
+}
+
 #[cw_serde]
-#[derive(Eq, TypedBuilder, Default)]
+#[derive(Eq, Default, Versionize)]
+#[versionize(ReencryptValuesVersioned)]
 pub struct ReencryptValues {
-    #[builder(setter(into))]
     signature: HexVector,
 
     // Payload
@@ -420,42 +503,67 @@ pub struct ReencryptValues {
     /// The address of the client receiving the reencryption output
     client_address: String,
     /// The encyption key of the client
-    #[builder(setter(into))]
     enc_key: RedactedHexVector,
     /// The FHE type of the value to be reencrypted
     fhe_type: FheType,
     /// The ID of the FHE public key used
-    #[builder(setter(into))]
     key_id: HexVector,
     /// The KV-store handle of the ciphertext to be reencrypted
-    #[builder(setter(into))]
     ciphertext_handle: RedactedHexVector,
     /// The SHA3 digest of the ciphertext to be reencrypted
-    #[builder(setter(into))]
     ciphertext_digest: RedactedHexVector,
     /// The address of the ACL contract
-    #[builder(setter(into))]
     acl_address: String,
 
     // EIP-712:
     /// The name of the EIP-712 domain
-    #[builder(setter(into))]
     eip712_name: String,
     /// The version of the EIP-712 domain
-    #[builder(setter(into))]
     eip712_version: String,
     /// The chain-id used for EIP-712
-    #[builder(setter(into))]
     eip712_chain_id: HexVector,
     /// The contract verifying the EIP-712 signature
-    #[builder(setter(into))]
     eip712_verifying_contract: String,
     /// The optional EIP-712 salt
-    #[builder(setter(into))]
     eip712_salt: HexVector,
 }
 
 impl ReencryptValues {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        signature: impl Into<HexVector>,
+        version: u32,
+        client_address: String,
+        enc_key: impl Into<RedactedHexVector>,
+        fhe_type: FheType,
+        key_id: impl Into<HexVector>,
+        ciphertext_handle: impl Into<RedactedHexVector>,
+        ciphertext_digest: impl Into<RedactedHexVector>,
+        acl_address: String,
+        eip712_name: String,
+        eip712_version: String,
+        eip712_chain_id: impl Into<HexVector>,
+        eip712_verifying_contract: String,
+        eip712_salt: impl Into<HexVector>,
+    ) -> Self {
+        Self {
+            signature: signature.into(),
+            version,
+            client_address,
+            enc_key: enc_key.into(),
+            fhe_type,
+            key_id: key_id.into(),
+            ciphertext_handle: ciphertext_handle.into(),
+            ciphertext_digest: ciphertext_digest.into(),
+            acl_address,
+            eip712_name,
+            eip712_version,
+            eip712_chain_id: eip712_chain_id.into(),
+            eip712_verifying_contract,
+            eip712_salt: eip712_salt.into(),
+        }
+    }
+
     pub fn signature(&self) -> &HexVector {
         &self.signature
     }
@@ -519,47 +627,71 @@ impl From<ReencryptValues> for OperationValue {
     }
 }
 
+#[derive(Serialize, Deserialize, VersionsDispatch)]
+pub enum ZkpValuesVersioned {
+    V0(ZkpValues),
+}
+
 #[cw_serde]
-#[derive(Eq, TypedBuilder, Default)]
+#[derive(Eq, Default, Versionize)]
+#[versionize(ZkpValuesVersioned)]
 pub struct ZkpValues {
     /// The ID of the CRS used
-    #[builder(setter(into))]
     crs_id: HexVector,
     /// The ID of the FHE public key used
-    #[builder(setter(into))]
     key_id: HexVector,
     /// The address of the dapp the input is used for
-    #[builder(setter(into))]
     contract_address: String,
     /// The address of the client providing the input
-    #[builder(setter(into))]
     client_address: String,
     /// The KV-store handle of the ciphertext and proof to be verified
-    #[builder(setter(into))]
     ct_proof_handle: RedactedHexVector,
     /// The address of the ACL contract
-    #[builder(setter(into))]
     acl_address: String,
 
     // EIP-712:
     /// The name of the EIP-712 domain
-    #[builder(setter(into))]
     eip712_name: String,
     /// The version of the EIP-712 domain
-    #[builder(setter(into))]
     eip712_version: String,
     /// The chain-id used for EIP-712
-    #[builder(setter(into))]
     eip712_chain_id: HexVector,
     /// The contract verifying the EIP-712 signature
-    #[builder(setter(into))]
     eip712_verifying_contract: String,
     /// The optional EIP-712 salt
-    #[builder(setter(into))]
     eip712_salt: HexVector,
 }
 
 impl ZkpValues {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        crs_id: impl Into<HexVector>,
+        key_id: impl Into<HexVector>,
+        contract_address: String,
+        client_address: String,
+        ct_proof_handle: impl Into<RedactedHexVector>,
+        acl_address: String,
+        eip712_name: String,
+        eip712_version: String,
+        eip712_chain_id: impl Into<HexVector>,
+        eip712_verifying_contract: String,
+        eip712_salt: impl Into<HexVector>,
+    ) -> Self {
+        Self {
+            crs_id: crs_id.into(),
+            key_id: key_id.into(),
+            contract_address,
+            client_address,
+            ct_proof_handle: ct_proof_handle.into(),
+            acl_address,
+            eip712_name,
+            eip712_version,
+            eip712_chain_id: eip712_chain_id.into(),
+            eip712_verifying_contract,
+            eip712_salt: eip712_salt.into(),
+        }
+    }
+
     pub fn key_id(&self) -> &HexVector {
         &self.key_id
     }
@@ -611,14 +743,24 @@ impl From<ZkpValues> for OperationValue {
     }
 }
 
+#[derive(Serialize, Deserialize, VersionsDispatch)]
+pub enum KeyUrlValuesVersioned {
+    V0(KeyUrlValues),
+}
+
 #[cw_serde]
-#[derive(Eq, TypedBuilder, Default)]
+#[derive(Eq, Default, Versionize)]
+#[versionize(KeyUrlValuesVersioned)]
 pub struct KeyUrlValues {
-    #[builder(setter(into))]
     data_id: HexVector,
 }
 
 impl KeyUrlValues {
+    pub fn new(data_id: impl Into<HexVector>) -> Self {
+        Self {
+            data_id: data_id.into(),
+        }
+    }
     pub fn data_id(&self) -> &HexVector {
         &self.data_id
     }
@@ -630,19 +772,30 @@ impl From<KeyUrlValues> for OperationValue {
     }
 }
 
+#[derive(Serialize, Deserialize, VersionsDispatch)]
+pub enum DecryptResponseValuesVersioned {
+    V0(DecryptResponseValues),
+}
+
 #[cw_serde]
-#[derive(Default, Eq, TypedBuilder)]
+#[derive(Default, Eq, Versionize)]
+#[versionize(DecryptResponseValuesVersioned)]
 pub struct DecryptResponseValues {
-    #[builder(setter(into))]
     signature: HexVector,
     /// This is the response payload,
     /// we keep it in the serialized form because
     /// we need to use it to verify the signature.
-    #[builder(setter(into))]
     payload: HexVector,
 }
 
 impl DecryptResponseValues {
+    pub fn new(signature: impl Into<HexVector>, payload: impl Into<HexVector>) -> Self {
+        Self {
+            signature: signature.into(),
+            payload: payload.into(),
+        }
+    }
+
     pub fn signature(&self) -> &HexVector {
         &self.signature
     }
@@ -658,10 +811,22 @@ impl From<DecryptResponseValues> for OperationValue {
     }
 }
 
+#[derive(Serialize, Deserialize, VersionsDispatch)]
+pub enum KeyGenPreprocResponseValuesVersioned {
+    V0(KeyGenPreprocResponseValues),
+}
+
 #[cw_serde]
-#[derive(Default, Eq, TypedBuilder)]
+#[derive(Default, Eq, Versionize)]
+#[versionize(KeyGenPreprocResponseValuesVersioned)]
 pub struct KeyGenPreprocResponseValues {
     // NOTE: there's no actual response except an "ok"
+}
+
+impl KeyGenPreprocResponseValues {
+    pub fn new() -> Self {
+        Self {}
+    }
 }
 
 impl From<KeyGenPreprocResponseValues> for OperationValue {
@@ -670,22 +835,41 @@ impl From<KeyGenPreprocResponseValues> for OperationValue {
     }
 }
 
+#[derive(Serialize, Deserialize, VersionsDispatch)]
+pub enum KeyGenResponseValuesVersioned {
+    V0(KeyGenResponseValues),
+}
+
 #[cw_serde]
-#[derive(Default, Eq, TypedBuilder)]
+#[derive(Default, Eq, Versionize)]
+#[versionize(KeyGenResponseValuesVersioned)]
 pub struct KeyGenResponseValues {
-    #[builder(setter(into))]
     request_id: HexVector,
     public_key_digest: String,
-    #[builder(setter(into))]
     public_key_signature: HexVector,
     // server key is bootstrap key
     server_key_digest: String,
-    #[builder(setter(into))]
     server_key_signature: HexVector,
     // we do not need SnS key
 }
 
 impl KeyGenResponseValues {
+    pub fn new(
+        request_id: impl Into<HexVector>,
+        public_key_digest: String,
+        public_key_signature: impl Into<HexVector>,
+        server_key_digest: String,
+        server_key_signature: impl Into<HexVector>,
+    ) -> Self {
+        Self {
+            request_id: request_id.into(),
+            public_key_digest,
+            public_key_signature: public_key_signature.into(),
+            server_key_digest,
+            server_key_signature: server_key_signature.into(),
+        }
+    }
+
     pub fn request_id(&self) -> &HexVector {
         &self.request_id
     }
@@ -713,19 +897,30 @@ impl From<KeyGenResponseValues> for OperationValue {
     }
 }
 
+#[derive(Serialize, Deserialize, VersionsDispatch)]
+pub enum ReencryptResponseValuesVersioned {
+    V0(ReencryptResponseValues),
+}
+
 #[cw_serde]
-#[derive(Default, Eq, TypedBuilder)]
+#[derive(Default, Eq, Versionize)]
+#[versionize(ReencryptResponseValuesVersioned)]
 pub struct ReencryptResponseValues {
-    #[builder(setter(into))]
     signature: HexVector,
     /// This is the response payload,
     /// we keep it in the serialized form because
     /// we need to use it to verify the signature.
-    #[builder(setter(into))]
     payload: HexVector,
 }
 
 impl ReencryptResponseValues {
+    pub fn new(signature: impl Into<HexVector>, payload: impl Into<HexVector>) -> Self {
+        Self {
+            signature: signature.into(),
+            payload: payload.into(),
+        }
+    }
+
     pub fn signature(&self) -> &HexVector {
         &self.signature
     }
@@ -741,19 +936,30 @@ impl From<ReencryptResponseValues> for OperationValue {
     }
 }
 
+#[derive(Serialize, Deserialize, VersionsDispatch)]
+pub enum ZkpResponseValuesVersioned {
+    V0(ZkpResponseValues),
+}
+
 #[cw_serde]
-#[derive(Default, Eq, TypedBuilder)]
+#[derive(Default, Eq, Versionize)]
+#[versionize(ZkpResponseValuesVersioned)]
 pub struct ZkpResponseValues {
-    #[builder(setter(into))]
     signature: HexVector,
     /// This is the response payload,
     /// we keep it in the serialized form because
     /// we need to use it to verify the signature.
-    #[builder(setter(into))]
     payload: HexVector,
 }
 
 impl ZkpResponseValues {
+    pub fn new(signature: impl Into<HexVector>, payload: impl Into<HexVector>) -> Self {
+        Self {
+            signature: signature.into(),
+            payload: payload.into(),
+        }
+    }
+
     pub fn signature(&self) -> &HexVector {
         &self.signature
     }
@@ -769,9 +975,15 @@ impl From<ZkpResponseValues> for OperationValue {
     }
 }
 
+#[derive(Serialize, Deserialize, VersionsDispatch)]
+pub enum KeyUrlInfoVersioned {
+    V0(KeyUrlInfo),
+}
+
 /// An entry containing all URL and signature info for a key or CRS.
 #[cw_serde]
-#[derive(Default, Eq, TypedBuilder)]
+#[derive(Default, Eq, Versionize)]
+#[versionize(KeyUrlInfoVersioned)]
 pub struct KeyUrlInfo {
     // The ID/handle of the key or CRS.
     data_id: HexVector,
@@ -780,10 +992,24 @@ pub struct KeyUrlInfo {
     // List of URLs to fetch the data element from.
     urls: Vec<String>,
     // List of signatures for the data element.
-    signatures: Vec<HexVector>,
+    signatures: HexVectorList,
 }
 
 impl KeyUrlInfo {
+    pub fn new(
+        data_id: impl Into<HexVector>,
+        param_choice: i32,
+        urls: Vec<String>,
+        signatures: impl Into<HexVectorList>,
+    ) -> Self {
+        Self {
+            data_id: data_id.into(),
+            param_choice,
+            urls,
+            signatures: signatures.into(),
+        }
+    }
+
     pub fn data_id(&self) -> &HexVector {
         &self.data_id
     }
@@ -793,24 +1019,34 @@ impl KeyUrlInfo {
     pub fn urls(&self) -> &Vec<String> {
         &self.urls
     }
-    pub fn signatures(&self) -> &Vec<HexVector> {
+    pub fn signatures(&self) -> &HexVectorList {
         &self.signatures
     }
 }
 
+#[derive(Serialize, Deserialize, VersionsDispatch)]
+pub enum FheKeyUrlInfoVersioned {
+    V0(FheKeyUrlInfo),
+}
+
 /// Struct containing information about a single conceptual key (and hence ID)
 #[cw_serde]
-#[derive(Default, Eq, TypedBuilder)]
+#[derive(Default, Eq, Versionize)]
+#[versionize(FheKeyUrlInfoVersioned)]
 pub struct FheKeyUrlInfo {
-    // Info aboout the public key used for FHE encryption.
-    #[builder(setter(into))]
+    // Info about the public key used for FHE encryption.
     fhe_public_key: KeyUrlInfo,
     // Info about the public key used for FHE computation.
-    #[builder(setter(into))]
     fhe_server_key: KeyUrlInfo,
 }
 
 impl FheKeyUrlInfo {
+    pub fn new(fhe_public_key: KeyUrlInfo, fhe_server_key: KeyUrlInfo) -> Self {
+        Self {
+            fhe_public_key,
+            fhe_server_key,
+        }
+    }
     pub fn fhe_public_key(&self) -> &KeyUrlInfo {
         &self.fhe_public_key
     }
@@ -819,26 +1055,42 @@ impl FheKeyUrlInfo {
     }
 }
 
-/// Struct containing information about a single conceptual verfication key.
+#[derive(Serialize, Deserialize, VersionsDispatch)]
+pub enum VerfKeyUrlInfoVersioned {
+    V0(VerfKeyUrlInfo),
+}
+
+/// Struct containing information about a single conceptual verification key.
 /// There is exactly one of these for each KMS server.
 #[cw_serde]
-#[derive(Default, Eq, TypedBuilder)]
+#[derive(Default, Eq, Versionize)]
+#[versionize(VerfKeyUrlInfoVersioned)]
 pub struct VerfKeyUrlInfo {
     // The ID of the verification key.
-    #[builder(setter(into))]
     key_id: HexVector,
     // The integer ID of the server who owns the key.
-    #[builder(setter(into))]
     server_id: u32,
     // The URL where the verification key can be found.
-    #[builder(setter(into))]
     verf_public_key_url: String,
     // The URL where the Ethereum associated address can be found.
-    #[builder(setter(into))]
     verf_public_key_address: String,
 }
 
 impl VerfKeyUrlInfo {
+    pub fn new(
+        key_id: impl Into<HexVector>,
+        server_id: u32,
+        verf_public_key_url: String,
+        verf_public_key_address: String,
+    ) -> Self {
+        Self {
+            key_id: key_id.into(),
+            server_id,
+            verf_public_key_url,
+            verf_public_key_address,
+        }
+    }
+
     pub fn key_id(&self) -> &HexVector {
         &self.key_id
     }
@@ -853,24 +1105,38 @@ impl VerfKeyUrlInfo {
     }
 }
 
+#[derive(Serialize, Deserialize, VersionsDispatch)]
+pub enum KeyUrlResponseValuesVersioned {
+    V0(KeyUrlResponseValues),
+}
+
 #[cw_serde]
-#[derive(Default, Eq, TypedBuilder)]
+#[derive(Default, Eq, Versionize)]
+#[versionize(KeyUrlResponseValuesVersioned)]
 pub struct KeyUrlResponseValues {
     // All the FHE public key info from this gateway and associated ASC.
-    #[builder(setter(into))]
     fhe_key_info: Vec<FheKeyUrlInfo>,
     // All the CRS info from this gateway and associated ASC.
     // The map maps the max_amount_of_bits a given CRS supports to the CRS information.
     // For now we assume there is only one CRS per max_amount_of_bits.
-    #[builder(setter(into))]
     crs: HashMap<u32, KeyUrlInfo>,
     // The public verification information for the KMS servers.
     // The vector will conatin one entry for each KMS server.
-    #[builder(setter(into))]
     verf_public_key: Vec<VerfKeyUrlInfo>,
 }
 
 impl KeyUrlResponseValues {
+    pub fn new(
+        fhe_key_info: Vec<FheKeyUrlInfo>,
+        crs: HashMap<u32, KeyUrlInfo>,
+        verf_public_key: Vec<VerfKeyUrlInfo>,
+    ) -> Self {
+        Self {
+            fhe_key_info,
+            crs,
+            verf_public_key,
+        }
+    }
     pub fn fhe_key_info(&self) -> &Vec<FheKeyUrlInfo> {
         &self.fhe_key_info
     }
@@ -887,20 +1153,32 @@ impl From<KeyUrlResponseValues> for OperationValue {
         OperationValue::KeyUrlResponse(value)
     }
 }
+#[derive(Serialize, Deserialize, VersionsDispatch)]
+pub enum CrsGenResponseValuesVersioned {
+    V0(CrsGenResponseValues),
+}
 
 #[cw_serde]
-#[derive(Default, Eq, TypedBuilder)]
+#[derive(Default, Eq, Versionize)]
+#[versionize(CrsGenResponseValuesVersioned)]
 pub struct CrsGenResponseValues {
     /// The request ID of the CRS generation.
     request_id: String,
     /// The CRS digest, which can be used to derive the storage URL for the CRS.
     digest: String,
     /// The signature on the digest.
-    #[builder(setter(into))]
     signature: HexVector,
 }
 
 impl CrsGenResponseValues {
+    pub fn new(request_id: String, digest: String, signature: impl Into<HexVector>) -> Self {
+        Self {
+            request_id,
+            digest,
+            signature: signature.into(),
+        }
+    }
+
     pub fn request_id(&self) -> &str {
         &self.request_id
     }
@@ -920,9 +1198,21 @@ impl From<CrsGenResponseValues> for OperationValue {
     }
 }
 
+#[derive(Serialize, Deserialize, VersionsDispatch)]
+pub enum KeyGenPreprocValuesVersioned {
+    V0(KeyGenPreprocValues),
+}
+
 #[cw_serde]
-#[derive(Eq, Default)]
+#[derive(Eq, Default, Versionize)]
+#[versionize(KeyGenPreprocValuesVersioned)]
 pub struct KeyGenPreprocValues {}
+
+impl KeyGenPreprocValues {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
 
 impl From<KeyGenPreprocValues> for OperationValue {
     fn from(value: KeyGenPreprocValues) -> Self {
@@ -930,8 +1220,14 @@ impl From<KeyGenPreprocValues> for OperationValue {
     }
 }
 
+#[derive(Serialize, Deserialize, VersionsDispatch)]
+pub enum KeyGenValuesVersioned {
+    V0(KeyGenValues),
+}
+
 #[cw_serde]
-#[derive(Eq, Default, TypedBuilder)]
+#[derive(Eq, Default, Versionize)]
+#[versionize(KeyGenValuesVersioned)]
 pub struct KeyGenValues {
     /// Hex-encoded preprocessing ID.
     /// This ID refers to the request ID of a preprocessing request.
@@ -939,6 +1235,12 @@ pub struct KeyGenValues {
 }
 
 impl KeyGenValues {
+    pub fn new(preproc_id: impl Into<HexVector>) -> Self {
+        Self {
+            preproc_id: preproc_id.into(),
+        }
+    }
+
     pub fn preproc_id(&self) -> &HexVector {
         &self.preproc_id
     }
@@ -950,9 +1252,21 @@ impl From<KeyGenValues> for OperationValue {
     }
 }
 
+#[derive(Serialize, Deserialize, VersionsDispatch)]
+pub enum CrsGenValuesVersioned {
+    V0(CrsGenValues),
+}
+
 #[cw_serde]
-#[derive(Eq, Default)]
+#[derive(Eq, Default, Versionize)]
+#[versionize(CrsGenValuesVersioned)]
 pub struct CrsGenValues {}
+
+impl CrsGenValues {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
 
 impl From<CrsGenValues> for OperationValue {
     fn from(value: CrsGenValues) -> Self {
@@ -1180,7 +1494,7 @@ impl TryFrom<Event> for KmsEvent {
 }
 
 #[cw_serde]
-#[derive(Eq, TypedBuilder)]
+#[derive(Eq)]
 pub struct TransactionEvent {
     pub tx_hash: String,
     pub event: KmsEvent,
@@ -1398,19 +1712,19 @@ mod tests {
 
     #[test]
     fn test_decrypt_event_to_json() {
-        let decrypt_values = DecryptValues::builder()
-            .version(1)
-            .key_id("mykeyid".as_bytes().to_vec())
-            .ciphertext_handles(vec![vec![1, 2, 3], vec![4, 4, 4]])
-            .fhe_types(vec![FheType::Euint8, FheType::Euint16])
-            .external_handles(Some(vec![vec![9, 8, 7], vec![5, 4, 3]].into()))
-            .eip712_name("eip712name".to_string())
-            .eip712_version("version".to_string())
-            .eip712_chain_id(vec![6])
-            .eip712_verifying_contract("contract".to_string())
-            .eip712_salt(vec![7])
-            .acl_address("acl_address".to_string())
-            .build();
+        let decrypt_values = DecryptValues::new(
+            "my_key_id".as_bytes().to_vec(),
+            vec![vec![1, 2, 3], vec![4, 4, 4]],
+            vec![FheType::Euint8, FheType::Euint16],
+            Some(vec![vec![9, 8, 7], vec![5, 4, 3]]),
+            1,
+            "acl_address".to_string(),
+            "eip712name".to_string(),
+            "version".to_string(),
+            vec![6],
+            "contract".to_string(),
+            vec![7],
+        );
         let message: KmsMessageWithoutProof = KmsMessage::builder().value(decrypt_values).build();
 
         let json = message.to_json().unwrap();
@@ -1418,7 +1732,7 @@ mod tests {
             "decrypt": {
                 "decrypt":{
                     "version": 1,
-                    "key_id": hex::encode("mykeyid".as_bytes()),
+                    "key_id": hex::encode("my_key_id".as_bytes()),
                     "fhe_types": ["euint8", "euint16"],
                     "external_handles": [hex::encode([9,8,7]), hex::encode([5, 4, 3])],
                     "ciphertext_handles": [hex::encode([1, 2, 3]), hex::encode([4, 4, 4])],
@@ -1436,10 +1750,7 @@ mod tests {
 
     #[test]
     fn test_decrypt_response_event_to_json() {
-        let decrypt_response_values = DecryptResponseValues::builder()
-            .signature(vec![4, 5, 6])
-            .payload(vec![1, 2, 3])
-            .build();
+        let decrypt_response_values = DecryptResponseValues::new(vec![4, 5, 6], vec![1, 2, 3]);
         let message: KmsMessageWithoutProof = KmsMessage::builder()
             .txn_id(Some(vec![1].into()))
             .value(decrypt_response_values)
@@ -1460,22 +1771,22 @@ mod tests {
 
     #[test]
     fn test_reencrypt_event_to_json() {
-        let reencrypt_values = ReencryptValues::builder()
-            .signature(vec![1])
-            .version(1)
-            .client_address("0x1234".to_string())
-            .enc_key(vec![4])
-            .fhe_type(FheType::Ebool)
-            .key_id("kid".as_bytes().to_vec())
-            .ciphertext_handle(vec![5])
-            .ciphertext_digest(vec![8])
-            .eip712_name("eip712name".to_string())
-            .eip712_version("version".to_string())
-            .eip712_chain_id(vec![6])
-            .eip712_verifying_contract("contract".to_string())
-            .eip712_salt(vec![7])
-            .acl_address("0xfe11".to_string())
-            .build();
+        let reencrypt_values = ReencryptValues::new(
+            vec![1],
+            1,
+            "0x1234".to_string(),
+            vec![4],
+            FheType::Ebool,
+            "kid".as_bytes().to_vec(),
+            vec![5],
+            vec![8],
+            "0xfe11".to_string(),
+            "eip712name".to_string(),
+            "version".to_string(),
+            vec![6],
+            "contract".to_string(),
+            vec![7],
+        );
         let message: KmsMessageWithoutProof = KmsMessage::builder().value(reencrypt_values).build();
 
         let json = message.to_json().unwrap();
@@ -1504,10 +1815,7 @@ mod tests {
 
     #[test]
     fn test_reencrypt_response_event_to_json() {
-        let reencrypt_response_values = ReencryptResponseValues::builder()
-            .signature(vec![1])
-            .payload(vec![2])
-            .build();
+        let reencrypt_response_values = ReencryptResponseValues::new(vec![1], vec![2]);
         let message: KmsMessageWithoutProof = KmsMessage::builder()
             .txn_id(Some(vec![1].into()))
             .value(reencrypt_response_values)
@@ -1527,19 +1835,19 @@ mod tests {
 
     #[test]
     fn test_zkp_event_to_json() {
-        let zkp_values = ZkpValues::builder()
-            .client_address("0x1234".to_string())
-            .contract_address("0x4321".to_string())
-            .crs_id("cid".as_bytes().to_vec())
-            .key_id("kid".as_bytes().to_vec())
-            .ct_proof_handle(vec![5])
-            .acl_address("0xfedc".to_string())
-            .eip712_name("eip712name".to_string())
-            .eip712_version("version".to_string())
-            .eip712_chain_id(vec![6])
-            .eip712_verifying_contract("contract".to_string())
-            .eip712_salt(vec![7])
-            .build();
+        let zkp_values = ZkpValues::new(
+            "cid".as_bytes().to_vec(),
+            "kid".as_bytes().to_vec(),
+            "0x4321".to_string(),
+            "0x1234".to_string(),
+            vec![5],
+            "0xfedc".to_string(),
+            "eip712name".to_string(),
+            "version".to_string(),
+            vec![6],
+            "contract".to_string(),
+            vec![7],
+        );
         let message: KmsMessageWithoutProof = KmsMessage::builder().value(zkp_values).build();
 
         let json = message.to_json().unwrap();
@@ -1565,10 +1873,7 @@ mod tests {
 
     #[test]
     fn test_zkp_response_event_to_json() {
-        let zkp_response_values = ZkpResponseValues::builder()
-            .signature(vec![1])
-            .payload(vec![2])
-            .build();
+        let zkp_response_values = ZkpResponseValues::new(vec![1], vec![2]);
         let message: KmsMessageWithoutProof = KmsMessage::builder()
             .txn_id(Some(vec![1].into()))
             .value(zkp_response_values)
@@ -1588,8 +1893,9 @@ mod tests {
 
     #[test]
     fn test_keygen_event_to_json() {
-        let message: KmsMessageWithoutProof =
-            KmsMessage::builder().value(KeyGenValues::default()).build();
+        let message: KmsMessageWithoutProof = KmsMessage::builder()
+            .value(KeyGenValues::new(vec![]))
+            .build();
 
         let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
@@ -1604,13 +1910,13 @@ mod tests {
 
     #[test]
     fn test_keygen_response_event_to_json() {
-        let keygen_response_values = KeyGenResponseValues::builder()
-            .request_id(vec![2, 2, 2])
-            .public_key_digest("abc".to_string())
-            .public_key_signature(vec![1, 2, 3])
-            .server_key_digest("def".to_string())
-            .server_key_signature(vec![4, 5, 6])
-            .build();
+        let keygen_response_values = KeyGenResponseValues::new(
+            vec![2, 2, 2],
+            "abc".to_string(),
+            vec![1, 2, 3],
+            "def".to_string(),
+            vec![4, 5, 6],
+        );
         let message: KmsMessageWithoutProof = KmsMessage::builder()
             .txn_id(Some(vec![1].into()))
             .value(keygen_response_values)
@@ -1634,7 +1940,7 @@ mod tests {
     #[test]
     fn test_crs_gen_event_to_json() {
         let message: KmsMessageWithoutProof =
-            KmsMessage::builder().value(CrsGenValues::default()).build();
+            KmsMessage::builder().value(CrsGenValues::new()).build();
 
         let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
@@ -1645,11 +1951,8 @@ mod tests {
 
     #[test]
     fn test_crs_gen_response_event_to_json() {
-        let crs_gen_response_values = CrsGenResponseValues::builder()
-            .request_id("abcdef".to_string())
-            .digest("123456".to_string())
-            .signature(vec![1, 2, 3])
-            .build();
+        let crs_gen_response_values =
+            CrsGenResponseValues::new("abcdef".to_string(), "123456".to_string(), vec![1, 2, 3]);
 
         let message: KmsMessageWithoutProof = KmsMessage::builder()
             .txn_id(Some(vec![1].into()))

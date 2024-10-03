@@ -947,6 +947,7 @@ dependencies = [
  "tendermint",
  "tendermint-ipsc",
  "test-context",
+ "tfhe-versionable",
 ]
 
 [[package]]
@@ -3978,6 +3979,7 @@ dependencies = [
  "strum",
  "strum_macros",
  "test-context",
+ "tfhe-versionable",
  "thiserror",
  "tokio",
  "tonic 0.11.0",

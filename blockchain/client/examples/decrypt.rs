@@ -19,21 +19,19 @@ async fn main() {
     // Decrypt the ciphertext
     let ciphertext = vec![1, 2, 3, 4, 5];
 
-    let operation_response = OperationValue::Decrypt(
-        DecryptValues::builder()
-            .ciphertext_handles(vec![ciphertext.clone()])
-            .fhe_types(vec![FheType::Euint8])
-            .version(1)
-            .key_id(vec![1, 2, 3])
-            .external_handles(None)
-            .eip712_name("eip712name".to_string())
-            .eip712_version("1".to_string())
-            .eip712_chain_id(vec![1])
-            .eip712_verifying_contract("contract".to_string())
-            .eip712_salt(vec![])
-            .acl_address("acl_address".to_string())
-            .build(),
-    );
+    let operation_response = OperationValue::Decrypt(DecryptValues::new(
+        vec![1, 2, 3],
+        vec![ciphertext.clone()],
+        vec![FheType::Euint8],
+        None::<Vec<Vec<u8>>>,
+        1,
+        "acl_address".to_string(),
+        "eip712name".to_string(),
+        "1".to_string(),
+        vec![1],
+        "contract".to_string(),
+        vec![],
+    ));
 
     let msg = KmsMessage::builder().value(operation_response).build();
 

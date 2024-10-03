@@ -1853,7 +1853,7 @@ dependencies = [
 [[package]]
 name = "concrete-csprng"
 version = "0.4.1"
-source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.7#c0878f1600ca1f5c5d0fbcfdb24c778bbe421f05"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0#dedb3e94e522523802c339495ca1be3051b9fe99"
 dependencies = [
  "aes",
  "libc",
@@ -1863,7 +1863,7 @@ dependencies = [
 [[package]]
 name = "concrete-csprng"
 version = "0.4.1"
-source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.9#5db5aba24a87d3274f0b11d4fd31ded0e34a9137"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.7#c0878f1600ca1f5c5d0fbcfdb24c778bbe421f05"
 dependencies = [
  "aes",
  "libc",
@@ -3377,7 +3377,7 @@ dependencies = [
  "semver 1.0.23",
  "serde",
  "strum",
- "tfhe 0.8.0-alpha.9",
+ "tfhe 0.8.0",
  "tfhe-versionable 0.3.0",
  "tokio",
 ]
@@ -5497,13 +5497,13 @@ dependencies = [
 
 [[package]]
 name = "tfhe"
-version = "0.8.0-alpha.9"
-source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.9#5db5aba24a87d3274f0b11d4fd31ded0e34a9137"
+version = "0.8.0"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0#dedb3e94e522523802c339495ca1be3051b9fe99"
 dependencies = [
  "aligned-vec",
  "bincode",
  "bytemuck",
- "concrete-csprng 0.4.1 (git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.9)",
+ "concrete-csprng 0.4.1 (git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0)",
  "concrete-fft",
  "concrete-ntt",
  "dyn-stack",
@@ -5598,7 +5598,7 @@ dependencies = [
 [[package]]
 name = "tfhe-versionable"
 version = "0.3.0"
-source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.9#5db5aba24a87d3274f0b11d4fd31ded0e34a9137"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0#dedb3e94e522523802c339495ca1be3051b9fe99"
 dependencies = [
  "aligned-vec",
  "num-complex",
@@ -5619,7 +5619,7 @@ dependencies = [
 [[package]]
 name = "tfhe-versionable-derive"
 version = "0.3.0"
-source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.9#5db5aba24a87d3274f0b11d4fd31ded0e34a9137"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0#dedb3e94e522523802c339495ca1be3051b9fe99"
 dependencies = [
  "proc-macro2",
  "quote",

@@ -583,19 +583,19 @@ mod tests {
         let data_size = extract_ciphertext_size(&ciphertext_handle) * batch_size as u32;
         assert_eq!(data_size, 661448 * batch_size as u32);
 
-        let decrypt = DecryptValues::builder()
-            .key_id(vec![1, 2, 3])
-            .version(1)
-            .ciphertext_handles(vec![ciphertext_handle; batch_size])
-            .fhe_types(vec![FheType::Euint8; batch_size])
-            .external_handles(Some(vec![vec![23_u8; 32]].into()))
-            .eip712_name("eip712name".to_string())
-            .eip712_version("version".to_string())
-            .eip712_chain_id(vec![6])
-            .eip712_verifying_contract("contract".to_string())
-            .eip712_salt(vec![])
-            .acl_address("acl_address".to_string())
-            .build();
+        let decrypt = DecryptValues::new(
+            vec![1, 2, 3],
+            vec![ciphertext_handle; batch_size],
+            vec![FheType::Euint8; batch_size],
+            Some(vec![vec![23_u8; 32]]),
+            1,
+            "acl_address".to_string(),
+            "eip712name".to_string(),
+            "version".to_string(),
+            vec![6],
+            "contract".to_string(),
+            vec![],
+        );
 
         // test insufficient funds
         let _failed_response = contract
@@ -620,10 +620,7 @@ mod tests {
 
         assert_event(&response.events, &expected_event);
 
-        let decrypt_response = DecryptResponseValues::builder()
-            .signature(vec![4, 5, 6])
-            .payload(vec![6, 7, 8])
-            .build();
+        let decrypt_response = DecryptResponseValues::new(vec![4, 5, 6], vec![6, 7, 8]);
 
         let response = contract
             .decrypt_response(txn_id.clone(), decrypt_response.clone())
@@ -641,12 +638,10 @@ mod tests {
         assert_eq!(response.events.len(), 2);
 
         let expected_event = KmsEvent::builder()
-            .operation(OperationValue::DecryptResponse(
-                DecryptResponseValues::builder()
-                    .signature(vec![4, 5, 6])
-                    .payload(vec![6, 7, 8])
-                    .build(),
-            ))
+            .operation(OperationValue::DecryptResponse(DecryptResponseValues::new(
+                vec![4, 5, 6],
+                vec![6, 7, 8],
+            )))
             .txn_id(txn_id.clone())
             .build();
 
@@ -738,19 +733,19 @@ mod tests {
         let data_size = extract_ciphertext_size(&ciphertext_handle) * batch_size as u32;
         assert_eq!(data_size, 661448 * batch_size as u32);
 
-        let decrypt = DecryptValues::builder()
-            .key_id(vec![1, 2, 3])
-            .version(1)
-            .ciphertext_handles(vec![ciphertext_handle; batch_size])
-            .fhe_types(vec![FheType::Euint8; batch_size])
-            .external_handles(Some(vec![vec![23_u8; 32]].into()))
-            .eip712_name("eip712name".to_string())
-            .eip712_version("version".to_string())
-            .eip712_chain_id(vec![6])
-            .eip712_verifying_contract("contract".to_string())
-            .eip712_salt(vec![])
-            .acl_address("acl_address".to_string())
-            .build();
+        let decrypt = DecryptValues::new(
+            vec![1, 2, 3],
+            vec![ciphertext_handle; batch_size],
+            vec![FheType::Euint8; batch_size],
+            Some(vec![vec![23_u8; 32]]),
+            1,
+            "acl_address".to_string(),
+            "eip712name".to_string(),
+            "version".to_string(),
+            vec![6],
+            "contract".to_string(),
+            vec![],
+        );
 
         // test insufficient funds
         let _failed_response = contract
@@ -774,10 +769,7 @@ mod tests {
 
         assert_event(&response.events, &expected_event);
 
-        let decrypt_response = DecryptResponseValues::builder()
-            .signature(vec![4, 5, 6])
-            .payload(vec![6, 7, 8])
-            .build();
+        let decrypt_response = DecryptResponseValues::new(vec![4, 5, 6], vec![6, 7, 8]);
 
         let response = contract
             .decrypt_response(txn_id.clone(), decrypt_response.clone())
@@ -795,12 +787,10 @@ mod tests {
         assert_eq!(response.events.len(), 2);
 
         let expected_event = KmsEvent::builder()
-            .operation(OperationValue::DecryptResponse(
-                DecryptResponseValues::builder()
-                    .signature(vec![4, 5, 6])
-                    .payload(vec![6, 7, 8])
-                    .build(),
-            ))
+            .operation(OperationValue::DecryptResponse(DecryptResponseValues::new(
+                vec![4, 5, 6],
+                vec![6, 7, 8],
+            )))
             .txn_id(txn_id.clone())
             .build();
 
@@ -880,8 +870,8 @@ mod tests {
             .call(&owner)
             .unwrap();
 
-        let preproc_id = "preproc_id".as_bytes().to_vec().into();
-        let keygen = KeyGenValues::builder().preproc_id(preproc_id).build();
+        let preproc_id = "preproc_id".as_bytes().to_vec();
+        let keygen = KeyGenValues::new(preproc_id);
         let response = contract.keygen(keygen.clone()).call(&owner).unwrap();
         println!("response: {:#?}", response);
         let txn_id: TransactionId = KmsContract::hash_transaction_id(12345, 0).into();
@@ -894,13 +884,13 @@ mod tests {
 
         assert_event(&response.events, &expected_event);
 
-        let keygen_response = KeyGenResponseValues::builder()
-            .request_id(txn_id.to_vec())
-            .public_key_digest("digest1".to_string())
-            .public_key_signature(vec![4, 5, 6])
-            .server_key_digest("digest2".to_string())
-            .server_key_signature(vec![7, 8, 9])
-            .build();
+        let keygen_response = KeyGenResponseValues::new(
+            txn_id.to_vec(),
+            "digest1".to_string(),
+            vec![4, 5, 6],
+            "digest2".to_string(),
+            vec![7, 8, 9],
+        );
 
         let response = contract
             .keygen_response(txn_id.clone(), keygen_response.clone())
@@ -959,22 +949,22 @@ mod tests {
         let data_size = extract_ciphertext_size(&ciphertext_handle);
         assert_eq!(data_size, 661448);
 
-        let reencrypt = ReencryptValues::builder()
-            .signature(vec![1])
-            .version(1)
-            .client_address("0x1234".to_string())
-            .enc_key(vec![4])
-            .fhe_type(FheType::Euint8)
-            .key_id(vec![5])
-            .ciphertext_handle(ciphertext_handle.clone())
-            .ciphertext_digest(vec![9])
-            .eip712_name("eip712name".to_string())
-            .eip712_version("version".to_string())
-            .eip712_chain_id(vec![7])
-            .eip712_verifying_contract("contract".to_string())
-            .eip712_salt(vec![8])
-            .acl_address("dummy_acl_address".to_string())
-            .build();
+        let reencrypt = ReencryptValues::new(
+            vec![1],
+            1,
+            "0x1234".to_string(),
+            vec![4],
+            FheType::Euint8,
+            vec![5],
+            ciphertext_handle.clone(),
+            vec![9],
+            "dummy_acl_address".to_string(),
+            "eip712name".to_string(),
+            "version".to_string(),
+            vec![7],
+            "contract".to_string(),
+            vec![8],
+        );
 
         let _failed_response = contract
             .reencrypt(reencrypt.clone())
@@ -998,10 +988,7 @@ mod tests {
 
         assert_event(&response.events, &expected_event);
 
-        let response_values = ReencryptResponseValues::builder()
-            .signature(vec![4, 5, 6])
-            .payload(vec![6, 7, 8])
-            .build();
+        let response_values = ReencryptResponseValues::new(vec![4, 5, 6], vec![6, 7, 8]);
 
         let response = contract
             .reencrypt_response(txn_id.clone(), response_values.clone())
@@ -1062,11 +1049,8 @@ mod tests {
 
         assert_event(&response.events, &expected_event);
 
-        let crs_gen_response = CrsGenResponseValues::builder()
-            .request_id(txn_id.to_hex())
-            .digest("my digest".to_string())
-            .signature(vec![4, 5, 6])
-            .build();
+        let crs_gen_response =
+            CrsGenResponseValues::new(txn_id.to_hex(), "my digest".to_string(), vec![4, 5, 6]);
 
         let response = contract
             .crs_gen_response(txn_id.clone(), crs_gen_response.clone())
@@ -1133,21 +1117,21 @@ mod tests {
             .unwrap();
 
         // First, trigger a keygen operation
-        let preproc_id = "preproc_id".as_bytes().to_vec().into();
-        let keygen = KeyGenValues::builder().preproc_id(preproc_id).build();
+        let preproc_id = "preproc_id".as_bytes().to_vec();
+        let keygen = KeyGenValues::new(preproc_id);
         let response = contract.keygen(keygen.clone()).call(&owner).unwrap();
 
         // Transaction id: 0
         let txn_id: TransactionId = KmsContract::hash_transaction_id(12345, 0).into();
         assert_eq!(response.events.len(), 2);
 
-        let keygen_response = KeyGenResponseValues::builder()
-            .request_id(txn_id.to_vec())
-            .public_key_digest("digest1".to_string())
-            .public_key_signature(vec![4, 5, 6])
-            .server_key_digest("digest2".to_string())
-            .server_key_signature(vec![7, 8, 9])
-            .build();
+        let keygen_response = KeyGenResponseValues::new(
+            txn_id.to_vec(),
+            "digest1".to_string(),
+            vec![4, 5, 6],
+            "digest2".to_string(),
+            vec![7, 8, 9],
+        );
 
         // Two keygen response event
         let response = contract
@@ -1221,19 +1205,19 @@ mod tests {
         let data_size = extract_ciphertext_size(&ciphertext_handle) * batch_size as u32;
         assert_eq!(data_size, 661448 * batch_size as u32);
 
-        let decrypt = DecryptValues::builder()
-            .key_id(vec![1, 2, 3])
-            .version(1)
-            .ciphertext_handles(vec![ciphertext_handle; batch_size])
-            .fhe_types(vec![FheType::Euint8; batch_size])
-            .external_handles(Some(vec![vec![23_u8; 32]].into()))
-            .eip712_name("eip712name".to_string())
-            .eip712_version("version".to_string())
-            .eip712_chain_id(vec![6])
-            .eip712_verifying_contract("contract".to_string())
-            .eip712_salt(vec![8])
-            .acl_address("acl_address".to_string())
-            .build();
+        let decrypt = DecryptValues::new(
+            vec![1, 2, 3],
+            vec![ciphertext_handle; batch_size],
+            vec![FheType::Euint8; batch_size],
+            Some(vec![vec![23_u8; 32]]),
+            1,
+            "acl_address".to_string(),
+            "eip712name".to_string(),
+            "version".to_string(),
+            vec![6],
+            "contract".to_string(),
+            vec![8],
+        );
 
         let response = contract
             .decrypt(decrypt.clone())
@@ -1246,10 +1230,7 @@ mod tests {
         let txn_id: TransactionId = KmsContract::hash_transaction_id(12345, 1).into();
         assert_eq!(response.events.len(), 2);
 
-        let decrypt_response = DecryptResponseValues::builder()
-            .signature(vec![4, 5, 6])
-            .payload(vec![6, 7, 8])
-            .build();
+        let decrypt_response = DecryptResponseValues::new(vec![4, 5, 6], vec![6, 7, 8]);
 
         // Decrypt response event
         let response = contract

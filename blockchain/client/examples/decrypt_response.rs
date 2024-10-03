@@ -26,12 +26,10 @@ async fn main() {
     let txn_id = hex::decode(params.txn_id).unwrap();
     let plaintext = vec![6, 7, 8, 9, 10];
 
-    let operation_response = OperationValue::DecryptResponse(
-        DecryptResponseValues::builder()
-            .signature(vec![1, 2, 3])
-            .payload(plaintext.clone())
-            .build(),
-    );
+    let operation_response = OperationValue::DecryptResponse(DecryptResponseValues::new(
+        vec![1, 2, 3],
+        plaintext.clone(),
+    ));
     let msg = KmsMessage::builder()
         .txn_id(Some(txn_id.into()))
         .value(operation_response)

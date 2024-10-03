@@ -287,18 +287,11 @@ pub(crate) async fn handle_keyurl_event(
         &config.kms.public_storage,
         &config.kms.key_id,
     )?;
-    let fhe_url_info = FheKeyUrlInfo::builder()
-        .fhe_public_key(fhe_public_key)
-        .fhe_server_key(fhe_server_key)
-        .build();
+    let fhe_url_info = FheKeyUrlInfo::new(fhe_public_key, fhe_server_key);
     let verf_key_info = get_verf_key_info(&config.kms.public_storage, &config.kms.key_id)?;
 
     let crs = get_crs_info(&config.kms.public_storage, &config.kms.crs_ids)?;
-    let response = KeyUrlResponseValues::builder()
-        .fhe_key_info(vec![fhe_url_info])
-        .verf_public_key(verf_key_info)
-        .crs(crs)
-        .build();
+    let response = KeyUrlResponseValues::new(vec![fhe_url_info], crs, verf_key_info);
 
     let duration = start.elapsed();
     tracing::info!("⏱️ KMS Response Time elapsed for KeyUrl: {:?}", duration);
@@ -321,12 +314,12 @@ fn get_fhe_key_info(
         let sig = HexVector::from_hex("00112233445566778899aabbccddeeff")?;
         signatures.push(sig);
     }
-    Ok(KeyUrlInfo::builder()
-        .data_id(HexVector::from_hex(data_id)?)
-        .param_choice(ParamChoice::Default.into()) // TODO should come from blockchain
-        .urls(urls)
-        .signatures(signatures)
-        .build())
+    Ok(KeyUrlInfo::new(
+        HexVector::from_hex(data_id)?,
+        ParamChoice::Default.into(), // TODO should come from blockchain
+        urls,
+        signatures,
+    ))
 }
 
 fn get_verf_key_info(
@@ -340,14 +333,12 @@ fn get_verf_key_info(
         let verf_addr = PubDataType::VerfAddress.to_string();
         let key_url = format!("{parsed_base_url}{MAIN_SEPARATOR_STR}PUB-p{i}{MAIN_SEPARATOR_STR}{verf_key}{MAIN_SEPARATOR_STR}{data_id}");
         let addr_url = format!("{parsed_base_url}{MAIN_SEPARATOR_STR}PUB-p{i}{MAIN_SEPARATOR_STR}{verf_addr}{MAIN_SEPARATOR_STR}{data_id}");
-        res.push(
-            VerfKeyUrlInfo::builder()
-                .key_id(HexVector::from_hex(data_id)?)
-                .server_id(*i)
-                .verf_public_key_url(key_url)
-                .verf_public_key_address(addr_url)
-                .build(),
-        )
+        res.push(VerfKeyUrlInfo::new(
+            HexVector::from_hex(data_id)?,
+            *i,
+            key_url,
+            addr_url,
+        ))
     }
     Ok(res)
 }
@@ -370,12 +361,12 @@ fn get_crs_info(
         }
         res.insert(
             *max_bits,
-            KeyUrlInfo::builder()
-                .data_id(HexVector::from_hex(crs_id)?)
-                .param_choice(ParamChoice::Default.into()) // TODO placeholder
-                .urls(urls)
-                .signatures(signatures)
-                .build(),
+            KeyUrlInfo::new(
+                HexVector::from_hex(crs_id)?,
+                ParamChoice::Default.into(), // TODO placeholder
+                urls,
+                signatures,
+            ),
         );
     }
     Ok(res)

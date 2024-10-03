@@ -355,10 +355,10 @@ where
                     let inner = res.into_inner();
                     let payload: DecryptionResponsePayload = inner.payload.ok_or_else(||anyhow!("empty decryption payload"))?;
                         Ok(PollerStatus::Done(KmsOperationResponse::DecryptResponse(DecryptResponseVal {
-                            decrypt_response: DecryptResponseValues::builder()
-                                .signature(inner.signature)
-                                .payload(bincode::serialize(&payload)?)
-                                .build(),
+                            decrypt_response: DecryptResponseValues::new(
+                                inner.signature,
+                                bincode::serialize(&payload)?,
+                            ),
                             operation_val: BlockchainOperationVal {
                                 tx_id: self.operation_val.tx_id.clone(),
                             },
@@ -466,10 +466,10 @@ where
                     let payload: ReencryptionResponsePayload = inner.payload.ok_or_else(||anyhow!("empty reencryption payload"))?;
                     Ok(PollerStatus::Done(KmsOperationResponse::ReencryptResponse(
                         ReencryptResponseVal {
-                            reencrypt_response: ReencryptResponseValues::builder()
-                                .signature(inner.signature)
-                                .payload(bincode::serialize(&payload)?)
-                                .build(),
+                            reencrypt_response: ReencryptResponseValues::new(
+                                inner.signature,
+                                bincode::serialize(&payload)?,
+                            ),
                             operation_val: BlockchainOperationVal {
                                 tx_id: self.operation_val.tx_id.clone(),
                             },
@@ -563,10 +563,10 @@ where
                     let payload: ZkVerifyResponsePayload = inner.payload.ok_or_else(||anyhow!("empty decryption payload"))?;
                     Ok(PollerStatus::Done(KmsOperationResponse::ZkpResponse(
                         ZkpResponseVal {
-                            zkp_response: ZkpResponseValues::builder()
-                                .signature(inner.signature)
-                                .payload(bincode::serialize(&payload)?)
-                                .build(),
+                            zkp_response: ZkpResponseValues::new(
+                                inner.signature,
+                                bincode::serialize(&payload)?,
+                            ),
                             operation_val: BlockchainOperationVal {
                                 tx_id: self.operation_val.tx_id.clone(),
                             },
@@ -751,13 +751,13 @@ where
                             .ok_or_else(||anyhow!("empty evaluation key info"))?;
                         Ok(PollerStatus::Done(KmsOperationResponse::KeyGenResponse(
                             crate::domain::blockchain::KeyGenResponseVal {
-                                keygen_response: KeyGenResponseValues::builder()
-                                    .request_id(HexVector::from_hex(&request_id.request_id)?)
-                                    .public_key_digest(pk_info.key_handle.clone())
-                                    .public_key_signature(pk_info.signature.clone())
-                                    .server_key_digest(ek_info.key_handle.clone())
-                                    .server_key_signature(ek_info.signature.clone())
-                                    .build(),
+                                keygen_response: KeyGenResponseValues::new(
+                                    HexVector::from_hex(&request_id.request_id)?,
+                                    pk_info.key_handle.clone(),
+                                    pk_info.signature.clone(),
+                                    ek_info.key_handle.clone(),
+                                    ek_info.signature.clone(),
+                                ),
                                 operation_val: crate::domain::blockchain::BlockchainOperationVal {
                                     tx_id: self.operation_val.tx_id.clone(),
                                 },
@@ -839,11 +839,11 @@ where
                         let crs_results = inner.crs_results.ok_or_else(||anyhow!("empty crs result"))?;
                         Ok(PollerStatus::Done(KmsOperationResponse::CrsGenResponse(
                             crate::domain::blockchain::CrsGenResponseVal {
-                                crs_gen_response: events::kms::CrsGenResponseValues::builder()
-                                    .request_id(request_id.request_id)
-                                    .digest(crs_results.key_handle)
-                                    .signature(crs_results.signature)
-                                    .build(),
+                                crs_gen_response: events::kms::CrsGenResponseValues::new(
+                                    request_id.request_id,
+                                    crs_results.key_handle,
+                                    crs_results.signature,
+                                ),
                                 operation_val: crate::domain::blockchain::BlockchainOperationVal {
                                     tx_id: self.operation_val.tx_id.clone(),
                                 },

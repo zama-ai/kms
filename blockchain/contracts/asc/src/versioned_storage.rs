@@ -1,0 +1,559 @@
+use cosmwasm_std::{StdError, StdResult, Storage};
+use cw_storage_plus::{Bound, Item, KeyDeserialize, Map, PrimaryKey};
+use serde::{de::DeserializeOwned, Serialize};
+use tfhe_versionable::{Unversionize, VersionizeOwned};
+
+pub struct VersionedItem<T: VersionizeOwned> {
+    versioned_item: Item<<T as VersionizeOwned>::VersionedOwned>,
+}
+
+// Implement a versionized Item for a given type T
+// Not all methods supported by CosmWasm's Item are currently implemented by VersionedItem, only the
+// ones needed by the ASC contract are. However, it should be easy to add the missing methods if
+// needed in the future
+impl<T> VersionedItem<T>
+where
+    T: DeserializeOwned + VersionizeOwned + Unversionize + Clone,
+{
+    pub fn new(namespace: &'static str) -> Self {
+        Self {
+            versioned_item: Item::new(namespace),
+        }
+    }
+
+    // Versionize and save the given data
+    pub fn save(&self, store: &mut dyn Storage, data: &T) -> StdResult<()> {
+        let versioned_data = data.clone().versionize_owned();
+        self.versioned_item.save(store, &versioned_data)?;
+        Ok(())
+    }
+
+    // Loads the data (if it exists) and unversionize it before returning it
+    pub fn may_load(&self, store: &dyn Storage) -> StdResult<Option<T>> {
+        let versioned_result = self.versioned_item.may_load(store)?;
+        versioned_result
+            .map(|v| T::unversionize(v))
+            .transpose()
+            .map_err(|e| {
+                StdError::generic_err(format!(
+                    "Unversionizing data failed after loading it: {}",
+                    e
+                ))
+            })
+    }
+
+    // Loads the data and unversionize it before returning it
+    pub fn load(&self, store: &dyn Storage) -> StdResult<T> {
+        let versioned_result = self.versioned_item.load(store)?;
+        T::unversionize(versioned_result).map_err(|e| {
+            StdError::generic_err(format!(
+                "Unversionizing data failed after loading it: {}",
+                e
+            ))
+        })
+    }
+
+    // Loads the data, unversionize it, apply the given action to it, versionize the result and save it
+    pub fn update<A, E>(&self, store: &mut dyn Storage, action: A) -> Result<T, E>
+    where
+        A: FnOnce(T) -> Result<T, E>,
+        E: From<StdError>,
+    {
+        // Load in Item calls `load` instead of `may_load` like in Map
+        let input = self.load(store)?;
+        let output = action(input)?;
+        self.save(store, &output)?;
+        Ok(output)
+    }
+}
+
+// Implement a versionized Map for a given type T
+// Not all methods supported by CosmWasm's Map are currently implemented by VersionedMap, only the
+// ones needed by the ASC contract are. However, it should be easy to add the missing methods if
+// needed in the future
+pub struct VersionedMap<K, T: VersionizeOwned> {
+    versioned_map: Map<K, <T as VersionizeOwned>::VersionedOwned>,
+}
+
+impl<'a, K, T> VersionedMap<K, T>
+where
+    K: PrimaryKey<'a>,
+    T: DeserializeOwned + VersionizeOwned + Unversionize + Clone,
+{
+    pub fn new(namespace: &'static str) -> Self {
+        Self {
+            versioned_map: Map::new(namespace),
+        }
+    }
+
+    // Versionize and save the given data and associate it to the given key
+    pub fn save(&self, store: &mut dyn Storage, k: K, data: &T) -> StdResult<()> {
+        let versioned_data = data.clone().versionize_owned();
+        self.versioned_map.save(store, k, &versioned_data)?;
+        Ok(())
+    }
+
+    // Loads the data associated to the given key (if it exists) and unversionize it before returning it
+    pub fn may_load(&self, store: &dyn Storage, k: K) -> StdResult<Option<T>> {
+        let versioned_result = self.versioned_map.may_load(store, k)?;
+        versioned_result
+            .map(|v| T::unversionize(v))
+            .transpose()
+            .map_err(|e| {
+                StdError::generic_err(format!(
+                    "Unversionizing data failed after loading it: {}",
+                    e
+                ))
+            })
+    }
+
+    // Loads the data associated to the given key and unversionize it before returning it
+    pub fn load(&self, storage: &dyn Storage, k: K) -> StdResult<T> {
+        let versioned_result = self.versioned_map.load(storage, k);
+        versioned_result.and_then(|t| {
+            T::unversionize(t).map_err(|e| {
+                StdError::generic_err(format!(
+                    "Unversionizing data failed after loading it: {}",
+                    e
+                ))
+            })
+        })
+    }
+
+    // Loads the data associated to the given key (if it exists), unversionize it, apply the given
+    // action to it (if it exists), versionize the result and save it along the same key
+    // If the key is not associated to any key, action(None) is run instead, but the rest stays the same
+    pub fn update<A, E>(&self, store: &mut dyn Storage, k: K, action: A) -> Result<T, E>
+    where
+        A: FnOnce(Option<T>) -> Result<T, E>,
+        E: From<StdError>,
+    {
+        let input = self.may_load(store, k.clone())?;
+        let output = action(input)?;
+        self.save(store, k, &output)?;
+
+        // Return the actual output struct and not the versioned enum
+        Ok(output)
+    }
+}
+
+// The `range` method have a slightly different constraint on the key's traits
+impl<'a, K, T> VersionedMap<K, T>
+where
+    T: Serialize + DeserializeOwned + VersionizeOwned + Unversionize,
+    K: PrimaryKey<'a> + KeyDeserialize,
+{
+    // Collect the different items found within the given CosmWasm storage, then unversionize them
+    // before returning them
+    pub fn range<'c>(
+        &self,
+        store: &'c dyn Storage,
+        min: Option<Bound<'a, K>>,
+        max: Option<Bound<'a, K>>,
+        order: cosmwasm_std::Order,
+    ) -> Box<dyn Iterator<Item = StdResult<(K::Output, T)>> + 'c>
+    where
+        T: 'c,
+        K::Output: 'static,
+    {
+        let versioned_items = self.versioned_map.range(store, min, max, order);
+
+        let items = versioned_items.map(|result| {
+            result.and_then(|(k, v)| {
+                T::unversionize(v)
+                    .map_err(|e| {
+                        StdError::generic_err(format!(
+                            "Unversionizing data failed after loading all mapped data: {}",
+                            e
+                        ))
+                    })
+                    .map(|unversioned_item| (k, unversioned_item))
+            })
+        });
+        Box::new(items)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use cosmwasm_std::{testing::MockStorage, Order, StdError};
+
+    // Build an "old" version of a dummy struct and define a CosmWasm storage struct from it
+    mod old_version {
+        use serde::{Deserialize, Serialize};
+        use tfhe_versionable::{Versionize, VersionsDispatch};
+
+        use super::super::{VersionedItem, VersionedMap};
+
+        #[derive(Serialize, Deserialize, VersionsDispatch)]
+        pub(super) enum MyStructVersioned {
+            V0(MyStruct),
+        }
+
+        #[derive(Serialize, Clone, Deserialize, Versionize)]
+        #[versionize(MyStructVersioned)]
+        pub(super) struct MyStruct {
+            pub attribute_0: String,
+        }
+
+        impl MyStruct {
+            pub(super) fn new(string_value: &str) -> Self {
+                Self {
+                    attribute_0: string_value.to_string(),
+                }
+            }
+        }
+
+        pub(super) struct VersionedStorage {
+            pub my_versioned_map: VersionedMap<Vec<u8>, MyStruct>,
+            pub my_versioned_item: VersionedItem<MyStruct>,
+        }
+
+        impl Default for VersionedStorage {
+            fn default() -> Self {
+                Self {
+                    my_versioned_map: VersionedMap::new("my_versioned_map"),
+                    my_versioned_item: VersionedItem::new("my_versioned_item"),
+                }
+            }
+        }
+    }
+
+    // Build a "new" version of the "old" dummy struct from above and define a new CosmWasm storage
+    // struct from it
+    mod new_version {
+        use serde::{Deserialize, Serialize};
+        use std::convert::Infallible;
+        use tfhe_versionable::{Upgrade, Version, Versionize, VersionsDispatch};
+
+        use super::super::{VersionedItem, VersionedMap};
+
+        #[derive(Serialize, Deserialize, VersionsDispatch)]
+        pub(super) enum MyStructVersioned<T: Default> {
+            V0(MyStructV0),
+            V1(MyStruct<T>),
+        }
+
+        #[derive(Serialize, Clone, Deserialize, Version)]
+        pub(super) struct MyStructV0 {
+            pub attribute_0: String,
+        }
+
+        impl<T: Default> Upgrade<MyStruct<T>> for MyStructV0 {
+            type Error = Infallible;
+
+            fn upgrade(self) -> Result<MyStruct<T>, Self::Error> {
+                Ok(MyStruct {
+                    attribute_0: self.attribute_0,
+                    attribute_1: T::default(),
+                })
+            }
+        }
+
+        #[derive(Serialize, Clone, Deserialize, Versionize, Debug)]
+        #[versionize(MyStructVersioned)]
+        pub(super) struct MyStruct<T: Default> {
+            pub attribute_0: String,
+            pub attribute_1: T,
+        }
+
+        impl<T: Default> MyStruct<T> {
+            pub(super) fn new(new_str: &str) -> Self {
+                Self {
+                    attribute_0: new_str.to_string(),
+                    attribute_1: T::default(),
+                }
+            }
+            pub(super) fn default() -> Self {
+                Self::new("default")
+            }
+
+            // Define a simple method that updates the struct
+            pub(super) fn add_prefix(&mut self, prefix: &str) {
+                self.attribute_0 = prefix.to_string() + &self.attribute_0
+            }
+        }
+
+        pub(super) struct VersionedStorage {
+            pub my_versioned_map: VersionedMap<Vec<u8>, MyStruct<u8>>,
+            pub my_versioned_item: VersionedItem<MyStruct<u8>>,
+        }
+
+        // Namespace must match the one from the old version
+        impl Default for VersionedStorage {
+            fn default() -> Self {
+                Self {
+                    my_versioned_map: VersionedMap::new("my_versioned_map"),
+                    my_versioned_item: VersionedItem::new("my_versioned_item"),
+                }
+            }
+        }
+
+        // Define a "broken" CosmWasm storage struct that uses a different namespace
+        pub(super) struct BrokenVersionedStorage {
+            pub my_versioned_map: VersionedMap<Vec<u8>, MyStruct<u8>>,
+            pub my_versioned_item: VersionedItem<MyStruct<u8>>,
+        }
+
+        impl Default for BrokenVersionedStorage {
+            fn default() -> Self {
+                Self {
+                    my_versioned_map: VersionedMap::new("my_broken_versioned_map"),
+                    my_versioned_item: VersionedItem::new("my_broken_versioned_item"),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_versioned_map_load() {
+        // Create an old VersionedStorage instance
+        let old_versioned_storage = old_version::VersionedStorage::default();
+
+        let dyn_store = &mut MockStorage::new();
+
+        // Build an old struct
+        let test_key = b"test_key".to_vec();
+        let test_value = "test_value";
+        let my_old_struct = old_version::MyStruct::new(test_value);
+
+        // Insert the old struct into the old storage
+        old_versioned_storage
+            .my_versioned_map
+            .save(dyn_store, test_key.clone(), &my_old_struct)
+            .expect("Failed to save old struct");
+
+        // Create a new VersionedStorage instance
+        let new_versioned_storage = new_version::VersionedStorage::default();
+
+        // Load the new struct using the new VersionedStorage, the same key and the same CosmWasm storage
+        let my_new_struct = new_versioned_storage
+            .my_versioned_map
+            .load(dyn_store, test_key.clone())
+            .unwrap_or_else(|e| panic!("Failed to load my_new_struct: {}", e));
+
+        // Test that the struct has been loaded under its new version
+        // Note: `attribute_1` is of type `<u8>` because VersionedStorage has been constructed like this
+        assert_eq!(my_new_struct.attribute_0, test_value.to_string());
+        assert_eq!(my_new_struct.attribute_0, my_old_struct.attribute_0);
+        assert_eq!(my_new_struct.attribute_1, <u8>::default());
+
+        // Create a new broken VersionedStorage instance (defines the same value map but with a
+        // different namespace)
+        let broken_versioned_storage = new_version::BrokenVersionedStorage::default();
+
+        // Load the new struct using the new VersionedStorage, the same key and the same CosmWasm storage
+        // Since the value map's namespace is different, the struct associated to the key cannot be
+        // found within this storage. This is because it serves as a unique identifier for the
+        // CosmWasm storage space within the contract's state
+        broken_versioned_storage
+            .my_versioned_map
+            .load(dyn_store, test_key)
+            .expect_err("Loading the broken storage should fail due to different namespace");
+    }
+
+    #[test]
+    fn test_versioned_item_load() {
+        // Create an old VersionedStorage instance
+        let old_versioned_storage = old_version::VersionedStorage::default();
+
+        let dyn_store = &mut MockStorage::new();
+
+        // Build an old struct
+        let test_value = "test_value";
+        let my_old_struct = old_version::MyStruct::new(test_value);
+
+        // Insert the old struct into the old storage
+        old_versioned_storage
+            .my_versioned_item
+            .save(dyn_store, &my_old_struct)
+            .expect("Failed to save old struct");
+
+        // Create a new VersionedStorage instance
+        let new_versioned_storage = new_version::VersionedStorage::default();
+
+        // Load the new struct using the new VersionedStorage and the same CosmWasm storage
+        let my_new_struct = new_versioned_storage
+            .my_versioned_item
+            .load(dyn_store)
+            .unwrap_or_else(|e| panic!("Failed to load my_new_struct: {}", e));
+
+        // Test that the struct has been loaded under its new version
+        // Note: `attribute_1` is of type `<u8>` because VersionedStorage has been constructed like this
+        assert_eq!(my_new_struct.attribute_0, test_value.to_string());
+        assert_eq!(my_new_struct.attribute_0, my_old_struct.attribute_0);
+        assert_eq!(my_new_struct.attribute_1, <u8>::default());
+
+        // Create a new broken VersionedStorage instance (defines the same value map but with a
+        // different namespace)
+        let broken_versioned_storage = new_version::BrokenVersionedStorage::default();
+
+        // Load the new struct using the new VersionedStorage, the same key and the same CosmWasm storage
+        // Since the value map's namespace is different, the struct cannot be found within this
+        // storage. This is because it serves as a unique identifier for the CosmWasm storage
+        // space within the contract's state
+        broken_versioned_storage
+            .my_versioned_item
+            .load(dyn_store)
+            .expect_err("Loading the broken storage should fail due to different namespace");
+    }
+
+    #[test]
+    fn test_versioned_map_update() {
+        // Create an old VersionedStorage instance
+        let old_versioned_storage = old_version::VersionedStorage::default();
+
+        let dyn_store = &mut MockStorage::new();
+
+        // Build an old struct
+        let test_key = b"test_key".to_vec();
+        let test_value = "test_value";
+        let my_old_struct = old_version::MyStruct::new(test_value);
+
+        // Insert the old struct into the old storage
+        old_versioned_storage
+            .my_versioned_map
+            .save(dyn_store, test_key.clone(), &my_old_struct)
+            .expect("Failed to save old struct");
+
+        // Create a new VersionedStorage instance
+        let new_versioned_storage = new_version::VersionedStorage::default();
+
+        let new_prefix = "updated_";
+
+        // Update the struct using the new VersionedStorage, the same key, the same CosmWasm storage
+        // and a function that will append a given prefix to one of the new struct's attribute
+        let my_new_struct = new_versioned_storage
+            .my_versioned_map
+            .update(dyn_store, test_key.clone(), |my_struct| {
+                my_struct.map_or_else(
+                    || Ok(new_version::MyStruct::default()),
+                    |mut my_struct| {
+                        my_struct.add_prefix(new_prefix);
+                        Ok(my_struct) as Result<new_version::MyStruct<u8>, StdError>
+                    },
+                )
+            })
+            .unwrap_or_else(|e| panic!("Failed to update struct from new storage: {}", e));
+
+        // Test that the struct has been loaded under its new version and updated with the new prefix
+        // Note: `attribute_1` is of type `<u8>` because VersionedStorage has been constructed like this
+        assert_eq!(
+            my_new_struct.attribute_0,
+            new_prefix.to_string() + test_value
+        );
+        assert_ne!(my_new_struct.attribute_0, my_old_struct.attribute_0);
+        assert_eq!(my_new_struct.attribute_1, <u8>::default());
+
+        // Note that there no real reason to test with the "broken storage" because of the nature of
+        // the update function: when trying to load the new struct, since the namespace is new and
+        // empty, no errors will be thrown and the struct will be simply added to the storage (under
+        // the same key but different storage namespace)
+    }
+
+    #[test]
+    fn test_versioned_item_update() {
+        // Create an old VersionedStorage instance
+        let old_versioned_storage = old_version::VersionedStorage::default();
+
+        let dyn_store = &mut MockStorage::new();
+
+        // Build an old struct
+        let test_value = "test_value";
+        let my_old_struct = old_version::MyStruct::new(test_value);
+
+        // Insert the old struct into the old storage
+        old_versioned_storage
+            .my_versioned_item
+            .save(dyn_store, &my_old_struct)
+            .expect("Failed to save old struct");
+
+        // Create a new VersionedStorage instance
+        let new_versioned_storage = new_version::VersionedStorage::default();
+
+        let new_prefix = "updated_";
+
+        // Update the struct using the new VersionedStorage, the same CosmWasm storage and a function
+        // that will append a given prefix to one of the new struct's attribute
+        let my_new_struct = new_versioned_storage
+            .my_versioned_item
+            .update(dyn_store, |mut my_struct| {
+                my_struct.add_prefix(new_prefix);
+                Ok(my_struct) as Result<new_version::MyStruct<u8>, StdError>
+            })
+            .unwrap_or_else(|e| panic!("Failed to update struct from new storage: {}", e));
+
+        // Test that the struct has been loaded under its new version and updated with the new prefix
+        // Note: `attribute_1` is of type `<u8>` because VersionedStorage has been constructed like this
+        assert_eq!(
+            my_new_struct.attribute_0,
+            new_prefix.to_string() + test_value
+        );
+        assert_ne!(my_new_struct.attribute_0, my_old_struct.attribute_0);
+        assert_eq!(my_new_struct.attribute_1, <u8>::default());
+
+        // Note that there no real reason to test with the "broken storage" because of the nature of
+        // the update function: when trying to load the new struct, since the namespace is new and
+        // empty, no errors will be thrown and the struct will be simply added to the storage (under
+        // the same key but different storage namespace)
+    }
+
+    #[test]
+    fn test_versioned_range() {
+        // Create an old VersionedStorage instance
+        let old_versioned_storage = old_version::VersionedStorage::default();
+
+        let dyn_store = &mut MockStorage::new();
+
+        // Build an old struct
+        let old_test_key = b"old_test_key".to_vec();
+        let old_test_value = "old_test_value";
+        let my_old_struct = old_version::MyStruct::new(old_test_value);
+
+        // Insert the old struct into the old storage
+        old_versioned_storage
+            .my_versioned_map
+            .save(dyn_store, old_test_key.clone(), &my_old_struct)
+            .expect("Failed to save old struct");
+
+        // Create a new VersionedStorage instance
+        let new_versioned_storage = new_version::VersionedStorage::default();
+
+        // Build a new struct
+        let new_test_key = b"new_test_key".to_vec();
+        let new_test_value = "new_test_value";
+        let my_new_struct = new_version::MyStruct::new(new_test_value);
+
+        // Insert the new struct into the new storage
+        new_versioned_storage
+            .my_versioned_map
+            .save(dyn_store, new_test_key.clone(), &my_new_struct)
+            .expect("Failed to save new struct");
+
+        let mut my_test_values = Vec::new();
+
+        // Iterate over the storage
+        new_versioned_storage
+            .my_versioned_map
+            .range(dyn_store, None, None, Order::Ascending)
+            .for_each(|my_struct| {
+                if let Ok((_, my_struct)) = my_struct {
+                    // Test that all struct has the new attribute_1
+                    // Note: `attribute_1` is of type `<u8>` because VersionedStorage has been
+                    // constructed like this
+                    assert_eq!(my_struct.attribute_1, <u8>::default());
+
+                    my_test_values.push(my_struct.attribute_0);
+                }
+            });
+
+        // Test that the struct has been loaded under its new version without altering the values
+        // of attribute_0
+        // Note: the vec's order is important here, as CosmWasm's `range` function orders by key ordering
+        assert_eq!(my_test_values, vec![new_test_value, old_test_value]);
+
+        // Note that there no real reason to test with the "broken storage" because of the nature of
+        // the range function: when iterating through the items, since the namespace is new and
+        // empty, no errors will be thrown and an empty vector is returned
+    }
+}

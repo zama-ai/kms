@@ -419,21 +419,19 @@ pub async fn execute_decryption_contract(
     tracing::info!("📦 Stored ciphertext, handle: {}", handle);
     let handle_bytes = hex::decode(handle)?;
 
-    let value = OperationValue::Decrypt(
-        DecryptValues::builder()
-            .ciphertext_handles(vec![handle_bytes.clone()])
-            .fhe_types(vec![FheType::Euint8])
-            .external_handles(Some(vec![vec![5_u8; 32]].into()))
-            .key_id(hex::decode(key_id)?)
-            .version(1)
-            .eip712_name("eip712name".to_string())
-            .eip712_version("version".to_string())
-            .eip712_chain_id(vec![6])
-            .eip712_verifying_contract("contract".to_string())
-            .eip712_salt(vec![])
-            .acl_address("acl_address".to_string())
-            .build(),
-    );
+    let value = OperationValue::Decrypt(DecryptValues::new(
+        hex::decode(key_id)?,
+        vec![handle_bytes.clone()],
+        vec![FheType::Euint8],
+        Some(vec![vec![5_u8; 32]]),
+        1,
+        "acl_address".to_string(),
+        "eip712name".to_string(),
+        "version".to_string(),
+        vec![6],
+        "contract".to_string(),
+        vec![],
+    ));
 
     let request = ExecuteContractRequest::builder()
         .message(KmsMessage::builder().value(value).build())

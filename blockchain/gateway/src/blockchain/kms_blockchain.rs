@@ -249,19 +249,19 @@ impl Blockchain for KmsBlockchainImpl {
             external_ct_handles.push(external_ct_handle);
         }
 
-        let decrypt_values = DecryptValues::builder()
-            .version(CURRENT_FORMAT_VERSION)
-            .key_id(hex::decode(self.config.kms.key_id.as_str()).unwrap())
-            .ciphertext_handles(kv_ct_handles.clone())
-            .fhe_types(fhe_types.clone())
-            .external_handles(Some(external_ct_handles.into()))
-            .eip712_name(eip712_domain.name)
-            .eip712_version(eip712_domain.version)
-            .eip712_chain_id(eip712_domain.chain_id)
-            .eip712_verifying_contract(eip712_domain.verifying_contract)
-            .eip712_salt(eip712_domain.salt)
-            .acl_address(acl_address)
-            .build();
+        let decrypt_values = DecryptValues::new(
+            hex::decode(self.config.kms.key_id.as_str()).unwrap(),
+            kv_ct_handles.clone(),
+            fhe_types.clone(),
+            Some(external_ct_handles),
+            CURRENT_FORMAT_VERSION,
+            acl_address,
+            eip712_domain.name,
+            eip712_domain.version,
+            eip712_domain.chain_id,
+            eip712_domain.verifying_contract,
+            eip712_domain.salt,
+        );
 
         tracing::info!(
             "Decryption EIP712 info: name={}, version={}, \
@@ -516,22 +516,22 @@ impl Blockchain for KmsBlockchainImpl {
         }
 
         // NOTE: the ciphertext digest must be the real digest
-        let reencrypt_values = ReencryptValues::builder()
-            .signature(signature)
-            .version(CURRENT_FORMAT_VERSION)
-            .client_address(client_address)
-            .enc_key(enc_key)
-            .fhe_type(fhe_type)
-            .key_id(key_id)
-            .ciphertext_handle(ctxt_handle.clone())
-            .ciphertext_digest(ctxt_digest)
-            .eip712_name(&self.config.ethereum.reenc_domain_name)
-            .eip712_version(&self.config.ethereum.reenc_domain_version)
-            .eip712_chain_id(eip712_chain_id)
-            .eip712_verifying_contract(eip712_verifying_contract)
-            .eip712_salt(eip712_salt)
-            .acl_address(acl_address)
-            .build();
+        let reencrypt_values = ReencryptValues::new(
+            signature,
+            CURRENT_FORMAT_VERSION,
+            client_address,
+            enc_key,
+            fhe_type,
+            key_id,
+            ctxt_handle.clone(),
+            ctxt_digest,
+            acl_address,
+            self.config.ethereum.reenc_domain_name.clone(),
+            self.config.ethereum.reenc_domain_version.clone(),
+            eip712_chain_id,
+            eip712_verifying_contract,
+            eip712_salt,
+        );
 
         tracing::info!(
             "Reencryption EIP712 info: name={}, version={}, \
@@ -658,19 +658,19 @@ impl Blockchain for KmsBlockchainImpl {
             ));
         }
 
-        let zkp_values = ZkpValues::builder()
-            .ct_proof_handle(ct_proof_handle.clone())
-            .client_address(client_address)
-            .contract_address(contract_address)
-            .key_id(key_id)
-            .crs_id(crs_id)
-            .eip712_name(eip712_domain.name)
-            .eip712_version(eip712_domain.version)
-            .eip712_chain_id(eip712_domain.chain_id)
-            .eip712_verifying_contract(eip712_domain.verifying_contract)
-            .eip712_salt(eip712_domain.salt)
-            .acl_address(acl_address)
-            .build();
+        let zkp_values = ZkpValues::new(
+            crs_id,
+            key_id,
+            contract_address,
+            client_address,
+            ct_proof_handle.clone(),
+            acl_address,
+            eip712_domain.name,
+            eip712_domain.version,
+            eip712_domain.chain_id,
+            eip712_domain.verifying_contract,
+            eip712_domain.salt,
+        );
 
         let operation = events::kms::OperationValue::Zkp(zkp_values);
 

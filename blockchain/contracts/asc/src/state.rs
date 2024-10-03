@@ -1,30 +1,40 @@
+use crate::versioned_storage::{VersionedItem, VersionedMap};
 use cosmwasm_std::{Env, Order, Response, StdError, StdResult, Storage};
-use cw_storage_plus::{Item, Map};
 use events::kms::{
     KmsCoreConf, KmsEvent, KmsOperation, OperationValue, Transaction, TransactionId,
 };
 
+// This storage struct is used to handle storage in the ASC contract. It contains:
+// - the configuration parameters for the KMS (centralized or threshold mode)
+// - the transactions stored in the ASC (along their operation values)
+// - a debug proof flag
+// This storage struct needs to use versionized types instead of direct CosmWasm types in order to
+// make it able to save, load or update versioned data in a backward-compatible manner
+// These versioned types are defined in the `versioned_storage` module and use the versionize features
+// from tfhe-rs
 pub struct KmsContractStorage {
-    core_conf: Item<KmsCoreConf>,
-    transactions: Map<Vec<u8>, Transaction>,
-    debug_proof: Item<bool>,
+    core_conf: VersionedItem<KmsCoreConf>,
+    transactions: VersionedMap<Vec<u8>, Transaction>,
+    debug_proof: VersionedItem<bool>,
 }
 
 impl Default for KmsContractStorage {
     fn default() -> Self {
         Self {
-            core_conf: Item::new("core_conf"),
-            transactions: Map::new("transactions"),
-            debug_proof: Item::new("debug_proof"),
+            core_conf: VersionedItem::new("core_conf"),
+            transactions: VersionedMap::new("transactions"),
+            debug_proof: VersionedItem::new("debug_proof"),
         }
     }
 }
 
 impl KmsContractStorage {
+    // Load the configuration parameters from the storage
     pub fn load_core_conf(&self, storage: &dyn Storage) -> StdResult<KmsCoreConf> {
         self.core_conf.load(storage)
     }
 
+    // Update the configuration parameters in the storage
     pub fn update_core_conf(
         &self,
         storage: &mut dyn Storage,
@@ -39,6 +49,7 @@ impl KmsContractStorage {
         Ok(Response::default())
     }
 
+    // Load a transaction from the storage
     pub fn load_transaction(
         &self,
         storage: &dyn Storage,
@@ -47,6 +58,7 @@ impl KmsContractStorage {
         self.transactions.load(storage, txn_id.to_vec())
     }
 
+    // Update a transaction in the storage
     // TODO: makes sense to propagate a `TransactionId` instead of a `Vec<u8>` for consistency with
     // load methods
     pub fn update_transaction<T>(
@@ -71,17 +83,19 @@ impl KmsContractStorage {
                         .transaction
                         .clone()
                         .ok_or_else(|| StdError::generic_err("Transaction not found in context"))?;
-                    Ok(Transaction::builder()
-                        .block_height(env.block.height)
-                        .transaction_index(tx.index)
-                        .operations(vec![operation.clone().into()])
-                        .build())
+                    Ok(Transaction::new(
+                        env.block.height,
+                        tx.index,
+                        vec![operation.clone().into()],
+                    ))
                 })?;
             Ok(tx_updated) as Result<Transaction, StdError>
         })?;
         Ok(())
     }
 
+    // Return the list of all operation values found in the storage and associated to the given
+    // KMS event (the combination of a KMS operation and a transaction ID)
     pub fn get_operations_value(
         &self,
         storage: &dyn Storage,
@@ -107,6 +121,8 @@ impl KmsContractStorage {
         Ok(result)
     }
 
+    // Return the list of all operation values found in the storage and associated to the given
+    // KMS operation. This can include values from different transactions that ran the same operation
     pub fn get_all_values_from_operation(
         &self,
         storage: &dyn Storage,
@@ -137,6 +153,7 @@ impl KmsContractStorage {
         Ok(operation_values)
     }
 
+    // Return the list of all operation values from all transactions found in the storage
     pub fn get_all_operations_values(
         &self,
         storage: &dyn Storage,
@@ -154,10 +171,12 @@ impl KmsContractStorage {
         Ok(operation_values)
     }
 
+    // Save the debug proof flag in the storage
     pub fn set_debug_proof(&self, storage: &mut dyn Storage, value: bool) -> StdResult<()> {
         self.debug_proof.save(storage, &value)
     }
 
+    // Load the debug proof flag from the storage
     #[allow(dead_code)]
     pub fn get_debug_proof(&self, storage: &dyn Storage) -> StdResult<bool> {
         self.debug_proof.load(storage)
