@@ -1,6 +1,6 @@
 [package]
 name = "distributed-decryption"
-version = "0.9.0-rc5"
+version = "0.9.0-rc11"
 edition.workspace = true
 publish.workspace = true
 authors.workspace = true
@@ -19,9 +19,9 @@ backoff = { version = "0.4", features = ["tokio"], optional = true }
 bincode.workspace = true
 cfg-if = "1.0.0"
 clap = { workspace = true, features = ["derive", "env"] }
-kms-core-common = { path = "../common", version = "0.9.0-rc5" }
+kms-core-common = { path = "../common", version = "0.9.0-rc11" }
 concrete-csprng = { git = "https://github.com/zama-ai/tfhe-rs.git", tag = "tfhe-rs-0.8.0" }
-conf-trace = { path = "../../conf-trace", optional = true, version = "0.9.0-rc5" }
+conf-trace = { path = "../../conf-trace", optional = true, version = "0.9.0-rc11" }
 const_format = "0.2.32"
 crypto-bigint = { version = "0.6.0-rc.5", features = [
     "serde",
@@ -94,7 +94,7 @@ serial_test = "3.0.0"
 tempfile = "3.10.1"
 test-log = { version = "0.2", features = ["trace"] }
 tracing-test = "0.2"
-kms-core-common = { path = "../common", version = "0.9.0-rc5", features = ["testing"] }
+kms-core-common = { path = "../common", version = "0.9.0-rc11", features = ["testing"] }
 kms-core-backward-compatibility = { path = "../backward-compatibility", version = "0.9.0-rc3" , features = ["load", "tests"] }
 
 [lib]
