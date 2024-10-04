@@ -1,9 +1,3 @@
-#[cfg(feature = "insecure")]
-use super::generic::InsecureKeyGenerator;
-use super::generic::{
-    CrsGenerator, Decryptor, GenericKms, Initiator, KeyGenPreprocessor, KeyGenerator, Reencryptor,
-    ZkVerifier,
-};
 use crate::conf::threshold::{PeerConf, ThresholdConfig};
 use crate::consts::{MINIMUM_SESSIONS_PREPROC, PRSS_EPOCH_ID};
 use crate::cryptography::central_kms::{compute_info, BaseKmsStruct};
@@ -30,6 +24,12 @@ use crate::rpc::rpc_types::{
 use crate::storage::{
     delete_at_request_id, delete_pk_at_request_id, read_all_data_versioned,
     read_versioned_at_request_id, store_pk_at_request_id, store_versioned_at_request_id, Storage,
+};
+#[cfg(feature = "insecure")]
+use crate::threshold::generic::InsecureKeyGenerator;
+use crate::threshold::generic::{
+    CrsGenerator, Decryptor, GenericKms, Initiator, KeyGenPreprocessor, KeyGenerator, Reencryptor,
+    ZkVerifier,
 };
 use crate::util::meta_store::{handle_res_mapping, HandlerStatus, MetaStore};
 use crate::{anyhow_error_and_log, get_exactly_one};
@@ -1394,7 +1394,11 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
     InsecureKeyGenerator for RealInsecureKeyGenerator<PubS, PrivS>
 {
-    async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
+    async fn insecure_key_gen(
+        &self,
+        request: Request<KeyGenRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        tracing::info!("starting insecure key gen in RealInsecureKeyGenerator");
         self.real_key_generator.inner_key_gen(request, true).await
     }
 
@@ -1617,10 +1621,13 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         insecure: bool,
     ) -> Result<Response<Empty>, Status> {
         let inner = request.into_inner();
+        tracing::info!("Request ID: {:?}", inner.request_id);
         let request_id = tonic_some_or_err(
             inner.request_id.clone(),
-            "Request ID is not set".to_string(),
+            "Request ID is not set (inner key gen)".to_string(),
         )?;
+        tracing::info!("Request ID after tonic: {:?}", request_id);
+
         // ensure the request ID is valid
         if !request_id.is_valid() {
             tracing::warn!("Request ID {} is not valid!", request_id.to_string());
@@ -1684,14 +1691,13 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             "Parameter choice is not recognized".to_string(),
         )?;
 
-        let preproc_id = tonic_some_or_err(
-            inner.preproc_id.clone(),
-            "Request ID is not set".to_string(),
-        )?;
-
         let preproc_handle = if insecure {
             PreprocHandleWithMode::Insecure
         } else {
+            let preproc_id = tonic_some_or_err(
+                inner.preproc_id.clone(),
+                "Pre-Processing ID is not set".to_string(),
+            )?;
             let mut map = self.preproc_buckets.write().await;
             let preproc = map.delete(&preproc_id);
             PreprocHandleWithMode::Secure(handle_res_mapping(
@@ -1825,6 +1831,7 @@ impl RealPreprocessor {
             let _ = guarded_meta_store.update(&request_id, handle_update);
             tracing::info!("Preproc Finished P[{:?}]", own_identity);
         });
+
         Ok(())
     }
 }
@@ -1838,7 +1845,7 @@ impl KeyGenPreprocessor for RealPreprocessor {
         let inner = request.into_inner();
         let request_id = tonic_some_or_err(
             inner.request_id.clone(),
-            "Request ID is not set".to_string(),
+            "Request ID is not set (key_gen_preproc)".to_string(),
         )?;
 
         // ensure the request ID is valid

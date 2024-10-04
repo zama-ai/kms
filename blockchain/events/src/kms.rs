@@ -152,6 +152,12 @@ pub enum OperationValue {
     #[strum(serialize = "keygen_response")]
     #[serde(rename = "keygen_response")]
     KeyGenResponse(KeyGenResponseValues),
+    #[strum(serialize = "insecure_keygen")]
+    #[serde(rename = "insecure_keygen")]
+    InsecureKeyGen(InsecureKeyGenValues),
+    #[strum(serialize = "insecure_keygen_response")]
+    #[serde(rename = "insecure_keygen_response")]
+    InsecureKeyGenResponse(InsecureKeyGenResponseValues),
     #[strum(serialize = "keygen_preproc")]
     #[serde(rename = "keygen_preproc")]
     KeyGenPreproc(KeyGenPreprocValues),
@@ -184,6 +190,7 @@ impl OperationValue {
                 | Self::CrsGen(_)
                 | Self::KeyGenPreproc(_)
                 | Self::KeyGen(_)
+                | Self::InsecureKeyGen(_)
         )
     }
 }
@@ -201,6 +208,8 @@ impl From<OperationValue> for KmsOperation {
             OperationValue::KeyUrlResponse(_) => KmsOperation::KeyUrlResponse,
             OperationValue::KeyGen(_) => KmsOperation::KeyGen,
             OperationValue::KeyGenResponse(_) => KmsOperation::KeyGenResponse,
+            OperationValue::InsecureKeyGen(_) => KmsOperation::InsecureKeyGen,
+            OperationValue::InsecureKeyGenResponse(_) => KmsOperation::KeyGenResponse,
             OperationValue::KeyGenPreproc(_) => KmsOperation::KeyGenPreproc,
             OperationValue::KeyGenPreprocResponse(_) => KmsOperation::KeyGenPreprocResponse,
             OperationValue::CrsGen(_) => KmsOperation::CrsGen,
@@ -898,6 +907,52 @@ impl From<KeyGenResponseValues> for OperationValue {
 }
 
 #[derive(Serialize, Deserialize, VersionsDispatch)]
+pub enum InsecureKeyGenResponseValuesVersioned {
+    V0(InsecureKeyGenResponseValues),
+}
+
+#[cw_serde]
+#[derive(Default, Eq, Versionize)]
+#[versionize(InsecureKeyGenResponseValuesVersioned)]
+pub struct InsecureKeyGenResponseValues {
+    request_id: HexVector,
+    public_key_digest: String,
+    public_key_signature: HexVector,
+    // server key is bootstrap key
+    server_key_digest: String,
+    server_key_signature: HexVector,
+    // we do not need SnS key
+}
+
+impl InsecureKeyGenResponseValues {
+    pub fn request_id(&self) -> &HexVector {
+        &self.request_id
+    }
+
+    pub fn public_key_digest(&self) -> &str {
+        &self.public_key_digest
+    }
+
+    pub fn public_key_signature(&self) -> &HexVector {
+        &self.public_key_signature
+    }
+
+    pub fn server_key_digest(&self) -> &str {
+        &self.server_key_digest
+    }
+
+    pub fn server_key_signature(&self) -> &HexVector {
+        &self.server_key_signature
+    }
+}
+
+impl From<InsecureKeyGenResponseValues> for OperationValue {
+    fn from(value: InsecureKeyGenResponseValues) -> Self {
+        OperationValue::InsecureKeyGenResponse(value)
+    }
+}
+
+#[derive(Serialize, Deserialize, VersionsDispatch)]
 pub enum ReencryptResponseValuesVersioned {
     V0(ReencryptResponseValues),
 }
@@ -1253,6 +1308,21 @@ impl From<KeyGenValues> for OperationValue {
 }
 
 #[derive(Serialize, Deserialize, VersionsDispatch)]
+pub enum InsecureKeyGenValuesVersioned {
+    V0(InsecureKeyGenValues),
+}
+// There is no preprocessing id when using insecure key generation.
+#[cw_serde]
+#[derive(Eq, Default, Versionize)]
+#[versionize(InsecureKeyGenValuesVersioned)]
+pub struct InsecureKeyGenValues {}
+
+impl From<InsecureKeyGenValues> for OperationValue {
+    fn from(value: InsecureKeyGenValues) -> Self {
+        OperationValue::InsecureKeyGen(value)
+    }
+}
+#[derive(Serialize, Deserialize, VersionsDispatch)]
 pub enum CrsGenValuesVersioned {
     V0(CrsGenValues),
 }
@@ -1306,6 +1376,9 @@ pub enum KmsOperation {
     #[strum(serialize = "keygen_response", props(response = "true"))]
     #[serde(rename = "keygen_response")]
     KeyGenResponse,
+    #[strum(serialize = "insecure_keygen", props(request = "true"))]
+    #[serde(rename = "insecure_keygen")]
+    InsecureKeyGen,
     #[strum(serialize = "crs_gen", props(request = "true"))]
     #[serde(rename = "crs_gen")]
     CrsGen,
@@ -1320,6 +1393,21 @@ impl KmsOperation {
 
     pub fn is_response(&self) -> bool {
         self.get_str("response").unwrap_or("false") == "true"
+    }
+
+    pub fn to_response(&self) -> Result<KmsOperation, anyhow::Error> {
+        match *self {
+            KmsOperation::Decrypt => Ok(KmsOperation::DecryptResponse),
+            KmsOperation::Reencrypt => Ok(KmsOperation::ReencryptResponse),
+            KmsOperation::KeyGenPreproc => Ok(KmsOperation::KeyGenPreprocResponse),
+            KmsOperation::KeyGen => Ok(KmsOperation::KeyGenResponse),
+            KmsOperation::InsecureKeyGen => Ok(KmsOperation::KeyGenResponse),
+            KmsOperation::CrsGen => Ok(KmsOperation::KeyGenResponse),
+            _ => Err(anyhow::anyhow!(
+                "To response is not supported for self: {:?}",
+                self
+            )),
+        }
     }
 }
 

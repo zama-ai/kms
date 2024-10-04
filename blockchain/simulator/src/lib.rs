@@ -11,7 +11,10 @@ use dashmap::DashMap;
 use ethers::abi::Token;
 use ethers::types::{Address, U256};
 use events::kms::TransactionId;
-use events::kms::{DecryptValues, FheType, KmsEvent, KmsMessage, KmsOperation, OperationValue};
+use events::kms::{
+    DecryptValues, FheType, InsecureKeyGenValues, KeyGenPreprocValues, KeyGenValues, KmsEvent,
+    KmsMessage, KmsOperation, OperationValue,
+};
 use events::HexVector;
 use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractRequest, ProtoCoin};
 use kms_blockchain_client::query_client::{
@@ -37,8 +40,8 @@ use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use typed_builder::TypedBuilder;
 
-#[derive(Deserialize, Serialize, Clone, Default, Debug)]
-pub struct SimConfig {
+#[derive(Serialize, Clone, Default, Debug)]
+pub struct SimulatorConfig {
     pub s3_endpoint: String,
     pub key_id: String,
     pub key_folder: String,
@@ -50,7 +53,56 @@ pub struct SimConfig {
     pub faucet_address: String,
 }
 
-// Define a custom error type for TryFrom implementations
+fn parse_contract_address(
+    contract_address: &String,
+    validator_tcp_endpoint: &str,
+) -> Result<String, Box<dyn std::error::Error + 'static>> {
+    if contract_address == "latest" {
+        return Ok(get_latest_deployed_contract_address(
+            validator_tcp_endpoint,
+        )?);
+    }
+    // Implement your custom parsing logic here
+    Ok(contract_address.to_string())
+}
+
+impl<'de> Deserialize<'de> for SimulatorConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize, Clone, Default, Debug)]
+        pub struct SimulatorConfigBuffer {
+            pub s3_endpoint: String,
+            pub key_id: String,
+            pub key_folder: String,
+            pub validator_addresses: Vec<String>,
+            pub http_validator_endpoints: Vec<String>,
+            pub kv_store_address: String,
+            pub contract: String,
+            pub mnemonic: String,
+            pub faucet_address: String,
+        }
+
+        let temp = SimulatorConfigBuffer::deserialize(deserializer)?;
+
+        let contract_address =
+            parse_contract_address(&temp.contract, &temp.http_validator_endpoints[0])
+                .unwrap_or_default();
+
+        Ok(SimulatorConfig {
+            s3_endpoint: temp.s3_endpoint,
+            key_id: temp.key_id,
+            key_folder: temp.key_folder,
+            validator_addresses: temp.validator_addresses,
+            http_validator_endpoints: temp.http_validator_endpoints,
+            kv_store_address: temp.kv_store_address,
+            contract: contract_address,
+            mnemonic: temp.mnemonic,
+            faucet_address: temp.faucet_address,
+        })
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum ConversionError {
@@ -171,14 +223,20 @@ impl_tokenizable!(u32, u32::MAX);
 impl_tokenizable!(u64, u64::MAX);
 impl_tokenizable!(u128, u128::MAX);
 
-// CLI
+// CLI arguments
 #[derive(Debug, Parser)]
 pub struct Nothing {}
 
 #[derive(Debug, Parser)]
-pub struct Execute {
+pub struct CryptExecute {
     #[clap(long, short = 'e')]
     pub to_encrypt: u8,
+}
+
+#[derive(Debug, Parser)]
+pub struct KeyGenExecute {
+    #[clap(long, short = 'i')]
+    pub preproc_id: String,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -186,13 +244,16 @@ pub struct Query {
     #[clap(long, short = 't')]
     pub txn_id: String,
     #[clap(long, short = 'o')]
-    pub event: KmsOperation,
+    pub kms_operation: KmsOperation,
 }
 
 #[derive(Debug, Parser)]
 pub enum Command {
-    Decrypt(Execute),
-    ReEncrypt(Execute),
+    PreprocKeyGen(Nothing),
+    KeyGen(KeyGenExecute),
+    InsecureKeyGen(Nothing),
+    Decrypt(CryptExecute),
+    ReEncrypt(CryptExecute),
     QueryContract(Query),
     DoNothing(Nothing),
 }
@@ -203,16 +264,6 @@ pub struct Config {
     pub file_conf: Option<String>,
     #[clap(subcommand)]
     pub command: Command,
-}
-
-pub fn to_event(event: &cosmos_proto::messages::tendermint::abci::Event) -> Event {
-    let mut result = Event::new(event.r#type.clone());
-    for attribute in event.attributes.iter() {
-        let key = attribute.key.clone();
-        let value = attribute.value.clone();
-        result = result.add_attribute(key, value);
-    }
-    result
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder)]
@@ -233,18 +284,6 @@ pub enum KmsMode {
     #[serde(rename = "threshold")]
     Threshold,
 }
-
-#[retrying::retry(stop=(attempts(5)|duration(30)),wait=fixed(1))]
-async fn wait_for_transaction(
-    responders: Arc<DashMap<TransactionId, oneshot::Sender<KmsEvent>>>,
-    txn_id: &TransactionId,
-) -> Result<KmsEvent, anyhow::Error> {
-    let (tx, rx) = oneshot::channel();
-    tracing::info!("🤠🤠🤠 Waiting for transaction: {:?}", txn_id);
-    responders.insert(txn_id.clone(), tx);
-    rx.await.map_err(|e| anyhow::anyhow!(e.to_string()))
-}
-
 // Plaintext being in another crate we wrap it here to implement dereferencing
 struct PlaintextWrapper(Plaintext);
 
@@ -310,6 +349,90 @@ impl TryFrom<PlaintextWrapper> for Token {
         };
         Ok(res)
     }
+}
+
+fn get_latest_deployed_contract_address(
+    validator_tcp_endpoint: &str,
+) -> Result<String, anyhow::Error> {
+    // Get list of deployed contracts
+    // TODO: make sure that when more than 100 contracts are deployed (pagination limit)
+    // the function still works fine
+    // TODO: Double check that this works properly: for some reason it didn't find the contract
+    let output = std::process::Command::new("wasmd")
+        .args([
+            "query",
+            "wasm",
+            "list-code",
+            "--output",
+            "json",
+            "--node",
+            validator_tcp_endpoint,
+        ])
+        .output()?;
+
+    // Parse the JSON output
+    let json: Value = serde_json::from_slice(&output.stdout)?;
+
+    // Extract the last code ID
+    let code_infos = json["code_infos"].as_array().expect("Empty code info");
+    let last_code_id = code_infos.last().expect("Empty code infos")["code_id"]
+        .as_str()
+        .expect("code id is none");
+
+    tracing::info!("Last Code ID: {}", last_code_id);
+
+    // Execute the second command with the last code ID
+    let contract_list_output = std::process::Command::new("wasmd")
+        .args([
+            "query",
+            "wasm",
+            "list-contract-by-code",
+            last_code_id,
+            "--output",
+            "json",
+            "--node",
+            validator_tcp_endpoint,
+        ])
+        .output()?;
+
+    // Parse the JSON output of the second command
+    let contract_list_json: Value = serde_json::from_slice(&contract_list_output.stdout)?;
+
+    tracing::info!("{:?}", contract_list_json);
+
+    // Extract the last contract address
+    let contracts = contract_list_json["contracts"]
+        .as_array()
+        .expect("Contracts list is empty.");
+    if let Some(last_contract) = contracts.last() {
+        let contract_address = last_contract.as_str().expect("last contact is none");
+        tracing::info!("Last Contract Address: {}", contract_address);
+        Ok(contract_address.to_string())
+    } else {
+        tracing::error!("No contracts found for the last code ID");
+        Err(anyhow!("No contracts found for the last code ID"))
+    }
+}
+
+pub fn to_event(event: &cosmos_proto::messages::tendermint::abci::Event) -> Event {
+    let mut result = Event::new(event.r#type.clone());
+    for attribute in event.attributes.iter() {
+        let key = attribute.key.clone();
+        let value = attribute.value.clone();
+        result = result.add_attribute(key, value);
+    }
+    result
+}
+
+#[retrying::retry(stop=(attempts(5)|duration(30)),wait=fixed(1))]
+async fn wait_for_transaction(
+    responders: Arc<DashMap<TransactionId, oneshot::Sender<KmsEvent>>>,
+    txn_id: &TransactionId,
+) -> Result<KmsEvent, anyhow::Error> {
+    let (tx, rx) = oneshot::channel();
+    tracing::info!("🤠🤠🤠 Waiting for transaction: {:?}", txn_id);
+    responders.insert(txn_id.clone(), tx);
+    rx.await.map_err(|e| anyhow::anyhow!(e.to_string()))
 }
 
 pub async fn encrypt(
@@ -403,6 +526,176 @@ pub async fn store_cipher(
     }
 }
 
+pub async fn execute_insecure_keygen_contract(
+    client: &Client,
+    query_client: &QueryClient,
+) -> Result<KmsEvent, Box<dyn std::error::Error + 'static>> {
+    // We need to first do a pre-processing execute
+    let insecure_keygen_value = OperationValue::InsecureKeyGen(InsecureKeyGenValues {});
+
+    let request = ExecuteContractRequest::builder()
+        .message(KmsMessage::builder().value(insecure_keygen_value).build())
+        .gas_limit(3_100_000)
+        .funds(vec![ProtoCoin::builder()
+            .amount(64_000_000) // Arbitrary value -> how do we get the proper value the first
+            // time?
+            .denom("ucosm".to_string())
+            .build()])
+        .build();
+
+    let response = client.execute_contract(request).await?;
+
+    let resp;
+    const MAX_ITER: u64 = 20;
+    let mut counter: u64 = 0;
+    loop {
+        tracing::info!("Querying client for tx hash: {:?}...", response.txhash);
+        let query_response = query_client.query_tx(response.txhash.clone()).await?;
+        if let Some(qr) = query_response {
+            resp = qr;
+            break;
+        } else {
+            tracing::info!("Waiting 1 second for transaction to be included in a block.");
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            if counter == MAX_ITER {
+                return Err(format!(
+                    "Max-iteration ({}) reached waiting for transaction to be included in a block",
+                    MAX_ITER,
+                )
+                .into());
+            }
+        }
+        counter += 1;
+    }
+
+    tracing::info!("Filtering events");
+    let evs: Vec<KmsEvent> = resp
+        .events
+        .iter()
+        .filter(|x| KmsOperation::iter().any(|attr| x.r#type == format!("wasm-{}", attr)))
+        .map(to_event)
+        .map(<Event as TryInto<KmsEvent>>::try_into)
+        .collect::<Result<Vec<KmsEvent>, _>>()?;
+
+    let ev = evs[0].clone();
+
+    tracing::info!("TxId: {:?}", ev.txn_id().to_hex(),);
+    Ok(ev)
+}
+
+pub async fn execute_preproc_keygen_contract(
+    client: &Client,
+    query_client: &QueryClient,
+) -> Result<KmsEvent, Box<dyn std::error::Error + 'static>> {
+    let preproc_value = OperationValue::KeyGenPreproc(KeyGenPreprocValues {});
+    let preproc_request = ExecuteContractRequest::builder()
+        .message(KmsMessage::builder().value(preproc_value).build())
+        .gas_limit(3_100_000)
+        .funds(vec![ProtoCoin::builder()
+            .amount(64_000_000) // Arbitrary value -> how do we get the proper value the first
+            // time?
+            .denom("ucosm".to_string())
+            .build()])
+        .build();
+
+    let response = client.execute_contract(preproc_request).await?;
+
+    let resp;
+    const MAX_ITER: u64 = 20;
+    let mut counter: u64 = 0;
+    loop {
+        tracing::info!("Querying client for tx hash: {:?}...", response.txhash);
+        let query_response = query_client.query_tx(response.txhash.clone()).await?;
+        if let Some(qr) = query_response {
+            resp = qr;
+            break;
+        } else {
+            tracing::info!("Waiting 1 second for transaction to be included in a block.");
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            if counter == MAX_ITER {
+                return Err(format!(
+                    "Max-iteration ({}) reached waiting for transaction to be included in a block",
+                    MAX_ITER,
+                )
+                .into());
+            }
+        }
+        counter += 1;
+    }
+
+    tracing::info!("Filtering events");
+    let evs: Vec<KmsEvent> = resp
+        .events
+        .iter()
+        .filter(|x| KmsOperation::iter().any(|attr| x.r#type == format!("wasm-{}", attr)))
+        .map(to_event)
+        .map(<Event as TryInto<KmsEvent>>::try_into)
+        .collect::<Result<Vec<KmsEvent>, _>>()?;
+
+    let ev = evs[0].clone();
+
+    tracing::info!("TxId: {:?}", ev.txn_id().to_hex(),);
+    Ok(ev)
+}
+
+pub async fn execute_keygen_contract(
+    client: &Client,
+    query_client: &QueryClient,
+    preproc_id: HexVector,
+) -> Result<KmsEvent, Box<dyn std::error::Error + 'static>> {
+    // We need to first do a pre-processing execute
+    let keygen_value = OperationValue::KeyGen(KeyGenValues::new(preproc_id));
+
+    let request = ExecuteContractRequest::builder()
+        .message(KmsMessage::builder().value(keygen_value).build())
+        .gas_limit(3_100_000)
+        .funds(vec![ProtoCoin::builder()
+            .amount(64_000_000) // Arbitrary value -> how do we get the proper value the first
+            // time?
+            .denom("ucosm".to_string())
+            .build()])
+        .build();
+
+    let response = client.execute_contract(request).await?;
+
+    let resp;
+    const MAX_ITER: u64 = 20;
+    let mut counter: u64 = 0;
+    loop {
+        tracing::info!("Querying client for tx hash: {:?}...", response.txhash);
+        let query_response = query_client.query_tx(response.txhash.clone()).await?;
+        if let Some(qr) = query_response {
+            resp = qr;
+            break;
+        } else {
+            tracing::info!("Waiting 1 second for transaction to be included in a block.");
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            if counter == MAX_ITER {
+                return Err(format!(
+                    "Max-iteration ({}) reached waiting for transaction to be included in a block",
+                    MAX_ITER,
+                )
+                .into());
+            }
+        }
+        counter += 1;
+    }
+
+    tracing::info!("Filtering events");
+    let evs: Vec<KmsEvent> = resp
+        .events
+        .iter()
+        .filter(|x| KmsOperation::iter().any(|attr| x.r#type == format!("wasm-{}", attr)))
+        .map(to_event)
+        .map(<Event as TryInto<KmsEvent>>::try_into)
+        .collect::<Result<Vec<KmsEvent>, _>>()?;
+
+    let ev = evs[0].clone();
+
+    tracing::info!("TxId: {:?}", ev.txn_id().to_hex(),);
+    Ok(ev)
+}
+
 pub async fn execute_decryption_contract(
     to_encrypt: u8,
     client: &Client,
@@ -484,22 +777,26 @@ pub async fn execute_decryption_contract(
 }
 
 pub async fn query_contract(
-    sim_config: &SimConfig,
+    sim_config: &SimulatorConfig,
     query: Query,
     query_client: &QueryClient,
 ) -> Result<Vec<Plaintext>, Box<dyn std::error::Error + 'static>> {
     let txn_id = HexVector::from_hex(&query.txn_id)?;
     let ev = KmsEvent::builder()
-        .operation(query.event)
+        .operation(query.kms_operation)
         .txn_id(txn_id)
         .build();
+
     tracing::info!("contract address: {:?}", sim_config.contract);
+
     let query_req = ContractQuery::GetOperationsValue(OperationQuery::builder().event(ev).build());
     let request = QueryContractRequest::builder()
         .contract_address(sim_config.contract.clone())
         .query(query_req)
         .build();
     let value: Vec<OperationValue> = query_client.query_contract(request).await?;
+
+    // Decryption specific code
     let mut results = Vec::new();
     for x in value.iter() {
         match x {
@@ -684,6 +981,8 @@ async fn check_contract(
     Ok(result.is_some() && !result.expect("Result is None").is_empty())
 }
 
+// TODO: Incompatible with "latest" in the configuration
+// make it compatible and update the configuration accordingly
 pub async fn wait_for_contract_to_be_deployed(
     node_url: &str,
     contract_address: &str,
@@ -715,7 +1014,7 @@ pub async fn main_from_config(
     command: &Command,
     keys_folder: &Path,
 ) -> Result<(), Box<dyn std::error::Error + 'static>> {
-    let sim_conf: SimConfig = Settings::builder()
+    let sim_conf: SimulatorConfig = Settings::builder()
         .path(path_to_config)
         .env_prefix("SIMULATOR")
         .build()
@@ -795,11 +1094,11 @@ pub async fn main_from_config(
 
     // Launch command
     // TODO: adding re-encryption support
-    let mut ev: Option<KmsEvent> = None;
+    let mut kms_event: Option<KmsEvent> = None;
     // Execute the proper command
     match command {
         Command::Decrypt(ex) => {
-            ev = Some(
+            kms_event = Some(
                 execute_decryption_contract(
                     ex.to_encrypt,
                     &client,
@@ -811,28 +1110,41 @@ pub async fn main_from_config(
             );
         }
         Command::QueryContract(q) => {
-            query_contract(&sim_conf, q.clone(), &query_client).await?;
-        }
-        Command::ReEncrypt(ex) => {
-            panic!("Re-encryption not implemented yet\n{:?}", ex);
+            let query_result = query_contract(&sim_conf, q.clone(), &query_client).await?;
+            tracing::info!("Query result: {:?}", query_result);
         }
         Command::DoNothing(..) => {
             tracing::info!("Nothing to do.");
         }
+        Command::PreprocKeyGen(_) => {
+            kms_event = Some(execute_preproc_keygen_contract(&client, &query_client).await?);
+        }
+        Command::KeyGen(ex) => {
+            let preproc_id = HexVector::from_hex(&ex.preproc_id)?;
+            kms_event = Some(execute_keygen_contract(&client, &query_client, preproc_id).await?);
+        }
+        Command::InsecureKeyGen(_) => {
+            kms_event = Some(execute_insecure_keygen_contract(&client, &query_client).await?);
+        }
+        _ => {
+            return Err(anyhow!("Command: {:?} not supported yet", command).into());
+        }
     };
 
-    // If Decryption or Re-Encryption we wait for the response
+    // If needed we wait for the response
     let time_to_wait = 10; // in seconds
     let max_iter = 10;
-    if let Some(event) = ev {
+    if let Some(event) = kms_event {
+        tracing::info!("Event operation: {:?}", event.operation);
         // Only execute contract results is an event not being None
         // in this case we wait for the decryption response
         let q = Query {
             txn_id: event.txn_id.to_hex(),
-            event: KmsOperation::DecryptResponse,
+            kms_operation: event.operation.to_response()?,
         };
         for n in 1..=max_iter {
             // TODO: add check that the value is the same as the expected one
+            // TODO: this is only valid for a decryption response, it should be more generic
             match query_contract(&sim_conf, q.clone(), &query_client).await {
                 Ok(results) => {
                     tracing::info!("Results: {:?}", results);
@@ -840,7 +1152,7 @@ pub async fn main_from_config(
                 }
                 _ => {
                     tracing::info!(
-                        "Waiting {} seconds for the decrypt_result to be posted to the blockchain.",
+                        "Waiting {} seconds for the response to be posted to the blockchain.",
                         time_to_wait
                     );
                     std::thread::sleep(std::time::Duration::from_secs(time_to_wait));
@@ -849,7 +1161,7 @@ pub async fn main_from_config(
 
             // Max-iter reached
             if n == max_iter {
-                panic!("Never reached the response.");
+                return Err(anyhow!("Never reached the response.").into());
             }
         }
     }

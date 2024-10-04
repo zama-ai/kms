@@ -112,6 +112,8 @@ impl Kms for KmsMock {
     }
 }
 
+const BOOTSTRAP_TIME_TO_SLEEP: u64 = 60; // Wait a minute for everything to setup properly
+
 #[test_context(DockerComposeContext)]
 #[tokio::test]
 async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
@@ -132,7 +134,7 @@ async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
         .unwrap();
 
     // Wait for the contract to be deployed
-    sleep(Duration::from_secs(5)).await;
+    sleep(Duration::from_secs(BOOTSTRAP_TIME_TO_SLEEP)).await;
 
     // Get the contract address dynamically
     let contract_address = get_contract_address(&query_client).await.unwrap();

@@ -38,23 +38,35 @@ where
                 self.observability
                     .increment(MetricType::TxError, 1, &[("error", &e.to_string())]);
             })?;
+
         tracing::info!("Running KMS operation with value: {:?}", operation_value);
         let config_contract = if operation_value.needs_kms_config() {
             Some(self.blockchain.get_config_contract().await?)
         } else {
             None
         };
+        tracing::info!(
+            "Successfully retrieved kms configuration {:?}",
+            config_contract
+        );
+
         let result = self
             .kms
             .run(message.event, operation_value, config_contract)
             .await
             .inspect_err(|e| {
+                tracing::error!("KMS connector error running kms operation: {:?}", e);
                 self.observability
                     .increment(MetricType::TxError, 1, &[("error", &e.to_string())]);
             })?;
-        tracing::info!("Sending result to blockchain: {}", result.to_string());
+
+        tracing::info!("Sending response to the blockchain: {}", result.to_string());
         let tx_id = result.txn_id_hex();
         self.blockchain.send_result(result).await.inspect_err(|e| {
+            tracing::error!(
+                "KMS connector error sending the response to the blockchain: {:?}",
+                e
+            );
             self.observability
                 .increment(MetricType::TxError, 1, &[("error", &e.to_string())]);
         })?;

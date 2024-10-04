@@ -12,9 +12,9 @@ use async_trait::async_trait;
 use conf_trace::grpc::make_request;
 use enum_dispatch::enum_dispatch;
 use events::kms::{
-    DecryptResponseValues, DecryptValues, KeyGenPreprocResponseValues, KeyGenResponseValues,
-    KeyGenValues, KmsCoreConf, KmsEvent, OperationValue, ReencryptResponseValues, ReencryptValues,
-    TransactionId, ZkpResponseValues, ZkpValues,
+    DecryptResponseValues, DecryptValues, InsecureKeyGenValues, KeyGenPreprocResponseValues,
+    KeyGenResponseValues, KeyGenValues, KmsCoreConf, KmsEvent, OperationValue,
+    ReencryptResponseValues, ReencryptValues, TransactionId, ZkpResponseValues, ZkpValues,
 };
 use events::HexVector;
 use kms_lib::kms::core_service_endpoint_client::CoreServiceEndpointClient;
@@ -64,6 +64,11 @@ pub struct KeyGenVal<S> {
     pub operation_val: KmsOperationVal<S>,
 }
 
+pub struct InsecureKeyGenVal<S> {
+    pub insecure_keygen: InsecureKeyGenValues,
+    pub operation_val: KmsOperationVal<S>,
+}
+
 pub struct CrsGenVal<S> {
     pub operation_val: KmsOperationVal<S>,
 }
@@ -73,6 +78,7 @@ pub enum KmsOperationRequest<S> {
     Reencrypt(ReencryptVal<S>),
     Zkp(ZkpVal<S>),
     KeyGen(KeyGenVal<S>),
+    InsecureKeyGen(InsecureKeyGenVal<S>),
     KeyGenPreproc(KeyGenPreprocVal<S>),
     CrsGen(CrsGenVal<S>),
 }
@@ -96,6 +102,9 @@ where
                 keygen_preproc.run_operation(config_contract).await
             }
             KmsOperationRequest::KeyGen(keygen) => keygen.run_operation(config_contract).await,
+            KmsOperationRequest::InsecureKeyGen(insecure_keygen) => {
+                insecure_keygen.run_operation(config_contract).await
+            }
             KmsOperationRequest::CrsGen(crsgen) => crsgen.run_operation(config_contract).await,
         }
     }
@@ -192,6 +201,12 @@ where
                 keygen,
                 operation_val,
             }),
+            OperationValue::InsecureKeyGen(insecure_keygen) => {
+                KmsOperationRequest::InsecureKeyGen(InsecureKeyGenVal {
+                    insecure_keygen,
+                    operation_val,
+                })
+            }
             OperationValue::CrsGen(_) => KmsOperationRequest::CrsGen(CrsGenVal { operation_val }),
             _ => return Err(anyhow::anyhow!("Invalid operation for request {:?}", event)),
         };
@@ -228,6 +243,7 @@ macro_rules! poller {
                     if cnt > $timeout_triple.max_poll_count {
                         let err_msg =
                             format!("Time out after {cnt} tries while trying to get response");
+                        tracing::error!(err_msg);
                         $metrics.increment(
                             MetricType::CoreResponseError,
                             1,
@@ -236,7 +252,7 @@ macro_rules! poller {
                         return Err(anyhow!(err_msg));
                     } else {
                         cnt += 1;
-                        tracing::info!(
+                        tracing::debug!(
                             "Polling core {}, tries: {cnt}, timeout_triple: {:?}",
                             $info,
                             $timeout_triple,
@@ -246,6 +262,7 @@ macro_rules! poller {
                 Err(e) => {
                     let err_msg = format!("error while trying to get response {e}");
                     $metrics.increment(MetricType::CoreResponseError, 1, &[("error", &err_msg)]);
+                    tracing::error!(err_msg);
                     return Err(anyhow!(err_msg));
                 }
             }
@@ -776,6 +793,109 @@ where
             g,
             timeout_triple,
             "(KeyGen)",
+            metrics
+        );
+    }
+}
+
+#[async_trait]
+impl<S> KmsEventHandler for InsecureKeyGenVal<S>
+where
+    S: Storage + Clone + Send + Sync + 'static,
+{
+    #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
+    async fn run_operation(
+        &self,
+        config_contract: Option<KmsCoreConf>,
+    ) -> anyhow::Result<KmsOperationResponse> {
+        let param_choice_str = config_contract
+            .ok_or_else(|| anyhow!("config contract missing"))?
+            .param_choice_string();
+        let param_choice = ParamChoice::from_str_name(&param_choice_str).ok_or_else(|| {
+            anyhow!(
+                "invalid parameter choice string in keygen: {}",
+                param_choice_str
+            )
+        })?;
+
+        let chan = &self.operation_val.kms_client.channel;
+        let mut client = CoreServiceEndpointClient::new(chan.clone());
+
+        let request_id = self.operation_val.tx_id.to_hex();
+
+        let req_id: RequestId = request_id.clone().try_into()?;
+
+        tracing::info!("Request ID: {:?}", req_id);
+        let req = KeyGenRequest {
+            config: Some(Config {}),
+            params: param_choice.into(),
+            request_id: Some(req_id.clone()),
+            preproc_id: None,
+        };
+
+        let metrics = self.operation_val.kms_client.metrics.clone();
+
+        let request = make_request(req.clone(), Some(request_id.clone()))?;
+
+        // the response should be empty
+        let _resp = client.insecure_key_gen(request).await.inspect_err(|e| {
+            let err_msg = e.to_string();
+            tracing::error!(
+                "Error communicating decryption to core. Error message:\n{}\nRequest:\n{:?}",
+                err_msg,
+                req,
+            );
+            metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
+        })?;
+        metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "InsecureKeyGen")]);
+
+        let g =
+            |res: Result<Response<KeyGenResult>, Status>| -> anyhow::Result<PollerStatus<_>, anyhow::Error> {
+                match res {
+                    Ok(response) => {
+                        let inner = response.into_inner();
+                        let request_id = inner.request_id.ok_or_else(||anyhow!("empty request_id"))?;
+                        let pk_info = inner
+                            .key_results
+                            .get(&PubDataType::PublicKey.to_string())
+                            .ok_or_else(||anyhow!("empty public key info"))?;
+                        let ek_info = inner
+                            .key_results
+                            .get(&PubDataType::ServerKey.to_string())
+                            .ok_or_else(||anyhow!("empty evaluation key info"))?;
+                        Ok(PollerStatus::Done(KmsOperationResponse::KeyGenResponse(
+                            crate::domain::blockchain::KeyGenResponseVal {
+                                keygen_response: KeyGenResponseValues::new(
+                                    HexVector::from_hex(&request_id.request_id)?,
+                                    pk_info.key_handle.clone(),
+                                    pk_info.signature.clone(),
+                                    ek_info.key_handle.clone(),
+                                    ek_info.signature.clone(),
+                                ),
+                                operation_val: crate::domain::blockchain::BlockchainOperationVal {
+                                    tx_id: self.operation_val.tx_id.clone(),
+                                },
+                            },
+                        )))
+                    }
+                    // we ignore all errors and just poll
+                    Err(_) => Ok(PollerStatus::Poll),
+                }
+            };
+
+        // loop to get response
+        let timeout_triple = self
+            .operation_val
+            .kms_client
+            .timeout_config
+            .insecure_keygen
+            .clone();
+
+        poller!(
+            client.get_key_gen_result(make_request(req_id.clone(), Some(request_id.clone()))?),
+            g,
+            timeout_triple,
+            "(InsecureKeyGen)",
             metrics
         );
     }

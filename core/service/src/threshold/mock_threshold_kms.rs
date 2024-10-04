@@ -183,7 +183,10 @@ impl KeyGenerator for DummyKeyGenerator {
 #[cfg(feature = "insecure")]
 #[tonic::async_trait]
 impl InsecureKeyGenerator for DummyKeyGenerator {
-    async fn key_gen(&self, _request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
+    async fn insecure_key_gen(
+        &self,
+        _request: Request<KeyGenRequest>,
+    ) -> Result<Response<Empty>, Status> {
         Ok(Response::new(Empty {}))
     }
 

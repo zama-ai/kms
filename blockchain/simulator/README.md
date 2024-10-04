@@ -41,6 +41,14 @@ Note that for the kubernetes version of the KMS blockchain the address of the co
 To use the simulator with the centralized version of the KMS running through docker-compose use ./config/local.toml.
 To use the simulator with the threshold version of the KMS running on Kubernetes use ./config/k8_threshold.toml.
 
+### Insecure key-generation
+
+Key-generation can be done insecurely using the following command:
+
+```{bash}
+$ cargo run -- -f <path-to-toml-config-file> insecure-key-gen
+```
+
 ### Decrypt
 
 To encrypt a value using the public key from the configuration file and request a decryption from the KMS Blockchain.

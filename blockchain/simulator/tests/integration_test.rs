@@ -14,7 +14,7 @@ use tokio::fs;
 /// ```
 /// Any issue might be related to the fact that some obsolete Docker images exist.
 
-const BOOTSTRAP_TIME_TO_SLEEP: u64 = 20;
+const BOOTSTRAP_TIME_TO_SLEEP: u64 = 60; // Wait a minute for everything to setup properly
 
 struct DockerComposeCentralizedContext {
     pub cmd: DockerCompose,
@@ -77,7 +77,7 @@ async fn test_decryption_centralized(ctx: &mut DockerComposeCentralizedContext) 
 
     let config = Config {
         file_conf: Some(String::from(path_to_config.to_str().unwrap())),
-        command: Command::Decrypt(Execute { to_encrypt: 7_u8 }),
+        command: Command::Decrypt(CryptExecute { to_encrypt: 7_u8 }),
     };
 
     let keys_folder: &Path = Path::new("tests/data/keys");
@@ -102,13 +102,27 @@ async fn test_decryption_threshold(ctx: &mut DockerComposeThresholdContext) {
         .clone()
         .join("blockchain/simulator/config/local_threshold.toml");
 
+    // Key-Gen
+    tracing::info!("Doing insecure key generation");
     let config = Config {
         file_conf: Some(String::from(path_to_config.to_str().unwrap())),
-        command: Command::Decrypt(Execute { to_encrypt: 7_u8 }),
+        command: Command::InsecureKeyGen(Nothing {}),
     };
     let keys_folder: &Path = Path::new("tests/data/keys");
-
     main_from_config(&config.file_conf.unwrap(), &config.command, keys_folder)
         .await
         .unwrap();
+    tracing::info!("Insecure key generation done");
+
+    // Decryption
+    tracing::info!("Doing decryption");
+    let config = Config {
+        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+        command: Command::Decrypt(CryptExecute { to_encrypt: 7_u8 }),
+    };
+    let keys_folder: &Path = Path::new("tests/data/keys");
+    main_from_config(&config.file_conf.unwrap(), &config.command, keys_folder)
+        .await
+        .unwrap();
+    tracing::info!("Decryption done");
 }

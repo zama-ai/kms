@@ -11,6 +11,7 @@ use schemars::{
 };
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, ops::Deref};
+use sylvia::entry_points;
 use sylvia::{contract, types::ExecCtx};
 use tendermint::merkle::proof::ProofOps;
 
@@ -114,6 +115,7 @@ pub struct ProofContract {
     pub(crate) storage: ProofStorage,
 }
 
+#[entry_points]
 #[contract]
 #[sv::messages(aipsc::contract as InclusionProofContract)]
 impl ProofContract {
@@ -122,6 +124,7 @@ impl ProofContract {
             storage: ProofStorage::default(),
         }
     }
+
     #[sv::msg(instantiate)]
     pub fn instantiate(&self, ctx: ExecCtx, validator_set: Vec<HexVector>) -> StdResult<Response> {
         self.storage

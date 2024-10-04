@@ -122,6 +122,7 @@ impl<
         &self,
         request: Request<KeyGenRequest>,
     ) -> Result<Response<Empty>, Status> {
+        tracing::info!("insecure_key_gen");
         self.key_gen(request).await
     }
 
@@ -138,6 +139,10 @@ impl<
     #[tracing::instrument(skip(self, request))]
     async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
         let inner = request.into_inner();
+        tracing::info!(
+            "centralized key-gen with request id: {:?}",
+            inner.request_id
+        );
         let req_id = tonic_some_or_err(
             inner.request_id,
             "No request ID present in request".to_string(),
@@ -586,8 +591,12 @@ impl<
     /// starts the centralized CRS generation
     #[tracing::instrument(skip(self, request))]
     async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
+        tracing::info!("in crs generation function");
         let inner = request.into_inner();
-        let request_id = tonic_some_or_err(inner.request_id, "Request ID is not set".to_string())?;
+        let request_id = tonic_some_or_err(
+            inner.request_id,
+            "Request ID is not set (crs gen)".to_string(),
+        )?;
         validate_request_id(&request_id)?;
         let params = tonic_handle_potential_err(
             retrieve_parameters(inner.params),
@@ -980,8 +989,10 @@ pub async fn validate_reencrypt_req(
         req.payload.as_ref(),
         format!("The request {:?} does not have a payload", req),
     )?;
-    let request_id =
-        tonic_some_or_err(req.request_id.clone(), "Request ID is not set".to_string())?;
+    let request_id = tonic_some_or_err(
+        req.request_id.clone(),
+        "Request ID is not set (validate reencrypt req)".to_string(),
+    )?;
     if !request_id.is_valid() {
         return Err(anyhow_error_and_warn_log(format!(
             "The value {} is not a valid request ID!",
@@ -1066,8 +1077,10 @@ pub(crate) fn validate_decrypt_req(
         BaseKmsStruct::digest(&serialized_req),
         format!("Could not hash payload {:?}", req),
     )?;
-    let request_id =
-        tonic_some_or_err(req.request_id.clone(), "Request ID is not set".to_string())?;
+    let request_id = tonic_some_or_err(
+        req.request_id.clone(),
+        "Request ID is not set (validate decrypt req)".to_string(),
+    )?;
     if !request_id.is_valid() {
         return Err(anyhow_error_and_warn_log(format!(
             "The value {} is not a valid request ID!",

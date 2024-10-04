@@ -1,14 +1,12 @@
 use super::state::KmsContractStorage;
 use crate::events::EventEmitStrategy as _;
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{
-    to_json_binary, Env, Response, StdError, StdResult, Storage, VerificationError, WasmMsg,
-};
+use cosmwasm_std::{to_json_binary, Env, Response, StdError, StdResult, Storage, WasmMsg};
 use cw_controllers::Admin;
 use cw_utils::must_pay;
 use events::kms::ZkpResponseValues;
 use events::kms::{
-    CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues,
+    CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues, InsecureKeyGenValues,
     KeyGenPreprocResponseValues, KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues,
     KmsCoreConf, KmsEvent, KmsOperation, OperationValue, ReencryptResponseValues, ReencryptValues,
     Transaction, TransactionId, ZkpValues,
@@ -128,37 +126,37 @@ impl KmsContract {
         if let KmsCoreConf::Threshold(conf) = &kms_core_conf {
             // centralized setting should be used if there is only one party
             if conf.parties.len() < 2 {
-                return Err(cosmwasm_std::StdError::verification_err(
-                    VerificationError::GenericErr,
+                return Err(cosmwasm_std::StdError::generic_err(
+                    "conf.parties.len() !< 2, in this case please use the centralized version", // VerificationError::GenericErr,
                 ));
             }
 
             // check that degree is at least 1
             if conf.degree_for_reconstruction < 1 {
-                return Err(cosmwasm_std::StdError::verification_err(
-                    VerificationError::GenericErr,
+                return Err(cosmwasm_std::StdError::generic_err(
+                    "conf.degree_for_reconstruction !< 1",
                 ));
             }
 
             // check that the number of shares needed for reconstruction is at least degree + 2
             // this is the minimum value such that error detection is possible
             if conf.response_count_for_reconstruction < conf.degree_for_reconstruction + 2 {
-                return Err(cosmwasm_std::StdError::verification_err(
-                    VerificationError::GenericErr,
+                return Err(cosmwasm_std::StdError::generic_err(
+                    "conf.response_count_for_reconstruction !< conf.degree_for_reconstruction + 2",
                 ));
             }
 
             // there can not be enough responses for reconstruction
             if conf.response_count_for_reconstruction > conf.parties.len() {
-                return Err(cosmwasm_std::StdError::verification_err(
-                    VerificationError::GenericErr,
+                return Err(cosmwasm_std::StdError::generic_err(
+                    "conf.response_count_for_reconstruction !> conf.parties.len()",
                 ));
             }
 
             // there can not be enough responses for majority vote
             if conf.response_count_for_majority_vote > conf.parties.len() {
-                return Err(cosmwasm_std::StdError::verification_err(
-                    VerificationError::GenericErr,
+                return Err(cosmwasm_std::StdError::generic_err(
+                    "conf.response_count_for_majority_vote !> conf.parties.len()",
                 ));
             }
         };
@@ -302,6 +300,26 @@ impl KmsContract {
             &ctx.env,
             &txn_id.to_vec(),
             KeyGenPreprocResponseValues::default(),
+        )
+    }
+
+    #[sv::msg(exec)]
+    pub fn insecure_keygen(&self, ctx: ExecCtx) -> StdResult<Response> {
+        self.process_request_transaction(ctx, InsecureKeyGenValues::default())
+    }
+
+    #[sv::msg(exec)]
+    pub fn insecure_keygen_response(
+        &self,
+        ctx: ExecCtx,
+        txn_id: TransactionId,
+        keygen_response: KeyGenResponseValues,
+    ) -> StdResult<Response> {
+        self.process_transaction(
+            ctx.deps.storage,
+            &ctx.env,
+            &txn_id.to_vec(),
+            keygen_response,
         )
     }
 
@@ -672,7 +690,7 @@ mod tests {
 
         let contract = code_id
             .instantiate(
-                None,
+                Some(false),
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 2,

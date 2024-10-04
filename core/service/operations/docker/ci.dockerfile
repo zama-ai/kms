@@ -22,8 +22,8 @@ WORKDIR /app/kms/core/service
 RUN --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
     CARGO_HOME=/var/cache/buildkit/cargo \
     CARGO_TARGET_DIR=/var/cache/buildkit/target \
-    cargo install --path . --root . --bin kms-server --bin kms-gen-tls-certs --bin kms-init && \
-    cargo install --path . --root . --bin kms-gen-keys -F testing
+    cargo install --path . --root . --bin kms-server --bin kms-gen-tls-certs --bin kms-init -F insecure && \
+    cargo install --path . --root . --bin kms-gen-keys -F testing -F insecure
 
 # Second stage builds the runtime image.
 # This stage will be the final image

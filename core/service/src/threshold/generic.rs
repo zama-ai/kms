@@ -43,7 +43,10 @@ pub trait KeyGenerator {
 #[cfg(feature = "insecure")]
 #[tonic::async_trait]
 pub trait InsecureKeyGenerator {
-    async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status>;
+    async fn insecure_key_gen(
+        &self,
+        request: Request<KeyGenRequest>,
+    ) -> Result<Response<Empty>, Status>;
     async fn get_result(
         &self,
         request: Request<RequestId>,
@@ -284,7 +287,7 @@ impl_endpoint! {
         #[cfg(feature = "insecure")]
         #[tracing::instrument(skip(self, request))]
         async fn insecure_key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
-            self.insecure_key_generator.key_gen(request).await
+            self.insecure_key_generator.insecure_key_gen(request).await
         }
 
         #[cfg(feature = "insecure")]

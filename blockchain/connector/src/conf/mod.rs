@@ -61,6 +61,7 @@ pub struct TimeoutConfig {
     pub channel_timeout: u64,
     pub crs: TimeoutTriple,
     pub keygen: TimeoutTriple,
+    pub insecure_keygen: TimeoutTriple,
     pub preproc: TimeoutTriple,
     pub decryption: TimeoutTriple,
     pub reencryption: TimeoutTriple,
@@ -71,17 +72,19 @@ impl Default for TimeoutConfig {
     fn default() -> Self {
         Self {
             channel_timeout: 60,
-            // 2 hours
+            // CRS: 2 hours total, check each minute
             crs: TimeoutTriple::new(60, 60, 120),
-            // 20 hours, wait 5 hours first, then poll for the next 15 hours
+            // Key-Gen: 20 hours, wait 5 hours first, then poll for the next 15 hours
             keygen: TimeoutTriple::new(18000, 15000, 150),
-            // 20 hours, wait 5 hours first, then poll for the next 15 hours
+            // Insecure Key-Gen: 2 minutes
+            insecure_keygen: TimeoutTriple::new(10, 5, 24),
+            // Pre-Processing: 20 hours, wait 5 hours first, then poll for the next 15 hours
             preproc: TimeoutTriple::new(18000, 15000, 150),
-            // 2 minutes
+            // Decryption: 2 minutes 10s total
             decryption: TimeoutTriple::new(10, 5, 24),
-            // 2 minutes
+            // Re-Encryption: 2 minutes 10s total
             reencryption: TimeoutTriple::new(10, 5, 24),
-            // 2 minutes
+            // ZKP: 2 minutes 10s total
             zkp: TimeoutTriple::new(10, 5, 24),
         }
     }
@@ -94,6 +97,7 @@ impl TimeoutConfig {
             channel_timeout: 60,
             crs: TimeoutTriple::new(1, 5, 50),
             keygen: TimeoutTriple::new(1, 5, 50),
+            insecure_keygen: TimeoutTriple::new(1, 5, 50),
             preproc: TimeoutTriple::new(1, 5, 50),
             decryption: TimeoutTriple::new(1, 5, 50),
             reencryption: TimeoutTriple::new(1, 5, 50),
@@ -107,6 +111,7 @@ impl TimeoutConfig {
             channel_timeout: 60,
             crs: TimeoutTriple::new(1, 1, 10),
             keygen: TimeoutTriple::new(1, 1, 10),
+            insecure_keygen: TimeoutTriple::new(1, 1, 10),
             preproc: TimeoutTriple::new(1, 1, 10),
             decryption: TimeoutTriple::new(1, 1, 10),
             reencryption: TimeoutTriple::new(1, 1, 10),

@@ -17,7 +17,7 @@ RUN mkdir -p /app/kms/bin
 RUN --mount=type=ssh --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
     CARGO_HOME=/var/cache/buildkit/cargo \
     CARGO_TARGET_DIR=/var/cache/buildkit/target \
-    cargo install --path core/service --root . --bin kms-server
+    cargo install --path core/service --root . --bin kms-server -F insecure
 
 # Second stage builds the runtime image.
 # This stage will be the final image

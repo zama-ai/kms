@@ -9,6 +9,7 @@ RUN RUSTFLAGS='-C link-arg=-s' cargo build --target wasm32-unknown-unknown --rel
 RUN cargo install wasm-opt --locked
 RUN mkdir -p /app/optimized
 
+
 RUN wasm-opt -Os --signext-lowering "/app/target/wasm32-unknown-unknown/release/asc.wasm" -o "/app/optimized/asc.wasm"
 RUN wasm-opt -Os --signext-lowering "/app/target/wasm32-unknown-unknown/release/tendermint_ipsc.wasm" -o "/app/optimized/tendermint_ipsc.wasm"
 
