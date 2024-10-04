@@ -11,3 +11,4 @@ pub mod kms;
 pub mod subscription;
 
 pub use conversions::HexVector;
+pub use conversions::HexVectorList;

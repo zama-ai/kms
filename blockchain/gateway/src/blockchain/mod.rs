@@ -11,7 +11,7 @@ use ethers::prelude::*;
 use events::kms::FheType;
 use events::kms::KmsEvent;
 use events::kms::ReencryptResponseValues;
-use events::kms::ZkpResponseValues;
+use events::HexVectorList;
 use kms_lib::kms::Eip712DomainMsg;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
@@ -77,5 +77,5 @@ pub(crate) trait Blockchain: KmsEventSubscriber {
         max_num_bits: u32,
         eip712_domain: Eip712DomainMsg,
         acl_address: String,
-    ) -> anyhow::Result<Vec<ZkpResponseValues>>;
+    ) -> anyhow::Result<HexVectorList>;
 }

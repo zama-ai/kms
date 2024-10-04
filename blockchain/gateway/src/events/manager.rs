@@ -8,6 +8,7 @@ use crate::common::provider::get_provider;
 use crate::common::provider::EventDecryptionFilter;
 use crate::config::init_conf_with_trace_connector;
 use crate::config::GatewayConfig;
+use crate::config::ZkpResponseToClient;
 use crate::events::manager::k256::ecdsa::SigningKey;
 use crate::util::height::AtomicBlockHeight;
 use actix_cors::Cors;
@@ -25,7 +26,6 @@ use ethers::types::U256;
 use events::kms::KeyUrlResponseValues;
 use events::kms::KmsEvent;
 use events::kms::ReencryptResponseValues;
-use events::kms::ZkpResponseValues;
 use events::HexVector;
 use kms_blockchain_connector::application::oracle_sync::OracleSyncHandler;
 use kms_blockchain_connector::application::SyncHandler;
@@ -133,7 +133,7 @@ pub struct ReencryptionEvent {
 
 #[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq)]
 pub(crate) struct ApiZkpValues {
-    pub(crate) client_address: String,
+    pub(crate) contract_address: String,
     pub(crate) caller_address: String,
     pub(crate) ct_proof: HexVector,
     pub(crate) max_num_bits: u32,
@@ -142,7 +142,7 @@ pub(crate) struct ApiZkpValues {
 #[derive(Debug)]
 pub struct ZkpEvent {
     pub(crate) values: ApiZkpValues,
-    pub(crate) sender: oneshot::Sender<Vec<ZkpResponseValues>>,
+    pub(crate) sender: oneshot::Sender<ZkpResponseToClient>,
 }
 
 #[derive(Debug)]

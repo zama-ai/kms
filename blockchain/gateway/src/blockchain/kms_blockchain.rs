@@ -22,7 +22,7 @@ use events::kms::TransactionId;
 use events::kms::ZkpResponseValues;
 use events::kms::ZkpValues;
 use events::kms::{FheType, KmsMessage};
-use events::HexVector;
+use events::{HexVector, HexVectorList};
 use kms_blockchain_client::client::Client;
 use kms_blockchain_client::client::ClientBuilder;
 use kms_blockchain_client::client::ExecuteContractRequest;
@@ -35,6 +35,7 @@ use kms_blockchain_client::query_client::QueryContractRequest;
 use kms_lib::cryptography::signcryption::hash_element;
 use kms_lib::kms::DecryptionResponsePayload;
 use kms_lib::kms::Eip712DomainMsg;
+use kms_lib::kms::ZkVerifyResponsePayload;
 use kms_lib::rpc::rpc_types::Plaintext;
 use kms_lib::rpc::rpc_types::CURRENT_FORMAT_VERSION;
 use std::collections::HashMap;
@@ -614,6 +615,9 @@ impl Blockchain for KmsBlockchainImpl {
         }
     }
 
+    /// Returns a [`HexVectorList`]
+    /// filled with the kms_signatures
+    /// (as that is the only info the KMS Blockchain provides)
     async fn zkp(
         &self,
         client_address: String,
@@ -622,7 +626,7 @@ impl Blockchain for KmsBlockchainImpl {
         max_num_bits: u32,
         eip712_domain: Eip712DomainMsg,
         acl_address: String,
-    ) -> anyhow::Result<Vec<ZkpResponseValues>> {
+    ) -> anyhow::Result<HexVectorList> {
         tracing::info!(
             "🔒 ZKP ciphertext with client_address: {:?}, contract_address: {:?}, max_num_bits: {:?}, chain_id: {:?}",
             hex::encode(&client_address),
@@ -702,7 +706,7 @@ impl Blockchain for KmsBlockchainImpl {
 
         let results: Vec<OperationValue> = self.query_client.query_contract(request).await?;
 
-        match self.config.mode {
+        let zkp_responses = match self.config.mode {
             KmsMode::Centralized => match results.first().unwrap() {
                 OperationValue::ZkpResponse(zkp_response) => {
                     tracing::debug!(
@@ -712,8 +716,7 @@ impl Blockchain for KmsBlockchainImpl {
 
                     // the output needs to have type Vec<ZkpResponse>
                     // in the centralized case there is only 1 element
-                    let out = vec![zkp_response.clone()];
-                    Ok(out)
+                    vec![zkp_response.clone()]
                 }
                 _ => return Err(anyhow::anyhow!("Invalid operation for request {:?}", event)),
             },
@@ -734,9 +737,10 @@ impl Blockchain for KmsBlockchainImpl {
                         }
                     }
                 }
-                Ok(out)
+                out
             }
-        }
+        };
+        parse_zkp_responses_to_client(zkp_responses)
     }
 }
 
@@ -748,6 +752,24 @@ fn to_event(event: &cosmos_proto::messages::tendermint::abci::Event) -> cosmwasm
         result = result.add_attribute(key, value);
     }
     result
+}
+
+/// Deserializes all zkp_responses and extract the external signature
+/// It then serializes the [`Vec`] of those signatures and returns
+/// a partially completed [`ZkpResponseToClient`] builder
+///
+/// __NOTE__: The [`ZkVerifyResponsePayload`] was serialized by [`kms_blockchain_connector::infrastructure::core::ZkpVal`]
+fn parse_zkp_responses_to_client(
+    zkp_responses: Vec<ZkpResponseValues>,
+) -> anyhow::Result<HexVectorList> {
+    let mut external_signatures = Vec::new();
+    for zkp_response in zkp_responses {
+        let zk_verify_payload: ZkVerifyResponsePayload =
+            bincode::deserialize(zkp_response.payload())?;
+        external_signatures.push(HexVector(zk_verify_payload.external_signature));
+    }
+
+    Ok(external_signatures.into())
 }
 
 // Returns the most common element in the vector together with its count

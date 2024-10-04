@@ -17,14 +17,40 @@ pub enum KmsMode {
     Threshold,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, EnumString)]
+/// Enum to indicate whether we are in Native or Coprocessor case
+///
+///__NOTE__: For ease of implementation of mock strucures, this structure
+/// derives [`Default`] arbitrarily set to[`ListenerType::FhevmNative`].
+#[derive(Default, Debug, Deserialize, Serialize, Clone, PartialEq, Eq, EnumString)]
 pub enum ListenerType {
+    #[default]
     #[strum(serialize = "FHEVM_NATIVE")]
     #[serde(rename = "FHEVM_NATIVE")]
     FhevmNative,
     #[strum(serialize = "COPROCESSOR")]
     #[serde(rename = "COPROCESSOR")]
     Coprocessor,
+}
+
+/// In the case of ZkP the gateway is responsible to
+/// process the response it received from KMS BC
+/// (and Coprocessor if any) into this struct for
+/// the client to use
+#[derive(Default, Debug, Serialize, TypedBuilder)]
+pub struct ZkpResponseToClient {
+    //Whether Native or Coprocessor
+    #[builder(setter(into))]
+    listener_type: ListenerType,
+    //Signature from KMS attesting validity of ZKPoPK
+    #[builder(setter(into))]
+    kms_signatures: Vec<Vec<u8>>,
+    //If Coprocesor, signature attesting correct storage
+    #[builder(default, setter(into))]
+    proof_of_storage: Vec<u8>,
+    //If Coprocessor, handles to the ciphertexts
+    //each inner vec is a single handle (32 byte array)
+    #[builder(default, setter(into))]
+    handles: Vec<Vec<u8>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, EnumString)]

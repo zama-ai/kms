@@ -5,6 +5,7 @@ use crate::common::provider::GatewayContract;
 use crate::config::BaseGasPrice;
 use crate::config::EthereumConfig;
 use crate::config::GatewayConfig;
+use crate::config::ZkpResponseToClient;
 use crate::events::manager::ApiReencryptValues;
 use crate::events::manager::ApiZkpValues;
 use crate::events::manager::DecryptionEvent;
@@ -18,7 +19,6 @@ use events::kms::KeyUrlInfo;
 use events::kms::KeyUrlResponseValues;
 use events::kms::ReencryptResponseValues;
 use events::kms::VerfKeyUrlInfo;
-use events::kms::ZkpResponseValues;
 use events::HexVector;
 use kms_lib::kms::Eip712DomainMsg;
 use kms_lib::kms::ParamChoice;
@@ -215,13 +215,13 @@ pub(crate) async fn handle_reencryption_event(
 pub(crate) async fn handle_zkp_event(
     event: &ApiZkpValues,
     config: &GatewayConfig,
-) -> anyhow::Result<Vec<ZkpResponseValues>> {
+) -> anyhow::Result<ZkpResponseToClient> {
     let client = Arc::new(http_provider(config).await?);
     let start = std::time::Instant::now();
     let chain_id = client.provider().get_chainid().await?;
 
     // check the format EIP-55
-    _ = alloy_primitives::Address::parse_checksummed(&event.client_address, None)?;
+    _ = alloy_primitives::Address::parse_checksummed(&event.contract_address, None)?;
     _ = alloy_primitives::Address::parse_checksummed(&event.caller_address, None)?;
 
     // Get chain-id and verifying contract for EIP-712 signature
@@ -246,20 +246,23 @@ pub(crate) async fn handle_zkp_event(
         salt: vec![],
     };
 
-    let response = blockchain_impl(config)
+    let zk_response_builder = blockchain_impl(config)
         .await
         .zkp(
-            event.client_address.clone(),
+            event.contract_address.clone(),
             event.caller_address.clone(),
             event.ct_proof.0.clone(),
             event.max_num_bits,
             domain,
             acl_address,
         )
-        .await;
+        .await?;
     let duration = start.elapsed();
     tracing::info!("⏱️ KMS Response Time elapsed for ZKP: {:?}", duration);
-    response
+
+    <EthereumConfig as Into<Box<dyn CiphertextProvider>>>::into(config.clone().ethereum)
+        .put_ciphertext(event, zk_response_builder)
+        .await
 }
 
 pub(crate) async fn handle_keyurl_event(

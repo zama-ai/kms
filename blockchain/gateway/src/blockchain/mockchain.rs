@@ -8,7 +8,7 @@ use ethers::prelude::*;
 use events::kms::FheType;
 use events::kms::KmsEvent;
 use events::kms::ReencryptResponseValues;
-use events::kms::ZkpResponseValues;
+use events::HexVectorList;
 use kms_lib::kms::Eip712DomainMsg;
 
 pub(crate) struct MockchainImpl;
@@ -92,7 +92,7 @@ impl Blockchain for MockchainImpl {
         max_num_bits: u32,
         eip712_domain: Eip712DomainMsg,
         acl_address: String,
-    ) -> anyhow::Result<Vec<ZkpResponseValues>> {
+    ) -> anyhow::Result<HexVectorList> {
         tracing::debug!("🐛 Mockchain zkp");
         tracing::debug!("🐛 client_address: {:?}", client_address);
         tracing::debug!("🐛 caller_address: {:?}", caller_address);
@@ -101,6 +101,6 @@ impl Blockchain for MockchainImpl {
         tracing::debug!("🐛 eip712_domain: {:?}", eip712_domain);
         tracing::debug!("🐛 acl_address: {:?}", acl_address);
 
-        Ok(vec![])
+        Ok(HexVectorList::default())
     }
 }

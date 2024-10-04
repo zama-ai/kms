@@ -149,7 +149,21 @@ impl From<Vec<Vec<u8>>> for HexVectorList {
     }
 }
 
+impl From<HexVectorList> for Vec<Vec<u8>> {
+    fn from(value: HexVectorList) -> Self {
+        value
+            .0
+            .into_iter()
+            .map(|inner_value| inner_value.0)
+            .collect()
+    }
+}
+
 impl HexVectorList {
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn len(&self) -> usize {
         self.0.len()
     }

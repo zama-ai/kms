@@ -63,7 +63,7 @@ message InputToUpload {
   bytes input_payload = 1;
   string contract_address = 2;
   string caller_address = 3;
-  bytes signature = 4;
+  repeated bytes signature = 4;
 }
 
 message InputCiphertextResponseHandle {

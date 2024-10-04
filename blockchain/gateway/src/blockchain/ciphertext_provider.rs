@@ -7,33 +7,41 @@ pub mod coprocessor {
 }
 
 use crate::blockchain::ciphertext_provider::k256::ecdsa::SigningKey;
-use crate::config::{EthereumConfig, ListenerType};
+use crate::config::{EthereumConfig, ListenerType, ZkpResponseToClient};
+use crate::events::manager::ApiZkpValues;
 use anyhow::Context;
 use async_trait::async_trait;
 use ethers::prelude::*;
 use ethers::types::transaction::eip2718::TypedTransaction;
 use ethers::types::{BlockId, Bytes as EthersBytes, TransactionRequest};
 use events::kms::FheType;
+use events::HexVectorList;
 use hex;
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::Arc;
 
 use coprocessor::fhevm_coprocessor_client::FhevmCoprocessorClient;
-use coprocessor::GetCiphertextBatch;
+use coprocessor::{GetCiphertextBatch, InputToUpload, InputUploadBatch, InputUploadResponse};
 use std::str::FromStr;
 use tonic::metadata::MetadataValue;
 
 // Trait to define the interface for getting ciphertext
 // SignerMiddleware<Provider<Http>, Wallet<SigningKey>>
 #[async_trait]
-pub trait CiphertextProvider: Send {
+pub(crate) trait CiphertextProvider: Send {
     async fn get_ciphertext(
         &self,
         client: &Arc<SignerMiddleware<Provider<Http>, Wallet<SigningKey>>>,
         ct_handle: Vec<u8>,
         block_id: Option<BlockId>,
     ) -> anyhow::Result<(Vec<u8>, FheType)>;
+
+    async fn put_ciphertext(
+        &self,
+        event: &ApiZkpValues,
+        kms_signatures: HexVectorList,
+    ) -> anyhow::Result<ZkpResponseToClient>;
 }
 
 // Implementation for FHEVM_V1_1
@@ -67,6 +75,19 @@ impl CiphertextProvider for FhevmNativeCiphertextProvider {
         let tx: TypedTransaction = call.into();
         let response = client.call(&tx, block_id).await?;
         Ok((response.to_vec(), FheType::from(ct_handle[30])))
+    }
+
+    /// In the Native case, there's nothing to do,
+    /// the ciphertexst is already on chain
+    async fn put_ciphertext(
+        &self,
+        _event: &ApiZkpValues,
+        kms_signatures: HexVectorList,
+    ) -> anyhow::Result<ZkpResponseToClient> {
+        Ok(ZkpResponseToClient::builder()
+            .kms_signatures(kms_signatures)
+            .listener_type(ListenerType::FhevmNative)
+            .build())
     }
 }
 
@@ -153,6 +174,91 @@ impl CiphertextProvider for CoprocessorCiphertextProvider {
             anyhow::bail!("Ciphertext is missing in the response.");
         }
     }
+
+    /// In the Coprocessor case, we need
+    /// to send a request to the Coprocessor
+    /// to store the ciphertext and receive back the proof
+    /// and the handles
+    async fn put_ciphertext(
+        &self,
+        event: &ApiZkpValues,
+        kms_signatures: HexVectorList,
+    ) -> anyhow::Result<ZkpResponseToClient> {
+        // Set up the gRPC client
+        let mut client = FhevmCoprocessorClient::connect(self.config.coprocessor_url.clone())
+            .await
+            .context("Failed to connect to gRPC server")?;
+
+        // Authorization token
+        let api_key = &self.config.coprocessor_api_key;
+        let api_key_header = format!("bearer {}", api_key);
+
+        let input_ciphertexts = convert_zkpvalues_to_copro_input(event, &kms_signatures);
+        // Prepare the request with the input ciphertexts
+        let mut request = tonic::Request::new(InputUploadBatch { input_ciphertexts });
+
+        // Add the authorization header to the request
+        request.metadata_mut().append(
+            "authorization",
+            MetadataValue::from_str(&api_key_header)
+                .context("Failed to set authorization metadata")?,
+        );
+
+        tracing::info!("Sending gRPC request for input ctxt to Coprocessor");
+
+        // Make the gRPC call and process the response
+        let response = client
+            .upload_inputs(request)
+            .await
+            .context("Failed to put ciphertexts from the server")?;
+
+        // Check if the response contains data
+        let output = response.get_ref();
+        if output.upload_responses.is_empty() {
+            tracing::error!("No responses found in the gRPC response.");
+            anyhow::bail!("No responses found in the gRPC response.");
+        }
+
+        process_response_from_copro_to_client(output, kms_signatures)
+    }
+}
+
+fn convert_zkpvalues_to_copro_input(
+    event: &ApiZkpValues,
+    kms_signatures: &HexVectorList,
+) -> Vec<InputToUpload> {
+    //Note: for now the GW only ever expects ciphertext to be sent one at a time for input
+    vec![InputToUpload {
+        input_payload: event.ct_proof.0.clone(),
+        contract_address: event.contract_address.clone(),
+        caller_address: event.caller_address.clone(),
+        signature: kms_signatures.clone().into(),
+    }]
+}
+
+fn process_response_from_copro_to_client(
+    upload_response: &InputUploadResponse,
+    kms_signatures: HexVectorList,
+) -> anyhow::Result<ZkpResponseToClient> {
+    //Here also for now we always expect a single response
+    if upload_response.upload_responses.len() != 1 {
+        tracing::error!("Multiple response from Coprocessor InputUpload");
+        anyhow::bail!("Multiple response from Coprocessor InputUpload");
+    }
+    let response = &upload_response.upload_responses[0];
+    let handles: Vec<Vec<u8>> = response
+        .input_handles
+        .iter()
+        .map(|handle| handle.handle.clone())
+        .collect();
+    let proof_of_storage = response.eip712_signature.clone();
+    let zk_response_builder = ZkpResponseToClient::builder()
+        .kms_signatures(kms_signatures)
+        .handles(handles)
+        .proof_of_storage(proof_of_storage)
+        .listener_type(ListenerType::Coprocessor);
+
+    Ok(zk_response_builder.build())
 }
 
 impl From<EthereumConfig> for Box<dyn CiphertextProvider> {
