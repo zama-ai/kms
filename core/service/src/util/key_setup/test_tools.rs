@@ -1,3 +1,4 @@
+use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::kms::{FheType, RequestId};
 use crate::rpc::rpc_types::Plaintext;
 use crate::rpc::rpc_types::{PubDataType, WrappedPublicKeyOwned};
@@ -222,21 +223,45 @@ pub async fn load_pk_from_storage(pub_path: Option<&Path>, key_id: &str) -> FheP
         .compute_url(key_id, &PubDataType::PublicKey.to_string())
         .unwrap();
     if storage.data_exists(&url).await.unwrap() {
-        tracing::info!("Trying centralized storage");
-        let content: FhePublicKey = storage.read_data(&url).await.unwrap();
-        tracing::info!("🚧 Using key: {}", url);
-        content
+        tracing::info!("Trying centralized storage at url {}", url);
+        let wrapped_pk = read_pk_at_request_id(
+            &storage,
+            &RequestId {
+                request_id: key_id.to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        let WrappedPublicKeyOwned::Compact(pk) = wrapped_pk;
+        pk
     } else {
         // Try with the threshold storage
-        tracing::info!("Fallback to threshold file storage");
+        tracing::info!("Fallback to threshold file storage with url {}", url);
         let storage = FileStorage::new_threshold(pub_path, StorageType::PUB, 1).unwrap();
-        let url = storage
-            .compute_url(key_id, &PubDataType::PublicKey.to_string())
-            .unwrap();
-        let content: FhePublicKey = storage.read_data(&url).await.unwrap();
-        tracing::info!("🚧 Using key: {}", url);
-        content
+        let wrapped_pk = read_pk_at_request_id(
+            &storage,
+            &RequestId {
+                request_id: key_id.to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        let WrappedPublicKeyOwned::Compact(pk) = wrapped_pk;
+        pk
     }
+}
+
+pub async fn compute_zkp_from_stored_key_and_serialize(
+    pub_path: Option<&Path>,
+    msgs: Vec<TypedPlaintext>,
+    key_id: &str,
+    crs_id: &str,
+    metadata: &[u8],
+) -> Vec<u8> {
+    let ctlist = compute_zkp_from_stored_key(pub_path, msgs, key_id, crs_id, metadata).await;
+    let mut out = Vec::new();
+    safe_serialize(&ctlist, &mut out, SAFE_SER_SIZE_LIMIT).unwrap();
+    out
 }
 
 /// This function should be used for testing only and it can panic.

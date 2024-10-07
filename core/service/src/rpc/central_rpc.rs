@@ -861,6 +861,15 @@ where
     validate_request_id(request_id)?;
 
     tracing::info!("starting proof verification for request {}", request_id);
+    tracing::debug!(
+        "proof verification request: crs_handle: {:?}, key_handle: {:?}, contract_address: {}, client_address: {}, acl_address: {}, domain: {:?}",
+        req.crs_handle,
+        req.key_handle,
+        req.contract_address,
+        req.client_address,
+        req.acl_address,
+        req.domain
+    );
     let mut cursor = std::io::Cursor::new(&req.ct_bytes);
     let proven_ct: ProvenCompactCiphertextList = safe_deserialize(&mut cursor, SAFE_SER_SIZE_LIMIT)
         .map_err(|e| anyhow::anyhow!(e))

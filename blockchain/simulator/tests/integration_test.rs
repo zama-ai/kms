@@ -1,6 +1,7 @@
 use serial_test::serial;
 use simulator::*;
 use std::path::Path;
+use std::path::PathBuf;
 use std::string::String;
 use test_context::{test_context, AsyncTestContext};
 use tests_utils::{DockerCompose, KMSMode};
@@ -16,14 +17,29 @@ use tokio::fs;
 
 const BOOTSTRAP_TIME_TO_SLEEP: u64 = 60; // Wait a minute for everything to setup properly
 
+trait DockerComposeContext {
+    fn root_path(&self) -> PathBuf;
+    fn config_path(&self) -> &str;
+}
+
 struct DockerComposeCentralizedContext {
     pub cmd: DockerCompose,
     pub test_dir: std::path::PathBuf,
 }
 
+impl DockerComposeContext for DockerComposeCentralizedContext {
+    fn root_path(&self) -> PathBuf {
+        self.cmd.cmd.root_path.clone()
+    }
+
+    fn config_path(&self) -> &str {
+        "blockchain/simulator/config/local_centralized.toml"
+    }
+}
+
 impl AsyncTestContext for DockerComposeCentralizedContext {
     async fn setup() -> Self {
-        // Probably dangerous in the case of concurrent tests
+        // TODO: probably dangerous in the case of concurrent tests
         // We should probably create a folder per-test and add it to the test context
         let test_dir = std::path::Path::new("tests/data");
         fs::create_dir_all(test_dir).await.unwrap();
@@ -44,6 +60,16 @@ struct DockerComposeThresholdContext {
     pub test_dir: std::path::PathBuf,
 }
 
+impl DockerComposeContext for DockerComposeThresholdContext {
+    fn root_path(&self) -> PathBuf {
+        self.cmd.cmd.root_path.clone()
+    }
+
+    fn config_path(&self) -> &str {
+        "blockchain/simulator/config/local_threshold.toml"
+    }
+}
+
 impl AsyncTestContext for DockerComposeThresholdContext {
     async fn setup() -> Self {
         let test_dir = std::path::Path::new("tests/data");
@@ -60,69 +86,59 @@ impl AsyncTestContext for DockerComposeThresholdContext {
     }
 }
 
-#[test_context(DockerComposeCentralizedContext)]
-#[tokio::test]
-#[serial(docker)]
-async fn test_decryption_centralized(ctx: &mut DockerComposeCentralizedContext) {
+async fn test_template<T: DockerComposeContext>(ctx: &mut T, commands: Vec<Command>) {
     // Wait for contract to be in-chain
     // TODO: add status check for contract in-chain
     tokio::time::sleep(tokio::time::Duration::from_secs(BOOTSTRAP_TIME_TO_SLEEP)).await;
 
-    let path_to_config = ctx
-        .cmd
-        .cmd
-        .root_path
-        .clone()
-        .join("blockchain/simulator/config/local_centralized.toml");
-
-    let config = Config {
-        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
-        command: Command::Decrypt(CryptExecute { to_encrypt: 7_u8 }),
-    };
+    let path_to_config = ctx.root_path().join(ctx.config_path());
 
     let keys_folder: &Path = Path::new("tests/data/keys");
 
-    main_from_config(&config.file_conf.unwrap(), &config.command, keys_folder)
-        .await
-        .unwrap();
+    for command in commands {
+        let config = Config {
+            file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+            command,
+        };
+
+        main_from_config(&config.file_conf.unwrap(), &config.command, keys_folder)
+            .await
+            .unwrap();
+
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    }
+}
+
+#[test_context(DockerComposeCentralizedContext)]
+#[tokio::test]
+#[serial(docker)]
+async fn test_centralized(ctx: &mut DockerComposeCentralizedContext) {
+    let commands = vec![
+        Command::InsecureKeyGen(Nothing {}),
+        Command::Decrypt(CryptExecute { to_encrypt: 7_u8 }),
+        Command::CrsGen(Nothing {}),
+        Command::Zkp(ZkpExecute {
+            to_encrypt: 41,
+            crs_id: None,
+            key_id: None,
+        }),
+    ];
+    test_template(ctx, commands).await
 }
 
 #[test_context(DockerComposeThresholdContext)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_decryption_threshold(ctx: &mut DockerComposeThresholdContext) {
-    // Wait for contract to be in-chain
-    // TODO: add status check for contract in-chain
-    tokio::time::sleep(tokio::time::Duration::from_secs(BOOTSTRAP_TIME_TO_SLEEP)).await;
-
-    let path_to_config = ctx
-        .cmd
-        .cmd
-        .root_path
-        .clone()
-        .join("blockchain/simulator/config/local_threshold.toml");
-
-    // Key-Gen
-    tracing::info!("Doing insecure key generation");
-    let config = Config {
-        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
-        command: Command::InsecureKeyGen(Nothing {}),
-    };
-    let keys_folder: &Path = Path::new("tests/data/keys");
-    main_from_config(&config.file_conf.unwrap(), &config.command, keys_folder)
-        .await
-        .unwrap();
-    tracing::info!("Insecure key generation done");
-
-    // Decryption
-    tracing::info!("Doing decryption");
-    let config = Config {
-        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
-        command: Command::Decrypt(CryptExecute { to_encrypt: 7_u8 }),
-    };
-    let keys_folder: &Path = Path::new("tests/data/keys");
-    main_from_config(&config.file_conf.unwrap(), &config.command, keys_folder)
-        .await
-        .unwrap();
-    tracing::info!("Decryption done");
+async fn test_threshold(ctx: &mut DockerComposeThresholdContext) {
+    let commands = vec![
+        Command::InsecureKeyGen(Nothing {}),
+        Command::CrsGen(Nothing {}),
+        Command::Decrypt(CryptExecute { to_encrypt: 7_u8 }),
+        Command::Zkp(ZkpExecute {
+            to_encrypt: 41,
+            crs_id: None,
+            key_id: None,
+        }),
+    ];
+    test_template(ctx, commands).await
 }

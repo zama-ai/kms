@@ -78,6 +78,7 @@ impl Blockchain for KmsBlockchain {
         self.call_execute_contract(&mut client, &request)
             .await
             .inspect_err(|e| {
+                tracing::error!("Error while sending to contract: {e}");
                 self.metrics.increment(
                     MetricType::BlockchainError,
                     1,

@@ -202,8 +202,8 @@ mod tests {
             assert_eq!(
                 conf.core.timeout_config.decryption,
                 TimeoutTriple {
-                    initial_wait_time: 0,
-                    retry_interval: 0,
+                    initial_wait_time: 1,
+                    retry_interval: 1,
                     max_poll_count: 24,
                 }
             );

@@ -17,6 +17,9 @@ name = "simulator"
 path = "src/bin.rs"
 
 [dependencies]
+# Alloy packages are based on alloy 0.8.3
+alloy-primitives = { version = "0.8.3", features = ["k256"] }
+alloy-sol-types = { version = "0.8.3", features = ["eip712-serde"] }
 bytes = "^1.6.1"
 reqwest = { version = "0.12.4", features = ["json"] }
 async-trait.workspace = true

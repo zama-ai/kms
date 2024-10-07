@@ -1,4 +1,5 @@
 key_id = "d4d17a412a6533599b010c8ffc3d6ebdc6b1cfad"
+crs_id = "d8d94eb3a23d22d3eb6b5e7b694e8afcd571d906"
 key_folder = "PUB-p1"
 s3_endpoint = "http://localhost:9000/kms"
 validator_addresses = ["http://localhost:9090"]

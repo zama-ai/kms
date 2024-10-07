@@ -367,6 +367,7 @@ impl KmsContract {
         )
     }
 
+    #[sv::msg(exec)]
     pub fn zkp(&self, ctx: ExecCtx, zkp: ZkpValues) -> StdResult<Response> {
         let txn_id = self.derive_transaction_id(&ctx.env)?;
         self.process_transaction(ctx.deps.storage, &ctx.env, &txn_id, zkp)

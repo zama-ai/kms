@@ -54,7 +54,7 @@ VALIDATOR_ADDRESS=$(echo $PASSWORD | wasmd keys show validator --output json |jq
 
 # Send tokens to connector and gateway accounts
 echo "Sending tokens from validator to connector and gateway accounts"
-echo $PASSWORD | wasmd tx bank multi-send "$VALIDATOR_ADDRESS" "$CONN_ADDRESS" "$GATEWAY_ADDRESS" "200000000ucosm" -y --chain-id testing
+echo $PASSWORD | wasmd tx bank multi-send "$VALIDATOR_ADDRESS" "$CONN_ADDRESS" "$GATEWAY_ADDRESS" "400000000ucosm" -y --chain-id testing
 
 #############################
 #         Contracts         #

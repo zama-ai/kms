@@ -1402,7 +1402,8 @@ impl KmsOperation {
             KmsOperation::KeyGenPreproc => Ok(KmsOperation::KeyGenPreprocResponse),
             KmsOperation::KeyGen => Ok(KmsOperation::KeyGenResponse),
             KmsOperation::InsecureKeyGen => Ok(KmsOperation::KeyGenResponse),
-            KmsOperation::CrsGen => Ok(KmsOperation::KeyGenResponse),
+            KmsOperation::CrsGen => Ok(KmsOperation::CrsGenResponse),
+            KmsOperation::Zkp => Ok(KmsOperation::ZkpResponse),
             _ => Err(anyhow::anyhow!(
                 "To response is not supported for self: {:?}",
                 self

@@ -74,7 +74,7 @@ services:
       dev-kms-core-setup:
         condition: service_completed_successfully
     environment:
-      - RUST_LOG=debug
+      - RUST_LOG=info
     entrypoint: >
       /bin/sh -c "
       echo 'current dir ls' &&
@@ -94,7 +94,7 @@ services:
     command:
       - "kms-blockchain-connector"
     environment:
-      - RUST_LOG=debug
+      - RUST_LOG=info
       - ASC_CONN__BLOCKCHAIN__ADDRESSES=http://dev-kms-blockchain-validator:9090
       - ASC_CONN__CORE__ADDRESSES=http://dev-kms-core-1:50100
       - ASC_CONN__STORE__URL=http://dev-kv-store:8088
@@ -128,7 +128,7 @@ services:
       dev-kms-core-setup:
         condition: service_completed_successfully
     environment:
-      - RUST_LOG=debug
+      - RUST_LOG=info
     entrypoint: >
       /bin/sh -c "
       kms-server threshold --config-file config/compose_2.toml
@@ -139,7 +139,7 @@ services:
     command:
       - "kms-blockchain-connector"
     environment:
-      - RUST_LOG=debug
+      - RUST_LOG=info
       - ASC_CONN__BLOCKCHAIN__ADDRESSES=http://dev-kms-blockchain-validator:9090
       - ASC_CONN__CORE__ADDRESSES=http://dev-kms-core-2:50200
       - ASC_CONN__STORE__URL=http://dev-kv-store:8088
@@ -173,7 +173,7 @@ services:
       dev-kms-core-setup:
         condition: service_completed_successfully
     environment:
-      - RUST_LOG=debug
+      - RUST_LOG=info
     entrypoint: >
       /bin/sh -c "
       kms-server threshold --config-file config/compose_3.toml
@@ -184,7 +184,7 @@ services:
     command:
       - "kms-blockchain-connector"
     environment:
-      - RUST_LOG=debug
+      - RUST_LOG=info
       - ASC_CONN__BLOCKCHAIN__ADDRESSES=http://dev-kms-blockchain-validator:9090
       - ASC_CONN__CORE__ADDRESSES=http://dev-kms-core-3:50300
       - ASC_CONN__STORE__URL=http://dev-kv-store:8088
@@ -218,7 +218,7 @@ services:
       dev-kms-core-setup:
         condition: service_completed_successfully
     environment:
-      - RUST_LOG=debug
+      - RUST_LOG=info
     entrypoint: >
       /bin/sh -c "
       kms-server threshold --config-file config/compose_4.toml
@@ -229,7 +229,7 @@ services:
     command:
       - "kms-blockchain-connector"
     environment:
-      - RUST_LOG=debug
+      - RUST_LOG=info
       - ASC_CONN__BLOCKCHAIN__ADDRESSES=http://dev-kms-blockchain-validator:9090
       - ASC_CONN__CORE__ADDRESSES=http://dev-kms-core-4:50400
       - ASC_CONN__STORE__URL=http://dev-kv-store:8088

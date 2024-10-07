@@ -8138,6 +8138,8 @@ dependencies = [
 name = "simulator"
 version = "0.9.0-rc11"
 dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
  "anyhow",
  "async-trait",
  "bech32 0.9.1",
