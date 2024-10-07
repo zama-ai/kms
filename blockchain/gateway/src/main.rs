@@ -1,6 +1,6 @@
 use ethers::prelude::*;
 use ethers::utils::to_checksum;
-use gateway::config::{init_conf_gateway, GatewayConfig};
+use gateway::config::{init_conf_with_trace_gateway, GatewayConfig};
 use gateway::events::manager::start_decryption_publisher;
 use gateway::events::manager::start_http_server;
 use gateway::events::manager::{start_gateway, start_kms_event_publisher};
@@ -17,7 +17,7 @@ use tokio::sync::mpsc::{self};
 /// when a shutdown signal (SIGINT or SIGTERM) is received.
 async fn main() -> anyhow::Result<()> {
     // Load gateway configuration
-    let config: GatewayConfig = init_conf_gateway("config/gateway")?;
+    let config: GatewayConfig = init_conf_with_trace_gateway("config/gateway")?;
     // Some starting logs
     print_intro(&config);
     // Channel for communication

@@ -134,7 +134,7 @@ pub fn init_conf_with_trace_gateway(config_file: &str) -> anyhow::Result<Gateway
 }
 
 pub fn init_conf_with_trace_connector(config_file: &str) -> anyhow::Result<ConnectorConfig> {
-    kms_blockchain_connector::conf::init_conf_with_trace(config_file)
+    kms_blockchain_connector::conf::init_conf(config_file)
 }
 
 #[cfg(test)]
