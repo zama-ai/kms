@@ -552,6 +552,13 @@ impl<
             )?
         };
 
+        tracing::debug!(
+            "Returning plaintext(s) for request ID {}: {:?}. External signature: {:x?}",
+            request_id,
+            plaintexts,
+            external_signature
+        );
+
         // serialize plaintexts to return as payload
         let pt_payload = tonic_handle_potential_err(
             plaintexts
@@ -1089,13 +1096,19 @@ pub(crate) fn validate_decrypt_req(
     }
 
     let eip712_domain = if let Some(domain) = req.domain.as_ref() {
-        protobuf_to_alloy_domain(domain).ok()
+        Some(tonic_handle_potential_err(
+            protobuf_to_alloy_domain(domain),
+            format!("Could not turn domain to alloy: {:?}", domain),
+        )?)
     } else {
         None
     };
 
     let acl_address = if let Some(address) = req.acl_address.as_ref() {
-        Address::from_str(address).ok()
+        Some(tonic_handle_potential_err(
+            Address::from_str(address),
+            format!("Could not parse ACL address: {:?}", address),
+        )?)
     } else {
         None
     };

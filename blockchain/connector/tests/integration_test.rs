@@ -316,11 +316,11 @@ async fn send_decrypt_request(client: &RwLock<Client>) -> String {
         vec![FheType::Euint8],
         Some(vec![[1, 0, 0, 0, 0, 1, 1, 1, 1, 1].to_vec()]),
         CURRENT_FORMAT_VERSION,
-        "acl_address".to_string(),
+        "0xEEdA6bf26964aF9D7Eed9e03e53415D37aa960EE".to_string(),
         "eip712name".to_string(),
-        "version".to_string(),
-        vec![101],
-        "contract".to_string(),
+        "1".to_string(),
+        vec![101; 32],
+        "0x33dA6bF26964af9d7eed9e03E53415D37aA960EE".to_string(),
         vec![],
     );
 
@@ -525,11 +525,11 @@ async fn ddec_centralized_sunshine() {
             MOCK_EXTERNAL_HANDLES[1].to_vec(),
         ]),
         CURRENT_FORMAT_VERSION,
-        "acl_address".to_string(),
+        "0xEEdA6bf26964aF9D7Eed9e03e53415D37aa960EE".to_string(),
         "eip712name".to_string(),
-        "version".to_string(),
-        vec![6],
-        "contract".to_string(),
+        "1".to_string(),
+        vec![101; 32],
+        "0x33dA6bF26964af9d7eed9e03E53415D37aA960EE".to_string(),
         vec![],
     ));
     let (result, txn_id) = generic_centralized_sunshine_test(vec![ct1, ct2], op).await;
@@ -722,11 +722,11 @@ async fn ddec_sunshine(slow: bool) {
             MOCK_EXTERNAL_HANDLES[1].to_vec(),
         ]),
         CURRENT_FORMAT_VERSION,
-        "acl_address".to_string(),
+        "0xEEdA6bf26964aF9D7Eed9e03e53415D37aa960EE".to_string(),
         "eip712name".to_string(),
-        "version".to_string(),
-        vec![6],
-        "contract".to_string(),
+        "1".to_string(),
+        vec![101; 32],
+        "0x33dA6bF26964af9d7eed9e03E53415D37aA960EE".to_string(),
         vec![],
     ));
     let (results, txn_id, _) = generic_sunshine_test(slow, vec![ct1, ct2], op).await;

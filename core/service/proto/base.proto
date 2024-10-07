@@ -144,7 +144,7 @@ message DecryptionResponsePayload {
   repeated bytes plaintexts = 4;
   // the signature on external_decryption_result for the external recipient
   // (e.g. the fhevm)
-  optional bytes external_signature = 6;
+  optional bytes external_signature = 5;
 }
 
 // KMS-internal Decryption Response

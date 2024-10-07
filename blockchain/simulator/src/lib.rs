@@ -718,11 +718,11 @@ pub async fn execute_decryption_contract(
         vec![FheType::Euint8],
         Some(vec![vec![5_u8; 32]]),
         1,
-        "acl_address".to_string(),
+        "0xFFda6bf26964af9D7eed9e03e53415D37Aa960ee".to_string(),
         "eip712name".to_string(),
         "version".to_string(),
-        vec![6],
-        "contract".to_string(),
+        vec![6; 32],
+        "0x00dA6BF26964af9D7EED9e03E53415d37aa960EE".to_string(),
         vec![],
     ));
 

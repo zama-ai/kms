@@ -25,11 +25,11 @@ async fn main() {
         vec![FheType::Euint8],
         None::<Vec<Vec<u8>>>,
         1,
-        "acl_address".to_string(),
+        "0xEEdA6bf26964aF9D7Eed9e03e53415D37aa960EE".to_string(),
         "eip712name".to_string(),
         "1".to_string(),
         vec![1],
-        "contract".to_string(),
+        "0x33dA6bF26964af9d7eed9e03E53415D37aA960EE".to_string(),
         vec![],
     ));
 

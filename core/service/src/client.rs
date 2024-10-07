@@ -3525,7 +3525,7 @@ pub(crate) mod tests {
             alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
 
         let dummy_acl_address =
-            alloy_primitives::address!("eeda6bf26964af9d7eed9e03e53415d37aa960ee");
+            alloy_primitives::address!("EEdA6bf26964aF9D7Eed9e03e53415D37aa960EE");
 
         let metadata = assemble_metadata_alloy(
             &dummy_contract_address,
