@@ -161,7 +161,7 @@ impl From<HexVectorList> for Vec<Vec<u8>> {
 
 impl HexVectorList {
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.0.is_empty()
     }
 
     pub fn len(&self) -> usize {

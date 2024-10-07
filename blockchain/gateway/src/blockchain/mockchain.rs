@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use ethers::abi::Token;
 use ethers::prelude::*;
 use events::kms::FheType;
+use events::kms::KeyUrlResponseValues;
 use events::kms::KmsEvent;
 use events::kms::ReencryptResponseValues;
 use events::HexVectorList;
@@ -61,6 +62,7 @@ impl Blockchain for MockchainImpl {
         &self,
         signature: Vec<u8>,
         client_address: String,
+        key_id_str: String,
         enc_key: Vec<u8>,
         fhe_type: FheType,
         ciphertext: Vec<u8>,
@@ -71,6 +73,7 @@ impl Blockchain for MockchainImpl {
         tracing::debug!("🐛 Mockchain reencrypting ciphertext");
         tracing::debug!("🐛 signature: {:?}", signature);
         tracing::debug!("🐛 client_address: {:?}", client_address);
+        tracing::debug!("🐛 key_id_str: {:?}", key_id_str);
         tracing::debug!("🐛 enc_key: {:?}", enc_key);
         tracing::debug!("🐛 fhe_type: {:?}", fhe_type);
         tracing::debug!("🐛 ciphertext: {:?}", ciphertext);
@@ -88,19 +91,108 @@ impl Blockchain for MockchainImpl {
         &self,
         client_address: String,
         caller_address: String,
+        key_id_str: String,
+        crs_id_str: String,
         ct_proof: Vec<u8>,
-        max_num_bits: u32,
         eip712_domain: Eip712DomainMsg,
         acl_address: String,
     ) -> anyhow::Result<HexVectorList> {
         tracing::debug!("🐛 Mockchain zkp");
         tracing::debug!("🐛 client_address: {:?}", client_address);
         tracing::debug!("🐛 caller_address: {:?}", caller_address);
+        tracing::debug!("🐛 key_id_str: {:?}", key_id_str);
+        tracing::debug!("🐛 crs_id_str: {:?}", crs_id_str);
         tracing::debug!("🐛 ct_proof: {:?}", ct_proof);
-        tracing::debug!("🐛 max_num_bits: {:?}", max_num_bits);
         tracing::debug!("🐛 eip712_domain: {:?}", eip712_domain);
         tracing::debug!("🐛 acl_address: {:?}", acl_address);
 
         Ok(HexVectorList::default())
+    }
+
+    async fn keyurl(&self) -> anyhow::Result<KeyUrlResponseValues> {
+        tracing::debug!("🐛 Mockchain keyurl called");
+        Ok(serde_json::from_str(
+            r#"{
+        "crs": {
+             "256": {
+                 "data_id": "d8d94eb3a23d22d3eb6b5e7b694e8afcd571d906",
+                 "param_choice": 1,
+                 "signatures": [
+                     "0011223344556677889900112233445566778899",
+                     "0011223344556677889900112233445566778899",
+                     "0011223344556677889900112233445566778899",
+                     "0011223344556677889900112233445566778899"
+                 ],
+                 "urls": [
+                     "https://s3.amazonaws.com/bucket-name-1/PUB-p1/CRS/d8d94eb3a23d22d3eb6b5e7b694e8afcd571d906",
+                     "https://s3.amazonaws.com/bucket-name-4/PUB-p4/CRS/d8d94eb3a23d22d3eb6b5e7b694e8afcd571d906",
+                     "https://s3.amazonaws.com/bucket-name-2/PUB-p2/CRS/d8d94eb3a23d22d3eb6b5e7b694e8afcd571d906",
+                     "https://s3.amazonaws.com/bucket-name-3/PUB-p3/CRS/d8d94eb3a23d22d3eb6b5e7b694e8afcd571d906"
+                 ]
+             }
+         },
+         "fhe_key_info": [
+             {
+                 "fhe_public_key": {
+                     "data_id": "408d8cbaa51dece7f782fe04ba0b1c1d017b1088",
+                     "param_choice": 1,
+                     "signatures": [
+                         "0011223344556677889900112233445566778899",
+                         "0011223344556677889900112233445566778899",
+                         "0011223344556677889900112233445566778899",
+                         "0011223344556677889900112233445566778899"
+                     ],
+                     "urls": [
+                         "https://s3.amazonaws.com/bucket-name-1/PUB-p1/PublicKey/408d8cbaa51dece7f782fe04ba0b1c1d017b1088",
+                         "https://s3.amazonaws.com/bucket-name-4/PUB-p4/PublicKey/408d8cbaa51dece7f782fe04ba0b1c1d017b1088",
+                         "https://s3.amazonaws.com/bucket-name-2/PUB-p2/PublicKey/408d8cbaa51dece7f782fe04ba0b1c1d017b1088",
+                         "https://s3.amazonaws.com/bucket-name-3/PUB-p3/PublicKey/408d8cbaa51dece7f782fe04ba0b1c1d017b1088"
+                     ]
+                 },
+                 "fhe_server_key": {
+                     "data_id": "408d8cbaa51dece7f782fe04ba0b1c1d017b1088",
+                     "param_choice": 1,
+                     "signatures": [
+                         "0011223344556677889900112233445566778899",
+                         "0011223344556677889900112233445566778899",
+                         "0011223344556677889900112233445566778899",
+                         "0011223344556677889900112233445566778899"
+                     ],
+                     "urls": [
+                         "https://s3.amazonaws.com/bucket-name-1/PUB-p1/ServerKey/408d8cbaa51dece7f782fe04ba0b1c1d017b1088",
+                         "https://s3.amazonaws.com/bucket-name-4/PUB-p4/ServerKey/408d8cbaa51dece7f782fe04ba0b1c1d017b1088",
+                         "https://s3.amazonaws.com/bucket-name-2/PUB-p2/ServerKey/408d8cbaa51dece7f782fe04ba0b1c1d017b1088",
+                         "https://s3.amazonaws.com/bucket-name-3/PUB-p3/ServerKey/408d8cbaa51dece7f782fe04ba0b1c1d017b1088"
+                     ]
+                 }
+             }
+         ],
+         "verf_public_key": [
+             {
+                 "key_id": "408d8cbaa51dece7f782fe04ba0b1c1d017b1088",
+                 "server_id": 1,
+                 "verf_public_key_address": "https://s3.amazonaws.com/bucket-name-1/PUB-p1/VerfAddress/408d8cbaa51dece7f782fe04ba0b1c1d017b1088",
+                 "verf_public_key_url": "https://s3.amazonaws.com/bucket-name-1/PUB-p1/VerfKey/408d8cbaa51dece7f782fe04ba0b1c1d017b1088"
+             },
+             {
+                 "key_id": "408d8cbaa51dece7f782fe04ba0b1c1d017b1088",
+                 "server_id": 4,
+                 "verf_public_key_address": "https://s3.amazonaws.com/bucket-name-4/PUB-p4/VerfAddress/408d8cbaa51dece7f782fe04ba0b1c1d017b1088",
+                 "verf_public_key_url": "https://s3.amazonaws.com/bucket-name-4//PUB-p4/VerfKey/408d8cbaa51dece7f782fe04ba0b1c1d017b1088"
+             },
+             {
+                 "key_id": "408d8cbaa51dece7f782fe04ba0b1c1d017b1088",
+                 "server_id": 2,
+                 "verf_public_key_address": "https://s3.amazonaws.com/bucket-name-2/PUB-p2/VerfAddress/408d8cbaa51dece7f782fe04ba0b1c1d017b1088",
+                 "verf_public_key_url": "https://s3.amazonaws.com/bucket-name-2/PUB-p2/VerfKey/408d8cbaa51dece7f782fe04ba0b1c1d017b1088"
+             },
+             {
+                 "key_id": "408d8cbaa51dece7f782fe04ba0b1c1d017b1088",
+                 "server_id": 3,
+                 "verf_public_key_address": "https://s3.amazonaws.com/bucket-name-3/PUB-p3/VerfAddress/408d8cbaa51dece7f782fe04ba0b1c1d017b1088",
+                 "verf_public_key_url": "https://s3.amazonaws.com/bucket-name-3/PUB-p3/VerfKey/408d8cbaa51dece7f782fe04ba0b1c1d017b1088"
+             }
+         ]}"#,
+        ).unwrap())
     }
 }

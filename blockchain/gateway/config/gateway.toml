@@ -96,20 +96,6 @@ mnemonic = "bachelor similar spirit copper rely carbon web hobby conduct wrap co
 # Used for making HTTP requests to the KMS service.
 address = "http://localhost:9090"
 
-# TODO these will eventually be fetched from the ASC
-# Key ID used within the KMS.
-# Identifies the specific key to be used for cryptographic operations within the KMS.
-key_id = "408d8cbaa51dece7f782fe04ba0b1c1d017b1088"
-
-# TODO these will eventually be fetched from the ASC
-# CRS IDs used within the KMS.
-# Identifies the specific CRS' to be used for ZKPs within the KMS.
-# The key is the bit parameter used to generate the CRS.
-[kms.crs_ids]
-# Ths is a list of crs ids with the amount of bits they can handle encryptions for.
-# 128 = "00000000000000000000000000000000000000000"
-256 = "d8d94eb3a23d22d3eb6b5e7b694e8afcd571d906"
-
 # List of prefixed of URL endpoints for the public storage of the KMS.
 # The key in the map is the MPC ID of the party. I.e. [1; amount of parties]
 [kms.public_storage]

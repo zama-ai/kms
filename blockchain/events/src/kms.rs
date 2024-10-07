@@ -385,7 +385,7 @@ pub enum DecryptValuesVersioned {
 }
 
 #[cw_serde]
-#[derive(Eq, Default, Versionize)]
+#[derive(Eq, Default, Versionize, TypedBuilder)]
 #[versionize(DecryptValuesVersioned)]
 pub struct DecryptValues {
     /// The ID of the FHE public key used
@@ -501,7 +501,7 @@ pub enum ReencryptValuesVersioned {
 }
 
 #[cw_serde]
-#[derive(Eq, Default, Versionize)]
+#[derive(Eq, Default, Versionize, TypedBuilder)]
 #[versionize(ReencryptValuesVersioned)]
 pub struct ReencryptValues {
     signature: HexVector,
@@ -642,7 +642,7 @@ pub enum ZkpValuesVersioned {
 }
 
 #[cw_serde]
-#[derive(Eq, Default, Versionize)]
+#[derive(Eq, Default, Versionize, TypedBuilder)]
 #[versionize(ZkpValuesVersioned)]
 pub struct ZkpValues {
     /// The ID of the CRS used
@@ -758,7 +758,7 @@ pub enum KeyUrlValuesVersioned {
 }
 
 #[cw_serde]
-#[derive(Eq, Default, Versionize)]
+#[derive(Eq, Default, Versionize, TypedBuilder)]
 #[versionize(KeyUrlValuesVersioned)]
 pub struct KeyUrlValues {
     data_id: HexVector,
@@ -787,7 +787,7 @@ pub enum DecryptResponseValuesVersioned {
 }
 
 #[cw_serde]
-#[derive(Default, Eq, Versionize)]
+#[derive(Default, Eq, Versionize, TypedBuilder)]
 #[versionize(DecryptResponseValuesVersioned)]
 pub struct DecryptResponseValues {
     signature: HexVector,
@@ -826,7 +826,7 @@ pub enum KeyGenPreprocResponseValuesVersioned {
 }
 
 #[cw_serde]
-#[derive(Default, Eq, Versionize)]
+#[derive(Default, Eq, Versionize, TypedBuilder)]
 #[versionize(KeyGenPreprocResponseValuesVersioned)]
 pub struct KeyGenPreprocResponseValues {
     // NOTE: there's no actual response except an "ok"
@@ -850,7 +850,7 @@ pub enum KeyGenResponseValuesVersioned {
 }
 
 #[cw_serde]
-#[derive(Default, Eq, Versionize)]
+#[derive(Default, Eq, Versionize, TypedBuilder)]
 #[versionize(KeyGenResponseValuesVersioned)]
 pub struct KeyGenResponseValues {
     request_id: HexVector,
@@ -958,7 +958,7 @@ pub enum ReencryptResponseValuesVersioned {
 }
 
 #[cw_serde]
-#[derive(Default, Eq, Versionize)]
+#[derive(Default, Eq, Versionize, TypedBuilder)]
 #[versionize(ReencryptResponseValuesVersioned)]
 pub struct ReencryptResponseValues {
     signature: HexVector,
@@ -997,7 +997,7 @@ pub enum ZkpResponseValuesVersioned {
 }
 
 #[cw_serde]
-#[derive(Default, Eq, Versionize)]
+#[derive(Default, Eq, Versionize, TypedBuilder)]
 #[versionize(ZkpResponseValuesVersioned)]
 pub struct ZkpResponseValues {
     signature: HexVector,
@@ -1037,7 +1037,7 @@ pub enum KeyUrlInfoVersioned {
 
 /// An entry containing all URL and signature info for a key or CRS.
 #[cw_serde]
-#[derive(Default, Eq, Versionize)]
+#[derive(Default, Eq, Versionize, TypedBuilder)]
 #[versionize(KeyUrlInfoVersioned)]
 pub struct KeyUrlInfo {
     // The ID/handle of the key or CRS.
@@ -1086,7 +1086,7 @@ pub enum FheKeyUrlInfoVersioned {
 
 /// Struct containing information about a single conceptual key (and hence ID)
 #[cw_serde]
-#[derive(Default, Eq, Versionize)]
+#[derive(Default, Eq, Versionize, TypedBuilder)]
 #[versionize(FheKeyUrlInfoVersioned)]
 pub struct FheKeyUrlInfo {
     // Info about the public key used for FHE encryption.
@@ -1118,7 +1118,7 @@ pub enum VerfKeyUrlInfoVersioned {
 /// Struct containing information about a single conceptual verification key.
 /// There is exactly one of these for each KMS server.
 #[cw_serde]
-#[derive(Default, Eq, Versionize)]
+#[derive(Default, Eq, Versionize, TypedBuilder)]
 #[versionize(VerfKeyUrlInfoVersioned)]
 pub struct VerfKeyUrlInfo {
     // The ID of the verification key.
@@ -1166,7 +1166,7 @@ pub enum KeyUrlResponseValuesVersioned {
 }
 
 #[cw_serde]
-#[derive(Default, Eq, Versionize)]
+#[derive(Default, Eq, Versionize, TypedBuilder)]
 #[versionize(KeyUrlResponseValuesVersioned)]
 pub struct KeyUrlResponseValues {
     // All the FHE public key info from this gateway and associated ASC.
@@ -1214,7 +1214,7 @@ pub enum CrsGenResponseValuesVersioned {
 }
 
 #[cw_serde]
-#[derive(Default, Eq, Versionize)]
+#[derive(Default, Eq, Versionize, TypedBuilder)]
 #[versionize(CrsGenResponseValuesVersioned)]
 pub struct CrsGenResponseValues {
     /// The request ID of the CRS generation.
@@ -1259,7 +1259,7 @@ pub enum KeyGenPreprocValuesVersioned {
 }
 
 #[cw_serde]
-#[derive(Eq, Default, Versionize)]
+#[derive(Eq, Default, Versionize, TypedBuilder)]
 #[versionize(KeyGenPreprocValuesVersioned)]
 pub struct KeyGenPreprocValues {}
 
@@ -1281,7 +1281,7 @@ pub enum KeyGenValuesVersioned {
 }
 
 #[cw_serde]
-#[derive(Eq, Default, Versionize)]
+#[derive(Eq, Default, Versionize, TypedBuilder)]
 #[versionize(KeyGenValuesVersioned)]
 pub struct KeyGenValues {
     /// Hex-encoded preprocessing ID.
@@ -1328,7 +1328,7 @@ pub enum CrsGenValuesVersioned {
 }
 
 #[cw_serde]
-#[derive(Eq, Default, Versionize)]
+#[derive(Eq, Default, Versionize, TypedBuilder)]
 #[versionize(CrsGenValuesVersioned)]
 pub struct CrsGenValues {}
 

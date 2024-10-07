@@ -6,7 +6,7 @@ use cosmos_proto::messages::cosmwasm::wasm::v1::query_client::QueryClient as Was
 use cosmos_proto::messages::cosmwasm::wasm::v1::{
     QueryContractsByCodeRequest, QueryContractsByCodeResponse, QuerySmartContractStateRequest,
 };
-use events::kms::{KmsEvent, TransactionId};
+use events::kms::{KmsEvent, KmsOperation, TransactionId};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::str;
@@ -47,8 +47,15 @@ pub struct QueryClient {
     client: Channel,
 }
 
+/// Query for the blockchain used when querying it in relation to a specific operation.
 #[derive(Debug, Serialize, Clone, PartialEq, Default, TypedBuilder)]
 pub struct OperationQuery {
+    pub operation: KmsOperation,
+}
+
+/// Query for the blockchain used when querying it in relation to a specific event, i.e. transaction.
+#[derive(Debug, Serialize, Clone, PartialEq, Default, TypedBuilder)]
+pub struct EventQuery {
     pub event: KmsEvent,
 }
 
@@ -59,9 +66,15 @@ pub struct TransactionQuery {
 
 #[derive(Debug, EnumString, Serialize, Clone, PartialEq)]
 pub enum ContractQuery {
+    #[strum(serialize = "get_all_values_from_operation")]
+    #[serde(rename = "get_all_values_from_operation")]
+    GetAllValuesFromOperation(OperationQuery),
+    #[strum(serialize = "get_all_operations_values")]
+    #[serde(rename = "get_all_operations_values")]
+    GetAllOperationsValues(OperationQuery),
     #[strum(serialize = "get_operations_value")]
     #[serde(rename = "get_operations_value")]
-    GetOperationsValue(OperationQuery),
+    GetOperationsValue(EventQuery),
     #[strum(serialize = "get_transaction")]
     #[serde(rename = "get_transaction")]
     GetTransaction(TransactionQuery),

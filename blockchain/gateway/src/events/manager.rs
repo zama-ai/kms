@@ -120,6 +120,7 @@ pub struct DecryptionEvent {
 pub(crate) struct ApiReencryptValues {
     pub(crate) signature: HexVector,
     pub(crate) client_address: String,
+    pub(crate) key_id: String,
     pub(crate) enc_key: HexVector,
     pub(crate) ciphertext_handle: HexVector,
     pub(crate) eip712_verifying_contract: String,
@@ -135,8 +136,9 @@ pub struct ReencryptionEvent {
 pub(crate) struct ApiZkpValues {
     pub(crate) contract_address: String,
     pub(crate) caller_address: String,
+    pub(crate) key_id: String,
+    pub(crate) crs_id: String,
     pub(crate) ct_proof: HexVector,
-    pub(crate) max_num_bits: u32,
 }
 
 #[derive(Debug)]
@@ -588,6 +590,7 @@ mod tests {
         let values = ApiReencryptValues {
             signature: HexVector::from(vec![1, 2, 3]),
             client_address: "0x1234567890abcdef".to_string(),
+            key_id: "00112233445566778899".to_string(),
             enc_key: HexVector::from(vec![7, 8, 9]),
             ciphertext_handle: HexVector::from(vec![10, 11, 12]),
             eip712_verifying_contract: "0x1234567890abcdef".to_string(),

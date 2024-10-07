@@ -36,6 +36,7 @@ k256 = "0.13.3"
 kms = { path = "../../core/service", default-features = false, features = ["grpc-client"] , version = "0.9.0-rc11" }
 kms-blockchain-client = { path = "../client" , version = "0.9.0-rc11" }
 kms-blockchain-connector = { path = "../connector" , version = "0.9.0-rc11" }
+lazy_static = "1.5"
 prost.workspace = true
 rand.workspace = true
 reqwest = { version = "0.12.4", features = ["json"] }
@@ -57,7 +58,7 @@ typed-builder.workspace = true
 tonic = "0.11"
 
 [build-dependencies]
-tonic-build = "0.11" 
+tonic-build = "0.11"
 
 [dev-dependencies]
 rand.workspace = true

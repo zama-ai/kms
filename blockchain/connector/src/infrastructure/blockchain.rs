@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use events::kms::{KmsCoreConf, KmsEvent, KmsMessage, OperationValue};
 use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractRequest};
 use kms_blockchain_client::query_client::{
-    ContractQuery, OperationQuery, QueryClient, QueryClientBuilder, QueryContractRequest,
+    ContractQuery, EventQuery, QueryClient, QueryClientBuilder, QueryContractRequest,
 };
 use retrying::retry;
 use std::sync::Arc;
@@ -92,7 +92,7 @@ impl Blockchain for KmsBlockchain {
         let request = QueryContractRequest::builder()
             .contract_address(self.config.contract.to_owned())
             .query(ContractQuery::GetOperationsValue(
-                OperationQuery::builder().event(event.clone()).build(),
+                EventQuery::builder().event(event.clone()).build(),
             ))
             .build();
         let result: Vec<OperationValue> = query_client.query_contract(request).await?;

@@ -1,8 +1,9 @@
+use crate::kms::ParamChoice;
+use crate::kms::RequestId;
 use distributed_decryption::execution::tfhe_internals::parameters::{
     DKGParams, BC_PARAMS_SAM_SNS, PARAMS_TEST_BK_SNS,
 };
-
-use crate::kms::ParamChoice;
+use lazy_static::lazy_static;
 
 // The amount of bytes in an ID (key handle, request ID etc.)
 pub const ID_LENGTH: usize = 20;
@@ -40,10 +41,15 @@ pub const THRESHOLD: usize = 1;
 
 pub const SAFE_SER_SIZE_LIMIT: u64 = 1024 * 1024 * 1024 * 2;
 
+lazy_static! {
+    // The static ID we will use for the signing key for each of the MPC parties.
+    // We do so, since there is ever only one conceptual signing key per party (at least for now).
+    // This is a bit hackish, but it works for now.
+    pub static ref SIGNING_KEY_ID: RequestId = RequestId::derive("SIGNING_KEY_ID").unwrap();
+}
+
 cfg_if::cfg_if! {
     if #[cfg(any(test, feature = "testing"))] {
-        use crate::kms::RequestId;
-        use lazy_static::lazy_static;
         pub const BASE_PORT: u16 = 50050;
         pub const DEFAULT_URL: &str = "127.0.0.1";
         pub const DEFAULT_PROT: &str = "http";
@@ -65,7 +71,7 @@ cfg_if::cfg_if! {
             pub static ref DEFAULT_DEC_ID: RequestId = RequestId::derive("DEFAULT_DEC_ID").unwrap();
             pub static ref OTHER_CENTRAL_DEFAULT_ID: RequestId =
                 RequestId::derive("OTHER_DEFAULT_ID").unwrap();
-            pub static ref SIGNING_KEY_ID: RequestId = RequestId::derive("SIGNING_KEY_ID").unwrap();
+
         }
     }
 }

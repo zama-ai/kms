@@ -93,8 +93,6 @@ pub struct KmsConfig {
     pub contract_address: String,
     pub mnemonic: String,
     pub address: String,
-    pub key_id: String,
-    pub crs_ids: HashMap<u32, String>,
     pub public_storage: HashMap<u32, String>,
 }
 
@@ -234,13 +232,6 @@ mod tests {
                 "bachelor similar spirit copper rely carbon web hobby conduct wrap conduct wire shine parrot erosion divert crucial balance lock reason price ignore educate open"
             );
             assert_eq!(gateway_config.kms.address, "http://localhost:9090");
-            assert_eq!(
-                gateway_config.kms.key_id,
-                "408d8cbaa51dece7f782fe04ba0b1c1d017b1088"
-            );
-            let crs_ids =
-                HashMap::from([(256, "d8d94eb3a23d22d3eb6b5e7b694e8afcd571d906".to_string())]);
-            assert_eq!(gateway_config.kms.crs_ids, crs_ids);
         });
     }
 
@@ -358,13 +349,6 @@ mod tests {
                 "some mnemonic for testing purpose only"
             );
             assert_eq!(gateway_config.kms.address, "http://test_with_var:9091");
-            assert_eq!(
-                gateway_config.kms.key_id,
-                "408d8cbaa51dece7f782fe04ba0b1c1d017b1088"
-            );
-            let crs_ids =
-                HashMap::from([(256, "d8d94eb3a23d22d3eb6b5e7b694e8afcd571d906".to_string())]);
-            assert_eq!(gateway_config.kms.crs_ids, crs_ids);
             assert_eq!(
                 gateway_config.ethereum.kmsverifier_vc_address,
                 H160::from_str("66f9664f97F2b50F62D13eA064982f936dE76657").unwrap()

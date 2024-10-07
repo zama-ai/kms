@@ -9,6 +9,7 @@ use async_trait::async_trait;
 use ethers::abi::Token;
 use ethers::prelude::*;
 use events::kms::FheType;
+use events::kms::KeyUrlResponseValues;
 use events::kms::KmsEvent;
 use events::kms::ReencryptResponseValues;
 use events::HexVectorList;
@@ -61,6 +62,7 @@ pub(crate) trait Blockchain: KmsEventSubscriber {
         &self,
         signature: Vec<u8>,
         client_address: String,
+        key_id_str: String,
         enc_key: Vec<u8>,
         fhe_type: FheType,
         ciphertext: Vec<u8>,
@@ -73,9 +75,12 @@ pub(crate) trait Blockchain: KmsEventSubscriber {
         &self,
         client_address: String,
         caller_address: String,
+        key_id_str: String,
+        crs_id_str: String,
         ct_proof: Vec<u8>,
-        max_num_bits: u32,
         eip712_domain: Eip712DomainMsg,
         acl_address: String,
     ) -> anyhow::Result<HexVectorList>;
+
+    async fn keyurl(&self) -> anyhow::Result<KeyUrlResponseValues>;
 }

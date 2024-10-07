@@ -18,7 +18,7 @@ use events::kms::{
 use events::HexVector;
 use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractRequest, ProtoCoin};
 use kms_blockchain_client::query_client::{
-    ContractQuery, OperationQuery, QueryClient, QueryClientBuilder, QueryContractRequest,
+    ContractQuery, EventQuery, QueryClient, QueryClientBuilder, QueryContractRequest,
 };
 use kms_lib::kms::DecryptionResponsePayload;
 use kms_lib::rpc::rpc_types::Plaintext;
@@ -788,8 +788,7 @@ pub async fn query_contract(
         .build();
 
     tracing::info!("contract address: {:?}", sim_config.contract);
-
-    let query_req = ContractQuery::GetOperationsValue(OperationQuery::builder().event(ev).build());
+    let query_req = ContractQuery::GetOperationsValue(EventQuery::builder().event(ev).build());
     let request = QueryContractRequest::builder()
         .contract_address(sim_config.contract.clone())
         .query(query_req)

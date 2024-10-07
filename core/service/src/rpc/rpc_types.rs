@@ -837,7 +837,6 @@ impl fmt::Display for RequestId {
 impl RequestId {
     /// Method for deterministically deriving a request ID from an arbitrary string.
     /// Is currently only used for testing purposes, since deriving is the responsibility of the smart contract.
-    #[cfg(any(test, feature = "testing"))]
     pub fn derive(name: &str) -> anyhow::Result<Self> {
         let mut hashed_name =
             crate::cryptography::signcryption::serialize_hash_element(&name.to_string())?;

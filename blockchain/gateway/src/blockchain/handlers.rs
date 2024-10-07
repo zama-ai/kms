@@ -14,18 +14,10 @@ use anyhow::Context;
 use ethers::abi::encode;
 use ethers::abi::Token;
 use ethers::prelude::*;
-use events::kms::FheKeyUrlInfo;
-use events::kms::KeyUrlInfo;
 use events::kms::KeyUrlResponseValues;
 use events::kms::ReencryptResponseValues;
-use events::kms::VerfKeyUrlInfo;
-use events::HexVector;
 use kms_lib::kms::Eip712DomainMsg;
-use kms_lib::kms::ParamChoice;
-use kms_lib::rpc::rpc_types::PubDataType;
-use std::collections::HashMap;
 use std::ops::Mul;
-use std::path::MAIN_SEPARATOR_STR;
 use std::sync::Arc;
 
 pub(crate) async fn handle_event_decryption(
@@ -196,6 +188,7 @@ pub(crate) async fn handle_reencryption_event(
         .reencrypt(
             event.signature.0.clone(),
             event.client_address.clone(),
+            event.key_id.clone(),
             event.enc_key.0.clone(),
             fhe_type,
             ciphertext,
@@ -251,8 +244,9 @@ pub(crate) async fn handle_zkp_event(
         .zkp(
             event.contract_address.clone(),
             event.caller_address.clone(),
+            event.key_id.clone(),
+            event.crs_id.clone(),
             event.ct_proof.0.clone(),
-            event.max_num_bits,
             domain,
             acl_address,
         )
@@ -269,110 +263,10 @@ pub(crate) async fn handle_keyurl_event(
     config: &GatewayConfig,
 ) -> anyhow::Result<KeyUrlResponseValues> {
     let start = std::time::Instant::now();
-    // TODO placeholder for calling the blockchain to get key ids
-    // let client = Arc::new(http_provider(config).await?);
-    // let chain_id = client.provider().get_chainid().await?;
-    // let response = blockchain_impl(config)
-    //     .await
-    //     .keyurl(
-    //         ...
-    //         chain_id,
-    //     )
-    //     .await;
-
-    let fhe_public_key = get_fhe_key_info(
-        PubDataType::PublicKey,
-        &config.kms.public_storage,
-        &config.kms.key_id,
-    )?;
-    let fhe_server_key = get_fhe_key_info(
-        PubDataType::ServerKey,
-        &config.kms.public_storage,
-        &config.kms.key_id,
-    )?;
-    let fhe_url_info = FheKeyUrlInfo::new(fhe_public_key, fhe_server_key);
-    let verf_key_info = get_verf_key_info(&config.kms.public_storage, &config.kms.key_id)?;
-
-    let crs = get_crs_info(&config.kms.public_storage, &config.kms.crs_ids)?;
-    let response = KeyUrlResponseValues::new(vec![fhe_url_info], crs, verf_key_info);
-
+    let response = blockchain_impl(config).await.keyurl().await;
     let duration = start.elapsed();
     tracing::info!("⏱️ KMS Response Time elapsed for KeyUrl: {:?}", duration);
-    Ok(response)
-}
-
-fn get_fhe_key_info(
-    data_type: PubDataType,
-    storage_urls: &HashMap<u32, String>,
-    data_id: &str,
-) -> anyhow::Result<KeyUrlInfo> {
-    let mut urls = Vec::new();
-    let mut signatures = Vec::new();
-    for (i, base_url) in storage_urls {
-        let type_string = data_type.to_string();
-        let parsed_base_url = base_url.trim().trim_end_matches(MAIN_SEPARATOR_STR);
-        let url = format!("{parsed_base_url}{MAIN_SEPARATOR_STR}PUB-p{i}{MAIN_SEPARATOR_STR}{type_string}{MAIN_SEPARATOR_STR}{data_id}");
-        urls.push(url);
-        // TODO placerholder to be replaced with ASC data
-        let sig = HexVector::from_hex("00112233445566778899aabbccddeeff")?;
-        signatures.push(sig);
-    }
-    Ok(KeyUrlInfo::new(
-        HexVector::from_hex(data_id)?,
-        ParamChoice::Default.into(), // TODO should come from blockchain
-        urls,
-        signatures,
-    ))
-}
-
-fn get_verf_key_info(
-    storage_urls: &HashMap<u32, String>,
-    data_id: &str,
-) -> anyhow::Result<Vec<VerfKeyUrlInfo>> {
-    let mut res = Vec::new();
-    for (i, base_url) in storage_urls {
-        let parsed_base_url = base_url.trim().trim_end_matches(MAIN_SEPARATOR_STR);
-        let verf_key = PubDataType::VerfKey.to_string();
-        let verf_addr = PubDataType::VerfAddress.to_string();
-        let key_url = format!("{parsed_base_url}{MAIN_SEPARATOR_STR}PUB-p{i}{MAIN_SEPARATOR_STR}{verf_key}{MAIN_SEPARATOR_STR}{data_id}");
-        let addr_url = format!("{parsed_base_url}{MAIN_SEPARATOR_STR}PUB-p{i}{MAIN_SEPARATOR_STR}{verf_addr}{MAIN_SEPARATOR_STR}{data_id}");
-        res.push(VerfKeyUrlInfo::new(
-            HexVector::from_hex(data_id)?,
-            *i,
-            key_url,
-            addr_url,
-        ))
-    }
-    Ok(res)
-}
-
-fn get_crs_info(
-    storage_urls: &HashMap<u32, String>,
-    crs_ids: &HashMap<u32, String>,
-) -> anyhow::Result<HashMap<u32, KeyUrlInfo>> {
-    let mut res = HashMap::new();
-    for (max_bits, crs_id) in crs_ids {
-        let mut urls = Vec::new();
-        let mut signatures = Vec::new();
-        for (i, base_url) in storage_urls {
-            let crs_type = PubDataType::CRS.to_string();
-            let parsed_base_url = base_url.trim().trim_end_matches(MAIN_SEPARATOR_STR);
-            let crs_url = format!("{parsed_base_url}{MAIN_SEPARATOR_STR}PUB-p{i}{MAIN_SEPARATOR_STR}{crs_type}{MAIN_SEPARATOR_STR}{crs_id}");
-            urls.push(crs_url);
-            // TODO placerholder to be replaced with ASC data
-            signatures.push(HexVector::from_hex("00112233445566778899aabbccddeeff")?);
-        }
-        res.insert(
-            *max_bits,
-            KeyUrlInfo::new(
-                HexVector::from_hex(crs_id)?,
-                ParamChoice::Default.into(), // TODO placeholder
-                urls,
-                signatures,
-            ),
-        );
-    }
-    Ok(res)
+    response
 }
 
 async fn http_provider(
@@ -403,17 +297,9 @@ async fn _ws_provider(
 
 #[cfg(test)]
 mod tests {
-    use crate::blockchain::handlers::get_crs_info;
-    use crate::blockchain::handlers::get_verf_key_info;
-
-    use super::get_fhe_key_info;
     use ethers::abi::encode;
     use ethers::abi::Token;
     use ethers::prelude::*;
-    use events::HexVector;
-    use kms_lib::kms::ParamChoice;
-    use kms_lib::rpc::rpc_types::PubDataType;
-    use std::collections::HashMap;
     use std::str::FromStr;
 
     // test encoding
@@ -444,110 +330,5 @@ mod tests {
 
         assert_eq!(str1, "000000000000000000000000000000000000005d");
         assert_eq!(str2, "ffe0000000000000022200000000000000000151");
-    }
-
-    #[test]
-    fn sunshine_fhe_key_info() {
-        let key_id = "00112233445566778899aabbccddeeff0011223344";
-        let storages_urls: HashMap<u32, String> = HashMap::from([
-            (1, "http://127.0.0.1:8081".to_string()),
-            (2, "http://127.0.0.1:8082".to_string()),
-            (3, "http://127.0.0.1:8083".to_string()),
-            (4, "http://127.0.0.1:8084".to_string()),
-        ]);
-        let fhe_server_key =
-            get_fhe_key_info(PubDataType::ServerKey, &storages_urls, key_id).unwrap();
-        assert_eq!(fhe_server_key.data_id().to_hex(), key_id);
-        assert_eq!(fhe_server_key.param_choice(), ParamChoice::Default as i32);
-        assert_eq!(fhe_server_key.urls().len(), 4);
-        assert!(fhe_server_key.urls().contains(
-            &"http://127.0.0.1:8081/PUB-p1/ServerKey/00112233445566778899aabbccddeeff0011223344"
-                .to_string()
-        ));
-        assert!(fhe_server_key.urls().contains(
-            &"http://127.0.0.1:8082/PUB-p2/ServerKey/00112233445566778899aabbccddeeff0011223344"
-                .to_string()
-        ));
-        assert!(fhe_server_key.urls().contains(
-            &"http://127.0.0.1:8083/PUB-p3/ServerKey/00112233445566778899aabbccddeeff0011223344"
-                .to_string()
-        ));
-        assert!(fhe_server_key.urls().contains(
-            &"http://127.0.0.1:8084/PUB-p4/ServerKey/00112233445566778899aabbccddeeff0011223344"
-                .to_string()
-        ));
-    }
-
-    #[test]
-    fn sunshine_verf_key_info() {
-        let key_id = "00112233445566778899aabbccddeeff0011223344";
-        let storages_urls: HashMap<u32, String> = HashMap::from([
-            (1, "http://127.0.0.1:8081".to_string()),
-            (2, "http://127.0.0.1:8082".to_string()),
-            (3, "http://127.0.0.1:8083".to_string()),
-            (4, "http://127.0.0.1:8084".to_string()),
-        ]);
-        let verf_key_info = get_verf_key_info(&storages_urls, key_id).unwrap();
-        assert_eq!(verf_key_info.len(), storages_urls.len());
-        for cur_info in verf_key_info {
-            assert_eq!(cur_info.key_id().to_hex(), key_id);
-            assert!(cur_info.server_id() >= 1);
-            assert!(cur_info.server_id() <= storages_urls.len() as u32);
-            assert_eq!(cur_info.verf_public_key_address(),
-                &format!("http://127.0.0.1:808{}/PUB-p{}/VerfAddress/00112233445566778899aabbccddeeff0011223344", cur_info.server_id(), cur_info.server_id())
-                    .to_string()
-            );
-            assert_eq!(cur_info.verf_public_key_url(),
-                &format!("http://127.0.0.1:808{}/PUB-p{}/VerfKey/00112233445566778899aabbccddeeff0011223344", cur_info.server_id(), cur_info.server_id())
-                    .to_string()
-            );
-        }
-    }
-
-    #[test]
-    fn sunshine_crs_info() {
-        let storages_urls: HashMap<u32, String> = HashMap::from([
-            (1, "http://127.0.0.1:8081".to_string()),
-            (2, "http://127.0.0.1:8082".to_string()),
-            (3, "http://127.0.0.1:8083".to_string()),
-            (4, "http://127.0.0.1:8084".to_string()),
-        ]);
-        let crs_ids: HashMap<u32, String> = HashMap::from([
-            (
-                128,
-                "00112233445566778899aabbccddeeff0011223311".to_string(),
-            ),
-            (
-                256,
-                "00112233445566778899aabbccddeeff0011223322".to_string(),
-            ),
-        ]);
-        let crs_info = get_crs_info(&storages_urls, &crs_ids).unwrap();
-        assert_eq!(crs_info.len(), crs_ids.len());
-        for (cur_id, cur_info) in &crs_info {
-            assert_eq!(crs_ids[cur_id], cur_info.data_id().to_hex());
-            assert_eq!(storages_urls.len(), cur_info.signatures().len());
-            assert_eq!(ParamChoice::Default as i32, cur_info.param_choice());
-            // TODO placeholder for now
-            assert!(cur_info
-                .signatures()
-                .contains(&HexVector::from_hex("00112233445566778899aabbccddeeff").unwrap()));
-        }
-        for cur_server_id in storages_urls.keys() {
-            assert!(crs_info[&128].urls().contains(
-                &format!(
-                    "http://127.0.0.1:808{}/PUB-p{}/CRS/00112233445566778899aabbccddeeff0011223311",
-                    cur_server_id, cur_server_id
-                )
-                .to_string()
-            ));
-            assert!(crs_info[&256].urls().contains(
-                &format!(
-                    "http://127.0.0.1:808{}/PUB-p{}/CRS/00112233445566778899aabbccddeeff0011223322",
-                    cur_server_id, cur_server_id
-                )
-                .to_string()
-            ));
-        }
     }
 }
