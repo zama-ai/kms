@@ -91,7 +91,7 @@ proptest = "1.5"
 pprof = { version = "0.13", features = ["flamegraph", "criterion"] }
 rstest = "0.21"
 serial_test = "3.0.0"
-tempfile = "3.10.1"
+tempfile = "3.13.0"
 test-log = { version = "0.2", features = ["trace"] }
 tracing-test = "0.2"
 kms-core-common = { path = "../common", version = "0.9.0-rc11", features = ["testing"] }
