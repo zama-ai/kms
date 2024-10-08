@@ -128,12 +128,12 @@ MODE="threshold"
 echo "Instantiating ASC"
 if [ "$MODE" = "threshold" ]; then
   # run in threshold mode
-  ASC_INST_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": true, "debug_keygen": true, "kms_core_conf": { "threshold": {"parties":[{"party_id": "01", "address": ""}, {"party_id": "02", "address": ""}, {"party_id": "03", "address": ""}, {"party_id": "04", "address": ""}], "response_count_for_majority_vote": 3, "response_count_for_reconstruction": 3, "degree_for_reconstruction": 1, "param_choice": "test"}}}' --label "asc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin | jq -r '.txhash')
+  ASC_INST_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": true, "verify_proof_contract_addr": "dummy",  "kms_core_conf": { "threshold": {"parties":[{"party_id": "01", "address": ""}, {"party_id": "02", "address": ""}, {"party_id": "03", "address": ""}, {"party_id": "04", "address": ""}], "response_count_for_majority_vote": 3, "response_count_for_reconstruction": 3, "degree_for_reconstruction": 1, "param_choice": "test"}}}' --label "asc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin | jq -r '.txhash')
 
 
 elif [ "$MODE" = "centralized" ]; then
   # run in centralized mode
-  ASC_INST_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": true, "debug_keygen": true, "kms_core_conf": { "centralized": "default" }}' --label "asc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin | jq -r '.txhash')
+  ASC_INST_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": true, "verify_proof_contract_addr": "dummy", "kms_core_conf": { "centralized": "default" }}' --label "asc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin | jq -r '.txhash')
 
 else
     ASC_INST_TX_HASH="NONE"

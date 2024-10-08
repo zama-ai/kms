@@ -821,9 +821,9 @@ pub async fn query_contract(
                     );
                 }
             }
-            OperationValue::InsecureKeyGenResponse(response) => {
+            OperationValue::KeyGenResponse(response) => {
                 tracing::info!(
-                    "Received InsecureKeyGenResponse with request ID {}, pk digest {}, pk signature {}, server key digest {}, server key signature {}",
+                    "Received KeyGenResponse with request ID {}, pk digest {}, pk signature {}, server key digest {}, server key signature {}",
                     response.request_id().to_hex(),
                     response.public_key_digest(),
                     response.public_key_signature().to_hex(),
