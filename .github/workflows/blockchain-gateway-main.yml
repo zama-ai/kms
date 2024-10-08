@@ -9,7 +9,6 @@ on:
       - 'blockchain/events/**'
       - '.github/workflows/blockchain-gateway-pr.yml'
 
-
 jobs:
   build:
     uses: ./.github/workflows/common-build-big-instance.yml

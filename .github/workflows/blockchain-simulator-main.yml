@@ -4,10 +4,9 @@ on:
   push:
     branches: ['main']
     paths:
-      - 'blockchain/simulator/**'
-      - 'blockchain/client/**'
-      - 'blockchain/events/**'
+      - 'blockchain/**'
       - 'core/**'
+      - 'conf-trace/**'
       - '.github/workflows/blockchain-simulator-main.yml'
 
 jobs:
