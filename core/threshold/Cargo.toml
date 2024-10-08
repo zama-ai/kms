@@ -23,7 +23,7 @@ kms-core-common = { path = "../common", version = "0.9.0-rc11" }
 concrete-csprng = { git = "https://github.com/zama-ai/tfhe-rs.git", tag = "tfhe-rs-0.8.0" }
 conf-trace = { path = "../../conf-trace", optional = true, version = "0.9.0-rc11" }
 const_format = "0.2.32"
-crypto-bigint = { version = "0.6.0-rc.5", features = [
+crypto-bigint = { version = "0.6.0-rc.6", features = [
     "serde",
     "rand_core",
     "extra-sizes",
