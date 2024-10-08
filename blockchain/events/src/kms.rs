@@ -400,6 +400,8 @@ pub struct DecryptValues {
     version: u32,
     /// The address of the ACL contract
     acl_address: String,
+    /// Proof of permission to decrypt included in ACL contract
+    proof: String,
 
     // EIP-712
     /// The name of the EIP-712 domain
@@ -423,6 +425,7 @@ impl DecryptValues {
         external_handles: Option<impl Into<HexVectorList>>,
         version: u32,
         acl_address: String,
+        proof: String,
         eip712_name: String,
         eip712_version: String,
         eip712_chain_id: impl Into<HexVector>,
@@ -436,6 +439,7 @@ impl DecryptValues {
             external_handles: external_handles.map(Into::into),
             version,
             acl_address,
+            proof,
             eip712_name,
             eip712_version,
             eip712_chain_id: eip712_chain_id.into(),
@@ -462,6 +466,10 @@ impl DecryptValues {
 
     pub fn external_handles(&self) -> &Option<HexVectorList> {
         &self.external_handles
+    }
+
+    pub fn proof(&self) -> &str {
+        &self.proof
     }
 
     pub fn eip712_name(&self) -> &str {
@@ -523,6 +531,8 @@ pub struct ReencryptValues {
     ciphertext_digest: RedactedHexVector,
     /// The address of the ACL contract
     acl_address: String,
+    /// Proof of permission to decrypt included in ACL contract
+    proof: String,
 
     // EIP-712:
     /// The name of the EIP-712 domain
@@ -549,6 +559,7 @@ impl ReencryptValues {
         ciphertext_handle: impl Into<RedactedHexVector>,
         ciphertext_digest: impl Into<RedactedHexVector>,
         acl_address: String,
+        proof: String,
         eip712_name: String,
         eip712_version: String,
         eip712_chain_id: impl Into<HexVector>,
@@ -565,6 +576,7 @@ impl ReencryptValues {
             ciphertext_handle: ciphertext_handle.into(),
             ciphertext_digest: ciphertext_digest.into(),
             acl_address,
+            proof,
             eip712_name,
             eip712_version,
             eip712_chain_id: eip712_chain_id.into(),
@@ -607,6 +619,10 @@ impl ReencryptValues {
 
     pub fn acl_address(&self) -> &str {
         &self.acl_address
+    }
+
+    pub fn proof(&self) -> &str {
+        &self.proof
     }
 
     pub fn eip712_name(&self) -> &str {
@@ -1648,6 +1664,7 @@ mod tests {
                 fhe_types: Vec::<FheType>::arbitrary(g),
                 ciphertext_handles: RedactedHexVectorList::arbitrary(g),
                 external_handles: Some(HexVectorList::arbitrary(g)),
+                proof: String::arbitrary(g),
                 eip712_name: String::arbitrary(g),
                 eip712_version: String::arbitrary(g),
                 eip712_chain_id: HexVector::arbitrary(g),
@@ -1669,6 +1686,7 @@ mod tests {
                 key_id: HexVector::arbitrary(g),
                 ciphertext_handle: HexVector::arbitrary(g).into(),
                 ciphertext_digest: HexVector::arbitrary(g).into(),
+                proof: String::arbitrary(g),
                 eip712_name: String::arbitrary(g),
                 eip712_version: String::arbitrary(g),
                 eip712_chain_id: HexVector::arbitrary(g),
@@ -1808,6 +1826,7 @@ mod tests {
             Some(vec![vec![9, 8, 7], vec![5, 4, 3]]),
             1,
             "acl_address".to_string(),
+            "some_proof".to_string(),
             "eip712name".to_string(),
             "version".to_string(),
             vec![6],
@@ -1825,6 +1844,7 @@ mod tests {
                     "fhe_types": ["euint8", "euint16"],
                     "external_handles": [hex::encode([9,8,7]), hex::encode([5, 4, 3])],
                     "ciphertext_handles": [hex::encode([1, 2, 3]), hex::encode([4, 4, 4])],
+                    "proof": "some_proof",
                     "eip712_name": "eip712name",
                     "eip712_version": "version",
                     "eip712_chain_id": hex::encode([6]),
@@ -1870,6 +1890,7 @@ mod tests {
             vec![5],
             vec![8],
             "0xfe11".to_string(),
+            "some_proof".to_string(),
             "eip712name".to_string(),
             "version".to_string(),
             vec![6],
@@ -1890,6 +1911,7 @@ mod tests {
                     "key_id": hex::encode("kid".as_bytes()),
                     "ciphertext_handle": hex::encode(vec![5]),
                     "ciphertext_digest": hex::encode(vec![8]),
+                    "proof": "some_proof",
                     "eip712_name": "eip712name",
                     "eip712_version": "version",
                     "eip712_chain_id": hex::encode([6]),

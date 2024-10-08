@@ -1,9 +1,7 @@
 use aipsc::contract::InclusionProofContract;
-use cosmwasm_std::{from_json, Response, StdError, StdResult};
+use cosmwasm_std::{Response, StdError, StdResult};
 use sylvia::contract;
 use sylvia::types::ExecCtx;
-
-use crate::contract::{ProofTendermint, TendermintUpdateHeader};
 
 pub struct NoopInclusionProofContract;
 
@@ -26,20 +24,9 @@ impl Default for NoopInclusionProofContract {
 }
 
 impl InclusionProofContract for NoopInclusionProofContract {
-    fn verify_proof(&self, _ctx: ExecCtx, proof: Vec<u8>, _value: Vec<u8>) -> StdResult<Response> {
-        let _pr: ProofTendermint =
-            from_json(&proof).map_err(|e| StdError::generic_err(format!("{:?}", e)))?;
+    fn verify_proof(&self, _ctx: ExecCtx, _proof: String) -> StdResult<Response> {
         Ok(Response::default())
     }
 
     type Error = StdError;
-    type UpdateHeader = TendermintUpdateHeader;
-
-    fn update_header(
-        &self,
-        _ctx: ExecCtx,
-        _update_header: Self::UpdateHeader,
-    ) -> StdResult<Response> {
-        Ok(Response::default())
-    }
 }

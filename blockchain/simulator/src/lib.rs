@@ -765,6 +765,7 @@ pub async fn execute_decryption_contract(
         Some(vec![vec![5_u8; 32]]),
         1,
         "0xFFda6bf26964af9D7eed9e03e53415D37Aa960ee".to_string(),
+        "some_proof".to_string(),
         "eip712name".to_string(),
         "version".to_string(),
         vec![6; 32],

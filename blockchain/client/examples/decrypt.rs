@@ -26,6 +26,7 @@ async fn main() {
         None::<Vec<Vec<u8>>>,
         1,
         "0xEEdA6bf26964aF9D7Eed9e03e53415D37aa960EE".to_string(),
+        "some proof".to_string(),
         "eip712name".to_string(),
         "1".to_string(),
         vec![1],

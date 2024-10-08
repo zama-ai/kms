@@ -1,0 +1,38 @@
+[package]
+name = "ethereum-triedb-local"
+version = "0.1.1"
+edition = "2021"
+description = "EIP-1186 ethereum trie layout implementation for parity/trie"
+authors = ["Polytope Labs <hello@polytope.technology>"]
+license = "Apache-2.0"
+repository = "https://github.com/polytope-labs/hyperbridge"
+documentation = "https://docs.rs/ethereum-triedb"
+keywords = ["merkle-patricia-trie", "ethereum", "state-proofs", "storage-proofs"]
+readme = "./README.md"
+
+[dependencies]
+trie-db = { version = "0.29.0", default-features = false }
+hash-db = { version = "0.16.0", default-features = false }
+memory-db = { version = "0.32.0", default-features = false }
+codec = { version = "3.1.3", package = "parity-scale-codec", default-features = false, features = ["derive"] }
+
+rlp = { version = "0.5.1", default-features = false }
+primitive-types = { version = "0.12.0", default-features = false }
+hash256-std-hasher = { version = "0.15.2", optional = false }
+tiny-keccak = { version = "2.0.2", features = ["keccak"],  optional = false }
+
+[dev-dependencies]
+hex = "0.4.3"
+hex-literal = "0.3.4"
+primitive-types = { version = "0.12.0", features = ["rlp"] }
+rlp-derive = "0.1.0"
+
+[features]
+default = ["std"]
+std = [
+    "trie-db/std",
+    "hash-db/std",
+    "rlp/std",
+    "primitive-types/std",
+    "codec/std"
+]

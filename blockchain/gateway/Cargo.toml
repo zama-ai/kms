@@ -56,6 +56,16 @@ tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["log"] }
 typed-builder.workspace = true
 tonic = "0.11"
+num-bigint = "0.4"
+num-traits = "0.2.19"
+hex-literal = "0.4.1"
+
+primitive-types = { version = "0.12.0", default-features = false }
+rlp = { version = "0.5.1", default-features = false }
+trie-db = { version = "0.28.0", default-features = false }
+ethereum-triedb = "=0.1.1"
+
+ethereum-inclusion-proofs = { path = "../inclusion_proofs/ethereum" }
 
 [build-dependencies]
 tonic-build = "0.11"

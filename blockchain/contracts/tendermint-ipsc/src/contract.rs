@@ -1,190 +1,140 @@
-use super::state::ProofStorage;
 use crate::proof::strategy::TendermintProofStrategy;
 use aipsc::contract::InclusionProofContract;
-use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{from_json, CustomMsg, Response, StdError, StdResult};
-use events::HexVector;
-use schemars::{
-    gen::SchemaGenerator,
-    schema::{InstanceType, Schema, SchemaObject},
-    JsonSchema,
-};
-use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, ops::Deref};
-use sylvia::entry_points;
-use sylvia::{contract, types::ExecCtx};
-use tendermint::merkle::proof::ProofOps;
+use cosmwasm_std::{Response, StdError, StdResult};
+use sylvia::{contract, entry_points, types::ExecCtx, types::InstantiateCtx};
 
-#[cw_serde]
-pub struct TendermintUpdateHeader {
-    pub new_header: NewHeader,
-    pub new_validator_set: Option<NewValidatorSet>,
-}
-
-#[cw_serde]
-pub struct NewValidatorSet {
-    pub new_validators: Vec<HexVector>,
-    pub sign_with_old_validators: Vec<HexVector>,
-}
-
-#[cw_serde]
-pub struct NewHeader {
-    pub signatures: Vec<HexVector>,
-    pub root_hash: HexVector,
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Eq)]
-pub struct ProofTendermint {
-    pub proof: ProofOps,
-    pub keypath: String,
-}
-
-impl ProofTendermint {
-    pub fn proof(&self) -> &ProofOps {
-        &self.proof
-    }
-
-    pub fn keypath(&self) -> &str {
-        &self.keypath
-    }
-}
-
-impl JsonSchema for ProofTendermint {
-    fn schema_name() -> String {
-        "ProofTendermint".to_owned()
-    }
-
-    fn schema_id() -> Cow<'static, str> {
-        Cow::Borrowed("events::kms::ProofTendermint")
-    }
-
-    fn json_schema(gen: &mut SchemaGenerator) -> Schema {
-        let mut schema = SchemaObject {
-            instance_type: Some(InstanceType::Object.into()),
-            ..Default::default()
-        };
-        let obj = schema.object();
-        obj.required.insert("proof".to_owned());
-        obj.required.insert("keypath".to_owned());
-        let mut schema_proof = SchemaObject {
-            instance_type: Some(InstanceType::Object.into()),
-            ..Default::default()
-        };
-        let obj_proof = schema_proof.object();
-        obj_proof.required.insert("ops".to_owned());
-
-        let mut schema_op = SchemaObject {
-            instance_type: Some(InstanceType::Object.into()),
-            ..Default::default()
-        };
-        let obj_op = schema_op.object();
-        obj_op.required.insert("field_type".to_owned());
-        obj_op.required.insert("key".to_owned());
-        obj_op.required.insert("data".to_owned());
-        obj_op
-            .properties
-            .insert("field_type".to_owned(), <String>::json_schema(gen));
-        obj_op
-            .properties
-            .insert("key".to_owned(), <Vec<u8>>::json_schema(gen));
-        obj_op
-            .properties
-            .insert("data".to_owned(), <Vec<u8>>::json_schema(gen));
-
-        let mut schema_array_op = SchemaObject {
-            instance_type: Some(InstanceType::Array.into()),
-            ..Default::default()
-        };
-        let obj_array_op = schema_array_op.array();
-        obj_array_op.items = Some(schemars::schema::SingleOrVec::Single(Box::new(
-            schema_op.into(),
-        )));
-        obj_proof
-            .properties
-            .insert("ops".to_owned(), schema_array_op.into());
-        obj.properties
-            .insert("proof".to_owned(), schema_proof.into());
-        obj.properties
-            .insert("keypath".to_owned(), <String>::json_schema(gen));
-        schema.into()
-    }
-}
+use anyhow::{anyhow, Error};
+use prost::Message;
+use sha3::{Digest, Keccak256};
 
 #[derive(Default)]
-pub struct ProofContract {
-    pub(crate) storage: ProofStorage,
-}
+pub struct ProofContract {}
 
 #[entry_points]
 #[contract]
 #[sv::messages(aipsc::contract as InclusionProofContract)]
 impl ProofContract {
     pub fn new() -> Self {
-        Self {
-            storage: ProofStorage::default(),
-        }
+        Self {}
     }
-
     #[sv::msg(instantiate)]
-    pub fn instantiate(&self, ctx: ExecCtx, validator_set: Vec<HexVector>) -> StdResult<Response> {
-        self.storage
-            .set_validators(ctx.deps.storage, validator_set)?;
+    pub fn instantiate(&self, _ctx: InstantiateCtx) -> StdResult<Response> {
         Ok(Response::default())
     }
 }
 
-impl CustomMsg for TendermintUpdateHeader {}
-impl CustomMsg for ProofTendermint {}
-
 impl InclusionProofContract for ProofContract {
     type Error = StdError;
-    type UpdateHeader = TendermintUpdateHeader;
 
-    fn update_header(
-        &self,
-        ctx: ExecCtx,
-        update_header: TendermintUpdateHeader,
-    ) -> StdResult<Response> {
-        // if there are new validators, update the validator set_validators
-        if let Some(validators) = update_header.new_validator_set {
-            let old_validators = self.storage.get_validators(ctx.deps.storage)?;
-            let msg = validators
-                .new_validators
-                .iter()
-                .flat_map(|v: &HexVector| v.deref().clone())
-                .collect::<Vec<u8>>();
-            TendermintProofStrategy::verify_signatures(
-                validators.sign_with_old_validators,
-                old_validators,
-                &msg,
-            )?;
-            self.storage
-                .set_validators(ctx.deps.storage, validators.new_validators)?;
+    fn verify_proof(&self, _ctx: ExecCtx, proof: String) -> StdResult<Response> {
+        let proof = hex::decode(proof).unwrap();
+        let proof = EthermintPermissionProof::decode(&*proof).unwrap();
+
+        let evm_storage_key = match Permission::try_from(proof.permission).unwrap() {
+            Permission::Decrypt => compute_storage_key(
+                [ACL_DECRYPT_MAPPING_SLOT].as_ref(),
+                &proof.ciphertext_handles[0],
+            )
+            .unwrap(),
+            Permission::Reencrypt => vec![1, 2, 3, 4],
+        };
+
+        let result = TendermintProofStrategy::verify_storage_proof(
+            &proof.proof[0],
+            &proof.contract_address.clone(),
+            &proof.root_hash,
+            &evm_storage_key,
+            &TRUE_SOLIDITY,
+        )
+        .unwrap();
+
+        Ok(Response::new()
+            .add_attribute("method", "verify tendermint proof")
+            .add_attribute("result", result.to_string())) // Convert bool to string for the attribute
+    }
+}
+
+fn compute_storage_key(base_slot_bytes: &[u8], key_in_mapping: &[u8]) -> Result<Vec<u8>, Error> {
+    if key_in_mapping.len() != 32 {
+        return Err(anyhow!("Key in mapping should be 32 bytes"));
+    }
+
+    let base_slot: [u8; 32] = {
+        let mut padded = [0u8; 32];
+        let start = 32 - base_slot_bytes.len().min(32);
+        padded[start..]
+            .copy_from_slice(&base_slot_bytes[base_slot_bytes.len().saturating_sub(32)..]);
+        padded
+    };
+
+    let mut concatenated = Vec::with_capacity(64);
+    concatenated.extend_from_slice(key_in_mapping);
+    concatenated.extend_from_slice(&base_slot);
+
+    let mut hasher = Keccak256::new();
+    hasher.update(&concatenated);
+    Ok(hasher.finalize().to_vec())
+}
+
+// Constant defining handle number
+const ACL_DECRYPT_MAPPING_SLOT: u8 = 0;
+// const ACL_REENCRYPT_MAPPING_SLOT: u8 = 1;
+
+const VEC_SIZE: usize = 31;
+const TRUE_SOLIDITY: [u8; VEC_SIZE + 1] = {
+    let mut vec = [0u8; VEC_SIZE + 1];
+    vec[VEC_SIZE] = 1; // Set the last element to 1
+    vec
+};
+
+/// Represents the operations allowed for a cipher text handle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum Permission {
+    Decrypt = 0,
+    Reencrypt = 1,
+}
+impl Permission {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Permission::Decrypt => "Decrypt",
+            Permission::Reencrypt => "Reencrypt",
         }
-
-        // verify the signatures
-        let validators = self.storage.get_validators(ctx.deps.storage)?;
-        TendermintProofStrategy::verify_signatures(
-            update_header.new_header.signatures,
-            validators,
-            update_header.new_header.root_hash.deref().as_slice(),
-        )?;
-
-        // update root hash
-        self.storage
-            .set_last_root_hash(ctx.deps.storage, update_header.new_header.root_hash)
-            .map(|_| Response::default())
     }
-
-    fn verify_proof(&self, ctx: ExecCtx, proof: Vec<u8>, value: Vec<u8>) -> StdResult<Response> {
-        let proof_tendermint = from_json(&proof).map_err(|e| {
-            StdError::generic_err(format!(
-                "Error deserializing Tendermint Proof from binary {:?}",
-                e
-            ))
-        })?;
-        let root_hash = self.storage.get_last_root_hash(ctx.deps.storage)?;
-        TendermintProofStrategy::verify(proof_tendermint, root_hash, &value)?;
-        Ok(Response::default())
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "Decrypt" => Some(Self::Decrypt),
+            "Reencrypt" => Some(Self::Reencrypt),
+            _ => None,
+        }
     }
+}
+
+/// Ethermint specific proof of a perrmission granted for a list of cipher text handles
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct EthermintPermissionProof {
+    /// Ordered list of cipher text handles.
+    #[prost(bytes = "vec", repeated, tag = "1")]
+    pub ciphertext_handles: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+    #[prost(enumeration = "Permission", tag = "2")]
+    pub permission: i32,
+    /// Block height at which the proof was generated.
+    #[prost(uint64, tag = "3")]
+    pub block_height: u64,
+    /// Root hash for merkle proofs.
+    #[prost(bytes = "vec", tag = "4")]
+    pub root_hash: ::prost::alloc::vec::Vec<u8>,
+    /// Address on ACL contract on ethermint.
+    #[prost(bytes = "vec", tag = "5")]
+    pub contract_address: ::prost::alloc::vec::Vec<u8>,
+    /// Ordered list of encoded proof ops for each cipher text handle in cipher text handles.
+    /// See cometbft/proto/cometbft/crypto/v1/proof.proto.
+    #[prost(bytes = "vec", repeated, tag = "6")]
+    pub proof: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
 }

@@ -86,7 +86,7 @@ impl KmsContract {
 
     fn process_request_transaction<T: Into<OperationValue> + Clone>(
         &self,
-        ctx: ExecCtx,
+        ctx: &mut ExecCtx,
         operation: T,
     ) -> StdResult<Response> {
         let txn_id = self.derive_transaction_id(&ctx.env)?;
@@ -99,14 +99,15 @@ impl KmsContract {
         ctx: ExecCtx,
         response: Response,
         proof: String,
-        _value: &[u8],
     ) -> StdResult<Response> {
         if !self.storage.get_debug_proof(ctx.deps.storage)? {
             let msg = ProofMessage {
                 verify_proof: ProofPayload { proof },
             };
             let msg = WasmMsg::Execute {
-                contract_addr: "todo-contract-address".to_string(),
+                contract_addr: self
+                    .storage
+                    .get_verify_proof_contract_address(ctx.deps.storage)?,
                 msg: to_json_binary(&msg)?,
                 funds: vec![],
             };
@@ -121,6 +122,7 @@ impl KmsContract {
         &self,
         ctx: InstantiateCtx,
         debug_proof: Option<bool>,
+        verify_proof_contract_addr: String,
         kms_core_conf: KmsCoreConf,
     ) -> StdResult<Response> {
         if let KmsCoreConf::Threshold(conf) = &kms_core_conf {
@@ -167,6 +169,9 @@ impl KmsContract {
         } else {
             self.storage.set_debug_proof(ctx.deps.storage, false)?;
         }
+
+        self.storage
+            .set_verify_proof_contract_address(ctx.deps.storage, verify_proof_contract_addr)?;
 
         self.storage
             .update_core_conf(ctx.deps.storage, kms_core_conf)?;
@@ -263,10 +268,9 @@ impl KmsContract {
                 e
             ))
         })?;
-        let _value = ctvecs.into_iter().flatten().collect::<Vec<u8>>();
-        self.process_request_transaction(ctx, decrypt).map_err(|e| {
-            StdError::generic_err(format!("Error verifying proof for decryption - {}", e))
-        })
+        let mut ctx = ctx;
+        let response = self.process_request_transaction(&mut ctx, decrypt.clone())?;
+        self.chain_verify_proof_contract_call(ctx, response, decrypt.proof().to_string())
     }
 
     #[sv::msg(exec)]
@@ -286,7 +290,8 @@ impl KmsContract {
 
     #[sv::msg(exec)]
     pub fn keygen_preproc(&self, ctx: ExecCtx) -> StdResult<Response> {
-        self.process_request_transaction(ctx, KeyGenPreprocValues::default())
+        let mut ctx = ctx;
+        self.process_request_transaction(&mut ctx, KeyGenPreprocValues::default())
     }
 
     #[sv::msg(exec)]
@@ -305,7 +310,8 @@ impl KmsContract {
 
     #[sv::msg(exec)]
     pub fn insecure_keygen(&self, ctx: ExecCtx) -> StdResult<Response> {
-        self.process_request_transaction(ctx, InsecureKeyGenValues::default())
+        let mut ctx = ctx;
+        self.process_request_transaction(&mut ctx, InsecureKeyGenValues::default())
     }
 
     #[sv::msg(exec)]
@@ -325,7 +331,8 @@ impl KmsContract {
 
     #[sv::msg(exec)]
     pub fn keygen(&self, ctx: ExecCtx, keygen: KeyGenValues) -> StdResult<Response> {
-        self.process_request_transaction(ctx, keygen)
+        let mut ctx = ctx;
+        self.process_request_transaction(&mut ctx, keygen)
     }
 
     #[sv::msg(exec)]
@@ -348,8 +355,9 @@ impl KmsContract {
         // decipher the size encoding and ensure the payment is included in the message
         let ciphertext_handle: Vec<u8> = reencrypt.ciphertext_handle().deref().into();
         self.verify_payment(&ctx, &[ciphertext_handle.clone()])?;
-
-        self.process_request_transaction(ctx, reencrypt)
+        let mut ctx = ctx;
+        let response = self.process_request_transaction(&mut ctx, reencrypt.clone())?;
+        self.chain_verify_proof_contract_call(ctx, response, reencrypt.proof().to_string())
     }
 
     #[sv::msg(exec)]
@@ -385,7 +393,8 @@ impl KmsContract {
 
     #[sv::msg(exec)]
     pub fn crs_gen(&self, ctx: ExecCtx) -> StdResult<Response> {
-        self.process_request_transaction(ctx, CrsGenValues::default())
+        let mut ctx = ctx;
+        self.process_request_transaction(&mut ctx, CrsGenValues::default())
     }
 
     #[sv::msg(exec)]
@@ -409,13 +418,10 @@ mod tests {
     use super::sv::mt::KmsContractProxy;
     use crate::contract::sv::mt::CodeId;
     use crate::contract::KmsContract;
-    use aipsc::contract::sv::mt::InclusionProofContractProxy;
     use cosmwasm_std::coin;
     use cosmwasm_std::coins;
-    use cosmwasm_std::to_json_binary;
     use cosmwasm_std::Addr;
     use cosmwasm_std::Event;
-    use ed25519_consensus::SigningKey;
     use events::kms::CrsGenResponseValues;
     use events::kms::DecryptResponseValues;
     use events::kms::DecryptValues;
@@ -434,17 +440,15 @@ mod tests {
     use events::kms::ReencryptResponseValues;
     use events::kms::ReencryptValues;
     use events::kms::TransactionId;
-    use rand::thread_rng;
     use sylvia::cw_multi_test::IntoAddr as _;
     use sylvia::multitest::App;
-    use tendermint::merkle::proof::ProofOp;
-    use tendermint::merkle::proof::ProofOps;
-    use tendermint_ipsc::contract::NewHeader;
-    use tendermint_ipsc::contract::ProofTendermint;
-    use tendermint_ipsc::contract::TendermintUpdateHeader;
     use tendermint_ipsc::mock::sv::mt::CodeId as ProofCodeId;
 
     const UCOSM: &str = "ucosm";
+
+    // let DUMMY_BECH32_ADDR: ADDR = "contract".into_addr();
+    const DUMMY_BECH32_ADDR: &str =
+        "cosmwasm1ejpjr43ht3y56pplm5pxpusmcrk9rkkvna4tklusnnwdxpqm0zls40599z";
 
     #[test]
     fn test_instantiate() {
@@ -457,6 +461,7 @@ mod tests {
         assert!(code_id
             .instantiate(
                 Some(true),
+                DUMMY_BECH32_ADDR.to_string(),
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 3,
@@ -472,6 +477,7 @@ mod tests {
         assert!(code_id
             .instantiate(
                 Some(true),
+                DUMMY_BECH32_ADDR.to_string(),
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 5,
@@ -487,6 +493,7 @@ mod tests {
         assert!(code_id
             .instantiate(
                 Some(true),
+                DUMMY_BECH32_ADDR.to_string(),
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 3,
@@ -502,6 +509,7 @@ mod tests {
         let contract = code_id
             .instantiate(
                 Some(true),
+                DUMMY_BECH32_ADDR.to_string(),
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 3,
@@ -529,6 +537,7 @@ mod tests {
         let contract = code_id
             .instantiate(
                 Some(true),
+                DUMMY_BECH32_ADDR.to_string(),
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 3,
@@ -582,6 +591,7 @@ mod tests {
         let contract = code_id
             .instantiate(
                 Some(true),
+                DUMMY_BECH32_ADDR.to_string(),
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 2,
@@ -609,6 +619,7 @@ mod tests {
             Some(vec![vec![23_u8; 32]]),
             1,
             "0xEEdA6bf26964aF9D7Eed9e03e53415D37aa960EE".to_string(),
+            "some proof".to_string(),
             "eip712name".to_string(),
             "1".to_string(),
             vec![101; 32],
@@ -688,10 +699,19 @@ mod tests {
         let code_id = CodeId::store_code(&app);
         let proof_code_id = ProofCodeId::store_code(&app);
         let owner = "owner".into_addr();
+        let ciphertext_handle =
+            hex::decode("000a17c82f8cd9fe41c871f12b391a2afaf5b640ea4fdd0420a109aa14c674d3e385b955")
+                .unwrap();
+
+        let batch_size = 2_usize;
+        let contract_proof = proof_code_id.instantiate().call(&owner).unwrap();
+
+        let proof_addr = &contract_proof.contract_addr;
 
         let contract = code_id
             .instantiate(
                 Some(false),
+                proof_addr.to_string(),
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 2,
@@ -701,52 +721,6 @@ mod tests {
                 }),
             )
             .call(&owner)
-            .unwrap();
-
-        let ciphertext_handle =
-            hex::decode("000a17c82f8cd9fe41c871f12b391a2afaf5b640ea4fdd0420a109aa14c674d3e385b955")
-                .unwrap();
-
-        let batch_size = 2_usize;
-
-        let sk = SigningKey::new(thread_rng());
-        let sig = sk.sign([1, 2, 3].as_ref());
-        let sig_bytes: [u8; 64] = sig.into();
-
-        let signature = sig_bytes.to_vec().into();
-
-        let contract_proof = proof_code_id.instantiate().call(&owner).unwrap();
-
-        let _proof_addr = &contract_proof.contract_addr;
-
-        let proof_op = ProofOp {
-            key: vec![1, 2, 3],
-            field_type: "ics23:simple".to_string(),
-            data: vec![1, 2, 3],
-        };
-        let proof_ops = ProofOps {
-            ops: vec![proof_op],
-        };
-
-        let proof_tendermint = ProofTendermint {
-            proof: proof_ops.clone(),
-            keypath: "".to_string(),
-        };
-
-        let _proof_ser = to_json_binary(&proof_tendermint).unwrap().to_vec();
-
-        let _proof = "dummy proof".to_string();
-        let tendermint_header = TendermintUpdateHeader {
-            new_validator_set: None,
-            new_header: NewHeader {
-                root_hash: vec![1, 2, 3].into(),
-                signatures: vec![signature],
-            },
-        };
-
-        contract_proof
-            .update_header(tendermint_header)
-            .call(&test)
             .unwrap();
 
         let data_size = extract_ciphertext_size(&ciphertext_handle) * batch_size as u32;
@@ -759,6 +733,7 @@ mod tests {
             Some(vec![vec![23_u8; 32]]),
             1,
             "0xEEdA6bf26964aF9D7Eed9e03e53415D37aa960EE".to_string(),
+            "some proof".to_string(),
             "eip712name".to_string(),
             "1".to_string(),
             vec![101; 32],
@@ -779,7 +754,7 @@ mod tests {
             .call(&test)
             .unwrap();
         let txn_id: TransactionId = KmsContract::hash_transaction_id(12345, 0).into();
-        assert_eq!(response.events.len(), 2);
+        assert_eq!(response.events.len(), 3);
 
         let expected_event = KmsEvent::builder()
             .operation(KmsOperation::Decrypt)
@@ -831,6 +806,7 @@ mod tests {
         let contract = code_id
             .instantiate(
                 Some(true),
+                DUMMY_BECH32_ADDR.to_string(),
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 2,
@@ -878,6 +854,7 @@ mod tests {
         let contract = code_id
             .instantiate(
                 Some(true),
+                DUMMY_BECH32_ADDR.to_string(),
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 2,
@@ -951,6 +928,7 @@ mod tests {
         let contract = code_id
             .instantiate(
                 Some(true),
+                DUMMY_BECH32_ADDR.to_string(),
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 1,
@@ -978,6 +956,7 @@ mod tests {
             ciphertext_handle.clone(),
             vec![9],
             "dummy_acl_address".to_string(),
+            "some proof".to_string(),
             "eip712name".to_string(),
             "version".to_string(),
             vec![7],
@@ -1045,6 +1024,7 @@ mod tests {
         let contract = code_id
             .instantiate(
                 Some(true),
+                DUMMY_BECH32_ADDR.to_string(),
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 2,
@@ -1124,6 +1104,7 @@ mod tests {
         let contract = code_id
             .instantiate(
                 Some(true),
+                DUMMY_BECH32_ADDR.to_string(),
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 2,
@@ -1231,6 +1212,7 @@ mod tests {
             Some(vec![vec![23_u8; 32]]),
             1,
             "0xEEdA6bf26964aF9D7Eed9e03e53415D37aa960EE".to_string(),
+            "some proof".to_string(),
             "eip712name".to_string(),
             "1".to_string(),
             vec![101; 32],

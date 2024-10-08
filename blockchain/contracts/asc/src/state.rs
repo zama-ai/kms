@@ -16,6 +16,7 @@ pub struct KmsContractStorage {
     core_conf: VersionedItem<KmsCoreConf>,
     transactions: VersionedMap<Vec<u8>, Transaction>,
     debug_proof: VersionedItem<bool>,
+    verify_proof_contract_address: VersionedItem<String>,
 }
 
 impl Default for KmsContractStorage {
@@ -24,6 +25,7 @@ impl Default for KmsContractStorage {
             core_conf: VersionedItem::new("core_conf"),
             transactions: VersionedMap::new("transactions"),
             debug_proof: VersionedItem::new("debug_proof"),
+            verify_proof_contract_address: VersionedItem::new("verify_proof_contract_address"),
         }
     }
 }
@@ -169,6 +171,18 @@ impl KmsContractStorage {
                 }
             });
         Ok(operation_values)
+    }
+
+    pub fn set_verify_proof_contract_address(
+        &self,
+        storage: &mut dyn Storage,
+        value: String,
+    ) -> StdResult<()> {
+        self.verify_proof_contract_address.save(storage, &value)
+    }
+
+    pub fn get_verify_proof_contract_address(&self, storage: &dyn Storage) -> StdResult<String> {
+        self.verify_proof_contract_address.load(storage)
     }
 
     // Save the debug proof flag in the storage

@@ -1,0 +1,31 @@
+[package]
+name = "ethereum-ipsc"
+description = "Ethereum Inclusion Proof Smart Contract implementation"
+version = "0.1.0"
+authors.workspace = true
+publish.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+schema = []
+mock = []
+
+[dependencies]
+aipsc = { path = "../aipsc" }
+cosmwasm-schema.workspace = true
+cosmwasm-std.workspace = true
+hex = { version = "0.4.3", features = ["serde"] }
+prost.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sylvia-derive.workspace = true
+sylvia.workspace = true
+
+ethereum-inclusion-proofs = { path = "../../inclusion_proofs/ethereum", default-features = false, features = [
+    "cosmwasm",
+] }

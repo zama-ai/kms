@@ -1,61 +1,113 @@
 use super::operator::default_proof_runtime;
-use cosmwasm_std::{StdError, StdResult};
-use events::HexVector;
-use tendermint::crypto::default::signature::Verifier;
-use tendermint::crypto::signature::Verifier as _;
-use tendermint::{PublicKey, Signature};
 
-use crate::contract::ProofTendermint;
+use super::operator::KeyEncoding;
+use super::operator::KeyPath;
+use super::serde_ops::raw_to_proof_ops;
+use anyhow::{anyhow, Error};
+use tendermint_proto::v0_38::crypto::ProofOps as RawProofOps;
 
 pub(crate) struct TendermintProofStrategy {}
 
 impl TendermintProofStrategy {
-    pub fn verify(
-        proof: ProofTendermint,
-        root_hash: Option<HexVector>,
+    pub fn verify_storage_proof(
+        proof_raw: &[u8],
+        contract_address: &[u8],
+        app_hash: &[u8],
+        storage_key: &[u8],
         value: &[u8],
-    ) -> StdResult<()> {
-        let root_hash_value = if let Some(root_hash) = root_hash {
-            if root_hash.is_empty() {
-                return Err(StdError::generic_err("Root hash is empty"));
-            }
-            root_hash
-        } else {
-            return Err(StdError::generic_err("Root hash is missing"));
-        };
-        let runtime = default_proof_runtime();
-        runtime
-            .verify_value(proof.proof(), &root_hash_value, proof.keypath(), value)
-            .map_err(|e| StdError::generic_err(format!("Verification proof failed: {}", e)))
-    }
+    ) -> Result<bool, Error> {
+        let decoded_raw: RawProofOps = prost::Message::decode(proof_raw).unwrap();
+        let proof = raw_to_proof_ops(decoded_raw);
+        verify(app_hash, 32)?;
+        verify(contract_address, 20)?;
+        let padded_storage_key = verify_or_pad(storage_key, 32)?;
 
-    pub fn verify_signatures(
-        signatures: Vec<HexVector>,
-        pubkeys: Vec<HexVector>,
-        msg: &[u8],
-    ) -> StdResult<()> {
-        if signatures.len() != pubkeys.len() {
-            return Err(StdError::generic_err("Invalid number of signatures"));
+        let key = state_key_for_proof(contract_address, &padded_storage_key);
+        let pr = default_proof_runtime();
+        let verfied = pr.verify_value(&proof, app_hash, &key, value);
+        if let Err(e) = verfied {
+            return Err(anyhow!("Error verifying proof: {:?}", e));
         }
-        for (signature_raw, pubkey) in signatures.iter().zip(pubkeys.iter()) {
-            let signature = Signature::new(signature_raw.to_vec().as_slice()).map_err(|e| {
-                StdError::generic_err(format!(
-                    "Error converting signature to Tendermint Signature {}",
-                    e
-                ))
-            })?;
-            let signature = signature
-                .ok_or_else(|| StdError::generic_err("Invalid signature. Signature is empty."))?;
-            let mut publickey = PublicKey::from_raw_ed25519(pubkey.to_vec().clone().as_slice());
-            if publickey.is_none() {
-                publickey = PublicKey::from_raw_secp256k1(pubkey.to_vec().as_slice());
-            }
-            let publickey = publickey
-                .ok_or_else(|| StdError::generic_err("Invalid public key. Public key is empty."))?;
-            Verifier::verify(publickey, msg, &signature).map_err(|e| {
-                StdError::generic_err(format!("Signature verification failed: {}", e))
-            })?;
-        }
-        Ok(())
+        Ok(true)
     }
+}
+
+const STORAGE_PREFIX: u8 = 0x02;
+
+macro_rules! state_key {
+    ($contract_address:expr, $storage_key:expr) => {{
+        let mut key = Vec::new();
+        key.push(STORAGE_PREFIX);
+        key.extend_from_slice($contract_address);
+        key.extend_from_slice($storage_key);
+        key
+    }};
+}
+
+/// Constructs a state key for proof verification, formatted as a string.
+///
+/// This function builds a path suitable for proof verification, encoding the contract address
+/// and storage key within the path.
+///
+/// # Arguments
+///
+/// * `contract_address` - The address of the contract.
+/// * `storage_key` - The storage key, potentially padded to a specific length.
+///
+/// # Returns
+///
+/// The state key path as a string, or an error if the path construction fails.
+fn state_key_for_proof(contract_address: &[u8], storage_key: &[u8]) -> String {
+    let mut path = KeyPath::default();
+    path.append_key("evm".into(), KeyEncoding::Url);
+    path.append_key(state_key!(contract_address, storage_key), KeyEncoding::Hex);
+    path.to_string()
+        .expect("Error creating state key for proof")
+}
+
+/// Verifies or pads a hexadecimal representation to ensure it matches an expected length.
+///
+/// # Arguments
+///
+/// * `hex` - The hexadecimal data to verify or pad.
+/// * `expected_length` - The expected length of the data.
+///
+/// # Returns
+///
+/// The verified or padded data as a vector of bytes, or an error if verification fails.
+pub fn verify_or_pad(hex: &[u8], expected_length: usize) -> Result<Vec<u8>, Error> {
+    if hex.len() == expected_length {
+        return Ok(hex.to_owned());
+    }
+    if hex.len() < expected_length {
+        let mut padded = vec![0; expected_length - hex.len()];
+        padded.extend_from_slice(hex);
+        return Ok(padded);
+    }
+    Err(anyhow!(
+        "Error: expected hex length: {}, got: {}",
+        expected_length,
+        hex.len()
+    ))
+}
+
+/// Verifies the length of a hexadecimal representation.
+///
+/// # Arguments
+///
+/// * `hex` - The hexadecimal data to verify.
+/// * `expected_length` - The expected length of the data.
+///
+/// # Returns
+///
+/// A result indicating success if the data length matches the expected length, or an error.
+fn verify(hex: &[u8], expected_length: usize) -> Result<(), Error> {
+    if hex.len() != expected_length {
+        return Err(anyhow!(
+            "Error: expected hex length: {}, got: {}",
+            expected_length,
+            hex.len()
+        ));
+    }
+    Ok(())
 }

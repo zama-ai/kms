@@ -33,6 +33,18 @@ jobs:
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
+  build-ethereum-ipsc:
+    uses: ./.github/workflows/common-build.yml
+    with:
+      working-directory: './blockchain/contracts/ethereum-ipsc'
+      args-tests-fhe: ''
+      package-name: 'ethereum-ipsc'
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+
 
   optimize-asc:
     uses: ./.github/workflows/common-build-wasm.yml
@@ -60,6 +72,18 @@ jobs:
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
+  optimize-ethereum-ipsc:
+    uses: ./.github/workflows/common-build-wasm.yml
+    with:
+      working-directory: './blockchain/'
+      # relative to working-directory
+      cargo-manifest-path: './contracts/ethereum-ipsc/'
+      target-path: 'contracts/ethereum-ipsc/'
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
   docker-smart-contracts:
     uses: ./.github/workflows/common-docker.yml
@@ -83,6 +107,8 @@ jobs:
     needs:
       - build-asc
       - build-tendermint-ipsc
+      - build-ethereum-ipsc
       - optimize-asc
       - optimize-tendermint-ipsc
+      - optimize-ethereum-ipsc
       - docker-smart-contracts

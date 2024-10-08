@@ -8,6 +8,7 @@ members = [
     "blockchain/contracts/aipsc",
     "blockchain/contracts/asc",
     "blockchain/contracts/tendermint-ipsc",
+    "blockchain/contracts/ethereum-ipsc",
     "blockchain/cosmos-proto",
     "blockchain/events",
     "blockchain/gateway",
@@ -15,19 +16,19 @@ members = [
     "conf-trace",
     "core/service",
     "core/threshold",
+    "blockchain/inclusion_proofs/ethereum",
+    "blockchain/inclusion_proofs/ethereum-triedb",
 ]
 
 # The backward-compatibility module is excluded from the workspace in order to avoid dependency
-# conflicts. This is related to the fact that it needs to import the different packages (kms, 
+# conflicts. This is related to the fact that it needs to import the different packages (kms,
 # distributed-decryption) to test with specific versions when generating the data. However, the
-# workspace already has these dependencies by nature, creating a name conflict like described in 
+# workspace already has these dependencies by nature, creating a name conflict like described in
 # https://github.com/rust-lang/cargo/issues/12891
 # Note that it's not possible to only generate the lock file using specific features as the resolver
-# builds the graph as if all features are enabled: 
+# builds the graph as if all features are enabled:
 # https://doc.rust-lang.org/cargo/reference/resolver.html#features
-exclude = [
-    "core/backward-compatibility"
-]
+exclude = ["core/backward-compatibility"]
 
 [workspace.package]
 authors = ["Zama"]
