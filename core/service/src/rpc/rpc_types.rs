@@ -21,7 +21,7 @@ use crate::kms::CrsGenRequest;
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
         use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey, PublicSigKey, Signature};
-        use crate::cryptography::signcryption::{hash_element, Reencrypt,DecryptionResult, CiphertextVerificationForKMS};
+        use crate::cryptography::signcryption::{hash_element, Reencrypt,DecryptionResult, CiphertextVerificationForKMS, CRS, FhePubKey, FheServerKey};
         use crate::kms::ZkVerifyRequest;
         use crate::cryptography::central_kms::KmsFheKeyHandles;
         use alloy_dyn_abi::DynSolValue;
@@ -58,6 +58,9 @@ pub struct SignedPubDataHandleInternal {
     pub key_handle: String,
     // The signature on the handle
     pub signature: Vec<u8>,
+    // The signature on the key for the external recipient
+    // (e.g. using EIP712 for the fhevm)
+    pub external_signature: Vec<u8>,
 }
 
 impl Named for SignedPubDataHandleInternal {
@@ -65,10 +68,15 @@ impl Named for SignedPubDataHandleInternal {
 }
 
 impl SignedPubDataHandleInternal {
-    pub fn new(key_handle: String, signature: Vec<u8>) -> SignedPubDataHandleInternal {
+    pub fn new(
+        key_handle: String,
+        signature: Vec<u8>,
+        external_signature: Vec<u8>,
+    ) -> SignedPubDataHandleInternal {
         SignedPubDataHandleInternal {
             key_handle,
             signature,
+            external_signature,
         }
     }
 }
@@ -78,6 +86,7 @@ impl From<SignedPubDataHandle> for SignedPubDataHandleInternal {
         SignedPubDataHandleInternal {
             key_handle: handle.key_handle,
             signature: handle.signature,
+            external_signature: handle.external_signature,
         }
     }
 }
@@ -86,6 +95,7 @@ impl From<SignedPubDataHandleInternal> for SignedPubDataHandle {
         SignedPubDataHandle {
             key_handle: crs.key_handle,
             signature: crs.signature,
+            external_signature: crs.external_signature,
         }
     }
 }
@@ -148,6 +158,26 @@ impl fmt::Display for PrivDataType {
             PrivDataType::FhePrivateKey => write!(f, "FhePrivateKey"),
             PrivDataType::PrssSetup => write!(f, "PrssSetup"),
         }
+    }
+}
+
+pub fn protobuf_to_alloy_domain_option(
+    domain_ref: Option<&Eip712DomainMsg>,
+) -> Option<Eip712Domain> {
+    if let Some(domain) = domain_ref {
+        match protobuf_to_alloy_domain(domain) {
+            Ok(domain) => Some(domain),
+            Err(e) => {
+                tracing::warn!(
+                    "Could not turn domain to alloy: {:?}. Error: {:?}. Returning None.",
+                    domain,
+                    e
+                );
+                None
+            }
+        }
+    } else {
+        None
     }
 }
 
@@ -354,6 +384,60 @@ pub(crate) fn compute_external_zkp_verf_signature(
         .to_vec();
 
     tracing::info!("ZKP Verf Signature: {:?}", hex::encode(signature.clone()));
+
+    Ok(signature)
+}
+
+#[cfg(feature = "non-wasm")]
+/// take some public data (e.g. public key or CRS), safely serialize it, convert it to a solidity type byte array and sign it using EIP-712 for external verification (e.g. in the fhevm).
+pub(crate) fn compute_external_pubdata_signature<D: Serialize + Versionize + Named>(
+    client_sk: &PrivateSigKey,
+    data: &D,
+    eip712_domain: &Eip712Domain,
+) -> anyhow::Result<Vec<u8>> {
+    use crate::cryptography::signcryption::safe_serialize_hash_element_versioned;
+
+    let bytes = safe_serialize_hash_element_versioned(data)?;
+
+    let signer = PrivateKeySigner::from_signing_key(client_sk.sk().clone());
+    let signer_address = signer.address();
+    tracing::info!("Signer address: {:?}", signer_address);
+
+    // distinguish between the different types of public data we can sign according to their name and sign it with EIP-712
+    let message_hash = match D::NAME {
+        "zk::CompactPkePublicParams" => {
+            let message = CRS { crs: bytes.into() };
+            message.eip712_signing_hash(eip712_domain)
+        }
+        "high_level_api::CompactPublicKey" => {
+            let message = FhePubKey {
+                pubkey: bytes.into(),
+            };
+            message.eip712_signing_hash(eip712_domain)
+        }
+        "high_level_api::ServerKey" => {
+            let message = FheServerKey {
+                server_key: bytes.into(),
+            };
+            message.eip712_signing_hash(eip712_domain)
+        }
+        e => {
+            return Err(anyhow_error_and_log(format!(
+                "Cannot compute EIP-712 signature on type {}. Expected one of: zk::CompactPkePublicParams, high_level_api::CompactPublicKey, high_level_api::ServerKey.",
+                e
+            )))
+        }
+    };
+    tracing::info!("Key Message hash: {:?}", message_hash);
+
+    // Sign the hash synchronously with the wallet.
+    let signature = signer
+        .sign_hash_sync(&message_hash)
+        .unwrap()
+        .as_bytes()
+        .to_vec();
+
+    tracing::info!("PT Signature: {:?}", hex::encode(signature.clone()));
 
     Ok(signature)
 }

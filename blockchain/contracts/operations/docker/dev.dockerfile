@@ -10,7 +10,7 @@ RUN RUSTFLAGS='-C link-arg=-s' cargo build --target wasm32-unknown-unknown --rel
 RUN cargo install wasm-opt --locked
 RUN mkdir -p /app/optimized
 
-RUN wasm-opt -Os --signext-lowering "/app/target/wasm32-unknown-unknown/release/asc.wasm" -o "/app/optimized/asc.wasm"
+RUN wasm-opt -Oz --signext-lowering "/app/target/wasm32-unknown-unknown/release/asc.wasm" -o "/app/optimized/asc.wasm"
 RUN wasm-opt -Os --signext-lowering "/app/target/wasm32-unknown-unknown/release/tendermint_ipsc.wasm" -o "/app/optimized/tendermint_ipsc.wasm"
 
 FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms-blockchain-validator:v0.51.0 AS runtime
@@ -26,4 +26,3 @@ COPY ./blockchain/scripts/bootstrap_asc.sh /app/bootstrap.sh
 COPY ./blockchain/scripts/pub_key_to_minio.sh /app/pub_key_to_minio.sh
 
 CMD ["/bin/bash"]
-

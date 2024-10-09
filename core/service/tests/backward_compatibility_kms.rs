@@ -84,8 +84,11 @@ fn test_signed_pub_data_handle_internal(
     let original_versionized: SignedPubDataHandleInternal =
         load_and_unversionize(dir, test, format)?;
 
-    let new_versionized =
-        SignedPubDataHandleInternal::new(test.key_handle.to_string(), test.signature.to_vec());
+    let new_versionized = SignedPubDataHandleInternal::new(
+        test.key_handle.to_string(),
+        test.signature.to_vec(),
+        test.external_signature.to_vec(),
+    );
 
     if original_versionized != new_versionized {
         Err(test.failure(
@@ -142,7 +145,7 @@ fn test_kms_fhe_key_handles(
     };
 
     let new_versionized =
-        KmsFheKeyHandles::new(&private_sig_key, client_key, &fhe_pub_key_set, None).unwrap();
+        KmsFheKeyHandles::new(&private_sig_key, client_key, &fhe_pub_key_set, None, None).unwrap();
 
     // Retrieve the key parameters from the new KMS handle
     let (new_integer_key, _, _, _) = new_versionized.client_key.clone().into_raw_parts();

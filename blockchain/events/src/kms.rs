@@ -158,7 +158,7 @@ pub enum OperationValue {
     KeyGenResponse(KeyGenResponseValues),
     #[strum(serialize = "insecure_keygen")]
     #[serde(rename = "insecure_keygen")]
-    InsecureKeyGen(InsecureKeyGenValues),
+    InsecureKeyGen(Eip712DomainValues),
     #[strum(serialize = "keygen_preproc")]
     #[serde(rename = "keygen_preproc")]
     KeyGenPreproc(KeyGenPreprocValues),
@@ -167,7 +167,7 @@ pub enum OperationValue {
     KeyGenPreprocResponse(KeyGenPreprocResponseValues),
     #[strum(serialize = "crs_gen")]
     #[serde(rename = "crs_gen")]
-    CrsGen(CrsGenValues),
+    CrsGen(Eip712DomainValues),
     #[strum(serialize = "crs_gen_response")]
     #[serde(rename = "crs_gen_response")]
     CrsGenResponse(CrsGenResponseValues),
@@ -177,7 +177,7 @@ impl OperationValue {
     fn has_no_inner_value(&self) -> bool {
         matches!(
             self,
-            Self::CrsGen(_) | Self::KeyGenPreproc(_) | Self::KeyGenPreprocResponse(_)
+            Self::KeyGenPreproc(_) | Self::KeyGenPreprocResponse(_)
         )
     }
 
@@ -1257,17 +1257,61 @@ pub struct KeyGenValues {
     /// Hex-encoded preprocessing ID.
     /// This ID refers to the request ID of a preprocessing request.
     preproc_id: HexVector,
+
+    // EIP-712:
+    /// The name of the EIP-712 domain
+    eip712_name: String,
+    /// The version of the EIP-712 domain
+    eip712_version: String,
+    /// The chain-id used for EIP-712
+    eip712_chain_id: HexVector,
+    /// The contract verifying the EIP-712 signature
+    eip712_verifying_contract: String,
+    /// The optional EIP-712 salt
+    eip712_salt: HexVector,
 }
 
 impl KeyGenValues {
-    pub fn new(preproc_id: impl Into<HexVector>) -> Self {
+    pub fn new(
+        preproc_id: impl Into<HexVector>,
+        eip712_name: String,
+        eip712_version: String,
+        eip712_chain_id: impl Into<HexVector>,
+        eip712_verifying_contract: String,
+        eip712_salt: impl Into<HexVector>,
+    ) -> Self {
         Self {
             preproc_id: preproc_id.into(),
+            eip712_name,
+            eip712_version,
+            eip712_chain_id: eip712_chain_id.into(),
+            eip712_verifying_contract,
+            eip712_salt: eip712_salt.into(),
         }
     }
 
     pub fn preproc_id(&self) -> &HexVector {
         &self.preproc_id
+    }
+
+    pub fn eip712_name(&self) -> &str {
+        &self.eip712_name
+    }
+
+    pub fn eip712_version(&self) -> &str {
+        &self.eip712_version
+    }
+
+    pub fn eip712_chain_id(&self) -> &HexVector {
+        &self.eip712_chain_id
+    }
+
+    pub fn eip712_verifying_contract(&self) -> &str {
+        &self.eip712_verifying_contract
+    }
+
+    pub fn eip712_salt(&self) -> &HexVector {
+        &self.eip712_salt
     }
 }
 
@@ -1278,39 +1322,62 @@ impl From<KeyGenValues> for OperationValue {
 }
 
 #[derive(Serialize, Deserialize, VersionsDispatch)]
-pub enum InsecureKeyGenValuesVersioned {
-    V0(InsecureKeyGenValues),
-}
-// There is no preprocessing id when using insecure key generation.
-#[cw_serde]
-#[derive(Eq, Default, Versionize)]
-#[versionize(InsecureKeyGenValuesVersioned)]
-pub struct InsecureKeyGenValues {}
-
-impl From<InsecureKeyGenValues> for OperationValue {
-    fn from(value: InsecureKeyGenValues) -> Self {
-        OperationValue::InsecureKeyGen(value)
-    }
-}
-#[derive(Serialize, Deserialize, VersionsDispatch)]
-pub enum CrsGenValuesVersioned {
-    V0(CrsGenValues),
+pub enum Eip712DomainValuesVersioned {
+    V0(Eip712DomainValues),
 }
 
 #[cw_serde]
 #[derive(Eq, Default, Versionize, TypedBuilder)]
-#[versionize(CrsGenValuesVersioned)]
-pub struct CrsGenValues {}
-
-impl CrsGenValues {
-    pub fn new() -> Self {
-        Self {}
-    }
+#[versionize(Eip712DomainValuesVersioned)]
+pub struct Eip712DomainValues {
+    // EIP-712:
+    /// The name of the EIP-712 domain
+    eip712_name: String,
+    /// The version of the EIP-712 domain
+    eip712_version: String,
+    /// The chain-id used for EIP-712
+    eip712_chain_id: HexVector,
+    /// The contract verifying the EIP-712 signature
+    eip712_verifying_contract: String,
+    /// The optional EIP-712 salt
+    eip712_salt: HexVector,
 }
 
-impl From<CrsGenValues> for OperationValue {
-    fn from(value: CrsGenValues) -> Self {
-        OperationValue::CrsGen(value)
+impl Eip712DomainValues {
+    pub fn new(
+        eip712_name: String,
+        eip712_version: String,
+        eip712_chain_id: impl Into<HexVector>,
+        eip712_verifying_contract: String,
+        eip712_salt: impl Into<HexVector>,
+    ) -> Self {
+        Self {
+            eip712_name,
+            eip712_version,
+            eip712_chain_id: eip712_chain_id.into(),
+            eip712_verifying_contract,
+            eip712_salt: eip712_salt.into(),
+        }
+    }
+
+    pub fn eip712_name(&self) -> &str {
+        &self.eip712_name
+    }
+
+    pub fn eip712_version(&self) -> &str {
+        &self.eip712_version
+    }
+
+    pub fn eip712_chain_id(&self) -> &HexVector {
+        &self.eip712_chain_id
+    }
+
+    pub fn eip712_verifying_contract(&self) -> &str {
+        &self.eip712_verifying_contract
+    }
+
+    pub fn eip712_salt(&self) -> &HexVector {
+        &self.eip712_salt
     }
 }
 
@@ -1959,14 +2026,26 @@ mod tests {
     #[test]
     fn test_keygen_event_to_json() {
         let message: KmsMessageWithoutProof = KmsMessage::builder()
-            .value(KeyGenValues::new(vec![]))
+            .value(KeyGenValues::new(
+                vec![],
+                "eip712name".to_string(),
+                "version".to_string(),
+                vec![6],
+                "contract".to_string(),
+                vec![7],
+            ))
             .build();
 
         let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
             "keygen": {
                 "keygen": {
-                    "preproc_id": ""
+                    "preproc_id": "",
+                    "eip712_name": "eip712name",
+                    "eip712_version": "version",
+                    "eip712_chain_id": hex::encode([6]),
+                    "eip712_verifying_contract": "contract",
+                    "eip712_salt": hex::encode([7]),
                 }
             }
         });
@@ -2003,13 +2082,29 @@ mod tests {
     }
 
     #[test]
-    fn test_crs_gen_event_to_json() {
-        let message: KmsMessageWithoutProof =
-            KmsMessage::builder().value(CrsGenValues::new()).build();
+    fn test_crs_eip712_gen_event_to_json() {
+        let edv = Eip712DomainValues::new(
+            "eip712name".to_string(),
+            "version".to_string(),
+            vec![6],
+            "contract".to_string(),
+            vec![7],
+        );
 
+        let message: KmsMessageWithoutProof = KmsMessage::builder()
+            .value(OperationValue::CrsGen(edv))
+            .build();
         let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
-            "crs_gen": {  }
+            "crs_gen": {
+                "crs_gen": {
+                    "eip712_name": "eip712name",
+                    "eip712_version": "version",
+                    "eip712_chain_id": hex::encode([6]),
+                    "eip712_verifying_contract": "contract",
+                    "eip712_salt": hex::encode([7]),
+                }
+            }
         });
         assert_eq!(json, json_str);
     }

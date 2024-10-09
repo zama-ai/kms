@@ -1,6 +1,6 @@
 use super::rpc_types::{
-    compute_external_pt_signature, protobuf_to_alloy_domain, BaseKms, PrivDataType,
-    SignedPubDataHandleInternal, CURRENT_FORMAT_VERSION,
+    compute_external_pt_signature, BaseKms, PrivDataType, SignedPubDataHandleInternal,
+    CURRENT_FORMAT_VERSION,
 };
 use crate::client::assemble_metadata_req;
 use crate::conf::centralized::CentralizedConfig;
@@ -20,7 +20,8 @@ use crate::kms::{
     ZkVerifyResponse, ZkVerifyResponsePayload,
 };
 use crate::rpc::rpc_types::{
-    compute_external_zkp_verf_signature, PubDataType, WrappedPublicKey, WrappedPublicKeyOwned,
+    compute_external_zkp_verf_signature, protobuf_to_alloy_domain_option, PubDataType,
+    WrappedPublicKey, WrappedPublicKeyOwned,
 };
 use crate::storage::{
     delete_at_request_id, delete_pk_at_request_id, read_pk_at_request_id, store_pk_at_request_id,
@@ -167,6 +168,8 @@ impl<
         let fhe_keys = Arc::clone(&self.fhe_keys);
         let sk = Arc::clone(&self.base_kms.sig_key);
 
+        let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref());
+
         let _handle = tokio::spawn(async move {
             {
                 {
@@ -183,7 +186,13 @@ impl<
                         return;
                     }
                 }
-                let (fhe_key_set, key_info) = match async_generate_fhe_keys(&sk, params, None).await
+                let (fhe_key_set, key_info) = match async_generate_fhe_keys(
+                    &sk,
+                    params,
+                    None,
+                    eip712_domain.as_ref(),
+                )
+                .await
                 {
                     Ok((fhe_key_set, key_info)) => (fhe_key_set, key_info),
                     Err(_e) => {
@@ -623,22 +632,31 @@ impl<
         let sk = Arc::clone(&self.base_kms.sig_key);
         let rng = self.base_kms.new_rng().await;
 
+        let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref());
+
         let _handle = tokio::spawn(async move {
             {
-                let (pp, crs_info) =
-                    match async_generate_crs(&sk, rng, params, inner.max_num_bits).await {
-                        Ok((pp, crs_info)) => (pp, crs_info),
-                        Err(_) => {
-                            let mut guarded_meta_store = meta_store.write().await;
-                            let _ = guarded_meta_store.update(
-                                &request_id,
-                                HandlerStatus::Error(format!(
-                                    "Failed CRS generation for CRS with ID {request_id}!"
-                                )),
-                            );
-                            return;
-                        }
-                    };
+                let (pp, crs_info) = match async_generate_crs(
+                    &sk,
+                    rng,
+                    params,
+                    inner.max_num_bits,
+                    eip712_domain.as_ref(),
+                )
+                .await
+                {
+                    Ok((pp, crs_info)) => (pp, crs_info),
+                    Err(_) => {
+                        let mut guarded_meta_store = meta_store.write().await;
+                        let _ = guarded_meta_store.update(
+                            &request_id,
+                            HandlerStatus::Error(format!(
+                                "Failed CRS generation for CRS with ID {request_id}!"
+                            )),
+                        );
+                        return;
+                    }
+                };
                 let mut pub_storage = public_storage.lock().await;
                 let mut priv_storage = private_storage.lock().await;
                 //Try to store the new data
@@ -1104,20 +1122,20 @@ pub(crate) fn validate_decrypt_req(
         )));
     }
 
-    let eip712_domain = if let Some(domain) = req.domain.as_ref() {
-        Some(tonic_handle_potential_err(
-            protobuf_to_alloy_domain(domain),
-            format!("Could not turn domain to alloy: {:?}", domain),
-        )?)
-    } else {
-        None
-    };
+    let eip712_domain = protobuf_to_alloy_domain_option(req.domain.as_ref());
 
     let acl_address = if let Some(address) = req.acl_address.as_ref() {
-        Some(tonic_handle_potential_err(
-            Address::from_str(address),
-            format!("Could not parse ACL address: {:?}", address),
-        )?)
+        match Address::from_str(address) {
+            Ok(address) => Some(address),
+            Err(e) => {
+                tracing::warn!(
+                    "Could not parse ACL address: {:?}. Error: {:?}. Returning None.",
+                    address,
+                    e
+                );
+                None
+            }
+        }
     } else {
         None
     };

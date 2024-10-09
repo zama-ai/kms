@@ -219,7 +219,7 @@ where
     }
     let sk = get_signing_key(priv_storage).await;
     let mut rng = get_rng(deterministic, Some(0));
-    let (pp, crs_info) = gen_centralized_crs(&sk, &dkg_params, None, &mut rng).unwrap();
+    let (pp, crs_info) = gen_centralized_crs(&sk, &dkg_params, None, &mut rng, None).unwrap();
 
     store_versioned_at_request_id(
         priv_storage,
@@ -292,8 +292,8 @@ where
         false => None,
     };
 
-    let (fhe_pub_keys_1, key_info_1) = generate_fhe_keys(&sk, dkg_params, seed).unwrap();
-    let (fhe_pub_keys_2, key_info_2) = generate_fhe_keys(&sk, dkg_params, seed).unwrap();
+    let (fhe_pub_keys_1, key_info_1) = generate_fhe_keys(&sk, dkg_params, seed, None).unwrap();
+    let (fhe_pub_keys_2, key_info_2) = generate_fhe_keys(&sk, dkg_params, seed, None).unwrap();
     let priv_fhe_map = HashMap::from([
         (key_id.clone(), key_info_1),
         (other_key_id.clone(), key_info_2),
@@ -510,7 +510,7 @@ where
     for i in 1..=AMOUNT_PARTIES {
         // Get first signing key
         let sk = &signing_keys[i - 1];
-        let info = compute_all_info(sk, &key_set.public_keys).unwrap();
+        let info = compute_all_info(sk, &key_set.public_keys, None).unwrap();
         let threshold_fhe_keys = ThresholdFheKeys {
             private_keys: key_shares[i - 1].to_owned(),
             sns_key: sns_key.clone(),
@@ -620,7 +620,7 @@ where
         .iter_mut()
         .zip(priv_storages.iter_mut().zip(signing_keys.iter()))
     {
-        let crs_info = compute_info(cur_sk, &pp).unwrap();
+        let crs_info = compute_info(cur_sk, &pp, None).unwrap();
 
         store_versioned_at_request_id(
             cur_priv,

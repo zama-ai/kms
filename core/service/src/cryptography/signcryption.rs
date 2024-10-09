@@ -71,6 +71,27 @@ alloy_sol_types::sol! {
     }
 }
 
+// Solidity struct for signing the FHE public key
+alloy_sol_types::sol! {
+    struct FhePubKey {
+        bytes pubkey;
+    }
+}
+
+// Solidity struct for signing the FHE server key
+alloy_sol_types::sol! {
+    struct FheServerKey {
+        bytes server_key;
+    }
+}
+
+// Solidity struct for signing the CRS
+alloy_sol_types::sol! {
+    struct CRS {
+        bytes crs;
+    }
+}
+
 // Solidity struct for ZK proof verification result signature
 alloy_sol_types::sol! {
     struct CiphertextVerificationForKMS {

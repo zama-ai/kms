@@ -166,6 +166,7 @@ impl KeyGenerator for DummyKeyGenerator {
         let dummy_info = SignedPubDataHandle {
             key_handle: "12".to_string(),
             signature: vec![1, 2],
+            external_signature: vec![3, 4],
         };
 
         let pk = PubDataType::PublicKey;
@@ -197,6 +198,7 @@ impl InsecureKeyGenerator for DummyKeyGenerator {
         let dummy_info = SignedPubDataHandle {
             key_handle: "12".to_string(),
             signature: vec![1, 2],
+            external_signature: vec![3, 4],
         };
 
         let pk = PubDataType::PublicKey;

@@ -6,7 +6,7 @@ use cw_controllers::Admin;
 use cw_utils::must_pay;
 use events::kms::ZkpResponseValues;
 use events::kms::{
-    CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues, InsecureKeyGenValues,
+    CrsGenResponseValues, DecryptResponseValues, DecryptValues, Eip712DomainValues,
     KeyGenPreprocResponseValues, KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues,
     KmsCoreConf, KmsEvent, KmsOperation, OperationValue, ReencryptResponseValues, ReencryptValues,
     Transaction, TransactionId, ZkpValues,
@@ -311,7 +311,10 @@ impl KmsContract {
     #[sv::msg(exec)]
     pub fn insecure_keygen(&self, ctx: ExecCtx) -> StdResult<Response> {
         let mut ctx = ctx;
-        self.process_request_transaction(&mut ctx, InsecureKeyGenValues::default())
+        self.process_request_transaction(
+            &mut ctx,
+            OperationValue::InsecureKeyGen(Eip712DomainValues::default()),
+        )
     }
 
     #[sv::msg(exec)]
@@ -394,7 +397,10 @@ impl KmsContract {
     #[sv::msg(exec)]
     pub fn crs_gen(&self, ctx: ExecCtx) -> StdResult<Response> {
         let mut ctx = ctx;
-        self.process_request_transaction(&mut ctx, CrsGenValues::default())
+        self.process_request_transaction(
+            &mut ctx,
+            OperationValue::CrsGen(Eip712DomainValues::default()),
+        )
     }
 
     #[sv::msg(exec)]
@@ -866,9 +872,16 @@ mod tests {
             .call(&owner)
             .unwrap();
 
-        let preproc_id = "preproc_id".as_bytes().to_vec();
-        let keygen = KeyGenValues::new(preproc_id);
-        let response = contract.keygen(keygen.clone()).call(&owner).unwrap();
+        let keygen_val = KeyGenValues::new(
+            "preproc_id".as_bytes().to_vec(),
+            "eip712name".to_string(),
+            "version".to_string(),
+            vec![7],
+            "contract".to_string(),
+            vec![8],
+        );
+
+        let response = contract.keygen(keygen_val).call(&owner).unwrap();
         println!("response: {:#?}", response);
         let txn_id: TransactionId = KmsContract::hash_transaction_id(12345, 0).into();
         assert_eq!(response.events.len(), 2);
@@ -1117,8 +1130,14 @@ mod tests {
             .unwrap();
 
         // First, trigger a keygen operation
-        let preproc_id = "preproc_id".as_bytes().to_vec();
-        let keygen = KeyGenValues::new(preproc_id);
+        let keygen = KeyGenValues::new(
+            "preproc_id".as_bytes().to_vec(),
+            "eip712name".to_string(),
+            "version".to_string(),
+            vec![7],
+            "contract".to_string(),
+            vec![8],
+        );
         let response = contract.keygen(keygen.clone()).call(&owner).unwrap();
 
         // Transaction id: 0

@@ -1,10 +1,12 @@
 use conf_trace::conf::Tracing;
 use conf_trace::telemetry::init_tracing;
 use events::kms::{
-    CrsGenValues, FheParameter, KeyGenPreprocValues, KmsCoreConf, KmsCoreParty,
-    KmsCoreThresholdConf, KmsEvent, TransactionId, ZkpValues,
+    DecryptResponseValues, DecryptValues, Eip712DomainValues, FheType, KmsMessage, Transaction,
 };
-use events::kms::{DecryptResponseValues, DecryptValues, FheType, KmsMessage, Transaction};
+use events::kms::{
+    FheParameter, KeyGenPreprocValues, KmsCoreConf, KmsCoreParty, KmsCoreThresholdConf, KmsEvent,
+    TransactionId, ZkpValues,
+};
 use events::kms::{KmsOperation, OperationValue};
 use events::{
     kms::{KeyGenValues, ReencryptValues},
@@ -568,8 +570,15 @@ async fn ddec_centralized_sunshine() {
 async fn keygen_sunshine_central() {
     setup_central_keys().await;
 
+    // the preproc_id can just be some dummy value since
+    // the centralized case does not need it
     let op = OperationValue::KeyGen(KeyGenValues::new(
         HexVector::from_hex("1111111111111111111111111111111111112222").unwrap(),
+        "eip712name".to_string(),
+        "version".to_string(),
+        vec![7],
+        "0x33dA6bF26964af9d7eed9e03E53415D37aA960EE".to_string(),
+        vec![],
     ));
     let (result, txn_id) = generic_centralized_sunshine_test(vec![], op).await;
     match result {
@@ -590,7 +599,13 @@ async fn keygen_sunshine_central() {
 #[serial_test::serial]
 async fn crs_sunshine_central() {
     setup_central_keys().await;
-    let op = OperationValue::CrsGen(CrsGenValues {});
+    let op = OperationValue::CrsGen(Eip712DomainValues::new(
+        "eip712name".to_string(),
+        "version".to_string(),
+        vec![7],
+        "0x33dA6bF26964af9d7eed9e03E53415D37aA960EE".to_string(),
+        vec![],
+    ));
     let (result, txn_id) = generic_centralized_sunshine_test(vec![], op).await;
     match result {
         KmsOperationResponse::CrsGenResponse(resp) => {
@@ -997,6 +1012,11 @@ async fn keygen_sunshine(slow: bool) {
 
     let op = OperationValue::KeyGen(KeyGenValues::new(
         HexVector::from_hex("1111111111111111111111111111111111112222").unwrap(),
+        "eip712name".to_string(),
+        "version".to_string(),
+        vec![7],
+        "contract".to_string(),
+        vec![8],
     ));
     let (results, txn_id, _) = generic_sunshine_test(slow, vec![], op).await;
     for result in results {
@@ -1035,7 +1055,13 @@ async fn preproc_sunshine(slow: bool) {
 
 async fn crs_sunshine(slow: bool) {
     setup_threshold_keys().await;
-    let op = OperationValue::CrsGen(CrsGenValues {});
+    let op = OperationValue::CrsGen(Eip712DomainValues::new(
+        "eip712name".to_string(),
+        "version".to_string(),
+        vec![7],
+        "0x33dA6bF26964af9d7eed9e03E53415D37aA960EE".to_string(),
+        vec![],
+    ));
     let (results, txn_id, _) = generic_sunshine_test(slow, vec![], op).await;
     assert_eq!(results.len(), AMOUNT_PARTIES);
 

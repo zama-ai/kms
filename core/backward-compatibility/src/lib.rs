@@ -128,6 +128,7 @@ pub struct SignedPubDataHandleInternalTest {
     pub state: u64,
     pub key_handle: Cow<'static, str>,
     pub signature: [u8; 3],
+    pub external_signature: [u8; 3],
 }
 
 impl TestType for SignedPubDataHandleInternalTest {

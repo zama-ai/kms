@@ -18,8 +18,9 @@ use crate::rpc::central_rpc::{
     validate_request_id,
 };
 use crate::rpc::rpc_types::{
-    compute_external_pt_signature, BaseKms, Plaintext, PrivDataType, PubDataType,
-    SigncryptionPayload, SignedPubDataHandleInternal, WrappedPublicKey, CURRENT_FORMAT_VERSION,
+    compute_external_pt_signature, protobuf_to_alloy_domain_option, BaseKms, Plaintext,
+    PrivDataType, PubDataType, SigncryptionPayload, SignedPubDataHandleInternal, WrappedPublicKey,
+    CURRENT_FORMAT_VERSION,
 };
 use crate::storage::{
     delete_at_request_id, delete_pk_at_request_id, read_all_data_versioned,
@@ -339,10 +340,11 @@ type BucketMetaStore = Box<dyn DKGPreprocessing<ResiduePoly128>>;
 pub fn compute_all_info(
     sig_key: &PrivateSigKey,
     fhe_key_set: &FhePubKeySet,
+    domain: Option<&alloy_sol_types::Eip712Domain>,
 ) -> anyhow::Result<DkgMetaStore> {
     //Compute all the info required for storing
-    let pub_key_info = compute_info(sig_key, &fhe_key_set.public_key);
-    let serv_key_info = compute_info(sig_key, &fhe_key_set.server_key);
+    let pub_key_info = compute_info(sig_key, &fhe_key_set.public_key, domain);
+    let serv_key_info = compute_info(sig_key, &fhe_key_set.server_key, domain);
 
     //Make sure we did manage to compute the info
     Ok(match (pub_key_info, serv_key_info) {
@@ -1429,6 +1431,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         dkg_params: DKGParams,
         preproc_handle_w_mode: PreprocHandleWithMode,
         req_id: RequestId,
+        eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
     ) -> anyhow::Result<()> {
         // Update status
         {
@@ -1450,6 +1453,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         let private_storage = Arc::clone(&self.private_storage);
         let sig_key = Arc::clone(&self.base_kms.sig_key);
         let fhe_keys = Arc::clone(&self.fhe_keys);
+        let eip712_domain_copy = eip712_domain.cloned();
 
         let _handle = tokio::spawn(async move {
             let dkg_res = match preproc_handle_w_mode {
@@ -1489,7 +1493,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             };
 
             //Compute all the info required for storing
-            let info = match compute_all_info(&sig_key, &pub_key_set) {
+            let info = match compute_all_info(&sig_key, &pub_key_set, eip712_domain_copy.as_ref()) {
                 Ok(info) => info,
                 Err(_) => {
                     let mut guarded_meta_storage = meta_store.write().await;
@@ -1620,10 +1624,10 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         request: Request<KeyGenRequest>,
         insecure: bool,
     ) -> Result<Response<Empty>, Status> {
-        let inner = request.into_inner();
-        tracing::info!("Request ID: {:?}", inner.request_id);
+        let req = request.into_inner();
+        tracing::info!("Request ID: {:?}", req.request_id);
         let request_id = tonic_some_or_err(
-            inner.request_id.clone(),
+            req.request_id.clone(),
             "Request ID is not set (inner key gen)".to_string(),
         )?;
         tracing::info!("Request ID after tonic: {:?}", request_id);
@@ -1687,7 +1691,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 
         //Retrieve kg params and preproc_id
         let dkg_params = tonic_handle_potential_err(
-            retrieve_parameters(inner.params),
+            retrieve_parameters(req.params),
             "Parameter choice is not recognized".to_string(),
         )?;
 
@@ -1695,7 +1699,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             PreprocHandleWithMode::Insecure
         } else {
             let preproc_id = tonic_some_or_err(
-                inner.preproc_id.clone(),
+                req.preproc_id.clone(),
                 "Pre-Processing ID is not set".to_string(),
             )?;
             let mut map = self.preproc_buckets.write().await;
@@ -1707,9 +1711,16 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             )?)
         };
 
+        let eip712_domain = protobuf_to_alloy_domain_option(req.domain.as_ref());
+
         tonic_handle_potential_err(
-            self.launch_dkg(dkg_params, preproc_handle, request_id.clone())
-                .await,
+            self.launch_dkg(
+                dkg_params,
+                preproc_handle,
+                request_id.clone(),
+                eip712_domain.as_ref(),
+            )
+            .await,
             format!("Error launching dkg for request ID {request_id}"),
         )?;
 
@@ -1938,6 +1949,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         witness_dim: usize,
         max_num_bits: Option<u32>,
         dkg_params: &DKGParams,
+        eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
     ) -> anyhow::Result<()> {
         {
             let mut guarded_meta_store = self.crs_meta_store.write().await;
@@ -1957,6 +1969,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         let public_storage = Arc::clone(&self.public_storage);
         let private_storage = Arc::clone(&self.private_storage);
         let owned_req_id = req_id.to_owned();
+        let eip712_domain_copy = eip712_domain.cloned();
 
         // we need to clone the signature key because it needs to be given
         // the thread that spawns the CRS ceremony
@@ -1975,7 +1988,9 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 .execute::<Z64, _, _>(&mut session, witness_dim, max_num_bits)
                 .await;
             let pp = internal_pp.and_then(|internal| internal.try_into_tfhe_zk_pok_pp(&pke_params));
-            let res_info_pp = pp.and_then(|pp| compute_info(&sig_key, &pp).map(|info| (info, pp)));
+            let res_info_pp = pp.and_then(|pp| {
+                compute_info(&sig_key, &pp, eip712_domain_copy.as_ref()).map(|info| (info, pp))
+            });
             let f = || async {
                 // we take these two locks at the same time in case there are races
                 // on return, the two locks should be dropped in the correct order also
@@ -2063,37 +2078,44 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
     for RealCrsGenerator<PubS, PrivS>
 {
     async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
-        let req_inner = request.into_inner();
+        let req = request.into_inner();
         tracing::info!(
             "Starting crs generation on kms for request ID {:?}",
-            req_inner.request_id
+            req.request_id
         );
 
-        let dkg_params =
-            crate::rpc::central_rpc::retrieve_parameters(req_inner.params).map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::NotFound,
-                    format!("Can not retrieve fhe parameters with error {e}"),
-                )
-            })?;
+        let dkg_params = crate::rpc::central_rpc::retrieve_parameters(req.params).map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::NotFound,
+                format!("Can not retrieve fhe parameters with error {e}"),
+            )
+        })?;
         let crs_params = dkg_params
             .get_params_basics_handle()
             .get_compact_pk_enc_params();
         let witness_dim = tonic_handle_potential_err(
-            compute_witness_dim(&crs_params, req_inner.max_num_bits.map(|x| x as usize)),
+            compute_witness_dim(&crs_params, req.max_num_bits.map(|x| x as usize)),
             "witness dimension computation failed".to_string(),
         )?;
 
-        let req_id = req_inner.request_id.ok_or_else(|| {
+        let req_id = req.request_id.ok_or_else(|| {
             tonic::Status::new(
                 tonic::Code::InvalidArgument,
                 "missing request ID in CRS generation",
             )
         })?;
 
-        self.inner_crs_gen(&req_id, witness_dim, req_inner.max_num_bits, &dkg_params)
-            .await
-            .map_err(|e| tonic::Status::new(tonic::Code::Aborted, e.to_string()))?;
+        let eip712_domain = protobuf_to_alloy_domain_option(req.domain.as_ref());
+
+        self.inner_crs_gen(
+            &req_id,
+            witness_dim,
+            req.max_num_bits,
+            &dkg_params,
+            eip712_domain.as_ref(),
+        )
+        .await
+        .map_err(|e| tonic::Status::new(tonic::Code::Aborted, e.to_string()))?;
         Ok(Response::new(Empty {}))
     }
 

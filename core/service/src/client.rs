@@ -971,6 +971,7 @@ impl Client {
         request_id: &RequestId,
         preproc_id: Option<RequestId>,
         param: Option<ParamChoice>,
+        eip712_domain: Option<Eip712Domain>,
     ) -> anyhow::Result<KeyGenRequest> {
         let parsed_param: i32 = match param {
             Some(parsed_param) => parsed_param.into(),
@@ -981,11 +982,18 @@ impl Client {
                 "The request id format is not valid {request_id}"
             )));
         }
+
+        let domain = match eip712_domain {
+            Some(eip712_domain) => Some(alloy_to_protobuf_domain(&eip712_domain)?),
+            None => None,
+        };
+
         Ok(KeyGenRequest {
             params: parsed_param,
             config: None,
             preproc_id,
             request_id: Some(request_id.clone()),
+            domain,
         })
     }
 
@@ -1010,6 +1018,7 @@ impl Client {
             config: None,
             max_num_bits,
             request_id: Some(request_id.clone()),
+            domain: None,
         })
     }
 
@@ -2843,7 +2852,7 @@ pub(crate) mod tests {
             super::test_tools::centralized_handles(StorageVersion::Dev, &dkg_params).await;
 
         let gen_req = internal_client
-            .key_gen_request(request_id, None, params)
+            .key_gen_request(request_id, None, params, None)
             .unwrap();
         let req_id = gen_req.request_id.clone().unwrap();
         let gen_response = kms_client
@@ -4924,7 +4933,12 @@ pub(crate) mod tests {
             threshold_handles(StorageVersion::Dev, TEST_PARAM).await;
 
         let req_keygen = internal_client
-            .key_gen_request(&req_key, Some(req_preproc.clone()), Some(ParamChoice::Test))
+            .key_gen_request(
+                &req_key,
+                Some(req_preproc.clone()),
+                Some(ParamChoice::Test),
+                None,
+            )
             .unwrap();
         let responses = launch_dkg(req_keygen.clone(), &kms_clients, true).await;
         for response in responses {
@@ -5003,7 +5017,12 @@ pub(crate) mod tests {
         assert_eq!(finished.len(), AMOUNT_PARTIES);
         //Preproc is now ready, start legitimate dkg
         let req_keygen = internal_client
-            .key_gen_request(&req_key, Some(req_preproc.clone()), Some(ParamChoice::Test))
+            .key_gen_request(
+                &req_key,
+                Some(req_preproc.clone()),
+                Some(ParamChoice::Test),
+                None,
+            )
             .unwrap();
         let responses = launch_dkg(req_keygen.clone(), &kms_clients, false).await;
         for response in responses {
@@ -5136,6 +5155,7 @@ pub(crate) mod tests {
                     &other_key_gen_id,
                     Some(req_preproc),
                     Some(ParamChoice::Test),
+                    None,
                 )
                 .unwrap();
             let responses = launch_dkg(keygen_req_data.clone(), kms_clients, insecure).await;

@@ -13,6 +13,7 @@ use crate::kms::ReencryptionRequest;
 #[cfg(feature = "non-wasm")]
 use crate::kms::RequestId;
 use crate::kms::{TypedCiphertext, ZkVerifyResponsePayload};
+use crate::rpc::rpc_types::compute_external_pubdata_signature;
 #[cfg(feature = "non-wasm")]
 use crate::rpc::rpc_types::SignedPubDataHandleInternal;
 use crate::rpc::rpc_types::{
@@ -82,11 +83,14 @@ pub async fn async_generate_fhe_keys(
     sk: &PrivateSigKey,
     params: DKGParams,
     seed: Option<Seed>,
+    eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
     let (send, recv) = tokio::sync::oneshot::channel();
     let sk_copy = sk.to_owned();
+    let eip712_domain_copy = eip712_domain.cloned();
+
     rayon::spawn(move || {
-        let out = generate_fhe_keys(&sk_copy, params, seed);
+        let out = generate_fhe_keys(&sk_copy, params, seed, eip712_domain_copy.as_ref());
         let _ = send.send(out);
     });
     recv.await.map_err(|e| anyhow::anyhow!(e.to_string()))?
@@ -98,11 +102,20 @@ pub async fn async_generate_crs(
     rng: AesRng,
     params: DKGParams,
     max_num_bits: Option<u32>,
+    eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
 ) -> anyhow::Result<(CompactPkePublicParams, SignedPubDataHandleInternal)> {
     let (send, recv) = tokio::sync::oneshot::channel();
     let sk_copy = sk.to_owned();
+    let eip712_domain_copy = eip712_domain.cloned();
+
     rayon::spawn(move || {
-        let out = gen_centralized_crs(&sk_copy, &params, max_num_bits, rng);
+        let out = gen_centralized_crs(
+            &sk_copy,
+            &params,
+            max_num_bits,
+            rng,
+            eip712_domain_copy.as_ref(),
+        );
         let _ = send.send(out);
     });
     recv.await?
@@ -113,6 +126,7 @@ pub fn generate_fhe_keys(
     sk: &PrivateSigKey,
     params: DKGParams,
     seed: Option<Seed>,
+    eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
     let f = || -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
         let client_key = generate_client_fhe_key(params, seed);
@@ -132,7 +146,8 @@ pub fn generate_fhe_keys(
             server_key,
             sns_key: None,
         };
-        let handles = KmsFheKeyHandles::new(sk, client_key, &pks, decompression_key)?;
+        let handles =
+            KmsFheKeyHandles::new(sk, client_key, &pks, decompression_key, eip712_domain)?;
         Ok((pks, handles))
     };
     match panic::catch_unwind(f) {
@@ -177,6 +192,7 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     params: &DKGParams,
     max_num_bits: Option<u32>,
     mut rng: R,
+    eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
 ) -> anyhow::Result<(CompactPkePublicParams, SignedPubDataHandleInternal)> {
     let internal_pp = make_centralized_public_parameters(
         &params
@@ -189,7 +205,7 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
         .get_params_basics_handle()
         .get_compact_pk_enc_params();
     let pp = internal_pp.try_into_tfhe_zk_pok_pp(&pke_params)?;
-    let crs_info = compute_info(sk, &pp)?;
+    let crs_info = compute_info(sk, &pp, eip712_domain)?;
     Ok((pp, crs_info))
 }
 
@@ -400,18 +416,22 @@ impl KmsFheKeyHandles {
         client_key: FhePrivateKey,
         public_keys: &FhePubKeySet,
         decompression_key: Option<DecompressionKey>,
+        eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
     ) -> anyhow::Result<Self> {
         let mut public_key_info = HashMap::new();
         public_key_info.insert(
             PubDataType::PublicKey,
-            compute_info(sig_key, &public_keys.public_key)?,
+            compute_info(sig_key, &public_keys.public_key, eip712_domain)?,
         );
         public_key_info.insert(
             PubDataType::ServerKey,
-            compute_info(sig_key, &public_keys.server_key)?,
+            compute_info(sig_key, &public_keys.server_key, eip712_domain)?,
         );
         if let Some(sns) = &public_keys.sns_key {
-            public_key_info.insert(PubDataType::SnsKey, compute_info(sig_key, sns)?);
+            public_key_info.insert(
+                PubDataType::SnsKey,
+                compute_info(sig_key, sns, eip712_domain)?,
+            );
         }
         Ok(KmsFheKeyHandles {
             client_key,
@@ -725,12 +745,21 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 pub(crate) fn compute_info<S: Serialize + Versionize + Named>(
     sk: &PrivateSigKey,
     element: &S,
+    domain: Option<&alloy_sol_types::Eip712Domain>,
 ) -> anyhow::Result<SignedPubDataHandleInternal> {
     let handle = compute_handle(element)?;
     let signature = sign(&handle, sk)?;
+
+    // if we get an EIP-712 domain, compute the external signature
+    let external_signature = match domain {
+        Some(domain) => compute_external_pubdata_signature(sk, element, domain)?,
+        None => vec![],
+    };
+
     Ok(SignedPubDataHandleInternal {
         key_handle: handle,
         signature: serialize(&signature)?,
+        external_signature,
     })
 }
 
@@ -841,11 +870,11 @@ pub(crate) mod tests {
         let mut rng = AesRng::seed_from_u64(100);
         let seed = Some(Seed(42));
         let (sig_pk, sig_sk) = gen_sig_keys(&mut rng);
-        let (pub_fhe_keys, key_info) = generate_fhe_keys(&sig_sk, dkg_params, seed).unwrap();
+        let (pub_fhe_keys, key_info) = generate_fhe_keys(&sig_sk, dkg_params, seed, None).unwrap();
         let mut key_info_map = HashMap::from([(key_id.to_string().try_into().unwrap(), key_info)]);
 
         let (other_pub_fhe_keys, other_key_info) =
-            generate_fhe_keys(&sig_sk, dkg_params, seed).unwrap();
+            generate_fhe_keys(&sig_sk, dkg_params, seed, None).unwrap();
 
         // Insert a key with another handle to setup a KMS with multiple keys
         key_info_map.insert(other_key_id.to_string().try_into().unwrap(), other_key_info);
@@ -1213,8 +1242,8 @@ pub(crate) mod tests {
         };
 
         let value = TestType { i: 32 };
-        let expected = super::compute_info(&kms.base_kms.sig_key, &value).unwrap();
-        let actual = super::compute_info(&kms.base_kms.sig_key, &value).unwrap();
+        let expected = super::compute_info(&kms.base_kms.sig_key, &value, None).unwrap();
+        let actual = super::compute_info(&kms.base_kms.sig_key, &value, None).unwrap();
         assert_eq!(expected, actual);
     }
 }

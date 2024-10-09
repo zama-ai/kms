@@ -54,7 +54,8 @@ message KeyGenRequest {
   Config config = 1;
   ParamChoice params = 2;
   RequestId preproc_id = 3;
-  RequestId request_id = 4;
+  Eip712DomainMsg domain = 4;
+  RequestId request_id = 5;
 }
 
 message Config {
@@ -73,6 +74,9 @@ message SignedPubDataHandle {
   string key_handle = 1;
   // Signature on the key handle
   bytes signature = 2;
+  // The signature on the key for the external recipient
+  // (e.g. using EIP712 for the fhevm)
+  bytes external_signature = 3;
 }
 
 // Keeping the fields in lowercase is important because
@@ -90,7 +94,8 @@ message CrsGenRequest {
   // e.g. 64 for a single FheUint64 or 8 x FheUint8 values.
   // If this is not provided, then it defaults to ZK_DEFAULT_MAX_NUM_CLEARTEXT.
   optional uint32 max_num_bits = 3;
-  RequestId request_id = 4;
+  Eip712DomainMsg domain = 4;
+  RequestId request_id = 5;
 }
 
 message CrsGenResult {

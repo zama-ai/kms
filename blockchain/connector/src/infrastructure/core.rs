@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use conf_trace::grpc::make_request;
 use enum_dispatch::enum_dispatch;
 use events::kms::{
-    DecryptResponseValues, DecryptValues, InsecureKeyGenValues, KeyGenPreprocResponseValues,
+    DecryptResponseValues, DecryptValues, Eip712DomainValues, KeyGenPreprocResponseValues,
     KeyGenResponseValues, KeyGenValues, KmsCoreConf, KmsEvent, OperationValue,
     ReencryptResponseValues, ReencryptValues, TransactionId, ZkpResponseValues, ZkpValues,
 };
@@ -65,11 +65,12 @@ pub struct KeyGenVal<S> {
 }
 
 pub struct InsecureKeyGenVal<S> {
-    pub insecure_keygen: InsecureKeyGenValues,
+    pub insecure_keygen: Eip712DomainValues,
     pub operation_val: KmsOperationVal<S>,
 }
 
 pub struct CrsGenVal<S> {
+    pub crsgen: Eip712DomainValues,
     pub operation_val: KmsOperationVal<S>,
 }
 
@@ -207,7 +208,10 @@ where
                     operation_val,
                 })
             }
-            OperationValue::CrsGen(_) => KmsOperationRequest::CrsGen(CrsGenVal { operation_val }),
+            OperationValue::CrsGen(crsgen) => KmsOperationRequest::CrsGen(CrsGenVal {
+                crsgen,
+                operation_val,
+            }),
             _ => return Err(anyhow::anyhow!("Invalid operation for request {:?}", event)),
         };
         Ok(request)
@@ -551,13 +555,13 @@ where
             client_address: zkp.client_address().to_string(),
             contract_address: zkp.contract_address().to_string(),
             ct_bytes: ct_proof,
-            acl_address: self.zkp.acl_address().to_string(),
+            acl_address: zkp.acl_address().to_string(),
             domain: Some(Eip712DomainMsg {
-                name: self.zkp.eip712_name().to_string(),
-                version: self.zkp.eip712_version().to_string(),
-                chain_id: self.zkp.eip712_chain_id().into(),
-                verifying_contract: self.zkp.eip712_verifying_contract().to_string(),
-                salt: self.zkp.eip712_salt().into(),
+                name: zkp.eip712_name().to_string(),
+                version: zkp.eip712_version().to_string(),
+                chain_id: zkp.eip712_chain_id().into(),
+                verifying_contract: zkp.eip712_verifying_contract().to_string(),
+                salt: zkp.eip712_salt().into(),
             }),
         };
 
@@ -726,14 +730,22 @@ where
         let mut client = CoreServiceEndpointClient::new(chan.clone());
 
         let request_id = self.operation_val.tx_id.to_hex();
+        let keygen = &self.keygen;
 
         let req_id: RequestId = request_id.clone().try_into()?;
-        let preproc_id = self.keygen.preproc_id().to_hex().try_into()?;
+        let preproc_id = keygen.preproc_id().to_hex().try_into()?;
         let req = KeyGenRequest {
             config: Some(Config {}),
             params: param_choice.into(),
             preproc_id: Some(preproc_id),
             request_id: Some(req_id.clone()),
+            domain: Some(Eip712DomainMsg {
+                name: keygen.eip712_name().to_string(),
+                version: keygen.eip712_version().to_string(),
+                chain_id: keygen.eip712_chain_id().into(),
+                verifying_contract: keygen.eip712_verifying_contract().to_string(),
+                salt: keygen.eip712_salt().into(),
+            }),
         };
 
         let metrics = self.operation_val.kms_client.metrics.clone();
@@ -813,7 +825,7 @@ where
             .param_choice_string();
         let param_choice = ParamChoice::from_str_name(&param_choice_str).ok_or_else(|| {
             anyhow!(
-                "invalid parameter choice string in keygen: {}",
+                "invalid parameter choice string in insecure keygen: {}",
                 param_choice_str
             )
         })?;
@@ -824,6 +836,7 @@ where
         let request_id = self.operation_val.tx_id.to_hex();
 
         let req_id: RequestId = request_id.clone().try_into()?;
+        let keygen = &self.insecure_keygen;
 
         tracing::info!("Request ID: {:?}", req_id);
         let req = KeyGenRequest {
@@ -831,6 +844,13 @@ where
             params: param_choice.into(),
             request_id: Some(req_id.clone()),
             preproc_id: None,
+            domain: Some(Eip712DomainMsg {
+                name: keygen.eip712_name().to_string(),
+                version: keygen.eip712_version().to_string(),
+                chain_id: keygen.eip712_chain_id().into(),
+                verifying_contract: keygen.eip712_verifying_contract().to_string(),
+                salt: keygen.eip712_salt().into(),
+            }),
         };
 
         let metrics = self.operation_val.kms_client.metrics.clone();
@@ -841,7 +861,7 @@ where
         let _resp = client.insecure_key_gen(request).await.inspect_err(|e| {
             let err_msg = e.to_string();
             tracing::error!(
-                "Error communicating decryption to core. Error message:\n{}\nRequest:\n{:?}",
+                "Error communicating insecure keygen to core. Error message:\n{}\nRequest:\n{:?}",
                 err_msg,
                 req,
             );
@@ -925,6 +945,7 @@ where
         let mut client = CoreServiceEndpointClient::new(chan.clone());
 
         let request_id = self.operation_val.tx_id.to_hex();
+        let crsgen = &self.crsgen;
 
         let req_id: RequestId = request_id.clone().try_into()?;
         let req = CrsGenRequest {
@@ -932,6 +953,13 @@ where
             params: param_choice.into(),
             request_id: Some(req_id.clone()),
             max_num_bits: None, // TODO: this will come in another PR
+            domain: Some(Eip712DomainMsg {
+                name: crsgen.eip712_name().to_string(),
+                version: crsgen.eip712_version().to_string(),
+                chain_id: crsgen.eip712_chain_id().into(),
+                verifying_contract: crsgen.eip712_verifying_contract().to_string(),
+                salt: crsgen.eip712_salt().into(),
+            }),
         };
 
         let metrics = self.operation_val.kms_client.metrics.clone();

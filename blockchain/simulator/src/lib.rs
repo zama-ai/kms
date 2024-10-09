@@ -15,9 +15,8 @@ use dashmap::DashMap;
 use ethers::abi::Token;
 use ethers::types::{Address, U256};
 use events::kms::{
-    CrsGenValues, DecryptValues, FheType, InsecureKeyGenValues, KeyGenPreprocValues, KeyGenValues,
-    KmsCoreConf, KmsEvent, KmsMessage, KmsOperation, OperationValue, ReencryptValues,
-    TransactionId, ZkpValues,
+    DecryptValues, Eip712DomainValues, FheType, KeyGenPreprocValues, KeyGenValues, KmsCoreConf,
+    KmsEvent, KmsMessage, KmsOperation, OperationValue, ReencryptValues, TransactionId, ZkpValues,
 };
 use events::HexVector;
 use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractRequest, ProtoCoin};
@@ -641,7 +640,13 @@ pub async fn execute_crsgen_contract(
     client: &Client,
     query_client: &QueryClient,
 ) -> Result<KmsEvent, Box<dyn std::error::Error + 'static>> {
-    let crsgen_value = OperationValue::CrsGen(CrsGenValues {});
+    let crsgen_value = OperationValue::CrsGen(Eip712DomainValues::new(
+        "eip712name".to_string(),
+        "version".to_string(),
+        vec![7],
+        "0x00dA6BF26964af9D7EED9e03E53415d37aa960EE".to_string(),
+        vec![8],
+    ));
 
     let evs = execute_contract(client, query_client, crsgen_value).await?;
     let ev = evs[0].clone();
@@ -654,7 +659,13 @@ pub async fn execute_insecure_keygen_contract(
     client: &Client,
     query_client: &QueryClient,
 ) -> Result<KmsEvent, Box<dyn std::error::Error + 'static>> {
-    let insecure_keygen_value = OperationValue::InsecureKeyGen(InsecureKeyGenValues {});
+    let insecure_keygen_value = OperationValue::InsecureKeyGen(Eip712DomainValues::new(
+        "eip712name".to_string(),
+        "version".to_string(),
+        vec![7],
+        "0x00dA6BF26964af9D7EED9e03E53415d37aa960EE".to_string(),
+        vec![8],
+    ));
 
     let evs = execute_contract(client, query_client, insecure_keygen_value).await?;
     let ev = evs[0].clone();
@@ -682,7 +693,14 @@ pub async fn execute_keygen_contract(
     preproc_id: HexVector,
 ) -> Result<KmsEvent, Box<dyn std::error::Error + 'static>> {
     // TODO we need to first do a pre-processing execute
-    let keygen_value = OperationValue::KeyGen(KeyGenValues::new(preproc_id));
+    let keygen_value = OperationValue::KeyGen(KeyGenValues::new(
+        preproc_id,
+        "eip712name".to_string(),
+        "version".to_string(),
+        vec![7],
+        "contract".to_string(),
+        vec![8],
+    ));
 
     let evs = execute_contract(client, query_client, keygen_value).await?;
     let ev = evs[0].clone();
