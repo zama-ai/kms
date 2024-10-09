@@ -26,7 +26,7 @@ use anyhow::Context;
 use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
 use rand::{CryptoRng, Rng};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::clone::Clone;
 use std::collections::{HashMap, HashSet};
 use tfhe::named::Named;
@@ -82,46 +82,12 @@ pub enum PRSSSetupVersioned<Z: Default + Clone + Serialize> {
 pub struct PRSSSetup<Z: Default + Clone + Serialize> {
     // all possible subsets of n-t parties (A) that contain Pi and their shared PRF keys
     sets: Vec<PrssSet<Z>>,
-    alpha_powers: AlphaPowers<Z>,
+    alpha_powers: Vec<Vec<Z>>,
 }
 
 impl<Z: Default + Clone + Serialize> Named for PRSSSetup<Z> {
     const NAME: &'static str = "PRSSSetup";
 }
-
-// TODO that this type has a non-versioned implementation.
-// see issue: https://github.com/zama-ai/kms-core/issues/934
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct AlphaPowers<Z: Default + Clone>(Vec<Vec<Z>>);
-
-impl<Z: Default + Clone + Serialize> tfhe_versionable::Versionize for AlphaPowers<Z> {
-    type Versioned<'vers> = &'vers AlphaPowers<Z> where Z: 'vers;
-
-    fn versionize(&self) -> Self::Versioned<'_> {
-        self
-    }
-}
-
-impl<Z: Default + Clone + Serialize + DeserializeOwned> tfhe_versionable::VersionizeOwned
-    for AlphaPowers<Z>
-{
-    type VersionedOwned = AlphaPowers<Z>;
-    fn versionize_owned(self) -> Self::VersionedOwned {
-        self
-    }
-}
-
-impl<Z: Default + Clone + Serialize + DeserializeOwned> tfhe_versionable::Unversionize
-    for AlphaPowers<Z>
-{
-    fn unversionize(
-        versioned: Self::VersionedOwned,
-    ) -> Result<Self, tfhe_versionable::UnversionizeError> {
-        Ok(versioned)
-    }
-}
-
-impl<Z: Default + Clone + Serialize> tfhe_versionable::NotVersioned for AlphaPowers<Z> {}
 
 /// PRSS state for use within a given session.
 #[derive(Debug, Clone)]
@@ -276,7 +242,7 @@ where
                         let f_a = set.f_a_points[party_id.zero_based()];
                         // power of alpha_i^j
                         let alpha_j =
-                            self.prss_setup.alpha_powers.0[party_id.zero_based()][j as usize];
+                            self.prss_setup.alpha_powers[party_id.zero_based()][j as usize];
                         res += f_a * alpha_j * chi;
                     }
                 } else {
@@ -631,7 +597,7 @@ where
 
         Ok(PRSSSetup {
             sets: party_prss_sets,
-            alpha_powers: AlphaPowers(alpha_powers),
+            alpha_powers,
         })
     }
 }
@@ -702,10 +668,7 @@ where
 
         Ok(PRSSSetup {
             sets: party_prss_sets,
-            alpha_powers: AlphaPowers(embed_parties_and_compute_alpha_powers(
-                n,
-                session.threshold() as usize,
-            )?),
+            alpha_powers: embed_parties_and_compute_alpha_powers(n, session.threshold() as usize)?,
         })
     }
 }
@@ -883,10 +846,7 @@ mod tests {
 
             tracing::debug!("epoch init: {:?}", sets);
 
-            Ok(PRSSSetup {
-                sets,
-                alpha_powers: AlphaPowers(alpha_powers),
-            })
+            Ok(PRSSSetup { sets, alpha_powers })
         }
     }
 

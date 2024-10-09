@@ -16,7 +16,7 @@ distributed_decryption_0_9 = { git = "ssh://git@github.com/zama-ai/kms-core.git"
 # Note: these dependencies should match the versions used by the KMS and distributed decryption
 # modules as much as possible to avoid serialization differences
 tfhe_versionable_0_2 = { git = "https://github.com/zama-ai/tfhe-rs.git", package = "tfhe-versionable", tag = "tfhe-rs-0.8.0", optional = true }
-tfhe_0_8 = { git = "https://github.com/zama-ai/tfhe-rs.git", package = "tfhe", tag = "tfhe-rs-0.8.0", optional = true , features = ["shortint"]}
+tfhe_0_8 = { git = "https://github.com/zama-ai/tfhe-rs.git", package = "tfhe", tag = "tfhe-rs-0.8.0", optional = true , features = ["shortint"] }
 serde = { version = "1.0", features = ["derive"] }
 strum = { version = "0.26", features = ["derive"] }
 semver = { version = "1.0", optional = true }

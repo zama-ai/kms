@@ -25,8 +25,7 @@ serde.workspace = true
 sha3 = "0.10.8"
 sylvia.workspace = true
 sylvia-derive.workspace = true
-tfhe-versionable = { git = "https://github.com/zama-ai/tfhe-rs.git", tag = "tfhe-rs-0.8.0" }
-
+tfhe-versionable = "0.3.1"
 
 [dev-dependencies]
 aipsc = { path = "../aipsc" }
