@@ -17,9 +17,12 @@ name = "simulator"
 path = "src/bin.rs"
 
 [dependencies]
+aes-prng = "0.2.1"
 # Alloy packages are based on alloy 0.8.3
 alloy-primitives = { version = "0.8.3", features = ["k256"] }
 alloy-sol-types = { version = "0.8.3", features = ["eip712-serde"] }
+alloy-signer = "0.3.6"
+alloy-signer-local = "0.3.6"
 bytes = "^1.6.1"
 reqwest = { version = "0.12.4", features = ["json"] }
 async-trait.workspace = true
@@ -40,10 +43,12 @@ bincode.workspace = true
 clap = { workspace = true, features = ["derive"] }
 conf-trace = { path = "../../conf-trace" , version = "0.9.0-rc11" }
 cosmos-proto = { path = "../cosmos-proto" , version = "0.9.0-rc11" }
+distributed-decryption = { path = "../../core/threshold", default-features = false, version = "0.9.0-rc11" }
 events = { path = "../events" , version = "0.9.0-rc11" }
 hex = "0.4.3"
 kms = { path = "../../core/service", default-features = false, features = ["grpc-client", "non-wasm", "testing", "insecure"] , version = "0.9.0-rc11" }
 kms-blockchain-client = { path = "../client" , version = "0.9.0-rc11" }
+rand = { workspace = true, features = ["std", "std_rng"] }
 serde = { workspace = true , features = ["derive"] }
 serde_json = { workspace = true }
 strum = "0.26"

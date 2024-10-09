@@ -670,6 +670,24 @@ pub struct ParsedReencryptionRequest {
     eip712_verifying_contract: alloy_primitives::Address,
 }
 
+impl ParsedReencryptionRequest {
+    pub fn new(
+        signature: alloy_primitives::Signature,
+        client_address: alloy_primitives::Address,
+        enc_key: Vec<u8>,
+        ciphertext_digest: Vec<u8>,
+        eip712_verifying_contract: alloy_primitives::Address,
+    ) -> Self {
+        Self {
+            signature,
+            client_address,
+            enc_key,
+            ciphertext_digest,
+            eip712_verifying_contract,
+        }
+    }
+}
+
 pub(crate) fn hex_decode_js_err(msg: &str) -> Result<Vec<u8>, JsError> {
     hex::decode(msg).map_err(|e| JsError::new(&e.to_string()))
 }
@@ -885,7 +903,6 @@ impl Client {
 
     /// This is used for tests to convert public keys into addresses
     /// because when processing reencryption response, only addresses are allowed.
-    #[cfg(any(test, feature = "testing"))]
     pub fn convert_to_addresses(&mut self) {
         let pks = self.get_server_pks().unwrap();
         let addrs = pks

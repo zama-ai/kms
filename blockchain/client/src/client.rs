@@ -136,7 +136,7 @@ pub struct Client {
     client: Channel,
     pub kv_store_address: Option<String>,
     sender_key: SigningKey,
-    contract_address: AccountId,
+    pub contract_address: AccountId,
     coin_denom: String,
     chain_id: String,
     gas_price: f64,

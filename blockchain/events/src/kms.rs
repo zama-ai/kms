@@ -62,11 +62,15 @@ pub struct KmsCoreThresholdConf {
 }
 
 impl KmsCoreConf {
+    pub fn param_choice(&self) -> FheParameter {
+        match self {
+            KmsCoreConf::Centralized(param_choice) => *param_choice,
+            KmsCoreConf::Threshold(inner) => inner.param_choice,
+        }
+    }
+
     pub fn param_choice_string(&self) -> String {
-        let param = match self {
-            KmsCoreConf::Centralized(param_choice) => param_choice,
-            KmsCoreConf::Threshold(inner) => &inner.param_choice,
-        };
+        let param = self.param_choice();
         // Our string representation is defined by the serialized json,
         // but the json encoding surrounds the string with double quotes,
         // so we need to extract the inner string so this result can be

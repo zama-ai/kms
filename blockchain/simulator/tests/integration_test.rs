@@ -116,6 +116,7 @@ async fn test_centralized(ctx: &mut DockerComposeCentralizedContext) {
     let commands = vec![
         Command::InsecureKeyGen(Nothing {}),
         Command::Decrypt(CryptExecute { to_encrypt: 7_u8 }),
+        Command::ReEncrypt(CryptExecute { to_encrypt: 9_u8 }),
         Command::CrsGen(Nothing {}),
         Command::Zkp(ZkpExecute {
             to_encrypt: 41,
@@ -134,6 +135,7 @@ async fn test_threshold(ctx: &mut DockerComposeThresholdContext) {
         Command::InsecureKeyGen(Nothing {}),
         Command::CrsGen(Nothing {}),
         Command::Decrypt(CryptExecute { to_encrypt: 7_u8 }),
+        Command::ReEncrypt(CryptExecute { to_encrypt: 9_u8 }),
         Command::Zkp(ZkpExecute {
             to_encrypt: 41,
             crs_id: None,

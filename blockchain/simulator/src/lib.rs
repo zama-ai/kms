@@ -1,6 +1,9 @@
 use std::ops::{Deref, DerefMut};
+use std::str::FromStr;
 
-use alloy_sol_types::Eip712Domain;
+use aes_prng::AesRng;
+use alloy_signer::SignerSync;
+use alloy_sol_types::{Eip712Domain, SolStruct};
 use anyhow::anyhow;
 use bech32::{self, FromBase32};
 use bincode::deserialize;
@@ -11,23 +14,31 @@ use cosmwasm_std::Event;
 use dashmap::DashMap;
 use ethers::abi::Token;
 use ethers::types::{Address, U256};
-use events::kms::{CrsGenValues, TransactionId, ZkpValues};
 use events::kms::{
-    DecryptValues, FheType, InsecureKeyGenValues, KeyGenPreprocValues, KeyGenValues, KmsEvent,
-    KmsMessage, KmsOperation, OperationValue,
+    CrsGenValues, DecryptValues, FheType, InsecureKeyGenValues, KeyGenPreprocValues, KeyGenValues,
+    KmsCoreConf, KmsEvent, KmsMessage, KmsOperation, OperationValue, ReencryptValues,
+    TransactionId, ZkpValues,
 };
 use events::HexVector;
 use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractRequest, ProtoCoin};
 use kms_blockchain_client::query_client::{
     ContractQuery, EventQuery, QueryClient, QueryClientBuilder, QueryContractRequest,
 };
-use kms_lib::client::assemble_metadata_alloy;
-use kms_lib::kms::DecryptionResponsePayload;
-use kms_lib::rpc::rpc_types::Plaintext;
+use kms_lib::client::{assemble_metadata_alloy, ParsedReencryptionRequest};
+use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
+use kms_lib::cryptography::central_kms::gen_sig_keys;
+use kms_lib::cryptography::internal_crypto_types::{PrivateEncKey, PublicEncKey, PublicSigKey};
+use kms_lib::cryptography::signcryption::{
+    ephemeral_encryption_key_generation, hash_element, Reencrypt,
+};
+use kms_lib::kms::{DecryptionResponsePayload, ReencryptionResponse, ReencryptionResponsePayload};
+use kms_lib::rpc::rpc_types::{Plaintext, PubDataType};
+use kms_lib::storage::{FileStorage, StorageReader, StorageType};
 use kms_lib::util::key_setup::test_tools::{
     compute_compressed_cipher_from_stored_key, compute_zkp_from_stored_key_and_serialize,
     TypedPlaintext,
 };
+use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -490,7 +501,7 @@ pub async fn encrypt(
     to_encrypt: u8,
     key_id: &str,
     keys_folder: &Path,
-) -> Result<Vec<u8>, Box<dyn std::error::Error + 'static>> {
+) -> Result<(Vec<u8>, Plaintext), Box<dyn std::error::Error + 'static>> {
     let typed_to_encrypt = TypedPlaintext::U8(to_encrypt);
 
     let ptxt = typed_to_encrypt.to_plaintext();
@@ -550,7 +561,7 @@ pub async fn encrypt(
     let (cipher, _) =
         compute_compressed_cipher_from_stored_key(Some(keys_folder), typed_to_encrypt, key_id)
             .await;
-    Ok(cipher)
+    Ok((cipher, ptxt))
 }
 
 pub async fn store_cipher(
@@ -748,8 +759,8 @@ pub async fn execute_decryption_contract(
     query_client: &QueryClient,
     key_id: &str,
     keys_folder: &Path,
-) -> Result<KmsEvent, Box<dyn std::error::Error + 'static>> {
-    let cipher = encrypt(to_encrypt, key_id, keys_folder).await?;
+) -> Result<(KmsEvent, Plaintext), Box<dyn std::error::Error + 'static>> {
+    let (cipher, ptxt) = encrypt(to_encrypt, key_id, keys_folder).await?;
     let kv_store_address = client
         .kv_store_address
         .clone()
@@ -777,14 +788,161 @@ pub async fn execute_decryption_contract(
     let ev = evs[0].clone();
 
     tracing::info!("TxId: {:?}", ev.txn_id().to_hex(),);
-    Ok(ev)
+    Ok((ev, ptxt))
+}
+
+pub async fn execute_reencryption_contract(
+    to_encrypt: u8,
+    client: &Client,
+    query_client: &QueryClient,
+    key_id: &str,
+    keys_folder: &Path,
+    kms_core_conf: KmsCoreConf,
+) -> Result<
+    (
+        KmsEvent,
+        Plaintext,
+        ParsedReencryptionRequest,
+        kms_lib::client::Client,
+        Eip712Domain,
+        PublicEncKey,
+        PrivateEncKey,
+    ),
+    Box<dyn std::error::Error + 'static>,
+> {
+    //NOTE: I(Titouan) believe we don't really even care
+    //given how we'll use the client
+    let params = match kms_core_conf.param_choice() {
+        events::kms::FheParameter::Default => DEFAULT_PARAM,
+        events::kms::FheParameter::Test => TEST_PARAM,
+    };
+
+    let (cipher, ptxt) = encrypt(to_encrypt, key_id, keys_folder).await?;
+    let kv_store_address = client
+        .kv_store_address
+        .clone()
+        .expect("KV-Store address is None.");
+    let handle = store_cipher(&cipher, &kv_store_address).await?;
+    tracing::info!("📦 Stored ciphertext, handle: {}", handle);
+    let handle_bytes = hex::decode(handle)?;
+
+    //Client address needs to be a alloy_primitives::Address
+    // Generate a new wallet with a random private key
+    let (sig_pk, sig_sk) = gen_sig_keys(&mut AesRng::seed_from_u64(1));
+    let client_address = alloy_primitives::Address::from_public_key(sig_pk.pk());
+
+    //enc_key needs to be a bincode serialized PublicEncKey, which is
+    //a wrapper around a crypto_box::PublicKey
+    let (enc_pk, enc_sk) = ephemeral_encryption_key_generation(&mut AesRng::seed_from_u64(1));
+    let serialized_enc_key = bincode::serialize(&enc_pk).unwrap();
+
+    //signature is an alloy_primitives::Signature on Eip Domain and encryption key
+    //using client address as public key
+    let acl_addres = "acl_address".to_string();
+    let eip712_name = "eip712name".to_string();
+    let eip712_version = "version".to_string();
+    let eip712_verifying_contract =
+        alloy_primitives::Address::from_str("0000000000000000000000000000000000000111").unwrap();
+    let chain_id = alloy_primitives::U256::try_from_be_slice(&[6]).unwrap();
+
+    let domain = alloy_sol_types::Eip712Domain::new(
+        Some(eip712_name.clone().into()),
+        Some(eip712_version.clone().into()),
+        Some(chain_id),
+        Some(eip712_verifying_contract),
+        None,
+    );
+
+    let message = Reencrypt {
+        publicKey: alloy_primitives::Bytes::copy_from_slice(&serialized_enc_key),
+    };
+
+    let message_hash = message.eip712_signing_hash(&domain);
+    let signer = alloy_signer_local::PrivateKeySigner::from_signing_key(sig_sk.sk().clone());
+
+    let signature = signer.sign_hash_sync(&message_hash).unwrap();
+
+    //ciphertext digest is SHA3 of the ctxt
+    let ciphertext_digest = hash_element(&cipher);
+
+    let value = OperationValue::Reencrypt(ReencryptValues::new(
+        signature.as_bytes().to_vec(),
+        1,
+        client_address.to_checksum(None),
+        serialized_enc_key.clone(),
+        FheType::Euint8,
+        hex::decode(key_id)?,
+        handle_bytes,
+        ciphertext_digest.clone(),
+        acl_addres,
+        "some_proof".to_string(),
+        eip712_name,
+        eip712_version,
+        chain_id.to_be_bytes::<32>().to_vec(),
+        eip712_verifying_contract.to_string(),
+        vec![],
+    ));
+
+    //Also create a copy of the request for reconstruction later on
+    let parsed_request = ParsedReencryptionRequest::new(
+        signature,
+        client_address,
+        serialized_enc_key,
+        ciphertext_digest,
+        eip712_verifying_contract,
+    );
+
+    // Finally, create a kms-core client for reconstruction later on.
+    // NOTE: The wasm code that deals with reencryption on the browser side
+    // also uses the client.
+    let verf_keys = match kms_core_conf {
+        KmsCoreConf::Centralized(_) => {
+            let storage =
+                FileStorage::new_centralized(Some(keys_folder), StorageType::PUB).unwrap();
+            let url = storage
+                .compute_url(
+                    &SIGNING_KEY_ID.to_string(),
+                    &PubDataType::VerfKey.to_string(),
+                )
+                .unwrap();
+            let verf_key: PublicSigKey = storage.read_data(&url).await.unwrap();
+            vec![verf_key]
+        }
+        KmsCoreConf::Threshold(kms_core_threshold_conf) => {
+            let num_kms_parties = kms_core_threshold_conf.parties.len();
+            let mut res = Vec::new();
+            for i in 1..=num_kms_parties {
+                let storage =
+                    FileStorage::new_threshold(Some(keys_folder), StorageType::PUB, i).unwrap();
+                let url = storage
+                    .compute_url(
+                        &SIGNING_KEY_ID.to_string(),
+                        &PubDataType::VerfKey.to_string(),
+                    )
+                    .unwrap();
+                let verf_key: PublicSigKey = storage.read_data(&url).await.unwrap();
+                res.push(verf_key);
+            }
+            res
+        }
+    };
+
+    let mut kms_client =
+        kms_lib::client::Client::new(verf_keys, client_address, Some(sig_sk), params);
+    kms_client.convert_to_addresses();
+
+    let evs = execute_contract(client, query_client, value).await?;
+    let ev = evs[0].clone();
+
+    tracing::info!("TxId: {:?}", ev.txn_id().to_hex(),);
+    Ok((ev, ptxt, parsed_request, kms_client, domain, enc_pk, enc_sk))
 }
 
 pub async fn query_contract(
     sim_config: &SimulatorConfig,
     query: Query,
     query_client: &QueryClient,
-) -> Result<Vec<Plaintext>, Box<dyn std::error::Error + 'static>> {
+) -> Result<Vec<OperationValue>, Box<dyn std::error::Error + 'static>> {
     let txn_id = HexVector::from_hex(&query.txn_id)?;
     let ev = KmsEvent::builder()
         .operation(query.kms_operation)
@@ -797,53 +955,8 @@ pub async fn query_contract(
         .contract_address(sim_config.contract.clone())
         .query(query_req)
         .build();
-    let value: Vec<OperationValue> = query_client.query_contract(request).await?;
-
-    let mut results = Vec::new();
-    for x in value.iter() {
-        match x {
-            OperationValue::DecryptResponse(decrypt) => {
-                let payload: DecryptionResponsePayload = bincode::deserialize(
-                    <&HexVector as Into<Vec<u8>>>::into(decrypt.payload()).as_slice(),
-                )?;
-                for (idx, pt) in payload.plaintexts.iter().enumerate() {
-                    let actual_pt: Plaintext = deserialize(pt)?;
-                    results.push(actual_pt.clone());
-                    tracing::info!(
-                        "Decrypt Result #{idx}: Plaintext Decrypted = {:?}.",
-                        actual_pt
-                    );
-                    tracing::info!(
-                        "Decrypt Result: Plaintext Decrypted {:?} {:?}",
-                        actual_pt,
-                        actual_pt.as_u8(), // We know that we have u8 here but we should automatically
-                                           // detect it
-                    );
-                }
-            }
-            OperationValue::KeyGenResponse(response) => {
-                tracing::info!(
-                    "Received KeyGenResponse with request ID {}, pk digest {}, pk signature {}, server key digest {}, server key signature {}",
-                    response.request_id().to_hex(),
-                    response.public_key_digest(),
-                    response.public_key_signature().to_hex(),
-                    response.server_key_digest(),
-                    response.server_key_signature().to_hex(),
-                );
-            }
-            OperationValue::CrsGenResponse(response) => {
-                tracing::info!(
-                    "Received CrsGenResponse with request ID {}, digest {} and signature {}",
-                    response.request_id(),
-                    response.digest(),
-                    response.signature().to_hex(),
-                );
-            }
-            _ => tracing::info!("Got response {:?} but it's not handled", x),
-        };
-    }
-
-    Ok(results)
+    let values: Vec<OperationValue> = query_client.query_contract(request).await?;
+    Ok(values)
 }
 
 pub fn cosmos_to_eth_address(cosmos_address: &str) -> Result<String, Box<dyn std::error::Error>> {
@@ -1029,13 +1142,14 @@ pub async fn wait_for_contract_to_be_deployed(
     Err("Timeout waiting for contract to be deployed".into())
 }
 
-async fn fetch_key_and_write_to_file(
+/// This fetches material which is global
+/// i.e. everything related to CRS and FHE public materials
+async fn fetch_global_key_and_write_to_file(
     destination_prefix: &Path,
     sim_conf: &SimulatorConfig,
     name: &str,
 ) -> Result<(), Box<dyn std::error::Error + 'static>> {
     // Fetch pub-key from storage and dump it for later use
-    // TODO: handle local file
     let key_id = if name == "CRS" {
         &sim_conf.crs_id
     } else {
@@ -1053,6 +1167,162 @@ async fn fetch_key_and_write_to_file(
     Ok(())
 }
 
+/// This fetches material which is local to the KMS parties
+/// i.e. the signature keys
+async fn fetch_local_key_and_write_to_file(
+    destination_prefix: &Path,
+    sim_conf: &SimulatorConfig,
+    name: &str,
+    kms_core_conf: &KmsCoreConf,
+) -> Result<(), Box<dyn std::error::Error + 'static>> {
+    // TODO: handle local file
+    let key_id = &SIGNING_KEY_ID.to_string();
+
+    //Centralized case
+    match kms_core_conf {
+        KmsCoreConf::Centralized(_) => {
+            let folder = destination_prefix.join("PUB").join(name);
+            let content = fetch_key(
+                &sim_conf.s3_endpoint,
+                &format!("{}/{}", sim_conf.key_folder, name),
+                key_id,
+            )
+            .await?;
+            let _ = write_bytes_to_file(&folder, key_id, content.as_ref());
+        }
+        KmsCoreConf::Threshold(kms_core_threshold_conf) => {
+            let num_kms_parties = kms_core_threshold_conf.parties.len();
+            for i in 1..=num_kms_parties {
+                let folder = destination_prefix.join(format!("PUB-p{}", i)).join(name);
+                let content = fetch_key(
+                    &sim_conf.s3_endpoint,
+                    &format!("PUB-p{}/{}", i, name),
+                    key_id,
+                )
+                .await?;
+                let _ = write_bytes_to_file(&folder, key_id, content.as_ref());
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn wait_for_response(
+    event: KmsEvent,
+    query_client: &QueryClient,
+    sim_conf: &SimulatorConfig,
+    max_iter: usize,
+) -> anyhow::Result<Vec<OperationValue>> {
+    let time_to_wait = 10; // in seconds
+    tracing::info!("Event operation: {:?}", event.operation);
+    let q = Query {
+        txn_id: event.txn_id.to_hex(),
+        kms_operation: event.operation.to_response()?,
+    };
+    for _ in 1..=max_iter {
+        match query_contract(sim_conf, q.clone(), query_client).await {
+            Ok(results) => {
+                tracing::info!("Results: {:?}", results);
+                return Ok(results);
+            }
+            Err(e) => {
+                tracing::info!(
+                    "Got error \"{e}\", waiting {time_to_wait} seconds for the response to be posted to the blockchain.",
+                );
+                std::thread::sleep(std::time::Duration::from_secs(time_to_wait));
+            }
+        }
+    }
+    Err(anyhow!(
+        "Never reached the response for operation {:?}.",
+        event.operation
+    ))
+}
+
+fn process_decrypt_responses(
+    responses: Vec<OperationValue>,
+    expected_answer: Plaintext,
+) -> anyhow::Result<()> {
+    let mut results = Vec::new();
+    for x in responses.into_iter() {
+        match x {
+            OperationValue::DecryptResponse(decrypt) => {
+                let payload: DecryptionResponsePayload = bincode::deserialize(
+                    <&HexVector as Into<Vec<u8>>>::into(decrypt.payload()).as_slice(),
+                )?;
+                for (idx, pt) in payload.plaintexts.iter().enumerate() {
+                    let actual_pt: Plaintext = deserialize(pt)?;
+                    results.push(actual_pt.clone());
+                    tracing::info!(
+                        "Decrypt Result #{idx}: Plaintext Decrypted = {:?}.",
+                        actual_pt
+                    );
+                    tracing::info!(
+                        "Decrypt Result: Plaintext Decrypted {:?} {:?}",
+                        actual_pt,
+                        actual_pt.as_u8(), // We know that we have u8 here but we should automatically
+                                           // detect it
+                    );
+                }
+            }
+            _ => {
+                tracing::error!("Found somehting else than DecryptResponse in decryption pipeline.")
+            }
+        }
+    }
+
+    for result in results {
+        //For now we only support euint8
+        debug_assert_eq!(expected_answer.fhe_type(), kms_lib::kms::FheType::Euint8);
+        assert_eq!(expected_answer.fhe_type(), result.fhe_type());
+        assert_eq!(expected_answer.as_u8(), result.as_u8());
+    }
+    Ok(())
+}
+
+fn process_reencrypt_responses(
+    responses: Vec<OperationValue>,
+    expected_answer: Plaintext,
+    request: ParsedReencryptionRequest,
+    kms_client: kms_lib::client::Client,
+    domain: Eip712Domain,
+    enc_pk: PublicEncKey,
+    enc_sk: PrivateEncKey,
+) -> anyhow::Result<()> {
+    tracing::info!("Found {} responses!", responses.len());
+    let mut reenc_responses = Vec::new();
+    for response in responses {
+        if let OperationValue::ReencryptResponse(resp) = response {
+            let payload: ReencryptionResponsePayload = bincode::deserialize(
+                <&HexVector as Into<Vec<u8>>>::into(resp.payload()).as_slice(),
+            )?;
+            let signature = resp.signature().0.clone();
+
+            reenc_responses.push(ReencryptionResponse {
+                signature,
+                payload: Some(payload),
+            });
+        }
+    }
+
+    let result = kms_client.process_reencryption_resp(
+        &request,
+        &domain,
+        &reenc_responses,
+        &enc_pk,
+        &enc_sk,
+    )?;
+
+    tracing::info!("Reconstructed {:?}", result);
+
+    //For now we only support euint8
+    debug_assert_eq!(expected_answer.fhe_type(), kms_lib::kms::FheType::Euint8);
+    assert_eq!(expected_answer.fhe_type(), result.fhe_type());
+    assert_eq!(expected_answer.as_u8(), result.as_u8());
+
+    Ok(())
+}
+
 pub async fn main_from_config(
     path_to_config: &str,
     command: &Command,
@@ -1065,14 +1335,6 @@ pub async fn main_from_config(
         .build()
         .init_conf()?;
 
-    fetch_key_and_write_to_file(destination_prefix, &sim_conf, "PublicKey").await?;
-    fetch_key_and_write_to_file(destination_prefix, &sim_conf, "PublicKeyMetadata").await?;
-    fetch_key_and_write_to_file(destination_prefix, &sim_conf, "ServerKey").await?;
-    fetch_key_and_write_to_file(destination_prefix, &sim_conf, "CRS").await?;
-    // fetch_key_and_write_to_file(destination_prefix, &sim_conf, "VerfAddress").await?;
-    // fetch_key_and_write_to_file(destination_prefix, &sim_conf, "VerfKey").await?;
-
-    // Build KMS Client
     let validator_addresses = sim_conf
         .validator_addresses
         .iter()
@@ -1101,6 +1363,22 @@ pub async fn main_from_config(
     )
     .await?;
 
+    //Retrieve params from ASC
+    let request = QueryContractRequest::builder()
+        .contract_address(client.contract_address.to_string())
+        .query(ContractQuery::GetKmsCoreConf {})
+        .build();
+    let kms_core_conf: KmsCoreConf = query_client.query_contract(request).await?;
+
+    fetch_global_key_and_write_to_file(destination_prefix, &sim_conf, "PublicKey").await?;
+    fetch_global_key_and_write_to_file(destination_prefix, &sim_conf, "PublicKeyMetadata").await?;
+    fetch_global_key_and_write_to_file(destination_prefix, &sim_conf, "ServerKey").await?;
+    fetch_global_key_and_write_to_file(destination_prefix, &sim_conf, "CRS").await?;
+    fetch_local_key_and_write_to_file(destination_prefix, &sim_conf, "VerfAddress", &kms_core_conf)
+        .await?;
+    fetch_local_key_and_write_to_file(destination_prefix, &sim_conf, "VerfKey", &kms_core_conf)
+        .await?;
+
     // Log account address
     let cosmwasm_address = client.get_account_address()?;
     tracing::info!("Client address (cosm): {:?}", cosmwasm_address);
@@ -1117,54 +1395,98 @@ pub async fn main_from_config(
     // TODO: add optional faucet configuration in config file
 
     // Launch command
-    // TODO: adding re-encryption support
     let mut max_iter = 10;
     // Execute the proper command
-    let kms_event: anyhow::Result<Option<KmsEvent>> = match command {
-        Command::Decrypt(ex) => Ok(Some(
-            execute_decryption_contract(
+    match command {
+        Command::Decrypt(ex) => {
+            let (event, ptxt) = execute_decryption_contract(
                 ex.to_encrypt,
                 &client,
                 &query_client,
                 &sim_conf.key_id,
                 destination_prefix,
             )
-            .await?,
-        )),
-        Command::QueryContract(q) => {
-            let query_result = query_contract(&sim_conf, q.clone(), &query_client).await?;
-            tracing::info!("Query result: {:?}", query_result);
-            Ok(None)
+            .await?;
+            let responses = wait_for_response(event, &query_client, &sim_conf, max_iter).await?;
+            process_decrypt_responses(responses, ptxt).unwrap();
         }
-        Command::DoNothing(Nothing {}) => {
-            tracing::info!("Nothing to do.");
-            Ok(None)
+        Command::ReEncrypt(ex) => {
+            let (event, ptxt, request, kms_client, domain, enc_pk, enc_sk) =
+                execute_reencryption_contract(
+                    ex.to_encrypt,
+                    &client,
+                    &query_client,
+                    &sim_conf.key_id,
+                    destination_prefix,
+                    kms_core_conf,
+                )
+                .await?;
+            let responses = wait_for_response(event, &query_client, &sim_conf, max_iter).await?;
+            process_reencrypt_responses(
+                responses, ptxt, request, kms_client, domain, enc_pk, enc_sk,
+            )
+            .unwrap();
         }
-        Command::PreprocKeyGen(Nothing {}) => Ok(Some(
-            execute_preproc_keygen_contract(&client, &query_client).await?,
-        )),
-        Command::KeyGen(ex) => {
-            let preproc_id = HexVector::from_hex(&ex.preproc_id)?;
-            Ok(Some(
-                execute_keygen_contract(&client, &query_client, preproc_id).await?,
-            ))
+
+        Command::PreprocKeyGen(Nothing {}) => {
+            unimplemented!(
+                "We only support InsecureKeyGen for now, thus no preprocessing required."
+            )
+            //let event = execute_preproc_keygen_contract(&client, &query_client).await?;
+            ////Do nothing with the response (for now ?)
+            //let _responses = wait_for_response(event, &query_client, &sim_conf, max_iter).await?;
         }
-        Command::InsecureKeyGen(Nothing {}) => Ok(Some(
-            execute_insecure_keygen_contract(&client, &query_client).await?,
-        )),
+        Command::KeyGen(_ex) => {
+            unimplemented!("We only support InsecureKeyGen for now.")
+            //let preproc_id = HexVector::from_hex(&ex.preproc_id)?;
+            //let event = execute_keygen_contract(&client, &query_client, preproc_id).await?;
+            ////Do nothing with the response (for now ?)
+            //let _responses = wait_for_response(event, &query_client, &sim_conf, max_iter).await?;
+        }
+        Command::InsecureKeyGen(Nothing {}) => {
+            let event = execute_insecure_keygen_contract(&client, &query_client).await?;
+            let responses = wait_for_response(event, &query_client, &sim_conf, max_iter).await?;
+            for response in responses {
+                if let OperationValue::KeyGenResponse(response) = &response {
+                    tracing::info!(
+                            "Received KeyGenResponse with request ID {}, pk digest {}, pk signature {}, server key digest {}, server key signature {}",
+                            response.request_id().to_hex(),
+                            response.public_key_digest(),
+                            response.public_key_signature().to_hex(),
+                            response.server_key_digest(),
+                            response.server_key_signature().to_hex(),
+                        );
+                } else {
+                    panic!("Receive response {:?} during InsecureKeyGen", response)
+                }
+            }
+        }
         Command::CrsGen(Nothing {}) => {
             // the actual CRS ceremony takes time
             max_iter = 20;
-            Ok(Some(execute_crsgen_contract(&client, &query_client).await?))
+            let event = execute_crsgen_contract(&client, &query_client).await?;
+            let responses = wait_for_response(event, &query_client, &sim_conf, max_iter).await?;
+            for response in responses {
+                if let OperationValue::CrsGenResponse(response) = &response {
+                    tracing::info!(
+                        "Received CrsGenResponse with request ID {}, digest {} and signature {}",
+                        response.request_id(),
+                        response.digest(),
+                        response.signature().to_hex(),
+                    );
+                } else {
+                    panic!("Receive response {:?} during CrsGen", response)
+                }
+            }
         }
         Command::Zkp(ZkpExecute {
             to_encrypt,
             crs_id,
             key_id,
-        }) => Ok(Some({
+        }) => {
             let crs_id = crs_id.as_ref().unwrap_or(&sim_conf.crs_id);
             let key_id = key_id.as_ref().unwrap_or(&sim_conf.key_id);
-            execute_zkp_contract(
+            let event = execute_zkp_contract(
                 &client,
                 &query_client,
                 *to_encrypt,
@@ -1172,49 +1494,18 @@ pub async fn main_from_config(
                 key_id,
                 destination_prefix,
             )
-            .await?
-        })),
-        _ => Err(anyhow!("Command: {:?} not supported yet", command)),
-    };
-    let kms_event = kms_event?;
-
-    // If needed we wait for the response
-    let time_to_wait = 10; // in seconds
-    if let Some(event) = kms_event {
-        tracing::info!("Event operation: {:?}", event.operation);
-        // Only execute contract results is an event not being None
-        // in this case we wait for the decryption response
-        let q = Query {
-            txn_id: event.txn_id.to_hex(),
-            kms_operation: event.operation.to_response()?,
-        };
-        for n in 1..=max_iter {
-            // TODO: add check that the value is the same as the expected one
-            // TODO: this is only valid for a decryption response, it should be more generic
-            match query_contract(&sim_conf, q.clone(), &query_client).await {
-                Ok(results) => {
-                    tracing::info!("Results: {:?}", results);
-                    break;
-                }
-                Err(e) => {
-                    tracing::info!(
-                        "Got error \"{e}\", waiting {time_to_wait} seconds for the response to be posted to the blockchain.",
-                    );
-                    std::thread::sleep(std::time::Duration::from_secs(time_to_wait));
-                }
-            }
-
-            // Max-iter reached
-            if n == max_iter {
-                return Err(anyhow!(
-                    "Never reached the response for command {:?} using config {}.",
-                    command,
-                    path_to_config
-                )
-                .into());
-            }
+            .await?;
+            //Do nothing with the response (for now ?)
+            let _responses = wait_for_response(event, &query_client, &sim_conf, max_iter).await?;
         }
-    }
+        Command::QueryContract(q) => {
+            let query_result = query_contract(&sim_conf, q.clone(), &query_client).await?;
+            tracing::info!("Query result: {:?}", query_result);
+        }
+        Command::DoNothing(Nothing {}) => {
+            tracing::info!("Nothing to do.");
+        }
+    };
 
     // Check wallet amount after operations
     let wallet_amount_after = client.get_wallet_amount(None).await?;

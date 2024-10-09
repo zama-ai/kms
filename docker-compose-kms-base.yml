@@ -11,30 +11,14 @@ name: zama-kms-base
 # TODO: add minio to simulate s3 + some config file for the endpoint
 
 services:
-  # KMS-Blockchain validator node
+  # KV-Store
+  # TODO: add healthcheck
   dev-kms-blockchain-validator:
     build:
       context: .
       dockerfile: blockchain/contracts/operations/docker/dev.dockerfile
     image: kms-validator:latest
-    ports:
-      - "36656:26656"
-      - "36657:26657"
-      - "1317:1317"
-      - "9090:9090"
-    entrypoint: [ "/app/bootstrap.sh" ]
-    healthcheck:
-      test: "wget -Sq --spider http://localhost:26657/status"
-      interval: 1s
-      timeout: 1s
-      retries: 5
-      start_period: 10s
-    depends_on:
-      dev-kms-core-status:
-        condition: service_completed_successfully
 
-  # KV-Store
-  # TODO: add healthcheck
   dev-kv-store:
     build:
       context: .

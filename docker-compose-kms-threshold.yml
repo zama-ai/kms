@@ -3,6 +3,27 @@ name: zama-kms-threshold
 # add keygen, tls and pushing keys to s3 mock
 
 services:
+# KMS-Blockchain validator node
+  dev-kms-blockchain-validator:
+    image: kms-validator:latest
+    ports:
+      - "36656:26656"
+      - "36657:26657"
+      - "1317:1317"
+      - "9090:9090"
+    environment:
+      - MODE=threshold
+    entrypoint: [ "/app/bootstrap.sh" ]
+    healthcheck:
+      test: "wget -Sq --spider http://localhost:26657/status"
+      interval: 1s
+      timeout: 1s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      dev-kms-core-status:
+        condition: service_completed_successfully
+
   dev-kms-core-status:
     image: kms-core:latest
     depends_on:

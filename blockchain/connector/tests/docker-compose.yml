@@ -10,6 +10,8 @@ services:
       - "36657:26657"
       - "1317:1317"
       - "9090:9090"
+    environment:
+      - MODE=centralized
     volumes:
       - ../../scripts/bootstrap_asc.sh:/app/bootstrap.sh
     entrypoint: [ "/app/bootstrap.sh" ]

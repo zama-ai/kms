@@ -8382,7 +8382,10 @@ dependencies = [
 name = "simulator"
 version = "0.9.0-rc11"
 dependencies = [
+ "aes-prng",
  "alloy-primitives",
+ "alloy-signer",
+ "alloy-signer-local",
  "alloy-sol-types",
  "anyhow",
  "async-trait",
@@ -8396,11 +8399,13 @@ dependencies = [
  "cosmwasm-crypto",
  "cosmwasm-std",
  "dashmap",
+ "distributed-decryption",
  "ethers",
  "events",
  "hex",
  "kms",
  "kms-blockchain-client",
+ "rand",
  "reqwest 0.12.8",
  "retrying",
  "ripemd",
