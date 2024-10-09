@@ -22,7 +22,7 @@ cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
         use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey, PublicSigKey, Signature};
         use crate::cryptography::signcryption::{hash_element, Reencrypt,DecryptionResult, CiphertextVerificationForKMS, CRS, FhePubKey, FheServerKey};
-        use crate::kms::ZkVerifyRequest;
+        use crate::kms::VerifyProvenCtRequest;
         use crate::cryptography::central_kms::KmsFheKeyHandles;
         use alloy_dyn_abi::DynSolValue;
         use alloy_primitives::Bytes;
@@ -346,10 +346,10 @@ pub(crate) fn compute_external_pt_signature(
 
 #[cfg(feature = "non-wasm")]
 /// Take the ZK proof verification metadata, convert it to the required solidity types and sign them using EIP-712 for external verification (e.g. in the fhevm).
-pub(crate) fn compute_external_zkp_verf_signature(
+pub(crate) fn compute_external_verify_proven_ct_signature(
     client_sk: &PrivateSigKey,
     ct_digest: &Vec<u8>,
-    req: &ZkVerifyRequest,
+    req: &VerifyProvenCtRequest,
 ) -> anyhow::Result<Vec<u8>> {
     let eip712_domain = match req.domain.as_ref() {
         Some(domain) => protobuf_to_alloy_domain(domain)?,
@@ -1033,7 +1033,7 @@ impl RequestIdGetter for CrsGenRequest {
 }
 
 #[cfg(test)]
-impl RequestIdGetter for ZkVerifyRequest {
+impl RequestIdGetter for VerifyProvenCtRequest {
     fn request_id(&self) -> Option<RequestId> {
         self.request_id.clone()
     }

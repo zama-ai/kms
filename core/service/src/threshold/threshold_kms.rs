@@ -9,13 +9,13 @@ use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus,
     KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult, ReencryptionRequest,
-    ReencryptionResponse, ReencryptionResponsePayload, RequestId, ZkVerifyRequest,
-    ZkVerifyResponse, ZkVerifyResponsePayload,
+    ReencryptionResponse, ReencryptionResponsePayload, RequestId, VerifyProvenCtRequest,
+    VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
 };
 use crate::rpc::central_rpc::{
-    convert_key_response, get_zk_verify_result, non_blocking_zk_verify, retrieve_parameters,
-    tonic_handle_potential_err, tonic_some_or_err, validate_decrypt_req, validate_reencrypt_req,
-    validate_request_id,
+    convert_key_response, get_verify_proven_ct_result, non_blocking_verify_proven_ct,
+    retrieve_parameters, tonic_handle_potential_err, tonic_some_or_err, validate_decrypt_req,
+    validate_reencrypt_req, validate_request_id,
 };
 use crate::rpc::rpc_types::{
     compute_external_pt_signature, protobuf_to_alloy_domain_option, BaseKms, Plaintext,
@@ -29,8 +29,8 @@ use crate::storage::{
 #[cfg(feature = "insecure")]
 use crate::threshold::generic::InsecureKeyGenerator;
 use crate::threshold::generic::{
-    CrsGenerator, Decryptor, GenericKms, Initiator, KeyGenPreprocessor, KeyGenerator, Reencryptor,
-    ZkVerifier,
+    CrsGenerator, Decryptor, GenericKms, Initiator, KeyGenPreprocessor, KeyGenerator,
+    ProvenCtVerifier, Reencryptor,
 };
 use crate::util::meta_store::{handle_res_mapping, HandlerStatus, MetaStore};
 use crate::{anyhow_error_and_log, get_exactly_one};
@@ -370,7 +370,7 @@ pub type RealThresholdKms<PubS, PrivS> = GenericKms<
     RealKeyGenerator<PubS, PrivS>,
     RealPreprocessor,
     RealCrsGenerator<PubS, PrivS>,
-    RealZkVerifier<PubS>,
+    RealProvenCtVerifier<PubS>,
 >;
 
 #[cfg(feature = "insecure")]
@@ -382,7 +382,7 @@ pub type RealThresholdKms<PubS, PrivS> = GenericKms<
     RealInsecureKeyGenerator<PubS, PrivS>,
     RealPreprocessor,
     RealCrsGenerator<PubS, PrivS>,
-    RealZkVerifier<PubS>,
+    RealProvenCtVerifier<PubS>,
 >;
 
 #[derive(Debug)]
@@ -543,7 +543,8 @@ where
     let dkg_pubinfo_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(key_info_w_status)));
     let dec_meta_store = Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache)));
     let reenc_meta_store = Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache)));
-    let zk_payload_meta_store = Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache)));
+    let ct_verifier_payload_meta_store =
+        Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache)));
 
     let session_preparer = SessionPreparer {
         base_kms: base_kms.new_instance().await,
@@ -600,7 +601,7 @@ where
     #[cfg(feature = "insecure")]
     let insecureerator = RealInsecureKeyGenerator::from_real_keygen(&keygenerator).await;
 
-    let preprocessor = RealPreprocessor {
+    let keygen_preprocessor = RealPreprocessor {
         prss_setup,
         preproc_buckets,
         preproc_factory,
@@ -608,7 +609,7 @@ where
         session_preparer: session_preparer.new_instance().await,
     };
 
-    let crsgenerator = RealCrsGenerator {
+    let crs_generator = RealCrsGenerator {
         base_kms: base_kms.new_instance().await,
         public_storage: Arc::clone(&public_storage),
         private_storage,
@@ -616,9 +617,9 @@ where
         session_preparer,
     };
 
-    let zkverifier = RealZkVerifier {
+    let proven_ct_verifier = RealProvenCtVerifier {
         base_kms,
-        zk_payload_meta_store,
+        ct_verifier_payload_meta_store,
         public_storage,
     };
 
@@ -629,9 +630,9 @@ where
         keygenerator,
         #[cfg(feature = "insecure")]
         insecureerator,
-        preprocessor,
-        crsgenerator,
-        zkverifier,
+        keygen_preprocessor,
+        crs_generator,
+        proven_ct_verifier,
         ddec_handle.abort_handle(),
     );
 
@@ -2137,16 +2138,19 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
     }
 }
 
-pub struct RealZkVerifier<PubS: Storage + Sync + Send + 'static> {
+pub struct RealProvenCtVerifier<PubS: Storage + Sync + Send + 'static> {
     base_kms: BaseKmsStruct,
-    zk_payload_meta_store: Arc<RwLock<MetaStore<ZkVerifyResponsePayload>>>,
+    ct_verifier_payload_meta_store: Arc<RwLock<MetaStore<VerifyProvenCtResponsePayload>>>,
     public_storage: Arc<Mutex<PubS>>,
 }
 
 #[tonic::async_trait]
-impl<PubS: Storage + Sync + Send + 'static> ZkVerifier for RealZkVerifier<PubS> {
-    async fn verify(&self, request: Request<ZkVerifyRequest>) -> Result<Response<Empty>, Status> {
-        let meta_store = Arc::clone(&self.zk_payload_meta_store);
+impl<PubS: Storage + Sync + Send + 'static> ProvenCtVerifier for RealProvenCtVerifier<PubS> {
+    async fn verify(
+        &self,
+        request: Request<VerifyProvenCtRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let meta_store = Arc::clone(&self.ct_verifier_payload_meta_store);
         let sigkey = Arc::clone(&self.base_kms.sig_key);
 
         // Check well-formedness of the request and return an error early if there's an error
@@ -2165,7 +2169,7 @@ impl<PubS: Storage + Sync + Send + 'static> ZkVerifier for RealZkVerifier<PubS> 
 
         let public_storage = Arc::clone(&self.public_storage);
 
-        non_blocking_zk_verify(
+        non_blocking_verify_proven_ct(
             meta_store,
             public_storage,
             request_id.clone(),
@@ -2176,7 +2180,7 @@ impl<PubS: Storage + Sync + Send + 'static> ZkVerifier for RealZkVerifier<PubS> 
         .map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Internal,
-                format!("non_blocking_zk_verify failed for request_id {request_id} ({e})"),
+                format!("non_blocking_verify_proven_ct failed for request_id {request_id} ({e})"),
             )
         })?;
 
@@ -2186,9 +2190,9 @@ impl<PubS: Storage + Sync + Send + 'static> ZkVerifier for RealZkVerifier<PubS> 
     async fn get_result(
         &self,
         request: Request<RequestId>,
-    ) -> Result<Response<ZkVerifyResponse>, Status> {
-        let meta_store = Arc::clone(&self.zk_payload_meta_store);
-        get_zk_verify_result(&self.base_kms, meta_store, request).await
+    ) -> Result<Response<VerifyProvenCtResponse>, Status> {
+        let meta_store = Arc::clone(&self.ct_verifier_payload_meta_store);
+        get_verify_proven_ct_result(&self.base_kms, meta_store, request).await
     }
 }
 

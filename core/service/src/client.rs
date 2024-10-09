@@ -47,7 +47,7 @@ cfg_if::cfg_if! {
         use crate::kms::ParamChoice;
         use crate::kms::{
             CrsGenRequest, CrsGenResult, TypedCiphertext, DecryptionRequest, DecryptionResponsePayload,
-            KeyGenPreprocRequest, KeyGenRequest, KeyGenResult, ZkVerifyRequest, ZkVerifyResponse,
+            KeyGenPreprocRequest, KeyGenRequest, KeyGenResult, VerifyProvenCtRequest, VerifyProvenCtResponse,
         };
         use crate::rpc::rpc_types::BaseKms;
         use crate::rpc::rpc_types::PubDataType;
@@ -2218,10 +2218,10 @@ impl Client {
     }
 
     /// Make a verification request for the given `proven_ct` with some metadata.
-    /// NOTE: eventually we want to integrate the metadata into the zk proof.
+    /// NOTE: eventually we want to integrate the metadata into the proven ciphertext.
     #[cfg(feature = "non-wasm")]
     #[expect(clippy::too_many_arguments)]
-    pub fn zk_verify_request(
+    pub fn verify_proven_ct_request(
         &self,
         crs_handle: &RequestId,
         key_handle: &RequestId,
@@ -2230,7 +2230,7 @@ impl Client {
         domain: &Eip712Domain,
         acl_address: &alloy_primitives::Address,
         request_id: &RequestId,
-    ) -> anyhow::Result<ZkVerifyRequest> {
+    ) -> anyhow::Result<VerifyProvenCtRequest> {
         let mut ct_buf = Vec::new();
         tfhe::safe_serialization::safe_serialize(
             proven_ct,
@@ -2241,7 +2241,7 @@ impl Client {
 
         let domain_msg = alloy_to_protobuf_domain(domain)?;
 
-        Ok(ZkVerifyRequest {
+        Ok(VerifyProvenCtRequest {
             crs_handle: Some(crs_handle.to_owned()),
             key_handle: Some(key_handle.to_owned()),
             contract_address: contract_address.to_string(),
@@ -2253,13 +2253,13 @@ impl Client {
         })
     }
 
-    /// Process a set of zk verification responses
+    /// Process a set of ciphertext verification responses
     /// by attempting to find a one-to-one match between the signature and the server public key.
     /// The output is the set of verified signatures along with their corresponding public key.
     #[cfg(feature = "non-wasm")]
-    pub fn process_zk_verify_resp(
+    pub fn process_verify_proven_ct_resp(
         &self,
-        responses: &[ZkVerifyResponse],
+        responses: &[VerifyProvenCtResponse],
         min_agree_count: u32,
     ) -> anyhow::Result<Vec<(Signature, PublicSigKey)>> {
         let server_pks = self.get_server_pks()?;
@@ -2270,18 +2270,18 @@ impl Client {
             let payload = response
                 .payload
                 .as_ref()
-                .ok_or_else(|| anyhow_error_and_log("empty zk verify response payload"))?;
+                .ok_or_else(|| anyhow_error_and_log("empty verify response payload"))?;
 
             let payload_serialized = bincode::serialize(payload)?;
 
-            let zk_sig = Signature {
+            let verify_proven_ct_sig = Signature {
                 sig: k256::ecdsa::Signature::from_slice(&response.signature)?,
             };
 
             let to_remove = (|| -> Option<usize> {
                 for pk_idx in &remaining_pk_idx {
                     let pk = &server_pks[*pk_idx];
-                    match internal_verify_sig(&payload_serialized, &zk_sig, pk) {
+                    match internal_verify_sig(&payload_serialized, &verify_proven_ct_sig, pk) {
                         Ok(()) => {
                             return Some(*pk_idx);
                         }
@@ -2294,14 +2294,14 @@ impl Client {
                 None
             })();
             if let Some(i) = to_remove {
-                out.push((zk_sig, server_pks[i].clone()));
+                out.push((verify_proven_ct_sig, server_pks[i].clone()));
                 remaining_pk_idx.remove(&i);
             };
         }
 
         if out.len() < min_agree_count as usize {
             Err(anyhow_error_and_log(
-                "Not enough correct responses to process zk proof verification",
+                "Not enough correct responses to process proof verification",
             ))
         } else {
             Ok(out)
@@ -2331,11 +2331,11 @@ pub fn assemble_metadata_alloy(
     metadata
 }
 
-/// creates the metadata (auxiliary data) for proving/verifying the input ZKPs from a `ZkVerifyRequest`
+/// creates the metadata (auxiliary data) for proving/verifying the input ZKPs from a `VerifyProvenCtRequest`
 ///
 /// metadata is `contract_addr || user_addr || acl_addr || chain_id` i.e. 92 bytes since chain ID is encoded as a 32 byte big endian integer
 #[cfg(feature = "non-wasm")]
-pub fn assemble_metadata_req(req: &ZkVerifyRequest) -> anyhow::Result<[u8; 92]> {
+pub fn assemble_metadata_req(req: &VerifyProvenCtRequest) -> anyhow::Result<[u8; 92]> {
     let contract_address = alloy_primitives::Address::from_str(&req.contract_address)?;
     let client_address = alloy_primitives::Address::from_str(&req.client_address)?;
     let acl_address = alloy_primitives::Address::from_str(&req.acl_address)?;
@@ -3051,11 +3051,11 @@ pub(crate) mod tests {
     #[cfg(feature = "slow_tests")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    async fn default_zk_verify_centralized() {
-        let zkp_req_id = RequestId::derive("default_zk_verify_centralized").unwrap();
-        zk_verify_centralized(
+    async fn default_verify_proven_ct_centralized() {
+        let proven_ct_id = RequestId::derive("default_verify_proven_ct_centralized").unwrap();
+        verify_proven_ct_centralized(
             &crate::consts::DEFAULT_PARAM,
-            &zkp_req_id,
+            &proven_ct_id,
             &crate::consts::DEFAULT_CRS_ID,
             &DEFAULT_CENTRAL_KEY_ID.to_string(),
         )
@@ -3064,11 +3064,11 @@ pub(crate) mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    async fn test_zk_verify_centralized() {
-        let zkp_req_id = RequestId::derive("test_zk_verify_centralized").unwrap();
-        zk_verify_centralized(
+    async fn test_verify_proven_ct_centralized() {
+        let proven_ct_id = RequestId::derive("test_verify_proven_ct_centralized").unwrap();
+        verify_proven_ct_centralized(
             &TEST_PARAM,
-            &zkp_req_id,
+            &proven_ct_id,
             &crate::consts::TEST_CRS_ID,
             &crate::consts::TEST_CENTRAL_KEY_ID.to_string(),
         )
@@ -3076,9 +3076,9 @@ pub(crate) mod tests {
     }
 
     /// test centralized ZK probing via client interface
-    async fn zk_verify_centralized(
+    async fn verify_proven_ct_centralized(
         dkg_params: &DKGParams,
-        zkp_req_id: &RequestId,
+        proven_ct_id: &RequestId,
         crs_req_id: &RequestId,
         key_handle: &str,
     ) {
@@ -3117,36 +3117,38 @@ pub(crate) mod tests {
         let pk = load_pk_from_storage(None, key_handle).await;
         assert!(tfhe::zk::ZkVerificationOutCome::Valid == proven_ct.verify(&pp, &pk, &metadata));
 
-        let zk_req = internal_client
-            .zk_verify_request(
+        let verify_proven_ct_req = internal_client
+            .verify_proven_ct_request(
                 crs_req_id,
                 &key_id,
                 &dummy_contract_address,
                 &proven_ct,
                 &dummy_domain(),
                 &dummy_acl_address,
-                zkp_req_id,
+                proven_ct_id,
             )
             .unwrap();
 
         let _ = kms_client
-            .zk_verify(tonic::Request::new(zk_req))
+            .verify_proven_ct(tonic::Request::new(verify_proven_ct_req))
             .await
             .unwrap();
 
         let mut ctr = 0;
-        let mut zk_response = kms_client.get_zk_verify_result(zkp_req_id.clone()).await;
-        while zk_response.is_err() && ctr < 1000 {
+        let mut verify_proven_ct_response = kms_client
+            .get_verify_proven_ct_result(proven_ct_id.clone())
+            .await;
+        while verify_proven_ct_response.is_err() && ctr < 1000 {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            zk_response = kms_client
-                .get_zk_verify_result(tonic::Request::new(zkp_req_id.clone()))
+            verify_proven_ct_response = kms_client
+                .get_verify_proven_ct_result(tonic::Request::new(proven_ct_id.clone()))
                 .await;
             ctr += 1;
         }
 
-        let zk_response_inner = zk_response.unwrap().into_inner();
+        let verify_proven_ct_response_inner = verify_proven_ct_response.unwrap().into_inner();
         let sigs = internal_client
-            .process_zk_verify_resp(&[zk_response_inner], 1)
+            .process_verify_proven_ct_resp(&[verify_proven_ct_response_inner], 1)
             .unwrap();
         assert_eq!(sigs.len(), 1);
 
@@ -3499,8 +3501,8 @@ pub(crate) mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    async fn test_zk_threshold() {
-        zk_verify_threshold(
+    async fn test_verify_proven_ct_threshold() {
+        verify_proven_ct_threshold(
             1,
             &crate::consts::TEST_CRS_ID,
             &crate::consts::TEST_THRESHOLD_KEY_ID,
@@ -3515,8 +3517,8 @@ pub(crate) mod tests {
     #[case(4)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    async fn default_zk_threshold(#[case] parallelism: usize) {
-        zk_verify_threshold(
+    async fn default_verify_proven_ct_threshold(#[case] parallelism: usize) {
+        verify_proven_ct_threshold(
             parallelism,
             &crate::consts::DEFAULT_CRS_ID,
             &crate::consts::DEFAULT_THRESHOLD_KEY_ID,
@@ -3525,7 +3527,7 @@ pub(crate) mod tests {
         .await
     }
 
-    async fn zk_verify_threshold(
+    async fn verify_proven_ct_threshold(
         parallelism: usize,
         crs_handle: &RequestId,
         key_handle: &RequestId,
@@ -3567,9 +3569,10 @@ pub(crate) mod tests {
 
         let reqs: Vec<_> = (0..parallelism)
             .map(|j| {
-                let request_id = RequestId::derive(&format!("zk_verify_threshold_{j}")).unwrap();
+                let request_id =
+                    RequestId::derive(&format!("verify_proven_ct_threshold_{j}")).unwrap();
                 internal_client
-                    .zk_verify_request(
+                    .verify_proven_ct_request(
                         crs_handle,
                         key_handle,
                         &dummy_contract_address,
@@ -3588,7 +3591,9 @@ pub(crate) mod tests {
                 let mut cur_client = kms_clients.get(&i).unwrap().clone();
                 let req_clone = req.clone();
                 tasks_gen.spawn(async move {
-                    cur_client.zk_verify(tonic::Request::new(req_clone)).await
+                    cur_client
+                        .verify_proven_ct(tonic::Request::new(req_clone))
+                        .await
                 });
             }
         }
@@ -3599,9 +3604,9 @@ pub(crate) mod tests {
         }
         assert_eq!(responses_gen.len(), AMOUNT_PARTIES * parallelism);
 
-        // wait a bit for the zk validation to finish
+        // wait a bit for the validation to finish
         let joined_responses =
-            par_poll_responses!(parallelism, kms_clients, reqs, get_zk_verify_result);
+            par_poll_responses!(parallelism, kms_clients, reqs, get_verify_proven_ct_result);
 
         for req in reqs {
             let req_id = req.request_id.unwrap();
@@ -3621,11 +3626,11 @@ pub(crate) mod tests {
 
             let min_count_agree = (THRESHOLD + 1) as u32;
 
-            let zk_sigs = internal_client
-                .process_zk_verify_resp(&joined_responses, min_count_agree)
+            let verify_proven_ct_sigs = internal_client
+                .process_verify_proven_ct_resp(&joined_responses, min_count_agree)
                 .unwrap();
 
-            assert_eq!(zk_sigs.len(), AMOUNT_PARTIES);
+            assert_eq!(verify_proven_ct_sigs.len(), AMOUNT_PARTIES);
         }
         for handle in kms_servers.values() {
             handle.abort()

@@ -12,7 +12,7 @@ use crate::kms::FheType;
 use crate::kms::ReencryptionRequest;
 #[cfg(feature = "non-wasm")]
 use crate::kms::RequestId;
-use crate::kms::{TypedCiphertext, ZkVerifyResponsePayload};
+use crate::kms::{TypedCiphertext, VerifyProvenCtResponsePayload};
 use crate::rpc::rpc_types::compute_external_pubdata_signature;
 #[cfg(feature = "non-wasm")]
 use crate::rpc::rpc_types::SignedPubDataHandleInternal;
@@ -477,8 +477,8 @@ pub struct SoftwareKms<PubS: Storage, PrivS: Storage> {
     pub(crate) reenc_meta_map: Arc<RwLock<MetaStore<ReencCallValues>>>,
     // Map storing ongoing CRS generation requests.
     pub(crate) crs_meta_map: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
-    // Map storing the completed zero-knowledge verification tasks.
-    pub(crate) zk_payload_meta_map: Arc<RwLock<MetaStore<ZkVerifyResponsePayload>>>,
+    // Map storing the completed proven ciphertext verification tasks.
+    pub(crate) proven_ct_payload_meta_map: Arc<RwLock<MetaStore<VerifyProvenCtResponsePayload>>>,
 }
 
 /// Perform asynchronous decryption and serialize the result
@@ -734,7 +734,10 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             dec_meta_store: Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE))),
             reenc_meta_map: Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE))),
             crs_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(cs_w_status))),
-            zk_payload_meta_map: Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE))),
+            proven_ct_payload_meta_map: Arc::new(RwLock::new(MetaStore::new(
+                DEC_CAPACITY,
+                MIN_DEC_CACHE,
+            ))),
         })
     }
 }

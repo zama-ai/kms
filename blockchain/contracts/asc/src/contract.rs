@@ -4,12 +4,12 @@ use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{to_json_binary, Env, Response, StdError, StdResult, Storage, WasmMsg};
 use cw_controllers::Admin;
 use cw_utils::must_pay;
-use events::kms::ZkpResponseValues;
+use events::kms::VerifyProvenCtResponseValues;
 use events::kms::{
     CrsGenResponseValues, DecryptResponseValues, DecryptValues, Eip712DomainValues,
     KeyGenPreprocResponseValues, KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues,
     KmsCoreConf, KmsEvent, KmsOperation, OperationValue, ReencryptResponseValues, ReencryptValues,
-    Transaction, TransactionId, ZkpValues,
+    Transaction, TransactionId, VerifyProvenCtValues,
 };
 use sha3::{Digest, Sha3_256};
 use std::ops::Deref;
@@ -379,19 +379,28 @@ impl KmsContract {
     }
 
     #[sv::msg(exec)]
-    pub fn zkp(&self, ctx: ExecCtx, zkp: ZkpValues) -> StdResult<Response> {
+    pub fn verify_proven_ct(
+        &self,
+        ctx: ExecCtx,
+        verify_proven_ct: VerifyProvenCtValues,
+    ) -> StdResult<Response> {
         let txn_id = self.derive_transaction_id(&ctx.env)?;
-        self.process_transaction(ctx.deps.storage, &ctx.env, &txn_id, zkp)
+        self.process_transaction(ctx.deps.storage, &ctx.env, &txn_id, verify_proven_ct)
     }
 
     #[sv::msg(exec)]
-    pub fn zkp_response(
+    pub fn verify_proven_ct_response(
         &self,
         ctx: ExecCtx,
         txn_id: TransactionId,
-        zkp_response: ZkpResponseValues,
+        verify_proven_ct_response: VerifyProvenCtResponseValues,
     ) -> StdResult<Response> {
-        self.process_transaction(ctx.deps.storage, &ctx.env, &txn_id.to_vec(), zkp_response)
+        self.process_transaction(
+            ctx.deps.storage,
+            &ctx.env,
+            &txn_id.to_vec(),
+            verify_proven_ct_response,
+        )
     }
 
     #[sv::msg(exec)]
@@ -446,6 +455,8 @@ mod tests {
     use events::kms::ReencryptResponseValues;
     use events::kms::ReencryptValues;
     use events::kms::TransactionId;
+    use events::kms::VerifyProvenCtResponseValues;
+    use events::kms::VerifyProvenCtValues;
     use sylvia::cw_multi_test::IntoAddr as _;
     use sylvia::multitest::App;
     use tendermint_ipsc::mock::sv::mt::CodeId as ProofCodeId;
@@ -577,6 +588,98 @@ mod tests {
             | ((ciphertext_handle[1] as u32) << 16)
             | ((ciphertext_handle[2] as u32) << 8)
             | (ciphertext_handle[3] as u32)
+    }
+
+    #[test]
+    fn test_verify_proven_ct() {
+        let gateway = Addr::unchecked("gateway");
+
+        let app = cw_multi_test::App::new(|router, _api, storage| {
+            router
+                .bank
+                .init_balance(storage, &gateway, coins(5000000, UCOSM))
+                .unwrap();
+        });
+
+        let app = App::new(app);
+        let code_id = CodeId::store_code(&app);
+        let owner = "owner".into_addr();
+
+        let contract = code_id
+            .instantiate(
+                Some(true),
+                DUMMY_BECH32_ADDR.to_string(),
+                KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                    parties: vec![KmsCoreParty::default(); 4],
+                    response_count_for_majority_vote: 2,
+                    response_count_for_reconstruction: 3,
+                    degree_for_reconstruction: 1,
+                    param_choice: FheParameter::Test,
+                }),
+            )
+            .call(&owner)
+            .unwrap();
+
+        let proven_val = VerifyProvenCtValues::new(
+            vec![1, 2, 3],
+            vec![2, 3, 4],
+            "0xEEdA6bf26964aF9D7Eed9e03e53415D37aa960EE".to_string(),
+            "0xEEdA6bf26964aF9D7Eed9e03e53415D37aa960EE".to_string(),
+            vec![4, 5, 6],
+            "0xEEdA6bf26964aF9D7Eed9e03e53415D37aa960EE".to_string(),
+            "eip712name".to_string(),
+            "1".to_string(),
+            vec![101; 32],
+            "0x33dA6bF26964af9d7eed9e03E53415D37aA960EE".to_string(),
+            vec![],
+        );
+
+        let response = contract
+            .verify_proven_ct(proven_val.clone())
+            .call(&gateway)
+            .unwrap();
+        println!("response: {:#?}", response);
+        let txn_id: TransactionId = KmsContract::hash_transaction_id(12345, 0).into();
+        assert_eq!(response.events.len(), 2);
+
+        let expected_event = KmsEvent::builder()
+            .operation(KmsOperation::VerifyProvenCt)
+            .txn_id(txn_id.clone())
+            .build();
+
+        assert_event(&response.events, &expected_event);
+
+        let proven_ct_response = VerifyProvenCtResponseValues::new(vec![4, 5, 6], vec![6, 7, 8]);
+
+        let response = contract
+            .verify_proven_ct_response(txn_id.clone(), proven_ct_response.clone())
+            .call(&owner)
+            .unwrap();
+        // one event because there's always an execute event
+        assert_eq!(response.events.len(), 1);
+
+        let response = contract
+            .verify_proven_ct_response(txn_id.clone(), proven_ct_response)
+            .call(&owner)
+            .unwrap();
+        // two events because there's always an execute event
+        // plus the verify ct request since it reached the threshold
+        assert_eq!(response.events.len(), 2);
+
+        let expected_event = KmsEvent::builder()
+            .operation(OperationValue::VerifyProvenCtResponse(
+                VerifyProvenCtResponseValues::new(vec![4, 5, 6], vec![6, 7, 8]),
+            ))
+            .txn_id(txn_id.clone())
+            .build();
+
+        assert_event(&response.events, &expected_event);
+
+        let response = contract.get_transaction(txn_id.clone()).unwrap();
+        assert_eq!(response.block_height(), 12345);
+        assert_eq!(response.transaction_index(), 0);
+        // three operations: one verify ct and two verify ct responses
+        assert_eq!(response.operations().len(), 3);
     }
 
     #[test]

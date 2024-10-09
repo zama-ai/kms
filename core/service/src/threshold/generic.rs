@@ -75,13 +75,16 @@ pub trait CrsGenerator {
 }
 
 #[tonic::async_trait]
-pub trait ZkVerifier {
-    async fn verify(&self, request: Request<ZkVerifyRequest>) -> Result<Response<Empty>, Status>;
+pub trait ProvenCtVerifier {
+    async fn verify(
+        &self,
+        request: Request<VerifyProvenCtRequest>,
+    ) -> Result<Response<Empty>, Status>;
 
     async fn get_result(
         &self,
         request: Request<RequestId>,
-    ) -> Result<Response<ZkVerifyResponse>, Status>;
+    ) -> Result<Response<VerifyProvenCtResponse>, Status>;
 }
 
 pub struct GenericKms<IN, RE, DE, KG, #[cfg(feature = "insecure")] IKG, PP, CG, ZV> {
@@ -93,7 +96,7 @@ pub struct GenericKms<IN, RE, DE, KG, #[cfg(feature = "insecure")] IKG, PP, CG, 
     insecure_key_generator: IKG,
     keygen_preprocessor: PP,
     crs_generator: CG,
-    zk_verifier: ZV,
+    proven_ct_verifier: ZV,
     abort_handle: AbortHandle,
 }
 
@@ -108,7 +111,7 @@ impl<IN, RE, DE, KG, IKG, PP, CG, ZV> GenericKms<IN, RE, DE, KG, IKG, PP, CG, ZV
         insecure_key_generator: IKG,
         keygen_preprocessor: PP,
         crs_generator: CG,
-        zk_verifier: ZV,
+        proven_ct_verifier: ZV,
         abort_handle: AbortHandle,
     ) -> Self {
         Self {
@@ -119,7 +122,7 @@ impl<IN, RE, DE, KG, IKG, PP, CG, ZV> GenericKms<IN, RE, DE, KG, IKG, PP, CG, ZV
             insecure_key_generator,
             keygen_preprocessor,
             crs_generator,
-            zk_verifier,
+            proven_ct_verifier,
             abort_handle,
         }
     }
@@ -139,7 +142,7 @@ impl<IN, RE, DE, KG, PP, CG, ZV> GenericKms<IN, RE, DE, KG, PP, CG, ZV> {
         key_generator: KG,
         keygen_preprocessor: PP,
         crs_generator: CG,
-        zk_verifier: ZV,
+        proven_ct_verifier: ZV,
         abort_handle: AbortHandle,
     ) -> Self {
         Self {
@@ -149,7 +152,7 @@ impl<IN, RE, DE, KG, PP, CG, ZV> GenericKms<IN, RE, DE, KG, PP, CG, ZV> {
             key_generator,
             keygen_preprocessor,
             crs_generator,
-            zk_verifier,
+            proven_ct_verifier,
             abort_handle,
         }
     }
@@ -170,7 +173,7 @@ macro_rules! impl_endpoint {
                 KG: KeyGenerator + Sync + Send + 'static,
                 PP: KeyGenPreprocessor + Sync + Send + 'static,
                 CG: CrsGenerator + Sync + Send + 'static,
-                ZV: ZkVerifier + Sync + Send + 'static,
+                ZV: ProvenCtVerifier + Sync + Send + 'static,
             > CoreServiceEndpoint for GenericKms<IN, RE, DE, KG, PP, CG, ZV> $implementations
 
         #[cfg(feature="insecure")]
@@ -183,7 +186,7 @@ macro_rules! impl_endpoint {
                 IKG: InsecureKeyGenerator + Sync + Send + 'static,
                 PP: KeyGenPreprocessor + Sync + Send + 'static,
                 CG: CrsGenerator + Sync + Send + 'static,
-                ZV: ZkVerifier + Sync + Send + 'static,
+                ZV: ProvenCtVerifier + Sync + Send + 'static,
             > CoreServiceEndpoint for GenericKms<IN, RE, DE, KG, IKG, PP, CG, ZV> $implementations
     }
 }
@@ -269,19 +272,19 @@ impl_endpoint! {
         }
 
         #[tracing::instrument(skip(self, request))]
-        async fn zk_verify(
+        async fn verify_proven_ct(
             &self,
-            request: Request<ZkVerifyRequest>,
+            request: Request<VerifyProvenCtRequest>,
         ) -> Result<Response<Empty>, Status> {
-            self.zk_verifier.verify(request).await
+            self.proven_ct_verifier.verify(request).await
         }
 
         #[tracing::instrument(skip(self, request))]
-        async fn get_zk_verify_result(
+        async fn get_verify_proven_ct_result(
             &self,
             request: Request<RequestId>,
-        ) -> Result<Response<ZkVerifyResponse>, Status> {
-            self.zk_verifier.get_result(request).await
+        ) -> Result<Response<VerifyProvenCtResponse>, Status> {
+            self.proven_ct_verifier.get_result(request).await
         }
 
         #[cfg(feature = "insecure")]

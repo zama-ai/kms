@@ -5,9 +5,9 @@ use crate::common::provider::GatewayContract;
 use crate::config::BaseGasPrice;
 use crate::config::EthereumConfig;
 use crate::config::GatewayConfig;
-use crate::config::ZkpResponseToClient;
+use crate::config::VerifyProvenCtResponseToClient;
 use crate::events::manager::ApiReencryptValues;
-use crate::events::manager::ApiZkpValues;
+use crate::events::manager::ApiVerifyProvenCtValues;
 use crate::events::manager::DecryptionEvent;
 use crate::util::wallet::WalletManager;
 use anyhow::Context;
@@ -205,10 +205,10 @@ pub(crate) async fn handle_reencryption_event(
     response
 }
 
-pub(crate) async fn handle_zkp_event(
-    event: &ApiZkpValues,
+pub(crate) async fn handle_verify_proven_ct_event(
+    event: &ApiVerifyProvenCtValues,
     config: &GatewayConfig,
-) -> anyhow::Result<ZkpResponseToClient> {
+) -> anyhow::Result<VerifyProvenCtResponseToClient> {
     let client = Arc::new(http_provider(config).await?);
     let start = std::time::Instant::now();
     let chain_id = client.provider().get_chainid().await?;
@@ -239,9 +239,9 @@ pub(crate) async fn handle_zkp_event(
         salt: vec![],
     };
 
-    let zk_response_builder = blockchain_impl(config)
+    let verify_proven_ct_response_builder = blockchain_impl(config)
         .await
-        .zkp(
+        .verify_proven_ct(
             event.contract_address.clone(),
             event.caller_address.clone(),
             event.key_id.clone(),
@@ -252,10 +252,13 @@ pub(crate) async fn handle_zkp_event(
         )
         .await?;
     let duration = start.elapsed();
-    tracing::info!("⏱️ KMS Response Time elapsed for ZKP: {:?}", duration);
+    tracing::info!(
+        "⏱️ KMS Response Time elapsed for verify proven ct: {:?}",
+        duration
+    );
 
     <EthereumConfig as Into<Box<dyn CiphertextProvider>>>::into(config.clone().ethereum)
-        .put_ciphertext(event, zk_response_builder)
+        .put_ciphertext(event, verify_proven_ct_response_builder)
         .await
 }
 

@@ -1,11 +1,9 @@
 use conf_trace::conf::Tracing;
 use conf_trace::telemetry::init_tracing;
 use events::kms::{
-    DecryptResponseValues, DecryptValues, Eip712DomainValues, FheType, KmsMessage, Transaction,
-};
-use events::kms::{
-    FheParameter, KeyGenPreprocValues, KmsCoreConf, KmsCoreParty, KmsCoreThresholdConf, KmsEvent,
-    TransactionId, ZkpValues,
+    DecryptResponseValues, DecryptValues, Eip712DomainValues, FheParameter, FheType,
+    KeyGenPreprocValues, KmsCoreConf, KmsCoreParty, KmsCoreThresholdConf, KmsEvent, KmsMessage,
+    Transaction, TransactionId, VerifyProvenCtValues,
 };
 use events::kms::{KmsOperation, OperationValue};
 use events::{
@@ -34,8 +32,8 @@ use kms_blockchain_connector::infrastructure::metrics::OpenTelemetryMetrics;
 use kms_lib::client::assemble_metadata_alloy;
 use kms_lib::consts::TEST_PARAM;
 use kms_lib::consts::{SAFE_SER_SIZE_LIMIT, TEST_CRS_ID};
-use kms_lib::kms::{ZkVerifyResponse, ZkVerifyResponsePayload};
-use kms_lib::util::key_setup::test_tools::compute_zkp_from_stored_key;
+use kms_lib::kms::{VerifyProvenCtResponse, VerifyProvenCtResponsePayload};
+use kms_lib::util::key_setup::test_tools::compute_proven_ct_from_stored_key;
 use kms_lib::util::key_setup::{ensure_central_crs_exists, ensure_threshold_crs_exists};
 use kms_lib::{
     client::{test_tools, ParsedReencryptionRequest},
@@ -886,7 +884,7 @@ async fn reenc_sunshine(slow: bool) {
     }
 }
 
-async fn zkp_sunshine(slow: bool) {
+async fn verify_proven_ct_sunshine(slow: bool) {
     setup_threshold_keys().await;
 
     println!("test CRS {:?}", TEST_CRS_ID.to_string());
@@ -916,7 +914,7 @@ async fn zkp_sunshine(slow: bool) {
         &dummy_domain().chain_id.unwrap(),
     );
 
-    let ct_proof = compute_zkp_from_stored_key(
+    let ct_proof = compute_proven_ct_from_stored_key(
         None,
         msg,
         &TEST_THRESHOLD_KEY_ID.to_string(),
@@ -928,7 +926,7 @@ async fn zkp_sunshine(slow: bool) {
     let key_id = &TEST_THRESHOLD_KEY_ID;
     let crs_id = &TEST_CRS_ID;
     let kms_req = kms_client
-        .zk_verify_request(
+        .verify_proven_ct_request(
             crs_id,
             key_id,
             &dummy_contract_address,
@@ -941,7 +939,7 @@ async fn zkp_sunshine(slow: bool) {
 
     let eip712 = kms_req.domain.clone().unwrap();
 
-    let op = OperationValue::Zkp(ZkpValues::new(
+    let op = OperationValue::VerifyProvenCt(VerifyProvenCtValues::new(
         HexVector::from_hex(kms_req.crs_handle.unwrap().request_id.as_str()).unwrap(),
         HexVector::from_hex(kms_req.key_handle.unwrap().request_id.as_str()).unwrap(),
         kms_req.contract_address,
@@ -962,20 +960,20 @@ async fn zkp_sunshine(slow: bool) {
     if slow {
         // process the result using the kms client when we're running in the slow mode
         // i.e., it is an integration test
-        let agg_resp: Vec<ZkVerifyResponse> = results
+        let agg_resp: Vec<VerifyProvenCtResponse> = results
             .into_iter()
             .map(|r| {
                 let r = match r {
-                    KmsOperationResponse::ZkpResponse(resp) => resp,
+                    KmsOperationResponse::VerifyProvenCtResponse(resp) => resp,
                     _ => panic!("invalid response"),
                 }
-                .zkp_response;
+                .verify_proven_ct_response;
 
-                let payload: ZkVerifyResponsePayload = bincode::deserialize(
+                let payload: VerifyProvenCtResponsePayload = bincode::deserialize(
                     <&HexVector as Into<Vec<u8>>>::into(r.payload()).as_slice(),
                 )
                 .unwrap();
-                ZkVerifyResponse {
+                VerifyProvenCtResponse {
                     signature: r.signature().to_vec(),
                     payload: Some(payload),
                 }
@@ -983,16 +981,16 @@ async fn zkp_sunshine(slow: bool) {
             .collect();
         // Try to check that enough signatures agree
         let _ = kms_client
-            .process_zk_verify_resp(&agg_resp, AMOUNT_PARTIES as u32)
+            .process_verify_proven_ct_resp(&agg_resp, AMOUNT_PARTIES as u32)
             .unwrap();
     } else {
         // otherwise just check that we're getting dummy values back
         for result in results {
             match result {
-                KmsOperationResponse::ZkpResponse(resp) => {
-                    let resp_value = &resp.zkp_response;
+                KmsOperationResponse::VerifyProvenCtResponse(resp) => {
+                    let resp_value = &resp.verify_proven_ct_response;
                     assert_eq!(resp.operation_val.tx_id, txn_id);
-                    let payload: ZkVerifyResponsePayload =
+                    let payload: VerifyProvenCtResponsePayload =
                         bincode::deserialize(resp_value.payload().as_slice()).unwrap();
                     assert_eq!(payload.ct_digest, "dummy digest".as_bytes().to_vec());
                 }
@@ -1118,8 +1116,8 @@ async fn reenc_sunshine_mocked_core() {
 
 #[tokio::test]
 #[serial_test::serial]
-async fn zkp_sunshine_mocked_core() {
-    zkp_sunshine(false).await
+async fn verify_proven_ct_sunshine_mocked_core() {
+    verify_proven_ct_sunshine(false).await
 }
 
 #[tokio::test]
@@ -1158,8 +1156,8 @@ async fn reenc_sunshine_slow() {
 #[cfg(feature = "slow_tests")]
 #[tokio::test]
 #[serial_test::serial]
-async fn zkp_sunshine_slow() {
-    zkp_sunshine(true).await
+async fn verify_proven_ct_sunshine_slow() {
+    verify_proven_ct_sunshine(true).await
 }
 
 #[cfg(feature = "slow_tests")]

@@ -251,21 +251,21 @@ pub async fn load_pk_from_storage(pub_path: Option<&Path>, key_id: &str) -> FheP
     }
 }
 
-pub async fn compute_zkp_from_stored_key_and_serialize(
+pub async fn compute_proven_ct_from_stored_key_and_serialize(
     pub_path: Option<&Path>,
     msgs: Vec<TypedPlaintext>,
     key_id: &str,
     crs_id: &str,
     metadata: &[u8],
 ) -> Vec<u8> {
-    let ctlist = compute_zkp_from_stored_key(pub_path, msgs, key_id, crs_id, metadata).await;
+    let ctlist = compute_proven_ct_from_stored_key(pub_path, msgs, key_id, crs_id, metadata).await;
     let mut out = Vec::new();
     safe_serialize(&ctlist, &mut out, SAFE_SER_SIZE_LIMIT).unwrap();
     out
 }
 
 /// This function should be used for testing only and it can panic.
-pub async fn compute_zkp_from_stored_key(
+pub async fn compute_proven_ct_from_stored_key(
     pub_path: Option<&Path>,
     msgs: Vec<TypedPlaintext>,
     key_id: &str,

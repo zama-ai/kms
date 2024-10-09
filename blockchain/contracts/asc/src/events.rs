@@ -87,6 +87,11 @@ impl EmitEventVerifier for OperationValue {
             return true;
         }
         match self {
+            OperationValue::VerifyProvenCtResponse(_) => {
+                self.reach_majority_vote_threshold(core_conf, transaction, |t| {
+                    t.is_verify_proven_ct_response()
+                })
+            }
             OperationValue::ReencryptResponse(_) => {
                 self.reach_reconstruction_threshold(core_conf, transaction, |t| {
                     t.is_reencrypt_response()

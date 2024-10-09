@@ -48,7 +48,7 @@ initial_wait_time = 0
 retry_interval = 0
 max_poll_count = 1
 
-[core.timeout_config.zkp]
+[core.timeout_config.verify_proven_ct]
 initial_wait_time = 0
 retry_interval = 0
 max_poll_count = 1

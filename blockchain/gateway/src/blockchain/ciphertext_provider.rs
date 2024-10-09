@@ -7,8 +7,8 @@ pub mod coprocessor {
 }
 
 use crate::blockchain::ciphertext_provider::k256::ecdsa::SigningKey;
-use crate::config::{EthereumConfig, ListenerType, ZkpResponseToClient};
-use crate::events::manager::ApiZkpValues;
+use crate::config::{EthereumConfig, ListenerType, VerifyProvenCtResponseToClient};
+use crate::events::manager::ApiVerifyProvenCtValues;
 use anyhow::Context;
 use async_trait::async_trait;
 use ethers::prelude::*;
@@ -39,9 +39,9 @@ pub(crate) trait CiphertextProvider: Send {
 
     async fn put_ciphertext(
         &self,
-        event: &ApiZkpValues,
+        event: &ApiVerifyProvenCtValues,
         kms_signatures: HexVectorList,
-    ) -> anyhow::Result<ZkpResponseToClient>;
+    ) -> anyhow::Result<VerifyProvenCtResponseToClient>;
 }
 
 // Implementation for FHEVM_V1_1
@@ -81,10 +81,10 @@ impl CiphertextProvider for FhevmNativeCiphertextProvider {
     /// the ciphertexst is already on chain
     async fn put_ciphertext(
         &self,
-        _event: &ApiZkpValues,
+        _event: &ApiVerifyProvenCtValues,
         kms_signatures: HexVectorList,
-    ) -> anyhow::Result<ZkpResponseToClient> {
-        Ok(ZkpResponseToClient::builder()
+    ) -> anyhow::Result<VerifyProvenCtResponseToClient> {
+        Ok(VerifyProvenCtResponseToClient::builder()
             .kms_signatures(kms_signatures)
             .listener_type(ListenerType::FhevmNative)
             .build())
@@ -181,9 +181,9 @@ impl CiphertextProvider for CoprocessorCiphertextProvider {
     /// and the handles
     async fn put_ciphertext(
         &self,
-        event: &ApiZkpValues,
+        event: &ApiVerifyProvenCtValues,
         kms_signatures: HexVectorList,
-    ) -> anyhow::Result<ZkpResponseToClient> {
+    ) -> anyhow::Result<VerifyProvenCtResponseToClient> {
         // Set up the gRPC client
         let mut client = FhevmCoprocessorClient::connect(self.config.coprocessor_url.clone())
             .await
@@ -193,7 +193,7 @@ impl CiphertextProvider for CoprocessorCiphertextProvider {
         let api_key = &self.config.coprocessor_api_key;
         let api_key_header = format!("bearer {}", api_key);
 
-        let input_ciphertexts = convert_zkpvalues_to_copro_input(event, &kms_signatures);
+        let input_ciphertexts = convert_proven_ct_to_copro_input(event, &kms_signatures);
         // Prepare the request with the input ciphertexts
         let mut request = tonic::Request::new(InputUploadBatch { input_ciphertexts });
 
@@ -223,8 +223,8 @@ impl CiphertextProvider for CoprocessorCiphertextProvider {
     }
 }
 
-fn convert_zkpvalues_to_copro_input(
-    event: &ApiZkpValues,
+fn convert_proven_ct_to_copro_input(
+    event: &ApiVerifyProvenCtValues,
     kms_signatures: &HexVectorList,
 ) -> Vec<InputToUpload> {
     //Note: for now the GW only ever expects ciphertext to be sent one at a time for input
@@ -239,7 +239,7 @@ fn convert_zkpvalues_to_copro_input(
 fn process_response_from_copro_to_client(
     upload_response: &InputUploadResponse,
     kms_signatures: HexVectorList,
-) -> anyhow::Result<ZkpResponseToClient> {
+) -> anyhow::Result<VerifyProvenCtResponseToClient> {
     //Here also for now we always expect a single response
     if upload_response.upload_responses.len() != 1 {
         tracing::error!("Multiple response from Coprocessor InputUpload");
@@ -252,13 +252,13 @@ fn process_response_from_copro_to_client(
         .map(|handle| handle.handle.clone())
         .collect();
     let proof_of_storage = response.eip712_signature.clone();
-    let zk_response_builder = ZkpResponseToClient::builder()
+    let verify_proven_ct_response_builder = VerifyProvenCtResponseToClient::builder()
         .kms_signatures(kms_signatures)
         .handles(handles)
         .proof_of_storage(proof_of_storage)
         .listener_type(ListenerType::Coprocessor);
 
-    Ok(zk_response_builder.build())
+    Ok(verify_proven_ct_response_builder.build())
 }
 
 impl From<EthereumConfig> for Box<dyn CiphertextProvider> {

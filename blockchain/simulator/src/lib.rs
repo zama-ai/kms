@@ -16,7 +16,8 @@ use ethers::abi::Token;
 use ethers::types::{Address, U256};
 use events::kms::{
     DecryptValues, Eip712DomainValues, FheType, KeyGenPreprocValues, KeyGenValues, KmsCoreConf,
-    KmsEvent, KmsMessage, KmsOperation, OperationValue, ReencryptValues, TransactionId, ZkpValues,
+    KmsEvent, KmsMessage, KmsOperation, OperationValue, ReencryptValues, TransactionId,
+    VerifyProvenCtValues,
 };
 use events::HexVector;
 use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractRequest, ProtoCoin};
@@ -34,7 +35,7 @@ use kms_lib::kms::{DecryptionResponsePayload, ReencryptionResponse, Reencryption
 use kms_lib::rpc::rpc_types::{Plaintext, PubDataType};
 use kms_lib::storage::{FileStorage, StorageReader, StorageType};
 use kms_lib::util::key_setup::test_tools::{
-    compute_compressed_cipher_from_stored_key, compute_zkp_from_stored_key_and_serialize,
+    compute_compressed_cipher_from_stored_key, compute_proven_ct_from_stored_key_and_serialize,
     TypedPlaintext,
 };
 use rand::SeedableRng;
@@ -258,7 +259,7 @@ pub struct KeyGenExecute {
 }
 
 #[derive(Debug, Parser)]
-pub struct ZkpExecute {
+pub struct VerifyProvenCtExecute {
     #[clap(long, short = 'e')]
     pub to_encrypt: u8,
     pub crs_id: Option<String>,
@@ -282,7 +283,7 @@ pub enum Command {
     ReEncrypt(CryptExecute),
     QueryContract(Query),
     CrsGen(Nothing),
-    Zkp(ZkpExecute),
+    VerifyProvenCt(VerifyProvenCtExecute),
     DoNothing(Nothing),
 }
 
@@ -482,11 +483,11 @@ pub async fn encrypt_and_prove(
     );
 
     tracing::info!(
-        "attempting to create zkp using materials from {:?}",
+        "attempting to create proven ct using materials from {:?}",
         keys_folder
     );
     let msgs = vec![TypedPlaintext::U8(to_encrypt)];
-    Ok(compute_zkp_from_stored_key_and_serialize(
+    Ok(compute_proven_ct_from_stored_key_and_serialize(
         Some(keys_folder),
         msgs,
         key_id,
@@ -709,7 +710,7 @@ pub async fn execute_keygen_contract(
     Ok(ev)
 }
 
-pub async fn execute_zkp_contract(
+pub async fn execute_verify_proven_ct_contract(
     client: &Client,
     query_client: &QueryClient,
     to_encrypt: u8,
@@ -717,7 +718,7 @@ pub async fn execute_zkp_contract(
     key_id: &str,
     keys_folder: &Path,
 ) -> Result<KmsEvent, Box<dyn std::error::Error + 'static>> {
-    // These are some random addresses used to create a valid input/zk request
+    // These are some random addresses used to create a valid verify proven ciphertext request
     let verifying_contract = alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657");
     let contract_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
     let acl_address = alloy_primitives::address!("01da6bf26964af9d7eed9e03e53415d37aa960ff");
@@ -750,7 +751,7 @@ pub async fn execute_zkp_contract(
     tracing::info!("📦 Stored ciphertext, handle: {}", handle);
     let handle_bytes = hex::decode(handle)?;
 
-    let zkp_value = OperationValue::Zkp(ZkpValues::new(
+    let value = OperationValue::VerifyProvenCt(VerifyProvenCtValues::new(
         hex::decode(crs_id)?,
         hex::decode(key_id)?,
         contract_address.to_string(),
@@ -764,7 +765,7 @@ pub async fn execute_zkp_contract(
         vec![],
     ));
 
-    let evs = execute_contract(client, query_client, zkp_value).await?;
+    let evs = execute_contract(client, query_client, value).await?;
     let ev = evs[0].clone();
 
     tracing::info!("TxId: {:?}", ev.txn_id().to_hex(),);
@@ -1497,14 +1498,14 @@ pub async fn main_from_config(
                 }
             }
         }
-        Command::Zkp(ZkpExecute {
+        Command::VerifyProvenCt(VerifyProvenCtExecute {
             to_encrypt,
             crs_id,
             key_id,
         }) => {
             let crs_id = crs_id.as_ref().unwrap_or(&sim_conf.crs_id);
             let key_id = key_id.as_ref().unwrap_or(&sim_conf.key_id);
-            let event = execute_zkp_contract(
+            let event = execute_verify_proven_ct_contract(
                 &client,
                 &query_client,
                 *to_encrypt,

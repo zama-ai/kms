@@ -55,8 +55,8 @@ service CoreServiceEndpoint {
 
   // Start a zero-knowledge proof verification
   // on a ProvenCompactCiphertextList.
-  rpc ZkVerify(ZkVerifyRequest) returns (Empty);
+  rpc VerifyProvenCt(VerifyProvenCtRequest) returns (Empty);
 
   // Get the zero-knowledge verification result.
-  rpc GetZkVerifyResult(RequestId) returns (ZkVerifyResponse);
+  rpc GetVerifyProvenCtResult(RequestId) returns (VerifyProvenCtResponse);
 }

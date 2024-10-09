@@ -2,13 +2,13 @@ use crate::blockchain::blockchain_impl;
 use crate::blockchain::handlers::handle_event_decryption;
 use crate::blockchain::handlers::handle_keyurl_event;
 use crate::blockchain::handlers::handle_reencryption_event;
-use crate::blockchain::handlers::handle_zkp_event;
+use crate::blockchain::handlers::handle_verify_proven_ct_event;
 use crate::blockchain::Blockchain;
 use crate::common::provider::get_provider;
 use crate::common::provider::EventDecryptionFilter;
 use crate::config::init_conf_with_trace_connector;
 use crate::config::GatewayConfig;
-use crate::config::ZkpResponseToClient;
+use crate::config::VerifyProvenCtResponseToClient;
 use crate::events::manager::k256::ecdsa::SigningKey;
 use crate::util::height::AtomicBlockHeight;
 use actix_cors::Cors;
@@ -64,11 +64,11 @@ pub fn get_options() -> Route {
 }
 
 /// Starts an http server on the gateway with support for all the REST endpoints.
-/// For now this includes health, reencryption, keyurl and zkp.
+/// For now this includes health, reencryption, keyurl and verify_proven_ct.
 pub async fn start_http_server(api_url: String, sender: mpsc::Sender<GatewayEvent>) {
     let _handle = HttpServer::new(move || {
         let reencrypt_publisher = ReencryptionEventPublisher::new(sender.clone());
-        let zkp_publisher = ZkpEventPublisher::new(sender.clone());
+        let verify_proven_ct_publisher = VerifyProvenCtEventPublisher::new(sender.clone());
         let keyurl_publisher = KeyUrlEventPublisher::new(sender.clone());
         App::new()
             .wrap(Logger::default())
@@ -81,9 +81,12 @@ pub async fn start_http_server(api_url: String, sender: mpsc::Sender<GatewayEven
                 web::post().to(reencrypt_payload),
             )
             .route(&ReencryptionEventPublisher::path(), get_options())
-            .app_data(web::Data::new(Arc::new(zkp_publisher)))
-            .route(&ZkpEventPublisher::path(), web::post().to(zkp_payload))
-            .route(&ZkpEventPublisher::path(), get_options())
+            .app_data(web::Data::new(Arc::new(verify_proven_ct_publisher)))
+            .route(
+                &VerifyProvenCtEventPublisher::path(),
+                web::post().to(verify_proven_ct_payload),
+            )
+            .route(&VerifyProvenCtEventPublisher::path(), get_options())
             .app_data(web::Data::new(Arc::new(keyurl_publisher)))
             .route(&KeyUrlEventPublisher::path(), web::get().to(keyurl_payload))
             .route(&KeyUrlEventPublisher::path(), get_options())
@@ -133,7 +136,7 @@ pub struct ReencryptionEvent {
 }
 
 #[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq)]
-pub(crate) struct ApiZkpValues {
+pub(crate) struct ApiVerifyProvenCtValues {
     pub(crate) contract_address: String,
     pub(crate) caller_address: String,
     pub(crate) key_id: String,
@@ -142,9 +145,9 @@ pub(crate) struct ApiZkpValues {
 }
 
 #[derive(Debug)]
-pub struct ZkpEvent {
-    pub(crate) values: ApiZkpValues,
-    pub(crate) sender: oneshot::Sender<ZkpResponseToClient>,
+pub struct VerifyProvenCtEvent {
+    pub(crate) values: ApiVerifyProvenCtValues,
+    pub(crate) sender: oneshot::Sender<VerifyProvenCtResponseToClient>,
 }
 
 #[derive(Debug)]
@@ -156,7 +159,7 @@ pub struct KeyUrlEvent {
 pub enum GatewayEvent {
     Decryption(DecryptionEvent),
     Reencryption(ReencryptionEvent),
-    Zkp(ZkpEvent),
+    VerifyProvenCt(VerifyProvenCtEvent),
     KeyUrl(KeyUrlEvent),
     KmsEvent(KmsEvent),
 }
@@ -410,50 +413,53 @@ async fn reencrypt_payload(
 }
 
 #[derive(Clone)]
-pub struct ZkpEventPublisher {
+pub struct VerifyProvenCtEventPublisher {
     sender: mpsc::Sender<GatewayEvent>,
 }
 
-impl ZkpEventPublisher {
+impl VerifyProvenCtEventPublisher {
     pub fn new(sender: mpsc::Sender<GatewayEvent>) -> Self {
         Self { sender }
     }
 }
 
-impl HttpPublisher<ZkpEvent> for ZkpEventPublisher {
+impl HttpPublisher<VerifyProvenCtEvent> for VerifyProvenCtEventPublisher {
     fn path() -> String {
-        "/zkp".to_string()
+        "/verify_proven_ct".to_string()
     }
 }
 
 #[async_trait]
-impl Publisher<ZkpEvent> for ZkpEventPublisher {
-    fn publish(&self, event: ZkpEvent) {
-        self.sender.try_send(GatewayEvent::Zkp(event)).unwrap();
+impl Publisher<VerifyProvenCtEvent> for VerifyProvenCtEventPublisher {
+    fn publish(&self, event: VerifyProvenCtEvent) {
+        self.sender
+            .try_send(GatewayEvent::VerifyProvenCt(event))
+            .unwrap();
     }
 }
 
-pub(crate) async fn zkp_payload(
-    payload: web::Json<ApiZkpValues>,
-    publisher: web::Data<Arc<ZkpEventPublisher>>,
+pub(crate) async fn verify_proven_ct_payload(
+    payload: web::Json<ApiVerifyProvenCtValues>,
+    publisher: web::Data<Arc<VerifyProvenCtEventPublisher>>,
 ) -> HttpResponse {
-    info!("🍓🍓🍓 => Received ZKP request");
+    info!("🍓🍓🍓 => Received verify proven ct request");
 
     let (sender, receiver) = oneshot::channel();
 
-    publisher.publish(ZkpEvent {
+    publisher.publish(VerifyProvenCtEvent {
         values: payload.into_inner(),
         sender,
     });
-    info!("🍓🍓🍓 Published ZKP request");
+    info!("🍓🍓🍓 Published verify proven ct request");
 
     match receiver.await {
-        Ok(zkp_response) => {
-            info!("🍓🍓🍓 <= Received ZKP response");
-            HttpResponse::Ok().json(json!({ "status": "success", "response": zkp_response }))
+        Ok(verify_proven_ct_response) => {
+            info!("🍓🍓🍓 <= Received verify proven ct response");
+            HttpResponse::Ok()
+                .json(json!({ "status": "success", "response": verify_proven_ct_response }))
         }
         Err(e) => {
-            error!("Error receiving ZKP response: {:?}", e);
+            error!("Error receiving verify proven ct response: {:?}", e);
             HttpResponse::InternalServerError().json(json!({ "status": "failure" }))
         }
     }
@@ -550,11 +556,17 @@ impl GatewaySubscriber {
                                     .unwrap();
                             let _ = reencrypt_event.sender.send(reencrypt_response);
                         }
-                        GatewayEvent::Zkp(zkp_event) => {
-                            debug!("🫐🫐🫐 Received Zkp Event");
-                            let zkp_response =
-                                handle_zkp_event(&zkp_event.values, &config).await.unwrap();
-                            let _ = zkp_event.sender.send(zkp_response);
+                        GatewayEvent::VerifyProvenCt(verify_proven_ct_event) => {
+                            debug!("🫐🫐🫐 Received VerifyProvenCt Event");
+                            let verify_proven_ct_response = handle_verify_proven_ct_event(
+                                &verify_proven_ct_event.values,
+                                &config,
+                            )
+                            .await
+                            .unwrap();
+                            let _ = verify_proven_ct_event
+                                .sender
+                                .send(verify_proven_ct_response);
                         }
                         GatewayEvent::KeyUrl(keyurl_event) => {
                             debug!("🫐🫐🫐 Received KeyUrl Event");

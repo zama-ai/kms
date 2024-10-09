@@ -13,8 +13,8 @@ use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenPreprocStatusEnum,
     KeyGenRequest, KeyGenResult, ReencryptionRequest, ReencryptionResponse,
-    ReencryptionResponsePayload, RequestId, SignedPubDataHandle, ZkVerifyRequest, ZkVerifyResponse,
-    ZkVerifyResponsePayload,
+    ReencryptionResponsePayload, RequestId, SignedPubDataHandle, VerifyProvenCtRequest,
+    VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
 };
 use crate::rpc::rpc_types::{Plaintext, PubDataType, CURRENT_FORMAT_VERSION};
 
@@ -48,7 +48,7 @@ type DummyThresholdKms = GenericKms<
     DummyKeyGenerator,
     DummyPreprocessor,
     DummyCrsGenerator,
-    DummyZkVerifier,
+    DummyProvenCtVerifier,
 >;
 
 #[cfg(feature = "insecure")]
@@ -60,7 +60,7 @@ type DummyThresholdKms = GenericKms<
     DummyKeyGenerator, // the insecure one is the same as the dummy one
     DummyPreprocessor,
     DummyCrsGenerator,
-    DummyZkVerifier,
+    DummyProvenCtVerifier,
 >;
 
 fn new_dummy_threshold_kms() -> DummyThresholdKms {
@@ -74,7 +74,7 @@ fn new_dummy_threshold_kms() -> DummyThresholdKms {
         DummyKeyGenerator {},
         DummyPreprocessor {},
         DummyCrsGenerator {},
-        DummyZkVerifier {},
+        DummyProvenCtVerifier {},
         handle.abort_handle(),
     )
 }
@@ -251,27 +251,30 @@ impl CrsGenerator for DummyCrsGenerator {
     }
 }
 
-struct DummyZkVerifier;
+struct DummyProvenCtVerifier;
 
 #[tonic::async_trait]
-impl ZkVerifier for DummyZkVerifier {
-    async fn verify(&self, _request: Request<ZkVerifyRequest>) -> Result<Response<Empty>, Status> {
+impl ProvenCtVerifier for DummyProvenCtVerifier {
+    async fn verify(
+        &self,
+        _request: Request<VerifyProvenCtRequest>,
+    ) -> Result<Response<Empty>, Status> {
         Ok(Response::new(Empty {}))
     }
 
     async fn get_result(
         &self,
         request: Request<RequestId>,
-    ) -> Result<Response<ZkVerifyResponse>, Status> {
+    ) -> Result<Response<VerifyProvenCtResponse>, Status> {
         let inner = request.into_inner();
-        let payload = Some(ZkVerifyResponsePayload {
+        let payload = Some(VerifyProvenCtResponsePayload {
             request_id: Some(inner),
             contract_address: "0xEe344eeDA74E25D746dd1853Bb65C800D1674264".to_string(),
             client_address: "0x355d755538C0310D725b589eA45fB17F320f707B".to_string(),
             ct_digest: "dummy digest".as_bytes().to_vec(),
             external_signature: vec![23_u8; 65],
         });
-        Ok(Response::new(ZkVerifyResponse {
+        Ok(Response::new(VerifyProvenCtResponse {
             payload,
             signature: vec![1, 2],
         }))

@@ -87,7 +87,7 @@ impl Blockchain for MockchainImpl {
         Ok(vec![])
     }
 
-    async fn zkp(
+    async fn verify_proven_ct(
         &self,
         client_address: String,
         caller_address: String,
@@ -97,7 +97,7 @@ impl Blockchain for MockchainImpl {
         eip712_domain: Eip712DomainMsg,
         acl_address: String,
     ) -> anyhow::Result<HexVectorList> {
-        tracing::debug!("🐛 Mockchain zkp");
+        tracing::debug!("🐛 Mockchain verify proven ct");
         tracing::debug!("🐛 client_address: {:?}", client_address);
         tracing::debug!("🐛 caller_address: {:?}", caller_address);
         tracing::debug!("🐛 key_id_str: {:?}", key_id_str);

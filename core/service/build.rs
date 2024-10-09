@@ -22,8 +22,8 @@ fn default_builder() -> Builder {
         .type_attribute("SignedPubDataHandle", EXTENDED_DERIVES)
         .type_attribute("CrsGenRequest", DERIVES)
         .type_attribute("CrsGenResult", DERIVES)
-        .type_attribute("ZkVerifyResponse", DERIVES)
-        .type_attribute("ZkVerifyResponsePayload", DERIVES)
+        .type_attribute("VerifyProvenCtResponse", DERIVES)
+        .type_attribute("VerifyProvenCtResponsePayload", DERIVES)
 }
 
 // Adding doc

@@ -25,8 +25,8 @@ use events::kms::ReencryptResponseValues;
 use events::kms::ReencryptValues;
 use events::kms::TransactionId;
 use events::kms::VerfKeyUrlInfo;
-use events::kms::ZkpResponseValues;
-use events::kms::ZkpValues;
+use events::kms::VerifyProvenCtResponseValues;
+use events::kms::VerifyProvenCtValues;
 use events::kms::{FheType, KmsMessage};
 use events::{HexVector, HexVectorList};
 use kms_blockchain_client::client::Client;
@@ -44,7 +44,7 @@ use kms_lib::cryptography::signcryption::hash_element;
 use kms_lib::kms::DecryptionResponsePayload;
 use kms_lib::kms::Eip712DomainMsg;
 use kms_lib::kms::ParamChoice;
-use kms_lib::kms::ZkVerifyResponsePayload;
+use kms_lib::kms::VerifyProvenCtResponsePayload;
 use kms_lib::rpc::rpc_types::Plaintext;
 use kms_lib::rpc::rpc_types::PubDataType;
 use kms_lib::rpc::rpc_types::CURRENT_FORMAT_VERSION;
@@ -909,7 +909,7 @@ impl Blockchain for KmsBlockchainImpl {
     /// Returns a [`HexVectorList`]
     /// filled with the kms_signatures
     /// (as that is the only info the KMS Blockchain provides)
-    async fn zkp(
+    async fn verify_proven_ct(
         &self,
         client_address: String,
         contract_address: String,
@@ -920,7 +920,7 @@ impl Blockchain for KmsBlockchainImpl {
         acl_address: String,
     ) -> anyhow::Result<HexVectorList> {
         tracing::info!(
-            "🔒 ZKP ciphertext with client_address: {:?}, contract_address: {:?}, key_id: {:?}, crs_id: {:?}, chain_id: {:?}",
+            "🔒 Verify proven ct with client_address: {:?}, contract_address: {:?}, key_id: {:?}, crs_id: {:?}, chain_id: {:?}",
             hex::encode(&client_address),
             hex::encode(&contract_address),
             key_id_str,
@@ -933,7 +933,7 @@ impl Blockchain for KmsBlockchainImpl {
         let key_id = HexVector::from_hex(&key_id_str)?;
         let crs_id = HexVector::from_hex(&crs_id_str)?;
         tracing::info!(
-            "🔒 ZKP using key_id={:?}, crs_id={:?}, ct_proof_handle={}",
+            "🔒 Verify proven ct using key_id={:?}, crs_id={:?}, ct_proof_handle={}",
             key_id.to_hex(),
             crs_id.to_hex(),
             hex::encode(&ct_proof_handle),
@@ -947,7 +947,7 @@ impl Blockchain for KmsBlockchainImpl {
             ));
         }
 
-        let zkp_values = ZkpValues::new(
+        let proven_ct_values = VerifyProvenCtValues::new(
             crs_id,
             key_id,
             contract_address,
@@ -961,12 +961,12 @@ impl Blockchain for KmsBlockchainImpl {
             eip712_domain.salt,
         );
 
-        let operation = events::kms::OperationValue::Zkp(zkp_values);
+        let operation = events::kms::OperationValue::VerifyProvenCt(proven_ct_values);
 
         // send coins 1:1 with the ciphertext size
         let data_size = footprint::extract_ciphertext_size(&ct_proof_handle);
-        tracing::info!("🍊 Zkp ciphertext of size: {:?}", data_size);
-        // TODO how do we handle payment of ZKP validation?
+        tracing::info!("🍊 Verify proven ciphertext of size: {:?}", data_size);
+        // TODO how do we handle payment of verify proven ct validation?
         let evs = self
             .make_req_to_kms_blockchain(data_size, operation)
             .await?;
@@ -991,17 +991,17 @@ impl Blockchain for KmsBlockchainImpl {
 
         let results: Vec<OperationValue> = self.query_client.query_contract(request).await?;
 
-        let zkp_responses = match self.config.mode {
+        let proven_ct_responses = match self.config.mode {
             KmsMode::Centralized => match results.first().unwrap() {
-                OperationValue::ZkpResponse(zkp_response) => {
+                OperationValue::VerifyProvenCtResponse(responses) => {
                     tracing::debug!(
                         "🍇🥐🍇🥐🍇🥐 Centralized KMS signature: {:?}",
-                        zkp_response.signature().to_hex()
+                        responses.signature().to_hex()
                     );
 
-                    // the output needs to have type Vec<ZkpResponse>
+                    // the output needs to have type Vec<VerifyProvenCtResponse>
                     // in the centralized case there is only 1 element
-                    vec![zkp_response.clone()]
+                    vec![responses.clone()]
                 }
                 _ => return Err(anyhow::anyhow!("Invalid operation for request {:?}", event)),
             },
@@ -1009,10 +1009,10 @@ impl Blockchain for KmsBlockchainImpl {
                 let mut out = vec![];
                 for value in results.iter() {
                     match value {
-                        OperationValue::ZkpResponse(zkp_response) => {
-                            // the output needs to have type Vec<ZkpResponse>
+                        OperationValue::VerifyProvenCtResponse(verify_proven_ct_response) => {
+                            // the output needs to have type Vec<VerifyProvenCtResponse>
                             // in the centralized case there is only 1 element
-                            out.push(zkp_response.clone());
+                            out.push(verify_proven_ct_response.clone());
                         }
                         _ => {
                             return Err(anyhow::anyhow!(
@@ -1025,7 +1025,7 @@ impl Blockchain for KmsBlockchainImpl {
                 out
             }
         };
-        parse_zkp_responses_to_client(zkp_responses)
+        parse_verify_proven_ct_responses_to_client(proven_ct_responses)
     }
 
     async fn keyurl(&self) -> anyhow::Result<KeyUrlResponseValues> {
@@ -1071,19 +1071,20 @@ fn to_event(event: &cosmos_proto::messages::tendermint::abci::Event) -> cosmwasm
     result
 }
 
-/// Deserializes all zkp_responses and extract the external signature
+/// Deserializes all verify_proven_ct_responses and extract the external signature
 /// It then serializes the [`Vec`] of those signatures and returns
-/// a partially completed [`ZkpResponseToClient`] builder
+/// a partially completed [`VerifyProvenCtResponseToClient`] builder
 ///
-/// __NOTE__: The [`ZkVerifyResponsePayload`] was serialized by [`kms_blockchain_connector::infrastructure::core::ZkpVal`]
-fn parse_zkp_responses_to_client(
-    zkp_responses: Vec<ZkpResponseValues>,
+/// __NOTE__: The [`VerifyProvenCtResponsePayload`] was serialized by
+/// [`kms_blockchain_connector::infrastructure::core::VerifyProvenCtVal`]
+fn parse_verify_proven_ct_responses_to_client(
+    verify_proven_ct_responses: Vec<VerifyProvenCtResponseValues>,
 ) -> anyhow::Result<HexVectorList> {
     let mut external_signatures = Vec::new();
-    for zkp_response in zkp_responses {
-        let zk_verify_payload: ZkVerifyResponsePayload =
-            bincode::deserialize(zkp_response.payload())?;
-        external_signatures.push(HexVector(zk_verify_payload.external_signature));
+    for verify_proven_ct_response in verify_proven_ct_responses {
+        let verify_proven_ct_payload: VerifyProvenCtResponsePayload =
+            bincode::deserialize(verify_proven_ct_response.payload())?;
+        external_signatures.push(HexVector(verify_proven_ct_payload.external_signature));
     }
 
     Ok(external_signatures.into())

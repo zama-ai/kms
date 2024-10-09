@@ -2,7 +2,7 @@ use super::metrics::OpenTelemetryMetrics;
 use crate::conf::TimeoutConfig;
 use crate::domain::blockchain::{
     BlockchainOperationVal, DecryptResponseVal, KmsOperationResponse, ReencryptResponseVal,
-    ZkpResponseVal,
+    VerifyProvenCtResponseVal,
 };
 use crate::domain::kms::Kms;
 use crate::domain::storage::Storage;
@@ -14,7 +14,8 @@ use enum_dispatch::enum_dispatch;
 use events::kms::{
     DecryptResponseValues, DecryptValues, Eip712DomainValues, KeyGenPreprocResponseValues,
     KeyGenResponseValues, KeyGenValues, KmsCoreConf, KmsEvent, OperationValue,
-    ReencryptResponseValues, ReencryptValues, TransactionId, ZkpResponseValues, ZkpValues,
+    ReencryptResponseValues, ReencryptValues, TransactionId, VerifyProvenCtResponseValues,
+    VerifyProvenCtValues,
 };
 use events::HexVector;
 use kms_lib::kms::core_service_endpoint_client::CoreServiceEndpointClient;
@@ -22,8 +23,8 @@ use kms_lib::kms::{
     Config, CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse,
     DecryptionResponsePayload, Eip712DomainMsg, KeyGenPreprocStatus, KeyGenPreprocStatusEnum,
     KeyGenResult, ParamChoice, ReencryptionRequest, ReencryptionRequestPayload,
-    ReencryptionResponse, ReencryptionResponsePayload, TypedCiphertext, ZkVerifyRequest,
-    ZkVerifyResponse, ZkVerifyResponsePayload,
+    ReencryptionResponse, ReencryptionResponsePayload, TypedCiphertext, VerifyProvenCtRequest,
+    VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
 };
 use kms_lib::kms::{KeyGenPreprocRequest, KeyGenRequest, RequestId};
 use kms_lib::rpc::rpc_types::{PubDataType, CURRENT_FORMAT_VERSION};
@@ -50,8 +51,8 @@ pub struct ReencryptVal<S> {
     pub operation_val: KmsOperationVal<S>,
 }
 
-pub struct ZkpVal<S> {
-    pub zkp: ZkpValues,
+pub struct VerifyProvenCtVal<S> {
+    pub verify_proven_ct: VerifyProvenCtValues,
     pub operation_val: KmsOperationVal<S>,
 }
 
@@ -77,7 +78,7 @@ pub struct CrsGenVal<S> {
 pub enum KmsOperationRequest<S> {
     Decrypt(DecryptVal<S>),
     Reencrypt(ReencryptVal<S>),
-    Zkp(ZkpVal<S>),
+    VerifyProvenCt(VerifyProvenCtVal<S>),
     KeyGen(KeyGenVal<S>),
     InsecureKeyGen(InsecureKeyGenVal<S>),
     KeyGenPreproc(KeyGenPreprocVal<S>),
@@ -98,7 +99,9 @@ where
             KmsOperationRequest::Reencrypt(reencrypt) => {
                 reencrypt.run_operation(config_contract).await
             }
-            KmsOperationRequest::Zkp(zkp) => zkp.run_operation(config_contract).await,
+            KmsOperationRequest::VerifyProvenCt(verify_proven_ct) => {
+                verify_proven_ct.run_operation(config_contract).await
+            }
             KmsOperationRequest::KeyGenPreproc(keygen_preproc) => {
                 keygen_preproc.run_operation(config_contract).await
             }
@@ -190,7 +193,12 @@ where
                 reencrypt,
                 operation_val,
             }),
-            OperationValue::Zkp(zkp) => KmsOperationRequest::Zkp(ZkpVal { zkp, operation_val }),
+            OperationValue::VerifyProvenCt(verify_proven_ct) => {
+                KmsOperationRequest::VerifyProvenCt(VerifyProvenCtVal {
+                    verify_proven_ct,
+                    operation_val,
+                })
+            }
             OperationValue::Decrypt(decrypt) => KmsOperationRequest::Decrypt(DecryptVal {
                 decrypt,
                 operation_val,
@@ -523,7 +531,7 @@ where
 }
 
 #[async_trait]
-impl<S> KmsEventHandler for ZkpVal<S>
+impl<S> KmsEventHandler for VerifyProvenCtVal<S>
 where
     S: Storage + Clone + Send + Sync + 'static,
 {
@@ -536,32 +544,32 @@ where
 
         let tx_id = self.operation_val.tx_id.to_hex();
         let req_id: RequestId = tx_id.clone().try_into()?;
-        let zkp = &self.zkp;
-        let ct_proof_handle: Vec<u8> = zkp.ct_proof_handle().deref().into();
+        let verify_proven_ct = &self.verify_proven_ct;
+        let ct_proof_handle: Vec<u8> = verify_proven_ct.ct_proof_handle().deref().into();
         let ct_proof = self
             .operation_val
             .kms_client
             .storage
             .get_ciphertext(ct_proof_handle)
             .await?;
-        let req = ZkVerifyRequest {
+        let req = VerifyProvenCtRequest {
             request_id: Some(req_id.clone()),
             key_handle: Some(RequestId {
-                request_id: zkp.key_id().to_hex(),
+                request_id: verify_proven_ct.key_id().to_hex(),
             }),
             crs_handle: Some(RequestId {
-                request_id: zkp.crs_id().to_hex(),
+                request_id: verify_proven_ct.crs_id().to_hex(),
             }),
-            client_address: zkp.client_address().to_string(),
-            contract_address: zkp.contract_address().to_string(),
+            client_address: verify_proven_ct.client_address().to_string(),
+            contract_address: verify_proven_ct.contract_address().to_string(),
             ct_bytes: ct_proof,
-            acl_address: zkp.acl_address().to_string(),
+            acl_address: verify_proven_ct.acl_address().to_string(),
             domain: Some(Eip712DomainMsg {
-                name: zkp.eip712_name().to_string(),
-                version: zkp.eip712_version().to_string(),
-                chain_id: zkp.eip712_chain_id().into(),
-                verifying_contract: zkp.eip712_verifying_contract().to_string(),
-                salt: zkp.eip712_salt().into(),
+                name: verify_proven_ct.eip712_name().to_string(),
+                version: verify_proven_ct.eip712_version().to_string(),
+                chain_id: verify_proven_ct.eip712_chain_id().into(),
+                verifying_contract: verify_proven_ct.eip712_verifying_contract().to_string(),
+                salt: verify_proven_ct.eip712_salt().into(),
             }),
         };
 
@@ -569,22 +577,22 @@ where
 
         let request = make_request(req.clone(), Some(tx_id.clone()))?;
         // Response is just empty
-        let _resp = client.zk_verify(request).await.inspect_err(|e| {
+        let _resp = client.verify_proven_ct(request).await.inspect_err(|e| {
             let err_msg = e.to_string();
-            tracing::error!("Error in ZKP verification: {}", err_msg);
+            tracing::error!("Error in Verify proven ct verification: {}", err_msg);
             metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
         })?;
-        metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "Zkp")]);
+        metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "VerifyProvenCt")]);
 
         let g =
-            |res: Result<Response<ZkVerifyResponse>, Status>| -> anyhow::Result<PollerStatus<_>, anyhow::Error> {
+            |res: Result<Response<VerifyProvenCtResponse>, Status>| -> anyhow::Result<PollerStatus<_>, anyhow::Error> {
             match res {
                 Ok(res) => {
                     let inner = res.into_inner();
-                    let payload: ZkVerifyResponsePayload = inner.payload.ok_or_else(||anyhow!("empty decryption payload"))?;
-                    Ok(PollerStatus::Done(KmsOperationResponse::ZkpResponse(
-                        ZkpResponseVal {
-                            zkp_response: ZkpResponseValues::new(
+                    let payload: VerifyProvenCtResponsePayload = inner.payload.ok_or_else(||anyhow!("empty decryption payload"))?;
+                    Ok(PollerStatus::Done(KmsOperationResponse::VerifyProvenCtResponse(
+                        VerifyProvenCtResponseVal {
+                            verify_proven_ct_response: VerifyProvenCtResponseValues::new(
                                 inner.signature,
                                 bincode::serialize(&payload)?,
                             ),
@@ -601,14 +609,19 @@ where
         };
 
         // we wait for a bit before even trying
-        let timeout_triple = self.operation_val.kms_client.timeout_config.zkp.clone();
+        let timeout_triple = self
+            .operation_val
+            .kms_client
+            .timeout_config
+            .verify_proven_ct
+            .clone();
 
         // loop to get response
         poller!(
-            client.get_zk_verify_result(make_request(req_id.clone(), Some(tx_id.clone()))?),
+            client.get_verify_proven_ct_result(make_request(req_id.clone(), Some(tx_id.clone()))?),
             g,
             timeout_triple,
-            "(Zkp)",
+            "(VerifyProvenCt)",
             metrics
         );
     }

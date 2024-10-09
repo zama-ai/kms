@@ -32,23 +32,24 @@ pub enum ListenerType {
     Coprocessor,
 }
 
-/// In the case of ZkP the gateway is responsible to
+/// In the case a verify proven ct request
+/// the gateway is responsible to
 /// process the response it received from KMS BC
 /// (and Coprocessor if any) into this struct for
 /// the client to use
 #[derive(Default, Debug, Serialize, TypedBuilder)]
-pub struct ZkpResponseToClient {
-    //Whether Native or Coprocessor
+pub struct VerifyProvenCtResponseToClient {
+    // Whether Native or Coprocessor
     #[builder(setter(into))]
     listener_type: ListenerType,
-    //Signature from KMS attesting validity of ZKPoPK
+    // Signature from KMS attesting validity of the proven ciphertext
     #[builder(setter(into))]
     kms_signatures: Vec<Vec<u8>>,
-    //If Coprocesor, signature attesting correct storage
+    // If Coprocesor, signature attesting correct storage
     #[builder(default, setter(into))]
     proof_of_storage: Vec<u8>,
-    //If Coprocessor, handles to the ciphertexts
-    //each inner vec is a single handle (32 byte array)
+    // If Coprocessor, handles to the ciphertexts
+    // each inner vec is a single handle (32 byte array)
     #[builder(default, setter(into))]
     handles: Vec<Vec<u8>>,
 }

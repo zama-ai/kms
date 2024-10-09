@@ -16,11 +16,11 @@ use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenRequest,
     KeyGenResult, ParamChoice, ReencryptionRequest, ReencryptionResponse,
-    ReencryptionResponsePayload, RequestId, SignedPubDataHandle, TypedCiphertext, ZkVerifyRequest,
-    ZkVerifyResponse, ZkVerifyResponsePayload,
+    ReencryptionResponsePayload, RequestId, SignedPubDataHandle, TypedCiphertext,
+    VerifyProvenCtRequest, VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
 };
 use crate::rpc::rpc_types::{
-    compute_external_zkp_verf_signature, protobuf_to_alloy_domain_option, PubDataType,
+    compute_external_verify_proven_ct_signature, protobuf_to_alloy_domain_option, PubDataType,
     WrappedPublicKey, WrappedPublicKeyOwned,
 };
 use crate::storage::{
@@ -737,11 +737,11 @@ impl<
     }
 
     #[tracing::instrument(skip(self, request))]
-    async fn zk_verify(
+    async fn verify_proven_ct(
         &self,
-        request: Request<ZkVerifyRequest>,
+        request: Request<VerifyProvenCtRequest>,
     ) -> Result<Response<Empty>, Status> {
-        let meta_store = Arc::clone(&self.zk_payload_meta_map);
+        let meta_store = Arc::clone(&self.proven_ct_payload_meta_map);
         let sigkey = Arc::clone(&self.base_kms.sig_key);
 
         // Check well-formedness of the request and return an error early if there's an error
@@ -760,7 +760,7 @@ impl<
 
         let public_storage = Arc::clone(&self.public_storage);
 
-        non_blocking_zk_verify(
+        non_blocking_verify_proven_ct(
             meta_store,
             public_storage,
             request_id.clone(),
@@ -771,27 +771,27 @@ impl<
         .map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Internal,
-                format!("non_blocking_zk_verify failed for request_id {request_id} ({e})"),
+                format!("non_blocking_verify_proven_ct failed for request_id {request_id} ({e})"),
             )
         })?;
 
         Ok(Response::new(Empty {}))
     }
 
-    async fn get_zk_verify_result(
+    async fn get_verify_proven_ct_result(
         &self,
         request: Request<RequestId>,
-    ) -> Result<Response<ZkVerifyResponse>, Status> {
-        let meta_store = Arc::clone(&self.zk_payload_meta_map);
-        get_zk_verify_result(self, meta_store, request).await
+    ) -> Result<Response<VerifyProvenCtResponse>, Status> {
+        let meta_store = Arc::clone(&self.proven_ct_payload_meta_map);
+        get_verify_proven_ct_result(self, meta_store, request).await
     }
 }
 
-pub(crate) async fn non_blocking_zk_verify<PubS>(
-    meta_store: Arc<RwLock<MetaStore<ZkVerifyResponsePayload>>>,
+pub(crate) async fn non_blocking_verify_proven_ct<PubS>(
+    meta_store: Arc<RwLock<MetaStore<VerifyProvenCtResponsePayload>>>,
     public_storage: Arc<Mutex<PubS>>,
     request_id: RequestId,
-    request: ZkVerifyRequest,
+    request: VerifyProvenCtRequest,
     client_sk: Arc<PrivateSigKey>,
 ) -> anyhow::Result<()>
 where
@@ -803,12 +803,15 @@ where
     }
     let sigkey = Arc::clone(&client_sk);
     let _handle = tokio::spawn(async move {
-        let res = zk_verify_and_sign(request, public_storage, &sigkey).await;
+        let res = verify_proven_ct_and_sign(request, public_storage, &sigkey).await;
 
         let mut guarded_meta_store = meta_store.write().await;
         match res {
             Ok(inner_res) => {
-                tracing::debug!("storing zk result for request_id {}", request_id);
+                tracing::debug!(
+                    "storing verify proven ct result for request_id {}",
+                    request_id
+                );
                 let _ = guarded_meta_store.update(&request_id, HandlerStatus::Done(inner_res));
             }
             Err(e) => {
@@ -825,17 +828,17 @@ where
     Ok(())
 }
 
-pub(crate) async fn get_zk_verify_result<KMS>(
+pub(crate) async fn get_verify_proven_ct_result<KMS>(
     base_kms: &KMS,
-    meta_store: Arc<RwLock<MetaStore<ZkVerifyResponsePayload>>>,
+    meta_store: Arc<RwLock<MetaStore<VerifyProvenCtResponsePayload>>>,
     request: Request<RequestId>,
-) -> Result<Response<ZkVerifyResponse>, Status>
+) -> Result<Response<VerifyProvenCtResponse>, Status>
 where
     KMS: BaseKms,
 {
     let request_id = request.into_inner();
     validate_request_id(&request_id)?;
-    let payload: ZkVerifyResponsePayload = {
+    let payload: VerifyProvenCtResponsePayload = {
         let guarded_meta_store = meta_store.read().await;
         handle_res_mapping(
             guarded_meta_store.retrieve(&request_id).cloned(),
@@ -854,18 +857,18 @@ where
         format!("Could not sign payload {:?}", payload),
     )?;
 
-    Ok(Response::new(ZkVerifyResponse {
+    Ok(Response::new(VerifyProvenCtResponse {
         payload: Some(payload),
         signature: sig.sig.to_vec(),
     }))
 }
 
 // Verifies the ZK proof and returns the metadata payload, including a KMS signature, if the proof is valid
-async fn zk_verify_and_sign<PubS>(
-    req: ZkVerifyRequest,
+async fn verify_proven_ct_and_sign<PubS>(
+    req: VerifyProvenCtRequest,
     public_storage: Arc<Mutex<PubS>>,
     client_sk: &PrivateSigKey,
-) -> anyhow::Result<ZkVerifyResponsePayload>
+) -> anyhow::Result<VerifyProvenCtResponsePayload>
 where
     PubS: Storage + Sync + Send + 'static,
 {
@@ -928,11 +931,12 @@ where
         // which is what is supported in solidity.
         let ct_digest = keccak256(&req.ct_bytes).to_vec();
 
-        let external_signature = compute_external_zkp_verf_signature(client_sk, &ct_digest, &req)?;
+        let external_signature =
+            compute_external_verify_proven_ct_signature(client_sk, &ct_digest, &req)?;
 
         tracing::info!("finished proof verification for request {}", request_id);
 
-        let payload = ZkVerifyResponsePayload {
+        let payload = VerifyProvenCtResponsePayload {
             request_id: req.request_id,
             contract_address: req.contract_address,
             client_address: req.client_address,
@@ -943,7 +947,7 @@ where
         Ok(payload)
     } else {
         let e = format!(
-            "zk verification failed for ciphertext request: {}",
+            "proven ciphertext verification failed for ciphertext request: {}",
             request_id
         );
         tracing::error!(e);

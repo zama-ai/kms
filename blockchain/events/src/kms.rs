@@ -138,12 +138,12 @@ pub enum OperationValue {
     #[strum(serialize = "reencrypt_response")]
     #[serde(rename = "reencrypt_response")]
     ReencryptResponse(ReencryptResponseValues),
-    #[strum(serialize = "zkp")]
-    #[serde(rename = "zkp")]
-    Zkp(ZkpValues),
-    #[strum(serialize = "zkp_response")]
-    #[serde(rename = "zkp_response")]
-    ZkpResponse(ZkpResponseValues),
+    #[strum(serialize = "verify_proven_ct")]
+    #[serde(rename = "verify_proven_ct")]
+    VerifyProvenCt(VerifyProvenCtValues),
+    #[strum(serialize = "verify_proven_ct_response")]
+    #[serde(rename = "verify_proven_ct_response")]
+    VerifyProvenCtResponse(VerifyProvenCtResponseValues),
     #[strum(serialize = "keyurl")]
     #[serde(rename = "keyurl")]
     KeyUrl(KeyUrlValues),
@@ -203,8 +203,8 @@ impl From<OperationValue> for KmsOperation {
             OperationValue::DecryptResponse(_) => KmsOperation::DecryptResponse,
             OperationValue::Reencrypt(_) => KmsOperation::Reencrypt,
             OperationValue::ReencryptResponse(_) => KmsOperation::ReencryptResponse,
-            OperationValue::Zkp(_) => KmsOperation::Zkp,
-            OperationValue::ZkpResponse(_) => KmsOperation::ZkpResponse,
+            OperationValue::VerifyProvenCt(_) => KmsOperation::VerifyProvenCt,
+            OperationValue::VerifyProvenCtResponse(_) => KmsOperation::VerifyProvenCtResponse,
             OperationValue::KeyUrl(_) => KmsOperation::KeyUrl,
             OperationValue::KeyUrlResponse(_) => KmsOperation::KeyUrlResponse,
             OperationValue::KeyGen(_) => KmsOperation::KeyGen,
@@ -653,14 +653,14 @@ impl From<ReencryptValues> for OperationValue {
 }
 
 #[derive(Serialize, Deserialize, VersionsDispatch)]
-pub enum ZkpValuesVersioned {
-    V0(ZkpValues),
+pub enum VerifyProvenCtValuesVersioned {
+    V0(VerifyProvenCtValues),
 }
 
 #[cw_serde]
 #[derive(Eq, Default, Versionize, TypedBuilder)]
-#[versionize(ZkpValuesVersioned)]
-pub struct ZkpValues {
+#[versionize(VerifyProvenCtValuesVersioned)]
+pub struct VerifyProvenCtValues {
     /// The ID of the CRS used
     crs_id: HexVector,
     /// The ID of the FHE public key used
@@ -687,7 +687,7 @@ pub struct ZkpValues {
     eip712_salt: HexVector,
 }
 
-impl ZkpValues {
+impl VerifyProvenCtValues {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         crs_id: impl Into<HexVector>,
@@ -762,9 +762,9 @@ impl ZkpValues {
     }
 }
 
-impl From<ZkpValues> for OperationValue {
-    fn from(value: ZkpValues) -> Self {
-        OperationValue::Zkp(value)
+impl From<VerifyProvenCtValues> for OperationValue {
+    fn from(value: VerifyProvenCtValues) -> Self {
+        OperationValue::VerifyProvenCt(value)
     }
 }
 
@@ -962,14 +962,14 @@ impl From<ReencryptResponseValues> for OperationValue {
 }
 
 #[derive(Serialize, Deserialize, VersionsDispatch)]
-pub enum ZkpResponseValuesVersioned {
-    V0(ZkpResponseValues),
+pub enum VerifyProvenCtResponseValuesVersioned {
+    V0(VerifyProvenCtResponseValues),
 }
 
 #[cw_serde]
 #[derive(Default, Eq, Versionize, TypedBuilder)]
-#[versionize(ZkpResponseValuesVersioned)]
-pub struct ZkpResponseValues {
+#[versionize(VerifyProvenCtResponseValuesVersioned)]
+pub struct VerifyProvenCtResponseValues {
     signature: HexVector,
     /// This is the response payload,
     /// we keep it in the serialized form because
@@ -977,7 +977,7 @@ pub struct ZkpResponseValues {
     payload: HexVector,
 }
 
-impl ZkpResponseValues {
+impl VerifyProvenCtResponseValues {
     pub fn new(signature: impl Into<HexVector>, payload: impl Into<HexVector>) -> Self {
         Self {
             signature: signature.into(),
@@ -994,9 +994,9 @@ impl ZkpResponseValues {
     }
 }
 
-impl From<ZkpResponseValues> for OperationValue {
-    fn from(value: ZkpResponseValues) -> Self {
-        OperationValue::ZkpResponse(value)
+impl From<VerifyProvenCtResponseValues> for OperationValue {
+    fn from(value: VerifyProvenCtResponseValues) -> Self {
+        OperationValue::VerifyProvenCtResponse(value)
     }
 }
 
@@ -1393,10 +1393,10 @@ pub enum KmsOperation {
     Reencrypt,
     #[strum(serialize = "reencrypt_response", props(response = "true"))]
     ReencryptResponse,
-    #[strum(serialize = "zkp", props(request = "true"))]
-    Zkp,
-    #[strum(serialize = "zkp_response", props(response = "true"))]
-    ZkpResponse,
+    #[strum(serialize = "verify_proven_ct", props(request = "true"))]
+    VerifyProvenCt,
+    #[strum(serialize = "verify_proven_ct_response", props(response = "true"))]
+    VerifyProvenCtResponse,
     #[strum(serialize = "keyurl", props(request = "true"))]
     KeyUrl,
     #[strum(serialize = "keyurl_response", props(response = "true"))]
@@ -1440,7 +1440,7 @@ impl KmsOperation {
             KmsOperation::KeyGen => Ok(KmsOperation::KeyGenResponse),
             KmsOperation::InsecureKeyGen => Ok(KmsOperation::KeyGenResponse),
             KmsOperation::CrsGen => Ok(KmsOperation::CrsGenResponse),
-            KmsOperation::Zkp => Ok(KmsOperation::ZkpResponse),
+            KmsOperation::VerifyProvenCt => Ok(KmsOperation::VerifyProvenCtResponse),
             _ => Err(anyhow::anyhow!(
                 "To response is not supported for self: {:?}",
                 self
@@ -1718,9 +1718,9 @@ mod tests {
         }
     }
 
-    impl Arbitrary for ZkpValues {
-        fn arbitrary(g: &mut Gen) -> ZkpValues {
-            ZkpValues {
+    impl Arbitrary for VerifyProvenCtValues {
+        fn arbitrary(g: &mut Gen) -> VerifyProvenCtValues {
+            VerifyProvenCtValues {
                 crs_id: HexVector::arbitrary(g),
                 key_id: HexVector::arbitrary(g),
                 contract_address: String::arbitrary(g),
@@ -1766,9 +1766,9 @@ mod tests {
         }
     }
 
-    impl Arbitrary for ZkpResponseValues {
-        fn arbitrary(g: &mut Gen) -> ZkpResponseValues {
-            ZkpResponseValues {
+    impl Arbitrary for VerifyProvenCtResponseValues {
+        fn arbitrary(g: &mut Gen) -> VerifyProvenCtResponseValues {
+            VerifyProvenCtResponseValues {
                 signature: HexVector::arbitrary(g),
                 payload: HexVector::arbitrary(g),
             }
@@ -1794,7 +1794,7 @@ mod tests {
                 1 => KmsOperation::DecryptResponse,
                 2 => KmsOperation::Reencrypt,
                 3 => KmsOperation::ReencryptResponse,
-                4 => KmsOperation::Zkp,
+                4 => KmsOperation::VerifyProvenCt,
                 5 => KmsOperation::KeyGen,
                 6 => KmsOperation::KeyGenResponse,
                 7 => KmsOperation::CrsGen,
@@ -1966,8 +1966,8 @@ mod tests {
     }
 
     #[test]
-    fn test_zkp_event_to_json() {
-        let zkp_values = ZkpValues::new(
+    fn test_verify_proven_ct_event_to_json() {
+        let verify_proven_ct_values = VerifyProvenCtValues::new(
             "cid".as_bytes().to_vec(),
             "kid".as_bytes().to_vec(),
             "0x4321".to_string(),
@@ -1980,12 +1980,13 @@ mod tests {
             "contract".to_string(),
             vec![7],
         );
-        let message: KmsMessageWithoutProof = KmsMessage::builder().value(zkp_values).build();
+        let message: KmsMessageWithoutProof =
+            KmsMessage::builder().value(verify_proven_ct_values).build();
 
         let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
-            "zkp": {
-                "zkp": {
+            "verify_proven_ct": {
+                "verify_proven_ct": {
                     "client_address": "0x1234",
                     "contract_address": "0x4321",
                     "acl_address": "0xfedc",
@@ -2004,16 +2005,16 @@ mod tests {
     }
 
     #[test]
-    fn test_zkp_response_event_to_json() {
-        let zkp_response_values = ZkpResponseValues::new(vec![1], vec![2]);
+    fn test_verify_proven_ct_response_event_to_json() {
+        let verify_proven_ct_response_values = VerifyProvenCtResponseValues::new(vec![1], vec![2]);
         let message: KmsMessageWithoutProof = KmsMessage::builder()
             .txn_id(Some(vec![1].into()))
-            .value(zkp_response_values)
+            .value(verify_proven_ct_response_values)
             .build();
         let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
-            "zkp_response": {
-                "zkp_response": {
+            "verify_proven_ct_response": {
+                "verify_proven_ct_response": {
                     "signature": hex::encode([1]),
                     "payload": hex::encode([2]),
                 },

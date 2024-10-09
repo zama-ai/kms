@@ -235,7 +235,7 @@ message ReencryptionResponsePayload {
   uint32 degree = 7;
 }
 
-message ZkVerifyRequest {
+message VerifyProvenCtRequest {
   RequestId crs_handle = 1;
   RequestId key_handle = 2;
   string contract_address = 3;
@@ -247,14 +247,14 @@ message ZkVerifyRequest {
 }
 
 // The response of an input verification request.
-message ZkVerifyResponse {
-  ZkVerifyResponsePayload payload = 1;
+message VerifyProvenCtResponse {
+  VerifyProvenCtResponsePayload payload = 1;
   bytes signature = 2;
 }
 
 // The response payload of an input verification request.
-// This payload is signed and the signature is stored in `ZkVerifyResponse`.
-message ZkVerifyResponsePayload {
+// This payload is signed and the signature is stored in `VerifyProvenCtResponse`.
+message VerifyProvenCtResponsePayload {
   RequestId request_id = 1;
   string contract_address = 2;
   string client_address = 3;

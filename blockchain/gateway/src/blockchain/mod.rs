@@ -71,7 +71,7 @@ pub(crate) trait Blockchain: KmsEventSubscriber {
         acl_address: String,
     ) -> anyhow::Result<Vec<ReencryptResponseValues>>;
 
-    async fn zkp(
+    async fn verify_proven_ct(
         &self,
         client_address: String,
         caller_address: String,
