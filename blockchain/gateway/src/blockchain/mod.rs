@@ -62,7 +62,6 @@ pub(crate) trait Blockchain: KmsEventSubscriber {
         &self,
         signature: Vec<u8>,
         client_address: String,
-        key_id_str: String,
         enc_key: Vec<u8>,
         fhe_type: FheType,
         ciphertext: Vec<u8>,

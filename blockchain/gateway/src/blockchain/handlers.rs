@@ -188,7 +188,6 @@ pub(crate) async fn handle_reencryption_event(
         .reencrypt(
             event.signature.0.clone(),
             event.client_address.clone(),
-            event.key_id.clone(),
             event.enc_key.0.clone(),
             fhe_type,
             ciphertext,

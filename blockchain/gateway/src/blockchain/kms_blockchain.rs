@@ -756,7 +756,6 @@ impl Blockchain for KmsBlockchainImpl {
         &self,
         signature: Vec<u8>,
         client_address: String,
-        key_id_str: String,
         enc_key: Vec<u8>,
         fhe_type: FheType,
         ciphertext: Vec<u8>,
@@ -778,7 +777,7 @@ impl Blockchain for KmsBlockchainImpl {
         let ctxt_handle = self.store_ciphertext(ciphertext.clone()).await?;
         let ctxt_digest = hash_element(&ciphertext);
 
-        let key_id = HexVector::from_hex(&key_id_str)?;
+        let key_id = HexVector::from_hex(&self.get_key_id().await?)?;
         tracing::info!(
             "🔒 Reencrypting ciphertext using key_id={:?}, ctxt_handle={}, ctxt_digest={}",
             key_id.to_hex(),

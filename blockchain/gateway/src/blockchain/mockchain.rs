@@ -62,7 +62,6 @@ impl Blockchain for MockchainImpl {
         &self,
         signature: Vec<u8>,
         client_address: String,
-        key_id_str: String,
         enc_key: Vec<u8>,
         fhe_type: FheType,
         ciphertext: Vec<u8>,
@@ -73,7 +72,6 @@ impl Blockchain for MockchainImpl {
         tracing::debug!("🐛 Mockchain reencrypting ciphertext");
         tracing::debug!("🐛 signature: {:?}", signature);
         tracing::debug!("🐛 client_address: {:?}", client_address);
-        tracing::debug!("🐛 key_id_str: {:?}", key_id_str);
         tracing::debug!("🐛 enc_key: {:?}", enc_key);
         tracing::debug!("🐛 fhe_type: {:?}", fhe_type);
         tracing::debug!("🐛 ciphertext: {:?}", ciphertext);
