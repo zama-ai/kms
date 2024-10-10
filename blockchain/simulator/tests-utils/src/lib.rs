@@ -47,8 +47,9 @@ impl DockerComposeCmd {
             .to_path_buf();
         DockerComposeCmd { root_path, mode }
     }
+
     pub fn up(&self) {
-        self.down(); // Make sure that the services are down
+        self.down(); // Make sure that no container is running
         let build_docker = env::var("DOCKER_BUILD_TEST_SIMULATOR").unwrap_or("".to_string());
 
         let mut build = Command::new("docker");
@@ -70,43 +71,76 @@ impl DockerComposeCmd {
         if build_docker == "1" {
             build.arg("--build");
         }
-
+        build.arg("--wait");
         println!("{:?}", build);
 
-        let output = build
-            .arg("--wait")
-            .output()
-            .expect("Failed to execute docker compose up command");
-        std::io::stdout().write_all(&output.stdout).unwrap();
+        match build.output() {
+            Err(error) => {
+                self.down();
+                panic!("Failed to execute docker compose up command: {}", error);
+            }
+            Ok(output) => {
+                std::io::stdout().write_all(&output.stdout).unwrap();
 
-        assert!(
-            output.status.success(),
-            "Docker compose failed to start.\n{}",
-            format_output(&output)
-        );
+                assert!(
+                    output.status.success(),
+                    "Docker compose failed to start.\n{}",
+                    format_output(&output)
+                );
+            }
+        };
     }
 
     pub fn down(&self) {
-        let mut cmd = Command::new("docker");
-        cmd.current_dir(self.root_path.clone())
-            .arg("compose")
-            .arg("-f")
-            .arg("docker-compose-kms-base.yml")
-            .arg("-f");
-        if self.mode == KMSMode::Centralized {
-            cmd.arg("docker-compose-kms-centralized.yml");
-        } else {
-            cmd.arg("docker-compose-kms-threshold.yml");
+        {
+            let mut docker_logs = Command::new("docker");
+            docker_logs
+                .current_dir(self.root_path.clone())
+                .arg("compose")
+                .arg("-f")
+                .arg("docker-compose-kms-base.yml")
+                .arg("-f");
+            if self.mode == KMSMode::Centralized {
+                docker_logs.arg("docker-compose-kms-centralized.yml");
+            } else {
+                docker_logs.arg("docker-compose-kms-threshold.yml");
+            }
+            docker_logs.arg("logs");
+            let docker_logs_output = docker_logs
+                .output()
+                .expect("Failed to fetch docker compose logs");
+            std::io::stdout()
+                .write_all(&docker_logs_output.stdout)
+                .unwrap();
         }
-        cmd.arg("down").arg("--volumes").arg("--remove-orphans");
 
-        let output = cmd
-            .output()
-            .expect("Failed to execute docker compose down command");
+        {
+            let mut docker_down = Command::new("docker");
+            docker_down
+                .current_dir(self.root_path.clone())
+                .arg("compose")
+                .arg("-f")
+                .arg("docker-compose-kms-base.yml")
+                .arg("-f");
+            if self.mode == KMSMode::Centralized {
+                docker_down.arg("docker-compose-kms-centralized.yml");
+            } else {
+                docker_down.arg("docker-compose-kms-threshold.yml");
+            }
+            docker_down
+                .arg("down")
+                .arg("--volumes")
+                .arg("--remove-orphans");
 
-        std::io::stdout().write_all(&output.stdout).unwrap();
-        // We don't really care if this finalize correctly
-        // We use it at the beginning of the up method just in case to avoid conflicts
+            let docker_down_output = docker_down
+                .output()
+                .expect("Failed to execute docker compose down command");
+
+            std::io::stdout()
+                .write_all(&docker_down_output.stdout)
+                .unwrap();
+            // We don't really care if this finalize correctly
+        }
     }
 }
 
