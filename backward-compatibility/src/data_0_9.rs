@@ -754,6 +754,7 @@ impl EventsV0_9 {
         TestMetadataEvents::ReencryptResponseValues(REENCRYPT_RESPONSE_VALUES_TEST)
     }
 
+    // TODO: rename `zkp` to `verify_proven_ct`
     fn gen_zkp_values(dir: &PathBuf) -> TestMetadataEvents {
         let zkp_values = ZkpValues::builder()
             .crs_id(ZKP_VALUES_TEST.crs_id.to_vec().into())
@@ -780,6 +781,7 @@ impl EventsV0_9 {
         TestMetadataEvents::ZkpValues(ZKP_VALUES_TEST)
     }
 
+    // TODO: rename `zkp_response_values` to `verify_proven_ct_response_values`
     fn gen_zkp_response_values(dir: &PathBuf) -> TestMetadataEvents {
         let zkp_response_values = ZkpResponseValues::builder()
             .signature(ZKP_RESPONSE_VALUES_TEST.signature.to_vec().into())

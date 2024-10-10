@@ -18,7 +18,7 @@ use events::kms::{
     FheParameter, FheType, KeyGenPreprocResponseValues, KeyGenPreprocValues, KeyGenResponseValues,
     KeyGenValues, KeyUrlInfo, KeyUrlResponseValues, KeyUrlValues, KmsCoreConf, KmsCoreParty,
     KmsCoreThresholdConf, OperationValue, ReencryptResponseValues, ReencryptValues, Transaction,
-    VerfKeyUrlInfo, ZkpResponseValues, ZkpValues,
+    VerfKeyUrlInfo, VerifyProvenCtResponseValues, VerifyProvenCtValues,
 };
 use kms_common::load_and_unversionize;
 use std::{borrow::Cow, env, path::Path};
@@ -194,6 +194,7 @@ fn test_reencrypt_response_values(
     }
 }
 
+// TODO: rename `zkp` to `verify_proven_ct`
 fn test_zkp_values(
     dir: &Path,
     test: &ZkpValuesTest,
@@ -201,7 +202,7 @@ fn test_zkp_values(
 ) -> Result<TestSuccess, TestFailure> {
     let original_versionized: Transaction = load_and_unversionize(dir, test, format)?;
 
-    let zkp_values = ZkpValues::builder()
+    let zkp_values = VerifyProvenCtValues::builder()
         .crs_id(test.crs_id.to_vec().into())
         .key_id(test.key_id.to_vec().into())
         .contract_address(test.contract_address.to_string())
@@ -218,7 +219,7 @@ fn test_zkp_values(
     let new_versionized = Transaction::new(
         test.block_height,
         test.transaction_index,
-        vec![OperationValue::Zkp(zkp_values)],
+        vec![OperationValue::VerifyProvenCt(zkp_values)],
     );
 
     if original_versionized != new_versionized {
@@ -234,6 +235,7 @@ fn test_zkp_values(
     }
 }
 
+// TODO: rename `zkp_response_values` to `verify_proven_ct_response_values`
 fn test_zkp_response_values(
     dir: &Path,
     test: &ZkpResponseValuesTest,
@@ -241,7 +243,7 @@ fn test_zkp_response_values(
 ) -> Result<TestSuccess, TestFailure> {
     let original_versionized: Transaction = load_and_unversionize(dir, test, format)?;
 
-    let zkp_response_values = ZkpResponseValues::builder()
+    let zkp_response_values = VerifyProvenCtResponseValues::builder()
         .signature(test.signature.to_vec().into())
         .payload(test.payload.to_vec().into())
         .build();
@@ -249,7 +251,7 @@ fn test_zkp_response_values(
     let new_versionized = Transaction::new(
         test.block_height,
         test.transaction_index,
-        vec![OperationValue::ZkpResponse(zkp_response_values)],
+        vec![OperationValue::VerifyProvenCtResponse(zkp_response_values)],
     );
 
     if original_versionized != new_versionized {
