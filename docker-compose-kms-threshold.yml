@@ -53,6 +53,8 @@ services:
       dockerfile: core/service/operations/docker/dev.dockerfile
     image: kms-core:latest
     depends_on:
+      kms-core-base:
+        condition: service_started
       dev-s3-mock-setup:
         condition: service_completed_successfully
     environment:

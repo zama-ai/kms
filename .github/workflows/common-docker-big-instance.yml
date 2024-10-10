@@ -20,10 +20,18 @@ on:
       image-name:
         type: string
         required: true
-      image-dev:
+      image-enclave-name:
         type: string
         required: false
-        default: 'kms'
+        default: 'kms-service-enclave'
+      image-dev-name:
+        type: string
+        required: false
+        default: 'kms-service-dev'
+      generate-enclave-image:
+        type: boolean
+        default: false
+        required: false
       generate-dev-image:
         type: boolean
         default: false
@@ -35,10 +43,18 @@ on:
       image-dev-description:
         type: string
         required: false
-        default: 'KMS Service Docker Image'
-      docker-file-dev:
+        default: 'KMS Service Development Image'
+      docker-file:
         type: string
         default: 'ci.dockerfile'
+        required: false
+      docker-file-enclave:
+        type: string
+        default: 'enclave.dockerfile'
+        required: false
+      docker-file-dev:
+        type: string
+        default: 'dev.dockerfile'
         required: false
     secrets:
       SLAB_ACTION_TOKEN:
@@ -93,9 +109,13 @@ jobs:
       push_image: ${{ inputs.push_image }}
       runs_on: ${{ needs.start-runner.outputs.label }}
       image-name: ${{ inputs.image-name }}
-      image-dev: ${{ inputs.image-dev }}
+      image-enclave-name: ${{ inputs.image-enclave-name }}
+      image-dev-name: ${{ inputs.image-dev-name }}
+      generate-enclave-image: ${{ inputs.generate-enclave-image }}
       generate-dev-image: ${{ inputs.generate-dev-image }}
       arm-build: ${{ inputs.arm-build }}
+      docker-file: ${{ inputs.docker-file }}
+      docker-file-enclave: ${{ inputs.docker-file-enclave }}
       docker-file-dev: ${{ inputs.docker-file-dev }}
       image-dev-description: ${{ inputs.image-dev-description }}
 

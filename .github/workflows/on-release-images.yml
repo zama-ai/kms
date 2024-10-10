@@ -22,7 +22,7 @@ jobs:
       working-directory: "./blockchain/connector"
       push_image: true
       image-name: 'kms-blockchain-connector'
-      image-dev: 'kms-blockchain-connector-dev'
+      image-dev-name: 'kms-blockchain-connector-dev'
       generate-dev-image: true
       image-dev-description: 'KMS Blockchain Connector Dev Docker Image'
       arm-build: true
@@ -42,7 +42,7 @@ jobs:
       working-directory: "./blockchain/gateway"
       push_image: true
       image-name: 'kms-blockchain-gateway'
-      image-dev: 'kms-blockchain-gateway-dev'
+      image-dev-name: 'kms-blockchain-gateway-dev'
       generate-dev-image: true
       image-dev-description: 'KMS-Blockchain Gateway Dev Docker Image'
       arm-build: true
@@ -64,7 +64,7 @@ jobs:
       working-directory: './blockchain/contracts/'
       push_image: true
       image-name: 'kms-blockchain-asc'
-      image-dev: 'kms-blockchain-asc-dev'
+      image-dev-name: 'kms-blockchain-asc-dev'
       generate-dev-image: true
       docker-file-dev: 'dev.dockerfile'
       image-dev-description: 'KMS ASC Dev Docker Image'
@@ -84,7 +84,7 @@ jobs:
       working-directory: "./core/service"
       push_image: true
       image-name: 'kms-service'
-      image-dev: 'kms-service-dev'
+      image-dev-name: 'kms-service-dev'
       generate-dev-image: true
       docker-file-dev: 'dev.dockerfile'
       image-dev-description: 'KMS Service Dev Docker Image'

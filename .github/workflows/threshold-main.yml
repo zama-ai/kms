@@ -35,7 +35,7 @@ jobs:
       working-directory: "./core/threshold"
       push_image: true
       image-name: 'kms-core-threshold'
-      image-dev: 'kms-core-threshold-dev'
+      image-dev-name: 'kms-core-threshold-dev'
       generate-dev-image: true
       image-dev-description: 'KMS Threshold Core Dev Docker Image'
       arm-build: true

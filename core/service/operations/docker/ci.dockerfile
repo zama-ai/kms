@@ -1,21 +1,21 @@
-# Multistage build to reduce image size
-# First stage builds the binary
+### Multistage build to reduce image size
+## First stage sets up basic Rust build environment
 FROM rust:1.79-slim-bookworm AS base
 
 ARG BLOCKCHAIN_ACTIONS_TOKEN
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt apt update && \
     apt install -y make protobuf-compiler iproute2 iputils-ping iperf net-tools dnsutils ssh git gcc libssl-dev libprotobuf-dev pkg-config
 
-WORKDIR /app/kms
-COPY . .
-
 # Add github.com to the list of known hosts. .ssh folder needs to be created first to avoid permission errors
 RUN mkdir -p -m 0600 /root/.ssh
 RUN ssh-keyscan -H github.com >> ~/.ssh/known_hosts
-
-# Install the binary leaving it in the WORKDIR/bin folder
-RUN mkdir -p /app/kms/bin
 RUN git config --global url."https://${BLOCKCHAIN_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
+
+## Second stage builds the kms-core binaries
+FROM --platform=$BUILDPLATFORM base AS kms-core
+
+WORKDIR /app/kms
+COPY . .
 
 # Cargo build from core/service directory
 WORKDIR /app/kms/core/service
@@ -25,9 +25,17 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
     cargo install --path . --root . --bin kms-server --bin kms-gen-tls-certs --bin kms-init -F insecure && \
     cargo install --path . --root . --bin kms-gen-keys -F testing -F insecure
 
-# Second stage builds the runtime image.
-# This stage will be the final image
-FROM debian:stable-slim AS go-runtime
+## Third stage builds nitro-cli (used to start enclaves only)
+FROM --platform=$BUILDPLATFORM base AS nitro-cli
+
+WORKDIR /build
+RUN git clone https://github.com/aws/aws-nitro-enclaves-cli --branch v1.3.3 --single-branch
+
+WORKDIR aws-nitro-enclaves-cli
+RUN make nitro-cli-native
+
+## Fourth stage builds Go dependencies
+FROM --platform=$BUILDPLATFORM debian:stable-slim AS go-runtime
 WORKDIR /app/kms
 
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt apt update && \
@@ -45,15 +53,28 @@ ENV PATH="$PATH:/usr/local/go/bin:/root/go/bin"
 # Install grpc-health-probe
 RUN go install github.com/grpc-ecosystem/grpc-health-probe@latest
 
-# Third stage: Copy the binaries from the base stage and the go-runtime stage
-FROM debian:stable-slim AS runtime
-RUN apt update && apt install -y libssl3 ca-certificates
-# Set the path to include the binaries and not just the default /usr/local/bin
-ENV PATH="$PATH:/app/kms/core/service/bin"
+## Fifth stage: Copy the binaries from preceding stages
+# This stage will be the final image
+FROM --platform=$BUILDPLATFORM debian:stable-slim
+RUN apt update && apt install -y libssl3 ca-certificates curl jq socat
 WORKDIR /app/kms/core/service
-# Copy the binaries from the base stage
-COPY --from=base /app/kms/core/service/bin/ /app/kms/core/service/bin/
-COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/kms/core/service/bin/
+
 RUN mkdir -p /app/kms/core/service/keys
 
-CMD ["kms-server"]
+COPY ./core/service/config/ /app/kms/core/service/config
+
+# Set the path to include the binaries and not just the default /usr/local/bin
+ENV PATH="/app/kms/core/service/bin:$PATH"
+# Copy the binaries from the kms-core, go-runtime and nitro-cli stages
+COPY --from=kms-core /app/kms/core/service/bin/ /app/kms/core/service/bin/
+COPY --from=nitro-cli /build/aws-nitro-enclaves-cli/build/nitro_cli/release/nitro-cli /app/kms/core/service/bin
+COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/kms/core/service/bin/
+
+# Copy parent-side and enclave-side init scripts
+COPY --from=kms-core /app/kms/core/service/operations/docker/start_enclave_and_proxies.sh /app/kms/core/service/bin/
+COPY --from=kms-core /app/kms/core/service/operations/docker/init_enclave_centralized.sh /app/kms/core/service/bin/
+
+# This is only meaningful when the image is used to build the EIF that runs
+# inside of a Nitro enclave. During deployment on k8s, containers are started
+# with commands defined in Helm charts.
+CMD ["init_enclave_centralized.sh"]

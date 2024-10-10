@@ -47,11 +47,13 @@ Once the trusted setup is done at genesis, the light client can be trusted to pr
 
 ## Implementation
 
-The KMS is iplemented as a gRPC service using the [tonic](https://github.com/hyperium/tonic) crate.
+The KMS is implemented as a gRPC service using the [tonic](https://github.com/hyperium/tonic) crate.
 Communication between full nodes and the KMS service is defined by [protobuf](/proto/kms.proto) messages.
 The rest of the communication is defined by existing standards and uses JSON-RPC.
 For the light client, we currently use CometBFT's [light](https://pkg.go.dev/github.com/cometbft/cometbft/light) package, which provides a service that connects to any CometBFT full node to serve trusted state roots on-demand.
 The light client package handles the logic of sequentially verifying block headers.
+
+Optionally, the gRPC service can be run in an Amazon Nitro enclave and store sensitive key material on S3 encrypted.
 
 ## Next steps
 - [ ] Full Node ->> KMS Reencryption request should contain user signature on `pubkey` and an `ACL` object.

@@ -22,14 +22,15 @@ on:
       image-name:
         type: string
         required: true
-      image-dev:
+      image-enclave-name:
         type: string
         required: false
-        default: 'kms'
+      image-dev-name:
+        type: string
+        required: false
       image-dev-description:
         type: string
         required: false
-        default: 'KMS Service Docker Image'
       push_image:
         type: boolean
         default: true
@@ -38,7 +39,7 @@ on:
         type: string
         required: false
         default: 'ubuntu-latest'
-      with_enclave:
+      generate-enclave-image:
         type: boolean
         default: false
         required: false
@@ -46,9 +47,17 @@ on:
         type: boolean
         default: false
         required: false
-      docker-file-dev:
+      docker-file:
         type: string
         default: 'ci.dockerfile'
+        required: false
+      docker-file-enclave:
+        type: string
+        default: 'enclave.dockerfile'
+        required: false
+      docker-file-dev:
+        type: string
+        default: 'dev.dockerfile'
         required: false
       graviton-build-host:
           type: string
@@ -124,12 +133,61 @@ jobs:
           context: ${{ inputs.docker-context }}
           build-args: |
             BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-          file: ${{ inputs.working-directory }}/operations/docker/ci.dockerfile
+          file: ${{ inputs.working-directory }}/operations/docker/${{ inputs.docker-file }}
           push: ${{ inputs.push_image }}
           pull: false
-          tags: ghcr.io/zama-ai/${{ inputs.image-name }}:${{env.DOCKER_TAG_IMAGE }}
+          tags: ghcr.io/zama-ai/${{ inputs.image-name }}:${{env.DOCKER_TAG_IMAGE }},ghcr.io/zama-ai/${{ inputs.image-name }}:latest
           cache-from: ${{ inputs.cache-from }}
           cache-to: ${{ inputs.cache-to }}
+
+      - name: Get Docker sock path
+        if: ${{ inputs.generate-enclave-image }}
+        run: echo "DOCKER_SOCK_PATH=$(docker context inspect | jq -r '.[0].Endpoints.docker.Host' | sed "s^unix://^^")" >> "$GITHUB_ENV"
+
+      - name: Set EIF output dir
+        if: ${{ inputs.generate-enclave-image }}
+        run: |
+          echo "EIF_OUTPUT_DIR=${{ github.workspace }}/${{ inputs.working-directory }}/eif-output" >> "$GITHUB_ENV"
+
+      - name: Create EIF file
+        if: ${{ inputs.generate-enclave-image }}
+        uses: addnab/docker-run-action@4f65fabd2431ebc8d299f8e5a018d79a769ae185 #v3
+        with:
+          image: amazonlinux@sha256:5fe11d17e56571a26e20df3fa1493bdf9139fb9f2cb6d84fad13104c7b869217 # 2023.5.20240916.0
+          options: -v ${{ env.EIF_OUTPUT_DIR }}:/output -v ${{env.DOCKER_SOCK_PATH}}:/var/run/docker.sock
+          run: |
+            dnf install aws-nitro-enclaves-cli aws-nitro-enclaves-cli-devel -y
+
+            nitro-cli build-enclave --docker-uri ghcr.io/zama-ai/${{ inputs.image-name }}:${{env.DOCKER_TAG_IMAGE}} --name ${{ inputs.image-name }} --output-file /output/enclave.eif
+
+            nitro-cli describe-eif --eif-path /output/enclave.eif > /output/eif-info.txt
+
+      - name: Export EIF measurements
+        if: ${{ inputs.generate-enclave-image }}
+        id: eif
+        run: |
+          EIF_MEASUREMENT_PCR0=$(jq '.Measurements.PCR0' ${{ env.EIF_OUTPUT_DIR }}/eif-info.txt)
+          echo "eif_pcr0=${EIF_MEASUREMENT_PCR0}" >> "$GITHUB_OUTPUT"
+
+      - name: Docker Build and Push Enclave Image
+        if: ${{ inputs.generate-enclave-image }}
+        uses: docker/build-push-action@5cd11c3a4ced054e52742c5fd54dca954e0edd85 # v6.7.0
+        with:
+          context: .
+          build-args: |
+            BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+            IMAGE_NAME=ghcr.io/zama-ai/${{ inputs.image-name }}
+            IMAGE_TAG=${{ env.DOCKER_TAG_IMAGE }}
+          build-contexts: eif=${{ env.EIF_OUTPUT_DIR }}
+          file: ${{ inputs.working-directory}}/operations/docker/${{ inputs.docker-file-enclave }}
+          push: ${{ inputs.push_image }}
+          pull: false
+          tags: ghcr.io/zama-ai/${{ inputs.image-enclave-name }}:${{env.DOCKER_TAG_IMAGE}},ghcr.io/zama-ai/${{ inputs.image-enclave-name }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: |
+            zama.kms.version=${{ env.DOCKER_TAG_IMAGE }}
+            zama.kms.eif_pcr0=${{ steps.eif.outputs.eif_pcr0 }}
 
       - name: Extract Docker metadata
         if: ${{ inputs.generate-dev-image }}
@@ -141,7 +199,7 @@ jobs:
           labels: |
             zama.kms.version=${{ env.DOCKER_TAG_IMAGE }}
             zama.kms.description="${{ inputs.image-dev-description }}"
-          images: ghcr.io/zama-ai/${{ inputs.image-dev }}:${{ env.DOCKER_TAG_IMAGE }}
+          images: ghcr.io/zama-ai/${{ inputs.image-dev-name }}:${{ env.DOCKER_TAG_IMAGE }}
         env:
           DOCKER_METADATA_ANNOTATIONS_LEVELS: index
 
@@ -157,7 +215,7 @@ jobs:
           file: ${{ inputs.working-directory }}/operations/docker/${{ inputs.docker-file-dev }}
           push: ${{ inputs.push_image }}
           pull: false
-          tags: ghcr.io/zama-ai/${{ inputs.image-dev }}:${{env.DOCKER_TAG_IMAGE}},ghcr.io/zama-ai/${{ inputs.image-dev }}:latest
+          tags: ghcr.io/zama-ai/${{ inputs.image-dev-name }}:${{env.DOCKER_TAG_IMAGE}},ghcr.io/zama-ai/${{ inputs.image-dev-name }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
           labels: ${{ steps.meta.outputs.labels }}
@@ -166,5 +224,3 @@ jobs:
       - name: Export image name
         id: export-image
         run: echo "image=ghcr.io/zama-ai/${{inputs.image-name}}:${{env.DOCKER_TAG_IMAGE}}" >> "${GITHUB_OUTPUT}"
-
-

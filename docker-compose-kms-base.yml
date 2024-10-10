@@ -82,6 +82,15 @@ services:
       dev-s3-mock:
         condition: service_healthy
 
+  # kms-core base image from the kms-core dev image is derived
+  kms-core-base:
+    image: ghcr.io/zama-ai/kms-service:latest
+    build:
+      context: .
+      dockerfile: core/service/operations/docker/ci.dockerfile
+    deploy:
+      replicas: 0 # it's a build dependency, not a real service
+
 volumes:
   minio_secrets:
 

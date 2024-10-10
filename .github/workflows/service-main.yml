@@ -36,10 +36,14 @@ jobs:
       working-directory: "./core/service"
       push_image: true
       image-name: 'kms-service'
-      image-dev: 'kms-service-dev'
+      image-enclave-name: 'kms-service-enclave'
+      image-dev-name: 'kms-service-dev'
+      generate-enclave-image: true
       generate-dev-image: true
+      docker-file: 'ci.dockerfile'
+      docker-file-enclave: 'enclave.dockerfile'
       docker-file-dev: 'dev.dockerfile'
-      image-dev-description: 'KMS Service Dev Docker Image'
+      image-dev-description: 'KMS Service Development Image'
       arm-build: true
     needs:
       - build

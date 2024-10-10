@@ -38,7 +38,6 @@ services:
     build:
       context: .
       dockerfile: core/service/operations/docker/dev.dockerfile
-    image: kms-core:latest
     ports:
       - "50051:50051"
     healthcheck:
@@ -50,6 +49,8 @@ services:
     volumes:
       - minio_secrets:/minio_secrets
     depends_on:
+      kms-core-base:
+        condition: service_started
       dev-s3-mock-setup:
         condition: service_completed_successfully
     entrypoint: >
