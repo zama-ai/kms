@@ -50,7 +50,7 @@ aws-config = { version = "1.5.4", optional = true }
 aws-nitro-enclaves-nsm-api = { version = "0.4.0", optional = true }
 aws-sdk-kms = { version = "1.34.0", optional = true }
 aws-sdk-s3 = { version = "1.39.0", optional = true }
-kms-core-common = { path = "../common", version = "0.9.0-rc11" }
+kms-common = { path = "../../common", version = "0.9.0-rc11" }
 backoff = { version = "0.4.0", features = ["tokio"], optional = true }
 bincode.workspace = true
 cbc = { version = "0.1.2", features = ["alloc"] }
@@ -121,8 +121,8 @@ rustls = { version = "0.23", default-features = false, features = ["std"] }
 rstest = "0.21.0"
 # The testing feature is only required for tests
 distributed-decryption = { path = "../threshold/", default-features = false, version = "0.9.0-rc11", features = ["testing"] }
-kms-core-common = { path = "../common", version = "0.9.0-rc11", features = ["testing"] }
-kms-core-backward-compatibility = { path = "../backward-compatibility", version = "0.9.0-rc3" , features = ["load", "tests"] }
+kms-common = { path = "../../common", version = "0.9.0-rc11", features = ["testing"] }
+backward-compatibility = { path = "../../backward-compatibility", version = "0.9.0-rc3" , features = ["load", "tests"] }
 
 [build-dependencies]
 tonic-build.workspace = true

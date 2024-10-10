@@ -1,8 +1,14 @@
-//! Tests breaking change in serialized data by trying to load historical data stored in `core/backward-compatibility/data`.
+//! Tests breaking change in serialized data by trying to load historical data stored in `backward-compatibility/data`.
 //! For each kms-core module, there is a folder with some serialized messages and a [ron](https://github.com/ron-rs/ron)
 //! file. The ron file stores some metadata that are parsed in this test. These metadata tells
 //! what to test for each message.
 
+use backward_compatibility::{
+    data_dir,
+    load::{DataFormat, TestFailure, TestResult, TestSuccess},
+    tests::{run_all_tests, TestedModule},
+    PRSSSetupTest, TestMetadataDD, TestType, Testcase,
+};
 use distributed_decryption::{
     algebra::{
         residue_poly::{ResiduePoly128, ResiduePoly64},
@@ -11,13 +17,7 @@ use distributed_decryption::{
     execution::{runtime::party::Role, small_execution::prss::PRSSSetup},
     tests::helper::testing::{get_dummy_prss_setup, get_networkless_base_session_for_parties},
 };
-use kms_core_backward_compatibility::{
-    data_dir,
-    load::{DataFormat, TestFailure, TestResult, TestSuccess},
-    tests::{run_all_tests, TestedModule},
-    PRSSSetupTest, TestMetadataDD, TestType, Testcase,
-};
-use kms_core_common::load_and_unversionize;
+use kms_common::load_and_unversionize;
 use serde::Serialize;
 use std::{env, path::Path};
 
@@ -98,6 +98,6 @@ fn test_backward_compatibility_distributed_decryption() {
     let results = run_all_tests::<DistributedDecryption>(&base_data_dir, pkg_version);
 
     if results.iter().any(|r| r.is_failure()) {
-        panic!("Backward compatibility test for the distributed decryption module failed")
+        panic!("Backward compatibility tests for the distributed decryption module failed")
     }
 }

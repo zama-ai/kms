@@ -1,7 +1,7 @@
 use crate::consts::SIG_SIZE;
 use crypto_box::SecretKey;
 use k256::ecdsa::{SigningKey, VerifyingKey};
-use kms_core_common::impl_generic_versionize;
+use kms_common::impl_generic_versionize;
 use nom::AsBytes;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};

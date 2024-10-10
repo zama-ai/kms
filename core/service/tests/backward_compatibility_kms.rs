@@ -1,22 +1,22 @@
-//! Tests breaking change in serialized data by trying to load historical data stored in `core/backward-compatibility/data`.
+//! Tests breaking change in serialized data by trying to load historical data stored in `backward-compatibility/data`.
 //! For each kms-core module, there is a folder with some serialized messages and a [ron](https://github.com/ron-rs/ron)
 //! file. The ron file stores some metadata that are parsed in this test. These metadata tells
 //! what to test for each message.
 
 use aes_prng::AesRng;
 
-use distributed_decryption::execution::{
-    endpoints::keygen::{FhePubKeySet, PrivateKeySet},
-    tfhe_internals::switch_and_squash::SwitchAndSquashKey,
-};
-use kms_core_backward_compatibility::{
+use backward_compatibility::{
     data_dir,
-    load::{load_versioned_auxiliary, DataFormat, TestFailure, TestResult, TestSuccess},
+    load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{run_all_tests, TestedModule},
     KmsFheKeyHandlesTest, PrivateSigKeyTest, PublicSigKeyTest, SignedPubDataHandleInternalTest,
     TestMetadataKMS, TestType, Testcase, ThresholdFheKeysTest,
 };
-use kms_core_common::load_and_unversionize;
+use distributed_decryption::execution::{
+    endpoints::keygen::{FhePubKeySet, PrivateKeySet},
+    tfhe_internals::switch_and_squash::SwitchAndSquashKey,
+};
+use kms_common::{load_and_unversionize, load_and_unversionize_auxiliary};
 use kms_lib::{
     cryptography::{
         central_kms::{gen_sig_keys, KmsFheKeyHandles},
@@ -28,7 +28,7 @@ use kms_lib::{
 };
 use rand::SeedableRng;
 use std::{collections::HashMap, env, path::Path};
-use tfhe::Unversionize;
+use tfhe::integer::compression_keys::DecompressionKey;
 
 fn test_private_sig_key(
     dir: &Path,
@@ -114,29 +114,17 @@ fn test_kms_fhe_key_handles(
     let (original_integer_key, _, _, _) = original_versionized.client_key.clone().into_raw_parts();
     let original_key_params = original_integer_key.parameters();
 
-    let client_key = tfhe::ClientKey::unversionize(
-        load_versioned_auxiliary(dir, &test.client_key_filename)
-            .map_err(|e| test.failure(e, format))?,
-    )
-    .unwrap();
+    let client_key: tfhe::ClientKey =
+        load_and_unversionize_auxiliary(dir, test, &test.client_key_filename, format)?;
 
-    let private_sig_key = PrivateSigKey::unversionize(
-        load_versioned_auxiliary(dir, &test.sig_key_filename)
-            .map_err(|e| test.failure(e, format))?,
-    )
-    .unwrap();
+    let private_sig_key: PrivateSigKey =
+        load_and_unversionize_auxiliary(dir, test, &test.sig_key_filename, format)?;
 
-    let server_key = tfhe::ServerKey::unversionize(
-        load_versioned_auxiliary(dir, &test.server_key_filename)
-            .map_err(|e| test.failure(e, format))?,
-    )
-    .unwrap();
+    let server_key: tfhe::ServerKey =
+        load_and_unversionize_auxiliary(dir, test, &test.server_key_filename, format)?;
 
-    let public_key = FhePublicKey::unversionize(
-        load_versioned_auxiliary(dir, &test.public_key_filename)
-            .map_err(|e| test.failure(e, format))?,
-    )
-    .unwrap();
+    let public_key: FhePublicKey =
+        load_and_unversionize_auxiliary(dir, test, &test.public_key_filename, format)?;
 
     let fhe_pub_key_set = FhePubKeySet {
         public_key,
@@ -144,8 +132,18 @@ fn test_kms_fhe_key_handles(
         sns_key: None,
     };
 
-    let new_versionized =
-        KmsFheKeyHandles::new(&private_sig_key, client_key, &fhe_pub_key_set, None, None).unwrap();
+    let decompression_key: Option<DecompressionKey> =
+        load_and_unversionize_auxiliary(dir, test, &test.decompression_key_filename, format)?;
+
+    // TODO: include eip712_domain parameter when generating the versioned data
+    let new_versionized = KmsFheKeyHandles::new(
+        &private_sig_key,
+        client_key,
+        &fhe_pub_key_set,
+        decompression_key,
+        None,
+    )
+    .unwrap();
 
     // Retrieve the key parameters from the new KMS handle
     let (new_integer_key, _, _, _) = new_versionized.client_key.clone().into_raw_parts();
@@ -180,31 +178,23 @@ fn test_threshold_fhe_keys(
     test: &ThresholdFheKeysTest,
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
-    let private_key_set = PrivateKeySet::unversionize(
-        load_versioned_auxiliary(dir, &test.private_key_set_filename)
-            .map_err(|e| test.failure(e, format))?,
-    )
-    .unwrap();
+    let private_key_set: PrivateKeySet =
+        load_and_unversionize_auxiliary(dir, test, &test.private_key_set_filename, format)?;
 
-    let sns_key = SwitchAndSquashKey::unversionize(
-        load_versioned_auxiliary(dir, &test.sns_key_filename)
-            .map_err(|e| test.failure(e, format))?,
-    )
-    .unwrap();
+    let sns_key: SwitchAndSquashKey =
+        load_and_unversionize_auxiliary(dir, test, &test.sns_key_filename, format)?;
 
-    let info = HashMap::<PubDataType, SignedPubDataHandleInternal>::unversionize(
-        load_versioned_auxiliary(dir, &test.info_filename).map_err(|e| test.failure(e, format))?,
-    )
-    .unwrap();
+    let info: HashMap<PubDataType, SignedPubDataHandleInternal> =
+        load_and_unversionize_auxiliary(dir, test, &test.info_filename, format)?;
+
+    let decompression_key: Option<DecompressionKey> =
+        load_and_unversionize_auxiliary(dir, test, &test.decompression_key_filename, format)?;
 
     let original_versionized: ThresholdFheKeys = load_and_unversionize(dir, test, format)?;
     let new_versionized = ThresholdFheKeys {
         private_keys: private_key_set,
         sns_key,
-        //NOTE: Set decompression_key to None just so that it compiles
-        //this woud need to be changed when releasing 0.9 and actually
-        //running those backward compatibility tests
-        decompression_key: None,
+        decompression_key,
         pk_meta_data: info,
     };
 
@@ -278,6 +268,6 @@ fn test_backward_compatibility_kms() {
     let results = run_all_tests::<KMS>(&base_data_dir, pkg_version);
 
     if results.iter().any(|r| r.is_failure()) {
-        panic!("Backward compatibility test for the KMS module failed")
+        panic!("Backward compatibility tests for the KMS module failed")
     }
 }

@@ -16,8 +16,8 @@ start-compose-threshold-ghcr:
 stop-compose:
 	docker compose down -v --remove-orphans
 
-test_backward_compatibility: pull-lfs-files
-	cargo test --test backward_compatibility_*
+test-backward-compatibility: pull-lfs-files
+	cargo test --test backward_compatibility_* -- --include-ignored
 
 # Check if Git LFS is installed and enabled
 check-git-lfs:

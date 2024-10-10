@@ -194,6 +194,27 @@ impl OperationValue {
                 | Self::InsecureKeyGen(_)
         )
     }
+
+    /// Returns the values' name as a string
+    pub fn values_name(&self) -> &'static str {
+        match self {
+            Self::Decrypt(_) => "DecryptValues",
+            Self::DecryptResponse(_) => "DecryptResponseValues",
+            Self::Reencrypt(_) => "ReencryptValues",
+            Self::ReencryptResponse(_) => "ReencryptResponseValues",
+            Self::Zkp(_) => "ZkpValues",
+            Self::ZkpResponse(_) => "ZkpResponseValues",
+            Self::KeyUrl(_) => "KeyUrlValues",
+            Self::KeyUrlResponse(_) => "KeyUrlResponseValues",
+            Self::KeyGen(_) => "KeyGenValues",
+            Self::KeyGenResponse(_) => "KeyGenResponseValues",
+            Self::InsecureKeyGen(_) => "Eip712DomainValues",
+            Self::KeyGenPreproc(_) => "KeyGenPreprocValues",
+            Self::KeyGenPreprocResponse(_) => "KeyGenPreprocResponseValues",
+            Self::CrsGen(_) => "Eip712DomainValues",
+            Self::CrsGenResponse(_) => "CrsGenResponseValues",
+        }
+    }
 }
 
 impl From<OperationValue> for KmsOperation {

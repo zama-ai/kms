@@ -28,7 +28,9 @@ members = [
 # Note that it's not possible to only generate the lock file using specific features as the resolver
 # builds the graph as if all features are enabled:
 # https://doc.rust-lang.org/cargo/reference/resolver.html#features
-exclude = ["core/backward-compatibility"]
+exclude = [
+    "backward-compatibility"
+]
 
 [workspace.package]
 authors = ["Zama"]

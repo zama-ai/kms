@@ -1810,6 +1810,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "backward-compatibility"
+version = "0.9.0-rc3"
+dependencies = [
+ "aes-prng",
+ "anyhow",
+ "bincode",
+ "rand",
+ "ron",
+ "semver 1.0.23",
+ "serde",
+ "strum",
+ "tokio",
+]
+
+[[package]]
 name = "base16ct"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3373,6 +3388,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "backoff",
+ "backward-compatibility",
  "bincode",
  "cfg-if",
  "clap 4.5.19",
@@ -3391,8 +3407,7 @@ dependencies = [
  "getrandom",
  "itertools 0.13.0",
  "k256",
- "kms-core-backward-compatibility",
- "kms-core-common",
+ "kms-common",
  "lazy_static",
  "minijinja",
  "mockall",
@@ -4107,10 +4122,12 @@ version = "0.9.0-rc11"
 dependencies = [
  "anyhow",
  "async-trait",
+ "backward-compatibility",
  "cosmos-proto",
  "cosmwasm-schema",
  "cosmwasm-std",
  "hex",
+ "kms-common",
  "koit-toml",
  "mockall",
  "opentelemetry",
@@ -5327,6 +5344,7 @@ dependencies = [
  "aws-sdk-kms",
  "aws-sdk-s3",
  "backoff",
+ "backward-compatibility",
  "bincode",
  "cbc",
  "cfg-if",
@@ -5341,8 +5359,7 @@ dependencies = [
  "hex",
  "itertools 0.13.0",
  "k256",
- "kms-core-backward-compatibility",
- "kms-core-common",
+ "kms-common",
  "lazy_static",
  "nom",
  "prost 0.12.6",
@@ -5449,26 +5466,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "kms-core-backward-compatibility"
-version = "0.9.0-rc3"
-dependencies = [
- "aes-prng",
- "anyhow",
- "bincode",
- "rand",
- "ron",
- "semver 1.0.23",
- "serde",
- "strum",
- "tokio",
-]
-
-[[package]]
-name = "kms-core-common"
+name = "kms-common"
 version = "0.9.0-rc11"
 dependencies = [
  "anyhow",
- "kms-core-backward-compatibility",
+ "backward-compatibility",
  "serde",
  "tfhe-versionable",
 ]

@@ -35,6 +35,8 @@ mockall = "0.12.1"
 quickcheck = "1.0.3"
 quickcheck_macros = "1"
 test-context = "0.3.0"
+backward-compatibility = { path = "../../backward-compatibility", version = "0.9.0-rc3" , features = ["load", "tests"] }
+kms-common = { path = "../../common", version = "0.9.0-rc11", features = ["testing"] }
 
 [features]
 default = []
