@@ -131,8 +131,7 @@ jobs:
         uses: docker/build-push-action@5cd11c3a4ced054e52742c5fd54dca954e0edd85 # v6.7.0
         with:
           context: ${{ inputs.docker-context }}
-          build-args: |
-            BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          secrets: BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           file: ${{ inputs.working-directory }}/operations/docker/${{ inputs.docker-file }}
           push: ${{ inputs.push_image }}
           pull: false
@@ -175,8 +174,8 @@ jobs:
         uses: docker/build-push-action@5cd11c3a4ced054e52742c5fd54dca954e0edd85 # v6.7.0
         with:
           context: .
+          secrets: BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           build-args: |
-            BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
             IMAGE_NAME=ghcr.io/zama-ai/${{ inputs.image-name }}
             IMAGE_TAG=${{ env.DOCKER_TAG_IMAGE }}
           build-contexts: eif=${{ env.EIF_OUTPUT_DIR }}
@@ -211,8 +210,7 @@ jobs:
         with:
           context: ${{ inputs.docker-context }}
           platforms: linux/amd64,linux/arm64
-          build-args: |
-            BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          secrets: BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           file: ${{ inputs.working-directory }}/operations/docker/${{ inputs.docker-file-dev }}
           push: ${{ inputs.push_image }}
           pull: false

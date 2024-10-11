@@ -1,15 +1,16 @@
+# syntax=docker/dockerfile:1
+
 ### Multistage build to reduce image size
 ## First stage sets up basic Rust build environment
 FROM rust:1.79-slim-bookworm AS base
 
-ARG BLOCKCHAIN_ACTIONS_TOKEN
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt apt update && \
     apt install -y make protobuf-compiler iproute2 iputils-ping iperf net-tools dnsutils ssh git gcc libssl-dev libprotobuf-dev pkg-config
 
 # Add github.com to the list of known hosts. .ssh folder needs to be created first to avoid permission errors
 RUN mkdir -p -m 0600 /root/.ssh
 RUN ssh-keyscan -H github.com >> ~/.ssh/known_hosts
-RUN git config --global url."https://${BLOCKCHAIN_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
+RUN --mount=type=secret,id=BLOCKCHAIN_ACTIONS_TOKEN,env=BLOCKCHAIN_ACTIONS_TOKEN git config --global url."https://$BLOCKCHAIN_ACTIONS_TOKEN@github.com".insteadOf ssh://git@github.com
 
 ## Second stage builds the kms-core binaries
 FROM --platform=$BUILDPLATFORM base AS kms-core

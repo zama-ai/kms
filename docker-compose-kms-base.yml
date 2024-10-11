@@ -94,3 +94,6 @@ services:
 volumes:
   minio_secrets:
 
+secrets:
+  BLOCKCHAIN_ACTIONS_TOKEN:
+    environment: "BLOCKCHAIN_ACTIONS_TOKEN"

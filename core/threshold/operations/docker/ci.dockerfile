@@ -1,8 +1,8 @@
+# syntax=docker/dockerfile:1
+
 # Multistage build to reduce image size
 # First stage builds the binary
 FROM rust:1.79-slim-bookworm AS base
-
-ARG BLOCKCHAIN_ACTIONS_TOKEN
 
 RUN apt update && \
     apt install -y make protobuf-compiler iproute2 iputils-ping iperf net-tools dnsutils ssh git gcc libssl-dev libprotobuf-dev pkg-config
@@ -16,7 +16,7 @@ RUN ssh-keyscan -H github.com >> ~/.ssh/known_hosts
 
 # Install the binary leaving it in the WORKDIR/bin folder
 RUN mkdir -p /app/ddec/bin
-RUN git config --global url."https://${BLOCKCHAIN_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
+RUN --mount=type=secret,id=BLOCKCHAIN_ACTIONS_TOKEN,env=BLOCKCHAIN_ACTIONS_TOKEN git config --global url."https://$BLOCKCHAIN_ACTIONS_TOKEN@github.com".insteadOf ssh://git@github.com
 RUN --mount=type=cache,target=/usr/local/cargo/registry cargo install --path core/threshold --root core/threshold --bins --features=choreographer
 
 # Second stage builds the runtime image.
