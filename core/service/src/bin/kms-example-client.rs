@@ -147,7 +147,7 @@ async fn central_requests(address: String) -> anyhow::Result<()> {
                 plaintext[0].fhe_type()
             )
         }
-        _ => tracing::warn!("Decryption response is NOT valid"),
+        Err(e) => tracing::error!("Decryption response is NOT valid! Error: {}", e),
     };
 
     // REENCRYPTION REQUEST
@@ -193,7 +193,7 @@ async fn central_requests(address: String) -> anyhow::Result<()> {
             );
             assert_eq!(plaintext.as_u32(), msg);
         }
-        _ => tracing::warn!("Reencryption response is NOT valid"),
+        Err(e) => tracing::error!("Reencryption response is NOT valid! Error: {}", e),
     };
 
     Ok(())
@@ -294,7 +294,7 @@ async fn do_threshold_decryption(
             );
             assert_eq!(plaintexts[0].as_u8(), msg);
         }
-        _ => tracing::warn!("Decryption response is NOT valid"),
+        Err(e) => tracing::warn!("Decryption response is NOT valid! Error: {}", e),
     };
 
     Ok(())
@@ -312,6 +312,8 @@ async fn do_threshold_reencryption(
             .await;
 
     let random_req_id = RequestId::from(rng.gen::<u128>());
+
+    internal_client.convert_to_addresses();
 
     // REENCRYPTION REQUEST
     let domain = dummy_domain();
@@ -394,7 +396,7 @@ async fn do_threshold_reencryption(
             );
             assert_eq!(plaintext.as_u8(), msg);
         }
-        _ => tracing::warn!("Reencryption response is NOT valid"),
+        Err(e) => tracing::error!("Reencryption response is NOT valid! Error: {}", e),
     };
 
     Ok(())
@@ -403,7 +405,7 @@ async fn do_threshold_reencryption(
 async fn threshold_requests(addresses: Vec<String>, init: bool) -> anyhow::Result<()> {
     let mut rng = AesRng::from_entropy();
 
-    tracing::info!("Threshold  Client - connecting to: {:?}", addresses);
+    tracing::info!("Threshold Client - connecting to: {:?}", addresses);
     let num_parties = addresses.len();
     let mut pub_storage = Vec::with_capacity(num_parties);
     let client_storage = FileStorage::new_centralized(None, StorageType::CLIENT).unwrap();
