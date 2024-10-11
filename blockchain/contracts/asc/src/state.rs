@@ -17,6 +17,7 @@ pub struct KmsContractStorage {
     transactions: VersionedMap<Vec<u8>, Transaction>,
     debug_proof: VersionedItem<bool>,
     verify_proof_contract_address: VersionedItem<String>,
+    allow_list: VersionedItem<Vec<String>>,
 }
 
 impl Default for KmsContractStorage {
@@ -26,6 +27,7 @@ impl Default for KmsContractStorage {
             transactions: VersionedMap::new("transactions"),
             debug_proof: VersionedItem::new("debug_proof"),
             verify_proof_contract_address: VersionedItem::new("verify_proof_contract_address"),
+            allow_list: VersionedItem::new("allow_list"),
         }
     }
 }
@@ -188,6 +190,29 @@ impl KmsContractStorage {
     // Save the debug proof flag in the storage
     pub fn set_debug_proof(&self, storage: &mut dyn Storage, value: bool) -> StdResult<()> {
         self.debug_proof.save(storage, &value)
+    }
+
+    /// Set allow list.
+    ///
+    /// Some exec operations like key-gen, crs-gen, etc ... take a lot of resources and shouldn't
+    /// be accessible to anyone. To allow some finer-grain control on who can launch said
+    /// operations the contract holds a list of addresses of who can call these operations.
+    /// In the future we might have to add an endpoint to modify the allow-list.
+    pub fn set_allow_list(&self, storage: &mut dyn Storage, value: Vec<String>) -> StdResult<()> {
+        self.allow_list.save(storage, &value)
+    }
+
+    pub fn allow_list_contains(
+        &self,
+        storage: &dyn Storage,
+        value: &String,
+    ) -> Result<bool, cosmwasm_std::StdError> {
+        let allow_list: Vec<String> = self.allow_list.load(storage)?;
+        // Check if wild card is set
+        if (allow_list.len() == 1) && (allow_list[0] == "*") {
+            return Ok(true);
+        }
+        Ok(allow_list.contains(value))
     }
 
     // Load the debug proof flag from the storage

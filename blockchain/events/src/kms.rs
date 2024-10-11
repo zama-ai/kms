@@ -15,6 +15,18 @@ use tfhe_versionable::{Versionize, VersionsDispatch};
 use typed_builder::TypedBuilder;
 
 #[derive(VersionsDispatch)]
+pub enum AllowListConfVersioned {
+    V0(AllowListConf),
+}
+
+#[cw_serde]
+#[derive(Versionize)]
+#[versionize(AllowListConfVersioned)]
+pub struct AllowListConf {
+    pub allow_list: Vec<String>,
+}
+
+#[derive(VersionsDispatch)]
 pub enum KmsCoreConfVersioned {
     V0(KmsCoreConf),
 }
@@ -23,7 +35,7 @@ pub enum KmsCoreConfVersioned {
 #[derive(Versionize)]
 #[versionize(KmsCoreConfVersioned)]
 pub enum KmsCoreConf {
-    Centralized(FheParameter),
+    Centralized(KmsCoreCentralizedConf),
     Threshold(KmsCoreThresholdConf),
 }
 
@@ -45,6 +57,20 @@ pub enum FheParameter {
     Test,
 }
 
+// Centralized
+#[derive(VersionsDispatch)]
+pub enum KmsCoreCentralizedConfVersioned {
+    V0(KmsCoreCentralizedConf),
+}
+
+#[cw_serde]
+#[derive(Versionize)]
+#[versionize(KmsCoreCentralizedConfVersioned)]
+pub struct KmsCoreCentralizedConf {
+    pub param_choice: FheParameter,
+}
+
+// Treshold
 #[derive(VersionsDispatch)]
 pub enum KmsCoreThresholdConfVersioned {
     V0(KmsCoreThresholdConf),
@@ -64,7 +90,7 @@ pub struct KmsCoreThresholdConf {
 impl KmsCoreConf {
     pub fn param_choice(&self) -> FheParameter {
         match self {
-            KmsCoreConf::Centralized(param_choice) => *param_choice,
+            KmsCoreConf::Centralized(inner) => inner.param_choice,
             KmsCoreConf::Threshold(inner) => inner.param_choice,
         }
     }
@@ -2179,11 +2205,15 @@ mod tests {
         for choice in FheParameter::iter() {
             match choice {
                 FheParameter::Default => {
-                    let conf = KmsCoreConf::Centralized(choice);
+                    let conf = KmsCoreConf::Centralized(KmsCoreCentralizedConf {
+                        param_choice: choice,
+                    });
                     assert_eq!(conf.param_choice_string(), "default");
                 }
                 FheParameter::Test => {
-                    let conf = KmsCoreConf::Centralized(choice);
+                    let conf = KmsCoreConf::Centralized(KmsCoreCentralizedConf {
+                        param_choice: choice,
+                    });
                     assert_eq!(conf.param_choice_string(), "test");
                 }
             }

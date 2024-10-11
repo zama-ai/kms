@@ -11,14 +11,15 @@ use backward_compatibility::{
     KeyGenPreprocResponseValuesTest, KeyGenPreprocValuesTest, KeyGenResponseValuesTest,
     KeyGenValuesTest, KeyUrlResponseValuesTest, KeyUrlValuesTest, KmsCoreConfCentralizedTest,
     KmsCoreConfThresholdTest, ReencryptResponseValuesTest, ReencryptValuesTest, TestMetadataEvents,
-    TestType, Testcase, ZkpResponseValuesTest, ZkpValuesTest,
+    TestType, Testcase, VerifyProvenCtResponseValuesTest, VerifyProvenCtValuesTest,
 };
 use events::kms::{
     CrsGenResponseValues, DecryptResponseValues, DecryptValues, Eip712DomainValues, FheKeyUrlInfo,
     FheParameter, FheType, KeyGenPreprocResponseValues, KeyGenPreprocValues, KeyGenResponseValues,
-    KeyGenValues, KeyUrlInfo, KeyUrlResponseValues, KeyUrlValues, KmsCoreConf, KmsCoreParty,
-    KmsCoreThresholdConf, OperationValue, ReencryptResponseValues, ReencryptValues, Transaction,
-    VerfKeyUrlInfo, VerifyProvenCtResponseValues, VerifyProvenCtValues,
+    KeyGenValues, KeyUrlInfo, KeyUrlResponseValues, KeyUrlValues, KmsCoreCentralizedConf,
+    KmsCoreConf, KmsCoreParty, KmsCoreThresholdConf, OperationValue, ReencryptResponseValues,
+    ReencryptValues, Transaction, VerfKeyUrlInfo, VerifyProvenCtResponseValues,
+    VerifyProvenCtValues,
 };
 use kms_common::load_and_unversionize;
 use std::{borrow::Cow, env, path::Path};
@@ -194,15 +195,14 @@ fn test_reencrypt_response_values(
     }
 }
 
-// TODO: rename `zkp` to `verify_proven_ct`
-fn test_zkp_values(
+fn test_verify_proven_ct_values(
     dir: &Path,
-    test: &ZkpValuesTest,
+    test: &VerifyProvenCtValuesTest,
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
     let original_versionized: Transaction = load_and_unversionize(dir, test, format)?;
 
-    let zkp_values = VerifyProvenCtValues::builder()
+    let verify_proven_ct_values = VerifyProvenCtValues::builder()
         .crs_id(test.crs_id.to_vec().into())
         .key_id(test.key_id.to_vec().into())
         .contract_address(test.contract_address.to_string())
@@ -219,13 +219,13 @@ fn test_zkp_values(
     let new_versionized = Transaction::new(
         test.block_height,
         test.transaction_index,
-        vec![OperationValue::VerifyProvenCt(zkp_values)],
+        vec![OperationValue::VerifyProvenCt(verify_proven_ct_values)],
     );
 
     if original_versionized != new_versionized {
         Err(test.failure(
             format!(
-                "Invalid ZkpValues:\n Expected :\n{:?}\nGot:\n{:?}",
+                "Invalid VerifyProvenCtValues:\n Expected :\n{:?}\nGot:\n{:?}",
                 original_versionized, new_versionized
             ),
             format,
@@ -235,15 +235,14 @@ fn test_zkp_values(
     }
 }
 
-// TODO: rename `zkp_response_values` to `verify_proven_ct_response_values`
-fn test_zkp_response_values(
+fn test_verify_proven_ct_response_values(
     dir: &Path,
-    test: &ZkpResponseValuesTest,
+    test: &VerifyProvenCtResponseValuesTest,
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
     let original_versionized: Transaction = load_and_unversionize(dir, test, format)?;
 
-    let zkp_response_values = VerifyProvenCtResponseValues::builder()
+    let verify_proven_ct_response_values = VerifyProvenCtResponseValues::builder()
         .signature(test.signature.to_vec().into())
         .payload(test.payload.to_vec().into())
         .build();
@@ -251,13 +250,15 @@ fn test_zkp_response_values(
     let new_versionized = Transaction::new(
         test.block_height,
         test.transaction_index,
-        vec![OperationValue::VerifyProvenCtResponse(zkp_response_values)],
+        vec![OperationValue::VerifyProvenCtResponse(
+            verify_proven_ct_response_values,
+        )],
     );
 
     if original_versionized != new_versionized {
         Err(test.failure(
             format!(
-                "Invalid ZkpResponseValues:\n Expected :\n{:?}\nGot:\n{:?}",
+                "Invalid VerifyProvenCtResponseValues:\n Expected :\n{:?}\nGot:\n{:?}",
                 original_versionized, new_versionized
             ),
             format,
@@ -585,7 +586,9 @@ fn test_kms_core_conf_centralized(
         _ => panic!("Invalid FHE parameter"),
     };
 
-    let new_versionized: KmsCoreConf = KmsCoreConf::Centralized(fhe_parameter);
+    let new_versionized: KmsCoreConf = KmsCoreConf::Centralized(KmsCoreCentralizedConf {
+        param_choice: fhe_parameter,
+    });
 
     if original_versionized != new_versionized {
         Err(test.failure(
@@ -667,11 +670,11 @@ impl TestedModule for Events {
             Self::Metadata::ReencryptResponseValues(test) => {
                 test_reencrypt_response_values(test_dir.as_ref(), test, format).into()
             }
-            Self::Metadata::ZkpValues(test) => {
-                test_zkp_values(test_dir.as_ref(), test, format).into()
+            Self::Metadata::VerifyProvenCtValues(test) => {
+                test_verify_proven_ct_values(test_dir.as_ref(), test, format).into()
             }
-            Self::Metadata::ZkpResponseValues(test) => {
-                test_zkp_response_values(test_dir.as_ref(), test, format).into()
+            Self::Metadata::VerifyProvenCtResponseValues(test) => {
+                test_verify_proven_ct_response_values(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::KeyUrlValues(test) => {
                 test_key_url_values(test_dir.as_ref(), test, format).into()

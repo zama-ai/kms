@@ -2,8 +2,8 @@ use conf_trace::conf::Tracing;
 use conf_trace::telemetry::init_tracing;
 use events::kms::{
     DecryptResponseValues, DecryptValues, Eip712DomainValues, FheParameter, FheType,
-    KeyGenPreprocValues, KmsCoreConf, KmsCoreParty, KmsCoreThresholdConf, KmsEvent, KmsMessage,
-    Transaction, TransactionId, VerifyProvenCtValues,
+    KeyGenPreprocValues, KmsCoreCentralizedConf, KmsCoreConf, KmsCoreParty, KmsCoreThresholdConf,
+    KmsEvent, KmsMessage, Transaction, TransactionId, VerifyProvenCtValues,
 };
 use events::kms::{KmsOperation, OperationValue};
 use events::{
@@ -256,7 +256,13 @@ async fn get_contract_address(client: &QueryClient) -> anyhow::Result<String> {
     tracing::info!("Getting contract address....");
     let result = client.list_contracts().await.unwrap();
     if !result.contracts.is_empty() {
-        Ok(result.contracts[0].clone())
+        tracing::info!("Found {} contracts", result.contracts.len());
+        let contract_address = result.contracts[0].clone();
+        let contract_metadata = client
+            .get_contract_metadata(contract_address.clone())
+            .await?;
+        tracing::info!("Contract metadata {:?}", contract_metadata);
+        Ok(contract_address)
     } else {
         Err(anyhow::anyhow!("Contract not found"))
     }
@@ -491,7 +497,9 @@ async fn generic_centralized_sunshine_test(
         .txn_id(txn_id.clone())
         .build();
 
-    let conf = KmsCoreConf::Centralized(FheParameter::Test);
+    let conf = KmsCoreConf::Centralized(KmsCoreCentralizedConf {
+        param_choice: FheParameter::Test,
+    });
 
     let result = client
         .create_kms_operation(event, op.clone())

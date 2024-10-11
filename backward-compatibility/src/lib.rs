@@ -344,7 +344,7 @@ impl TestType for ReencryptResponseValuesTest {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ZkpValuesTest {
+pub struct VerifyProvenCtValuesTest {
     pub test_filename: Cow<'static, str>,
     pub crs_id: [u8; 3],
     pub key_id: [u8; 3],
@@ -361,13 +361,13 @@ pub struct ZkpValuesTest {
     pub transaction_index: u32,
 }
 
-impl TestType for ZkpValuesTest {
+impl TestType for VerifyProvenCtValuesTest {
     fn module(&self) -> String {
         EVENTS_MODULE_NAME.to_string()
     }
 
     fn target_type(&self) -> String {
-        "ZkpValues".to_string()
+        "VerifyProvenCtValues".to_string()
     }
 
     fn test_filename(&self) -> String {
@@ -376,7 +376,7 @@ impl TestType for ZkpValuesTest {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ZkpResponseValuesTest {
+pub struct VerifyProvenCtResponseValuesTest {
     pub test_filename: Cow<'static, str>,
     pub signature: [u8; 3],
     pub payload: [u8; 3],
@@ -384,13 +384,13 @@ pub struct ZkpResponseValuesTest {
     pub transaction_index: u32,
 }
 
-impl TestType for ZkpResponseValuesTest {
+impl TestType for VerifyProvenCtResponseValuesTest {
     fn module(&self) -> String {
         EVENTS_MODULE_NAME.to_string()
     }
 
     fn target_type(&self) -> String {
-        "ZkpResponseValues".to_string()
+        "VerifyProvenCtResponseValues".to_string()
     }
 
     fn test_filename(&self) -> String {
@@ -675,8 +675,8 @@ pub enum TestMetadataEvents {
     DecryptResponseValues(DecryptResponseValuesTest),
     ReencryptValues(ReencryptValuesTest),
     ReencryptResponseValues(ReencryptResponseValuesTest),
-    ZkpValues(ZkpValuesTest),
-    ZkpResponseValues(ZkpResponseValuesTest),
+    VerifyProvenCtValues(VerifyProvenCtValuesTest),
+    VerifyProvenCtResponseValues(VerifyProvenCtResponseValuesTest),
     KeyUrlValues(KeyUrlValuesTest),
     KeyUrlResponseValues(KeyUrlResponseValuesTest),
     KeyGenValues(KeyGenValuesTest),

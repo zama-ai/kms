@@ -6,7 +6,7 @@ use cw_controllers::Admin;
 use cw_utils::must_pay;
 use events::kms::VerifyProvenCtResponseValues;
 use events::kms::{
-    CrsGenResponseValues, DecryptResponseValues, DecryptValues, Eip712DomainValues,
+    AllowListConf, CrsGenResponseValues, DecryptResponseValues, DecryptValues, Eip712DomainValues,
     KeyGenPreprocResponseValues, KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues,
     KmsCoreConf, KmsEvent, KmsOperation, OperationValue, ReencryptResponseValues, ReencryptValues,
     Transaction, TransactionId, VerifyProvenCtValues,
@@ -68,26 +68,23 @@ impl KmsContract {
 
     // TODO: makes sense to propagate a `TransactionId` instead of a `Vec<u8>` for consistency with
     // load methods
-    fn process_transaction<T>(
+    fn process_transaction(
         &self,
         storage: &mut dyn Storage,
         env: &Env,
         txn_id: &[u8],
-        operation: T,
-    ) -> StdResult<Response>
-    where
-        T: Into<OperationValue> + Clone,
-    {
+        operation: OperationValue,
+    ) -> StdResult<Response> {
         self.storage
             .update_transaction(storage, env, txn_id, &operation)?;
         let response = self.emit_event(storage, txn_id, &operation)?;
         Ok(response)
     }
 
-    fn process_request_transaction<T: Into<OperationValue> + Clone>(
+    fn process_request_transaction(
         &self,
         ctx: &mut ExecCtx,
-        operation: T,
+        operation: OperationValue,
     ) -> StdResult<Response> {
         let txn_id = self.derive_transaction_id(&ctx.env)?;
         self.process_transaction(ctx.deps.storage, &ctx.env, &txn_id, operation)
@@ -117,6 +114,46 @@ impl KmsContract {
         }
     }
 
+    /// Verifies that the caller is in the allow-list
+    ///
+    /// Some operations aren't meant for users like key-gen and crs-gen.
+    /// Thus a list of addresses allowed to call restricted operators is set in the instantiation
+    /// of this contract. This method verifies that the caller is in the configured allowed-list.
+    pub fn verify_allow_list(
+        &self,
+        ctx: &ExecCtx,
+        operation: &str,
+    ) -> std::result::Result<(), cosmwasm_std::StdError> {
+        let sender_string_address = ctx.info.sender.as_str().to_string();
+        if !self
+            .storage
+            .allow_list_contains(ctx.deps.storage, &sender_string_address)
+            .map_err(|_| {
+                StdError::generic_err(format!(
+                    "Error checking if address is allowed in operation: {}",
+                    operation
+                ))
+            })?
+        {
+            return Err(StdError::generic_err(format!(
+                "{} {}",
+                sender_string_address, operation
+            )));
+        };
+        Ok(())
+    }
+
+    /// ASC contract instantiation
+    ///
+    /// The Application Smart Contract instantiation.
+    ///
+    /// # Arguments
+    ///
+    /// * `allow_list_conf` - an optional list of who can call crs-gen, insecure-key-gen, key-gen,
+    /// key-gen preprocessing methods.
+    /// Providing None will default to only the address of the sender.
+    /// Providing `["*"]` will allow everyone to access the endpoints
+    /// If the list is not the wild-card it should only contain valid addresses.
     #[sv::msg(instantiate)]
     pub fn instantiate(
         &self,
@@ -124,6 +161,7 @@ impl KmsContract {
         debug_proof: Option<bool>,
         verify_proof_contract_addr: String,
         kms_core_conf: KmsCoreConf,
+        allow_list_conf: Option<AllowListConf>,
     ) -> StdResult<Response> {
         if let KmsCoreConf::Threshold(conf) = &kms_core_conf {
             // centralized setting should be used if there is only one party
@@ -163,6 +201,9 @@ impl KmsContract {
             }
         };
 
+        // Inclusion proof debug configuration
+        // While developing without a blockchain against which to verify we might need to skip the
+        // call to a inclusion proof smart contract altogether. This allows that
         if let Some(debug_proof) = debug_proof {
             self.storage
                 .set_debug_proof(ctx.deps.storage, debug_proof)?;
@@ -170,12 +211,40 @@ impl KmsContract {
             self.storage.set_debug_proof(ctx.deps.storage, false)?;
         }
 
+        // Allow-list configuration
+        if let Some(allow_list) = allow_list_conf {
+            // Verify that they can be cast as addresses
+            let all_valid_addresses = allow_list
+                .allow_list
+                .clone()
+                .into_iter()
+                .all(|addr| ctx.deps.api.addr_validate(&addr).is_ok());
+
+            let wild_card = (allow_list.allow_list.len() == 1) && (allow_list.allow_list[0] == "*");
+            if !(all_valid_addresses | wild_card) {
+                return Err(cosmwasm_std::StdError::generic_err(
+                    "allow_list contains invalid addresses",
+                ));
+            };
+
+            self.storage
+                .set_allow_list(ctx.deps.storage, allow_list.allow_list)?
+        } else {
+            self.storage
+                .set_allow_list(ctx.deps.storage, vec![ctx.info.sender.to_string()])?
+        }
+
+        // Inclusion proof smart contract configuration
         self.storage
             .set_verify_proof_contract_address(ctx.deps.storage, verify_proof_contract_addr)?;
 
+        // KMS Core configuration
         self.storage
             .update_core_conf(ctx.deps.storage, kms_core_conf)?;
+
+        // Administrator configuration
         ADMIN.set(ctx.deps, Some(ctx.info.sender.clone()))?;
+
         Ok(Response::default())
     }
 
@@ -269,7 +338,7 @@ impl KmsContract {
             ))
         })?;
         let mut ctx = ctx;
-        let response = self.process_request_transaction(&mut ctx, decrypt.clone())?;
+        let response = self.process_request_transaction(&mut ctx, decrypt.clone().into())?;
         self.chain_verify_proof_contract_call(ctx, response, decrypt.proof().to_string())
     }
 
@@ -284,14 +353,15 @@ impl KmsContract {
             ctx.deps.storage,
             &ctx.env,
             &txn_id.to_vec(),
-            decrypt_response,
+            decrypt_response.into(),
         )
     }
 
     #[sv::msg(exec)]
     pub fn keygen_preproc(&self, ctx: ExecCtx) -> StdResult<Response> {
         let mut ctx = ctx;
-        self.process_request_transaction(&mut ctx, KeyGenPreprocValues::default())
+        self.verify_allow_list(&ctx, "keygen_preproc")?;
+        self.process_request_transaction(&mut ctx, KeyGenPreprocValues::default().into())
     }
 
     #[sv::msg(exec)]
@@ -304,13 +374,14 @@ impl KmsContract {
             ctx.deps.storage,
             &ctx.env,
             &txn_id.to_vec(),
-            KeyGenPreprocResponseValues::default(),
+            KeyGenPreprocResponseValues::default().into(),
         )
     }
 
     #[sv::msg(exec)]
     pub fn insecure_keygen(&self, ctx: ExecCtx) -> StdResult<Response> {
         let mut ctx = ctx;
+        self.verify_allow_list(&ctx, "insecure_keygen")?;
         self.process_request_transaction(
             &mut ctx,
             OperationValue::InsecureKeyGen(Eip712DomainValues::default()),
@@ -328,14 +399,15 @@ impl KmsContract {
             ctx.deps.storage,
             &ctx.env,
             &txn_id.to_vec(),
-            keygen_response,
+            keygen_response.into(),
         )
     }
 
     #[sv::msg(exec)]
     pub fn keygen(&self, ctx: ExecCtx, keygen: KeyGenValues) -> StdResult<Response> {
         let mut ctx = ctx;
-        self.process_request_transaction(&mut ctx, keygen)
+        self.verify_allow_list(&ctx, "keygen")?;
+        self.process_request_transaction(&mut ctx, keygen.into())
     }
 
     #[sv::msg(exec)]
@@ -349,7 +421,7 @@ impl KmsContract {
             ctx.deps.storage,
             &ctx.env,
             &txn_id.to_vec(),
-            keygen_response,
+            keygen_response.into(),
         )
     }
 
@@ -359,7 +431,7 @@ impl KmsContract {
         let ciphertext_handle: Vec<u8> = reencrypt.ciphertext_handle().deref().into();
         self.verify_payment(&ctx, &[ciphertext_handle.clone()])?;
         let mut ctx = ctx;
-        let response = self.process_request_transaction(&mut ctx, reencrypt.clone())?;
+        let response = self.process_request_transaction(&mut ctx, reencrypt.clone().into())?;
         self.chain_verify_proof_contract_call(ctx, response, reencrypt.proof().to_string())
     }
 
@@ -374,7 +446,7 @@ impl KmsContract {
             ctx.deps.storage,
             &ctx.env,
             &txn_id.to_vec(),
-            reencrypt_response,
+            reencrypt_response.into(),
         )
     }
 
@@ -385,7 +457,7 @@ impl KmsContract {
         verify_proven_ct: VerifyProvenCtValues,
     ) -> StdResult<Response> {
         let txn_id = self.derive_transaction_id(&ctx.env)?;
-        self.process_transaction(ctx.deps.storage, &ctx.env, &txn_id, verify_proven_ct)
+        self.process_transaction(ctx.deps.storage, &ctx.env, &txn_id, verify_proven_ct.into())
     }
 
     #[sv::msg(exec)]
@@ -399,13 +471,14 @@ impl KmsContract {
             ctx.deps.storage,
             &ctx.env,
             &txn_id.to_vec(),
-            verify_proven_ct_response,
+            verify_proven_ct_response.into(),
         )
     }
 
     #[sv::msg(exec)]
     pub fn crs_gen(&self, ctx: ExecCtx) -> StdResult<Response> {
         let mut ctx = ctx;
+        self.verify_allow_list(&ctx, "crs_gen")?;
         self.process_request_transaction(
             &mut ctx,
             OperationValue::CrsGen(Eip712DomainValues::default()),
@@ -423,7 +496,7 @@ impl KmsContract {
             ctx.deps.storage,
             &ctx.env,
             &txn_id.to_vec(),
-            crs_gen_response,
+            crs_gen_response.into(),
         )
     }
 }
@@ -437,6 +510,7 @@ mod tests {
     use cosmwasm_std::coins;
     use cosmwasm_std::Addr;
     use cosmwasm_std::Event;
+    use events::kms::AllowListConf;
     use events::kms::CrsGenResponseValues;
     use events::kms::DecryptResponseValues;
     use events::kms::DecryptValues;
@@ -486,6 +560,9 @@ mod tests {
                     degree_for_reconstruction: 2,
                     param_choice: FheParameter::Test,
                 }),
+                Some(AllowListConf {
+                    allow_list: vec![owner.to_string()]
+                }),
             )
             .call(&owner)
             .is_err());
@@ -501,6 +578,9 @@ mod tests {
                     response_count_for_reconstruction: 3,
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
+                }),
+                Some(AllowListConf {
+                    allow_list: vec![owner.to_string()]
                 }),
             )
             .call(&owner)
@@ -518,6 +598,9 @@ mod tests {
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 }),
+                Some(AllowListConf {
+                    allow_list: vec![owner.to_string()]
+                }),
             )
             .call(&owner)
             .is_err());
@@ -533,6 +616,9 @@ mod tests {
                     response_count_for_reconstruction: 3,
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
+                }),
+                Some(AllowListConf {
+                    allow_list: vec![owner.to_string()],
                 }),
             )
             .call(&owner)
@@ -561,6 +647,9 @@ mod tests {
                     response_count_for_reconstruction: 3,
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
+                }),
+                Some(AllowListConf {
+                    allow_list: vec![owner.to_string()],
                 }),
             )
             .call(&owner)
@@ -615,6 +704,9 @@ mod tests {
                     response_count_for_reconstruction: 3,
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
+                }),
+                Some(AllowListConf {
+                    allow_list: vec![owner.to_string()],
                 }),
             )
             .call(&owner)
@@ -707,6 +799,9 @@ mod tests {
                     response_count_for_reconstruction: 3,
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
+                }),
+                Some(AllowListConf {
+                    allow_list: vec![owner.to_string()],
                 }),
             )
             .call(&owner)
@@ -828,6 +923,9 @@ mod tests {
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 }),
+                Some(AllowListConf {
+                    allow_list: vec![owner.to_string()],
+                }),
             )
             .call(&owner)
             .unwrap();
@@ -923,6 +1021,9 @@ mod tests {
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 }),
+                Some(AllowListConf {
+                    allow_list: vec![owner.to_string()],
+                }),
             )
             .call(&owner)
             .unwrap();
@@ -970,6 +1071,9 @@ mod tests {
                     response_count_for_reconstruction: 3,
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
+                }),
+                Some(AllowListConf {
+                    allow_list: vec![owner.to_string()],
                 }),
             )
             .call(&owner)
@@ -1052,6 +1156,7 @@ mod tests {
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 }),
+                None,
             )
             .call(&owner)
             .unwrap();
@@ -1137,6 +1242,8 @@ mod tests {
         let code_id = CodeId::store_code(&app);
         let owner = "owner".into_addr();
 
+        let user = "user".into_addr();
+
         let contract = code_id
             .instantiate(
                 Some(true),
@@ -1148,11 +1255,19 @@ mod tests {
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 }),
+                Some(AllowListConf {
+                    allow_list: vec![owner.to_string()],
+                }),
             )
             .call(&owner)
             .unwrap();
 
         let response = contract.crs_gen().call(&owner).unwrap();
+
+        contract
+            .crs_gen()
+            .call(&user)
+            .expect_err("User wasn't allowed to call CRS gen but somehow succeeded.");
 
         let txn_id: TransactionId = KmsContract::hash_transaction_id(12345, 0).into();
         assert_eq!(response.events.len(), 2);
@@ -1227,6 +1342,9 @@ mod tests {
                     response_count_for_reconstruction: 3,
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
+                }),
+                Some(AllowListConf {
+                    allow_list: vec![owner.to_string()],
                 }),
             )
             .call(&owner)
@@ -1395,5 +1513,106 @@ mod tests {
         let not_expected_operation = KmsOperation::Reencrypt;
         let not_expected_values = contract.get_all_values_from_operation(not_expected_operation);
         assert!(not_expected_values.is_err());
+    }
+
+    #[test]
+    fn test_allow_list() {
+        let owner = "owner".into_addr();
+        let user = "user".into_addr();
+        let another_user = "another_user".into_addr();
+        let app = App::default();
+
+        for (allow_list, allowed, instantiation_ok) in [
+            (None, vec![true, false, false], true), // Defaults to owner only
+            (Some(vec![]), vec![false, false, false], true), // Empty -> no one can operate (not sure this is really useful)
+            (Some(vec!["*".to_string()]), vec![true, true, true], true), // Wild-card, everyone can
+            (Some(vec!["".to_string()]), vec![false, false, false], false), // Instantiation error -> not a valid address
+            (
+                Some(vec![user.to_string(), owner.to_string()]),
+                vec![true, true, false],
+                true,
+            ), // Both user and
+            // owner can
+            (
+                Some(vec![user.to_string(), owner.to_string(), "*".to_string()]),
+                vec![false, false, false],
+                false,
+            ), // Instantiation
+            // error -> invalid to use wild card with other addresses
+            (Some(vec![user.to_string()]), vec![false, true, false], true), // User only allowed
+            (
+                Some(vec![owner.to_string()]),
+                vec![true, false, false],
+                true,
+            ), // Owner only allowed
+        ] {
+            let code_id = CodeId::store_code(&app);
+
+            if instantiation_ok {
+                let contract = code_id
+                    .instantiate(
+                        Some(true),
+                        DUMMY_BECH32_ADDR.to_string(),
+                        KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                            parties: vec![KmsCoreParty::default(); 4],
+                            response_count_for_majority_vote: 2,
+                            response_count_for_reconstruction: 3,
+                            degree_for_reconstruction: 1,
+                            param_choice: FheParameter::Test,
+                        }),
+                        allow_list
+                            .clone()
+                            .map(|allow_list| AllowListConf { allow_list }),
+                    )
+                    .call(&owner)
+                    .unwrap();
+
+                for ((wallet, wallet_allowed), wallet_name) in std::iter::zip(
+                    std::iter::zip([owner.clone(), user.clone(), another_user.clone()], allowed),
+                    vec!["owner", "user", "another_user"],
+                ) {
+                    if wallet_allowed {
+                        // Success
+                        let response = contract.crs_gen().call(&wallet).unwrap();
+                        assert_eq!(response.events.len(), 2);
+                    } else {
+                        // Failure
+                        contract.crs_gen().call(&wallet).expect_err(
+                            format!(
+                                "{} ({}) wasn't allowed to call CRS gen but somehow succeeded with allow_list: {:?}.",
+                                wallet_name,
+                                wallet,
+                                allow_list,
+                            )
+                            .as_str(),
+                        );
+                    }
+                }
+            } else {
+                code_id
+                    .instantiate(
+                        Some(true),
+                        DUMMY_BECH32_ADDR.to_string(),
+                        KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                            parties: vec![KmsCoreParty::default(); 4],
+                            response_count_for_majority_vote: 2,
+                            response_count_for_reconstruction: 3,
+                            degree_for_reconstruction: 1,
+                            param_choice: FheParameter::Test,
+                        }),
+                        allow_list
+                            .clone()
+                            .map(|allow_list| AllowListConf { allow_list }),
+                    )
+                    .call(&owner)
+                    .expect_err(
+                        format!(
+                            "Instantiation didn't fail as expected with allow-list: {:?}.",
+                            allow_list
+                        )
+                        .as_str(),
+                    );
+            }
+        }
     }
 }

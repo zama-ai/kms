@@ -4,7 +4,8 @@ use cosmos_proto::messages::cosmos::tx::v1beta1::service_client::ServiceClient;
 use cosmos_proto::messages::cosmos::tx::v1beta1::{GetTxRequest, GetTxsEventRequest, OrderBy};
 use cosmos_proto::messages::cosmwasm::wasm::v1::query_client::QueryClient as WasmQueryClient;
 use cosmos_proto::messages::cosmwasm::wasm::v1::{
-    QueryContractsByCodeRequest, QueryContractsByCodeResponse, QuerySmartContractStateRequest,
+    QueryContractInfoRequest, QueryContractInfoResponse, QueryContractsByCodeRequest,
+    QueryContractsByCodeResponse, QuerySmartContractStateRequest,
 };
 use events::kms::{KmsEvent, KmsOperation, TransactionId};
 use serde::de::DeserializeOwned;
@@ -201,6 +202,22 @@ impl QueryClient {
                     block_height, tx_index
                 ))
             })
+    }
+
+    pub async fn get_contract_metadata(
+        &self,
+        contract_address: String,
+    ) -> Result<QueryContractInfoResponse, Error> {
+        let mut query = WasmQueryClient::new(self.client.clone());
+        let req = QueryContractInfoRequest {
+            address: contract_address,
+        };
+        let result = query
+            .contract_info(req)
+            .await
+            .map(|response| response.into_inner())?;
+
+        Ok(result)
     }
 
     pub async fn list_contracts(&self) -> Result<QueryContractsByCodeResponse, Error> {
