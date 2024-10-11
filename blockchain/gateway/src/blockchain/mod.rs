@@ -20,8 +20,7 @@ use tokio::sync::OnceCell;
 static BLOCKCHAIN_INSTANCE: Lazy<OnceCell<Arc<dyn Blockchain>>> = Lazy::new(OnceCell::new);
 
 async fn setup_blockchain(config: &GatewayConfig) -> anyhow::Result<Arc<dyn Blockchain>> {
-    let debug = config.debug;
-    let strategy: Arc<dyn Blockchain> = match debug {
+    let strategy: Arc<dyn Blockchain> = match config.debug {
         true => {
             tracing::info!("🐛 Running in debug mode with a mocked KMS backend 🐛");
             Arc::new(MockchainImpl)

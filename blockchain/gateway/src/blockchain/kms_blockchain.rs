@@ -269,7 +269,7 @@ impl<'a> KmsBlockchainImpl {
     }
 
     /// Retrive the newest key id on the ASC.
-    /// NOTE this is teporary until we have a way to get the key id from the fhevm/co-processor.
+    /// NOTE this is temporary until we have a way to get the key id from the fhevm/co-processor.
     /// See https://github.com/zama-ai/fhevm/issues/548
     async fn get_key_id(&self) -> anyhow::Result<String> {
         let key_ops = self

@@ -1,4 +1,7 @@
 use crate::blockchain::blockchain_impl;
+use crate::blockchain::ciphertext_provider::CiphertextProvider;
+use crate::blockchain::ciphertext_provider::DummyCiphertextProvider;
+use crate::blockchain::ciphertext_provider::InternalMiddleware;
 use crate::blockchain::handlers::handle_event_decryption;
 use crate::blockchain::handlers::handle_keyurl_event;
 use crate::blockchain::handlers::handle_reencryption_event;
@@ -114,7 +117,7 @@ pub struct DecryptionEvent {
 //     signature: '15a4f9a8eb61459cfba7d103d8f911fb04ce91ecf841b34c49c0d56a70b896d20cbc31986188f91efc3842b7df215cee8acb40178daedb8b63d0ba5d199bce121c',
 //     client_address: '0x17853A630aAe15AED549B2B874de08B73C0F59c5',
 //     enc_key: '2000000000000000df2fcacb774f03187f3802a27259f45c06d33cefa68d9c53426b15ad531aa822',
-//     ciphertext_digest: '0748b542afe2353c86cb707e3d21044b0be1fd18efc7cbaa6a415af055bfb358',
+//     ciphertext_handle: '0748b542afe2353c86cb707e3d21044b0be1fd18efc7cbaa6a415af055bfb358',
 //     eip712_verifying_contract: '0x66f9664f97F2b50F62D13eA064982f936dE76657'
 // }
 // Note that `client_address` and `eip712_verifying_contract`
@@ -506,42 +509,86 @@ async fn keyurl_payload(publisher: web::Data<Arc<KeyUrlEventPublisher>>) -> Http
     }
 }
 
-// Subscriber
+// Gateway subscriber that subscribes to events,
+// events from multiple publishers will come into the `receiver` channel.
 pub struct GatewaySubscriber {
     config: GatewayConfig,
     receiver: Arc<Mutex<mpsc::Receiver<GatewayEvent>>>,
-    kms: Arc<dyn Blockchain>,
+    kms_blockchain: Arc<dyn Blockchain>,
+    ct_provider: Arc<Box<dyn CiphertextProvider>>,
+    middleware: Arc<Box<dyn InternalMiddleware>>,
 }
 
 impl GatewaySubscriber {
     pub async fn new(
         receiver: Arc<Mutex<mpsc::Receiver<GatewayEvent>>>,
         config: GatewayConfig,
-    ) -> Self {
+    ) -> anyhow::Result<(Self, Option<MockProvider>)> {
         let blockchain_instance = blockchain_impl(&config).await;
-        Self {
-            receiver,
-            config,
-            kms: blockchain_instance,
-        }
+        let ct_provider = if config.debug {
+            Box::new(DummyCiphertextProvider)
+        } else {
+            <crate::config::EthereumConfig as Into<Box<dyn CiphertextProvider>>>::into(
+                config.ethereum.clone(),
+            )
+        };
+
+        let (middleware, mock): (Arc<Box<dyn InternalMiddleware>>, _) = if config.debug {
+            let (mw, mk) = crate::blockchain::handlers::mock_provider(&config).await?;
+            (
+                Arc::new(Box::new(
+                    crate::blockchain::ciphertext_provider::MockMiddleware { inner: mw },
+                )),
+                Some(mk),
+            )
+        } else {
+            (
+                Arc::new(Box::new(
+                    crate::blockchain::ciphertext_provider::RealMiddleware {
+                        inner: crate::blockchain::handlers::http_provider(&config).await?,
+                    },
+                )),
+                None,
+            )
+        };
+
+        Ok((
+            GatewaySubscriber {
+                receiver,
+                config,
+                kms_blockchain: blockchain_instance,
+                ct_provider: ct_provider.into(),
+                middleware,
+            },
+            mock,
+        ))
     }
 
     pub fn listen(&self) {
         let receiver = Arc::clone(&self.receiver);
         let config = self.config.clone();
-        let kms = Arc::clone(&self.kms);
+        let kms = Arc::clone(&self.kms_blockchain);
+        let ct_provider = Arc::clone(&self.ct_provider);
+        let middleware = Arc::clone(&self.middleware);
         tokio::spawn(async move {
             loop {
                 let event = receiver.lock().await.recv().await.unwrap();
                 let config = config.clone();
-                let kms = Arc::clone(&kms);
+                let kms_blockchain = Arc::clone(&kms);
+                let ct_provider = Arc::clone(&ct_provider);
+                let middleware = Arc::clone(&middleware);
                 tokio::task::spawn(async move {
                     let start = std::time::Instant::now();
                     match event {
                         GatewayEvent::Decryption(msg_event) => {
                             debug!("🫐🫐🫐 Received Decryption Event");
-                            if let Err(e) =
-                                handle_event_decryption(&Arc::new(msg_event.clone()), &config).await
+                            if let Err(e) = handle_event_decryption(
+                                &Arc::new(msg_event.clone()),
+                                &config,
+                                kms_blockchain,
+                                middleware,
+                            )
+                            .await
                             {
                                 error!("Error handling event decryption: {:?}", e);
                             }
@@ -549,32 +596,61 @@ impl GatewaySubscriber {
                         }
                         GatewayEvent::Reencryption(reencrypt_event) => {
                             debug!("🫐🫐🫐 Received Reencryption Event");
-                            let reencrypt_response =
-                                handle_reencryption_event(&reencrypt_event.values, &config)
-                                    .await
-                                    .unwrap();
-                            let _ = reencrypt_event.sender.send(reencrypt_response);
+                            match handle_reencryption_event(
+                                &reencrypt_event.values,
+                                &config,
+                                ct_provider,
+                                middleware,
+                                kms_blockchain,
+                            )
+                            .await
+                            {
+                                Ok(resp) => {
+                                    let _ = reencrypt_event.sender.send(resp);
+                                }
+                                Err(e) => {
+                                    println!("{e}");
+                                    error!("failed to handle reencryption with error {e}");
+                                }
+                            }
                         }
                         GatewayEvent::VerifyProvenCt(verify_proven_ct_event) => {
                             debug!("🫐🫐🫐 Received VerifyProvenCt Event");
-                            let verify_proven_ct_response = handle_verify_proven_ct_event(
+                            match handle_verify_proven_ct_event(
                                 &verify_proven_ct_event.values,
                                 &config,
+                                kms_blockchain,
                             )
                             .await
-                            .unwrap();
-                            let _ = verify_proven_ct_event
-                                .sender
-                                .send(verify_proven_ct_response);
+                            {
+                                Ok(verify_proven_ct_response) => {
+                                    let _ = verify_proven_ct_event
+                                        .sender
+                                        .send(verify_proven_ct_response);
+                                }
+                                Err(e) => {
+                                    error!(
+                                        "failed to handle verify proven ct request with error {e}"
+                                    );
+                                }
+                            }
                         }
                         GatewayEvent::KeyUrl(keyurl_event) => {
                             debug!("🫐🫐🫐 Received KeyUrl Event");
-                            let keyurl_response = handle_keyurl_event(&config).await.unwrap();
-                            let _ = keyurl_event.sender.send(keyurl_response);
+                            match handle_keyurl_event(kms_blockchain).await {
+                                Ok(keyurl_response) => {
+                                    let _ = keyurl_event.sender.send(keyurl_response);
+                                }
+                                Err(e) => {
+                                    error!("failed to handle keyurl request with error {e}");
+                                }
+                            }
                         }
                         GatewayEvent::KmsEvent(kms_event) => {
                             debug!("🫐🫐🫐 Received KmsEvent: {:?}", kms_event);
-                            kms.receive(kms_event).await.unwrap();
+                            if let Err(e) = kms_blockchain.receive(kms_event).await {
+                                error!("failed to handle kms request with error {e}");
+                            }
                         }
                     }
                     let duration = start.elapsed();
@@ -585,10 +661,16 @@ impl GatewaySubscriber {
     }
 }
 
-pub async fn start_gateway(receiver: Receiver<GatewayEvent>, config: GatewayConfig) {
-    let subscriber = GatewaySubscriber::new(Arc::new(Mutex::new(receiver)), config).await;
+pub async fn start_gateway(
+    receiver: Receiver<GatewayEvent>,
+    config: GatewayConfig,
+) -> Option<MockProvider> {
+    let (subscriber, mock) = GatewaySubscriber::new(Arc::new(Mutex::new(receiver)), config)
+        .await
+        .unwrap();
     subscriber.listen();
     tracing::info!("GatewaySubscriber started");
+    mock
 }
 
 // write a test for serialization and deserialization of the ApiReencryptValues struct

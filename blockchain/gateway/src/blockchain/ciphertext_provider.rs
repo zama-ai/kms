@@ -27,12 +27,11 @@ use std::str::FromStr;
 use tonic::metadata::MetadataValue;
 
 // Trait to define the interface for getting ciphertext
-// SignerMiddleware<Provider<Http>, Wallet<SigningKey>>
 #[async_trait]
-pub(crate) trait CiphertextProvider: Send {
+pub(crate) trait CiphertextProvider: Send + Sync {
     async fn get_ciphertext(
         &self,
-        client: &Arc<SignerMiddleware<Provider<Http>, Wallet<SigningKey>>>,
+        client: Arc<Box<dyn InternalMiddleware>>,
         ct_handle: Vec<u8>,
         block_id: Option<BlockId>,
     ) -> anyhow::Result<(Vec<u8>, FheType)>;
@@ -44,6 +43,59 @@ pub(crate) trait CiphertextProvider: Send {
     ) -> anyhow::Result<VerifyProvenCtResponseToClient>;
 }
 
+// This is wrapper around real and fake SignerMiddleware
+// to avoid lifetime issues when making Provider<T> generic.
+// It has Send + Sync marker traits because SignerMiddleware
+// implements ethers::providers::Middleware which also has Send + Sync.
+#[async_trait]
+pub(crate) trait InternalMiddleware: Send + Sync {
+    async fn call(&self, tx: &TypedTransaction, block: Option<BlockId>) -> anyhow::Result<Bytes>;
+
+    async fn get_chainid(&self) -> anyhow::Result<U256>;
+}
+
+pub(crate) struct RealMiddleware {
+    pub(crate) inner: SignerMiddleware<Provider<Http>, Wallet<SigningKey>>,
+}
+
+pub(crate) struct MockMiddleware {
+    pub(crate) inner: SignerMiddleware<Provider<MockProvider>, Wallet<SigningKey>>,
+}
+
+#[async_trait]
+impl InternalMiddleware for RealMiddleware {
+    async fn call(&self, tx: &TypedTransaction, block: Option<BlockId>) -> anyhow::Result<Bytes> {
+        self.inner
+            .call(tx, block)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    async fn get_chainid(&self) -> anyhow::Result<U256> {
+        self.inner
+            .provider()
+            .get_chainid()
+            .await
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+}
+
+#[async_trait]
+impl InternalMiddleware for MockMiddleware {
+    async fn call(&self, tx: &TypedTransaction, block: Option<BlockId>) -> anyhow::Result<Bytes> {
+        self.inner
+            .call(tx, block)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    async fn get_chainid(&self) -> anyhow::Result<U256> {
+        // This needs to match what's in gateway.toml for tests to pass
+        // [35, 40] in big endian corresponds to the integer 9000
+        Ok(U256::from_big_endian(&[35, 40]))
+    }
+}
+
 // Implementation for FHEVM_V1_1
 struct FhevmNativeCiphertextProvider {
     config: EthereumConfig,
@@ -53,7 +105,7 @@ struct FhevmNativeCiphertextProvider {
 impl CiphertextProvider for FhevmNativeCiphertextProvider {
     async fn get_ciphertext(
         &self,
-        client: &Arc<SignerMiddleware<Provider<Http>, Wallet<SigningKey>>>,
+        client: Arc<Box<dyn InternalMiddleware>>,
         ct_handle: Vec<u8>,
         block_id: Option<BlockId>,
     ) -> anyhow::Result<(Vec<u8>, FheType)> {
@@ -114,7 +166,7 @@ struct CoprocessorCiphertextProvider {
 impl CiphertextProvider for CoprocessorCiphertextProvider {
     async fn get_ciphertext(
         &self,
-        _client: &Arc<SignerMiddleware<Provider<Http>, Wallet<SigningKey>>>,
+        _client: Arc<Box<dyn InternalMiddleware>>,
         ct_handle: Vec<u8>,
         _block_id: Option<BlockId>,
     ) -> anyhow::Result<(Vec<u8>, FheType)> {
@@ -267,5 +319,27 @@ impl From<EthereumConfig> for Box<dyn CiphertextProvider> {
             ListenerType::FhevmNative => Box::new(FhevmNativeCiphertextProvider { config }),
             ListenerType::Coprocessor => Box::new(CoprocessorCiphertextProvider { config }),
         }
+    }
+}
+
+pub(crate) struct DummyCiphertextProvider;
+
+#[async_trait]
+impl CiphertextProvider for DummyCiphertextProvider {
+    async fn get_ciphertext(
+        &self,
+        _client: Arc<Box<dyn InternalMiddleware>>,
+        _ct_handle: Vec<u8>,
+        _block_id: Option<BlockId>,
+    ) -> anyhow::Result<(Vec<u8>, FheType)> {
+        Ok((b"get_ciphertext".into(), FheType::Ebool))
+    }
+
+    async fn put_ciphertext(
+        &self,
+        _event: &ApiVerifyProvenCtValues,
+        _kms_signatures: HexVectorList,
+    ) -> anyhow::Result<VerifyProvenCtResponseToClient> {
+        Err(anyhow::anyhow!("not implemented"))
     }
 }

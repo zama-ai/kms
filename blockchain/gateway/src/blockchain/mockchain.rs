@@ -82,7 +82,11 @@ impl Blockchain for MockchainImpl {
         tracing::debug!("🐛 chain_id: {:?}", chain_id);
         tracing::debug!("🐛 acl_address: {:?}", acl_address);
 
-        Ok(vec![])
+        let resp = ReencryptResponseValues::builder()
+            .payload(b"payload".to_vec().into())
+            .signature(b"signature".to_vec().into())
+            .build();
+        Ok(vec![resp])
     }
 
     async fn verify_proven_ct(

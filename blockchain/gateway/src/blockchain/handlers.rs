@@ -1,4 +1,5 @@
-use crate::blockchain::blockchain_impl;
+use super::ciphertext_provider::InternalMiddleware;
+use super::Blockchain;
 use crate::blockchain::ciphertext_provider::CiphertextProvider;
 use crate::blockchain::handlers::k256::ecdsa::SigningKey;
 use crate::common::provider::GatewayContract;
@@ -23,15 +24,15 @@ use std::sync::Arc;
 pub(crate) async fn handle_event_decryption(
     event: &Arc<DecryptionEvent>,
     config: &GatewayConfig,
+    blockchain: Arc<dyn Blockchain>,
+    middleware: Arc<Box<dyn InternalMiddleware>>,
 ) -> anyhow::Result<()> {
     tracing::debug!("🍻 handle_event_decryption enter");
     let start = std::time::Instant::now();
     let block_number = event.block_number;
     let ciphertexts = event.filter.cts.clone();
 
-    let client = Arc::new(http_provider(config).await.unwrap());
-
-    let (tokens, sigs) = decrypt(&client, config, ciphertexts, block_number)
+    let (tokens, sigs) = decrypt(middleware, config, ciphertexts, block_number, blockchain)
         .await
         .unwrap();
 
@@ -118,10 +119,11 @@ pub(crate) async fn handle_event_decryption(
 }
 
 async fn decrypt(
-    client: &Arc<SignerMiddleware<Provider<Http>, Wallet<SigningKey>>>,
+    client: Arc<Box<dyn InternalMiddleware>>,
     config: &GatewayConfig,
     external_ct_handles: Vec<U256>,
     block_number: u64,
+    blockchain: Arc<dyn Blockchain>,
 ) -> anyhow::Result<(Vec<Token>, Vec<Vec<u8>>)> {
     let mut typed_cts = Vec::new();
 
@@ -131,6 +133,7 @@ async fn decrypt(
         external_ct_handle.to_big_endian(&mut external_ct_handle_bytes);
         let external_handle_vec = external_ct_handle_bytes.to_vec();
 
+        let client = Arc::clone(&client);
         let (ct_bytes, fhe_type) =
             <EthereumConfig as Into<Box<dyn CiphertextProvider>>>::into(config.clone().ethereum)
                 .get_ciphertext(
@@ -157,34 +160,42 @@ async fn decrypt(
         salt: vec![],
     };
 
-    blockchain_impl(config)
-        .await
-        .decrypt(typed_cts, domain, acl_address)
-        .await
+    blockchain.decrypt(typed_cts, domain, acl_address).await
 }
 
 pub(crate) async fn handle_reencryption_event(
     event: &ApiReencryptValues,
     config: &GatewayConfig,
+    ct_provider: Arc<Box<dyn CiphertextProvider>>,
+    middleware: Arc<Box<dyn InternalMiddleware>>,
+    blockchain: Arc<dyn Blockchain>,
 ) -> anyhow::Result<Vec<ReencryptResponseValues>> {
-    let client = Arc::new(http_provider(config).await?);
     let start = std::time::Instant::now();
-    let chain_id = client.provider().get_chainid().await?;
+    let chain_id = middleware.get_chainid().await?;
     let ethereum_ct_handle = event.ciphertext_handle.0.clone();
 
-    let (ciphertext, fhe_type) =
-        <EthereumConfig as Into<Box<dyn CiphertextProvider>>>::into(config.clone().ethereum)
-            .get_ciphertext(&client, ethereum_ct_handle.clone(), None)
-            .await?;
+    let (ciphertext, fhe_type) = ct_provider
+        .get_ciphertext(middleware, ethereum_ct_handle.clone(), None)
+        .await?;
 
     // check the format EIP-55
     _ = alloy_primitives::Address::parse_checksummed(&event.client_address, None)?;
     _ = alloy_primitives::Address::parse_checksummed(&event.eip712_verifying_contract, None)?;
 
+    // sanity check that the U256 and byte chain_id are identical
+    if config.parse_chain_id() != chain_id {
+        let err_str = format!(
+            "chain_id mismatch: {:?} vs. {:?}",
+            config.parse_chain_id(),
+            chain_id
+        );
+        tracing::error!(err_str);
+        return Err(anyhow::anyhow!(err_str));
+    }
+
     let acl_address = hex::encode(config.ethereum.acl_address);
 
-    let response = blockchain_impl(config)
-        .await
+    let response = blockchain
         .reencrypt(
             event.signature.0.clone(),
             event.client_address.clone(),
@@ -207,6 +218,7 @@ pub(crate) async fn handle_reencryption_event(
 pub(crate) async fn handle_verify_proven_ct_event(
     event: &ApiVerifyProvenCtValues,
     config: &GatewayConfig,
+    blockchain: Arc<dyn Blockchain>,
 ) -> anyhow::Result<VerifyProvenCtResponseToClient> {
     let client = Arc::new(http_provider(config).await?);
     let start = std::time::Instant::now();
@@ -216,17 +228,18 @@ pub(crate) async fn handle_verify_proven_ct_event(
     _ = alloy_primitives::Address::parse_checksummed(&event.contract_address, None)?;
     _ = alloy_primitives::Address::parse_checksummed(&event.caller_address, None)?;
 
-    // Get chain-id and verifying contract for EIP-712 signature
-    let chain_id_be = config.ethereum.chain_id.to_be_bytes();
-    let mut chain_id_bytes = vec![0u8; 32];
-    chain_id_bytes[24..].copy_from_slice(&chain_id_be);
-
     // sanity check that the U256 and byte chain_id are identical
-    if U256::from_big_endian(&chain_id_bytes) != chain_id {
-        let err_str = format!("chain_id mismatch: {:?} vs. {:?}", chain_id, chain_id_bytes);
+    if config.parse_chain_id() != chain_id {
+        let err_str = format!(
+            "chain_id mismatch: {:?} vs. {:?}",
+            config.parse_chain_id(),
+            chain_id
+        );
         tracing::error!(err_str);
         return Err(anyhow::anyhow!(err_str));
     }
+    let mut chain_id_bytes = vec![0u8; 8];
+    chain_id.to_big_endian(&mut chain_id_bytes);
 
     let vc_hex = hex::encode(config.ethereum.kmsverifier_vc_address);
     let acl_address = hex::encode(config.ethereum.acl_address);
@@ -238,8 +251,7 @@ pub(crate) async fn handle_verify_proven_ct_event(
         salt: vec![],
     };
 
-    let verify_proven_ct_response_builder = blockchain_impl(config)
-        .await
+    let verify_proven_ct_response_builder = blockchain
         .verify_proven_ct(
             event.contract_address.clone(),
             event.caller_address.clone(),
@@ -262,16 +274,31 @@ pub(crate) async fn handle_verify_proven_ct_event(
 }
 
 pub(crate) async fn handle_keyurl_event(
-    config: &GatewayConfig,
+    blockchain: Arc<dyn Blockchain>,
 ) -> anyhow::Result<KeyUrlResponseValues> {
     let start = std::time::Instant::now();
-    let response = blockchain_impl(config).await.keyurl().await;
+    let response = blockchain.keyurl().await;
     let duration = start.elapsed();
     tracing::info!("⏱️ KMS Response Time elapsed for KeyUrl: {:?}", duration);
     response
 }
 
-async fn http_provider(
+pub(crate) async fn mock_provider(
+    config: &GatewayConfig,
+) -> anyhow::Result<(
+    SignerMiddleware<Provider<MockProvider>, Wallet<SigningKey>>,
+    MockProvider,
+)> {
+    let wallet = WalletManager::default().wallet;
+    let (provider, mock) = Provider::mocked();
+    let provider = SignerMiddleware::new(
+        provider.clone(),
+        wallet.with_chain_id(config.ethereum.chain_id),
+    );
+    Ok((provider, mock))
+}
+
+pub(crate) async fn http_provider(
     config: &GatewayConfig,
 ) -> anyhow::Result<SignerMiddleware<Provider<Http>, Wallet<SigningKey>>> {
     let wallet = WalletManager::default().wallet;

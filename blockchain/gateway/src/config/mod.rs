@@ -113,6 +113,16 @@ pub struct GatewayConfig {
     pub tracing: Option<Tracing>,
 }
 
+impl GatewayConfig {
+    pub(crate) fn parse_chain_id(&self) -> primitive_types::U256 {
+        let chain_id_be = self.ethereum.chain_id.to_be_bytes();
+        let mut chain_id_bytes = vec![0u8; 32];
+        chain_id_bytes[24..].copy_from_slice(&chain_id_be);
+
+        primitive_types::U256::from_big_endian(&chain_id_bytes)
+    }
+}
+
 pub fn init_conf_gateway(config_file: &str) -> anyhow::Result<GatewayConfig> {
     Settings::builder()
         .path(config_file)
