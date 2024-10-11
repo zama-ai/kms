@@ -382,7 +382,7 @@ mod kms_server_binary_test {
     #[test]
     #[serial_test::serial]
     fn central_s3() {
-        use kms_lib::util::aws::{AWS_REGION, BUCKET_NAME};
+        use kms_lib::util::aws::{AWS_REGION, AWS_S3_ENDPOINT, BUCKET_NAME};
 
         let s3_url = format!("s3://{}/central_s3/", BUCKET_NAME);
         let file_url = "file://temp/keys/";
@@ -393,6 +393,7 @@ mod kms_server_binary_test {
             .arg("centralized")
             .arg("--param-test")
             .arg(format!("--aws-region={}", AWS_REGION))
+            .arg(format!("--aws-s3-endpoint={}", AWS_S3_ENDPOINT))
             .arg(format!("--pub-url={}", s3_url))
             .arg(format!("--priv-url={}", file_url))
             .arg("--cmd=signing-keys")

@@ -68,6 +68,9 @@ enum Mode {
         /// AWS region to use for S3 storage
         #[clap(long, default_value = "eu-west-3")]
         aws_region: String,
+        /// Optional AWS S3 API endpoint
+        #[clap(long, default_value = None)]
+        aws_s3_endpoint: Option<String>,
         /// Optional parameter for the private storage URL
         #[clap(long, default_value = None)]
         priv_url: Option<String>,
@@ -103,6 +106,9 @@ enum Mode {
         /// AWS region to use for S3 storage
         #[clap(long, default_value = "eu-west-3")]
         aws_region: String,
+        /// Optional AWS S3 API endpoint
+        #[clap(long, default_value = None)]
+        aws_s3_endpoint: Option<String>,
         /// Optional parameter for the private storage URL
         #[clap(long, default_value = None)]
         priv_url: Option<String>,
@@ -167,6 +173,7 @@ async fn main() {
     match args.mode {
         Mode::Centralized {
             aws_region,
+            aws_s3_endpoint,
             priv_url,
             pub_url,
             deterministic,
@@ -176,14 +183,22 @@ async fn main() {
             cmd,
             param_test,
         } => {
-            let mut pub_storage =
-                make_central_proxy_storage(pub_url, &aws_region, StorageType::PUB)
-                    .await
-                    .unwrap();
-            let mut priv_storage =
-                make_central_proxy_storage(priv_url, &aws_region, StorageType::PRIV)
-                    .await
-                    .unwrap();
+            let mut pub_storage = make_central_proxy_storage(
+                pub_url,
+                &aws_region,
+                aws_s3_endpoint.clone(),
+                StorageType::PUB,
+            )
+            .await
+            .unwrap();
+            let mut priv_storage = make_central_proxy_storage(
+                priv_url,
+                &aws_region,
+                aws_s3_endpoint,
+                StorageType::PRIV,
+            )
+            .await
+            .unwrap();
 
             let mut cmdargs = CentralCmdArgs {
                 pub_storage: &mut pub_storage,
@@ -204,6 +219,7 @@ async fn main() {
         }
         Mode::Threshold {
             aws_region,
+            aws_s3_endpoint,
             priv_url,
             pub_url,
             deterministic,
@@ -215,6 +231,7 @@ async fn main() {
             let mut pub_storages = make_threshold_proxy_storage(
                 pub_url,
                 &aws_region,
+                aws_s3_endpoint.clone(),
                 StorageType::PUB,
                 AMOUNT_PARTIES,
             )
@@ -223,6 +240,7 @@ async fn main() {
             let mut priv_storages = make_threshold_proxy_storage(
                 priv_url,
                 &aws_region,
+                aws_s3_endpoint,
                 StorageType::PRIV,
                 AMOUNT_PARTIES,
             )
@@ -566,6 +584,7 @@ async fn show_key<S: Storage>(storage: &S, data_type: &str) {
 async fn make_central_proxy_storage(
     url_str: Option<String>,
     aws_region: &str,
+    aws_s3_endpoint: Option<String>,
     storage_type: StorageType,
 ) -> anyhow::Result<StorageProxy> {
     let parsed_url = url_str
@@ -578,7 +597,7 @@ async fn make_central_proxy_storage(
             "s3" => StorageProxy::S3(
                 S3Storage::new_centralized(
                     aws_region.to_string(),
-                    None,
+                    aws_s3_endpoint,
                     some_or_err(url.host_str(), "No host in url {url}".to_string())?.to_string(),
                     Some(url.path().to_string()),
                     storage_type,
@@ -601,6 +620,7 @@ async fn make_central_proxy_storage(
 async fn make_threshold_proxy_storage(
     url_str: Option<String>,
     aws_region: &str,
+    aws_s3_endpoint: Option<String>,
     storage_type: StorageType,
     amount: usize,
 ) -> anyhow::Result<Vec<StorageProxy>> {
@@ -616,7 +636,7 @@ async fn make_threshold_proxy_storage(
                 "s3" => StorageProxy::S3(
                     S3Storage::new_threshold(
                         aws_region.to_string(),
-                        None,
+                        aws_s3_endpoint.clone(),
                         some_or_err(url.host_str(), "No host in url {url}".to_string())?
                             .to_string(),
                         Some(url.path().to_string()),
