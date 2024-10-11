@@ -1231,6 +1231,7 @@ async fn wait_for_response(
     query_client: &QueryClient,
     sim_conf: &SimulatorConfig,
     max_iter: usize,
+    num_expected_responses: usize,
 ) -> anyhow::Result<Vec<OperationValue>> {
     let time_to_wait = 10; // in seconds
     tracing::info!("Event operation: {:?}", event.operation);
@@ -1241,8 +1242,15 @@ async fn wait_for_response(
     for _ in 1..=max_iter {
         match query_contract(sim_conf, q.clone(), query_client).await {
             Ok(results) => {
-                tracing::info!("Results: {:?}", results);
-                return Ok(results);
+                if results.len() != num_expected_responses {
+                    tracing::info!(
+                    "Got {} responses, but expecting {}. Waiting {time_to_wait} seconds for the other responses to be posted to the blockchain.", results.len(), num_expected_responses,
+                );
+                    std::thread::sleep(std::time::Duration::from_secs(time_to_wait));
+                } else {
+                    tracing::info!("Results: {:?}", results);
+                    return Ok(results);
+                }
             }
             Err(e) => {
                 tracing::info!(
@@ -1309,7 +1317,7 @@ fn process_reencrypt_responses(
     enc_sk: PrivateEncKey,
 ) -> anyhow::Result<()> {
     tracing::info!("Found {} responses!", responses.len());
-    let mut reenc_responses = Vec::new();
+    let mut reenc_responses: Vec<ReencryptionResponse> = Vec::new();
     for response in responses {
         if let OperationValue::ReencryptResponse(resp) = response {
             let payload: ReencryptionResponsePayload = bincode::deserialize(
@@ -1412,9 +1420,13 @@ pub async fn main_from_config(
 
     // TODO: stop here if insufficient gas and/or query faucet if setup
     // TODO: add optional faucet configuration in config file
+    let num_kms_parties = match kms_core_conf.clone() {
+        KmsCoreConf::Centralized(_) => 1,
+        KmsCoreConf::Threshold(kms_core_threshold_conf) => kms_core_threshold_conf.parties.len(),
+    };
 
     // Launch command
-    let mut max_iter = 10;
+    let mut max_iter = 20;
     // Execute the proper command
     match command {
         Command::Decrypt(ex) => {
@@ -1426,7 +1438,9 @@ pub async fn main_from_config(
                 destination_prefix,
             )
             .await?;
-            let responses = wait_for_response(event, &query_client, &sim_conf, max_iter).await?;
+            let responses =
+                wait_for_response(event, &query_client, &sim_conf, max_iter, num_kms_parties)
+                    .await?;
             process_decrypt_responses(responses, ptxt).unwrap();
         }
         Command::ReEncrypt(ex) => {
@@ -1440,7 +1454,9 @@ pub async fn main_from_config(
                     kms_core_conf,
                 )
                 .await?;
-            let responses = wait_for_response(event, &query_client, &sim_conf, max_iter).await?;
+            let responses =
+                wait_for_response(event, &query_client, &sim_conf, max_iter, num_kms_parties)
+                    .await?;
             process_reencrypt_responses(
                 responses, ptxt, request, kms_client, domain, enc_pk, enc_sk,
             )
@@ -1464,7 +1480,9 @@ pub async fn main_from_config(
         }
         Command::InsecureKeyGen(Nothing {}) => {
             let event = execute_insecure_keygen_contract(&client, &query_client).await?;
-            let responses = wait_for_response(event, &query_client, &sim_conf, max_iter).await?;
+            let responses =
+                wait_for_response(event, &query_client, &sim_conf, max_iter, num_kms_parties)
+                    .await?;
             for response in responses {
                 if let OperationValue::KeyGenResponse(response) = &response {
                     tracing::info!(
@@ -1484,7 +1502,9 @@ pub async fn main_from_config(
             // the actual CRS ceremony takes time
             max_iter = 20;
             let event = execute_crsgen_contract(&client, &query_client).await?;
-            let responses = wait_for_response(event, &query_client, &sim_conf, max_iter).await?;
+            let responses =
+                wait_for_response(event, &query_client, &sim_conf, max_iter, num_kms_parties)
+                    .await?;
             for response in responses {
                 if let OperationValue::CrsGenResponse(response) = &response {
                     tracing::info!(
@@ -1515,7 +1535,9 @@ pub async fn main_from_config(
             )
             .await?;
             //Do nothing with the response (for now ?)
-            let _responses = wait_for_response(event, &query_client, &sim_conf, max_iter).await?;
+            let _responses =
+                wait_for_response(event, &query_client, &sim_conf, max_iter, num_kms_parties)
+                    .await?;
         }
         Command::QueryContract(q) => {
             let query_result = query_contract(&sim_conf, q.clone(), &query_client).await?;
