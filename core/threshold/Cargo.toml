@@ -60,13 +60,11 @@ tonic = { workspace = true, features = ["tls"], optional = true }
 tonic-health = { version = "0.11", optional = true }
 tower = { version = "0.4", features = ["retry", "timeout"], optional = true }
 tower-http = { version = "0.4", features = ["trace"], optional = true }
-# experimental-force_fft_algo_dif4 feature ensure PBS is deterministic
 tfhe = { workspace = true, features = [
     "boolean",
     "shortint",
     "integer",
     "zk-pok",
-    "experimental-force_fft_algo_dif4",
 ] }
 tracing = { workspace = true, features = ["log"] }
 x509-parser = "0.16"
