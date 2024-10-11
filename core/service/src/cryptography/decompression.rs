@@ -97,7 +97,10 @@ mod test {
     use tfhe::integer::ciphertext::{CompressedCiphertextListBuilder, Compressible};
     use tfhe::named::Named;
     use tfhe::prelude::{FheDecrypt, FheEncrypt};
-    use tfhe::shortint::parameters::{COMP_PARAM_MESSAGE_2_CARRY_2, PARAM_MESSAGE_2_CARRY_2};
+    use tfhe::shortint::parameters::{
+        COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
+        PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
+    };
     use tfhe::{generate_keys, ClientKey};
     use tfhe::{
         FheBool, FheUint1024, FheUint128, FheUint16, FheUint2048, FheUint256, FheUint32, FheUint4,
@@ -114,9 +117,11 @@ mod test {
 
     #[test]
     fn test_bad_ciphertext() {
-        let config = tfhe::ConfigBuilder::with_custom_parameters(PARAM_MESSAGE_2_CARRY_2)
-            .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2)
-            .build();
+        let config = tfhe::ConfigBuilder::with_custom_parameters(
+            PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
+        )
+        .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64)
+        .build();
         let (client_key, server_key) = generate_keys(config);
         let compression_key = server_key.clone().into_raw_parts().2;
         let decompression_key = None;
@@ -137,9 +142,11 @@ mod test {
 
     #[test]
     fn test_bad_fhe_type() {
-        let config = tfhe::ConfigBuilder::with_custom_parameters(PARAM_MESSAGE_2_CARRY_2)
-            .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2)
-            .build();
+        let config = tfhe::ConfigBuilder::with_custom_parameters(
+            PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
+        )
+        .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64)
+        .build();
         let (client_key, server_key) = generate_keys(config);
         let compression_key = server_key.clone().into_raw_parts().2;
         let decompression_key = server_key.clone().into_raw_parts().3;
@@ -151,9 +158,11 @@ mod test {
 
     #[test]
     fn test_no_decomp_key() {
-        let config = tfhe::ConfigBuilder::with_custom_parameters(PARAM_MESSAGE_2_CARRY_2)
-            .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2)
-            .build();
+        let config = tfhe::ConfigBuilder::with_custom_parameters(
+            PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
+        )
+        .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64)
+        .build();
         let (client_key, server_key) = generate_keys(config);
         let compression_key = server_key.clone().into_raw_parts().2;
         let decompression_key = None;
@@ -256,9 +265,11 @@ mod test {
     >(
         clear_value: StaticUnsignedBigInt<N>,
     ) {
-        let config = tfhe::ConfigBuilder::with_custom_parameters(PARAM_MESSAGE_2_CARRY_2)
-            .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2)
-            .build();
+        let config = tfhe::ConfigBuilder::with_custom_parameters(
+            PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
+        )
+        .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64)
+        .build();
         let (client_key, server_key) = generate_keys(config);
         let compression_key = server_key.clone().into_raw_parts().2;
         let decompression_key = server_key.clone().into_raw_parts().3;
@@ -278,9 +289,11 @@ mod test {
     #[test]
     fn test_bool() {
         let clear_value = true;
-        let config = tfhe::ConfigBuilder::with_custom_parameters(PARAM_MESSAGE_2_CARRY_2)
-            .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2)
-            .build();
+        let config = tfhe::ConfigBuilder::with_custom_parameters(
+            PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
+        )
+        .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64)
+        .build();
         let (client_key, server_key) = generate_keys(config);
         let compression_key = server_key.clone().into_raw_parts().2;
         let decompression_key = server_key.clone().into_raw_parts().3;

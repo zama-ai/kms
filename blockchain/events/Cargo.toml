@@ -24,8 +24,8 @@ thiserror = { version = "1.0.64", optional = true }
 tokio = { workspace = true, features = ["full"], optional = true }
 tonic = { workspace = true, features = ["transport","tls","tls-roots"], optional = true }
 tracing = { workspace = true, features = ["log"] }
-typed-builder = { workspace = true }
-tfhe-versionable = "0.3.1"
+typed-builder.workspace = true
+tfhe-versionable.workspace = true
 
 [build-dependencies]
 tonic-build.workspace = true

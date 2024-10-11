@@ -25,7 +25,7 @@ serde.workspace = true
 sha3 = "0.10.8"
 sylvia.workspace = true
 sylvia-derive.workspace = true
-tfhe-versionable = "0.3.1"
+tfhe-versionable.workspace = true
 
 [dev-dependencies]
 aipsc = { path = "../aipsc" }
