@@ -31,7 +31,7 @@ tfhe-versionable.workspace = true
 tonic-build.workspace = true
 
 [dev-dependencies]
-mockall = "0.12.1"
+mockall = "0.13.0"
 quickcheck = "1.0.3"
 quickcheck_macros = "1"
 test-context = "0.3.0"
