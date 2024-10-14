@@ -11,7 +11,7 @@ use kms_lib::{
     consts::{DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM, DEFAULT_THRESHOLD_KEY_ID},
     kms::InitRequest,
     storage::{FileStorage, StorageType},
-    util::key_setup::test_tools::compute_cipher_from_stored_key,
+    util::key_setup::test_tools::compute_compressed_cipher_from_stored_key,
 };
 use rand::{Rng, SeedableRng};
 use tokio::task::JoinSet;
@@ -105,8 +105,12 @@ async fn central_requests(address: String) -> anyhow::Result<()> {
         .await
         .unwrap();
     let msg = rng.gen::<u32>();
-    let (ct, fhe_type) =
-        compute_cipher_from_stored_key(None, msg.into(), &DEFAULT_CENTRAL_KEY_ID.to_string()).await;
+    let (ct, fhe_type) = compute_compressed_cipher_from_stored_key(
+        None,
+        msg.into(),
+        &DEFAULT_CENTRAL_KEY_ID.to_string(),
+    )
+    .await;
 
     // this is currently a batch of size 1
     let ct = vec![TypedCiphertext {
@@ -131,7 +135,7 @@ async fn central_requests(address: String) -> anyhow::Result<()> {
         .get_decrypt_result(tonic::Request::new(req.request_id.clone().unwrap()))
         .await;
     while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
-        // Sleep to give the server some time to complete reencryption
+        // Sleep to give the server some time to complete decryption
         std::thread::sleep(std::time::Duration::from_millis(100));
         response = kms_client
             .get_decrypt_result(tonic::Request::new(req.request_id.clone().unwrap()))
@@ -145,7 +149,8 @@ async fn central_requests(address: String) -> anyhow::Result<()> {
                 "Decryption response is ok: {:?} of type {:?}",
                 plaintext[0].as_u32(),
                 plaintext[0].fhe_type()
-            )
+            );
+            assert_eq!(plaintext[0].as_u32(), msg);
         }
         Err(e) => tracing::error!("Decryption response is NOT valid! Error: {}", e),
     };
@@ -178,6 +183,7 @@ async fn central_requests(address: String) -> anyhow::Result<()> {
 
     let eip712_domain = protobuf_to_alloy_domain(req.domain.as_ref().unwrap()).unwrap();
     let client_request = ParsedReencryptionRequest::try_from(&req).unwrap();
+    internal_client.convert_to_addresses();
     match internal_client.process_reencryption_resp(
         &client_request,
         &eip712_domain,
@@ -206,9 +212,12 @@ async fn do_threshold_decryption(
 ) -> anyhow::Result<()> {
     let num_parties = core_endpoints.len();
     let msg: u8 = rng.gen();
-    let (ct, fhe_type) =
-        compute_cipher_from_stored_key(None, msg.into(), &DEFAULT_THRESHOLD_KEY_ID.to_string())
-            .await;
+    let (ct, fhe_type) = compute_compressed_cipher_from_stored_key(
+        None,
+        msg.into(),
+        &DEFAULT_THRESHOLD_KEY_ID.to_string(),
+    )
+    .await;
 
     let random_req_id = RequestId::from(rng.gen::<u128>());
 
@@ -307,9 +316,12 @@ async fn do_threshold_reencryption(
 ) -> anyhow::Result<()> {
     let num_parties = core_endpoints.len();
     let msg: u8 = rng.gen();
-    let (ct, fhe_type) =
-        compute_cipher_from_stored_key(None, msg.into(), &DEFAULT_THRESHOLD_KEY_ID.to_string())
-            .await;
+    let (ct, fhe_type) = compute_compressed_cipher_from_stored_key(
+        None,
+        msg.into(),
+        &DEFAULT_THRESHOLD_KEY_ID.to_string(),
+    )
+    .await;
 
     let random_req_id = RequestId::from(rng.gen::<u128>());
 
