@@ -140,6 +140,12 @@ jobs:
           cache-from: ${{ inputs.cache-from }}
           cache-to: ${{ inputs.cache-to }}
 
+      # Our self-hosted runner AMI doesn't ship jq which we need during EIF build
+      - name: Install jq
+        if: ${{ inputs.generate-enclave-image }}
+        run: |
+          sudo apt update && sudo apt -y install jq
+
       - name: Get Docker sock path
         if: ${{ inputs.generate-enclave-image }}
         run: echo "DOCKER_SOCK_PATH=$(docker context inspect | jq -r '.[0].Endpoints.docker.Host' | sed "s^unix://^^")" >> "$GITHUB_ENV"
