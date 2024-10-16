@@ -124,7 +124,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Linting
-        run: RUSTFLAGS="-Aclippy::doc-lazy-continuation" cargo clippy --all-targets --all-features --package ${{inputs.package-name}} -- -D warnings
+        run: cargo clippy --all-targets --all-features --package ${{inputs.package-name}} -- -D warnings
 
       - name: Run Tests
         if: ${{ ! inputs.test-coverage }}

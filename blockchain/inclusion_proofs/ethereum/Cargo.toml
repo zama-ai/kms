@@ -36,3 +36,6 @@ reqwest = { version = "0.12.4", features = ["json"], optional = true }
 [features]
 cosmwasm = ["ethereum-triedb-local", "hash256-std-hasher", "hash-db"]
 default = ["ethereum-triedb", "reqwest"]
+
+[lints.clippy]
+doc_lazy_continuation = "allow"
