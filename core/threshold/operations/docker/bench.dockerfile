@@ -1,6 +1,6 @@
 # Multistage build to reduce image size
 # First stage builds the binary
-FROM rust:1.79-slim-bookworm AS base
+FROM rust:1.81-slim-bookworm AS base
 
 ARG CONCRETE_ACTIONS_TOKEN
 

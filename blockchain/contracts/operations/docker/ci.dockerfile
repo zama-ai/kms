@@ -1,4 +1,4 @@
-FROM rust:1.80 AS compiler
+FROM rust:1.81 AS compiler
 
 WORKDIR /app
 COPY . .

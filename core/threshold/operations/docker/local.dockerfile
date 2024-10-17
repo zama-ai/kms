@@ -1,6 +1,6 @@
 # Multistage build to reduce image size
 # First stage builds the binary
-FROM rust:1.79-slim-bookworm AS base
+FROM rust:1.81-slim-bookworm AS base
 
 RUN apt update && \
     apt install -y make protobuf-compiler iproute2 iputils-ping iperf net-tools dnsutils ssh git gcc libssl-dev libprotobuf-dev pkg-config
@@ -53,4 +53,3 @@ COPY --from=base /app/ddec/bin/ /app/ddec/bin/
 COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/ddec/bin/grpc-health-probe
 
 EXPOSE 50000
-

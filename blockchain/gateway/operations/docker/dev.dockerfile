@@ -1,6 +1,6 @@
 # Multistage build to reduce image size
 # First stage builds the binary
-FROM rust:1.79-slim-bookworm AS base
+FROM rust:1.81-slim-bookworm AS base
 
 RUN apt --allow-releaseinfo-change update && \
     apt install -y make protobuf-compiler ssh git gcc libssl-dev libprotobuf-dev pkg-config
@@ -39,4 +39,3 @@ ENV PATH="$PATH:/app/gateway/bin"
 # Copy the binaries from the base stage
 COPY --from=base /app/gateway/blockchain/gateway/bin/ /app/gateway/bin/
 COPY ./blockchain/gateway/config/ /app/gateway/config/
-
