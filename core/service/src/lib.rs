@@ -126,6 +126,7 @@ use util::aws::{EnclaveS3Storage, S3Storage};
 /// storage object at the same time as passing them to the server startup
 /// function.
 #[cfg(feature = "non-wasm")]
+#[allow(clippy::large_enum_variant)]
 pub enum StorageProxy {
     File(FileStorage),
     #[allow(dead_code)]
