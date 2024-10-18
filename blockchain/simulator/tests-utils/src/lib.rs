@@ -71,6 +71,7 @@ impl DockerComposeCmd {
         if build_docker == "1" {
             build.arg("--build");
         }
+
         build.arg("--wait");
         println!("{:?}", build);
 

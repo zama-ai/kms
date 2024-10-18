@@ -2,7 +2,6 @@ name: zama-kms-centralized
 services:
 # KMS-Blockchain validator node
   dev-kms-blockchain-validator:
-    image: kms-validator:latest
     ports:
       - "36656:26656"
       - "36657:26657"
@@ -35,6 +34,7 @@ services:
   # TODO: move the upload of the pub-key from the validator to the core -> or maybe the connector?
   # anyway where the keys really are
   dev-kms-core:
+    image: ghcr.io/zama-ai/kms-service-dev:latest
     build:
       context: .
       dockerfile: core/service/operations/docker/dev.dockerfile
@@ -49,7 +49,7 @@ services:
     volumes:
       - minio_secrets:/minio_secrets
     depends_on:
-      kms-core-base:
+      kms-core-base-build:
         condition: service_started
       dev-s3-mock-setup:
         condition: service_completed_successfully

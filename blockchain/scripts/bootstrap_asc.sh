@@ -1,5 +1,7 @@
 #!/bin/sh
 
+# TODO: fail script if some command fails
+
 ulimit unlimited
 
 export PASSWORD="1234567890"
@@ -54,7 +56,8 @@ VALIDATOR_ADDRESS=$(echo $PASSWORD | wasmd keys show validator --output json |jq
 
 # Send tokens to connector and gateway accounts
 echo "Sending tokens from validator to connector and gateway accounts"
-echo $PASSWORD | wasmd tx bank multi-send "$VALIDATOR_ADDRESS" "$CONN_ADDRESS" "$GATEWAY_ADDRESS" "400000000ucosm" -y --chain-id testing
+# The validator has 1000000000ucosm (setup_wasmd.sh)
+echo $PASSWORD | wasmd tx bank multi-send "$VALIDATOR_ADDRESS" "$CONN_ADDRESS" "$GATEWAY_ADDRESS" "450000000ucosm" -y --chain-id testing
 
 #############################
 #         Contracts         #
@@ -124,11 +127,13 @@ echo "ASC code ID: ${ASC_CODE_ID}"
 # Instantiate the ASC smart contract
 echo "Instantiating ASC"
 if [ "$MODE" = "threshold" ]; then
+  echo "Instantiating threshold ASC"
   # run in threshold mode
   ASC_INST_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": true, "verify_proof_contract_addr": "dummy",  "kms_core_conf": { "threshold": {"parties":[{"party_id": "01", "address": ""}, {"party_id": "02", "address": ""}, {"party_id": "03", "address": ""}, {"party_id": "04", "address": ""}], "response_count_for_majority_vote": 3, "response_count_for_reconstruction": 3, "degree_for_reconstruction": 1, "param_choice": "test"}}, "allow_list_conf":{"allow_list": ["'"${CONN_ADDRESS}"'"]} }' --label "asc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin | jq -r '.txhash')
 
 
 elif [ "$MODE" = "centralized" ]; then
+  echo "Instantiating centralized ASC"
   # run in centralized mode
   ASC_INST_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": true, "verify_proof_contract_addr": "dummy", "kms_core_conf": { "centralized": {"param_choice": "default"} }, "allow_list_conf":{"allow_list": ["'"${CONN_ADDRESS}"'"]} }' --label "asc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin | jq -r '.txhash')
 else

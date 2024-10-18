@@ -115,8 +115,22 @@ async fn test_template<T: DockerComposeContext>(ctx: &mut T, commands: Vec<Comma
 async fn test_centralized(ctx: &mut DockerComposeCentralizedContext) {
     let commands = vec![
         Command::InsecureKeyGen(Nothing {}),
-        Command::Decrypt(CryptExecute { to_encrypt: 7_u8 }),
-        Command::ReEncrypt(CryptExecute { to_encrypt: 9_u8 }),
+        Command::Decrypt(CryptExecute {
+            to_encrypt: 7_u8,
+            compressed: false,
+        }),
+        Command::Decrypt(CryptExecute {
+            to_encrypt: 10_u8,
+            compressed: true,
+        }),
+        Command::ReEncrypt(CryptExecute {
+            to_encrypt: 9_u8,
+            compressed: false,
+        }),
+        Command::ReEncrypt(CryptExecute {
+            to_encrypt: 13_u8,
+            compressed: true,
+        }),
         Command::CrsGen(Nothing {}),
         Command::VerifyProvenCt(VerifyProvenCtExecute {
             to_encrypt: 41,
@@ -134,8 +148,22 @@ async fn test_threshold(ctx: &mut DockerComposeThresholdContext) {
     let commands = vec![
         Command::InsecureKeyGen(Nothing {}),
         Command::CrsGen(Nothing {}),
-        Command::Decrypt(CryptExecute { to_encrypt: 7_u8 }),
-        Command::ReEncrypt(CryptExecute { to_encrypt: 9_u8 }),
+        Command::Decrypt(CryptExecute {
+            to_encrypt: 7_u8,
+            compressed: false,
+        }),
+        Command::Decrypt(CryptExecute {
+            to_encrypt: 32_u8,
+            compressed: true,
+        }),
+        Command::ReEncrypt(CryptExecute {
+            to_encrypt: 9_u8,
+            compressed: false,
+        }),
+        Command::ReEncrypt(CryptExecute {
+            to_encrypt: 28_u8,
+            compressed: true,
+        }),
         Command::VerifyProvenCt(VerifyProvenCtExecute {
             to_encrypt: 41,
             crs_id: None,

@@ -35,8 +35,8 @@ use kms_lib::kms::{DecryptionResponsePayload, ReencryptionResponse, Reencryption
 use kms_lib::rpc::rpc_types::{Plaintext, PubDataType};
 use kms_lib::storage::{FileStorage, StorageReader, StorageType};
 use kms_lib::util::key_setup::test_tools::{
-    compute_compressed_cipher_from_stored_key, compute_proven_ct_from_stored_key_and_serialize,
-    TypedPlaintext,
+    compute_cipher_from_stored_key, compute_compressed_cipher_from_stored_key,
+    compute_proven_ct_from_stored_key_and_serialize, TypedPlaintext,
 };
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
@@ -250,6 +250,8 @@ pub struct Nothing {}
 pub struct CryptExecute {
     #[clap(long, short = 'e')]
     pub to_encrypt: u8,
+    #[clap(long, short = 'c', default_value_t = false)]
+    pub compressed: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -501,6 +503,7 @@ pub async fn encrypt(
     to_encrypt: u8,
     key_id: &str,
     keys_folder: &Path,
+    compressed: Option<bool>,
 ) -> Result<(Vec<u8>, Plaintext), Box<dyn std::error::Error + 'static>> {
     let typed_to_encrypt = TypedPlaintext::U8(to_encrypt);
 
@@ -558,9 +561,16 @@ pub async fn encrypt(
         typed_to_encrypt
     );
 
-    let (cipher, _) =
-        compute_compressed_cipher_from_stored_key(Some(keys_folder), typed_to_encrypt, key_id)
-            .await;
+    let cipher: Vec<u8>;
+    if compressed.unwrap_or(false) {
+        (cipher, _) =
+            compute_compressed_cipher_from_stored_key(Some(keys_folder), typed_to_encrypt, key_id)
+                .await;
+    } else {
+        (cipher, _) =
+            compute_cipher_from_stored_key(Some(keys_folder), typed_to_encrypt, key_id).await;
+    }
+
     Ok((cipher, ptxt))
 }
 
@@ -778,8 +788,9 @@ pub async fn execute_decryption_contract(
     query_client: &QueryClient,
     key_id: &str,
     keys_folder: &Path,
+    compressed: Option<bool>,
 ) -> Result<(KmsEvent, Plaintext), Box<dyn std::error::Error + 'static>> {
-    let (cipher, ptxt) = encrypt(to_encrypt, key_id, keys_folder).await?;
+    let (cipher, ptxt) = encrypt(to_encrypt, key_id, keys_folder, compressed).await?;
     let kv_store_address = client
         .kv_store_address
         .clone()
@@ -817,6 +828,7 @@ pub async fn execute_reencryption_contract(
     key_id: &str,
     keys_folder: &Path,
     kms_core_conf: KmsCoreConf,
+    compressed: Option<bool>,
 ) -> Result<
     (
         KmsEvent,
@@ -836,7 +848,7 @@ pub async fn execute_reencryption_contract(
         events::kms::FheParameter::Test => TEST_PARAM,
     };
 
-    let (cipher, ptxt) = encrypt(to_encrypt, key_id, keys_folder).await?;
+    let (cipher, ptxt) = encrypt(to_encrypt, key_id, keys_folder, compressed).await?;
     let kv_store_address = client
         .kv_store_address
         .clone()
@@ -1436,6 +1448,7 @@ pub async fn main_from_config(
                 &query_client,
                 &sim_conf.key_id,
                 destination_prefix,
+                Some(ex.compressed),
             )
             .await?;
             let responses =
@@ -1452,6 +1465,7 @@ pub async fn main_from_config(
                     &sim_conf.key_id,
                     destination_prefix,
                     kms_core_conf,
+                    Some(ex.compressed),
                 )
                 .await?;
             let responses =

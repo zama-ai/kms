@@ -5,7 +5,6 @@ name: zama-kms-threshold
 services:
 # KMS-Blockchain validator node
   dev-kms-blockchain-validator:
-    image: kms-validator:latest
     ports:
       - "36656:26656"
       - "36657:26657"
@@ -25,7 +24,7 @@ services:
         condition: service_completed_successfully
 
   dev-kms-core-status:
-    image: kms-core:latest
+    image: ghcr.io/zama-ai/kms-service-dev:latest
     depends_on:
       dev-kms-core-1:
         condition: service_healthy
@@ -48,12 +47,12 @@ services:
       "
 
   dev-kms-core-setup:
+    image: ghcr.io/zama-ai/kms-service-dev:latest
     build:
       context: .
       dockerfile: core/service/operations/docker/dev.dockerfile
-    image: kms-core:latest
     depends_on:
-      kms-core-base:
+      kms-core-base-build:
         condition: service_started
       dev-s3-mock-setup:
         condition: service_completed_successfully
@@ -78,7 +77,7 @@ services:
       - certs:/app/kms/core/service/certs
 
   dev-kms-core-1:
-    image: kms-core:latest
+    image: ghcr.io/zama-ai/kms-service-dev:latest
     ports:
       - "50051:50051"
       - "50100:50100"
@@ -113,7 +112,7 @@ services:
     build:
       context: .
       dockerfile: blockchain/connector/operations/docker/dev.dockerfile
-    image: kms-connector:latest
+    image: ghcr.io/zama-ai/kms-blockchain-connector-dev:latest
     command:
       - "kms-blockchain-connector"
     environment:
@@ -132,7 +131,7 @@ services:
         condition: service_healthy
 
   dev-kms-core-2:
-    image: kms-core:latest
+    image: ghcr.io/zama-ai/kms-service-dev:latest
     ports:
       - "50052:50052"
       - "50200:50200"
@@ -158,7 +157,7 @@ services:
       "
 
   dev-kms-connector-2:
-    image: kms-connector:latest
+    image: ghcr.io/zama-ai/kms-blockchain-connector-dev:latest
     command:
       - "kms-blockchain-connector"
     environment:
@@ -177,7 +176,7 @@ services:
         condition: service_healthy
 
   dev-kms-core-3:
-    image: kms-core:latest
+    image: ghcr.io/zama-ai/kms-service-dev:latest
     ports:
       - "50053:50053"
       - "50300:50300"
@@ -203,7 +202,7 @@ services:
       "
 
   dev-kms-connector-3:
-    image: kms-connector:latest
+    image: ghcr.io/zama-ai/kms-blockchain-connector-dev:latest
     command:
       - "kms-blockchain-connector"
     environment:
@@ -222,7 +221,7 @@ services:
         condition: service_healthy
 
   dev-kms-core-4:
-    image: kms-core:latest
+    image: ghcr.io/zama-ai/kms-service-dev:latest
     ports:
       - "50054:50054"
       - "50400:50400"
@@ -248,7 +247,7 @@ services:
       "
 
   dev-kms-connector-4:
-    image: kms-connector:latest
+    image: ghcr.io/zama-ai/kms-blockchain-connector-dev:latest
     command:
       - "kms-blockchain-connector"
     environment:

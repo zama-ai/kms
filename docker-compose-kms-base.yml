@@ -14,16 +14,16 @@ services:
   # KV-Store
   # TODO: add healthcheck
   dev-kms-blockchain-validator:
+    image: ghcr.io/zama-ai/kms-blockchain-validator:latest
     build:
       context: .
       dockerfile: blockchain/contracts/operations/docker/dev.dockerfile
-    image: kms-validator:latest
 
   dev-kv-store:
+    image: ghcr.io/zama-ai/kms-blockchain-gateway-dev:latest
     build:
       context: .
       dockerfile: blockchain/gateway/operations/docker/dev.dockerfile
-    image: kms-gateway:latest
     ports:
       - "8088:8088"
     command:
@@ -83,7 +83,7 @@ services:
         condition: service_healthy
 
   # kms-core base image from the kms-core dev image is derived
-  kms-core-base:
+  kms-core-base-build:
     image: ghcr.io/zama-ai/kms-service:latest
     build:
       context: .
