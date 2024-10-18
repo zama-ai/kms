@@ -66,8 +66,9 @@ impl KmsContract {
         result[..20].to_vec()
     }
 
-    // TODO: makes sense to propagate a `TransactionId` instead of a `Vec<u8>` for consistency with
-    // load methods
+    /// Process transaction
+    ///
+    /// Processes a transaction.
     fn process_transaction(
         &self,
         storage: &mut dyn Storage,
@@ -300,6 +301,9 @@ impl KmsContract {
             | (ciphertext_handle[3] as u32)
     }
 
+    /// Verify payment
+    ///
+    /// Verify payment for ciphertext storage
     fn verify_payment(&self, ctx: &ExecCtx, ciphertext_handles: &[Vec<u8>]) -> StdResult<()> {
         let mut data_size = 0;
         for handle in ciphertext_handles {
@@ -456,8 +460,8 @@ impl KmsContract {
         ctx: ExecCtx,
         verify_proven_ct: VerifyProvenCtValues,
     ) -> StdResult<Response> {
-        let txn_id = self.derive_transaction_id(&ctx.env)?;
-        self.process_transaction(ctx.deps.storage, &ctx.env, &txn_id, verify_proven_ct.into())
+        let mut ctx = ctx;
+        self.process_request_transaction(&mut ctx, verify_proven_ct.into())
     }
 
     #[sv::msg(exec)]
