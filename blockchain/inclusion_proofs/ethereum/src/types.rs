@@ -51,7 +51,7 @@ pub struct EvmPermissionProof {
     ///
     /// Note:
     /// 1. For ethermint, this is list of encoded proof ops. See
-    /// cometbft/proto/cometbft/crypto/v1/proof.proto.
+    ///    cometbft/proto/cometbft/crypto/v1/proof.proto.
     /// 2. For ethereum, this is serialized ethereum storag proof json.
     #[prost(bytes = "vec", repeated, tag = "6")]
     pub proof: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,

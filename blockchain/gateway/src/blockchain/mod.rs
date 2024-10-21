@@ -66,6 +66,7 @@ pub(crate) trait Blockchain: KmsEventSubscriber {
         ciphertext: Vec<u8>,
         eip712_verifying_contract: String,
         chain_id: U256,
+        salt: Option<Vec<u8>>,
         acl_address: String,
     ) -> anyhow::Result<Vec<ReencryptResponseValues>>;
 

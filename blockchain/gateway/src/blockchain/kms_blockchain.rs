@@ -15,6 +15,7 @@ use ethers::abi::Token;
 use ethers::prelude::*;
 use events::kms::DecryptValues;
 use events::kms::FheKeyUrlInfo;
+use events::kms::FheParameter;
 use events::kms::KeyUrlInfo;
 use events::kms::KeyUrlResponseValues;
 use events::kms::KmsCoreConf;
@@ -43,7 +44,6 @@ use kms_lib::consts::SIGNING_KEY_ID;
 use kms_lib::cryptography::signcryption::hash_element;
 use kms_lib::kms::DecryptionResponsePayload;
 use kms_lib::kms::Eip712DomainMsg;
-use kms_lib::kms::ParamChoice;
 use kms_lib::kms::VerifyProvenCtResponsePayload;
 use kms_lib::rpc::rpc_types::Plaintext;
 use kms_lib::rpc::rpc_types::PubDataType;
@@ -293,11 +293,12 @@ impl<'a> KmsBlockchainImpl {
     }
 
     /// Helper function to parse the KeyGenResponses from the KMS blockchain.
-    /// Takes a vector of KeyGenResponses as input and returns a map of key IDs to a tuple of public key signatures followed by server signatures.
+    /// Takes a vector of KeyGenResponses as input and returns a map of key IDs to a tuple of parameter choice, public key signatures followed by server signatures.
     fn parse_signed_key_data(
         vals: Vec<OperationValue>,
-    ) -> anyhow::Result<HashMap<String, (HexVectorList, HexVectorList)>> {
-        let mut id_sig_map: HashMap<String, (HexVectorList, HexVectorList)> = HashMap::new();
+    ) -> anyhow::Result<HashMap<String, (FheParameter, HexVectorList, HexVectorList)>> {
+        let mut id_sig_map: HashMap<String, (FheParameter, HexVectorList, HexVectorList)> =
+            HashMap::new();
         // Go through each operation value returned and branch into the keygen case.
         // Then combine all signatures on the same ID into a vector for that ID.
         for cur_res in vals.iter() {
@@ -305,7 +306,10 @@ impl<'a> KmsBlockchainImpl {
                 OperationValue::KeyGenResponse(key_resp) => {
                     match id_sig_map.get_mut(&key_resp.request_id().to_hex()) {
                         // First the case where the ID is already in the map
-                        Some((pk_sigs, server_sigs)) => {
+                        Some((param, pk_sigs, server_sigs)) => {
+                            if param != key_resp.param() {
+                                tracing::error!("Discrepency between the parties choice of parameter. Specifically the inital parameter choice is {:?} and the current one is {:?}", key_resp.param(), param);
+                            }
                             // NOTE: This is just a sanity check and pretty slow, so can be removed if we end up with many MPC servers.
                             if pk_sigs.contains(key_resp.public_key_signature()) {
                                 tracing::error!("The response from the blockchain on KeyGenResponse already contains duplicate signatures. Specifically the signature {:?}", key_resp.public_key_signature());
@@ -326,6 +330,7 @@ impl<'a> KmsBlockchainImpl {
                             id_sig_map.insert(
                                 key_resp.request_id().to_hex(),
                                 (
+                                    key_resp.param().to_owned(),
                                     HexVectorList(vec![key_resp.public_key_signature().to_owned()]),
                                     HexVectorList(vec![key_resp.server_key_signature().to_owned()]),
                                 ),
@@ -348,8 +353,8 @@ impl<'a> KmsBlockchainImpl {
     /// Takes a vector of CrsGenResponses as input and returns a map of key IDs to a tuple of public key signatures followed by a tuple of the max number of bits and the list of signatures.
     fn parse_signed_crs_data(
         vals: Vec<OperationValue>,
-    ) -> anyhow::Result<HashMap<String, (u32, HexVectorList)>> {
-        let mut id_sig_map: HashMap<String, (u32, HexVectorList)> = HashMap::new();
+    ) -> anyhow::Result<HashMap<String, (u32, FheParameter, HexVectorList)>> {
+        let mut id_sig_map: HashMap<String, (u32, FheParameter, HexVectorList)> = HashMap::new();
         // Go through each operation value returned and branch into the crsgen case.
         // Then combine all signatures on the same ID into a vector for that ID.
         for cur_res in vals.iter() {
@@ -357,7 +362,13 @@ impl<'a> KmsBlockchainImpl {
                 OperationValue::CrsGenResponse(crs_resp) => {
                     match id_sig_map.get_mut(crs_resp.request_id()) {
                         // First the case where the ID is already in the map
-                        Some((_max_num_bits, sigs)) => {
+                        Some((max_num_bits, fhe_param, sigs)) => {
+                            if *max_num_bits != crs_resp.max_num_bits() {
+                                tracing::error!("Discrepency between the parties choice of max number of bits. Specifically the inital choice is {:?} and the current one is {:?}", max_num_bits, crs_resp.max_num_bits());
+                            }
+                            if fhe_param != crs_resp.param() {
+                                tracing::error!("Discrepency between the parties choice of parameter. Specifically the inital parameter choice is {:?} and the current one is {:?}", fhe_param, crs_resp.param());
+                            }
                             // NOTE: This is just a sanity check and pretty slow, so can be removed if we end up with many MPC servers.
                             if sigs.contains(crs_resp.signature()) {
                                 tracing::error!("The response from the blockchain on CrsGenResponse already contains duplicate signatures. Specifically the signature {:?}", crs_resp.signature());
@@ -369,8 +380,11 @@ impl<'a> KmsBlockchainImpl {
                         None => {
                             id_sig_map.insert(
                                 crs_resp.request_id().to_owned(),
-                                // TODO this is not part of the crs yet request or response yet! See issue #1172
-                                (256, HexVectorList(vec![crs_resp.signature().to_owned()])),
+                                (
+                                    crs_resp.max_num_bits(),
+                                    crs_resp.param().to_owned(),
+                                    HexVectorList(vec![crs_resp.signature().to_owned()]),
+                                ),
                             );
                         }
                     }
@@ -391,13 +405,19 @@ impl<'a> KmsBlockchainImpl {
     fn prepare_fhe_key_urls(
         storage_urls: &HashMap<u32, String>,
         key_id: &str,
+        param: &FheParameter,
         pk_sig: HexVectorList,
         server_sig: HexVectorList,
     ) -> anyhow::Result<FheKeyUrlInfo> {
         let fhe_public_key =
-            Self::get_fhe_key_info(PubDataType::PublicKey, storage_urls, key_id, pk_sig)?;
-        let fhe_server_key =
-            Self::get_fhe_key_info(PubDataType::ServerKey, storage_urls, key_id, server_sig)?;
+            Self::get_fhe_key_info(PubDataType::PublicKey, storage_urls, key_id, param, pk_sig)?;
+        let fhe_server_key = Self::get_fhe_key_info(
+            PubDataType::ServerKey,
+            storage_urls,
+            key_id,
+            param,
+            server_sig,
+        )?;
         Ok(FheKeyUrlInfo::builder()
             .fhe_public_key(fhe_public_key)
             .fhe_server_key(fhe_server_key)
@@ -409,6 +429,7 @@ impl<'a> KmsBlockchainImpl {
         key_type: PubDataType,
         storage_urls: &HashMap<u32, String>,
         key_id: &str,
+        param: &FheParameter,
         sigs: HexVectorList,
     ) -> anyhow::Result<KeyUrlInfo> {
         let mut urls = Vec::new();
@@ -422,7 +443,7 @@ impl<'a> KmsBlockchainImpl {
         }
         Ok(KeyUrlInfo::builder()
             .data_id(HexVector::from_hex(key_id)?)
-            .param_choice(ParamChoice::Default.into()) // TODO should come from blockchain, see issue #1172
+            .param_choice(param.to_owned().into())
             .urls(urls)
             .signatures(sigs)
             .build())
@@ -461,10 +482,10 @@ impl<'a> KmsBlockchainImpl {
     /// The key in the resultant map is the maximum number of bits of the CRS and the value is the CRS information including the URL and signature.
     fn get_crs_info(
         storage_urls: &HashMap<u32, String>,
-        crs_data: &HashMap<String, (u32, HexVectorList)>,
+        crs_data: &HashMap<String, (u32, FheParameter, HexVectorList)>,
     ) -> anyhow::Result<HashMap<u32, KeyUrlInfo>> {
         let mut res = HashMap::new();
-        for (crs_id, (max_bits, sigs)) in crs_data.iter() {
+        for (crs_id, (max_bits, param, sigs)) in crs_data.iter() {
             let mut urls = Vec::new();
             for base_url in storage_urls.values() {
                 let crs_type = PubDataType::CRS.to_string();
@@ -478,7 +499,7 @@ impl<'a> KmsBlockchainImpl {
                 *max_bits,
                 KeyUrlInfo::builder()
                     .data_id(HexVector::from_hex(crs_id)?)
-                    .param_choice(ParamChoice::Default.into()) // TODO placeholder until crs data gets updated, see issue #1172
+                    .param_choice(param.to_owned().into())
                     .urls(urls)
                     .signatures(sigs.to_owned())
                     .build(),
@@ -549,16 +570,16 @@ impl Blockchain for KmsBlockchainImpl {
             eip712_domain.chain_id,
             eip712_domain.verifying_contract,
             eip712_domain.salt,
-        );
+        )?;
 
         tracing::info!(
             "Decryption EIP712 info: name={}, version={}, \
-            chain_id={} (HEX), verifying_contract={}, salt={} (HEX), ACL address={}",
+            chain_id={} (HEX), verifying_contract={}, salt={:?}, ACL address={}",
             decrypt_values.eip712_name(),
             decrypt_values.eip712_version(),
             decrypt_values.eip712_chain_id().to_hex(),
             decrypt_values.eip712_verifying_contract(),
-            decrypt_values.eip712_salt().to_hex(),
+            decrypt_values.eip712_salt(),
             decrypt_values.acl_address()
         );
 
@@ -595,8 +616,7 @@ impl Blockchain for KmsBlockchainImpl {
                 OperationValue::DecryptResponse(decrypt_response) => {
                     let payload: DecryptionResponsePayload = deserialize(
                         <&HexVector as Into<Vec<u8>>>::into(decrypt_response.payload()).as_slice(),
-                    )
-                    .unwrap();
+                    )?;
 
                     // the KMS-internal signature, for verification of the response (currently not used)
                     let _internal_sig = decrypt_response.signature().0.clone();
@@ -653,8 +673,7 @@ impl Blockchain for KmsBlockchainImpl {
                             let payload: DecryptionResponsePayload = deserialize(
                                 <&HexVector as Into<Vec<u8>>>::into(decrypt_response.payload())
                                     .as_slice(),
-                            )
-                            .unwrap();
+                            )?;
                             tracing::info!(
                                 "🥐🥐🥐🥐🥐🥐 Threshold Gateway decrypted {} plaintext(s).",
                                 payload.plaintexts.len()
@@ -761,6 +780,7 @@ impl Blockchain for KmsBlockchainImpl {
         ciphertext: Vec<u8>,
         eip712_verifying_contract: String,
         chain_id: U256,
+        eip712_salt: Option<Vec<u8>>,
         acl_address: String,
     ) -> anyhow::Result<Vec<ReencryptResponseValues>> {
         tracing::info!(
@@ -791,9 +811,6 @@ impl Blockchain for KmsBlockchainImpl {
         };
         let proof = fetch_ethereum_proof(ctxt_handle.clone(), config).await;
 
-        // TODO this is currently not set, but might be in the future
-        let eip712_salt = HexVector(vec![]);
-
         // chain ID is 32 bytes
         let mut eip712_chain_id = vec![0u8; 32];
         chain_id.to_big_endian(&mut eip712_chain_id);
@@ -823,16 +840,16 @@ impl Blockchain for KmsBlockchainImpl {
             eip712_chain_id,
             eip712_verifying_contract,
             eip712_salt,
-        );
+        )?;
 
         tracing::info!(
             "Reencryption EIP712 info: name={}, version={}, \
-            chain_id={} (HEX), verifying_contract={}, salt={} (HEX)",
+            chain_id={} (HEX), verifying_contract={}, salt={:?}",
             reencrypt_values.eip712_name(),
             reencrypt_values.eip712_version(),
             reencrypt_values.eip712_chain_id().to_hex(),
             reencrypt_values.eip712_verifying_contract(),
-            reencrypt_values.eip712_salt().to_hex(),
+            reencrypt_values.eip712_salt(),
         );
 
         let operation = events::kms::OperationValue::Reencrypt(reencrypt_values);
@@ -958,7 +975,7 @@ impl Blockchain for KmsBlockchainImpl {
             eip712_domain.chain_id,
             eip712_domain.verifying_contract,
             eip712_domain.salt,
-        );
+        )?;
 
         let operation = events::kms::OperationValue::VerifyProvenCt(proven_ct_values);
 
@@ -1033,10 +1050,11 @@ impl Blockchain for KmsBlockchainImpl {
             .await?;
         let key_data = KmsBlockchainImpl::parse_signed_key_data(key_ops)?;
         let mut fhe_url_info = Vec::new();
-        for (key_id, (pk_sigs, server_sigs)) in key_data.iter() {
+        for (key_id, (param, pk_sigs, server_sigs)) in key_data.iter() {
             fhe_url_info.push(KmsBlockchainImpl::prepare_fhe_key_urls(
                 &self.config.kms.public_storage,
                 key_id,
+                param,
                 pk_sigs.to_owned(),
                 server_sigs.to_owned(),
             )?);
@@ -1109,7 +1127,7 @@ fn most_common_element<T: Eq + std::hash::Hash + Clone>(vec: &[T]) -> Option<(T,
 mod tests {
     use crate::blockchain::kms_blockchain::{most_common_element, KmsBlockchainImpl};
     use events::{
-        kms::{CrsGenResponseValues, KeyGenResponseValues, OperationValue},
+        kms::{CrsGenResponseValues, FheParameter, KeyGenResponseValues, OperationValue},
         HexVector, HexVectorList,
     };
     use kms_lib::{
@@ -1152,6 +1170,7 @@ mod tests {
                 HexVector::from_hex("111111111111111111111111111111111111111100").unwrap(), // pk_sig
                 "digest_server_1".to_string(),
                 HexVector::from_hex("111111111111111111111111111111111111111111").unwrap(), // server_sig
+                FheParameter::Test,
             )),
             // Server 2 response
             OperationValue::KeyGenResponse(KeyGenResponseValues::new(
@@ -1160,6 +1179,7 @@ mod tests {
                 HexVector::from_hex("222222222222222222222222222222222222222200").unwrap(), // pk_sig
                 "digest_server_2".to_string(),
                 HexVector::from_hex("222222222222222222222222222222222222222211").unwrap(), // server_sig
+                FheParameter::Test,
             )),
             // Server 1 response to other key
             OperationValue::KeyGenResponse(KeyGenResponseValues::new(
@@ -1168,11 +1188,13 @@ mod tests {
                 HexVector::from_hex("abcdef").unwrap(), // pk_sig
                 "digest_server_1_other".to_string(),
                 HexVector::from_hex("abcdef").unwrap(), // server_sig
+                FheParameter::Test,
             )),
         ];
         let res = KmsBlockchainImpl::parse_signed_key_data(key_operations).unwrap();
         assert_eq!(res.len(), 2);
-        let (res_pk_sig, res_server_sig) = res.get(&req_id.to_hex()).unwrap();
+        let (param, res_pk_sig, res_server_sig) = res.get(&req_id.to_hex()).unwrap();
+        assert_eq!(param, &FheParameter::Test);
         // Check pk sigs
         assert_eq!(
             res_pk_sig.0,
@@ -1199,31 +1221,39 @@ mod tests {
         let other_req_id = RequestId::derive("sunshine_parse_key_sig_other_req_id")
             .unwrap()
             .to_string();
+        let max_bits = 256;
+        let param = FheParameter::Test;
         let key_operations = vec![
             // Server 1 response
             OperationValue::CrsGenResponse(CrsGenResponseValues::new(
                 req_id.clone(),
                 "digest_1".to_string(),
                 HexVector::from_hex("111111111111111111111111111111111111111111").unwrap(),
+                max_bits,
+                param,
             )),
             // Server 2 response
             OperationValue::CrsGenResponse(CrsGenResponseValues::new(
                 req_id.clone(),
                 "digest_pk_2".to_string(),
                 HexVector::from_hex("222222222222222222222222222222222222222222").unwrap(),
+                max_bits,
+                param,
             )),
             // Server 1 response to other crs
             OperationValue::CrsGenResponse(CrsGenResponseValues::new(
                 other_req_id.clone(),
                 "digest_1_other".to_string(),
                 HexVector::from_hex("abcdef").unwrap(),
+                max_bits,
+                param,
             )),
         ];
         let res = KmsBlockchainImpl::parse_signed_crs_data(key_operations).unwrap();
         assert_eq!(res.len(), 2);
-        let (max_bits, sig) = res.get(&req_id).unwrap();
-        // TODO will be changed with # 1172
-        assert_eq!(256, *max_bits);
+        let (retrieved_max_bits, retrieved_param, sig) = res.get(&req_id).unwrap();
+        assert_eq!(max_bits, *retrieved_max_bits);
+        assert_eq!(&param, retrieved_param);
         assert_eq!(
             sig.0,
             vec![
@@ -1253,11 +1283,15 @@ mod tests {
             PubDataType::ServerKey,
             &storages_urls,
             key_id,
+            &FheParameter::Test,
             sigs,
         )
         .unwrap();
         assert_eq!(fhe_server_key.data_id().to_hex(), key_id);
-        assert_eq!(fhe_server_key.param_choice(), ParamChoice::Default as i32);
+        assert_eq!(
+            fhe_server_key.param_choice(),
+            <FheParameter as Into<i32>>::into(FheParameter::Test),
+        );
         assert_eq!(fhe_server_key.urls().len(), 4);
         assert!(fhe_server_key.urls().contains(
             &"http://127.0.0.1:8081/PUB-p1/ServerKey/00112233445566778899aabbccddeeff0011223344"
@@ -1318,22 +1352,31 @@ mod tests {
             base_sig.clone(),
             base_sig.clone(),
         ]);
-        let crs_ids: HashMap<String, (u32, HexVectorList)> = HashMap::from([
+        let crs_ids: HashMap<String, (u32, FheParameter, HexVectorList)> = HashMap::from([
             (
                 "00112233445566778899aabbccddeeff0011223344".to_string(),
-                (128, sigs.clone()),
+                (128, FheParameter::Test, sigs.clone()),
             ),
             (
                 "9988776655443322110099887766554433221100aa".to_string(),
-                (256, sigs.clone()),
+                (256, FheParameter::Default, sigs.clone()),
             ),
         ]);
         let crs_info = KmsBlockchainImpl::get_crs_info(&storages_urls, &crs_ids).unwrap();
         assert_eq!(crs_info.len(), crs_ids.len());
-        for cur_info in crs_info.values() {
+        for (max_bits, cur_info) in &crs_info {
             assert_eq!(storages_urls.len(), cur_info.signatures().len());
-            // TODO placeholder for now, see issue #1172
-            assert_eq!(ParamChoice::Default as i32, cur_info.param_choice());
+            if *max_bits == 128 {
+                assert_eq!(
+                    <ParamChoice as Into<i32>>::into(ParamChoice::Test),
+                    cur_info.param_choice()
+                );
+            } else {
+                assert_eq!(
+                    <ParamChoice as Into<i32>>::into(ParamChoice::Default),
+                    cur_info.param_choice()
+                );
+            }
             assert!(cur_info.signatures().contains(&base_sig.clone()));
         }
         for cur_server_id in storages_urls.keys() {

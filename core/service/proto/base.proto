@@ -8,6 +8,10 @@ message InitRequest {
   Config config = 1;
 }
 
+message Config {
+  // TODO placeholder
+}
+
 // Placeholder response, when no content is needed
 message Empty {}
 
@@ -41,9 +45,8 @@ enum FheType {
 }
 
 message KeyGenPreprocRequest {
-  Config config = 1;
-  ParamChoice params = 2;
-  RequestId request_id = 3;
+  ParamChoice params = 1;
+  RequestId request_id = 2;
 }
 
 message KeyGenPreprocStatus { KeyGenPreprocStatusEnum result = 1; }
@@ -51,15 +54,10 @@ message KeyGenPreprocStatus { KeyGenPreprocStatusEnum result = 1; }
 // Request for generating new keys under a certain handle and return a URI where
 // they can be accessed.
 message KeyGenRequest {
-  Config config = 1;
-  ParamChoice params = 2;
-  RequestId preproc_id = 3;
+  ParamChoice params = 1;
+  RequestId preproc_id = 2;
+  RequestId request_id = 3;
   Eip712DomainMsg domain = 4;
-  RequestId request_id = 5;
-}
-
-message Config {
-  // TODO placeholder
 }
 
 message KeyGenResult {
@@ -88,14 +86,13 @@ enum ParamChoice {
 }
 
 message CrsGenRequest {
-  Config config = 1;
-  ParamChoice params = 2;
+  ParamChoice params = 1;
   // This is the maximum number of bits that can be proven,
   // e.g. 64 for a single FheUint64 or 8 x FheUint8 values.
   // If this is not provided, then it defaults to ZK_DEFAULT_MAX_NUM_CLEARTEXT.
-  optional uint32 max_num_bits = 3;
+  optional uint32 max_num_bits = 2;
+  RequestId request_id = 3;
   Eip712DomainMsg domain = 4;
-  RequestId request_id = 5;
 }
 
 message CrsGenResult {
@@ -192,7 +189,7 @@ message Eip712DomainMsg {
   string version = 2;
   bytes chain_id = 3;
   string verifying_contract = 4;
-  bytes salt = 5;
+  optional bytes salt = 5;
 }
 
 message ReencryptionRequest {

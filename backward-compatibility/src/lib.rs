@@ -1,17 +1,15 @@
 //! All tests struct are defined here, for all modules and versions of kms-core.
 
+#[cfg(feature = "load")]
+use semver::{Prerelease, Version, VersionReq};
+use serde::{Deserialize, Serialize};
+#[cfg(feature = "load")]
+use std::fmt::Display;
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
 };
-
-#[cfg(feature = "load")]
-use semver::{Prerelease, Version, VersionReq};
-#[cfg(feature = "load")]
-use std::fmt::Display;
 use strum::Display;
-
-use serde::{Deserialize, Serialize};
 
 pub mod parameters;
 
@@ -242,7 +240,7 @@ pub struct DecryptValuesTest {
     pub eip712_version: Cow<'static, str>,
     pub eip712_chain_id: [u8; 3],
     pub eip712_verifying_contract: Cow<'static, str>,
-    pub eip712_salt: [u8; 3],
+    pub eip712_salt: Option<[u8; 3]>,
     pub block_height: u64,
     pub transaction_index: u32,
 }
@@ -344,7 +342,7 @@ impl TestType for ReencryptResponseValuesTest {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct VerifyProvenCtValuesTest {
+pub struct ZkpValuesTest {
     pub test_filename: Cow<'static, str>,
     pub crs_id: [u8; 3],
     pub key_id: [u8; 3],
@@ -361,7 +359,7 @@ pub struct VerifyProvenCtValuesTest {
     pub transaction_index: u32,
 }
 
-impl TestType for VerifyProvenCtValuesTest {
+impl TestType for ZkpValuesTest {
     fn module(&self) -> String {
         EVENTS_MODULE_NAME.to_string()
     }
@@ -376,7 +374,7 @@ impl TestType for VerifyProvenCtValuesTest {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct VerifyProvenCtResponseValuesTest {
+pub struct ZkpResponseValuesTest {
     pub test_filename: Cow<'static, str>,
     pub signature: [u8; 3],
     pub payload: [u8; 3],
@@ -384,7 +382,7 @@ pub struct VerifyProvenCtResponseValuesTest {
     pub transaction_index: u32,
 }
 
-impl TestType for VerifyProvenCtResponseValuesTest {
+impl TestType for ZkpResponseValuesTest {
     fn module(&self) -> String {
         EVENTS_MODULE_NAME.to_string()
     }
@@ -493,6 +491,7 @@ pub struct KeyGenResponseValuesTest {
     pub public_key_signature: [u8; 3],
     pub server_key_digest: Cow<'static, str>,
     pub server_key_signature: [u8; 3],
+    pub param: i32,
     pub block_height: u64,
     pub transaction_index: u32,
 }
@@ -554,7 +553,7 @@ impl TestType for KeyGenPreprocResponseValuesTest {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct Eip712DomainValuesTest {
+pub struct InsecureKeyGenValuesTest {
     pub test_filename: Cow<'static, str>,
     pub eip712_name: Cow<'static, str>,
     pub eip712_version: Cow<'static, str>,
@@ -565,13 +564,40 @@ pub struct Eip712DomainValuesTest {
     pub transaction_index: u32,
 }
 
-impl TestType for Eip712DomainValuesTest {
+impl TestType for InsecureKeyGenValuesTest {
     fn module(&self) -> String {
         EVENTS_MODULE_NAME.to_string()
     }
 
     fn target_type(&self) -> String {
-        "Eip712DomainValues".to_string()
+        "InsecureKeyGenValues".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct CrsGenValuesTest {
+    pub test_filename: Cow<'static, str>,
+    pub max_num_bits: u32,
+    pub eip712_name: Cow<'static, str>,
+    pub eip712_version: Cow<'static, str>,
+    pub eip712_chain_id: [u8; 3],
+    pub eip712_verifying_contract: Cow<'static, str>,
+    pub eip712_salt: [u8; 3],
+    pub block_height: u64,
+    pub transaction_index: u32,
+}
+
+impl TestType for CrsGenValuesTest {
+    fn module(&self) -> String {
+        EVENTS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "CrsGenValues".to_string()
     }
 
     fn test_filename(&self) -> String {
@@ -585,6 +611,8 @@ pub struct CrsGenResponseValuesTest {
     pub request_id: Cow<'static, str>,
     pub digest: Cow<'static, str>,
     pub signature: [u8; 3],
+    pub max_num_bits: u32,
+    pub param: i32,
     pub block_height: u64,
     pub transaction_index: u32,
 }
@@ -675,15 +703,16 @@ pub enum TestMetadataEvents {
     DecryptResponseValues(DecryptResponseValuesTest),
     ReencryptValues(ReencryptValuesTest),
     ReencryptResponseValues(ReencryptResponseValuesTest),
-    VerifyProvenCtValues(VerifyProvenCtValuesTest),
-    VerifyProvenCtResponseValues(VerifyProvenCtResponseValuesTest),
+    ZkpValues(ZkpValuesTest),
+    ZkpResponseValues(ZkpResponseValuesTest),
     KeyUrlValues(KeyUrlValuesTest),
     KeyUrlResponseValues(KeyUrlResponseValuesTest),
     KeyGenValues(KeyGenValuesTest),
     KeyGenResponseValues(KeyGenResponseValuesTest),
     KeyGenPreprocValues(KeyGenPreprocValuesTest),
     KeyGenPreprocResponseValues(KeyGenPreprocResponseValuesTest),
-    Eip712DomainValues(Eip712DomainValuesTest),
+    InsecureKeyGenValues(InsecureKeyGenValuesTest),
+    CrsGenValues(CrsGenValuesTest),
     CrsGenResponseValues(CrsGenResponseValuesTest),
     KmsCoreConfCentralized(KmsCoreConfCentralizedTest),
     KmsCoreConfThreshold(KmsCoreConfThresholdTest),

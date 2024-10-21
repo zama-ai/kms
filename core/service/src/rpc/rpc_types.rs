@@ -182,11 +182,6 @@ pub fn protobuf_to_alloy_domain_option(
 }
 
 pub fn protobuf_to_alloy_domain(pb_domain: &Eip712DomainMsg) -> anyhow::Result<Eip712Domain> {
-    let salt = if pb_domain.salt.is_empty() {
-        None
-    } else {
-        Some(B256::from_slice(&pb_domain.salt))
-    };
     let out = Eip712Domain::new(
         Some(pb_domain.name.clone().into()),
         Some(pb_domain.version.clone().into()),
@@ -198,7 +193,10 @@ pub fn protobuf_to_alloy_domain(pb_domain: &Eip712DomainMsg) -> anyhow::Result<E
             pb_domain.verifying_contract.clone(),
             None,
         )?),
-        salt,
+        pb_domain
+            .salt
+            .as_ref()
+            .map(|inner_salt| B256::from_slice(inner_salt)),
     );
     Ok(out)
 }
@@ -223,16 +221,12 @@ pub(crate) fn alloy_to_protobuf_domain(domain: &Eip712Domain) -> anyhow::Result<
         .as_ref()
         .ok_or_else(|| anyhow_error_and_log("missing domain chain_id"))?
         .to_string();
-    let salt = match domain.salt {
-        Some(x) => x.to_vec(),
-        None => vec![],
-    };
     let domain_msg = Eip712DomainMsg {
         name,
         version,
         chain_id,
         verifying_contract,
-        salt,
+        salt: domain.salt.map(|x| x.to_vec()),
     };
     Ok(domain_msg)
 }

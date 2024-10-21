@@ -4,13 +4,13 @@ use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{to_json_binary, Env, Response, StdError, StdResult, Storage, WasmMsg};
 use cw_controllers::Admin;
 use cw_utils::must_pay;
-use events::kms::VerifyProvenCtResponseValues;
 use events::kms::{
-    AllowListConf, CrsGenResponseValues, DecryptResponseValues, DecryptValues, Eip712DomainValues,
+    AllowListConf, CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues,
     KeyGenPreprocResponseValues, KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues,
     KmsCoreConf, KmsEvent, KmsOperation, OperationValue, ReencryptResponseValues, ReencryptValues,
     Transaction, TransactionId, VerifyProvenCtValues,
 };
+use events::kms::{InsecureKeyGenValues, VerifyProvenCtResponseValues};
 use sha3::{Digest, Sha3_256};
 use std::ops::Deref;
 use sylvia::{
@@ -383,17 +383,18 @@ impl KmsContract {
     }
 
     #[sv::msg(exec)]
-    pub fn insecure_keygen(&self, ctx: ExecCtx) -> StdResult<Response> {
+    pub fn insecure_key_gen(
+        &self,
+        ctx: ExecCtx,
+        insecure_key_gen: InsecureKeyGenValues,
+    ) -> StdResult<Response> {
         let mut ctx = ctx;
-        self.verify_allow_list(&ctx, "insecure_keygen")?;
-        self.process_request_transaction(
-            &mut ctx,
-            OperationValue::InsecureKeyGen(Eip712DomainValues::default()),
-        )
+        self.verify_allow_list(&ctx, "insecure_key_gen")?;
+        self.process_request_transaction(&mut ctx, OperationValue::InsecureKeyGen(insecure_key_gen))
     }
 
     #[sv::msg(exec)]
-    pub fn insecure_keygen_response(
+    pub fn insecure_key_gen_response(
         &self,
         ctx: ExecCtx,
         txn_id: TransactionId,
@@ -480,13 +481,10 @@ impl KmsContract {
     }
 
     #[sv::msg(exec)]
-    pub fn crs_gen(&self, ctx: ExecCtx) -> StdResult<Response> {
+    pub fn crs_gen(&self, ctx: ExecCtx, crs_gen: CrsGenValues) -> StdResult<Response> {
         let mut ctx = ctx;
         self.verify_allow_list(&ctx, "crs_gen")?;
-        self.process_request_transaction(
-            &mut ctx,
-            OperationValue::CrsGen(Eip712DomainValues::default()),
-        )
+        self.process_request_transaction(&mut ctx, OperationValue::CrsGen(crs_gen))
     }
 
     #[sv::msg(exec)]
@@ -516,6 +514,7 @@ mod tests {
     use cosmwasm_std::Event;
     use events::kms::AllowListConf;
     use events::kms::CrsGenResponseValues;
+    use events::kms::CrsGenValues;
     use events::kms::DecryptResponseValues;
     use events::kms::DecryptValues;
     use events::kms::FheParameter;
@@ -727,8 +726,9 @@ mod tests {
             "1".to_string(),
             vec![101; 32],
             "0x33dA6bF26964af9d7eed9e03E53415D37aA960EE".to_string(),
-            vec![],
-        );
+            Some(vec![42; 32]),
+        )
+        .unwrap();
 
         let response = contract
             .verify_proven_ct(proven_val.clone())
@@ -832,8 +832,9 @@ mod tests {
             "1".to_string(),
             vec![101; 32],
             "0x33dA6bF26964af9d7eed9e03E53415D37aA960EE".to_string(),
-            vec![],
-        );
+            Some(vec![42; 32]),
+        )
+        .unwrap();
 
         // test insufficient funds
         let _failed_response = contract
@@ -949,8 +950,9 @@ mod tests {
             "1".to_string(),
             vec![101; 32],
             "0x33dA6bF26964af9d7eed9e03E53415D37aA960EE".to_string(),
-            vec![],
-        );
+            Some(vec![42; 32]),
+        )
+        .unwrap();
 
         // test insufficient funds
         let _failed_response = contract
@@ -1087,10 +1089,11 @@ mod tests {
             "preproc_id".as_bytes().to_vec(),
             "eip712name".to_string(),
             "version".to_string(),
-            vec![7],
+            vec![1; 32],
             "contract".to_string(),
-            vec![8],
-        );
+            Some(vec![42; 32]),
+        )
+        .unwrap();
 
         let response = contract.keygen(keygen_val).call(&owner).unwrap();
         println!("response: {:#?}", response);
@@ -1110,6 +1113,7 @@ mod tests {
             vec![4, 5, 6],
             "digest2".to_string(),
             vec![7, 8, 9],
+            FheParameter::Test,
         );
 
         let response = contract
@@ -1184,10 +1188,11 @@ mod tests {
             "some proof".to_string(),
             "eip712name".to_string(),
             "version".to_string(),
-            vec![7],
+            vec![1; 32],
             "contract".to_string(),
-            vec![8],
-        );
+            Some(vec![42; 32]),
+        )
+        .unwrap();
 
         let _failed_response = contract
             .reencrypt(reencrypt.clone())
@@ -1266,10 +1271,20 @@ mod tests {
             .call(&owner)
             .unwrap();
 
-        let response = contract.crs_gen().call(&owner).unwrap();
+        let crsgen_val = CrsGenValues::new(
+            192,
+            "eip712name".to_string(),
+            "version".to_string(),
+            vec![1; 32],
+            "contract".to_string(),
+            Some(vec![42; 32]),
+        )
+        .unwrap();
+
+        let response = contract.crs_gen(crsgen_val.clone()).call(&owner).unwrap();
 
         contract
-            .crs_gen()
+            .crs_gen(crsgen_val)
             .call(&user)
             .expect_err("User wasn't allowed to call CRS gen but somehow succeeded.");
 
@@ -1283,8 +1298,13 @@ mod tests {
 
         assert_event(&response.events, &expected_event);
 
-        let crs_gen_response =
-            CrsGenResponseValues::new(txn_id.to_hex(), "my digest".to_string(), vec![4, 5, 6]);
+        let crs_gen_response = CrsGenResponseValues::new(
+            txn_id.to_hex(),
+            "my digest".to_string(),
+            vec![4, 5, 6],
+            256,
+            FheParameter::Test,
+        );
 
         let response = contract
             .crs_gen_response(txn_id.clone(), crs_gen_response.clone())
@@ -1359,10 +1379,11 @@ mod tests {
             "preproc_id".as_bytes().to_vec(),
             "eip712name".to_string(),
             "version".to_string(),
-            vec![7],
+            vec![1; 32],
             "contract".to_string(),
-            vec![8],
-        );
+            Some(vec![42; 32]),
+        )
+        .unwrap();
         let response = contract.keygen(keygen.clone()).call(&owner).unwrap();
 
         // Transaction id: 0
@@ -1375,6 +1396,7 @@ mod tests {
             vec![4, 5, 6],
             "digest2".to_string(),
             vec![7, 8, 9],
+            FheParameter::Test,
         );
 
         // Two keygen response event
@@ -1461,8 +1483,9 @@ mod tests {
             "1".to_string(),
             vec![101; 32],
             "0x33dA6bF26964af9d7eed9e03E53415D37aA960EE".to_string(),
-            vec![],
-        );
+            Some(vec![42; 32]),
+        )
+        .unwrap();
 
         let response = contract
             .decrypt(decrypt.clone())
@@ -1526,6 +1549,15 @@ mod tests {
         let another_user = "another_user".into_addr();
         let app = App::default();
 
+        let crsgen_val = CrsGenValues::new(
+            192,
+            "eip712name".to_string(),
+            "version".to_string(),
+            vec![1; 32],
+            "contract".to_string(),
+            Some(vec![42; 32]),
+        )
+        .unwrap();
         for (allow_list, allowed, instantiation_ok) in [
             (None, vec![true, false, false], true), // Defaults to owner only
             (Some(vec![]), vec![false, false, false], true), // Empty -> no one can operate (not sure this is really useful)
@@ -1577,11 +1609,11 @@ mod tests {
                 ) {
                     if wallet_allowed {
                         // Success
-                        let response = contract.crs_gen().call(&wallet).unwrap();
+                        let response = contract.crs_gen(crsgen_val.clone()).call(&wallet).unwrap();
                         assert_eq!(response.events.len(), 2);
                     } else {
                         // Failure
-                        contract.crs_gen().call(&wallet).expect_err(
+                        contract.crs_gen(crsgen_val.clone()).call(&wallet).expect_err(
                             format!(
                                 "{} ({}) wasn't allowed to call CRS gen but somehow succeeded with allow_list: {:?}.",
                                 wallet_name,

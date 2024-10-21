@@ -57,6 +57,27 @@ pub enum FheParameter {
     Test,
 }
 
+impl From<FheParameter> for i32 {
+    fn from(value: FheParameter) -> Self {
+        match value {
+            FheParameter::Test => 0,
+            FheParameter::Default => 1,
+        }
+    }
+}
+
+impl TryFrom<i32> for FheParameter {
+    type Error = anyhow::Error;
+
+    fn try_from(value: i32) -> Result<FheParameter, Self::Error> {
+        match value {
+            0 => Ok(FheParameter::Test),
+            1 => Ok(FheParameter::Default),
+            _ => Err(anyhow::anyhow!("Invalid FHE parameter")),
+        }
+    }
+}
+
 // Centralized
 #[derive(VersionsDispatch)]
 pub enum KmsCoreCentralizedConfVersioned {
@@ -96,12 +117,11 @@ impl KmsCoreConf {
     }
 
     pub fn param_choice_string(&self) -> String {
-        let param = self.param_choice();
         // Our string representation is defined by the serialized json,
         // but the json encoding surrounds the string with double quotes,
         // so we need to extract the inner string so this result can be
         // processed by other functions, e.g., turned into a [ParamChoice].
-        serde_json::json!(param)
+        serde_json::json!(self.param_choice())
             .to_string()
             .trim_matches('\"')
             .to_string()
@@ -182,18 +202,20 @@ pub enum OperationValue {
     #[strum(serialize = "keygen_response")]
     #[serde(rename = "keygen_response")]
     KeyGenResponse(KeyGenResponseValues),
-    #[strum(serialize = "insecure_keygen")]
-    #[serde(rename = "insecure_keygen")]
-    InsecureKeyGen(Eip712DomainValues),
+    #[strum(serialize = "insecure_key_gen")]
+    #[serde(rename = "insecure_key_gen")]
+    InsecureKeyGen(InsecureKeyGenValues),
     #[strum(serialize = "keygen_preproc")]
     #[serde(rename = "keygen_preproc")]
+    // NOTE this is not supposed to have an inner value. If it ever gets one, correct method OperationValue::has_no_inner_value
     KeyGenPreproc(KeyGenPreprocValues),
     #[strum(serialize = "keygen_preproc_response")]
     #[serde(rename = "keygen_preproc_response")]
+    // NOTE this is not supposed to have an inner value. If it ever gets one, correct method OperationValue::has_no_inner_value
     KeyGenPreprocResponse(KeyGenPreprocResponseValues),
     #[strum(serialize = "crs_gen")]
     #[serde(rename = "crs_gen")]
-    CrsGen(Eip712DomainValues),
+    CrsGen(CrsGenValues),
     #[strum(serialize = "crs_gen_response")]
     #[serde(rename = "crs_gen_response")]
     CrsGenResponse(CrsGenResponseValues),
@@ -234,10 +256,10 @@ impl OperationValue {
             Self::KeyUrlResponse(_) => "KeyUrlResponseValues",
             Self::KeyGen(_) => "KeyGenValues",
             Self::KeyGenResponse(_) => "KeyGenResponseValues",
-            Self::InsecureKeyGen(_) => "Eip712DomainValues",
+            Self::InsecureKeyGen(_) => "InsecureKeyGenValues",
             Self::KeyGenPreproc(_) => "KeyGenPreprocValues",
             Self::KeyGenPreprocResponse(_) => "KeyGenPreprocResponseValues",
-            Self::CrsGen(_) => "Eip712DomainValues",
+            Self::CrsGen(_) => "CrsGenValues",
             Self::CrsGenResponse(_) => "CrsGenResponseValues",
         }
     }
@@ -456,11 +478,13 @@ pub struct DecryptValues {
     /// The version of the EIP-712 domain
     eip712_version: String,
     /// The chain-id used for EIP-712
+    /// This MUST be 32 bytes
     eip712_chain_id: HexVector,
     /// The contract verifying the EIP-712 signature
     eip712_verifying_contract: String,
     /// The optional EIP-712 salt
-    eip712_salt: HexVector,
+    /// This MUST be 32 bytes if present
+    eip712_salt: Option<HexVector>,
 }
 
 impl DecryptValues {
@@ -477,9 +501,10 @@ impl DecryptValues {
         eip712_version: String,
         eip712_chain_id: impl Into<HexVector>,
         eip712_verifying_contract: String,
-        eip712_salt: impl Into<HexVector>,
-    ) -> Self {
-        Self {
+        eip712_salt: Option<impl Into<HexVector>>,
+    ) -> anyhow::Result<Self> {
+        let (chain_id, salt) = validate_eip712(eip712_chain_id, eip712_salt)?;
+        Ok(Self {
             key_id: key_id.into(),
             ciphertext_handles: ciphertext_handles.into(),
             fhe_types,
@@ -489,10 +514,10 @@ impl DecryptValues {
             proof,
             eip712_name,
             eip712_version,
-            eip712_chain_id: eip712_chain_id.into(),
+            eip712_chain_id: chain_id,
             eip712_verifying_contract,
-            eip712_salt: eip712_salt.into(),
-        }
+            eip712_salt: salt,
+        })
     }
 
     pub fn version(&self) -> u32 {
@@ -535,8 +560,9 @@ impl DecryptValues {
         &self.eip712_verifying_contract
     }
 
-    pub fn eip712_salt(&self) -> &HexVector {
-        &self.eip712_salt
+    #[allow(clippy::needless_borrow)]
+    pub fn eip712_salt(&self) -> Option<&HexVector> {
+        (&self.eip712_salt).as_ref()
     }
 
     pub fn acl_address(&self) -> &str {
@@ -587,11 +613,13 @@ pub struct ReencryptValues {
     /// The version of the EIP-712 domain
     eip712_version: String,
     /// The chain-id used for EIP-712
+    /// This MUST be 32 bytes if present
     eip712_chain_id: HexVector,
     /// The contract verifying the EIP-712 signature
     eip712_verifying_contract: String,
     /// The optional EIP-712 salt
-    eip712_salt: HexVector,
+    /// This MUST be 32 bytes if present
+    eip712_salt: Option<HexVector>,
 }
 
 impl ReencryptValues {
@@ -611,9 +639,10 @@ impl ReencryptValues {
         eip712_version: String,
         eip712_chain_id: impl Into<HexVector>,
         eip712_verifying_contract: String,
-        eip712_salt: impl Into<HexVector>,
-    ) -> Self {
-        Self {
+        eip712_salt: Option<impl Into<HexVector>>,
+    ) -> anyhow::Result<Self> {
+        let (chain_id, salt) = validate_eip712(eip712_chain_id, eip712_salt)?;
+        Ok(Self {
             signature: signature.into(),
             version,
             client_address,
@@ -626,10 +655,10 @@ impl ReencryptValues {
             proof,
             eip712_name,
             eip712_version,
-            eip712_chain_id: eip712_chain_id.into(),
+            eip712_chain_id: chain_id,
             eip712_verifying_contract,
-            eip712_salt: eip712_salt.into(),
-        }
+            eip712_salt: salt,
+        })
     }
 
     pub fn signature(&self) -> &HexVector {
@@ -688,8 +717,9 @@ impl ReencryptValues {
         &self.eip712_verifying_contract
     }
 
-    pub fn eip712_salt(&self) -> &HexVector {
-        &self.eip712_salt
+    #[allow(clippy::needless_borrow)]
+    pub fn eip712_salt(&self) -> Option<&HexVector> {
+        (&self.eip712_salt).as_ref()
     }
 }
 
@@ -727,11 +757,13 @@ pub struct VerifyProvenCtValues {
     /// The version of the EIP-712 domain
     eip712_version: String,
     /// The chain-id used for EIP-712
+    /// This MUST be 32 bytes
     eip712_chain_id: HexVector,
     /// The contract verifying the EIP-712 signature
     eip712_verifying_contract: String,
     /// The optional EIP-712 salt
-    eip712_salt: HexVector,
+    /// This MUST be 32 bytes if present
+    eip712_salt: Option<HexVector>,
 }
 
 impl VerifyProvenCtValues {
@@ -747,9 +779,10 @@ impl VerifyProvenCtValues {
         eip712_version: String,
         eip712_chain_id: impl Into<HexVector>,
         eip712_verifying_contract: String,
-        eip712_salt: impl Into<HexVector>,
-    ) -> Self {
-        Self {
+        eip712_salt: Option<impl Into<HexVector>>,
+    ) -> anyhow::Result<Self> {
+        let (chain_id, salt) = validate_eip712(eip712_chain_id, eip712_salt)?;
+        Ok(Self {
             crs_id: crs_id.into(),
             key_id: key_id.into(),
             contract_address,
@@ -758,10 +791,10 @@ impl VerifyProvenCtValues {
             acl_address,
             eip712_name,
             eip712_version,
-            eip712_chain_id: eip712_chain_id.into(),
+            eip712_chain_id: chain_id,
             eip712_verifying_contract,
-            eip712_salt: eip712_salt.into(),
-        }
+            eip712_salt: salt,
+        })
     }
 
     pub fn key_id(&self) -> &HexVector {
@@ -804,8 +837,9 @@ impl VerifyProvenCtValues {
         &self.eip712_verifying_contract
     }
 
-    pub fn eip712_salt(&self) -> &HexVector {
-        &self.eip712_salt
+    #[allow(clippy::needless_borrow)]
+    pub fn eip712_salt(&self) -> Option<&HexVector> {
+        (&self.eip712_salt).as_ref()
     }
 }
 
@@ -923,6 +957,9 @@ pub struct KeyGenResponseValues {
     server_key_digest: String,
     server_key_signature: HexVector,
     // we do not need SnS key
+    // The parameter used to generate the public keys
+    // Note that it is fetched from the ASC
+    param: FheParameter,
 }
 
 impl KeyGenResponseValues {
@@ -932,6 +969,7 @@ impl KeyGenResponseValues {
         public_key_signature: impl Into<HexVector>,
         server_key_digest: String,
         server_key_signature: impl Into<HexVector>,
+        param: impl Into<FheParameter>,
     ) -> Self {
         Self {
             request_id: request_id.into(),
@@ -939,6 +977,7 @@ impl KeyGenResponseValues {
             public_key_signature: public_key_signature.into(),
             server_key_digest,
             server_key_signature: server_key_signature.into(),
+            param: param.into(),
         }
     }
 
@@ -960,6 +999,10 @@ impl KeyGenResponseValues {
 
     pub fn server_key_signature(&self) -> &HexVector {
         &self.server_key_signature
+    }
+
+    pub fn param(&self) -> &FheParameter {
+        &self.param
     }
 }
 
@@ -1240,14 +1283,26 @@ pub struct CrsGenResponseValues {
     digest: String,
     /// The signature on the digest.
     signature: HexVector,
+    max_num_bits: u32,
+    // The parameter for which the CRS was generated
+    // Note that parameter is fetched from the ASC
+    param: FheParameter,
 }
 
 impl CrsGenResponseValues {
-    pub fn new(request_id: String, digest: String, signature: impl Into<HexVector>) -> Self {
+    pub fn new(
+        request_id: String,
+        digest: String,
+        signature: impl Into<HexVector>,
+        max_num_bits: u32,
+        param: impl Into<FheParameter>,
+    ) -> Self {
         Self {
             request_id,
             digest,
             signature: signature.into(),
+            max_num_bits,
+            param: param.into(),
         }
     }
 
@@ -1261,6 +1316,14 @@ impl CrsGenResponseValues {
 
     pub fn signature(&self) -> &HexVector {
         &self.signature
+    }
+
+    pub fn max_num_bits(&self) -> u32 {
+        self.max_num_bits
+    }
+
+    pub fn param(&self) -> &FheParameter {
+        &self.param
     }
 }
 
@@ -1311,11 +1374,13 @@ pub struct KeyGenValues {
     /// The version of the EIP-712 domain
     eip712_version: String,
     /// The chain-id used for EIP-712
+    /// This MUST be 32 bytes
     eip712_chain_id: HexVector,
     /// The contract verifying the EIP-712 signature
     eip712_verifying_contract: String,
     /// The optional EIP-712 salt
-    eip712_salt: HexVector,
+    /// This MUST be 32 bytes if present
+    eip712_salt: Option<HexVector>,
 }
 
 impl KeyGenValues {
@@ -1325,16 +1390,17 @@ impl KeyGenValues {
         eip712_version: String,
         eip712_chain_id: impl Into<HexVector>,
         eip712_verifying_contract: String,
-        eip712_salt: impl Into<HexVector>,
-    ) -> Self {
-        Self {
+        eip712_salt: Option<impl Into<HexVector>>,
+    ) -> anyhow::Result<Self> {
+        let (chain_id, salt) = validate_eip712(eip712_chain_id, eip712_salt)?;
+        Ok(Self {
             preproc_id: preproc_id.into(),
             eip712_name,
             eip712_version,
-            eip712_chain_id: eip712_chain_id.into(),
+            eip712_chain_id: chain_id,
             eip712_verifying_contract,
-            eip712_salt: eip712_salt.into(),
-        }
+            eip712_salt: salt,
+        })
     }
 
     pub fn preproc_id(&self) -> &HexVector {
@@ -1357,8 +1423,9 @@ impl KeyGenValues {
         &self.eip712_verifying_contract
     }
 
-    pub fn eip712_salt(&self) -> &HexVector {
-        &self.eip712_salt
+    #[allow(clippy::needless_borrow)]
+    pub fn eip712_salt(&self) -> Option<&HexVector> {
+        (&self.eip712_salt).as_ref()
     }
 }
 
@@ -1369,42 +1436,45 @@ impl From<KeyGenValues> for OperationValue {
 }
 
 #[derive(Serialize, Deserialize, VersionsDispatch)]
-pub enum Eip712DomainValuesVersioned {
-    V0(Eip712DomainValues),
+pub enum InsecureKeyGenValuesVersioned {
+    V0(InsecureKeyGenValues),
 }
-
+// There is no preprocessing id when using insecure key generation.
 #[cw_serde]
 #[derive(Eq, Default, Versionize, TypedBuilder)]
-#[versionize(Eip712DomainValuesVersioned)]
-pub struct Eip712DomainValues {
+#[versionize(InsecureKeyGenValuesVersioned)]
+pub struct InsecureKeyGenValues {
     // EIP-712:
     /// The name of the EIP-712 domain
     eip712_name: String,
     /// The version of the EIP-712 domain
     eip712_version: String,
     /// The chain-id used for EIP-712
+    /// This MUST be 32 bytes
     eip712_chain_id: HexVector,
     /// The contract verifying the EIP-712 signature
     eip712_verifying_contract: String,
     /// The optional EIP-712 salt
-    eip712_salt: HexVector,
+    /// This MUST be 32 bytes if present
+    eip712_salt: Option<HexVector>,
 }
 
-impl Eip712DomainValues {
+impl InsecureKeyGenValues {
     pub fn new(
         eip712_name: String,
         eip712_version: String,
         eip712_chain_id: impl Into<HexVector>,
         eip712_verifying_contract: String,
-        eip712_salt: impl Into<HexVector>,
-    ) -> Self {
-        Self {
+        eip712_salt: Option<impl Into<HexVector>>,
+    ) -> anyhow::Result<Self> {
+        let (chain_id, salt) = validate_eip712(eip712_chain_id, eip712_salt)?;
+        Ok(Self {
             eip712_name,
             eip712_version,
-            eip712_chain_id: eip712_chain_id.into(),
+            eip712_chain_id: chain_id,
             eip712_verifying_contract,
-            eip712_salt: eip712_salt.into(),
-        }
+            eip712_salt: salt,
+        })
     }
 
     pub fn eip712_name(&self) -> &str {
@@ -1423,9 +1493,124 @@ impl Eip712DomainValues {
         &self.eip712_verifying_contract
     }
 
-    pub fn eip712_salt(&self) -> &HexVector {
-        &self.eip712_salt
+    #[allow(clippy::needless_borrow)]
+    pub fn eip712_salt(&self) -> Option<&HexVector> {
+        (&self.eip712_salt).as_ref()
     }
+}
+
+impl From<InsecureKeyGenValues> for OperationValue {
+    fn from(value: InsecureKeyGenValues) -> Self {
+        OperationValue::InsecureKeyGen(value)
+    }
+}
+
+#[derive(Serialize, Deserialize, VersionsDispatch)]
+pub enum CrsGenValuesVersioned {
+    V0(CrsGenValues),
+}
+
+#[cw_serde]
+#[derive(Eq, Default, Versionize, TypedBuilder)]
+#[versionize(CrsGenValuesVersioned)]
+pub struct CrsGenValues {
+    max_num_bits: u32,
+
+    // EIP-712:
+    /// The name of the EIP-712 domain
+    eip712_name: String,
+    /// The version of the EIP-712 domain
+    eip712_version: String,
+    /// The chain-id used for EIP-712
+    /// This MUST be 32 bytes
+    eip712_chain_id: HexVector,
+    /// The contract verifying the EIP-712 signature
+    eip712_verifying_contract: String,
+    /// The optional EIP-712 salt
+    /// This MUST be 32 bytes if present
+    eip712_salt: Option<HexVector>,
+}
+
+impl CrsGenValues {
+    pub fn new(
+        max_num_bits: u32,
+        eip712_name: String,
+        eip712_version: String,
+        eip712_chain_id: impl Into<HexVector>,
+        eip712_verifying_contract: String,
+        eip712_salt: Option<impl Into<HexVector>>,
+    ) -> anyhow::Result<Self> {
+        let (chain_id, salt) = validate_eip712(eip712_chain_id, eip712_salt)?;
+        Ok(Self {
+            max_num_bits,
+            eip712_name,
+            eip712_version,
+            eip712_chain_id: chain_id,
+            eip712_verifying_contract,
+            eip712_salt: salt,
+        })
+    }
+
+    pub fn max_num_bits(&self) -> u32 {
+        self.max_num_bits
+    }
+
+    pub fn eip712_name(&self) -> &str {
+        &self.eip712_name
+    }
+
+    pub fn eip712_version(&self) -> &str {
+        &self.eip712_version
+    }
+
+    pub fn eip712_chain_id(&self) -> &HexVector {
+        &self.eip712_chain_id
+    }
+
+    pub fn eip712_verifying_contract(&self) -> &str {
+        &self.eip712_verifying_contract
+    }
+
+    #[allow(clippy::needless_borrow)]
+    pub fn eip712_salt(&self) -> Option<&HexVector> {
+        (&self.eip712_salt).as_ref()
+    }
+}
+
+impl From<CrsGenValues> for OperationValue {
+    fn from(value: CrsGenValues) -> Self {
+        OperationValue::CrsGen(value)
+    }
+}
+
+/// Validate that the chain ID and salt are conforment to the eip712 standard.
+/// That is, wether they are 32 bytes if present.
+/// and return the chain ID and salt as a tuple of [HexVectors].
+fn validate_eip712(
+    chain_id: impl Into<HexVector>,
+    salt: Option<impl Into<HexVector>>,
+) -> anyhow::Result<(HexVector, Option<HexVector>)> {
+    let chain_id = chain_id.into();
+    if chain_id.len() != 32 {
+        return Err(anyhow::anyhow!(
+            "eip712_chain_id must be 32 bytes long but is {} bytes long",
+            chain_id.len()
+        ));
+    }
+    let updated_salt = match salt {
+        Some(salt) => {
+            let inner_salt = salt.into();
+            if inner_salt.len() != 32 {
+                return Err(anyhow::anyhow!(
+                    "eip712_salt must be 32 bytes long but is {} bytes long",
+                    inner_salt.len()
+                ));
+            }
+            Some(inner_salt)
+        }
+        None => None,
+    };
+    Ok((chain_id, updated_salt))
 }
 
 #[cw_serde]
@@ -1460,8 +1645,8 @@ pub enum KmsOperation {
     #[strum(serialize = "keygen_response", props(response = "true"))]
     #[serde(rename = "keygen_response")]
     KeyGenResponse,
-    #[strum(serialize = "insecure_keygen", props(request = "true"))]
-    #[serde(rename = "insecure_keygen")]
+    #[strum(serialize = "insecure_key_gen", props(request = "true"))]
+    #[serde(rename = "insecure_key_gen")]
     InsecureKeyGen,
     #[strum(serialize = "crs_gen", props(request = "true"))]
     #[serde(rename = "crs_gen")]
@@ -1675,11 +1860,20 @@ pub struct TransactionEvent {
 
 #[cfg(test)]
 mod tests {
-
+    use super::*;
+    use core::panic;
     use quickcheck::{Arbitrary, Gen};
     use strum::IntoEnumIterator;
 
-    use super::*;
+    impl Arbitrary for FheParameter {
+        fn arbitrary(g: &mut Gen) -> FheParameter {
+            match u8::arbitrary(g) % 2 {
+                0 => FheParameter::Test,
+                1 => FheParameter::Default,
+                _ => panic!("Invalid FheParameter"),
+            }
+        }
+    }
 
     impl Arbitrary for FheType {
         fn arbitrary(g: &mut Gen) -> FheType {
@@ -1737,7 +1931,7 @@ mod tests {
                 eip712_version: String::arbitrary(g),
                 eip712_chain_id: HexVector::arbitrary(g),
                 eip712_verifying_contract: String::arbitrary(g),
-                eip712_salt: HexVector::arbitrary(g),
+                eip712_salt: Some(HexVector::arbitrary(g)),
                 acl_address: String::arbitrary(g),
             }
         }
@@ -1759,7 +1953,7 @@ mod tests {
                 eip712_version: String::arbitrary(g),
                 eip712_chain_id: HexVector::arbitrary(g),
                 eip712_verifying_contract: String::arbitrary(g),
-                eip712_salt: HexVector::arbitrary(g),
+                eip712_salt: Some(HexVector::arbitrary(g)),
                 acl_address: String::arbitrary(g),
             }
         }
@@ -1778,7 +1972,7 @@ mod tests {
                 eip712_version: String::arbitrary(g),
                 eip712_chain_id: HexVector::arbitrary(g),
                 eip712_verifying_contract: String::arbitrary(g),
-                eip712_salt: HexVector::arbitrary(g),
+                eip712_salt: Some(HexVector::arbitrary(g)),
             }
         }
     }
@@ -1800,6 +1994,7 @@ mod tests {
                 public_key_signature: HexVector::arbitrary(g),
                 server_key_digest: String::arbitrary(g),
                 server_key_signature: HexVector::arbitrary(g),
+                param: FheParameter::arbitrary(g),
             }
         }
     }
@@ -1830,6 +2025,8 @@ mod tests {
                 request_id: String::arbitrary(g),
                 digest: String::arbitrary(g),
                 signature: HexVector::arbitrary(g),
+                max_num_bits: u32::arbitrary(g),
+                param: FheParameter::arbitrary(g),
             }
         }
     }
@@ -1897,10 +2094,11 @@ mod tests {
             "some_proof".to_string(),
             "eip712name".to_string(),
             "version".to_string(),
-            vec![6],
+            [1; 32].to_vec(),
             "contract".to_string(),
-            vec![7],
-        );
+            Some([42; 32].to_vec()),
+        )
+        .unwrap();
         let message: KmsMessageWithoutProof = KmsMessage::builder().value(decrypt_values).build();
 
         let json = message.to_json().unwrap();
@@ -1915,9 +2113,9 @@ mod tests {
                     "proof": "some_proof",
                     "eip712_name": "eip712name",
                     "eip712_version": "version",
-                    "eip712_chain_id": hex::encode([6]),
+                    "eip712_chain_id": hex::encode([1; 32]),
                     "eip712_verifying_contract": "contract",
-                    "eip712_salt": hex::encode([7]),
+                    "eip712_salt": hex::encode([42; 32]), // TODO should be updated
                     "acl_address": "acl_address",
                 }
             }
@@ -1961,10 +2159,11 @@ mod tests {
             "some_proof".to_string(),
             "eip712name".to_string(),
             "version".to_string(),
-            vec![6],
+            [0_u8; 32].to_vec(),
             "contract".to_string(),
-            vec![7],
-        );
+            Some([1_u8; 32].to_vec()),
+        )
+        .unwrap();
         let message: KmsMessageWithoutProof = KmsMessage::builder().value(reencrypt_values).build();
 
         let json = message.to_json().unwrap();
@@ -1982,9 +2181,9 @@ mod tests {
                     "proof": "some_proof",
                     "eip712_name": "eip712name",
                     "eip712_version": "version",
-                    "eip712_chain_id": hex::encode([6]),
+                    "eip712_chain_id": hex::encode([0_u8; 32]),
                     "eip712_verifying_contract": "contract",
-                    "eip712_salt": hex::encode([7]),
+                    "eip712_salt": hex::encode([1_u8; 32]), // TODO should be updated
                     "acl_address": "0xfe11",
                 }
             }
@@ -2023,10 +2222,11 @@ mod tests {
             "0xfedc".to_string(),
             "eip712name".to_string(),
             "version".to_string(),
-            vec![6],
+            [0_u8; 32].to_vec(),
             "contract".to_string(),
-            vec![7],
-        );
+            Some([1_u8; 32].to_vec()),
+        )
+        .unwrap();
         let message: KmsMessageWithoutProof =
             KmsMessage::builder().value(verify_proven_ct_values).build();
 
@@ -2042,9 +2242,9 @@ mod tests {
                     "ct_proof_handle": hex::encode(vec![5]),
                     "eip712_name": "eip712name",
                     "eip712_version": "version",
-                    "eip712_chain_id": hex::encode([6]),
+                    "eip712_chain_id": hex::encode([0_u8; 32]),
                     "eip712_verifying_contract": "contract",
-                    "eip712_salt": hex::encode([7]),
+                    "eip712_salt": hex::encode([1_u8; 32]), // TODO should be updated
                 },
             }
         });
@@ -2074,16 +2274,18 @@ mod tests {
     #[test]
     fn test_keygen_event_to_json() {
         let message: KmsMessageWithoutProof = KmsMessage::builder()
-            .value(KeyGenValues::new(
-                vec![],
-                "eip712name".to_string(),
-                "version".to_string(),
-                vec![6],
-                "contract".to_string(),
-                vec![7],
-            ))
+            .value(
+                KeyGenValues::new(
+                    vec![],
+                    "eip712name".to_string(),
+                    "version".to_string(),
+                    [1; 32].to_vec(),
+                    "contract".to_string(),
+                    Some([42; 32].to_vec()),
+                )
+                .unwrap(),
+            )
             .build();
-
         let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
             "keygen": {
@@ -2091,9 +2293,9 @@ mod tests {
                     "preproc_id": "",
                     "eip712_name": "eip712name",
                     "eip712_version": "version",
-                    "eip712_chain_id": hex::encode([6]),
+                    "eip712_chain_id": hex::encode([1; 32]),
                     "eip712_verifying_contract": "contract",
-                    "eip712_salt": hex::encode([7]),
+                    "eip712_salt": hex::encode([42; 32]), // TODO should be updated
                 }
             }
         });
@@ -2108,6 +2310,7 @@ mod tests {
             vec![1, 2, 3],
             "def".to_string(),
             vec![4, 5, 6],
+            FheParameter::Test,
         );
         let message: KmsMessageWithoutProof = KmsMessage::builder()
             .txn_id(Some(vec![1].into()))
@@ -2122,6 +2325,7 @@ mod tests {
                     "public_key_signature": hex::encode([1, 2, 3]),
                     "server_key_digest": "def",
                     "server_key_signature": hex::encode([4, 5, 6]),
+                    "param": FheParameter::Test.to_string(),
                 },
                 "txn_id": hex::encode(vec![1])
             }
@@ -2130,27 +2334,33 @@ mod tests {
     }
 
     #[test]
-    fn test_crs_eip712_gen_event_to_json() {
-        let edv = Eip712DomainValues::new(
-            "eip712name".to_string(),
-            "version".to_string(),
-            vec![6],
-            "contract".to_string(),
-            vec![7],
-        );
-
+    fn test_crs_gen_event_to_json() {
         let message: KmsMessageWithoutProof = KmsMessage::builder()
-            .value(OperationValue::CrsGen(edv))
+            .value(
+                CrsGenValues::new(
+                    256,
+                    "eip712name".to_string(),
+                    "version".to_string(),
+                    [1; 32].to_vec(),
+                    "contract".to_string(),
+                    Some([42; 32].to_vec()),
+                )
+                .unwrap(),
+            )
             .build();
+
         let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
             "crs_gen": {
                 "crs_gen": {
+                    "max_num_bits": 256,
+
+
                     "eip712_name": "eip712name",
                     "eip712_version": "version",
-                    "eip712_chain_id": hex::encode([6]),
+                    "eip712_chain_id": hex::encode([1; 32]),
                     "eip712_verifying_contract": "contract",
-                    "eip712_salt": hex::encode([7]),
+                    "eip712_salt": hex::encode([42; 32]), // TODO should be updated
                 }
             }
         });
@@ -2159,8 +2369,13 @@ mod tests {
 
     #[test]
     fn test_crs_gen_response_event_to_json() {
-        let crs_gen_response_values =
-            CrsGenResponseValues::new("abcdef".to_string(), "123456".to_string(), vec![1, 2, 3]);
+        let crs_gen_response_values = CrsGenResponseValues::new(
+            "abcdef".to_string(),
+            "123456".to_string(),
+            vec![1, 2, 3],
+            256,
+            FheParameter::Test,
+        );
 
         let message: KmsMessageWithoutProof = KmsMessage::builder()
             .txn_id(Some(vec![1].into()))
@@ -2174,6 +2389,8 @@ mod tests {
                     "request_id": "abcdef",
                     "digest": "123456",
                     "signature": hex::encode([1, 2, 3]),
+                    "max_num_bits": 256,
+                    "param": FheParameter::Test.to_string(),
                 },
                 "txn_id": hex::encode(vec![1])
             }

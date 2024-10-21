@@ -12,19 +12,19 @@ use async_trait::async_trait;
 use conf_trace::grpc::make_request;
 use enum_dispatch::enum_dispatch;
 use events::kms::{
-    DecryptResponseValues, DecryptValues, Eip712DomainValues, KeyGenPreprocResponseValues,
-    KeyGenResponseValues, KeyGenValues, KmsCoreConf, KmsEvent, OperationValue,
-    ReencryptResponseValues, ReencryptValues, TransactionId, VerifyProvenCtResponseValues,
-    VerifyProvenCtValues,
+    CrsGenValues, DecryptResponseValues, DecryptValues, InsecureKeyGenValues,
+    KeyGenPreprocResponseValues, KeyGenResponseValues, KeyGenValues, KmsCoreConf, KmsEvent,
+    OperationValue, ReencryptResponseValues, ReencryptValues, TransactionId,
+    VerifyProvenCtResponseValues, VerifyProvenCtValues,
 };
 use events::HexVector;
 use kms_lib::kms::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_lib::kms::{
-    Config, CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse,
-    DecryptionResponsePayload, Eip712DomainMsg, KeyGenPreprocStatus, KeyGenPreprocStatusEnum,
-    KeyGenResult, ParamChoice, ReencryptionRequest, ReencryptionRequestPayload,
-    ReencryptionResponse, ReencryptionResponsePayload, TypedCiphertext, VerifyProvenCtRequest,
-    VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
+    CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
+    Eip712DomainMsg, KeyGenPreprocStatus, KeyGenPreprocStatusEnum, KeyGenResult, ParamChoice,
+    ReencryptionRequest, ReencryptionRequestPayload, ReencryptionResponse,
+    ReencryptionResponsePayload, TypedCiphertext, VerifyProvenCtRequest, VerifyProvenCtResponse,
+    VerifyProvenCtResponsePayload,
 };
 use kms_lib::kms::{KeyGenPreprocRequest, KeyGenRequest, RequestId};
 use kms_lib::rpc::rpc_types::{PubDataType, CURRENT_FORMAT_VERSION};
@@ -66,12 +66,12 @@ pub struct KeyGenVal<S> {
 }
 
 pub struct InsecureKeyGenVal<S> {
-    pub insecure_keygen: Eip712DomainValues,
+    pub insecure_key_gen: InsecureKeyGenValues,
     pub operation_val: KmsOperationVal<S>,
 }
 
 pub struct CrsGenVal<S> {
-    pub crsgen: Eip712DomainValues,
+    pub crsgen: CrsGenValues,
     pub operation_val: KmsOperationVal<S>,
 }
 
@@ -106,8 +106,8 @@ where
                 keygen_preproc.run_operation(config_contract).await
             }
             KmsOperationRequest::KeyGen(keygen) => keygen.run_operation(config_contract).await,
-            KmsOperationRequest::InsecureKeyGen(insecure_keygen) => {
-                insecure_keygen.run_operation(config_contract).await
+            KmsOperationRequest::InsecureKeyGen(insecure_key_gen) => {
+                insecure_key_gen.run_operation(config_contract).await
             }
             KmsOperationRequest::CrsGen(crsgen) => crsgen.run_operation(config_contract).await,
         }
@@ -210,9 +210,9 @@ where
                 keygen,
                 operation_val,
             }),
-            OperationValue::InsecureKeyGen(insecure_keygen) => {
+            OperationValue::InsecureKeyGen(insecure_key_gen) => {
                 KmsOperationRequest::InsecureKeyGen(InsecureKeyGenVal {
-                    insecure_keygen,
+                    insecure_key_gen,
                     operation_val,
                 })
             }
@@ -357,7 +357,7 @@ where
                 version: self.decrypt.eip712_version().to_string(),
                 chain_id: self.decrypt.eip712_chain_id().into(),
                 verifying_contract: self.decrypt.eip712_verifying_contract().to_string(),
-                salt: self.decrypt.eip712_salt().into(),
+                salt: self.decrypt.eip712_salt().map(|salt| salt.to_vec()),
             }),
             acl_address: Some(self.decrypt.acl_address().to_string()),
         };
@@ -466,7 +466,7 @@ where
                 version: reencrypt.eip712_version().to_string(),
                 chain_id: reencrypt.eip712_chain_id().into(),
                 verifying_contract: reencrypt.eip712_verifying_contract().to_string(),
-                salt: reencrypt.eip712_salt().into(),
+                salt: self.reencrypt.eip712_salt().map(|salt| salt.to_vec()),
             }),
             request_id: Some(req_id.clone()),
         };
@@ -569,7 +569,10 @@ where
                 version: verify_proven_ct.eip712_version().to_string(),
                 chain_id: verify_proven_ct.eip712_chain_id().into(),
                 verifying_contract: verify_proven_ct.eip712_verifying_contract().to_string(),
-                salt: verify_proven_ct.eip712_salt().into(),
+                salt: self
+                    .verify_proven_ct
+                    .eip712_salt()
+                    .map(|salt| salt.to_vec()),
             }),
         };
 
@@ -654,7 +657,6 @@ where
 
         let req_id: RequestId = request_id.clone().try_into()?;
         let req = KeyGenPreprocRequest {
-            config: Some(Config {}),
             params: param_choice.into(),
             request_id: Some(req_id.clone()),
         };
@@ -729,16 +731,9 @@ where
         &self,
         config_contract: Option<KmsCoreConf>,
     ) -> anyhow::Result<KmsOperationResponse> {
-        let param_choice_str = config_contract
+        let param_choice = config_contract
             .ok_or_else(|| anyhow!("config contract missing"))?
-            .param_choice_string();
-        let param_choice = ParamChoice::from_str_name(&param_choice_str).ok_or_else(|| {
-            anyhow!(
-                "invalid parameter choice string in keygen: {}",
-                param_choice_str
-            )
-        })?;
-
+            .param_choice();
         let chan = &self.operation_val.kms_client.channel;
         let mut client = CoreServiceEndpointClient::new(chan.clone());
 
@@ -748,7 +743,6 @@ where
         let req_id: RequestId = request_id.clone().try_into()?;
         let preproc_id = keygen.preproc_id().to_hex().try_into()?;
         let req = KeyGenRequest {
-            config: Some(Config {}),
             params: param_choice.into(),
             preproc_id: Some(preproc_id),
             request_id: Some(req_id.clone()),
@@ -757,7 +751,7 @@ where
                 version: keygen.eip712_version().to_string(),
                 chain_id: keygen.eip712_chain_id().into(),
                 verifying_contract: keygen.eip712_verifying_contract().to_string(),
-                salt: keygen.eip712_salt().into(),
+                salt: self.keygen.eip712_salt().map(|salt| salt.to_vec()),
             }),
         };
 
@@ -776,7 +770,6 @@ where
             metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
         })?;
         metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "KeyGen")]);
-
         let g =
             |res: Result<Response<KeyGenResult>, Status>| -> anyhow::Result<PollerStatus<_>, anyhow::Error> {
                 match res {
@@ -799,6 +792,7 @@ where
                                     pk_info.signature.clone(),
                                     ek_info.key_handle.clone(),
                                     ek_info.signature.clone(),
+                                    param_choice,
                                 ),
                                 operation_val: crate::domain::blockchain::BlockchainOperationVal {
                                     tx_id: self.operation_val.tx_id.clone(),
@@ -833,15 +827,9 @@ where
         &self,
         config_contract: Option<KmsCoreConf>,
     ) -> anyhow::Result<KmsOperationResponse> {
-        let param_choice_str = config_contract
+        let param_choice = config_contract
             .ok_or_else(|| anyhow!("config contract missing"))?
-            .param_choice_string();
-        let param_choice = ParamChoice::from_str_name(&param_choice_str).ok_or_else(|| {
-            anyhow!(
-                "invalid parameter choice string in insecure keygen: {}",
-                param_choice_str
-            )
-        })?;
+            .param_choice();
 
         let chan = &self.operation_val.kms_client.channel;
         let mut client = CoreServiceEndpointClient::new(chan.clone());
@@ -849,11 +837,10 @@ where
         let request_id = self.operation_val.tx_id.to_hex();
 
         let req_id: RequestId = request_id.clone().try_into()?;
-        let keygen = &self.insecure_keygen;
+        let keygen = &self.insecure_key_gen;
 
         tracing::info!("Request ID: {:?}", req_id);
         let req = KeyGenRequest {
-            config: Some(Config {}),
             params: param_choice.into(),
             request_id: Some(req_id.clone()),
             preproc_id: None,
@@ -862,7 +849,7 @@ where
                 version: keygen.eip712_version().to_string(),
                 chain_id: keygen.eip712_chain_id().into(),
                 verifying_contract: keygen.eip712_verifying_contract().to_string(),
-                salt: keygen.eip712_salt().into(),
+                salt: keygen.eip712_salt().map(|salt| salt.to_vec()),
             }),
         };
 
@@ -904,6 +891,7 @@ where
                                     pk_info.signature.clone(),
                                     ek_info.key_handle.clone(),
                                     ek_info.signature.clone(),
+                                    param_choice,
                                 ),
                                 operation_val: crate::domain::blockchain::BlockchainOperationVal {
                                     tx_id: self.operation_val.tx_id.clone(),
@@ -921,7 +909,7 @@ where
             .operation_val
             .kms_client
             .timeout_config
-            .insecure_keygen
+            .insecure_key_gen
             .clone();
 
         poller!(
@@ -944,15 +932,9 @@ where
         &self,
         config_contract: Option<KmsCoreConf>,
     ) -> anyhow::Result<KmsOperationResponse> {
-        let param_choice_str = config_contract
+        let param_choice = config_contract
             .ok_or_else(|| anyhow!("config contract missing"))?
-            .param_choice_string();
-        let param_choice = ParamChoice::from_str_name(&param_choice_str).ok_or_else(|| {
-            anyhow!(
-                "invalid parameter choice string in crsgen: {}",
-                param_choice_str
-            )
-        })?;
+            .param_choice();
 
         let chan = &self.operation_val.kms_client.channel;
         let mut client = CoreServiceEndpointClient::new(chan.clone());
@@ -962,16 +944,15 @@ where
 
         let req_id: RequestId = request_id.clone().try_into()?;
         let req = CrsGenRequest {
-            config: Some(Config {}),
             params: param_choice.into(),
             request_id: Some(req_id.clone()),
-            max_num_bits: None, // TODO: this will come in another PR
+            max_num_bits: Some(self.crsgen.max_num_bits()),
             domain: Some(Eip712DomainMsg {
                 name: crsgen.eip712_name().to_string(),
                 version: crsgen.eip712_version().to_string(),
                 chain_id: crsgen.eip712_chain_id().into(),
                 verifying_contract: crsgen.eip712_verifying_contract().to_string(),
-                salt: crsgen.eip712_salt().into(),
+                salt: self.crsgen.eip712_salt().map(|salt| salt.to_vec()),
             }),
         };
 
@@ -1004,6 +985,8 @@ where
                                     request_id.request_id,
                                     crs_results.key_handle,
                                     crs_results.signature,
+                                    self.crsgen.max_num_bits(),
+                                    param_choice,
                                 ),
                                 operation_val: crate::domain::blockchain::BlockchainOperationVal {
                                     tx_id: self.operation_val.tx_id.clone(),

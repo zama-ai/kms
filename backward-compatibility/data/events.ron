@@ -176,6 +176,7 @@
             public_key_signature: (4, 5, 6),
             server_key_digest: "server_key_digest",
             server_key_signature: (7, 8, 9),
+            param: 1,
             block_height: 1,
             transaction_index: 1,
         )),
@@ -183,8 +184,23 @@
     (
         kms_core_version_min: "0.9",
         kms_core_module: "events",
-        metadata: Eip712DomainValues((
-            test_filename: "eip712_domain_values",
+        metadata: InsecureKeyGenValues((
+            test_filename: "insecure_key_gen_values",
+            eip712_name: "eip712_name",
+            eip712_version: "eip712_version",
+            eip712_chain_id: (1, 2, 3),
+            eip712_verifying_contract: "eip712_verifying_contract",
+            eip712_salt: (4, 5, 6),
+            block_height: 1,
+            transaction_index: 1,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.9",
+        kms_core_module: "events",
+        metadata: CrsGenValues((
+            test_filename: "crs_gen_values",
+            max_num_bits: 256,
             eip712_name: "eip712_name",
             eip712_version: "eip712_version",
             eip712_chain_id: (1, 2, 3),
@@ -202,6 +218,8 @@
             request_id: "request_id",
             digest: "digest",
             signature: (1, 2, 3),
+            max_num_bits: 256,
+            param: 1,
             block_height: 1,
             transaction_index: 1,
         )),

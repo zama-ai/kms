@@ -7,19 +7,20 @@ use backward_compatibility::{
     data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{run_all_tests, TestedModule},
-    CrsGenResponseValuesTest, DecryptResponseValuesTest, DecryptValuesTest, Eip712DomainValuesTest,
-    KeyGenPreprocResponseValuesTest, KeyGenPreprocValuesTest, KeyGenResponseValuesTest,
-    KeyGenValuesTest, KeyUrlResponseValuesTest, KeyUrlValuesTest, KmsCoreConfCentralizedTest,
-    KmsCoreConfThresholdTest, ReencryptResponseValuesTest, ReencryptValuesTest, TestMetadataEvents,
-    TestType, Testcase, VerifyProvenCtResponseValuesTest, VerifyProvenCtValuesTest,
+    CrsGenResponseValuesTest, CrsGenValuesTest, DecryptResponseValuesTest, DecryptValuesTest,
+    InsecureKeyGenValuesTest, KeyGenPreprocResponseValuesTest, KeyGenPreprocValuesTest,
+    KeyGenResponseValuesTest, KeyGenValuesTest, KeyUrlResponseValuesTest, KeyUrlValuesTest,
+    KmsCoreConfCentralizedTest, KmsCoreConfThresholdTest, ReencryptResponseValuesTest,
+    ReencryptValuesTest, TestMetadataEvents, TestType, Testcase, ZkpResponseValuesTest,
+    ZkpValuesTest,
 };
 use events::kms::{
-    CrsGenResponseValues, DecryptResponseValues, DecryptValues, Eip712DomainValues, FheKeyUrlInfo,
-    FheParameter, FheType, KeyGenPreprocResponseValues, KeyGenPreprocValues, KeyGenResponseValues,
-    KeyGenValues, KeyUrlInfo, KeyUrlResponseValues, KeyUrlValues, KmsCoreCentralizedConf,
-    KmsCoreConf, KmsCoreParty, KmsCoreThresholdConf, OperationValue, ReencryptResponseValues,
-    ReencryptValues, Transaction, VerfKeyUrlInfo, VerifyProvenCtResponseValues,
-    VerifyProvenCtValues,
+    CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues, FheKeyUrlInfo,
+    FheParameter, FheType, InsecureKeyGenValues, KeyGenPreprocResponseValues, KeyGenPreprocValues,
+    KeyGenResponseValues, KeyGenValues, KeyUrlInfo, KeyUrlResponseValues, KeyUrlValues,
+    KmsCoreCentralizedConf, KmsCoreConf, KmsCoreParty, KmsCoreThresholdConf, OperationValue,
+    ReencryptResponseValues, ReencryptValues, Transaction, VerfKeyUrlInfo,
+    VerifyProvenCtResponseValues, VerifyProvenCtValues,
 };
 use kms_common::load_and_unversionize;
 use std::{borrow::Cow, env, path::Path};
@@ -67,7 +68,7 @@ fn test_decrypt_values(
         .eip712_version(test.eip712_version.to_string())
         .eip712_chain_id(test.eip712_chain_id.to_vec().into())
         .eip712_verifying_contract(test.eip712_verifying_contract.to_string())
-        .eip712_salt(test.eip712_salt.to_vec().into())
+        .eip712_salt(test.eip712_salt.map(|salt| salt.to_vec().into()))
         .build();
 
     let new_versionized = Transaction::new(
@@ -142,7 +143,7 @@ fn test_reencrypt_values(
         .eip712_version(test.eip712_version.to_string())
         .eip712_chain_id(test.eip712_chain_id.to_vec().into())
         .eip712_verifying_contract(test.eip712_verifying_contract.to_string())
-        .eip712_salt(test.eip712_salt.to_vec().into())
+        .eip712_salt(Some(test.eip712_salt.to_vec().into()))
         .build();
 
     let new_versionized = Transaction::new(
@@ -197,7 +198,7 @@ fn test_reencrypt_response_values(
 
 fn test_verify_proven_ct_values(
     dir: &Path,
-    test: &VerifyProvenCtValuesTest,
+    test: &ZkpValuesTest,
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
     let original_versionized: Transaction = load_and_unversionize(dir, test, format)?;
@@ -213,7 +214,7 @@ fn test_verify_proven_ct_values(
         .eip712_version(test.eip712_version.to_string())
         .eip712_chain_id(test.eip712_chain_id.to_vec().into())
         .eip712_verifying_contract(test.eip712_verifying_contract.to_string())
-        .eip712_salt(test.eip712_salt.to_vec().into())
+        .eip712_salt(Some(test.eip712_salt.to_vec().into()))
         .build();
 
     let new_versionized = Transaction::new(
@@ -237,7 +238,7 @@ fn test_verify_proven_ct_values(
 
 fn test_verify_proven_ct_response_values(
     dir: &Path,
-    test: &VerifyProvenCtResponseValuesTest,
+    test: &ZkpResponseValuesTest,
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
     let original_versionized: Transaction = load_and_unversionize(dir, test, format)?;
@@ -393,7 +394,7 @@ fn test_key_gen_values(
         .eip712_version(test.eip712_version.to_string())
         .eip712_chain_id(test.eip712_chain_id.to_vec().into())
         .eip712_verifying_contract(test.eip712_verifying_contract.to_string())
-        .eip712_salt(test.eip712_salt.to_vec().into())
+        .eip712_salt(Some(test.eip712_salt.to_vec().into()))
         .build();
 
     let new_versionized = Transaction::new(
@@ -422,12 +423,13 @@ fn test_key_gen_response_values(
 ) -> Result<TestSuccess, TestFailure> {
     let original_versionized: Transaction = load_and_unversionize(dir, test, format)?;
 
-    let key_gen_response_values = KeyGenResponseValues::builder()
+    let key_gen_response_values: KeyGenResponseValues = KeyGenResponseValues::builder()
         .request_id(test.request_id.to_vec().into())
         .public_key_digest(test.public_key_digest.to_string())
         .public_key_signature(test.public_key_signature.to_vec().into())
         .server_key_digest(test.server_key_digest.to_string())
         .server_key_signature(test.server_key_signature.to_vec().into())
+        .param(test.param.try_into().unwrap())
         .build();
 
     let new_versionized = Transaction::new(
@@ -507,31 +509,66 @@ fn test_key_gen_preproc_response_values(
     }
 }
 
-fn test_eip712_domain_values(
+fn test_insecure_key_gen_values(
     dir: &Path,
-    test: &Eip712DomainValuesTest,
+    test: &InsecureKeyGenValuesTest,
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
     let original_versionized: Transaction = load_and_unversionize(dir, test, format)?;
 
-    let eip712_domain_values = Eip712DomainValues::builder()
+    let insecure_key_gen_values = InsecureKeyGenValues::builder()
         .eip712_name(test.eip712_name.to_string())
         .eip712_version(test.eip712_version.to_string())
         .eip712_chain_id(test.eip712_chain_id.to_vec().into())
         .eip712_verifying_contract(test.eip712_verifying_contract.to_string())
-        .eip712_salt(test.eip712_salt.to_vec().into())
+        .eip712_salt(Some(test.eip712_salt.to_vec().into()))
         .build();
 
     let new_versionized = Transaction::new(
         test.block_height,
         test.transaction_index,
-        vec![OperationValue::CrsGen(eip712_domain_values)],
+        vec![OperationValue::InsecureKeyGen(insecure_key_gen_values)],
     );
 
     if original_versionized != new_versionized {
         Err(test.failure(
             format!(
-                "Invalid Eip712DomainValues:\n Expected :\n{:?}\nGot:\n{:?}",
+                "Invalid InsecureKeyGenValues:\n Expected :\n{:?}\nGot:\n{:?}",
+                original_versionized, new_versionized
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_crs_gen_values(
+    dir: &Path,
+    test: &CrsGenValuesTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: Transaction = load_and_unversionize(dir, test, format)?;
+
+    let crs_gen_values = CrsGenValues::builder()
+        .max_num_bits(256)
+        .eip712_name(test.eip712_name.to_string())
+        .eip712_version(test.eip712_version.to_string())
+        .eip712_chain_id(test.eip712_chain_id.to_vec().into())
+        .eip712_verifying_contract(test.eip712_verifying_contract.to_string())
+        .eip712_salt(Some(test.eip712_salt.to_vec().into()))
+        .build();
+
+    let new_versionized = Transaction::new(
+        test.block_height,
+        test.transaction_index,
+        vec![OperationValue::CrsGen(crs_gen_values)],
+    );
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid CrsGenValues:\n Expected :\n{:?}\nGot:\n{:?}",
                 original_versionized, new_versionized
             ),
             format,
@@ -552,6 +589,8 @@ fn test_crs_gen_response_values(
         .request_id(test.request_id.to_string())
         .digest(test.digest.to_string())
         .signature(test.signature.to_vec().into())
+        .max_num_bits(256)
+        .param(FheParameter::Test)
         .build();
 
     let new_versionized = Transaction::new(
@@ -670,10 +709,10 @@ impl TestedModule for Events {
             Self::Metadata::ReencryptResponseValues(test) => {
                 test_reencrypt_response_values(test_dir.as_ref(), test, format).into()
             }
-            Self::Metadata::VerifyProvenCtValues(test) => {
+            Self::Metadata::ZkpValues(test) => {
                 test_verify_proven_ct_values(test_dir.as_ref(), test, format).into()
             }
-            Self::Metadata::VerifyProvenCtResponseValues(test) => {
+            Self::Metadata::ZkpResponseValues(test) => {
                 test_verify_proven_ct_response_values(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::KeyUrlValues(test) => {
@@ -694,8 +733,11 @@ impl TestedModule for Events {
             Self::Metadata::KeyGenPreprocResponseValues(test) => {
                 test_key_gen_preproc_response_values(test_dir.as_ref(), test, format).into()
             }
-            Self::Metadata::Eip712DomainValues(test) => {
-                test_eip712_domain_values(test_dir.as_ref(), test, format).into()
+            Self::Metadata::InsecureKeyGenValues(test) => {
+                test_insecure_key_gen_values(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::CrsGenValues(test) => {
+                test_crs_gen_values(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::CrsGenResponseValues(test) => {
                 test_crs_gen_response_values(test_dir.as_ref(), test, format).into()

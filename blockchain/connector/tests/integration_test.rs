@@ -1,9 +1,10 @@
 use conf_trace::conf::Tracing;
 use conf_trace::telemetry::init_tracing;
+use events::kms::CrsGenValues;
 use events::kms::{
-    DecryptResponseValues, DecryptValues, Eip712DomainValues, FheParameter, FheType,
-    KeyGenPreprocValues, KmsCoreCentralizedConf, KmsCoreConf, KmsCoreParty, KmsCoreThresholdConf,
-    KmsEvent, KmsMessage, Transaction, TransactionId, VerifyProvenCtValues,
+    DecryptResponseValues, DecryptValues, FheParameter, FheType, KeyGenPreprocValues,
+    KmsCoreCentralizedConf, KmsCoreConf, KmsCoreParty, KmsCoreThresholdConf, KmsEvent, KmsMessage,
+    Transaction, TransactionId, VerifyProvenCtValues,
 };
 use events::kms::{KmsOperation, OperationValue};
 use events::{
@@ -328,8 +329,9 @@ async fn send_decrypt_request(client: &RwLock<Client>) -> String {
         "1".to_string(),
         vec![101; 32],
         "0x33dA6bF26964af9d7eed9e03E53415D37aA960EE".to_string(),
-        vec![],
-    );
+        Some(vec![42; 32]),
+    )
+    .unwrap();
 
     let operation = events::kms::OperationValue::Decrypt(decrypt);
 
@@ -522,26 +524,29 @@ async fn ddec_centralized_sunshine() {
         compute_cipher_from_stored_key(None, msg1.into(), &TEST_CENTRAL_KEY_ID.to_string()).await;
     let (ct2, fhe_type2): (Vec<u8>, kms_lib::kms::FheType) =
         compute_cipher_from_stored_key(None, msg2.into(), &TEST_CENTRAL_KEY_ID.to_string()).await;
-    let op = OperationValue::Decrypt(DecryptValues::new(
-        HexVector::from_hex(&TEST_CENTRAL_KEY_ID.request_id).unwrap(),
-        vec![MOCK_CT_HANDLES[0].to_vec(), MOCK_CT_HANDLES[1].to_vec()],
-        vec![
-            events::kms::FheType::from(fhe_type1 as u8),
-            events::kms::FheType::from(fhe_type2 as u8),
-        ],
-        Some(vec![
-            MOCK_EXTERNAL_HANDLES[0].to_vec(),
-            MOCK_EXTERNAL_HANDLES[1].to_vec(),
-        ]),
-        CURRENT_FORMAT_VERSION,
-        "0xEEdA6bf26964aF9D7Eed9e03e53415D37aa960EE".to_string(),
-        "some_proof".to_string(),
-        "eip712name".to_string(),
-        "1".to_string(),
-        vec![101; 32],
-        "0x33dA6bF26964af9d7eed9e03E53415D37aA960EE".to_string(),
-        vec![],
-    ));
+    let op = OperationValue::Decrypt(
+        DecryptValues::new(
+            HexVector::from_hex(&TEST_CENTRAL_KEY_ID.request_id).unwrap(),
+            vec![MOCK_CT_HANDLES[0].to_vec(), MOCK_CT_HANDLES[1].to_vec()],
+            vec![
+                events::kms::FheType::from(fhe_type1 as u8),
+                events::kms::FheType::from(fhe_type2 as u8),
+            ],
+            Some(vec![
+                MOCK_EXTERNAL_HANDLES[0].to_vec(),
+                MOCK_EXTERNAL_HANDLES[1].to_vec(),
+            ]),
+            CURRENT_FORMAT_VERSION,
+            "0xEEdA6bf26964aF9D7Eed9e03e53415D37aa960EE".to_string(),
+            "some_proof".to_string(),
+            "eip712name".to_string(),
+            "1".to_string(),
+            vec![101; 32],
+            "0x33dA6bF26964af9d7eed9e03E53415D37aA960EE".to_string(),
+            Some(vec![42; 32]),
+        )
+        .unwrap(),
+    );
     let (result, txn_id) = generic_centralized_sunshine_test(vec![ct1, ct2], op).await;
     match result {
         KmsOperationResponse::DecryptResponse(resp) => {
@@ -578,14 +583,17 @@ async fn keygen_sunshine_central() {
 
     // the preproc_id can just be some dummy value since
     // the centralized case does not need it
-    let op = OperationValue::KeyGen(KeyGenValues::new(
-        HexVector::from_hex("1111111111111111111111111111111111112222").unwrap(),
-        "eip712name".to_string(),
-        "version".to_string(),
-        vec![7],
-        "0x33dA6bF26964af9d7eed9e03E53415D37aA960EE".to_string(),
-        vec![],
-    ));
+    let op = OperationValue::KeyGen(
+        KeyGenValues::new(
+            HexVector::from_hex("1111111111111111111111111111111111112222").unwrap(),
+            "eip712name".to_string(),
+            "version".to_string(),
+            vec![1; 32],
+            "0x33dA6bF26964af9d7eed9e03E53415D37aA960EE".to_string(),
+            Some(vec![42; 32]),
+        )
+        .unwrap(),
+    );
     let (result, txn_id) = generic_centralized_sunshine_test(vec![], op).await;
     match result {
         KmsOperationResponse::KeyGenResponse(resp) => {
@@ -605,13 +613,17 @@ async fn keygen_sunshine_central() {
 #[serial_test::serial]
 async fn crs_sunshine_central() {
     setup_central_keys().await;
-    let op = OperationValue::CrsGen(Eip712DomainValues::new(
-        "eip712name".to_string(),
-        "version".to_string(),
-        vec![7],
-        "0x33dA6bF26964af9d7eed9e03E53415D37aA960EE".to_string(),
-        vec![],
-    ));
+    let op = OperationValue::CrsGen(
+        CrsGenValues::new(
+            128,
+            "eip712name".to_string(),
+            "version".to_string(),
+            vec![1; 32],
+            "0x33dA6bF26964af9d7eed9e03E53415D37aA960EE".to_string(),
+            Some(vec![42; 32]),
+        )
+        .unwrap(),
+    );
     let (result, txn_id) = generic_centralized_sunshine_test(vec![], op).await;
     match result {
         KmsOperationResponse::CrsGenResponse(resp) => {
@@ -733,26 +745,29 @@ async fn ddec_sunshine(slow: bool) {
         compute_cipher_from_stored_key(None, msg1.into(), &TEST_THRESHOLD_KEY_ID.to_string()).await;
     let (ct2, fhe_type2): (Vec<u8>, kms_lib::kms::FheType) =
         compute_cipher_from_stored_key(None, msg2.into(), &TEST_THRESHOLD_KEY_ID.to_string()).await;
-    let op = OperationValue::Decrypt(DecryptValues::new(
-        HexVector::from_hex(&TEST_THRESHOLD_KEY_ID.request_id).unwrap(),
-        vec![MOCK_CT_HANDLES[0].to_vec(), MOCK_CT_HANDLES[1].to_vec()],
-        vec![
-            events::kms::FheType::from(fhe_type1 as u8),
-            events::kms::FheType::from(fhe_type2 as u8),
-        ],
-        Some(vec![
-            MOCK_EXTERNAL_HANDLES[0].to_vec(),
-            MOCK_EXTERNAL_HANDLES[1].to_vec(),
-        ]),
-        CURRENT_FORMAT_VERSION,
-        "0xEEdA6bf26964aF9D7Eed9e03e53415D37aa960EE".to_string(),
-        "some_proof".to_string(),
-        "eip712name".to_string(),
-        "1".to_string(),
-        vec![101; 32],
-        "0x33dA6bF26964af9d7eed9e03E53415D37aA960EE".to_string(),
-        vec![],
-    ));
+    let op = OperationValue::Decrypt(
+        DecryptValues::new(
+            HexVector::from_hex(&TEST_THRESHOLD_KEY_ID.request_id).unwrap(),
+            vec![MOCK_CT_HANDLES[0].to_vec(), MOCK_CT_HANDLES[1].to_vec()],
+            vec![
+                events::kms::FheType::from(fhe_type1 as u8),
+                events::kms::FheType::from(fhe_type2 as u8),
+            ],
+            Some(vec![
+                MOCK_EXTERNAL_HANDLES[0].to_vec(),
+                MOCK_EXTERNAL_HANDLES[1].to_vec(),
+            ]),
+            CURRENT_FORMAT_VERSION,
+            "0xEEdA6bf26964aF9D7Eed9e03e53415D37aa960EE".to_string(),
+            "some_proof".to_string(),
+            "eip712name".to_string(),
+            "1".to_string(),
+            vec![1; 32],
+            "0x33dA6bF26964af9d7eed9e03E53415D37aA960EE".to_string(),
+            Some(vec![42; 32]),
+        )
+        .unwrap(),
+    );
     let (results, txn_id, _) = generic_sunshine_test(slow, vec![ct1, ct2], op).await;
     assert_eq!(results.len(), AMOUNT_PARTIES);
 
@@ -792,8 +807,9 @@ fn dummy_domain() -> alloy_sol_types::Eip712Domain {
     alloy_sol_types::eip712_domain!(
         name: "dummy",
         version: "1",
-        chain_id: 1,
+        chain_id: 0,
         verifying_contract: alloy_primitives::Address::ZERO,
+        // No salt
     )
 }
 
@@ -822,23 +838,26 @@ async fn reenc_sunshine(slow: bool) {
         .unwrap();
     let payload = kms_req.payload.clone().unwrap();
     let eip712 = kms_req.domain.clone().unwrap();
-    let op = OperationValue::Reencrypt(ReencryptValues::new(
-        kms_req.signature.clone(),
-        payload.version,
-        payload.client_address,
-        payload.enc_key,
-        events::kms::FheType::from(fhe_type as u8),
-        HexVector::from_hex(payload.key_id.unwrap().request_id.as_str()).unwrap(),
-        MOCK_CT_HANDLES[0].to_vec(),
-        payload.ciphertext_digest,
-        "dummy_acl_address".to_string(),
-        "some proof".to_string(),
-        eip712.name,
-        eip712.version,
-        eip712.chain_id,
-        eip712.verifying_contract,
-        eip712.salt,
-    ));
+    let op = OperationValue::Reencrypt(
+        ReencryptValues::new(
+            kms_req.signature.clone(),
+            payload.version,
+            payload.client_address,
+            payload.enc_key,
+            events::kms::FheType::from(fhe_type as u8),
+            HexVector::from_hex(payload.key_id.unwrap().request_id.as_str()).unwrap(),
+            MOCK_CT_HANDLES[0].to_vec(),
+            payload.ciphertext_digest,
+            "dummy_acl_address".to_string(),
+            "some proof".to_string(),
+            eip712.name,
+            eip712.version,
+            eip712.chain_id,
+            eip712.verifying_contract,
+            eip712.salt,
+        )
+        .unwrap(),
+    );
     let (results, txn_id, _) = generic_sunshine_test(slow, vec![ct], op).await;
     assert_eq!(results.len(), AMOUNT_PARTIES);
 
@@ -947,19 +966,22 @@ async fn verify_proven_ct_sunshine(slow: bool) {
 
     let eip712 = kms_req.domain.clone().unwrap();
 
-    let op = OperationValue::VerifyProvenCt(VerifyProvenCtValues::new(
-        HexVector::from_hex(kms_req.crs_handle.unwrap().request_id.as_str()).unwrap(),
-        HexVector::from_hex(kms_req.key_handle.unwrap().request_id.as_str()).unwrap(),
-        kms_req.contract_address,
-        kms_req.client_address,
-        MOCK_CT_HANDLES[0].to_vec(),
-        kms_req.acl_address,
-        eip712.name,
-        eip712.version,
-        eip712.chain_id,
-        eip712.verifying_contract,
-        eip712.salt,
-    ));
+    let op = OperationValue::VerifyProvenCt(
+        VerifyProvenCtValues::new(
+            HexVector::from_hex(kms_req.crs_handle.unwrap().request_id.as_str()).unwrap(),
+            HexVector::from_hex(kms_req.key_handle.unwrap().request_id.as_str()).unwrap(),
+            kms_req.contract_address,
+            kms_req.client_address,
+            MOCK_CT_HANDLES[0].to_vec(),
+            kms_req.acl_address,
+            eip712.name,
+            eip712.version,
+            eip712.chain_id,
+            eip712.verifying_contract,
+            eip712.salt,
+        )
+        .unwrap(),
+    );
     let mut ct_buf = Vec::new();
     tfhe::safe_serialization::safe_serialize(&ct_proof, &mut ct_buf, SAFE_SER_SIZE_LIMIT).unwrap();
     let (results, txn_id, _) = generic_sunshine_test(slow, vec![ct_buf], op).await;
@@ -1016,14 +1038,17 @@ async fn keygen_sunshine(slow: bool) {
         panic!("slow/integration test is not supported since there's no preprocessing material")
     }
 
-    let op = OperationValue::KeyGen(KeyGenValues::new(
-        HexVector::from_hex("1111111111111111111111111111111111112222").unwrap(),
-        "eip712name".to_string(),
-        "version".to_string(),
-        vec![7],
-        "contract".to_string(),
-        vec![8],
-    ));
+    let op = OperationValue::KeyGen(
+        KeyGenValues::new(
+            HexVector::from_hex("1111111111111111111111111111111111112222").unwrap(),
+            "eip712name".to_string(),
+            "version".to_string(),
+            vec![1; 32],
+            "contract".to_string(),
+            Some(vec![42; 32]),
+        )
+        .unwrap(),
+    );
     let (results, txn_id, _) = generic_sunshine_test(slow, vec![], op).await;
     for result in results {
         match result {
@@ -1061,13 +1086,17 @@ async fn preproc_sunshine(slow: bool) {
 
 async fn crs_sunshine(slow: bool) {
     setup_threshold_keys().await;
-    let op = OperationValue::CrsGen(Eip712DomainValues::new(
-        "eip712name".to_string(),
-        "version".to_string(),
-        vec![7],
-        "0x33dA6bF26964af9d7eed9e03E53415D37aA960EE".to_string(),
-        vec![],
-    ));
+    let op = OperationValue::CrsGen(
+        CrsGenValues::new(
+            256,
+            "eip712name".to_string(),
+            "version".to_string(),
+            vec![1; 32],
+            "0x33dA6bF26964af9d7eed9e03E53415D37aA960EE".to_string(),
+            Some(vec![42; 32]),
+        )
+        .unwrap(),
+    );
     let (results, txn_id, _) = generic_sunshine_test(slow, vec![], op).await;
     assert_eq!(results.len(), AMOUNT_PARTIES);
 

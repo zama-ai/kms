@@ -19,20 +19,23 @@ async fn main() {
     // Decrypt the ciphertext
     let ciphertext = vec![1, 2, 3, 4, 5];
 
-    let operation_response = OperationValue::Decrypt(DecryptValues::new(
-        vec![1, 2, 3],
-        vec![ciphertext.clone()],
-        vec![FheType::Euint8],
-        None::<Vec<Vec<u8>>>,
-        1,
-        "0xEEdA6bf26964aF9D7Eed9e03e53415D37aa960EE".to_string(),
-        "some proof".to_string(),
-        "eip712name".to_string(),
-        "1".to_string(),
-        vec![1],
-        "0x33dA6bF26964af9d7eed9e03E53415D37aA960EE".to_string(),
-        vec![],
-    ));
+    let operation_response = OperationValue::Decrypt(
+        DecryptValues::new(
+            vec![1, 2, 3],
+            vec![ciphertext.clone()],
+            vec![FheType::Euint8],
+            None::<Vec<Vec<u8>>>,
+            1,
+            "0xEEdA6bf26964aF9D7Eed9e03e53415D37aa960EE".to_string(),
+            "some proof".to_string(),
+            "eip712name".to_string(),
+            "1".to_string(),
+            vec![1],
+            "0x33dA6bF26964af9d7eed9e03E53415D37aA960EE".to_string(),
+            None::<Vec<u8>>,
+        )
+        .unwrap(),
+    );
 
     let msg = KmsMessage::builder().value(operation_response).build();
 

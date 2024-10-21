@@ -15,9 +15,9 @@ use dashmap::DashMap;
 use ethers::abi::Token;
 use ethers::types::{Address, U256};
 use events::kms::{
-    DecryptValues, Eip712DomainValues, FheType, KeyGenPreprocValues, KeyGenValues, KmsCoreConf,
-    KmsEvent, KmsMessage, KmsOperation, OperationValue, ReencryptValues, TransactionId,
-    VerifyProvenCtValues,
+    CrsGenValues, DecryptValues, FheType, InsecureKeyGenValues, KeyGenPreprocValues, KeyGenValues,
+    KmsCoreConf, KmsEvent, KmsMessage, KmsOperation, OperationValue, ReencryptValues,
+    TransactionId, VerifyProvenCtValues,
 };
 use events::HexVector;
 use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractRequest, ProtoCoin};
@@ -55,6 +55,17 @@ use tokio::sync::oneshot;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use typed_builder::TypedBuilder;
+
+const EIP712_NAME: &str = "eip712_name";
+const EIP712_VERSION: &str = "1.0.4";
+const EIP712_CONTRACT: &str = "0x00dA6BF26964af9D7EED9e03E53415d37aa960EE";
+static EIP712_CHAIN_ID: &[u8] = &[
+    42, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+];
+static EIP712_SALT: &[u8] = &[
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+    26, 27, 28, 29, 30, 31,
+];
 
 #[derive(Serialize, Clone, Default, Debug)]
 pub struct SimulatorConfig {
@@ -261,6 +272,12 @@ pub struct KeyGenExecute {
 }
 
 #[derive(Debug, Parser)]
+pub struct CrsExecute {
+    #[clap(long, short = 'm')]
+    pub max_num_bits: u32,
+}
+
+#[derive(Debug, Parser)]
 pub struct VerifyProvenCtExecute {
     #[clap(long, short = 'e')]
     pub to_encrypt: u8,
@@ -284,7 +301,7 @@ pub enum Command {
     Decrypt(CryptExecute),
     ReEncrypt(CryptExecute),
     QueryContract(Query),
-    CrsGen(Nothing),
+    CrsGen(CrsExecute),
     VerifyProvenCt(VerifyProvenCtExecute),
     DoNothing(Nothing),
 }
@@ -650,14 +667,16 @@ async fn execute_contract(
 pub async fn execute_crsgen_contract(
     client: &Client,
     query_client: &QueryClient,
+    max_amount_of_bits: u32,
 ) -> Result<KmsEvent, Box<dyn std::error::Error + 'static>> {
-    let crsgen_value = OperationValue::CrsGen(Eip712DomainValues::new(
-        "eip712name".to_string(),
-        "version".to_string(),
-        vec![7],
-        "0x00dA6BF26964af9D7EED9e03E53415d37aa960EE".to_string(),
-        vec![8],
-    ));
+    let crsgen_value = OperationValue::CrsGen(CrsGenValues::new(
+        max_amount_of_bits,
+        EIP712_NAME.to_string(),
+        EIP712_VERSION.to_string(),
+        EIP712_CHAIN_ID.to_vec(),
+        EIP712_CONTRACT.to_string(),
+        Some(EIP712_SALT.to_vec()),
+    )?);
 
     let evs = execute_contract(client, query_client, crsgen_value).await?;
     let ev = evs[0].clone();
@@ -666,19 +685,19 @@ pub async fn execute_crsgen_contract(
     Ok(ev)
 }
 
-pub async fn execute_insecure_keygen_contract(
+pub async fn execute_insecure_key_gen_contract(
     client: &Client,
     query_client: &QueryClient,
 ) -> Result<KmsEvent, Box<dyn std::error::Error + 'static>> {
-    let insecure_keygen_value = OperationValue::InsecureKeyGen(Eip712DomainValues::new(
-        "eip712name".to_string(),
-        "version".to_string(),
-        vec![7],
-        "0x00dA6BF26964af9D7EED9e03E53415d37aa960EE".to_string(),
-        vec![8],
-    ));
+    let insecure_key_gen_value = OperationValue::InsecureKeyGen(InsecureKeyGenValues::new(
+        EIP712_NAME.to_string(),
+        EIP712_VERSION.to_string(),
+        EIP712_CHAIN_ID.to_vec(),
+        EIP712_CONTRACT.to_string(),
+        Some(EIP712_SALT.to_vec()),
+    )?);
 
-    let evs = execute_contract(client, query_client, insecure_keygen_value).await?;
+    let evs = execute_contract(client, query_client, insecure_key_gen_value).await?;
     let ev = evs[0].clone();
 
     tracing::info!("TxId: {:?}", ev.txn_id().to_hex(),);
@@ -706,12 +725,12 @@ pub async fn execute_keygen_contract(
     // TODO we need to first do a pre-processing execute
     let keygen_value = OperationValue::KeyGen(KeyGenValues::new(
         preproc_id,
-        "eip712name".to_string(),
-        "version".to_string(),
-        vec![7],
-        "contract".to_string(),
-        vec![8],
-    ));
+        EIP712_NAME.to_string(),
+        EIP712_VERSION.to_string(),
+        EIP712_CHAIN_ID.to_vec(),
+        EIP712_CONTRACT.to_string(),
+        Some(EIP712_SALT.to_vec()),
+    )?);
 
     let evs = execute_contract(client, query_client, keygen_value).await?;
     let ev = evs[0].clone();
@@ -772,8 +791,8 @@ pub async fn execute_verify_proven_ct_contract(
         dummy_domain.version.unwrap().to_string(),
         dummy_domain.chain_id.unwrap().to_be_bytes_vec(),
         dummy_domain.verifying_contract.unwrap().to_string(),
-        vec![],
-    ));
+        Some(EIP712_SALT.to_vec()),
+    )?);
 
     let evs = execute_contract(client, query_client, value).await?;
     let ev = evs[0].clone();
@@ -807,12 +826,12 @@ pub async fn execute_decryption_contract(
         1,
         "0xFFda6bf26964af9D7eed9e03e53415D37Aa960ee".to_string(),
         "some_proof".to_string(),
-        "eip712name".to_string(),
-        "version".to_string(),
-        vec![6; 32],
-        "0x00dA6BF26964af9D7EED9e03E53415d37aa960EE".to_string(),
-        vec![],
-    ));
+        EIP712_NAME.to_string(),
+        EIP712_VERSION.to_string(),
+        EIP712_CHAIN_ID.to_vec(),
+        EIP712_CONTRACT.to_string(),
+        Some(EIP712_SALT.to_vec()),
+    )?);
 
     let evs = execute_contract(client, query_client, value).await?;
     let ev = evs[0].clone();
@@ -870,18 +889,16 @@ pub async fn execute_reencryption_contract(
     //signature is an alloy_primitives::Signature on Eip Domain and encryption key
     //using client address as public key
     let acl_addres = "acl_address".to_string();
-    let eip712_name = "eip712name".to_string();
-    let eip712_version = "version".to_string();
     let eip712_verifying_contract =
         alloy_primitives::Address::from_str("0000000000000000000000000000000000000111").unwrap();
     let chain_id = alloy_primitives::U256::try_from_be_slice(&[6]).unwrap();
 
     let domain = alloy_sol_types::Eip712Domain::new(
-        Some(eip712_name.clone().into()),
-        Some(eip712_version.clone().into()),
+        Some(EIP712_NAME.into()),
+        Some(EIP712_VERSION.into()),
         Some(chain_id),
         Some(eip712_verifying_contract),
-        None,
+        Some(alloy_primitives::FixedBytes::from_slice(EIP712_SALT)),
     );
 
     let message = Reencrypt {
@@ -907,12 +924,12 @@ pub async fn execute_reencryption_contract(
         ciphertext_digest.clone(),
         acl_addres,
         "some_proof".to_string(),
-        eip712_name,
-        eip712_version,
+        EIP712_NAME.to_string(),
+        EIP712_VERSION.to_string(),
         chain_id.to_be_bytes::<32>().to_vec(),
         eip712_verifying_contract.to_string(),
-        vec![],
-    ));
+        Some(EIP712_SALT.to_vec()),
+    )?);
 
     //Also create a copy of the request for reconstruction later on
     let parsed_request = ParsedReencryptionRequest::new(
@@ -1493,7 +1510,7 @@ pub async fn main_from_config(
             //let _responses = wait_for_response(event, &query_client, &sim_conf, max_iter).await?;
         }
         Command::InsecureKeyGen(Nothing {}) => {
-            let event = execute_insecure_keygen_contract(&client, &query_client).await?;
+            let event = execute_insecure_key_gen_contract(&client, &query_client).await?;
             let responses =
                 wait_for_response(event, &query_client, &sim_conf, max_iter, num_kms_parties)
                     .await?;
@@ -1512,10 +1529,10 @@ pub async fn main_from_config(
                 }
             }
         }
-        Command::CrsGen(Nothing {}) => {
+        Command::CrsGen(CrsExecute { max_num_bits }) => {
             // the actual CRS ceremony takes time
             max_iter = 20;
-            let event = execute_crsgen_contract(&client, &query_client).await?;
+            let event = execute_crsgen_contract(&client, &query_client, *max_num_bits).await?;
             let responses =
                 wait_for_response(event, &query_client, &sim_conf, max_iter, num_kms_parties)
                     .await?;

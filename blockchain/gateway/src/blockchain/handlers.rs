@@ -157,7 +157,7 @@ async fn decrypt(
         version: config.ethereum.kmsverifier_version.clone(),
         chain_id: chain_id_bytes,
         verifying_contract: vc_hex,
-        salt: vec![],
+        salt: None, // TODO we might want to ensure this can be set in the future
     };
 
     blockchain.decrypt(typed_cts, domain, acl_address).await
@@ -204,6 +204,7 @@ pub(crate) async fn handle_reencryption_event(
             ciphertext,
             event.eip712_verifying_contract.clone(),
             chain_id,
+            None, // TODO we might want to ensure this can be set in the future
             acl_address,
         )
         .await;
@@ -248,7 +249,7 @@ pub(crate) async fn handle_verify_proven_ct_event(
         version: config.ethereum.kmsverifier_version.clone(),
         chain_id: chain_id_bytes,
         verifying_contract: vc_hex,
-        salt: vec![],
+        salt: None, // TODO we might want to ensure this can be set in the future
     };
 
     let verify_proven_ct_response_builder = blockchain

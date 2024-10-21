@@ -32,6 +32,7 @@ use crate::{
     cryptography::internal_crypto_types::Signature,
 };
 use aes_prng::AesRng;
+use alloy_primitives::B256;
 use alloy_sol_types::SolStruct;
 use anyhow::Context;
 use bincode::serialize;
@@ -322,17 +323,15 @@ pub(crate) fn verify_eip712(request: &ReencryptionRequest) -> anyhow::Result<()>
         alloy_primitives::Address::from_str(wrapped_domain.verifying_contract.as_str())
             .context("Failed to convert wrappted domain message into address")?;
 
-    let salt = if wrapped_domain.salt.is_empty() {
-        None
-    } else {
-        Some(alloy_primitives::B256::from_slice(&wrapped_domain.salt))
-    };
     let domain = alloy_sol_types::Eip712Domain::new(
         Some(wrapped_domain.name.clone().into()),
         Some(wrapped_domain.version.clone().into()),
         Some(chain_id),
         Some(verifying_contract_address),
-        salt,
+        wrapped_domain
+            .salt
+            .as_ref()
+            .map(|inner_salt| B256::from_slice(inner_salt)),
     );
 
     // Derive the EIP-712 signing hash.

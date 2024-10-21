@@ -990,7 +990,6 @@ impl Client {
 
         Ok(KeyGenRequest {
             params: parsed_param,
-            config: None,
             preproc_id,
             request_id: Some(request_id.clone()),
             domain,
@@ -1015,7 +1014,6 @@ impl Client {
         }
         Ok(CrsGenRequest {
             params: parsed_param,
-            config: None,
             max_num_bits,
             request_id: Some(request_id.clone()),
             domain: None,
@@ -1040,7 +1038,6 @@ impl Client {
         }
 
         Ok(KeyGenPreprocRequest {
-            config: None,
             params: parsed_param,
             request_id: Some(request_id.clone()),
         })
