@@ -373,10 +373,6 @@ pub async fn get_server_key_from_storage(pub_path: Option<&Path>, key_id: &str) 
     }
 }
 
-pub async fn set_server_key_from_storage(pub_path: Option<&Path>, key_id: &str) {
-    set_server_key(get_server_key_from_storage(pub_path, key_id).await);
-}
-
 /// This function should be used for testing only and it can panic.
 async fn compute_generic_cipher_from_stored_key(
     pub_path: Option<&Path>,

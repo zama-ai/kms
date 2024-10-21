@@ -25,7 +25,7 @@ where
         Ok(list) => list,
         Err(err) => {
             tracing::info!(
-                "Cannot deserialized compressed ciphertext due to: {}, fallback to non compressed",
+                "Cannot deserialized compressed ciphertext due to: {}, fallback to non compressed.",
                 err
             );
             return deserialize::<T>(bytes);
@@ -33,7 +33,8 @@ where
     };
     let (list, _tag) = list.into_raw_parts();
     if list.len() != 1 {
-        return Err(anyhow_error_and_log("User compact list are not supported."));
+        let msg = format!("Unexpected size of compressed list: {}.", list.len());
+        return Err(anyhow_error_and_log(msg));
     }
     let Some(key) = key else {
         return Err(anyhow_error_and_log("Decompression key is not configured."));
@@ -61,7 +62,7 @@ pub mod test_tools {
 
     use crate::consts::SAFE_SER_SIZE_LIMIT;
 
-    fn safe_serialize_versioned<T>(ct: &T) -> Vec<u8>
+    pub fn safe_serialize_versioned<T>(ct: &T) -> Vec<u8>
     where
         T: Serialize + Versionize + Named,
     {
@@ -92,11 +93,14 @@ mod test {
     use crate::consts::SAFE_SER_SIZE_LIMIT;
 
     use super::from_bytes;
-    use super::test_tools::compress_serialize_versioned;
+    use super::test_tools::{compress_serialize_versioned, safe_serialize_versioned};
+    use distributed_decryption::execution::tfhe_internals::parameters::{
+        DKGParams, PARAMS_TEST_BK_SNS,
+    };
     use tfhe::integer::bigint::StaticUnsignedBigInt;
     use tfhe::integer::ciphertext::{CompressedCiphertextListBuilder, Compressible};
     use tfhe::named::Named;
-    use tfhe::prelude::{FheDecrypt, FheEncrypt};
+    use tfhe::prelude::{CiphertextList, FheDecrypt, FheEncrypt};
     use tfhe::shortint::parameters::{
         COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
         PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
@@ -109,7 +113,12 @@ mod test {
     use tfhe::{Unversionize, Versionize};
 
     use tfhe::integer::ciphertext::Expandable;
+
+    use tfhe::set_server_key;
+    use tfhe::CompactPublicKey;
     use tfhe::CompressedCiphertextList as HLCompressedCiphertextList;
+    use tfhe::CompressedCiphertextListBuilder as HLCompressedCiphertextListBuilder;
+    use tfhe::ConfigBuilder;
 
     fn max_val(num_bits: usize) -> StaticUnsignedBigInt<1> {
         StaticUnsignedBigInt::from([(2_u128.pow(num_bits as u32) - 1) as u64; 1])
@@ -308,5 +317,68 @@ mod test {
         };
         let decrypted: bool = result.decrypt(&client_key);
         assert_eq!(decrypted, clear_value);
+    }
+
+    #[rstest::rstest]
+    #[case(false)]
+    #[case(true)]
+    #[test]
+    fn test_full_chain_client_copro_kms_uint8(#[case] default_config: bool) {
+        let config = if default_config {
+            ConfigBuilder::with_custom_parameters(PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64)
+                .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64)
+                .build()
+        } else {
+            let DKGParams::WithSnS(params) = PARAMS_TEST_BK_SNS else {
+                panic!("");
+            };
+            ConfigBuilder::with_custom_parameters(params.regular_params.ciphertext_parameters)
+                .enable_compression(
+                    params
+                        .regular_params
+                        .compression_decompression_parameters
+                        .unwrap(),
+                )
+                .use_dedicated_compact_public_key_parameters(
+                    params
+                        .regular_params
+                        .dedicated_compact_public_key_parameters
+                        .unwrap(),
+                )
+                .build()
+        };
+        let (client_key, server_key) = generate_keys(config);
+        let clear_value = 255_u8;
+        let decompression_key = server_key.clone().into_raw_parts().3;
+        let compression_key = server_key.clone().into_raw_parts().2;
+        assert!(compression_key.is_some());
+        assert!(decompression_key.is_some());
+        set_server_key(server_key.clone());
+
+        // CLIENT like part
+        let compact_key = CompactPublicKey::new(&client_key);
+        let mut builder = tfhe::ProvenCompactCiphertextList::builder(&compact_key);
+        let not_compressed = builder.push(clear_value).build();
+
+        // COPRO like part
+        let expander = not_compressed.expand().unwrap();
+        // TODO: use verify_and_expand instead
+        let not_compressed = expander.get::<FheUint8>(0).unwrap().unwrap();
+        let not_compressed = not_compressed.reverse_bits();
+        let compressed = HLCompressedCiphertextListBuilder::new()
+            .push(not_compressed.clone())
+            .build()
+            .unwrap();
+        let compressed = safe_serialize_versioned(&compressed);
+
+        // KMS like part
+        let result = from_bytes::<FheUint8>(&decompression_key, &compressed);
+        let result = match result {
+            Ok(result) => result,
+            Err(err) => panic!("{:?}", err),
+        };
+        let decrypted: u8 = result.decrypt(&client_key);
+
+        assert_eq!(decrypted, clear_value.reverse_bits());
     }
 }
