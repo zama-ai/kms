@@ -129,6 +129,11 @@ where
     where
         U: SubscriptionHandler + Clone + Send + Sync + 'static,
     {
+        //Init once the block height
+        let bc_height = self.blockchain.get_last_height().await;
+        let height = bc_height.unwrap_or(0);
+        self.update_last_seen_height(height).await?;
+        tracing::info!("Starting polling Blockchain on block {height}");
         loop {
             tracing::trace!(
                 "Waiting {} secs for next tick before getting events",
@@ -155,17 +160,15 @@ where
         );
         let _guard = enter.enter();
         let height = self.storage.get_last_height().await?;
-        tracing::debug!("Getting events from Blockchain from height {:?}", height);
+        tracing::info!("Getting events from Blockchain from height {:?}", height);
         let results = self.get_txs_events(height).await.inspect_err(|e| {
             self.metrics
                 .increment_connection_errors(1, &[("error", &e.to_string())]);
         })?;
-        tracing::debug!("Received events from Blockchain {:?}", results.len());
+        tracing::info!("Received events from Blockchain {:?}", results.len());
         if results.is_empty() {
-            tracing::debug!("No events received from Blockchain. Update to last height");
-            let last_height = self.blockchain.get_last_height().await?;
-            let new_height = 0.max(last_height as i64) as u64;
-            self.storage.save_last_height(new_height).await?;
+            tracing::info!("No events received from Blockchain. Incrementing height by one.");
+            self.update_last_seen_height(height + 1).await?;
             return Ok(());
         }
         let last_height = results.iter().map(|tx| tx.height).max().unwrap_or(0) as u64;
@@ -360,13 +363,6 @@ mod tests {
             .withf(|_| true)
             .times(1)
             .returning(|_| Ok(()));
-
-        server
-            .subscription
-            .blockchain
-            .expect_get_last_height()
-            .times(1)
-            .returning(|| Ok(0));
 
         let mut on_message_mock = MockNeverCalledSubscriptionHandler::new();
         on_message_mock.expect_on_message().never();

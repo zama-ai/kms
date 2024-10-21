@@ -151,20 +151,31 @@ async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
             .unwrap(),
     );
 
-    // Send decryption request to the blockchain in order to get events after
-    let txhash = send_decrypt_request(&client).await;
-
-    let query_client = Arc::new(query_client);
-    wait_for_tx_processed(query_client.clone(), txhash.clone())
-        .await
-        .unwrap();
-
     let (tx, mut rc) = channel(1);
     // Start SyncHandler to listen events
     let handler = start_sync_handler(addresses.clone(), &contract_address, mnemonic, tx).await;
 
     // Wait for the event to be processed and send the response back to the blockchain
-    wait_for_event_response(handler, &contract_address, query_client, &mut rc).await;
+    let query_client = Arc::new(query_client);
+    let cloned_query_client = Arc::clone(&query_client);
+    let handle = tokio::spawn(async move {
+        wait_for_event_response(
+            handler,
+            &contract_address.clone(),
+            cloned_query_client,
+            &mut rc,
+        )
+        .await;
+    });
+
+    // Send decryption request to the blockchain in order to get events after
+    let txhash = send_decrypt_request(&client).await;
+
+    wait_for_tx_processed(query_client, txhash.clone())
+        .await
+        .unwrap();
+
+    handle.await.unwrap();
 }
 
 async fn wait_for_event_response<T>(
@@ -221,6 +232,7 @@ async fn wait_for_tx_processed(
     if r.is_none() {
         Err(anyhow::anyhow!("Transaction not found"))
     } else {
+        tracing::info!("Tx processed: {:?}", r);
         Ok(())
     }
 }
