@@ -26,9 +26,15 @@ bytes = "^1.6.1"
 reqwest = { version = "0.12.4", features = ["json"] }
 async-trait.workspace = true
 thiserror = "1.0.64"
-ethers = { version = "2.0.14", features = ["abigen", "rustls", "ws", "ethers-solc", "legacy"] }
+ethers = { version = "2.0.14", features = [
+    "abigen",
+    "rustls",
+    "ws",
+    "ethers-solc",
+    "legacy",
+] }
 dashmap = "6.0.1"
-retrying = {version = "0.1.0", features = ["tokio"]}
+retrying = { version = "0.1.0", features = ["tokio"] }
 typed-builder.workspace = true
 anyhow.workspace = true
 cosmwasm-std = { version = "2.1.4" }
@@ -40,22 +46,27 @@ bip39 = "2.0.0"
 bech32 = "0.9.0"
 bincode.workspace = true
 clap = { workspace = true, features = ["derive"] }
-conf-trace = { path = "../../conf-trace" , version = "0.9.0-rc11" }
-cosmos-proto = { path = "../cosmos-proto" , version = "0.9.0-rc11" }
+conf-trace = { path = "../../conf-trace", version = "0.9.0-rc11" }
+cosmos-proto = { path = "../cosmos-proto", version = "0.9.0-rc11" }
 distributed-decryption = { path = "../../core/threshold", default-features = false, version = "0.9.0-rc11" }
-events = { path = "../events" , version = "0.9.0-rc11" }
+events = { path = "../events", version = "0.9.0-rc11" }
 hex = "0.4.3"
-kms = { path = "../../core/service", default-features = false, features = ["grpc-client", "non-wasm", "testing", "insecure"] , version = "0.9.0-rc11" }
-kms-blockchain-client = { path = "../client" , version = "0.9.0-rc11" }
+kms = { path = "../../core/service", default-features = false, features = [
+    "grpc-client",
+    "non-wasm",
+    "testing",
+    "insecure",
+], version = "0.9.0-rc11" }
+kms-blockchain-client = { path = "../client", version = "0.9.0-rc11" }
 rand = { workspace = true, features = ["std", "std_rng"] }
-serde = { workspace = true , features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 strum = "0.26"
 strum_macros = "0.26"
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 tracing = { workspace = true, features = ["log"] }
-tracing-subscriber = {version = "0.3.18", features = ["fmt", "std"] }
-tracing-appender = "0.2"
+tracing-appender = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["fmt", "std"] }
 
 [dev-dependencies]
 test-context = "0.3.0"

@@ -269,6 +269,8 @@ impl Gnetworking for NetworkingImpl {
                     format!("wrong sender: expected {:?} to be in {:?}", host, sender),
                 ));
             }
+        } else {
+            tracing::warn!("No valid TLS senders known.");
         }
         tracing::debug!("passed sender verification, tag is {:?}", tag);
 
@@ -297,7 +299,10 @@ impl Gnetworking for NetworkingImpl {
                 .await;
             Ok(tonic::Response::new(SendValueResponse::default()))
         } else {
-            let msg = format!("unknown session id {:?} for party", tag.session_id);
+            let msg = format!(
+                "unknown session id {:?} for from sender {:?} (round {})",
+                tag.session_id, tag.sender, tag.round_counter
+            );
             tracing::error!(msg);
             Err(tonic::Status::new(tonic::Code::NotFound, msg))
         }
@@ -362,21 +367,21 @@ pub fn extract_san_from_certs(certs: &[Certificate], use_pem: bool) -> Result<St
 
     // find the subject and issuer CN, check there's a matching name in SAN list
     let Some(subject) = cert.subject().iter_common_name().next() else {
-        return Err("bad certificate, missing subject".to_owned());
+        return Err("Bad certificate: missing subject".to_owned());
     };
     let subject_str = subject.as_str().map_err(|e| e.to_string())?;
 
     let Some(issuer) = cert.issuer().iter_common_name().next() else {
-        return Err("bad certificate, missing issuer".to_owned());
+        return Err("Bad certificate: missing issuer".to_owned());
     };
     let issuer_str = issuer.as_str().map_err(|e| e.to_string())?;
 
     if subject_str != issuer_str {
-        return Err("subject CN not match issuer CN".to_owned());
+        return Err("Subject CN does not match issuer CN".to_owned());
     }
 
     if !san_strings.contains(&subject_str) {
-        return Err("subject CN not found in SAN".to_owned());
+        return Err("Subject CN not found in SAN".to_owned());
     }
 
     Ok(subject_str.to_string())

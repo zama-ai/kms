@@ -94,6 +94,8 @@ tonic-health = { version = "0.11", optional = true }
 tower = { version = "0.4", features = ["retry", "timeout"], optional = true }
 tower-http = { version = "0.4", features = ["trace"], optional = true }
 tracing = { workspace = true, features = ["log"] }
+tracing-appender = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["fmt", "std"] }
 url = "2.5.0"
 
 # [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -104,22 +106,27 @@ wasm-bindgen = { version = "0.2.86", features = ["serde-serialize"] }
 tfhe-versionable = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
-tfhe = { workspace = true, features = [
-    "seeder_unix",
-] }
+tfhe = { workspace = true, features = ["seeder_unix"] }
 
 [dev-dependencies]
 assert_cmd = "2.0.14"
-sysinfo = "0.31.4"
+sysinfo = "0.32"
 tempfile = "3.13.0"
 tracing-test = "0.2.4"
 webpki = { version = "0.22", features = ["std"] }
 rustls = { version = "0.23", default-features = false, features = ["std"] }
-rstest = "0.21.0"
+rstest = "0.23.0"
 # The testing feature is only required for tests
-distributed-decryption = { path = "../threshold/", default-features = false, version = "0.9.0-rc11", features = ["testing"] }
-kms-common = { path = "../../common", version = "0.9.0-rc11", features = ["testing"] }
-backward-compatibility = { path = "../../backward-compatibility", version = "0.9.0-rc3" , features = ["load", "tests"] }
+distributed-decryption = { path = "../threshold/", default-features = false, version = "0.9.0-rc11", features = [
+    "testing",
+] }
+kms-common = { path = "../../common", version = "0.9.0-rc11", features = [
+    "testing",
+] }
+backward-compatibility = { path = "../../backward-compatibility", version = "0.9.0-rc3", features = [
+    "load",
+    "tests",
+] }
 
 [build-dependencies]
 tonic-build.workspace = true

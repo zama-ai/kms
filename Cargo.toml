@@ -28,9 +28,7 @@ members = [
 # Note that it's not possible to only generate the lock file using specific features as the resolver
 # builds the graph as if all features are enabled:
 # https://doc.rust-lang.org/cargo/reference/resolver.html#features
-exclude = [
-    "backward-compatibility"
-]
+exclude = ["backward-compatibility"]
 
 [workspace.package]
 authors = ["Zama"]
@@ -67,6 +65,8 @@ tokio = { version = "1.37", features = ["full"] }
 tonic = "0.11"
 tonic-build = "0.11"
 tracing = { version = "0.1.40", features = ["log"] }
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3.18", features = ["fmt", "std"] }
 typed-builder = "0.18.1"
 
 # Alloy packages are based on alloy 0.8.3

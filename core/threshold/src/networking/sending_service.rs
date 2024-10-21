@@ -120,10 +120,13 @@ impl GrpcSendingService {
                     .domain_name(domain_name)
                     .ca_certificate(cert_bundle.get_ca_by_name(domain_name)?)
                     .identity(cert_bundle.get_identity()?);
-                tracing::debug!("building TLS channel with {domain_name}");
+                tracing::debug!("Building TLS channel with {domain_name}");
                 Channel::builder(endpoint).tls_config(tls_config)?
             }
-            None => Channel::builder(endpoint),
+            None => {
+                tracing::warn!("Building channel to {:?} without TLS", endpoint.host());
+                Channel::builder(endpoint)
+            }
         };
         let channel = channel.connect_lazy();
         let client = GnetworkingClient::with_interceptor(channel, ContextPropagator)

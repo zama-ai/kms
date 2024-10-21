@@ -4164,7 +4164,7 @@ pub(crate) mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    async fn test_decryption_threshold_no_decompresion() {
+    async fn test_decryption_threshold_no_decompression() {
         decryption_threshold(
             TEST_PARAM,
             &TEST_THRESHOLD_KEY_ID.to_string(),
@@ -4181,7 +4181,7 @@ pub(crate) mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    async fn test_decryption_threshold() {
+    async fn test_decryption_threshold_with_decompression() {
         decryption_threshold(
             TEST_PARAM,
             &TEST_THRESHOLD_KEY_ID.to_string(),

@@ -147,7 +147,7 @@ pub fn accept_trace(request: Request<Body>) -> Request<Body> {
     request
 }
 
-/// Recorcd the OTel trace ID of the given request as "trace_id" field in the current span.
+/// Record the OTel trace ID of the given request as "trace_id" field in the current span.
 pub fn record_trace_id(request: Request<Body>) -> Request<Body> {
     let span = Span::current(); // Tokio tracing span.
     let trace_id = span.context().span().span_context().trace_id(); // OpenTelemetry trace ID.
