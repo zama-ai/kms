@@ -1,18 +1,40 @@
 #[cfg(test)]
 mod tests {
+    use ethers::providers::MockProvider;
     use gateway::{
-        config::{init_conf_gateway, GatewayConfig},
+        config::{init_conf_gateway, GatewayConfig, VerifyProvenCtResponseToClient},
         events::manager::{start_gateway, start_http_server},
     };
     use reqwest::Client;
     use serde::Deserialize;
+    use serde_json::json;
     use std::{collections::HashMap, time::Duration};
     use tokio::sync::mpsc;
 
-    #[tokio::test]
-    async fn integration_test() {
+    fn id() -> usize {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static ID: AtomicUsize = AtomicUsize::new(0);
+        ID.fetch_add(1, Ordering::SeqCst)
+    }
+
+    fn valid_config() -> GatewayConfig {
         let mut config: GatewayConfig = init_conf_gateway("config/gateway").unwrap();
         config.debug = true;
+        let port = 7070 + id();
+        let port = format!(":{port}");
+        let old_port = ":7077";
+        assert!(config.api_url.contains(old_port));
+        config.api_url = config.api_url.replace(":7077", &port);
+        config
+    }
+
+    async fn new_client() -> (
+        Client,
+        String,
+        tokio::task::JoinHandle<()>,
+        tokio::task::JoinHandle<Option<MockProvider>>,
+    ) {
+        let config: GatewayConfig = valid_config();
         let (sender, receiver) = mpsc::channel(100);
         let url_server = config.api_url.clone();
         let url_client = config.api_url.clone();
@@ -20,7 +42,12 @@ mod tests {
             tokio::spawn(async move { start_http_server(url_server, sender.clone()).await });
         let gateway_handle = tokio::spawn(async move { start_gateway(receiver, config).await });
         tokio::time::sleep(Duration::from_millis(500)).await;
-        let client = Client::new();
+        (Client::new(), url_client, http_handle, gateway_handle)
+    }
+
+    #[tokio::test]
+    async fn integration_test_keyurl() {
+        let (client, url_client, http_handle, gateway_handle) = new_client().await;
         let test_count = 10;
 
         // key handle, we can try more than once in parallel
@@ -104,6 +131,264 @@ mod tests {
                 .unwrap();
         }
 
+        http_handle.abort();
+        gateway_handle.abort();
+    }
+
+    #[derive(Deserialize)]
+    struct RespBodyVerifyProvenCt {
+        response: VerifyProvenCtResponseToClient,
+        status: String,
+    }
+
+    #[derive(Deserialize)]
+    struct RespBodyVerifyProvenCtFailed {
+        response: String,
+        status: String,
+    }
+
+    #[tokio::test]
+    async fn integration_test_zkp_event_correct() {
+        let body_map: serde_json::Value = serde_json::Value::Object(serde_json::Map::from_iter([
+            ("ct_proof".into(), json!("00")),
+            (
+                "caller_address".into(),
+                json!("0x0000000000000000000000000000000000000001"),
+            ),
+            (
+                "contract_address".into(),
+                json!("0x0000000000000000000000000000000000000002"),
+            ),
+            ("key_id".into(), json!("")),
+            ("crs_id".into(), json!("")),
+        ]));
+
+        let (client, url_client, http_handle, gateway_handle) = new_client().await;
+        let response = match client
+            .post(format!("http://{url_client}/verify_proven_ct"))
+            .json(&body_map)
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(err) => {
+                eprintln!("{err}");
+                unreachable!("")
+            }
+        };
+
+        let status = response.status();
+        assert_eq!(status, actix_web::http::StatusCode::OK.as_u16());
+        let body = response.text().await.expect("Body");
+        let body: RespBodyVerifyProvenCt =
+            serde_json::de::from_str(&body).expect("Deserialized body");
+        assert_eq!(body.status, "success");
+        assert_eq!(body.response.kms_signatures, vec![vec![0_u8, 1, 2, 3]]);
+        http_handle.abort();
+        gateway_handle.abort();
+    }
+
+    #[tokio::test]
+    async fn integration_test_zkp_event_bad_address() {
+        let body_map: serde_json::Value = serde_json::Value::Object(serde_json::Map::from_iter([
+            ("ct_proof".into(), json!("00")),
+            (
+                "caller_address".into(),
+                json!("0x0000000000000000000000000000000000000001"),
+            ),
+            (
+                "contract_address".into(),
+                json!("0x0000000000000000000000000000000000000007"),
+            ),
+            ("key_id".into(), json!("")),
+            ("crs_id".into(), json!("")),
+        ]));
+
+        let (client, url_client, http_handle, gateway_handle) = new_client().await;
+        let response = match client
+            .post(format!("http://{url_client}/verify_proven_ct"))
+            .json(&body_map)
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(err) => {
+                eprintln!("{err}");
+                unreachable!("")
+            }
+        };
+
+        let status = response.status();
+        assert_eq!(status, actix_web::http::StatusCode::BAD_REQUEST.as_u16());
+        let body = response.text().await.expect("Body");
+        let body: RespBodyVerifyProvenCtFailed =
+            serde_json::de::from_str(&body).expect("Deserialized body");
+        assert_eq!(body.status, "failure");
+        assert_eq!(body.response, "Unknown contact address.");
+        http_handle.abort();
+        gateway_handle.abort();
+    }
+
+    #[tokio::test]
+    async fn integration_test_zkp_event_bad_proof_explicit() {
+        let body_map: serde_json::Value = serde_json::Value::Object(serde_json::Map::from_iter([
+            ("ct_proof".into(), json!("01")),
+            (
+                "caller_address".into(),
+                json!("0x0000000000000000000000000000000000000001"),
+            ),
+            (
+                "contract_address".into(),
+                json!("0x0000000000000000000000000000000000000002"),
+            ),
+            ("key_id".into(), json!("")),
+            ("crs_id".into(), json!("")),
+        ]));
+
+        let (client, url_client, http_handle, gateway_handle) = new_client().await;
+        let response = match client
+            .post(format!("http://{url_client}/verify_proven_ct"))
+            .json(&body_map)
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(err) => {
+                eprintln!("{err}");
+                unreachable!("")
+            }
+        };
+
+        let status = response.status();
+        assert_eq!(status, actix_web::http::StatusCode::BAD_REQUEST.as_u16());
+        let body = response.text().await.expect("Body");
+        let body: RespBodyVerifyProvenCtFailed =
+            serde_json::de::from_str(&body).expect("Deserialized body");
+        assert_eq!(body.status, "failure");
+        assert_eq!(
+            body.response,
+            "Error verifying proven ciphertext. Mock: only valid if element 0 is odd."
+        );
+        http_handle.abort();
+        gateway_handle.abort();
+    }
+
+    #[tokio::test]
+    async fn integration_test_zkp_event_bad_proof_implicit() {
+        let body_map: serde_json::Value = serde_json::Value::Object(serde_json::Map::from_iter([
+            ("ct_proof".into(), json!("03")),
+            (
+                "caller_address".into(),
+                json!("0x0000000000000000000000000000000000000001"),
+            ),
+            (
+                "contract_address".into(),
+                json!("0x0000000000000000000000000000000000000002"),
+            ),
+            ("key_id".into(), json!("")),
+            ("crs_id".into(), json!("")),
+        ]));
+
+        let (client, url_client, http_handle, gateway_handle) = new_client().await;
+        let response = match client
+            .post(format!("http://{url_client}/verify_proven_ct"))
+            .json(&body_map)
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(err) => {
+                eprintln!("{err}");
+                unreachable!("")
+            }
+        };
+
+        let status = response.status();
+        assert_eq!(
+            status,
+            actix_web::http::StatusCode::INTERNAL_SERVER_ERROR.as_u16()
+        );
+        let body = response.text().await.expect("Body");
+        let body: RespBodyVerifyProvenCtFailed =
+            serde_json::de::from_str(&body).expect("Deserialized body");
+        assert_eq!(body.status, "failure");
+        assert_eq!(body.response, "channel closed");
+        http_handle.abort();
+        gateway_handle.abort();
+    }
+
+    #[tokio::test]
+    async fn integration_test_zkp_event_bad_field() {
+        let body_map: serde_json::Value = serde_json::Value::Object(serde_json::Map::from_iter([
+            ("ct_proof".into(), json!("01")),
+            ("caller_address".into(), json!("0x0000000000000000001")),
+            (
+                "contract_address".into(),
+                json!("0x0000000000000000000000000000000000000002"),
+            ),
+            ("key_id".into(), json!("")),
+            ("crs_id".into(), json!("")),
+        ]));
+
+        let (client, url_client, http_handle, gateway_handle) = new_client().await;
+        let response = match client
+            .post(format!("http://{url_client}/verify_proven_ct"))
+            .json(&body_map)
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(err) => {
+                eprintln!("{err}");
+                unreachable!("")
+            }
+        };
+
+        let status = response.status();
+        assert_eq!(status, actix_web::http::StatusCode::BAD_REQUEST.as_u16());
+        let body = response.text().await.expect("Body");
+        let body: RespBodyVerifyProvenCtFailed =
+            serde_json::de::from_str(&body).expect("Deserialized body");
+        assert_eq!(body.status, "failure");
+        assert_eq!(body.response, "Odd number of digits");
+        http_handle.abort();
+        gateway_handle.abort();
+    }
+
+    #[tokio::test]
+    async fn integration_test_zkp_event_missing_field() {
+        let body_map: serde_json::Value = serde_json::Value::Object(serde_json::Map::from_iter([
+            ("ct_proof".into(), json!("01")),
+            // missing ("caller_address".into(),   json!("0x000000000000000000000000000000000000001")),
+            (
+                "contract_address".into(),
+                json!("0x0000000000000000000000000000000000000002"),
+            ),
+            ("key_id".into(), json!("")),
+            ("crs_id".into(), json!("")),
+        ]));
+
+        let (client, url_client, http_handle, gateway_handle) = new_client().await;
+        let response = match client
+            .post(format!("http://{url_client}/verify_proven_ct"))
+            .json(&body_map)
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(err) => {
+                eprintln!("{err}");
+                unreachable!("")
+            }
+        };
+
+        let status = response.status();
+        assert_eq!(status, actix_web::http::StatusCode::BAD_REQUEST.as_u16());
+        let body = response.text().await.expect("Body");
+        assert_eq!(
+            body,
+            "Json deserialize error: missing field `caller_address` at line 1 column 105"
+        );
         http_handle.abort();
         gateway_handle.abort();
     }

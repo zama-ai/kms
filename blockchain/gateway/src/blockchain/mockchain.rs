@@ -91,6 +91,8 @@ impl Blockchain for MockchainImpl {
         Ok(vec![resp])
     }
 
+    // Ok if ct_proof[0] is odd
+    // Err otherwise
     async fn verify_proven_ct(
         &self,
         client_address: String,
@@ -110,7 +112,17 @@ impl Blockchain for MockchainImpl {
         tracing::debug!("🐛 eip712_domain: {:?}", eip712_domain);
         tracing::debug!("🐛 acl_address: {:?}", acl_address);
 
-        Ok(HexVectorList::default())
+        if ct_proof[0] == 0 {
+            let fake_list = HexVectorList::from(vec![events::HexVector(vec![0_u8, 1, 2, 3])]);
+            Ok(fake_list)
+        } else if ct_proof[0] == 1 {
+            Err(anyhow::anyhow!(
+                "Error verifying proven ciphertext. Mock: only valid if element 0 is odd."
+            ))
+        } else {
+            // simulate something wrong with the blockchain
+            panic!("I will never answer")
+        }
     }
 
     async fn keyurl(&self) -> anyhow::Result<KeyUrlResponseValues> {

@@ -219,11 +219,12 @@ pub(crate) async fn handle_reencryption_event(
 pub(crate) async fn handle_verify_proven_ct_event(
     event: &ApiVerifyProvenCtValues,
     config: &GatewayConfig,
+    middleware: Arc<Box<dyn InternalMiddleware>>,
     blockchain: Arc<dyn Blockchain>,
+    ciphertext_provider: Arc<Box<dyn CiphertextProvider>>,
 ) -> anyhow::Result<VerifyProvenCtResponseToClient> {
-    let client = Arc::new(http_provider(config).await?);
     let start = std::time::Instant::now();
-    let chain_id = client.provider().get_chainid().await?;
+    let chain_id = middleware.get_chainid().await?;
 
     // check the format EIP-55
     _ = alloy_primitives::Address::parse_checksummed(&event.contract_address, None)?;
@@ -239,7 +240,7 @@ pub(crate) async fn handle_verify_proven_ct_event(
         tracing::error!(err_str);
         return Err(anyhow::anyhow!(err_str));
     }
-    let mut chain_id_bytes = vec![0u8; 8];
+    let mut chain_id_bytes = vec![0u8; 32];
     chain_id.to_big_endian(&mut chain_id_bytes);
 
     let vc_hex = hex::encode(config.ethereum.kmsverifier_vc_address);
@@ -269,7 +270,7 @@ pub(crate) async fn handle_verify_proven_ct_event(
         duration
     );
 
-    <EthereumConfig as Into<Box<dyn CiphertextProvider>>>::into(config.clone().ethereum)
+    ciphertext_provider
         .put_ciphertext(event, verify_proven_ct_response_builder)
         .await
 }

@@ -335,11 +335,20 @@ impl CiphertextProvider for DummyCiphertextProvider {
         Ok((b"get_ciphertext".into(), FheType::Ebool))
     }
 
+    // An address ending by "7" is considered unknown for testing purpose
     async fn put_ciphertext(
         &self,
-        _event: &ApiVerifyProvenCtValues,
-        _kms_signatures: HexVectorList,
+        event: &ApiVerifyProvenCtValues,
+        kms_signatures: HexVectorList,
     ) -> anyhow::Result<VerifyProvenCtResponseToClient> {
-        Err(anyhow::anyhow!("not implemented"))
+        let last_char = &event.contract_address[event.contract_address.len() - 1..];
+        if last_char == "7" {
+            return Err(anyhow::anyhow!("Unknown contact address."));
+        }
+        let verify_proven_ct_response_builder = VerifyProvenCtResponseToClient::builder()
+            .kms_signatures(kms_signatures)
+            .listener_type(ListenerType::Coprocessor);
+
+        Ok(verify_proven_ct_response_builder.build())
     }
 }

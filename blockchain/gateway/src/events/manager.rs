@@ -149,7 +149,7 @@ pub(crate) struct ApiVerifyProvenCtValues {
 #[derive(Debug)]
 pub struct VerifyProvenCtEvent {
     pub(crate) values: ApiVerifyProvenCtValues,
-    pub(crate) sender: oneshot::Sender<VerifyProvenCtResponseToClient>,
+    pub(crate) sender: oneshot::Sender<anyhow::Result<VerifyProvenCtResponseToClient>>,
 }
 
 #[derive(Debug)]
@@ -455,14 +455,20 @@ pub(crate) async fn verify_proven_ct_payload(
     info!("🍓🍓🍓 Published verify proven ct request");
 
     match receiver.await {
-        Ok(verify_proven_ct_response) => {
+        Ok(Ok(verify_proven_ct_response)) => {
             info!("🍓🍓🍓 <= Received verify proven ct response");
             HttpResponse::Ok()
                 .json(json!({ "status": "success", "response": verify_proven_ct_response }))
         }
+        Ok(Err(e)) => {
+            error!("Error receiving verify proven ct response: {:?}", e);
+            HttpResponse::BadRequest()
+                .json(json!({ "status": "failure", "response": e.to_string() }))
+        }
         Err(e) => {
             error!("Error receiving verify proven ct response: {:?}", e);
-            HttpResponse::InternalServerError().json(json!({ "status": "failure" }))
+            HttpResponse::InternalServerError()
+                .json(json!({ "status": "failure", "response": e.to_string() }))
         }
     }
 }
@@ -609,30 +615,23 @@ impl GatewaySubscriber {
                                     let _ = reencrypt_event.sender.send(resp);
                                 }
                                 Err(e) => {
-                                    println!("{e}");
                                     error!("failed to handle reencryption with error {e}");
                                 }
                             }
                         }
                         GatewayEvent::VerifyProvenCt(verify_proven_ct_event) => {
                             debug!("🫐🫐🫐 Received VerifyProvenCt Event");
-                            match handle_verify_proven_ct_event(
+                            let result = handle_verify_proven_ct_event(
                                 &verify_proven_ct_event.values,
                                 &config,
+                                middleware,
                                 kms_blockchain,
+                                ct_provider,
                             )
-                            .await
-                            {
-                                Ok(verify_proven_ct_response) => {
-                                    let _ = verify_proven_ct_event
-                                        .sender
-                                        .send(verify_proven_ct_response);
-                                }
-                                Err(e) => {
-                                    error!(
-                                        "failed to handle verify proven ct request with error {e}"
-                                    );
-                                }
+                            .await;
+                            let sended = verify_proven_ct_event.sender.send(result);
+                            if let Err(_result) = sended {
+                                error!("failed to send message back");
                             }
                         }
                         GatewayEvent::KeyUrl(keyurl_event) => {
