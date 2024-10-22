@@ -37,20 +37,6 @@ jobs:
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
-  docker:
-    if: ${{ ! startsWith(github.head_ref, 'dependabot/') }}
-    uses: ./.github/workflows/common-docker.yml
-    permissions:
-      contents: 'read'
-      id-token: 'write'
-      packages: 'write'
-    with:
-      working-directory: "./core/threshold"
-      push_image: false
-      image-name: 'kms-core-threshold'
-    secrets:
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-
   done:
     if: ${{ ! startsWith(github.head_ref, 'dependabot/') }}
     runs-on: ubuntu-latest
@@ -60,4 +46,3 @@ jobs:
         run: echo Pipeline Done
     needs:
       - build
-      - docker
