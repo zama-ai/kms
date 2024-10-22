@@ -94,6 +94,7 @@ pub struct KmsConfig {
     pub contract_address: String,
     pub mnemonic: String,
     pub address: String,
+    pub key_id: String, //TODO: remove this field as part of https://github.com/zama-ai/fhevm/issues/548
     pub public_storage: HashMap<u32, String>,
 }
 
@@ -188,10 +189,10 @@ mod tests {
             let gateway_config: GatewayConfig = init_conf_gateway("config/gateway").unwrap();
             assert!(!gateway_config.debug);
             assert_eq!(gateway_config.mode, KmsMode::Centralized);
-            assert_eq!(gateway_config.ethereum.chain_id, 9000);
+            assert_eq!(gateway_config.ethereum.chain_id, 12345);
             assert_eq!(
                 gateway_config.ethereum.kmsverifier_vc_address,
-                H160::from_str("66f9664f97F2b50F62D13eA064982f936dE76657").unwrap()
+                H160::from_str("208de73316e44722e16f6ddff40881a3e4f86104").unwrap()
             );
             assert_eq!(gateway_config.ethereum.kmsverifier_name, "KMSVerifier");
             assert_eq!(gateway_config.ethereum.kmsverifier_version, "1");
@@ -202,22 +203,25 @@ mod tests {
             assert_eq!(gateway_config.ethereum.reenc_domain_version, "1");
             assert_eq!(
                 gateway_config.ethereum.acl_address,
-                H160::from_str("66f9664f97F2b50F62D13eA064982f936dE76657").unwrap()
+                H160::from_str("339ece85b9e11a3a3aa557582784a15d7f82aaf2").unwrap()
             );
             assert_eq!(
                 gateway_config.ethereum.listener_type,
-                ListenerType::FhevmNative
+                ListenerType::Coprocessor
             );
-            assert_eq!(gateway_config.ethereum.wss_url, "ws://localhost:8546");
-            assert_eq!(gateway_config.ethereum.http_url, "http://localhost:8545");
+            assert_eq!(gateway_config.ethereum.wss_url, "ws://localhost:8746");
+            assert_eq!(gateway_config.ethereum.http_url, "http://localhost:8745");
             assert_eq!(
                 gateway_config.ethereum.fhe_lib_address,
                 H160::from_str("000000000000000000000000000000000000005d").unwrap()
             );
-            assert_eq!(gateway_config.ethereum.coprocessor_api_key, "api-key");
+            assert_eq!(
+                gateway_config.ethereum.coprocessor_api_key,
+                "a1503fb6-d79b-4e9e-826d-44cf262f3e05"
+            );
             assert_eq!(
                 gateway_config.ethereum.oracle_predeploy_address,
-                H160::from_str("c8c9303Cd7F337fab769686B593B87DC3403E0ce").unwrap()
+                H160::from_str("096b4679d45fb675d4e2c1e4565009cec99a12b1").unwrap()
             );
             assert_eq!(
                 gateway_config.ethereum.test_async_decrypt_address,

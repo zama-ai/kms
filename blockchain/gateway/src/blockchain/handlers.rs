@@ -150,13 +150,18 @@ async fn decrypt(
     let mut chain_id_bytes = vec![0u8; 32];
     chain_id_bytes[24..].copy_from_slice(&chain_id_be);
 
-    let vc_hex = hex::encode(config.ethereum.kmsverifier_vc_address);
-    let acl_address = hex::encode(config.ethereum.acl_address);
+    // Ensure we are using EIP-55 encoded addresses; expected by KMS core during signature generation.
+    let kms_verifier_address =
+        alloy_primitives::Address::from_slice(&config.ethereum.kmsverifier_vc_address.0)
+            .to_string();
+    let acl_address =
+        alloy_primitives::Address::from_slice(&config.ethereum.acl_address.0).to_string();
+
     let domain = Eip712DomainMsg {
         name: config.ethereum.kmsverifier_name.clone(),
         version: config.ethereum.kmsverifier_version.clone(),
         chain_id: chain_id_bytes,
-        verifying_contract: vc_hex,
+        verifying_contract: kms_verifier_address,
         salt: None, // TODO we might want to ensure this can be set in the future
     };
 

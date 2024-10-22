@@ -91,8 +91,8 @@ impl InternalMiddleware for MockMiddleware {
 
     async fn get_chainid(&self) -> anyhow::Result<U256> {
         // This needs to match what's in gateway.toml for tests to pass
-        // [35, 40] in big endian corresponds to the integer 9000
-        Ok(U256::from_big_endian(&[35, 40]))
+        // [48, 57] in big endian corresponds to the integer 12345
+        Ok(U256::from_big_endian(&[48, 57]))
     }
 }
 

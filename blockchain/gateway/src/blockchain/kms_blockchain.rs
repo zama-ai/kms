@@ -557,8 +557,17 @@ impl Blockchain for KmsBlockchainImpl {
         };
         let proof = fetch_ethereum_proof(external_ct_handles[0].clone(), config).await;
 
+        // Stop-gap to allow for testing with a static key that has not been genereated using the kms
+        // Should be removed as part of https://github.com/zama-ai/fhevm/issues/548
+        let key_id_str = match self.get_key_id().await {
+            Ok(key_id) => key_id,
+            Err(e) => {
+                tracing::warn!("Could not retrieve the key id from the blockchain: {}", e);
+                self.config.kms.key_id.clone()
+            }
+        };
         let decrypt_values = DecryptValues::new(
-            HexVector::from_hex(&self.get_key_id().await?)?,
+            HexVector::from_hex(&key_id_str)?,
             kv_ct_handles.clone(),
             fhe_types.clone(),
             Some(external_ct_handles),
