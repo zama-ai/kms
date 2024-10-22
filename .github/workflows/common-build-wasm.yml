@@ -17,7 +17,7 @@ on:
       runs-on:
         type: string
         required: false
-        default: 'ubuntu-latest'
+        default: 'ubuntu-22.04'
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
@@ -37,7 +37,7 @@ jobs:
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
 
       - name: Setup Home
-        if: ${{ inputs.runs-on != 'ubuntu-latest' }}
+        if: ${{ inputs.runs-on != 'ubuntu-22.04' }}
         run: echo "HOME=/home/ubuntu" >> "${GITHUB_ENV}"
 
       - name: Set up Rust
