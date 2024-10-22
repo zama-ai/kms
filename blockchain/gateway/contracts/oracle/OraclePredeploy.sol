@@ -51,9 +51,9 @@ contract OraclePredeploy is Ownable2Step {
         uint256 maxTimestamp
     );
 
-    event AddedRelayer(address indexed realyer);
+    event AddedRelayer(address indexed relayer);
 
-    event RemovedRelayer(address indexed realyer);
+    event RemovedRelayer(address indexed relayer);
 
     event ResultCallback(uint256 indexed requestID, bool success, bytes result);
 
