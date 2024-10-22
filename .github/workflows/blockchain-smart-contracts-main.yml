@@ -109,6 +109,7 @@ jobs:
         - optimize-ethereum-ipsc
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      GRAVITON_BUILDER_SSH_PRIVATE_KEY: ${{ secrets.GRAVITON_BUILDER_SSH_PRIVATE_KEY }}
 
   done:
     runs-on: ubuntu-latest
