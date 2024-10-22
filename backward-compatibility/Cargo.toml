@@ -18,7 +18,7 @@ events_0_9 = { git = "ssh://git@github.com/zama-ai/kms-core.git", package = "eve
 # modules as much as possible to avoid serialization differences
 tfhe_versionable_0_3 = { package = "tfhe-versionable", version = "0.3.1", optional = true }
 tfhe_0_8 = { package = "tfhe", version = "0.8.2", optional = true , features = ["shortint"] }
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "=1.0.210", features = ["derive"] }
 strum = { version = "0.26", features = ["derive"] }
 semver = { version = "1.0", optional = true }
 ron = { version = "0.8", features = ["integer128"] }
