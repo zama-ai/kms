@@ -14,10 +14,11 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::time::Instant;
 use tonic::service::interceptor::InterceptedService;
 use tonic::transport::{ClientTlsConfig, Uri};
+use tonic::Status;
 use tonic::{async_trait, transport::Channel};
 
 use crate::conf::party::CertificatePaths;
-use crate::error::error_handler::{anyhow_error_and_log, anyhow_error_and_warn_log};
+use crate::error::error_handler::anyhow_error_and_log;
 use crate::{execution::runtime::party::Identity, session_id::SessionId};
 
 use super::grpc::{CoreToCoreNetworkConfig, MessageQueueStore, OptionConfigWrapper};
@@ -140,29 +141,46 @@ impl GrpcSendingService {
         network_channel: GnetworkingClient<InterceptedService<Channel, ContextPropagator>>,
         exponential_backoff: ExponentialBackoff<SystemClock>,
     ) {
+        let mut received_request = 0;
+        let mut incorrectly_sended = 0;
         while let Some(value) = receiver.recv().await {
+            received_request += 1;
             let send_fn = || async {
-                match network_channel.clone().send_value(value.clone()).await {
-                    Ok(_) => Ok(()),
-                    Err(e) => Err(anyhow_error_and_log(format!("networking error: {:?}", e)))
-                        .map_err(|e| e.into()),
-                }
+                network_channel
+                    .clone()
+                    .send_value(value.clone())
+                    .await
+                    .map_err(Status::into)
             };
-            let notify = |e, duration: Duration| {
-                tracing::warn!(
-                                    "RETRY ERROR: Failed to send message: {:?} - Receiver {:?} - Duration {:?} secs",
-                                    e,
-                                    receiver,
-                                    duration.as_secs()
-                                );
+            let mut nb_retry = 0;
+            let on_network_fail = |e, duration: Duration| {
+                tracing::debug!(
+                    "Retry {nb_retry}, network failure for message: {e:?} - Receiver {receiver:?} - Duration {:?} secs",
+                    duration.as_secs()
+                );
+                nb_retry += 1;
             };
 
-            let res = retry_notify(exponential_backoff.clone(), send_fn, notify).await;
-            if res.is_err() {
-                tracing::error!("Error sending");
+            let res = retry_notify(exponential_backoff.clone(), send_fn, on_network_fail).await;
+            if let Err(err) = res {
+                incorrectly_sended += 1;
+                tracing::error!(
+                    "Error sending, {err}, after {:?} timeout and {nb_retry} retries, and {incorrectly_sended} errors so far",
+                    exponential_backoff.max_elapsed_time
+                );
             }
         }
-        anyhow_error_and_warn_log("No more listeners, shutting down network task".to_string());
+        if received_request == 0 {
+            tracing::error!("No more listeners, nothing happened, shutting down network task");
+        } else if incorrectly_sended == received_request {
+            tracing::error!("No more listeners, everything failed, {incorrectly_sended} errors, shutting down network task");
+        } else if incorrectly_sended > 0 {
+            tracing::warn!(
+                "Network task finished with: {incorrectly_sended}/{received_request} errors"
+            );
+        } else {
+            tracing::info!("Network task succeeded and transmitted {received_request} values");
+        }
     }
 }
 
