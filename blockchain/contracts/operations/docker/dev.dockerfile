@@ -7,11 +7,13 @@ RUN apt-get update && apt-get install -y clang
 RUN rustup target add wasm32-unknown-unknown
 RUN RUSTFLAGS='-C link-arg=-s' cargo build --target wasm32-unknown-unknown --release --lib --manifest-path /app/blockchain/contracts/asc/Cargo.toml
 RUN RUSTFLAGS='-C link-arg=-s' cargo build --target wasm32-unknown-unknown --release --lib --manifest-path /app/blockchain/contracts/tendermint-ipsc/Cargo.toml
+RUN RUSTFLAGS='-C link-arg=-s' cargo build --target wasm32-unknown-unknown --release --lib --manifest-path /app/blockchain/contracts/ethereum-ipsc/Cargo.toml
 RUN cargo install wasm-opt --locked
 RUN mkdir -p /app/optimized
 
 RUN wasm-opt -Oz --signext-lowering "/app/target/wasm32-unknown-unknown/release/asc.wasm" -o "/app/optimized/asc.wasm"
 RUN wasm-opt -Oz --signext-lowering "/app/target/wasm32-unknown-unknown/release/tendermint_ipsc.wasm" -o "/app/optimized/tendermint_ipsc.wasm"
+RUN wasm-opt -Oz --signext-lowering "/app/target/wasm32-unknown-unknown/release/ethereum_ipsc.wasm" -o "/app/optimized/ethereum_ipsc.wasm"
 
 FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms-blockchain-validator:v0.51.0 AS runtime
 
@@ -20,6 +22,7 @@ RUN apk add jq
 
 COPY --from=compiler /app/optimized/asc.wasm /app/asc.wasm
 COPY --from=compiler /app/optimized/tendermint_ipsc.wasm /app/tendermint_ipsc.wasm
+COPY --from=compiler /app/optimized/ethereum_ipsc.wasm /app/ethereum_ipsc.wasm
 
 COPY ./blockchain/scripts/setup_wasmd.sh /app/setup_wasmd.sh
 COPY ./blockchain/scripts/bootstrap_asc.sh /app/bootstrap.sh

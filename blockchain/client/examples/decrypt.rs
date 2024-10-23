@@ -10,7 +10,7 @@ async fn main() {
     let client: Client = ClientBuilder::builder()
         .mnemonic_wallet(Some(bob_mnemonic_phrase))
         .grpc_addresses(vec!["http://localhost:9090"])
-        .contract_address("wasm14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9s0phg4d")
+        .contract_address("wasm1yyca08xqdgvjz0psg56z67ejh9xms6l436u8y58m82npdqqhmmtqas0cl7")
         .kv_store_address("http://localhost:8088")
         .build()
         .try_into()

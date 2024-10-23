@@ -63,7 +63,13 @@ echo $PASSWORD | wasmd tx bank multi-send "$VALIDATOR_ADDRESS" "$CONN_ADDRESS" "
 #         Contracts         #
 #############################
 
-# Deploy and instantiate the ASC smart contract
+# Deploy and instantiate the ASC and IPSC smart contracts
+# We deploy:
+# - A debug ASC with no proof verification
+# - A pair (ASC,IPSC) meant for Ethereum
+# - A pair (ASC,IPSC) meant for Ethermint (Tendermint?)
+#
+# NOTE: To deploy the ASC we first need to know the address of the IPSC
 #
 
 sleep 6
@@ -76,99 +82,218 @@ echo "ASC_UPLOAD_TX: ${ASC_UPLOAD_TX}"
 
 sleep 6
 
-echo "Uploading ISC"
-TM_IPSC_UPLOAD_TX=$(echo $PASSWORD | wasmd tx wasm store /app/tendermint_ipsc.wasm --from validator --chain-id testing --node tcp://localhost:26657 --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 -y --output json)
-export TM_IPSC_UPLOAD_TX
-echo "TM_IPSC_UPLOAD_TX: ${TM_IPSC_UPLOAD_TX}"
+# Upload IPSC Ethermint (Tendermint?) 
+echo "Uploading IPSC Ethermint"
+TM_IPSC_ETHERMINT_UPLOAD_TX=$(echo $PASSWORD | wasmd tx wasm store /app/tendermint_ipsc.wasm --from validator --chain-id testing --node tcp://localhost:26657 --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 -y --output json)
+export TM_IPSC_ETHERMINT_UPLOAD_TX
+echo "TM_IPSC_ETHERMINT_UPLOAD_TX: ${TM_IPSC_ETHERMINT_UPLOAD_TX}"
+
+sleep 6
+
+# Upload IPSC Ethereum  
+echo "Uploading IPSC Ethereum"
+TM_IPSC_ETHEREUM_UPLOAD_TX=$(echo $PASSWORD | wasmd tx wasm store /app/ethereum_ipsc.wasm --from validator --chain-id testing --node tcp://localhost:26657 --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 -y --output json)
+export TM_IPSC_ETHEREUM_UPLOAD_TX
+echo "TM_IPSC_ETHERMINT_UPLOAD_TX: ${TM_IPSC_ETHEREUM_UPLOAD_TX}"
 
 sleep 6
 
 # Extract the transaction hash
 ASC_TX_HASH=$(echo "${ASC_UPLOAD_TX}" | jq -r '.txhash')
 export ASC_TX_HASH
-TM_IPSC_TX_HASH=$(echo "${TM_IPSC_UPLOAD_TX}" | jq -r '.txhash')
-export TM_IPSC_TX_HASH
+TM_IPSC_ETHERMINT_TX_HASH=$(echo "${TM_IPSC_ETHERMINT_UPLOAD_TX}" | jq -r '.txhash')
+export TM_IPSC_ETHERMINT_TX_HASH
+TM_IPSC_ETHEREUM_TX_HASH=$(echo "${TM_IPSC_ETHEREUM_UPLOAD_TX}" | jq -r '.txhash')
+export TM_IPSC_ETHEREUM_TX_HASH
 
 echo "ASC_TX_HASH: ${ASC_TX_HASH}"
-echo "TM_IPSC_TX_HASH: ${TM_IPSC_TX_HASH}"
+echo "TM_IPSC_ETHERMINT_TX_HASH: ${TM_IPSC_ETHERMINT_TX_HASH}"
+echo "TM_IPSC_ETHEREUM_TX_HASH: ${TM_IPSC_ETHEREUM_TX_HASH}"
 
 if [ -z "${ASC_TX_HASH}" ]; then
   echo "Failed to upload ASC"
-  # exit 1
+  exit 1
 fi
 
-if [ -z "${ASC_TX_HASH}" ]; then
-  echo "Failed to upload Tendermint IPSC"
-  # exit 1
+if [ -z "${TM_IPSC_ETHERMINT_TX_HASH}" ]; then
+  echo "Failed to upload Ethermint IPSC"
+  exit 1
 fi
 
-# Wait for the transaction to be included in a block
-echo "Waiting for transaction to be mined..."
-sleep 6
+if [ -z "${TM_IPSC_ETHEREUM_TX_HASH}" ]; then
+  echo "Failed to upload Ethereum IPSC"
+  exit 1
+fi
 
 # Query the transaction to get the code ID
 ASC_CODE_ID=$(wasmd query tx --output json "${ASC_TX_HASH}" | jq -r '.events[] | select(.type=="store_code") | .attributes[] | select(.key=="code_id") | .value')
 export ASC_CODE_ID
-TM_IPSC_CODE_ID=$(wasmd query tx --output json "${TM_IPSC_TX_HASH}" | jq -r '.events[] | select(.type=="store_code") | .attributes[] | select(.key=="code_id") | .value')
-export TM_IPSC_CODE_ID
+TM_IPSC_ETHERMINT_CODE_ID=$(wasmd query tx --output json "${TM_IPSC_ETHERMINT_TX_HASH}" | jq -r '.events[] | select(.type=="store_code") | .attributes[] | select(.key=="code_id") | .value')
+export TM_IPSC_ETHERMINT_CODE_ID
+TM_IPSC_ETHEREUM_CODE_ID=$(wasmd query tx --output json "${TM_IPSC_ETHEREUM_TX_HASH}" | jq -r '.events[] | select(.type=="store_code") | .attributes[] | select(.key=="code_id") | .value')
+export TM_IPSC_ETHEREUM_CODE_ID
 
 if [ -z "${ASC_CODE_ID}" ]; then
   echo "Failed to retrieve ASC code ID"
-  # exit 1
+  exit 1
 fi
-if [ -z "${TM_IPSC_CODE_ID}" ]; then
-  echo "Failed to retrieve Tendermint IPSC code ID"
-  # exit 1
+if [ -z "${TM_IPSC_ETHERMINT_CODE_ID}" ]; then
+  echo "Failed to retrieve Ethermint IPSC code ID"
+  exit 1
+fi
+if [ -z "${TM_IPSC_ETHEREUM_CODE_ID}" ]; then
+  echo "Failed to retrieve Ethereum IPSC code ID"
+  exit 1
 fi
 
-echo "Tendermint IPSC code ID: ${TM_IPSC_CODE_ID}"
 echo "ASC code ID: ${ASC_CODE_ID}"
+echo "Ethermint IPSC code ID: ${TM_IPSC_ETHERMINT_CODE_ID}"
+echo "Ethereum IPSC code ID: ${TM_IPSC_ETHEREUM_CODE_ID}"
 
-# Instantiate the ASC smart contract
-echo "Instantiating ASC"
+# Instantiate the IPSC smart contracts
+echo "Instantiating IPSC Ethermint"
+TM_IPSC_ETHERMINT_INST_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${TM_IPSC_ETHERMINT_CODE_ID}" '{}' --label "tendermint-ipsc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin | jq -r '.txhash')
+export TM_IPSC_ETHERMINT_INST_TX_HASH
+echo "TM_IPSC_ETHERMINT_INST_TX_HASH: ${TM_IPSC_ETHERMINT_INST_TX_HASH}"
+
+sleep 6
+
+echo "Instantiating IPSC Ethereum"
+TM_IPSC_ETHEREUM_INST_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${TM_IPSC_ETHEREUM_CODE_ID}" '{}' --label "ethereum-ipsc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin | jq -r '.txhash')
+export TM_IPSC_ETHEREUM_INST_TX_HASH
+echo "TM_IPSC_ETHEREUM_INST_TX_HASH: ${TM_IPSC_ETHEREUM_INST_TX_HASH}"
+
+sleep 6
+
+# Wait for the transaction to be included in a block to retrieve corresponding addresses
+# to be able to instantiate the ASCs
+echo "Waiting for IPSC instantiate transactions to be mined..."
+sleep 10
+
+echo "Ethermint IPSC instantiation result"
+TM_IPSC_ETHERMINT_INST_RESULT=$(wasmd query tx "${TM_IPSC_ETHERMINT_INST_TX_HASH}" --output json)
+export TM_IPSC_ETHERMINT_INST_RESULT
+echo "TM_IPSC_ETHERMINT_INST_RESULT : ${TM_IPSC_ETHERMINT_INST_RESULT}"
+IPSC_ETHERMINT_ADDRESS=$(echo "${TM_IPSC_ETHERMINT_INST_RESULT}" | jq -r '.events[] | select(.type=="instantiate") | .attributes[] | select(.key=="_contract_address") | .value')
+export IPSC_ETHERMINT_ADDRESS 
+echo "IPSC_ETHERMINT_ADDRESS : ${IPSC_ETHERMINT_ADDRESS}"
+
+
+if [ -z "${IPSC_ETHERMINT_ADDRESS}" ]; then
+  echo "Failed to instantiate IPSC Ethermint"
+  exit 1
+fi
+
+echo "Ethereum IPSC instantiation result"
+TM_IPSC_ETHEREUM_INST_RESULT=$(wasmd query tx "${TM_IPSC_ETHEREUM_INST_TX_HASH}" --output json)
+export TM_IPSC_ETHEREUM_INST_RESULT
+echo "TM_IPSC_ETHEREUM_INST_RESULT : ${TM_IPSC_ETHEREUM_INST_RESULT}"
+IPSC_ETHEREUM_ADDRESS=$(echo "${TM_IPSC_ETHEREUM_INST_RESULT}" | jq -r '.events[] | select(.type=="instantiate") | .attributes[] | select(.key=="_contract_address") | .value')
+export IPSC_ETHEREUM_ADDRESS
+echo "IPSC_ETHEREUM_ADDRESS : ${IPSC_ETHEREUM_ADDRESS}"
+
+if [ -z "${IPSC_ETHEREUM_ADDRESS}" ]; then
+  echo "Failed to instantiate IPSC Ethereum"
+  exit 1
+fi
+
+
+# Instantiate the ASC smart contracts using addresses of the IPSC above
+echo "Instantiating ASCs"
 if [ "$MODE" = "threshold" ]; then
-  echo "Instantiating threshold ASC"
   # run in threshold mode
-  ASC_INST_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": true, "verify_proof_contract_addr": "dummy",  "kms_core_conf": { "threshold": {"parties":[{"party_id": "01", "address": ""}, {"party_id": "02", "address": ""}, {"party_id": "03", "address": ""}, {"party_id": "04", "address": ""}], "response_count_for_majority_vote": 3, "response_count_for_reconstruction": 3, "degree_for_reconstruction": 1, "param_choice": "test"}}, "allow_list_conf":{"allow_list": ["'"${CONN_ADDRESS}"'"]} }' --label "asc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin | jq -r '.txhash')
+  echo "Instantiating threshold ASC debug"
+  ASC_INST_DEBUG_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": true, "verify_proof_contract_addr": "dummy",  "kms_core_conf": { "threshold": {"parties":[{"party_id": "01", "address": ""}, {"party_id": "02", "address": ""}, {"party_id": "03", "address": ""}, {"party_id": "04", "address": ""}], "response_count_for_majority_vote": 3, "response_count_for_reconstruction": 3, "degree_for_reconstruction": 1, "param_choice": "test"}}, "allow_list_conf":{"allow_list": ["'"${CONN_ADDRESS}"'"]} }' --label "asc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin | jq -r '.txhash')
 
+  sleep 6
+
+  echo "Instantiating threshold ASC Ethermint"
+  ASC_INST_ETHERMINT_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": false, "verify_proof_contract_addr": "'${IPSC_ETHERMINT_ADDRESS}'",  "kms_core_conf": { "threshold": {"parties":[{"party_id": "01", "address": ""}, {"party_id": "02", "address": ""}, {"party_id": "03", "address": ""}, {"party_id": "04", "address": ""}], "response_count_for_majority_vote": 3, "response_count_for_reconstruction": 3, "degree_for_reconstruction": 1, "param_choice": "test"}}, "allow_list_conf":{"allow_list": ["'"${CONN_ADDRESS}"'"]} }' --label "asc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin | jq -r '.txhash')
+
+  sleep 6
+
+  echo "Instantiating threshold ASC Ethereum"
+  ASC_INST_ETHEREUM_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": false, "verify_proof_contract_addr": "'${IPSC_ETHEREUM_ADDRESS}'",  "kms_core_conf": { "threshold": {"parties":[{"party_id": "01", "address": ""}, {"party_id": "02", "address": ""}, {"party_id": "03", "address": ""}, {"party_id": "04", "address": ""}], "response_count_for_majority_vote": 3, "response_count_for_reconstruction": 3, "degree_for_reconstruction": 1, "param_choice": "test"}}, "allow_list_conf":{"allow_list": ["'"${CONN_ADDRESS}"'"]} }' --label "asc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin | jq -r '.txhash')
+
+  sleep 6
 
 elif [ "$MODE" = "centralized" ]; then
-  echo "Instantiating centralized ASC"
   # run in centralized mode
-  ASC_INST_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": true, "verify_proof_contract_addr": "dummy", "kms_core_conf": { "centralized": {"param_choice": "default"} }, "allow_list_conf":{"allow_list": ["'"${CONN_ADDRESS}"'"]} }' --label "asc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin | jq -r '.txhash')
+  echo "Instantiating centralized ASC debug"
+  ASC_INST_DEBUG_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": true, "verify_proof_contract_addr": "dummy", "kms_core_conf": { "centralized": {"param_choice": "default"} }, "allow_list_conf":{"allow_list": ["'"${CONN_ADDRESS}"'"]} }' --label "asc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin | jq -r '.txhash')
+
+  sleep 6
+
+  echo "Instantiating centralized ASC Ethermint"
+  ASC_INST_ETHERMINT_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": false, "verify_proof_contract_addr": "'${IPSC_ETHERMINT_ADDRESS}'", "kms_core_conf": { "centralized": {"param_choice": "default"} }, "allow_list_conf":{"allow_list": ["'"${CONN_ADDRESS}"'"]} }' --label "asc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin | jq -r '.txhash')
+
+  sleep 6
+
+  echo "Instantiating centralized ASC Ethereum"
+  ASC_INST_ETHEREUM_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": false, "verify_proof_contract_addr": "'${IPSC_ETHEREUM_ADDRESS}'", "kms_core_conf": { "centralized": {"param_choice": "default"} }, "allow_list_conf":{"allow_list": ["'"${CONN_ADDRESS}"'"]} }' --label "asc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin | jq -r '.txhash')
+
+  sleep 6
 else
     ASC_INST_TX_HASH="NONE"
     echo "MODE is ${MODE} which is neither 'threshold' nor 'centralized', can't instantiate smart contract"
 fi
 
-export ASC_INST_TX_HASH
-echo "ASC_INST_TX_HASH: ${ASC_INST_TX_HASH}"
-
-sleep 6
-
-# Instantiate the ISC smart contract
-echo "Instantiating ISC"
-TM_IPSC_INST_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${TM_IPSC_CODE_ID}" '{"validator_set": []}' --label "tendermint-ipsc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin | jq -r '.txhash')
-export TM_IPSC_INST_TX_HASH
-echo "TM_IPSC_INST_TX_HASH: ${TM_IPSC_INST_TX_HASH}"
+export ASC_INST_DEBUG_TX_HASH
+echo "ASC_INST_DEBUG_TX_HASH: ${ASC_INST_DEBUG_TX_HASH}"
+export ASC_INST_ETHERMINT_TX_HASH
+echo "ASC_INST_ETHERMINT_TX_HASH: ${ASC_INST_ETHERMINT_TX_HASH}"
+export ASC_INST_ETHEREUM_TX_HASH
+echo "ASC_INST_ETHEREUM_TX_HASH: ${ASC_INST_ETHEREUM_TX_HASH}"
 
 # Wait for the transaction to be included in a block
-echo "Waiting for transaction to be mined..."
-sleep 6
+echo "Waiting for ASC transactions to be mined..."
+sleep 10
 
 # TODO: add a check -> raise an error if some upload failed
 
-echo "ASC instantiation result"
-ASC_INST_RESULT=$(wasmd query tx "${ASC_INST_TX_HASH}" --output json)
-export ASC_INST_RESULT
-echo "${ASC_INST_RESULT}" | jq -r ".raw_log"
-echo "${ASC_INST_RESULT}"
+echo "ASC Debug instantiation result"
+ASC_DEBUG_INST_RESULT=$(wasmd query tx "${ASC_INST_DEBUG_TX_HASH}" --output json)
+export ASC_DEBUG_INST_RESULT
+echo "${ASC_DEBUG_INST_RESULT}"
+ASC_DEBUG_ADDRESS=$(echo "${ASC_DEBUG_INST_RESULT}" | jq -r '.events[] | select(.type=="instantiate") | .attributes[] | select(.key=="_contract_address") | .value')
+export ASC_DEBUG_ADDRESS
 
-echo "Tendermint IPSC instantiation result"
-TM_IPSC_INST_RESULT=$(wasmd query tx "${TM_IPSC_INST_TX_HASH}" --output json)
-export TM_IPSC_INST_RESULT
-echo "${TM_IPSC_INST_RESULT}" | jq -r ".raw_log"
-echo "${TM_IPSC_INST_RESULT}"
+if [ -z "${ASC_DEBUG_ADDRESS}" ]; then
+  echo "Failed to instantiate ASC Debug"
+  exit 1
+fi
+
+echo "ASC Ethermint instantiation result"
+ASC_ETHERMINT_INST_RESULT=$(wasmd query tx "${ASC_INST_ETHERMINT_TX_HASH}" --output json)
+export ASC_ETHERMINT_INST_RESULT
+echo "${ASC_ETHERMINT_INST_RESULT}"
+ASC_ETHERMINT_ADDRESS=$(echo "${ASC_ETHERMINT_INST_RESULT}" | jq -r '.events[] | select(.type=="instantiate") | .attributes[] | select(.key=="_contract_address") | .value')
+export ASC_ETHERMINT_ADDRESS
+
+if [ -z "${ASC_ETHERMINT_ADDRESS}" ]; then
+  echo "Failed to instantiate ASC Ethermint"
+  exit 1
+fi
+
+echo "ASC Ethereum instantiation result"
+ASC_ETHEREUM_INST_RESULT=$(wasmd query tx "${ASC_INST_ETHEREUM_TX_HASH}" --output json)
+export ASC_ETHEREUM_INST_RESULT
+echo "${ASC_ETHEREUM_INST_RESULT}"
+ASC_ETHEREUM_ADDRESS=$(echo "${ASC_ETHEREUM_INST_RESULT}" | jq -r '.events[] | select(.type=="instantiate") | .attributes[] | select(.key=="_contract_address") | .value')
+export ASC_ETHEREUM_ADDRESS
+
+if [ -z "${ASC_ETHEREUM_ADDRESS}" ]; then
+  echo "Failed to instantiate ASC Ethereum"
+  exit 1
+fi
+
+
+echo "Summary of all the addresses:"
+echo "IPSC_ETHERMINT_ADDRESS : ${IPSC_ETHERMINT_ADDRESS}"
+echo "IPSC_ETHEREUM_ADDRESS : ${IPSC_ETHEREUM_ADDRESS}"
+echo "ASC_DEBUG_ADDRESS : ${ASC_DEBUG_ADDRESS}"
+echo "ASC_ETHERMINT_ADDRESS : ${ASC_ETHERMINT_ADDRESS}"
+echo "ASC_ETHEREUM_ADDRESS : ${ASC_ETHEREUM_ADDRESS}"
 
 echo "Done bootstrapping. Now simply running the validator node ..."
 

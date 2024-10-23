@@ -15,7 +15,7 @@ use tokio::fs;
 /// ```
 /// Any issue might be related to the fact that some obsolete Docker images exist.
 
-const BOOTSTRAP_TIME_TO_SLEEP: u64 = 60; // Wait a minute for everything to setup properly
+const BOOTSTRAP_TIME_TO_SLEEP: u64 = 150; // Wait a 2min30s for everything to setup properly
 
 trait DockerComposeContext {
     fn root_path(&self) -> PathBuf;
