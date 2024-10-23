@@ -9,21 +9,19 @@ use backward_compatibility::{
     tests::{run_all_tests, TestedModule},
     CrsGenResponseValuesTest, CrsGenValuesTest, DecryptResponseValuesTest, DecryptValuesTest,
     InsecureKeyGenValuesTest, KeyGenPreprocResponseValuesTest, KeyGenPreprocValuesTest,
-    KeyGenResponseValuesTest, KeyGenValuesTest, KeyUrlResponseValuesTest, KeyUrlValuesTest,
-    KmsCoreConfCentralizedTest, KmsCoreConfThresholdTest, ReencryptResponseValuesTest,
-    ReencryptValuesTest, TestMetadataEvents, TestType, Testcase, ZkpResponseValuesTest,
-    ZkpValuesTest,
+    KeyGenResponseValuesTest, KeyGenValuesTest, KmsCoreConfCentralizedTest,
+    KmsCoreConfThresholdTest, ReencryptResponseValuesTest, ReencryptValuesTest, TestMetadataEvents,
+    TestType, Testcase, ZkpResponseValuesTest, ZkpValuesTest,
 };
 use events::kms::{
-    CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues, FheKeyUrlInfo,
-    FheParameter, FheType, InsecureKeyGenValues, KeyGenPreprocResponseValues, KeyGenPreprocValues,
-    KeyGenResponseValues, KeyGenValues, KeyUrlInfo, KeyUrlResponseValues, KeyUrlValues,
-    KmsCoreCentralizedConf, KmsCoreConf, KmsCoreParty, KmsCoreThresholdConf, OperationValue,
-    ReencryptResponseValues, ReencryptValues, Transaction, VerfKeyUrlInfo,
+    CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues, FheParameter,
+    FheType, InsecureKeyGenValues, KeyGenPreprocResponseValues, KeyGenPreprocValues,
+    KeyGenResponseValues, KeyGenValues, KmsCoreCentralizedConf, KmsCoreConf, KmsCoreParty,
+    KmsCoreThresholdConf, OperationValue, ReencryptResponseValues, ReencryptValues, Transaction,
     VerifyProvenCtResponseValues, VerifyProvenCtValues,
 };
 use kms_common::load_and_unversionize;
-use std::{borrow::Cow, env, path::Path};
+use std::{env, path::Path};
 use strum::IntoEnumIterator;
 
 // Utility function to convert an array of arrays to a vector of vectors
@@ -33,11 +31,6 @@ where
     T: Clone,
 {
     array.into_iter().map(|a| a.into_iter().collect()).collect()
-}
-
-// Utility function to convert an array of strings to a vector of strings
-fn array_str_to_vec_string<const N: usize>(array: [Cow<'static, str>; N]) -> Vec<String> {
-    array.into_iter().map(|s| s.into_owned()).collect()
 }
 
 fn test_decrypt_values(
@@ -260,118 +253,6 @@ fn test_verify_proven_ct_response_values(
         Err(test.failure(
             format!(
                 "Invalid VerifyProvenCtResponseValues:\n Expected :\n{:?}\nGot:\n{:?}",
-                original_versionized, new_versionized
-            ),
-            format,
-        ))
-    } else {
-        Ok(test.success(format))
-    }
-}
-
-fn test_key_url_values(
-    dir: &Path,
-    test: &KeyUrlValuesTest,
-    format: DataFormat,
-) -> Result<TestSuccess, TestFailure> {
-    let original_versionized: Transaction = load_and_unversionize(dir, test, format)?;
-
-    let key_url_values = KeyUrlValues::builder()
-        .data_id(test.data_id.to_vec().into())
-        .build();
-
-    let new_versionized = Transaction::new(
-        test.block_height,
-        test.transaction_index,
-        vec![OperationValue::KeyUrl(key_url_values)],
-    );
-
-    if original_versionized != new_versionized {
-        Err(test.failure(
-            format!(
-                "Invalid KeyUrlValues:\n Expected :\n{:?}\nGot:\n{:?}",
-                original_versionized, new_versionized
-            ),
-            format,
-        ))
-    } else {
-        Ok(test.success(format))
-    }
-}
-
-fn test_key_url_response_values(
-    dir: &Path,
-    test: &KeyUrlResponseValuesTest,
-    format: DataFormat,
-) -> Result<TestSuccess, TestFailure> {
-    let original_versionized: Transaction = load_and_unversionize(dir, test, format)?;
-
-    let fhe_public_key = KeyUrlInfo::builder()
-        .data_id(test.fhe_key_info_fhe_public_key_data_id.to_vec().into())
-        .param_choice(test.fhe_key_info_fhe_public_key_param_choice)
-        .urls(array_str_to_vec_string(
-            test.fhe_key_info_fhe_public_key_urls.clone(),
-        ))
-        .signatures(array_array_to_vec_vec(test.fhe_key_info_fhe_public_key_signatures).into())
-        .build();
-
-    let fhe_server_key = KeyUrlInfo::builder()
-        .data_id(test.fhe_key_info_fhe_server_key_data_id.to_vec().into())
-        .param_choice(test.fhe_key_info_fhe_server_key_param_choice)
-        .urls(array_str_to_vec_string(
-            test.fhe_key_info_fhe_server_key_urls.clone(),
-        ))
-        .signatures(array_array_to_vec_vec(test.fhe_key_info_fhe_server_key_signatures).into())
-        .build();
-
-    let fhe_key_info = vec![FheKeyUrlInfo::builder()
-        .fhe_public_key(fhe_public_key)
-        .fhe_server_key(fhe_server_key)
-        .build()];
-
-    let crs = test
-        .crs_ids
-        .iter()
-        .zip(test.crs_data_ids.iter())
-        .zip(test.crs_param_choices.iter())
-        .zip(test.crs_urls.iter())
-        .zip(test.crs_signatures.iter())
-        .map(|((((id, data_id), param_choice), urls), signatures)| {
-            (
-                *id,
-                KeyUrlInfo::builder()
-                    .data_id(data_id.to_vec().into())
-                    .param_choice(*param_choice)
-                    .urls(array_str_to_vec_string(urls.clone()))
-                    .signatures(array_array_to_vec_vec(*signatures).into())
-                    .build(),
-            )
-        })
-        .collect();
-
-    let verf_public_key = vec![VerfKeyUrlInfo::builder()
-        .key_id(test.verf_public_key_key_id.to_vec().into())
-        .server_id(test.verf_public_key_server_id)
-        .verf_public_key_url(test.verf_public_key_url.to_string())
-        .verf_public_key_address(test.verf_public_key_address.to_string())
-        .build()];
-
-    let key_url_response_values = KeyUrlResponseValues::builder()
-        .fhe_key_info(fhe_key_info)
-        .crs(crs)
-        .verf_public_key(verf_public_key)
-        .build();
-
-    let new_versionized = Transaction::new(
-        test.block_height,
-        test.transaction_index,
-        vec![OperationValue::KeyUrlResponse(key_url_response_values)],
-    );
-
-    if original_versionized != new_versionized {
-        Err(test.failure(
-            format!(
-                "Invalid KeyUrlResponseValues:\n Expected :\n{:?}\nGot:\n{:?}",
                 original_versionized, new_versionized
             ),
             format,
@@ -714,12 +595,6 @@ impl TestedModule for Events {
             }
             Self::Metadata::ZkpResponseValues(test) => {
                 test_verify_proven_ct_response_values(test_dir.as_ref(), test, format).into()
-            }
-            Self::Metadata::KeyUrlValues(test) => {
-                test_key_url_values(test_dir.as_ref(), test, format).into()
-            }
-            Self::Metadata::KeyUrlResponseValues(test) => {
-                test_key_url_response_values(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::KeyGenValues(test) => {
                 test_key_gen_values(test_dir.as_ref(), test, format).into()

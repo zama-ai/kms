@@ -1,6 +1,7 @@
 use conf_trace::conf::{Settings, Tracing};
 use conf_trace::telemetry::init_tracing;
 use ethers::types::H160;
+use events::{HexVector, HexVectorList};
 use kms_blockchain_connector::conf::ConnectorConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -52,6 +53,126 @@ pub struct VerifyProvenCtResponseToClient {
     // each inner vec is a single handle (32 byte array)
     #[builder(default, setter(into))]
     pub handles: Vec<Vec<u8>>,
+}
+
+/// An entry containing all URL and signature info for a key or CRS.
+#[derive(Debug, TypedBuilder, Serialize, Deserialize)]
+pub struct KeyUrlInfo {
+    // The ID/handle of the key or CRS.
+    data_id: HexVector,
+    // The enum choice of parameters used for the key or CRS. TODO should maybe import ParamChoice
+    param_choice: i32,
+    // List of URLs to fetch the data element from.
+    urls: Vec<String>,
+    // List of signatures for the data element.
+    signatures: HexVectorList,
+}
+
+impl KeyUrlInfo {
+    pub fn data_id(&self) -> &HexVector {
+        &self.data_id
+    }
+
+    pub fn param_choice(&self) -> i32 {
+        self.param_choice
+    }
+
+    pub fn urls(&self) -> &Vec<String> {
+        &self.urls
+    }
+
+    pub fn signatures(&self) -> &HexVectorList {
+        &self.signatures
+    }
+}
+
+/// Struct containing information about a single conceptual key (and hence ID)
+#[derive(Debug, TypedBuilder, Serialize, Deserialize)]
+pub struct FheKeyUrlInfo {
+    // Info about the public key used for FHE encryption.
+    fhe_public_key: KeyUrlInfo,
+    // Info about the public key used for FHE computation.
+    fhe_server_key: KeyUrlInfo,
+}
+
+impl FheKeyUrlInfo {
+    pub fn fhe_public_key(&self) -> &KeyUrlInfo {
+        &self.fhe_public_key
+    }
+
+    pub fn fhe_server_key(&self) -> &KeyUrlInfo {
+        &self.fhe_server_key
+    }
+}
+
+/// Struct containing information about a single conceptual verification key.
+/// There is exactly one of these for each KMS server.
+#[derive(Debug, TypedBuilder, Serialize, Deserialize)]
+pub struct VerfKeyUrlInfo {
+    // The ID of the verification key.
+    key_id: HexVector,
+    // The integer ID of the server who owns the key.
+    server_id: u32,
+    // The URL where the verification key can be found.
+    verf_public_key_url: String,
+    // The URL where the Ethereum associated address can be found.
+    verf_public_key_address: String,
+}
+
+impl VerfKeyUrlInfo {
+    pub fn key_id(&self) -> &HexVector {
+        &self.key_id
+    }
+
+    pub fn server_id(&self) -> u32 {
+        self.server_id
+    }
+
+    pub fn verf_public_key_url(&self) -> &str {
+        &self.verf_public_key_url
+    }
+
+    pub fn verf_public_key_address(&self) -> &str {
+        &self.verf_public_key_address
+    }
+}
+
+#[derive(TypedBuilder)]
+pub struct KeyUrlValues {
+    data_id: HexVector,
+}
+
+impl KeyUrlValues {
+    pub fn data_id(&self) -> &HexVector {
+        &self.data_id
+    }
+}
+
+#[derive(Debug, TypedBuilder, Serialize, Deserialize)]
+pub struct KeyUrlResponseValues {
+    // All the FHE public key info from this gateway and associated ASC.
+    fhe_key_info: Vec<FheKeyUrlInfo>,
+    // All the CRS info from this gateway and associated ASC.
+    // The map maps the max_amount_of_bits a given CRS supports to the CRS information.
+    // For now we assume there is only one CRS per max_amount_of_bits.
+    crs: HashMap<u32, KeyUrlInfo>,
+    // The public verification information for the KMS servers.
+    // The vector will conatin one entry for each KMS server.
+    verf_public_key: Vec<VerfKeyUrlInfo>,
+}
+
+impl KeyUrlResponseValues {
+    pub fn fhe_key_info(&self) -> &Vec<FheKeyUrlInfo> {
+        &self.fhe_key_info
+    }
+
+    pub fn crs(&self) -> &HashMap<u32, KeyUrlInfo> {
+        &self.crs
+    }
+
+    pub fn verf_public_key(&self) -> &Vec<VerfKeyUrlInfo> {
+        &self.verf_public_key
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, EnumString)]

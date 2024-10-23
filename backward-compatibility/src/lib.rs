@@ -397,66 +397,6 @@ impl TestType for ZkpResponseValuesTest {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct KeyUrlValuesTest {
-    pub test_filename: Cow<'static, str>,
-    pub data_id: [u8; 3],
-    pub block_height: u64,
-    pub transaction_index: u32,
-}
-
-impl TestType for KeyUrlValuesTest {
-    fn module(&self) -> String {
-        EVENTS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "KeyUrlValues".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct KeyUrlResponseValuesTest {
-    pub test_filename: Cow<'static, str>,
-    pub fhe_key_info_fhe_public_key_data_id: [u8; 3],
-    pub fhe_key_info_fhe_public_key_param_choice: i32,
-    pub fhe_key_info_fhe_public_key_urls: [Cow<'static, str>; 1],
-    pub fhe_key_info_fhe_public_key_signatures: [[u8; 3]; 1],
-    pub fhe_key_info_fhe_server_key_data_id: [u8; 3],
-    pub fhe_key_info_fhe_server_key_param_choice: i32,
-    pub fhe_key_info_fhe_server_key_urls: [Cow<'static, str>; 1],
-    pub fhe_key_info_fhe_server_key_signatures: [[u8; 3]; 1],
-    pub crs_ids: [u32; 1],
-    pub crs_data_ids: [[u8; 3]; 1],
-    pub crs_param_choices: [i32; 1],
-    pub crs_urls: [[Cow<'static, str>; 1]; 1],
-    pub crs_signatures: [[[u8; 3]; 1]; 1],
-    pub verf_public_key_key_id: [u8; 3],
-    pub verf_public_key_server_id: u32,
-    pub verf_public_key_url: Cow<'static, str>,
-    pub verf_public_key_address: Cow<'static, str>,
-    pub block_height: u64,
-    pub transaction_index: u32,
-}
-
-impl TestType for KeyUrlResponseValuesTest {
-    fn module(&self) -> String {
-        EVENTS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "KeyUrlResponseValues".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct KeyGenValuesTest {
     pub test_filename: Cow<'static, str>,
     pub preproc_id: [u8; 3],
@@ -705,8 +645,6 @@ pub enum TestMetadataEvents {
     ReencryptResponseValues(ReencryptResponseValuesTest),
     ZkpValues(ZkpValuesTest),
     ZkpResponseValues(ZkpResponseValuesTest),
-    KeyUrlValues(KeyUrlValuesTest),
-    KeyUrlResponseValues(KeyUrlResponseValuesTest),
     KeyGenValues(KeyGenValuesTest),
     KeyGenResponseValues(KeyGenResponseValuesTest),
     KeyGenPreprocValues(KeyGenPreprocValuesTest),

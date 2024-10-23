@@ -6,7 +6,6 @@ use cosmwasm_std::{Attribute, Event};
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
 use std::ops::Deref;
 use std::str::FromStr;
 use strum::EnumProperty;
@@ -91,7 +90,7 @@ pub struct KmsCoreCentralizedConf {
     pub param_choice: FheParameter,
 }
 
-// Treshold
+// Threshold
 #[derive(VersionsDispatch)]
 pub enum KmsCoreThresholdConfVersioned {
     V0(KmsCoreThresholdConf),
@@ -190,12 +189,6 @@ pub enum OperationValue {
     #[strum(serialize = "verify_proven_ct_response")]
     #[serde(rename = "verify_proven_ct_response")]
     VerifyProvenCtResponse(VerifyProvenCtResponseValues),
-    #[strum(serialize = "keyurl")]
-    #[serde(rename = "keyurl")]
-    KeyUrl(KeyUrlValues),
-    #[strum(serialize = "keyurl_response")]
-    #[serde(rename = "keyurl_response")]
-    KeyUrlResponse(KeyUrlResponseValues),
     #[strum(serialize = "keygen")]
     #[serde(rename = "keygen")]
     KeyGen(KeyGenValues),
@@ -252,8 +245,6 @@ impl OperationValue {
             Self::ReencryptResponse(_) => "ReencryptResponseValues",
             Self::VerifyProvenCt(_) => "VerifyProvenCtValues",
             Self::VerifyProvenCtResponse(_) => "VerifyProvenCtResponseValues",
-            Self::KeyUrl(_) => "KeyUrlValues",
-            Self::KeyUrlResponse(_) => "KeyUrlResponseValues",
             Self::KeyGen(_) => "KeyGenValues",
             Self::KeyGenResponse(_) => "KeyGenResponseValues",
             Self::InsecureKeyGen(_) => "InsecureKeyGenValues",
@@ -274,8 +265,6 @@ impl From<OperationValue> for KmsOperation {
             OperationValue::ReencryptResponse(_) => KmsOperation::ReencryptResponse,
             OperationValue::VerifyProvenCt(_) => KmsOperation::VerifyProvenCt,
             OperationValue::VerifyProvenCtResponse(_) => KmsOperation::VerifyProvenCtResponse,
-            OperationValue::KeyUrl(_) => KmsOperation::KeyUrl,
-            OperationValue::KeyUrlResponse(_) => KmsOperation::KeyUrlResponse,
             OperationValue::KeyGen(_) => KmsOperation::KeyGen,
             OperationValue::KeyGenResponse(_) => KmsOperation::KeyGenResponse,
             OperationValue::InsecureKeyGen(_) => KmsOperation::InsecureKeyGen,
@@ -850,35 +839,6 @@ impl From<VerifyProvenCtValues> for OperationValue {
 }
 
 #[derive(Serialize, Deserialize, VersionsDispatch)]
-pub enum KeyUrlValuesVersioned {
-    V0(KeyUrlValues),
-}
-
-#[cw_serde]
-#[derive(Eq, Default, Versionize, TypedBuilder)]
-#[versionize(KeyUrlValuesVersioned)]
-pub struct KeyUrlValues {
-    data_id: HexVector,
-}
-
-impl KeyUrlValues {
-    pub fn new(data_id: impl Into<HexVector>) -> Self {
-        Self {
-            data_id: data_id.into(),
-        }
-    }
-    pub fn data_id(&self) -> &HexVector {
-        &self.data_id
-    }
-}
-
-impl From<KeyUrlValues> for OperationValue {
-    fn from(value: KeyUrlValues) -> Self {
-        OperationValue::KeyUrl(value)
-    }
-}
-
-#[derive(Serialize, Deserialize, VersionsDispatch)]
 pub enum DecryptResponseValuesVersioned {
     V0(DecryptResponseValues),
 }
@@ -1090,184 +1050,6 @@ impl From<VerifyProvenCtResponseValues> for OperationValue {
     }
 }
 
-#[derive(Serialize, Deserialize, VersionsDispatch)]
-pub enum KeyUrlInfoVersioned {
-    V0(KeyUrlInfo),
-}
-
-/// An entry containing all URL and signature info for a key or CRS.
-#[cw_serde]
-#[derive(Default, Eq, Versionize, TypedBuilder)]
-#[versionize(KeyUrlInfoVersioned)]
-pub struct KeyUrlInfo {
-    // The ID/handle of the key or CRS.
-    data_id: HexVector,
-    // The enum choice of parameters used for the key or CRS. TODO should maybe import ParamChoice
-    param_choice: i32,
-    // List of URLs to fetch the data element from.
-    urls: Vec<String>,
-    // List of signatures for the data element.
-    signatures: HexVectorList,
-}
-
-impl KeyUrlInfo {
-    pub fn new(
-        data_id: impl Into<HexVector>,
-        param_choice: i32,
-        urls: Vec<String>,
-        signatures: impl Into<HexVectorList>,
-    ) -> Self {
-        Self {
-            data_id: data_id.into(),
-            param_choice,
-            urls,
-            signatures: signatures.into(),
-        }
-    }
-
-    pub fn data_id(&self) -> &HexVector {
-        &self.data_id
-    }
-    pub fn param_choice(&self) -> i32 {
-        self.param_choice
-    }
-    pub fn urls(&self) -> &Vec<String> {
-        &self.urls
-    }
-    pub fn signatures(&self) -> &HexVectorList {
-        &self.signatures
-    }
-}
-
-#[derive(Serialize, Deserialize, VersionsDispatch)]
-pub enum FheKeyUrlInfoVersioned {
-    V0(FheKeyUrlInfo),
-}
-
-/// Struct containing information about a single conceptual key (and hence ID)
-#[cw_serde]
-#[derive(Default, Eq, Versionize, TypedBuilder)]
-#[versionize(FheKeyUrlInfoVersioned)]
-pub struct FheKeyUrlInfo {
-    // Info about the public key used for FHE encryption.
-    fhe_public_key: KeyUrlInfo,
-    // Info about the public key used for FHE computation.
-    fhe_server_key: KeyUrlInfo,
-}
-
-impl FheKeyUrlInfo {
-    pub fn new(fhe_public_key: KeyUrlInfo, fhe_server_key: KeyUrlInfo) -> Self {
-        Self {
-            fhe_public_key,
-            fhe_server_key,
-        }
-    }
-    pub fn fhe_public_key(&self) -> &KeyUrlInfo {
-        &self.fhe_public_key
-    }
-    pub fn fhe_server_key(&self) -> &KeyUrlInfo {
-        &self.fhe_server_key
-    }
-}
-
-#[derive(Serialize, Deserialize, VersionsDispatch)]
-pub enum VerfKeyUrlInfoVersioned {
-    V0(VerfKeyUrlInfo),
-}
-
-/// Struct containing information about a single conceptual verification key.
-/// There is exactly one of these for each KMS server.
-#[cw_serde]
-#[derive(Default, Eq, Versionize, TypedBuilder)]
-#[versionize(VerfKeyUrlInfoVersioned)]
-pub struct VerfKeyUrlInfo {
-    // The ID of the verification key.
-    key_id: HexVector,
-    // The integer ID of the server who owns the key.
-    server_id: u32,
-    // The URL where the verification key can be found.
-    verf_public_key_url: String,
-    // The URL where the Ethereum associated address can be found.
-    verf_public_key_address: String,
-}
-
-impl VerfKeyUrlInfo {
-    pub fn new(
-        key_id: impl Into<HexVector>,
-        server_id: u32,
-        verf_public_key_url: String,
-        verf_public_key_address: String,
-    ) -> Self {
-        Self {
-            key_id: key_id.into(),
-            server_id,
-            verf_public_key_url,
-            verf_public_key_address,
-        }
-    }
-
-    pub fn key_id(&self) -> &HexVector {
-        &self.key_id
-    }
-    pub fn server_id(&self) -> u32 {
-        self.server_id
-    }
-    pub fn verf_public_key_url(&self) -> &str {
-        &self.verf_public_key_url
-    }
-    pub fn verf_public_key_address(&self) -> &str {
-        &self.verf_public_key_address
-    }
-}
-
-#[derive(Serialize, Deserialize, VersionsDispatch)]
-pub enum KeyUrlResponseValuesVersioned {
-    V0(KeyUrlResponseValues),
-}
-
-#[cw_serde]
-#[derive(Default, Eq, Versionize, TypedBuilder)]
-#[versionize(KeyUrlResponseValuesVersioned)]
-pub struct KeyUrlResponseValues {
-    // All the FHE public key info from this gateway and associated ASC.
-    fhe_key_info: Vec<FheKeyUrlInfo>,
-    // All the CRS info from this gateway and associated ASC.
-    // The map maps the max_amount_of_bits a given CRS supports to the CRS information.
-    // For now we assume there is only one CRS per max_amount_of_bits.
-    crs: HashMap<u32, KeyUrlInfo>,
-    // The public verification information for the KMS servers.
-    // The vector will conatin one entry for each KMS server.
-    verf_public_key: Vec<VerfKeyUrlInfo>,
-}
-
-impl KeyUrlResponseValues {
-    pub fn new(
-        fhe_key_info: Vec<FheKeyUrlInfo>,
-        crs: HashMap<u32, KeyUrlInfo>,
-        verf_public_key: Vec<VerfKeyUrlInfo>,
-    ) -> Self {
-        Self {
-            fhe_key_info,
-            crs,
-            verf_public_key,
-        }
-    }
-    pub fn fhe_key_info(&self) -> &Vec<FheKeyUrlInfo> {
-        &self.fhe_key_info
-    }
-    pub fn crs(&self) -> &HashMap<u32, KeyUrlInfo> {
-        &self.crs
-    }
-    pub fn verf_public_key(&self) -> &Vec<VerfKeyUrlInfo> {
-        &self.verf_public_key
-    }
-}
-
-impl From<KeyUrlResponseValues> for OperationValue {
-    fn from(value: KeyUrlResponseValues) -> Self {
-        OperationValue::KeyUrlResponse(value)
-    }
-}
 #[derive(Serialize, Deserialize, VersionsDispatch)]
 pub enum CrsGenResponseValuesVersioned {
     V0(CrsGenResponseValues),

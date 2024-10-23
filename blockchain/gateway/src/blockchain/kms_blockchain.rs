@@ -1,7 +1,8 @@
 use crate::blockchain::Blockchain;
 use crate::blockchain::KmsEventSubscriber;
-use crate::config::GatewayConfig;
-use crate::config::KmsMode;
+use crate::config::{
+    FheKeyUrlInfo, GatewayConfig, KeyUrlInfo, KeyUrlResponseValues, KmsMode, VerfKeyUrlInfo,
+};
 use crate::util::conversion::TokenizableFrom;
 use crate::util::footprint;
 use anyhow::anyhow;
@@ -13,22 +14,11 @@ use ethereum_inclusion_proofs::std_proof_handler::EthereumProofHandler;
 use ethereum_inclusion_proofs::types::{EVMProofParams, EthereumConfig, Permission};
 use ethers::abi::Token;
 use ethers::prelude::*;
-use events::kms::DecryptValues;
-use events::kms::FheKeyUrlInfo;
-use events::kms::FheParameter;
-use events::kms::KeyUrlInfo;
-use events::kms::KeyUrlResponseValues;
-use events::kms::KmsCoreConf;
-use events::kms::KmsEvent;
-use events::kms::KmsOperation;
-use events::kms::OperationValue;
-use events::kms::ReencryptResponseValues;
-use events::kms::ReencryptValues;
-use events::kms::TransactionId;
-use events::kms::VerfKeyUrlInfo;
-use events::kms::VerifyProvenCtResponseValues;
-use events::kms::VerifyProvenCtValues;
-use events::kms::{FheType, KmsMessage};
+use events::kms::{
+    DecryptValues, FheParameter, FheType, KmsCoreConf, KmsEvent, KmsMessage, KmsOperation,
+    OperationValue, ReencryptResponseValues, ReencryptValues, TransactionId,
+    VerifyProvenCtResponseValues, VerifyProvenCtValues,
+};
 use events::{HexVector, HexVectorList};
 use kms_blockchain_client::client::Client;
 use kms_blockchain_client::client::ClientBuilder;

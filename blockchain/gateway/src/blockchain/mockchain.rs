@@ -1,12 +1,12 @@
 use crate::blockchain::Blockchain;
 use crate::blockchain::KmsEventSubscriber;
+use crate::config::KeyUrlResponseValues;
 use crate::util::conversion::TokenizableFrom;
 use crate::util::conversion::U4;
 use async_trait::async_trait;
 use ethers::abi::Token;
 use ethers::prelude::*;
 use events::kms::FheType;
-use events::kms::KeyUrlResponseValues;
 use events::kms::KmsEvent;
 use events::kms::ReencryptResponseValues;
 use events::HexVectorList;
