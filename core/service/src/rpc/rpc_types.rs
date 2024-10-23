@@ -643,6 +643,24 @@ impl Plaintext {
         }
     }
 
+    pub fn from_u512(value: StaticUnsignedBigInt<8>) -> Plaintext {
+        let mut bytes = vec![0_u8; 64];
+        value.copy_to_le_byte_slice(&mut bytes);
+        Plaintext {
+            bytes,
+            fhe_type: FheType::Euint512,
+        }
+    }
+
+    pub fn from_u1024(value: StaticUnsignedBigInt<16>) -> Plaintext {
+        let mut bytes = vec![0_u8; 128];
+        value.copy_to_le_byte_slice(&mut bytes);
+        Plaintext {
+            bytes,
+            fhe_type: FheType::Euint1024,
+        }
+    }
+
     pub fn from_u2048(value: tfhe::integer::bigint::U2048) -> Self {
         let mut bytes = [0u8; 256];
         value.copy_to_le_byte_slice(&mut bytes);
@@ -761,24 +779,6 @@ impl Plaintext {
         self.fhe_type
     }
     // TODO: Implement something that does something like `as_<fhe_type>`
-
-    pub fn from_u512(value: StaticUnsignedBigInt<8>) -> Plaintext {
-        let mut bytes = vec![0_u8; 8];
-        value.copy_to_le_byte_slice(&mut bytes);
-        Plaintext {
-            bytes,
-            fhe_type: FheType::Euint512,
-        }
-    }
-
-    pub fn from_u1024(value: StaticUnsignedBigInt<16>) -> Plaintext {
-        let mut bytes = vec![0_u8; 16];
-        value.copy_to_le_byte_slice(&mut bytes);
-        Plaintext {
-            bytes,
-            fhe_type: FheType::Euint1024,
-        }
-    }
 }
 
 impl From<Plaintext> for Vec<u8> {
