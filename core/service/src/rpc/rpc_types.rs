@@ -196,7 +196,15 @@ pub fn protobuf_to_alloy_domain(pb_domain: &Eip712DomainMsg) -> anyhow::Result<E
         pb_domain
             .salt
             .as_ref()
-            .map(|inner_salt| B256::from_slice(inner_salt)),
+            .and_then(|inner_salt| match inner_salt.len() {
+                0 => {
+                    // Empty vector crashes `from_slice`
+                    // TODO: we should figure out what to do in this situation
+                    tracing::warn!("Inner salt is an empty vec in EIP712");
+                    None
+                }
+                _ => Some(B256::from_slice(inner_salt)),
+            }),
     );
     Ok(out)
 }
