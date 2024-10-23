@@ -8,9 +8,12 @@ license.workspace = true
 
 [dependencies]
 anyhow = "1.0.86"
-serde = { version = "=1.0.210", features = ["derive", "rc"] }
+serde = { workspace = true, features = ["derive", "rc"] }
 tfhe-versionable.workspace = true
-backward-compatibility = { path = "../backward-compatibility", version = "0.9.0-rc3" , features = ["load", "tests"], optional = true }
+backward-compatibility = { path = "../backward-compatibility", version = "0.9.0-rc3", features = [
+    "load",
+    "tests",
+], optional = true }
 
 [features]
 testing = ["dep:backward-compatibility"]
