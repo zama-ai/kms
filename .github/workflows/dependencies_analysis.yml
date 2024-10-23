@@ -23,9 +23,14 @@ jobs:
 
       - run: cargo install cargo-audit cargo-deny
 
-      - run: cargo deny check license
+      - name: Check Cargo.lock is up-to-date and is not overriden by any Cargo.toml files
+        run: cargo update -w --locked
 
-      - run: cargo audit
+      - name: License whitelist
+        run: cargo deny check license
+
+      - name: Security issue whitelist
+        run: cargo audit
 
 permissions:
   contents: read
