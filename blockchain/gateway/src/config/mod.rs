@@ -189,6 +189,8 @@ pub enum BaseGasPrice {
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder)]
 pub struct EthereumConfig {
     pub chain_id: u64,
+    // EIP712 application salt representend as a hex encoding
+    pub eip712_salt: Option<String>,
     pub listener_type: ListenerType,
     pub wss_url: String,
     pub coprocessor_api_key: String,
@@ -242,6 +244,13 @@ impl GatewayConfig {
         chain_id_bytes[24..].copy_from_slice(&chain_id_be);
 
         primitive_types::U256::from_big_endian(&chain_id_bytes)
+    }
+
+    pub(crate) fn parse_eip712_salt(&self) -> Option<Vec<u8>> {
+        self.ethereum
+            .eip712_salt
+            .clone()
+            .map(|salt| hex::decode(salt).expect("Failed to decode EIP712 salt from hex string"))
     }
 }
 

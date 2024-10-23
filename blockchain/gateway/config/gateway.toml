@@ -16,6 +16,12 @@ api_url = "0.0.0.0:7077"
 # chain id
 chain_id = 12345
 
+# EIP712 salt, optional
+# A static salt value used for EIP712 signing in order to distingush different dApps
+# Computed as the sha 256 digest of the string "Zama TKMS ASC"
+# Outcommented for now since it needs to be supported in fhevmjs see https://github.com/zama-ai/fhevmjs/issues/116
+# eip712_salt = "e4edb9fdce7fd5cfd13ebe4ff9931f986b5df5b30ed798e2d72d1ce400b615d9"
+
 # Listener type, one of FHEVM_NATIVE or COPROCESSOR.
 # Specifies the type of listener to be used for processing Ethereum events.
 # - FHEVM_NATIVE: Use the FHEVM native listener.

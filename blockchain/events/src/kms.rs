@@ -1897,7 +1897,7 @@ mod tests {
                     "eip712_version": "version",
                     "eip712_chain_id": hex::encode([1; 32]),
                     "eip712_verifying_contract": "contract",
-                    "eip712_salt": hex::encode([42; 32]), // TODO should be updated
+                    "eip712_salt": hex::encode([42; 32]),
                     "acl_address": "acl_address",
                 }
             }
@@ -1943,7 +1943,7 @@ mod tests {
             "version".to_string(),
             [0_u8; 32].to_vec(),
             "contract".to_string(),
-            Some([1_u8; 32].to_vec()),
+            None::<Vec<u8>>,
         )
         .unwrap();
         let message: KmsMessageWithoutProof = KmsMessage::builder().value(reencrypt_values).build();
@@ -1965,7 +1965,7 @@ mod tests {
                     "eip712_version": "version",
                     "eip712_chain_id": hex::encode([0_u8; 32]),
                     "eip712_verifying_contract": "contract",
-                    "eip712_salt": hex::encode([1_u8; 32]), // TODO should be updated
+                    "eip712_salt": None::<Vec<u8>>,
                     "acl_address": "0xfe11",
                 }
             }
@@ -2026,7 +2026,7 @@ mod tests {
                     "eip712_version": "version",
                     "eip712_chain_id": hex::encode([0_u8; 32]),
                     "eip712_verifying_contract": "contract",
-                    "eip712_salt": hex::encode([1_u8; 32]), // TODO should be updated
+                    "eip712_salt": hex::encode([1_u8; 32]),
                 },
             }
         });
@@ -2077,7 +2077,7 @@ mod tests {
                     "eip712_version": "version",
                     "eip712_chain_id": hex::encode([1; 32]),
                     "eip712_verifying_contract": "contract",
-                    "eip712_salt": hex::encode([42; 32]), // TODO should be updated
+                    "eip712_salt": hex::encode([42; 32]),
                 }
             }
         });
@@ -2125,7 +2125,7 @@ mod tests {
                     "version".to_string(),
                     [1; 32].to_vec(),
                     "contract".to_string(),
-                    Some([42; 32].to_vec()),
+                    None::<Vec<u8>>,
                 )
                 .unwrap(),
             )
@@ -2142,7 +2142,7 @@ mod tests {
                     "eip712_version": "version",
                     "eip712_chain_id": hex::encode([1; 32]),
                     "eip712_verifying_contract": "contract",
-                    "eip712_salt": hex::encode([42; 32]), // TODO should be updated
+                    "eip712_salt": None::<Vec<u8>>,
                 }
             }
         });

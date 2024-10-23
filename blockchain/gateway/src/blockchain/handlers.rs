@@ -146,9 +146,8 @@ async fn decrypt(
     }
 
     // Get chain-id and verifying contract for EIP-712 signature
-    let chain_id_be = config.ethereum.chain_id.to_be_bytes();
     let mut chain_id_bytes = vec![0u8; 32];
-    chain_id_bytes[24..].copy_from_slice(&chain_id_be);
+    config.parse_chain_id().to_big_endian(&mut chain_id_bytes);
 
     // Ensure we are using EIP-55 encoded addresses; expected by KMS core during signature generation.
     let kms_verifier_address =
@@ -162,7 +161,7 @@ async fn decrypt(
         version: config.ethereum.kmsverifier_version.clone(),
         chain_id: chain_id_bytes,
         verifying_contract: kms_verifier_address,
-        salt: None, // TODO we might want to ensure this can be set in the future
+        salt: config.parse_eip712_salt(),
     };
 
     blockchain.decrypt(typed_cts, domain, acl_address).await
@@ -209,7 +208,7 @@ pub(crate) async fn handle_reencryption_event(
             ciphertext,
             event.eip712_verifying_contract.clone(),
             chain_id,
-            None, // TODO we might want to ensure this can be set in the future
+            config.parse_eip712_salt(),
             acl_address,
         )
         .await;
@@ -255,7 +254,7 @@ pub(crate) async fn handle_verify_proven_ct_event(
         version: config.ethereum.kmsverifier_version.clone(),
         chain_id: chain_id_bytes,
         verifying_contract: vc_hex,
-        salt: None, // TODO we might want to ensure this can be set in the future
+        salt: config.parse_eip712_salt(),
     };
 
     let verify_proven_ct_response_builder = blockchain

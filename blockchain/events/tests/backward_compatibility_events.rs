@@ -136,7 +136,7 @@ fn test_reencrypt_values(
         .eip712_version(test.eip712_version.to_string())
         .eip712_chain_id(test.eip712_chain_id.to_vec().into())
         .eip712_verifying_contract(test.eip712_verifying_contract.to_string())
-        .eip712_salt(Some(test.eip712_salt.to_vec().into()))
+        .eip712_salt(test.eip712_salt.map(|salt| salt.to_vec().into()))
         .build();
 
     let new_versionized = Transaction::new(
@@ -207,7 +207,7 @@ fn test_verify_proven_ct_values(
         .eip712_version(test.eip712_version.to_string())
         .eip712_chain_id(test.eip712_chain_id.to_vec().into())
         .eip712_verifying_contract(test.eip712_verifying_contract.to_string())
-        .eip712_salt(Some(test.eip712_salt.to_vec().into()))
+        .eip712_salt(test.eip712_salt.map(|salt| salt.to_vec().into()))
         .build();
 
     let new_versionized = Transaction::new(
@@ -275,7 +275,7 @@ fn test_key_gen_values(
         .eip712_version(test.eip712_version.to_string())
         .eip712_chain_id(test.eip712_chain_id.to_vec().into())
         .eip712_verifying_contract(test.eip712_verifying_contract.to_string())
-        .eip712_salt(Some(test.eip712_salt.to_vec().into()))
+        .eip712_salt(test.eip712_salt.map(|salt| salt.to_vec().into()))
         .build();
 
     let new_versionized = Transaction::new(
@@ -402,7 +402,7 @@ fn test_insecure_key_gen_values(
         .eip712_version(test.eip712_version.to_string())
         .eip712_chain_id(test.eip712_chain_id.to_vec().into())
         .eip712_verifying_contract(test.eip712_verifying_contract.to_string())
-        .eip712_salt(Some(test.eip712_salt.to_vec().into()))
+        .eip712_salt(test.eip712_salt.map(|salt| salt.to_vec().into()))
         .build();
 
     let new_versionized = Transaction::new(
@@ -437,7 +437,7 @@ fn test_crs_gen_values(
         .eip712_version(test.eip712_version.to_string())
         .eip712_chain_id(test.eip712_chain_id.to_vec().into())
         .eip712_verifying_contract(test.eip712_verifying_contract.to_string())
-        .eip712_salt(Some(test.eip712_salt.to_vec().into()))
+        .eip712_salt(test.eip712_salt.map(|salt| salt.to_vec().into()))
         .build();
 
     let new_versionized = Transaction::new(

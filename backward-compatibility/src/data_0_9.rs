@@ -246,9 +246,15 @@ const DECRYPT_VALUES_TEST: DecryptValuesTest = DecryptValuesTest {
     proof: Cow::Borrowed("proof"),
     eip712_name: Cow::Borrowed("eip712_name"),
     eip712_version: Cow::Borrowed("eip712_version"),
-    eip712_chain_id: [17, 18, 19],
+    eip712_chain_id: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 42,
+    ],
     eip712_verifying_contract: Cow::Borrowed("eip712_verifying_contract"),
-    eip712_salt: [20, 21, 22],
+    eip712_salt: Some([
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+        25, 26, 27, 28, 29, 30, 31,
+    ]),
     block_height: 1,
     transaction_index: 1,
 };
@@ -275,9 +281,15 @@ const REENCRYPT_VALUES_TEST: ReencryptValuesTest = ReencryptValuesTest {
     proof: Cow::Borrowed("proof"),
     eip712_name: Cow::Borrowed("eip712_name"),
     eip712_version: Cow::Borrowed("eip712_version"),
-    eip712_chain_id: [17, 18, 19],
+    eip712_chain_id: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 42,
+    ],
     eip712_verifying_contract: Cow::Borrowed("eip712_verifying_contract"),
-    eip712_salt: [20, 21, 22],
+    eip712_salt: Some([
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+        25, 26, 27, 28, 29, 30, 31,
+    ]),
     block_height: 1,
     transaction_index: 1,
 };
@@ -300,9 +312,15 @@ const ZKP_VALUES_TEST: ZkpValuesTest = ZkpValuesTest {
     acl_address: Cow::Borrowed("acl_address"),
     eip712_name: Cow::Borrowed("eip712_name"),
     eip712_version: Cow::Borrowed("eip712_version"),
-    eip712_chain_id: [10, 11, 12],
+    eip712_chain_id: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 42,
+    ],
     eip712_verifying_contract: Cow::Borrowed("eip712_verifying_contract"),
-    eip712_salt: [13, 14, 15],
+    eip712_salt: Some([
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+        25, 26, 27, 28, 29, 30, 31,
+    ]),
     block_height: 1,
     transaction_index: 1,
 };
@@ -363,9 +381,15 @@ const KEY_GEN_VALUES_TEST: KeyGenValuesTest = KeyGenValuesTest {
     preproc_id: [1, 2, 3],
     eip712_name: Cow::Borrowed("eip712_name"),
     eip712_version: Cow::Borrowed("eip712_version"),
-    eip712_chain_id: [1, 2, 3],
+    eip712_chain_id: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 42,
+    ],
     eip712_verifying_contract: Cow::Borrowed("eip712_verifying_contract"),
-    eip712_salt: [4, 5, 6],
+    eip712_salt: Some([
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+        25, 26, 27, 28, 29, 30, 31,
+    ]),
     block_height: 1,
     transaction_index: 1,
 };
@@ -386,9 +410,15 @@ const INSECURE_KEY_GEN_VALUES_TEST: InsecureKeyGenValuesTest = InsecureKeyGenVal
     test_filename: Cow::Borrowed("insecure_key_gen_values"),
     eip712_name: Cow::Borrowed("eip712_name"),
     eip712_version: Cow::Borrowed("eip712_version"),
-    eip712_chain_id: [1, 2, 3],
+    eip712_chain_id: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 42,
+    ],
     eip712_verifying_contract: Cow::Borrowed("eip712_verifying_contract"),
-    eip712_salt: [4, 5, 6],
+    eip712_salt: Some([
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+        25, 26, 27, 28, 29, 30, 31,
+    ]),
     block_height: 1,
     transaction_index: 1,
 };
@@ -398,9 +428,15 @@ const CRS_GEN_VALUES_TEST: CrsGenValuesTest = CrsGenValuesTest {
     max_num_bits: 256,
     eip712_name: Cow::Borrowed("eip712_name"),
     eip712_version: Cow::Borrowed("eip712_version"),
-    eip712_chain_id: [1, 2, 3],
+    eip712_chain_id: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 42,
+    ],
     eip712_verifying_contract: Cow::Borrowed("eip712_verifying_contract"),
-    eip712_salt: [4, 5, 6],
+    eip712_salt: Some([
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+        25, 26, 27, 28, 29, 30, 31,
+    ]),
     block_height: 1,
     transaction_index: 1,
 };
@@ -683,7 +719,12 @@ impl EventsV0_9 {
             .eip712_version(DECRYPT_VALUES_TEST.eip712_version.to_string())
             .eip712_chain_id(DECRYPT_VALUES_TEST.eip712_chain_id.to_vec().into())
             .eip712_verifying_contract(DECRYPT_VALUES_TEST.eip712_verifying_contract.to_string())
-            .eip712_salt(DECRYPT_VALUES_TEST.eip712_salt.to_vec().into())
+            .eip712_salt(
+                DECRYPT_VALUES_TEST
+                    .eip712_salt
+                    .map(|salt| salt.to_vec().into())
+                    .expect("could not convert salt format"),
+            )
             .build();
 
         let transaction = Transaction::new(
@@ -734,7 +775,12 @@ impl EventsV0_9 {
             .eip712_version(REENCRYPT_VALUES_TEST.eip712_version.to_string())
             .eip712_chain_id(REENCRYPT_VALUES_TEST.eip712_chain_id.to_vec().into())
             .eip712_verifying_contract(REENCRYPT_VALUES_TEST.eip712_verifying_contract.to_string())
-            .eip712_salt(REENCRYPT_VALUES_TEST.eip712_salt.to_vec().into())
+            .eip712_salt(
+                REENCRYPT_VALUES_TEST
+                    .eip712_salt
+                    .map(|salt| salt.to_vec().into())
+                    .expect("could not convert salt format"),
+            )
             .build();
 
         let transaction = Transaction::new(
@@ -782,7 +828,12 @@ impl EventsV0_9 {
             .eip712_version(ZKP_VALUES_TEST.eip712_version.to_string())
             .eip712_chain_id(ZKP_VALUES_TEST.eip712_chain_id.to_vec().into())
             .eip712_verifying_contract(ZKP_VALUES_TEST.eip712_verifying_contract.to_string())
-            .eip712_salt(ZKP_VALUES_TEST.eip712_salt.to_vec().into())
+            .eip712_salt(
+                ZKP_VALUES_TEST
+                    .eip712_salt
+                    .map(|salt| salt.to_vec().into())
+                    .expect("could not convert salt format"),
+            )
             .build();
 
         let transaction = Transaction::new(
@@ -974,7 +1025,12 @@ impl EventsV0_9 {
             .eip712_version(KEY_GEN_VALUES_TEST.eip712_version.to_string())
             .eip712_chain_id(KEY_GEN_VALUES_TEST.eip712_chain_id.to_vec().into())
             .eip712_verifying_contract(KEY_GEN_VALUES_TEST.eip712_verifying_contract.to_string())
-            .eip712_salt(KEY_GEN_VALUES_TEST.eip712_salt.to_vec().into())
+            .eip712_salt(
+                KEY_GEN_VALUES_TEST
+                    .eip712_salt
+                    .map(|salt| salt.to_vec().into())
+                    .expect("could not convert salt format"),
+            )
             .build();
 
         let transaction = Transaction::new(
@@ -1033,7 +1089,12 @@ impl EventsV0_9 {
                     .eip712_verifying_contract
                     .to_string(),
             )
-            .eip712_salt(INSECURE_KEY_GEN_VALUES_TEST.eip712_salt.to_vec().into())
+            .eip712_salt(
+                INSECURE_KEY_GEN_VALUES_TEST
+                    .eip712_salt
+                    .map(|salt| salt.to_vec().into())
+                    .expect("could not convert salt format"),
+            )
             .build();
 
         let transaction = Transaction::new(
@@ -1058,7 +1119,12 @@ impl EventsV0_9 {
             .eip712_version(CRS_GEN_VALUES_TEST.eip712_version.to_string())
             .eip712_chain_id(CRS_GEN_VALUES_TEST.eip712_chain_id.to_vec().into())
             .eip712_verifying_contract(CRS_GEN_VALUES_TEST.eip712_verifying_contract.to_string())
-            .eip712_salt(CRS_GEN_VALUES_TEST.eip712_salt.to_vec().into())
+            .eip712_salt(
+                CRS_GEN_VALUES_TEST
+                    .eip712_salt
+                    .map(|salt| salt.to_vec().into())
+                    .expect("could not convert salt format"),
+            )
             .build();
 
         let transaction = Transaction::new(
