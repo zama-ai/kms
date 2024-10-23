@@ -65,6 +65,10 @@ use tfhe::{
 };
 use tokio::sync::{Mutex, RwLock};
 
+// TODO: we should organize our code so that we can unit test our error messages
+const ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR: &str =
+    "client address is the same as verifying contract address";
+
 pub fn handle_potential_err<T, E>(resp: Result<T, E>, error: String) -> anyhow::Result<T> {
     resp.map_err(|_| {
         tracing::warn!(error);
@@ -333,6 +337,11 @@ pub(crate) fn verify_eip712(request: &ReencryptionRequest) -> anyhow::Result<()>
             .as_ref()
             .map(|inner_salt| B256::from_slice(inner_salt)),
     );
+
+    // this is to prevent malicious dapp
+    if client_address == verifying_contract_address {
+        return Err(anyhow_error_and_log(ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR));
+    }
 
     // Derive the EIP-712 signing hash.
     let message_hash = message.eip712_signing_hash(&domain);
@@ -779,27 +788,32 @@ where
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::{KmsFheKeyHandles, Storage};
+    use super::{verify_eip712, KmsFheKeyHandles, Storage};
     #[cfg(feature = "slow_tests")]
     use crate::consts::{
         DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM, OTHER_CENTRAL_DEFAULT_ID,
     };
-    use crate::consts::{OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID};
+    use crate::consts::{DEFAULT_THRESHOLD_KEY_ID, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID};
     use crate::consts::{TEST_CENTRAL_KEYS_PATH, TEST_PARAM};
-    use crate::cryptography::central_kms::CentralizedTestingKeys;
     use crate::cryptography::central_kms::SoftwareKmsKeys;
     use crate::cryptography::central_kms::{gen_sig_keys, SoftwareKms};
+    use crate::cryptography::central_kms::{
+        CentralizedTestingKeys, ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR,
+    };
     use crate::cryptography::internal_crypto_types::PrivateSigKey;
     use crate::cryptography::signcryption::{
-        decrypt_signcryption, ephemeral_signcryption_key_generation,
+        decrypt_signcryption, ephemeral_encryption_key_generation,
+        ephemeral_signcryption_key_generation, hash_element,
     };
     use crate::kms::{FheType, RequestId};
-    use crate::rpc::rpc_types::Kms;
+    use crate::rpc::rpc_types::{Kms, CURRENT_FORMAT_VERSION};
     use crate::storage::{FileStorage, RamStorage, StorageType};
     use crate::util::file_handling::read_element;
     use crate::util::key_setup::test_tools::compute_cipher;
     use crate::{cryptography::central_kms::generate_fhe_keys, util::file_handling::write_element};
     use aes_prng::AesRng;
+    use alloy_signer::SignerSync;
+    use alloy_sol_types::SolStruct;
     use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
     use rand::{RngCore, SeedableRng};
     use serde::{Deserialize, Serialize};
@@ -1247,5 +1261,96 @@ pub(crate) mod tests {
         let expected = super::compute_info(&kms.base_kms.sig_key, &value, None).unwrap();
         let actual = super::compute_info(&kms.base_kms.sig_key, &value, None).unwrap();
         assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn test_verify_eip712() {
+        let mut rng = AesRng::seed_from_u64(1);
+        let (client_pk, client_sk) = gen_sig_keys(&mut rng);
+        let client_address = alloy_primitives::Address::from_public_key(client_pk.pk());
+        let signer = alloy_signer_local::PrivateKeySigner::from_signing_key(client_sk.sk().clone());
+        let ciphertext = vec![1, 2, 3];
+        let ciphertext_digest = hash_element(&ciphertext);
+        let (enc_pk, _) = ephemeral_encryption_key_generation(&mut rng);
+        let key_id = DEFAULT_THRESHOLD_KEY_ID.clone();
+
+        let payload = crate::kms::ReencryptionRequestPayload {
+            version: CURRENT_FORMAT_VERSION,
+            enc_key: bincode::serialize(&enc_pk).unwrap(),
+            client_address: client_address.to_checksum(None),
+            fhe_type: 1,
+            key_id: Some(key_id),
+            ciphertext: Some(ciphertext),
+            ciphertext_digest,
+        };
+        let message = crate::cryptography::signcryption::Reencrypt {
+            publicKey: alloy_primitives::Bytes::copy_from_slice(&payload.enc_key),
+        };
+        let domain = alloy_sol_types::eip712_domain!(
+            name: "Authorization token",
+            version: "1",
+            chain_id: 8006,
+            verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+        );
+
+        let message_hash = message.eip712_signing_hash(&domain);
+        let signature = signer.sign_hash_sync(&message_hash).unwrap();
+        let domain_msg = crate::rpc::rpc_types::alloy_to_protobuf_domain(&domain).unwrap();
+
+        let req = crate::kms::ReencryptionRequest {
+            signature: signature.into(),
+            payload: Some(payload),
+            domain: Some(domain_msg),
+            request_id: Some(RequestId {
+                request_id: "dummy request ID".to_owned(),
+            }),
+        };
+
+        {
+            // happy path
+            verify_eip712(&req).unwrap();
+        }
+        {
+            // use a wrong client address (invalid string length)
+            let mut bad_payload = req.payload.as_ref().cloned().unwrap();
+            bad_payload.client_address = "66f9664f97F2b50F62D13eA064982f936dE76657".to_string();
+            let mut bad_req = req.clone();
+            bad_req.payload = Some(bad_payload);
+            match verify_eip712(&bad_req) {
+                Ok(_) => panic!("expected failure"),
+                Err(e) => {
+                    assert_eq!(e.to_string(), "invalid string length");
+                }
+            }
+        }
+        {
+            // use the same address for verifying contract and client address should fail
+            let mut bad_payload = req.payload.as_ref().cloned().unwrap();
+            bad_payload.client_address = domain
+                .verifying_contract
+                .as_ref()
+                .cloned()
+                .unwrap()
+                .to_string();
+            let mut bad_req = req.clone();
+            bad_req.payload = Some(bad_payload);
+            match verify_eip712(&bad_req) {
+                Ok(_) => panic!("expected failure"),
+                Err(e) => {
+                    assert!(e.to_string().contains(ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR));
+                }
+            }
+        }
+        {
+            // bad signature
+            let mut bad_req = req.clone();
+            bad_req.signature[0] = req.signature[0] ^ 1;
+            match verify_eip712(&bad_req) {
+                Ok(_) => panic!("expected failure"),
+                Err(e) => {
+                    assert_eq!(e.to_string(), "signature error");
+                }
+            }
+        }
     }
 }
