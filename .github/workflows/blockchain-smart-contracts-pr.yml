@@ -85,19 +85,6 @@ jobs:
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
-  docker-smart-contracts:
-    uses: ./.github/workflows/common-docker.yml
-    permissions:
-      contents: 'read'
-      id-token: 'write'
-    with:
-      working-directory: './blockchain/contracts'
-      push_image: false
-      image-name: 'kms-blockchain-asc'
-    secrets:
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      GRAVITON_BUILDER_SSH_PRIVATE_KEY: ${{ secrets.GRAVITON_BUILDER_SSH_PRIVATE_KEY }}
-
   done:
     runs-on: ubuntu-latest
     name: Pipeline Done
@@ -111,4 +98,3 @@ jobs:
       - optimize-asc
       - optimize-tendermint-ipsc
       - optimize-ethereum-ipsc
-      - docker-smart-contracts
