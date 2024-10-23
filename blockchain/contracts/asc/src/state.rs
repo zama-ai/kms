@@ -4,6 +4,9 @@ use events::kms::{
     KmsCoreConf, KmsEvent, KmsOperation, OperationValue, Transaction, TransactionId,
 };
 
+const ERR_SWITCH_BETWEEN_CENTRALIZED_AND_THRESHOLD: &str =
+    "It is not possible to switch between threshold and centralized mode";
+
 // This storage struct is used to handle storage in the ASC contract. It contains:
 // - the configuration parameters for the KMS (centralized or threshold mode)
 // - the transactions stored in the ASC (along their operation values)
@@ -44,12 +47,26 @@ impl KmsContractStorage {
         storage: &mut dyn Storage,
         value: KmsCoreConf,
     ) -> StdResult<Response> {
-        if self.core_conf.may_load(storage)?.is_none() {
-            self.core_conf.save(storage, &value)?;
-        } else {
-            self.core_conf
-                .update(storage, |_| -> StdResult<KmsCoreConf> { Ok(value) })?;
-        }
+        match &self.core_conf.may_load(storage)? {
+            Some(conf) => {
+                match (conf, &value) {
+                    (KmsCoreConf::Centralized(_), KmsCoreConf::Centralized(_))
+                    | (KmsCoreConf::Threshold(_), KmsCoreConf::Threshold(_)) => {
+                        /* ok, do nothing */
+                    }
+                    _ => {
+                        return Err(StdError::generic_err(
+                            ERR_SWITCH_BETWEEN_CENTRALIZED_AND_THRESHOLD,
+                        ))
+                    }
+                }
+                self.core_conf
+                    .update(storage, |_| -> StdResult<KmsCoreConf> { Ok(value) })?;
+            }
+            None => {
+                self.core_conf.save(storage, &value)?;
+            }
+        };
         Ok(Response::default())
     }
 
@@ -230,11 +247,13 @@ mod tests {
         BlockInfo, ContractInfo, DepsMut, Empty, Env, MessageInfo, QuerierWrapper, TransactionInfo,
     };
     use cw_multi_test::IntoAddr;
-    use events::kms::{DecryptValues, FheParameter, KmsCoreThresholdConf, TransactionId};
+    use events::kms::{
+        DecryptValues, FheParameter, KmsCoreCentralizedConf, KmsCoreThresholdConf, TransactionId,
+    };
     use sylvia::types::ExecCtx;
 
     #[test]
-    fn test_core_conf() {
+    fn test_core_conf_threshold() {
         let dyn_store = &mut MockStorage::new();
         let storage = KmsContractStorage::default();
         let core_conf = KmsCoreConf::Threshold(KmsCoreThresholdConf {
@@ -248,6 +267,43 @@ mod tests {
             .update_core_conf(dyn_store, core_conf.clone())
             .unwrap();
         assert_eq!(storage.load_core_conf(dyn_store).unwrap(), core_conf);
+
+        // next try to update from threshold to centralized, which should fail
+        let central_conf = KmsCoreConf::Centralized(KmsCoreCentralizedConf {
+            param_choice: FheParameter::Test,
+        });
+        assert!(storage
+            .update_core_conf(dyn_store, central_conf)
+            .unwrap_err()
+            .to_string()
+            .contains(ERR_SWITCH_BETWEEN_CENTRALIZED_AND_THRESHOLD));
+    }
+
+    #[test]
+    fn test_core_conf_centralized() {
+        let dyn_store = &mut MockStorage::new();
+        let storage = KmsContractStorage::default();
+        let core_conf = KmsCoreConf::Centralized(KmsCoreCentralizedConf {
+            param_choice: FheParameter::Test,
+        });
+        storage
+            .update_core_conf(dyn_store, core_conf.clone())
+            .unwrap();
+        assert_eq!(storage.load_core_conf(dyn_store).unwrap(), core_conf);
+
+        // next try to update from centralized to threshold, which should fail
+        let threshold_conf = KmsCoreConf::Threshold(KmsCoreThresholdConf {
+            parties: vec![],
+            response_count_for_majority_vote: 3,
+            response_count_for_reconstruction: 3,
+            degree_for_reconstruction: 1,
+            param_choice: FheParameter::Test,
+        });
+        assert!(storage
+            .update_core_conf(dyn_store, threshold_conf)
+            .unwrap_err()
+            .to_string()
+            .contains(ERR_SWITCH_BETWEEN_CENTRALIZED_AND_THRESHOLD));
     }
 
     #[test]
