@@ -62,7 +62,7 @@ on:
       graviton-build-host:
           type: string
           required: false
-          default: 'ec2-13-36-234-121.eu-west-3.compute.amazonaws.com'
+          default: 'ec2-15-188-101-126.eu-west-3.compute.amazonaws.com'
       arm-build:
         type: boolean
         default: true
