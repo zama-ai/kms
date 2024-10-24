@@ -113,6 +113,15 @@ pub enum ServerIdentities {
     Addrs(Vec<alloy_primitives::Address>),
 }
 
+impl ServerIdentities {
+    fn len(&self) -> usize {
+        match &self {
+            ServerIdentities::Pks(vec) => vec.len(),
+            ServerIdentities::Addrs(vec) => vec.len(),
+        }
+    }
+}
+
 /// Simple client to interact with the KMS servers. This can be seen as a proof-of-concept
 /// and reference code for validating the KMS. The logic supplied by the client will be
 /// distributed across the aggregator/proxy and smart contracts.
@@ -167,7 +176,7 @@ pub struct TestingReencryptionTranscript {
 /// The JavaScript API is created from compiling
 /// a part of the client code (along with other dependencies)
 /// into wasm and then using wasm-pack to generate the JS bindings.
-/// Care must be taken when new code is introduced to the core/service
+/// Care must be taken when new code is introduced to core/service
 /// or core/threshold since wasm does not support every feature
 /// that Rust supports. Specifically, for our use-case, we will not
 /// try to compile async, multi-threaded or IO code.
@@ -181,7 +190,7 @@ pub struct TestingReencryptionTranscript {
 /// Generating the JavaScript binding introduces another layer
 /// of limitations on the Rust side. For example, HashMap,
 /// HashSet, Option on custom types, tuple,
-/// u128, anyhow::Result, and so on.
+/// u128, anyhow::Result, and so on cannot be used.
 ///
 /// Testing:
 /// Due to the way re-encryption is designed,
@@ -220,7 +229,7 @@ pub struct TestingReencryptionTranscript {
 /// ```
 /// node --test tests/js
 /// ```
-// Do not compile this module for grpc-client
+// Rather complicated cfg so that we do not compile this module for grpc-client.
 #[cfg(all(not(feature = "non-wasm"), not(feature = "grpc-client")))]
 pub mod js_api {
     use crate::kms::Eip712DomainMsg;
@@ -257,8 +266,8 @@ pub mod js_api {
 
     /// Instantiate a new client.
     ///
-    /// * `server_pks` - a list of KMS server signature public keys,
-    /// which can parsed using [u8vec_to_public_sig_key].
+    /// * `server_addrs` - a list of KMS server EIP-55 addresses,
+    /// must be prefixed with "0x".
     ///
     /// * `client_address_hex` - the client (wallet) address in hex,
     /// must be prefixed with "0x".
@@ -519,7 +528,8 @@ pub mod js_api {
     }
 
     /// Process the reencryption response from JavaScript objects.
-    /// The result is a byte array representing a plaintext of any length.
+    /// The returned result is a byte array representing a plaintext of any length,
+    /// postprocessing is returned to turn it into an integer.
     ///
     /// * `client` - client that wants to perform reencryption.
     ///
@@ -532,7 +542,7 @@ pub mod js_api {
     ///   signature: '15a4f9a8eb61459cfba7d103d8f911fb04ce91ecf841b34c49c0d56a70b896d20cbc31986188f91efc3842b7df215cee8acb40178daedb8b63d0ba5d199bce121c',
     ///   client_address: '0x17853A630aAe15AED549B2B874de08B73C0F59c5',
     ///   enc_key: '2000000000000000df2fcacb774f03187f3802a27259f45c06d33cefa68d9c53426b15ad531aa822',
-    ///   ciphertext_digest: '0748b542afe2353c86cb707e3d21044b0be1fd18efc7cbaa6a415af055bfb358',
+    ///   ciphertext_handle: '0748b542afe2353c86cb707e3d21044b0be1fd18efc7cbaa6a415af055bfb358',
     ///   eip712_verifying_contract: '0x66f9664f97F2b50F62D13eA064982f936dE76657'
     /// }
     /// ```
@@ -1519,6 +1529,9 @@ impl Client {
     /// the encryption of the secret shared plaintext and returns this. Validates the
     /// response matches the request, checks signatures, and handles both
     /// centralized and distributed cases.
+    ///
+    /// If there is more than one response or more than one server identity,
+    /// then the threshold mode is used.
     pub fn process_reencryption_resp(
         &self,
         client_request: &ParsedReencryptionRequest,
@@ -1538,12 +1551,19 @@ impl Client {
             },
         };
 
-        // Execute simplified and faster flow for the centralized case
-        // Observe that we don't encode exactly the same in the centralized case and in the
-        // distributed case. For the centralized case we directly encode the [Plaintext]
-        // object whereas for the distributed we encode the plain text as a
-        // Vec<ResiduePoly<Z128>>
-        if agg_resp.len() <= 1 {
+        // The condition below decides whether we'll parse the response
+        // in the centralized mode or threshold mode.
+        //
+        // It's important to check both the length of the server identities
+        // and the number of responses at the start to avoid "falling back"
+        // to the centralized mode by mistake since the checks that happen
+        // in the centralized mode is weaker (there are no checks on the threshold).
+        if agg_resp.len() <= 1 && self.server_identities.len() == 1 {
+            // Execute simplified and faster flow for the centralized case
+            // Observe that we don't encode exactly the same in the centralized case and in the
+            // distributed case. For the centralized case we directly encode the [Plaintext]
+            // object whereas for the distributed we encode the plain text as a
+            // Vec<ResiduePoly<Z128>>.
             self.centralized_reencryption_resp(
                 client_request,
                 eip712_domain,
@@ -1576,12 +1596,8 @@ impl Client {
             },
         };
 
-        // Execute simplified and faster flow for the centralized case
-        // Observe that we don't encode exactly the same in the centralized case and in the
-        // distributed case. For the centralized case we directly encode the [Plaintext]
-        // object whereas for the distributed we encode the plain text as a
-        // Vec<ResiduePoly<Z128>>
-        if agg_resp.len() <= 1 {
+        // The same logic is used in `process_reencryption_resp`.
+        if agg_resp.len() <= 1 && self.server_identities.len() == 1 {
             self.insecure_centralized_reencryption_resp(agg_resp, &client_keys)
         } else {
             self.insecure_threshold_reencryption_resp(agg_resp, &client_keys)
@@ -4134,7 +4150,12 @@ pub(crate) mod tests {
                     )
                     .unwrap()
             } else {
-                internal_client.server_identities = ServerIdentities::Addrs(Vec::new());
+                internal_client.server_identities =
+                    // one dummy address is needed to force insecure_process_reencryption_resp
+                    // in the centralized mode
+                    ServerIdentities::Addrs(vec![alloy_primitives::address!(
+                        "d8da6bf26964af9d7eed9e03e53415d37aa96045"
+                    )]);
                 internal_client
                     .insecure_process_reencryption_resp(&responses, enc_pk, enc_sk)
                     .unwrap()
