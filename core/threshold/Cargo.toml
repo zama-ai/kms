@@ -58,7 +58,7 @@ strum_macros = "0.26"
 tokio = { workspace = true, features = ["full", "sync"], optional = true }
 tonic = { workspace = true, features = ["tls"], optional = true }
 tonic-health = { version = "0.11", optional = true }
-tower = { version = "0.4", features = ["retry", "timeout"], optional = true }
+tower = { version = "0.5", features = ["retry", "timeout"], optional = true }
 tower-http = { version = "0.4", features = ["trace"], optional = true }
 tfhe = { workspace = true, features = [
     "boolean",
