@@ -89,6 +89,7 @@ impl<'a> KmsBlockchainImpl {
                         tracing::info!("🤠🤠🤠 Notifying waiting task");
                         let _ = sender.send(event); // Notify the waiting task
                     }
+                    //Should we store the event in responders if it's a dec event and it wasn't in responders ? Might mean there was a reace condition (or current GW didn't initiate the decryption)
                 }
             }
         });
@@ -170,9 +171,9 @@ impl<'a> KmsBlockchainImpl {
         &self,
         data_size: u32,
         operation: OperationValue,
-    ) -> anyhow::Result<Vec<KmsEvent>> {
+    ) -> anyhow::Result<KmsEvent> {
         let request = ExecuteContractRequest::builder()
-            .message(KmsMessage::builder().value(operation).build())
+            .message(KmsMessage::builder().value(operation.clone()).build())
             .gas_limit(10_000_000u64)
             .funds(vec![ProtoCoin::builder()
                 .denom("ucosm".to_string())
@@ -181,10 +182,12 @@ impl<'a> KmsBlockchainImpl {
             .build();
 
         let mut client = self.client.write().await;
+        // Broadcast the transaction so it gets picked up by a validator
         let response = self.call_execute_contract(&mut client, &request).await?;
 
         let resp;
         loop {
+            // Keep querying using the txhash to make sure it appeared on the blockchain
             let query_response = self.query_client.query_tx(response.txhash.clone()).await?;
             if let Some(qr) = query_response {
                 resp = qr;
@@ -195,12 +198,32 @@ impl<'a> KmsBlockchainImpl {
                 continue;
             }
         }
-        resp.events
+        let events = resp
+            .events
             .iter()
             .filter(|x| KmsOperation::iter().any(|attr| x.r#type == format!("wasm-{}", attr)))
             .map(to_event)
             .map(<cosmwasm_std::Event as TryInto<KmsEvent>>::try_into)
-            .collect::<Result<Vec<KmsEvent>, _>>()
+            .collect::<Result<Vec<KmsEvent>, _>>()?;
+
+        // At this point evs should contain a single event
+        if events.len() != 1 {
+            return Err(anyhow!(
+                "Expected a single KmsEvent, but received: {:?}",
+                events
+            ));
+        }
+        let ev = events[0].clone();
+        let expected_kms_op = <OperationValue as std::convert::Into<KmsOperation>>::into(operation);
+        // Make sure this is indeed the expected event
+        if ev.operation != expected_kms_op {
+            return Err(anyhow!(
+                "Expected a {:?} , but received: {:?}",
+                expected_kms_op,
+                ev
+            ));
+        }
+        Ok(ev)
     }
 
     async fn store_ciphertext(&self, ctxt: Vec<u8>) -> anyhow::Result<Vec<u8>> {
@@ -587,12 +610,11 @@ impl Blockchain for KmsBlockchainImpl {
         // send coins 1:1 with the ciphertext size
         tracing::info!("🍊 Decrypting ciphertexts of total size: {:?}", total_size);
 
-        let evs = self
+        // Execute the smart contract and wait for the Tx to appear in a block.
+        // Returns the corresponding KmsEvent of this transaction
+        let ev = self
             .make_req_to_kms_blockchain(total_size, operation)
             .await?;
-
-        // TODO what if we have multiple events?
-        let ev = evs[0].clone();
 
         tracing::info!("✉️ TxId: {:?}", ev.txn_id().to_hex(),);
 
@@ -600,8 +622,31 @@ impl Blockchain for KmsBlockchainImpl {
             "🍊 Waiting for callback from KMS, txn_id: {:?}",
             ev.txn_id().to_hex()
         );
+
+        // NOTE: Might be an (unlikely) race condition between calls:
+        // make_req_to_kms_blockchain and wait_for_transaction
+        //
+        // i.e. What if the response tx has already been emited
+        // before we were monitoring for it ?
+        // Why not decouple the way in from the way back ?
+        // Should Any GW be allowed/able to pick up a dec event from the ASC even if
+        // it didn't initiate this specific decryption ?
+        //
+        // (This isn't possible for e.g. reencryption as we need an open connection with the client though, but otoh, for reencryption client can always retry upon failure)
+
+        // We now wait for an event to be emitted by the ASC that contains the same ID
+        // our decryption event had.
+        // i.e. We expect the corresponding DecryptResponse event
         let event = self.wait_for_transaction(ev.txn_id()).await?;
+        if event.operation != KmsOperation::DecryptResponse {
+            return Err(anyhow!(
+                "Expected to receive a DecryptResponse, but received {:?}",
+                event
+            ));
+        }
         tracing::info!("🍊 Received callback from KMS: {:?}", event.txn_id());
+        // Because we have seen the event, we now know that the result is ready to be queried
+        // so we query the GetOperationsValue endpoint of the ASC
         let request = QueryContractRequest::builder()
             .contract_address(self.config.kms.contract_address.to_string())
             .query(ContractQuery::GetOperationsValue(
@@ -856,12 +901,9 @@ impl Blockchain for KmsBlockchainImpl {
         // send coins 1:1 with the ciphertext size
         let data_size = footprint::extract_ciphertext_size(&ctxt_handle);
         tracing::info!("🍊 Reencrypting ciphertext of size: {:?}", data_size);
-        let evs = self
+        let ev = self
             .make_req_to_kms_blockchain(data_size, operation)
             .await?;
-
-        // TODO what if we have multiple events?
-        let ev = evs[0].clone();
 
         tracing::info!("✉️ TxId: {:?}", ev.txn_id().to_hex(),);
 
@@ -870,6 +912,13 @@ impl Blockchain for KmsBlockchainImpl {
             ev.txn_id().to_hex()
         );
         let event = self.wait_for_transaction(ev.txn_id()).await?;
+        if event.operation != KmsOperation::ReencryptResponse {
+            return Err(anyhow!(
+                "Expected to receive a ReencryptResponse, but received {:?}",
+                event
+            ));
+        }
+
         tracing::info!("🍊 Received callback from KMS: {:?}", event.txn_id());
         let request = QueryContractRequest::builder()
             .contract_address(self.config.kms.contract_address.to_string())
@@ -982,12 +1031,9 @@ impl Blockchain for KmsBlockchainImpl {
         let data_size = footprint::extract_ciphertext_size(&ct_proof_handle);
         tracing::info!("🍊 Verify proven ciphertext of size: {:?}", data_size);
         // TODO how do we handle payment of verify proven ct validation?
-        let evs = self
+        let ev = self
             .make_req_to_kms_blockchain(data_size, operation)
             .await?;
-
-        // TODO what if we have multiple events?
-        let ev = evs[0].clone();
 
         tracing::info!("✉️ TxId: {:?}", ev.txn_id().to_hex(),);
 
@@ -996,6 +1042,12 @@ impl Blockchain for KmsBlockchainImpl {
             ev.txn_id().to_hex()
         );
         let event = self.wait_for_transaction(ev.txn_id()).await?;
+        if event.operation != KmsOperation::VerifyProvenCtResponse {
+            return Err(anyhow!(
+                "Expected to receive a VerifyProvenCtResponse, but received {:?}",
+                event
+            ));
+        }
         tracing::info!("🍊 Received callback from KMS: {:?}", event.txn_id());
         let request = QueryContractRequest::builder()
             .contract_address(self.config.kms.contract_address.to_string())

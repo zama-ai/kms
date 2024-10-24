@@ -26,7 +26,6 @@ use actix_web::{web, HttpResponse};
 use async_trait::async_trait;
 use ethers::prelude::*;
 use ethers::providers::{Provider, Ws};
-use ethers::types::U256;
 use events::kms::KmsEvent;
 use events::kms::ReencryptResponseValues;
 use events::HexVector;
@@ -232,11 +231,13 @@ impl RunnablePublisher<DecryptionEvent> for DecryptionEventPublisher {
         info!("last_block: {last_block}");
 
         debug!("last_block: {last_block}");
-        let mut last_request_id = U256::zero();
-        debug!("last_request_id: {last_request_id}");
+        let mut last_request_id = None;
         let mut stream = self.provider.subscribe_blocks().await.unwrap();
         while let Some(block) = stream.next().await {
-            info!("🧱 block number: {}", block.number.unwrap());
+            info!(
+                "(DecryptionEventPublisher) 🧱 block number: {}",
+                block.number.unwrap()
+            );
 
             // process any EventDecryption logs
             let events = self
@@ -256,8 +257,15 @@ impl RunnablePublisher<DecryptionEvent> for DecryptionEventPublisher {
                 let _ = self.atomic_height.try_update(block_number);
                 let event_decryption: EventDecryptionFilter =
                     EthLogDecode::decode_log(&log.clone().into()).unwrap();
-                if event_decryption.request_id > last_request_id {
-                    last_request_id = event_decryption.request_id;
+
+                //TODO: This check seems incompatible with potential reorg,
+                //see https://github.com/zama-ai/kms-core/issues/1245
+
+                //Counting on lazy evaluation of the or to have never failing unwraps
+                if last_request_id.is_none()
+                    || event_decryption.request_id > last_request_id.unwrap()
+                {
+                    last_request_id = Some(event_decryption.request_id);
                     info!("⭐ event_decryption: {:?}", event_decryption.request_id);
                     debug!("EventDecryptionFilter: {:?}", event_decryption);
 
