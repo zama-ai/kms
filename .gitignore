@@ -16,3 +16,6 @@
 .wallet
 .cargo/advisory-db
 .cargo/advisory-db..lock
+kms-core.sublime-project
+kms-core.sublime-workspace
+/artifacts
