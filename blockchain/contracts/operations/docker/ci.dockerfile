@@ -36,11 +36,17 @@ RUN cargo build --target wasm32-unknown-unknown --release --lib \
 # building from source which saves CPU time and io
 RUN curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
 
-# Install wasm-opt with specific version and no confirmation prompt
-RUN cargo binstall wasm-opt@0.116.1 \
+# Install wasm-opt with architecture detection (amd | arm), specific version and no confirmation prompt
+RUN ARCH=$(uname -m); \
+    case "$ARCH" in \
+        "x86_64") TARGET="x86_64-unknown-linux-musl" ;; \
+        "aarch64") TARGET="aarch64-unknown-linux-musl" ;; \
+        *) echo "Unsupported architecture: $ARCH" && exit 1 ;; \
+    esac && \
+    cargo binstall wasm-opt@0.116.1 \
     --no-confirm \
     --force \
-    --target x86_64-unknown-linux-musl
+    --target $TARGET
 
 # Create optimized directory
 RUN mkdir -p /app/optimized
