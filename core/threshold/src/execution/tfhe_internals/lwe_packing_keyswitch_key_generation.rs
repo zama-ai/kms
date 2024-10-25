@@ -46,7 +46,6 @@ where
     {
         // We fill the buffer with the powers of the key elements
         for level_message in (1..=decomp_level_count.0)
-            .rev()
             .map(DecompositionLevel)
             .zip_longest(decomposition_plaintexts_buffer.chunks_exact_mut(polynomial_size.0))
         {

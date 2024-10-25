@@ -1315,10 +1315,10 @@ pub mod tests {
         );
     }
 
-    ///Tests related to [`BC_PARAMS_SAM_SNS`]
+    ///Tests related to [`BC_PARAMS_SAM_NO_SNS`]
     #[test]
     #[ignore]
-    fn keygen_params_blockchain_with_sns() {
+    fn keygen_params_blockchain_without_sns() {
         let params = BC_PARAMS_SAM_NO_SNS;
         let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
