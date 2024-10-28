@@ -175,36 +175,37 @@ where
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use cosmwasm_std::{testing::MockStorage, Order, StdError};
-
     // Build an "old" version of a dummy struct and define a CosmWasm storage struct from it
-    mod old_version {
+    pub(crate) mod v0 {
+        use cosmwasm_schema::cw_serde;
         use serde::{Deserialize, Serialize};
         use tfhe_versionable::{Versionize, VersionsDispatch};
 
         use super::super::{VersionedItem, VersionedMap};
 
         #[derive(Serialize, Deserialize, VersionsDispatch)]
-        pub(super) enum MyStructVersioned {
+        pub(crate) enum MyStructVersioned {
             V0(MyStruct),
         }
 
-        #[derive(Serialize, Clone, Deserialize, Versionize)]
+        #[cw_serde]
+        #[derive(Versionize)]
         #[versionize(MyStructVersioned)]
-        pub(super) struct MyStruct {
+        pub(crate) struct MyStruct {
             pub attribute_0: String,
         }
 
         impl MyStruct {
-            pub(super) fn new(string_value: &str) -> Self {
+            pub(crate) fn new(string_value: &str) -> Self {
                 Self {
                     attribute_0: string_value.to_string(),
                 }
             }
         }
 
-        pub(super) struct VersionedStorage {
+        pub(crate) struct VersionedStorage {
             pub my_versioned_map: VersionedMap<Vec<u8>, MyStruct>,
             pub my_versioned_item: VersionedItem<MyStruct>,
         }
@@ -221,7 +222,8 @@ mod tests {
 
     // Build a "new" version of the "old" dummy struct from above and define a new CosmWasm storage
     // struct from it
-    mod new_version {
+    pub(crate) mod v1 {
+        use cosmwasm_schema::cw_serde;
         use serde::{Deserialize, Serialize};
         use std::convert::Infallible;
         use tfhe_versionable::{Upgrade, Version, Versionize, VersionsDispatch};
@@ -229,13 +231,14 @@ mod tests {
         use super::super::{VersionedItem, VersionedMap};
 
         #[derive(Serialize, Deserialize, VersionsDispatch)]
-        pub(super) enum MyStructVersioned<T: Default> {
+        pub(crate) enum MyStructVersioned<T: Default> {
             V0(MyStructV0),
             V1(MyStruct<T>),
         }
 
-        #[derive(Serialize, Clone, Deserialize, Version)]
-        pub(super) struct MyStructV0 {
+        #[cw_serde]
+        #[derive(Version)]
+        pub(crate) struct MyStructV0 {
             pub attribute_0: String,
         }
 
@@ -250,15 +253,16 @@ mod tests {
             }
         }
 
-        #[derive(Serialize, Clone, Deserialize, Versionize, Debug)]
+        #[cw_serde]
+        #[derive(Versionize)]
         #[versionize(MyStructVersioned)]
-        pub(super) struct MyStruct<T: Default> {
+        pub(crate) struct MyStruct<T: Default> {
             pub attribute_0: String,
             pub attribute_1: T,
         }
 
         impl<T: Default> MyStruct<T> {
-            pub(super) fn new(new_str: &str) -> Self {
+            pub(crate) fn new(new_str: &str) -> Self {
                 Self {
                     attribute_0: new_str.to_string(),
                     attribute_1: T::default(),
@@ -274,7 +278,7 @@ mod tests {
             }
         }
 
-        pub(super) struct VersionedStorage {
+        pub(crate) struct VersionedStorage {
             pub my_versioned_map: VersionedMap<Vec<u8>, MyStruct<u8>>,
             pub my_versioned_item: VersionedItem<MyStruct<u8>>,
         }
@@ -288,7 +292,6 @@ mod tests {
                 }
             }
         }
-
         // Define a "broken" CosmWasm storage struct that uses a different namespace
         pub(super) struct BrokenVersionedStorage {
             pub my_versioned_map: VersionedMap<Vec<u8>, MyStruct<u8>>,
@@ -308,14 +311,14 @@ mod tests {
     #[test]
     fn test_versioned_map_load() {
         // Create an old VersionedStorage instance
-        let old_versioned_storage = old_version::VersionedStorage::default();
+        let old_versioned_storage = v0::VersionedStorage::default();
 
         let dyn_store = &mut MockStorage::new();
 
         // Build an old struct
         let test_key = b"test_key".to_vec();
         let test_value = "test_value";
-        let my_old_struct = old_version::MyStruct::new(test_value);
+        let my_old_struct = v0::MyStruct::new(test_value);
 
         // Insert the old struct into the old storage
         old_versioned_storage
@@ -324,7 +327,7 @@ mod tests {
             .expect("Failed to save old struct");
 
         // Create a new VersionedStorage instance
-        let new_versioned_storage = new_version::VersionedStorage::default();
+        let new_versioned_storage = v1::VersionedStorage::default();
 
         // Load the new struct using the new VersionedStorage, the same key and the same CosmWasm storage
         let my_new_struct = new_versioned_storage
@@ -340,7 +343,7 @@ mod tests {
 
         // Create a new broken VersionedStorage instance (defines the same value map but with a
         // different namespace)
-        let broken_versioned_storage = new_version::BrokenVersionedStorage::default();
+        let broken_versioned_storage = v1::BrokenVersionedStorage::default();
 
         // Load the new struct using the new VersionedStorage, the same key and the same CosmWasm storage
         // Since the value map's namespace is different, the struct associated to the key cannot be
@@ -355,13 +358,13 @@ mod tests {
     #[test]
     fn test_versioned_item_load() {
         // Create an old VersionedStorage instance
-        let old_versioned_storage = old_version::VersionedStorage::default();
+        let old_versioned_storage = v0::VersionedStorage::default();
 
         let dyn_store = &mut MockStorage::new();
 
         // Build an old struct
         let test_value = "test_value";
-        let my_old_struct = old_version::MyStruct::new(test_value);
+        let my_old_struct = v0::MyStruct::new(test_value);
 
         // Insert the old struct into the old storage
         old_versioned_storage
@@ -370,7 +373,7 @@ mod tests {
             .expect("Failed to save old struct");
 
         // Create a new VersionedStorage instance
-        let new_versioned_storage = new_version::VersionedStorage::default();
+        let new_versioned_storage = v1::VersionedStorage::default();
 
         // Load the new struct using the new VersionedStorage and the same CosmWasm storage
         let my_new_struct = new_versioned_storage
@@ -386,7 +389,7 @@ mod tests {
 
         // Create a new broken VersionedStorage instance (defines the same value map but with a
         // different namespace)
-        let broken_versioned_storage = new_version::BrokenVersionedStorage::default();
+        let broken_versioned_storage = v1::BrokenVersionedStorage::default();
 
         // Load the new struct using the new VersionedStorage, the same key and the same CosmWasm storage
         // Since the value map's namespace is different, the struct cannot be found within this
@@ -401,14 +404,14 @@ mod tests {
     #[test]
     fn test_versioned_map_update() {
         // Create an old VersionedStorage instance
-        let old_versioned_storage = old_version::VersionedStorage::default();
+        let old_versioned_storage = v0::VersionedStorage::default();
 
         let dyn_store = &mut MockStorage::new();
 
         // Build an old struct
         let test_key = b"test_key".to_vec();
         let test_value = "test_value";
-        let my_old_struct = old_version::MyStruct::new(test_value);
+        let my_old_struct = v0::MyStruct::new(test_value);
 
         // Insert the old struct into the old storage
         old_versioned_storage
@@ -417,7 +420,7 @@ mod tests {
             .expect("Failed to save old struct");
 
         // Create a new VersionedStorage instance
-        let new_versioned_storage = new_version::VersionedStorage::default();
+        let new_versioned_storage = v1::VersionedStorage::default();
 
         let new_prefix = "updated_";
 
@@ -427,10 +430,10 @@ mod tests {
             .my_versioned_map
             .update(dyn_store, test_key.clone(), |my_struct| {
                 my_struct.map_or_else(
-                    || Ok(new_version::MyStruct::default()),
+                    || Ok(v1::MyStruct::default()),
                     |mut my_struct| {
                         my_struct.add_prefix(new_prefix);
-                        Ok(my_struct) as Result<new_version::MyStruct<u8>, StdError>
+                        Ok(my_struct) as Result<v1::MyStruct<u8>, StdError>
                     },
                 )
             })
@@ -454,13 +457,13 @@ mod tests {
     #[test]
     fn test_versioned_item_update() {
         // Create an old VersionedStorage instance
-        let old_versioned_storage = old_version::VersionedStorage::default();
+        let old_versioned_storage = v0::VersionedStorage::default();
 
         let dyn_store = &mut MockStorage::new();
 
         // Build an old struct
         let test_value = "test_value";
-        let my_old_struct = old_version::MyStruct::new(test_value);
+        let my_old_struct = v0::MyStruct::new(test_value);
 
         // Insert the old struct into the old storage
         old_versioned_storage
@@ -469,7 +472,7 @@ mod tests {
             .expect("Failed to save old struct");
 
         // Create a new VersionedStorage instance
-        let new_versioned_storage = new_version::VersionedStorage::default();
+        let new_versioned_storage = v1::VersionedStorage::default();
 
         let new_prefix = "updated_";
 
@@ -479,7 +482,7 @@ mod tests {
             .my_versioned_item
             .update(dyn_store, |mut my_struct| {
                 my_struct.add_prefix(new_prefix);
-                Ok(my_struct) as Result<new_version::MyStruct<u8>, StdError>
+                Ok(my_struct) as Result<v1::MyStruct<u8>, StdError>
             })
             .unwrap_or_else(|e| panic!("Failed to update struct from new storage: {}", e));
 
@@ -501,14 +504,14 @@ mod tests {
     #[test]
     fn test_versioned_range() {
         // Create an old VersionedStorage instance
-        let old_versioned_storage = old_version::VersionedStorage::default();
+        let old_versioned_storage = v0::VersionedStorage::default();
 
         let dyn_store = &mut MockStorage::new();
 
         // Build an old struct
         let old_test_key = b"old_test_key".to_vec();
         let old_test_value = "old_test_value";
-        let my_old_struct = old_version::MyStruct::new(old_test_value);
+        let my_old_struct = v0::MyStruct::new(old_test_value);
 
         // Insert the old struct into the old storage
         old_versioned_storage
@@ -517,12 +520,12 @@ mod tests {
             .expect("Failed to save old struct");
 
         // Create a new VersionedStorage instance
-        let new_versioned_storage = new_version::VersionedStorage::default();
+        let new_versioned_storage = v1::VersionedStorage::default();
 
         // Build a new struct
         let new_test_key = b"new_test_key".to_vec();
         let new_test_value = "new_test_value";
-        let my_new_struct = new_version::MyStruct::new(new_test_value);
+        let my_new_struct = v1::MyStruct::new(new_test_value);
 
         // Insert the new struct into the new storage
         new_versioned_storage

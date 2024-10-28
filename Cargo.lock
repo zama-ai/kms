@@ -941,6 +941,7 @@ dependencies = [
  "cw-multi-test",
  "cw-storage-plus",
  "cw-utils",
+ "cw2",
  "ed25519-consensus",
  "events",
  "hex",
@@ -3138,6 +3139,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "cw2"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b04852cd38f044c0751259d5f78255d07590d136b8a86d4e09efdd7666bd6d27"
+dependencies = [
+ "cosmwasm-schema",
+ "cosmwasm-std",
+ "cw-storage-plus",
+ "schemars",
+ "semver 1.0.23",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "dashmap"
 version = "6.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3780,6 +3796,7 @@ dependencies = [
  "aipsc",
  "cosmwasm-schema",
  "cosmwasm-std",
+ "cw2",
  "ethereum-inclusion-proofs",
  "hex",
  "prost 0.12.6",
@@ -8916,6 +8933,7 @@ dependencies = [
  "cw-multi-test",
  "cw-storage-plus",
  "cw-utils",
+ "cw2",
  "events",
  "hex",
  "ics23",

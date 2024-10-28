@@ -18,6 +18,7 @@ mock = []
 aipsc = { path = "../aipsc" }
 cosmwasm-schema.workspace = true
 cosmwasm-std.workspace = true
+cw2.workspace = true
 hex = { version = "0.4.3", features = ["serde"] }
 prost.workspace = true
 schemars.workspace = true

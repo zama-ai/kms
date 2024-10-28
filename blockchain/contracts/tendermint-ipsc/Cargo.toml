@@ -23,6 +23,7 @@ cosmwasm-std.workspace = true
 cw-controllers.workspace = true
 cw-storage-plus.workspace = true
 cw-utils.workspace = true
+cw2.workspace = true
 events = { path = "../../events" , version = "0.9.0-rc19" }
 hex = { version = "0.4.3", features = ["serde"] }
 ics23 = "0.11.1"

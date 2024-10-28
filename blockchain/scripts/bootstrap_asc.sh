@@ -152,14 +152,14 @@ echo "Ethereum IPSC code ID: ${TM_IPSC_ETHEREUM_CODE_ID}"
 
 # Instantiate the IPSC smart contracts
 echo "Instantiating IPSC Ethermint"
-TM_IPSC_ETHERMINT_INST_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${TM_IPSC_ETHERMINT_CODE_ID}" '{}' --label "tendermint-ipsc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin | jq -r '.txhash')
+TM_IPSC_ETHERMINT_INST_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${TM_IPSC_ETHERMINT_CODE_ID}" '{}' --label "tendermint-ipsc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --admin "${VALIDATOR_ADDRESS}" | jq -r '.txhash')
 export TM_IPSC_ETHERMINT_INST_TX_HASH
 echo "TM_IPSC_ETHERMINT_INST_TX_HASH: ${TM_IPSC_ETHERMINT_INST_TX_HASH}"
 
 sleep 6
 
 echo "Instantiating IPSC Ethereum"
-TM_IPSC_ETHEREUM_INST_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${TM_IPSC_ETHEREUM_CODE_ID}" '{}' --label "ethereum-ipsc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin | jq -r '.txhash')
+TM_IPSC_ETHEREUM_INST_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${TM_IPSC_ETHEREUM_CODE_ID}" '{}' --label "ethereum-ipsc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --admin "${VALIDATOR_ADDRESS}" | jq -r '.txhash')
 export TM_IPSC_ETHEREUM_INST_TX_HASH
 echo "TM_IPSC_ETHEREUM_INST_TX_HASH: ${TM_IPSC_ETHEREUM_INST_TX_HASH}"
 
@@ -203,34 +203,34 @@ echo "Instantiating ASCs"
 if [ "$MODE" = "threshold" ]; then
   # run in threshold mode
   echo "Instantiating threshold ASC debug"
-  ASC_INST_DEBUG_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": true, "verify_proof_contract_addr": "dummy",  "kms_core_conf": { "threshold": {"parties":[{"party_id": "01", "address": ""}, {"party_id": "02", "address": ""}, {"party_id": "03", "address": ""}, {"party_id": "04", "address": ""}], "response_count_for_majority_vote": 3, "response_count_for_reconstruction": 3, "degree_for_reconstruction": 1, "param_choice": "test"}}, "allow_list_conf":{"allow_list": ["'"${CONN_ADDRESS}"'"]} }' --label "asc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin | jq -r '.txhash')
+  ASC_INST_DEBUG_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": true, "verify_proof_contract_addr": "dummy",  "kms_core_conf": { "threshold": {"parties":[{"party_id": "01", "address": ""}, {"party_id": "02", "address": ""}, {"party_id": "03", "address": ""}, {"party_id": "04", "address": ""}], "response_count_for_majority_vote": 3, "response_count_for_reconstruction": 3, "degree_for_reconstruction": 1, "param_choice": "test"}}, "allow_list_conf":{"allow_list": ["'"${CONN_ADDRESS}"'"]} }' --label "asc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --admin "${VALIDATOR_ADDRESS}" | jq -r '.txhash')
 
   sleep 6
 
   echo "Instantiating threshold ASC Ethermint"
-  ASC_INST_ETHERMINT_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": false, "verify_proof_contract_addr": "'${IPSC_ETHERMINT_ADDRESS}'",  "kms_core_conf": { "threshold": {"parties":[{"party_id": "01", "address": ""}, {"party_id": "02", "address": ""}, {"party_id": "03", "address": ""}, {"party_id": "04", "address": ""}], "response_count_for_majority_vote": 3, "response_count_for_reconstruction": 3, "degree_for_reconstruction": 1, "param_choice": "test"}}, "allow_list_conf":{"allow_list": ["'"${CONN_ADDRESS}"'"]} }' --label "asc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin | jq -r '.txhash')
+  ASC_INST_ETHERMINT_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": false, "verify_proof_contract_addr": "'${IPSC_ETHERMINT_ADDRESS}'",  "kms_core_conf": { "threshold": {"parties":[{"party_id": "01", "address": ""}, {"party_id": "02", "address": ""}, {"party_id": "03", "address": ""}, {"party_id": "04", "address": ""}], "response_count_for_majority_vote": 3, "response_count_for_reconstruction": 3, "degree_for_reconstruction": 1, "param_choice": "test"}}, "allow_list_conf":{"allow_list": ["'"${CONN_ADDRESS}"'"]} }' --label "asc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --admin "${VALIDATOR_ADDRESS}" | jq -r '.txhash')
 
   sleep 6
 
   echo "Instantiating threshold ASC Ethereum"
-  ASC_INST_ETHEREUM_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": false, "verify_proof_contract_addr": "'${IPSC_ETHEREUM_ADDRESS}'",  "kms_core_conf": { "threshold": {"parties":[{"party_id": "01", "address": ""}, {"party_id": "02", "address": ""}, {"party_id": "03", "address": ""}, {"party_id": "04", "address": ""}], "response_count_for_majority_vote": 3, "response_count_for_reconstruction": 3, "degree_for_reconstruction": 1, "param_choice": "test"}}, "allow_list_conf":{"allow_list": ["'"${CONN_ADDRESS}"'"]} }' --label "asc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin | jq -r '.txhash')
+  ASC_INST_ETHEREUM_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": false, "verify_proof_contract_addr": "'${IPSC_ETHEREUM_ADDRESS}'",  "kms_core_conf": { "threshold": {"parties":[{"party_id": "01", "address": ""}, {"party_id": "02", "address": ""}, {"party_id": "03", "address": ""}, {"party_id": "04", "address": ""}], "response_count_for_majority_vote": 3, "response_count_for_reconstruction": 3, "degree_for_reconstruction": 1, "param_choice": "test"}}, "allow_list_conf":{"allow_list": ["'"${CONN_ADDRESS}"'"]} }' --label "asc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --admin "${VALIDATOR_ADDRESS}" | jq -r '.txhash')
 
   sleep 6
 
 elif [ "$MODE" = "centralized" ]; then
   # run in centralized mode
   echo "Instantiating centralized ASC debug"
-  ASC_INST_DEBUG_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": true, "verify_proof_contract_addr": "dummy", "kms_core_conf": { "centralized": {"param_choice": "default"} }, "allow_list_conf":{"allow_list": ["'"${CONN_ADDRESS}"'"]} }' --label "asc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin | jq -r '.txhash')
+  ASC_INST_DEBUG_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": true, "verify_proof_contract_addr": "dummy", "kms_core_conf": { "centralized": {"param_choice": "default"} }, "allow_list_conf":{"allow_list": ["'"${CONN_ADDRESS}"'"]} }' --label "asc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --admin "${VALIDATOR_ADDRESS}" | jq -r '.txhash')
 
   sleep 6
 
   echo "Instantiating centralized ASC Ethermint"
-  ASC_INST_ETHERMINT_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": false, "verify_proof_contract_addr": "'${IPSC_ETHERMINT_ADDRESS}'", "kms_core_conf": { "centralized": {"param_choice": "default"} }, "allow_list_conf":{"allow_list": ["'"${CONN_ADDRESS}"'"]} }' --label "asc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin | jq -r '.txhash')
+  ASC_INST_ETHERMINT_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": false, "verify_proof_contract_addr": "'${IPSC_ETHERMINT_ADDRESS}'", "kms_core_conf": { "centralized": {"param_choice": "default"} }, "allow_list_conf":{"allow_list": ["'"${CONN_ADDRESS}"'"]} }' --label "asc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --admin "${VALIDATOR_ADDRESS}" | jq -r '.txhash')
 
   sleep 6
 
   echo "Instantiating centralized ASC Ethereum"
-  ASC_INST_ETHEREUM_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": false, "verify_proof_contract_addr": "'${IPSC_ETHEREUM_ADDRESS}'", "kms_core_conf": { "centralized": {"param_choice": "default"} }, "allow_list_conf":{"allow_list": ["'"${CONN_ADDRESS}"'"]} }' --label "asc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin | jq -r '.txhash')
+  ASC_INST_ETHEREUM_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": false, "verify_proof_contract_addr": "'${IPSC_ETHEREUM_ADDRESS}'", "kms_core_conf": { "centralized": {"param_choice": "default"} }, "allow_list_conf":{"allow_list": ["'"${CONN_ADDRESS}"'"]} }' --label "asc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --admin "${VALIDATOR_ADDRESS}" | jq -r '.txhash')
 
   sleep 6
 else
