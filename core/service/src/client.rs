@@ -2921,7 +2921,8 @@ pub(crate) mod tests {
         let max_num_bits = if params.unwrap() == ParamChoice::Test {
             Some(1)
         } else {
-            None
+            // The default is 2048 which is too slow for tests, so we switch to 256
+            Some(256)
         };
         let ceremony_req = internal_client
             .crs_gen_request(request_id, max_num_bits, params)
@@ -3022,7 +3023,8 @@ pub(crate) mod tests {
         let max_num_bits = if params.unwrap() == ParamChoice::Test {
             Some(1)
         } else {
-            None
+            // The default is 2048 which is too slow for tests, so we switch to 256
+            Some(256)
         };
         let gen_req = internal_client
             .crs_gen_request(crs_req_id, max_num_bits, params)

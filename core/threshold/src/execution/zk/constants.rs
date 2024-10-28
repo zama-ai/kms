@@ -1,6 +1,8 @@
 use lazy_static::lazy_static;
 
-pub const ZK_DEFAULT_MAX_NUM_CLEARTEXT: usize = 256;
+// We default to the maximum number of bits for the largest
+// type that we support, which is `Euint2048`.
+pub const ZK_DEFAULT_MAX_NUM_CLEARTEXT: usize = 2048;
 
 //Need to be careful that one DSEP isn't the prefix of another
 pub const ZK_DSEP_HASH: [u8; 12] = *b"ZK_DSEP_HASH";
@@ -10,7 +12,7 @@ pub const ZK_DSEP_HASH_LMAP: [u8; 12] = *b"ZK_DSEP_LMAP";
 pub const ZK_DSEP_HASH_Z: [u8; 9] = *b"ZK_DSEP_Z";
 pub const ZK_DSEP_HASH_W: [u8; 9] = *b"ZK_DSEP_W";
 
-//Turn the above constants into types suitable for zk api
+// Turn the above constants into types suitable for zk api
 const ZK_DSEP_SIZE: usize = 256;
 lazy_static! {
     pub(crate) static ref ZK_DSEP_HASH_PADDED: [u8; ZK_DSEP_SIZE] = {

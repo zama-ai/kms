@@ -545,6 +545,8 @@ impl Plaintext {
     pub fn new(value: u128, fhe_type: FheType) -> Self {
         if fhe_type == FheType::Euint160
             || fhe_type == FheType::Euint256
+            || fhe_type == FheType::Euint512
+            || fhe_type == FheType::Euint1024
             || fhe_type == FheType::Euint2048
         {
             tracing::warn!(

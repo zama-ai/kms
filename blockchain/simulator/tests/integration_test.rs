@@ -131,7 +131,7 @@ async fn test_centralized(ctx: &mut DockerComposeCentralizedContext) {
             to_encrypt: 13_u8,
             compressed: true,
         }),
-        Command::CrsGen(CrsExecute { max_num_bits: 256 }),
+        Command::CrsGen(CrsExecute { max_num_bits: 1 }),
         Command::VerifyProvenCt(VerifyProvenCtExecute {
             to_encrypt: 41,
             crs_id: None,
@@ -147,7 +147,7 @@ async fn test_centralized(ctx: &mut DockerComposeCentralizedContext) {
 async fn test_threshold(ctx: &mut DockerComposeThresholdContext) {
     let commands = vec![
         Command::InsecureKeyGen(Nothing {}),
-        Command::CrsGen(CrsExecute { max_num_bits: 256 }),
+        Command::CrsGen(CrsExecute { max_num_bits: 1 }),
         Command::Decrypt(CryptExecute {
             to_encrypt: 7_u8,
             compressed: false,
