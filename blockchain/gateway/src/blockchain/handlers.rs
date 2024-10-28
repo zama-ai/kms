@@ -244,23 +244,27 @@ pub(crate) async fn handle_verify_proven_ct_event(
         tracing::error!(err_str);
         return Err(anyhow::anyhow!(err_str));
     }
+
     let mut chain_id_bytes = vec![0u8; 32];
     chain_id.to_big_endian(&mut chain_id_bytes);
 
-    let vc_hex = hex::encode(config.ethereum.kmsverifier_vc_address);
-    let acl_address = hex::encode(config.ethereum.acl_address);
+    let kms_verifier_address =
+        alloy_primitives::Address::from_slice(&config.ethereum.kmsverifier_vc_address.0)
+            .to_string();
+    let acl_address =
+        alloy_primitives::Address::from_slice(&config.ethereum.acl_address.0).to_string();
     let domain = Eip712DomainMsg {
         name: config.ethereum.kmsverifier_name.clone(),
         version: config.ethereum.kmsverifier_version.clone(),
         chain_id: chain_id_bytes,
-        verifying_contract: vc_hex,
+        verifying_contract: kms_verifier_address,
         salt: config.parse_eip712_salt(),
     };
 
     let verify_proven_ct_response_builder = blockchain
         .verify_proven_ct(
-            event.contract_address.clone(),
             event.caller_address.clone(),
+            event.contract_address.clone(),
             event.key_id.clone(),
             event.crs_id.clone(),
             event.ct_proof.0.clone(),

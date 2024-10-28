@@ -283,8 +283,8 @@ fn convert_proven_ct_to_copro_input(
     vec![InputToUpload {
         input_payload: event.ct_proof.0.clone(),
         contract_address: event.contract_address.clone(),
-        caller_address: event.caller_address.clone(),
-        signature: kms_signatures.clone().into(),
+        user_address: event.caller_address.clone(),
+        signatures: kms_signatures.clone().into(),
     }]
 }
 

@@ -537,7 +537,7 @@ async fn fetch_ethereum_proof(cipher_text_handle: Vec<u8>, config: EthereumConfi
     let mut proof_encoded = Vec::new();
     proof_result.encode(&mut proof_encoded).unwrap();
     let proof_encoded = hex::encode(proof_encoded.clone());
-    println!("\nProof Encoded in hex: {:?}\n", proof_encoded);
+    tracing::info!("Proof Encoded in hex: {:?}", proof_encoded);
     proof_encoded
 }
 
@@ -970,6 +970,9 @@ impl Blockchain for KmsBlockchainImpl {
         }
     }
 
+    /// * `client_address`: it has the EIP-55 format, prefixed with 0x
+    /// * `contract_address`: it has the EIP-55 format, prefixed with 0x
+    ///
     /// Returns a [`HexVectorList`]
     /// filled with the kms_signatures
     /// (as that is the only info the KMS Blockchain provides)
@@ -985,8 +988,8 @@ impl Blockchain for KmsBlockchainImpl {
     ) -> anyhow::Result<HexVectorList> {
         tracing::info!(
             "🔒 Verify proven ct with client_address: {:?}, contract_address: {:?}, key_id: {:?}, crs_id: {:?}, chain_id: {:?}",
-            hex::encode(&client_address),
-            hex::encode(&contract_address),
+            &client_address,
+            &contract_address,
             key_id_str,
             crs_id_str,
             eip712_domain.chain_id
@@ -1002,14 +1005,6 @@ impl Blockchain for KmsBlockchainImpl {
             crs_id.to_hex(),
             hex::encode(&ct_proof_handle),
         );
-
-        // convert user_address to verification_key
-        if client_address.len() != 20 {
-            return Err(anyhow::anyhow!(
-                "user_address {} bytes but 20 bytes is expected",
-                client_address.len()
-            ));
-        }
 
         let proven_ct_values = VerifyProvenCtValues::new(
             crs_id,
@@ -1099,6 +1094,11 @@ impl Blockchain for KmsBlockchainImpl {
         let key_ops = self
             .get_old_operations(KmsOperation::KeyGenResponse)
             .await?;
+        if key_ops.is_empty() {
+            tracing::warn!("key_ops is empty");
+        } else {
+            tracing::info!("got {} key_ops", key_ops.len());
+        }
         let key_data = KmsBlockchainImpl::parse_signed_key_data(key_ops)?;
         let mut fhe_url_info = Vec::new();
         for (key_id, (param, pk_sigs, server_sigs)) in key_data.iter() {
@@ -1114,6 +1114,11 @@ impl Blockchain for KmsBlockchainImpl {
         let crs_ops = self
             .get_old_operations(KmsOperation::CrsGenResponse)
             .await?;
+        if crs_ops.is_empty() {
+            tracing::warn!("crs_ops is empty");
+        } else {
+            tracing::info!("got {} crs_ops", crs_ops.len());
+        }
         let crs_data = KmsBlockchainImpl::parse_signed_crs_data(crs_ops)?;
         let crs = KmsBlockchainImpl::get_crs_info(&self.config.kms.public_storage, &crs_data)?;
 

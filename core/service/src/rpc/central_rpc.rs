@@ -916,6 +916,7 @@ where
         assemble_metadata_req(&req),
         "Error assembling ZKP metadata".to_string(),
     )?;
+
     let (send, recv) = tokio::sync::oneshot::channel();
     rayon::spawn(move || {
         let ok = verify_ct_proofs(&proven_ct, &pp, &wrapped_pk, &metadata);
@@ -925,11 +926,11 @@ where
         tracing::error!("channel error for key handle {} ({e})", key_handle);
     })?;
 
+    let ct_digest = keccak256(&req.ct_bytes).to_vec();
     if signature_ok {
         // REMARK: usually we should use `serialize_hash_element(proven_ct)`
         // but because the hash is checked on chain, we'll use keccak,
         // which is what is supported in solidity.
-        let ct_digest = keccak256(&req.ct_bytes).to_vec();
 
         let external_signature =
             compute_external_verify_proven_ct_signature(client_sk, &ct_digest, &req)?;
@@ -946,12 +947,15 @@ where
 
         Ok(payload)
     } else {
-        let e = format!(
+        tracing::error!(
+            "verification failed using medatata: {:x?} and digest {:x?}",
+            &metadata,
+            &ct_digest
+        );
+        Err(anyhow_error_and_log(format!(
             "proven ciphertext verification failed for ciphertext request: {}",
             request_id
-        );
-        tracing::error!(e);
-        Err(anyhow::anyhow!(e))
+        )))
     }
 }
 

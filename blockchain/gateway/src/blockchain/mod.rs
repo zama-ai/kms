@@ -73,7 +73,7 @@ pub(crate) trait Blockchain: KmsEventSubscriber {
     async fn verify_proven_ct(
         &self,
         client_address: String,
-        caller_address: String,
+        contract_address: String,
         key_id_str: String,
         crs_id_str: String,
         ct_proof: Vec<u8>,

@@ -11,7 +11,6 @@ import "common.proto";
 
 service FhevmCoprocessor {
   rpc AsyncCompute (AsyncComputeRequest) returns (GenericResponse) {}
-  rpc WaitComputations (AsyncComputeRequest) returns (FhevmResponses) {}
   rpc UploadInputs (InputUploadBatch) returns (InputUploadResponse) {}
   rpc GetCiphertexts (GetCiphertextBatch) returns (GetCiphertextResponse) {}
   rpc TrivialEncryptCiphertexts (TrivialEncryptBatch) returns (GenericResponse) {}
@@ -62,8 +61,8 @@ message AsyncComputationInput {
 message InputToUpload {
   bytes input_payload = 1;
   string contract_address = 2;
-  string caller_address = 3;
-  repeated bytes signature = 4;
+  string user_address = 3;
+  repeated bytes signatures = 4;
 }
 
 message InputCiphertextResponseHandle {
@@ -72,11 +71,13 @@ message InputCiphertextResponseHandle {
 }
 
 message InputCiphertextResponse {
-  repeated InputCiphertextResponseHandle input_handles = 1;
-  string eip712ContractAddress = 2;
-  string eip712CallerAddress = 3;
-  string eip712SignerAddress = 4;
-  bytes eip712Signature = 5;
+  string aclAddress = 1;
+  bytes hashOfCiphertext = 2;
+  repeated InputCiphertextResponseHandle input_handles = 3;
+  string contractAddress = 5;
+  string userAddress = 6;
+  string signerAddress = 7;
+  bytes eip712Signature = 8;
 }
 
 message InputUploadResponse {
