@@ -8,7 +8,7 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-config = "0.14.0"
+config = "0.14.1"
 lazy_static = "1.5"
 opentelemetry = "0.23"
 opentelemetry-http = "0.12"
