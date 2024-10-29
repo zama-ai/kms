@@ -1640,6 +1640,54 @@ pub struct TransactionEvent {
     pub event: KmsEvent,
 }
 
+#[derive(Debug, Display, EnumString)]
+#[strum(serialize_all = "lowercase")]
+pub enum MigrationStatus {
+    Success,
+    #[strum(serialize = "in progress")]
+    InProgress,
+    Failed,
+}
+
+#[derive(Debug)]
+pub struct MigrationEvent {
+    from_version: String,
+    to_version: String,
+    status: MigrationStatus,
+}
+
+impl MigrationEvent {
+    pub fn new(from_version: String, to_version: String) -> Self {
+        Self {
+            from_version,
+            to_version,
+            status: MigrationStatus::InProgress,
+        }
+    }
+
+    pub fn update_status(&mut self, status: MigrationStatus) {
+        self.status = status;
+    }
+
+    pub fn set_success(&mut self) {
+        self.status = MigrationStatus::Success;
+    }
+
+    pub fn set_failed(&mut self) {
+        self.status = MigrationStatus::Failed;
+    }
+}
+
+impl From<MigrationEvent> for Event {
+    fn from(event: MigrationEvent) -> Self {
+        Event::new("migration").add_attributes([
+            ("from_version", event.from_version),
+            ("to_version", event.to_version),
+            ("status", event.status.to_string()),
+        ])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

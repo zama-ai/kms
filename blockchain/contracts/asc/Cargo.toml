@@ -28,6 +28,7 @@ sylvia.workspace = true
 sylvia-derive.workspace = true
 tfhe-versionable.workspace = true
 wee_alloc = "0.4.5"
+semver = "1.0.23"
 
 [dev-dependencies]
 aipsc = { path = "../aipsc" }

@@ -1,15 +1,15 @@
 use crate::proof::strategy::TendermintProofStrategy;
 use aipsc::contract::InclusionProofContract;
-use cosmwasm_std::{Response, StdError, StdResult};
+use anyhow::{anyhow, Error};
+use cosmwasm_std::{Event, Response, StdError, StdResult};
 use cw2::{ensure_from_older_version, set_contract_version};
+use events::kms::MigrationEvent;
+use prost::Message;
+use sha3::{Digest, Keccak256};
 use sylvia::{
     contract, entry_points,
     types::{ExecCtx, InstantiateCtx, MigrateCtx},
 };
-
-use anyhow::{anyhow, Error};
-use prost::Message;
-use sha3::{Digest, Keccak256};
 
 // Info for migration
 const CONTRACT_NAME: &str = "kms-tendermint-ipsc";
@@ -40,14 +40,28 @@ impl ProofContract {
     #[sv::msg(migrate)]
     fn migrate(&self, ctx: MigrateCtx) -> StdResult<Response> {
         // Check that the given storage (representing the old contract's storage) is compatible with
-        // the new version of the ethereum-ipsc by :
+        // the new version of the tendermint-ipsc by :
         // - checking that the new contract name is the same
         // - checking that the new contract version is more recent than the current version
         // If both conditions are met, the storage is updated with the new contract version
-        let _original_version =
-            ensure_from_older_version(ctx.deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
+        let original_version =
+            ensure_from_older_version(ctx.deps.storage, CONTRACT_NAME, CONTRACT_VERSION).map_err(
+                |e| {
+                    StdError::generic_err(format!(
+                        "Tendermint-ipsc migration failed while checking version compatibility: {}",
+                        e
+                    ))
+                },
+            )?;
 
-        Ok(Response::default())
+        let mut migration_event =
+            MigrationEvent::new(original_version.to_string(), CONTRACT_VERSION.to_string());
+
+        // Since there no real migration logic for now, we set it to successful
+        migration_event.set_success();
+
+        let response = Response::new().add_event(Into::<Event>::into(migration_event));
+        Ok(response)
     }
 }
 

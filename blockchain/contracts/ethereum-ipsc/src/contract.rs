@@ -2,8 +2,9 @@ use ethereum_inclusion_proofs::cosmwasm_proof_handler::EthereumProofHandler;
 use ethereum_inclusion_proofs::types::EvmPermissionProof;
 
 use aipsc::contract::InclusionProofContract;
-use cosmwasm_std::{Response, StdError, StdResult};
+use cosmwasm_std::{Event, Response, StdError, StdResult};
 use cw2::{ensure_from_older_version, set_contract_version};
+use events::kms::MigrationEvent;
 use sylvia::{
     contract, entry_points,
     types::{ExecCtx, InstantiateCtx, MigrateCtx},
@@ -45,10 +46,24 @@ impl ProofContract {
         // - checking that the new contract name is the same
         // - checking that the new contract version is more recent than the current version
         // If both conditions are met, the storage is updated with the new contract version
-        let _original_version =
-            ensure_from_older_version(ctx.deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
+        let original_version =
+            ensure_from_older_version(ctx.deps.storage, CONTRACT_NAME, CONTRACT_VERSION).map_err(
+                |e| {
+                    StdError::generic_err(format!(
+                        "Ethereum-ipsc migration failed while checking version compatibility: {}",
+                        e
+                    ))
+                },
+            )?;
 
-        Ok(Response::default())
+        let mut migration_event =
+            MigrationEvent::new(original_version.to_string(), CONTRACT_VERSION.to_string());
+
+        // Since there no real migration logic for now, we set it to successful
+        migration_event.set_success();
+
+        let response = Response::new().add_event(Into::<Event>::into(migration_event));
+        Ok(response)
     }
 }
 

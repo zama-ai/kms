@@ -1,7 +1,7 @@
 use super::state::KmsContractStorage;
 use crate::events::EventEmitStrategy as _;
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{to_json_binary, Env, Response, StdError, StdResult, Storage, WasmMsg};
+use cosmwasm_std::{to_json_binary, Env, Event, Response, StdError, StdResult, Storage, WasmMsg};
 use cw2::{ensure_from_older_version, set_contract_version};
 use cw_controllers::Admin;
 use cw_utils::must_pay;
@@ -11,7 +11,7 @@ use events::kms::{
     KmsCoreConf, KmsEvent, KmsOperation, OperationValue, ReencryptResponseValues, ReencryptValues,
     Transaction, TransactionId, VerifyProvenCtValues,
 };
-use events::kms::{InsecureKeyGenValues, VerifyProvenCtResponseValues};
+use events::kms::{InsecureKeyGenValues, MigrationEvent, VerifyProvenCtResponseValues};
 use sha3::{Digest, Sha3_256};
 use std::ops::Deref;
 use sylvia::{
@@ -521,10 +521,24 @@ impl KmsContract {
         // - checking that the new contract name is the same
         // - checking that the new contract version is more recent than the current version
         // If both conditions are met, the storage is updated with the new contract version
-        let _original_version =
-            ensure_from_older_version(ctx.deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
+        let original_version =
+            ensure_from_older_version(ctx.deps.storage, CONTRACT_NAME, CONTRACT_VERSION).map_err(
+                |e| {
+                    StdError::generic_err(format!(
+                        "ASC migration failed while checking version compatibility: {}",
+                        e
+                    ))
+                },
+            )?;
 
-        Ok(Response::default())
+        let mut migration_event =
+            MigrationEvent::new(original_version.to_string(), CONTRACT_VERSION.to_string());
+
+        // Since there no real migration logic for now, we set it to successful
+        migration_event.set_success();
+
+        let response = Response::new().add_event(Into::<Event>::into(migration_event));
+        Ok(response)
     }
 }
 
