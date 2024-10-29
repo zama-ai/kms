@@ -20,7 +20,7 @@ hmac = "0.12.1"
 k256 = { version = "0.13.3" }
 prost.workspace = true
 prost-types.workspace = true
-secp256k1 = "0.29.0"
+secp256k1 = "0.30.0"
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10.8"
