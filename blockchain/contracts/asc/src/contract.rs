@@ -169,43 +169,12 @@ impl KmsContract {
         kms_core_conf: KmsCoreConf,
         allow_list_conf: Option<AllowListConf>,
     ) -> StdResult<Response> {
-        if let KmsCoreConf::Threshold(conf) = &kms_core_conf {
-            // centralized setting should be used if there is only one party
-            if conf.parties.len() < 2 {
-                return Err(cosmwasm_std::StdError::generic_err(
-                    "conf.parties.len() !< 2, in this case please use the centralized version", // VerificationError::GenericErr,
-                ));
-            }
-
-            // check that degree is at least 1
-            if conf.degree_for_reconstruction < 1 {
-                return Err(cosmwasm_std::StdError::generic_err(
-                    "conf.degree_for_reconstruction !< 1",
-                ));
-            }
-
-            // check that the number of shares needed for reconstruction is at least degree + 2
-            // this is the minimum value such that error detection is possible
-            if conf.response_count_for_reconstruction < conf.degree_for_reconstruction + 2 {
-                return Err(cosmwasm_std::StdError::generic_err(
-                    "conf.response_count_for_reconstruction !< conf.degree_for_reconstruction + 2",
-                ));
-            }
-
-            // there can not be enough responses for reconstruction
-            if conf.response_count_for_reconstruction > conf.parties.len() {
-                return Err(cosmwasm_std::StdError::generic_err(
-                    "conf.response_count_for_reconstruction !> conf.parties.len()",
-                ));
-            }
-
-            // there can not be enough responses for majority vote
-            if conf.response_count_for_majority_vote > conf.parties.len() {
-                return Err(cosmwasm_std::StdError::generic_err(
-                    "conf.response_count_for_majority_vote !> conf.parties.len()",
-                ));
-            }
-        };
+        // Check conformance of threshold config
+        if !kms_core_conf.is_conformant() {
+            return Err(cosmwasm_std::StdError::generic_err(
+                "KMS core configuration is not conformant.",
+            ));
+        }
 
         // Inclusion proof debug configuration
         // While developing without a blockchain against which to verify we might need to skip the
@@ -566,7 +535,6 @@ mod tests {
     use events::kms::KeyGenValues;
     use events::kms::KmsCoreConf;
     use events::kms::KmsCoreParty;
-    use events::kms::KmsCoreThresholdConf;
     use events::kms::KmsEvent;
     use events::kms::KmsOperation;
     use events::kms::OperationValue;
@@ -597,13 +565,13 @@ mod tests {
             .instantiate(
                 Some(true),
                 DUMMY_BECH32_ADDR.to_string(),
-                KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                KmsCoreConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 3,
                     response_count_for_reconstruction: 3,
                     degree_for_reconstruction: 2,
                     param_choice: FheParameter::Test,
-                }),
+                },
                 Some(AllowListConf {
                     allow_list: vec![owner.to_string()]
                 }),
@@ -616,13 +584,13 @@ mod tests {
             .instantiate(
                 Some(true),
                 DUMMY_BECH32_ADDR.to_string(),
-                KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                KmsCoreConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 5,
                     response_count_for_reconstruction: 3,
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
-                }),
+                },
                 Some(AllowListConf {
                     allow_list: vec![owner.to_string()]
                 }),
@@ -635,13 +603,13 @@ mod tests {
             .instantiate(
                 Some(true),
                 DUMMY_BECH32_ADDR.to_string(),
-                KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                KmsCoreConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 3,
                     response_count_for_reconstruction: 5,
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
-                }),
+                },
                 Some(AllowListConf {
                     allow_list: vec![owner.to_string()]
                 }),
@@ -654,13 +622,13 @@ mod tests {
             .instantiate(
                 Some(true),
                 DUMMY_BECH32_ADDR.to_string(),
-                KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                KmsCoreConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 3,
                     response_count_for_reconstruction: 3,
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
-                }),
+                },
                 Some(AllowListConf {
                     allow_list: vec![owner.to_string()],
                 }),
@@ -685,13 +653,13 @@ mod tests {
             .instantiate(
                 Some(true),
                 DUMMY_BECH32_ADDR.to_string(),
-                KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                KmsCoreConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 3,
                     response_count_for_reconstruction: 3,
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
-                }),
+                },
                 Some(AllowListConf {
                     allow_list: vec![owner.to_string()],
                 }),
@@ -699,13 +667,13 @@ mod tests {
             .call(&owner)
             .unwrap();
 
-        let value = KmsCoreConf::Threshold(KmsCoreThresholdConf {
+        let value = KmsCoreConf {
             parties: vec![KmsCoreParty::default(); 4],
             response_count_for_majority_vote: 3,
             response_count_for_reconstruction: 3,
             degree_for_reconstruction: 1,
             param_choice: FheParameter::Test,
-        });
+        };
 
         contract
             .update_kms_core_conf(value.clone())
@@ -742,13 +710,13 @@ mod tests {
             .instantiate(
                 Some(true),
                 DUMMY_BECH32_ADDR.to_string(),
-                KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                KmsCoreConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 2,
                     response_count_for_reconstruction: 3,
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
-                }),
+                },
                 Some(AllowListConf {
                     allow_list: vec![owner.to_string()],
                 }),
@@ -838,13 +806,13 @@ mod tests {
             .instantiate(
                 Some(true),
                 DUMMY_BECH32_ADDR.to_string(),
-                KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                KmsCoreConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 2,
                     response_count_for_reconstruction: 3,
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
-                }),
+                },
                 Some(AllowListConf {
                     allow_list: vec![owner.to_string()],
                 }),
@@ -962,13 +930,13 @@ mod tests {
             .instantiate(
                 Some(false),
                 proof_addr.to_string(),
-                KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                KmsCoreConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 2,
                     response_count_for_reconstruction: 3,
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
-                }),
+                },
                 Some(AllowListConf {
                     allow_list: vec![owner.to_string()],
                 }),
@@ -1061,13 +1029,13 @@ mod tests {
             .instantiate(
                 Some(true),
                 DUMMY_BECH32_ADDR.to_string(),
-                KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                KmsCoreConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 2,
                     response_count_for_reconstruction: 3,
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
-                }),
+                },
                 Some(AllowListConf {
                     allow_list: vec![owner.to_string()],
                 }),
@@ -1112,13 +1080,13 @@ mod tests {
             .instantiate(
                 Some(true),
                 DUMMY_BECH32_ADDR.to_string(),
-                KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                KmsCoreConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 2,
                     response_count_for_reconstruction: 3,
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
-                }),
+                },
                 Some(AllowListConf {
                     allow_list: vec![owner.to_string()],
                 }),
@@ -1198,13 +1166,13 @@ mod tests {
             .instantiate(
                 Some(true),
                 DUMMY_BECH32_ADDR.to_string(),
-                KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                KmsCoreConf {
                     parties: vec![KmsCoreParty::default(); 4],
-                    response_count_for_majority_vote: 1,
+                    response_count_for_majority_vote: 2,
                     response_count_for_reconstruction: 3,
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
-                }),
+                },
                 None,
             )
             .call(&owner)
@@ -1298,13 +1266,13 @@ mod tests {
             .instantiate(
                 Some(true),
                 DUMMY_BECH32_ADDR.to_string(),
-                KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                KmsCoreConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 2,
                     response_count_for_reconstruction: 3,
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
-                }),
+                },
                 Some(AllowListConf {
                     allow_list: vec![owner.to_string()],
                 }),
@@ -1401,13 +1369,13 @@ mod tests {
             .instantiate(
                 Some(true),
                 DUMMY_BECH32_ADDR.to_string(),
-                KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                KmsCoreConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 2,
                     response_count_for_reconstruction: 3,
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
-                }),
+                },
                 Some(AllowListConf {
                     allow_list: vec![owner.to_string()],
                 }),
@@ -1630,13 +1598,13 @@ mod tests {
                     .instantiate(
                         Some(true),
                         DUMMY_BECH32_ADDR.to_string(),
-                        KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                        KmsCoreConf {
                             parties: vec![KmsCoreParty::default(); 4],
                             response_count_for_majority_vote: 2,
                             response_count_for_reconstruction: 3,
                             degree_for_reconstruction: 1,
                             param_choice: FheParameter::Test,
-                        }),
+                        },
                         allow_list
                             .clone()
                             .map(|allow_list| AllowListConf { allow_list }),
@@ -1670,13 +1638,13 @@ mod tests {
                     .instantiate(
                         Some(true),
                         DUMMY_BECH32_ADDR.to_string(),
-                        KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                        KmsCoreConf {
                             parties: vec![KmsCoreParty::default(); 4],
                             response_count_for_majority_vote: 2,
                             response_count_for_reconstruction: 3,
                             degree_for_reconstruction: 1,
                             param_choice: FheParameter::Test,
-                        }),
+                        },
                         allow_list
                             .clone()
                             .map(|allow_list| AllowListConf { allow_list }),

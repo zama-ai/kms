@@ -943,10 +943,22 @@ pub async fn execute_reencryption_contract(
     // Finally, create a kms-core client for reconstruction later on.
     // NOTE: The wasm code that deals with reencryption on the browser side
     // also uses the client.
-    let verf_keys = match kms_core_conf {
-        KmsCoreConf::Centralized(_) => {
+    let verf_keys = if kms_core_conf.is_centralized() {
+        let storage = FileStorage::new_centralized(Some(keys_folder), StorageType::PUB).unwrap();
+        let url = storage
+            .compute_url(
+                &SIGNING_KEY_ID.to_string(),
+                &PubDataType::VerfKey.to_string(),
+            )
+            .unwrap();
+        let verf_key: PublicSigKey = storage.read_data(&url).await.unwrap();
+        vec![verf_key]
+    } else {
+        let num_kms_parties = kms_core_conf.parties.len();
+        let mut res = Vec::new();
+        for i in 1..=num_kms_parties {
             let storage =
-                FileStorage::new_centralized(Some(keys_folder), StorageType::PUB).unwrap();
+                FileStorage::new_threshold(Some(keys_folder), StorageType::PUB, i).unwrap();
             let url = storage
                 .compute_url(
                     &SIGNING_KEY_ID.to_string(),
@@ -954,25 +966,9 @@ pub async fn execute_reencryption_contract(
                 )
                 .unwrap();
             let verf_key: PublicSigKey = storage.read_data(&url).await.unwrap();
-            vec![verf_key]
+            res.push(verf_key);
         }
-        KmsCoreConf::Threshold(kms_core_threshold_conf) => {
-            let num_kms_parties = kms_core_threshold_conf.parties.len();
-            let mut res = Vec::new();
-            for i in 1..=num_kms_parties {
-                let storage =
-                    FileStorage::new_threshold(Some(keys_folder), StorageType::PUB, i).unwrap();
-                let url = storage
-                    .compute_url(
-                        &SIGNING_KEY_ID.to_string(),
-                        &PubDataType::VerfKey.to_string(),
-                    )
-                    .unwrap();
-                let verf_key: PublicSigKey = storage.read_data(&url).await.unwrap();
-                res.push(verf_key);
-            }
-            res
-        }
+        res
     };
 
     let mut kms_client =
@@ -1227,29 +1223,26 @@ async fn fetch_local_key_and_write_to_file(
     let key_id = &SIGNING_KEY_ID.to_string();
 
     //Centralized case
-    match kms_core_conf {
-        KmsCoreConf::Centralized(_) => {
-            let folder = destination_prefix.join("PUB").join(name);
+    if kms_core_conf.is_centralized() {
+        let folder = destination_prefix.join("PUB").join(name);
+        let content = fetch_key(
+            &sim_conf.s3_endpoint,
+            &format!("{}/{}", sim_conf.key_folder, name),
+            key_id,
+        )
+        .await?;
+        let _ = write_bytes_to_file(&folder, key_id, content.as_ref());
+    } else {
+        let num_kms_parties = kms_core_conf.parties.len();
+        for i in 1..=num_kms_parties {
+            let folder = destination_prefix.join(format!("PUB-p{}", i)).join(name);
             let content = fetch_key(
                 &sim_conf.s3_endpoint,
-                &format!("{}/{}", sim_conf.key_folder, name),
+                &format!("PUB-p{}/{}", i, name),
                 key_id,
             )
             .await?;
             let _ = write_bytes_to_file(&folder, key_id, content.as_ref());
-        }
-        KmsCoreConf::Threshold(kms_core_threshold_conf) => {
-            let num_kms_parties = kms_core_threshold_conf.parties.len();
-            for i in 1..=num_kms_parties {
-                let folder = destination_prefix.join(format!("PUB-p{}", i)).join(name);
-                let content = fetch_key(
-                    &sim_conf.s3_endpoint,
-                    &format!("PUB-p{}/{}", i, name),
-                    key_id,
-                )
-                .await?;
-                let _ = write_bytes_to_file(&folder, key_id, content.as_ref());
-            }
         }
     }
     Ok(())
@@ -1425,6 +1418,9 @@ pub async fn main_from_config(
         .query(ContractQuery::GetKmsCoreConf {})
         .build();
     let kms_core_conf: KmsCoreConf = query_client.query_contract(request).await?;
+    if !kms_core_conf.is_conformant() {
+        return Err(anyhow!("Kms Core configuration is not conformant!").into());
+    }
 
     fetch_global_key_and_write_to_file(destination_prefix, &sim_conf, "PublicKey").await?;
     fetch_global_key_and_write_to_file(destination_prefix, &sim_conf, "PublicKeyMetadata").await?;
@@ -1449,11 +1445,7 @@ pub async fn main_from_config(
 
     // TODO: stop here if insufficient gas and/or query faucet if setup
     // TODO: add optional faucet configuration in config file
-    let num_kms_parties = match kms_core_conf.clone() {
-        KmsCoreConf::Centralized(_) => 1,
-        KmsCoreConf::Threshold(kms_core_threshold_conf) => kms_core_threshold_conf.parties.len(),
-    };
-
+    let num_kms_parties = kms_core_conf.parties.len();
     // Launch command
     let mut max_iter = 20;
     // Execute the proper command

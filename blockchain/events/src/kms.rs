@@ -30,12 +30,18 @@ pub enum KmsCoreConfVersioned {
     V0(KmsCoreConf),
 }
 
+/// This type describes the configuration of the KMS.
+///
+/// It can be used to represent both the centralized and threshold case.
 #[cw_serde]
 #[derive(Versionize)]
 #[versionize(KmsCoreConfVersioned)]
-pub enum KmsCoreConf {
-    Centralized(KmsCoreCentralizedConf),
-    Threshold(KmsCoreThresholdConf),
+pub struct KmsCoreConf {
+    pub parties: Vec<KmsCoreParty>,
+    pub response_count_for_majority_vote: usize,
+    pub response_count_for_reconstruction: usize,
+    pub degree_for_reconstruction: usize,
+    pub param_choice: FheParameter,
 }
 
 #[derive(VersionsDispatch)]
@@ -77,42 +83,34 @@ impl TryFrom<i32> for FheParameter {
     }
 }
 
-// Centralized
-#[derive(VersionsDispatch)]
-pub enum KmsCoreCentralizedConfVersioned {
-    V0(KmsCoreCentralizedConf),
-}
-
-#[cw_serde]
-#[derive(Versionize)]
-#[versionize(KmsCoreCentralizedConfVersioned)]
-pub struct KmsCoreCentralizedConf {
-    pub param_choice: FheParameter,
-}
-
-// Threshold
-#[derive(VersionsDispatch)]
-pub enum KmsCoreThresholdConfVersioned {
-    V0(KmsCoreThresholdConf),
-}
-
-#[cw_serde]
-#[derive(Versionize)]
-#[versionize(KmsCoreThresholdConfVersioned)]
-pub struct KmsCoreThresholdConf {
-    pub parties: Vec<KmsCoreParty>,
-    pub response_count_for_majority_vote: usize,
-    pub response_count_for_reconstruction: usize,
-    pub degree_for_reconstruction: usize,
-    pub param_choice: FheParameter,
-}
-
 impl KmsCoreConf {
-    pub fn param_choice(&self) -> FheParameter {
-        match self {
-            KmsCoreConf::Centralized(inner) => inner.param_choice,
-            KmsCoreConf::Threshold(inner) => inner.param_choice,
+    /// We use the number of parties as a proxy to know whether
+    /// we are in centralized case or threshold
+    pub fn is_centralized(&self) -> bool {
+        self.parties.len() == 1
+    }
+
+    pub fn is_conformant(&self) -> bool {
+        if self.is_centralized() {
+            self.degree_for_reconstruction == 0
+                && self.response_count_for_majority_vote == 1
+                && self.response_count_for_reconstruction == 1
+        } else {
+            let num_parties = self.parties.len();
+            let majority = num_parties.div_ceil(2);
+            // We assume we are always looking for highest possible threshold
+            3*self.degree_for_reconstruction + 1 == num_parties
+            // We require at least degree + 2 responses to be able to do error detection
+            && self.response_count_for_reconstruction >= self.degree_for_reconstruction + 2
+            // We can not expect more responses than there are parties
+            && self.response_count_for_reconstruction <= num_parties
+            && self.response_count_for_majority_vote >= majority
+            && self.response_count_for_majority_vote <= num_parties
         }
+    }
+
+    pub fn param_choice(&self) -> FheParameter {
+        self.param_choice
     }
 
     pub fn param_choice_string(&self) -> String {
@@ -130,20 +128,14 @@ impl KmsCoreConf {
     ///
     /// In the centralized setting, this is always 1.
     pub fn response_count_for_majority_vote(&self) -> usize {
-        match self {
-            KmsCoreConf::Centralized(_) => 1,
-            KmsCoreConf::Threshold(x) => x.response_count_for_majority_vote,
-        }
+        self.response_count_for_majority_vote
     }
 
     /// The number of shares needed to perform reconstruction.
     ///
     /// In the centralized setting, this is always 1.
     pub fn response_count_for_reconstruction(&self) -> usize {
-        match self {
-            KmsCoreConf::Centralized(_) => 1,
-            KmsCoreConf::Threshold(x) => x.response_count_for_reconstruction,
-        }
+        self.response_count_for_reconstruction
     }
 }
 
@@ -2250,17 +2242,18 @@ mod tests {
     fn param_choice_serialization() {
         // make sure these strings match what's in the protobuf [ParamChoice]
         for choice in FheParameter::iter() {
+            let conf = KmsCoreConf {
+                param_choice: choice,
+                parties: Vec::new(),
+                response_count_for_majority_vote: 0,
+                response_count_for_reconstruction: 0,
+                degree_for_reconstruction: 0,
+            };
             match choice {
                 FheParameter::Default => {
-                    let conf = KmsCoreConf::Centralized(KmsCoreCentralizedConf {
-                        param_choice: choice,
-                    });
                     assert_eq!(conf.param_choice_string(), "default");
                 }
                 FheParameter::Test => {
-                    let conf = KmsCoreConf::Centralized(KmsCoreCentralizedConf {
-                        param_choice: choice,
-                    });
                     assert_eq!(conf.param_choice_string(), "test");
                 }
             }

@@ -4,8 +4,8 @@ use events::kms::{
     KmsCoreConf, KmsEvent, KmsOperation, OperationValue, Transaction, TransactionId,
 };
 
-const ERR_SWITCH_BETWEEN_CENTRALIZED_AND_THRESHOLD: &str =
-    "It is not possible to switch between threshold and centralized mode";
+const ERR_MODIFY_NUM_PARTIES: &str =
+    "It is not possible to change the number of parties participating";
 
 // This storage struct is used to handle storage in the ASC contract. It contains:
 // - the configuration parameters for the KMS (centralized or threshold mode)
@@ -47,19 +47,19 @@ impl KmsContractStorage {
         storage: &mut dyn Storage,
         value: KmsCoreConf,
     ) -> StdResult<Response> {
+        if !value.is_conformant() {
+            return Err(cosmwasm_std::StdError::generic_err(
+                "KMS core configuration is not conformant.",
+            ));
+        }
         match &self.core_conf.may_load(storage)? {
             Some(conf) => {
-                match (conf, &value) {
-                    (KmsCoreConf::Centralized(_), KmsCoreConf::Centralized(_))
-                    | (KmsCoreConf::Threshold(_), KmsCoreConf::Threshold(_)) => {
-                        /* ok, do nothing */
-                    }
-                    _ => {
-                        return Err(StdError::generic_err(
-                            ERR_SWITCH_BETWEEN_CENTRALIZED_AND_THRESHOLD,
-                        ))
-                    }
+                // Following https://github.com/zama-ai/planning-blockchain/issues/182#issuecomment-2429482934
+                // we disallow changing the amount of parties participating
+                if conf.parties.len() != value.parties.len() {
+                    return Err(StdError::generic_err(ERR_MODIFY_NUM_PARTIES));
                 }
+
                 self.core_conf
                     .update(storage, |_| -> StdResult<KmsCoreConf> { Ok(value) })?;
             }
@@ -247,63 +247,69 @@ mod tests {
         BlockInfo, ContractInfo, DepsMut, Empty, Env, MessageInfo, QuerierWrapper, TransactionInfo,
     };
     use cw_multi_test::IntoAddr;
-    use events::kms::{
-        DecryptValues, FheParameter, KmsCoreCentralizedConf, KmsCoreThresholdConf, TransactionId,
-    };
+    use events::kms::{DecryptValues, FheParameter, KmsCoreParty, TransactionId};
     use sylvia::types::ExecCtx;
 
     #[test]
     fn test_core_conf_threshold() {
         let dyn_store = &mut MockStorage::new();
         let storage = KmsContractStorage::default();
-        let core_conf = KmsCoreConf::Threshold(KmsCoreThresholdConf {
-            parties: vec![],
+        let core_conf = KmsCoreConf {
+            parties: vec![KmsCoreParty::default(); 4],
             response_count_for_majority_vote: 3,
             response_count_for_reconstruction: 3,
             degree_for_reconstruction: 1,
             param_choice: FheParameter::Test,
-        });
+        };
         storage
             .update_core_conf(dyn_store, core_conf.clone())
             .unwrap();
         assert_eq!(storage.load_core_conf(dyn_store).unwrap(), core_conf);
 
         // next try to update from threshold to centralized, which should fail
-        let central_conf = KmsCoreConf::Centralized(KmsCoreCentralizedConf {
+        let central_conf = KmsCoreConf {
+            parties: vec![KmsCoreParty::default(); 1],
+            response_count_for_majority_vote: 1,
+            response_count_for_reconstruction: 1,
+            degree_for_reconstruction: 0,
             param_choice: FheParameter::Test,
-        });
+        };
         assert!(storage
             .update_core_conf(dyn_store, central_conf)
             .unwrap_err()
             .to_string()
-            .contains(ERR_SWITCH_BETWEEN_CENTRALIZED_AND_THRESHOLD));
+            .contains(ERR_MODIFY_NUM_PARTIES));
     }
 
     #[test]
     fn test_core_conf_centralized() {
         let dyn_store = &mut MockStorage::new();
         let storage = KmsContractStorage::default();
-        let core_conf = KmsCoreConf::Centralized(KmsCoreCentralizedConf {
+        let core_conf = KmsCoreConf {
+            parties: vec![KmsCoreParty::default(); 1],
+            response_count_for_majority_vote: 1,
+            response_count_for_reconstruction: 1,
+            degree_for_reconstruction: 0,
             param_choice: FheParameter::Test,
-        });
+        };
         storage
             .update_core_conf(dyn_store, core_conf.clone())
             .unwrap();
         assert_eq!(storage.load_core_conf(dyn_store).unwrap(), core_conf);
 
         // next try to update from centralized to threshold, which should fail
-        let threshold_conf = KmsCoreConf::Threshold(KmsCoreThresholdConf {
-            parties: vec![],
+        let threshold_conf = KmsCoreConf {
+            parties: vec![KmsCoreParty::default(); 4],
             response_count_for_majority_vote: 3,
             response_count_for_reconstruction: 3,
             degree_for_reconstruction: 1,
             param_choice: FheParameter::Test,
-        });
+        };
         assert!(storage
             .update_core_conf(dyn_store, threshold_conf)
             .unwrap_err()
             .to_string()
-            .contains(ERR_SWITCH_BETWEEN_CENTRALIZED_AND_THRESHOLD));
+            .contains(ERR_MODIFY_NUM_PARTIES));
     }
 
     #[test]

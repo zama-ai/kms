@@ -29,8 +29,8 @@ use events_0_9::kms::{
     CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues, FheKeyUrlInfo,
     FheParameter, FheType, InsecureKeyGenValues, KeyGenPreprocResponseValues, KeyGenPreprocValues,
     KeyGenResponseValues, KeyGenValues, KeyUrlInfo, KeyUrlResponseValues, KeyUrlValues,
-    KmsCoreConf, KmsCoreParty, KmsCoreThresholdConf, OperationValue, ReencryptResponseValues,
-    ReencryptValues, Transaction, VerfKeyUrlInfo, ZkpResponseValues, ZkpValues,
+    KmsCoreConf, KmsCoreParty, OperationValue, ReencryptResponseValues, ReencryptValues,
+    Transaction, VerfKeyUrlInfo, ZkpResponseValues, ZkpValues,
 };
 use rand::SeedableRng;
 use tfhe_0_8::{
@@ -62,11 +62,11 @@ use crate::{
     CrsGenResponseValuesTest, CrsGenValuesTest, DecryptResponseValuesTest, DecryptValuesTest,
     InsecureKeyGenValuesTest, KeyGenPreprocResponseValuesTest, KeyGenPreprocValuesTest,
     KeyGenResponseValuesTest, KeyGenValuesTest, KeyUrlResponseValuesTest, KeyUrlValuesTest,
-    KmsCoreConfCentralizedTest, KmsCoreConfThresholdTest, KmsFheKeyHandlesTest, PRSSSetupTest,
-    PrivateSigKeyTest, PublicSigKeyTest, ReencryptResponseValuesTest, ReencryptValuesTest,
-    SignedPubDataHandleInternalTest, TestMetadataDD, TestMetadataEvents, TestMetadataKMS,
-    ThresholdFheKeysTest, ZkpResponseValuesTest, ZkpValuesTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
-    EVENTS_MODULE_NAME, KMS_MODULE_NAME,
+    KmsCoreConfTest, KmsFheKeyHandlesTest, PRSSSetupTest, PrivateSigKeyTest, PublicSigKeyTest,
+    ReencryptResponseValuesTest, ReencryptValuesTest, SignedPubDataHandleInternalTest,
+    TestMetadataDD, TestMetadataEvents, TestMetadataKMS, ThresholdFheKeysTest,
+    ZkpResponseValuesTest, ZkpValuesTest, DISTRIBUTED_DECRYPTION_MODULE_NAME, EVENTS_MODULE_NAME,
+    KMS_MODULE_NAME,
 };
 
 // Macro to store a versioned test
@@ -452,13 +452,8 @@ const CRS_GEN_RESPONSE_VALUES_TEST: CrsGenResponseValuesTest = CrsGenResponseVal
     transaction_index: 1,
 };
 
-const KMS_CORE_CONF_CENTRALIZED_TEST: KmsCoreConfCentralizedTest = KmsCoreConfCentralizedTest {
-    test_filename: Cow::Borrowed("kms_core_conf_centralized"),
-    fhe_parameter: Cow::Borrowed("test"),
-};
-
-const KMS_CORE_CONF_THRESHOLD_TEST: KmsCoreConfThresholdTest = KmsCoreConfThresholdTest {
-    test_filename: Cow::Borrowed("kms_core_conf_threshold"),
+const KMS_CORE_CONF_TEST: KmsCoreConfTest = KmsCoreConfTest {
+    test_filename: Cow::Borrowed("kms_core_conf"),
     parties_party_id: [1, 2, 3],
     parties_public_key: [4, 5, 6],
     parties_address: Cow::Borrowed("parties_address"),
@@ -1162,70 +1157,33 @@ impl EventsV0_9 {
         TestMetadataEvents::CrsGenResponseValues(CRS_GEN_RESPONSE_VALUES_TEST)
     }
 
-    fn gen_kms_core_conf_centralized(dir: &PathBuf) -> TestMetadataEvents {
-        let fhe_parameter = match KMS_CORE_CONF_CENTRALIZED_TEST.fhe_parameter.as_ref() {
-            "test" => FheParameter::Test,
-            "default" => FheParameter::Default,
-            _ => panic!("Invalid FHE parameter"),
-        };
-
-        let kms_core_conf: KmsCoreConf = KmsCoreConf::Centralized(fhe_parameter);
-
-        store_versioned_test!(
-            &kms_core_conf,
-            dir,
-            &KMS_CORE_CONF_CENTRALIZED_TEST.test_filename
-        );
-
-        TestMetadataEvents::KmsCoreConfCentralized(KMS_CORE_CONF_CENTRALIZED_TEST)
-    }
-
-    fn gen_kms_core_conf_threshold(dir: &PathBuf) -> TestMetadataEvents {
+    fn gen_kms_core_conf(dir: &PathBuf) -> TestMetadataEvents {
         let parties = vec![KmsCoreParty {
-            party_id: KMS_CORE_CONF_THRESHOLD_TEST
-                .parties_party_id
-                .to_vec()
-                .into(),
-            public_key: Some(
-                KMS_CORE_CONF_THRESHOLD_TEST
-                    .parties_public_key
-                    .to_vec()
-                    .into(),
-            ),
-            address: KMS_CORE_CONF_THRESHOLD_TEST.parties_address.to_string(),
-            tls_pub_key: Some(
-                KMS_CORE_CONF_THRESHOLD_TEST
-                    .parties_tls_pub_key
-                    .to_vec()
-                    .into(),
-            ),
+            party_id: KMS_CORE_CONF_TEST.parties_party_id.to_vec().into(),
+            public_key: Some(KMS_CORE_CONF_TEST.parties_public_key.to_vec().into()),
+            address: KMS_CORE_CONF_TEST.parties_address.to_string(),
+            tls_pub_key: Some(KMS_CORE_CONF_TEST.parties_tls_pub_key.to_vec().into()),
         }];
 
-        let param_choice = match KMS_CORE_CONF_THRESHOLD_TEST.param_choice.as_ref() {
+        let param_choice = match KMS_CORE_CONF_TEST.param_choice.as_ref() {
             "test" => FheParameter::Test,
             "default" => FheParameter::Default,
             _ => panic!("Invalid parameter choice"),
         };
 
-        let kms_core_conf_threshold = KmsCoreThresholdConf {
+        let kms_core_conf_threshold = KmsCoreConf {
             parties,
-            response_count_for_majority_vote: KMS_CORE_CONF_THRESHOLD_TEST
-                .response_count_for_majority_vote,
-            response_count_for_reconstruction: KMS_CORE_CONF_THRESHOLD_TEST
-                .response_count_for_reconstruction,
-            degree_for_reconstruction: KMS_CORE_CONF_THRESHOLD_TEST.degree_for_reconstruction,
+            response_count_for_majority_vote: KMS_CORE_CONF_TEST.response_count_for_majority_vote,
+            response_count_for_reconstruction: KMS_CORE_CONF_TEST.response_count_for_reconstruction,
+            degree_for_reconstruction: KMS_CORE_CONF_TEST.degree_for_reconstruction,
             param_choice,
         };
 
         let kms_core_conf: KmsCoreConf = KmsCoreConf::Threshold(kms_core_conf_threshold);
 
-        store_versioned_test!(
-            &kms_core_conf,
-            dir,
-            &KMS_CORE_CONF_THRESHOLD_TEST.test_filename
-        );
+        store_versioned_test!(&kms_core_conf, dir, &KMS_CORE_CONF_TEST.test_filename);
 
-        TestMetadataEvents::KmsCoreConfThreshold(KMS_CORE_CONF_THRESHOLD_TEST)
+        TestMetadataEvents::KmsCoreConf(KMS_CORE_CONF_TEST)
     }
 }
 
@@ -1284,8 +1242,7 @@ impl KMSCoreVersion for V0_9 {
             EventsV0_9::gen_insecure_key_gen_values(&dir),
             EventsV0_9::gen_crs_gen_values(&dir),
             EventsV0_9::gen_crs_gen_response_values(&dir),
-            EventsV0_9::gen_kms_core_conf_centralized(&dir),
-            EventsV0_9::gen_kms_core_conf_threshold(&dir),
+            EventsV0_9::gen_kms_core_conf(&dir),
         ]
     }
 }

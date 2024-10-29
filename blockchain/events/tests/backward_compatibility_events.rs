@@ -9,16 +9,16 @@ use backward_compatibility::{
     tests::{run_all_tests, TestedModule},
     CrsGenResponseValuesTest, CrsGenValuesTest, DecryptResponseValuesTest, DecryptValuesTest,
     InsecureKeyGenValuesTest, KeyGenPreprocResponseValuesTest, KeyGenPreprocValuesTest,
-    KeyGenResponseValuesTest, KeyGenValuesTest, KmsCoreConfCentralizedTest,
-    KmsCoreConfThresholdTest, ReencryptResponseValuesTest, ReencryptValuesTest, TestMetadataEvents,
-    TestType, Testcase, ZkpResponseValuesTest, ZkpValuesTest,
+    KeyGenResponseValuesTest, KeyGenValuesTest, KmsCoreConfTest, ReencryptResponseValuesTest,
+    ReencryptValuesTest, TestMetadataEvents, TestType, Testcase, ZkpResponseValuesTest,
+    ZkpValuesTest,
 };
 use events::kms::{
     CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues, FheParameter,
     FheType, InsecureKeyGenValues, KeyGenPreprocResponseValues, KeyGenPreprocValues,
-    KeyGenResponseValues, KeyGenValues, KmsCoreCentralizedConf, KmsCoreConf, KmsCoreParty,
-    KmsCoreThresholdConf, OperationValue, ReencryptResponseValues, ReencryptValues, Transaction,
-    VerifyProvenCtResponseValues, VerifyProvenCtValues,
+    KeyGenResponseValues, KeyGenValues, KmsCoreConf, KmsCoreParty, OperationValue,
+    ReencryptResponseValues, ReencryptValues, Transaction, VerifyProvenCtResponseValues,
+    VerifyProvenCtValues,
 };
 use kms_common::load_and_unversionize;
 use std::{env, path::Path};
@@ -493,39 +493,9 @@ fn test_crs_gen_response_values(
     }
 }
 
-fn test_kms_core_conf_centralized(
+fn test_kms_core_conf(
     dir: &Path,
-    test: &KmsCoreConfCentralizedTest,
-    format: DataFormat,
-) -> Result<TestSuccess, TestFailure> {
-    let original_versionized: KmsCoreConf = load_and_unversionize(dir, test, format)?;
-
-    let fhe_parameter = match test.fhe_parameter.as_ref() {
-        "test" => FheParameter::Test,
-        "default" => FheParameter::Default,
-        _ => panic!("Invalid FHE parameter"),
-    };
-
-    let new_versionized: KmsCoreConf = KmsCoreConf::Centralized(KmsCoreCentralizedConf {
-        param_choice: fhe_parameter,
-    });
-
-    if original_versionized != new_versionized {
-        Err(test.failure(
-            format!(
-                "Invalid KmsCoreConf (centralized):\n Expected :\n{:?}\nGot:\n{:?}",
-                original_versionized, new_versionized
-            ),
-            format,
-        ))
-    } else {
-        Ok(test.success(format))
-    }
-}
-
-fn test_kms_core_conf_threshold(
-    dir: &Path,
-    test: &KmsCoreConfThresholdTest,
+    test: &KmsCoreConfTest,
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
     let original_versionized: KmsCoreConf = load_and_unversionize(dir, test, format)?;
@@ -543,15 +513,13 @@ fn test_kms_core_conf_threshold(
         _ => panic!("Invalid FHE parameter"),
     };
 
-    let kms_core_conf_threshold = KmsCoreThresholdConf {
+    let new_versionized = KmsCoreConf {
         parties,
         response_count_for_majority_vote: test.response_count_for_majority_vote,
         response_count_for_reconstruction: test.response_count_for_reconstruction,
         degree_for_reconstruction: test.degree_for_reconstruction,
         param_choice,
     };
-
-    let new_versionized: KmsCoreConf = KmsCoreConf::Threshold(kms_core_conf_threshold);
 
     if original_versionized != new_versionized {
         Err(test.failure(
@@ -617,11 +585,8 @@ impl TestedModule for Events {
             Self::Metadata::CrsGenResponseValues(test) => {
                 test_crs_gen_response_values(test_dir.as_ref(), test, format).into()
             }
-            Self::Metadata::KmsCoreConfCentralized(test) => {
-                test_kms_core_conf_centralized(test_dir.as_ref(), test, format).into()
-            }
-            Self::Metadata::KmsCoreConfThreshold(test) => {
-                test_kms_core_conf_threshold(test_dir.as_ref(), test, format).into()
+            Self::Metadata::KmsCoreConf(test) => {
+                test_kms_core_conf(test_dir.as_ref(), test, format).into()
             }
         }
     }

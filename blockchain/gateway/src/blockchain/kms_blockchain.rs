@@ -690,14 +690,13 @@ impl Blockchain for KmsBlockchainImpl {
                 let mut sigs = Vec::new();
 
                 // Fetch threshold KMS core config (the config is read at start once, currently)
-                let threshold_kms_core_conf =
-                    if let Some(KmsCoreConf::Threshold(conf)) = &self.kms_core_conf {
-                        conf
-                    } else {
-                        return Err(anyhow::anyhow!(
-                            "Error reading KMS core config (wrong config type or config not set)."
-                        ));
-                    };
+                let threshold_kms_core_conf = if let Some(conf) = &self.kms_core_conf {
+                    conf
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "Error reading KMS core config (wrong config type or config not set)."
+                    ));
+                };
 
                 // We need at least 2t + 1 responses for secure majority voting (at most t could be malicious).
                 // The reason ist that the KMS ASC simply counts responses without checking equality, so we might receive up to t malicious responses.

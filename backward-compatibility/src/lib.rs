@@ -572,27 +572,7 @@ impl TestType for CrsGenResponseValuesTest {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct KmsCoreConfCentralizedTest {
-    pub test_filename: Cow<'static, str>,
-    pub fhe_parameter: Cow<'static, str>,
-}
-
-impl TestType for KmsCoreConfCentralizedTest {
-    fn module(&self) -> String {
-        EVENTS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "KmsCoreConfCentralized".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct KmsCoreConfThresholdTest {
+pub struct KmsCoreConfTest {
     pub test_filename: Cow<'static, str>,
     pub parties_party_id: [u8; 3],
     pub parties_public_key: [u8; 3],
@@ -604,13 +584,13 @@ pub struct KmsCoreConfThresholdTest {
     pub param_choice: Cow<'static, str>,
 }
 
-impl TestType for KmsCoreConfThresholdTest {
+impl TestType for KmsCoreConfTest {
     fn module(&self) -> String {
         EVENTS_MODULE_NAME.to_string()
     }
 
     fn target_type(&self) -> String {
-        "KmsCoreConfThreshold".to_string()
+        "KmsCoreConf".to_string()
     }
 
     fn test_filename(&self) -> String {
@@ -652,8 +632,7 @@ pub enum TestMetadataEvents {
     InsecureKeyGenValues(InsecureKeyGenValuesTest),
     CrsGenValues(CrsGenValuesTest),
     CrsGenResponseValues(CrsGenResponseValuesTest),
-    KmsCoreConfCentralized(KmsCoreConfCentralizedTest),
-    KmsCoreConfThreshold(KmsCoreConfThresholdTest),
+    KmsCoreConf(KmsCoreConfTest),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

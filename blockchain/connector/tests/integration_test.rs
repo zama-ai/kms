@@ -2,9 +2,8 @@ use conf_trace::conf::Tracing;
 use conf_trace::telemetry::init_tracing;
 use events::kms::CrsGenValues;
 use events::kms::{
-    DecryptResponseValues, DecryptValues, FheParameter, FheType, KeyGenPreprocValues,
-    KmsCoreCentralizedConf, KmsCoreConf, KmsCoreParty, KmsCoreThresholdConf, KmsEvent, KmsMessage,
-    Transaction, TransactionId, VerifyProvenCtValues,
+    DecryptResponseValues, DecryptValues, FheParameter, FheType, KeyGenPreprocValues, KmsCoreConf,
+    KmsCoreParty, KmsEvent, KmsMessage, Transaction, TransactionId, VerifyProvenCtValues,
 };
 use events::kms::{KmsOperation, OperationValue};
 use events::{
@@ -511,9 +510,13 @@ async fn generic_centralized_sunshine_test(
         .txn_id(txn_id.clone())
         .build();
 
-    let conf = KmsCoreConf::Centralized(KmsCoreCentralizedConf {
+    let conf = KmsCoreConf {
         param_choice: FheParameter::Test,
-    });
+        parties: vec![KmsCoreParty::default(); 1],
+        response_count_for_majority_vote: 1,
+        response_count_for_reconstruction: 1,
+        degree_for_reconstruction: 0,
+    };
 
     let result = client
         .create_kms_operation(event, op.clone())
@@ -720,13 +723,13 @@ async fn generic_sunshine_test(
     assert_eq!(events.len(), clients.len());
     let mut tasks = JoinSet::new();
     for (i, (event, client)) in events.into_iter().zip(clients).enumerate() {
-        let conf = KmsCoreConf::Threshold(KmsCoreThresholdConf {
+        let conf = KmsCoreConf {
             parties: vec![KmsCoreParty::default(); AMOUNT_PARTIES],
             response_count_for_majority_vote: 2 * THRESHOLD + 1,
             response_count_for_reconstruction: THRESHOLD + 2,
             degree_for_reconstruction: THRESHOLD,
             param_choice: FheParameter::Test,
-        });
+        };
         let op = client.create_kms_operation(event, op.clone()).unwrap();
         tasks.spawn(async move { (i as u32 + 1, op.run_operation(Some(conf)).await) });
     }
