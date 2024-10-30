@@ -17,7 +17,7 @@ jobs:
       args-tests-fhe: ''
       package-name: 'gateway'
       test-coverage: true
-      test-minimum-coverage: 10
+      test-minimum-coverage: 40
     permissions:
       contents: 'write'
       id-token: 'write'

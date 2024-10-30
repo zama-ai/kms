@@ -150,8 +150,7 @@ jobs:
           cargo install grcov
           mkdir coverage
           ~/.cargo/bin/grcov . --binary-path ../../target/debug/deps/ -s . --branch --ignore-not-existing --ignore '../*' --ignore "/*" -o coverage/ -t markdown
-          ~/.cargo/bin/grcov . --binary-path ../../target/debug/deps/ -s . --branch --ignore-not-existing --ignore '../*' --ignore "/*" -o coverage/ -t lcov
-          find coverage
+          ~/.cargo/bin/grcov . --binary-path ../../target/debug/deps/ -s . --branch --ignore-not-existing --ignore '../*' --ignore "/*" -o ./ -t lcov
           cat coverage/markdown.md
           cat coverage/markdown.md >> "$GITHUB_STEP_SUMMARY"
 
@@ -159,14 +158,15 @@ jobs:
         if: ${{ inputs.test-coverage }}
         uses: romeovs/lcov-reporter-action@87a815f34ec27a5826abba44ce09bbc688da58fd # v0.4.0
         with:
+          title: ${{inputs.package-name}}-test-coverage
           lcov-file: lcov
-          working-directory: ${{ inputs.working-directory }}/coverage
+          working-directory: ${{ inputs.working-directory }}/
 
       - name: Check minimum coverage
         if: ${{ inputs.test-coverage }}
         uses: VeryGoodOpenSource/very_good_coverage@c953fca3e24a915e111cc6f55f03f756dcb3964c # v3.0.0
         with:
-          path: "${{inputs.working-directory}}/coverage/lcov"
+          path: "${{inputs.working-directory}}/lcov"
           min_coverage: ${{ inputs.test-minimum-coverage }}
 
       - name: Build Documentation
