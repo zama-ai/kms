@@ -182,6 +182,12 @@ pub fn protobuf_to_alloy_domain_option(
 }
 
 pub fn protobuf_to_alloy_domain(pb_domain: &Eip712DomainMsg) -> anyhow::Result<Eip712Domain> {
+    // any salt that has the wrong length will result in an error
+    let salt = pb_domain
+        .salt
+        .as_ref()
+        .map(|inner_salt| B256::try_from(inner_salt.as_slice()))
+        .map_or(Ok(None), |v| v.map(Some))?;
     let out = Eip712Domain::new(
         Some(pb_domain.name.clone().into()),
         Some(pb_domain.version.clone().into()),
@@ -193,18 +199,7 @@ pub fn protobuf_to_alloy_domain(pb_domain: &Eip712DomainMsg) -> anyhow::Result<E
             pb_domain.verifying_contract.clone(),
             None,
         )?),
-        pb_domain
-            .salt
-            .as_ref()
-            .and_then(|inner_salt| match inner_salt.len() {
-                0 => {
-                    // Empty vector crashes `from_slice`
-                    // TODO: we should figure out what to do in this situation
-                    tracing::warn!("Inner salt is an empty vec in EIP712");
-                    None
-                }
-                _ => Some(B256::from_slice(inner_salt)),
-            }),
+        salt,
     );
     Ok(out)
 }

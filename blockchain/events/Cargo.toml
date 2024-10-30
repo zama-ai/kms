@@ -1,6 +1,6 @@
 [package]
 name = "events"
-version = "0.9.0-rc19"
+version = "0.9.0-rc21"
 edition.workspace = true
 publish.workspace = true
 authors.workspace = true
@@ -11,7 +11,7 @@ anyhow = { workspace = true }
 async-trait = {workspace = true, optional = true}
 cosmwasm-std = { version = "2.1.4" }
 cosmwasm-schema = "2.1.4"
-cosmos-proto = { path = "../cosmos-proto", optional = true , version = "0.9.0-rc19" }
+cosmos-proto = { path = "../cosmos-proto", optional = true , version = "0.9.0-rc21" }
 hex = "0.4.3"
 koit-toml = { version = "=0.2.1", optional = true }
 opentelemetry = { version = "0.23", features = ["metrics" ], optional = true }
@@ -36,7 +36,7 @@ quickcheck = "1.0.3"
 quickcheck_macros = "1"
 test-context = "0.3.0"
 backward-compatibility = { path = "../../backward-compatibility", version = "0.9.0-rc3" , features = ["load", "tests"] }
-kms-common = { path = "../../common", version = "0.9.0-rc19", features = ["testing"] }
+kms-common = { path = "../../common", version = "0.9.0-rc21", features = ["testing"] }
 
 [features]
 default = []

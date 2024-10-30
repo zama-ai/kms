@@ -1,6 +1,6 @@
 [package]
 name = "conf-trace"
-version = "0.9.0-rc19"
+version = "0.9.0-rc21"
 authors.workspace = true
 publish.workspace = true
 edition.workspace = true
