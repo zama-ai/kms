@@ -1,11 +1,20 @@
 use crate::versioned_storage::{VersionedItem, VersionedMap};
 use cosmwasm_std::{Env, Order, Response, StdError, StdResult, Storage};
 use events::kms::{
-    KmsCoreConf, KmsEvent, KmsOperation, OperationValue, Transaction, TransactionId,
+    AllowedAddresses, KmsCoreConf, KmsEvent, KmsOperation, OperationValue, Transaction,
+    TransactionId,
 };
 
 const ERR_MODIFY_NUM_PARTIES: &str =
     "It is not possible to change the number of parties participating";
+
+fn is_address_allowed(list: &[String], value: &String) -> bool {
+    if list.len() == 1 && list[0] == "*" {
+        true
+    } else {
+        list.contains(value)
+    }
+}
 
 // This storage struct is used to handle storage in the ASC contract. It contains:
 // - the configuration parameters for the KMS (centralized or threshold mode)
@@ -20,7 +29,7 @@ pub struct KmsContractStorage {
     transactions: VersionedMap<Vec<u8>, Transaction>,
     debug_proof: VersionedItem<bool>,
     verify_proof_contract_address: VersionedItem<String>,
-    allow_list: VersionedItem<Vec<String>>,
+    allowed_addresses: VersionedItem<AllowedAddresses>,
 }
 
 impl Default for KmsContractStorage {
@@ -30,7 +39,7 @@ impl Default for KmsContractStorage {
             transactions: VersionedMap::new("transactions"),
             debug_proof: VersionedItem::new("debug_proof"),
             verify_proof_contract_address: VersionedItem::new("verify_proof_contract_address"),
-            allow_list: VersionedItem::new("allow_list"),
+            allowed_addresses: VersionedItem::new("allowed_addresses"),
         }
     }
 }
@@ -209,27 +218,41 @@ impl KmsContractStorage {
         self.debug_proof.save(storage, &value)
     }
 
-    /// Set allow list.
+    /// Set allowed addresses.
     ///
-    /// Some exec operations like key-gen, crs-gen, etc ... take a lot of resources and shouldn't
-    /// be accessible to anyone. To allow some finer-grain control on who can launch said
-    /// operations the contract holds a list of addresses of who can call these operations.
-    /// In the future we might have to add an endpoint to modify the allow-list.
-    pub fn set_allow_list(&self, storage: &mut dyn Storage, value: Vec<String>) -> StdResult<()> {
-        self.allow_list.save(storage, &value)
+    /// Some exec operations must not be accessible to anyone. To allow some finer-grain control
+    /// on who can launch said operations the contract holds several lists of addresses of who can
+    /// call these operations:
+    /// - `allowed_to_gen`: who can trigger gen calls (ex: `keygen`, `crs_gen`)
+    /// - `allowed_to_response`: who can trigger response calls (ex: `decrypt_response`, `keygen_response`)
+    ///
+    /// In the future we might have to add an endpoint to modify these lists.
+    pub fn set_allowed_addresses(
+        &self,
+        storage: &mut dyn Storage,
+        value: AllowedAddresses,
+    ) -> StdResult<()> {
+        self.allowed_addresses.save(storage, &value)
     }
 
-    pub fn allow_list_contains(
+    /// Check if the given address is allowed to trigger gen calls
+    pub fn is_allowed_to_gen(
         &self,
         storage: &dyn Storage,
         value: &String,
     ) -> Result<bool, cosmwasm_std::StdError> {
-        let allow_list: Vec<String> = self.allow_list.load(storage)?;
-        // Check if wild card is set
-        if (allow_list.len() == 1) && (allow_list[0] == "*") {
-            return Ok(true);
-        }
-        Ok(allow_list.contains(value))
+        let allowed_to_gen = &self.allowed_addresses.load(storage)?.allowed_to_gen;
+        Ok(is_address_allowed(allowed_to_gen, value))
+    }
+
+    /// Check if the given address is allowed to trigger response calls
+    pub fn is_allowed_to_response(
+        &self,
+        storage: &dyn Storage,
+        value: &String,
+    ) -> Result<bool, cosmwasm_std::StdError> {
+        let allowed_to_response = &self.allowed_addresses.load(storage)?.allowed_to_response;
+        Ok(is_address_allowed(allowed_to_response, value))
     }
 
     // Load the debug proof flag from the storage

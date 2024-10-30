@@ -6,7 +6,7 @@ use cw2::{ensure_from_older_version, set_contract_version};
 use cw_controllers::Admin;
 use cw_utils::must_pay;
 use events::kms::{
-    AllowListConf, CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues,
+    AllowedAddresses, CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues,
     KeyGenPreprocResponseValues, KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues,
     KmsCoreConf, KmsEvent, KmsOperation, OperationValue, ReencryptResponseValues, ReencryptValues,
     Transaction, TransactionId, VerifyProvenCtValues,
@@ -26,6 +26,28 @@ pub(crate) const ADMIN: Admin = Admin::new("kms-conf-admin");
 // Info for migration
 const CONTRACT_NAME: &str = "kms-asc";
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Check if the given address is allowed using the given function.
+fn is_address_allowed<F>(
+    addr: &str,
+    storage: &dyn Storage,
+    allow_addr_fn: F,
+) -> std::result::Result<(), cosmwasm_std::StdError>
+where
+    F: Fn(&dyn Storage, &String) -> Result<bool, cosmwasm_std::StdError>,
+{
+    let sender_string_address = addr.to_string();
+
+    if !allow_addr_fn(storage, &sender_string_address).map_err(|e| {
+        StdError::generic_err(format!("Error checking if address is allowed: {}", e))
+    })? {
+        return Err(StdError::generic_err(format!(
+            "Address {} is not allowed",
+            sender_string_address
+        )));
+    };
+    Ok(())
+}
 
 #[cw_serde]
 pub struct ProofPayload {
@@ -120,33 +142,42 @@ impl KmsContract {
         }
     }
 
-    /// Verifies that the caller is in the allow-list
+    /// Check that the sender's address is allowed to trigger gen calls
     ///
-    /// Some operations aren't meant for users like key-gen and crs-gen.
-    /// Thus a list of addresses allowed to call restricted operators is set in the instantiation
-    /// of this contract. This method verifies that the caller is in the configured allowed-list.
-    pub fn verify_allow_list(
+    /// Gen operations aren't meant for ordinary users (ex: `keygen`, `crs_gen`).
+    /// Thus, a list of addresses allowed to call these operators is set at the contract's
+    /// instantiation. This method verifies that the sender's address is in the configured
+    /// allowed-list.
+    pub fn is_allowed_to_gen(
         &self,
         ctx: &ExecCtx,
         operation: &str,
     ) -> std::result::Result<(), cosmwasm_std::StdError> {
-        let sender_string_address = ctx.info.sender.as_str().to_string();
-        if !self
-            .storage
-            .allow_list_contains(ctx.deps.storage, &sender_string_address)
-            .map_err(|_| {
-                StdError::generic_err(format!(
-                    "Error checking if address is allowed in operation: {}",
-                    operation
-                ))
-            })?
-        {
-            return Err(StdError::generic_err(format!(
-                "{} {}",
-                sender_string_address, operation
-            )));
-        };
-        Ok(())
+        is_address_allowed(
+            ctx.info.sender.as_str(),
+            ctx.deps.storage,
+            |storage, address| self.storage.is_allowed_to_gen(storage, address),
+        )
+        .map_err(|e| StdError::generic_err(format!("{}: {}", operation, e)))
+    }
+
+    /// Check that the sender's address is allowed to trigger response calls
+    ///
+    /// Response operations aren't meant for ordinary users (ex: `decrypt_response`, `keygen_response`).
+    /// Thus, a list of addresses allowed to call these operators is set at the contract's
+    /// instantiation. This method verifies that the sender's address is in the configured
+    /// allowed-list.
+    pub fn is_allowed_to_response(
+        &self,
+        ctx: &ExecCtx,
+        operation: &str,
+    ) -> std::result::Result<(), cosmwasm_std::StdError> {
+        is_address_allowed(
+            ctx.info.sender.as_str(),
+            ctx.deps.storage,
+            |storage, address| self.storage.is_allowed_to_response(storage, address),
+        )
+        .map_err(|e| StdError::generic_err(format!("{}: {}", operation, e)))
     }
 
     /// ASC contract instantiation
@@ -155,11 +186,12 @@ impl KmsContract {
     ///
     /// # Arguments
     ///
-    /// * `allow_list_conf` - an optional list of who can call crs-gen, insecure-key-gen, key-gen,
-    /// key-gen preprocessing methods.
-    /// Providing None will default to only the address of the sender.
-    /// Providing `["*"]` will allow everyone to access the endpoints
-    /// If the list is not the wild-card it should only contain valid addresses.
+    /// * `allowed_addresses` - an optional struct containing two lists of addresses, one for who
+    /// can trigger all gen calls (`allowed_to_gen`) and one for who can trigger all response calls
+    /// (`allowed_to_response`).
+    /// Providing None will default to use the sender's address for both.
+    /// Providing `["*"]` in either list will allow everyone to access the respective endpoints.
+    /// Both lists should only contain valid addresses (if not the wild-card `["*"]`).
     #[sv::msg(instantiate)]
     pub fn instantiate(
         &self,
@@ -167,7 +199,7 @@ impl KmsContract {
         debug_proof: Option<bool>,
         verify_proof_contract_addr: String,
         kms_core_conf: KmsCoreConf,
-        allow_list_conf: Option<AllowListConf>,
+        allowed_addresses: Option<AllowedAddresses>,
     ) -> StdResult<Response> {
         // Check conformance of threshold config
         if !kms_core_conf.is_conformant() {
@@ -187,26 +219,15 @@ impl KmsContract {
         }
 
         // Allow-list configuration
-        if let Some(allow_list) = allow_list_conf {
-            // Verify that they can be cast as addresses
-            let all_valid_addresses = allow_list
-                .allow_list
-                .clone()
-                .into_iter()
-                .all(|addr| ctx.deps.api.addr_validate(&addr).is_ok());
-
-            let wild_card = (allow_list.allow_list.len() == 1) && (allow_list.allow_list[0] == "*");
-            if !(all_valid_addresses | wild_card) {
-                return Err(cosmwasm_std::StdError::generic_err(
-                    "allow_list contains invalid addresses",
-                ));
-            };
+        if let Some(allowed_addresses) = allowed_addresses {
+            allowed_addresses.validate_addresses(|addr| ctx.deps.api.addr_validate(addr))?;
 
             self.storage
-                .set_allow_list(ctx.deps.storage, allow_list.allow_list)?
+                .set_allowed_addresses(ctx.deps.storage, allowed_addresses)?
         } else {
+            let allowed_sender_address = AllowedAddresses::default_to(ctx.info.sender.as_str());
             self.storage
-                .set_allow_list(ctx.deps.storage, vec![ctx.info.sender.to_string()])?
+                .set_allowed_addresses(ctx.deps.storage, allowed_sender_address)?
         }
 
         // Inclusion proof smart contract configuration
@@ -323,6 +344,9 @@ impl KmsContract {
         self.chain_verify_proof_contract_call(ctx, response, decrypt.proof().to_string())
     }
 
+    /// Decrypt response
+    ///
+    /// This call might be restricted to specific addresses defined at instantiation (`AllowedAddresses`).
     #[sv::msg(exec)]
     pub fn decrypt_response(
         &self,
@@ -330,6 +354,7 @@ impl KmsContract {
         txn_id: TransactionId,
         decrypt_response: DecryptResponseValues,
     ) -> StdResult<Response> {
+        self.is_allowed_to_response(&ctx, "decrypt_response")?;
         self.process_transaction(
             ctx.deps.storage,
             &ctx.env,
@@ -338,19 +363,26 @@ impl KmsContract {
         )
     }
 
+    /// Keygen preproc
+    ///
+    /// This call might be restricted to specific addresses defined at instantiation (`AllowedAddresses`).
     #[sv::msg(exec)]
     pub fn keygen_preproc(&self, ctx: ExecCtx) -> StdResult<Response> {
         let mut ctx = ctx;
-        self.verify_allow_list(&ctx, "keygen_preproc")?;
+        self.is_allowed_to_gen(&ctx, "keygen_preproc")?;
         self.process_request_transaction(&mut ctx, KeyGenPreprocValues::default().into())
     }
 
+    /// Keygen preproc response
+    ///
+    /// This call might be restricted to specific addresses defined at instantiation (`AllowedAddresses`).
     #[sv::msg(exec)]
     pub fn keygen_preproc_response(
         &self,
         ctx: ExecCtx,
         txn_id: TransactionId,
     ) -> StdResult<Response> {
+        self.is_allowed_to_response(&ctx, "keygen_preproc_response")?;
         self.process_transaction(
             ctx.deps.storage,
             &ctx.env,
@@ -359,6 +391,9 @@ impl KmsContract {
         )
     }
 
+    /// Insecure keygen
+    ///
+    /// This call might be restricted to specific addresses defined at instantiation (`AllowedAddresses`).
     #[sv::msg(exec)]
     pub fn insecure_key_gen(
         &self,
@@ -366,10 +401,13 @@ impl KmsContract {
         insecure_key_gen: InsecureKeyGenValues,
     ) -> StdResult<Response> {
         let mut ctx = ctx;
-        self.verify_allow_list(&ctx, "insecure_key_gen")?;
+        self.is_allowed_to_gen(&ctx, "insecure_key_gen")?;
         self.process_request_transaction(&mut ctx, OperationValue::InsecureKeyGen(insecure_key_gen))
     }
 
+    /// Insecure keygen response
+    ///
+    /// This call might be restricted to specific addresses defined at instantiation (`AllowedAddresses`).
     #[sv::msg(exec)]
     pub fn insecure_key_gen_response(
         &self,
@@ -377,6 +415,7 @@ impl KmsContract {
         txn_id: TransactionId,
         keygen_response: KeyGenResponseValues,
     ) -> StdResult<Response> {
+        self.is_allowed_to_response(&ctx, "insecure_key_gen_response")?;
         self.process_transaction(
             ctx.deps.storage,
             &ctx.env,
@@ -385,13 +424,19 @@ impl KmsContract {
         )
     }
 
+    /// Keygen
+    ///
+    /// This call might be restricted to specific addresses defined at instantiation (`AllowedAddresses`).
     #[sv::msg(exec)]
     pub fn keygen(&self, ctx: ExecCtx, keygen: KeyGenValues) -> StdResult<Response> {
         let mut ctx = ctx;
-        self.verify_allow_list(&ctx, "keygen")?;
+        self.is_allowed_to_gen(&ctx, "keygen")?;
         self.process_request_transaction(&mut ctx, keygen.into())
     }
 
+    /// Keygen response
+    ///
+    /// This call might be restricted to specific addresses defined at instantiation (`AllowedAddresses`).
     #[sv::msg(exec)]
     pub fn keygen_response(
         &self,
@@ -399,6 +444,7 @@ impl KmsContract {
         txn_id: TransactionId,
         keygen_response: KeyGenResponseValues,
     ) -> StdResult<Response> {
+        self.is_allowed_to_response(&ctx, "keygen_response")?;
         self.process_transaction(
             ctx.deps.storage,
             &ctx.env,
@@ -417,6 +463,9 @@ impl KmsContract {
         self.chain_verify_proof_contract_call(ctx, response, reencrypt.proof().to_string())
     }
 
+    /// Reencrypt response
+    ///
+    /// This call might be restricted to specific addresses defined at instantiation (`AllowedAddresses`).
     #[sv::msg(exec)]
     pub fn reencrypt_response(
         &self,
@@ -424,6 +473,7 @@ impl KmsContract {
         txn_id: TransactionId,
         reencrypt_response: ReencryptResponseValues,
     ) -> StdResult<Response> {
+        self.is_allowed_to_response(&ctx, "reencrypt_response")?;
         self.process_transaction(
             ctx.deps.storage,
             &ctx.env,
@@ -442,6 +492,9 @@ impl KmsContract {
         self.process_request_transaction(&mut ctx, verify_proven_ct.into())
     }
 
+    /// Verify proven ct response
+    ///
+    /// This call might be restricted to specific addresses defined at instantiation (`AllowedAddresses`).
     #[sv::msg(exec)]
     pub fn verify_proven_ct_response(
         &self,
@@ -449,6 +502,7 @@ impl KmsContract {
         txn_id: TransactionId,
         verify_proven_ct_response: VerifyProvenCtResponseValues,
     ) -> StdResult<Response> {
+        self.is_allowed_to_response(&ctx, "verify_proven_ct_response")?;
         self.process_transaction(
             ctx.deps.storage,
             &ctx.env,
@@ -457,13 +511,19 @@ impl KmsContract {
         )
     }
 
+    /// CRS gen
+    ///
+    /// This call might be restricted to specific addresses defined at instantiation (`AllowedAddresses`).
     #[sv::msg(exec)]
     pub fn crs_gen(&self, ctx: ExecCtx, crs_gen: CrsGenValues) -> StdResult<Response> {
         let mut ctx = ctx;
-        self.verify_allow_list(&ctx, "crs_gen")?;
+        self.is_allowed_to_gen(&ctx, "crs_gen")?;
         self.process_request_transaction(&mut ctx, OperationValue::CrsGen(crs_gen))
     }
 
+    /// CRS gen response
+    ///
+    /// This call might be restricted to specific addresses defined at instantiation (`AllowedAddresses`).
     #[sv::msg(exec)]
     pub fn crs_gen_response(
         &self,
@@ -471,6 +531,7 @@ impl KmsContract {
         txn_id: TransactionId,
         crs_gen_response: CrsGenResponseValues,
     ) -> StdResult<Response> {
+        self.is_allowed_to_response(&ctx, "crs_gen_response")?;
         self.process_transaction(
             ctx.deps.storage,
             &ctx.env,
@@ -522,7 +583,7 @@ mod tests {
     use cosmwasm_std::Binary;
     use cosmwasm_std::Event;
     use cw_multi_test::{App as CwApp, Executor};
-    use events::kms::AllowListConf;
+    use events::kms::AllowedAddresses;
     use events::kms::CrsGenResponseValues;
     use events::kms::CrsGenValues;
     use events::kms::DecryptResponseValues;
@@ -572,9 +633,7 @@ mod tests {
                     degree_for_reconstruction: 2,
                     param_choice: FheParameter::Test,
                 },
-                Some(AllowListConf {
-                    allow_list: vec![owner.to_string()]
-                }),
+                Some(AllowedAddresses::default_to(owner.as_str())),
             )
             .call(&owner)
             .is_err());
@@ -591,9 +650,7 @@ mod tests {
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 },
-                Some(AllowListConf {
-                    allow_list: vec![owner.to_string()]
-                }),
+                Some(AllowedAddresses::default_to(owner.as_str())),
             )
             .call(&owner)
             .is_err());
@@ -610,9 +667,7 @@ mod tests {
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 },
-                Some(AllowListConf {
-                    allow_list: vec![owner.to_string()]
-                }),
+                Some(AllowedAddresses::default_to(owner.as_str())),
             )
             .call(&owner)
             .is_err());
@@ -629,9 +684,7 @@ mod tests {
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 },
-                Some(AllowListConf {
-                    allow_list: vec![owner.to_string()],
-                }),
+                Some(AllowedAddresses::default_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
@@ -660,9 +713,7 @@ mod tests {
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 },
-                Some(AllowListConf {
-                    allow_list: vec![owner.to_string()],
-                }),
+                Some(AllowedAddresses::default_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
@@ -717,9 +768,7 @@ mod tests {
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 },
-                Some(AllowListConf {
-                    allow_list: vec![owner.to_string()],
-                }),
+                Some(AllowedAddresses::default_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
@@ -813,9 +862,7 @@ mod tests {
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 },
-                Some(AllowListConf {
-                    allow_list: vec![owner.to_string()],
-                }),
+                Some(AllowedAddresses::default_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
@@ -937,9 +984,7 @@ mod tests {
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 },
-                Some(AllowListConf {
-                    allow_list: vec![owner.to_string()],
-                }),
+                Some(AllowedAddresses::default_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
@@ -1036,9 +1081,7 @@ mod tests {
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 },
-                Some(AllowListConf {
-                    allow_list: vec![owner.to_string()],
-                }),
+                Some(AllowedAddresses::default_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
@@ -1087,9 +1130,7 @@ mod tests {
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 },
-                Some(AllowListConf {
-                    allow_list: vec![owner.to_string()],
-                }),
+                Some(AllowedAddresses::default_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
@@ -1273,9 +1314,7 @@ mod tests {
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 },
-                Some(AllowListConf {
-                    allow_list: vec![owner.to_string()],
-                }),
+                Some(AllowedAddresses::default_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
@@ -1376,9 +1415,7 @@ mod tests {
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 },
-                Some(AllowListConf {
-                    allow_list: vec![owner.to_string()],
-                }),
+                Some(AllowedAddresses::default_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
@@ -1551,12 +1588,18 @@ mod tests {
         assert!(not_expected_values.is_err());
     }
 
+    /// Test the `allowed_to_gen` list's logic. In particular this test makes sure to consider all
+    /// kinds of possible inputs for this list.
     #[test]
-    fn test_allow_list() {
+    fn test_is_allowed_to_gen() {
         let owner = "owner".into_addr();
         let user = "user".into_addr();
         let another_user = "another_user".into_addr();
+        let connector = "connector".into_addr();
         let app = App::default();
+
+        // List of addresses that are allowed to trigger a response in the ASC (represents the connector(s)
+        let allowed_to_response = vec![connector.to_string()];
 
         let crsgen_val = CrsGenValues::new(
             192,
@@ -1567,7 +1610,8 @@ mod tests {
             Some(vec![42; 32]),
         )
         .unwrap();
-        for (allow_list, allowed, instantiation_ok) in [
+
+        for (allowed_to_gen, allowed, instantiation_ok) in [
             (None, vec![true, false, false], true), // Defaults to owner only
             (Some(vec![]), vec![false, false, false], true), // Empty -> no one can operate (not sure this is really useful)
             (Some(vec!["*".to_string()]), vec![true, true, true], true), // Wild-card, everyone can
@@ -1605,9 +1649,12 @@ mod tests {
                             degree_for_reconstruction: 1,
                             param_choice: FheParameter::Test,
                         },
-                        allow_list
+                        allowed_to_gen
                             .clone()
-                            .map(|allow_list| AllowListConf { allow_list }),
+                            .map(|allowed_to_gen| AllowedAddresses {
+                                allowed_to_gen,
+                                allowed_to_response: allowed_to_response.clone(),
+                            }),
                     )
                     .call(&owner)
                     .unwrap();
@@ -1624,10 +1671,10 @@ mod tests {
                         // Failure
                         contract.crs_gen(crsgen_val.clone()).call(&wallet).expect_err(
                             format!(
-                                "{} ({}) wasn't allowed to call CRS gen but somehow succeeded with allow_list: {:?}.",
+                                "{} ({}) wasn't allowed to call CRS gen but somehow succeeded with `allowed_to_gen` list: {:?}.",
                                 wallet_name,
                                 wallet,
-                                allow_list,
+                                allowed_to_gen,
                             )
                             .as_str(),
                         );
@@ -1645,20 +1692,99 @@ mod tests {
                             degree_for_reconstruction: 1,
                             param_choice: FheParameter::Test,
                         },
-                        allow_list
+                        allowed_to_gen
                             .clone()
-                            .map(|allow_list| AllowListConf { allow_list }),
+                            .map(|allowed_to_gen| AllowedAddresses {
+                                allowed_to_gen,
+                                allowed_to_response: allowed_to_response.clone(),
+                            }),
                     )
                     .call(&owner)
                     .expect_err(
                         format!(
                             "Instantiation didn't fail as expected with allow-list: {:?}.",
-                            allow_list
+                            allowed_to_gen
                         )
                         .as_str(),
                     );
             }
         }
+    }
+
+    /// Test the `allowed_to_response` list's logic. Not all kinds of inputs (for this list) are
+    /// tested here since this has already been done in `test_is_allowed_to_gen` (which shares
+    /// the same logic).
+    #[test]
+    fn test_is_allowed_to_response() {
+        let gateway = Addr::unchecked("gateway");
+
+        let app = cw_multi_test::App::new(|router, _api, storage| {
+            router
+                .bank
+                .init_balance(storage, &gateway, coins(5000000, UCOSM))
+                .unwrap();
+        });
+
+        let app = App::new(app);
+        let code_id = CodeId::store_code(&app);
+        let owner = "owner".into_addr();
+        let fake_owner = "fake_owner".into_addr();
+        let friend_owner = "friend_owner".into_addr();
+
+        let allowed_to_gen = vec![owner.to_string()];
+
+        // Only the `owner` and `friend_owner` are allowed to trigger a decrypt response
+        let allowed_to_response = vec![owner.to_string(), friend_owner.to_string()];
+
+        // Instantiate the contract
+        let contract = code_id
+            .instantiate(
+                Some(true),
+                DUMMY_BECH32_ADDR.to_string(),
+                KmsCoreConf {
+                    parties: vec![KmsCoreParty::default(); 4],
+                    response_count_for_majority_vote: 2,
+                    response_count_for_reconstruction: 3,
+                    degree_for_reconstruction: 1,
+                    param_choice: FheParameter::Test,
+                },
+                Some(AllowedAddresses {
+                    allowed_to_gen,
+                    allowed_to_response: allowed_to_response.clone(),
+                }),
+            )
+            .call(&owner)
+            .unwrap();
+
+        // Trigger a decrypt response
+        let decrypt_response = DecryptResponseValues::new(vec![4, 5, 6], vec![6, 7, 8]);
+
+        let txn_id = TransactionId::default();
+
+        // Owner has been allowed to call a decrypt response
+        let _ = contract
+            .decrypt_response(txn_id.clone(), decrypt_response.clone())
+            .call(&owner)
+            .unwrap();
+
+        // `friend_owner` has been allowed to call a decrypt response
+        let _ = contract
+            .decrypt_response(txn_id.clone(), decrypt_response.clone())
+            .call(&friend_owner)
+            .unwrap();
+
+        // `fake_owner` is not allowed to call a decrypt response
+        let _ = contract
+            .decrypt_response(txn_id.clone(), decrypt_response.clone())
+            .call(&fake_owner)
+            .expect_err(
+                format!(
+                    "Fake owner was allowed to call a decrypt response with address {} and whitelist {:?}",
+                    fake_owner,
+                    allowed_to_response
+                )
+                .as_str(),
+            );
     }
 
     // Provide an "old" dummy versioned smart contract implementation

@@ -1,3 +1,6 @@
+build-compose-base:
+	docker compose -vvv -f docker-compose-kms-base.yml build
+
 build-compose-threshold:
 	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml build
 

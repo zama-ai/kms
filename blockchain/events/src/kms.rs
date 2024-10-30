@@ -2,7 +2,7 @@ use super::conversions::*;
 use core::hash::Hash;
 use core::hash::Hasher;
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Attribute, Event};
+use cosmwasm_std::{Addr, Attribute, Event, StdResult};
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -14,15 +14,62 @@ use tfhe_versionable::{Versionize, VersionsDispatch};
 use typed_builder::TypedBuilder;
 
 #[derive(VersionsDispatch)]
-pub enum AllowListConfVersioned {
-    V0(AllowListConf),
+pub enum AllowedAddressesVersioned {
+    V0(AllowedAddresses),
 }
 
+/// This struct contains two lists of addresses meant to restrict who can trigger certain operations
+/// in the ASC:
+/// - `allowed_to_gen`: who can trigger all gen calls (ex: `keygen`, `crs_gen`)
+/// - `allowed_to_response`: who can trigger all response calls (ex: `decrypt_response`, `keygen_response`)
+/// In both:
+/// - the wild-card `["*"]` can be used to allow everyone (it must be the only item in the list)
+/// - else, the given addresses should be valid.
 #[cw_serde]
 #[derive(Versionize)]
-#[versionize(AllowListConfVersioned)]
-pub struct AllowListConf {
-    pub allow_list: Vec<String>,
+#[versionize(AllowedAddressesVersioned)]
+pub struct AllowedAddresses {
+    pub allowed_to_gen: Vec<String>,
+    pub allowed_to_response: Vec<String>,
+}
+
+/// Validate the given addresses using the given validate function.
+///
+/// The only exception is if a list only contains the wild-card `["*"]`, which is allowed.
+impl AllowedAddresses {
+    pub fn validate_addresses<F>(&self, validate_addr_fn: F) -> Result<(), cosmwasm_std::StdError>
+    where
+        F: Fn(&str) -> StdResult<Addr>,
+    {
+        let validate_list = |list: &[String]| {
+            if list.len() == 1 && list[0] == "*" {
+                true
+            } else {
+                list.iter().all(|addr| validate_addr_fn(addr).is_ok())
+            }
+        };
+
+        if !validate_list(&self.allowed_to_gen) {
+            return Err(cosmwasm_std::StdError::generic_err(
+                "`allowed_to_gen` contains invalid addresses",
+            ));
+        }
+
+        if !validate_list(&self.allowed_to_response) {
+            return Err(cosmwasm_std::StdError::generic_err(
+                "`allowed_to_response` contains invalid addresses",
+            ));
+        }
+
+        Ok(())
+    }
+
+    pub fn default_to(addr: &str) -> Self {
+        Self {
+            allowed_to_gen: vec![addr.to_string()],
+            allowed_to_response: vec![addr.to_string()],
+        }
+    }
 }
 
 #[derive(VersionsDispatch)]
