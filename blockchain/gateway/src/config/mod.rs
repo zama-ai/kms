@@ -45,14 +45,14 @@ pub struct VerifyProvenCtResponseToClient {
     pub listener_type: ListenerType,
     // Signature from KMS attesting validity of the proven ciphertext
     #[builder(setter(into))]
-    pub kms_signatures: Vec<Vec<u8>>,
+    pub kms_signatures: HexVectorList,
     // If Coprocesor, signature attesting correct storage
     #[builder(default, setter(into))]
-    pub proof_of_storage: Vec<u8>,
+    pub proof_of_storage: HexVector,
     // If Coprocessor, handles to the ciphertexts
     // each inner vec is a single handle (32 byte array)
     #[builder(default, setter(into))]
-    pub handles: Vec<Vec<u8>>,
+    pub handles: HexVectorList,
 }
 
 /// An entry containing all URL and signature info for a key or CRS.

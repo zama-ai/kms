@@ -183,7 +183,10 @@ mod tests {
         let body: RespBodyVerifyProvenCt =
             serde_json::de::from_str(&body).expect("Deserialized body");
         assert_eq!(body.status, "success");
-        assert_eq!(body.response.kms_signatures, vec![vec![0_u8, 1, 2, 3]]);
+        assert_eq!(
+            body.response.kms_signatures,
+            vec![vec![0_u8, 1, 2, 3]].into()
+        );
         http_handle.abort();
         gateway_handle.abort();
     }
