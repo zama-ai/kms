@@ -73,4 +73,4 @@ max_en_decode_message_size = 2147483648
 
 [tracing]
 service_name = "kms-threshold-3"
-endpoint = "http://localhost:4317"
+endpoint = "http://otelcol:4317"

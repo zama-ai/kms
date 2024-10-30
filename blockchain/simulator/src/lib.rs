@@ -1,5 +1,6 @@
 use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
+use std::sync::Once;
 
 use aes_prng::AesRng;
 use alloy_signer::SignerSync;
@@ -1108,12 +1109,19 @@ pub async fn call_faucet(
     }
 }
 
+static INIT: Once = Once::new();
+
+pub fn init_logging() {
+    INIT.call_once(setup_logging)
+}
+
 pub fn setup_logging() {
     let file_appender = RollingFileAppender::new(Rotation::DAILY, "logs", "simulator.log");
     let file_and_stdout = file_appender.and(std::io::stdout);
     let subscriber = tracing_subscriber::fmt()
         .with_writer(file_and_stdout)
         .with_ansi(false)
+        .json()
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("Failed to set subscriber");
 }

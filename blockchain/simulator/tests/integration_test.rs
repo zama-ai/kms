@@ -87,6 +87,8 @@ impl AsyncTestContext for DockerComposeThresholdContext {
 }
 
 async fn test_template<T: DockerComposeContext>(ctx: &mut T, commands: Vec<Command>) {
+    init_logging();
+
     // Wait for contract to be in-chain
     // TODO: add status check for contract in-chain
     tokio::time::sleep(tokio::time::Duration::from_secs(BOOTSTRAP_TIME_TO_SLEEP)).await;

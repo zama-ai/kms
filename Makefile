@@ -7,17 +7,20 @@ build-compose-threshold:
 start-compose-threshold:
 	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml up -d --wait
 
-start-compose-threshold-ghcr:
-	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml -f docker-compose-kms-threshold-ghcr.yml up -d --wait
-
 stop-compose-threshold:
 	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml down --volumes --remove-orphans
 
 start-compose-threshold-ghcr:
 	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml -f docker-compose-kms-threshold-ghcr.yml up -d --wait
 
-stop-compose:
-	docker compose down -v --remove-orphans
+start-compose-threshold-observability:
+	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml -f docker-compose-kms-observability.yml up -d --wait
+
+start-compose-threshold-observability-ghcr:
+	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml -f docker-compose-kms-observability.yml -f docker-compose-kms-threshold-ghcr.yml up -d --wait
+
+stop-compose-threshold-observability:
+	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml -f docker-compose-kms-observability.yml down --volumes --remove-orphans
 
 test-backward-compatibility: pull-lfs-files
 	cargo test --test backward_compatibility_* -- --include-ignored
@@ -43,3 +46,4 @@ linting-package:
 		exit 1; \
 	fi
 	RUSTFLAGS="-Aclippy::doc-lazy-continuation" cargo clippy --all-targets --all-features --package $(PACKAGE) -- -D warnings
+

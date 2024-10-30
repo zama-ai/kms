@@ -10,6 +10,7 @@ use crate::infrastructure::metrics::{MetricType, Metrics};
 use anyhow::anyhow;
 use async_trait::async_trait;
 use conf_trace::grpc::make_request;
+use conf_trace::telemetry::ContextPropagator;
 use enum_dispatch::enum_dispatch;
 use events::kms::{
     CrsGenValues, DecryptResponseValues, DecryptValues, InsecureKeyGenValues,
@@ -287,12 +288,14 @@ impl<S> KmsEventHandler for DecryptVal<S>
 where
     S: Storage + Clone + Send + Sync + 'static,
 {
+    #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
         _config_contract: Option<KmsCoreConf>,
     ) -> anyhow::Result<KmsOperationResponse> {
         let chan = &self.operation_val.kms_client.channel;
-        let mut client = CoreServiceEndpointClient::new(chan.clone());
+        let mut client =
+            CoreServiceEndpointClient::with_interceptor(chan.clone(), ContextPropagator);
 
         if CURRENT_FORMAT_VERSION != self.decrypt.version() {
             return Err(anyhow!(
@@ -421,12 +424,14 @@ impl<S> KmsEventHandler for ReencryptVal<S>
 where
     S: Storage + Clone + Send + Sync + 'static,
 {
+    #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
         _config_contract: Option<KmsCoreConf>,
     ) -> anyhow::Result<KmsOperationResponse> {
         let chan = &self.operation_val.kms_client.channel;
-        let mut client = CoreServiceEndpointClient::new(chan.clone());
+        let mut client =
+            CoreServiceEndpointClient::with_interceptor(chan.clone(), ContextPropagator);
 
         let tx_id = self.operation_val.tx_id.to_hex();
 
@@ -535,12 +540,14 @@ impl<S> KmsEventHandler for VerifyProvenCtVal<S>
 where
     S: Storage + Clone + Send + Sync + 'static,
 {
+    #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
         _config_contract: Option<KmsCoreConf>,
     ) -> anyhow::Result<KmsOperationResponse> {
         let chan = &self.operation_val.kms_client.channel;
-        let mut client = CoreServiceEndpointClient::new(chan.clone());
+        let mut client =
+            CoreServiceEndpointClient::with_interceptor(chan.clone(), ContextPropagator);
 
         let tx_id = self.operation_val.tx_id.to_hex();
         let req_id: RequestId = tx_id.clone().try_into()?;
@@ -651,7 +658,8 @@ where
         })?;
 
         let chan = &self.operation_val.kms_client.channel;
-        let mut client = CoreServiceEndpointClient::new(chan.clone());
+        let mut client =
+            CoreServiceEndpointClient::with_interceptor(chan.clone(), ContextPropagator);
 
         let request_id = self.operation_val.tx_id.to_hex();
 
@@ -735,7 +743,8 @@ where
             .ok_or_else(|| anyhow!("config contract missing"))?
             .param_choice();
         let chan = &self.operation_val.kms_client.channel;
-        let mut client = CoreServiceEndpointClient::new(chan.clone());
+        let mut client =
+            CoreServiceEndpointClient::with_interceptor(chan.clone(), ContextPropagator);
 
         let request_id = self.operation_val.tx_id.to_hex();
         let keygen = &self.keygen;
@@ -832,7 +841,8 @@ where
             .param_choice();
 
         let chan = &self.operation_val.kms_client.channel;
-        let mut client = CoreServiceEndpointClient::new(chan.clone());
+        let mut client =
+            CoreServiceEndpointClient::with_interceptor(chan.clone(), ContextPropagator);
 
         let request_id = self.operation_val.tx_id.to_hex();
 
@@ -937,7 +947,8 @@ where
             .param_choice();
 
         let chan = &self.operation_val.kms_client.channel;
-        let mut client = CoreServiceEndpointClient::new(chan.clone());
+        let mut client =
+            CoreServiceEndpointClient::with_interceptor(chan.clone(), ContextPropagator);
 
         let request_id = self.operation_val.tx_id.to_hex();
         let crsgen = &self.crsgen;

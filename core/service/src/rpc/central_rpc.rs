@@ -47,6 +47,7 @@ use tokio::sync::{Mutex, RwLock};
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
 use tower_http::trace::TraceLayer;
+use tracing::Instrument;
 
 pub async fn server_handle<
     PubS: Storage + Sync + Send + 'static,
@@ -279,7 +280,7 @@ impl<
                         );
                 }
             }
-        });
+        }.instrument(tracing::Span::current()));
 
         Ok(Response::new(Empty {}))
     }
@@ -331,54 +332,57 @@ impl<
 
         // we do not need to hold the handle,
         // the result of the computation is tracked by the reenc_meta_store
-        let _handle = tokio::spawn(async move {
-            let fhe_keys_rlock = fhe_keys.read().await;
-            let keys = match fhe_keys_rlock.get(&key_id) {
-                Some(keys) => keys,
-                None => {
-                    let mut guarded_meta_store = meta_store.write().await;
-                    let _ = guarded_meta_store.update(
-                        &request_id,
-                        HandlerStatus::Error(format!(
-                            "Failed reencryption: Key with ID {key_id} does not exist!"
-                        )),
-                    );
-                    return;
-                }
-            };
-            tracing::info!(
-                "Starting reencryption using key_id {} for request ID {}",
-                &key_id,
-                &request_id
-            );
-            match async_reencrypt::<PubS, PrivS>(
-                keys,
-                &sig_key,
-                &mut rng,
-                &ciphertext,
-                fhe_type,
-                &link,
-                &client_enc_key,
-                &client_address,
-            )
-            .await
-            {
-                Ok(raw_decryption) => {
-                    let mut guarded_meta_store = meta_store.write().await;
-                    let _ = guarded_meta_store.update(
-                        &request_id,
-                        HandlerStatus::Done((fhe_type, link, raw_decryption)),
-                    );
-                }
-                Result::Err(e) => {
-                    let mut guarded_meta_store = meta_store.write().await;
-                    let _ = guarded_meta_store.update(
-                        &request_id,
-                        HandlerStatus::Error(format!("Failed reencryption: {e}")),
-                    );
+        let _handle = tokio::spawn(
+            async move {
+                let fhe_keys_rlock = fhe_keys.read().await;
+                let keys = match fhe_keys_rlock.get(&key_id) {
+                    Some(keys) => keys,
+                    None => {
+                        let mut guarded_meta_store = meta_store.write().await;
+                        let _ = guarded_meta_store.update(
+                            &request_id,
+                            HandlerStatus::Error(format!(
+                                "Failed reencryption: Key with ID {key_id} does not exist!"
+                            )),
+                        );
+                        return;
+                    }
+                };
+                tracing::info!(
+                    "Starting reencryption using key_id {} for request ID {}",
+                    &key_id,
+                    &request_id
+                );
+                match async_reencrypt::<PubS, PrivS>(
+                    keys,
+                    &sig_key,
+                    &mut rng,
+                    &ciphertext,
+                    fhe_type,
+                    &link,
+                    &client_enc_key,
+                    &client_address,
+                )
+                .await
+                {
+                    Ok(raw_decryption) => {
+                        let mut guarded_meta_store = meta_store.write().await;
+                        let _ = guarded_meta_store.update(
+                            &request_id,
+                            HandlerStatus::Done((fhe_type, link, raw_decryption)),
+                        );
+                    }
+                    Result::Err(e) => {
+                        let mut guarded_meta_store = meta_store.write().await;
+                        let _ = guarded_meta_store.update(
+                            &request_id,
+                            HandlerStatus::Error(format!("Failed reencryption: {e}")),
+                        );
+                    }
                 }
             }
-        });
+            .instrument(tracing::Span::current()),
+        );
         Ok(Response::new(Empty {}))
     }
 
@@ -464,45 +468,47 @@ impl<
 
         // we do not need to hold the handle,
         // the result of the computation is tracked by the dec_meta_store
-        let _handle = tokio::spawn(async move {
-            let fhe_keys_rlock = fhe_keys.read().await;
-            let keys = match fhe_keys_rlock.get(&key_id) {
-                Some(keys) => keys.clone(),
-                None => {
-                    let mut guarded_meta_store = meta_store.write().await;
-                    let _ = guarded_meta_store.update(
-                        &request_id,
-                        HandlerStatus::Error(format!(
-                            "Failed decryption: Key with ID {key_id} does not exist!"
-                        )),
-                    );
-                    return;
-                }
-            };
-            tracing::info!(
-                "Starting decryption using key_id {} for request ID {}",
-                &key_id,
-                &request_id
-            );
+        let _handle = tokio::spawn(
+            async move {
+                let fhe_keys_rlock = fhe_keys.read().await;
+                let keys = match fhe_keys_rlock.get(&key_id) {
+                    Some(keys) => keys.clone(),
+                    None => {
+                        let mut guarded_meta_store = meta_store.write().await;
+                        let _ = guarded_meta_store.update(
+                            &request_id,
+                            HandlerStatus::Error(format!(
+                                "Failed decryption: Key with ID {key_id} does not exist!"
+                            )),
+                        );
+                        return;
+                    }
+                };
+                tracing::info!(
+                    "Starting decryption using key_id {} for request ID {}",
+                    &key_id,
+                    &request_id
+                );
 
-            let ext_handles_bytes = ciphertexts
-                .iter()
-                .map(|c| c.external_handle.to_owned())
-                .collect::<Vec<_>>();
+                let ext_handles_bytes = ciphertexts
+                    .iter()
+                    .map(|c| c.external_handle.to_owned())
+                    .collect::<Vec<_>>();
 
-            // run the computation in a separate rayon thread to avoid blocking the tokio runtime
-            let (send, recv) = tokio::sync::oneshot::channel();
-            rayon::spawn(move || {
-                let decryptions = central_decrypt::<PubS, PrivS>(&keys, &ciphertexts);
-                let _ = send.send(decryptions);
-            });
-            let decryptions = recv.await;
+                // run the computation in a separate rayon thread to avoid blocking the tokio runtime
+                let (send, recv) = tokio::sync::oneshot::channel();
+                rayon::spawn(move || {
+                    let decryptions = central_decrypt::<PubS, PrivS>(&keys, &ciphertexts);
+                    let _ = send.send(decryptions);
+                });
+                let decryptions = recv.await;
 
-            match decryptions {
-                Ok(Ok(pts)) => {
-                    // sign the plaintexts and handles for external verification (in the fhevm)
-                    let external_sig =
-                        if let (Some(domain), Some(acl_address)) = (eip712_domain, acl_address) {
+                match decryptions {
+                    Ok(Ok(pts)) => {
+                        // sign the plaintexts and handles for external verification (in the fhevm)
+                        let external_sig = if let (Some(domain), Some(acl_address)) =
+                            (eip712_domain, acl_address)
+                        {
                             compute_external_pt_signature(
                                 &sigkey,
                                 ext_handles_bytes,
@@ -514,32 +520,40 @@ impl<
                             vec![]
                         };
 
-                    let mut guarded_meta_store = meta_store.write().await;
-                    let _ = guarded_meta_store.update(
-                        &request_id,
-                        HandlerStatus::Done((req_digest.clone(), pts, external_sig)),
-                    );
-                    tracing::info!(
-                        "⏱️ Core Event Time for decryption computation: {:?}",
-                        start.elapsed()
-                    );
-                }
-                Err(e) => {
-                    let mut guarded_meta_store = meta_store.write().await;
-                    let _ = guarded_meta_store.update(
-                        &request_id,
-                        HandlerStatus::Error(format!("Error collecting decrypt result: {:?}", e)),
-                    );
-                }
-                Ok(Err(e)) => {
-                    let mut guarded_meta_store = meta_store.write().await;
-                    let _ = guarded_meta_store.update(
-                        &request_id,
-                        HandlerStatus::Error(format!("Error during decryption computation: {}", e)),
-                    );
+                        let mut guarded_meta_store = meta_store.write().await;
+                        let _ = guarded_meta_store.update(
+                            &request_id,
+                            HandlerStatus::Done((req_digest.clone(), pts, external_sig)),
+                        );
+                        tracing::info!(
+                            "⏱️ Core Event Time for decryption computation: {:?}",
+                            start.elapsed()
+                        );
+                    }
+                    Err(e) => {
+                        let mut guarded_meta_store = meta_store.write().await;
+                        let _ = guarded_meta_store.update(
+                            &request_id,
+                            HandlerStatus::Error(format!(
+                                "Error collecting decrypt result: {:?}",
+                                e
+                            )),
+                        );
+                    }
+                    Ok(Err(e)) => {
+                        let mut guarded_meta_store = meta_store.write().await;
+                        let _ = guarded_meta_store.update(
+                            &request_id,
+                            HandlerStatus::Error(format!(
+                                "Error during decryption computation: {}",
+                                e
+                            )),
+                        );
+                    }
                 }
             }
-        });
+            .instrument(tracing::Span::current()),
+        );
 
         Ok(Response::new(Empty {}))
     }
@@ -709,7 +723,7 @@ impl<
                     }
                 }
             }
-        });
+        }.instrument(tracing::Span::current()));
         Ok(Response::new(Empty {}))
     }
 
@@ -802,29 +816,32 @@ where
         guarded_meta_store.insert(&request_id)?;
     }
     let sigkey = Arc::clone(&client_sk);
-    let _handle = tokio::spawn(async move {
-        let res = verify_proven_ct_and_sign(request, public_storage, &sigkey).await;
+    let _handle = tokio::spawn(
+        async move {
+            let res = verify_proven_ct_and_sign(request, public_storage, &sigkey).await;
 
-        let mut guarded_meta_store = meta_store.write().await;
-        match res {
-            Ok(inner_res) => {
-                tracing::debug!(
-                    "storing verify proven ct result for request_id {}",
-                    request_id
-                );
-                let _ = guarded_meta_store.update(&request_id, HandlerStatus::Done(inner_res));
-            }
-            Err(e) => {
-                let _ = guarded_meta_store.update(
-                    &request_id,
-                    HandlerStatus::Error(format!(
-                        "Zk verification failed for ID {} with error {e}",
+            let mut guarded_meta_store = meta_store.write().await;
+            match res {
+                Ok(inner_res) => {
+                    tracing::debug!(
+                        "storing verify proven ct result for request_id {}",
                         request_id
-                    )),
-                );
+                    );
+                    let _ = guarded_meta_store.update(&request_id, HandlerStatus::Done(inner_res));
+                }
+                Err(e) => {
+                    let _ = guarded_meta_store.update(
+                        &request_id,
+                        HandlerStatus::Error(format!(
+                            "Zk verification failed for ID {} with error {e}",
+                            request_id
+                        )),
+                    );
+                }
             }
         }
-    });
+        .instrument(tracing::Span::current()),
+    );
     Ok(())
 }
 

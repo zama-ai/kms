@@ -34,7 +34,9 @@ sleep 6
 #         Wallets           #
 #############################
 
-# TODO: Create multiple accounts
+# TODO: Create one account per connector instead of a shared one
+# TODO: Should connector accounts creation be delegated to some CLI called on startup?
+# TODO: Add a faucet account
 
 # Add Connector account
 PUB_KEY_KMS_CONN='{"@type":"/cosmos.crypto.secp256k1.PubKey","key":"A/ZoCPf+L7Uxf3snWT+RU5+ivCmT8XR+NFpuhjm5cTP2"}'
@@ -50,9 +52,6 @@ sleep 6
 CONN_ADDRESS=$(echo $PASSWORD | wasmd keys show connector --output json |jq -r '.address')
 GATEWAY_ADDRESS=$(echo $PASSWORD | wasmd keys show gateway --output json |jq -r '.address')
 VALIDATOR_ADDRESS=$(echo $PASSWORD | wasmd keys show validator --output json |jq -r '.address')
-
-# TODO: Have one account per connector instead of a shared one
-# TODO: Add to the faucet account too
 
 # Send tokens to connector and gateway accounts
 echo "Sending tokens from validator to connector and gateway accounts"
@@ -70,7 +69,6 @@ echo $PASSWORD | wasmd tx bank multi-send "$VALIDATOR_ADDRESS" "$CONN_ADDRESS" "
 # - A pair (ASC,IPSC) meant for Ethermint (Tendermint?)
 #
 # NOTE: To deploy the ASC we first need to know the address of the IPSC
-#
 
 sleep 6
 

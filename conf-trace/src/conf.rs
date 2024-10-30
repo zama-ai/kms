@@ -76,6 +76,7 @@ pub struct Tracing {
     service_name: String,
 
     /// All the following settings are optional.
+
     /// The endpoint of the tracing system. If it is not set, tracing will be redirected to stdout.
     #[builder(default, setter(strip_option))]
     endpoint: Option<String>,
@@ -83,7 +84,12 @@ pub struct Tracing {
     /// Batch configuration.
     /// If this is set, the tracing system will not batch the spans before exporting them.
     #[builder(default, setter(strip_option))]
-    bacth: Option<BatchConf>,
+    batch: Option<BatchConf>,
+    ///
+    /// Batch configuration.
+    /// If this is set, the tracing system will not batch the spans before exporting them.
+    #[builder(default, setter(strip_option))]
+    json_logs: Option<bool>,
 }
 
 impl Tracing {
@@ -99,11 +105,18 @@ impl Tracing {
 
     /// Returns the batch configuration.
     pub fn batch(&self) -> &Option<BatchConf> {
-        &self.bacth
+        &self.batch
+    }
+
+    /// Returns the json configuration.
+    pub fn json_logs(&self) -> &Option<bool> {
+        &self.json_logs
     }
 }
 
-#[derive(Default, Display, Deserialize, Serialize, Clone, EnumString, AsRefStr, Eq, PartialEq)]
+#[derive(
+    Default, Display, Deserialize, Serialize, Clone, EnumString, AsRefStr, Eq, PartialEq, Debug,
+)]
 #[strum(serialize_all = "snake_case")]
 pub(crate) enum ExecutionEnvironment {
     #[default]
@@ -149,7 +162,7 @@ impl<'a> Settings<'a> {
         for key in &self.parse_keys {
             env_conf = env_conf.with_list_parse_key(key);
         }
-        let mut s = Config::builder()
+        let mut config_builder = Config::builder()
             .add_source(File::with_name("config/default").required(false))
             .add_source(
                 File::with_name(&format!("config/{}", self.env_prefix.to_lowercase()))
@@ -172,12 +185,12 @@ impl<'a> Settings<'a> {
             );
 
         if let Some(path) = self.path {
-            s = s.add_source(File::with_name(path).required(true))
+            config_builder = config_builder.add_source(File::with_name(path).required(true))
         };
 
-        let s = s.add_source(env_conf).build()?;
+        let config = config_builder.add_source(env_conf).build()?;
 
-        let settings: T = s.try_deserialize()?;
+        let settings: T = config.try_deserialize()?;
 
         tracing::info!("DEBUG: SETTINGS: {:?}", settings);
 

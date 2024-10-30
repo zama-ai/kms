@@ -13,7 +13,7 @@ use tonic::metadata::{MetadataKey, MetadataMap, MetadataValue};
 use tonic::service::Interceptor;
 use tonic::transport::Body;
 use tonic::Status;
-use tracing::{field, info_span, warn, Span};
+use tracing::{field, info_span, trace_span, warn, Id, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::fmt::{layer, Layer};
@@ -22,11 +22,15 @@ use tracing_subscriber::{EnvFilter, Registry};
 
 /// This is the HEADER key that will be used to store the request ID in the tracing context.
 pub const TRACER_REQUEST_ID: &str = "x-zama-kms-request-id";
+pub const TRACER_PARENT_SPAN_ID: &str = "x-zama-kms-parent-span-id";
 
 impl From<Tracing> for Tracer {
     fn from(settings: Tracing) -> Self {
+        let result;
         if *ENVIRONMENT == ExecutionEnvironment::Local {
-            stdout_pipeline(settings.service_name())
+            result = stdout_pipeline(settings.service_name());
+            tracing::info!("Environnment is {:?}. Logging to stdout", *ENVIRONMENT);
+            result
         } else if let Some(endpoint) = settings.endpoint() {
             let mut pipeline = opentelemetry_otlp::new_pipeline()
                 .tracing()
@@ -51,11 +55,20 @@ impl From<Tracing> for Tracer {
                 pipeline = pipeline.with_batch_config(batch_config);
             }
 
-            pipeline
+            result = pipeline
                 .install_batch(Tokio)
-                .expect("Failed to install OpenTelemetry tracer.")
+                .expect("Failed to install OpenTelemetry tracer.");
+
+            tracing::info!(
+                "Environnment is {:?}. Logging to endpoint: {:?}",
+                *ENVIRONMENT,
+                endpoint,
+            );
+            result
         } else {
-            stdout_pipeline(settings.service_name())
+            result = stdout_pipeline(settings.service_name());
+            tracing::info!("Environnment is {:?}. Loggingto stdout", *ENVIRONMENT);
+            result
         }
     }
 }
@@ -109,12 +122,23 @@ pub fn init_tracing(settings: Tracing) -> Result<(), anyhow::Error> {
 
     // Layer to add our configured tracer.
     let tracing_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+
     // Setting a trace context propagation data.
-    let subscriber = Registry::default().with(tracing_layer);
     global::set_text_map_propagator(TraceContextPropagator::new());
     global::set_error_handler(|error| eprintln!("OpenTelemetry error {:}", error)).unwrap();
-    let last_layer = subscriber.with(env_filter).with(fmt_layer);
-    tracing::subscriber::set_global_default(last_layer).map_err(|e| anyhow::anyhow!("{e:?}"))?;
+
+    let subscriber = Registry::default().with(tracing_layer).with(env_filter);
+
+    // Simplest option to have conditional subscribers because of tracing-subscriber inability to
+    // Clone
+    if settings.json_logs().unwrap_or(false) {
+        tracing::subscriber::set_global_default(subscriber.with(Layer::default().json()))
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+    } else {
+        tracing::subscriber::set_global_default(subscriber.with(fmt_layer))
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+    };
+
     let metrics = init_metrics(settings);
     global::set_meter_provider(metrics);
     Ok(())
@@ -127,12 +151,34 @@ pub fn make_span(request: &Request<Body>) -> Span {
         .get(TRACER_REQUEST_ID)
         .map(|r| r.to_str().map(|x| x.to_string()));
 
-    match request_id {
-        Some(Ok(request_id)) => {
-            info_span!("grpc_request", ?endpoint, ?headers, trace_id = %request_id)
+    let span = if endpoint.contains("Health/Check") {
+        return trace_span!("healt_grpc_request", ?endpoint, ?headers);
+    } else {
+        match request_id {
+            Some(Ok(request_id)) => {
+                info_span!("grpc_request", ?endpoint, ?headers, trace_id = %request_id)
+            }
+            _ => info_span!("grpc_request", ?endpoint, ?headers, trace_id = field::Empty),
         }
-        _ => info_span!("grpc_request", ?endpoint, ?headers, trace_id = field::Empty),
+    };
+
+    match headers
+        .get(TRACER_PARENT_SPAN_ID)
+        .map(|r| r.to_str().unwrap().to_string().parse::<u64>().unwrap())
+    {
+        Some(parent_span_id_u64) => {
+            if parent_span_id_u64 > 0 {
+                tracing::info!("Propagating span id");
+                span.follows_from(Id::from_u64(parent_span_id_u64));
+            } else {
+                tracing::warn!("Parent span id found is 0");
+            }
+        }
+        None => {
+            tracing::warn!("{} shouldn't be None", TRACER_PARENT_SPAN_ID);
+        }
     }
+    span
 }
 
 /// Trace context propagation: associate the current span with the OTel trace of the given request,

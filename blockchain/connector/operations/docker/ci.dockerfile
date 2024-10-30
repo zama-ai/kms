@@ -38,4 +38,4 @@ ENV PATH="$PATH:/app/kms-connector/bin"
 
 # Copy the binaries from the base stage
 COPY --from=base /app/kms-connector/blockchain/connector/bin/ /app/kms-connector/bin/
-COPY ./blockchain/connector/config/default.toml /app/kms-connector/config/default.toml
+COPY ./blockchain/connector/config/ /app/kms-connector/config/

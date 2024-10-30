@@ -2,6 +2,7 @@ use clap::Parser;
 use kms_blockchain_connector::application::Mode;
 use kms_blockchain_connector::conf::{init_conf_with_trace, ConnectorConfig};
 
+// TODO: rename conf-file to config-file for consistency between core and connector
 #[derive(Parser, Debug)]
 #[clap(name = "kms-asc-connector")]
 pub struct Cli {

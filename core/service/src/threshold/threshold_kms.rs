@@ -87,6 +87,7 @@ use tokio::time::Instant;
 use tonic::transport::{Server, ServerTlsConfig};
 use tonic::{Request, Response, Status};
 use tower_http::trace::TraceLayer;
+use tracing::Instrument;
 
 const DECRYPTION_MODE: DecryptionMode = DecryptionMode::PRSSDecrypt;
 
@@ -944,38 +945,41 @@ impl Reencryptor for RealReencryptor {
 
         // we do not need to hold the handle,
         // the result of the computation is tracked the crs_meta_store
-        let _handle = tokio::spawn(async move {
-            let fhe_keys_rlock = fhe_keys.read().await;
-            let tmp = Self::inner_reencrypt(
-                &mut session,
-                &mut protocol,
-                &mut rng,
-                &ciphertext,
-                fhe_type,
-                link.clone(),
-                &key_id,
-                &client_enc_key,
-                &client_address,
-                sig_key,
-                fhe_keys_rlock,
-            )
-            .await;
-            let mut guarded_meta_store = meta_store.write().await;
-            match tmp {
-                Ok(partial_dec) => {
-                    // We cannot do much if updating the storage fails at this point...
-                    let _ = guarded_meta_store
-                        .update(&req_id, HandlerStatus::Done((link, fhe_type, partial_dec)));
-                }
-                Result::Err(e) => {
-                    // We cannot do much if updating the storage fails at this point...
-                    let _ = guarded_meta_store.update(
-                        &req_id,
-                        HandlerStatus::Error(format!("Failed decryption: {e}")),
-                    );
+        let _handle = tokio::spawn(
+            async move {
+                let fhe_keys_rlock = fhe_keys.read().await;
+                let tmp = Self::inner_reencrypt(
+                    &mut session,
+                    &mut protocol,
+                    &mut rng,
+                    &ciphertext,
+                    fhe_type,
+                    link.clone(),
+                    &key_id,
+                    &client_enc_key,
+                    &client_address,
+                    sig_key,
+                    fhe_keys_rlock,
+                )
+                .await;
+                let mut guarded_meta_store = meta_store.write().await;
+                match tmp {
+                    Ok(partial_dec) => {
+                        // We cannot do much if updating the storage fails at this point...
+                        let _ = guarded_meta_store
+                            .update(&req_id, HandlerStatus::Done((link, fhe_type, partial_dec)));
+                    }
+                    Result::Err(e) => {
+                        // We cannot do much if updating the storage fails at this point...
+                        let _ = guarded_meta_store.update(
+                            &req_id,
+                            HandlerStatus::Error(format!("Failed decryption: {e}")),
+                        );
+                    }
                 }
             }
-        });
+            .instrument(tracing::Span::current()),
+        );
         Ok(Response::new(Empty {}))
     }
 
@@ -1158,7 +1162,7 @@ impl Decryptor for RealDecryptor {
 
             // we do not need to hold the handle,
             // the result of the computation is tracked by the dec_meta_store
-            dec_tasks.spawn(async move {
+            let my_future = || async move {
                 let fhe_type = if let Ok(f) = FheType::try_from(ct.fhe_type) {
                     f
                 } else {
@@ -1241,13 +1245,14 @@ impl Decryptor for RealDecryptor {
                         e
                     ))),
                 }
-            });
+            };
+            dec_tasks.spawn(my_future().instrument(tracing::Span::current()));
         }
 
         // collect decryption results in async mgmt task so we can return from this call without waiting for the decryption(s) to finish
         let meta_store = Arc::clone(&self.dec_meta_store);
         let sigkey = Arc::clone(&self.base_kms.sig_key);
-        let _handle = tokio::spawn(async move {
+        let my_future = || async move {
             let mut decs = HashMap::new();
             while let Some(resp) = dec_tasks.join_next().await {
                 match resp {
@@ -1286,7 +1291,8 @@ impl Decryptor for RealDecryptor {
                 &req_id,
                 HandlerStatus::Done((req_digest.clone(), pts, external_sig)),
             );
-        });
+        };
+        let _handle = tokio::spawn(my_future().instrument(tracing::Span::current()));
 
         Ok(Response::new(Empty {}))
     }
@@ -1456,7 +1462,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         let fhe_keys = Arc::clone(&self.fhe_keys);
         let eip712_domain_copy = eip712_domain.cloned();
 
-        let _handle = tokio::spawn(async move {
+        let my_future = || async move {
             let dkg_res = match preproc_handle_w_mode {
                 PreprocHandleWithMode::Insecure => {
                     initialize_key_material(&mut base_session, dkg_params).await
@@ -1616,7 +1622,8 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                     );
                 }
             }
-        });
+        };
+        let _handle = tokio::spawn(my_future().instrument(tracing::Span::current()));
         Ok(())
     }
 
@@ -1822,27 +1829,30 @@ impl RealPreprocessor {
         )?;
         //NOTE: For now we just discard the handle, we can check status with get_preproc_status
         // endpoint
-        let _handle = tokio::spawn(async move {
-            let sessions = create_sessions(base_sessions, prss_setup);
-            let orchestrator = {
-                let mut factory_guard = factory.lock().await;
-                let factory = factory_guard.as_mut();
-                PreprocessingOrchestrator::<ResiduePoly128>::new(factory, dkg_params).unwrap()
-            };
-            tracing::info!("Starting Preproc Orchestration on P[{:?}]", own_identity);
-            let preproc_result = orchestrator
-                .orchestrate_small_session_dkg_processing(sessions)
-                .await;
-            //write the preproc handle to the bucket store
-            let handle_update = match preproc_result {
-                Ok((_, preproc_handle)) => HandlerStatus::Done(preproc_handle),
-                Err(error) => HandlerStatus::Error(error.to_string()),
-            };
-            let mut guarded_meta_store = bucket_store.write().await;
-            // We cannot do much if updating the storage fails at this point...
-            let _ = guarded_meta_store.update(&request_id, handle_update);
-            tracing::info!("Preproc Finished P[{:?}]", own_identity);
-        });
+        let _handle = tokio::spawn(
+            async move {
+                let sessions = create_sessions(base_sessions, prss_setup);
+                let orchestrator = {
+                    let mut factory_guard = factory.lock().await;
+                    let factory = factory_guard.as_mut();
+                    PreprocessingOrchestrator::<ResiduePoly128>::new(factory, dkg_params).unwrap()
+                };
+                tracing::info!("Starting Preproc Orchestration on P[{:?}]", own_identity);
+                let preproc_result = orchestrator
+                    .orchestrate_small_session_dkg_processing(sessions)
+                    .await;
+                //write the preproc handle to the bucket store
+                let handle_update = match preproc_result {
+                    Ok((_, preproc_handle)) => HandlerStatus::Done(preproc_handle),
+                    Err(error) => HandlerStatus::Error(error.to_string()),
+                };
+                let mut guarded_meta_store = bucket_store.write().await;
+                // We cannot do much if updating the storage fails at this point...
+                let _ = guarded_meta_store.update(&request_id, handle_update);
+                tracing::info!("Preproc Finished P[{:?}]", own_identity);
+            }
+            .instrument(tracing::Span::current()),
+        );
 
         Ok(())
     }
@@ -2069,7 +2079,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 "CRS stored. CRS ceremony time was {:?} ms",
                 (elapsed_time).as_millis()
             );
-        });
+        }.instrument(tracing::Span::current()));
         Ok(())
     }
 }
