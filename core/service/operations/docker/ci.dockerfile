@@ -15,16 +15,22 @@ RUN --mount=type=secret,id=BLOCKCHAIN_ACTIONS_TOKEN,env=BLOCKCHAIN_ACTIONS_TOKEN
 ## Second stage builds the kms-core binaries
 FROM --platform=$BUILDPLATFORM base AS kms-core
 
+# Fetch dependencies and build binaries
 WORKDIR /app/kms
 COPY . .
-
-# Cargo build from core/service directory
-WORKDIR /app/kms/core/service
+RUN mkdir -p /app/kms/core/service/bin
+ENV CARGO_HOME=/var/cache/buildkit/cargo \
+    CARGO_TARGET_DIR=/var/cache/buildkit/target
 RUN --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
-    CARGO_HOME=/var/cache/buildkit/cargo \
-    CARGO_TARGET_DIR=/var/cache/buildkit/target \
-    cargo install --path . --root . --bin kms-server --bin kms-gen-tls-certs --bin kms-init -F insecure && \
-    cargo install --path . --root . --bin kms-gen-keys -F testing -F insecure
+    cargo fetch --locked
+RUN --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
+    cargo build --locked --release -p kms --bin kms-server --bin kms-gen-tls-certs --bin kms-init -F insecure && \
+    cargo build --locked --release -p kms --bin kms-gen-keys -F testing -F insecure && \
+    cp /var/cache/buildkit/target/release/kms-server \
+       /var/cache/buildkit/target/release/kms-gen-tls-certs \
+       /var/cache/buildkit/target/release/kms-init \
+       /var/cache/buildkit/target/release/kms-gen-keys \
+    ./core/service/bin
 
 ## Third stage builds nitro-cli (used to start enclaves only)
 FROM --platform=$BUILDPLATFORM base AS nitro-cli
@@ -72,10 +78,10 @@ COPY --from=nitro-cli /build/aws-nitro-enclaves-cli/build/nitro_cli/release/nitr
 COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/kms/core/service/bin/
 
 # Copy parent-side and enclave-side init scripts
-COPY --from=kms-core /app/kms/core/service/operations/docker/start_enclave_and_proxies.sh /app/kms/core/service/bin/
-COPY --from=kms-core /app/kms/core/service/operations/docker/init_enclave_centralized.sh /app/kms/core/service/bin/
+COPY ./core/service/operations/docker/start_enclave_and_proxies.sh /app/kms/core/service/bin/
+COPY ./core/service/operations/docker/init_enclave_centralized.sh /app/kms/core/service/bin/
 
 # This is only meaningful when the image is used to build the EIF that runs
 # inside of a Nitro enclave. During deployment on k8s, containers are started
 # with commands defined in Helm charts.
-CMD ["init_enclave_centralized.sh"]
+CMD ["/bin/bash", "/app/kms/core/service/bin/init_enclave_centralized.sh"]
