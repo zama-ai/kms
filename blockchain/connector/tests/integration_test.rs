@@ -397,7 +397,7 @@ async fn setup_threshold_keys() {
         &mut threshold_priv_storages,
         &SIGNING_KEY_ID,
         true,
-        AMOUNT_PARTIES,
+        kms_lib::util::key_setup::ThresholdSigningKeyConfig::AllParties(AMOUNT_PARTIES),
     )
     .await;
     ensure_threshold_keys_exist(

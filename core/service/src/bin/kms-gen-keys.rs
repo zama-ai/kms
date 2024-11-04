@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use core::fmt;
 use kms_lib::consts::{DEFAULT_PARAM, TEST_PARAM};
 use kms_lib::storage::StorageForText;
+use kms_lib::util::key_setup::ThresholdSigningKeyConfig;
 use kms_lib::{
     conf::init_trace, consts::SIGNING_KEY_ID, kms::RequestId,
     util::key_setup::ensure_central_crs_exists,
@@ -129,6 +130,11 @@ enum Mode {
         /// What to construct, options are "all", "signing-keys", "fhe-keys" or "crs".
         #[clap(short, long, default_value_t, value_enum)]
         cmd: ConstructCommand,
+        /// When using `--cmd signing-keys`, this option can be set
+        /// to generate the signing key for a specific party.
+        /// If it's not used, then the signing keys are generated for all parties.
+        #[clap(long, default_value = None)]
+        signing_key_party_id: Option<usize>,
     },
 }
 
@@ -147,6 +153,7 @@ struct ThresholdCmdArgs<'a, S: Storage> {
     deterministic: bool,
     overwrite: bool,
     show_existing: bool,
+    signing_key_party_id: Option<usize>,
 }
 
 /// Execute the KMS key generation
@@ -218,6 +225,7 @@ async fn main() {
             }
         }
         Mode::Threshold {
+            param_test,
             aws_region,
             aws_s3_endpoint,
             priv_url,
@@ -226,7 +234,7 @@ async fn main() {
             overwrite,
             show_existing,
             cmd,
-            param_test,
+            signing_key_party_id,
         } => {
             let mut pub_storages = make_threshold_proxy_storage(
                 pub_url,
@@ -253,6 +261,11 @@ async fn main() {
                 deterministic,
                 overwrite,
                 show_existing,
+                // the `signing_party_id` is only used when the cmd is signing-keys
+                signing_key_party_id: match cmd {
+                    ConstructCommand::SigningKeys => signing_key_party_id,
+                    _ => None,
+                },
             };
 
             if cmd == ConstructCommand::All {
@@ -387,7 +400,10 @@ async fn handle_threshold_cmd<'a, S: StorageForText>(
                 args.priv_storages,
                 &SIGNING_KEY_ID,
                 args.deterministic,
-                AMOUNT_PARTIES,
+                match args.signing_key_party_id {
+                    Some(i) => ThresholdSigningKeyConfig::OneParty(i),
+                    None => ThresholdSigningKeyConfig::AllParties(AMOUNT_PARTIES),
+                },
             )
             .await
             {

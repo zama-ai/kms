@@ -23,6 +23,7 @@ use distributed_decryption::execution::{
     tfhe_internals::test_feature::{gen_key_set, keygen_all_party_shares},
     zk::ceremony::make_centralized_public_parameters,
 };
+use itertools::Itertools;
 use rand::SeedableRng;
 use std::collections::HashMap;
 use std::path::Path;
@@ -363,6 +364,11 @@ where
     true
 }
 
+pub enum ThresholdSigningKeyConfig {
+    AllParties(usize),
+    OneParty(usize),
+}
+
 /// Generates signing and verification keys for _each_ of the servers
 /// and stores them in the storages if they don't already exist under [request_id].
 ///
@@ -372,12 +378,16 @@ pub async fn ensure_threshold_server_signing_keys_exist<S>(
     priv_storages: &mut [S],
     request_id: &RequestId,
     deterministic: bool,
-    amount: usize,
+    config: ThresholdSigningKeyConfig,
 ) -> bool
 where
     S: StorageForText,
 {
-    for i in 1..=amount {
+    let parties = match config {
+        ThresholdSigningKeyConfig::AllParties(amount) => (1..=amount).collect_vec(),
+        ThresholdSigningKeyConfig::OneParty(i) => std::iter::once(i).collect_vec(),
+    };
+    for i in parties {
         let mut rng = get_rng(deterministic, Some(i as u64));
         let temp: HashMap<RequestId, PrivateSigKey> =
             read_all_data_versioned(&priv_storages[i - 1], &PrivDataType::SigningKey.to_string())

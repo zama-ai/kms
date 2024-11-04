@@ -426,6 +426,7 @@ pub async fn purge(pub_path: Option<&Path>, priv_path: Option<&Path>, id: &str) 
 pub(crate) mod setup {
     use crate::util::key_setup::{
         ensure_central_crs_exists, ensure_central_keys_exist, ensure_client_keys_exist,
+        ThresholdSigningKeyConfig,
     };
     use crate::{
         consts::{
@@ -496,7 +497,7 @@ pub(crate) mod setup {
             &mut threshold_priv_storages,
             &SIGNING_KEY_ID,
             true,
-            AMOUNT_PARTIES,
+            ThresholdSigningKeyConfig::AllParties(AMOUNT_PARTIES),
         )
         .await;
         ensure_threshold_keys_exist(
@@ -573,7 +574,7 @@ pub(crate) mod setup {
             &mut threshold_priv_storages,
             &SIGNING_KEY_ID,
             true,
-            AMOUNT_PARTIES,
+            ThresholdSigningKeyConfig::AllParties(AMOUNT_PARTIES),
         )
         .await;
         ensure_threshold_keys_exist(
