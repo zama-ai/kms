@@ -5,7 +5,7 @@ use super::rpc_types::{
 use crate::client::assemble_metadata_req;
 use crate::conf::centralized::CentralizedConfig;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
-use crate::cryptography::central_kms::verify_eip712;
+use crate::cryptography::central_kms::verify_reencryption_eip712;
 use crate::cryptography::central_kms::{
     async_generate_crs, async_generate_fhe_keys, async_reencrypt, central_decrypt, BaseKmsStruct,
     SoftwareKms,
@@ -59,7 +59,10 @@ pub async fn server_handle<
 ) -> anyhow::Result<()> {
     let socket = config.get_socket_addr()?;
     let kms = SoftwareKms::new(public_storage, private_storage).await?;
-    tracing::info!("Starting centralized KMS server ...");
+    tracing::info!(
+        "Starting centralized KMS server, listening on {} ...",
+        config.url
+    );
     let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
     health_reporter
         .set_serving::<CoreServiceEndpointServer<SoftwareKms<PubS, PrivS>>>()
@@ -1068,7 +1071,7 @@ pub async fn validate_reencrypt_req(
     let client_verf_key =
         alloy_primitives::Address::parse_checksummed(&payload.client_address, None)?;
 
-    match verify_eip712(req) {
+    match verify_reencryption_eip712(req) {
         Ok(()) => {
             tracing::debug!("🔒 Signature verified successfully");
         }

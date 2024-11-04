@@ -165,11 +165,12 @@ where
             self.metrics
                 .increment_connection_errors(1, &[("error", &e.to_string())]);
         })?;
-        tracing::info!("Received events from Blockchain {:?}", results.len());
         if results.is_empty() {
-            tracing::info!("No events received from Blockchain. Incrementing height by one.");
+            tracing::debug!("No events received from Blockchain. Incrementing height by one.");
             self.update_last_seen_height(height + 1).await?;
             return Ok(());
+        } else {
+            tracing::debug!("Received {:?} events from Blockchain", results.len());
         }
         let last_height = results.iter().map(|tx| tx.height).max().unwrap_or(0) as u64;
         let events = results

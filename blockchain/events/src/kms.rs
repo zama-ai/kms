@@ -191,6 +191,18 @@ pub enum KmsCorePartyVersioned {
     V0(KmsCoreParty),
 }
 
+pub trait Eip712Values {
+    fn eip712_name(&self) -> &str;
+
+    fn eip712_version(&self) -> &str;
+
+    fn eip712_chain_id(&self) -> &HexVector;
+
+    fn eip712_verifying_contract(&self) -> &str;
+
+    fn eip712_salt(&self) -> Option<&HexVector>;
+}
+
 #[cw_serde]
 #[derive(Default, Versionize)]
 #[versionize(KmsCorePartyVersioned)]
@@ -1250,6 +1262,29 @@ impl KeyGenValues {
     }
 }
 
+impl Eip712Values for KeyGenValues {
+    fn eip712_name(&self) -> &str {
+        &self.eip712_name
+    }
+
+    fn eip712_version(&self) -> &str {
+        &self.eip712_version
+    }
+
+    fn eip712_chain_id(&self) -> &HexVector {
+        &self.eip712_chain_id
+    }
+
+    fn eip712_verifying_contract(&self) -> &str {
+        &self.eip712_verifying_contract
+    }
+
+    #[allow(clippy::needless_borrow)]
+    fn eip712_salt(&self) -> Option<&HexVector> {
+        (&self.eip712_salt).as_ref()
+    }
+}
+
 impl From<KeyGenValues> for OperationValue {
     fn from(value: KeyGenValues) -> Self {
         OperationValue::KeyGen(value)
@@ -1316,6 +1351,29 @@ impl InsecureKeyGenValues {
 
     #[allow(clippy::needless_borrow)]
     pub fn eip712_salt(&self) -> Option<&HexVector> {
+        (&self.eip712_salt).as_ref()
+    }
+}
+
+impl Eip712Values for InsecureKeyGenValues {
+    fn eip712_name(&self) -> &str {
+        &self.eip712_name
+    }
+
+    fn eip712_version(&self) -> &str {
+        &self.eip712_version
+    }
+
+    fn eip712_chain_id(&self) -> &HexVector {
+        &self.eip712_chain_id
+    }
+
+    fn eip712_verifying_contract(&self) -> &str {
+        &self.eip712_verifying_contract
+    }
+
+    #[allow(clippy::needless_borrow)]
+    fn eip712_salt(&self) -> Option<&HexVector> {
         (&self.eip712_salt).as_ref()
     }
 }
@@ -1394,6 +1452,29 @@ impl CrsGenValues {
 
     #[allow(clippy::needless_borrow)]
     pub fn eip712_salt(&self) -> Option<&HexVector> {
+        (&self.eip712_salt).as_ref()
+    }
+}
+
+impl Eip712Values for CrsGenValues {
+    fn eip712_name(&self) -> &str {
+        &self.eip712_name
+    }
+
+    fn eip712_version(&self) -> &str {
+        &self.eip712_version
+    }
+
+    fn eip712_chain_id(&self) -> &HexVector {
+        &self.eip712_chain_id
+    }
+
+    fn eip712_verifying_contract(&self) -> &str {
+        &self.eip712_verifying_contract
+    }
+
+    #[allow(clippy::needless_borrow)]
+    fn eip712_salt(&self) -> Option<&HexVector> {
         (&self.eip712_salt).as_ref()
     }
 }

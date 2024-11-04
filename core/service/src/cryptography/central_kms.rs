@@ -289,7 +289,7 @@ impl BaseKms for BaseKmsStruct {
 /// Then the public key is converted into an address and we check
 /// whether the address matches the address in the request.
 /// We assume the `domain` is trusted since tkms core does not run a light client.
-pub(crate) fn verify_eip712(request: &ReencryptionRequest) -> anyhow::Result<()> {
+pub(crate) fn verify_reencryption_eip712(request: &ReencryptionRequest) -> anyhow::Result<()> {
     let payload = request
         .payload
         .as_ref()
@@ -695,7 +695,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             tracing::error!("signing key hashmap is not exactly 1");
         })?;
 
-        // compute corresponding public key from private sig key
+        // compute corresponding public key and derive address from private sig key
         let pk = SigningKey::verifying_key(sk.sk());
         tracing::info!(
             "Public address is {}",
@@ -788,7 +788,7 @@ where
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::{verify_eip712, KmsFheKeyHandles, Storage};
+    use super::{verify_reencryption_eip712, KmsFheKeyHandles, Storage};
     #[cfg(feature = "slow_tests")]
     use crate::consts::{
         DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM, OTHER_CENTRAL_DEFAULT_ID,
@@ -1264,7 +1264,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_verify_eip712() {
+    fn test_verify_reenc_eip712() {
         let mut rng = AesRng::seed_from_u64(1);
         let (client_pk, client_sk) = gen_sig_keys(&mut rng);
         let client_address = alloy_primitives::Address::from_public_key(client_pk.pk());
@@ -1308,7 +1308,7 @@ pub(crate) mod tests {
 
         {
             // happy path
-            verify_eip712(&req).unwrap();
+            verify_reencryption_eip712(&req).unwrap();
         }
         {
             // use a wrong client address (invalid string length)
@@ -1316,7 +1316,7 @@ pub(crate) mod tests {
             bad_payload.client_address = "66f9664f97F2b50F62D13eA064982f936dE76657".to_string();
             let mut bad_req = req.clone();
             bad_req.payload = Some(bad_payload);
-            match verify_eip712(&bad_req) {
+            match verify_reencryption_eip712(&bad_req) {
                 Ok(_) => panic!("expected failure"),
                 Err(e) => {
                     assert_eq!(e.to_string(), "invalid string length");
@@ -1334,7 +1334,7 @@ pub(crate) mod tests {
                 .to_string();
             let mut bad_req = req.clone();
             bad_req.payload = Some(bad_payload);
-            match verify_eip712(&bad_req) {
+            match verify_reencryption_eip712(&bad_req) {
                 Ok(_) => panic!("expected failure"),
                 Err(e) => {
                     assert!(e.to_string().contains(ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR));
@@ -1345,7 +1345,7 @@ pub(crate) mod tests {
             // bad signature
             let mut bad_req = req.clone();
             bad_req.signature[0] = req.signature[0] ^ 1;
-            match verify_eip712(&bad_req) {
+            match verify_reencryption_eip712(&bad_req) {
                 Ok(_) => panic!("expected failure"),
                 Err(e) => {
                     assert_eq!(e.to_string(), "signature error");

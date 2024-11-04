@@ -3026,7 +3026,7 @@ pub(crate) mod tests {
             // The default is 2048 which is too slow for tests, so we switch to 256
             Some(256)
         };
-        let gen_req = internal_client
+        let gen_req: crate::kms::CrsGenRequest = internal_client
             .crs_gen_request(crs_req_id, max_num_bits, params)
             .unwrap();
 

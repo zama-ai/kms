@@ -67,6 +67,7 @@ use distributed_decryption::networking::NetworkingStrategy;
 use distributed_decryption::session_id::SessionId;
 use distributed_decryption::{algebra::base_ring::Z64, execution::endpoints::keygen::FhePubKeySet};
 use itertools::Itertools;
+use k256::ecdsa::SigningKey;
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -420,11 +421,22 @@ where
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
 {
+    tracing::info!(
+        "Starting threshold KMS Server. Party ID {my_id}, listening on {listen_address}:{listen_port} ...",
+    );
+
     let sks: HashMap<RequestId, PrivateSigKey> =
         read_all_data_versioned(&private_storage, &PrivDataType::SigningKey.to_string()).await?;
     let sk = get_exactly_one(sks).inspect_err(|e| {
         tracing::error!("signing key hashmap is not exactly 1, {}", e);
     })?;
+
+    // compute corresponding public key and derive address from private sig key
+    let pk = SigningKey::verifying_key(sk.sk());
+    tracing::info!(
+        "Public address is {}",
+        alloy_signer::utils::public_key_to_address(pk)
+    );
 
     let key_info_versioned: HashMap<RequestId, ThresholdFheKeys> =
         read_all_data_versioned(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;

@@ -63,6 +63,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 strum = "0.26"
 strum_macros = "0.26"
+tfhe = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 tracing = { workspace = true, features = ["log"] }
 tracing-appender = { workspace = true }

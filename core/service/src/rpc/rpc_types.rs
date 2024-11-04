@@ -297,14 +297,12 @@ fn abi_encode_plaintexts(ptxts: &[Plaintext]) -> Bytes {
 }
 
 #[cfg(feature = "non-wasm")]
-/// take external handles and plaintext in the form of bytes, convert them to the required solidity types and sign them using EIP-712 for external verification (e.g. in the fhevm).
-pub(crate) fn compute_external_pt_signature(
-    client_sk: &PrivateSigKey,
+pub fn compute_pt_message_hash(
     ext_handles_bytes: Vec<Option<Vec<u8>>>,
     pts: &[Plaintext],
     eip712_domain: Eip712Domain,
     acl_address: Address,
-) -> Vec<u8> {
+) -> B256 {
     // convert external_handles back to U256 to be signed
     let external_handles: Vec<_> = ext_handles_bytes
         .into_iter()
@@ -321,13 +319,25 @@ pub(crate) fn compute_external_pt_signature(
         decryptedResult: pt_bytes,
     };
 
+    let message_hash = message.eip712_signing_hash(&eip712_domain);
+    tracing::info!("PT EIP-712 Message hash: {:?}", message_hash);
+    message_hash
+}
+
+#[cfg(feature = "non-wasm")]
+/// take external handles and plaintext in the form of bytes, convert them to the required solidity types and sign them using EIP-712 for external verification (e.g. in the fhevm).
+pub(crate) fn compute_external_pt_signature(
+    client_sk: &PrivateSigKey,
+    ext_handles_bytes: Vec<Option<Vec<u8>>>,
+    pts: &[Plaintext],
+    eip712_domain: Eip712Domain,
+    acl_address: Address,
+) -> Vec<u8> {
+    let message_hash = compute_pt_message_hash(ext_handles_bytes, pts, eip712_domain, acl_address);
+
     let signer = PrivateKeySigner::from_signing_key(client_sk.sk().clone());
     let signer_address = signer.address();
-
     tracing::info!("Signer address: {:?}", signer_address);
-
-    let message_hash = message.eip712_signing_hash(&eip712_domain);
-    tracing::info!("PT Message hash: {:?}", message_hash);
 
     // Sign the hash synchronously with the wallet.
     let signature = signer
@@ -386,21 +396,16 @@ pub(crate) fn compute_external_verify_proven_ct_signature(
 }
 
 #[cfg(feature = "non-wasm")]
-/// take some public data (e.g. public key or CRS), safely serialize it, convert it to a solidity type byte array and sign it using EIP-712 for external verification (e.g. in the fhevm).
-pub(crate) fn compute_external_pubdata_signature<D: Serialize + Versionize + Named>(
-    client_sk: &PrivateSigKey,
+/// Safely serialize some public data, convert it to a solidity type byte array and compute the EIP-712 message hash for external verification (e.g. in the fhevm).
+pub fn compute_external_pubdata_message_hash<D: Serialize + Versionize + Named>(
     data: &D,
     eip712_domain: &Eip712Domain,
-) -> anyhow::Result<Vec<u8>> {
+) -> anyhow::Result<B256> {
     use crate::cryptography::signcryption::safe_serialize_hash_element_versioned;
 
     let bytes = safe_serialize_hash_element_versioned(data)?;
 
-    let signer = PrivateKeySigner::from_signing_key(client_sk.sk().clone());
-    let signer_address = signer.address();
-    tracing::info!("Signer address: {:?}", signer_address);
-
-    // distinguish between the different types of public data we can sign according to their name and sign it with EIP-712
+    // distinguish between the different types of public data we can sign according to their type name and sign it with EIP-712
     let message_hash = match D::NAME {
         "zk::CompactPkePublicParams" => {
             let message = CRS { crs: bytes.into() };
@@ -425,7 +430,22 @@ pub(crate) fn compute_external_pubdata_signature<D: Serialize + Versionize + Nam
             )))
         }
     };
-    tracing::info!("Key Message hash: {:?}", message_hash);
+    tracing::info!("Public Data EIP-712 Message hash: {:?}", message_hash);
+    Ok(message_hash)
+}
+
+#[cfg(feature = "non-wasm")]
+/// take some public data (e.g. public key or CRS) and sign it using EIP-712 for external verification (e.g. in the fhevm).
+pub(crate) fn compute_external_pubdata_signature<D: Serialize + Versionize + Named>(
+    client_sk: &PrivateSigKey,
+    data: &D,
+    eip712_domain: &Eip712Domain,
+) -> anyhow::Result<Vec<u8>> {
+    let message_hash = compute_external_pubdata_message_hash(data, eip712_domain)?;
+
+    let signer = PrivateKeySigner::from_signing_key(client_sk.sk().clone());
+    let signer_address = signer.address();
+    tracing::info!("Signer address: {:?}", signer_address);
 
     // Sign the hash synchronously with the wallet.
     let signature = signer
@@ -434,7 +454,10 @@ pub(crate) fn compute_external_pubdata_signature<D: Serialize + Versionize + Nam
         .as_bytes()
         .to_vec();
 
-    tracing::info!("PT Signature: {:?}", hex::encode(signature.clone()));
+    tracing::info!(
+        "Public Data EIP-712 Signature: {:?}",
+        hex::encode(signature.clone())
+    );
 
     Ok(signature)
 }
