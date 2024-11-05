@@ -29,7 +29,7 @@ jobs:
           ref: ${{ inputs.ref }}
 
       - name: Install semantic-release-cargo
-        uses: taiki-e/install-action@437c908c7e5ee18b63a261286cbe5147219f8a39 # v2.42.3
+        uses: taiki-e/install-action@678b06b887cdbf44fa0601e5915f865e17c2241d # v2.42.3
         with:
           tool: semantic-release-cargo@2
 
