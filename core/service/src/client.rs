@@ -1930,13 +1930,19 @@ impl Client {
         )?
         .degree as usize;
         let sharings = self.recover_sharings(&validated_resps, fhe_type, client_keys)?;
-        let amount_shares = sharings.len();
+        let amount_shares = validated_resps.len();
+        // TODO: in general this is not true, degree isn't a perfect proxy for num_parties
+        let num_parties = 3 * degree + 1;
         let mut decrypted_blocks = Vec::new();
         for cur_block_shares in sharings {
             // NOTE: this performs optimistic reconstruction
-            if let Ok(Some(r)) =
-                reconstruct_w_errors_sync(amount_shares, degree, degree, 0, &cur_block_shares)
-            {
+            if let Ok(Some(r)) = reconstruct_w_errors_sync(
+                num_parties,
+                degree,
+                degree,
+                num_parties - amount_shares,
+                &cur_block_shares,
+            ) {
                 decrypted_blocks.push(r);
             } else {
                 return Err(anyhow_error_and_log("Could not reconstruct all blocks"));
@@ -1961,6 +1967,13 @@ impl Client {
     ) -> anyhow::Result<Plaintext> {
         // Recover sharings
         let mut opt_sharings = None;
+        let degree = some_or_err(
+            some_or_err(agg_resp.first().as_ref(), "empty responses".to_owned())?
+                .payload
+                .as_ref(),
+            "empty payload".to_owned(),
+        )?
+        .degree as usize;
 
         // Trust all responses have all expected blocks
         for cur_resp in agg_resp {
@@ -1991,14 +2004,19 @@ impl Client {
             )?;
         }
         let sharings = opt_sharings.unwrap();
-        let num_parties = agg_resp.len();
+        // TODO: in general this is not true, degree isn't a perfect proxy for num_parties
+        let num_parties = 3 * degree + 1;
+        let amount_shares = agg_resp.len();
         let mut decrypted_blocks = Vec::new();
-        let degree = num_parties / 3;
         for cur_block_shares in sharings {
             // NOTE: this performs optimistic reconstruction
-            if let Ok(Some(r)) =
-                reconstruct_w_errors_sync(num_parties, degree, degree, 0, &cur_block_shares)
-            {
+            if let Ok(Some(r)) = reconstruct_w_errors_sync(
+                num_parties,
+                degree,
+                degree,
+                num_parties - amount_shares,
+                &cur_block_shares,
+            ) {
                 decrypted_blocks.push(r);
             } else {
                 return Err(anyhow_error_and_log("Could not reconstruct all blocks"));
@@ -4650,12 +4668,29 @@ pub(crate) mod tests {
 
             let domain = protobuf_to_alloy_domain(req.domain.as_ref().unwrap()).unwrap();
             let client_req = ParsedReencryptionRequest::try_from(req).unwrap();
+            // NOTE: throw away one response and it should still work.
             let plaintext = if secure {
+                // test with one fewer response
+                internal_client
+                    .process_reencryption_resp(
+                        &client_req,
+                        &domain,
+                        &responses[1..],
+                        enc_pk,
+                        enc_sk,
+                    )
+                    .unwrap();
+                // test with all responses
                 internal_client
                     .process_reencryption_resp(&client_req, &domain, responses, enc_pk, enc_sk)
                     .unwrap()
             } else {
                 internal_client.server_identities = ServerIdentities::Addrs(Vec::new());
+                // test with one fewer response
+                internal_client
+                    .insecure_process_reencryption_resp(&responses[1..], enc_pk, enc_sk)
+                    .unwrap();
+                // test with all responses
                 internal_client
                     .insecure_process_reencryption_resp(responses, enc_pk, enc_sk)
                     .unwrap()

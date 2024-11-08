@@ -111,19 +111,28 @@ test('threshold reencryption response', (_t) => {
     const transcript_buf = fs.readFileSync('temp/test-threshold-wasm-transcript.bin.8')
     const transcript = buf_to_transcript(transcript_buf);
     const client = transcript_to_client(transcript);
-    const request = transcript_to_parsed_req(transcript);
-    const eip712_domain = transcript_to_eip712domain(transcript);
-    const response = transcript_to_response(transcript);
+    const request_js = transcript_to_parsed_req_js(transcript);
+    const eip712_domain_js = transcript_to_eip712domain_js(transcript);
+    const response_js = transcript_to_response_js(transcript);
     const enc_pk = transcript_to_enc_pk(transcript);
     const enc_sk = transcript_to_enc_sk(transcript);
 
     // test reenc using wasm objects
-    const pt = process_reencryption_resp(client, request, eip712_domain, response, enc_pk, enc_sk, true);
+    const pt = process_reencryption_resp_from_js(client, request_js, eip712_domain_js, response_js, enc_pk, enc_sk, true);
     assert.deepEqual(42, pt[0]);
 
-    const response2 = transcript_to_response(transcript);
-    const pt2 = process_reencryption_resp(client, null, null, response2, enc_pk, enc_sk, false);
+    const response2_js = transcript_to_response_js(transcript);
+    const pt2 = process_reencryption_resp_from_js(client, null, null, response2_js, enc_pk, enc_sk, false);
     assert.deepEqual(42, pt2[0]);
+
+    // test again using fewer shares
+    response_js.pop();
+    const pt3 = process_reencryption_resp_from_js(client, request_js, eip712_domain_js, response_js, enc_pk, enc_sk, true);
+    assert.deepEqual(42, pt3[0]);
+
+    response2_js.pop();
+    const pt4 = process_reencryption_resp_from_js(client, null, null, response2_js, enc_pk, enc_sk, false);
+    assert.deepEqual(42, pt4[0]);
 });
 
 test('threshold reencryption response with js', (_t) => {

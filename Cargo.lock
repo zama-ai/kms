@@ -307,7 +307,7 @@ dependencies = [
 
 [[package]]
 name = "aipsc"
-version = "0.9.0-rc21"
+version = "0.9.0-rc25"
 dependencies = [
  "cosmwasm-schema",
  "cosmwasm-std",
@@ -937,7 +937,7 @@ checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 
 [[package]]
 name = "asc"
-version = "0.9.0-rc21"
+version = "0.9.0-rc25"
 dependencies = [
  "aipsc",
  "byteorder",
@@ -2573,7 +2573,7 @@ dependencies = [
 
 [[package]]
 name = "conf-trace"
-version = "0.9.0-rc21"
+version = "0.9.0-rc25"
 dependencies = [
  "anyhow",
  "config",
@@ -2746,7 +2746,7 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
 name = "cosmos-proto"
-version = "0.9.0-rc21"
+version = "0.9.0-rc25"
 dependencies = [
  "glob",
  "prost 0.12.6",
@@ -3418,7 +3418,7 @@ dependencies = [
 
 [[package]]
 name = "distributed-decryption"
-version = "0.9.0-rc21"
+version = "0.9.0-rc25"
 dependencies = [
  "aes",
  "aes-prng",
@@ -4159,7 +4159,7 @@ dependencies = [
 
 [[package]]
 name = "events"
-version = "0.9.0-rc21"
+version = "0.9.0-rc25"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4523,7 +4523,7 @@ checksum = "0fd8b261ccf00df8c5cc60c082bb7d7aa64c33a433cfcc091ca244326c924b2c"
 
 [[package]]
 name = "gateway"
-version = "0.9.0-rc21"
+version = "0.9.0-rc25"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -5515,7 +5515,7 @@ dependencies = [
 
 [[package]]
 name = "kms"
-version = "0.9.0-rc21"
+version = "0.9.0-rc25"
 dependencies = [
  "aes",
  "aes-gcm-siv",
@@ -5588,7 +5588,7 @@ dependencies = [
 
 [[package]]
 name = "kms-blockchain-client"
-version = "0.9.0-rc21"
+version = "0.9.0-rc25"
 dependencies = [
  "base64 0.22.1",
  "bip32",
@@ -5619,7 +5619,7 @@ dependencies = [
 
 [[package]]
 name = "kms-blockchain-connector"
-version = "0.9.0-rc21"
+version = "0.9.0-rc25"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -5657,7 +5657,7 @@ dependencies = [
 
 [[package]]
 name = "kms-common"
-version = "0.9.0-rc21"
+version = "0.9.0-rc25"
 dependencies = [
  "anyhow",
  "backward-compatibility",
@@ -8590,7 +8590,7 @@ dependencies = [
 
 [[package]]
 name = "simulator"
-version = "0.9.0-rc21"
+version = "0.9.0-rc25"
 dependencies = [
  "aes-prng",
  "alloy-primitives",
@@ -9104,7 +9104,7 @@ dependencies = [
 
 [[package]]
 name = "tendermint-ipsc"
-version = "0.9.0-rc21"
+version = "0.9.0-rc25"
 dependencies = [
  "aipsc",
  "anyhow",
@@ -9245,11 +9245,11 @@ dependencies = [
 
 [[package]]
 name = "test-utilities"
-version = "0.9.0-rc21"
+version = "0.9.0-rc25"
 
 [[package]]
 name = "tests-utils"
-version = "0.9.0-rc21"
+version = "0.9.0-rc25"
 
 [[package]]
 name = "textwrap"

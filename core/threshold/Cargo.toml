@@ -1,6 +1,6 @@
 [package]
 name = "distributed-decryption"
-version = "0.9.0-rc21"
+version = "0.9.0-rc25"
 edition.workspace = true
 publish.workspace = true
 authors.workspace = true
@@ -19,9 +19,9 @@ backoff = { version = "0.4", features = ["tokio"], optional = true }
 bincode.workspace = true
 cfg-if = "1.0.0"
 clap = { workspace = true, features = ["derive", "env"] }
-kms-common = { path = "../../common", version = "0.9.0-rc21" }
+kms-common = { path = "../../common", version = "0.9.0-rc25" }
 concrete-csprng = "0.4.1"
-conf-trace = { path = "../../conf-trace", optional = true, version = "0.9.0-rc21" }
+conf-trace = { path = "../../conf-trace", optional = true, version = "0.9.0-rc25" }
 const_format = "0.2.32"
 crypto-bigint = { version = "0.6.0-rc.6", features = [
     "serde",
@@ -92,7 +92,7 @@ serial_test = "3.0.0"
 tempfile = "3.13.0"
 test-log = { version = "0.2", features = ["trace"] }
 tracing-test = "0.2"
-kms-common = { path = "../../common", version = "0.9.0-rc21", features = [
+kms-common = { path = "../../common", version = "0.9.0-rc25", features = [
     "testing",
 ] }
 backward-compatibility = { path = "../../backward-compatibility", version = "0.9.0-rc3", features = [
