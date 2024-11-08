@@ -18,6 +18,7 @@ use strum::{EnumIter, IntoEnumIterator};
 use tfhe::named::Named;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tfhe::{Unversionize, Versionize};
+use tracing;
 use url::Url;
 
 // TODO add a wrapper struct for both public and private storage.
@@ -181,6 +182,7 @@ pub async fn store_pk_at_request_id<'a, S: Storage>(
     request_id: &RequestId,
     pk: WrappedPublicKey<'a>,
 ) -> anyhow::Result<()> {
+    tracing::info!("Storing public key");
     match pk {
         WrappedPublicKey::Compact(inner_pk) => {
             store_versioned_at_request_id(

@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 use std::ops::Deref;
 
 use cosmwasm_schema::schemars;
@@ -14,6 +14,12 @@ pub enum HexVectorVersioned {
 #[derive(Eq, Hash, PartialEq, Default, Clone, Debug, JsonSchema, Versionize)]
 #[versionize(HexVectorVersioned)]
 pub struct HexVector(pub Vec<u8>);
+
+impl Display for HexVector {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "{}", self.to_hex())
+    }
+}
 
 impl Deref for HexVector {
     type Target = Vec<u8>;

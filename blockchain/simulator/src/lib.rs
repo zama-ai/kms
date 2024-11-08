@@ -1,3 +1,7 @@
+/// Simulator library
+///
+/// This library implements most functionnalities to interact with a KMS ASC.
+/// This library also includes an associated CLI.
 use aes_prng::AesRng;
 use alloy_signer::{Signature, SignerSync};
 use alloy_sol_types::{Eip712Domain, SolStruct};
@@ -63,6 +67,7 @@ use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use typed_builder::TypedBuilder;
 
+// TODO: remove hard coded values -> should be either cli arguments or configuration
 const EIP712_NAME: &str = "eip712_name";
 const EIP712_VERSION: &str = "1.0.4";
 const EIP712_CONTRACT: &str = "0x00dA6BF26964af9D7EED9e03E53415d37aa960EE";
@@ -76,16 +81,21 @@ static EIP712_SALT: &[u8] = &[
 
 #[derive(Serialize, Clone, Default, Debug)]
 pub struct SimulatorConfig {
-    pub s3_endpoint: String,
-    pub crs_id: String,
-    pub key_id: String,
-    pub key_folder: String,
+    /// S3 endpoint from which to fetch keys
+    /// NOTE: We should probably move away from that and use the key-url
+    pub s3_endpoint: Option<String>,
+    /// Key folder where to store the keys
+    pub object_folder: Vec<String>,
+    /// Validator addresses (only one supported for now)
     pub validator_addresses: Vec<String>,
+    /// HTTP validator endpoint (length should match)
     pub http_validator_endpoints: Vec<String>,
+    /// Key-value store endpoint
     pub kv_store_address: String,
+    /// ASC contract address
     pub contract: String,
+    /// Mnemonic of the user wallet to use
     pub mnemonic: String,
-    pub faucet_address: String,
 }
 
 fn parse_contract_address(
@@ -108,16 +118,13 @@ impl<'de> Deserialize<'de> for SimulatorConfig {
     {
         #[derive(Deserialize, Clone, Default, Debug)]
         pub struct SimulatorConfigBuffer {
-            pub s3_endpoint: String,
-            pub crs_id: String,
-            pub key_id: String,
-            pub key_folder: String,
+            pub s3_endpoint: Option<String>,
+            pub object_folder: Vec<String>,
             pub validator_addresses: Vec<String>,
             pub http_validator_endpoints: Vec<String>,
             pub kv_store_address: String,
             pub contract: String,
             pub mnemonic: String,
-            pub faucet_address: String,
         }
 
         let temp = SimulatorConfigBuffer::deserialize(deserializer)?;
@@ -128,15 +135,12 @@ impl<'de> Deserialize<'de> for SimulatorConfig {
 
         Ok(SimulatorConfig {
             s3_endpoint: temp.s3_endpoint,
-            crs_id: temp.crs_id,
-            key_id: temp.key_id,
-            key_folder: temp.key_folder,
+            object_folder: temp.object_folder,
             validator_addresses: temp.validator_addresses,
             http_validator_endpoints: temp.http_validator_endpoints,
             kv_store_address: temp.kv_store_address,
             contract: contract_address,
             mnemonic: temp.mnemonic,
-            faucet_address: temp.faucet_address,
         })
     }
 }
@@ -262,34 +266,42 @@ impl_tokenizable!(u128, u128::MAX);
 
 // CLI arguments
 #[derive(Debug, Parser)]
-pub struct Nothing {}
+pub struct NoParameters {}
 
 #[derive(Debug, Parser)]
-pub struct CryptExecute {
+pub struct CipherParameters {
+    /// Value to encrypt for later re-encryption/decryption
     #[clap(long, short = 'e')]
     pub to_encrypt: u8,
+    /// Flag to activate ciphertext compression
     #[clap(long, short = 'c', default_value_t = false)]
     pub compressed: bool,
+    /// CRS identifier to use
+    #[clap(long, short = 'r')]
+    pub crs_id: String,
+    /// Key identifier to use for decryption/re-encryption purposes
+    #[clap(long, short = 'k')]
+    pub key_id: String,
 }
 
 #[derive(Debug, Parser)]
-pub struct KeyGenExecute {
+pub struct KeyGenParameters {
     #[clap(long, short = 'i')]
     pub preproc_id: String,
 }
 
 #[derive(Debug, Parser)]
-pub struct CrsExecute {
+pub struct CrsParameters {
     #[clap(long, short = 'm')]
     pub max_num_bits: u32,
 }
 
 #[derive(Debug, Parser)]
-pub struct VerifyProvenCtExecute {
+pub struct VerifyProvenCtParameters {
     #[clap(long, short = 'e')]
     pub to_encrypt: u8,
-    pub crs_id: Option<String>,
-    pub key_id: Option<String>,
+    pub crs_id: String,
+    pub key_id: String,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -301,16 +313,23 @@ pub struct Query {
 }
 
 #[derive(Debug, Parser)]
-pub enum Command {
-    PreprocKeyGen(Nothing),
-    KeyGen(KeyGenExecute),
-    InsecureKeyGen(Nothing),
-    Decrypt(CryptExecute),
-    ReEncrypt(CryptExecute),
+pub struct GetFundsParameters {
+    /// Faucet address
+    pub faucet_address: String,
+}
+
+#[derive(Debug, Parser)]
+pub enum SimulatorCommand {
+    PreprocKeyGen(NoParameters),
+    GetFunds(GetFundsParameters),
+    KeyGen(KeyGenParameters),
+    InsecureKeyGen(NoParameters),
+    Decrypt(CipherParameters),
+    ReEncrypt(CipherParameters),
     QueryContract(Query),
-    CrsGen(CrsExecute),
-    VerifyProvenCt(VerifyProvenCtExecute),
-    DoNothing(Nothing),
+    CrsGen(CrsParameters),
+    VerifyProvenCt(VerifyProvenCtParameters),
+    DoNothing(NoParameters),
 }
 
 #[derive(Debug, Parser)]
@@ -318,7 +337,12 @@ pub struct Config {
     #[clap(long, short = 'f')]
     pub file_conf: Option<String>,
     #[clap(subcommand)]
-    pub command: Command,
+    pub command: SimulatorCommand,
+    // TODO: expose a log-level instead
+    #[clap(long, short = 'l')]
+    pub logs: bool,
+    #[clap(long, default_value = "20")]
+    pub max_iter: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder)]
@@ -632,6 +656,7 @@ async fn execute_contract(
     client: &Client,
     query_client: &QueryClient,
     value: OperationValue,
+    max_iter: Option<u64>,
 ) -> anyhow::Result<Vec<KmsEvent>> {
     let request = ExecuteContractRequest::builder()
         .message(KmsMessage::builder().value(value).build())
@@ -645,8 +670,8 @@ async fn execute_contract(
 
     let response = client.execute_contract(request).await?;
 
+    let max_iter: u64 = max_iter.unwrap_or(20);
     let resp;
-    const MAX_ITER: u64 = 20;
     let mut counter: u64 = 0;
     loop {
         tracing::info!("Querying client for tx hash: {:?}...", response.txhash);
@@ -657,10 +682,10 @@ async fn execute_contract(
         } else {
             tracing::info!("Waiting 1 second for transaction to be included in a block.");
             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-            if counter == MAX_ITER {
+            if counter == max_iter {
                 return Err(anyhow::anyhow!(
                     "Max-iteration ({}) reached waiting for transaction to be included in a block",
-                    MAX_ITER,
+                    max_iter,
                 ));
             }
         }
@@ -690,7 +715,13 @@ pub async fn execute_crsgen_contract(
         Some(EIP712_SALT.to_vec()),
     )?;
 
-    let evs = execute_contract(client, query_client, OperationValue::CrsGen(cv.clone())).await?;
+    let evs = execute_contract(
+        client,
+        query_client,
+        OperationValue::CrsGen(cv.clone()),
+        None,
+    )
+    .await?;
     let ev = evs[0].clone();
 
     tracing::info!("TxId: {:?}", ev.txn_id().to_hex(),);
@@ -711,7 +742,7 @@ pub async fn execute_insecure_key_gen_contract(
 
     let insecure_key_gen_value = OperationValue::InsecureKeyGen(ikv.clone());
 
-    let evs = execute_contract(client, query_client, insecure_key_gen_value).await?;
+    let evs = execute_contract(client, query_client, insecure_key_gen_value, None).await?;
     let ev = evs[0].clone();
 
     tracing::info!("TxId: {:?}", ev.txn_id().to_hex(),);
@@ -724,7 +755,7 @@ pub async fn execute_preproc_keygen_contract(
 ) -> Result<KmsEvent, Box<dyn std::error::Error + 'static>> {
     let preproc_value = OperationValue::KeyGenPreproc(KeyGenPreprocValues {});
 
-    let evs = execute_contract(client, query_client, preproc_value).await?;
+    let evs = execute_contract(client, query_client, preproc_value, None).await?;
     let ev = evs[0].clone();
 
     tracing::info!("TxId: {:?}", ev.txn_id().to_hex(),);
@@ -747,7 +778,7 @@ pub async fn execute_keygen_contract(
     )?;
     let keygen_value = OperationValue::KeyGen(kv.clone());
 
-    let evs = execute_contract(client, query_client, keygen_value).await?;
+    let evs = execute_contract(client, query_client, keygen_value, None).await?;
     let ev = evs[0].clone();
 
     tracing::info!("TxId: {:?}", ev.txn_id().to_hex(),);
@@ -809,7 +840,7 @@ pub async fn execute_verify_proven_ct_contract(
         Some(EIP712_SALT.to_vec()),
     )?);
 
-    let evs = execute_contract(client, query_client, value).await?;
+    let evs = execute_contract(client, query_client, value, None).await?;
     let ev = evs[0].clone();
 
     tracing::info!("TxId: {:?}", ev.txn_id().to_hex(),);
@@ -848,7 +879,13 @@ pub async fn execute_decryption_contract(
         Some(EIP712_SALT.to_vec()),
     )?;
 
-    let evs = execute_contract(client, query_client, OperationValue::Decrypt(dv.clone())).await?;
+    let evs = execute_contract(
+        client,
+        query_client,
+        OperationValue::Decrypt(dv.clone()),
+        None,
+    )
+    .await?;
     let ev = evs[0].clone();
 
     tracing::info!("TxId: {:?}", ev.txn_id().to_hex(),);
@@ -962,10 +999,11 @@ pub async fn execute_reencryption_contract(
         let storage = FileStorage::new_centralized(Some(keys_folder), StorageType::PUB).unwrap();
         let url = storage
             .compute_url(
-                &SIGNING_KEY_ID.to_string(),
+                &SIGNING_KEY_ID.to_string().to_lowercase(),
                 &PubDataType::VerfKey.to_string(),
             )
             .unwrap();
+        tracing::info!("{:?}", url);
         let verf_key: PublicSigKey = storage.read_data(&url).await.unwrap();
         vec![verf_key]
     } else {
@@ -976,11 +1014,14 @@ pub async fn execute_reencryption_contract(
                 FileStorage::new_threshold(Some(keys_folder), StorageType::PUB, i).unwrap();
             let url = storage
                 .compute_url(
-                    &SIGNING_KEY_ID.to_string(),
+                    &SIGNING_KEY_ID.to_string().to_lowercase(),
                     &PubDataType::VerfKey.to_string(),
                 )
                 .unwrap();
-            let verf_key: PublicSigKey = storage.read_data(&url).await.unwrap();
+            let verf_key: PublicSigKey = match storage.read_data(&url).await {
+                Ok(key) => key,
+                Err(e) => panic!("Error reading file at {}: {}", url, e),
+            };
             res.push(verf_key);
         }
         res
@@ -990,7 +1031,7 @@ pub async fn execute_reencryption_contract(
         kms_lib::client::Client::new(verf_keys, client_address, Some(sig_sk), params);
     kms_client.convert_to_addresses();
 
-    let evs = execute_contract(client, query_client, value).await?;
+    let evs = execute_contract(client, query_client, value, None).await?;
     let ev = evs[0].clone();
 
     tracing::info!("TxId: {:?}", ev.txn_id().to_hex(),);
@@ -1041,12 +1082,12 @@ fn join_vars(args: &[&str]) -> String {
 
 // TODO: handle auth
 // TODO: add option to either use local  key or remote key
-pub async fn fetch_key(
+pub async fn fetch_object(
     endpoint: &str,
     folder: &str,
-    key_id: &str,
+    object_id: &str,
 ) -> Result<Bytes, Box<dyn std::error::Error + 'static>> {
-    let object_key = key_id.to_string();
+    let object_key = object_id.to_string();
     // Construct the URL
     let url = join_vars(&[endpoint, folder, object_key.as_str()]);
 
@@ -1075,12 +1116,15 @@ pub async fn fetch_key(
             )))
         }
     } else {
-        let key_path = Path::new(endpoint).join(key_id);
+        let key_path = Path::new(endpoint).join(folder).join(object_id);
         match fs::read(&key_path) {
             Ok(content) => Ok(Bytes::from(content)),
-            Err(..) => Err(Box::new(std::io::Error::new(
+            Err(error) => Err(Box::new(std::io::Error::new(
                 std::io::ErrorKind::Other,
-                format!("Couldn't fetch key from file\n{:?}", key_path,),
+                format!(
+                    "Couldn't fetch key from file {:?} from error: {:?}",
+                    key_path, error
+                ),
             ))),
         }
     }
@@ -1212,62 +1256,57 @@ pub async fn wait_for_contract_to_be_deployed(
 /// i.e. everything related to CRS and FHE public materials
 async fn fetch_global_key_and_write_to_file(
     destination_prefix: &Path,
-    sim_conf: &SimulatorConfig,
-    name: &str,
+    s3_endpoint: &str,
+    object_id: &str,
+    object_name: &str,
+    object_folder: &str,
 ) -> Result<(), Box<dyn std::error::Error + 'static>> {
     // Fetch pub-key from storage and dump it for later use
-    let key_id = if name == "CRS" {
-        &sim_conf.crs_id
-    } else {
-        &sim_conf.key_id
-    };
-
-    let folder = destination_prefix.join("PUB").join(name);
-    let content = fetch_key(
-        &sim_conf.s3_endpoint,
-        &format!("{}/{}", sim_conf.key_folder, name),
-        key_id,
+    let folder = destination_prefix.join("PUB").join(object_name);
+    let content = fetch_object(
+        s3_endpoint,
+        &format!("{}/{}", object_folder, object_name),
+        object_id,
     )
     .await?;
-    let _ = write_bytes_to_file(&folder, key_id, content.as_ref());
+    let _ = write_bytes_to_file(&folder, object_id, content.as_ref());
     Ok(())
 }
 
-/// This fetches material which is local to the KMS parties
-/// i.e. the signature keys
+/// This fetches material which is local
+/// i.e. everything related to parties verification keys
 async fn fetch_local_key_and_write_to_file(
     destination_prefix: &Path,
-    sim_conf: &SimulatorConfig,
-    name: &str,
-    kms_core_conf: &KmsCoreConf,
+    s3_endpoint: &str,
+    object_id: &str,
+    object_name: &str,
+    object_folder: &[String],
 ) -> Result<(), Box<dyn std::error::Error + 'static>> {
-    // TODO: handle local file
-    let key_id = &SIGNING_KEY_ID.to_string();
-
-    //Centralized case
-    if kms_core_conf.is_centralized() {
-        let folder = destination_prefix.join("PUB").join(name);
-        let content = fetch_key(
-            &sim_conf.s3_endpoint,
-            &format!("{}/{}", sim_conf.key_folder, name),
-            key_id,
+    // Fetch pub-key from storage and dump it for later use
+    if object_folder.len() == 1 {
+        fetch_global_key_and_write_to_file(
+            destination_prefix,
+            s3_endpoint,
+            object_id,
+            object_name,
+            object_folder.first().unwrap(),
         )
-        .await?;
-        let _ = write_bytes_to_file(&folder, key_id, content.as_ref());
+        .await
     } else {
-        let num_kms_parties = kms_core_conf.parties.len();
-        for i in 1..=num_kms_parties {
-            let folder = destination_prefix.join(format!("PUB-p{}", i)).join(name);
-            let content = fetch_key(
-                &sim_conf.s3_endpoint,
-                &format!("PUB-p{}/{}", i, name),
-                key_id,
+        for (party_idx, folder_name) in object_folder.iter().enumerate() {
+            let folder = destination_prefix
+                .join(format!("PUB-p{}", party_idx + 1))
+                .join(object_name);
+            let content = fetch_object(
+                s3_endpoint,
+                &format!("{}/{}", folder_name, object_name),
+                object_id,
             )
             .await?;
-            let _ = write_bytes_to_file(&folder, key_id, content.as_ref());
+            let _ = write_bytes_to_file(&folder, object_id, content.as_ref());
         }
+        Ok(())
     }
-    Ok(())
 }
 
 /// This fetches the kms ethereum address from local storage
@@ -1280,20 +1319,28 @@ async fn fetch_kms_addresses(
 
     let mut addr_bytes = Vec::new();
     if kms_core_conf.is_centralized() {
-        let content = fetch_key(
-            &sim_conf.s3_endpoint,
-            &format!("{}/{}", sim_conf.key_folder, "VerfAddress"),
+        let content = fetch_object(
+            &sim_conf
+                .s3_endpoint
+                .clone()
+                .expect("s3 endpoint should be provided"),
+            &format!(
+                "{}/{}",
+                sim_conf.object_folder.first().unwrap(),
+                "VerfAddress"
+            ),
             key_id,
         )
         .await?;
         addr_bytes.push(content);
     } else {
-        let num_kms_parties = kms_core_conf.parties.len();
-
-        for i in 1..=num_kms_parties {
-            let content = fetch_key(
-                &sim_conf.s3_endpoint,
-                &format!("PUB-p{}/{}", i, "VerfAddress"),
+        for folder_name in sim_conf.object_folder.iter() {
+            let content = fetch_object(
+                &sim_conf
+                    .s3_endpoint
+                    .clone()
+                    .expect("s3 endpoint should be provided"),
+                &format!("{}/{}", folder_name, "VerfAddress"),
                 key_id,
             )
             .await?;
@@ -1319,7 +1366,7 @@ async fn wait_for_response(
     event: KmsEvent,
     query_client: &QueryClient,
     sim_conf: &SimulatorConfig,
-    max_iter: usize,
+    max_iter: u64,
     num_expected_responses: usize,
 ) -> anyhow::Result<Vec<OperationValue>> {
     let time_to_wait = 10; // in seconds
@@ -1560,9 +1607,10 @@ fn process_reencrypt_responses(
 
 pub async fn main_from_config(
     path_to_config: &str,
-    command: &Command,
+    command: &SimulatorCommand,
     destination_prefix: &Path,
-) -> Result<(), Box<dyn std::error::Error + 'static>> {
+    max_iter: Option<u64>,
+) -> Result<Option<Vec<OperationValue>>, Box<dyn std::error::Error + 'static>> {
     tracing::info!("starting command: {:?}", command);
     let sim_conf: SimulatorConfig = Settings::builder()
         .path(path_to_config)
@@ -1583,6 +1631,8 @@ pub async fn main_from_config(
         .mnemonic_wallet(Some(&sim_conf.mnemonic.clone()))
         .build()
         .try_into()?;
+
+    tracing::debug!("Client address: {}", client.contract_address.to_string());
 
     // TODO: merge both clients
     let query_client: QueryClient = QueryClientBuilder::builder()
@@ -1608,14 +1658,57 @@ pub async fn main_from_config(
         return Err(anyhow!("Kms Core configuration is not conformant!").into());
     }
 
-    fetch_global_key_and_write_to_file(destination_prefix, &sim_conf, "PublicKey").await?;
-    fetch_global_key_and_write_to_file(destination_prefix, &sim_conf, "PublicKeyMetadata").await?;
-    fetch_global_key_and_write_to_file(destination_prefix, &sim_conf, "ServerKey").await?;
-    fetch_global_key_and_write_to_file(destination_prefix, &sim_conf, "CRS").await?;
-    fetch_local_key_and_write_to_file(destination_prefix, &sim_conf, "VerfAddress", &kms_core_conf)
-        .await?;
-    fetch_local_key_and_write_to_file(destination_prefix, &sim_conf, "VerfKey", &kms_core_conf)
-        .await?;
+    let mut return_value: Option<Vec<OperationValue>> = None;
+    match command {
+        SimulatorCommand::Decrypt(cipher_params) | SimulatorCommand::ReEncrypt(cipher_params) => {
+            // Fetch all objects associated with TFHE keys
+            for object_name in ["PublicKey", "PublicKeyMetadata", "ServerKey"] {
+                fetch_global_key_and_write_to_file(
+                    destination_prefix,
+                    sim_conf
+                        .s3_endpoint
+                        .clone()
+                        .expect("S3 endpoint should be provided")
+                        .as_str(),
+                    &cipher_params.key_id,
+                    object_name,
+                    sim_conf.object_folder.first().unwrap(),
+                )
+                .await?;
+            }
+
+            // Fetch objects associated with Signature keys
+            for object_name in ["VerfAddress", "VerfKey"] {
+                fetch_local_key_and_write_to_file(
+                    destination_prefix,
+                    sim_conf
+                        .s3_endpoint
+                        .clone()
+                        .expect("S3 endpoint should be provided")
+                        .as_str(),
+                    &SIGNING_KEY_ID.to_string(),
+                    object_name,
+                    &sim_conf.object_folder,
+                )
+                .await?;
+            }
+
+            // Fetch CRS
+            fetch_global_key_and_write_to_file(
+                destination_prefix,
+                sim_conf
+                    .s3_endpoint
+                    .clone()
+                    .expect("S3 endpoint should be provided")
+                    .as_str(),
+                &cipher_params.crs_id,
+                "CRS",
+                sim_conf.object_folder.first().unwrap(),
+            )
+            .await?;
+        }
+        _ => {}
+    }
 
     let kms_addrs = fetch_kms_addresses(&sim_conf, &kms_core_conf).await?;
 
@@ -1634,47 +1727,66 @@ pub async fn main_from_config(
     // TODO: stop here if insufficient gas and/or query faucet if setup
     // TODO: add optional faucet configuration in config file
     let num_kms_parties = kms_core_conf.parties.len();
-    // Launch command
-    let mut max_iter = 20;
+
+    let max_iter = max_iter.unwrap_or(20);
+
     // Execute the proper command
     match command {
-        Command::Decrypt(ex) => {
-            let (event, ptxt, request) = execute_decryption_contract(
-                ex.to_encrypt,
+        SimulatorCommand::Decrypt(cipher_params) => {
+            let (event, ptxt, decrypt_values) = execute_decryption_contract(
+                cipher_params.to_encrypt,
                 &client,
                 &query_client,
-                &sim_conf.key_id,
+                &cipher_params.key_id,
                 destination_prefix,
-                Some(ex.compressed),
+                Some(cipher_params.compressed),
             )
             .await?;
-            let responses =
+            return_value = Some(
                 wait_for_response(event, &query_client, &sim_conf, max_iter, num_kms_parties)
-                    .await?;
-            process_decrypt_responses(responses, ptxt, request, &kms_addrs).unwrap();
+                    .await?,
+            );
+            process_decrypt_responses(
+                return_value
+                    .clone()
+                    .expect("Return value of decryption shouldn't be None"),
+                ptxt,
+                decrypt_values,
+                &kms_addrs,
+            )
+            .unwrap();
         }
-        Command::ReEncrypt(ex) => {
+        SimulatorCommand::ReEncrypt(cipher_params) => {
             let (event, ptxt, request, kms_client, domain, enc_pk, enc_sk) =
                 execute_reencryption_contract(
-                    ex.to_encrypt,
+                    cipher_params.to_encrypt,
                     &client,
                     &query_client,
-                    &sim_conf.key_id,
+                    &cipher_params.key_id,
                     destination_prefix,
                     kms_core_conf,
-                    Some(ex.compressed),
+                    Some(cipher_params.compressed),
                 )
                 .await?;
-            let responses =
+            return_value = Some(
                 wait_for_response(event, &query_client, &sim_conf, max_iter, num_kms_parties)
-                    .await?;
+                    .await?,
+            );
             process_reencrypt_responses(
-                responses, ptxt, request, kms_client, domain, enc_pk, enc_sk,
+                return_value
+                    .clone()
+                    .expect("Return value of re-encryption shouldn't be None"),
+                ptxt,
+                request,
+                kms_client,
+                domain,
+                enc_pk,
+                enc_sk,
             )
             .unwrap();
         }
 
-        Command::PreprocKeyGen(Nothing {}) => {
+        SimulatorCommand::PreprocKeyGen(NoParameters {}) => {
             unimplemented!(
                 "We only support InsecureKeyGen for now, thus no preprocessing required."
             )
@@ -1682,19 +1794,20 @@ pub async fn main_from_config(
             ////Do nothing with the response (for now ?)
             //let _responses = wait_for_response(event, &query_client, &sim_conf, max_iter).await?;
         }
-        Command::KeyGen(_ex) => {
+        SimulatorCommand::KeyGen(_ex) => {
             unimplemented!("We only support InsecureKeyGen for now.")
             //let preproc_id = HexVector::from_hex(&ex.preproc_id)?;
             //let event = execute_keygen_contract(&client, &query_client, preproc_id).await?;
             ////Do nothing with the response (for now ?)
             //let _responses = wait_for_response(event, &query_client, &sim_conf, max_iter).await?;
         }
-        Command::InsecureKeyGen(Nothing {}) => {
+        SimulatorCommand::InsecureKeyGen(NoParameters {}) => {
             let (event, _insecure_keygen_vals) =
                 execute_insecure_key_gen_contract(&client, &query_client).await?;
             let responses =
                 wait_for_response(event, &query_client, &sim_conf, max_iter, num_kms_parties)
                     .await?;
+            return_value = Some(responses.clone());
             for response in responses {
                 if let OperationValue::KeyGenResponse(response) = &response {
                     tracing::info!(
@@ -1720,14 +1833,14 @@ pub async fn main_from_config(
                 }
             }
         }
-        Command::CrsGen(CrsExecute { max_num_bits }) => {
+        SimulatorCommand::CrsGen(CrsParameters { max_num_bits }) => {
             // the actual CRS ceremony takes time
-            max_iter = 20;
-            let (event, _crs_vals) =
+            let (event, _crs_values) =
                 execute_crsgen_contract(&client, &query_client, *max_num_bits).await?;
             let responses =
                 wait_for_response(event, &query_client, &sim_conf, max_iter, num_kms_parties)
                     .await?;
+            return_value = Some(responses.clone());
 
             for response in responses {
                 if let OperationValue::CrsGenResponse(response) = &response {
@@ -1752,13 +1865,11 @@ pub async fn main_from_config(
                 }
             }
         }
-        Command::VerifyProvenCt(VerifyProvenCtExecute {
+        SimulatorCommand::VerifyProvenCt(VerifyProvenCtParameters {
             to_encrypt,
             crs_id,
             key_id,
         }) => {
-            let crs_id = crs_id.as_ref().unwrap_or(&sim_conf.crs_id);
-            let key_id = key_id.as_ref().unwrap_or(&sim_conf.key_id);
             let event = execute_verify_proven_ct_contract(
                 &client,
                 &query_client,
@@ -1769,15 +1880,23 @@ pub async fn main_from_config(
             )
             .await?;
             //Do nothing with the response (for now ?)
-            let _responses =
+            return_value = Some(
                 wait_for_response(event, &query_client, &sim_conf, max_iter, num_kms_parties)
-                    .await?;
+                    .await?,
+            );
         }
-        Command::QueryContract(q) => {
-            let query_result = query_contract(&sim_conf, q.clone(), &query_client).await?;
-            tracing::info!("Query result: {:?}", query_result);
+        SimulatorCommand::QueryContract(q) => {
+            return_value = Some(query_contract(&sim_conf, q.clone(), &query_client).await?);
+            // tracing::info!("Query result: {:?}", return_value);
         }
-        Command::DoNothing(Nothing {}) => {
+        SimulatorCommand::GetFunds(faucet_params) => {
+            call_faucet(
+                faucet_params.faucet_address.as_str(),
+                &client.get_account_address()?,
+            )
+            .await?;
+        }
+        SimulatorCommand::DoNothing(NoParameters {}) => {
             tracing::info!("Nothing to do.");
         }
     };
@@ -1789,5 +1908,6 @@ pub async fn main_from_config(
         "The whole operation costed: {:}",
         wallet_amount_before - wallet_amount_after
     );
-    Ok(())
+
+    Ok(return_value)
 }

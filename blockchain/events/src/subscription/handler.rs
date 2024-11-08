@@ -160,7 +160,7 @@ where
         );
         let _guard = enter.enter();
         let height = self.storage.get_last_height().await?;
-        tracing::info!("Getting events from Blockchain from height {:?}", height);
+        tracing::debug!("Getting events from Blockchain from height {:?}", height);
         let results = self.get_txs_events(height).await.inspect_err(|e| {
             self.metrics
                 .increment_connection_errors(1, &[("error", &e.to_string())]);

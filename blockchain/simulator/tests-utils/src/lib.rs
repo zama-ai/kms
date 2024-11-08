@@ -106,6 +106,7 @@ impl DockerComposeCmd {
             } else {
                 docker_logs.arg("docker-compose-kms-threshold.yml");
             }
+
             docker_logs.arg("logs");
             let docker_logs_output = docker_logs
                 .output()

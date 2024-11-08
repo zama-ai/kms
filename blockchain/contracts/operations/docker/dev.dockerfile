@@ -89,7 +89,7 @@ COPY --from=compiler /app/optimized/tendermint_ipsc.wasm /app/tendermint_ipsc.wa
 COPY --from=compiler /app/optimized/ethereum_ipsc.wasm /app/ethereum_ipsc.wasm
 
 COPY ./blockchain/scripts/setup_wasmd.sh /app/setup_wasmd.sh
-COPY ./blockchain/scripts/bootstrap_asc.sh /app/bootstrap.sh
-COPY ./blockchain/scripts/pub_key_to_minio.sh /app/pub_key_to_minio.sh
+COPY ./blockchain/scripts/deploy_contracts.sh /app/deploy_contracts.sh
+COPY ./blockchain/scripts/bootstrap_validator.sh /app/bootstrap_validator.sh
 
 CMD ["/bin/bash"]

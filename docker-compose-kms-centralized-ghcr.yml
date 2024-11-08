@@ -1,8 +1,0 @@
-name: zama-kms-centralized
-services:
-  # KMS-Core-centralized
-  dev-kms-core:
-    image: ghcr.io/zama-ai/kms-service-dev:${DOCKER_IMAGES_TAG}
-
-  dev-kms-connector:
-    image: ghcr.io/zama-ai/kms-blockchain-connector-dev:${DOCKER_IMAGES_TAG}

@@ -1,40 +1,15 @@
 name: zama-kms-centralized
 services:
-# KMS-Blockchain validator node
-  dev-kms-blockchain-validator:
-    ports:
-      - "36656:26656"
-      - "36657:26657"
-      - "1317:1317"
-      - "9090:9090"
+  # KMS-Blockchain validator node
+  dev-kms-blockchain-asc-deploy:
     environment:
       - MODE=centralized
-    entrypoint: [ "/app/bootstrap.sh" ]
-    healthcheck:
-      test: "wget -Sq --spider http://localhost:26657/status"
-      interval: 1s
-      timeout: 1s
-      retries: 5
-      start_period: 10s
-    depends_on:
-      dev-kms-core-status:
-        condition: service_completed_successfully
-
-  dev-kms-core-status:
-    image: alpine
-    depends_on:
-      dev-kms-core:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      sleep 1 && exit 0
-      "
 
   # KMS-Core-centralized
   # TODO: move the upload of the pub-key from the validator to the core -> or maybe the connector?
   # anyway where the keys really are
   dev-kms-core:
-    image: ghcr.io/zama-ai/kms-service-dev:latest
+    image: ghcr.io/zama-ai/kms-service:latest
     build:
       context: .
       dockerfile: core/service/operations/docker/dev.dockerfile
@@ -48,6 +23,7 @@ services:
       start_period: 1s
     volumes:
       - minio_secrets:/minio_secrets
+      - ./core/service/config/:/app/kms/core/service/config
     depends_on:
       kms-core-base-build:
         condition: service_started
@@ -55,18 +31,25 @@ services:
         condition: service_completed_successfully
     entrypoint: >
       /bin/sh -c "
-      chmod +x /app/scripts/pub_key_to_minio.sh &&
-      /app/scripts/pub_key_to_minio.sh &&
-      kms-server centralized
+      export AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
+      export AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
+      echo 'Generating signing keys' &&
+      kms-gen-keys centralized --pub-url s3://kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --priv-url file://./keys --cmd signing-keys &&
+      echo 'Starting kms service' &&
+      kms-server centralized --config-file config/compose_centralized.toml
       "
 
   dev-kms-connector:
     build:
       context: .
       dockerfile: blockchain/connector/operations/docker/dev.dockerfile
-    image: kms-connector:latest
+    image: ghcr.io/zama-ai/kms-blockchain-connector-dev:latest
+    volumes:
+      - ./blockchain/connector/config/:/app/kms-connector/config
     command:
       - "kms-blockchain-connector"
+      - "--conf-file"
+      - "config/default.toml"
     environment:
       - ASC_CONN__BLOCKCHAIN__ADDRESSES=http://dev-kms-blockchain-validator:9090
       - ASC_CONN__CORE__ADDRESSES=http://dev-kms-core:50051

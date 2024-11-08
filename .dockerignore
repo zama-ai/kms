@@ -21,3 +21,4 @@ data/
 .cache
 .github
 target/
+target-analyzer/

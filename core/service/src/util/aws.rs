@@ -11,6 +11,7 @@ use aws_sdk_kms::primitives::Blob;
 use aws_sdk_kms::types::DataKeySpec::Aes256;
 use aws_sdk_kms::types::{KeyEncryptionMechanism, RecipientInfo as KMSRecipientInfo};
 use aws_sdk_kms::Client as AmazonKMSClient;
+use aws_sdk_s3::error::ProvideErrorMetadata;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::Client as S3Client;
 use serde::de::DeserializeOwned;
@@ -399,14 +400,21 @@ impl Named for AppKeyBlob {
 /// Given the address of a vsock-to-TCP proxy, constructs an S3 client for use inside of a Nitro
 /// enclave.
 pub async fn build_s3_client(region: String, proxy: Option<String>) -> S3Client {
-    let s3_config_loader =
+    // SdkConfig - shared AWS configuration
+    let mut sdk_config_loader =
         aws_config::defaults(aws_config::BehaviorVersion::latest()).region(Region::new(region));
-    let s3_config_loader = match proxy {
-        Some(p) => s3_config_loader.endpoint_url(p),
-        None => s3_config_loader,
-    };
-    let s3_config = s3_config_loader.load().await;
-    S3Client::new(&s3_config)
+
+    if let Some(proxy_value) = proxy {
+        sdk_config_loader = sdk_config_loader.endpoint_url(proxy_value) // useful for localstack
+    }
+    let sdk_config = sdk_config_loader.load().await;
+
+    // S3-specific config
+    let s3_config = aws_sdk_s3::config::Builder::from(&sdk_config)
+        .force_path_style(true) // S3-specific option (needed for minio)
+        .build();
+
+    S3Client::from_conf(s3_config)
 }
 
 pub async fn s3_get_blob<T: DeserializeOwned + Unversionize + Named>(
@@ -453,14 +461,21 @@ async fn s3_put_blob_bytes(
     path: &str,
     blob_bytes: Vec<u8>,
 ) -> anyhow::Result<()> {
-    let _ = s3_client
+    let result = s3_client
         .put_object()
         .bucket(bucket)
         .key(path)
         .body(ByteStream::from(blob_bytes))
         .send()
-        .await?;
-    Ok(())
+        .await;
+
+    match result {
+        Ok(_) => Ok(()),
+        Err(err) => {
+            tracing::error!("{:?} {:?}", err.meta(), err.code());
+            Err(anyhow::anyhow!("AWS error, please refer to other logs."))
+        }
+    }
 }
 
 /// Given the address of a vsock-to-TCP proxy, constructs an AWS KMS client for use inside of a

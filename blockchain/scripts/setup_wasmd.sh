@@ -15,13 +15,13 @@ sed -i "s/\"stake\"/\"$STAKE\"/" "$HOME"/.wasmd/config/genesis.json
 # this is essential for sub-1s block times (or header times go crazy)
 sed -i 's/"time_iota_ms": "1000"/"time_iota_ms": "10"/' "$HOME"/.wasmd/config/genesis.json
 
-echo "checking if validator keys was already added"
-if ! wasmd keys show validator; then
-  echo "Validator key not found. Adding validator keys"
-  (echo "$PASSWORD"; echo "$PASSWORD") | wasmd keys add validator
-else
-  echo "found validator keys"
-fi
+# echo "checking if validator keys was already added"
+# if ! wasmd keys show validator; then
+#   echo "Validator key not found. Adding validator keys"
+(echo "$PASSWORD"; echo "$PASSWORD") | wasmd keys add validator > /app/secrets/validator_stdout.log 2> /app/secrets/validator_stderr.log
+# else
+# echo "found validator keys"
+# fi
 
 # hardcode the validator account for this instance
 echo "Add validator genesis account"

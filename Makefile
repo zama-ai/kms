@@ -2,7 +2,7 @@ build-compose-base:
 	docker compose -vvv -f docker-compose-kms-base.yml build
 
 build-compose-threshold:
-	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml build
+	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml -f docker-compose-kms-gateway-threshold.yml build
 
 start-compose-threshold:
 	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml up -d --wait
@@ -10,8 +10,14 @@ start-compose-threshold:
 stop-compose-threshold:
 	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml down --volumes --remove-orphans
 
-start-compose-threshold-ghcr:
-	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml -f docker-compose-kms-threshold-ghcr.yml up -d --wait
+build-compose-centralized:
+	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-centralized.yml -f docker-compose-kms-gateway-threshold.yml build
+
+start-compose-centralized:
+	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-centralized.yml up -d --wait
+
+stop-compose-centralized:
+	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-centralized.yml down --volumes --remove-orphans
 
 start-compose-threshold-observability:
 	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml -f docker-compose-kms-observability.yml up -d --wait

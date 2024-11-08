@@ -3,28 +3,25 @@ name: zama-kms-threshold
 # add keygen, tls and pushing keys to s3 mock
 
 services:
-# KMS-Blockchain validator node
-  dev-kms-blockchain-validator:
-    ports:
-      - "36656:26656"
-      - "36657:26657"
-      - "1317:1317"
-      - "9090:9090"
+  # 1. Generate TLS certificates
+  # NOTE: for now we do the key-generation here because kms-server requires one to start
+  dev-kms-core-certs:
+    image: ghcr.io/zama-ai/kms-service:latest
     environment:
-      - MODE=threshold
-    entrypoint: [ "/app/bootstrap.sh" ]
-    healthcheck:
-      test: "wget -Sq --spider http://localhost:26657/status"
-      interval: 1s
-      timeout: 1s
-      retries: 5
-      start_period: 10s
-    depends_on:
-      dev-kms-core-status:
-        condition: service_completed_successfully
+      - RUST_LOG=debug
+    entrypoint: >
+      /bin/sh -c "
+      echo \"Starting tls certificates generation\" &&
+      kms-gen-tls-certs --ca-names dev-kms-core-1 dev-kms-core-2 dev-kms-core-3 dev-kms-core-4  &&
+      echo \"TLS certificates generated\" &&
+      exit 0
+      "
+    volumes:
+      - certs:/app/kms/core/service/certs
 
-  dev-kms-core-status:
-    image: ghcr.io/zama-ai/kms-service-dev:latest
+  # 3. Initialize the different cores
+  dev-kms-core-init:
+    image: ghcr.io/zama-ai/kms-service:latest
     depends_on:
       dev-kms-core-1:
         condition: service_healthy
@@ -39,47 +36,19 @@ services:
       - RUN_MODE=dev
     entrypoint: >
       /bin/sh -c "
-      sleep 1 &&
-      echo \"Starting init procedure\" &&
-      sleep 1 &&
+      echo \"Starting initialization procedure\" &&
       kms-init -a http://dev-kms-core-1:50100 http://dev-kms-core-2:50200 http://dev-kms-core-3:50300 http://dev-kms-core-4:50400 &&
       echo \"Core services initialization done\" &&
       exit 0
       "
-
-  dev-kms-core-setup:
-    image: ghcr.io/zama-ai/kms-service-dev:latest
-    build:
-      context: .
-      dockerfile: core/service/operations/docker/dev.dockerfile
-    depends_on:
-      kms-core-base-build:
-        condition: service_started
-      dev-s3-mock-setup:
-        condition: service_completed_successfully
+  # 4. Deploy smart contracts
+  dev-kms-blockchain-asc-deploy:
     environment:
-      - RUST_LOG=info
-      - RUN_MODE=dev
-      - RUST_BACKTRACE=1
-    entrypoint: >
-      /bin/sh -c "
-      sleep 2 &&
-      echo \"Threshold core setup\" &&
-      kms-gen-keys threshold --param-test &&
-      chmod +x /app/scripts/pub_key_to_minio.sh &&
-      /app/scripts/pub_key_to_minio.sh &&
-      kms-gen-tls-certs --ca-names dev-kms-core-1 dev-kms-core-2 dev-kms-core-3 dev-kms-core-4  &&
-      pwd &&
-      ls &&
-      ls certs
-      "
-    volumes:
-      - minio_secrets:/minio_secrets
-      - keys:/app/kms/core/service/keys
-      - certs:/app/kms/core/service/certs
+      - MODE=threshold
 
+  # 2. We start all cores
   dev-kms-core-1:
-    image: ghcr.io/zama-ai/kms-service-dev:latest
+    image: ghcr.io/zama-ai/kms-service:latest
     ports:
       - "50051:50051"
       - "50100:50100"
@@ -90,23 +59,35 @@ services:
       retries: 5
       start_period: 1s
     volumes:
-      - keys:/app/kms/core/service/keys
+      - ./core/service/config/:/app/kms/core/service/config
       - certs:/app/kms/core/service/certs
+      - minio_secrets:/minio_secrets
     depends_on:
       dev-s3-mock-setup:
         condition: service_completed_successfully
-      dev-kms-core-setup:
+      dev-kms-core-certs:
         condition: service_completed_successfully
     environment:
       - RUST_LOG=info
+    # We do a key-gen first because otherwise the service won't start
+    # NOTE: currently debugging the upload to s3
+    # Credentials are set with both credentials file and env-var
     entrypoint: >
       /bin/sh -c "
-      echo 'current dir ls' &&
-      ls &&
-      echo 'certs ls' &&
-      ls certs/ &&
-      echo 'keys ls' &&
-      ls keys/ &&
+      export AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
+      export AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
+      mkdir -p ~/.aws/ &&
+      echo '[default]' > ~/.aws/credentials &&
+      echo 'aws_access_key_id = ${AWS_ACCESS_KEY_ID}' >> ~/.aws/credentials &&
+      echo 'aws_secret_access_key = ${AWS_SECRET_ACCESS_KEY}' >> ~/.aws/credentials &&
+      cat ~/.aws/credentials &&
+      echo '[default]' > ~/.aws/config &&
+      echo 'output=json' >> ~/.aws/config &&
+      echo 'region=us-east-1' >> ~/.aws/config &&
+      cat ~/.aws/config &&
+      echo 'Generating signing keys' &&
+      kms-gen-keys threshold --pub-url s3://kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --priv-url file://./keys --cmd signing-keys  --signing-key-party-id 1 &&
+      echo 'Starting kms service' &&
       kms-server threshold --config-file config/compose_1.toml
       "
 
@@ -115,6 +96,8 @@ services:
       context: .
       dockerfile: blockchain/connector/operations/docker/dev.dockerfile
     image: ghcr.io/zama-ai/kms-blockchain-connector-dev:latest
+    volumes:
+      - ./blockchain/connector/config/:/app/kms-connector/config
     command:
       - "kms-blockchain-connector"
       - "--conf-file"
@@ -129,13 +112,13 @@ services:
       - ASC_CONN__CORE__TIMEOUT_CONFIG__REENCRYPTION__INITIAL_WAIT_TIME=1
       - ASC_CONN__CORE__TIMEOUT_CONFIG__REENCRYPTION__RETRY_INTERVAL=1
     depends_on:
-      dev-kms-blockchain-validator:
-        condition: service_healthy
-      dev-kms-core-1:
-        condition: service_healthy
+      dev-kms-blockchain-asc-deploy:
+        condition: service_completed_successfully
+      dev-kms-core-init:
+        condition: service_completed_successfully
 
   dev-kms-core-2:
-    image: ghcr.io/zama-ai/kms-service-dev:latest
+    image: ghcr.io/zama-ai/kms-service:latest
     ports:
       - "50052:50052"
       - "50200:50200"
@@ -146,22 +129,30 @@ services:
       retries: 5
       start_period: 1s
     volumes:
-      - keys:/app/kms/core/service/keys
+      - ./core/service/config/:/app/kms/core/service/config
       - certs:/app/kms/core/service/certs
+      - minio_secrets:/minio_secrets
     depends_on:
       dev-s3-mock-setup:
         condition: service_completed_successfully
-      dev-kms-core-setup:
+      dev-kms-core-certs:
         condition: service_completed_successfully
     environment:
       - RUST_LOG=info
     entrypoint: >
       /bin/sh -c "
+      export AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
+      export AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
+      echo 'Generating signing keys' &&
+      kms-gen-keys threshold --pub-url s3://kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --priv-url file://./keys --cmd signing-keys  --signing-key-party-id 2 &&
+      echo 'Starting kms service' &&
       kms-server threshold --config-file config/compose_2.toml
       "
 
   dev-kms-connector-2:
     image: ghcr.io/zama-ai/kms-blockchain-connector-dev:latest
+    volumes:
+      - ./blockchain/connector/config/:/app/kms-connector/config
     command:
       - "kms-blockchain-connector"
       - "--conf-file"
@@ -176,13 +167,13 @@ services:
       - ASC_CONN__CORE__TIMEOUT_CONFIG__REENCRYPTION__INITIAL_WAIT_TIME=1
       - ASC_CONN__CORE__TIMEOUT_CONFIG__REENCRYPTION__RETRY_INTERVAL=1
     depends_on:
-      dev-kms-blockchain-validator:
-        condition: service_healthy
-      dev-kms-core-2:
-        condition: service_healthy
+      dev-kms-blockchain-asc-deploy:
+        condition: service_completed_successfully
+      dev-kms-core-init:
+        condition: service_completed_successfully
 
   dev-kms-core-3:
-    image: ghcr.io/zama-ai/kms-service-dev:latest
+    image: ghcr.io/zama-ai/kms-service:latest
     ports:
       - "50053:50053"
       - "50300:50300"
@@ -193,22 +184,30 @@ services:
       retries: 5
       start_period: 1s
     volumes:
-      - keys:/app/kms/core/service/keys
       - certs:/app/kms/core/service/certs
+      - minio_secrets:/minio_secrets
+      - ./core/service/config/:/app/kms/core/service/config
     depends_on:
       dev-s3-mock-setup:
         condition: service_completed_successfully
-      dev-kms-core-setup:
+      dev-kms-core-certs:
         condition: service_completed_successfully
     environment:
       - RUST_LOG=info
     entrypoint: >
       /bin/sh -c "
+      export AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
+      export AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
+      echo 'Generating signing keys' &&
+      kms-gen-keys threshold --pub-url s3://kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --priv-url file://./keys --cmd signing-keys  --signing-key-party-id 3 &&
+      echo 'Starting kms service' &&
       kms-server threshold --config-file config/compose_3.toml
       "
 
   dev-kms-connector-3:
     image: ghcr.io/zama-ai/kms-blockchain-connector-dev:latest
+    volumes:
+      - ./blockchain/connector/config/:/app/kms-connector/config
     command:
       - "kms-blockchain-connector"
       - "--conf-file"
@@ -223,13 +222,13 @@ services:
       - ASC_CONN__CORE__TIMEOUT_CONFIG__REENCRYPTION__INITIAL_WAIT_TIME=1
       - ASC_CONN__CORE__TIMEOUT_CONFIG__REENCRYPTION__RETRY_INTERVAL=1
     depends_on:
-      dev-kms-blockchain-validator:
-        condition: service_healthy
-      dev-kms-core-3:
-        condition: service_healthy
+      dev-kms-blockchain-asc-deploy:
+        condition: service_completed_successfully
+      dev-kms-core-init:
+        condition: service_completed_successfully
 
   dev-kms-core-4:
-    image: ghcr.io/zama-ai/kms-service-dev:latest
+    image: ghcr.io/zama-ai/kms-service:latest
     ports:
       - "50054:50054"
       - "50400:50400"
@@ -240,22 +239,30 @@ services:
       retries: 5
       start_period: 1s
     volumes:
-      - keys:/app/kms/core/service/keys
+      - ./core/service/config/:/app/kms/core/service/config
       - certs:/app/kms/core/service/certs
+      - minio_secrets:/minio_secrets
     depends_on:
       dev-s3-mock-setup:
         condition: service_completed_successfully
-      dev-kms-core-setup:
+      dev-kms-core-certs:
         condition: service_completed_successfully
     environment:
       - RUST_LOG=info
     entrypoint: >
       /bin/sh -c "
+      export AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
+      export AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
+      echo 'Generating signing keys' &&
+      kms-gen-keys threshold --pub-url s3://kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --priv-url file://./keys --cmd signing-keys  --signing-key-party-id 4 &&
+      echo 'Starting kms service' &&
       kms-server threshold --config-file config/compose_4.toml
       "
 
   dev-kms-connector-4:
     image: ghcr.io/zama-ai/kms-blockchain-connector-dev:latest
+    volumes:
+      - ./blockchain/connector/config/:/app/kms-connector/config
     command:
       - "kms-blockchain-connector"
       - "--conf-file"
@@ -270,12 +277,19 @@ services:
       - ASC_CONN__CORE__TIMEOUT_CONFIG__REENCRYPTION__INITIAL_WAIT_TIME=1
       - ASC_CONN__CORE__TIMEOUT_CONFIG__REENCRYPTION__RETRY_INTERVAL=1
     depends_on:
-      dev-kms-blockchain-validator:
-        condition: service_healthy
-      dev-kms-core-4:
-        condition: service_healthy
+      dev-kms-blockchain-asc-deploy:
+        condition: service_completed_successfully
+      dev-kms-core-init:
+        condition: service_completed_successfully
+
+  debug:
+    image: ubuntu:22.04
+    # Keep container running
+    command: tail -f /dev/null
+    # For better interactive debugging
+    stdin_open: true
+    tty: true
 
 volumes:
   certs:
-  keys:
   minio_secrets:

@@ -1553,7 +1553,9 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 decompression_key,
                 pk_meta_data: info.clone(),
             };
+
             //Try to store the new data
+            tracing::info!("Storing objects");
             if store_versioned_at_request_id(
                 &mut (*priv_storage),
                 &req_id,

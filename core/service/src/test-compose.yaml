@@ -1,4 +1,5 @@
 name: zama-kms
+# TODO: Figure out what this file even is for
 
 services:
 
@@ -18,7 +19,7 @@ services:
       - "36657:26657"
       - "1317:1317"
       - "9090:9090"
-    entrypoint: [ "/app/bootstrap.sh" ]
+    entrypoint: [ "/app/bootstrap_validator.sh" ]
     healthcheck:
       test: "wget -Sq --spider http://localhost:26657/status"
       interval: 1s
@@ -67,7 +68,7 @@ services:
 
     volumes:
       - ./default.toml:/app/gateway/config/default.toml:Z
-      - ./gateway.toml:/app/gateway/config/gateway.toml:Z
+      - ./gateway_centralized.toml:/app/gateway/config/gateway.toml:Z
       - ../../:/app/workspace/:Z
     environment:
       - RUST_LOG=info

@@ -263,7 +263,7 @@ async fn check_event(
     }
 }
 
-#[retry(stop=(attempts(4)|duration(20)),wait=fixed(5))]
+#[retry(stop=(attempts(12)|duration(130)),wait=fixed(10))]
 async fn get_contract_address(client: &QueryClient) -> anyhow::Result<String> {
     tracing::info!("Getting contract address....");
     let result = client.list_contracts().await.unwrap();

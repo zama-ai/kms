@@ -168,7 +168,6 @@ pub fn make_span(request: &Request<Body>) -> Span {
     {
         Some(parent_span_id_u64) => {
             if parent_span_id_u64 > 0 {
-                tracing::info!("Propagating span id");
                 span.follows_from(Id::from_u64(parent_span_id_u64));
             } else {
                 tracing::warn!("Parent span id found is 0");

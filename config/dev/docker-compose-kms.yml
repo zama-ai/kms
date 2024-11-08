@@ -18,7 +18,7 @@ services:
       - "36657:26657"
       - "1317:1317"
       - "9090:9090"
-    entrypoint: [ "/app/bootstrap.sh" ]
+    entrypoint: [ "/app/bootstrap_validator.sh" ]
     healthcheck:
       test: "wget -Sq --spider http://localhost:26657/status"
       interval: 1s
