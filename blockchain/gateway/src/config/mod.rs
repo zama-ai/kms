@@ -318,7 +318,7 @@ mod tests {
         temp_env::with_vars(env_conf, || {
             let gateway_config: GatewayConfig = init_conf_gateway("config/gateway").unwrap();
             assert!(!gateway_config.debug);
-            assert_eq!(gateway_config.mode, KmsMode::Centralized);
+            assert_eq!(gateway_config.mode, KmsMode::Threshold);
             assert_eq!(gateway_config.ethereum.chain_id, 12345);
             assert_eq!(
                 gateway_config.ethereum.kmsverifier_vc_address,
@@ -370,7 +370,7 @@ mod tests {
             assert_eq!(gateway_config.ethereum.gas_escalator_increase, 20);
             assert_eq!(
                 gateway_config.kms.contract_address,
-                "wasm1yyca08xqdgvjz0psg56z67ejh9xms6l436u8y58m82npdqqhmmtqas0cl7"
+                "wasm1cnuw3f076wgdyahssdkd0g3nr96ckq8cwa2mh029fn5mgf2fmcms9ax00l"
             );
             assert_eq!(
                 gateway_config.kms.mnemonic,

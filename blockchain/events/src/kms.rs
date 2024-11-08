@@ -638,6 +638,8 @@ pub struct ReencryptValues {
     fhe_type: FheType,
     /// The ID of the FHE public key used
     key_id: HexVector,
+    /// The host blockchain handle for ciphertext to be reencrypted
+    external_ciphertext_handle: RedactedHexVector,
     /// The KV-store handle of the ciphertext to be reencrypted
     ciphertext_handle: RedactedHexVector,
     /// The SHA3 digest of the ciphertext to be reencrypted
@@ -671,6 +673,7 @@ impl ReencryptValues {
         enc_key: impl Into<RedactedHexVector>,
         fhe_type: FheType,
         key_id: impl Into<HexVector>,
+        external_ciphertext_handle: impl Into<RedactedHexVector>,
         ciphertext_handle: impl Into<RedactedHexVector>,
         ciphertext_digest: impl Into<RedactedHexVector>,
         acl_address: String,
@@ -689,6 +692,7 @@ impl ReencryptValues {
             enc_key: enc_key.into(),
             fhe_type,
             key_id: key_id.into(),
+            external_ciphertext_handle: external_ciphertext_handle.into(),
             ciphertext_handle: ciphertext_handle.into(),
             ciphertext_digest: ciphertext_digest.into(),
             acl_address,
@@ -725,6 +729,9 @@ impl ReencryptValues {
         &self.key_id
     }
 
+    pub fn external_ciphertext_handle(&self) -> &RedactedHexVector {
+        &self.external_ciphertext_handle
+    }
     pub fn ciphertext_handle(&self) -> &RedactedHexVector {
         &self.ciphertext_handle
     }
@@ -1037,6 +1044,15 @@ pub struct ReencryptResponseValues {
     /// we keep it in the serialized form because
     /// we need to use it to verify the signature.
     payload: HexVector,
+
+    /// Digest of ciphertext.
+    /// In the payload from KMS, cipher text digest is used as reference, since
+    /// the KMS is now aware of external handle values. However, client does not
+    /// have this value as uses external handle as reference. Hence include this
+    /// value in the response, so that client can verify the integrity of the
+    /// payload.
+    /// This will be set by the gateway, when it finally returns the value.
+    ciphertext_digest: Option<HexVector>,
 }
 
 impl ReencryptResponseValues {
@@ -1044,6 +1060,7 @@ impl ReencryptResponseValues {
         Self {
             signature: signature.into(),
             payload: payload.into(),
+            ciphertext_digest: None,
         }
     }
 
@@ -1053,6 +1070,10 @@ impl ReencryptResponseValues {
 
     pub fn payload(&self) -> &HexVector {
         &self.payload
+    }
+
+    pub fn set_ciphertext_digest(&mut self, ciphertext_digest: impl Into<HexVector>) {
+        self.ciphertext_digest = Some(ciphertext_digest.into());
     }
 }
 
@@ -1896,6 +1917,7 @@ mod tests {
                 enc_key: HexVector::arbitrary(g).into(),
                 fhe_type: FheType::arbitrary(g),
                 key_id: HexVector::arbitrary(g),
+                external_ciphertext_handle: HexVector::arbitrary(g).into(),
                 ciphertext_handle: HexVector::arbitrary(g).into(),
                 ciphertext_digest: HexVector::arbitrary(g).into(),
                 proof: String::arbitrary(g),
@@ -1954,6 +1976,7 @@ mod tests {
             ReencryptResponseValues {
                 signature: HexVector::arbitrary(g),
                 payload: HexVector::arbitrary(g),
+                ciphertext_digest: None,
             }
         }
     }
@@ -2103,6 +2126,7 @@ mod tests {
             vec![4],
             FheType::Ebool,
             "kid".as_bytes().to_vec(),
+            vec![3],
             vec![5],
             vec![8],
             "0xfe11".to_string(),
@@ -2126,6 +2150,7 @@ mod tests {
                     "enc_key": hex::encode(vec![4]),
                     "fhe_type": "ebool",
                     "key_id": hex::encode("kid".as_bytes()),
+                    "external_ciphertext_handle": hex::encode(vec![3]),
                     "ciphertext_handle": hex::encode(vec![5]),
                     "ciphertext_digest": hex::encode(vec![8]),
                     "proof": "some_proof",
@@ -2152,6 +2177,7 @@ mod tests {
         let json_str = serde_json::json!({
             "reencrypt_response": {
                 "reencrypt_response": {
+                    "ciphertext_digest": null,
                     "signature": hex::encode([1]),
                     "payload": hex::encode([2]),
                 },

@@ -39,3 +39,7 @@ default = ["ethereum-triedb", "reqwest"]
 
 [lints.clippy]
 doc_lazy_continuation = "allow"
+
+# Add dev dependencies
+[dev-dependencies]
+tokio.workspace = true

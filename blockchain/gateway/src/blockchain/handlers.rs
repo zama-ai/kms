@@ -176,10 +176,10 @@ pub(crate) async fn handle_reencryption_event(
 ) -> anyhow::Result<Vec<ReencryptResponseValues>> {
     let start = std::time::Instant::now();
     let chain_id = middleware.get_chainid().await?;
-    let ethereum_ct_handle = event.ciphertext_handle.0.clone();
+    let external_ct_handle = event.ciphertext_handle.0.clone();
 
     let (ciphertext, fhe_type) = ct_provider
-        .get_ciphertext(middleware, ethereum_ct_handle.clone(), None)
+        .get_ciphertext(middleware, external_ct_handle.clone(), None)
         .await?;
 
     // check the format EIP-55
@@ -197,13 +197,15 @@ pub(crate) async fn handle_reencryption_event(
         return Err(anyhow::anyhow!(err_str));
     }
 
-    let acl_address = hex::encode(config.ethereum.acl_address);
+    let acl_address =
+        alloy_primitives::Address::from_slice(&config.ethereum.acl_address.0).to_string();
 
     let response = blockchain
         .reencrypt(
             event.signature.0.clone(),
             event.client_address.clone(),
             event.enc_key.0.clone(),
+            external_ct_handle,
             fhe_type,
             ciphertext,
             event.eip712_verifying_contract.clone(),

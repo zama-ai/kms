@@ -8,11 +8,12 @@
 pub mod proof_handler {
     use crate::types::{
         biguint_to_bytes32, bytes32_to_biguint, EthGetProofResult, EvmPermissionProof, Permission,
-        ACL_DECRYPT_MAPPING_SLOT,
+        ACL_DECRYPT_MAPPING_SLOT, ACL_REENCRYPT_MAPPING_SLOT,
     };
 
     use crate::cosmwasm_nodecodec::nodecodec::{keccak_256, EIP1186Layout, KeccakHasher};
     use ethereum_triedb_local::StorageProof;
+    use hex_literal::hex;
     use primitive_types::H256;
     use rlp::{Decodable, Rlp};
     use sha3::{Digest, Keccak256};
@@ -23,60 +24,101 @@ pub mod proof_handler {
     pub struct EthereumProofHandler {}
 
     impl EthereumProofHandler {
-        pub fn verify_proof(params: EvmPermissionProof) -> Result<bool, Error> {
-            if params.ciphertext_handles.len() != 1 || params.proof.len() != 1 {
+        pub fn verify_proof(
+            params: EvmPermissionProof,
+            ciphertext_handles: Vec<Vec<u8>>,
+        ) -> Result<bool, Error> {
+            if params.ciphertext_handles.len() != params.proof.len() {
                 return Err(anyhow!(
-                    "Proof should contain exactly one proof op and one ciphertext handle"
+                    "count of ciphertext handles should be equal to count of proofs {}, {}",
+                    params.ciphertext_handles.len(),
+                    params.proof.len()
                 ));
             }
 
-            let proof_response = params.proof[0].clone();
-            let proof_response = String::from_utf8(proof_response).unwrap();
-            let proof_response: EthGetProofResult = serde_json::from_str(&proof_response).unwrap();
-
-            let evm_storage_key = match Permission::try_from(params.permission)? {
-                Permission::Decrypt => Self::compute_storage_key(
-                    [ACL_DECRYPT_MAPPING_SLOT].as_ref(),
-                    &params.ciphertext_handles[0],
-                    &proof_response.storageLocation,
-                )?,
-                Permission::Reencrypt => String::from("TODO"),
-            };
-
-            let storage_hash_str = &proof_response.storageHash;
-            let storage_hash = H256::from_slice(&hex::decode(&storage_hash_str[2..]).unwrap());
-
-            let mut extracted_key = H256::zero();
-            // let mut extracted_value = U256::zero();
-            let mut extracted_proof_nodes: Vec<Vec<u8>> = Vec::new();
-
-            // Step 3: Parse and display the storage proofs
-            if let Some(proof) = proof_response.storageProof.first() {
-                extracted_key = H256::from_slice(&hex::decode(&proof.key[2..]).unwrap());
-                // extracted_value = U256::from_str_radix(&proof.value[2..], 16).unwrap();
-                extracted_proof_nodes = proof
-                    .proof
-                    .iter()
-                    .map(|p| hex::decode(&p[2..]).unwrap())
-                    .collect();
-            }
-            if hex::decode(&evm_storage_key[2..]).unwrap() != extracted_key.as_bytes() {
-                return Err(anyhow!("Keys do not match"));
+            if params.ciphertext_handles != ciphertext_handles {
+                return Err(anyhow!(
+                    "proof does not correspond to the given set of ciphertext handles {} {}",
+                    hex::encode(&params.ciphertext_handles[0]),
+                    hex::encode(&ciphertext_handles[0])
+                ));
             }
 
-            let key_retrieval = keccak_256(extracted_key.as_bytes());
+            match Permission::try_from(params.permission)? {
+                Permission::Decrypt => {
+                    for (handle, proof) in params.ciphertext_handles.iter().zip(params.proof.iter())
+                    {
+                        let proof = String::from_utf8(proof.clone())?;
+                        let proof: EthGetProofResult = serde_json::from_str(&proof)?;
 
-            let db = StorageProof::new(extracted_proof_nodes).into_memory_db::<KeccakHasher>();
-            let trie =
-                TrieDBBuilder::<EIP1186Layout<KeccakHasher>>::new(&db, &storage_hash).build();
+                        let evm_storage_key =
+                            Self::compute_storage_key_decrypt(handle, &proof.storageLocation)?;
 
-            let storage_result = trie.get(key_retrieval.as_bytes()).unwrap().unwrap();
+                        if let Some(value) = evaluate_merkle_proof(proof, evm_storage_key) {
+                            return value;
+                        }
+                    }
+                }
+                Permission::Reencrypt => {
+                    if params.accounts.len() == params.ciphertext_handles.len()
+                        && params.accounts.len() == params.proof.len()
+                    {
+                        for ((handle, account), proof) in params
+                            .ciphertext_handles
+                            .iter()
+                            .zip(params.accounts.iter())
+                            .zip(params.proof.iter())
+                        {
+                            let proof = String::from_utf8(proof.clone())?;
+                            let proof: EthGetProofResult = serde_json::from_str(&proof)?;
 
-            // Decode the retrieved data (assuming it's a bool for this example)
-            let storage_value = <bool as Decodable>::decode(&Rlp::new(&storage_result)).unwrap();
-            Ok(storage_value)
+                            let evm_storage_key = Self::compute_storage_key_reencrypt(
+                                    handle,
+                                    account,
+                                    &hex!(
+                                        "a688f31953c2015baaf8c0a488ee1ee22eb0e05273cc1fd31ea4cbee42febc00"
+                                    ),
+                                )?;
+
+                            if let Some(value) = evaluate_merkle_proof(proof, evm_storage_key) {
+                                return value;
+                            }
+                        }
+                    } else {
+                        return Err(anyhow!("lengths of account {}, handles {} and ciphertext handles {} do not match",
+                            params.accounts.len(), params.ciphertext_handles.len(), params.proof.len()));
+                    }
+                }
+            }
+            Ok(true)
         }
 
+        fn compute_storage_key_reencrypt(
+            handle: &[u8],
+            account: &[u8],
+            storage_location: &[u8],
+        ) -> Result<String, Error> {
+            let intermediate_slot =
+                Self::compute_storage_key(&[ACL_REENCRYPT_MAPPING_SLOT], handle, storage_location)?;
+            let intermediate_slot_bytes = hex::decode(intermediate_slot.trim_start_matches("0x"))?;
+
+            // Step 2: Compute the final storage key for persistedAllowedPairs[handle][account]
+            let account_padded = {
+                let mut padded = [0u8; 32];
+                padded[12..].copy_from_slice(account); // Left-pad the account address
+                padded
+            };
+
+            Self::compute_storage_key(&[], &account_padded, &intermediate_slot_bytes)
+        }
+
+        fn compute_storage_key_decrypt(
+            handle: &[u8],
+            storage_location: &[u8],
+        ) -> Result<String, Error> {
+            // Compute the storage key for allowedForDecryption[handle]
+            Self::compute_storage_key(&[ACL_DECRYPT_MAPPING_SLOT], handle, storage_location)
+        }
         pub fn compute_storage_key(
             base_slot_bytes: &[u8],
             key_in_mapping: &[u8],
@@ -124,6 +166,46 @@ pub mod proof_handler {
                 H256::from_slice(hasher.finalize().as_slice())
             ))
         }
+    }
+
+    fn evaluate_merkle_proof(
+        proof: EthGetProofResult,
+        evm_storage_key: String,
+    ) -> Option<Result<bool, Error>> {
+        let storage_hash = match hex::decode(&proof.storageHash) {
+            Ok(hash) => H256::from_slice(&hash),
+            Err(_) => return Some(Err(anyhow!("invalid storage hash"))),
+        };
+        let mut extracted_key = H256::zero();
+        let mut extracted_proof_nodes: Vec<Vec<u8>> = Vec::new();
+        if let Some(proof) = proof.storageProof.first() {
+            extracted_key = H256::from_slice(&hex::decode(&proof.key[2..]).unwrap());
+            // extracted_value = U256::from_str_radix(&proof.value[2..], 16).unwrap();
+            extracted_proof_nodes = proof
+                .proof
+                .iter()
+                .map(|p| hex::decode(&p[2..]).unwrap())
+                .collect();
+        }
+        if hex::decode(&evm_storage_key[2..]).unwrap() != extracted_key.as_bytes() {
+            return Some(Err(anyhow!("Keys do not match")));
+        }
+        let key_retrieval = keccak_256(extracted_key.as_bytes());
+        let key_retrieval = key_retrieval.as_bytes().to_vec();
+        let db = StorageProof::new(extracted_proof_nodes).into_memory_db::<KeccakHasher>();
+        let trie = TrieDBBuilder::<EIP1186Layout<KeccakHasher>>::new(&db, &storage_hash).build();
+        let storage_result = trie.get(&key_retrieval).unwrap().unwrap();
+        let storage_value = <bool as Decodable>::decode(&Rlp::new(&storage_result))
+            .map_err(|e| anyhow!("Error decoding storage value from RLP: {}", e))
+            .ok()?;
+
+        // let mut extracted_value = U256::zero();
+
+        // Decode the retrieved data (assuming it's a bool for this example)
+        if !storage_value {
+            return Some(Ok(false));
+        }
+        None
     }
 }
 

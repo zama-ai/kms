@@ -853,6 +853,7 @@ async fn reenc_sunshine(slow: bool) {
         .unwrap();
     let payload = kms_req.payload.clone().unwrap();
     let eip712 = kms_req.domain.clone().unwrap();
+    let dummy_external_ciphertext_handle = vec![0_u8, 32];
     let op = OperationValue::Reencrypt(
         ReencryptValues::new(
             kms_req.signature.clone(),
@@ -861,6 +862,7 @@ async fn reenc_sunshine(slow: bool) {
             payload.enc_key,
             events::kms::FheType::from(fhe_type as u8),
             HexVector::from_hex(payload.key_id.unwrap().request_id.as_str()).unwrap(),
+            dummy_external_ciphertext_handle,
             MOCK_CT_HANDLES[0].to_vec(),
             payload.ciphertext_digest,
             "dummy_acl_address".to_string(),

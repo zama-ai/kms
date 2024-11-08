@@ -24,7 +24,7 @@ impl Default for NoopInclusionProofContract {
 }
 
 impl InclusionProofContract for NoopInclusionProofContract {
-    fn verify_proof(&self, _ctx: ExecCtx, _proof: String) -> StdResult<Response> {
+    fn verify_proof(&self, _ctx: ExecCtx, _proof: String, _handles: String) -> StdResult<Response> {
         Ok(Response::default())
     }
 

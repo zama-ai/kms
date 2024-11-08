@@ -5,13 +5,16 @@ use crate::config::{
 };
 use crate::util::conversion::TokenizableFrom;
 use crate::util::footprint;
-use anyhow::anyhow;
+use alloy_primitives::Address;
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use bincode::deserialize;
 use cosmos_proto::messages::cosmos::base::abci::v1beta1::TxResponse;
 use dashmap::DashMap;
 use ethereum_inclusion_proofs::std_proof_handler::EthereumProofHandler;
-use ethereum_inclusion_proofs::types::{EVMProofParams, EthereumConfig, Permission};
+use ethereum_inclusion_proofs::types::{
+    DecryptProofParams, EVMProofParams, EthereumConfig, ReencryptProofParams,
+};
 use ethers::abi::Token;
 use ethers::prelude::*;
 use events::kms::{
@@ -41,6 +44,7 @@ use kms_lib::rpc::rpc_types::CURRENT_FORMAT_VERSION;
 use prost::Message;
 use std::collections::HashMap;
 use std::path::MAIN_SEPARATOR_STR;
+use std::str::FromStr;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use tokio::sync::mpsc;
@@ -522,23 +526,29 @@ impl<'a> KmsBlockchainImpl {
     }
 }
 
-async fn fetch_ethereum_proof(cipher_text_handle: Vec<u8>, config: EthereumConfig) -> String {
-    let proof_handler = EthereumProofHandler::new(config).unwrap();
-
-    // let cipher_text_handle = hex::decode("1001").unwrap();
-    // hex::decode("aa9f8f90ebf0fa8e30caee92f0b97e158f1ec659b363101d07beac9b0cc90200").unwrap();
-    let params = EVMProofParams {
-        cipher_text_handle: cipher_text_handle.clone(),
-        permission: Permission::Decrypt,
-    };
-
-    let proof_result = proof_handler.fetch_proof(params).await.unwrap();
-
+async fn fetch_ethereum_proof(
+    params: EVMProofParams,
+    config: EthereumConfig,
+) -> anyhow::Result<String> {
+    let proof_handler = EthereumProofHandler::new(config)?;
+    let proof = proof_handler.fetch_proof(params).await?;
     let mut proof_encoded = Vec::new();
-    proof_result.encode(&mut proof_encoded).unwrap();
-    let proof_encoded = hex::encode(proof_encoded.clone());
-    tracing::info!("Proof Encoded in hex: {:?}", proof_encoded);
-    proof_encoded
+    proof.encode(&mut proof_encoded)?;
+    Ok(hex::encode(proof_encoded.clone()))
+}
+
+fn decrypt_proof_params(ciphertext_handles: Vec<Vec<u8>>) -> EVMProofParams {
+    EVMProofParams::Decrypt(DecryptProofParams { ciphertext_handles })
+}
+
+fn reencrypt_proof_params(
+    ciphertext_handles: Vec<Vec<u8>>,
+    accounts: Vec<Vec<u8>>,
+) -> EVMProofParams {
+    EVMProofParams::Reencrypt(ReencryptProofParams {
+        ciphertext_handles,
+        accounts,
+    })
 }
 
 #[async_trait]
@@ -568,7 +578,9 @@ impl Blockchain for KmsBlockchainImpl {
             json_rpc_url: self.config.ethereum.http_url.clone(),
             acl_contract_address: format!("0x{}", hex::encode(self.config.ethereum.acl_address.0)),
         };
-        let proof = fetch_ethereum_proof(external_ct_handles[0].clone(), config).await;
+
+        let proof =
+            fetch_ethereum_proof(decrypt_proof_params(external_ct_handles.clone()), config).await?;
 
         // Stop-gap to allow for testing with a static key that has not been genereated using the kms
         // Should be removed as part of https://github.com/zama-ai/fhevm/issues/548
@@ -819,6 +831,7 @@ impl Blockchain for KmsBlockchainImpl {
         signature: Vec<u8>,
         client_address: String,
         enc_key: Vec<u8>,
+        external_ct_handle: Vec<u8>,
         fhe_type: FheType,
         ciphertext: Vec<u8>,
         eip712_verifying_contract: String,
@@ -840,7 +853,17 @@ impl Blockchain for KmsBlockchainImpl {
         let ctxt_handle = self.store_ciphertext(ciphertext.clone()).await?;
         let ctxt_digest = hash_element(&ciphertext);
 
-        let key_id = HexVector::from_hex(&self.get_key_id().await?)?;
+        // Stop-gap to allow for testing with a static key that has not been genereated using the kms
+        // Should be removed as part of https://github.com/zama-ai/fhevm/issues/548
+        let key_id_str = match self.get_key_id().await {
+            Ok(key_id) => key_id,
+            Err(e) => {
+                tracing::warn!("Could not retrieve the key id from the blockchain: {}", e);
+                self.config.kms.key_id.clone()
+            }
+        };
+        let key_id = HexVector::from_hex(&key_id_str)?;
+
         tracing::info!(
             "🔒 Reencrypting ciphertext using key_id={:?}, ctxt_handle={}, ctxt_digest={}",
             key_id.to_hex(),
@@ -848,34 +871,36 @@ impl Blockchain for KmsBlockchainImpl {
             hex::encode(&ctxt_digest)
         );
 
+        let client_address =
+            Address::from_str(&client_address).context("parsing client address")?;
         let config = EthereumConfig {
             json_rpc_url: self.config.ethereum.http_url.clone(),
             acl_contract_address: format!("0x{}", hex::encode(self.config.ethereum.acl_address.0)),
         };
-        let proof = fetch_ethereum_proof(ctxt_handle.clone(), config).await;
+        let proof = fetch_ethereum_proof(
+            reencrypt_proof_params(
+                vec![external_ct_handle.clone()],
+                vec![client_address.to_vec()],
+            ),
+            config,
+        )
+        .await?;
 
         // chain ID is 32 bytes
         let mut eip712_chain_id = vec![0u8; 32];
         chain_id.to_big_endian(&mut eip712_chain_id);
 
-        // convert user_address to verification_key
-        if client_address.len() != 20 {
-            return Err(anyhow::anyhow!(
-                "user_address {} bytes but 20 bytes is expected",
-                client_address.len()
-            ));
-        }
-
         // NOTE: the ciphertext digest must be the real digest
         let reencrypt_values = ReencryptValues::new(
             signature,
             CURRENT_FORMAT_VERSION,
-            client_address,
+            client_address.to_string(),
             enc_key,
             fhe_type,
             key_id,
+            external_ct_handle.clone(),
             ctxt_handle.clone(),
-            ctxt_digest,
+            ctxt_digest.clone(),
             acl_address,
             proof,
             self.config.ethereum.reenc_domain_name.clone(),
@@ -931,6 +956,9 @@ impl Blockchain for KmsBlockchainImpl {
         match self.config.mode {
             KmsMode::Centralized => match results.first().unwrap() {
                 OperationValue::ReencryptResponse(reencrypt_response) => {
+                    let mut reencrypt_response = reencrypt_response.clone();
+                    reencrypt_response.set_ciphertext_digest(ctxt_digest.clone());
+
                     tracing::debug!(
                         "🍇🥐🍇🥐🍇🥐 Centralized KMS signature: {:?}",
                         reencrypt_response.signature().to_hex()
@@ -948,6 +976,9 @@ impl Blockchain for KmsBlockchainImpl {
                 for value in results.iter() {
                     match value {
                         OperationValue::ReencryptResponse(reencrypt_response) => {
+                            let mut reencrypt_response = reencrypt_response.clone();
+                            reencrypt_response.set_ciphertext_digest(ctxt_digest.clone());
+
                             // the output needs to have type Vec<ReencryptionResponse>
                             // in the centralized case there is only 1 element
                             out.push(reencrypt_response.clone());

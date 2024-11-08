@@ -1,8 +1,8 @@
 use num_bigint::BigUint;
 use serde::{Deserialize, Serialize};
 
+pub const ACL_REENCRYPT_MAPPING_SLOT: u8 = 0;
 pub const ACL_DECRYPT_MAPPING_SLOT: u8 = 1;
-// const ACL_REENCRYPT_MAPPING_SLOT: u8 = 1;
 
 pub const TRUE_SOLIDITY_STR: &str = "0x1";
 
@@ -13,9 +13,21 @@ pub struct EthereumConfig {
     pub acl_contract_address: String,
 }
 
-pub struct EVMProofParams {
-    pub cipher_text_handle: Hex,
-    pub permission: Permission,
+#[derive(Clone)]
+pub enum EVMProofParams {
+    Decrypt(DecryptProofParams),
+    Reencrypt(ReencryptProofParams),
+}
+
+#[derive(Clone)]
+pub struct DecryptProofParams {
+    pub ciphertext_handles: Vec<Hex>,
+}
+
+#[derive(Clone)]
+pub struct ReencryptProofParams {
+    pub ciphertext_handles: Vec<Hex>,
+    pub accounts: Vec<Hex>,
 }
 
 #[derive(Serialize)]
@@ -33,18 +45,21 @@ pub struct EvmPermissionProof {
     /// Ordered list of cipher text handles.
     #[prost(bytes = "vec", repeated, tag = "1")]
     pub ciphertext_handles: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
-    #[prost(enumeration = "Permission", tag = "2")]
+    /// Ordered list of cipher text handles.
+    #[prost(bytes = "vec", repeated, tag = "2")]
+    pub accounts: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+    #[prost(enumeration = "Permission", tag = "3")]
     pub permission: i32,
     /// Block height at which the proof was generated.
-    #[prost(uint64, tag = "3")]
+    #[prost(uint64, tag = "4")]
     pub block_height: u64,
     /// Root hash for merkle proofs.
-    #[prost(bytes = "vec", tag = "4")]
+    #[prost(bytes = "vec", tag = "5")]
     pub root_hash: ::prost::alloc::vec::Vec<u8>,
     /// Address on ACL contract on ethermint.
-    #[prost(bytes = "vec", tag = "5")]
+    #[prost(bytes = "vec", tag = "6")]
     pub contract_address: ::prost::alloc::vec::Vec<u8>,
-    /// This is a set of encoded proof ops for the list of cipher text handles.
+    /// This is a set of encoded proofs for the list of cipher text handles.
     ///
     /// Should be decoded using the data formats for specific blockchain such as
     /// ethereum, ethermint.
@@ -53,7 +68,7 @@ pub struct EvmPermissionProof {
     /// 1. For ethermint, this is list of encoded proof ops. See
     ///    cometbft/proto/cometbft/crypto/v1/proof.proto.
     /// 2. For ethereum, this is serialized ethereum storag proof json.
-    #[prost(bytes = "vec", repeated, tag = "6")]
+    #[prost(bytes = "vec", repeated, tag = "7")]
     pub proof: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
 }
 
@@ -64,6 +79,7 @@ pub enum Permission {
     Decrypt = 0,
     Reencrypt = 1,
 }
+
 impl Permission {
     /// String value of the enum field names used in the ProtoBuf definition.
     ///

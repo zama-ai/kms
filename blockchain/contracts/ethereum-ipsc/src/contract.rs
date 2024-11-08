@@ -70,11 +70,17 @@ impl ProofContract {
 impl InclusionProofContract for ProofContract {
     type Error = StdError;
 
-    fn verify_proof(&self, _ctx: ExecCtx, proof: String) -> StdResult<Response> {
+    fn verify_proof(
+        &self,
+        _ctx: ExecCtx,
+        proof: String,
+        ciphertext_handles: String,
+    ) -> StdResult<Response> {
         let proof = hex::decode(proof).unwrap();
         let proof = EvmPermissionProof::decode(&*proof).unwrap();
+        let ciphertext_handles: Vec<Vec<u8>> = serde_json::from_str(&ciphertext_handles).unwrap();
 
-        let result = EthereumProofHandler::verify_proof(proof).unwrap();
+        let result = EthereumProofHandler::verify_proof(proof, ciphertext_handles).unwrap();
         Ok(Response::new()
             .add_attribute("method", "verify ethereum proof")
             .add_attribute("result", result.to_string()))

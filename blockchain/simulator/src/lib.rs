@@ -919,6 +919,7 @@ pub async fn execute_reencryption_contract(
         events::kms::FheParameter::Test => TEST_PARAM,
     };
 
+    let dummy_external_ciphertext_handle = vec![0_u8, 32];
     let (cipher, ptxt) = encrypt(to_encrypt, key_id, keys_folder, compressed).await?;
     let kv_store_address = client
         .kv_store_address
@@ -972,6 +973,7 @@ pub async fn execute_reencryption_contract(
         serialized_enc_key.clone(),
         FheType::Euint8,
         hex::decode(key_id)?,
+        dummy_external_ciphertext_handle,
         handle_bytes,
         ciphertext_digest.clone(),
         acl_addres,

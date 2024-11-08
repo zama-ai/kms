@@ -12,6 +12,7 @@ use events::kms::{
     Transaction, TransactionId, VerifyProvenCtValues,
 };
 use events::kms::{InsecureKeyGenValues, MigrationEvent, VerifyProvenCtResponseValues};
+use serde_json;
 use sha3::{Digest, Sha3_256};
 use std::ops::Deref;
 use sylvia::{
@@ -52,6 +53,7 @@ where
 #[cw_serde]
 pub struct ProofPayload {
     pub proof: String,
+    pub ciphertext_handles: String,
 }
 
 #[cw_serde]
@@ -124,10 +126,14 @@ impl KmsContract {
         ctx: ExecCtx,
         response: Response,
         proof: String,
+        external_ciphertext_handles: String,
     ) -> StdResult<Response> {
         if !self.storage.get_debug_proof(ctx.deps.storage)? {
             let msg = ProofMessage {
-                verify_proof: ProofPayload { proof },
+                verify_proof: ProofPayload {
+                    proof,
+                    ciphertext_handles: external_ciphertext_handles,
+                },
             };
             let msg = WasmMsg::Execute {
                 contract_addr: self
@@ -339,9 +345,37 @@ impl KmsContract {
                 e
             ))
         })?;
+
+        let external_ciphertext_handles: String;
+        match decrypt.external_handles() {
+            None => {
+                return Err(StdError::generic_err(
+                    "Error: external ciphertext handles are empty",
+                ))
+            }
+            Some(hex_vector_list) => {
+                let hex_vector_list: Vec<Vec<u8>> = hex_vector_list.clone().into();
+                match serde_json::to_string(&hex_vector_list) {
+                    Ok(json_string) => {
+                        external_ciphertext_handles = json_string;
+                    }
+                    Err(e) => {
+                        return Err(StdError::generic_err(format!(
+                            "Error serializing external ciphertext handles: {}",
+                            e
+                        )))
+                    }
+                }
+            }
+        }
         let mut ctx = ctx;
         let response = self.process_request_transaction(&mut ctx, decrypt.clone().into())?;
-        self.chain_verify_proof_contract_call(ctx, response, decrypt.proof().to_string())
+        self.chain_verify_proof_contract_call(
+            ctx,
+            response,
+            decrypt.proof().to_string(),
+            external_ciphertext_handles,
+        )
     }
 
     /// Decrypt response
@@ -458,9 +492,31 @@ impl KmsContract {
         // decipher the size encoding and ensure the payment is included in the message
         let ciphertext_handle: Vec<u8> = reencrypt.ciphertext_handle().deref().into();
         self.verify_payment(&ctx, &[ciphertext_handle.clone()])?;
+
+        let external_ciphertext_handles: String;
+
+        let external_ciphertext_handles_vec: Vec<Vec<u8>> =
+            vec![reencrypt.external_ciphertext_handle().deref().into()];
+        match serde_json::to_string(&external_ciphertext_handles_vec) {
+            Ok(json_string) => {
+                external_ciphertext_handles = json_string;
+            }
+            Err(e) => {
+                return Err(StdError::generic_err(format!(
+                    "Error serializing external ciphertext handles: {}",
+                    e
+                )))
+            }
+        }
+
         let mut ctx = ctx;
         let response = self.process_request_transaction(&mut ctx, reencrypt.clone().into())?;
-        self.chain_verify_proof_contract_call(ctx, response, reencrypt.proof().to_string())
+        self.chain_verify_proof_contract_call(
+            ctx,
+            response,
+            reencrypt.proof().to_string(),
+            external_ciphertext_handles,
+        )
     }
 
     /// Reencrypt response
@@ -1219,6 +1275,7 @@ mod tests {
             .call(&owner)
             .unwrap();
 
+        let dummy_external_ciphertext_handle = hex::decode("0".repeat(64)).unwrap();
         let ciphertext_handle =
             hex::decode("000a17c82f8cd9fe41c871f12b391a2afaf5b640ea4fdd0420a109aa14c674d3e385b955")
                 .unwrap();
@@ -1232,6 +1289,7 @@ mod tests {
             vec![4],
             FheType::Euint8,
             vec![5],
+            dummy_external_ciphertext_handle.clone(),
             ciphertext_handle.clone(),
             vec![9],
             "dummy_acl_address".to_string(),

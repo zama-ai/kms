@@ -63,6 +63,7 @@ impl Blockchain for MockchainImpl {
         signature: Vec<u8>,
         client_address: String,
         enc_key: Vec<u8>,
+        external_handle: Vec<u8>,
         fhe_type: FheType,
         ciphertext: Vec<u8>,
         eip712_verifying_contract: String,
@@ -75,6 +76,7 @@ impl Blockchain for MockchainImpl {
         tracing::debug!("🐛 client_address: {:?}", client_address);
         tracing::debug!("🐛 enc_key: {:?}", enc_key);
         tracing::debug!("🐛 fhe_type: {:?}", fhe_type);
+        tracing::debug!("🐛 external_handle: {:?}", external_handle);
         tracing::debug!("🐛 ciphertext: {:?}", ciphertext);
         tracing::debug!(
             "🐛 eip712_verifying_contract: {:?}",
@@ -87,6 +89,7 @@ impl Blockchain for MockchainImpl {
         let resp = ReencryptResponseValues::builder()
             .payload(b"payload".to_vec().into())
             .signature(b"signature".to_vec().into())
+            .ciphertext_digest(None)
             .build();
         Ok(vec![resp])
     }

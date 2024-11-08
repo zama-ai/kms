@@ -128,6 +128,7 @@ fn test_reencrypt_values(
         .enc_key(test.enc_key.to_vec().into())
         .fhe_type(FheType::from_str_name(&test.fhe_type_name))
         .key_id(test.key_id.to_vec().into())
+        .external_ciphertext_handle(test.ciphertext_handle.to_vec().into())
         .ciphertext_handle(test.ciphertext_handle.to_vec().into())
         .ciphertext_digest(test.ciphertext_digest.to_vec().into())
         .acl_address(test.acl_address.to_string())
@@ -168,6 +169,7 @@ fn test_reencrypt_response_values(
     let reencrypt_response_values = ReencryptResponseValues::builder()
         .signature(test.signature.to_vec().into())
         .payload(test.payload.to_vec().into())
+        .ciphertext_digest(None)
         .build();
 
     let new_versionized = Transaction::new(

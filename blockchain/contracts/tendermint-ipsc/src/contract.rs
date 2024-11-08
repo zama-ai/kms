@@ -68,7 +68,7 @@ impl ProofContract {
 impl InclusionProofContract for ProofContract {
     type Error = StdError;
 
-    fn verify_proof(&self, _ctx: ExecCtx, proof: String) -> StdResult<Response> {
+    fn verify_proof(&self, _ctx: ExecCtx, proof: String, _handles: String) -> StdResult<Response> {
         let proof = hex::decode(proof).unwrap();
         let proof = EthermintPermissionProof::decode(&*proof).unwrap();
 

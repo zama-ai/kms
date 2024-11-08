@@ -955,6 +955,7 @@ dependencies = [
  "schemars",
  "semver 1.0.23",
  "serde",
+ "serde_json",
  "sha3",
  "sylvia",
  "sylvia-derive",
@@ -3807,6 +3808,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha3",
+ "tokio",
  "trie-db 0.28.0",
 ]
 
