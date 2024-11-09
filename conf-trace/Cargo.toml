@@ -1,6 +1,6 @@
 [package]
 name = "conf-trace"
-version = "0.9.0-rc25"
+version.workspace = true
 authors.workspace = true
 publish.workspace = true
 edition.workspace = true
@@ -9,8 +9,8 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 config = "0.14.1"
-lazy_static = "1.5"
-opentelemetry = "0.23"
+lazy_static.workspace = true
+opentelemetry.workspace = true
 opentelemetry-http = "0.12"
 opentelemetry-otlp = { version = "0.16.0", features = ["tokio"] }
 opentelemetry-prometheus = "0.16.0"
@@ -19,10 +19,10 @@ opentelemetry-stdout = { version = "0.4.0", features = ["trace"] }
 opentelemetry_sdk = { version = "0.23", features = ["rt-tokio","logs"]}
 prometheus = "=0.13.4"
 serde = { workspace = true, features = ["derive", "rc"] }
-strum = "0.26"
-strum_macros = "0.26"
+strum.workspace = true
+strum_macros.workspace = true
 tonic.workspace = true
 tracing = { workspace = true, features = ["log"] }
-tracing-opentelemetry = "0.24"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter", "fmt", "json"] }
+tracing-opentelemetry.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "json"] }
 typed-builder.workspace = true

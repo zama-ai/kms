@@ -1,16 +1,14 @@
 [package]
 name = "kms-common"
-version = "0.9.0-rc25"
+version.workspace = true
 edition.workspace = true
 publish.workspace = true
 authors.workspace = true
 license.workspace = true
 
 [dependencies]
-anyhow = "1.0.86"
-serde = { workspace = true, features = ["derive", "rc"] }
 tfhe-versionable.workspace = true
-backward-compatibility = { path = "../backward-compatibility", version = "0.9.0-rc3", features = [
+backward-compatibility = { workspace = true, features = [
     "load",
     "tests",
 ], optional = true }

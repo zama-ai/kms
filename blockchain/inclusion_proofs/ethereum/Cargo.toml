@@ -18,10 +18,10 @@ trie-db = { version = "0.28.0", default-features = false }
 hex-literal = "0.4.1"
 num-bigint = "0.4"
 primitive-types = { version = "0.12.0", default-features = false }
-sha3 = "0.10.8"
+sha3.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-hex = { version = "0.4.3", features = ["serde"] }
+hex = { workspace = true, features = ["serde"] }
 prost.workspace = true
 
 # cosmwasm only dependencies
@@ -31,7 +31,7 @@ hash-db = { version = "0.16.0", default-features = false, optional = true }
 
 # Default only dependencies
 ethereum-triedb = { version = "=0.1.1", optional = true }
-reqwest = { version = "0.12.4", features = ["json"], optional = true }
+reqwest = { workspace = true, features = ["json"], optional = true }
 
 [features]
 cosmwasm = ["ethereum-triedb-local", "hash256-std-hasher", "hash-db"]

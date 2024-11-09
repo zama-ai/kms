@@ -1,6 +1,6 @@
 [package]
 name = "gateway"
-version = "0.9.0-rc25"
+version.workspace = true
 edition.workspace = true
 publish.workspace = true
 authors.workspace = true
@@ -9,7 +9,7 @@ license.workspace = true
 [dependencies]
 actix-cors = "0.7.0"
 actix-web = "4.6.0"
-aes-prng = "0.2.1"
+aes-prng.workspace = true
 alloy-primitives.workspace = true
 alloy-signer.workspace = true
 alloy-signer-local.workspace = true
@@ -18,54 +18,43 @@ anyhow.workspace = true
 async-trait.workspace = true
 bincode.workspace = true
 byteorder = "1.5.0"
-conf-trace = { path = "../../conf-trace" , version = "0.9.0-rc25" }
-cosmos-proto = { path = "../cosmos-proto" , version = "0.9.0-rc25" }
-cosmwasm-std = { version = "2.1.4" }
+conf-trace.workspace = true
+cosmos-proto.workspace = true
+cosmwasm-std.workspace = true
 dashmap = "6.0.1"
 deep_space = "2.24.1"
 ethers = { version = "2.0.14", features = ["abigen", "rustls", "ws", "ethers-solc", "legacy"] }
-events = { path = "../events", features = ["subscription"] , version = "0.9.0-rc25" }
+events = { workspace = true, features = ["subscription"] }
 eyre = "0.6.12"
-futures = "0.3"
-hex = "0.4.3"
+futures.workspace = true
+hex.workspace = true
 hmac = "0.12.1"
-k256 = "0.13.3"
-kms = { path = "../../core/service", default-features = false, features = ["grpc-client"] , version = "0.9.0-rc25" }
-kms-blockchain-client = { path = "../client" , version = "0.9.0-rc25" }
-kms-blockchain-connector = { path = "../connector" , version = "0.9.0-rc25" }
-lazy_static = "1.5"
+k256.workspace = true
+kms = { workspace = true, default-features = false, features = ["grpc-client"] }
+kms-blockchain-client.workspace = true
+kms-blockchain-connector.workspace = true
 prost.workspace = true
 rand.workspace = true
-reqwest = { version = "0.12.4", features = ["json"] }
+reqwest = { workspace = true, features = ["json"] }
 retrying = "0.1.0"
-secp256k1 = "0.30.0"
+secp256k1.workspace = true
 serde = { workspace = true , features = ["derive"] }
 serde_json.workspace = true
-sha2 = "0.10.8"
-sha3 = "0.10.8"
+sha2.workspace = true
 structopt = "0.3.26"
-strum = { version = "0.26", features = ["derive"] }
-strum_macros = "0.26"
-tendermint.workspace = true
+strum = { workspace = true, features = ["derive"] }
+strum_macros.workspace = true
 tendermint-rpc = { workspace = true, features = ["websocket-client"] }
-thiserror = "1.0.64"
+thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["log"] }
 typed-builder.workspace = true
-tonic = "0.11"
-num-bigint = "0.4"
-num-traits = "0.2.19"
-hex-literal = "0.4.1"
-
+tonic.workspace = true
 primitive-types = { version = "0.12.0", default-features = false }
-rlp = { version = "0.5.1", default-features = false }
-trie-db = { version = "0.28.0", default-features = false }
-ethereum-triedb = "=0.1.1"
-
 ethereum-inclusion-proofs = { path = "../inclusion_proofs/ethereum" }
 
 [build-dependencies]
-tonic-build = "0.11"
+tonic-build.workspace = true
 
 [dev-dependencies]
 rand.workspace = true

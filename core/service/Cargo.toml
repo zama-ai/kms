@@ -1,6 +1,6 @@
 [package]
 name = "kms"
-version = "0.9.0-rc25"
+version.workspace = true
 edition.workspace = true
 publish.workspace = true
 authors.workspace = true
@@ -34,9 +34,9 @@ path = "src/bin/kms-example-client.rs"
 required-features = ["testing"]
 
 [dependencies]
-aes = "0.8.4"
+aes.workspace = true
 aes-gcm-siv = "0.11.1"
-aes-prng = "0.2.1"
+aes-prng.workspace = true
 alloy-dyn-abi = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["k256"] }
 alloy-sol-types = { workspace = true, features = ["eip712-serde"] }
@@ -47,35 +47,35 @@ aws-config = { version = "1.5.4", optional = true }
 aws-nitro-enclaves-nsm-api = { version = "0.4.0", optional = true }
 aws-sdk-kms = { version = "1.48.0", optional = true }
 aws-sdk-s3 = { version = "1.39.0", optional = true }
-kms-common = { path = "../../common", version = "0.9.0-rc25" }
-backoff = { version = "0.4.0", features = ["tokio"], optional = true }
+kms-common.workspace = true
+backoff = { workspace = true, features = ["tokio"], optional = true }
 bincode.workspace = true
 cbc = { version = "0.1.2", features = ["alloc"] }
-cfg-if = "1.0.0"
+cfg-if.workspace = true
 clap = { workspace = true, features = ["derive"] }
 cms = "0.2.3"
-conf-trace = { path = "../../conf-trace", optional = true, version = "0.9.0-rc25" }
+conf-trace = { workspace = true, optional = true }
 crypto_box = { version = "0.9.1", features = ["salsa20"] }
 der = "0.7.8"
-distributed-decryption = { path = "../threshold/", default-features = false, version = "0.9.0-rc25" }
-hex = "0.4.3"
-itertools = "0.13"
-k256 = "0.13.3"
-lazy_static = "1.4.0"
+distributed-decryption = { workspace = true, default-features = false }
+hex.workspace = true
+itertools.workspace = true
+k256.workspace = true
+lazy_static.workspace = true
 nom = "7.1.3"
 prost.workspace = true
 rand = { workspace = true, features = ["std", "std_rng"] }
-rayon = "1.10"
+rayon.workspace = true
 rcgen = { version = "0.13", optional = true }
 rsa = { version = "0.9.6", features = ["sha2"] }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_bytes = "0.11"
 serde_json.workspace = true
 serial_test = "3.0.0"
-sha3 = "0.10.8"
+sha3.workspace = true
 signature = "2.2.0"
-strum = "0.26"
-strum_macros = "0.26"
+strum.workspace = true
+strum_macros.workspace = true
 # experimental-force_fft_algo_dif4 feature ensure PBS is deterministic
 tfhe = { workspace = true, features = [
     "boolean",
@@ -90,20 +90,17 @@ tokio = { workspace = true, features = [
     "rt-multi-thread",
 ], optional = true }
 tonic = { workspace = true, optional = true }
-tonic-health = { version = "0.11", optional = true }
-tower = { version = "0.5", features = ["retry", "timeout"], optional = true }
-tower-http = { version = "0.4", features = ["trace"], optional = true }
+tonic-health = { workspace = true, optional = true }
+tower = { workspace = true, features = ["retry", "timeout"], optional = true }
+tower-http = { workspace = true, features = ["trace"], optional = true }
 tracing = { workspace = true, features = ["log"] }
-tracing-appender = { workspace = true }
-tracing-subscriber = { workspace = true, features = ["fmt", "std"] }
 url = "2.5.0"
 
 # [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = { version = "0.1.7" }
-futures = "0.3.30"
 serde-wasm-bindgen = { version = "0.6.0" }
 wasm-bindgen = { version = "0.2.86", features = ["serde-serialize"] }
-tfhe-versionable = { workspace = true }
+tfhe-versionable.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 tfhe = { workspace = true, features = ["seeder_unix"] }
@@ -117,13 +114,13 @@ webpki = { version = "0.22", features = ["std"] }
 rustls = { version = "0.23", default-features = false, features = ["std"] }
 rstest = "0.23.0"
 # The testing feature is only required for tests
-distributed-decryption = { path = "../threshold/", default-features = false, version = "0.9.0-rc25", features = [
+distributed-decryption = { workspace = true, default-features = false, features = [
     "testing",
 ] }
-kms-common = { path = "../../common", version = "0.9.0-rc25", features = [
+kms-common = { workspace = true, features = [
     "testing",
 ] }
-backward-compatibility = { path = "../../backward-compatibility", version = "0.9.0-rc3", features = [
+backward-compatibility = { workspace = true, features = [
     "load",
     "tests",
 ] }

@@ -35,30 +35,64 @@ authors = ["Zama"]
 publish = true
 edition = "2021"
 license = "BSD-3-Clause-Clear"
+version = "0.9.0-rc25"
 
 [workspace.dependencies]
+aes = "0.8.4"
+aes-prng = "0.2.1"
+aipsc = { path = "./blockchain/contracts/aipsc" }
 anyhow = "1.0.89"
 async-trait = "0.1.81"
+backward-compatibility = { path = "./backward-compatibility" }
+backoff = { version = "0.4.0" }
+base64 = "0.22.1"
 bincode = "1.3.3"
 clap = { version = "4.5.8", features = ["derive"] }
+cfg-if = "1.0.0"
+conf-trace = { path = "./conf-trace" }
+cosmos-proto = { path = "./blockchain/cosmos-proto" }
 cosmwasm-schema = "2.1.4"
 cosmwasm-std = "2.1.4"
 cw-controllers = "2.0.0"
 cw-storage-plus = "2.0.0"
 cw-utils = "2.0.0"
 cw2 = "2.0.0"
+distributed-decryption = { path = "./core/threshold/", default-features = false }
+events = { path = "./blockchain/events" }
+futures = "0.3"
+hex = "0.4.3"
+itertools = "0.13"
+k256 = { version = "0.13.3" }
+kms = { path = "./core/service", default-features = false }
+kms-blockchain-client = { path = "./blockchain/client" }
+kms-blockchain-connector = { path = "./blockchain/connector" }
+kms-common = { path = "./common" }
+lazy_static = "1.5"
+mockall = "0.13.0"
+opentelemetry = "0.23"
 prost = "0.12.4"
 prost-build = "0.12.4"
 prost-types = "0.12.4"
 rand = "0.8.5"
+rayon = "1.10"
+reqwest = "0.12.4"
 schemars = "0.8.16"
+secp256k1 = "0.30.0"
 serde = { version = "1.0.213", features = ["derive", "rc"] }
 serde_json = "1.0.120"
+sha2 = "0.10.8"
+sha3 = "0.10.8"
+strum = "0.26"
+strum_macros = "0.26"
 sylvia = "=1.1.0"
 sylvia-derive = "=1.1.0"
 tendermint = { version = "0.37.0", features = ["secp256k1"] }
 tendermint-proto = "0.37.0"
 tendermint-rpc = { version = "0.37.0", features = ["websocket-client"] }
+thiserror = "1.0.64"
+tonic-health = { version = "0.11" }
+tower = { version = "0.5" }
+tower-http = { version = "0.4" }
 tfhe = "0.9.0"
 tfhe-versionable = "0.3.1"
 tfhe-zk-pok = "0.3.0"
@@ -67,6 +101,7 @@ tonic = "0.11"
 tonic-build = "0.11"
 tracing = { version = "0.1.40", features = ["log"] }
 tracing-appender = "0.2"
+tracing-opentelemetry = "0.24"
 tracing-subscriber = { version = "0.3.18", features = ["fmt", "std"] }
 typed-builder = "0.18.1"
 

@@ -1,6 +1,6 @@
 [package]
 name = "distributed-decryption"
-version = "0.9.0-rc25"
+version.workspace = true
 edition.workspace = true
 publish.workspace = true
 authors.workspace = true
@@ -10,56 +10,51 @@ license.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-aes = "0.8.2"
-aes-prng = "0.2.1"
+aes.workspace = true
+aes-prng.workspace = true
 aligned-vec = "0.5"
 anyhow.workspace = true
 async-trait.workspace = true
-backoff = { version = "0.4", features = ["tokio"], optional = true }
+backoff = { workspace = true, features = ["tokio"], optional = true }
 bincode.workspace = true
-cfg-if = "1.0.0"
+cfg-if.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
-kms-common = { path = "../../common", version = "0.9.0-rc25" }
+kms-common.workspace = true
 concrete-csprng = "0.4.1"
-conf-trace = { path = "../../conf-trace", optional = true, version = "0.9.0-rc25" }
+conf-trace = { workspace = true, optional = true }
 const_format = "0.2.32"
 crypto-bigint = { version = "0.6.0-rc.6", features = [
     "serde",
     "rand_core",
     "extra-sizes",
 ], optional = true }
-crypto_box = { version = "0.9.1", features = ["salsa20"] }
 dashmap = "6"
 derive_more = { version = "1.0.0", features = ["display"] }
-enum_dispatch = "0.3.12"
-futures = "0.3"
+futures.workspace = true
 g2p = "1.0.1"
-itertools = "0.13"
-k256 = "0.13.1"
-lazy_static = "1.5"
+itertools.workspace = true
+lazy_static.workspace = true
 minijinja = { version = "2.0.3", features = ["loader"], optional = true }
-mockall = "0.13.0"
+mockall.workspace = true
 ndarray = { version = "0.16", features = ["serde"] }
-nom = "7.1.3"
 num-integer = "0.1.45"
 num-traits = "0.2"
-opentelemetry = { version = "0.26", optional = true }
+opentelemetry = { workspace = true, optional = true }
 paste = "1.0.12"
 prost.workspace = true
 rand.workspace = true
-rayon = "1.10"
+rayon.workspace = true
 redis = { version = "0.27.2", optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
-sha3 = "0.10.8"
-signature = "2.2"
-strum = { version = "0.26", features = ["derive"] }
-strum_macros = "0.26"
+sha3.workspace = true
+strum = {  workspace = true, features = ["derive"] }
+strum_macros.workspace = true
 tokio = { workspace = true, features = ["full", "sync"], optional = true }
 tonic = { workspace = true, features = ["tls"], optional = true }
-tonic-health = { version = "0.11", optional = true }
-tower = { version = "0.5", features = ["retry", "timeout"], optional = true }
-tower-http = { version = "0.4", features = ["trace"], optional = true }
+tonic-health = { workspace = true, optional = true }
+tower = { workspace = true, features = ["retry", "timeout"], optional = true }
+tower-http = { workspace = true, features = ["trace"], optional = true }
 tfhe = { workspace = true, features = [
     "boolean",
     "shortint",
@@ -70,7 +65,7 @@ tracing = { workspace = true, features = ["log"] }
 x509-parser = "0.16"
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
 tfhe-zk-pok = { workspace = true, optional = true }
-tfhe-versionable = { workspace = true }
+tfhe-versionable.workspace = true
 
 # we need getrandom to have the js feature so that it can target wasm
 # this is an indirect dependency
@@ -92,10 +87,10 @@ serial_test = "3.0.0"
 tempfile = "3.13.0"
 test-log = { version = "0.2", features = ["trace"] }
 tracing-test = "0.2"
-kms-common = { path = "../../common", version = "0.9.0-rc25", features = [
+kms-common = { workspace = true, features = [
     "testing",
 ] }
-backward-compatibility = { path = "../../backward-compatibility", version = "0.9.0-rc3", features = [
+backward-compatibility = { workspace = true, features = [
     "load",
     "tests",
 ] }

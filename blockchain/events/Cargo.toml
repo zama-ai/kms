@@ -1,26 +1,26 @@
 [package]
 name = "events"
-version = "0.9.0-rc25"
+version.workspace = true
 edition.workspace = true
 publish.workspace = true
 authors.workspace = true
 license.workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
+anyhow.workspace = true
 async-trait = {workspace = true, optional = true}
-cosmwasm-std = { version = "2.1.4" }
-cosmwasm-schema = "2.1.4"
-cosmos-proto = { path = "../cosmos-proto", optional = true , version = "0.9.0-rc25" }
-hex = "0.4.3"
+cosmwasm-std.workspace = true
+cosmwasm-schema.workspace = true
+cosmos-proto = { workspace = true, optional = true }
+hex.workspace = true
 koit-toml = { version = "=0.2.1", optional = true }
-opentelemetry = { version = "0.23", features = ["metrics" ], optional = true }
+opentelemetry = { workspace = true, features = ["metrics" ], optional = true }
 retrying = { version = "0.1.0", features = ["tokio"], optional = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-strum = "0.26"
-strum_macros = "0.26"
-thiserror = { version = "1.0.64", optional = true }
+strum.workspace = true
+strum_macros.workspace = true
+thiserror = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["full"], optional = true }
 tonic = { workspace = true, features = ["transport","tls","tls-roots"], optional = true }
 tracing = { workspace = true, features = ["log"] }
@@ -31,12 +31,12 @@ tfhe-versionable.workspace = true
 tonic-build.workspace = true
 
 [dev-dependencies]
-mockall = "0.13.0"
+mockall.workspace = true
 quickcheck = "1.0.3"
 quickcheck_macros = "1"
 test-context = "0.3.0"
-backward-compatibility = { path = "../../backward-compatibility", version = "0.9.0-rc3" , features = ["load", "tests"] }
-kms-common = { path = "../../common", version = "0.9.0-rc25", features = ["testing"] }
+backward-compatibility = { workspace = true, features = ["load", "tests"] }
+kms-common = { workspace = true, features = ["testing"] }
 
 [features]
 default = []

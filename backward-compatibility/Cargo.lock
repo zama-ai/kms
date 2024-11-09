@@ -1238,7 +1238,6 @@ name = "backward-compatibility"
 version = "0.9.0-rc3"
 dependencies = [
  "aes-prng",
- "anyhow",
  "bincode",
  "distributed-decryption",
  "events",
