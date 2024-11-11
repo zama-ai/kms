@@ -6,10 +6,12 @@ updates:
     # Check for updates every Monday
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 10
+    # Set to 0 to prevent version updates (i.e. require only security updates)
+    open-pull-requests-limit: 0
   - package-ecosystem: "github-actions"
     directory: "/"
     # Check for updates every Monday
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 10
+    # Set to 0 to prevent version updates (i.e. require only security updates)
+    open-pull-requests-limit: 0
