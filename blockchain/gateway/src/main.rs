@@ -17,7 +17,11 @@ use tokio::sync::mpsc::{self};
 /// when a shutdown signal (SIGINT or SIGTERM) is received.
 async fn main() -> anyhow::Result<()> {
     // Load gateway configuration
-    let config: GatewayConfig = init_conf_with_trace_gateway("config/gateway")?;
+    let config: GatewayConfig = init_conf_with_trace_gateway(
+        std::env::var("GATEWAY_CONFIG")
+            .unwrap_or_else(|_| "config/gateway.toml".to_string())
+            .as_str(),
+    )?;
     // Some starting logs
     print_intro(&config);
     // Channel for communication

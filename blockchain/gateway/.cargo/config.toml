@@ -1,0 +1,3 @@
+[env]
+GATEWAY_CONFIG = "config/gateway.toml"
+CONNECTOR_CONFIG = "config/connector.toml"

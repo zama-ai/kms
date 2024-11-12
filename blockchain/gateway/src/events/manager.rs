@@ -348,7 +348,11 @@ impl Publisher<KmsEvent> for KmsEventPublisher {
 #[async_trait]
 impl RunnablePublisher<KmsEvent> for KmsEventPublisher {
     async fn run(&self) -> anyhow::Result<()> {
-        let config: ConnectorConfig = init_conf_with_trace_connector("config/default.toml")?;
+        let config: ConnectorConfig = init_conf_with_trace_connector(
+            std::env::var("CONNECTOR_CONFIG")
+                .unwrap_or_else(|_| "config/connector.toml".to_string())
+                .as_str(),
+        )?;
 
         let _ = OracleSyncHandler::new_with_config_and_listener(config, self.clone())
             .await?
