@@ -17,7 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     let res = main_from_config(
         &config
             .file_conf
-            .unwrap_or_else(|| "config/local.toml".to_string()),
+            .unwrap_or_else(|| "config/local_centralized.toml".to_string()),
         &config.command,
         keys_folder,
         Some(config.max_iter),

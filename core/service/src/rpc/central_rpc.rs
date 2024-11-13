@@ -176,6 +176,7 @@ impl<
 
         let _handle = tokio::spawn(async move {
             {
+                let start = std::time::Instant::now();
                 {
                     // Check if the key already exists
                     let key_handles = fhe_keys.read().await;
@@ -282,6 +283,12 @@ impl<
                             )),
                         );
                 }
+
+
+                tracing::info!(
+                    "⏱️ Core Event Time for Keygen: {:?}",
+                    start.elapsed()
+                );
             }
         }.instrument(tracing::Span::current()));
 
@@ -295,15 +302,14 @@ impl<
         request: Request<RequestId>,
     ) -> Result<Response<KeyGenResult>, Status> {
         let request_id = request.into_inner();
+        tracing::debug!("Received get key gen result request with id {}", request_id);
         validate_request_id(&request_id)?;
-        let pub_key_handles = {
+        let status = {
             let guarded_meta_store = self.key_meta_map.read().await;
-            handle_res_mapping(
-                guarded_meta_store.retrieve(&request_id).cloned(),
-                &request_id,
-                "Key generation",
-            )?
+            guarded_meta_store.retrieve(&request_id).cloned()
         };
+        let pub_key_handles = handle_res_mapping(status, &request_id, "Key generation")?;
+
         Ok(Response::new(KeyGenResult {
             request_id: Some(request_id),
             key_results: convert_key_response(pub_key_handles),
@@ -397,14 +403,12 @@ impl<
         let request_id = request.into_inner();
         validate_request_id(&request_id)?;
 
-        let (fhe_type, req_digest, partial_dec) = {
+        let status = {
             let guarded_meta_store = self.reenc_meta_map.read().await;
-            handle_res_mapping(
-                guarded_meta_store.retrieve(&request_id).cloned(),
-                &request_id,
-                "Reencryption",
-            )?
+            guarded_meta_store.retrieve(&request_id).cloned()
         };
+        let (fhe_type, req_digest, partial_dec) =
+            handle_res_mapping(status, &request_id, "Reencryption")?;
 
         let server_verf_key = self.get_serialized_verf_key();
         let payload = ReencryptionResponsePayload {
@@ -520,6 +524,7 @@ impl<
                                 acl_address,
                             )
                         } else {
+                            tracing::warn!("Skipping external signature computation due to missing domain or acl address");
                             vec![]
                         };
 
@@ -569,14 +574,12 @@ impl<
         let request_id = request.into_inner();
         validate_request_id(&request_id)?;
 
-        let (req_digest, plaintexts, external_signature) = {
+        let status = {
             let guarded_meta_store = self.dec_meta_store.read().await;
-            handle_res_mapping(
-                guarded_meta_store.retrieve(&request_id).cloned(),
-                &request_id,
-                "Decryption",
-            )?
+            guarded_meta_store.retrieve(&request_id).cloned()
         };
+        let (req_digest, plaintexts, external_signature) =
+            handle_res_mapping(status, &request_id, "Decryption")?;
 
         tracing::debug!(
             "Returning plaintext(s) for request ID {}: {:?}. External signature: {:x?}",
@@ -653,6 +656,8 @@ impl<
 
         let _handle = tokio::spawn(async move {
             {
+                let start = std::time::Instant::now();
+
                 let (pp, crs_info) = match async_generate_crs(
                     &sk,
                     rng,
@@ -663,7 +668,8 @@ impl<
                 .await
                 {
                     Ok((pp, crs_info)) => (pp, crs_info),
-                    Err(_) => {
+                    Err(e) => {
+                        tracing::error!("Error in inner CRS generation: {}", e);
                         let mut guarded_meta_store = meta_store.write().await;
                         let _ = guarded_meta_store.update(
                             &request_id,
@@ -725,6 +731,11 @@ impl<
                         );
                     }
                 }
+                tracing::info!(
+                    "⏱️ Core Event Time for CRS-gen: {:?}",
+                    start.elapsed()
+                );
+
             }
         }.instrument(tracing::Span::current()));
         Ok(Response::new(Empty {}))
@@ -737,15 +748,14 @@ impl<
         request: Request<RequestId>,
     ) -> Result<Response<CrsGenResult>, Status> {
         let request_id = request.into_inner();
+        tracing::debug!("Received CRS gen result request with id {}", request_id);
         validate_request_id(&request_id)?;
-        let crs_info = {
+
+        let status = {
             let guarded_meta_store = self.crs_meta_map.read().await;
-            handle_res_mapping(
-                guarded_meta_store.retrieve(&request_id).cloned(),
-                &request_id,
-                "CRS",
-            )?
+            guarded_meta_store.retrieve(&request_id).cloned()
         };
+        let crs_info = handle_res_mapping(status, &request_id, "CRS")?;
 
         Ok(Response::new(CrsGenResult {
             request_id: Some(request_id),
@@ -858,14 +868,13 @@ where
 {
     let request_id = request.into_inner();
     validate_request_id(&request_id)?;
-    let payload: VerifyProvenCtResponsePayload = {
+
+    let status = {
         let guarded_meta_store = meta_store.read().await;
-        handle_res_mapping(
-            guarded_meta_store.retrieve(&request_id).cloned(),
-            &request_id,
-            "ZK",
-        )?
+        guarded_meta_store.retrieve(&request_id).cloned()
     };
+
+    let payload: VerifyProvenCtResponsePayload = { handle_res_mapping(status, &request_id, "ZK")? };
 
     let sig_payload_vec = tonic_handle_potential_err(
         bincode::serialize(&payload),

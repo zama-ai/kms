@@ -764,7 +764,10 @@ pub(crate) fn compute_info<S: Serialize + Versionize + Named>(
     // if we get an EIP-712 domain, compute the external signature
     let external_signature = match domain {
         Some(domain) => compute_external_pubdata_signature(sk, element, domain)?,
-        None => vec![],
+        None => {
+            tracing::warn!("Skipping external signature computation due to missing domain");
+            vec![]
+        }
     };
 
     Ok(SignedPubDataHandleInternal {

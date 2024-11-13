@@ -247,6 +247,7 @@ macro_rules! poller {
         loop {
             sleep(Duration::from_secs($timeout_triple.retry_interval)).await;
             let resp = $f_to_poll.await;
+
             match $res_map(resp) {
                 Ok(PollerStatus::Done(res)) => {
                     $metrics.increment(MetricType::CoreResponseSuccess, 1, &[("ok", "ok")]);
@@ -396,9 +397,10 @@ where
                             },
                         })))
                 }
-                Err(_) => {
+                Err(e) => {
+                    tracing::warn!("Decrypt Response Poller error {:?}", e);
                     Ok(PollerStatus::Poll)
-                }
+                },
             }
         };
 
@@ -510,9 +512,10 @@ where
                         },
                     )))
                 }
-                Err(_) => {
+                Err(e) => {
+                    tracing::warn!("Reencrypt Response Poller error {:?}", e);
                     Ok(PollerStatus::Poll)
-                }
+                },
             }
         };
 
@@ -612,9 +615,10 @@ where
                         },
                     )))
                 }
-                Err(_) => {
+                Err(e) => {
+                    tracing::warn!("VerifyCt Response Poller error {:?}", e);
                     Ok(PollerStatus::Poll)
-                }
+                },
             }
         };
 
@@ -810,7 +814,10 @@ where
                         )))
                     }
                     // we ignore all errors and just poll
-                    Err(_) => Ok(PollerStatus::Poll),
+                    Err(e) => {
+                        tracing::warn!("Keygen Response Poller error {:?}", e);
+                        Ok(PollerStatus::Poll)
+                    },
                 }
             };
 
@@ -849,7 +856,7 @@ where
         let req_id: RequestId = request_id.clone().try_into()?;
         let keygen = &self.insecure_key_gen;
 
-        tracing::info!("Request ID: {:?}", req_id);
+        tracing::debug!("Insecure Keygen with request ID: {:?}", req_id);
         let req = KeyGenRequest {
             params: param_choice.into(),
             request_id: Some(req_id.clone()),
@@ -910,8 +917,12 @@ where
                         )))
                     }
                     // we ignore all errors and just poll
-                    Err(_) => Ok(PollerStatus::Poll),
+                    Err(e) => {
+                        tracing::warn!("Insecure Keygen Response Poller error {:?}", e);
+                        Ok(PollerStatus::Poll)
+                    },
                 }
+
             };
 
         // loop to get response
@@ -1005,7 +1016,10 @@ where
                             },
                         )))
                     }
-                    Err(_) => Ok(PollerStatus::Poll),
+                    Err(e) => {
+                        tracing::warn!("CrsGen Response Poller error {:?}", e);
+                        Ok(PollerStatus::Poll)
+                    },
                 }
             };
 

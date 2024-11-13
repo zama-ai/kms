@@ -1613,6 +1613,7 @@ pub async fn main_from_config(
     destination_prefix: &Path,
     max_iter: Option<u64>,
 ) -> Result<Option<Vec<OperationValue>>, Box<dyn std::error::Error + 'static>> {
+    tracing::info!("Path to config: {:?}", path_to_config);
     tracing::info!("starting command: {:?}", command);
     let sim_conf: SimulatorConfig = Settings::builder()
         .path(path_to_config)
@@ -1634,7 +1635,8 @@ pub async fn main_from_config(
         .build()
         .try_into()?;
 
-    tracing::debug!("Client address: {}", client.contract_address.to_string());
+    tracing::info!("Client address: {}", client.contract_address.to_string());
+    tracing::info!("Contract address: {}", sim_conf.contract);
 
     // TODO: merge both clients
     let query_client: QueryClient = QueryClientBuilder::builder()

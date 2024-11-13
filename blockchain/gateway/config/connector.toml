@@ -54,9 +54,9 @@ retry_interval = 0
 max_poll_count = 1
 
 [core.timeout_config.insecure_key_gen]
-initial_wait_time = 1
+initial_wait_time = 9
 retry_interval = 3
-max_poll_count = 24
+max_poll_count = 36
 
 [tracing]
 service_name = "kms-asc-connector"

@@ -95,7 +95,7 @@ fn stdout_pipeline(service_name: &str) -> Tracer {
         service_name.to_string(),
     )]));
     TracerProvider::builder()
-        .with_simple_exporter(exporter)
+        .with_batch_exporter(exporter, Tokio)
         .with_config(config)
         .build()
         .tracer(service_name.to_string())
@@ -162,13 +162,17 @@ pub fn make_span(request: &Request<Body>) -> Span {
         }
     };
 
-    match headers
-        .get(TRACER_PARENT_SPAN_ID)
-        .map(|r| r.to_str().unwrap().to_string().parse::<u64>().unwrap())
-    {
+    match headers.get(TRACER_PARENT_SPAN_ID).map(|r| {
+        tracing::debug!("Span header: {:?}", r);
+        r.to_str().unwrap().to_string().parse::<u64>().unwrap()
+    }) {
         Some(parent_span_id_u64) => {
             if parent_span_id_u64 > 0 {
-                span.follows_from(Id::from_u64(parent_span_id_u64));
+                tracing::debug!("Propagating span id {parent_span_id_u64}");
+                let id = Id::from_u64(parent_span_id_u64);
+                tracing::debug!("Span id (u64) is {id:?}");
+                span.follows_from(id);
+                tracing::debug!("Span id propagated.");
             } else {
                 tracing::warn!("Parent span id found is 0");
             }

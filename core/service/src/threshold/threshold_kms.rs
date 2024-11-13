@@ -1012,14 +1012,12 @@ impl Reencryptor for RealReencryptor {
         }
 
         // Retrieve the ReencMetaStore object
-        let (link, fhe_type, signcrypted_ciphertext) = {
+        let status = {
             let guarded_meta_store = self.reenc_meta_store.read().await;
-            handle_res_mapping(
-                guarded_meta_store.retrieve(&request_id).cloned(),
-                &request_id,
-                "Reencryption",
-            )?
+            guarded_meta_store.retrieve(&request_id).cloned()
         };
+        let (link, fhe_type, signcrypted_ciphertext) =
+            handle_res_mapping(status, &request_id, "Reencryption")?;
         let server_verf_key = self.base_kms.get_serialized_verf_key();
         let payload = ReencryptionResponsePayload {
             version: CURRENT_FORMAT_VERSION,
@@ -1295,6 +1293,9 @@ impl Decryptor for RealDecryptor {
             {
                 compute_external_pt_signature(&sigkey, ext_handles_bytes, &pts, domain, acl_address)
             } else {
+                tracing::warn!(
+                    "Skipping external signature computation due to missing domain or acl address"
+                );
                 vec![]
             };
 
@@ -1324,14 +1325,12 @@ impl Decryptor for RealDecryptor {
                 format!("The value {} is not a valid request ID!", request_id),
             ));
         }
-        let (req_digest, plaintexts, external_signature) = {
+        let status = {
             let guarded_meta_store = self.dec_meta_store.read().await;
-            handle_res_mapping(
-                guarded_meta_store.retrieve(&request_id).cloned(),
-                &request_id,
-                "Decryption",
-            )?
+            guarded_meta_store.retrieve(&request_id).cloned()
         };
+        let (req_digest, plaintexts, external_signature) =
+            handle_res_mapping(status, &request_id, "Decryption")?;
 
         let pt_payload = tonic_handle_potential_err(
             plaintexts
@@ -1724,8 +1723,10 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 req.preproc_id.clone(),
                 "Pre-Processing ID is not set".to_string(),
             )?;
-            let mut map = self.preproc_buckets.write().await;
-            let preproc = map.delete(&preproc_id);
+            let preproc = {
+                let mut map = self.preproc_buckets.write().await;
+                map.delete(&preproc_id)
+            };
             PreprocHandleWithMode::Secure(handle_res_mapping(
                 preproc,
                 &preproc_id,
@@ -1756,12 +1757,11 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
     ) -> Result<Response<KeyGenResult>, Status> {
         let request_id = request.into_inner();
         validate_request_id(&request_id)?;
-        let guarded_meta_store = self.dkg_pubinfo_meta_store.read().await;
-        let res = handle_res_mapping(
-            guarded_meta_store.retrieve(&request_id).cloned(),
-            &request_id,
-            "DKG",
-        )?;
+        let status = {
+            let guarded_meta_store = self.dkg_pubinfo_meta_store.read().await;
+            guarded_meta_store.retrieve(&request_id).cloned()
+        };
+        let res = handle_res_mapping(status, &request_id, "DKG")?;
         Ok(Response::new(KeyGenResult {
             request_id: Some(request_id),
             key_results: convert_key_response(res),
@@ -2149,12 +2149,11 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         request: Request<RequestId>,
     ) -> Result<Response<CrsGenResult>, Status> {
         let request_id = request.into_inner();
-        let guarded_meta_store = self.crs_meta_store.read().await;
-        let crs_data = handle_res_mapping(
-            guarded_meta_store.retrieve(&request_id).cloned(),
-            &request_id,
-            "CRS generation",
-        )?;
+        let status = {
+            let guarded_meta_store = self.crs_meta_store.read().await;
+            guarded_meta_store.retrieve(&request_id).cloned()
+        };
+        let crs_data = handle_res_mapping(status, &request_id, "CRS generation")?;
         Ok(Response::new(CrsGenResult {
             request_id: Some(request_id),
             crs_results: Some(crs_data.into()),

@@ -56,7 +56,7 @@ VALIDATOR_ADDRESS=$(echo $KEYRING_PASSWORD | wasmd keys show validator --output 
 # Send tokens to connector and gateway accounts
 echo "Sending tokens from validator to connector and gateway accounts"
 # The validator has 1000000000ucosm (setup_NODE="$NODE" wasmd.sh)
-NODE="$NODE" echo $KEYRING_PASSWORD | wasmd tx bank multi-send "$VALIDATOR_ADDRESS" "$CONN_ADDRESS" "$GATEWAY_ADDRESS" "450000000ucosm" -y --chain-id testing 
+NODE="$NODE" echo $KEYRING_PASSWORD | wasmd tx bank multi-send "$VALIDATOR_ADDRESS" "$CONN_ADDRESS" "$GATEWAY_ADDRESS" "4500000000ucosm" -y --chain-id testing
 
 echo ""
 echo "+++++++++++++++++++++++"
