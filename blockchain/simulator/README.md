@@ -1,15 +1,17 @@
 # Contract Execution Tool
 
-This tool allows you to execute and query smart contracts. 
+This tool allows you to execute and query smart contracts on the KMS blockchain.
 It provides a command-line interface (CLI) for interacting with a blockchain network and associated services.
 
 ## Prerequisites
 
 - Rust (ensure you have Rust installed on your system)
-- A running KMS-blockchain, two options here
+- A running KMS-blockchain, KMS connector and KMS core. There are two options:
     - Either starts a centralized or threshold instance with the docker-compose files at the root of this repository,
-        - `docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-centralized.yml build` for the centralised case and `docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml build` for the threshold case,  at the root of the repository.
-        - Followed by `docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-centralized.yml up`  for the centralised case and `docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml up` for the threshold case,  at the root of the repository.
+        - `docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-centralized.yml build` for the centralized case and `docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml build` for the threshold case,  at the root of the repository.
+          - By default the command uses the pre-built docker images from `ghrc.io`.
+          - If you want to build the docker images locally, set the environment variable `DOCKER_BUILD_TEST_SIMULATOR=1`. Building all images takes around 20 minutes.
+        - Followed by `docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-centralized.yml up`  for the centralized case and `docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml up` for the threshold case,  at the root of the repository.
         Side note: Ensure that the following is present in an `.env` file at the root of the repository:
         ```
         MINIO_ROOT_USER=admin
@@ -18,23 +20,50 @@ It provides a command-line interface (CLI) for interacting with a blockchain net
     - Or bind the proper ports from the Kubernetes threshold namespace to your local host
         - `bash ./bind_k8_threshold.sh` in this folder
         Side note: you will also need to download the proper keys from S3 to do so you can launch the following command: `aws s3 cp s3://kms-dev-v1/ aws/ --recursive`
-- Configuration file (optional, specify with `-f` flag) to match the KMS-blockchain setup
-    - `./config/local.toml` for the docker-compose centralized version (default)
+- A configuration file (see below)
+
+## Configuration
+
+To run this tool, you need a configuration file.
+The file can be specified with the `-f` flag. E.g. `-f config/local_centralized.toml`.
+If the file is not specified, then `./config/local_centralized.toml` will be used by default.
+The simulator currently ships with the following pre-defined configurations:
+    - `./config/local_centralized.toml` for the docker-compose centralized version (default)
+    - `./config/local_threshold.toml` for the docker-compose threshold version
+    - `./config/local_threshold_from_compose.toml` for the docker-compose threshold version run from docker compose (used for keygen when launching the gateway)
     - `./config/k8_threshold.toml` for the kubernetes threshold version
+    - `./config/k8_centralized.toml` for the kubernetes centralized version
+
+- The addresses must match the deployment of the KMS entities.
+
+- The `mnemonic` field must match an address that has been funded with the appropriate amount of tokens to run operations. In the local deployment, this is currently the `connector` wallet.
+
+- The `contract` address must be set to the contract that manages the KMS operations.
+If you are not sure about this, then consult the Docker logs when running the simulator or simulator tests. More specifically:
+1. Open Docker _while_ the simulator or a test of the simulator is running. It needs to be done while it is running as the images will be shut down and the log destroyed after the simulator is closed or test completed.
+2. Go to the fan "Containers".
+3. Find `zama-kms-centralized` or `zama-kms-threshold` and click on it. This opens the live log.
+4. Locate `Summary of all the addresses:` issued from the container `dev-kms-blockchain-asc-deploy-1`.
+5. Around the end of this log you can find the `ASC_DEBUG_ADDRESS` which is the address you should use for local testing.
+6. Copy the address and paste it into the configuration file you use under `contract`.
+For example:
+
+```
+dev-kms-blockchain-asc-deploy-1  | ASC_DEBUG_ADDRESS : wasm1yyca08xqdgvjz0psg56z67ejh9xms6l436u8y58m82npdqqhmmtqas0cl7
+```
 
 ## Usage
 
-1. Clone this repository and navigate to the project directory.
-2. Build the project using `cargo build`.
-3. Run the tool with the desired command with the appropriate configuration file.
+1. Make sure the prerequisites above are met and that the configuration is set up correctly.
+2. Clone this repository and navigate to the project directory.
+3. Build the project using `cargo build`.
+4. Run the tool with the desired command with the appropriate configuration file. (See below for details on commands.)
 
 An example of configuration file for the central setup can be found ![here](./config/local_centralized.toml).
 
-You can provide additional configuration options via a configuration file (if needed). 
-Use the `-f` flag to specify the path to the configuration file. 
+You can provide additional configuration options via a configuration file (if needed).
+Use the `-f` flag to specify the path to the configuration file.
 In that file you will configure the addresses of validators, contract address to interact with and mnemonic wallet.
-
-An example of configuration file can be found ![here](./config/local.toml).
 
 Note that for the kubernetes version of the KMS blockchain the address of the contract will change each time  a new version is deployed.
 
@@ -48,6 +77,17 @@ Key-generation can be done insecurely using the following command:
 ```{bash}
 $ cargo run -- -f <path-to-toml-config-file> insecure-key-gen
 ```
+
+### CRS generation
+
+A CRS can be created using the following command, where `<max-num-bits>` is the number of bits that one can proof with the CRS:
+
+```{bash}
+$ cargo run -- -f <path-to-toml-config-file> crs-gen --max-num-bits <max-num-bits>
+```
+
+Note that threshold generation of a CRS with more than a handful of bits will take in the order of multiple minutes! Timeouts might need to be adjusted for that.
+
 
 ### Decrypt
 
@@ -76,3 +116,6 @@ $ cargo run -- query-contract -t <txn_id> -p <proof> -o <operation>
 
 <!-- TODO: Add support -->
 Calling the faucet isn't supported in the simulator tool yet.
+
+### Validator Keyring Password
+The validator keyring password is currently set to `1234567890` and is specified / can be modified in [`deploy_contracts.sh`](../scripts/deploy_contracts.sh).
