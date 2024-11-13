@@ -82,12 +82,15 @@ impl DockerComposeCmd {
             }
             Ok(output) => {
                 std::io::stdout().write_all(&output.stdout).unwrap();
-
-                assert!(
-                    output.status.success(),
-                    "Docker compose failed to start.\n{}",
-                    format_output(&output)
-                );
+                if !output.status.success() {
+                    self.down();
+                    panic!(
+                        "Docker compose failed to start.\n{}",
+                        format_output(&output)
+                    );
+                } else {
+                    println!("Successfully launch command: {:?}", build);
+                }
             }
         };
     }
