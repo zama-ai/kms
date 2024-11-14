@@ -27,7 +27,6 @@ serde_json.workspace = true
 sha3.workspace = true
 sylvia.workspace = true
 tfhe-versionable.workspace = true
-wee_alloc = "0.4.5"
 
 [dev-dependencies]
 aipsc = { path = "../aipsc" }
