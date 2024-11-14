@@ -1,3 +1,4 @@
+use clap::Parser;
 use ethers::prelude::*;
 use ethers::providers::{Middleware, Provider, StreamExt, Ws};
 use ethers::types::BlockNumber;
@@ -5,19 +6,18 @@ use eyre::Result;
 use gateway::common::provider::EventDecryptionFilter;
 use gateway::config::{init_conf_with_trace_gateway, GatewayConfig};
 use std::sync::Arc;
-use structopt::StructOpt;
 
-#[derive(StructOpt, Debug)]
-#[structopt(name = "eth_events")]
+#[derive(Parser, Debug)]
+#[command(name = "eth_events")]
 struct Opts {
     /// WebSocket URL to connect to the Ethereum node
-    #[structopt(short, long, default_value = "ws://localhost:8546")]
+    #[arg(short, long, default_value = "ws://localhost:8546")]
     url: String,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let opts = Opts::from_args();
+    let opts = Opts::parse();
     let provider = Provider::<Ws>::connect_with_reconnects(&opts.url, 10).await?;
     provider.get_chainid().await?;
     let config: GatewayConfig =

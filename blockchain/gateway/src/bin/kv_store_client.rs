@@ -1,27 +1,27 @@
 use byteorder::{BigEndian, ByteOrder};
+use clap::Parser;
 use reqwest::Client;
 use sha2::{Digest, Sha256};
-use structopt::StructOpt;
 
-#[derive(StructOpt, Debug)]
-#[structopt(name = "client")]
+#[derive(Parser, Debug)]
+#[command(name = "client")]
 struct Opt {
     /// Action to perform: "post" or "get"
-    #[structopt(short, long)]
+    #[arg(short, long)]
     action: String,
 
     /// Data to post (hex-encoded) or identifier to get
-    #[structopt(short, long)]
+    #[arg(short, long)]
     data: Option<String>,
 
     /// url
-    #[structopt(short, long, default_value = "http://localhost:8088")]
+    #[arg(short, long, default_value = "http://localhost:8088")]
     url: String,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let opt = Opt::from_args();
+    let opt = Opt::parse();
 
     // Create an HTTP client
     let client = Client::new();
