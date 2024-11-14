@@ -101,6 +101,7 @@ async fn key_and_crs_gen<T: DockerComposeContext>(ctx: &mut T) -> (String, Strin
         command: SimulatorCommand::InsecureKeyGen(NoParameters {}),
         logs: true,
         max_iter: 200,
+        expect_all_responses: false,
     };
     println!("Doing key-gen");
     let key_gen_results = main_from_config(
@@ -108,6 +109,7 @@ async fn key_and_crs_gen<T: DockerComposeContext>(ctx: &mut T) -> (String, Strin
         &config.command,
         keys_folder,
         Some(config.max_iter),
+        config.expect_all_responses,
     )
     .await
     .unwrap();
@@ -118,6 +120,7 @@ async fn key_and_crs_gen<T: DockerComposeContext>(ctx: &mut T) -> (String, Strin
         command: SimulatorCommand::CrsGen(CrsParameters { max_num_bits: 256 }),
         logs: true,
         max_iter: 200,
+        expect_all_responses: false,
     };
 
     let key_ids: Vec<String> = match key_gen_results {
@@ -139,6 +142,7 @@ async fn key_and_crs_gen<T: DockerComposeContext>(ctx: &mut T) -> (String, Strin
         &config.command,
         keys_folder,
         Some(config.max_iter),
+        config.expect_all_responses,
     )
     .await
     .unwrap();
@@ -175,6 +179,7 @@ async fn test_template<T: DockerComposeContext>(ctx: &mut T, commands: Vec<Simul
             command,
             logs: true,
             max_iter: 50,
+            expect_all_responses: false,
         };
 
         main_from_config(
@@ -182,6 +187,7 @@ async fn test_template<T: DockerComposeContext>(ctx: &mut T, commands: Vec<Simul
             &config.command,
             keys_folder,
             Some(50),
+            config.expect_all_responses,
         )
         .await
         .unwrap();

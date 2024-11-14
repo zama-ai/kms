@@ -343,6 +343,8 @@ pub struct Config {
     pub logs: bool,
     #[clap(long, default_value = "20")]
     pub max_iter: u64,
+    #[clap(long, short = 'a', default_value_t = false)]
+    pub expect_all_responses: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder)]
@@ -1612,6 +1614,7 @@ pub async fn main_from_config(
     command: &SimulatorCommand,
     destination_prefix: &Path,
     max_iter: Option<u64>,
+    expect_all_responses: bool,
 ) -> Result<Option<Vec<OperationValue>>, Box<dyn std::error::Error + 'static>> {
     tracing::info!("Path to config: {:?}", path_to_config);
     tracing::info!("starting command: {:?}", command);
@@ -1730,9 +1733,9 @@ pub async fn main_from_config(
 
     // TODO: stop here if insufficient gas and/or query faucet if setup
     // TODO: add optional faucet configuration in config file
-    let num_kms_parties = kms_core_conf.parties.len();
 
     let max_iter = max_iter.unwrap_or(20);
+    let num_parties = kms_core_conf.parties.len();
 
     // Execute the proper command
     match command {
@@ -1747,8 +1750,18 @@ pub async fn main_from_config(
             )
             .await?;
             return_value = Some(
-                wait_for_response(event, &query_client, &sim_conf, max_iter, num_kms_parties)
-                    .await?,
+                wait_for_response(
+                    event,
+                    &query_client,
+                    &sim_conf,
+                    max_iter,
+                    if expect_all_responses {
+                        num_parties
+                    } else {
+                        kms_core_conf.response_count_for_majority_vote()
+                    },
+                )
+                .await?,
             );
             process_decrypt_responses(
                 return_value
@@ -1768,13 +1781,23 @@ pub async fn main_from_config(
                     &query_client,
                     &cipher_params.key_id,
                     destination_prefix,
-                    kms_core_conf,
+                    kms_core_conf.clone(),
                     Some(cipher_params.compressed),
                 )
                 .await?;
             return_value = Some(
-                wait_for_response(event, &query_client, &sim_conf, max_iter, num_kms_parties)
-                    .await?,
+                wait_for_response(
+                    event,
+                    &query_client,
+                    &sim_conf,
+                    max_iter,
+                    if expect_all_responses {
+                        num_parties
+                    } else {
+                        kms_core_conf.response_count_for_reconstruction()
+                    },
+                )
+                .await?,
             );
             process_reencrypt_responses(
                 return_value
@@ -1808,9 +1831,18 @@ pub async fn main_from_config(
         SimulatorCommand::InsecureKeyGen(NoParameters {}) => {
             let (event, _insecure_keygen_vals) =
                 execute_insecure_key_gen_contract(&client, &query_client).await?;
-            let responses =
-                wait_for_response(event, &query_client, &sim_conf, max_iter, num_kms_parties)
-                    .await?;
+            let responses = wait_for_response(
+                event,
+                &query_client,
+                &sim_conf,
+                max_iter,
+                if expect_all_responses {
+                    num_parties
+                } else {
+                    kms_core_conf.response_count_for_majority_vote()
+                },
+            )
+            .await?;
             return_value = Some(responses.clone());
             for response in responses {
                 if let OperationValue::KeyGenResponse(response) = &response {
@@ -1841,9 +1873,18 @@ pub async fn main_from_config(
             // the actual CRS ceremony takes time
             let (event, _crs_values) =
                 execute_crsgen_contract(&client, &query_client, *max_num_bits).await?;
-            let responses =
-                wait_for_response(event, &query_client, &sim_conf, max_iter, num_kms_parties)
-                    .await?;
+            let responses = wait_for_response(
+                event,
+                &query_client,
+                &sim_conf,
+                max_iter,
+                if expect_all_responses {
+                    num_parties
+                } else {
+                    kms_core_conf.response_count_for_majority_vote()
+                },
+            )
+            .await?;
             return_value = Some(responses.clone());
 
             for response in responses {
@@ -1885,8 +1926,18 @@ pub async fn main_from_config(
             .await?;
             //Do nothing with the response (for now ?)
             return_value = Some(
-                wait_for_response(event, &query_client, &sim_conf, max_iter, num_kms_parties)
-                    .await?,
+                wait_for_response(
+                    event,
+                    &query_client,
+                    &sim_conf,
+                    max_iter,
+                    if expect_all_responses {
+                        num_parties
+                    } else {
+                        kms_core_conf.response_count_for_majority_vote()
+                    },
+                )
+                .await?,
             );
         }
         SimulatorCommand::QueryContract(q) => {

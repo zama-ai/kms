@@ -21,6 +21,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
         &config.command,
         keys_folder,
         Some(config.max_iter),
+        config.expect_all_responses,
     )
     .await;
 
