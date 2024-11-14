@@ -56,11 +56,11 @@ impl S3Storage {
     pub async fn new_centralized(
         aws_region: String,
         aws_imds_proxy: Option<String>,
-        aws_s3_proxy: Option<String>,
+        aws_s3_proxy: Option<Url>,
         blob_bucket: String,
         optional_path: Option<String>,
         storage_type: StorageType,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         let blob_path = Self::centralized_path(optional_path, storage_type);
         Self::new(
             aws_region,
@@ -75,12 +75,12 @@ impl S3Storage {
     pub async fn new_threshold(
         aws_region: String,
         aws_imds_proxy: Option<String>,
-        aws_s3_proxy: Option<String>,
+        aws_s3_proxy: Option<Url>,
         blob_bucket: String,
         optional_path: Option<String>,
         storage_type: StorageType,
         party_id: usize,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         let blob_path = Self::threshold_path(optional_path, storage_type, party_id);
         Self::new(
             aws_region,
@@ -95,19 +95,19 @@ impl S3Storage {
     async fn new(
         aws_region: String,
         aws_imds_proxy: Option<String>,
-        aws_s3_proxy: Option<String>,
+        aws_s3_proxy: Option<Url>,
         blob_bucket: String,
         blob_path: String,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         let aws_sdk_config = build_aws_sdk_config(aws_region, aws_imds_proxy).await;
-        let s3_client = build_s3_client(&aws_sdk_config, aws_s3_proxy).await;
+        let s3_client = build_s3_client(&aws_sdk_config, aws_s3_proxy).await?;
         let trimmed_key_prefix = blob_path.trim_start_matches('/').to_string();
-        S3Storage {
+        Ok(S3Storage {
             aws_sdk_config,
             s3_client,
             blob_bucket,
             blob_path: trimmed_key_prefix,
-        }
+        })
     }
 
     /// Make the path on the bucket needed for centralized S3 storage to store elements of a certain type.
@@ -317,7 +317,7 @@ impl EnclaveS3Storage {
     pub async fn new_centralized(
         aws_region: String,
         aws_imds_proxy: String,
-        aws_s3_proxy: String,
+        aws_s3_proxy: Url,
         aws_kms_proxy: String,
         root_key_id: String,
         blob_bucket: String,
@@ -332,7 +332,7 @@ impl EnclaveS3Storage {
             optional_path,
             storage_type,
         )
-        .await;
+        .await?;
         Self::new(s3_storage, aws_kms_proxy, root_key_id).await
     }
 
@@ -340,7 +340,7 @@ impl EnclaveS3Storage {
     pub async fn new_threshold(
         aws_region: String,
         aws_imds_proxy: String,
-        aws_s3_proxy: String,
+        aws_s3_proxy: Url,
         aws_kms_proxy: String,
         root_key_id: String,
         blob_bucket: String,
@@ -357,7 +357,7 @@ impl EnclaveS3Storage {
             storage_type,
             party_id,
         )
-        .await;
+        .await?;
         Self::new(s3_storage, aws_kms_proxy, root_key_id).await
     }
 }
@@ -494,8 +494,8 @@ impl Intercept for HostHeaderInterceptor {
 /// enclave.
 pub async fn build_s3_client(
     aws_sdk_config: &SdkConfig,
-    proxy_endpoint: Option<String>,
-) -> S3Client {
+    proxy_endpoint: Option<Url>,
+) -> anyhow::Result<S3Client> {
     let region = aws_sdk_config.region().expect("AWS region must be set");
     let s3_config = match proxy_endpoint {
         Some(p) => {
@@ -503,26 +503,42 @@ pub async fn build_s3_client(
             let host_header_interceptor = HostHeaderInterceptor {
                 host: format!("s3.{}.amazonaws.com", region),
             };
-            let https_connector = HttpsConnectorBuilder::new()
-                .with_native_roots()
-                .https_only()
-                // Overrides the hostname checked during the TLS handshake
-                .with_server_name(format!("s3.{}.amazonaws.com", region))
-                .enable_http1()
-                .build();
-            let http_client = HyperClientBuilder::new().build(https_connector);
-            aws_sdk_s3::config::Builder::from(aws_sdk_config)
-                // Overrides the hostname used for the TCP connection
-                .endpoint_url(p)
-                .interceptor(host_header_interceptor)
-                .http_client(http_client)
-                // Virtual-hosting style S3 URLs don't work well with endpoint overrides
-                .force_path_style(true)
-                .build()
+            match p.scheme() {
+                "https" => {
+                    let https_connector = HttpsConnectorBuilder::new()
+                        .with_native_roots()
+                        .https_only()
+                        // Overrides the hostname checked during the TLS handshake
+                        .with_server_name(format!("s3.{}.amazonaws.com", region))
+                        .enable_http1()
+                        .build();
+                    let http_client = HyperClientBuilder::new().build(https_connector);
+                    aws_sdk_s3::config::Builder::from(aws_sdk_config)
+                        // Overrides the hostname used for the TCP connection
+                        .endpoint_url(p)
+                        .interceptor(host_header_interceptor)
+                        .http_client(http_client)
+                        // Virtual-hosting style S3 URLs don't work well with endpoint overrides
+                        .force_path_style(true)
+                        .build()
+                }
+                "http" => {
+                    aws_sdk_s3::config::Builder::from(aws_sdk_config)
+                        // Overrides the hostname used for the TCP connection
+                        .endpoint_url(p)
+                        .interceptor(host_header_interceptor)
+                        // Virtual-hosting style S3 URLs don't work well with endpoint overrides
+                        .force_path_style(true)
+                        .build()
+                }
+                _ => {
+                    anyhow::bail!("Only HTTP and HTTPS URL schemes are supported for S3 endpoints")
+                }
+            }
         }
         None => aws_sdk_s3::config::Builder::from(aws_sdk_config).build(),
     };
-    S3Client::from_conf(s3_config)
+    Ok(S3Client::from_conf(s3_config))
 }
 
 pub async fn s3_get_blob<T: DeserializeOwned + Unversionize + Named>(
@@ -759,11 +775,12 @@ pub mod tests {
         let storage = S3Storage::new(
             "aws_region".to_string(),
             Some("aws_imds_proxy".to_string()),
-            Some("aws_kms_proxy".to_string()),
+            Some(Url::parse("http://aws_s3_proxy").unwrap()),
             "blob_bucket".to_string(),
             "blob_key_prefix".to_string(),
         )
-        .await;
+        .await
+        .unwrap();
 
         let url = storage.compute_url("id", "type").unwrap();
         assert_eq!(
@@ -787,7 +804,8 @@ pub mod tests {
             Some(temp_dir.path().to_str().unwrap().to_string()),
             StorageType::PUB,
         )
-        .await;
+        .await
+        .unwrap();
         test_storage_read_store_methods(&mut pub_storage).await;
         test_batch_helper_methods(&mut pub_storage).await;
     }

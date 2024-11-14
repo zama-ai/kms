@@ -97,13 +97,13 @@ async fn main() -> Result<(), anyhow::Error> {
                         S3Storage::new_threshold(
                             config.aws_region.clone().expect("AWS region must be set"),
                             config.aws_imds_proxy.clone(),
-                            config.aws_s3_proxy.clone(),
+                            config.aws_s3_proxy()?,
                             url.host_str().unwrap().to_string(),
                             Some(url.path().to_string()),
                             StorageType::PUB,
                             config.rest.my_id,
                         )
-                        .await,
+                        .await?,
                     ),
                     _ => StorageProxy::File(FileStorage::new_threshold(
                         Some(url_to_pathbuf(&url).as_path()),
@@ -126,10 +126,7 @@ async fn main() -> Result<(), anyhow::Error> {
                                 .aws_imds_proxy
                                 .clone()
                                 .expect("AWS IMDS proxy must be set"),
-                            config
-                                .aws_s3_proxy
-                                .clone()
-                                .expect("AWS S3 proxy must be set"),
+                            config.aws_s3_proxy()?.expect("AWS S3 proxy must be set"),
                             config
                                 .aws_kms_proxy
                                 .clone()
@@ -175,12 +172,12 @@ async fn main() -> Result<(), anyhow::Error> {
                         S3Storage::new_centralized(
                             config.aws_region.clone().expect("AWS region must be set"),
                             config.aws_imds_proxy.clone(),
-                            config.aws_s3_proxy.clone(),
+                            config.aws_s3_proxy()?,
                             url.host_str().unwrap().to_string(),
                             Some(url.path().to_string()),
                             StorageType::PUB,
                         )
-                        .await,
+                        .await?,
                     ),
                     _ => StorageProxy::File(FileStorage::new_centralized(
                         Some(url_to_pathbuf(&url).as_path()),
@@ -198,10 +195,7 @@ async fn main() -> Result<(), anyhow::Error> {
                                 .aws_imds_proxy
                                 .clone()
                                 .expect("AWS IMDS proxy must be set"),
-                            config
-                                .aws_s3_proxy
-                                .clone()
-                                .expect("AWS S3 proxy must be set"),
+                            config.aws_s3_proxy()?.expect("AWS S3 proxy must be set"),
                             config
                                 .aws_kms_proxy
                                 .clone()

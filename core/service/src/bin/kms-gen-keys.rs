@@ -31,6 +31,7 @@ use kms_lib::{
     },
 };
 use serde::{Deserialize, Serialize};
+use url::Url;
 
 #[derive(Parser)]
 #[clap(name = "Zama KMS Key Material Generator")]
@@ -215,7 +216,11 @@ async fn main() {
                 pub_url,
                 &aws_region,
                 aws_imds_endpoint.clone(),
-                aws_s3_endpoint.clone(),
+                aws_s3_endpoint
+                    .as_deref()
+                    .map(Url::parse)
+                    .transpose()
+                    .unwrap(),
                 None,
                 None,
                 StorageType::PUB,
@@ -226,7 +231,11 @@ async fn main() {
                 priv_url,
                 &aws_region,
                 aws_imds_endpoint,
-                aws_s3_endpoint,
+                aws_s3_endpoint
+                    .as_deref()
+                    .map(Url::parse)
+                    .transpose()
+                    .unwrap(),
                 aws_kms_endpoint,
                 root_key_id,
                 StorageType::PRIV,
@@ -270,7 +279,11 @@ async fn main() {
                 pub_url,
                 &aws_region,
                 aws_imds_endpoint.clone(),
-                aws_s3_endpoint.clone(),
+                aws_s3_endpoint
+                    .as_deref()
+                    .map(Url::parse)
+                    .transpose()
+                    .unwrap(),
                 None,
                 None,
                 StorageType::PUB,
@@ -282,7 +295,11 @@ async fn main() {
                 priv_url,
                 &aws_region,
                 aws_imds_endpoint,
-                aws_s3_endpoint,
+                aws_s3_endpoint
+                    .as_deref()
+                    .map(Url::parse)
+                    .transpose()
+                    .unwrap(),
                 aws_kms_endpoint,
                 root_key_id,
                 StorageType::PRIV,
@@ -637,7 +654,7 @@ async fn make_central_proxy_storage(
     url_str: Option<String>,
     aws_region: &str,
     aws_imds_endpoint: Option<String>,
-    aws_s3_endpoint: Option<String>,
+    aws_s3_endpoint: Option<Url>,
     aws_kms_endpoint: Option<String>,
     root_key_id: Option<String>,
     storage_type: StorageType,
@@ -674,7 +691,7 @@ async fn make_central_proxy_storage(
                         Some(url.path().to_string()),
                         storage_type,
                     )
-                    .await,
+                    .await?,
                 ),
             },
             _ => {
@@ -695,7 +712,7 @@ async fn make_threshold_proxy_storage(
     url_str: Option<String>,
     aws_region: &str,
     aws_imds_endpoint: Option<String>,
-    aws_s3_endpoint: Option<String>,
+    aws_s3_endpoint: Option<Url>,
     aws_kms_endpoint: Option<String>,
     root_key_id: Option<String>,
     storage_type: StorageType,
@@ -739,7 +756,7 @@ async fn make_threshold_proxy_storage(
                             storage_type,
                             i,
                         )
-                        .await,
+                        .await?,
                     ),
                 },
                 _ => {

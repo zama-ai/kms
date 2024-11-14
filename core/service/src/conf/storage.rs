@@ -35,6 +35,10 @@ where
             .map(Url::parse)
             .transpose()?)
     }
+
+    pub fn aws_s3_proxy(&self) -> anyhow::Result<Option<Url>> {
+        Ok(self.aws_s3_proxy.as_deref().map(Url::parse).transpose()?)
+    }
 }
 
 impl<MoreConfig> ConfigTracing for StorageConfigWith<MoreConfig> {
