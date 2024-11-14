@@ -1382,9 +1382,9 @@ async fn wait_for_response(
     for _ in 1..=max_iter {
         match query_contract(sim_conf, q.clone(), query_client).await {
             Ok(results) => {
-                if results.len() != num_expected_responses {
+                if results.len() < num_expected_responses {
                     tracing::info!(
-                    "Got {} responses, but expecting {}. Waiting {time_to_wait} seconds for the other responses to be posted to the blockchain.", results.len(), num_expected_responses,
+                    "Got {} responses, but expecting at least {}. Waiting {time_to_wait} seconds for the other responses to be posted to the blockchain.", results.len(), num_expected_responses,
                 );
                     std::thread::sleep(std::time::Duration::from_secs(time_to_wait));
                 } else {

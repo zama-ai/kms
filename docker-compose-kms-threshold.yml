@@ -113,7 +113,7 @@ services:
       - ASC_CONN__CORE__TIMEOUT_CONFIG__REENCRYPTION__RETRY_INTERVAL=1
     depends_on:
       dev-kms-blockchain-asc-deploy:
-        condition: service_completed_successfully
+        condition: service_healthy
       dev-kms-core-init:
         condition: service_completed_successfully
 
@@ -168,7 +168,7 @@ services:
       - ASC_CONN__CORE__TIMEOUT_CONFIG__REENCRYPTION__RETRY_INTERVAL=1
     depends_on:
       dev-kms-blockchain-asc-deploy:
-        condition: service_completed_successfully
+        condition: service_healthy
       dev-kms-core-init:
         condition: service_completed_successfully
 
@@ -223,7 +223,7 @@ services:
       - ASC_CONN__CORE__TIMEOUT_CONFIG__REENCRYPTION__RETRY_INTERVAL=1
     depends_on:
       dev-kms-blockchain-asc-deploy:
-        condition: service_completed_successfully
+        condition: service_healthy
       dev-kms-core-init:
         condition: service_completed_successfully
 
@@ -278,7 +278,7 @@ services:
       - ASC_CONN__CORE__TIMEOUT_CONFIG__REENCRYPTION__RETRY_INTERVAL=1
     depends_on:
       dev-kms-blockchain-asc-deploy:
-        condition: service_completed_successfully
+        condition: service_healthy
       dev-kms-core-init:
         condition: service_completed_successfully
 

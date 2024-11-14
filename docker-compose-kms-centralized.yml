@@ -63,3 +63,5 @@ services:
         condition: service_healthy
       dev-kms-core:
         condition: service_healthy
+      dev-kms-blockchain-asc-deploy:
+        condition: service_healthy
