@@ -1,20 +1,12 @@
 use crate::versioned_storage::{VersionedItem, VersionedMap};
-use cosmwasm_std::{Env, Order, Response, StdError, StdResult, Storage};
+use cosmwasm_std::{Api, Env, Order, StdError, StdResult, Storage};
 use events::kms::{
-    AllowedAddresses, KmsCoreConf, KmsEvent, KmsOperation, OperationValue, Transaction,
-    TransactionId,
+    AdminsOperations, AllowedAddresses, KmsCoreConf, KmsEvent, KmsOperation, OperationType,
+    OperationValue, Transaction, TransactionId,
 };
 
 const ERR_MODIFY_NUM_PARTIES: &str =
     "It is not possible to change the number of parties participating";
-
-fn is_address_allowed(list: &[String], value: &String) -> bool {
-    if list.len() == 1 && list[0] == "*" {
-        true
-    } else {
-        list.contains(value)
-    }
-}
 
 // This storage struct is used to handle storage in the ASC contract. It contains:
 // - the configuration parameters for the KMS (centralized or threshold mode)
@@ -51,11 +43,7 @@ impl KmsContractStorage {
     }
 
     // Update the configuration parameters in the storage
-    pub fn update_core_conf(
-        &self,
-        storage: &mut dyn Storage,
-        value: KmsCoreConf,
-    ) -> StdResult<Response> {
+    pub fn update_core_conf(&self, storage: &mut dyn Storage, value: KmsCoreConf) -> StdResult<()> {
         if !value.is_conformant() {
             return Err(cosmwasm_std::StdError::generic_err(
                 "KMS core configuration is not conformant.",
@@ -76,7 +64,7 @@ impl KmsContractStorage {
                 self.core_conf.save(storage, &value)?;
             }
         };
-        Ok(Response::default())
+        Ok(())
     }
 
     // Load a transaction from the storage
@@ -218,6 +206,12 @@ impl KmsContractStorage {
         self.debug_proof.save(storage, &value)
     }
 
+    // Load the debug proof flag from the storage
+    #[allow(dead_code)]
+    pub fn get_debug_proof(&self, storage: &dyn Storage) -> StdResult<bool> {
+        self.debug_proof.load(storage)
+    }
+
     /// Set allowed addresses.
     ///
     /// Some exec operations must not be accessible to anyone. To allow some finer-grain control
@@ -225,40 +219,89 @@ impl KmsContractStorage {
     /// call these operations:
     /// - `allowed_to_gen`: who can trigger gen calls (ex: `keygen`, `crs_gen`)
     /// - `allowed_to_response`: who can trigger response calls (ex: `decrypt_response`, `keygen_response`)
-    ///
-    /// In the future we might have to add an endpoint to modify these lists.
+    /// - `allowed_to_admin`: who can trigger admin calls (ex: `update_kms_core_conf`, `remove_allowed_address`)
     pub fn set_allowed_addresses(
         &self,
         storage: &mut dyn Storage,
-        value: AllowedAddresses,
+        allowed_addresses: AllowedAddresses,
     ) -> StdResult<()> {
-        self.allowed_addresses.save(storage, &value)
+        self.allowed_addresses.save(storage, &allowed_addresses)
     }
 
-    /// Check if the given address is allowed to trigger gen calls
-    pub fn is_allowed_to_gen(
+    /// Check that the given address is allowed to trigger the given operation type
+    pub fn check_address_is_allowed(
         &self,
         storage: &dyn Storage,
-        value: &String,
-    ) -> Result<bool, cosmwasm_std::StdError> {
-        let allowed_to_gen = &self.allowed_addresses.load(storage)?.allowed_to_gen;
-        Ok(is_address_allowed(allowed_to_gen, value))
+        address: &str,
+        operation_type: OperationType,
+    ) -> Result<(), cosmwasm_std::StdError> {
+        let allowed_addresses = self.allowed_addresses.load(storage)?;
+        allowed_addresses
+            .get_addresses(operation_type.clone())
+            .check_is_allowed(address)
+            .map_err(|e| StdError::generic_err(format!("Type `{}`: {}", operation_type, e)))
     }
 
-    /// Check if the given address is allowed to trigger response calls
-    pub fn is_allowed_to_response(
+    /// Allow an address to trigger the given operation type.
+    pub fn add_allowed_address(
         &self,
-        storage: &dyn Storage,
-        value: &String,
-    ) -> Result<bool, cosmwasm_std::StdError> {
-        let allowed_to_response = &self.allowed_addresses.load(storage)?.allowed_to_response;
-        Ok(is_address_allowed(allowed_to_response, value))
+        storage: &mut dyn Storage,
+        address: &str,
+        operation_type: OperationType,
+        cosmwasm_api: &dyn Api,
+    ) -> StdResult<()> {
+        self.allowed_addresses
+            .update(storage, |mut allowed_addresses| {
+                allowed_addresses
+                    .get_addresses_mut(operation_type.clone())
+                    .add_allowed(address.to_string(), cosmwasm_api)
+                    .map_err(|e| {
+                        StdError::generic_err(format!("Type `{}`: {}", operation_type, e))
+                    })?;
+                Ok(allowed_addresses) as Result<AllowedAddresses, StdError>
+            })?;
+        Ok(())
     }
 
-    // Load the debug proof flag from the storage
-    #[allow(dead_code)]
-    pub fn get_debug_proof(&self, storage: &dyn Storage) -> StdResult<bool> {
-        self.debug_proof.load(storage)
+    /// Forbid an address from triggering the given operation type.
+    pub fn remove_allowed_address(
+        &self,
+        storage: &mut dyn Storage,
+        address: &str,
+        operation_type: OperationType,
+    ) -> StdResult<()> {
+        self.allowed_addresses
+            .update(storage, |mut allowed_addresses| {
+                allowed_addresses
+                    .get_addresses_mut(operation_type.clone())
+                    .remove_allowed(address)
+                    .map_err(|e| {
+                        StdError::generic_err(format!("Type `{}`: {}", operation_type, e))
+                    })?;
+                Ok(allowed_addresses) as Result<AllowedAddresses, StdError>
+            })?;
+        Ok(())
+    }
+
+    /// Replace all of the allowed addresses for the given operation type.
+    pub fn replace_allowed_addresses(
+        &self,
+        storage: &mut dyn Storage,
+        addresses: Vec<String>,
+        operation_type: OperationType,
+        cosmwasm_api: &dyn Api,
+    ) -> StdResult<()> {
+        self.allowed_addresses
+            .update(storage, |mut allowed_addresses| {
+                allowed_addresses
+                    .get_addresses_mut(operation_type.clone())
+                    .replace_allowed(addresses, cosmwasm_api)
+                    .map_err(|e| {
+                        StdError::generic_err(format!("Type `{}`: {}", operation_type, e))
+                    })?;
+                Ok(allowed_addresses) as Result<AllowedAddresses, StdError>
+            })?;
+        Ok(())
     }
 }
 

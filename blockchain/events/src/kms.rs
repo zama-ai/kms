@@ -2,16 +2,155 @@ use super::conversions::*;
 use core::hash::Hash;
 use core::hash::Hasher;
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Addr, Attribute, Event, StdResult};
+use cosmwasm_std::{Api, Attribute, Event};
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::ops::Deref;
 use std::str::FromStr;
-use strum::EnumProperty;
+use strum::{EnumProperty, IntoEnumIterator};
 use strum_macros::{Display, EnumIs, EnumIter, EnumString};
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use typed_builder::TypedBuilder;
+
+/// Define a type alias for Vec<String>
+///
+/// We define an alias with a trait instead of struct mostly because when we instantiate the ASC,
+/// we read JSON objects and not Rust objects. This means type conversions are not made. Hence,
+/// having a struct would require us to provide an `admin` field for each operation type in the
+/// JSON used for contract instantiation, which is not practical.
+type Admins = Vec<String>;
+
+/// Define a trait for Admins-related operations
+pub trait AdminsOperations {
+    fn default_to(addr: &str) -> Self;
+    fn is_valid(&self, cosmwasm_api: &dyn Api) -> bool;
+    fn check_is_valid(&self, cosmwasm_api: &dyn Api) -> Result<(), cosmwasm_std::StdError>;
+    fn is_allowed(&self, address: &str) -> bool;
+    fn check_is_allowed(&self, address: &str) -> Result<(), cosmwasm_std::StdError>;
+    fn add_allowed(
+        &mut self,
+        address: String,
+        cosmwasm_api: &dyn Api,
+    ) -> Result<(), cosmwasm_std::StdError>;
+    fn remove_allowed(&mut self, address: &str) -> Result<(), cosmwasm_std::StdError>;
+    fn replace_allowed(
+        &mut self,
+        admins: Vec<String>,
+        cosmwasm_api: &dyn Api,
+    ) -> Result<(), cosmwasm_std::StdError>;
+}
+
+/// This traits provides methods to manage a list of addresses that are considered admins
+/// (ie, they can be used to allow or restrict some permissions). The most important methods are:
+/// - `is_valid`: check if the current list of admins is valid
+/// - `is_allowed`: check if the given address is in the list of admins
+/// - `add_allowed`: add an address to the list of admins
+/// - `remove_allowed`: remove an address from the list of admins, if there is (strictly) more than one address
+/// - `replace_allowed`: replace the list of admins with a new non-empty list
+impl AdminsOperations for Admins {
+    /// Create a new list of admins with only the given address.
+    fn default_to(addr: &str) -> Self {
+        vec![addr.to_string()]
+    }
+
+    /// Indicate if the current list of admins is valid.
+    fn is_valid(&self, cosmwasm_api: &dyn Api) -> bool {
+        self.iter()
+            .all(|addr| cosmwasm_api.addr_validate(addr).is_ok())
+    }
+
+    /// Check that the current list of admins is valid.
+    fn check_is_valid(&self, cosmwasm_api: &dyn Api) -> Result<(), cosmwasm_std::StdError> {
+        if !self.is_valid(cosmwasm_api) {
+            return Err(cosmwasm_std::StdError::generic_err(
+                "Some addresses are invalid ",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Indicate if the given address is in the current list of admins.
+    fn is_allowed(&self, address: &str) -> bool {
+        self.contains(&address.to_string())
+    }
+
+    /// Check that the given address is in the current list of admins.
+    fn check_is_allowed(&self, address: &str) -> Result<(), cosmwasm_std::StdError> {
+        if !self.is_allowed(address) {
+            return Err(cosmwasm_std::StdError::generic_err(format!(
+                "Address `{}` is not allowed",
+                address
+            )));
+        }
+        Ok(())
+    }
+
+    /// Add an address to the current list of admins, if it is not already present. Also checks that
+    /// the new list is valid.
+    fn add_allowed(
+        &mut self,
+        address: String,
+        cosmwasm_api: &dyn Api,
+    ) -> Result<(), cosmwasm_std::StdError> {
+        if !self.contains(&address) {
+            self.push(address);
+        }
+        self.check_is_valid(cosmwasm_api)?;
+
+        Ok(())
+    }
+
+    /// Remove an address from the current list of admins, if there is (strictly) more than one address.
+    fn remove_allowed(&mut self, address: &str) -> Result<(), cosmwasm_std::StdError> {
+        if self.len() <= 1 {
+            return Err(cosmwasm_std::StdError::generic_err(
+                "Cannot remove address: only one address is remaining",
+            ));
+        }
+        self.retain(|x| x != address);
+        Ok(())
+    }
+
+    /// Replace the current list of admins with a new non-empty list. Also checks that the new list
+    /// is valid.
+    fn replace_allowed(
+        &mut self,
+        admins: Vec<String>,
+        cosmwasm_api: &dyn Api,
+    ) -> Result<(), cosmwasm_std::StdError> {
+        if admins.is_empty() {
+            return Err(cosmwasm_std::StdError::generic_err(
+                "Cannot replace with empty list of addresses",
+            ));
+        }
+
+        *self = admins;
+
+        self.check_is_valid(cosmwasm_api)?;
+
+        Ok(())
+    }
+}
+
+#[derive(VersionsDispatch)]
+pub enum OperationTypeVersioned {
+    V0(OperationType),
+}
+
+/// The types of operations that are only allowed to be triggered by certain addresses.
+///
+/// This enum is closely bound to the `AllowedAddresses` struct: all its variants are matching
+/// the `AllowedAddresses`'s fields.
+#[cw_serde]
+#[derive(Versionize, EnumIter, Display)]
+#[versionize(OperationTypeVersioned)]
+pub enum OperationType {
+    SuperAdmin, // Allowed to update all allowed addresses
+    Admin,      // Allowed to update other configurations (ex: KmsCoreConf)
+    Gen,        // Allowed to trigger gen calls (ex: `keygen`, `crs_gen`)
+    Response,   // Allowed to trigger response calls (ex: `decrypt_response`, `keygen_response`)
+}
 
 #[derive(VersionsDispatch)]
 pub enum AllowedAddressesVersioned {
@@ -22,53 +161,82 @@ pub enum AllowedAddressesVersioned {
 /// in the ASC:
 /// - `allowed_to_gen`: who can trigger all gen calls (ex: `keygen`, `crs_gen`)
 /// - `allowed_to_response`: who can trigger all response calls (ex: `decrypt_response`, `keygen_response`)
-/// In both:
-/// - the wild-card `["*"]` can be used to allow everyone (it must be the only item in the list)
-/// - else, the given addresses should be valid.
+/// - `allowed_to_admin`: who can trigger admin calls (ex: `update_kms_core_conf`, `remove_allowed_address`)
+/// All the given addresses should be valid.
 #[cw_serde]
 #[derive(Versionize)]
 #[versionize(AllowedAddressesVersioned)]
 pub struct AllowedAddresses {
-    pub allowed_to_gen: Vec<String>,
-    pub allowed_to_response: Vec<String>,
+    pub allowed_to_gen: Admins,
+    pub allowed_to_response: Admins,
+    pub admins: Admins,
+    pub super_admins: Admins,
 }
 
-/// Validate the given addresses using the given validate function.
-///
-/// The only exception is if a list only contains the wild-card `["*"]`, which is allowed.
 impl AllowedAddresses {
-    pub fn validate_addresses<F>(&self, validate_addr_fn: F) -> Result<(), cosmwasm_std::StdError>
-    where
-        F: Fn(&str) -> StdResult<Addr>,
-    {
-        let validate_list = |list: &[String]| {
-            if list.len() == 1 && list[0] == "*" {
-                true
-            } else {
-                list.iter().all(|addr| validate_addr_fn(addr).is_ok())
-            }
-        };
-
-        if !validate_list(&self.allowed_to_gen) {
-            return Err(cosmwasm_std::StdError::generic_err(
-                "`allowed_to_gen` contains invalid addresses",
-            ));
+    /// Create a new list of allowed addresses with only the given address.
+    pub fn default_all_to(addr: &str) -> Self {
+        Self {
+            allowed_to_gen: Admins::default_to(addr),
+            allowed_to_response: Admins::default_to(addr),
+            admins: Admins::default_to(addr),
+            super_admins: Admins::default_to(addr),
         }
-
-        if !validate_list(&self.allowed_to_response) {
-            return Err(cosmwasm_std::StdError::generic_err(
-                "`allowed_to_response` contains invalid addresses",
-            ));
-        }
-
-        Ok(())
     }
 
-    pub fn default_to(addr: &str) -> Self {
-        Self {
-            allowed_to_gen: vec![addr.to_string()],
-            allowed_to_response: vec![addr.to_string()],
+    /// Get the list of addresses for the given operation type.
+    pub fn get_addresses(&self, address_type: OperationType) -> &Admins {
+        // This destructuring is necessary to make sure the `AllowedAddresses` struct is properly
+        // bound to the `OperationType` enum.
+        // This forces us to update this method if:
+        // - `AllowedAddresses` has a new field
+        // - `OperationType` has a new variant
+        let Self {
+            allowed_to_gen,
+            allowed_to_response,
+            admins,
+            super_admins,
+        } = self;
+
+        match address_type {
+            OperationType::Gen => allowed_to_gen,
+            OperationType::Response => allowed_to_response,
+            OperationType::Admin => admins,
+            OperationType::SuperAdmin => super_admins,
         }
+    }
+
+    /// Get a mutable reference to the list of addresses for the given operation type.
+    ///
+    /// This is useful for updating the list of addresses.
+    pub fn get_addresses_mut(&mut self, address_type: OperationType) -> &mut Admins {
+        let Self {
+            allowed_to_gen,
+            allowed_to_response,
+            admins,
+            super_admins,
+        } = self;
+        match address_type {
+            OperationType::Gen => allowed_to_gen,
+            OperationType::Response => allowed_to_response,
+            OperationType::Admin => admins,
+            OperationType::SuperAdmin => super_admins,
+        }
+    }
+
+    /// Check that addresses of all operation types are valid.
+    pub fn check_all_addresses_are_valid(
+        &self,
+        cosmwasm_api: &dyn Api,
+    ) -> Result<(), cosmwasm_std::StdError> {
+        for address_type in OperationType::iter() {
+            let addresses = self.get_addresses(address_type.clone());
+
+            addresses.check_is_valid(cosmwasm_api).map_err(|e| {
+                cosmwasm_std::StdError::generic_err(format!("Type `{}`: {}", address_type, e))
+            })?;
+        }
+        Ok(())
     }
 }
 
@@ -1825,6 +1993,52 @@ impl From<MigrationEvent> for Event {
             ("from_version", event.from_version),
             ("to_version", event.to_version),
             ("status", event.status.to_string()),
+        ])
+    }
+}
+
+#[derive(Debug)]
+pub struct UpdateAllowedAddressesEvent {
+    pub new_addresses: Vec<String>,
+    pub operation: String,
+    pub operation_type: OperationType,
+    pub sender: String,
+}
+
+impl From<UpdateAllowedAddressesEvent> for Event {
+    fn from(event: UpdateAllowedAddressesEvent) -> Self {
+        Event::new("update_allowed_addresses").add_attributes([
+            ("new_addresses", event.new_addresses.join(",")),
+            ("operation", event.operation),
+            ("operation_type", event.operation_type.to_string()),
+            ("sender", event.sender),
+        ])
+    }
+}
+
+#[derive(Debug)]
+pub struct SenderAllowedEvent {
+    operation: String,
+    sender: String,
+    allowed: bool,
+}
+
+impl SenderAllowedEvent {
+    pub fn new(operation: String, sender: String) -> Self {
+        Self {
+            operation,
+            sender,
+            allowed: true,
+        }
+    }
+}
+
+impl From<SenderAllowedEvent> for Event {
+    fn from(event: SenderAllowedEvent) -> Self {
+        Event::new("sender_allowed").add_attributes([
+            ("operation", event.operation),
+            ("sender", event.sender),
+            ("allowed", event.allowed.to_string()),
         ])
     }
 }
