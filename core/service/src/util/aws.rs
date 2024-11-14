@@ -1,12 +1,16 @@
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::nitro_enclave::{
     decrypt_ciphertext_for_recipient, decrypt_on_data_key, encrypt_on_data_key,
-    gen_nitro_enclave_keys, nitro_enclave_get_random, NitroEnclaveKeys, APP_BLOB_NONCE_SIZE,
+    nitro_enclave_get_random, request_nitro_enclave_attestation, APP_BLOB_NONCE_SIZE,
+    ENCLAVE_SK_SIZE,
 };
 use crate::storage::{Storage, StorageForText, StorageReader, StorageType};
 use crate::{anyhow_error_and_log, some_or_err};
 use anyhow::ensure;
-use aws_config::Region;
+use aws_config::{
+    imds::{client::Client as IMDSClient, credentials::ImdsCredentialsProvider},
+    Region, SdkConfig,
+};
 use aws_sdk_kms::primitives::Blob;
 use aws_sdk_kms::types::DataKeySpec::Aes256;
 use aws_sdk_kms::types::{KeyEncryptionMechanism, RecipientInfo as KMSRecipientInfo};
@@ -14,6 +18,20 @@ use aws_sdk_kms::Client as AmazonKMSClient;
 use aws_sdk_s3::error::ProvideErrorMetadata;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::Client as S3Client;
+use aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder;
+use aws_smithy_runtime_api::{
+    box_error::BoxError,
+    client::{
+        interceptors::{context::BeforeTransmitInterceptorContextMut, Intercept},
+        runtime_components::RuntimeComponents,
+    },
+};
+use aws_smithy_types::config_bag::ConfigBag;
+use http::{header::HOST, HeaderValue};
+use hyper_rustls::HttpsConnectorBuilder;
+#[cfg(feature = "non-wasm")]
+use rand::rngs::OsRng;
+use rsa::{RsaPrivateKey, RsaPublicKey};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -28,6 +46,7 @@ const PREALLOCATED_BLOB_SIZE: usize = 32768;
 
 // TODO refactor to keep all storage code in the same folder
 pub struct S3Storage {
+    pub aws_sdk_config: SdkConfig,
     pub s3_client: S3Client,
     pub blob_bucket: String,
     pub blob_path: String,
@@ -36,17 +55,26 @@ pub struct S3Storage {
 impl S3Storage {
     pub async fn new_centralized(
         aws_region: String,
+        aws_imds_proxy: Option<String>,
         aws_s3_proxy: Option<String>,
         blob_bucket: String,
         optional_path: Option<String>,
         storage_type: StorageType,
     ) -> Self {
         let blob_path = Self::centralized_path(optional_path, storage_type);
-        Self::new(aws_region, aws_s3_proxy, blob_bucket, blob_path).await
+        Self::new(
+            aws_region,
+            aws_imds_proxy,
+            aws_s3_proxy,
+            blob_bucket,
+            blob_path,
+        )
+        .await
     }
 
     pub async fn new_threshold(
         aws_region: String,
+        aws_imds_proxy: Option<String>,
         aws_s3_proxy: Option<String>,
         blob_bucket: String,
         optional_path: Option<String>,
@@ -54,18 +82,28 @@ impl S3Storage {
         party_id: usize,
     ) -> Self {
         let blob_path = Self::threshold_path(optional_path, storage_type, party_id);
-        Self::new(aws_region, aws_s3_proxy, blob_bucket, blob_path).await
+        Self::new(
+            aws_region,
+            aws_imds_proxy,
+            aws_s3_proxy,
+            blob_bucket,
+            blob_path,
+        )
+        .await
     }
 
     async fn new(
         aws_region: String,
+        aws_imds_proxy: Option<String>,
         aws_s3_proxy: Option<String>,
         blob_bucket: String,
         blob_path: String,
     ) -> Self {
-        let s3_client = build_s3_client(aws_region, aws_s3_proxy).await;
+        let aws_sdk_config = build_aws_sdk_config(aws_region, aws_imds_proxy).await;
+        let s3_client = build_s3_client(&aws_sdk_config, aws_s3_proxy).await;
         let trimmed_key_prefix = blob_path.trim_start_matches('/').to_string();
         S3Storage {
+            aws_sdk_config,
             s3_client,
             blob_bucket,
             blob_path: trimmed_key_prefix,
@@ -243,68 +281,76 @@ impl StorageForText for S3Storage {
     }
 }
 
-/// Keeps together everything needed for running a chain of trust for working with application
-/// secret keys (such as FHE private keys). The root key encrypt data keys which encrypt application
-/// keys. The root key is stored in AWS KMS and never leaves it. Encrypted application keys
-/// (together with the corresponding data keys) are stored on S3. Enclave keys permit secure
-/// decryption of data keys by AWS KMS.
+/// Keeps together everything needed for running a chain of trust for working
+/// with application secret keys (such as FHE private keys). The root key
+/// encrypt data keys which encrypt application keys. The root key is stored in
+/// AWS KMS and never leaves it. Encrypted application keys (together with the
+/// corresponding data keys) are stored on S3. The enclave keypair permits
+/// secure decryption of data keys by AWS KMS.
 pub struct EnclaveS3Storage {
     s3_storage: S3Storage,
     aws_kms_client: AmazonKMSClient,
     root_key_id: String,
-    enclave_keys: NitroEnclaveKeys,
+    enclave_sk: RsaPrivateKey,
+    enclave_pk: RsaPublicKey,
 }
 
 impl EnclaveS3Storage {
     async fn new(
         s3_storage: S3Storage,
-        aws_region: String,
         aws_kms_proxy: String,
         root_key_id: String,
     ) -> anyhow::Result<Self> {
-        let aws_kms_client = build_aws_kms_client(aws_region, aws_kms_proxy).await;
-        let enclave_keys = gen_nitro_enclave_keys()?;
+        let aws_kms_client = build_aws_kms_client(&s3_storage.aws_sdk_config, aws_kms_proxy).await;
+        let enclave_sk = RsaPrivateKey::new(&mut OsRng, ENCLAVE_SK_SIZE)?;
+        let enclave_pk = RsaPublicKey::from(&enclave_sk);
         Ok(EnclaveS3Storage {
             s3_storage,
             aws_kms_client,
             root_key_id,
-            enclave_keys,
+            enclave_sk,
+            enclave_pk,
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn new_centralized(
         aws_region: String,
+        aws_imds_proxy: String,
         aws_s3_proxy: String,
         aws_kms_proxy: String,
+        root_key_id: String,
         blob_bucket: String,
         optional_path: Option<String>,
         storage_type: StorageType,
-        root_key_id: String,
     ) -> anyhow::Result<Self> {
         let s3_storage = S3Storage::new_centralized(
             aws_region.clone(),
+            Some(aws_imds_proxy),
             Some(aws_s3_proxy),
             blob_bucket,
             optional_path,
             storage_type,
         )
         .await;
-        Self::new(s3_storage, aws_region, aws_kms_proxy, root_key_id).await
+        Self::new(s3_storage, aws_kms_proxy, root_key_id).await
     }
 
     #[allow(clippy::too_many_arguments)]
     pub async fn new_threshold(
         aws_region: String,
+        aws_imds_proxy: String,
         aws_s3_proxy: String,
         aws_kms_proxy: String,
+        root_key_id: String,
         blob_bucket: String,
         optional_path: Option<String>,
         storage_type: StorageType,
         party_id: usize,
-        root_key_id: String,
     ) -> anyhow::Result<Self> {
         let s3_storage = S3Storage::new_threshold(
             aws_region.clone(),
+            Some(aws_imds_proxy),
             Some(aws_s3_proxy),
             blob_bucket,
             optional_path,
@@ -312,7 +358,7 @@ impl EnclaveS3Storage {
             party_id,
         )
         .await;
-        Self::new(s3_storage, aws_region, aws_kms_proxy, root_key_id).await
+        Self::new(s3_storage, aws_kms_proxy, root_key_id).await
     }
 }
 
@@ -333,7 +379,8 @@ impl StorageReader for EnclaveS3Storage {
         let mut encrypted_data = self.s3_storage.read_data(url).await?;
         nitro_enclave_decrypt_app_key(
             &self.aws_kms_client,
-            &self.enclave_keys,
+            &self.enclave_sk,
+            &self.enclave_pk,
             &mut encrypted_data,
         )
         .await
@@ -363,7 +410,8 @@ impl Storage for EnclaveS3Storage {
     ) -> anyhow::Result<()> {
         let encrypted_data = nitro_enclave_encrypt_app_key(
             &self.aws_kms_client,
-            &self.enclave_keys,
+            &self.enclave_sk,
+            &self.enclave_pk,
             &self.root_key_id,
             data,
         )
@@ -397,23 +445,83 @@ impl Named for AppKeyBlob {
     const NAME: &'static str = "AppKeyBlob";
 }
 
+/// Given the address of a vsock-to-TCP proxy, constructs an AWS SDK configuration for requesting AWS credentials inside of a Nitro enclave.
+pub async fn build_aws_sdk_config(aws_region: String, proxy_endpoint: Option<String>) -> SdkConfig {
+    let config_loader = match proxy_endpoint {
+        Some(p) => {
+            let imds_client = IMDSClient::builder()
+                .endpoint(p)
+                .expect("IMDS endpoint invalid")
+                .build();
+            let credentials_provider = ImdsCredentialsProvider::builder()
+                .imds_client(imds_client)
+                .build();
+            aws_config::defaults(aws_config::BehaviorVersion::latest())
+                .credentials_provider(credentials_provider)
+        }
+        None => aws_config::defaults(aws_config::BehaviorVersion::latest()),
+    };
+    config_loader.region(Region::new(aws_region)).load().await
+}
+
+/// Accessing AWS S3 endpoints through a proxy might require rewriting the Host
+/// HTTP header. We use the AWS SDK interceptor mechanism to do that.
+#[derive(Debug)]
+struct HostHeaderInterceptor {
+    host: String,
+}
+
+impl Intercept for HostHeaderInterceptor {
+    fn name(&self) -> &'static str {
+        "HostHeaderInterceptor"
+    }
+
+    fn modify_before_signing(
+        &self,
+        context: &mut BeforeTransmitInterceptorContextMut<'_>,
+        _runtime_components: &RuntimeComponents,
+        _cfg: &mut ConfigBag,
+    ) -> Result<(), BoxError> {
+        context
+            .request_mut()
+            .headers_mut()
+            .insert(HOST, HeaderValue::from_str(self.host.as_str())?);
+        Ok(())
+    }
+}
+
 /// Given the address of a vsock-to-TCP proxy, constructs an S3 client for use inside of a Nitro
 /// enclave.
-pub async fn build_s3_client(region: String, proxy: Option<String>) -> S3Client {
-    // SdkConfig - shared AWS configuration
-    let mut sdk_config_loader =
-        aws_config::defaults(aws_config::BehaviorVersion::latest()).region(Region::new(region));
-
-    if let Some(proxy_value) = proxy {
-        sdk_config_loader = sdk_config_loader.endpoint_url(proxy_value) // useful for localstack
-    }
-    let sdk_config = sdk_config_loader.load().await;
-
-    // S3-specific config
-    let s3_config = aws_sdk_s3::config::Builder::from(&sdk_config)
-        .force_path_style(true) // S3-specific option (needed for minio)
-        .build();
-
+pub async fn build_s3_client(
+    aws_sdk_config: &SdkConfig,
+    proxy_endpoint: Option<String>,
+) -> S3Client {
+    let region = aws_sdk_config.region().expect("AWS region must be set");
+    let s3_config = match proxy_endpoint {
+        Some(p) => {
+            // Overrides the hostname checked by the AWS API endpoint
+            let host_header_interceptor = HostHeaderInterceptor {
+                host: format!("s3.{}.amazonaws.com", region),
+            };
+            let https_connector = HttpsConnectorBuilder::new()
+                .with_native_roots()
+                .https_only()
+                // Overrides the hostname checked during the TLS handshake
+                .with_server_name(format!("s3.{}.amazonaws.com", region))
+                .enable_http1()
+                .build();
+            let http_client = HyperClientBuilder::new().build(https_connector);
+            aws_sdk_s3::config::Builder::from(aws_sdk_config)
+                // Overrides the hostname used for the TCP connection
+                .endpoint_url(p)
+                .interceptor(host_header_interceptor)
+                .http_client(http_client)
+                // Virtual-hosting style S3 URLs don't work well with endpoint overrides
+                .force_path_style(true)
+                .build()
+        }
+        None => aws_sdk_s3::config::Builder::from(aws_sdk_config).build(),
+    };
     S3Client::from_conf(s3_config)
 }
 
@@ -480,47 +588,25 @@ async fn s3_put_blob_bytes(
 
 /// Given the address of a vsock-to-TCP proxy, constructs an AWS KMS client for use inside of a
 /// Nitro enclave.
-pub async fn build_aws_kms_client(region: String, proxy: String) -> AmazonKMSClient {
-    let kms_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
-        .region(Region::new(region))
-        .endpoint_url(proxy)
-        .load()
-        .await;
-    AmazonKMSClient::new(&kms_config)
-}
-
-/// Request AWS KMS to re-encrypt a secret (usually, a data key on which application keys, such as
-/// FHE private keys, are encrypted) from a key stored in AWS KMS (usually, the root key) on the
-/// Nitro enclave public key, then decrypt the re-encrypted secret using the Nitro enclave private
-/// key.
-async fn aws_kms_decrypt_blob(
-    aws_kms_client: &AmazonKMSClient,
-    nitro_enclave_keys: &NitroEnclaveKeys,
-    root_key_id: &String,
-    blob_bytes: &[u8],
-) -> anyhow::Result<Vec<u8>> {
-    let decrypt_response = aws_kms_client
-        .decrypt()
-        .key_id(root_key_id)
-        .ciphertext_blob(Blob::new(blob_bytes.to_owned()))
-        .recipient(
-            KMSRecipientInfo::builder()
-                .key_encryption_algorithm(KeyEncryptionMechanism::RsaesOaepSha256)
-                .attestation_document(Blob::new(nitro_enclave_keys.attestation_document.clone()))
-                .build(),
-        )
-        .send()
-        .await?;
-
-    let decrypt_response_ciphertext_bytes = some_or_err(
-        decrypt_response.ciphertext_for_recipient,
-        "No blob returned in decryption response from AWS".to_string(),
-    )?
-    .into_inner();
-    decrypt_ciphertext_for_recipient(
-        decrypt_response_ciphertext_bytes,
-        &nitro_enclave_keys.enclave_sk,
-    )
+pub async fn build_aws_kms_client(
+    aws_sdk_config: &SdkConfig,
+    proxy_endpoint: String,
+) -> AmazonKMSClient {
+    let region = aws_sdk_config.region().expect("AWS region must be set");
+    let https_connector = HttpsConnectorBuilder::new()
+        .with_native_roots()
+        .https_only()
+        // Overrides the hostname checked during the TLS handshake
+        .with_server_name(format!("kms.{}.amazonaws.com", region))
+        .enable_http1()
+        .build();
+    let http_client = HyperClientBuilder::new().build(https_connector);
+    let kms_config = aws_sdk_kms::config::Builder::from(aws_sdk_config)
+        // Overrides the hostname used for the TCP connection
+        .endpoint_url(proxy_endpoint)
+        .http_client(http_client)
+        .build();
+    AmazonKMSClient::from_conf(kms_config)
 }
 
 /// Request a data key from AWS KMS and encrypt an application key (such as the FHE private key) on
@@ -528,14 +614,16 @@ async fn aws_kms_decrypt_blob(
 /// the encrypted application key.
 pub async fn nitro_enclave_encrypt_app_key<T: Serialize + Versionize + Named>(
     aws_kms_client: &AmazonKMSClient,
-    nitro_enclave_keys: &NitroEnclaveKeys,
+    enclave_sk: &RsaPrivateKey,
+    enclave_pk: &RsaPublicKey,
     root_key_id: &String,
     app_key: &T,
 ) -> anyhow::Result<AppKeyBlob> {
-    let mut blob_bytes = Vec::new();
-    safe_serialize(app_key, &mut blob_bytes, SAFE_SER_SIZE_LIMIT)?;
+    // request enclave attestation before making an AWS KMS request, so the
+    // attestation is fresh and not older than 5 minutes
+    let enclave_attestation = request_nitro_enclave_attestation(enclave_pk)?;
 
-    // request the data key from AWS KMS to encrypt the blob on
+    // request the data key from AWS KMS to encrypt the app key
     let gen_data_key_response = aws_kms_client
         .generate_data_key()
         .key_id(root_key_id)
@@ -543,7 +631,7 @@ pub async fn nitro_enclave_encrypt_app_key<T: Serialize + Versionize + Named>(
         .recipient(
             KMSRecipientInfo::builder()
                 .key_encryption_algorithm(KeyEncryptionMechanism::RsaesOaepSha256)
-                .attestation_document(Blob::new(nitro_enclave_keys.attestation_document.clone()))
+                .attestation_document(Blob::new(enclave_attestation))
                 .build(),
         )
         .send()
@@ -557,12 +645,13 @@ pub async fn nitro_enclave_encrypt_app_key<T: Serialize + Versionize + Named>(
     )?;
     let data_key = decrypt_ciphertext_for_recipient(
         gen_data_key_response_ciphertext_blob.into_inner(),
-        &nitro_enclave_keys.enclave_sk,
+        enclave_sk,
     )?;
 
+    // encrypt the app key under the data key
+    let mut blob_bytes = Vec::new();
+    safe_serialize(app_key, &mut blob_bytes, SAFE_SER_SIZE_LIMIT)?;
     let iv = nitro_enclave_get_random(APP_BLOB_NONCE_SIZE)?;
-
-    // encrypt the blob on the data key
     let auth_tag = encrypt_on_data_key(&mut blob_bytes, &data_key, &iv)?;
     Ok(AppKeyBlob {
         root_key_id: root_key_id.to_string(),
@@ -581,16 +670,37 @@ pub async fn nitro_enclave_encrypt_app_key<T: Serialize + Versionize + Named>(
 /// data key to decrypt an application key (such as an FHE private key).
 pub async fn nitro_enclave_decrypt_app_key<T: DeserializeOwned + Unversionize + Named>(
     aws_kms_client: &AmazonKMSClient,
-    nitro_enclave_keys: &NitroEnclaveKeys,
+    enclave_sk: &RsaPrivateKey,
+    enclave_pk: &RsaPublicKey,
     app_key_blob: &mut AppKeyBlob,
 ) -> anyhow::Result<T> {
-    let data_key = aws_kms_decrypt_blob(
-        aws_kms_client,
-        nitro_enclave_keys,
-        &app_key_blob.root_key_id,
-        &app_key_blob.data_key_blob,
-    )
-    .await?;
+    // request enclave attestation before making an AWS KMS request, so the
+    // attestation is fresh and not older than 5 minutes
+    let enclave_attestation = request_nitro_enclave_attestation(enclave_pk)?;
+
+    // decrypt the data key under which the app key was encrypted
+    let decrypt_data_key_response = aws_kms_client
+        .decrypt()
+        .key_id(&app_key_blob.root_key_id)
+        .ciphertext_blob(Blob::new(app_key_blob.data_key_blob.clone()))
+        .recipient(
+            KMSRecipientInfo::builder()
+                .key_encryption_algorithm(KeyEncryptionMechanism::RsaesOaepSha256)
+                .attestation_document(Blob::new(enclave_attestation))
+                .build(),
+        )
+        .send()
+        .await?;
+    let decrypt_data_key_response_ciphertext_bytes = some_or_err(
+        decrypt_data_key_response.ciphertext_for_recipient,
+        "No blob returned in decryption response from AWS".to_string(),
+    )?;
+    let data_key = decrypt_ciphertext_for_recipient(
+        decrypt_data_key_response_ciphertext_bytes.into_inner(),
+        enclave_sk,
+    )?;
+
+    // decrypt the app key
     decrypt_on_data_key(
         &mut app_key_blob.ciphertext,
         &data_key,
@@ -648,6 +758,7 @@ pub mod tests {
     async fn aws_storage_url() {
         let storage = S3Storage::new(
             "aws_region".to_string(),
+            Some("aws_imds_proxy".to_string()),
             Some("aws_kms_proxy".to_string()),
             "blob_bucket".to_string(),
             "blob_key_prefix".to_string(),
@@ -670,6 +781,7 @@ pub mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut pub_storage = S3Storage::new_centralized(
             AWS_REGION.to_string(),
+            None,
             None,
             BUCKET_NAME.to_string(),
             Some(temp_dir.path().to_str().unwrap().to_string()),

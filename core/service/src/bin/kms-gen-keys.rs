@@ -14,7 +14,7 @@ use kms_lib::{
     },
     storage::{url_to_pathbuf, FileStorage, Storage, StorageType},
     util::{
-        aws::S3Storage,
+        aws::{EnclaveS3Storage, S3Storage},
         key_setup::{ensure_central_keys_exist, ensure_central_server_signing_keys_exist},
     },
     StorageProxy,
@@ -69,9 +69,18 @@ enum Mode {
         /// AWS region to use for S3 storage
         #[clap(long, default_value = "eu-west-3")]
         aws_region: String,
+        /// Optional AWS IMDS API endpoint
+        #[clap(long, default_value = None)]
+        aws_imds_endpoint: Option<String>,
         /// Optional AWS S3 API endpoint
         #[clap(long, default_value = None)]
         aws_s3_endpoint: Option<String>,
+        /// Optional AWS KMS API endpoint
+        #[clap(long, default_value = None)]
+        aws_kms_endpoint: Option<String>,
+        /// Optional root key ID
+        #[clap(long, default_value = None)]
+        root_key_id: Option<String>,
         /// Optional parameter for the private storage URL
         #[clap(long, default_value = None)]
         priv_url: Option<String>,
@@ -107,9 +116,18 @@ enum Mode {
         /// AWS region to use for S3 storage
         #[clap(long, default_value = "eu-west-3")]
         aws_region: String,
+        /// Optional AWS IMDS API endpoint
+        #[clap(long, default_value = None)]
+        aws_imds_endpoint: Option<String>,
         /// Optional AWS S3 API endpoint
         #[clap(long, default_value = None)]
         aws_s3_endpoint: Option<String>,
+        /// Optional AWS KMS API endpoint
+        #[clap(long, default_value = None)]
+        aws_kms_endpoint: Option<String>,
+        /// Optional root key ID
+        #[clap(long, default_value = None)]
+        root_key_id: Option<String>,
         /// Optional parameter for the private storage URL
         #[clap(long, default_value = None)]
         priv_url: Option<String>,
@@ -180,7 +198,10 @@ async fn main() {
     match args.mode {
         Mode::Centralized {
             aws_region,
+            aws_imds_endpoint,
             aws_s3_endpoint,
+            aws_kms_endpoint,
+            root_key_id,
             priv_url,
             pub_url,
             deterministic,
@@ -193,7 +214,10 @@ async fn main() {
             let mut pub_storage = make_central_proxy_storage(
                 pub_url,
                 &aws_region,
+                aws_imds_endpoint.clone(),
                 aws_s3_endpoint.clone(),
+                None,
+                None,
                 StorageType::PUB,
             )
             .await
@@ -201,7 +225,10 @@ async fn main() {
             let mut priv_storage = make_central_proxy_storage(
                 priv_url,
                 &aws_region,
+                aws_imds_endpoint,
                 aws_s3_endpoint,
+                aws_kms_endpoint,
+                root_key_id,
                 StorageType::PRIV,
             )
             .await
@@ -227,7 +254,10 @@ async fn main() {
         Mode::Threshold {
             param_test,
             aws_region,
+            aws_imds_endpoint,
             aws_s3_endpoint,
+            aws_kms_endpoint,
+            root_key_id,
             priv_url,
             pub_url,
             deterministic,
@@ -239,7 +269,10 @@ async fn main() {
             let mut pub_storages = make_threshold_proxy_storage(
                 pub_url,
                 &aws_region,
+                aws_imds_endpoint.clone(),
                 aws_s3_endpoint.clone(),
+                None,
+                None,
                 StorageType::PUB,
                 AMOUNT_PARTIES,
             )
@@ -248,7 +281,10 @@ async fn main() {
             let mut priv_storages = make_threshold_proxy_storage(
                 priv_url,
                 &aws_region,
+                aws_imds_endpoint,
                 aws_s3_endpoint,
+                aws_kms_endpoint,
+                root_key_id,
                 StorageType::PRIV,
                 AMOUNT_PARTIES,
             )
@@ -600,7 +636,10 @@ async fn show_key<S: Storage>(storage: &S, data_type: &str) {
 async fn make_central_proxy_storage(
     url_str: Option<String>,
     aws_region: &str,
+    aws_imds_endpoint: Option<String>,
     aws_s3_endpoint: Option<String>,
+    aws_kms_endpoint: Option<String>,
+    root_key_id: Option<String>,
     storage_type: StorageType,
 ) -> anyhow::Result<StorageProxy> {
     let parsed_url = url_str
@@ -610,16 +649,34 @@ async fn make_central_proxy_storage(
         .map_err(|e| anyhow::anyhow!("Could not parse URL: {e}"))?;
     let storage: StorageProxy = match parsed_url {
         Some(url) => match url.scheme() {
-            "s3" => StorageProxy::S3(
-                S3Storage::new_centralized(
-                    aws_region.to_string(),
-                    aws_s3_endpoint,
-                    some_or_err(url.host_str(), "No host in url {url}".to_string())?.to_string(),
-                    Some(url.path().to_string()),
-                    storage_type,
-                )
-                .await,
-            ),
+            "s3" => match storage_type {
+                StorageType::PRIV => StorageProxy::EnclaveS3(
+                    EnclaveS3Storage::new_centralized(
+                        aws_region.to_string(),
+                        aws_imds_endpoint.expect("AWS IMDS proxy must be set"),
+                        aws_s3_endpoint.expect("AWS S3 proxy must be set"),
+                        aws_kms_endpoint.expect("AWS KMS proxy must be set"),
+                        root_key_id.expect("Root key ID must be set"),
+                        some_or_err(url.host_str(), "No host in url {url}".to_string())?
+                            .to_string(),
+                        Some(url.path().to_string()),
+                        storage_type,
+                    )
+                    .await?,
+                ),
+                _ => StorageProxy::S3(
+                    S3Storage::new_centralized(
+                        aws_region.to_string(),
+                        aws_imds_endpoint,
+                        aws_s3_endpoint,
+                        some_or_err(url.host_str(), "No host in url {url}".to_string())?
+                            .to_string(),
+                        Some(url.path().to_string()),
+                        storage_type,
+                    )
+                    .await,
+                ),
+            },
             _ => {
                 let optional_path = url_to_pathbuf(&url);
                 StorageProxy::File(
@@ -633,10 +690,14 @@ async fn make_central_proxy_storage(
     Ok(storage)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn make_threshold_proxy_storage(
     url_str: Option<String>,
     aws_region: &str,
+    aws_imds_endpoint: Option<String>,
     aws_s3_endpoint: Option<String>,
+    aws_kms_endpoint: Option<String>,
+    root_key_id: Option<String>,
     storage_type: StorageType,
     amount: usize,
 ) -> anyhow::Result<Vec<StorageProxy>> {
@@ -649,18 +710,38 @@ async fn make_threshold_proxy_storage(
     for i in 1..=amount {
         let cur_storage: StorageProxy = match parsed_url {
             Some(ref url) => match url.scheme() {
-                "s3" => StorageProxy::S3(
-                    S3Storage::new_threshold(
-                        aws_region.to_string(),
-                        aws_s3_endpoint.clone(),
-                        some_or_err(url.host_str(), "No host in url {url}".to_string())?
-                            .to_string(),
-                        Some(url.path().to_string()),
-                        storage_type,
-                        i,
-                    )
-                    .await,
-                ),
+                "s3" => match storage_type {
+                    StorageType::PRIV => StorageProxy::EnclaveS3(
+                        EnclaveS3Storage::new_threshold(
+                            aws_region.to_string(),
+                            aws_imds_endpoint
+                                .clone()
+                                .expect("AWS IMDS proxy must be set"),
+                            aws_s3_endpoint.clone().expect("AWS S3 proxy must be set"),
+                            aws_kms_endpoint.clone().expect("AWS KMS proxy must be set"),
+                            root_key_id.clone().expect("Root key ID must be set"),
+                            some_or_err(url.host_str(), "No host in url {url}".to_string())?
+                                .to_string(),
+                            Some(url.path().to_string()),
+                            storage_type,
+                            i,
+                        )
+                        .await?,
+                    ),
+                    _ => StorageProxy::S3(
+                        S3Storage::new_threshold(
+                            aws_region.to_string(),
+                            aws_imds_endpoint.clone(),
+                            aws_s3_endpoint.clone(),
+                            some_or_err(url.host_str(), "No host in url {url}".to_string())?
+                                .to_string(),
+                            Some(url.path().to_string()),
+                            storage_type,
+                            i,
+                        )
+                        .await,
+                    ),
+                },
                 _ => {
                     let optional_path = url_to_pathbuf(url);
                     StorageProxy::File(

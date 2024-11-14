@@ -3,8 +3,7 @@ use kms_lib::conf::centralized::CentralizedConfig;
 use kms_lib::conf::init_conf_trace;
 use kms_lib::conf::storage::StorageConfigWith;
 use kms_lib::conf::threshold::ThresholdConfig;
-use kms_lib::rpc::central_rpc::server_handle as kms_server_handle;
-use kms_lib::rpc::central_rpc_proxy::server_handle as kms_proxy_server_handle;
+use kms_lib::rpc::central_rpc::server_handle;
 use kms_lib::storage::{url_to_pathbuf, FileStorage, StorageType};
 use kms_lib::threshold::threshold_kms::{threshold_server_init, threshold_server_start};
 use kms_lib::util::aws::{EnclaveS3Storage, S3Storage};
@@ -59,15 +58,6 @@ enum ExecutionMode {
         )]
         config_file: String,
     },
-    NitroEnclaveProxy {
-        /// Enclave application CID for proxying
-        #[clap(
-            long,
-            default_value = "config/default_centralized_enclave_proxy.toml",
-            help = "path to the configuration file"
-        )]
-        config_file: String,
-    },
 }
 
 /// Starts a KMS server.
@@ -105,7 +95,8 @@ async fn main() -> Result<(), anyhow::Error> {
                 Some(url) => match url.scheme() {
                     "s3" => StorageProxy::S3(
                         S3Storage::new_threshold(
-                            config.aws_region.clone().unwrap(),
+                            config.aws_region.clone().expect("AWS region must be set"),
+                            config.aws_imds_proxy.clone(),
                             config.aws_s3_proxy.clone(),
                             url.host_str().unwrap().to_string(),
                             Some(url.path().to_string()),
@@ -130,14 +121,24 @@ async fn main() -> Result<(), anyhow::Error> {
                 Some(url) => match url.scheme() {
                     "s3" => StorageProxy::EnclaveS3(
                         EnclaveS3Storage::new_threshold(
-                            config.aws_region.clone().unwrap(),
-                            config.aws_s3_proxy.clone().unwrap(),
-                            config.aws_kms_proxy.clone().unwrap(),
+                            config.aws_region.clone().expect("AWS region must be set"),
+                            config
+                                .aws_imds_proxy
+                                .clone()
+                                .expect("AWS IMDS proxy must be set"),
+                            config
+                                .aws_s3_proxy
+                                .clone()
+                                .expect("AWS S3 proxy must be set"),
+                            config
+                                .aws_kms_proxy
+                                .clone()
+                                .expect("AWS KMS proxy must be set"),
+                            config.root_key_id.clone().expect("Root key ID must be set"),
                             url.host_str().unwrap().to_string(),
                             Some(url.path().to_string()),
                             StorageType::PRIV,
                             config.rest.my_id,
-                            config.root_key_id.clone().unwrap(),
                         )
                         .await?,
                     ),
@@ -172,7 +173,8 @@ async fn main() -> Result<(), anyhow::Error> {
                 Some(url) => match url.scheme() {
                     "s3" => StorageProxy::S3(
                         S3Storage::new_centralized(
-                            config.aws_region.clone().unwrap(),
+                            config.aws_region.clone().expect("AWS region must be set"),
+                            config.aws_imds_proxy.clone(),
                             config.aws_s3_proxy.clone(),
                             url.host_str().unwrap().to_string(),
                             Some(url.path().to_string()),
@@ -191,13 +193,23 @@ async fn main() -> Result<(), anyhow::Error> {
                 Some(url) => match url.scheme() {
                     "s3" => StorageProxy::EnclaveS3(
                         EnclaveS3Storage::new_centralized(
-                            config.aws_region.clone().unwrap(),
-                            config.aws_s3_proxy.clone().unwrap(),
-                            config.aws_kms_proxy.clone().unwrap(),
+                            config.aws_region.clone().expect("AWS region must be set"),
+                            config
+                                .aws_imds_proxy
+                                .clone()
+                                .expect("AWS IMDS proxy must be set"),
+                            config
+                                .aws_s3_proxy
+                                .clone()
+                                .expect("AWS S3 proxy must be set"),
+                            config
+                                .aws_kms_proxy
+                                .clone()
+                                .expect("AWS KMS proxy must be set"),
+                            config.root_key_id.clone().expect("Root key ID must be set"),
                             url.host_str().unwrap().to_string(),
                             Some(url.path().to_string()),
                             StorageType::PRIV,
-                            config.root_key_id.clone().unwrap(),
                         )
                         .await?,
                     ),
@@ -208,11 +220,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 },
                 None => StorageProxy::File(FileStorage::new_centralized(None, StorageType::PRIV)?),
             };
-            kms_server_handle(config.into(), pub_storage, priv_storage).await
-        }
-        ExecutionMode::NitroEnclaveProxy { config_file } => {
-            let config: StorageConfigWith<CentralizedConfig> = init_conf_trace(&config_file)?;
-            kms_proxy_server_handle(config.clone().into(), config.enclave_vsock.unwrap()).await
+            server_handle(config.into(), pub_storage, priv_storage).await
         }
     }?;
     Ok(())

@@ -8,9 +8,9 @@ pub struct StorageConfigWith<MoreConfig> {
     pub private_storage_url: Option<String>,
     pub root_key_id: Option<String>,
     pub aws_region: Option<String>,
+    pub aws_imds_proxy: Option<String>,
     pub aws_s3_proxy: Option<String>,
     pub aws_kms_proxy: Option<String>,
-    pub enclave_vsock: Option<String>,
     #[serde(flatten)]
     pub rest: MoreConfig,
     pub tracing: Option<Tracing>,

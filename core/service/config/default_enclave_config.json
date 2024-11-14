@@ -1,0 +1,6 @@
+{
+    "cpu_count": 2,
+    "memory_mib": 2048,
+    "enclave_cid": 20,
+    "eif_path": "enclave.eif"
+}

@@ -32,16 +32,7 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
        /var/cache/buildkit/target/release/kms-gen-keys \
     ./core/service/bin
 
-## Third stage builds nitro-cli (used to start enclaves only)
-FROM --platform=$BUILDPLATFORM base AS nitro-cli
-
-WORKDIR /build
-RUN git clone https://github.com/aws/aws-nitro-enclaves-cli --branch v1.3.3 --single-branch
-
-WORKDIR aws-nitro-enclaves-cli
-RUN make nitro-cli-native
-
-## Fourth stage builds Go dependencies
+## Third stage builds Go dependencies
 FROM --platform=$BUILDPLATFORM debian:stable-slim AS go-runtime
 WORKDIR /app/kms
 
@@ -60,10 +51,10 @@ ENV PATH="$PATH:/usr/local/go/bin:/root/go/bin"
 # Install grpc-health-probe
 RUN go install github.com/grpc-ecosystem/grpc-health-probe@latest
 
-## Fifth stage: Copy the binaries from preceding stages
+## Fourth stage: Copy the binaries from preceding stages
 # This stage will be the final image
 FROM --platform=$BUILDPLATFORM debian:stable-slim
-RUN apt update && apt install -y libssl3 ca-certificates curl jq socat
+RUN apt update && apt install -y libssl3 ca-certificates curl jq socat net-tools
 WORKDIR /app/kms/core/service
 
 RUN mkdir -p /app/kms/core/service/keys
@@ -72,13 +63,12 @@ COPY ./core/service/config/ /app/kms/core/service/config
 
 # Set the path to include the binaries and not just the default /usr/local/bin
 ENV PATH="/app/kms/core/service/bin:$PATH"
-# Copy the binaries from the kms-core, go-runtime and nitro-cli stages
+# Copy the binaries from the kms-core and go-runtime stages
 COPY --from=kms-core /app/kms/core/service/bin/ /app/kms/core/service/bin/
-COPY --from=nitro-cli /build/aws-nitro-enclaves-cli/build/nitro_cli/release/nitro-cli /app/kms/core/service/bin
 COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/kms/core/service/bin/
 
 # Copy parent-side and enclave-side init scripts
-COPY ./core/service/operations/docker/start_enclave_and_proxies.sh /app/kms/core/service/bin/
+COPY ./core/service/operations/docker/start_parent_proxies.sh /app/kms/core/service/bin/
 COPY ./core/service/operations/docker/init_enclave_centralized.sh /app/kms/core/service/bin/
 
 # This is only meaningful when the image is used to build the EIF that runs

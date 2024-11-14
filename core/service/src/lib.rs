@@ -46,8 +46,6 @@ pub mod storage;
 pub mod rpc {
     #[cfg(feature = "non-wasm")]
     pub mod central_rpc;
-    #[cfg(feature = "non-wasm")]
-    pub mod central_rpc_proxy;
     pub mod rpc_types;
 }
 #[cfg(feature = "non-wasm")]

@@ -224,14 +224,6 @@ mod kms_server_binary_test {
             .unwrap()
             .assert()
             .success();
-        Command::cargo_bin(KMS_SERVER)
-            .unwrap()
-            .arg("nitro-enclave-proxy")
-            .arg("--help")
-            .output()
-            .unwrap()
-            .assert()
-            .success();
     }
 
     fn run_subcommand_no_args(config_file: &str, exec_mode: &str) {

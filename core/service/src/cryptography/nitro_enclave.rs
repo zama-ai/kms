@@ -1,61 +1,57 @@
 use crate::anyhow_error_and_log;
-use aes::cipher::block_padding::Pkcs7;
-use aes::cipher::{BlockDecryptMut, KeyIvInit};
+use aes::{
+    cipher::{block_padding::Pkcs7, BlockDecryptMut, IvSizeUser, KeyIvInit, KeySizeUser},
+    Aes256,
+};
 use aes_gcm_siv::{AeadInPlace, Aes256GcmSiv, KeyInit, Nonce};
 use anyhow::{bail, ensure};
 #[cfg(feature = "non-wasm")]
 use aws_nitro_enclaves_nsm_api::api::{Request as NSMRequest, Response as NSMResponse};
 #[cfg(feature = "non-wasm")]
 use aws_nitro_enclaves_nsm_api::driver as nsm_driver;
-use cms::enveloped_data::{EnvelopedData, RecipientInfo as PKCS7RecipientInfo};
-use der::{Decode, DecodeValue, Header, SliceReader};
-#[cfg(feature = "non-wasm")]
-use rand::rngs::OsRng;
-#[cfg(feature = "non-wasm")]
-use rsa::pkcs1::EncodeRsaPublicKey;
+use rasn::{
+    ber::de::{Decoder, DecoderOptions},
+    de::Decode,
+    types::{Integer, OctetString, Oid},
+};
+use rasn_cms::{
+    algorithms::AES256_CBC, ContentInfo, EnvelopedData, RecipientInfo, CONTENT_DATA,
+    CONTENT_ENVELOPED_DATA,
+};
 use rsa::sha2::Sha256;
-use rsa::{Oaep, RsaPrivateKey, RsaPublicKey};
 #[cfg(feature = "non-wasm")]
-use serde_bytes::ByteBuf;
-
-/// A keypair that the Nitro enclave uses to communicate securely with AWS KMS. This keypair is
-/// signed by the Nitro security module, and the signature is included in the attestation
-/// document. This way AWS KMS can establish its authenticity and only respond to requests from
-/// authorized enclave instances.
-#[derive(Clone)]
-pub struct NitroEnclaveKeys {
-    pub enclave_sk: RsaPrivateKey,
-    pub enclave_pk: RsaPublicKey,
-    pub attestation_document: Vec<u8>,
-}
+use rsa::{pkcs8::EncodePublicKey, RsaPublicKey};
+use rsa::{Oaep, RsaPrivateKey};
 
 #[cfg(feature = "non-wasm")]
-const ENCLAVE_SK_SIZE: usize = 2048;
+pub const ENCLAVE_SK_SIZE: usize = 2048;
 #[cfg(feature = "non-wasm")]
 const ATTESTATION_NONCE_SIZE: usize = 8;
 // AES256-GCM-SIV uses 96 bit nonces
 pub const APP_BLOB_NONCE_SIZE: usize = 12;
+// AWS KMS is expected to produce this version of the CMS structure
+const AWS_KMS_ENVELOPED_DATA_VERSION: isize = 2;
+// AWS KMS is expected to produce this version of the recipient substructure
+const AWS_KMS_ENVELOPED_DATA_RECIPIENT_VERSION: isize = 2;
 
+/// Request the attestation document from the Nitro security module. Attestation
+/// documents are used in AWS KMS requests to receive responses where the
+/// sensitive data that can only be shared with enclaves running an approved
+/// software version is encrypted under the attested enclave public key.
 #[cfg(feature = "non-wasm")]
-pub fn gen_nitro_enclave_keys() -> anyhow::Result<NitroEnclaveKeys> {
-    // generate a Nitro enclave keypair
-    let enclave_sk = RsaPrivateKey::new(&mut OsRng, ENCLAVE_SK_SIZE)?;
-    let enclave_pk = RsaPublicKey::from(&enclave_sk);
-    let enclave_pk_der = enclave_pk.to_pkcs1_der()?;
-    let enclave_pk_der_bytes = enclave_pk_der.as_ref().to_vec();
-
+pub fn request_nitro_enclave_attestation(enclave_pk: &RsaPublicKey) -> anyhow::Result<Vec<u8>> {
     // generate a nonce to include into the attestation document
     let attestation_nonce = nitro_enclave_get_random(ATTESTATION_NONCE_SIZE)?;
 
     // request Nitro enclave attestation
     let nsm_fd = nsm_driver::nsm_init();
     let nsm_request = NSMRequest::Attestation {
-        public_key: Some(ByteBuf::from(enclave_pk_der_bytes)),
+        public_key: Some(enclave_pk.to_public_key_der()?.to_vec().into()),
         user_data: None,
         // The nonce can potentially be used in protocols that do not allow using the same
         // attestation twice. The AWS KMS API allows reusing attestations (in fact, there
         // does not seem to be a way to forbid it).
-        nonce: Some(ByteBuf::from(attestation_nonce)),
+        nonce: Some(attestation_nonce.into()),
     };
     let NSMResponse::Attestation { document } =
         nsm_driver::nsm_process_request(nsm_fd, nsm_request)
@@ -65,11 +61,7 @@ pub fn gen_nitro_enclave_keys() -> anyhow::Result<NitroEnclaveKeys> {
     };
     nsm_driver::nsm_exit(nsm_fd);
 
-    Ok(NitroEnclaveKeys {
-        enclave_sk,
-        enclave_pk,
-        attestation_document: document,
-    })
+    Ok(document)
 }
 
 /// Request random bytes from the Nitro security module. Only used for generating initialization
@@ -95,61 +87,105 @@ pub fn nitro_enclave_get_random(i: usize) -> anyhow::Result<Vec<u8>> {
     Ok(random[0..i].to_vec())
 }
 
-/// If a Nitro enclave attestation document is attached to a AWS KMS request, the response will
-/// contain all plaintext values encrypted on the enclave public key. This function allows for their
-/// decryption using the enclave private key. In a better world, it would be implemented by the
-/// Nitro enclave SDK but, alas, it is currently not.
+/// If a Nitro enclave attestation document is attached to a AWS KMS request,
+/// the response will contain all plaintext values encrypted on the enclave
+/// public key. This function allows for their decryption using the enclave
+/// private key. In a better world, there would be a Nitro Enclave SDK for Rust
+/// that implements this function. Alas, only the C SDK currently exists.
 pub fn decrypt_ciphertext_for_recipient(
     ciphertext: Vec<u8>,
     enclave_sk: &RsaPrivateKey,
 ) -> anyhow::Result<Vec<u8>> {
-    // peek inside the re-encrypted key PKCS7 envelope
-    let envelope_header = Header::from_der(ciphertext.as_slice())?;
-    let mut envelope_reader = SliceReader::new(ciphertext.as_slice())?;
-    let envelope: EnvelopedData =
-        EnvelopedData::decode_value(&mut envelope_reader, envelope_header)?;
+    // peek inside of the top-level message and check that it contains PKCS7
+    // Enveloped Data
+    let mut cms_decoder = Decoder::new(ciphertext.as_slice(), DecoderOptions::ber());
+    let cms = ContentInfo::decode(&mut cms_decoder)?;
     ensure!(
-        envelope.recip_infos.0.len() == 1,
+        cms.content_type == CONTENT_ENVELOPED_DATA,
+        "Re-encrypted ciphertext content must be PKCS#7 Enveloped Data, actual content type: {}",
+        cms.content_type
+    );
+    let mut envelope_decoder = Decoder::new(cms.content.as_ref(), DecoderOptions::ber());
+    let envelope = EnvelopedData::decode(&mut envelope_decoder)?;
+
+    // validate the PKCS7 envelope
+    ensure!(
+        envelope.version == Integer::Primitive(AWS_KMS_ENVELOPED_DATA_VERSION),
+        "Re-encrypted ciphertext envelope must have version {}, actual version: {}",
+        AWS_KMS_ENVELOPED_DATA_VERSION,
+        envelope.version
+    );
+    ensure!(
+        envelope.recipient_infos.len() == 1,
         "Re-encrypted ciphertext envelope must have exactly one recipient"
     );
-    let PKCS7RecipientInfo::Ktri(ktri) = envelope.recip_infos.0.get(0).unwrap() else {
-        bail!("Re-encrypted ciphertext envelope does not contain a session key");
+    let RecipientInfo::KeyTransRecipientInfo(ktri) =
+        envelope.recipient_infos.to_vec().pop().unwrap()
+    else {
+        bail!("Re-encrypted ciphertext envelope does not contain a recipient");
     };
     ensure!(
-        ktri.version == envelope.version,
-        "Re-encrypted ciphertext envelope malformed"
+        ktri.version == Integer::Primitive(AWS_KMS_ENVELOPED_DATA_RECIPIENT_VERSION),
+        "Re-encrypted ciphertext envelope recipient info must have version {}, actual version: {}",
+        AWS_KMS_ENVELOPED_DATA_RECIPIENT_VERSION,
+        ktri.version
     );
-    let enc_session_key = ktri.enc_key.as_bytes();
-    // NOTE: `cms` doesn't parse OIDs yet but it would be good to validate that
-    // encrypted_content.content_type == pkcs7_data and that
-    // encrypted_content.content_enc_alg.oid == aes_256_cbc
+    ensure!(ktri.key_encryption_algorithm.algorithm == Oid:: ISO_MEMBER_BODY_US_RSADSI_PKCS1_RSAES_OAEP,
+	    "Re-encrypted ciphertext envelope must use RSA-OAEP for envelope encryption, actual algorithm: {}",
+	    ktri.key_encryption_algorithm.algorithm
+    );
     ensure!(
-        envelope
-            .encrypted_content
-            .content_enc_alg
-            .parameters
-            .is_some(),
-        "Re-encrypted ciphertext envelope does not contain an initialization vector"
+        envelope.encrypted_content_info.content_type == CONTENT_DATA,
+        "Re-encrypted ciphertext envelope content must be PKCS#7 Data, actual content type: {}",
+        envelope.encrypted_content_info.content_type
     );
-    let iv = envelope
-        .encrypted_content
-        .content_enc_alg
+    ensure!(
+	envelope.encrypted_content_info.content_encryption_algorithm.algorithm == AES256_CBC,
+	"Re-encrypted ciphertext envelope must use AES-256-CBC for content encryption, actual algorithm: {}",
+	envelope.encrypted_content_info.content_encryption_algorithm.algorithm
+    );
+    let enc_session_key = ktri.encrypted_key.as_ref();
+    let Some(iv_string) = envelope
+        .encrypted_content_info
+        .content_encryption_algorithm
         .parameters
-        .unwrap();
-    ensure!(
-        envelope.encrypted_content.encrypted_content.is_some(),
-        "Re-encrypted ciphertext envelope does not contain a payload"
-    );
-    let envelope_payload = envelope.encrypted_content.encrypted_content.unwrap();
+    else {
+        bail!("Re-encrypted ciphertext envelope does not contain an AES-256-CBC initialization vector")
+    };
+    let Some(enc_payload) = envelope.encrypted_content_info.encrypted_content else {
+        bail!("Re-encrypted ciphertext envelope does not contain a payload")
+    };
 
     // decrypt the PKCS7 envelope session key
-    let session_key = enclave_sk.decrypt(Oaep::new::<Sha256>(), enc_session_key)?;
+    // RSA-OAEP-SHA256 is the only choice supported by AWS KMS
+    let session_key = enclave_sk
+        .decrypt(Oaep::new::<Sha256>(), enc_session_key)
+        .map_err(|e| {
+            anyhow_error_and_log(format!("Cannot decrypt PKCS7 envelope session key: {}", e))
+        })?;
+    ensure!(
+        session_key.len() == Aes256::key_size(),
+        "Reencrypted ciphertext envelope session key is not {} bits long, actual length: {} bits",
+        Aes256::key_size() * 8,
+        session_key.len() * 8
+    );
+
+    // decode the initialization vector from ASN.1
+    let mut iv_decoder = Decoder::new(iv_string.as_ref(), DecoderOptions::ber());
+    let iv = OctetString::decode(&mut iv_decoder)?;
+    ensure!(iv.len() == cbc::Decryptor::<Aes256>::iv_size(),
+	    "Reencrypted ciphertext envelope initialization vector is not {} bits long, actual length: {} bits",
+	    cbc::Decryptor::<Aes256>::iv_size() * 8,
+	    iv.len() * 8
+    );
 
     // decrypt the ciphertext for recipient enclave
-    let plaintext =
-        cbc::Decryptor::<aes::Aes256>::new(session_key.as_slice().into(), iv.value().into())
-            .decrypt_padded_vec_mut::<Pkcs7>(envelope_payload.as_bytes())
-            .map_err(|e| anyhow_error_and_log(format!("{}", e)))?;
+    // AES256-CBC is the only choice supported by AWS KMS
+    let plaintext = cbc::Decryptor::<Aes256>::new_from_slices(session_key.as_slice(), iv.as_ref())?
+        .decrypt_padded_vec_mut::<Pkcs7>(enc_payload.as_ref())
+        .map_err(|e| {
+            anyhow_error_and_log(format!("Cannot decrypt ciphertext for recipient: {}", e))
+        })?;
     Ok(plaintext)
 }
 
@@ -160,7 +196,7 @@ pub fn encrypt_on_data_key(plaintext: &mut [u8], key: &[u8], iv: &[u8]) -> anyho
     let nonce = Nonce::from_slice(iv);
     let auth_tag = cipher
         .encrypt_in_place_detached(nonce, b"", plaintext)
-        .map_err(|e| anyhow_error_and_log(format!("{}", e)))?;
+        .map_err(|e| anyhow_error_and_log(format!("Cannot encrypt application key: {}", e)))?;
     Ok(auth_tag.to_vec())
 }
 
