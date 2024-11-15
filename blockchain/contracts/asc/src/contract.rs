@@ -6,10 +6,10 @@ use cw2::{ensure_from_older_version, set_contract_version};
 use cw_utils::must_pay;
 use events::kms::{
     AllowedAddresses, CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues,
-    KeyGenPreprocResponseValues, KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues,
-    KmsCoreConf, KmsEvent, KmsOperation, OperationType, OperationValue, ReencryptResponseValues,
-    ReencryptValues, SenderAllowedEvent, Transaction, TransactionId, UpdateAllowedAddressesEvent,
-    VerifyProvenCtValues,
+    InsecureCrsGenValues, KeyGenPreprocResponseValues, KeyGenPreprocValues, KeyGenResponseValues,
+    KeyGenValues, KmsCoreConf, KmsEvent, KmsOperation, OperationType, OperationValue,
+    ReencryptResponseValues, ReencryptValues, SenderAllowedEvent, Transaction, TransactionId,
+    UpdateAllowedAddressesEvent, VerifyProvenCtValues,
 };
 use events::kms::{InsecureKeyGenValues, MigrationEvent, VerifyProvenCtResponseValues};
 use serde_json;
@@ -397,7 +397,7 @@ impl KmsContract {
     }
 
     #[sv::msg(exec)]
-    pub fn decrypt(&self, ctx: ExecCtx, decrypt: DecryptValues) -> StdResult<Response> {
+    pub fn decrypt(&self, mut ctx: ExecCtx, decrypt: DecryptValues) -> StdResult<Response> {
         // decipher the size encoding and ensure the payment is included in the message
         let ciphertext_handles = decrypt.ciphertext_handles();
 
@@ -432,7 +432,6 @@ impl KmsContract {
                 }
             }
         }
-        let mut ctx = ctx;
         let response = self.process_request_transaction(&mut ctx, decrypt.clone().into())?;
         self.chain_verify_proof_contract_call(
             ctx,
@@ -474,8 +473,7 @@ impl KmsContract {
     ///
     /// This call is restricted to specific addresses defined at instantiation (`AllowedAddresses`).
     #[sv::msg(exec)]
-    pub fn keygen_preproc(&self, ctx: ExecCtx) -> StdResult<Response> {
-        let mut ctx = ctx;
+    pub fn keygen_preproc(&self, mut ctx: ExecCtx) -> StdResult<Response> {
         let operation = "keygen_preproc";
 
         self.check_sender_is_allowed(&ctx, OperationType::Gen, operation)?;
@@ -523,10 +521,9 @@ impl KmsContract {
     #[sv::msg(exec)]
     pub fn insecure_key_gen(
         &self,
-        ctx: ExecCtx,
+        mut ctx: ExecCtx,
         insecure_key_gen: InsecureKeyGenValues,
     ) -> StdResult<Response> {
-        let mut ctx = ctx;
         let operation = "insecure_key_gen";
 
         self.check_sender_is_allowed(&ctx, OperationType::Gen, operation)?;
@@ -574,8 +571,7 @@ impl KmsContract {
     ///
     /// This call is restricted to specific addresses defined at instantiation (`AllowedAddresses`).
     #[sv::msg(exec)]
-    pub fn keygen(&self, ctx: ExecCtx, keygen: KeyGenValues) -> StdResult<Response> {
-        let mut ctx = ctx;
+    pub fn keygen(&self, mut ctx: ExecCtx, keygen: KeyGenValues) -> StdResult<Response> {
         let operation = "keygen";
 
         self.check_sender_is_allowed(&ctx, OperationType::Gen, operation)?;
@@ -617,7 +613,7 @@ impl KmsContract {
     }
 
     #[sv::msg(exec)]
-    pub fn reencrypt(&self, ctx: ExecCtx, reencrypt: ReencryptValues) -> StdResult<Response> {
+    pub fn reencrypt(&self, mut ctx: ExecCtx, reencrypt: ReencryptValues) -> StdResult<Response> {
         // decipher the size encoding and ensure the payment is included in the message
         let ciphertext_handle: Vec<u8> = reencrypt.ciphertext_handle().deref().into();
         self.verify_payment(&ctx, &[ciphertext_handle.clone()])?;
@@ -638,7 +634,6 @@ impl KmsContract {
             }
         }
 
-        let mut ctx = ctx;
         let response = self.process_request_transaction(&mut ctx, reencrypt.clone().into())?;
         self.chain_verify_proof_contract_call(
             ctx,
@@ -679,10 +674,9 @@ impl KmsContract {
     #[sv::msg(exec)]
     pub fn verify_proven_ct(
         &self,
-        ctx: ExecCtx,
+        mut ctx: ExecCtx,
         verify_proven_ct: VerifyProvenCtValues,
     ) -> StdResult<Response> {
-        let mut ctx = ctx;
         self.process_request_transaction(&mut ctx, verify_proven_ct.into())
     }
 
@@ -718,8 +712,7 @@ impl KmsContract {
     ///
     /// This call is restricted to specific addresses defined at instantiation (`AllowedAddresses`).
     #[sv::msg(exec)]
-    pub fn crs_gen(&self, ctx: ExecCtx, crs_gen: CrsGenValues) -> StdResult<Response> {
-        let mut ctx = ctx;
+    pub fn crs_gen(&self, mut ctx: ExecCtx, crs_gen: CrsGenValues) -> StdResult<Response> {
         let operation = "crs_gen";
 
         self.check_sender_is_allowed(&ctx, OperationType::Gen, operation)?;
@@ -745,6 +738,58 @@ impl KmsContract {
     ) -> StdResult<Response> {
         let operation = "crs_gen_response";
 
+        self.check_sender_is_allowed(&ctx, OperationType::Response, operation)?;
+
+        let sender_allowed_event =
+            SenderAllowedEvent::new(operation.to_string(), ctx.info.sender.to_string());
+
+        let response = self.process_transaction(
+            ctx.deps.storage,
+            &ctx.env,
+            &txn_id.to_vec(),
+            crs_gen_response.into(),
+        )?;
+
+        let response = response.add_event(Into::<Event>::into(sender_allowed_event));
+        Ok(response)
+    }
+
+    /// Insecure CRS gen
+    ///
+    /// This call might be restricted to specific addresses defined at instantiation (`AllowedAddresses`).
+    #[sv::msg(exec)]
+    pub fn insecure_crs_gen(
+        &self,
+        mut ctx: ExecCtx,
+        insecure_crs_gen: InsecureCrsGenValues,
+    ) -> StdResult<Response> {
+        let operation = "insecure_crs_gen";
+
+        self.check_sender_is_allowed(&ctx, OperationType::Gen, operation)?;
+
+        let sender_allowed_event =
+            SenderAllowedEvent::new(operation.to_string(), ctx.info.sender.to_string());
+
+        let response = self.process_request_transaction(
+            &mut ctx,
+            OperationValue::InsecureCrsGen(insecure_crs_gen),
+        )?;
+
+        let response = response.add_event(Into::<Event>::into(sender_allowed_event));
+        Ok(response)
+    }
+
+    /// Insecure CRS gen response
+    ///
+    /// This call might be restricted to specific addresses defined at instantiation (`AllowedAddresses`).
+    #[sv::msg(exec)]
+    pub fn insecure_crs_gen_response(
+        &self,
+        ctx: ExecCtx,
+        txn_id: TransactionId,
+        crs_gen_response: CrsGenResponseValues,
+    ) -> StdResult<Response> {
+        let operation = "insecure_crs_gen_response";
         self.check_sender_is_allowed(&ctx, OperationType::Response, operation)?;
 
         let sender_allowed_event =

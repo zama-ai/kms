@@ -8,17 +8,17 @@ use backward_compatibility::{
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{run_all_tests, TestedModule},
     CrsGenResponseValuesTest, CrsGenValuesTest, DecryptResponseValuesTest, DecryptValuesTest,
-    InsecureKeyGenValuesTest, KeyGenPreprocResponseValuesTest, KeyGenPreprocValuesTest,
-    KeyGenResponseValuesTest, KeyGenValuesTest, KmsCoreConfTest, ReencryptResponseValuesTest,
-    ReencryptValuesTest, TestMetadataEvents, TestType, Testcase, ZkpResponseValuesTest,
-    ZkpValuesTest,
+    InsecureCrsGenValuesTest, InsecureKeyGenValuesTest, KeyGenPreprocResponseValuesTest,
+    KeyGenPreprocValuesTest, KeyGenResponseValuesTest, KeyGenValuesTest, KmsCoreConfTest,
+    ReencryptResponseValuesTest, ReencryptValuesTest, TestMetadataEvents, TestType, Testcase,
+    ZkpResponseValuesTest, ZkpValuesTest,
 };
 use events::kms::{
     CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues, FheParameter,
-    FheType, InsecureKeyGenValues, KeyGenPreprocResponseValues, KeyGenPreprocValues,
-    KeyGenResponseValues, KeyGenValues, KmsCoreConf, KmsCoreParty, OperationValue,
-    ReencryptResponseValues, ReencryptValues, Transaction, VerifyProvenCtResponseValues,
-    VerifyProvenCtValues,
+    FheType, InsecureCrsGenValues, InsecureKeyGenValues, KeyGenPreprocResponseValues,
+    KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues, KmsCoreConf, KmsCoreParty,
+    OperationValue, ReencryptResponseValues, ReencryptValues, Transaction,
+    VerifyProvenCtResponseValues, VerifyProvenCtValues,
 };
 use kms_common::load_and_unversionize;
 use std::{env, path::Path};
@@ -495,6 +495,41 @@ fn test_crs_gen_response_values(
     }
 }
 
+fn test_insecure_crs_gen_values(
+    dir: &Path,
+    test: &InsecureCrsGenValuesTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: Transaction = load_and_unversionize(dir, test, format)?;
+
+    let insecure_crs_gen_values = InsecureCrsGenValues::builder()
+        .max_num_bits(test.max_num_bits)
+        .eip712_name(test.eip712_name.to_string())
+        .eip712_version(test.eip712_version.to_string())
+        .eip712_chain_id(test.eip712_chain_id.to_vec().into())
+        .eip712_verifying_contract(test.eip712_verifying_contract.to_string())
+        .eip712_salt(test.eip712_salt.map(|salt| salt.to_vec().into()))
+        .build();
+
+    let new_versionized = Transaction::new(
+        test.block_height,
+        test.transaction_index,
+        vec![OperationValue::InsecureCrsGen(insecure_crs_gen_values)],
+    );
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid InsecureCrsGenValues:\n Expected :\n{:?}\nGot:\n{:?}",
+                original_versionized, new_versionized
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
 fn test_kms_core_conf(
     dir: &Path,
     test: &KmsCoreConfTest,
@@ -586,6 +621,9 @@ impl TestedModule for Events {
             }
             Self::Metadata::CrsGenResponseValues(test) => {
                 test_crs_gen_response_values(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::InsecureCrsGenValues(test) => {
+                test_insecure_crs_gen_values(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::KmsCoreConf(test) => {
                 test_kms_core_conf(test_dir.as_ref(), test, format).into()

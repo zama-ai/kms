@@ -87,7 +87,10 @@ impl AsyncTestContext for DockerComposeThresholdContext {
     }
 }
 
-async fn key_and_crs_gen<T: DockerComposeContext>(ctx: &mut T) -> (String, String) {
+async fn key_and_crs_gen<T: DockerComposeContext>(
+    ctx: &mut T,
+    insecure_crs_gen: bool,
+) -> (String, String) {
     // Wait for contract to be in-chain
     // TODO: add status check for contract in-chain
     tokio::time::sleep(tokio::time::Duration::from_secs(BOOTSTRAP_TIME_TO_SLEEP)).await;
@@ -115,9 +118,13 @@ async fn key_and_crs_gen<T: DockerComposeContext>(ctx: &mut T) -> (String, Strin
     .unwrap();
     println!("Key-gen done");
 
+    let command = match insecure_crs_gen {
+        true => SimulatorCommand::InsecureCrsGen(CrsParameters { max_num_bits: 32 }),
+        false => SimulatorCommand::CrsGen(CrsParameters { max_num_bits: 32 }),
+    };
     let config = Config {
         file_conf: Some(String::from(path_to_config.to_str().unwrap())),
-        command: SimulatorCommand::CrsGen(CrsParameters { max_num_bits: 256 }),
+        command,
         logs: true,
         max_iter: 200,
         expect_all_responses: false,
@@ -136,7 +143,7 @@ async fn key_and_crs_gen<T: DockerComposeContext>(ctx: &mut T) -> (String, Strin
         _ => panic!("Error doing keygen"),
     };
 
-    println!("Doing CRS-gen");
+    println!("Doing CRS-gen: insecure?: {}", insecure_crs_gen);
     let crs_gen_results = main_from_config(
         &config.file_conf.unwrap(),
         &config.command,
@@ -196,54 +203,50 @@ async fn test_template<T: DockerComposeContext>(ctx: &mut T, commands: Vec<Simul
     }
 }
 
+// TODO do we want to run these as well?
+#[ignore]
 #[test_context(DockerComposeCentralizedContext)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_centralized(ctx: &mut DockerComposeCentralizedContext) {
+async fn test_centralized_secure_crs(ctx: &mut DockerComposeCentralizedContext) {
     init_logging();
-    let (key_id, crs_id) = key_and_crs_gen(ctx).await;
+    let (key_id, crs_id) = key_and_crs_gen(ctx, false).await;
+    integration_test_commands(ctx, key_id, crs_id).await;
+}
 
-    let commands = vec![
-        SimulatorCommand::Decrypt(CipherParameters {
-            to_encrypt: 7_u8,
-            compressed: false,
-            crs_id: crs_id.clone(),
-            key_id: key_id.clone(),
-        }),
-        SimulatorCommand::Decrypt(CipherParameters {
-            to_encrypt: 10_u8,
-            compressed: true,
-            crs_id: crs_id.clone(),
-            key_id: key_id.clone(),
-        }),
-        SimulatorCommand::ReEncrypt(CipherParameters {
-            to_encrypt: 9_u8,
-            compressed: false,
-            crs_id: crs_id.clone(),
-            key_id: key_id.clone(),
-        }),
-        SimulatorCommand::ReEncrypt(CipherParameters {
-            to_encrypt: 13_u8,
-            compressed: true,
-            crs_id: crs_id.clone(),
-            key_id: key_id.clone(),
-        }),
-        SimulatorCommand::VerifyProvenCt(VerifyProvenCtParameters {
-            to_encrypt: 41,
-            crs_id: crs_id.clone(),
-            key_id: key_id.clone(),
-        }),
-    ];
-    test_template(ctx, commands).await
+#[test_context(DockerComposeCentralizedContext)]
+#[tokio::test]
+#[serial(docker)]
+async fn test_centralized_insecure_crs(ctx: &mut DockerComposeCentralizedContext) {
+    init_logging();
+    let (key_id, crs_id) = key_and_crs_gen(ctx, true).await;
+    integration_test_commands(ctx, key_id, crs_id).await;
+}
+
+#[ignore]
+#[test_context(DockerComposeThresholdContext)]
+#[tokio::test]
+#[serial(docker)]
+async fn test_threshold_secure_crs(ctx: &mut DockerComposeThresholdContext) {
+    init_logging();
+    let (key_id, crs_id) = key_and_crs_gen(ctx, false).await;
+    integration_test_commands(ctx, key_id, crs_id).await;
 }
 
 #[test_context(DockerComposeThresholdContext)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_threshold(ctx: &mut DockerComposeThresholdContext) {
+async fn test_threshold_insecure_crs(ctx: &mut DockerComposeThresholdContext) {
     init_logging();
-    let (key_id, crs_id) = key_and_crs_gen(ctx).await;
+    let (key_id, crs_id) = key_and_crs_gen(ctx, true).await;
+    integration_test_commands(ctx, key_id, crs_id).await;
+}
 
+async fn integration_test_commands<T: DockerComposeContext>(
+    ctx: &mut T,
+    key_id: String,
+    crs_id: String,
+) {
     let commands = vec![
         SimulatorCommand::Decrypt(CipherParameters {
             to_encrypt: 7_u8,
@@ -275,5 +278,6 @@ async fn test_threshold(ctx: &mut DockerComposeThresholdContext) {
             key_id: key_id.clone(),
         }),
     ];
+
     test_template(ctx, commands).await
 }

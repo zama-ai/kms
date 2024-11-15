@@ -1,6 +1,8 @@
+#[cfg(feature = "insecure")]
+use super::generic::InsecureCrsGenerator;
 use crate::conf::threshold::{PeerConf, ThresholdConfig};
 use crate::consts::{MINIMUM_SESSIONS_PREPROC, PRSS_EPOCH_ID};
-use crate::cryptography::central_kms::{compute_info, BaseKmsStruct};
+use crate::cryptography::central_kms::{async_generate_crs, compute_info, BaseKmsStruct};
 use crate::cryptography::decompression;
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey};
 use crate::cryptography::signcryption::signcrypt;
@@ -57,7 +59,9 @@ use distributed_decryption::execution::runtime::session::{
 use distributed_decryption::execution::small_execution::prss::PRSSSetup;
 use distributed_decryption::execution::tfhe_internals::parameters::{Ciphertext64, DKGParams};
 use distributed_decryption::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
-use distributed_decryption::execution::tfhe_internals::test_feature::initialize_key_material;
+use distributed_decryption::execution::tfhe_internals::test_feature::{
+    initialize_key_material, transfer_crs,
+};
 use distributed_decryption::execution::zk::ceremony::{
     compute_witness_dim, Ceremony, RealCeremony,
 };
@@ -384,6 +388,7 @@ pub type RealThresholdKms<PubS, PrivS> = GenericKms<
     RealInsecureKeyGenerator<PubS, PrivS>,
     RealPreprocessor,
     RealCrsGenerator<PubS, PrivS>,
+    RealInsecureCrsGenerator<PubS, PrivS>,
     RealProvenCtVerifier<PubS>,
 >;
 
@@ -612,7 +617,7 @@ where
     };
 
     #[cfg(feature = "insecure")]
-    let insecureerator = RealInsecureKeyGenerator::from_real_keygen(&keygenerator).await;
+    let insecure_keygenerator = RealInsecureKeyGenerator::from_real_keygen(&keygenerator).await;
 
     let keygen_preprocessor = RealPreprocessor {
         prss_setup,
@@ -630,6 +635,9 @@ where
         session_preparer,
     };
 
+    #[cfg(feature = "insecure")]
+    let insecure_crs_generator = RealInsecureCrsGenerator::from_real_crsgen(&crs_generator).await;
+
     let proven_ct_verifier = RealProvenCtVerifier {
         base_kms,
         ct_verifier_payload_meta_store,
@@ -642,9 +650,11 @@ where
         decryptor,
         keygenerator,
         #[cfg(feature = "insecure")]
-        insecureerator,
+        insecure_keygenerator,
         keygen_preprocessor,
         crs_generator,
+        #[cfg(feature = "insecure")]
+        insecure_crs_generator,
         proven_ct_verifier,
         ddec_handle.abort_handle(),
     );
@@ -1817,7 +1827,7 @@ impl RealPreprocessor {
                 })
                 .collect_vec()
         }
-        //Derive a sequence of sessionId from request_id
+        // Derive a sequence of sessionId from request_id
         let session_id: u128 = request_id.clone().try_into()?;
         let own_identity = self.session_preparer.own_identity()?;
 
@@ -1968,6 +1978,53 @@ pub struct RealCrsGenerator<
 impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
     RealCrsGenerator<PubS, PrivS>
 {
+    async fn inner_crs_gen_from_request(
+        &self,
+        request: Request<CrsGenRequest>,
+        insecure: bool,
+    ) -> Result<Response<Empty>, Status> {
+        let req = request.into_inner();
+        tracing::info!(
+            "Starting crs generation on kms for request ID {:?}",
+            req.request_id
+        );
+
+        let dkg_params = crate::rpc::central_rpc::retrieve_parameters(req.params).map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::NotFound,
+                format!("Can not retrieve fhe parameters with error {e}"),
+            )
+        })?;
+        let crs_params = dkg_params
+            .get_params_basics_handle()
+            .get_compact_pk_enc_params();
+        let witness_dim = tonic_handle_potential_err(
+            compute_witness_dim(&crs_params, req.max_num_bits.map(|x| x as usize)),
+            "witness dimension computation failed".to_string(),
+        )?;
+
+        let req_id = req.request_id.ok_or_else(|| {
+            tonic::Status::new(
+                tonic::Code::InvalidArgument,
+                "missing request ID in CRS generation",
+            )
+        })?;
+
+        let eip712_domain = protobuf_to_alloy_domain_option(req.domain.as_ref());
+
+        self.inner_crs_gen(
+            &req_id,
+            witness_dim,
+            req.max_num_bits,
+            &dkg_params,
+            eip712_domain.as_ref(),
+            insecure,
+        )
+        .await
+        .map_err(|e| tonic::Status::new(tonic::Code::Aborted, e.to_string()))?;
+        Ok(Response::new(Empty {}))
+    }
+
     async fn inner_crs_gen(
         &self,
         req_id: &RequestId,
@@ -1975,6 +2032,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         max_num_bits: Option<u32>,
         dkg_params: &DKGParams,
         eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
+        insecure: bool,
     ) -> anyhow::Result<()> {
         {
             let mut guarded_meta_store = self.crs_meta_store.write().await;
@@ -2002,19 +2060,43 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 
         // we do not need to hold the handle,
         // the result of the computation is tracked the crs_meta_store
+        let rng = self.base_kms.new_rng().await.to_owned();
+        let my_role = session.my_role()?;
 
         let pke_params = dkg_params
             .get_params_basics_handle()
             .get_compact_pk_enc_params();
+        let dkg_params_copy = *dkg_params;
         let _handle = tokio::spawn(async move {
             let crs_start_timer = Instant::now();
-            let real_ceremony = RealCeremony::default();
-            let internal_pp = real_ceremony
-                .execute::<Z64, _, _>(&mut session, witness_dim, max_num_bits)
-                .await;
-            let pp = internal_pp.and_then(|internal| internal.try_into_tfhe_zk_pok_pp(&pke_params));
+            let pp = if insecure {
+                // We let the first party sample the seed (we are using 1-based party IDs)
+                let input_party_id = 1;
+                if my_role.one_based() == input_party_id {
+                    let crs_res = async_generate_crs(&sig_key, rng, dkg_params_copy, max_num_bits, eip712_domain_copy.as_ref()).await;
+                    let crs = match crs_res {
+                        Ok((crs, _)) => crs,
+                        Err(e) => {
+                            let mut guarded_meta_store = meta_store.write().await;
+                            let _ = guarded_meta_store
+                                .update(&owned_req_id, HandlerStatus::Error(e.to_string()));
+                            return;
+                        }
+                    };
+                    transfer_crs(&session, Some(crs), input_party_id).await
+                } else {
+                    transfer_crs(&session, None, input_party_id).await
+                }
+            } else {
+                // real, secure ceremony (insecure = false)
+                let real_ceremony = RealCeremony::default();
+                let internal_pp = real_ceremony
+                    .execute::<Z64, _, _>(&mut session, witness_dim, max_num_bits)
+                    .await;
+                internal_pp.and_then(|internal| internal.try_into_tfhe_zk_pok_pp(&pke_params))
+            };
             let res_info_pp = pp.and_then(|pp| {
-                compute_info(&sig_key, &pp, eip712_domain_copy.as_ref()).map(|info| (info, pp))
+                    compute_info(&sig_key, &pp, eip712_domain_copy.as_ref()).map(|info| (pp, info))
             });
             let f = || async {
                 // we take these two locks at the same time in case there are races
@@ -2022,7 +2104,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 let mut pub_storage = public_storage.lock().await;
                 let mut priv_storage = private_storage.lock().await;
 
-                let (meta_data, pp_id) = match res_info_pp {
+                let (pp_id, meta_data) = match res_info_pp {
                     Ok((meta, pp_id)) => (meta, pp_id),
                     Err(e) => {
                         let mut guarded_meta_store = meta_store.write().await;
@@ -2096,55 +2178,8 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         }.instrument(tracing::Span::current()));
         Ok(())
     }
-}
 
-#[tonic::async_trait]
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> CrsGenerator
-    for RealCrsGenerator<PubS, PrivS>
-{
-    async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
-        let req = request.into_inner();
-        tracing::info!(
-            "Starting crs generation on kms for request ID {:?}",
-            req.request_id
-        );
-
-        let dkg_params = crate::rpc::central_rpc::retrieve_parameters(req.params).map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::NotFound,
-                format!("Can not retrieve fhe parameters with error {e}"),
-            )
-        })?;
-        let crs_params = dkg_params
-            .get_params_basics_handle()
-            .get_compact_pk_enc_params();
-        let witness_dim = tonic_handle_potential_err(
-            compute_witness_dim(&crs_params, req.max_num_bits.map(|x| x as usize)),
-            "witness dimension computation failed".to_string(),
-        )?;
-
-        let req_id = req.request_id.ok_or_else(|| {
-            tonic::Status::new(
-                tonic::Code::InvalidArgument,
-                "missing request ID in CRS generation",
-            )
-        })?;
-
-        let eip712_domain = protobuf_to_alloy_domain_option(req.domain.as_ref());
-
-        self.inner_crs_gen(
-            &req_id,
-            witness_dim,
-            req.max_num_bits,
-            &dkg_params,
-            eip712_domain.as_ref(),
-        )
-        .await
-        .map_err(|e| tonic::Status::new(tonic::Code::Aborted, e.to_string()))?;
-        Ok(Response::new(Empty {}))
-    }
-
-    async fn get_result(
+    async fn inner_get_result(
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<CrsGenResult>, Status> {
@@ -2158,6 +2193,70 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             request_id: Some(request_id),
             crs_results: Some(crs_data.into()),
         }))
+    }
+}
+
+#[tonic::async_trait]
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> CrsGenerator
+    for RealCrsGenerator<PubS, PrivS>
+{
+    async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
+        self.inner_crs_gen_from_request(request, false).await
+    }
+
+    async fn get_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<CrsGenResult>, Status> {
+        self.inner_get_result(request).await
+    }
+}
+
+#[cfg(feature = "insecure")]
+pub struct RealInsecureCrsGenerator<
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
+> {
+    real_crs_generator: RealCrsGenerator<PubS, PrivS>,
+}
+
+#[cfg(feature = "insecure")]
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
+    RealInsecureCrsGenerator<PubS, PrivS>
+{
+    async fn from_real_crsgen(value: &RealCrsGenerator<PubS, PrivS>) -> Self {
+        Self {
+            real_crs_generator: RealCrsGenerator {
+                base_kms: value.base_kms.new_instance().await,
+                public_storage: Arc::clone(&value.public_storage),
+                private_storage: Arc::clone(&value.private_storage),
+                crs_meta_store: Arc::clone(&value.crs_meta_store),
+                session_preparer: value.session_preparer.new_instance().await,
+            },
+        }
+    }
+}
+
+#[cfg(feature = "insecure")]
+#[tonic::async_trait]
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
+    InsecureCrsGenerator for RealInsecureCrsGenerator<PubS, PrivS>
+{
+    async fn insecure_crs_gen(
+        &self,
+        request: Request<CrsGenRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        tracing::info!("starting insecure crs gen in RealInsecureCrsGenerator");
+        self.real_crs_generator
+            .inner_crs_gen_from_request(request, true)
+            .await
+    }
+
+    async fn get_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<CrsGenResult>, Status> {
+        self.real_crs_generator.inner_get_result(request).await
     }
 }
 

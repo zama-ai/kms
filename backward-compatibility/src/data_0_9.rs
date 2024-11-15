@@ -27,10 +27,10 @@ use kms_0_9::{
 
 use events_0_9::kms::{
     CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues, FheKeyUrlInfo,
-    FheParameter, FheType, InsecureKeyGenValues, KeyGenPreprocResponseValues, KeyGenPreprocValues,
-    KeyGenResponseValues, KeyGenValues, KeyUrlInfo, KeyUrlResponseValues, KeyUrlValues,
-    KmsCoreConf, KmsCoreParty, OperationValue, ReencryptResponseValues, ReencryptValues,
-    Transaction, VerfKeyUrlInfo, ZkpResponseValues, ZkpValues,
+    FheParameter, FheType, InsecureCrsGenValues, InsecureKeyGenValues, KeyGenPreprocResponseValues,
+    KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues, KeyUrlInfo, KeyUrlResponseValues,
+    KeyUrlValues, KmsCoreConf, KmsCoreParty, OperationValue, ReencryptResponseValues,
+    ReencryptValues, Transaction, VerfKeyUrlInfo, ZkpResponseValues, ZkpValues,
 };
 use rand::SeedableRng;
 use tfhe_0_8::{
@@ -60,13 +60,13 @@ use crate::{
         SwitchAndSquashParametersTest,
     },
     CrsGenResponseValuesTest, CrsGenValuesTest, DecryptResponseValuesTest, DecryptValuesTest,
-    InsecureKeyGenValuesTest, KeyGenPreprocResponseValuesTest, KeyGenPreprocValuesTest,
-    KeyGenResponseValuesTest, KeyGenValuesTest, KeyUrlResponseValuesTest, KeyUrlValuesTest,
-    KmsCoreConfTest, KmsFheKeyHandlesTest, PRSSSetupTest, PrivateSigKeyTest, PublicSigKeyTest,
-    ReencryptResponseValuesTest, ReencryptValuesTest, SignedPubDataHandleInternalTest,
-    TestMetadataDD, TestMetadataEvents, TestMetadataKMS, ThresholdFheKeysTest,
-    ZkpResponseValuesTest, ZkpValuesTest, DISTRIBUTED_DECRYPTION_MODULE_NAME, EVENTS_MODULE_NAME,
-    KMS_MODULE_NAME,
+    InsecureCrsGenValuesTest, InsecureKeyGenValuesTest, KeyGenPreprocResponseValuesTest,
+    KeyGenPreprocValuesTest, KeyGenResponseValuesTest, KeyGenValuesTest, KeyUrlResponseValuesTest,
+    KeyUrlValuesTest, KmsCoreConfTest, KmsFheKeyHandlesTest, PRSSSetupTest, PrivateSigKeyTest,
+    PublicSigKeyTest, ReencryptResponseValuesTest, ReencryptValuesTest,
+    SignedPubDataHandleInternalTest, TestMetadataDD, TestMetadataEvents, TestMetadataKMS,
+    ThresholdFheKeysTest, ZkpResponseValuesTest, ZkpValuesTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
+    EVENTS_MODULE_NAME, KMS_MODULE_NAME,
 };
 
 // Macro to store a versioned test
@@ -335,9 +335,9 @@ const ZKP_RESPONSE_VALUES_TEST: ZkpResponseValuesTest = ZkpResponseValuesTest {
 
 const KEY_URL_VALUES_TEST: KeyUrlValuesTest = KeyUrlValuesTest {
     test_filename: Cow::Borrowed("key_url_values"),
-    data_id: [1, 2, 3],
     block_height: 1,
     transaction_index: 1,
+    data_id: [1, 2, 3],
 };
 
 const KEY_URL_RESPONSE_VALUES_TEST: KeyUrlResponseValuesTest = KeyUrlResponseValuesTest {
@@ -448,6 +448,24 @@ const CRS_GEN_RESPONSE_VALUES_TEST: CrsGenResponseValuesTest = CrsGenResponseVal
     signature: [1, 2, 3],
     max_num_bits: 256,
     param: 1,
+    block_height: 1,
+    transaction_index: 1,
+};
+
+const INSECURE_CRS_GEN_VALUES_TEST: InsecureCrsGenValuesTest = InsecureCrsGenValuesTest {
+    test_filename: Cow::Borrowed("insecure_crs_gen_values"),
+    max_num_bits: 256,
+    eip712_name: Cow::Borrowed("eip712_name"),
+    eip712_version: Cow::Borrowed("eip712_version"),
+    eip712_chain_id: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 42,
+    ],
+    eip712_verifying_contract: Cow::Borrowed("eip712_verifying_contract"),
+    eip712_salt: Some([
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+        25, 26, 27, 28, 29, 30, 31,
+    ]),
     block_height: 1,
     transaction_index: 1,
 };
@@ -1157,6 +1175,40 @@ impl EventsV0_9 {
         TestMetadataEvents::CrsGenResponseValues(CRS_GEN_RESPONSE_VALUES_TEST)
     }
 
+    fn gen_insecure_crs_gen_values(dir: &PathBuf) -> TestMetadataEvents {
+        let insecure_crs_gen_values = InsecureCrsGenValues::builder()
+            .max_num_bits(INSECURE_CRS_GEN_VALUES_TEST.max_num_bits)
+            .eip712_name(INSECURE_CRS_GEN_VALUES_TEST.eip712_name.to_string())
+            .eip712_version(INSECURE_CRS_GEN_VALUES_TEST.eip712_version.to_string())
+            .eip712_chain_id(INSECURE_CRS_GEN_VALUES_TEST.eip712_chain_id.to_vec().into())
+            .eip712_verifying_contract(
+                INSECURE_CRS_GEN_VALUES_TEST
+                    .eip712_verifying_contract
+                    .to_string(),
+            )
+            .eip712_salt(
+                INSECURE_CRS_GEN_VALUES_TEST
+                    .eip712_salt
+                    .map(|salt| salt.to_vec().into())
+                    .expect("could not convert salt format"),
+            )
+            .build();
+
+        let transaction = Transaction::new(
+            INSECURE_CRS_GEN_VALUES_TEST.block_height,
+            INSECURE_CRS_GEN_VALUES_TEST.transaction_index,
+            vec![OperationValue::from(insecure_crs_gen_values)],
+        );
+
+        store_versioned_test!(
+            &transaction,
+            dir,
+            &INSECURE_CRS_GEN_VALUES_TEST.test_filename
+        );
+
+        TestMetadataEvents::InsecureCrsGenValues(INSECURE_CRS_GEN_VALUES_TEST)
+    }
+
     fn gen_kms_core_conf(dir: &PathBuf) -> TestMetadataEvents {
         let parties = vec![KmsCoreParty {
             party_id: KMS_CORE_CONF_TEST.parties_party_id.to_vec().into(),
@@ -1242,6 +1294,7 @@ impl KMSCoreVersion for V0_9 {
             EventsV0_9::gen_insecure_key_gen_values(&dir),
             EventsV0_9::gen_crs_gen_values(&dir),
             EventsV0_9::gen_crs_gen_response_values(&dir),
+            EventsV0_9::gen_insecure_crs_gen_values(&dir),
             EventsV0_9::gen_kms_core_conf(&dir),
         ]
     }

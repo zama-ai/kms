@@ -10,13 +10,12 @@ use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    tracing::info!("Setting up KV store...");
-
     let _config: GatewayConfig = init_conf_with_trace_gateway("config/gateway").map_err(|e| {
         let error_str = format!("Failed to initialize gateway config: {:?}", e);
         tracing::error!(error_str);
         std::io::Error::new(std::io::ErrorKind::Other, error_str)
     })?;
+    tracing::info!("Setting up KV store...");
 
     tokio::fs::create_dir_all(".store").await.unwrap();
 
@@ -30,7 +29,7 @@ async fn main() -> std::io::Result<()> {
 
     let payload_limit = 50 * 1024 * 1024; // 50 MB
 
-    tracing::info!("Starting KV store server ...");
+    tracing::info!("Starting KV store server...");
     actix_web::HttpServer::new(move || {
         actix_web::App::new()
             .app_data(web::PayloadConfig::new(payload_limit))

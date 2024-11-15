@@ -2728,8 +2728,6 @@ pub(crate) mod tests {
     use crate::cryptography::internal_crypto_types::Signature;
     use crate::cryptography::signcryption::Reencrypt;
     use crate::kms::core_service_endpoint_client::CoreServiceEndpointClient;
-    #[cfg(feature = "slow_tests")]
-    use crate::kms::CrsGenResult;
     use crate::kms::{FheType, ParamChoice, TypedCiphertext};
     use crate::rpc::rpc_types::RequestIdGetter;
     use crate::rpc::rpc_types::{protobuf_to_alloy_domain, BaseKms, PubDataType};
@@ -3016,6 +3014,7 @@ pub(crate) mod tests {
             &crate::consts::DEFAULT_PARAM,
             &crs_req_id,
             Some(ParamChoice::Default),
+            false,
         )
         .await;
     }
@@ -3026,7 +3025,33 @@ pub(crate) mod tests {
         let crs_req_id = RequestId::derive("test_crs_gen_centralized").unwrap();
         // Delete potentially old data
         purge(None, None, &crs_req_id.to_string()).await;
-        crs_gen_centralized(&TEST_PARAM, &crs_req_id, Some(ParamChoice::Test)).await;
+        crs_gen_centralized(&TEST_PARAM, &crs_req_id, Some(ParamChoice::Test), false).await;
+    }
+
+    #[cfg(feature = "insecure")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
+    async fn test_insecure_crs_gen_centralized() {
+        let crs_req_id = RequestId::derive("test_insecure_crs_gen_centralized").unwrap();
+        // Delete potentially old data
+        purge(None, None, &crs_req_id.to_string()).await;
+        crs_gen_centralized(&TEST_PARAM, &crs_req_id, Some(ParamChoice::Test), true).await;
+    }
+
+    #[cfg(feature = "insecure")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
+    async fn default_insecure_crs_gen_centralized() {
+        let crs_req_id = RequestId::derive("default_insecure_crs_gen_centralized").unwrap();
+        // Delete potentially old data
+        purge(None, None, &crs_req_id.to_string()).await;
+        crs_gen_centralized(
+            &crate::consts::DEFAULT_PARAM,
+            &crs_req_id,
+            Some(ParamChoice::Default),
+            true,
+        )
+        .await;
     }
 
     /// test centralized crs generation via client interface
@@ -3034,6 +3059,7 @@ pub(crate) mod tests {
         dkg_params: &DKGParams,
         crs_req_id: &RequestId,
         params: Option<ParamChoice>,
+        insecure: bool,
     ) {
         let (kms_server, mut kms_client, internal_client) =
             super::test_tools::centralized_handles(StorageVersion::Dev, dkg_params).await;
@@ -3044,19 +3070,40 @@ pub(crate) mod tests {
             // The default is 2048 which is too slow for tests, so we switch to 256
             Some(256)
         };
-        let gen_req: crate::kms::CrsGenRequest = internal_client
+        let gen_req = internal_client
             .crs_gen_request(crs_req_id, max_num_bits, params)
             .unwrap();
 
         // response is currently empty
-        tracing::debug!("making crs request");
-        let gen_response = kms_client
-            .crs_gen(tonic::Request::new(gen_req.clone()))
-            .await
-            .unwrap();
-        assert_eq!(gen_response.into_inner(), Empty {});
+        tracing::debug!("making crs request, insecure? {insecure}");
+        let mut response = match insecure {
+            true => {
+                #[cfg(feature = "insecure")]
+                {
+                    let gen_response = kms_client
+                        .insecure_crs_gen(tonic::Request::new(gen_req.clone()))
+                        .await
+                        .unwrap();
+                    assert_eq!(gen_response.into_inner(), Empty {});
+                    kms_client
+                        .get_insecure_crs_gen_result(crs_req_id.clone())
+                        .await
+                }
+                #[cfg(not(feature = "insecure"))]
+                {
+                    panic!("cannot perform insecure crs gen")
+                }
+            }
+            false => {
+                let gen_response = kms_client
+                    .crs_gen(tonic::Request::new(gen_req.clone()))
+                    .await
+                    .unwrap();
+                assert_eq!(gen_response.into_inner(), Empty {});
+                kms_client.get_crs_gen_result(crs_req_id.clone()).await
+            }
+        };
 
-        let mut response = kms_client.get_crs_gen_result(crs_req_id.clone()).await;
         let mut ctr = 0;
         while response.is_err() && ctr < 200 {
             // Sleep to give the server some time to complete CRS generation
@@ -3250,13 +3297,34 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn test_crs_gen_threshold(#[case] parallelism: usize) {
-        // NOTE: the test parameter has 300 witness size
+        // CRS generation is slow
         // so we set this as a slow test
-        crs_gen_threshold(parallelism, &TEST_PARAM).await
+        crs_gen_threshold(parallelism, &TEST_PARAM, Some(ParamChoice::Test), false).await
+    }
+
+    #[cfg(feature = "insecure")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
+    async fn test_insecure_crs_gen_threshold() {
+        crs_gen_threshold(1, &TEST_PARAM, Some(ParamChoice::Test), true).await
     }
 
     #[cfg(feature = "slow_tests")]
-    fn set_signatures(crs_gen_results: &mut [CrsGenResult], count: usize, sig: &[u8]) {
+    #[cfg(feature = "insecure")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
+    async fn default_insecure_crs_gen_threshold() {
+        use crate::consts::DEFAULT_PARAM;
+
+        crs_gen_threshold(1, &DEFAULT_PARAM, Some(ParamChoice::Default), true).await
+    }
+
+    #[cfg(any(feature = "slow_tests", feature = "insecure"))]
+    fn set_signatures(
+        crs_gen_results: &mut [crate::client::CrsGenResult],
+        count: usize,
+        sig: &[u8],
+    ) {
         for crs_gen_result in crs_gen_results.iter_mut().take(count) {
             match &mut crs_gen_result.crs_results {
                 Some(info) => {
@@ -3267,8 +3335,12 @@ pub(crate) mod tests {
         }
     }
 
-    #[cfg(feature = "slow_tests")]
-    fn set_digests(crs_gen_results: &mut [CrsGenResult], count: usize, digest: &str) {
+    #[cfg(any(feature = "slow_tests", feature = "insecure"))]
+    fn set_digests(
+        crs_gen_results: &mut [crate::client::CrsGenResult],
+        count: usize,
+        digest: &str,
+    ) {
         for crs_gen_result in crs_gen_results.iter_mut().take(count) {
             match &mut crs_gen_result.crs_results {
                 Some(info) => {
@@ -3330,11 +3402,16 @@ pub(crate) mod tests {
         }};
     }
 
-    #[cfg(feature = "slow_tests")]
-    async fn crs_gen_threshold(parallelism: usize, param: &DKGParams) {
+    #[cfg(any(feature = "slow_tests", feature = "insecure"))]
+    async fn crs_gen_threshold(
+        parallelism: usize,
+        param: &DKGParams,
+        params: Option<ParamChoice>,
+        insecure: bool,
+    ) {
         assert!(parallelism > 0);
         let req_ids: Vec<RequestId> = (0..parallelism)
-            .map(|j| RequestId::derive(&format!("crs_gen_threshold{j}")).unwrap())
+            .map(|j| RequestId::derive(&format!("crs_gen_threshold_{j}_{insecure}")).unwrap())
             .collect();
 
         // Ensure the test is idempotent
@@ -3347,13 +3424,18 @@ pub(crate) mod tests {
         let (kms_servers, kms_clients, internal_client) =
             threshold_handles(StorageVersion::Dev, *param).await;
 
-        let param_choice = ParamChoice::Test;
-        let max_num_bits = 1;
+        let max_num_bits = if params.unwrap() == ParamChoice::Test {
+            Some(1)
+        } else {
+            // The default is 2048 which is too slow for tests, so we switch to 256
+            Some(256)
+        };
         let reqs: Vec<_> = (0..parallelism)
             .map(|j| {
-                let request_id = RequestId::derive(&format!("crs_gen_threshold{j}")).unwrap();
+                let request_id =
+                    RequestId::derive(&format!("crs_gen_threshold_{j}_{insecure}")).unwrap();
                 internal_client
-                    .crs_gen_request(&request_id, Some(max_num_bits), Some(param_choice))
+                    .crs_gen_request(&request_id, max_num_bits, params)
                     .unwrap()
             })
             .collect();
@@ -3363,8 +3445,22 @@ pub(crate) mod tests {
             for i in 1..=AMOUNT_PARTIES as u32 {
                 let mut cur_client = kms_clients.get(&i).unwrap().clone();
                 let req_clone = req.clone();
-                tasks_gen
-                    .spawn(async move { cur_client.crs_gen(tonic::Request::new(req_clone)).await });
+                tasks_gen.spawn(async move {
+                    if insecure {
+                        #[cfg(feature = "insecure")]
+                        {
+                            cur_client
+                                .insecure_crs_gen(tonic::Request::new(req_clone))
+                                .await
+                        }
+                        #[cfg(not(feature = "insecure"))]
+                        {
+                            panic!("cannot perform insecure crs gen")
+                        }
+                    } else {
+                        cur_client.crs_gen(tonic::Request::new(req_clone)).await
+                    }
+                });
             }
         }
         let mut responses_gen = Vec::new();

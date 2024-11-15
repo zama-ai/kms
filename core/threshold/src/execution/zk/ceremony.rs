@@ -12,7 +12,9 @@ use rand::{CryptoRng, Rng};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, Mul, Neg};
-use tfhe::shortint::parameters::CompactPublicKeyEncryptionParameters;
+use tfhe::{
+    shortint::parameters::CompactPublicKeyEncryptionParameters, zk::CompactPkePublicParams,
+};
 use tfhe_zk_pok::{
     curve_api::{bls12_446 as curve, CurveGroupOps},
     proofs::pke,
@@ -136,27 +138,25 @@ impl InternalPublicParameter {
             .into_iter()
             .map(|x| x.normalize())
             .collect_vec();
-        Ok(
-            pke::PublicParams::<tfhe_zk_pok::curve_api::Bls12_446>::from_vec(
-                g_list,
-                g_hat_list,
-                big_d,
-                n,
-                d,
-                k,
-                b,
-                b_r,
-                q,
-                t,
-                1,
-                *ZK_DSEP_HASH_PADDED,
-                *ZK_DSEP_HASH_T_PADDED,
-                *ZK_DSEP_HASH_AGG_PADDED,
-                *ZK_DSEP_HASH_LMAP_PADDED,
-                *ZK_DSEP_HASH_Z_PADDED,
-                *ZK_DSEP_HASH_W_PADDED,
-            ),
-        )
+        Ok(CompactPkePublicParams::from_vec(
+            g_list,
+            g_hat_list,
+            big_d,
+            n,
+            d,
+            k,
+            b,
+            b_r,
+            q,
+            t,
+            1,
+            *ZK_DSEP_HASH_PADDED,
+            *ZK_DSEP_HASH_T_PADDED,
+            *ZK_DSEP_HASH_AGG_PADDED,
+            *ZK_DSEP_HASH_LMAP_PADDED,
+            *ZK_DSEP_HASH_Z_PADDED,
+            *ZK_DSEP_HASH_W_PADDED,
+        ))
     }
 
     /// Create new PublicParameter for given witness dimension containing the generators

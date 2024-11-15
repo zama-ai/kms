@@ -60,6 +60,7 @@ type DummyThresholdKms = GenericKms<
     DummyKeyGenerator, // the insecure one is the same as the dummy one
     DummyPreprocessor,
     DummyCrsGenerator,
+    DummyCrsGenerator, // the insecure one is the same as the dummy one
     DummyProvenCtVerifier,
 >;
 
@@ -73,6 +74,8 @@ fn new_dummy_threshold_kms() -> DummyThresholdKms {
         #[cfg(feature = "insecure")]
         DummyKeyGenerator {},
         DummyPreprocessor {},
+        DummyCrsGenerator {},
+        #[cfg(feature = "insecure")]
         DummyCrsGenerator {},
         DummyProvenCtVerifier {},
         handle.abort_handle(),
@@ -237,6 +240,27 @@ struct DummyCrsGenerator;
 #[tonic::async_trait]
 impl CrsGenerator for DummyCrsGenerator {
     async fn crs_gen(&self, _request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn get_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<CrsGenResult>, Status> {
+        Ok(Response::new(CrsGenResult {
+            request_id: Some(request.into_inner()),
+            crs_results: Some(SignedPubDataHandle::default()),
+        }))
+    }
+}
+
+#[cfg(feature = "insecure")]
+#[tonic::async_trait]
+impl InsecureCrsGenerator for DummyCrsGenerator {
+    async fn insecure_crs_gen(
+        &self,
+        _request: Request<CrsGenRequest>,
+    ) -> Result<Response<Empty>, Status> {
         Ok(Response::new(Empty {}))
     }
 

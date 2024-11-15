@@ -25,6 +25,7 @@ use tfhe::{
     shortint::{
         self, list_compression::CompressionPrivateKeys, ClassicPBSParameters, ShortintParameterSet,
     },
+    zk::CompactPkePublicParams,
     ClientKey,
 };
 use tokio::{task::JoinSet, time::timeout_at};
@@ -370,6 +371,62 @@ pub async fn transfer_pub_key<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
             ))?,
         };
         Ok(*pk)
+    }
+}
+
+/// Send the CRS to the other parties, if I am the input party in this session. Else receive the CRS.
+pub async fn transfer_crs<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    session: &S,
+    some_crs: Option<CompactPkePublicParams>,
+    input_party_id: usize,
+) -> anyhow::Result<CompactPkePublicParams> {
+    session.network().increase_round_counter()?;
+    if session.my_role()?.one_based() == input_party_id {
+        // send CRS
+        let crs = some_crs.ok_or_else(|| anyhow_error_and_log("I have no CRS to send!"))?;
+        let num_parties = session.num_parties();
+        tracing::debug!(
+            "I'm the input party. Sending CRS to {} other parties...",
+            num_parties - 1
+        );
+        let crs_network_val = NetworkValue::<Z128>::Crs(Box::new(crs.clone()));
+
+        let mut set = JoinSet::new();
+        for receiver in 1..=num_parties {
+            if receiver != input_party_id {
+                let rcv_identity = session.identity_from(&Role::indexed_by_one(receiver))?;
+
+                let networking = Arc::clone(session.network());
+                let send_crs = crs_network_val.clone();
+
+                set.spawn(async move {
+                    let _ = networking.send(send_crs.to_network(), &rcv_identity).await;
+                });
+            }
+        }
+        while (set.join_next().await).is_some() {}
+        Ok(crs)
+    } else {
+        // receive CRS
+        let sender_identity = session.identity_from(&Role::indexed_by_one(input_party_id))?;
+        let networking = Arc::clone(session.network());
+        let timeout = session.network().get_timeout_current_round()?;
+        tracing::debug!(
+            "Waiting to receive CRS from input party with timeout {:?}",
+            timeout
+        );
+        let data = tokio::spawn(timeout_at(timeout, async move {
+            networking.receive(&sender_identity).await
+        }))
+        .await??;
+
+        let crs = match NetworkValue::<Z128>::from_network(data)? {
+            NetworkValue::Crs(crs) => crs,
+            _ => Err(anyhow_error_and_log(
+                "I have received something different from a CRS!",
+            ))?,
+        };
+        Ok(*crs)
     }
 }
 

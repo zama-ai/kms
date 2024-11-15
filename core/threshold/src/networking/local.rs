@@ -345,8 +345,9 @@ mod tests {
         let task1 = tokio::spawn(async move {
             let recv = net_bob.receive(&"alice".into()).await;
             assert_eq!(
-                NetworkValue::from_network(recv).unwrap(),
-                NetworkValue::RingValue(Wrapping::<u64>(1234))
+                bincode::serialize(&NetworkValue::<Wrapping::<u64>>::from_network(recv).unwrap())
+                    .unwrap(),
+                bincode::serialize(&NetworkValue::RingValue(Wrapping::<u64>(1234))).unwrap()
             );
         });
 
@@ -357,7 +358,6 @@ mod tests {
 
         let _ = tokio::try_join!(task1, task2).unwrap();
     }
-
     #[tokio::test]
     #[should_panic = "Trying to send to bob in round 0 more than once !"]
     async fn test_sync_networking_panic() {

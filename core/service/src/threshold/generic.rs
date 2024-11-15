@@ -74,6 +74,19 @@ pub trait CrsGenerator {
     ) -> Result<Response<CrsGenResult>, Status>;
 }
 
+#[cfg(feature = "insecure")]
+#[tonic::async_trait]
+pub trait InsecureCrsGenerator {
+    async fn insecure_crs_gen(
+        &self,
+        request: Request<CrsGenRequest>,
+    ) -> Result<Response<Empty>, Status>;
+    async fn get_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<CrsGenResult>, Status>;
+}
+
 #[tonic::async_trait]
 pub trait ProvenCtVerifier {
     async fn verify(
@@ -87,7 +100,17 @@ pub trait ProvenCtVerifier {
     ) -> Result<Response<VerifyProvenCtResponse>, Status>;
 }
 
-pub struct GenericKms<IN, RE, DE, KG, #[cfg(feature = "insecure")] IKG, PP, CG, ZV> {
+pub struct GenericKms<
+    IN,
+    RE,
+    DE,
+    KG,
+    #[cfg(feature = "insecure")] IKG,
+    PP,
+    CG,
+    #[cfg(feature = "insecure")] ICG,
+    ZV,
+> {
     initiator: IN,
     reencryptor: RE,
     decryptor: DE,
@@ -96,12 +119,14 @@ pub struct GenericKms<IN, RE, DE, KG, #[cfg(feature = "insecure")] IKG, PP, CG, 
     insecure_key_generator: IKG,
     keygen_preprocessor: PP,
     crs_generator: CG,
+    #[cfg(feature = "insecure")]
+    insecure_crs_generator: ICG,
     proven_ct_verifier: ZV,
     abort_handle: AbortHandle,
 }
 
 #[cfg(feature = "insecure")]
-impl<IN, RE, DE, KG, IKG, PP, CG, ZV> GenericKms<IN, RE, DE, KG, IKG, PP, CG, ZV> {
+impl<IN, RE, DE, KG, IKG, PP, CG, ICG, ZV> GenericKms<IN, RE, DE, KG, IKG, PP, CG, ICG, ZV> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         initiator: IN,
@@ -111,6 +136,7 @@ impl<IN, RE, DE, KG, IKG, PP, CG, ZV> GenericKms<IN, RE, DE, KG, IKG, PP, CG, ZV
         insecure_key_generator: IKG,
         keygen_preprocessor: PP,
         crs_generator: CG,
+        insecure_crs_generator: ICG,
         proven_ct_verifier: ZV,
         abort_handle: AbortHandle,
     ) -> Self {
@@ -122,6 +148,7 @@ impl<IN, RE, DE, KG, IKG, PP, CG, ZV> GenericKms<IN, RE, DE, KG, IKG, PP, CG, ZV
             insecure_key_generator,
             keygen_preprocessor,
             crs_generator,
+            insecure_crs_generator,
             proven_ct_verifier,
             abort_handle,
         }
@@ -186,8 +213,9 @@ macro_rules! impl_endpoint {
                 IKG: InsecureKeyGenerator + Sync + Send + 'static,
                 PP: KeyGenPreprocessor + Sync + Send + 'static,
                 CG: CrsGenerator + Sync + Send + 'static,
+                ICG: InsecureCrsGenerator + Sync + Send + 'static,
                 ZV: ProvenCtVerifier + Sync + Send + 'static,
-            > CoreServiceEndpoint for GenericKms<IN, RE, DE, KG, IKG, PP, CG, ZV> $implementations
+            > CoreServiceEndpoint for GenericKms<IN, RE, DE, KG, IKG, PP, CG, ICG, ZV> $implementations
     }
 }
 
@@ -300,6 +328,21 @@ impl_endpoint! {
             request: Request<RequestId>,
         ) -> Result<Response<KeyGenResult>, Status> {
             self.insecure_key_generator.get_result(request).await
+        }
+
+        #[cfg(feature = "insecure")]
+        #[tracing::instrument(skip(self, request))]
+        async fn insecure_crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
+            self.insecure_crs_generator.insecure_crs_gen(request).await
+        }
+
+        #[cfg(feature = "insecure")]
+        #[tracing::instrument(skip(self, request))]
+        async fn get_insecure_crs_gen_result(
+            &self,
+            request: Request<RequestId>,
+        ) -> Result<Response<CrsGenResult>, Status> {
+            self.insecure_crs_generator.get_result(request).await
         }
 
     }

@@ -428,6 +428,9 @@ pub enum OperationValue {
     #[strum(serialize = "crs_gen")]
     #[serde(rename = "crs_gen")]
     CrsGen(CrsGenValues),
+    #[strum(serialize = "insecure_crs_gen")]
+    #[serde(rename = "insecure_crs_gen")]
+    InsecureCrsGen(InsecureCrsGenValues),
     #[strum(serialize = "crs_gen_response")]
     #[serde(rename = "crs_gen_response")]
     CrsGenResponse(CrsGenResponseValues),
@@ -449,6 +452,7 @@ impl OperationValue {
             Self::Decrypt(_)
                 | Self::Reencrypt(_)
                 | Self::CrsGen(_)
+                | Self::InsecureCrsGen(_)
                 | Self::KeyGenPreproc(_)
                 | Self::KeyGen(_)
                 | Self::InsecureKeyGen(_)
@@ -470,6 +474,7 @@ impl OperationValue {
             Self::KeyGenPreproc(_) => "KeyGenPreprocValues",
             Self::KeyGenPreprocResponse(_) => "KeyGenPreprocResponseValues",
             Self::CrsGen(_) => "CrsGenValues",
+            Self::InsecureCrsGen(_) => "InsecureCrsGenValues",
             Self::CrsGenResponse(_) => "CrsGenResponseValues",
         }
     }
@@ -490,6 +495,7 @@ impl From<OperationValue> for KmsOperation {
             OperationValue::KeyGenPreproc(_) => KmsOperation::KeyGenPreproc,
             OperationValue::KeyGenPreprocResponse(_) => KmsOperation::KeyGenPreprocResponse,
             OperationValue::CrsGen(_) => KmsOperation::CrsGen,
+            OperationValue::InsecureCrsGen(_) => KmsOperation::InsecureCrsGen,
             OperationValue::CrsGenResponse(_) => KmsOperation::CrsGenResponse,
         }
     }
@@ -1674,6 +1680,107 @@ impl From<CrsGenValues> for OperationValue {
     }
 }
 
+#[derive(Serialize, Deserialize, VersionsDispatch)]
+pub enum InsecureCrsGenValuesVersioned {
+    V0(InsecureCrsGenValues),
+}
+
+#[cw_serde]
+#[derive(Eq, Default, Versionize, TypedBuilder)]
+#[versionize(InsecureCrsGenValuesVersioned)]
+pub struct InsecureCrsGenValues {
+    max_num_bits: u32,
+
+    // EIP-712:
+    /// The name of the EIP-712 domain
+    eip712_name: String,
+    /// The version of the EIP-712 domain
+    eip712_version: String,
+    /// The chain-id used for EIP-712
+    /// This MUST be 32 bytes
+    eip712_chain_id: HexVector,
+    /// The contract verifying the EIP-712 signature
+    eip712_verifying_contract: String,
+    /// The optional EIP-712 salt
+    /// This MUST be 32 bytes if present
+    eip712_salt: Option<HexVector>,
+}
+
+impl InsecureCrsGenValues {
+    pub fn new(
+        max_num_bits: u32,
+        eip712_name: String,
+        eip712_version: String,
+        eip712_chain_id: impl Into<HexVector>,
+        eip712_verifying_contract: String,
+        eip712_salt: Option<impl Into<HexVector>>,
+    ) -> anyhow::Result<Self> {
+        let (chain_id, salt) = validate_eip712(eip712_chain_id, eip712_salt)?;
+        Ok(Self {
+            max_num_bits,
+            eip712_name,
+            eip712_version,
+            eip712_chain_id: chain_id,
+            eip712_verifying_contract,
+            eip712_salt: salt,
+        })
+    }
+
+    pub fn max_num_bits(&self) -> u32 {
+        self.max_num_bits
+    }
+
+    pub fn eip712_name(&self) -> &str {
+        &self.eip712_name
+    }
+
+    pub fn eip712_version(&self) -> &str {
+        &self.eip712_version
+    }
+
+    pub fn eip712_chain_id(&self) -> &HexVector {
+        &self.eip712_chain_id
+    }
+
+    pub fn eip712_verifying_contract(&self) -> &str {
+        &self.eip712_verifying_contract
+    }
+
+    #[allow(clippy::needless_borrow)]
+    pub fn eip712_salt(&self) -> Option<&HexVector> {
+        (&self.eip712_salt).as_ref()
+    }
+}
+
+impl Eip712Values for InsecureCrsGenValues {
+    fn eip712_name(&self) -> &str {
+        &self.eip712_name
+    }
+
+    fn eip712_version(&self) -> &str {
+        &self.eip712_version
+    }
+
+    fn eip712_chain_id(&self) -> &HexVector {
+        &self.eip712_chain_id
+    }
+
+    fn eip712_verifying_contract(&self) -> &str {
+        &self.eip712_verifying_contract
+    }
+
+    #[allow(clippy::needless_borrow)]
+    fn eip712_salt(&self) -> Option<&HexVector> {
+        (&self.eip712_salt).as_ref()
+    }
+}
+
+impl From<InsecureCrsGenValues> for OperationValue {
+    fn from(value: InsecureCrsGenValues) -> Self {
+        OperationValue::InsecureCrsGen(value)
+    }
+}
+
 /// Validate that the chain ID and salt are conforment to the eip712 standard.
 /// That is, wether they are 32 bytes if present.
 /// and return the chain ID and salt as a tuple of [HexVectors].
@@ -1742,6 +1849,9 @@ pub enum KmsOperation {
     #[strum(serialize = "crs_gen", props(request = "true"))]
     #[serde(rename = "crs_gen")]
     CrsGen,
+    #[strum(serialize = "insecure_crs_gen", props(request = "true"))]
+    #[serde(rename = "insecure_crs_gen")]
+    InsecureCrsGen,
     #[strum(serialize = "crs_gen_response", props(response = "true"))]
     CrsGenResponse,
 }
@@ -1763,6 +1873,7 @@ impl KmsOperation {
             KmsOperation::KeyGen => Ok(KmsOperation::KeyGenResponse),
             KmsOperation::InsecureKeyGen => Ok(KmsOperation::KeyGenResponse),
             KmsOperation::CrsGen => Ok(KmsOperation::CrsGenResponse),
+            KmsOperation::InsecureCrsGen => Ok(KmsOperation::CrsGenResponse),
             KmsOperation::VerifyProvenCt => Ok(KmsOperation::VerifyProvenCtResponse),
             _ => Err(anyhow::anyhow!(
                 "To response is not supported for self: {:?}",

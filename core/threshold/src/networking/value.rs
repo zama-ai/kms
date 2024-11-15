@@ -18,6 +18,8 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
 use std::collections::{BTreeMap, HashMap};
+#[cfg(any(test, feature = "testing"))]
+use tfhe::zk::CompactPkePublicParams;
 
 pub(crate) const BCAST_HASH_BYTE_LEN: usize = 32;
 pub(crate) const DSEP_BRACH: &[u8; 5] = b"BRACH";
@@ -73,12 +75,14 @@ pub enum AgreeRandomValue {
 }
 
 /// a value that is sent via network
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum NetworkValue<Z: Eq + Zero> {
     #[cfg(any(test, feature = "testing"))]
     PubKeySet(Box<FhePubKeySet>),
     #[cfg(feature = "experimental")]
     PubBgvKeySet(Box<PublicBgvKeySet>),
+    #[cfg(any(test, feature = "testing"))]
+    Crs(Box<CompactPkePublicParams>),
     RingValue(Z),
     VecRingValue(Vec<Z>),
     VecPairRingValue(Vec<(Z, Z)>),

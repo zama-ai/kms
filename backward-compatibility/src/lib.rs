@@ -572,6 +572,94 @@ impl TestType for CrsGenResponseValuesTest {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct KeyUrlValuesTest {
+    pub test_filename: Cow<'static, str>,
+    pub block_height: u64,
+    pub transaction_index: u32,
+    pub data_id: [u8; 3],
+}
+
+impl TestType for KeyUrlValuesTest {
+    fn module(&self) -> String {
+        EVENTS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "KeyUrlValues".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// TODO this might need adjustments
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct KeyUrlResponseValuesTest {
+    pub test_filename: Cow<'static, str>,
+    pub fhe_key_info_fhe_public_key_data_id: [u8; 3],
+    pub fhe_key_info_fhe_public_key_param_choice: i32,
+    pub fhe_key_info_fhe_public_key_urls: [Cow<'static, str>; 1],
+    pub fhe_key_info_fhe_public_key_signatures: [[u8; 3]; 1],
+    pub fhe_key_info_fhe_server_key_data_id: [u8; 3],
+    pub fhe_key_info_fhe_server_key_param_choice: i32,
+    pub fhe_key_info_fhe_server_key_urls: [Cow<'static, str>; 1],
+    pub fhe_key_info_fhe_server_key_signatures: [[u8; 3]; 1],
+    pub crs_ids: [u8; 1],
+    pub crs_data_ids: [[u8; 3]; 3],
+    pub crs_param_choices: [u32; 1],
+    pub crs_urls: [Cow<'static, str>; 1],
+    pub crs_signatures: [[[u8; 3]; 1]; 1],
+    pub verf_public_key_key_id: [u8; 3],
+    pub verf_public_key_server_id: i32,
+    pub verf_public_key_url: Cow<'static, str>,
+    pub verf_public_key_address: Cow<'static, str>,
+    pub block_height: u64,
+    pub transaction_index: u32,
+}
+
+impl TestType for KeyUrlResponseValuesTest {
+    fn module(&self) -> String {
+        EVENTS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "KeyUrlResponseValues".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct InsecureCrsGenValuesTest {
+    pub test_filename: Cow<'static, str>,
+    pub max_num_bits: u32,
+    pub eip712_name: Cow<'static, str>,
+    pub eip712_version: Cow<'static, str>,
+    pub eip712_chain_id: [u8; 32],
+    pub eip712_verifying_contract: Cow<'static, str>,
+    pub eip712_salt: Option<[u8; 32]>,
+    pub block_height: u64,
+    pub transaction_index: u32,
+}
+
+impl TestType for InsecureCrsGenValuesTest {
+    fn module(&self) -> String {
+        EVENTS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "InsecureCrsGenValues".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct KmsCoreConfTest {
     pub test_filename: Cow<'static, str>,
     pub parties_party_id: [u8; 3],
@@ -632,6 +720,7 @@ pub enum TestMetadataEvents {
     InsecureKeyGenValues(InsecureKeyGenValuesTest),
     CrsGenValues(CrsGenValuesTest),
     CrsGenResponseValues(CrsGenResponseValuesTest),
+    InsecureCrsGenValues(InsecureCrsGenValuesTest),
     KmsCoreConf(KmsCoreConfTest),
 }
 

@@ -763,6 +763,25 @@ impl<
         }))
     }
 
+    #[cfg(feature = "insecure")]
+    #[tracing::instrument(skip(self, request))]
+    async fn insecure_crs_gen(
+        &self,
+        request: Request<CrsGenRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        tracing::info!("insecure_crs_gen");
+        self.crs_gen(request).await
+    }
+
+    #[cfg(feature = "insecure")]
+    #[tracing::instrument(skip(self, request))]
+    async fn get_insecure_crs_gen_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<CrsGenResult>, Status> {
+        self.get_crs_gen_result(request).await
+    }
+
     #[tracing::instrument(skip(self, request))]
     async fn verify_proven_ct(
         &self,

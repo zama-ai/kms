@@ -13,7 +13,7 @@ use conf_trace::grpc::make_request;
 use conf_trace::telemetry::ContextPropagator;
 use enum_dispatch::enum_dispatch;
 use events::kms::{
-    CrsGenValues, DecryptResponseValues, DecryptValues, InsecureKeyGenValues,
+    CrsGenValues, DecryptResponseValues, DecryptValues, InsecureCrsGenValues, InsecureKeyGenValues,
     KeyGenPreprocResponseValues, KeyGenResponseValues, KeyGenValues, KmsCoreConf, KmsEvent,
     OperationValue, ReencryptResponseValues, ReencryptValues, TransactionId,
     VerifyProvenCtResponseValues, VerifyProvenCtValues,
@@ -76,6 +76,11 @@ pub struct CrsGenVal<S> {
     pub operation_val: KmsOperationVal<S>,
 }
 
+pub struct InsecureCrsGenVal<S> {
+    pub insecure_crs_gen: InsecureCrsGenValues,
+    pub operation_val: KmsOperationVal<S>,
+}
+
 pub enum KmsOperationRequest<S> {
     Decrypt(DecryptVal<S>),
     Reencrypt(ReencryptVal<S>),
@@ -84,6 +89,7 @@ pub enum KmsOperationRequest<S> {
     InsecureKeyGen(InsecureKeyGenVal<S>),
     KeyGenPreproc(KeyGenPreprocVal<S>),
     CrsGen(CrsGenVal<S>),
+    InsecureCrsGen(InsecureCrsGenVal<S>),
 }
 
 #[async_trait]
@@ -111,6 +117,9 @@ where
                 insecure_key_gen.run_operation(config_contract).await
             }
             KmsOperationRequest::CrsGen(crsgen) => crsgen.run_operation(config_contract).await,
+            KmsOperationRequest::InsecureCrsGen(insecure_crs_gen) => {
+                insecure_crs_gen.run_operation(config_contract).await
+            }
         }
     }
 }
@@ -221,6 +230,12 @@ where
                 crsgen,
                 operation_val,
             }),
+            OperationValue::InsecureCrsGen(insecure_crs_gen) => {
+                KmsOperationRequest::InsecureCrsGen(InsecureCrsGenVal {
+                    insecure_crs_gen,
+                    operation_val,
+                })
+            }
             _ => return Err(anyhow::anyhow!("Invalid operation for request {:?}", event)),
         };
         Ok(request)
@@ -1029,6 +1044,102 @@ where
             g,
             timeout_triple,
             "(CRS)",
+            metrics
+        );
+    }
+}
+
+#[async_trait]
+impl<S> KmsEventHandler for InsecureCrsGenVal<S>
+where
+    S: Storage + Clone + Send + Sync + 'static,
+{
+    #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
+    async fn run_operation(
+        &self,
+        config_contract: Option<KmsCoreConf>,
+    ) -> anyhow::Result<KmsOperationResponse> {
+        let param_choice = config_contract
+            .ok_or_else(|| anyhow!("config contract missing"))?
+            .param_choice();
+
+        let chan = &self.operation_val.kms_client.channel;
+        let mut client =
+            CoreServiceEndpointClient::with_interceptor(chan.clone(), ContextPropagator);
+
+        let request_id = self.operation_val.tx_id.to_hex();
+        let insecure_crs_gen = &self.insecure_crs_gen;
+
+        let req_id: RequestId = request_id.clone().try_into()?;
+        let req = CrsGenRequest {
+            params: param_choice.into(),
+            request_id: Some(req_id.clone()),
+            max_num_bits: Some(self.insecure_crs_gen.max_num_bits()),
+            domain: Some(Eip712DomainMsg {
+                name: insecure_crs_gen.eip712_name().to_string(),
+                version: insecure_crs_gen.eip712_version().to_string(),
+                chain_id: insecure_crs_gen.eip712_chain_id().into(),
+                verifying_contract: insecure_crs_gen.eip712_verifying_contract().to_string(),
+                salt: self
+                    .insecure_crs_gen
+                    .eip712_salt()
+                    .map(|salt| salt.to_vec()),
+            }),
+        };
+
+        let metrics = self.operation_val.kms_client.metrics.clone();
+
+        let request = make_request(req.clone(), Some(request_id.clone()))?;
+
+        // the response should be empty
+        let _resp = client.insecure_crs_gen(request).await.inspect_err(|e| {
+            let err_msg = e.to_string();
+            tracing::error!(
+                "Error communicating insecure CRS generation to core. Error message:\n{}\nRequest:\n{:?}",
+                err_msg,
+                req,
+            );
+            metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
+        })?;
+        metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "InsecureCRS")]);
+
+        let g =
+            |res: Result<Response<CrsGenResult>, Status>| -> anyhow::Result<PollerStatus<_>, anyhow::Error> {
+                match res {
+                    Ok(response) => {
+                        let inner = response.into_inner();
+                        let request_id = inner.request_id.ok_or_else(||anyhow!("empty request_id for insecure CRS generation"))?;
+                        let crs_results = inner.crs_results.ok_or_else(||anyhow!("empty insecure crs result"))?;
+                        Ok(PollerStatus::Done(KmsOperationResponse::CrsGenResponse(
+                            crate::domain::blockchain::CrsGenResponseVal {
+                                crs_gen_response: events::kms::CrsGenResponseValues::new(
+                                    request_id.request_id,
+                                    crs_results.key_handle,
+                                    crs_results.signature,
+                                    self.insecure_crs_gen.max_num_bits(),
+                                    param_choice,
+                                ),
+                                operation_val: crate::domain::blockchain::BlockchainOperationVal {
+                                    tx_id: self.operation_val.tx_id.clone(),
+                                },
+                            },
+                        )))
+                    }
+                    Err(_) => Ok(PollerStatus::Poll),
+                }
+            };
+
+        let timeout_triple = self
+            .operation_val
+            .kms_client
+            .timeout_config
+            .insecure_crs
+            .clone();
+        poller!(
+            client.get_crs_gen_result(make_request(req_id.clone(), Some(request_id.clone()))?),
+            g,
+            timeout_triple,
+            "(InsecureCRS)",
             metrics
         );
     }

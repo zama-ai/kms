@@ -227,6 +227,21 @@
     (
         kms_core_version_min: "0.9",
         kms_core_module: "events",
+        metadata: InsecureCrsGenValues((
+            test_filename: "insecure_crs_gen_values",
+            max_num_bits: 256,
+            eip712_name: "eip712_name",
+            eip712_version: "eip712_version",
+            eip712_chain_id: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 42),
+            eip712_verifying_contract: "eip712_verifying_contract",
+            eip712_salt: Some((0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31)),
+            block_height: 1,
+            transaction_index: 1,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.9",
+        kms_core_module: "events",
         metadata: KmsCoreConfCentralized((
             test_filename: "kms_core_conf_centralized",
             fhe_parameter: "test",

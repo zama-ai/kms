@@ -28,6 +28,11 @@ initial_wait_time = 10
 retry_interval = 10
 max_poll_count = 200
 
+[core.timeout_config.insecure_crs]
+initial_wait_time = 9
+retry_interval = 3
+max_poll_count = 36
+
 [core.timeout_config.keygen]
 initial_wait_time = 18000
 retry_interval = 15000

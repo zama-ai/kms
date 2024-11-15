@@ -60,6 +60,7 @@ impl TimeoutTriple {
 pub struct TimeoutConfig {
     pub channel_timeout: u64,
     pub crs: TimeoutTriple,
+    pub insecure_crs: TimeoutTriple,
     pub keygen: TimeoutTriple,
     pub insecure_key_gen: TimeoutTriple,
     pub preproc: TimeoutTriple,
@@ -74,6 +75,8 @@ impl Default for TimeoutConfig {
             channel_timeout: 60,
             // CRS: 2 hours total, check each minute
             crs: TimeoutTriple::new(60, 60, 120),
+            // Insecure CRS: 2 minutes
+            insecure_crs: TimeoutTriple::new(10, 5, 24),
             // Key-Gen: 20 hours, wait 5 hours first, then poll for the next 15 hours
             keygen: TimeoutTriple::new(18000, 15000, 150),
             // Insecure Key-Gen: 2 minutes
@@ -96,6 +99,7 @@ impl TimeoutConfig {
         Self {
             channel_timeout: 60,
             crs: TimeoutTriple::new(1, 5, 50),
+            insecure_crs: TimeoutTriple::new(1, 5, 50),
             keygen: TimeoutTriple::new(1, 5, 50),
             insecure_key_gen: TimeoutTriple::new(1, 5, 50),
             preproc: TimeoutTriple::new(1, 5, 50),
@@ -110,6 +114,7 @@ impl TimeoutConfig {
         Self {
             channel_timeout: 60,
             crs: TimeoutTriple::new(1, 1, 10),
+            insecure_crs: TimeoutTriple::new(1, 1, 10),
             keygen: TimeoutTriple::new(1, 1, 10),
             insecure_key_gen: TimeoutTriple::new(1, 1, 10),
             preproc: TimeoutTriple::new(1, 1, 10),

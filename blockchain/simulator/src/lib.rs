@@ -16,9 +16,9 @@ use dashmap::DashMap;
 use ethers::abi::Token;
 use ethers::types::{Address, U256};
 use events::kms::{
-    CrsGenValues, DecryptValues, Eip712Values, FheType, InsecureKeyGenValues, KeyGenPreprocValues,
-    KeyGenValues, KmsCoreConf, KmsEvent, KmsMessage, KmsOperation, OperationValue, ReencryptValues,
-    TransactionId, VerifyProvenCtValues,
+    CrsGenValues, DecryptValues, Eip712Values, FheType, InsecureCrsGenValues, InsecureKeyGenValues,
+    KeyGenPreprocValues, KeyGenValues, KmsCoreConf, KmsEvent, KmsMessage, KmsOperation,
+    OperationValue, ReencryptValues, TransactionId, VerifyProvenCtValues,
 };
 use events::HexVector;
 use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractRequest, ProtoCoin};
@@ -328,6 +328,7 @@ pub enum SimulatorCommand {
     ReEncrypt(CipherParameters),
     QueryContract(Query),
     CrsGen(CrsParameters),
+    InsecureCrsGen(CrsParameters),
     VerifyProvenCt(VerifyProvenCtParameters),
     DoNothing(NoParameters),
 }
@@ -721,6 +722,33 @@ pub async fn execute_crsgen_contract(
         client,
         query_client,
         OperationValue::CrsGen(cv.clone()),
+        None,
+    )
+    .await?;
+    let ev = evs[0].clone();
+
+    tracing::info!("TxId: {:?}", ev.txn_id().to_hex(),);
+    Ok((ev, cv))
+}
+
+pub async fn execute_insecure_crsgen_contract(
+    client: &Client,
+    query_client: &QueryClient,
+    max_amount_of_bits: u32,
+) -> Result<(KmsEvent, InsecureCrsGenValues), Box<dyn std::error::Error + 'static>> {
+    let cv = InsecureCrsGenValues::new(
+        max_amount_of_bits,
+        EIP712_NAME.to_string(),
+        EIP712_VERSION.to_string(),
+        EIP712_CHAIN_ID.to_vec(),
+        EIP712_CONTRACT.to_string(),
+        Some(EIP712_SALT.to_vec()),
+    )?;
+
+    let evs = execute_contract(
+        client,
+        query_client,
+        OperationValue::InsecureCrsGen(cv.clone()),
         None,
     )
     .await?;
@@ -1907,6 +1935,47 @@ pub async fn main_from_config(
                     // )?;
                 } else {
                     panic!("Receive response {:?} during CrsGen", response)
+                }
+            }
+        }
+        SimulatorCommand::InsecureCrsGen(CrsParameters { max_num_bits }) => {
+            // the actual CRS ceremony takes time
+            let (event, _crs_values) =
+                execute_insecure_crsgen_contract(&client, &query_client, *max_num_bits).await?;
+            let responses = wait_for_response(
+                event,
+                &query_client,
+                &sim_conf,
+                max_iter,
+                if expect_all_responses {
+                    num_parties
+                } else {
+                    kms_core_conf.response_count_for_majority_vote()
+                },
+            )
+            .await?;
+            return_value = Some(responses.clone());
+
+            for response in responses {
+                if let OperationValue::CrsGenResponse(response) = &response {
+                    tracing::info!(
+                        "Received CrsGenResponse with request ID {}, digest {} and signature {}",
+                        response.request_id(),
+                        response.digest(),
+                        response.signature().to_hex(),
+                    );
+
+                    //TODO fetch CRS and CRS-info (containing external signature)
+
+                    // TODO verify external signature
+                    // check_ext_pubdata_signature(
+                    //     crs,
+                    //     crs_info.external_signature,
+                    //     &crs_vals,
+                    //     &kms_addrs,
+                    // )?;
+                } else {
+                    panic!("Receive response {:?} during InsecureCrsGen", response)
                 }
             }
         }

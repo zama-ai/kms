@@ -53,6 +53,13 @@ service CoreServiceEndpoint {
   // This query fails if the result is not available yet.
   rpc GetCrsGenResult(RequestId) returns (CrsGenResult);
 
+  // Start the insecure CRS generation protocol asynchronously.
+  rpc InsecureCrsGen(CrsGenRequest) returns (Empty);
+
+  // Get a reference to the insecure CRS.
+  // This query fails if the result is not available yet.
+  rpc GetInsecureCrsGenResult(RequestId) returns (CrsGenResult);
+
   // Start a zero-knowledge proof verification
   // on a ProvenCompactCiphertextList.
   rpc VerifyProvenCt(VerifyProvenCtRequest) returns (Empty);

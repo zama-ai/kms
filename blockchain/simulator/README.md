@@ -6,6 +6,8 @@ It provides a command-line interface (CLI) for interacting with a blockchain net
 ## Prerequisites
 
 - Rust (ensure you have Rust installed on your system)
+- Ensure you have access to the Docker images on Github:
+  - Either use [this link](https://github.com/settings/tokens) or go to your GitHub, click you profil picture, select "Settings". Then nagivate to "Developer Settings" > "Personal Access Tokens" > "Tokens (classic)" > "Generate new token (classic)". The token should have the "read:packages" permission. Afterwards, do docker login ghcr.io and use your github ID and the token to login. Note that this token is saved by docker locally in the clear, so it's best to only give it the permissions you need and set the expiration time to 7 days.
 - A running KMS-blockchain, KMS connector and KMS core. There are two options:
     - Either starts a centralized or threshold instance with the docker-compose files at the root of this repository,
         - `docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-centralized.yml build` for the centralized case and `docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml build` for the threshold case,  at the root of the repository.
