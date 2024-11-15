@@ -8,8 +8,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-#[actix_web::main]
+#[tokio::main]
 async fn main() -> std::io::Result<()> {
+    tracing::info!("Setting up KV store...");
+
     let _config: GatewayConfig = init_conf_with_trace_gateway("config/gateway").map_err(|e| {
         let error_str = format!("Failed to initialize gateway config: {:?}", e);
         tracing::error!(error_str);
@@ -28,6 +30,7 @@ async fn main() -> std::io::Result<()> {
 
     let payload_limit = 50 * 1024 * 1024; // 50 MB
 
+    tracing::info!("Starting KV store server ...");
     actix_web::HttpServer::new(move || {
         actix_web::App::new()
             .app_data(web::PayloadConfig::new(payload_limit))
