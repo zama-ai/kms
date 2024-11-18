@@ -95,7 +95,7 @@ fn stdout_pipeline(service_name: &str) -> Tracer {
         service_name.to_string(),
     )]));
     TracerProvider::builder()
-        .with_batch_exporter(exporter, Tokio)
+        .with_simple_exporter(exporter)
         .with_config(config)
         .build()
         .tracer(service_name.to_string())

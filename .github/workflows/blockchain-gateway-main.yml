@@ -7,6 +7,7 @@ on:
       - 'blockchain/gateway/**'
       - 'blockchain/client/**'
       - 'blockchain/events/**'
+      - 'conf-trace/**'
       - '.github/workflows/blockchain-gateway-pr.yml'
 
 jobs:
@@ -57,4 +58,3 @@ jobs:
     needs:
       - build
       - docker
-

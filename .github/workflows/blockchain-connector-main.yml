@@ -7,6 +7,7 @@ on:
       - 'blockchain/client/**'
       - 'blockchain/connector/**'
       - 'blockchain/events/**'
+      - 'conf-trace/**'
       - 'core/service/proto/kms.proto'
       - '.github/workflows/blockchain-connector-main.yml'
 
@@ -57,4 +58,3 @@ jobs:
     needs:
       - build
       - docker
-

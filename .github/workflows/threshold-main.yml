@@ -5,6 +5,7 @@ on:
     branches: ['main']
     paths:
       - 'core/threshold/**'
+      - 'conf-trace/**'
       - '.github/workflows/threshold-main.yml'
 
 jobs:
