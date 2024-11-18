@@ -8,14 +8,14 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-async-trait = {workspace = true, optional = true}
+async-trait = { workspace = true, optional = true }
 cosmwasm-std.workspace = true
 cosmwasm-schema.workspace = true
 cosmos-proto = { workspace = true, optional = true }
 hex.workspace = true
 koit-toml = { version = "=0.2.1", optional = true }
 opentelemetry = { workspace = true, features = ["metrics" ], optional = true }
-retrying = { version = "0.1.0", features = ["tokio"], optional = true }
+retrying = { version = "=0.1.0", features = ["tokio"], optional = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 strum.workspace = true
@@ -32,9 +32,9 @@ tonic-build.workspace = true
 
 [dev-dependencies]
 mockall.workspace = true
-quickcheck = "1.0.3"
-quickcheck_macros = "1"
-test-context = "0.3.0"
+quickcheck = "=1.0.3"
+quickcheck_macros = "=1.0.0"
+test-context = "=0.3.0"
 backward-compatibility = { workspace = true, features = ["load", "tests"] }
 kms-common = { workspace = true, features = ["testing"] }
 

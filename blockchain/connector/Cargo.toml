@@ -10,18 +10,18 @@ license.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 bincode.workspace = true
-byteorder = "1.5.0"
+byteorder = "=1.5.0"
 clap = { workspace = true, features = ["derive", "env"] }
 conf-trace.workspace = true
-dashmap = "6"
-enum_dispatch = "0.3.12"
+dashmap = "=6.1.0"
+enum_dispatch = "=0.3.13"
 events = { workspace = true, features = ["subscription"] }
 hex.workspace = true
 kms = { workspace = true, default-features = false, features = ["grpc-client", "insecure"] }
 kms-blockchain-client.workspace = true
 opentelemetry = { workspace = true, features = ["metrics"] }
 reqwest.workspace = true
-retrying = { version = "0.1.0", features = ["tokio"] }
+retrying = { version = "=0.1.0", features = ["tokio"] }
 serde = { workspace = true, features = ["derive"] }
 sha2.workspace = true
 strum = { workspace = true, features = ["derive"] }
@@ -37,11 +37,11 @@ alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 kms = { path = "../../core/service", features = ["testing"] , version = "0.9.0-rc25" }
 rand.workspace = true
-serial_test = "3.1.1"
-temp-env = "0.3"
-test-context = "0.3.0"
+serial_test = "=3.1.1"
+temp-env = "=0.3.6"
+test-context = "=0.3.0"
 test-utilities = { path = "./utilities" }
-tracing-test = "0.2.4"
+tracing-test = "=0.2.5"
 
 [features]
 slow_tests = []

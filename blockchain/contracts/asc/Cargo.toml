@@ -16,7 +16,7 @@ schema = []
 cosmwasm-schema.workspace = true
 cosmwasm-std = { workspace = true, features = ["staking"] }
 cw-controllers.workspace = true
-cw-storage-plus = {workspace = true, features = ["iterator"] }
+cw-storage-plus = { workspace = true, features = ["iterator"] }
 cw-utils.workspace = true
 cw2.workspace = true
 events.workspace = true
@@ -30,14 +30,14 @@ tfhe-versionable.workspace = true
 
 [dev-dependencies]
 aipsc = { path = "../aipsc" }
-byteorder = "1.5.0"
+byteorder = "=1.5.0"
 cw-multi-test = "=2.1.1"
-ed25519-consensus = "2.1.0"
+ed25519-consensus = "=2.1.0"
 rand.workspace = true
 sylvia = { workspace = true, features = ["mt"] }
 tendermint.workspace = true
 tendermint-ipsc = { path = "../tendermint-ipsc", features = ["mock"] }
-test-context = "0.3.0"
+test-context = "=0.3.0"
 
 [profile.release]
 opt-level = 'z'

@@ -22,14 +22,14 @@ tfhe_versionable_0_3 = { package = "tfhe-versionable", version = "0.3.1", option
 tfhe_0_8 = { package = "tfhe", version = "0.8.2", optional = true, features = [
     "shortint",
 ] }
-serde = { version = "1.0.213", features = ["derive"] }
-strum = { version = "0.26", features = ["derive"] }
-semver = { version = "1.0", optional = true }
-ron = { version = "0.8", features = ["integer128"] }
-bincode = "1.3"
-aes-prng = "0.2.1"
-rand = "0.8.5"
-tokio = { version = "1.37", features = ["full"] }
+serde = { version = "=1.0.214", features = ["derive"] }
+strum = { version = "=0.26.3", features = ["derive"] }
+semver = { version = "=1.0.23", optional = true }
+ron = { version = "=0.8.1", features = ["integer128"] }
+bincode = "=1.3.3"
+aes-prng = "=0.2.1"
+rand = "=0.8.5"
+tokio = { version = "=1.41.0", features = ["full"] }
 
 [[bin]]
 name = "backward-compatibility"

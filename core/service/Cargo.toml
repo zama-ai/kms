@@ -35,7 +35,7 @@ required-features = ["testing"]
 
 [dependencies]
 aes.workspace = true
-aes-gcm-siv = "0.11.1"
+aes-gcm-siv = "=0.11.1"
 aes-prng.workspace = true
 alloy-dyn-abi = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["k256"] }
@@ -43,42 +43,42 @@ alloy-sol-types = { workspace = true, features = ["eip712-serde"] }
 alloy-signer.workspace = true
 alloy-signer-local.workspace = true
 anyhow.workspace = true
-aws-config = { version = "1.5.9", optional = true }
-aws-nitro-enclaves-nsm-api = { version = "0.4.0", optional = true }
-aws-sdk-kms = { version = "1.48.0", optional = true }
-aws-sdk-s3 = { version = "1.39.0", optional = true }
-aws-smithy-runtime = { version = "1.7.3", features = ["client", "connector-hyper-0-14-x"], optional = true }
-aws-smithy-runtime-api = { version = "1.7.3", optional = true }
-aws-smithy-types = { version = "1.2.9", optional = true }
+aws-config = { version = "=1.5.9", optional = true }
+aws-nitro-enclaves-nsm-api = { version = "=0.4.0", optional = true }
+aws-sdk-kms = { version = "=1.49.0", optional = true }
+aws-sdk-s3 = { version = "=1.59.0", optional = true }
+aws-smithy-runtime = { version = "=1.7.3", features = ["client", "connector-hyper-0-14-x"], optional = true }
+aws-smithy-runtime-api = { version = "=1.7.3", optional = true }
+aws-smithy-types = { version = "=1.2.9", optional = true }
 kms-common.workspace = true
 backoff = { workspace = true, features = ["tokio"], optional = true }
 bincode.workspace = true
-cbc = { version = "0.1.2", features = ["alloc"] }
+cbc = { version = "=0.1.2", features = ["alloc"] }
 cfg-if.workspace = true
 clap = { workspace = true, features = ["derive"] }
 conf-trace = { workspace = true, optional = true }
-crypto_box = { version = "0.9.1", features = ["salsa20"] }
+crypto_box = { version = "=0.9.1", features = ["salsa20"] }
 distributed-decryption = { workspace = true, default-features = false }
 hex.workspace = true
-http = "0.2.12"
-hyper-rustls = { version = "0.24.2", optional = true }
+http = "=0.2.12"
+hyper-rustls = { version = "=0.24.2", optional = true }
 itertools.workspace = true
 k256.workspace = true
 lazy_static.workspace = true
-nom = "7.1.3"
+nom = "=7.1.3"
 prost.workspace = true
 rand = { workspace = true, features = ["std", "std_rng"] }
-rasn = "0.20.2"
-rasn-cms = "0.20.2"
+rasn = "=0.20.2"
+rasn-cms = "=0.20.2"
 rayon.workspace = true
-rcgen = { version = "0.13", optional = true }
-rsa = { version = "0.9.6", features = ["sha2"] }
+rcgen = { version = "=0.13.1", optional = true }
+rsa = { version = "=0.9.6", features = ["sha2"] }
 serde = { workspace = true, features = ["derive", "rc"] }
-serde_bytes = "0.11"
+serde_bytes = "=0.11.15"
 serde_json.workspace = true
-serial_test = "3.0.0"
+serial_test = "=3.1.1"
 sha3.workspace = true
-signature = "2.2.0"
+signature = "=2.2.0"
 strum.workspace = true
 strum_macros.workspace = true
 # experimental-force_fft_algo_dif4 feature ensure PBS is deterministic
@@ -99,25 +99,25 @@ tonic-health = { workspace = true, optional = true }
 tower = { workspace = true, features = ["retry", "timeout"], optional = true }
 tower-http = { workspace = true, features = ["trace"], optional = true }
 tracing = { workspace = true, features = ["log"] }
-url = "2.5.0"
+url = "=2.5.3"
 
 # [target.'cfg(target_arch = "wasm32")'.dependencies]
-console_error_panic_hook = { version = "0.1.7" }
-serde-wasm-bindgen = { version = "0.6.0" }
-wasm-bindgen = { version = "0.2.86", features = ["serde-serialize"] }
+console_error_panic_hook = { version = "=0.1.7" }
+serde-wasm-bindgen = { version = "=0.6.5" }
+wasm-bindgen = { version = "=0.2.95", features = ["serde-serialize"] }
 tfhe-versionable.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 tfhe = { workspace = true, features = ["seeder_unix"] }
 
 [dev-dependencies]
-assert_cmd = "2.0.14"
-sysinfo = "0.32"
-tempfile = "3.13.0"
-tracing-test = "0.2.4"
-webpki = { version = "0.22", features = ["std"] }
-rustls = { version = "0.23", default-features = false, features = ["std"] }
-rstest = "0.23.0"
+assert_cmd = "=2.0.16"
+sysinfo = "=0.32.0"
+tempfile = "=3.13.0"
+tracing-test = "=0.2.5"
+webpki = { version = "=0.22.4", features = ["std"] }
+rustls = { version = "=0.23.16", default-features = false, features = ["std"] }
+rstest = "=0.23.0"
 # The testing feature is only required for tests
 distributed-decryption = { workspace = true, default-features = false, features = [
     "testing",

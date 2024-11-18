@@ -23,8 +23,8 @@ cosmwasm-std.workspace = true
 cw2.workspace = true
 events.workspace = true
 hex = { workspace = true, features = ["serde"] }
-ics23 = "0.11.1"
-percent-encoding = "2.1"
+ics23 = "=0.11.3"
+percent-encoding = "=2.3.1"
 prost.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -35,8 +35,8 @@ tendermint.workspace = true
 tendermint-proto.workspace = true
 
 [dev-dependencies]
-byteorder = "1.5.0"
+byteorder = "=1.5.0"
 cw-multi-test = "=2.1.1"
 rand.workspace = true
 sylvia = { workspace = true, features = ["mt"] }
-test-context = "0.3.0"
+test-context = "=0.3.0"

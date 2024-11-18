@@ -12,7 +12,7 @@ license.workspace = true
 [dependencies]
 aes.workspace = true
 aes-prng.workspace = true
-aligned-vec = "0.5"
+aligned-vec = "=0.5.0"
 anyhow.workspace = true
 async-trait.workspace = true
 backoff = { workspace = true, features = ["tokio"], optional = true }
@@ -20,31 +20,31 @@ bincode.workspace = true
 cfg-if.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 kms-common.workspace = true
-concrete-csprng = "0.4.1"
+concrete-csprng = "=0.4.1"
 conf-trace = { workspace = true, optional = true }
-const_format = "0.2.32"
-crypto-bigint = { version = "0.6.0-rc.6", features = [
+const_format = "=0.2.33"
+crypto-bigint = { version = "=0.6.0-rc.6", features = [
     "serde",
     "rand_core",
     "extra-sizes",
 ], optional = true }
-dashmap = "6"
-derive_more = { version = "1.0.0", features = ["display"] }
+dashmap = "=6.1.0"
+derive_more = { version = "=1.0.0", features = ["display"] }
 futures.workspace = true
-g2p = "1.0.1"
+g2p = "=1.1.0"
 itertools.workspace = true
 lazy_static.workspace = true
-minijinja = { version = "2.0.3", features = ["loader"], optional = true }
+minijinja = { version = "=2.4.0", features = ["loader"], optional = true }
 mockall.workspace = true
-ndarray = { version = "0.16", features = ["serde"] }
-num-integer = "0.1.45"
-num-traits = "0.2"
+ndarray = { version = "=0.16.1", features = ["serde"] }
+num-integer = "=0.1.46"
+num-traits = "=0.2.19"
 opentelemetry = { workspace = true, optional = true }
-paste = "1.0.12"
+paste = "=1.0.15"
 prost.workspace = true
 rand.workspace = true
 rayon.workspace = true
-redis = { version = "0.27.2", optional = true }
+redis = { version = "=0.27.5", optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
 sha3.workspace = true
@@ -62,14 +62,14 @@ tfhe = { workspace = true, features = [
     "zk-pok",
 ] }
 tracing = { workspace = true, features = ["log"] }
-x509-parser = "0.16"
-zeroize = { version = "1.8", features = ["zeroize_derive"] }
+x509-parser = "=0.16.0"
+zeroize = { version = "=1.8.1", features = ["zeroize_derive"] }
 tfhe-zk-pok = { workspace = true, optional = true }
 tfhe-versionable.workspace = true
 
 # we need getrandom to have the js feature so that it can target wasm
 # this is an indirect dependency
-getrandom = { version = "0.2", features = ["js"] }
+getrandom = { version = "=0.2.15", features = ["js"] }
 
 [build-dependencies]
 tonic-build.workspace = true
@@ -78,15 +78,15 @@ tonic-build.workspace = true
 tfhe = { workspace = true, features = ["seeder_unix"] }
 
 [dev-dependencies]
-criterion = "0.5"
-ctor = "0.2"
-proptest = "1.5"
-pprof = { version = "0.13", features = ["flamegraph", "criterion"] }
-rstest = "0.23.0"
-serial_test = "3.0.0"
-tempfile = "3.13.0"
-test-log = { version = "0.2", features = ["trace"] }
-tracing-test = "0.2"
+criterion = "=0.5.1"
+ctor = "=0.2.8"
+proptest = "=1.5.0"
+pprof = { version = "=0.13.0", features = ["flamegraph", "criterion"] }
+rstest = "=0.23.0"
+serial_test = "=3.1.1"
+tempfile = "=3.13.0"
+test-log = { version = "=0.2.16", features = ["trace"] }
+tracing-test = "=0.2.5"
 kms-common = { workspace = true, features = [
     "testing",
 ] }

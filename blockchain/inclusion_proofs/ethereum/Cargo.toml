@@ -13,11 +13,11 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 anyhow.workspace = true
-rlp = { version = "0.5.1", default-features = false }
-trie-db = { version = "0.28.0", default-features = false }
-hex-literal = "0.4.1"
-num-bigint = "0.4"
-primitive-types = { version = "0.12.0", default-features = false }
+rlp = { version = "=0.5.2", default-features = false }
+trie-db = { version = "=0.28.0", default-features = false }
+hex-literal = "=0.4.1"
+num-bigint = "=0.4.6"
+primitive-types = { version = "=0.12.2", default-features = false }
 sha3.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -26,8 +26,8 @@ prost.workspace = true
 
 # cosmwasm only dependencies
 ethereum-triedb-local = { path = "../ethereum-triedb", version = "0.1.1", default-features = false, optional = true }
-hash256-std-hasher = { version = "0.15.2", optional = true }
-hash-db = { version = "0.16.0", default-features = false, optional = true }
+hash256-std-hasher = { version = "=0.15.2", optional = true }
+hash-db = { version = "=0.16.0", default-features = false, optional = true }
 
 # Default only dependencies
 ethereum-triedb = { version = "=0.1.1", optional = true }

@@ -38,80 +38,78 @@ license = "BSD-3-Clause-Clear"
 version = "0.9.0-rc25"
 
 [workspace.dependencies]
-aes = "0.8.4"
-aes-prng = "0.2.1"
+aes = "=0.8.4"
+aes-prng = "=0.2.1"
 aipsc = { path = "./blockchain/contracts/aipsc" }
-anyhow = "1.0.89"
-async-trait = "0.1.81"
+anyhow = "=1.0.93"
+async-trait = "=0.1.83"
 backward-compatibility = { path = "./backward-compatibility" }
-backoff = { version = "0.4.0" }
-base64 = "0.22.1"
-bincode = "1.3.3"
+backoff = "=0.4.0"
+base64 = "=0.22.1"
+bincode = "=1.3.3"
 clap = { version = "=4.5.20", features = ["derive"] }
-cfg-if = "1.0.0"
+cfg-if = "=1.0.0"
 conf-trace = { path = "./conf-trace" }
 cosmos-proto = { path = "./blockchain/cosmos-proto" }
-cosmwasm-schema = "2.1.4"
-cosmwasm-std = "2.1.4"
-cw-controllers = "2.0.0"
-cw-storage-plus = "2.0.0"
-cw-utils = "2.0.0"
-cw2 = "2.0.0"
+cosmwasm-schema = "=2.1.4"
+cosmwasm-std = "=2.1.4"
+cw-controllers = "=2.0.0"
+cw-storage-plus = "=2.0.0"
+cw-utils = "=2.0.0"
+cw2 = "=2.0.0"
 distributed-decryption = { path = "./core/threshold/", default-features = false }
 events = { path = "./blockchain/events" }
-futures = "0.3"
-hex = "0.4.3"
-itertools = "0.13"
-k256 = { version = "0.13.3" }
+futures = "=0.3.31"
+hex = "=0.4.3"
+itertools = "=0.13.0"
+k256 = "=0.13.4"
 kms = { path = "./core/service", default-features = false }
 kms-blockchain-client = { path = "./blockchain/client" }
 kms-blockchain-connector = { path = "./blockchain/connector" }
 kms-common = { path = "./common" }
-lazy_static = "1.5"
-mockall = "0.13.0"
-opentelemetry = "0.23"
-prost = "0.12.4"
-prost-build = "0.12.4"
-prost-types = "0.12.4"
-rand = "0.8.5"
-rayon = "1.10"
-reqwest = "0.12.4"
-schemars = "0.8.16"
-secp256k1 = "0.30.0"
-serde = { version = "1.0.213", features = ["derive", "rc"] }
-serde_json = "1.0.120"
-sha2 = "0.10.8"
-sha3 = "0.10.8"
-strum = "0.26"
-strum_macros = "0.26"
+lazy_static = "=1.5.0"
+mockall = "=0.13.0"
+opentelemetry = "=0.23.0"
+prost = "=0.12.6"
+prost-build = "=0.12.6"
+prost-types = "=0.12.6"
+rand = "=0.8.5"
+rayon = "=1.10.0"
+reqwest = "=0.12.9"
+schemars = "=0.8.21"
+secp256k1 = "=0.30.0"
+serde = { version = "=1.0.214", features = ["derive", "rc"] }
+serde_json = "=1.0.132"
+sha2 = "=0.10.8"
+sha3 = "=0.10.8"
+strum = "=0.26.3"
+strum_macros = "=0.26.4"
 sylvia = "=1.1.0"
 sylvia-derive = "=1.1.0"
-tendermint = { version = "0.37.0", features = ["secp256k1"] }
-tendermint-proto = "0.37.0"
-tendermint-rpc = { version = "0.37.0", features = ["websocket-client"] }
-thiserror = "1.0.64"
-tonic-health = { version = "0.11" }
-tower = { version = "0.5" }
-tower-http = { version = "0.4" }
-tfhe = "0.9.0"
-tfhe-versionable = "0.3.1"
-tfhe-zk-pok = "0.3.0"
-tokio = { version = "1.37", features = ["full"] }
-tonic = "0.11"
-tonic-build = "0.11"
-tracing = { version = "0.1.40", features = ["log"] }
-tracing-appender = "0.2"
-tracing-opentelemetry = "0.24"
-tracing-subscriber = { version = "0.3.18", features = ["fmt", "std"] }
-typed-builder = "0.18.1"
+tendermint = { version = "=0.37.0", features = ["secp256k1"] }
+tendermint-proto = "=0.37.0"
+tendermint-rpc = { version = "=0.37.0", features = ["websocket-client"] }
+thiserror = "=1.0.68"
+tonic-health = "=0.11.0"
+tower = "=0.5.1"
+tower-http = "=0.4.4"
+tfhe = "=0.9.1"
+tfhe-versionable = "=0.3.2"
+tfhe-zk-pok = "=0.3.2"
+tokio = { version = "=1.41.0", features = ["full"] }
+tonic = "=0.11.0"
+tonic-build = "=0.11.0"
+tracing = { version = "=0.1.40", features = ["log"] }
+tracing-appender = "=0.2.3"
+tracing-opentelemetry = "=0.24.0"
+tracing-subscriber = { version = "=0.3.18", features = ["fmt", "std"] }
+typed-builder = "=0.18.2"
 
-# Alloy packages are based on alloy 0.8.3
-alloy-dyn-abi = "0.8.3"
-alloy-primitives = "0.8.9"
-alloy-sol-types = "0.8.3"
-alloy-signer = "0.3.6"
-alloy-signer-local = "0.3.6"
-
+alloy-dyn-abi = "=0.8.11"
+alloy-primitives = "=0.8.11"
+alloy-sol-types = "=0.8.11"
+alloy-signer = "=0.3.6"
+alloy-signer-local = "=0.3.6"
 
 [profile.dev.package."*"]
 # Set the default for dependencies in Development mode.

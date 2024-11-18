@@ -14,7 +14,7 @@ prost-types.workspace = true
 [build-dependencies]
 tonic-build.workspace = true
 prost-build.workspace = true
-glob = "0.3.1"
+glob = "=0.3.1"
 
 [lints.clippy]
 doc_lazy_continuation = "allow"
