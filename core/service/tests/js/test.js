@@ -100,10 +100,10 @@ test('centralized reencryption response with js', (_t) => {
     console.log(eip712_domain_js);
     console.log(response_js);
     const pt = process_reencryption_resp_from_js(client, request_js, eip712_domain_js, response_js, enc_pk, enc_sk, true);
-    assert.deepEqual(48, pt[0]);
+    assert.deepEqual(48, pt.at(-1));
 
     const pt2 = process_reencryption_resp_from_js(client, null, null, response_js, enc_pk, enc_sk, false);
-    assert.deepEqual(48, pt2[0]);
+    assert.deepEqual(48, pt2.at(-1));
 });
 
 test('threshold reencryption response', (_t) => {
@@ -119,20 +119,20 @@ test('threshold reencryption response', (_t) => {
 
     // test reenc using wasm objects
     const pt = process_reencryption_resp_from_js(client, request_js, eip712_domain_js, response_js, enc_pk, enc_sk, true);
-    assert.deepEqual(42, pt[0]);
+    assert.deepEqual(42, pt.at(-1));
 
     const response2_js = transcript_to_response_js(transcript);
     const pt2 = process_reencryption_resp_from_js(client, null, null, response2_js, enc_pk, enc_sk, false);
-    assert.deepEqual(42, pt2[0]);
+    assert.deepEqual(42, pt2.at(-1));
 
     // test again using fewer shares
     response_js.pop();
     const pt3 = process_reencryption_resp_from_js(client, request_js, eip712_domain_js, response_js, enc_pk, enc_sk, true);
-    assert.deepEqual(42, pt3[0]);
+    assert.deepEqual(42, pt3.at(-1));
 
     response2_js.pop();
     const pt4 = process_reencryption_resp_from_js(client, null, null, response2_js, enc_pk, enc_sk, false);
-    assert.deepEqual(42, pt4[0]);
+    assert.deepEqual(42, pt4.at(-1));
 });
 
 test('threshold reencryption response with js', (_t) => {
@@ -148,10 +148,10 @@ test('threshold reencryption response with js', (_t) => {
 
     // test reenc using js objects
     const pt = process_reencryption_resp_from_js(client, request_js, eip712_domain_js, response_js, enc_pk, enc_sk, true);
-    assert.deepEqual(42, pt[0]);
+    assert.deepEqual(42, pt.at(-1));
 
     const pt2 = process_reencryption_resp_from_js(client, null, null, response_js, enc_pk, enc_sk, false);
-    assert.deepEqual(42, pt2[0]);
+    assert.deepEqual(42, pt2.at(-1));
 });
 
 test('new client', (_t) => {

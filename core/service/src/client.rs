@@ -608,7 +608,7 @@ pub mod js_api {
         } else {
             Some(ParsedReencryptionRequest::try_from(request)?)
         };
-        process_reencryption_resp(
+        let le_res = process_reencryption_resp(
             client,
             request,
             eip712_domain,
@@ -616,7 +616,12 @@ pub mod js_api {
             enc_pk,
             enc_sk,
             verify,
-        )
+        );
+        // Need to convert to BE for JS, evrerything is internally represented as LE
+        match le_res {
+            Ok(le_res) => Ok(le_res.into_iter().rev().collect()),
+            Err(e) => Err(e),
+        }
     }
 
     /// Process the reencryption response from Rust objects.
