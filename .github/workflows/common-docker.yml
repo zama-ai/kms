@@ -132,7 +132,7 @@ jobs:
         uses: docker/build-push-action@5cd11c3a4ced054e52742c5fd54dca954e0edd85 # v6.7.0
         with:
           context: ${{ inputs.docker-context }}
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           secrets: BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           file: ${{ inputs.working-directory }}/operations/docker/${{ inputs.docker-file }}
           push: ${{ inputs.push_image }}
@@ -196,6 +196,22 @@ jobs:
           labels: |
             zama.kms.version=${{ env.DOCKER_TAG_IMAGE }}
             zama.kms.eif_pcr0=${{ steps.eif.outputs.eif_pcr0 }}
+
+      # the ARM64 build needs to happen separately from the AMD64 build so the
+      # EIF build isn't confused by locally available images
+      - name: Docker Build and Push ARM64
+        if: inputs.arm-build
+        uses: docker/build-push-action@5cd11c3a4ced054e52742c5fd54dca954e0edd85 # v6.7.0
+        with:
+          context: ${{ inputs.docker-context }}
+          platforms: linux/arm64
+          secrets: BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          file: ${{ inputs.working-directory }}/operations/docker/${{ inputs.docker-file }}
+          push: ${{ inputs.push_image }}
+          pull: false
+          tags: ghcr.io/zama-ai/${{ inputs.image-name }}:${{env.DOCKER_TAG_IMAGE }},ghcr.io/zama-ai/${{ inputs.image-name }}:latest
+          cache-from: ${{ inputs.cache-from }}
+          cache-to: ${{ inputs.cache-to }}
 
       - name: Extract Docker metadata
         if: ${{ inputs.generate-dev-image }}
