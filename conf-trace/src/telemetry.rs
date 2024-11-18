@@ -29,7 +29,7 @@ impl From<Tracing> for Tracer {
         let result;
         if *ENVIRONMENT == ExecutionEnvironment::Local {
             result = stdout_pipeline(settings.service_name());
-            tracing::info!("Environnment is {:?}. Logging to stdout", *ENVIRONMENT);
+            tracing::info!("Environment is {:?}. Logging to stdout", *ENVIRONMENT);
             result
         } else if let Some(endpoint) = settings.endpoint() {
             let mut pipeline = opentelemetry_otlp::new_pipeline()
@@ -60,14 +60,14 @@ impl From<Tracing> for Tracer {
                 .expect("Failed to install OpenTelemetry tracer.");
 
             tracing::info!(
-                "Environnment is {:?}. Logging to endpoint: {:?}",
+                "Environment is {:?}. Logging to endpoint: {:?}",
                 *ENVIRONMENT,
                 endpoint,
             );
             result
         } else {
             result = stdout_pipeline(settings.service_name());
-            tracing::info!("Environnment is {:?}. Loggingto stdout", *ENVIRONMENT);
+            tracing::info!("Environment is {:?}. Logging to stdout", *ENVIRONMENT);
             result
         }
     }
@@ -125,7 +125,7 @@ pub fn init_tracing(settings: Tracing) -> Result<(), anyhow::Error> {
 
     // Setting a trace context propagation data.
     global::set_text_map_propagator(TraceContextPropagator::new());
-    global::set_error_handler(|error| eprintln!("OpenTelemetry error {:}", error)).unwrap();
+    global::set_error_handler(|error| tracing::error!("OpenTelemetry error: {:?}", error)).unwrap();
 
     let subscriber = Registry::default().with(tracing_layer).with(env_filter);
 
@@ -164,21 +164,20 @@ pub fn make_span(request: &Request<Body>) -> Span {
 
     match headers.get(TRACER_PARENT_SPAN_ID).map(|r| {
         tracing::debug!("Span header: {:?}", r);
-        r.to_str().unwrap().to_string().parse::<u64>().unwrap()
+        r.to_str()
+            .unwrap_or("0")
+            .to_string()
+            .parse::<u64>()
+            .unwrap_or(0)
     }) {
-        Some(parent_span_id_u64) => {
-            if parent_span_id_u64 > 0 {
-                tracing::debug!("Propagating span id {parent_span_id_u64}");
-                let id = Id::from_u64(parent_span_id_u64);
-                tracing::debug!("Span id (u64) is {id:?}");
-                span.follows_from(id);
-                tracing::debug!("Span id propagated.");
-            } else {
-                tracing::warn!("Parent span id found is 0");
-            }
+        Some(parent_span_id_u64) if parent_span_id_u64 > 0 => {
+            tracing::debug!("Propagating span id {parent_span_id_u64}");
+            let id = Id::from_u64(parent_span_id_u64);
+            span.follows_from(id);
+            tracing::debug!("Span id propagated.");
         }
-        None => {
-            tracing::warn!("{} shouldn't be None", TRACER_PARENT_SPAN_ID);
+        Some(_) | None => {
+            tracing::warn!("Invalid or missing parent span id: {TRACER_PARENT_SPAN_ID}");
         }
     }
     span

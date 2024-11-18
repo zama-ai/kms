@@ -6,13 +6,13 @@ use std::time::Duration;
 use strum_macros::{AsRefStr, Display, EnumString};
 use typed_builder::TypedBuilder;
 
-const TRACER_MAX_QUEUE_SIZE: usize = 4096;
-const TRACER_MAX_EXPORT_BATCH_SIZE: usize = 512;
+const TRACER_MAX_QUEUE_SIZE: usize = 8192;
+const TRACER_MAX_EXPORT_BATCH_SIZE: usize = 2048;
 const TRACER_MAX_CONCURRENT_EXPORTS: usize = 4;
 
 lazy_static::lazy_static! {
     pub(crate) static ref ENVIRONMENT: ExecutionEnvironment = mode();
-    static ref TRACER_SCHEDULED_DELAY: Duration = Duration::from_millis(1000);
+    static ref TRACER_SCHEDULED_DELAY: Duration = Duration::from_millis(500);
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder)]
