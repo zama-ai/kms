@@ -178,7 +178,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use tokio::time::Duration;
 
     use aes_prng::AesRng;
     use rand::{RngCore, SeedableRng};
@@ -270,7 +270,7 @@ mod tests {
 
         //This is Async because preproc is completely dummy, so we only do the DKG
         //Delay P1 by 1s every round
-        let delay_vec = vec![std::time::Duration::from_secs(1)];
+        let delay_vec = vec![tokio::time::Duration::from_secs(1)];
         let mut results = execute_protocol_small(
             parties,
             threshold,

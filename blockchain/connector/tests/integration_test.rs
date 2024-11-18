@@ -59,14 +59,13 @@ use retrying::retry;
 use std::collections::HashMap;
 use std::env::set_var;
 use std::sync::Arc;
-use std::time::Duration;
 use test_context::{test_context, AsyncTestContext};
 use test_utilities::context::DockerCompose;
 use tokio::fs;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::{oneshot, RwLock};
 use tokio::task::JoinSet;
-use tokio::time::sleep;
+use tokio::time::{sleep, Duration};
 
 struct DockerComposeContext {
     cmd: DockerCompose,

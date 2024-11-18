@@ -2,7 +2,7 @@
 # First stage builds the binary
 # This is a modified version of the gateway image.
 # We should probably double check to make sure we need all dependencies
-FROM rust:1.81-slim-bookworm AS base
+FROM rust:1.82-slim-bookworm AS base
 
 RUN apt update && \
     apt install -y make protobuf-compiler ssh gcc libssl-dev libprotobuf-dev pkg-config

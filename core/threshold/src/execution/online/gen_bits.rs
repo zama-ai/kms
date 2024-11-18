@@ -120,7 +120,7 @@ mod tests {
                     // expect 3 rounds: 2 for bit gen and 1 for opening
                     // Async because the triple gen is dummy
                     //Delay P1 by 1s every round
-                    let delay_vec = vec![std::time::Duration::from_secs(1)];
+                    let delay_vec = vec![tokio::time::Duration::from_secs(1)];
                     let results = execute_protocol_small(parties, threshold, Some(3), NetworkMode::Async, Some(delay_vec), &mut task);
                     [<validate_res_ $z:lower>](results, AMOUNT, parties);
                 }
@@ -164,7 +164,7 @@ mod tests {
 
                     // Async because the triple gen is dummy
                     //Delay P1 by 1s every round
-                    let delay_vec = vec![std::time::Duration::from_secs(1)];
+                    let delay_vec = vec![tokio::time::Duration::from_secs(1)];
                     let results = execute_protocol_small(parties, threshold, None, NetworkMode::Async, Some(delay_vec), &mut task);
                     [<validate_res_ $z:lower>](results, AMOUNT, parties);
                 }

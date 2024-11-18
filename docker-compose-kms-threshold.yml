@@ -8,7 +8,7 @@ services:
   dev-kms-core-certs:
     image: ghcr.io/zama-ai/kms-service:latest
     environment:
-      - RUST_LOG=debug
+      - RUST_LOG=info
     entrypoint: >
       /bin/sh -c "
       echo \"Starting tls certificates generation\" &&

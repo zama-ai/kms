@@ -2577,7 +2577,7 @@ pub mod test_tools {
             server_handles.insert(i as u32, handle);
         }
         // We need to sleep as the servers keep running in the background and hence do not return
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         server_handles
     }
 
@@ -2594,7 +2594,7 @@ pub mod test_tools {
                 }
                 Err(_) => {
                     tracing::info!("Retrying: Client connection to {}", uri);
-                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
                     channel = Channel::builder(uri.clone()).connect().await;
                     tries += 1;
                     if tries > RETRY_COUNT {
@@ -2663,7 +2663,7 @@ pub mod test_tools {
             let _ = server_handle(config, pub_storage, priv_storage).await;
         });
         // We have to wait for the server to start since it will keep running in the background
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         server_handle
     }
 
@@ -2900,7 +2900,7 @@ pub(crate) mod tests {
         while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
         {
             // Sleep to give the server some time to complete key generation
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
             response = kms_client
                 .get_key_gen_result(tonic::Request::new(req_id.clone()))
                 .await;
@@ -2957,14 +2957,14 @@ pub(crate) mod tests {
             .await
             .unwrap();
         assert_eq!(gen_response.into_inner(), Empty {});
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
         // Check that we can retrieve the CRS under that request id
         let mut get_response = kms_client
             .get_crs_gen_result(tonic::Request::new(client_request_id.clone()))
             .await;
         while get_response.is_err() {
             // Sleep to give the server some time to complete CRS generation
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
             get_response = kms_client
                 .get_crs_gen_result(tonic::Request::new(request_id.clone()))
                 .await;
@@ -3112,7 +3112,7 @@ pub(crate) mod tests {
         let mut ctr = 0;
         while response.is_err() && ctr < 200 {
             // Sleep to give the server some time to complete CRS generation
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
             response = kms_client
                 .get_crs_gen_result(tonic::Request::new(crs_req_id.clone()))
                 .await;
@@ -3224,7 +3224,7 @@ pub(crate) mod tests {
             .get_verify_proven_ct_result(proven_ct_id.clone())
             .await;
         while verify_proven_ct_response.is_err() && ctr < 1000 {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
             verify_proven_ct_response = kms_client
                 .get_verify_proven_ct_result(tonic::Request::new(proven_ct_id.clone()))
                 .await;
@@ -3368,7 +3368,7 @@ pub(crate) mod tests {
             let mut joined_responses = vec![];
             for count in 0..TRIES {
                 joined_responses = vec![];
-                tokio::time::sleep(std::time::Duration::from_secs(5 * $parallelism as u64)).await;
+                tokio::time::sleep(tokio::time::Duration::from_secs(5 * $parallelism as u64)).await;
 
                 let mut tasks_get = JoinSet::new();
                 for req in &$reqs {
@@ -3920,7 +3920,7 @@ pub(crate) mod tests {
             let mut cur_client = kms_client.clone();
             resp_tasks.spawn(async move {
                 // Sleep initially to give the server some time to complete the decryption
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
                 // send query
                 let mut response = cur_client
@@ -3934,7 +3934,7 @@ pub(crate) mod tests {
                 while response.is_err()
                     && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
                 {
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
                     // we may wait up to 50s for tests (include slow profiles), for big ciphertexts
                     if ctr >= 1000 {
                         panic!("timeout while waiting for decryption result");
@@ -4169,7 +4169,7 @@ pub(crate) mod tests {
             let mut cur_client = kms_client.clone();
             resp_tasks.spawn(async move {
                 // Sleep initially to give the server some time to complete the reencryption
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
                 // send query
                 let mut response = cur_client
@@ -4183,7 +4183,7 @@ pub(crate) mod tests {
                 while response.is_err()
                     && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
                 {
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
                     // we may wait up to 50s for tests (include slow profiles), for big ciphertexts
                     if ctr >= 1000 {
                         panic!("timeout while waiting for reencryption result");
@@ -4438,7 +4438,7 @@ pub(crate) mod tests {
                 let req_id_clone = req.request_id.as_ref().unwrap().clone();
                 resp_tasks.spawn(async move {
                     // Sleep to give the server some time to complete decryption
-                    tokio::time::sleep(std::time::Duration::from_millis(
+                    tokio::time::sleep(tokio::time::Duration::from_millis(
                         100 * bits * parallelism as u64,
                     ))
                     .await;
@@ -4451,7 +4451,7 @@ pub(crate) mod tests {
                         && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
                     {
                         // wait for 4*bits ms before the next query, but at least 100ms and at most 1s.
-                        tokio::time::sleep(std::time::Duration::from_millis(
+                        tokio::time::sleep(tokio::time::Duration::from_millis(
                             4 * bits.clamp(100, 1000),
                         ))
                         .await;
@@ -4674,7 +4674,7 @@ pub(crate) mod tests {
                 let bits = msg.bits() as u64;
                 resp_tasks.spawn(async move {
                     // Sleep to give the server some time to complete reencryption
-                    tokio::time::sleep(std::time::Duration::from_millis(
+                    tokio::time::sleep(tokio::time::Duration::from_millis(
                         100 * bits * parallelism as u64,
                     ))
                     .await;
@@ -4687,7 +4687,7 @@ pub(crate) mod tests {
                         && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
                     {
                         // wait for 4*bits ms before the next query, but at least 100ms and at most 1s.
-                        tokio::time::sleep(std::time::Duration::from_millis(
+                        tokio::time::sleep(tokio::time::Duration::from_millis(
                             4 * bits.clamp(100, 1000),
                         ))
                         .await;
@@ -4855,7 +4855,7 @@ pub(crate) mod tests {
         while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
         {
             // Sleep to give the server some time to complete reencryption
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
             response = kms_client
                 .get_reencrypt_result(req.request_id.clone().unwrap())
                 .await;
@@ -5014,7 +5014,7 @@ pub(crate) mod tests {
         let mut finished: Vec<_> = Vec::new();
         let finished_enum: i32 = KeyGenPreprocStatusEnum::Finished.into();
         for _ in 0..20 {
-            tokio::time::sleep(std::time::Duration::from_secs(15 * parallelism as u64)).await;
+            tokio::time::sleep(tokio::time::Duration::from_secs(15 * parallelism as u64)).await;
 
             let mut done = true;
             for req in &reqs {
@@ -5162,7 +5162,7 @@ pub(crate) mod tests {
         let finished_enum: i32 = KeyGenPreprocStatusEnum::Finished.into();
         let mut finished = Vec::new();
         for _ in 0..20 {
-            tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+            tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
 
             let status = get_preproc_status(preprocessing_req_data.clone(), &kms_clients).await;
             finished = status
@@ -5219,7 +5219,7 @@ pub(crate) mod tests {
         //Wait 5 min max (should be enough here too)
         let mut finished = Vec::new();
         for _ in 0..20 {
-            tokio::time::sleep(std::time::Duration::from_secs(if insecure {
+            tokio::time::sleep(tokio::time::Duration::from_secs(if insecure {
                 1
             } else {
                 15

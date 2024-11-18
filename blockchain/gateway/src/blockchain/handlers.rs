@@ -28,7 +28,7 @@ pub(crate) async fn handle_event_decryption(
     middleware: Arc<Box<dyn InternalMiddleware>>,
 ) -> anyhow::Result<()> {
     tracing::debug!("🍻 handle_event_decryption enter");
-    let start = std::time::Instant::now();
+    let start = tokio::time::Instant::now();
     let block_number = event.block_number;
     let ciphertexts = event.filter.cts.clone();
 
@@ -174,7 +174,7 @@ pub(crate) async fn handle_reencryption_event(
     middleware: Arc<Box<dyn InternalMiddleware>>,
     blockchain: Arc<dyn Blockchain>,
 ) -> anyhow::Result<Vec<ReencryptResponseValues>> {
-    let start = std::time::Instant::now();
+    let start = tokio::time::Instant::now();
     let chain_id = middleware.get_chainid().await?;
     let external_ct_handle = event.ciphertext_handle.0.clone();
 
@@ -229,7 +229,7 @@ pub(crate) async fn handle_verify_proven_ct_event(
     blockchain: Arc<dyn Blockchain>,
     ciphertext_provider: Arc<Box<dyn CiphertextProvider>>,
 ) -> anyhow::Result<VerifyProvenCtResponseToClient> {
-    let start = std::time::Instant::now();
+    let start = tokio::time::Instant::now();
     let chain_id = middleware.get_chainid().await?;
 
     // check the format EIP-55
@@ -288,7 +288,7 @@ pub(crate) async fn handle_verify_proven_ct_event(
 pub(crate) async fn handle_keyurl_event(
     blockchain: Arc<dyn Blockchain>,
 ) -> anyhow::Result<KeyUrlResponseValues> {
-    let start = std::time::Instant::now();
+    let start = tokio::time::Instant::now();
     let response = blockchain.keyurl().await;
     let duration = start.elapsed();
     tracing::info!("⏱️ KMS Response Time elapsed for KeyUrl: {:?}", duration);

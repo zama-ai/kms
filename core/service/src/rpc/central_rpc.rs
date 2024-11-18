@@ -176,7 +176,7 @@ impl<
 
         let _handle = tokio::spawn(async move {
             {
-                let start = std::time::Instant::now();
+                let start = tokio::time::Instant::now();
                 {
                     // Check if the key already exists
                     let key_handles = fhe_keys.read().await;
@@ -444,7 +444,7 @@ impl<
         request: Request<DecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
         tracing::info!("Received a new request!");
-        let start = std::time::Instant::now();
+        let start = tokio::time::Instant::now();
         let inner = request.into_inner();
         tracing::info!("Request ID: {:?}", inner.request_id);
         tracing::debug!("#CTs: {}", inner.ciphertexts.len());
@@ -656,7 +656,7 @@ impl<
 
         let _handle = tokio::spawn(async move {
             {
-                let start = std::time::Instant::now();
+                let start = tokio::time::Instant::now();
 
                 let (pp, crs_info) = match async_generate_crs(
                     &sk,

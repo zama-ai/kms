@@ -10,11 +10,10 @@ use mockall::{automock, mock, predicate::*};
 use retrying::retry;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::time::Duration;
 use strum::IntoEnumIterator as _;
 use strum_macros::EnumString;
 use thiserror::Error;
-use tokio::time::sleep;
+use tokio::time::{sleep, Duration};
 use typed_builder::TypedBuilder;
 
 #[derive(Debug, Error)]

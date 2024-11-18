@@ -57,12 +57,12 @@ use std::collections::HashMap;
 use std::num::Wrapping;
 #[cfg(any(test, feature = "testing"))]
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 use tfhe::core_crypto::prelude::{keyswitch_lwe_ciphertext, LweCiphertext, LweKeyswitchKey};
 use tfhe::integer::IntegerCiphertext;
 use tfhe::shortint::PBSOrder;
 #[cfg(any(test, feature = "testing"))]
 use tokio::task::JoinSet;
+use tokio::time::{Duration, Instant};
 use tracing::instrument;
 
 use super::keygen::PrivateKeySet;

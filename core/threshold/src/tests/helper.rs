@@ -4,7 +4,7 @@
 /// TODO(Dragos) Investigate this afterwards.
 pub mod tests_and_benches {
 
-    use std::time::Duration;
+    use tokio::time::Duration;
 
     use crate::{
         algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed},
@@ -482,7 +482,7 @@ pub mod tests {
         malicious_roles: &[Role],
         malicious_strategy: P,
         network_mode: NetworkMode,
-        delay_vec: Option<Vec<std::time::Duration>>,
+        delay_vec: Option<Vec<tokio::time::Duration>>,
         task_honest: &mut dyn FnMut(LargeSession) -> TaskOutputT,
         task_malicious: &mut dyn FnMut(LargeSession, P) -> TaskOutputM,
     ) -> (Vec<OutputT>, Vec<Result<OutputM, JoinError>>)

@@ -11,10 +11,10 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
-use std::time::Duration;
 use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::time::Duration;
 
 /// A simple implementation of networking for local execution.
 ///

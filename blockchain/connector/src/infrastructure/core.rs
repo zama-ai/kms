@@ -32,7 +32,6 @@ use kms_lib::rpc::rpc_types::{PubDataType, CURRENT_FORMAT_VERSION};
 use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::time::sleep;
 use tonic::transport::{Channel, Endpoint};
 use tonic::{Response, Status};
 use typed_builder::TypedBuilder;
@@ -255,12 +254,18 @@ enum PollerStatus<T> {
 macro_rules! poller {
     ($f_to_poll:expr,$res_map:expr,$timeout_triple:expr,$info:expr,$metrics:expr) => {
         // first wait a bit because some requests are slow.
-        tokio::time::sleep(Duration::from_secs($timeout_triple.initial_wait_time)).await;
+        tokio::time::sleep(tokio::time::Duration::from_secs(
+            $timeout_triple.initial_wait_time,
+        ))
+        .await;
 
         // start polling
         let mut cnt = 0u64;
         loop {
-            sleep(Duration::from_secs($timeout_triple.retry_interval)).await;
+            tokio::time::sleep(tokio::time::Duration::from_secs(
+                $timeout_triple.retry_interval,
+            ))
+            .await;
             let resp = $f_to_poll.await;
 
             match $res_map(resp) {

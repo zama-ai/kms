@@ -1,6 +1,6 @@
 //! Constants for the exponential backoff policy for gRPC
 use lazy_static::lazy_static;
-use std::time::Duration;
+use tokio::time::Duration;
 
 /// The default incoming messages limit per party
 pub(crate) const MESSAGE_LIMIT: usize = 70;

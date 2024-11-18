@@ -311,7 +311,7 @@ mod tests {
 
         //This is Async because triples are generated from dummy preprocessing
         //Delay P1 by 1s every round
-        let delay_vec = vec![std::time::Duration::from_secs(1)];
+        let delay_vec = vec![tokio::time::Duration::from_secs(1)];
         let results = execute_protocol_large::<ResiduePoly64, _, _>(
             parties,
             threshold,

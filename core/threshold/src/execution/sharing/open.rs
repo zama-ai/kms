@@ -367,7 +367,7 @@ mod test {
         // expect a single round for opening
 
         //Delay P1 by 1s every round
-        let delay_vec = vec![std::time::Duration::from_secs(1)];
+        let delay_vec = vec![tokio::time::Duration::from_secs(1)];
         let _ = execute_protocol_large::<ResiduePoly128, _, _>(
             parties,
             threshold,

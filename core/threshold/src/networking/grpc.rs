@@ -24,9 +24,9 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::sync::RwLock;
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::Mutex;
+use tokio::time::Duration;
 use tonic::transport::Certificate;
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]

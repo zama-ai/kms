@@ -34,7 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("failed to execute process");
 
     // sleep for a bit to let the faucet complete
-    std::thread::sleep(std::time::Duration::from_secs(5));
+    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
 
     let provider = Provider::<Ws>::connect("ws://0.0.0.0:8546").await?;
 

@@ -1354,7 +1354,7 @@ pub mod tests {
         threshold: usize,
         prefix_path: String,
     ) {
-        use std::time::Duration;
+        use tokio::time::Duration;
 
         use crate::{
             execution::{
@@ -1473,7 +1473,7 @@ pub mod tests {
 
         //Async because the preprocessing is Dummy
         //Delay P1 by 1s every round
-        let delay_vec = vec![std::time::Duration::from_secs(1)];
+        let delay_vec = vec![tokio::time::Duration::from_secs(1)];
         let results = execute_protocol_large::<ResiduePoly128, _, _>(
             num_parties,
             threshold,
@@ -1530,7 +1530,7 @@ pub mod tests {
 
         //Async because the preprocessing is Dummy
         //Delay P1 by 1s every round
-        let delay_vec = vec![std::time::Duration::from_secs(1)];
+        let delay_vec = vec![tokio::time::Duration::from_secs(1)];
         let results = execute_protocol_large::<ResiduePoly128, _, _>(
             num_parties,
             threshold,

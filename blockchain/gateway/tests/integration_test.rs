@@ -8,8 +8,8 @@ mod tests {
     use reqwest::Client;
     use serde::Deserialize;
     use serde_json::json;
-    use std::{collections::HashMap, time::Duration};
-    use tokio::sync::mpsc;
+    use std::collections::HashMap;
+    use tokio::{sync::mpsc, time::Duration};
 
     fn id() -> usize {
         use std::sync::atomic::{AtomicUsize, Ordering};

@@ -596,7 +596,7 @@ impl GatewaySubscriber {
                 let ct_provider = Arc::clone(&ct_provider);
                 let middleware = Arc::clone(&middleware);
                 tokio::task::spawn(async move {
-                    let start = std::time::Instant::now();
+                    let start = tokio::time::Instant::now();
                     match event {
                         GatewayEvent::Decryption(msg_event) => {
                             debug!("🫐🫐🫐 Received Decryption Event");

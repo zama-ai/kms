@@ -23,9 +23,8 @@ use crate::{
     session_id::SessionId,
 };
 use conf_trace::telemetry::ContextPropagator;
-use std::thread;
-use std::{collections::HashMap, time::Duration};
-use tokio::task::JoinSet;
+use std::collections::HashMap;
+use tokio::{task::JoinSet, time::Duration};
 use tonic::service::interceptor::InterceptedService;
 use tonic::transport::{Channel, Uri};
 use tracing::{instrument, Instrument};
@@ -501,7 +500,7 @@ impl ChoreoRuntime {
                 for (role, status) in result.drain(..) {
                     println!("Role {role}, Status {:?}", status);
                 }
-                thread::sleep(interval);
+                tokio::time::sleep(interval).await;
             }
         }
     }

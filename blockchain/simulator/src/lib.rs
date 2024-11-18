@@ -1262,7 +1262,7 @@ pub async fn wait_for_contract_to_be_deployed(
     node_url: &str,
     contract_address: &str,
     max_retries: u64,
-    time_to_wait: std::time::Duration,
+    time_to_wait: tokio::time::Duration,
 ) -> Result<(), Box<dyn std::error::Error + 'static>> {
     for retry_index in 0..max_retries {
         match check_contract(node_url, contract_address).await {
@@ -1414,7 +1414,7 @@ async fn wait_for_response(
                     tracing::info!(
                     "Got {} responses, but expecting at least {}. Waiting {time_to_wait} seconds for the other responses to be posted to the blockchain.", results.len(), num_expected_responses,
                 );
-                    std::thread::sleep(std::time::Duration::from_secs(time_to_wait));
+                    tokio::time::sleep(tokio::time::Duration::from_secs(time_to_wait)).await;
                 } else {
                     tracing::info!("Results: {:?}", results);
                     return Ok(results);
@@ -1424,7 +1424,7 @@ async fn wait_for_response(
                 tracing::info!(
                     "Got error \"{e}\", waiting {time_to_wait} seconds for the response to be posted to the blockchain.",
                 );
-                std::thread::sleep(std::time::Duration::from_secs(time_to_wait));
+                tokio::time::sleep(tokio::time::Duration::from_secs(time_to_wait)).await;
             }
         }
     }
@@ -1679,7 +1679,7 @@ pub async fn main_from_config(
         sim_conf.http_validator_endpoints[0].as_str(),
         &sim_conf.contract,
         120,
-        std::time::Duration::from_secs(1),
+        tokio::time::Duration::from_secs(1),
     )
     .await?;
 

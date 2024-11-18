@@ -62,7 +62,7 @@ macro_rules! retry {
                 break result;
             } else {
                 retries += 1;
-                tokio::time::sleep(std::time::Duration::from_millis($interval)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis($interval)).await;
             }
         };
         result
@@ -136,7 +136,7 @@ async fn central_requests(address: String) -> anyhow::Result<()> {
         .await;
     while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
         // Sleep to give the server some time to complete decryption
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         response = kms_client
             .get_decrypt_result(tonic::Request::new(req.request_id.clone().unwrap()))
             .await;
@@ -173,7 +173,7 @@ async fn central_requests(address: String) -> anyhow::Result<()> {
         .await;
     while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
         // Sleep to give the server some time to complete reencryption
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         response = kms_client
             .get_reencrypt_result(tonic::Request::new(req.request_id.clone().unwrap()))
             .await;
@@ -260,7 +260,7 @@ async fn do_threshold_decryption(
 
         resp_tasks.spawn(async move {
             // Sleep to give the server some time to complete decryption
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
             let mut response = cur_client
                 .get_decrypt_result(tonic::Request::new(req_id_clone.clone()))
@@ -269,7 +269,7 @@ async fn do_threshold_decryption(
             while response.is_err()
                 && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
             {
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                 // do at most 100 retries (stop after max. 50 secs)
                 if ctr >= CLIENT_RETRY_COUNTER {
                     panic!(
@@ -361,7 +361,7 @@ async fn do_threshold_reencryption(
 
         resp_tasks.spawn(async move {
             // Sleep to give the server some time to complete decryption
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
             let mut response = cur_client
                 .get_reencrypt_result(tonic::Request::new(req_id_clone.clone()))
@@ -370,7 +370,7 @@ async fn do_threshold_reencryption(
             while response.is_err()
                 && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
             {
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                 // do at most 100 retries (stop after max. 50 secs)
                 if ctr >= CLIENT_RETRY_COUNTER {
                     panic!(

@@ -236,7 +236,7 @@ mod tests {
         //Delay P1 by 1s every round
         let delay_map = HashMap::from([(
             identities.first().unwrap().clone(),
-            std::time::Duration::from_secs(1),
+            tokio::time::Duration::from_secs(1),
         )]);
         let runtime: DistributedTestRuntime<LevelOne> =
             DistributedTestRuntime::new(identities, threshold, NetworkMode::Async, Some(delay_map));

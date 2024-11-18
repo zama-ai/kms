@@ -210,7 +210,7 @@ mod tests {
                     // expect 2 rounds: 1 for multiplication and 1 for opening
                     // Online phase so Async
                     //Delay P1 by 1s every round
-                    let delay_vec = vec![std::time::Duration::from_secs(1)];
+                    let delay_vec = vec![tokio::time::Duration::from_secs(1)];
                     let results = execute_protocol_small(parties, threshold, Some(2), NetworkMode::Async, Some(delay_vec), &mut task);
                     assert_eq!(results.len(), parties);
 
@@ -254,7 +254,7 @@ mod tests {
                     // expect 4 rounds: 1 for bit multiplication and 3 for the separate openings
                     // Online phase so Async
                     //Delay P1 by 1s every round
-                    let delay_vec = vec![std::time::Duration::from_secs(1)];
+                    let delay_vec = vec![tokio::time::Duration::from_secs(1)];
                     let results = execute_protocol_small(parties, threshold, Some(4), NetworkMode::Async,Some(delay_vec), &mut task);
                     assert_eq!(results.len(), parties);
                     for (a_vec, b_vec, c_vec) in &results {
@@ -291,7 +291,7 @@ mod tests {
 
                     // Online phase so Async
                     //Delay P1 by 1s every round
-                    let delay_vec = vec![std::time::Duration::from_secs(1)];
+                    let delay_vec = vec![tokio::time::Duration::from_secs(1)];
                     let results = execute_protocol_small(parties, threshold, None, NetworkMode::Async, Some(delay_vec), &mut task);
                     assert_eq!(results.len(), parties);
 
@@ -327,7 +327,7 @@ mod tests {
 
                     // Online phase so Async
                     //Delay P1 by 1s every round
-                    let delay_vec = vec![std::time::Duration::from_secs(1)];
+                    let delay_vec = vec![tokio::time::Duration::from_secs(1)];
                     let results = execute_protocol_small(parties, threshold, None, NetworkMode::Async, Some(delay_vec), &mut task);
                     assert_eq!(results.len(), parties);
 

@@ -1,6 +1,6 @@
 //! Networking traits and implementations.
 
-use std::time::Duration;
+use tokio::time::Duration;
 
 use crate::execution::runtime::party::Identity;
 use crate::execution::runtime::party::RoleAssignment;

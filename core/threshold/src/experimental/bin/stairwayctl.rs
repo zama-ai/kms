@@ -1,5 +1,5 @@
 //! CLI tool for interacting with a group of stairways
-use std::time::Duration;
+use tokio::time::Duration;
 
 use aes_prng::AesRng;
 use clap::{Args, Parser, Subcommand};

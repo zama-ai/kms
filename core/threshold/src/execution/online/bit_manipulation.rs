@@ -565,7 +565,7 @@ mod tests {
         // we expect 2 rounds: one for the opening during multiplication, one for the opening of the output.
         // Async because preprocessing is Dummy
         //Delay P1 by 1s every round
-        let delay_vec = vec![std::time::Duration::from_secs(1)];
+        let delay_vec = vec![tokio::time::Duration::from_secs(1)];
         let results = execute_protocol_small(
             parties,
             threshold as u8,
@@ -603,7 +603,7 @@ mod tests {
         // we expect 1 round: the opening of the output.
         // Async because no preprocessing
         //Delay P1 by 1s every round
-        let delay_vec = vec![std::time::Duration::from_secs(1)];
+        let delay_vec = vec![tokio::time::Duration::from_secs(1)];
         let results = execute_protocol_small(
             parties,
             threshold as u8,
@@ -661,7 +661,7 @@ mod tests {
         let rounds = 2_usize * Z64::CHAR_LOG2.ilog2() as usize + 1 + 1;
         // Async because preprocessing is Dummy
         //Delay P1 by 1s every round
-        let delay_vec = vec![std::time::Duration::from_secs(1)];
+        let delay_vec = vec![tokio::time::Duration::from_secs(1)];
         let results = execute_protocol_small(
             parties,
             threshold as u8,
@@ -775,7 +775,7 @@ mod tests {
 
         // Async because preprocessing is Dummy
         //Delay P1 by 1s every round
-        let delay_vec = vec![std::time::Duration::from_secs(1)];
+        let delay_vec = vec![tokio::time::Duration::from_secs(1)];
         let results = &execute_protocol_small(
             parties,
             threshold as u8,
@@ -844,7 +844,7 @@ mod tests {
         //generating bits from DummyPreprocessing is now communication-free
         // Async because preprocessing is Dummy
         //Delay P1 by 1s every round
-        let delay_vec = vec![std::time::Duration::from_secs(1)];
+        let delay_vec = vec![tokio::time::Duration::from_secs(1)];
         let rounds = 2_usize + 1 + 2_usize * Z64::CHAR_LOG2.ilog2() as usize;
         let results = &execute_protocol_small(
             parties,

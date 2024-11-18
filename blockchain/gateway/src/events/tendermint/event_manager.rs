@@ -4,7 +4,7 @@ use tendermint_rpc::{
     client::CompatMode, event::Event, query::Query, Client, Error, Subscription,
     SubscriptionClient, Url, WebSocketClient,
 };
-use tokio::{task::JoinHandle, time::Duration};
+use tokio::task::JoinHandle;
 use tracing::{debug, info};
 
 pub struct EventManager {
@@ -74,32 +74,40 @@ impl EventManager {
         timeout_secs: u32,
         callback: fn(Event) -> Result<(), Error>,
     ) -> Result<(), Error> {
-        let timeout = tokio::time::sleep(Duration::from_secs(timeout_secs as u64));
-        let mut event_count = 0u64;
-        tokio::pin!(timeout);
+        let mut event_count = 0u32;
         loop {
-            tokio::select! {
-                result_opt = subs.next() => {
-                    let result = match result_opt {
-                        Some(r) => r,
-                        None => {
-                            info!("The server terminated the subscription");
-                            return Ok(());
-                        }
-                    };
-                    let event = result?;
+            match tokio::time::timeout(
+                tokio::time::Duration::from_secs(timeout_secs as u64),
+                subs.next(),
+            )
+            .await
+            {
+                Ok(Some(Ok(event))) => {
+                    // Process the event
                     callback(event)?;
                     event_count += 1;
-                    if let Some(me) = max_events {
-                        if event_count >= (me as u64) {
-                            info!("Reached maximum number of events: {}", me);
+
+                    // Check if the max event limit is reached
+                    if let Some(max_events) = max_events {
+                        if event_count >= max_events {
+                            info!("Reached maximum number of events: {}", max_events);
                             return Ok(());
                         }
                     }
                 }
-                _ = &mut timeout => {
+                Ok(Some(Err(e))) => {
+                    // Handle error from subscription
+                    return Err(e);
+                }
+                Ok(None) => {
+                    // Subscription ended
+                    info!("The server terminated the subscription");
+                    return Ok(());
+                }
+                Err(_) => {
+                    // Timeout occurred
                     info!("Reached event receive timeout of {} seconds", timeout_secs);
-                    return Ok(())
+                    return Ok(());
                 }
             }
         }

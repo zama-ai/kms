@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 use std::str::FromStr;
 use std::sync::{Arc, OnceLock, RwLock};
-use std::time::Duration;
+use tokio::time::Duration;
 
 use backoff::exponential::ExponentialBackoff;
 use backoff::future::retry_notify;
@@ -511,7 +511,7 @@ mod tests {
                         let msg = vec![1u8; 10];
                         tracing::info!("Sending ONCE");
                         network_stack.send(msg.clone(), &id_2).await.unwrap();
-                        tokio::time::sleep(Duration::from_secs(4)).await;
+                        tokio::time::sleep(tokio::time::Duration::from_secs(4)).await;
                         tracing::info!("Sending TWICE");
                         network_stack.send(msg.clone(), &id_2).await.unwrap();
                         send.send(msg).unwrap();

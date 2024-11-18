@@ -129,7 +129,7 @@ mod tests {
 
         // Online phase so Async because offline is dummy
         //Delay P1 by 1s every round
-        let delay_vec = vec![std::time::Duration::from_secs(1)];
+        let delay_vec = vec![tokio::time::Duration::from_secs(1)];
         let results = execute_protocol_small(
             parties,
             threshold,
@@ -190,7 +190,7 @@ mod tests {
         //This is now a unit test as we use DummyPreprocessing, so only 1 round (for openeing at the end)
         // Online phase so Async because offline is dummy
         //Delay P1 by 1s every round
-        let delay_vec = vec![std::time::Duration::from_secs(1)];
+        let delay_vec = vec![tokio::time::Duration::from_secs(1)];
         let results = execute_protocol_large::<ResiduePoly128, _, _>(
             parties,
             threshold,
@@ -264,7 +264,7 @@ mod tests {
         //This is now a unit test as we use DummyPreprocessing, so only 1 round (for openeing at the end)
         // Online phase so Async because offline is dummy
         //Delay P1 by 1s every round
-        let delay_vec = vec![std::time::Duration::from_secs(1)];
+        let delay_vec = vec![tokio::time::Duration::from_secs(1)];
         let results = execute_protocol_large::<ResiduePoly64, _, _>(
             parties,
             threshold,
