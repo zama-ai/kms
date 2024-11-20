@@ -549,9 +549,12 @@ impl Transaction {
         &self.operations
     }
 
-    pub fn add_operation(&mut self, operation: OperationValue) -> Result<(), anyhow::Error> {
+    pub fn add_operation(&mut self, operation: OperationValue) {
         self.operations.push(operation);
-        Ok(())
+    }
+
+    pub fn add_operations(&mut self, operations: Vec<OperationValue>) {
+        self.operations.extend(operations);
     }
 }
 

@@ -1,5 +1,5 @@
 use cosmwasm_std::{StdError, StdResult, Storage};
-use cw_storage_plus::{Bound, Item, KeyDeserialize, Map, PrimaryKey};
+use cw_storage_plus::{Bound, Item, KeyDeserialize, Map, PrefixBound, PrimaryKey};
 use serde::{de::DeserializeOwned, Serialize};
 use tfhe_versionable::{Unversionize, VersionizeOwned};
 
@@ -78,7 +78,7 @@ pub struct VersionedMap<K, T: VersionizeOwned> {
 impl<'a, K, T> VersionedMap<K, T>
 where
     K: PrimaryKey<'a>,
-    T: DeserializeOwned + VersionizeOwned + Unversionize + Clone,
+    T: Serialize + DeserializeOwned + VersionizeOwned + Unversionize + Clone,
 {
     pub fn new(namespace: &'static str) -> Self {
         Self {
@@ -135,28 +135,33 @@ where
         // Return the actual output struct and not the versioned enum
         Ok(output)
     }
-}
 
-// The `range` method have a slightly different constraint on the key's traits
-impl<'a, K, T> VersionedMap<K, T>
-where
-    T: Serialize + DeserializeOwned + VersionizeOwned + Unversionize,
-    K: PrimaryKey<'a> + KeyDeserialize,
-{
-    // Collect the different items found within the given CosmWasm storage, then unversionize them
-    // before returning them
-    pub fn range<'c>(
+    // Indicate whether the given key is associated to any data in storage, without parsing or
+    // interpreting the contents
+    pub fn has(&self, store: &dyn Storage, k: K) -> bool {
+        self.versioned_map.has(store, k)
+    }
+
+    // Collect the different items found within the given CosmWasm storage, filter them by the given
+    // prefix, then unversionize them before returning them. Note that we use `prefix_range_raw`
+    // instead of `prefix_range` to avoid the overhead of unversionizing the keys, since we currently
+    // have no methods needing these keys
+    // Also, we prefer to implement `prefix_range_raw` instead of using `prefix` and then `range_raw`
+    // because that would require use to implement a custom `VersionedPrefix` type. It is just simpler
+    // to instead support `prefix_range_raw` here
+    pub fn prefix_range_raw<'c>(
         &self,
         store: &'c dyn Storage,
-        min: Option<Bound<'a, K>>,
-        max: Option<Bound<'a, K>>,
+        min: Option<PrefixBound<'a, K::Prefix>>,
+        max: Option<PrefixBound<'a, K::Prefix>>,
         order: cosmwasm_std::Order,
-    ) -> Box<dyn Iterator<Item = StdResult<(K::Output, T)>> + 'c>
+    ) -> Box<dyn Iterator<Item = StdResult<cosmwasm_std::Record<T>>> + 'c>
     where
         T: 'c,
-        K::Output: 'static,
+        'a: 'c,
+        K: 'c,
     {
-        let versioned_items = self.versioned_map.range(store, min, max, order);
+        let versioned_items = self.versioned_map.prefix_range_raw(store, min, max, order);
 
         let items = versioned_items.map(|result| {
             result.and_then(|(k, v)| {
@@ -174,9 +179,31 @@ where
     }
 }
 
+impl<'a, K, T> VersionedMap<K, T>
+where
+    K: PrimaryKey<'a> + KeyDeserialize,
+    T: Serialize + DeserializeOwned + VersionizeOwned + Unversionize + Clone,
+{
+    // Collect the different keys found within the given CosmWasm storage
+    pub fn keys<'c>(
+        &self,
+        store: &'c dyn Storage,
+        min: Option<Bound<'a, K>>,
+        max: Option<Bound<'a, K>>,
+        order: cosmwasm_std::Order,
+    ) -> Box<dyn Iterator<Item = StdResult<K::Output>> + 'c>
+    where
+        T: 'c,
+        K::Output: 'static,
+    {
+        self.versioned_map.keys(store, min, max, order)
+    }
+}
 #[cfg(test)]
 pub(crate) mod tests {
     use cosmwasm_std::{testing::MockStorage, Order, StdError};
+    use cw_storage_plus::PrefixBound;
+
     // Build an "old" version of a dummy struct and define a CosmWasm storage struct from it
     pub(crate) mod v0 {
         use cosmwasm_schema::cw_serde;
@@ -206,8 +233,9 @@ pub(crate) mod tests {
         }
 
         pub(crate) struct VersionedStorage {
-            pub my_versioned_map: VersionedMap<Vec<u8>, MyStruct>,
+            pub my_versioned_map: VersionedMap<String, MyStruct>,
             pub my_versioned_item: VersionedItem<MyStruct>,
+            pub my_versioned_map_prefix: VersionedMap<(String, String), MyStruct>,
         }
 
         impl Default for VersionedStorage {
@@ -215,6 +243,7 @@ pub(crate) mod tests {
                 Self {
                     my_versioned_map: VersionedMap::new("my_versioned_map"),
                     my_versioned_item: VersionedItem::new("my_versioned_item"),
+                    my_versioned_map_prefix: VersionedMap::new("my_versioned_map_prefix"),
                 }
             }
         }
@@ -279,8 +308,9 @@ pub(crate) mod tests {
         }
 
         pub(crate) struct VersionedStorage {
-            pub my_versioned_map: VersionedMap<Vec<u8>, MyStruct<u8>>,
+            pub my_versioned_map: VersionedMap<String, MyStruct<u8>>,
             pub my_versioned_item: VersionedItem<MyStruct<u8>>,
+            pub my_versioned_map_prefix: VersionedMap<(String, String), MyStruct<u8>>,
         }
 
         // Namespace must match the one from the old version
@@ -289,12 +319,13 @@ pub(crate) mod tests {
                 Self {
                     my_versioned_map: VersionedMap::new("my_versioned_map"),
                     my_versioned_item: VersionedItem::new("my_versioned_item"),
+                    my_versioned_map_prefix: VersionedMap::new("my_versioned_map_prefix"),
                 }
             }
         }
         // Define a "broken" CosmWasm storage struct that uses a different namespace
         pub(super) struct BrokenVersionedStorage {
-            pub my_versioned_map: VersionedMap<Vec<u8>, MyStruct<u8>>,
+            pub my_versioned_map: VersionedMap<String, MyStruct<u8>>,
             pub my_versioned_item: VersionedItem<MyStruct<u8>>,
         }
 
@@ -309,6 +340,54 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn test_versioned_has() {
+        // Create an old VersionedStorage instance
+        let old_versioned_storage = v0::VersionedStorage::default();
+
+        let dyn_store = &mut MockStorage::new();
+
+        // Build an old struct
+        let old_test_key = "old_test_key".to_string();
+        let old_test_value = "old_test_value";
+        let my_old_struct = v0::MyStruct::new(old_test_value);
+
+        // Insert the old struct into the old storage
+        old_versioned_storage
+            .my_versioned_map
+            .save(dyn_store, old_test_key.clone(), &my_old_struct)
+            .expect("Failed to save old struct");
+
+        // Create a new VersionedStorage instance
+        let new_versioned_storage = v1::VersionedStorage::default();
+
+        // Build a new struct
+        let new_test_key = "new_test_key".to_string();
+        let new_test_value = "new_test_value";
+        let my_new_struct = v1::MyStruct::new(new_test_value);
+
+        // Insert the new struct into the new storage
+        new_versioned_storage
+            .my_versioned_map
+            .save(dyn_store, new_test_key.clone(), &my_new_struct)
+            .expect("Failed to save new struct");
+
+        // Check that the old struct is present in the new storage
+        assert!(new_versioned_storage
+            .my_versioned_map
+            .has(dyn_store, old_test_key.clone()));
+
+        // Check that the new struct is present in the new storage
+        assert!(new_versioned_storage
+            .my_versioned_map
+            .has(dyn_store, new_test_key.clone()));
+
+        // Check that the new storage does not contain an unrelated key
+        assert!(!new_versioned_storage
+            .my_versioned_map
+            .has(dyn_store, "unrelated_key".to_string()));
+    }
+
+    #[test]
     fn test_versioned_map_load() {
         // Create an old VersionedStorage instance
         let old_versioned_storage = v0::VersionedStorage::default();
@@ -316,7 +395,7 @@ pub(crate) mod tests {
         let dyn_store = &mut MockStorage::new();
 
         // Build an old struct
-        let test_key = b"test_key".to_vec();
+        let test_key = "test_key".to_string();
         let test_value = "test_value";
         let my_old_struct = v0::MyStruct::new(test_value);
 
@@ -409,7 +488,7 @@ pub(crate) mod tests {
         let dyn_store = &mut MockStorage::new();
 
         // Build an old struct
-        let test_key = b"test_key".to_vec();
+        let test_key = "test_key".to_string();
         let test_value = "test_value";
         let my_old_struct = v0::MyStruct::new(test_value);
 
@@ -502,14 +581,14 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_versioned_range() {
+    fn test_versioned_keys() {
         // Create an old VersionedStorage instance
         let old_versioned_storage = v0::VersionedStorage::default();
 
         let dyn_store = &mut MockStorage::new();
 
         // Build an old struct
-        let old_test_key = b"old_test_key".to_vec();
+        let old_test_key = "old_test_key".to_string();
         let old_test_value = "old_test_value";
         let my_old_struct = v0::MyStruct::new(old_test_value);
 
@@ -523,7 +602,7 @@ pub(crate) mod tests {
         let new_versioned_storage = v1::VersionedStorage::default();
 
         // Build a new struct
-        let new_test_key = b"new_test_key".to_vec();
+        let new_test_key = "new_test_key".to_string();
         let new_test_value = "new_test_value";
         let my_new_struct = v1::MyStruct::new(new_test_value);
 
@@ -533,12 +612,86 @@ pub(crate) mod tests {
             .save(dyn_store, new_test_key.clone(), &my_new_struct)
             .expect("Failed to save new struct");
 
-        let mut my_test_values = Vec::new();
+        let mut my_test_keys = Vec::new();
 
         // Iterate over the storage
         new_versioned_storage
             .my_versioned_map
-            .range(dyn_store, None, None, Order::Ascending)
+            .keys(dyn_store, None, None, Order::Ascending)
+            .for_each(|my_struct_key| {
+                if let Ok(my_struct_key) = my_struct_key {
+                    my_test_keys.push(my_struct_key);
+                }
+            });
+
+        // Test that we have fetched both the new and old keys
+        // Note: the vec's order is important here, as CosmWasm's `keys` function orders by
+        // lexicographical order on key names
+        assert_eq!(my_test_keys, vec![new_test_key, old_test_key]);
+
+        // Note that there no real reason to test with the "broken storage" because of the nature of
+        // the keys function: when iterating through the items, since the namespace is new and
+        // empty, no errors will be thrown and an empty vector is returned
+    }
+
+    #[test]
+    fn test_versioned_prefix_range_raw() {
+        // Create an old VersionedStorage instance
+        let old_versioned_storage = v0::VersionedStorage::default();
+
+        let dyn_store = &mut MockStorage::new();
+
+        // Build an old struct, with a prefix
+        let old_test_key = ("prefix_1".to_string(), "old_test_key".to_string());
+        let old_test_value = "old_test_value";
+        let my_old_struct = v0::MyStruct::new(old_test_value);
+
+        // Insert the old struct into the old storage
+        old_versioned_storage
+            .my_versioned_map_prefix
+            .save(dyn_store, old_test_key.clone(), &my_old_struct)
+            .expect("Failed to save old struct");
+
+        // Create a new VersionedStorage instance
+        let new_versioned_storage = v1::VersionedStorage::default();
+
+        // Build a first new struct, with the same prefix as for the old struct
+        let new_first_test_key = ("prefix_1".to_string(), "new_first_test_key".to_string());
+        let new_first_test_value = "new_first_test_value";
+        let my_new_first_struct = v1::MyStruct::new(new_first_test_value);
+
+        // Insert the new struct into the new storage
+        new_versioned_storage
+            .my_versioned_map_prefix
+            .save(dyn_store, new_first_test_key.clone(), &my_new_first_struct)
+            .expect("Failed to save new struct");
+
+        // Build a second new struct, with a different prefix
+        let new_second_test_key = ("prefix_2".to_string(), "new_second_test_key".to_string());
+        let new_second_test_value = "new_second_test_value";
+        let my_new_second_struct = v1::MyStruct::new(new_second_test_value);
+
+        // Insert the new struct into the new storage
+        new_versioned_storage
+            .my_versioned_map_prefix
+            .save(
+                dyn_store,
+                new_second_test_key.clone(),
+                &my_new_second_struct,
+            )
+            .expect("Failed to save new struct");
+
+        let mut my_test_values = Vec::new();
+
+        // Iterate over the storage and filter by the first prefix
+        new_versioned_storage
+            .my_versioned_map_prefix
+            .prefix_range_raw(
+                dyn_store,
+                Some(PrefixBound::inclusive("prefix_1".to_string())),
+                Some(PrefixBound::inclusive("prefix_1".to_string())),
+                Order::Ascending,
+            )
             .for_each(|my_struct| {
                 if let Ok((_, my_struct)) = my_struct {
                     // Test that all struct has the new attribute_1
@@ -552,11 +705,12 @@ pub(crate) mod tests {
 
         // Test that the struct has been loaded under its new version without altering the values
         // of attribute_0
-        // Note: the vec's order is important here, as CosmWasm's `range` function orders by key ordering
-        assert_eq!(my_test_values, vec![new_test_value, old_test_value]);
+        // Note: the vec's order is important here, as CosmWasm's `prefix_range_raw` function orders by
+        // lexicographical order on key names
+        assert_eq!(my_test_values, vec![new_first_test_value, old_test_value]);
 
         // Note that there no real reason to test with the "broken storage" because of the nature of
-        // the range function: when iterating through the items, since the namespace is new and
+        // the prefix_range_raw function: when iterating through the items, since the namespace is new and
         // empty, no errors will be thrown and an empty vector is returned
     }
 }

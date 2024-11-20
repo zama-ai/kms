@@ -49,7 +49,7 @@ impl KmsContract {
         Self::default()
     }
 
-    fn derive_transaction_id(&self, env: &Env) -> StdResult<Vec<u8>> {
+    fn derive_transaction_id(&self, env: &Env) -> StdResult<TransactionId> {
         let block_height = env.block.height;
         let transaction_index = env
             .transaction
@@ -59,7 +59,7 @@ impl KmsContract {
         Ok(Self::hash_transaction_id(block_height, transaction_index))
     }
 
-    pub fn hash_transaction_id(block_height: u64, transaction_index: u32) -> Vec<u8> {
+    pub fn hash_transaction_id(block_height: u64, transaction_index: u32) -> TransactionId {
         let mut hasher = Sha3_256::new();
         hasher.update("KMS_BLOCK_HEIGHT");
         hasher.update(block_height.to_string().len().to_le_bytes());
@@ -68,32 +68,53 @@ impl KmsContract {
         hasher.update(transaction_index.to_string().len().to_be_bytes());
         hasher.update(transaction_index.to_string());
         let result = hasher.finalize();
-        result[..20].to_vec()
+        result[..20].to_vec().into()
     }
 
-    /// Process transaction
+    /// Process request transaction
     ///
-    /// Processes a transaction.
-    fn process_transaction(
-        &self,
-        storage: &mut dyn Storage,
-        env: &Env,
-        txn_id: &[u8],
-        operation: OperationValue,
-    ) -> StdResult<Response> {
-        self.storage
-            .update_transaction(storage, env, txn_id, &operation)?;
-        let response = self.emit_event(storage, txn_id, &operation)?;
-        Ok(response)
-    }
-
+    /// Processes a request transaction and emits the corresponding event
     fn process_request_transaction(
         &self,
         ctx: &mut ExecCtx,
         operation: OperationValue,
     ) -> StdResult<Response> {
         let txn_id = self.derive_transaction_id(&ctx.env)?;
-        self.process_transaction(ctx.deps.storage, &ctx.env, &txn_id, operation)
+        self.storage
+            .update_request_transaction(ctx.deps.storage, &ctx.env, &txn_id, &operation)?;
+        let response = self.emit_event(ctx.deps.storage, &txn_id, &operation)?;
+        Ok(response)
+    }
+
+    /// Process response transaction
+    ///
+    /// Processes a response transaction and emits the corresponding event if conditions are met.
+    /// More info on the conditions to meet can be found in `events.rs`
+    /// Note that response values cannot be saved along a transaction ID if this ID cannot be found
+    /// in the `transactions` map, which means not request has been saved for this transaction.
+    fn process_response_transaction(
+        &self,
+        storage: &mut dyn Storage,
+        transaction_id: &TransactionId,
+        operation: OperationValue,
+    ) -> StdResult<Response> {
+        // Check that the transaction exists. We should not store response values for a
+        // transaction if the transaction does not exist
+        // Note that we might also check that this transaction (if it exists) also has the corresponding
+        // request value in the future
+        if !self.storage.has_transaction(storage, transaction_id) {
+            return Err(StdError::generic_err(format!(
+                "Transaction with id {:?} not found while trying to save response operation value `{:?}`",
+                transaction_id,
+                operation
+            )));
+        }
+
+        self.storage
+            .save_response_value(storage, transaction_id, &operation)?;
+
+        let response = self.emit_event(storage, transaction_id, &operation)?;
+        Ok(response)
     }
 
     #[allow(dead_code)]
@@ -334,23 +355,29 @@ impl KmsContract {
 
     #[sv::msg(query)]
     pub fn get_transaction(&self, ctx: QueryCtx, txn_id: TransactionId) -> StdResult<Transaction> {
-        self.storage.load_transaction(ctx.deps.storage, txn_id)
+        self.storage
+            .load_transaction_with_response_values(ctx.deps.storage, &txn_id)
     }
 
+    /// Return the list of all operation values found in the storage and associated to the given
+    /// KMS event (a KMS operation and a transaction ID).
     #[sv::msg(query)]
     pub fn get_operations_value(
         &self,
         ctx: QueryCtx,
         event: KmsEvent,
     ) -> StdResult<Vec<OperationValue>> {
-        self.storage.get_operations_value(ctx.deps.storage, event)
+        self.storage.get_values_from_transaction_and_operation(
+            ctx.deps.storage,
+            &event.txn_id,
+            &event.operation,
+        )
     }
 
-    #[sv::msg(query)]
-    pub fn get_all_operations_values(&self, ctx: QueryCtx) -> StdResult<Vec<OperationValue>> {
-        self.storage.get_all_operations_values(ctx.deps.storage)
-    }
-
+    /// Return the list of all operation values found in the storage and associated to the given
+    /// KMS operation.
+    ///
+    /// This includes all values from different transactions that ran the same operation
     #[sv::msg(query)]
     pub fn get_all_values_from_operation(
         &self,
@@ -358,7 +385,7 @@ impl KmsContract {
         operation: KmsOperation,
     ) -> StdResult<Vec<OperationValue>> {
         self.storage
-            .get_all_values_from_operation(ctx.deps.storage, operation)
+            .get_all_values_from_operation(ctx.deps.storage, &operation)
     }
 
     /// return ciphertext size from handle. Size is encoded as u32 in the first 4 bytes of the handle
@@ -458,12 +485,8 @@ impl KmsContract {
         let sender_allowed_event =
             SenderAllowedEvent::new(operation.to_string(), ctx.info.sender.to_string());
 
-        let response = self.process_transaction(
-            ctx.deps.storage,
-            &ctx.env,
-            &txn_id.to_vec(),
-            decrypt_response.into(),
-        )?;
+        let response =
+            self.process_response_transaction(ctx.deps.storage, &txn_id, decrypt_response.into())?;
 
         let response = response.add_event(Into::<Event>::into(sender_allowed_event));
         Ok(response)
@@ -504,10 +527,9 @@ impl KmsContract {
         let sender_allowed_event =
             SenderAllowedEvent::new(operation.to_string(), ctx.info.sender.to_string());
 
-        let response = self.process_transaction(
+        let response = self.process_response_transaction(
             ctx.deps.storage,
-            &ctx.env,
-            &txn_id.to_vec(),
+            &txn_id,
             KeyGenPreprocResponseValues::default().into(),
         )?;
 
@@ -556,12 +578,8 @@ impl KmsContract {
         let sender_allowed_event =
             SenderAllowedEvent::new(operation.to_string(), ctx.info.sender.to_string());
 
-        let response = self.process_transaction(
-            ctx.deps.storage,
-            &ctx.env,
-            &txn_id.to_vec(),
-            keygen_response.into(),
-        )?;
+        let response =
+            self.process_response_transaction(ctx.deps.storage, &txn_id, keygen_response.into())?;
 
         let response = response.add_event(Into::<Event>::into(sender_allowed_event));
         Ok(response)
@@ -601,12 +619,8 @@ impl KmsContract {
         let sender_allowed_event =
             SenderAllowedEvent::new(operation.to_string(), ctx.info.sender.to_string());
 
-        let response = self.process_transaction(
-            ctx.deps.storage,
-            &ctx.env,
-            &txn_id.to_vec(),
-            keygen_response.into(),
-        )?;
+        let response =
+            self.process_response_transaction(ctx.deps.storage, &txn_id, keygen_response.into())?;
 
         let response = response.add_event(Into::<Event>::into(sender_allowed_event));
         Ok(response)
@@ -660,10 +674,9 @@ impl KmsContract {
         let sender_allowed_event =
             SenderAllowedEvent::new(operation.to_string(), ctx.info.sender.to_string());
 
-        let response = self.process_transaction(
+        let response = self.process_response_transaction(
             ctx.deps.storage,
-            &ctx.env,
-            &txn_id.to_vec(),
+            &txn_id,
             reencrypt_response.into(),
         )?;
 
@@ -697,10 +710,9 @@ impl KmsContract {
         let sender_allowed_event =
             SenderAllowedEvent::new(operation.to_string(), ctx.info.sender.to_string());
 
-        let response = self.process_transaction(
+        let response = self.process_response_transaction(
             ctx.deps.storage,
-            &ctx.env,
-            &txn_id.to_vec(),
+            &txn_id,
             verify_proven_ct_response.into(),
         )?;
 
@@ -743,12 +755,8 @@ impl KmsContract {
         let sender_allowed_event =
             SenderAllowedEvent::new(operation.to_string(), ctx.info.sender.to_string());
 
-        let response = self.process_transaction(
-            ctx.deps.storage,
-            &ctx.env,
-            &txn_id.to_vec(),
-            crs_gen_response.into(),
-        )?;
+        let response =
+            self.process_response_transaction(ctx.deps.storage, &txn_id, crs_gen_response.into())?;
 
         let response = response.add_event(Into::<Event>::into(sender_allowed_event));
         Ok(response)
@@ -795,12 +803,8 @@ impl KmsContract {
         let sender_allowed_event =
             SenderAllowedEvent::new(operation.to_string(), ctx.info.sender.to_string());
 
-        let response = self.process_transaction(
-            ctx.deps.storage,
-            &ctx.env,
-            &txn_id.to_vec(),
-            crs_gen_response.into(),
-        )?;
+        let response =
+            self.process_response_transaction(ctx.deps.storage, &txn_id, crs_gen_response.into())?;
 
         let response = response.add_event(Into::<Event>::into(sender_allowed_event));
         Ok(response)
@@ -1060,7 +1064,7 @@ mod tests {
             .call(&gateway)
             .unwrap();
         println!("response: {:#?}", response);
-        let txn_id: TransactionId = KmsContract::hash_transaction_id(12345, 0).into();
+        let txn_id = KmsContract::hash_transaction_id(12345, 0);
         assert_eq!(response.events.len(), 2);
 
         let expected_event = KmsEvent::builder()
@@ -1173,7 +1177,7 @@ mod tests {
             .call(&gateway)
             .unwrap();
         println!("response: {:#?}", response);
-        let txn_id: TransactionId = KmsContract::hash_transaction_id(12345, 0).into();
+        let txn_id = KmsContract::hash_transaction_id(12345, 0);
         assert_eq!(response.events.len(), 2);
 
         let expected_event = KmsEvent::builder()
@@ -1289,7 +1293,7 @@ mod tests {
             .with_funds(&[coin(data_size.into(), UCOSM)])
             .call(&test)
             .unwrap();
-        let txn_id: TransactionId = KmsContract::hash_transaction_id(12345, 0).into();
+        let txn_id = KmsContract::hash_transaction_id(12345, 0);
         assert_eq!(response.events.len(), 3);
 
         let expected_event = KmsEvent::builder()
@@ -1357,7 +1361,7 @@ mod tests {
             .unwrap();
 
         let response = contract.keygen_preproc().call(&owner).unwrap();
-        let txn_id: TransactionId = KmsContract::hash_transaction_id(12345, 0).into();
+        let txn_id = KmsContract::hash_transaction_id(12345, 0);
         assert_eq!(response.events.len(), 3);
 
         let expected_event = KmsEvent::builder()
@@ -1417,7 +1421,7 @@ mod tests {
 
         let response = contract.keygen(keygen_val).call(&owner).unwrap();
         println!("response: {:#?}", response);
-        let txn_id: TransactionId = KmsContract::hash_transaction_id(12345, 0).into();
+        let txn_id = KmsContract::hash_transaction_id(12345, 0);
         assert_eq!(response.events.len(), 3);
 
         let expected_event = KmsEvent::builder()
@@ -1528,7 +1532,7 @@ mod tests {
             .call(&owner)
             .unwrap();
 
-        let txn_id: TransactionId = KmsContract::hash_transaction_id(12345, 0).into();
+        let txn_id = KmsContract::hash_transaction_id(12345, 0);
         assert_eq!(response.events.len(), 2);
 
         let expected_event = KmsEvent::builder()
@@ -1608,7 +1612,7 @@ mod tests {
             .call(&user)
             .expect_err("User wasn't allowed to call CRS gen but somehow succeeded.");
 
-        let txn_id: TransactionId = KmsContract::hash_transaction_id(12345, 0).into();
+        let txn_id = KmsContract::hash_transaction_id(12345, 0);
         assert_eq!(response.events.len(), 3);
 
         let expected_event = KmsEvent::builder()
@@ -1704,9 +1708,21 @@ mod tests {
         .unwrap();
         let response = contract.keygen(keygen.clone()).call(&owner).unwrap();
 
-        // Transaction id: 0
-        let txn_id: TransactionId = KmsContract::hash_transaction_id(12345, 0).into();
         assert_eq!(response.events.len(), 3);
+
+        // Get the transaction id from the decrypt event, since response values can only be stored
+        // along an already-existing transaction ID
+        let txn_id: TransactionId = hex::decode(
+            response.events[1]
+                .attributes
+                .iter()
+                .find(|attr| attr.key == "txn_id")
+                .unwrap()
+                .value
+                .clone(),
+        )
+        .unwrap()
+        .into();
 
         let keygen_response = KeyGenResponseValues::new(
             txn_id.to_vec(),
@@ -1748,7 +1764,7 @@ mod tests {
 
         // There should not be any decrypt operation
         let not_expected_data = contract.get_operations_value(not_expected_event);
-        assert!(not_expected_data.is_err());
+        assert!(not_expected_data.unwrap().is_empty());
 
         // Test `get_all_values_from_operation` function for KeyGenResponse
         let keygen_response_operation = KmsOperation::KeyGenResponse;
@@ -1777,7 +1793,7 @@ mod tests {
         // There should not be any Decrypt operation
         let not_expected_operation = KmsOperation::Decrypt;
         let not_expected_values = contract.get_all_values_from_operation(not_expected_operation);
-        assert!(not_expected_values.is_err());
+        assert!(not_expected_values.unwrap().is_empty());
 
         // Then, trigger a decrypt operation
         let ciphertext_handle =
@@ -1812,11 +1828,23 @@ mod tests {
             .unwrap();
         println!("response: {:#?}", response);
 
-        // Transaction id: 1
-        let txn_id: TransactionId = KmsContract::hash_transaction_id(12345, 1).into();
         assert_eq!(response.events.len(), 2);
 
         let decrypt_response = DecryptResponseValues::new(vec![4, 5, 6], vec![6, 7, 8]);
+
+        // Get the transaction id from the decrypt event, since response values can only be stored
+        // along an already-existing transaction ID
+        let txn_id: TransactionId = hex::decode(
+            response.events[1]
+                .attributes
+                .iter()
+                .find(|attr| attr.key == "txn_id")
+                .unwrap()
+                .value
+                .clone(),
+        )
+        .unwrap()
+        .into();
 
         // Decrypt response event
         let response = contract
@@ -1825,39 +1853,10 @@ mod tests {
             .unwrap();
         assert_eq!(response.events.len(), 2);
 
-        // Test `get_all_operations_values` function
-        let operations_response_values = contract.get_all_operations_values();
-        assert!(operations_response_values.is_ok());
-
-        // Two keygen and one decrypt operations give two (KeyGenValues + KeyGenResponseValues) and
-        // one (DecryptValues + DecryptResponseValues) = 5 response values
-        let operations_response_values = operations_response_values.unwrap();
-        assert_eq!(
-            operations_response_values.len(),
-            5,
-            "Unexpected number of operation values: {:?}",
-            operations_response_values
-        );
-
-        // Check that values are actually either KeyGen, Decrypt or one of their responses
-        for operations_response_value in operations_response_values {
-            assert!(
-                matches!(
-                    operations_response_value,
-                    OperationValue::KeyGen(_)
-                        | OperationValue::KeyGenResponse(_)
-                        | OperationValue::Decrypt(_)
-                        | OperationValue::DecryptResponse(_)
-                ),
-                "Unexpected operation value: {:?}",
-                operations_response_value
-            );
-        }
-
         // There should not be any Reencrypt operation
         let not_expected_operation = KmsOperation::Reencrypt;
         let not_expected_values = contract.get_all_values_from_operation(not_expected_operation);
-        assert!(not_expected_values.is_err());
+        assert!(not_expected_values.unwrap().is_empty());
     }
 
     /// Test the `allowed_to_gen` list's logic. In particular this test makes sure to consider all
@@ -2034,30 +2033,37 @@ mod tests {
 
         let txn_id = TransactionId::default();
 
-        // Owner has been allowed to call a decrypt response
-        contract
+        // Owner has been allowed to call a decrypt response, but it should be able to because the
+        // given transaction ID does not exist (meaning no request transaction has been triggered
+        // using this ID yet)
+        let response_not_possible_error = contract
             .decrypt_response(txn_id.clone(), decrypt_response.clone())
             .call(&owner)
-            .unwrap();
+            .unwrap_err()
+            .to_string();
 
-        // `friend_owner` has been allowed to call a decrypt response
-        contract
-            .decrypt_response(txn_id.clone(), decrypt_response.clone())
-            .call(&friend_owner)
-            .unwrap();
+        assert!(
+            response_not_possible_error
+                .contains("not found while trying to save response operation value"),
+            "Owner was able to call a decrypt response for a transaction that does not exist: {}",
+            response_not_possible_error
+        );
 
-        // `fake_owner` is not allowed to call a decrypt response
-        contract
+        // `fake_owner` is not allowed to call a decrypt response, so the first error should be about
+        // the address not being allowed
+        let response_not_allowed_error = contract
             .decrypt_response(txn_id.clone(), decrypt_response.clone())
             .call(&fake_owner)
-            .expect_err(
-                format!(
-                    "Fake owner was allowed to call a decrypt response with address {} and whitelist {:?}",
-                    fake_owner,
-                    allowed_to_response
-                )
-                .as_str(),
-            );
+            .unwrap_err()
+            .to_string();
+
+        assert!(
+            response_not_allowed_error.contains("is not allowed"),
+            "Fake owner was allowed to call a decrypt response with address {}, whitelist {:?} and error: {}",
+            fake_owner,
+            allowed_to_response,
+            response_not_allowed_error
+        );
     }
 
     #[test]

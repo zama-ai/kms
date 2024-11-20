@@ -70,9 +70,6 @@ pub enum ContractQuery {
     #[strum(serialize = "get_all_values_from_operation")]
     #[serde(rename = "get_all_values_from_operation")]
     GetAllValuesFromOperation(OperationQuery),
-    #[strum(serialize = "get_all_operations_values")]
-    #[serde(rename = "get_all_operations_values")]
-    GetAllOperationsValues(OperationQuery),
     #[strum(serialize = "get_operations_value")]
     #[serde(rename = "get_operations_value")]
     GetOperationsValue(EventQuery),
