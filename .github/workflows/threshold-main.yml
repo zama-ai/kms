@@ -8,6 +8,10 @@ on:
       - 'conf-trace/**'
       - '.github/workflows/threshold-main.yml'
 
+concurrency:
+  group: threshold-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     uses: ./.github/workflows/common-build-big-instance.yml

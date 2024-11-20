@@ -8,6 +8,10 @@ on:
       - 'blockchain/events/**'
       - '.github/workflows/blockchain-smart-contracts-pr.yml'
 
+concurrency:
+  group: blockchain-smart-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-asc:
     uses: ./.github/workflows/common-build.yml

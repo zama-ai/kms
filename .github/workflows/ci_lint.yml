@@ -4,6 +4,10 @@ name: "[CI Lint and Checks]"
 on:
   pull_request:
 
+concurrency:
+  group: ci-lint-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 env:
   ACTIONLINT_VERSION: 1.6.27
 

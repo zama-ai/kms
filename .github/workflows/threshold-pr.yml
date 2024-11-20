@@ -8,6 +8,10 @@ on:
       - 'conf-trace/**'
       - '.github/workflows/threshold-pr.yml'
 
+concurrency:
+  group: threshold-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     if: ${{ ! startsWith(github.head_ref, 'dependabot/') }}

@@ -10,6 +10,10 @@ on:
       - 'conf-trace/**'
       - '.github/workflows/blockchain-gateway-pr.yml'
 
+concurrency:
+  group: blockchain-gateway-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     uses: ./.github/workflows/common-build-big-instance.yml

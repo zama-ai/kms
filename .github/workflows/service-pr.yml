@@ -8,6 +8,9 @@ on:
       - 'core/threshold/**'
       - '.github/workflows/service-pr.yml'
 
+concurrency:
+  group: service-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:

@@ -9,6 +9,10 @@ on:
       - 'conf-trace/**'
       - '.github/workflows/blockchain-simulator-main.yml'
 
+concurrency:
+  group: blockchain-simulator-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     uses: ./.github/workflows/common-build-big-instance.yml

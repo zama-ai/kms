@@ -8,6 +8,10 @@ on:
       - 'blockchain/cosmos-proto/**'
       - '.github/workflows/blockchain-events-main.yml'
 
+concurrency:
+  group: blockchain-events-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     uses: ./.github/workflows/common-build.yml

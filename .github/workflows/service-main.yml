@@ -9,6 +9,10 @@ on:
       - 'conf-trace/**'
       - '.github/workflows/service-main.yml'
 
+concurrency:
+  group: service-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     uses: ./.github/workflows/common-build-big-instance.yml
