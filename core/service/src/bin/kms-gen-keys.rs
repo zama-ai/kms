@@ -4,7 +4,9 @@ use kms_lib::consts::{DEFAULT_PARAM, TEST_PARAM};
 use kms_lib::storage::StorageForText;
 use kms_lib::util::key_setup::ThresholdSigningKeyConfig;
 use kms_lib::{
-    conf::init_trace, consts::SIGNING_KEY_ID, kms::RequestId,
+    conf::{init_trace, AWSConfig},
+    consts::SIGNING_KEY_ID,
+    kms::RequestId,
     util::key_setup::ensure_central_crs_exists,
 };
 use kms_lib::{
@@ -12,18 +14,11 @@ use kms_lib::{
         AMOUNT_PARTIES, DEFAULT_CENTRAL_KEY_ID, DEFAULT_CRS_ID, DEFAULT_THRESHOLD_KEY_ID,
         OTHER_CENTRAL_DEFAULT_ID,
     },
-    storage::{url_to_pathbuf, FileStorage, Storage, StorageType},
-    util::{
-        aws::{EnclaveS3Storage, S3Storage},
-        key_setup::{ensure_central_keys_exist, ensure_central_server_signing_keys_exist},
-    },
-    StorageProxy,
+    storage::{make_storage, Storage, StorageType},
+    util::key_setup::{ensure_central_keys_exist, ensure_central_server_signing_keys_exist},
 };
 use kms_lib::{
     rpc::rpc_types::{PrivDataType, PubDataType},
-    some_or_err,
-};
-use kms_lib::{
     storage::delete_at_request_id,
     util::key_setup::{
         ensure_threshold_crs_exists, ensure_threshold_keys_exist,
@@ -49,6 +44,45 @@ use url::Url;
 struct Args {
     #[clap(subcommand)]
     mode: Mode,
+    /// What to construct, options are "all", "signing-keys", "fhe-keys" or "crs".
+    #[clap(short, long, default_value_t = ConstructCommand::All, value_enum)]
+    cmd: ConstructCommand,
+
+    /// AWS region to use for S3 storage
+    #[clap(long, default_value = "eu-west-3")]
+    aws_region: String,
+    /// Optional AWS IMDS API endpoint
+    #[clap(long, default_value = None)]
+    aws_imds_endpoint: Option<Url>,
+    /// Optional AWS S3 API endpoint
+    #[clap(long, default_value = None)]
+    aws_s3_endpoint: Option<Url>,
+    /// Optional AWS KMS API endpoint
+    #[clap(long, default_value = None)]
+    aws_kms_endpoint: Option<Url>,
+    /// Optional root key ID
+    #[clap(long, default_value = None)]
+    root_key_id: Option<String>,
+    /// Optional parameter for the private storage URL
+    #[clap(long, default_value = None)]
+    priv_url: Option<Url>,
+    /// Optional parameter for the public storage URL
+    #[clap(long, default_value = None)]
+    pub_url: Option<Url>,
+    /// Specify whether to use test parameters or not.
+    #[clap(long, default_value_t = false)]
+    param_test: bool,
+    /// Whether to generate keys deterministically,
+    /// only use this option for testing.
+    /// The determinism is not guaranteed to be the same between releases.
+    #[clap(long, default_value_t = false)]
+    deterministic: bool,
+    /// Whether to overwrite ALL the existing keys,
+    #[clap(long, default_value_t = false)]
+    overwrite: bool,
+    /// Only show existing keys, do not generate any
+    #[clap(long, default_value_t = false)]
+    show_existing: bool,
 }
 
 #[derive(Clone, Subcommand, Default, Debug, Serialize, Deserialize, ValueEnum, PartialEq)]
@@ -64,91 +98,15 @@ enum ConstructCommand {
 enum Mode {
     /// Generate centralized FHE keys, signing keys and the CRS.
     Centralized {
-        /// Specify whether to use test parameters or not.
-        #[clap(long, default_value_t = false)]
-        param_test: bool,
-        /// AWS region to use for S3 storage
-        #[clap(long, default_value = "eu-west-3")]
-        aws_region: String,
-        /// Optional AWS IMDS API endpoint
-        #[clap(long, default_value = None)]
-        aws_imds_endpoint: Option<String>,
-        /// Optional AWS S3 API endpoint
-        #[clap(long, default_value = None)]
-        aws_s3_endpoint: Option<String>,
-        /// Optional AWS KMS API endpoint
-        #[clap(long, default_value = None)]
-        aws_kms_endpoint: Option<String>,
-        /// Optional root key ID
-        #[clap(long, default_value = None)]
-        root_key_id: Option<String>,
-        /// Optional parameter for the private storage URL
-        #[clap(long, default_value = None)]
-        priv_url: Option<String>,
-        /// Optional parameter for the public storage URL
-        #[clap(long, default_value = None)]
-        pub_url: Option<String>,
-        /// Whether to generate keys deterministically,
-        /// only use this option for testing.
-        /// The determinism is not guaranteed to be the same between releases.
-        #[clap(long, default_value_t = false)]
-        deterministic: bool,
-        /// Whether to overwrite ALL the existing keys,
-        #[clap(long, default_value_t = false)]
-        overwrite: bool,
         /// Whether to output the private FHE key separately,
         #[clap(long, default_value_t = false)]
         write_privkey: bool,
-        /// Only show existing keys, do not generate any
-        #[clap(long, default_value_t = false)]
-        show_existing: bool,
-        /// What to construct, options are "all", "signing-keys", "fhe-keys" or "crs".
-        #[clap(short, long, default_value_t = ConstructCommand::All, value_enum)]
-        cmd: ConstructCommand,
     },
 
     /// Generate shares of FHE key shares and signing keys.
     /// The FHE key shares should only be used for testing.
     /// At the moment it's only limited to 4 parties.
     Threshold {
-        /// Specify whether to use test parameters or not.
-        #[clap(long, default_value_t = false)]
-        param_test: bool,
-        /// AWS region to use for S3 storage
-        #[clap(long, default_value = "eu-west-3")]
-        aws_region: String,
-        /// Optional AWS IMDS API endpoint
-        #[clap(long, default_value = None)]
-        aws_imds_endpoint: Option<String>,
-        /// Optional AWS S3 API endpoint
-        #[clap(long, default_value = None)]
-        aws_s3_endpoint: Option<String>,
-        /// Optional AWS KMS API endpoint
-        #[clap(long, default_value = None)]
-        aws_kms_endpoint: Option<String>,
-        /// Optional root key ID
-        #[clap(long, default_value = None)]
-        root_key_id: Option<String>,
-        /// Optional parameter for the private storage URL
-        #[clap(long, default_value = None)]
-        priv_url: Option<String>,
-        /// Optional parameter for the public storage URL
-        #[clap(long, default_value = None)]
-        pub_url: Option<String>,
-        /// Whether to generate keys deterministically,
-        /// only use this option for testing.
-        /// The determinism is not guaranteed to be the same between releases.
-        #[clap(long, default_value_t = false)]
-        deterministic: bool,
-        /// Whether to overwrite the existing keys,
-        #[clap(long, default_value_t = false)]
-        overwrite: bool,
-        /// Only show existing keys, do not generate any
-        #[clap(long, default_value_t = false)]
-        show_existing: bool,
-        /// What to construct, options are "all", "signing-keys", "fhe-keys" or "crs".
-        #[clap(short, long, default_value_t, value_enum)]
-        cmd: ConstructCommand,
         /// When using `--cmd signing-keys`, this option can be set
         /// to generate the signing key for a specific party.
         /// If it's not used, then the signing keys are generated for all parties.
@@ -196,137 +154,100 @@ struct ThresholdCmdArgs<'a, S: Storage> {
 async fn main() {
     init_trace().unwrap();
     let args = Args::parse();
-    match args.mode {
-        Mode::Centralized {
-            aws_region,
-            aws_imds_endpoint,
-            aws_s3_endpoint,
-            aws_kms_endpoint,
-            root_key_id,
-            priv_url,
-            pub_url,
-            deterministic,
-            overwrite,
-            write_privkey,
-            show_existing,
-            cmd,
-            param_test,
-        } => {
-            let mut pub_storage = make_central_proxy_storage(
-                pub_url,
-                &aws_region,
-                aws_imds_endpoint.clone(),
-                aws_s3_endpoint
-                    .as_deref()
-                    .map(Url::parse)
-                    .transpose()
-                    .unwrap(),
-                None,
+    let aws_config = AWSConfig {
+        region: args.aws_region,
+        imds_endpoint: args.aws_imds_endpoint,
+        s3_endpoint: args.aws_s3_endpoint,
+        awskms_endpoint: args.aws_kms_endpoint,
+    };
+    // create storage
+    let amount_storages = match args.mode {
+        Mode::Centralized { write_privkey: _ } => 1,
+        Mode::Threshold {
+            signing_key_party_id: _,
+        } => AMOUNT_PARTIES,
+    };
+    let mut pub_storages = Vec::with_capacity(amount_storages);
+    let mut priv_storages = Vec::with_capacity(amount_storages);
+    for i in 1..=amount_storages {
+        let party_id = match args.mode {
+            Mode::Centralized { write_privkey: _ } => None,
+            Mode::Threshold {
+                signing_key_party_id: _,
+            } => Some(i),
+        };
+        let root_key_id = args
+            .root_key_id
+            .as_ref()
+            .map(|k| Url::parse(format!("awskms://{}", k).as_str()).unwrap());
+        pub_storages.push(
+            make_storage(
+                Some(aws_config.clone()),
+                args.pub_url.clone(),
                 None,
                 StorageType::PUB,
+                party_id,
             )
             .await
-            .unwrap();
-            let mut priv_storage = make_central_proxy_storage(
-                priv_url,
-                &aws_region,
-                aws_imds_endpoint,
-                aws_s3_endpoint
-                    .as_deref()
-                    .map(Url::parse)
-                    .transpose()
-                    .unwrap(),
-                aws_kms_endpoint,
-                root_key_id,
+            .unwrap(),
+        );
+        priv_storages.push(
+            make_storage(
+                Some(aws_config.clone()),
+                args.priv_url.clone(),
+                root_key_id.clone(),
                 StorageType::PRIV,
+                party_id,
             )
             .await
-            .unwrap();
-
+            .unwrap(),
+        );
+    }
+    // generate keys
+    match args.mode {
+        Mode::Centralized { write_privkey } => {
             let mut cmdargs = CentralCmdArgs {
-                pub_storage: &mut pub_storage,
-                priv_storage: &mut priv_storage,
-                deterministic,
-                overwrite,
+                pub_storage: &mut pub_storages[0],
+                priv_storage: &mut priv_storages[0],
+                deterministic: args.deterministic,
+                overwrite: args.overwrite,
                 write_privkey,
-                show_existing,
+                show_existing: args.show_existing,
             };
 
-            if cmd == ConstructCommand::All {
-                handle_central_cmd(param_test, &mut cmdargs, ConstructCommand::SigningKeys).await;
-                handle_central_cmd(param_test, &mut cmdargs, ConstructCommand::FheKeys).await;
-                handle_central_cmd(param_test, &mut cmdargs, ConstructCommand::Crs).await;
+            if args.cmd == ConstructCommand::All {
+                handle_central_cmd(args.param_test, &mut cmdargs, ConstructCommand::SigningKeys)
+                    .await;
+                handle_central_cmd(args.param_test, &mut cmdargs, ConstructCommand::FheKeys).await;
+                handle_central_cmd(args.param_test, &mut cmdargs, ConstructCommand::Crs).await;
             } else {
-                handle_central_cmd(param_test, &mut cmdargs, cmd).await;
+                handle_central_cmd(args.param_test, &mut cmdargs, args.cmd).await;
             }
         }
         Mode::Threshold {
-            param_test,
-            aws_region,
-            aws_imds_endpoint,
-            aws_s3_endpoint,
-            aws_kms_endpoint,
-            root_key_id,
-            priv_url,
-            pub_url,
-            deterministic,
-            overwrite,
-            show_existing,
-            cmd,
             signing_key_party_id,
         } => {
-            let mut pub_storages = make_threshold_proxy_storage(
-                pub_url,
-                &aws_region,
-                aws_imds_endpoint.clone(),
-                aws_s3_endpoint
-                    .as_deref()
-                    .map(Url::parse)
-                    .transpose()
-                    .unwrap(),
-                None,
-                None,
-                StorageType::PUB,
-                AMOUNT_PARTIES,
-            )
-            .await
-            .unwrap();
-            let mut priv_storages = make_threshold_proxy_storage(
-                priv_url,
-                &aws_region,
-                aws_imds_endpoint,
-                aws_s3_endpoint
-                    .as_deref()
-                    .map(Url::parse)
-                    .transpose()
-                    .unwrap(),
-                aws_kms_endpoint,
-                root_key_id,
-                StorageType::PRIV,
-                AMOUNT_PARTIES,
-            )
-            .await
-            .unwrap();
-
             let mut cmdargs = ThresholdCmdArgs {
                 pub_storages: &mut pub_storages,
                 priv_storages: &mut priv_storages,
-                deterministic,
-                overwrite,
-                show_existing,
+                deterministic: args.deterministic,
+                overwrite: args.deterministic,
+                show_existing: args.show_existing,
                 // the `signing_party_id` is only used when the cmd is signing-keys
-                signing_key_party_id: match cmd {
+                signing_key_party_id: match args.cmd {
                     ConstructCommand::SigningKeys => signing_key_party_id,
                     _ => None,
                 },
             };
 
-            if cmd == ConstructCommand::All {
-                handle_threshold_cmd(param_test, &mut cmdargs, ConstructCommand::SigningKeys).await;
-                handle_threshold_cmd(param_test, &mut cmdargs, ConstructCommand::FheKeys).await;
-                handle_threshold_cmd(param_test, &mut cmdargs, ConstructCommand::Crs).await;
+            if args.cmd == ConstructCommand::All {
+                handle_threshold_cmd(args.param_test, &mut cmdargs, ConstructCommand::SigningKeys)
+                    .await;
+                handle_threshold_cmd(args.param_test, &mut cmdargs, ConstructCommand::FheKeys)
+                    .await;
+                handle_threshold_cmd(args.param_test, &mut cmdargs, ConstructCommand::Crs).await;
             } else {
-                handle_threshold_cmd(param_test, &mut cmdargs, cmd).await;
+                handle_threshold_cmd(args.param_test, &mut cmdargs, args.cmd).await;
             }
         }
     }
@@ -648,128 +569,4 @@ async fn show_key<S: Storage>(storage: &S, data_type: &str) {
         let exists = storage.data_exists(&v).await.unwrap();
         println!("{data_type}, {k}, {v}, exists={exists}");
     }
-}
-
-async fn make_central_proxy_storage(
-    url_str: Option<String>,
-    aws_region: &str,
-    aws_imds_endpoint: Option<String>,
-    aws_s3_endpoint: Option<Url>,
-    aws_kms_endpoint: Option<String>,
-    root_key_id: Option<String>,
-    storage_type: StorageType,
-) -> anyhow::Result<StorageProxy> {
-    let parsed_url = url_str
-        .as_deref()
-        .map(url::Url::parse)
-        .transpose()
-        .map_err(|e| anyhow::anyhow!("Could not parse URL: {e}"))?;
-    let storage: StorageProxy = match parsed_url {
-        Some(url) => match url.scheme() {
-            "s3" => match storage_type {
-                StorageType::PRIV => StorageProxy::EnclaveS3(
-                    EnclaveS3Storage::new_centralized(
-                        aws_region.to_string(),
-                        aws_imds_endpoint.expect("AWS IMDS proxy must be set"),
-                        aws_s3_endpoint.expect("AWS S3 proxy must be set"),
-                        aws_kms_endpoint.expect("AWS KMS proxy must be set"),
-                        root_key_id.expect("Root key ID must be set"),
-                        some_or_err(url.host_str(), "No host in url {url}".to_string())?
-                            .to_string(),
-                        Some(url.path().to_string()),
-                        storage_type,
-                    )
-                    .await?,
-                ),
-                _ => StorageProxy::S3(
-                    S3Storage::new_centralized(
-                        aws_region.to_string(),
-                        aws_imds_endpoint,
-                        aws_s3_endpoint,
-                        some_or_err(url.host_str(), "No host in url {url}".to_string())?
-                            .to_string(),
-                        Some(url.path().to_string()),
-                        storage_type,
-                    )
-                    .await?,
-                ),
-            },
-            _ => {
-                let optional_path = url_to_pathbuf(&url);
-                StorageProxy::File(
-                    FileStorage::new_centralized(Some(optional_path.as_path()), storage_type)
-                        .unwrap(),
-                )
-            }
-        },
-        None => StorageProxy::File(FileStorage::new_centralized(None, storage_type)?),
-    };
-    Ok(storage)
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn make_threshold_proxy_storage(
-    url_str: Option<String>,
-    aws_region: &str,
-    aws_imds_endpoint: Option<String>,
-    aws_s3_endpoint: Option<Url>,
-    aws_kms_endpoint: Option<String>,
-    root_key_id: Option<String>,
-    storage_type: StorageType,
-    amount: usize,
-) -> anyhow::Result<Vec<StorageProxy>> {
-    let mut storages = Vec::new();
-    let parsed_url = url_str
-        .as_deref()
-        .map(url::Url::parse)
-        .transpose()
-        .map_err(|e| anyhow::anyhow!("Could not parse URL: {e}"))?;
-    for i in 1..=amount {
-        let cur_storage: StorageProxy = match parsed_url {
-            Some(ref url) => match url.scheme() {
-                "s3" => match storage_type {
-                    StorageType::PRIV => StorageProxy::EnclaveS3(
-                        EnclaveS3Storage::new_threshold(
-                            aws_region.to_string(),
-                            aws_imds_endpoint
-                                .clone()
-                                .expect("AWS IMDS proxy must be set"),
-                            aws_s3_endpoint.clone().expect("AWS S3 proxy must be set"),
-                            aws_kms_endpoint.clone().expect("AWS KMS proxy must be set"),
-                            root_key_id.clone().expect("Root key ID must be set"),
-                            some_or_err(url.host_str(), "No host in url {url}".to_string())?
-                                .to_string(),
-                            Some(url.path().to_string()),
-                            storage_type,
-                            i,
-                        )
-                        .await?,
-                    ),
-                    _ => StorageProxy::S3(
-                        S3Storage::new_threshold(
-                            aws_region.to_string(),
-                            aws_imds_endpoint.clone(),
-                            aws_s3_endpoint.clone(),
-                            some_or_err(url.host_str(), "No host in url {url}".to_string())?
-                                .to_string(),
-                            Some(url.path().to_string()),
-                            storage_type,
-                            i,
-                        )
-                        .await?,
-                    ),
-                },
-                _ => {
-                    let optional_path = url_to_pathbuf(url);
-                    StorageProxy::File(
-                        FileStorage::new_threshold(Some(optional_path.as_path()), storage_type, i)
-                            .unwrap(),
-                    )
-                }
-            },
-            None => StorageProxy::File(FileStorage::new_threshold(None, storage_type, i)?),
-        };
-        storages.push(cur_storage);
-    }
-    Ok(storages)
 }

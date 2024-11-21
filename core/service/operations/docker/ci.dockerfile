@@ -50,28 +50,28 @@ RUN rm $go_file
 ENV PATH="$PATH:/usr/local/go/bin:/root/go/bin"
 # Install grpc-health-probe
 RUN go install github.com/grpc-ecosystem/grpc-health-probe@latest
+# Install yq-go to parse TOML configs in scripts
+RUN go install github.com/mikefarah/yq/v4@latest
 
 ## Fourth stage: Copy the binaries from preceding stages
 # This stage will be the final image
 FROM --platform=$BUILDPLATFORM debian:stable-slim
-RUN apt update && apt install -y libssl3 ca-certificates curl jq socat net-tools
+RUN apt update && apt install -y libssl3 ca-certificates socat net-tools
 WORKDIR /app/kms/core/service
-
-RUN mkdir -p /app/kms/core/service/keys
-
 COPY ./core/service/config/ /app/kms/core/service/config
 
 # Set the path to include the binaries and not just the default /usr/local/bin
 ENV PATH="/app/kms/core/service/bin:$PATH"
 # Copy the binaries from the kms-core and go-runtime stages
-COPY --from=kms-core /app/kms/core/service/bin/ /app/kms/core/service/bin/
-COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/kms/core/service/bin/
+COPY --from=kms-core /app/kms/core/service/bin/ ./bin/
+COPY --from=go-runtime /root/go/bin/grpc-health-probe ./bin/
+COPY --from=go-runtime /root/go/bin/yq ./bin/
 
 # Copy parent-side and enclave-side init scripts
-COPY ./core/service/operations/docker/start_parent_proxies.sh /app/kms/core/service/bin/
-COPY ./core/service/operations/docker/init_enclave_centralized.sh /app/kms/core/service/bin/
+COPY ./core/service/operations/docker/start_parent_proxies.sh ./bin/
+COPY ./core/service/operations/docker/init_enclave.sh ./bin/
 
 # This is only meaningful when the image is used to build the EIF that runs
 # inside of a Nitro enclave. During deployment on k8s, containers are started
 # with commands defined in Helm charts.
-CMD ["/bin/bash", "/app/kms/core/service/bin/init_enclave_centralized.sh"]
+CMD ["/bin/bash", "/app/kms/core/service/bin/init_enclave.sh"]

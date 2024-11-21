@@ -810,7 +810,7 @@ pub(crate) mod tests {
     };
     use crate::kms::{FheType, RequestId};
     use crate::rpc::rpc_types::{Kms, CURRENT_FORMAT_VERSION};
-    use crate::storage::{FileStorage, RamStorage, StorageType};
+    use crate::storage::{file::FileStorage, ram::RamStorage, StorageType};
     use crate::util::file_handling::read_element;
     use crate::util::key_setup::test_tools::compute_cipher;
     use crate::{cryptography::central_kms::generate_fhe_keys, util::file_handling::write_element};

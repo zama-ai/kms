@@ -1,12 +1,7 @@
 use anyhow::anyhow;
 #[cfg(feature = "non-wasm")]
-use serde::{de::DeserializeOwned, ser::Serialize};
-use std::fmt;
-use std::panic::Location;
-#[cfg(feature = "non-wasm")]
-use storage::StorageForText;
-#[cfg(feature = "non-wasm")]
-use tfhe::{named::Named, Unversionize, Versionize};
+use std::collections::HashMap;
+use std::{fmt, panic::Location};
 
 // copied from tonic since we're cannot pull in tonic for wasm
 macro_rules! my_include_proto {
@@ -42,14 +37,10 @@ pub mod threshold {
     pub mod threshold_kms;
 }
 #[cfg(feature = "non-wasm")]
-pub mod storage;
-pub mod rpc {
-    #[cfg(feature = "non-wasm")]
-    pub mod central_rpc;
-    pub mod rpc_types;
-}
-#[cfg(feature = "non-wasm")]
 pub mod conf;
+pub mod rpc;
+#[cfg(feature = "non-wasm")]
+pub mod storage;
 
 /// Check that the hashmap has exactly one element and return it.
 #[cfg(feature = "non-wasm")]
@@ -104,125 +95,4 @@ pub(crate) fn anyhow_error_and_log<S: AsRef<str> + fmt::Display>(msg: S) -> anyh
 pub(crate) fn anyhow_error_and_warn_log<S: AsRef<str> + fmt::Display>(msg: S) -> anyhow::Error {
     tracing::warn!("Warning in {}: {}", Location::caller(), msg);
     anyhow!("Warning in {}: {}", Location::caller(), msg)
-}
-
-#[cfg(feature = "non-wasm")]
-use std::collections::HashMap;
-#[cfg(feature = "non-wasm")]
-use storage::{FileStorage, RamStorage, Storage, StorageReader};
-#[cfg(feature = "non-wasm")]
-use url::Url;
-#[cfg(feature = "non-wasm")]
-use util::aws::{EnclaveS3Storage, S3Storage};
-
-/// Represents all storage types as variants of one concrete type. This
-/// monstrosity is required to work around the Rust's inability to create trait
-/// objects if the trait has methods with generic parameters. Without it, the
-/// code in `main()` that creates storage objects and passes them to the server
-/// startup functions will blow up quadratically in the number of available
-/// storage backends, as one would have to create both public and private
-/// storage object at the same time as passing them to the server startup
-/// function.
-#[allow(clippy::large_enum_variant)]
-#[cfg(feature = "non-wasm")]
-#[allow(clippy::large_enum_variant)]
-pub enum StorageProxy {
-    File(FileStorage),
-    #[allow(dead_code)]
-    Ram(RamStorage),
-    S3(S3Storage),
-    EnclaveS3(EnclaveS3Storage),
-}
-
-#[cfg(feature = "non-wasm")]
-#[tonic::async_trait]
-impl StorageReader for StorageProxy {
-    async fn data_exists(&self, url: &Url) -> anyhow::Result<bool> {
-        match &self {
-            StorageProxy::File(s) => s.data_exists(url).await,
-            StorageProxy::Ram(s) => s.data_exists(url).await,
-            StorageProxy::S3(s) => s.data_exists(url).await,
-            StorageProxy::EnclaveS3(s) => s.data_exists(url).await,
-        }
-    }
-
-    async fn read_data<T: DeserializeOwned + Unversionize + Named + Send>(
-        &self,
-        url: &Url,
-    ) -> anyhow::Result<T> {
-        match &self {
-            StorageProxy::File(s) => s.read_data(url).await,
-            StorageProxy::Ram(s) => s.read_data(url).await,
-            StorageProxy::S3(s) => s.read_data(url).await,
-            StorageProxy::EnclaveS3(s) => s.read_data(url).await,
-        }
-    }
-
-    fn compute_url(&self, data_id: &str, data_type: &str) -> anyhow::Result<Url> {
-        match &self {
-            StorageProxy::File(s) => s.compute_url(data_id, data_type),
-            StorageProxy::Ram(s) => s.compute_url(data_id, data_type),
-            StorageProxy::S3(s) => s.compute_url(data_id, data_type),
-            StorageProxy::EnclaveS3(s) => s.compute_url(data_id, data_type),
-        }
-    }
-
-    async fn all_urls(&self, data_type: &str) -> anyhow::Result<HashMap<String, Url>> {
-        match &self {
-            StorageProxy::File(s) => s.all_urls(data_type).await,
-            StorageProxy::Ram(s) => s.all_urls(data_type).await,
-            StorageProxy::S3(s) => s.all_urls(data_type).await,
-            StorageProxy::EnclaveS3(s) => s.all_urls(data_type).await,
-        }
-    }
-
-    fn info(&self) -> String {
-        match &self {
-            StorageProxy::File(s) => s.info(),
-            StorageProxy::Ram(s) => s.info(),
-            StorageProxy::S3(s) => s.info(),
-            StorageProxy::EnclaveS3(s) => s.info(),
-        }
-    }
-}
-
-#[cfg(feature = "non-wasm")]
-#[tonic::async_trait]
-impl Storage for StorageProxy {
-    async fn store_data<T: Serialize + Versionize + Named + Send + Sync>(
-        &mut self,
-        data: &T,
-        url: &Url,
-    ) -> anyhow::Result<()> {
-        match &mut self {
-            StorageProxy::File(s) => s.store_data(data, url).await,
-            StorageProxy::Ram(s) => s.store_data(data, url).await,
-            StorageProxy::S3(s) => s.store_data(data, url).await,
-            StorageProxy::EnclaveS3(s) => s.store_data(data, url).await,
-        }
-    }
-
-    async fn delete_data(&mut self, url: &Url) -> anyhow::Result<()> {
-        match &mut self {
-            StorageProxy::File(s) => s.delete_data(url).await,
-            StorageProxy::Ram(s) => s.delete_data(url).await,
-            StorageProxy::S3(s) => s.delete_data(url).await,
-            StorageProxy::EnclaveS3(s) => s.delete_data(url).await,
-        }
-    }
-}
-
-#[cfg(feature = "non-wasm")]
-#[tonic::async_trait]
-impl StorageForText for StorageProxy {
-    async fn store_text(&mut self, text: &str, url: &Url) -> anyhow::Result<()> {
-        match &mut self {
-            StorageProxy::File(s) => s.store_text(text, url).await,
-            StorageProxy::Ram(s) => s.store_text(text, url).await,
-            StorageProxy::S3(s) => s.store_text(text, url).await,
-            StorageProxy::EnclaveS3(_s) => {
-                Err(anyhow::anyhow!("store_text is not supported for EnclaveS3"))
-            }
-        }
-    }
 }

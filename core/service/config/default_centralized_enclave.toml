@@ -1,15 +1,31 @@
-url = "http://127.0.0.1:50051"
+[service]
+listen_address = "0.0.0.0"
+listen_port = 50051
+timeout_secs = 360
+# maximum grpc message size in bytes
+grpc_max_message_size = 20971520 # 20 MiB
 
-# The two settings below are optional. Two URL schemas are supported: file://
+[tracing]
+service_name = "kms-centralized"
+endpoint = "http://localhost:4317"
+
+# This section is optional. It's required if kms-server is running in the Nitro
+# enclave with S3 being used for storage and with AWS KMS protecting the storage
+# root key. Setting alternative AWS endpoints can also be used in testing
+# against mocked AWS APIs.
+[aws]
+region = "eu-west-3"
+imds_endpoint = "http://localhost:5000"
+s3_endpoint = "https://localhost:6000"
+awskms_endpoint = "https://localhost:7000"
+
+# The two sections below are optional. Two URL schemas are supported: file://
 # and s3://. The paths can be the same for the different storage types and for
 # different parties.
-public_storage_url = "s3://zama_kms_public_blobs"
-private_storage_url = "s3://zama_kms_private_blobs"
 
-# The five settings below must be set if the s3:// URL schema is used for any
-# storage.
-root_key_id = "zama_kms_root_key"
-aws_region = "eu-west-3"
-aws_imds_proxy = "http://localhost:5000"
-aws_s3_proxy = "https://localhost:6000"
-aws_kms_proxy = "https://localhost:7000"
+[public_vault]
+storage = "s3://zama_kms_public_keys"
+
+[private_vault]
+storage = "s3://zama_kms_private_keys"
+keychain = "awskms://zama_kms_storage_root_key"

@@ -8,9 +8,9 @@ use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::kms::RequestId;
 use crate::rpc::rpc_types::PubDataType;
 use crate::rpc::rpc_types::{PrivDataType, WrappedPublicKey};
+use crate::storage::{file::FileStorage, store_versioned_at_request_id, StorageType};
 use crate::storage::{read_all_data_versioned, store_text_at_request_id};
 use crate::storage::{store_pk_at_request_id, Storage};
-use crate::storage::{store_versioned_at_request_id, FileStorage, StorageType};
 use crate::storage::{StorageForText, StorageReader};
 use crate::threshold::threshold_kms::{compute_all_info, ThresholdFheKeys};
 use crate::{
@@ -64,8 +64,7 @@ pub async fn ensure_client_keys_exist(
     req_id: &RequestId,
     deterministic: bool,
 ) -> bool {
-    let mut client_storage =
-        FileStorage::new_centralized(optional_path, StorageType::CLIENT).unwrap();
+    let mut client_storage = FileStorage::new(optional_path, StorageType::CLIENT, None).unwrap();
     let temp: HashMap<RequestId, PrivateSigKey> =
         read_all_data_versioned(&client_storage, &ClientDataType::SigningKey.to_string())
             .await

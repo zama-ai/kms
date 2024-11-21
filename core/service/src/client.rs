@@ -2474,13 +2474,18 @@ pub fn recover_ecdsa_public_key_from_signature(
 #[cfg(feature = "non-wasm")]
 pub mod test_tools {
     use super::*;
-    use crate::conf::centralized::CentralizedConfig;
-    use crate::conf::threshold::{PeerConf, ThresholdConfig};
+    use crate::conf::{
+        threshold::{PeerConf, ThresholdParty},
+        ServiceEndpoint,
+    };
     use crate::consts::{BASE_PORT, DEC_CAPACITY, DEFAULT_PROT, DEFAULT_URL, MIN_DEC_CACHE};
+    use crate::cryptography::central_kms::SoftwareKms;
     use crate::kms::core_service_endpoint_client::CoreServiceEndpointClient;
-    use crate::rpc::central_rpc::server_handle;
-    use crate::storage::{FileStorage, RamStorage, Storage, StorageType, StorageVersion};
-    use crate::threshold::threshold_kms::{threshold_server_init, threshold_server_start};
+    use crate::rpc::run_server;
+    use crate::storage::{
+        file::FileStorage, ram::RamStorage, Storage, StorageType, StorageVersion,
+    };
+    use crate::threshold::threshold_kms::threshold_server_init;
     use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
     use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
     use itertools::Itertools;
@@ -2518,40 +2523,40 @@ pub mod test_tools {
         let mut handles = Vec::new();
         tracing::info!("Spawning servers...");
         let amount = priv_storage.len();
-        let timeout_secs = 60u64;
-        let grpc_max_message_size = 2 * 10 * 1024 * 1024; // 20 MiB
         for i in 1..=amount {
             let cur_pub_storage = pub_storage[i - 1].to_owned();
             let cur_priv_storage = priv_storage[i - 1].to_owned();
-            let peer_configs = default_peer_configs(amount);
+            let peers = default_peer_configs(amount);
+            let service_config = ServiceEndpoint {
+                listen_address: DEFAULT_URL.to_owned(),
+                listen_port: BASE_PORT + i as u16 * 100,
+                timeout_secs: 60u64,
+                grpc_max_message_size: 2 * 10 * 1024 * 1024, // 20 MiB
+            };
             handles.push(tokio::spawn(async move {
-                let config = ThresholdConfig {
-                    listen_address_client: DEFAULT_URL.to_owned(),
-                    listen_port_client: BASE_PORT + i as u16 * 100,
-                    listen_address_core: peer_configs[i - 1].address.clone(),
-                    listen_port_core: peer_configs[i - 1].port,
+                let threshold_config = ThresholdParty {
+                    listen_address: peers[i - 1].address.clone(),
+                    listen_port: peers[i - 1].port,
                     threshold,
                     dec_capacity: DEC_CAPACITY,
                     min_dec_cache: MIN_DEC_CACHE,
                     my_id: i,
-                    timeout_secs,
-                    grpc_max_message_size,
-                    preproc_redis_conf: None,
+                    preproc_redis: None,
                     num_sessions_preproc: None,
                     tls_cert_path: None,
                     tls_key_path: None,
-                    peer_confs: peer_configs,
-                    core_to_core_net_conf: None,
+                    peers,
+                    core_to_core_net: None,
                 };
                 // TODO pass in cert_paths for testing TLS
                 let server = threshold_server_init(
-                    config.clone(),
+                    threshold_config,
                     cur_pub_storage,
                     cur_priv_storage,
                     run_prss,
                 )
                 .await;
-                (i, server, config)
+                (i, server, service_config)
             }));
         }
         assert_eq!(handles.len(), amount);
@@ -2559,24 +2564,17 @@ pub mod test_tools {
         tracing::info!("Client waiting for server");
         let mut servers = Vec::with_capacity(amount);
         for cur_handle in handles {
-            let (i, kms_server_res, config) = cur_handle.await.unwrap();
+            let (i, kms_server_res, service_config) = cur_handle.await.unwrap();
             match kms_server_res {
-                Ok(kms_server) => servers.push((i, kms_server, config)),
+                Ok(kms_server) => servers.push((i, kms_server, service_config)),
                 Err(e) => panic!("Failed to start server {i} with error {:?}", e),
             }
         }
         tracing::info!("Servers initialized. Starting servers...");
         let mut server_handles = HashMap::new();
-        for (i, cur_server, config) in servers {
+        for (i, cur_server, service_config) in servers {
             let handle = tokio::spawn(async move {
-                let _ = threshold_server_start(
-                    config.listen_address_client,
-                    config.listen_port_client,
-                    timeout_secs,
-                    config.grpc_max_message_size,
-                    cur_server,
-                )
-                .await;
+                let _ = run_server(service_config, cur_server).await;
             });
             server_handles.insert(i as u32, handle);
         }
@@ -2659,12 +2657,17 @@ pub mod test_tools {
         ensure_default_material_exists().await;
 
         let server_handle = tokio::spawn(async move {
-            let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", BASE_PORT + 1);
-            let config = CentralizedConfig {
-                url,
+            let config = ServiceEndpoint {
+                listen_address: DEFAULT_URL.to_string(),
+                listen_port: BASE_PORT + 1,
+                timeout_secs: 360,
                 grpc_max_message_size: 2 * 10 * 1024 * 1024, // 20 MiB to allow for 2048 bit encryptions
             };
-            let _ = server_handle(config, pub_storage, priv_storage).await;
+            let _ = run_server(
+                config,
+                SoftwareKms::new(pub_storage, priv_storage).await.unwrap(),
+            )
+            .await;
         });
         // We have to wait for the server to start since it will keep running in the background
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -2698,8 +2701,8 @@ pub mod test_tools {
     ) -> (JoinHandle<()>, CoreServiceEndpointClient<Channel>, Client) {
         let (kms_server, kms_client) = match storage_version {
             StorageVersion::Dev => {
-                let priv_storage = FileStorage::new_centralized(None, StorageType::PRIV).unwrap();
-                let pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
+                let priv_storage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
+                let pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
                 setup_centralized(pub_storage, priv_storage).await
             }
             StorageVersion::Ram => {
@@ -2709,8 +2712,8 @@ pub mod test_tools {
             }
         };
         // TODO why are these FileStorage and not depend on the StorageVersion?
-        let pub_storage = vec![FileStorage::new_centralized(None, StorageType::PUB).unwrap()];
-        let client_storage = FileStorage::new_centralized(None, StorageType::CLIENT).unwrap();
+        let pub_storage = vec![FileStorage::new(None, StorageType::PUB, None).unwrap()];
+        let client_storage = FileStorage::new(None, StorageType::CLIENT, None).unwrap();
         let internal_client = Client::new_client(client_storage, pub_storage, param)
             .await
             .unwrap();
@@ -2743,7 +2746,7 @@ pub(crate) mod tests {
     use crate::rpc::rpc_types::RequestIdGetter;
     use crate::rpc::rpc_types::{protobuf_to_alloy_domain, BaseKms, PubDataType};
     use crate::storage::StorageReader;
-    use crate::storage::{FileStorage, RamStorage, StorageType, StorageVersion};
+    use crate::storage::{file::FileStorage, ram::RamStorage, StorageType, StorageVersion};
     use crate::util::file_handling::safe_read_element_versioned;
     #[cfg(feature = "wasm_tests")]
     use crate::util::file_handling::write_element;
@@ -2802,10 +2805,8 @@ pub(crate) mod tests {
                 let mut pub_storage = Vec::new();
                 let mut priv_storage = Vec::new();
                 for i in 1..=AMOUNT_PARTIES {
-                    priv_storage
-                        .push(FileStorage::new_threshold(None, StorageType::PRIV, i).unwrap());
-                    pub_storage
-                        .push(FileStorage::new_threshold(None, StorageType::PUB, i).unwrap());
+                    priv_storage.push(FileStorage::new(None, StorageType::PRIV, Some(i)).unwrap());
+                    pub_storage.push(FileStorage::new(None, StorageType::PUB, Some(i)).unwrap());
                 }
                 super::test_tools::setup_threshold(THRESHOLD as u8, pub_storage, priv_storage).await
             }
@@ -2821,9 +2822,9 @@ pub(crate) mod tests {
         };
         let mut pub_storage = Vec::with_capacity(AMOUNT_PARTIES);
         for i in 1..=AMOUNT_PARTIES {
-            pub_storage.push(FileStorage::new_threshold(None, StorageType::PUB, i).unwrap());
+            pub_storage.push(FileStorage::new(None, StorageType::PUB, Some(i)).unwrap());
         }
-        let client_storage = FileStorage::new_centralized(None, StorageType::CLIENT).unwrap();
+        let client_storage = FileStorage::new(None, StorageType::CLIENT, None).unwrap();
         let internal_client = Client::new_client(client_storage, pub_storage, &params)
             .await
             .unwrap();
@@ -2912,7 +2913,7 @@ pub(crate) mod tests {
                 .await;
         }
         let inner_resp = response.unwrap().into_inner();
-        let pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
+        let pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
         let pk = internal_client
             .retrieve_public_key(&inner_resp, &pub_storage)
             .await
@@ -2983,7 +2984,7 @@ pub(crate) mod tests {
         assert_eq!(rvcd_req_id, client_request_id);
 
         let crs_info = resp.crs_results.unwrap();
-        let pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
+        let pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
         let mut crs_path = pub_storage
             .compute_url(&request_id.to_string(), &PubDataType::CRS.to_string())
             .unwrap()
@@ -3125,7 +3126,7 @@ pub(crate) mod tests {
             ctr += 1;
         }
         let inner_resp = response.unwrap().into_inner();
-        let pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
+        let pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
         let pp = internal_client
             .process_get_crs_resp(&inner_resp, &pub_storage)
             .await
@@ -3183,7 +3184,7 @@ pub(crate) mod tests {
         let key_id = RequestId {
             request_id: key_handle.to_owned(),
         };
-        let pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
+        let pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
         let pp = internal_client
             .get_crs(crs_req_id, &pub_storage)
             .await
@@ -3509,7 +3510,7 @@ pub(crate) mod tests {
                 .into_iter()
                 .map(|(i, res)| {
                     (
-                        { FileStorage::new_threshold(None, StorageType::PUB, i as usize).unwrap() },
+                        { FileStorage::new(None, StorageType::PUB, Some(i as usize)).unwrap() },
                         res,
                     )
                 })
@@ -3680,7 +3681,7 @@ pub(crate) mod tests {
         let (kms_servers, kms_clients, internal_client) =
             threshold_handles(StorageVersion::Dev, dkg_params).await;
 
-        let pub_storage = FileStorage::new_threshold(None, StorageType::PUB, 1).unwrap();
+        let pub_storage = FileStorage::new(None, StorageType::PUB, Some(1)).unwrap();
         let pp = internal_client
             .get_crs(crs_handle, &pub_storage)
             .await
@@ -5292,7 +5293,7 @@ pub(crate) mod tests {
         let mut serialized_ref_pk = Vec::new();
         let mut serialized_ref_server_key = Vec::new();
         for (idx, kg_res) in finished.into_iter().enumerate() {
-            let storage = FileStorage::new_threshold(None, StorageType::PUB, idx + 1).unwrap();
+            let storage = FileStorage::new(None, StorageType::PUB, Some(idx + 1)).unwrap();
             let pk = internal_client
                 .retrieve_public_key(&kg_res, &storage)
                 .await

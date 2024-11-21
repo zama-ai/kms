@@ -3,7 +3,6 @@ use super::rpc_types::{
     CURRENT_FORMAT_VERSION,
 };
 use crate::client::assemble_metadata_req;
-use crate::conf::centralized::CentralizedConfig;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::central_kms::verify_reencryption_eip712;
 use crate::cryptography::central_kms::{
@@ -11,7 +10,7 @@ use crate::cryptography::central_kms::{
     SoftwareKms,
 };
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey};
-use crate::kms::core_service_endpoint_server::{CoreServiceEndpoint, CoreServiceEndpointServer};
+use crate::kms::core_service_endpoint_server::CoreServiceEndpoint;
 use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenRequest,
@@ -32,9 +31,6 @@ use crate::util::meta_store::{handle_res_mapping, HandlerStatus, MetaStore};
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
 use alloy_primitives::{keccak256, Address};
 use alloy_sol_types::Eip712Domain;
-use conf_trace::telemetry::accept_trace;
-use conf_trace::telemetry::make_span;
-use conf_trace::telemetry::record_trace_id;
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 use std::collections::HashMap;
 use std::fmt;
@@ -44,47 +40,8 @@ use tfhe::safe_serialization::safe_deserialize;
 use tfhe::zk::CompactPkePublicParams;
 use tfhe::ProvenCompactCiphertextList;
 use tokio::sync::{Mutex, RwLock};
-use tonic::transport::Server;
 use tonic::{Request, Response, Status};
-use tower_http::trace::TraceLayer;
 use tracing::Instrument;
-
-pub async fn server_handle<
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
->(
-    config: CentralizedConfig,
-    public_storage: PubS,
-    private_storage: PrivS,
-) -> anyhow::Result<()> {
-    let socket = config.get_socket_addr()?;
-    let kms = SoftwareKms::new(public_storage, private_storage).await?;
-    tracing::info!(
-        "Starting centralized KMS server, listening on {} ...",
-        config.url
-    );
-    let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
-    health_reporter
-        .set_serving::<CoreServiceEndpointServer<SoftwareKms<PubS, PrivS>>>()
-        .await;
-
-    let trace_request = tower::ServiceBuilder::new()
-        .layer(TraceLayer::new_for_grpc().make_span_with(make_span))
-        .map_request(accept_trace)
-        .map_request(record_trace_id);
-
-    Server::builder()
-        .layer(trace_request)
-        .add_service(
-            CoreServiceEndpointServer::new(kms)
-                .max_decoding_message_size(config.grpc_max_message_size)
-                .max_encoding_message_size(config.grpc_max_message_size),
-        )
-        .add_service(health_service)
-        .serve(socket)
-        .await?;
-    Ok(())
-}
 
 #[tonic::async_trait]
 impl<

@@ -1,6 +1,6 @@
 use assert_cmd::{assert::OutputAssertExt, Command};
 use kms_lib::consts::KEY_PATH_PREFIX;
-use kms_lib::storage::{FileStorage, StorageType};
+use kms_lib::storage::{file::FileStorage, StorageType};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::{fs, thread, time::Duration};
@@ -43,14 +43,14 @@ fn purge_file_storage(storage: &FileStorage) {
 // We purge the centralized storage and the threshold storage for party-1
 // since the CLI test only use default_1.toml.
 fn purge_all() {
-    let priv_storage = FileStorage::new_centralized(None, StorageType::PRIV).unwrap();
-    let pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
+    let priv_storage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
+    let pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
     purge_file_storage(&priv_storage);
     purge_file_storage(&pub_storage);
 
     let i = 1usize;
-    let priv_storage = FileStorage::new_threshold(None, StorageType::PRIV, i).unwrap();
-    let pub_storage = FileStorage::new_threshold(None, StorageType::PUB, i).unwrap();
+    let priv_storage = FileStorage::new(None, StorageType::PRIV, Some(i)).unwrap();
+    let pub_storage = FileStorage::new(None, StorageType::PUB, Some(i)).unwrap();
     purge_file_storage(&priv_storage);
     purge_file_storage(&pub_storage);
 
@@ -129,8 +129,8 @@ mod kms_gen_keys_binary_test {
         purge_all();
         Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
-            .arg(arg)
             .arg("--param-test")
+            .arg(arg)
             .output()
             .unwrap()
             .assert()
@@ -154,12 +154,12 @@ mod kms_gen_keys_binary_test {
         let temp_dir_pub = tempdir().unwrap();
         Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
-            .arg(arg)
             .arg("--param-test")
             .arg("--priv-url")
             .arg(format!("file://{}", temp_dir_priv.path().display()))
             .arg("--pub-url")
             .arg(format!("file://{}", temp_dir_pub.path().display()))
+            .arg(arg)
             .output()
             .unwrap()
             .assert()
@@ -206,75 +206,17 @@ mod kms_server_binary_test {
             .unwrap()
             .assert()
             .success();
-
-        // check the subcommands
-        Command::cargo_bin(KMS_SERVER)
-            .unwrap()
-            .arg("threshold")
-            .arg("--help")
-            .output()
-            .unwrap()
-            .assert()
-            .success();
-        Command::cargo_bin(KMS_SERVER)
-            .unwrap()
-            .arg("centralized")
-            .arg("--help")
-            .output()
-            .unwrap()
-            .assert()
-            .success();
     }
 
-    fn run_subcommand_no_args(config_file: &str, exec_mode: &str) {
-        purge_all();
-        if exec_mode == "threshold" {
-            Command::cargo_bin(KMS_GEN_KEYS)
-                .unwrap()
-                .arg("threshold")
-                .arg("--param-test")
-                .output()
-                .unwrap()
-                .assert()
-                .success();
-
-            // NOTE that we use the cert directory instead of
-            // a temporary directory because kms-server binary
-            // doesn't know about the temporary directory since
-            // its configuration is loaded from a file.
-            Command::cargo_bin(KMS_GEN_TLS_CERTS)
-                .unwrap()
-                .arg("-o")
-                .arg("certs")
-                .arg("--ca-prefix")
-                .arg("p")
-                .arg("--ca-count")
-                .arg("4")
-                .output()
-                .unwrap()
-                .assert()
-                .success();
-        } else {
-            Command::cargo_bin(KMS_GEN_KEYS)
-                .unwrap()
-                .arg("centralized")
-                .arg("--param-test")
-                .output()
-                .unwrap()
-                .assert()
-                .success();
-        }
-
+    fn run_subcommand_no_args(config_file: &str) {
         // Spawn with correct arguments and check it does not
         // die within 5 seconds.
         // Note that the join handle cannot kill the thread,
         // so we need [kill_kms_server] for it.
-        let exec_mode = exec_mode.to_string(); // clone this to pass into thread
         let config_file = config_file.to_string();
         let h = thread::spawn(|| {
             let out = Command::cargo_bin(KMS_SERVER)
                 .unwrap()
-                .arg(exec_mode)
                 .arg("--config-file")
                 .arg(config_file)
                 .output();
@@ -296,13 +238,48 @@ mod kms_server_binary_test {
     #[test]
     #[serial_test::serial]
     fn subcommand_dev_centralized() {
-        run_subcommand_no_args("config/default_centralized.toml", "centralized");
+        purge_all();
+        Command::cargo_bin(KMS_GEN_KEYS)
+            .unwrap()
+            .arg("--param-test")
+            .arg("centralized")
+            .output()
+            .unwrap()
+            .assert()
+            .success();
+        run_subcommand_no_args("config/default_centralized.toml");
     }
 
     #[test]
     #[serial_test::serial]
     fn subcommand_dev_threshold() {
-        run_subcommand_no_args("config/default_1.toml", "threshold");
+        purge_all();
+        Command::cargo_bin(KMS_GEN_KEYS)
+            .unwrap()
+            .arg("--param-test")
+            .arg("threshold")
+            .output()
+            .unwrap()
+            .assert()
+            .success();
+
+        // NOTE that we use the cert directory instead of
+        // a temporary directory because kms-server binary
+        // doesn't know about the temporary directory since
+        // its configuration is loaded from a file.
+        Command::cargo_bin(KMS_GEN_TLS_CERTS)
+            .unwrap()
+            .arg("-o")
+            .arg("certs")
+            .arg("--ca-prefix")
+            .arg("p")
+            .arg("--ca-count")
+            .arg("4")
+            .output()
+            .unwrap()
+            .assert()
+            .success();
+        run_subcommand_no_args("config/default_1.toml");
     }
 
     #[test]
@@ -310,10 +287,10 @@ mod kms_server_binary_test {
     fn central_signing_keys_overwrite() {
         let output = Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
-            .arg("centralized")
             .arg("--param-test")
             .arg("--cmd=signing-keys")
             .arg("--overwrite")
+            .arg("centralized")
             .output()
             .unwrap();
         let log = String::from_utf8_lossy(&output.stdout);
@@ -324,9 +301,9 @@ mod kms_server_binary_test {
 
         let new_output = Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
-            .arg("centralized")
             .arg("--param-test")
             .arg("--cmd=signing-keys")
+            .arg("centralized")
             .output()
             .unwrap();
         assert!(new_output.status.success());
@@ -341,13 +318,13 @@ mod kms_server_binary_test {
         let temp_dir_pub = tempdir().unwrap();
         let output = Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
-            .arg("centralized")
             .arg("--param-test")
             .arg("--priv-url")
             .arg(format!("file://{}", temp_dir_priv.path().display()))
             .arg("--pub-url")
             .arg(format!("file://{}", temp_dir_pub.path().display()))
             .arg("--cmd=signing-keys")
+            .arg("centralized")
             .output()
             .unwrap();
 
@@ -374,15 +351,15 @@ mod kms_server_binary_test {
     #[test]
     #[serial_test::serial]
     fn central_s3() {
-        use kms_lib::util::aws::{AWS_REGION, AWS_S3_ENDPOINT, BUCKET_NAME};
+        use kms_lib::storage::s3::{AWS_REGION, AWS_S3_ENDPOINT, BUCKET_NAME};
 
         let s3_url = format!("s3://{}/central_s3/", BUCKET_NAME);
         let file_url = "file://temp/keys/";
         // Test the following command:
-        // cargo run --features testing  --bin kms-gen-keys centralized --param-test --aws-region eu-north-1 --pub-url=s3://jot2re-kms-key-test/central_s3/ --priv-url=file://temp/keys/ --cmd=signing-keys --overwrite --deterministic
+        // cargo run --features testing  --bin kms-gen-keys -- --centralized --param-test --aws-region eu-north-1 --pub-url=s3://jot2re-kms-key-test/central_s3/ --priv-url=file://temp/keys/ --cmd=signing-keys --overwrite --deterministic
         let output = Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
-            .arg("centralized")
+            .arg("--centralized")
             .arg("--param-test")
             .arg(format!("--aws-region={}", AWS_REGION))
             .arg(format!("--aws-s3-endpoint={}", AWS_S3_ENDPOINT))
@@ -397,12 +374,5 @@ mod kms_server_binary_test {
         assert!(output.status.success());
         assert!(log.contains("Successfully stored public server signing key under the handle e164d9de0bec6656928726433cc56bef6ee8417a with storage \"S3 storage with bucket"));
         assert!(log.contains("Successfully stored public server signing key under the handle e164d9de0bec6656928726433cc56bef6ee8417a with storage \"file storage with"));
-    }
-
-    #[test]
-    #[ignore]
-    #[serial_test::serial]
-    fn subcommand_enclave() {
-        run_subcommand_no_args("enclave", "centralized")
     }
 }

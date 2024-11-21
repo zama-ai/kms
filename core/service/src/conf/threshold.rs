@@ -1,4 +1,3 @@
-use crate::conf::storage::StorageConfigWith;
 use distributed_decryption::conf::party::CertificatePaths;
 use distributed_decryption::execution::online::preprocessing::redis::RedisConf;
 use distributed_decryption::execution::runtime::party::{Identity, Role};
@@ -6,32 +5,27 @@ use distributed_decryption::networking::grpc::CoreToCoreNetworkConfig;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ThresholdConfig {
-    pub listen_address_client: String,
-    pub listen_port_client: u16,
-    pub listen_address_core: String,
-    pub listen_port_core: u16,
+pub struct ThresholdParty {
+    // endpoint for incoming peer requests
+    pub listen_address: String,
+    pub listen_port: u16,
+
     pub threshold: u8,
     pub my_id: usize,
     pub dec_capacity: usize,
     pub min_dec_cache: usize,
-    pub timeout_secs: u64,
-    pub grpc_max_message_size: usize,
-    pub preproc_redis_conf: Option<RedisConf>,
+    pub preproc_redis: Option<RedisConf>,
     pub num_sessions_preproc: Option<u16>,
     pub tls_cert_path: Option<String>,
     pub tls_key_path: Option<String>,
-    pub peer_confs: Vec<PeerConf>,
-    pub core_to_core_net_conf: Option<CoreToCoreNetworkConfig>,
+    pub peers: Vec<PeerConf>,
+    pub core_to_core_net: Option<CoreToCoreNetworkConfig>,
 }
 
-impl ThresholdConfig {
+impl ThresholdParty {
     pub fn get_tls_cert_paths(&self) -> Option<CertificatePaths> {
-        let cert_paths: Option<Vec<String>> = self
-            .peer_confs
-            .iter()
-            .map(|c| c.tls_cert_path.clone())
-            .collect();
+        let cert_paths: Option<Vec<String>> =
+            self.peers.iter().map(|c| c.tls_cert_path.clone()).collect();
 
         match (
             cert_paths,
@@ -63,11 +57,5 @@ impl PeerConf {
             Role::indexed_by_one(self.party_id),
             Identity(format!("{}:{}", self.address, self.port)),
         )
-    }
-}
-
-impl From<StorageConfigWith<ThresholdConfig>> for ThresholdConfig {
-    fn from(value: StorageConfigWith<ThresholdConfig>) -> Self {
-        value.rest
     }
 }

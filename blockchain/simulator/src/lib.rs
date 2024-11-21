@@ -39,7 +39,7 @@ use kms_lib::rpc::rpc_types::{
     compute_external_pubdata_message_hash, compute_pt_message_hash, protobuf_to_alloy_domain,
     Plaintext, PubDataType,
 };
-use kms_lib::storage::{FileStorage, StorageReader, StorageType};
+use kms_lib::storage::{file::FileStorage, StorageReader, StorageType};
 use kms_lib::util::key_setup::test_tools::{
     compute_cipher_from_stored_key, compute_compressed_cipher_from_stored_key,
     compute_proven_ct_from_stored_key_and_serialize, TypedPlaintext,
@@ -1082,7 +1082,7 @@ pub async fn execute_reencryption_contract(
     // NOTE: The wasm code that deals with reencryption on the browser side
     // also uses the client.
     let verf_keys = if kms_core_conf.is_centralized() {
-        let storage = FileStorage::new_centralized(Some(keys_folder), StorageType::PUB).unwrap();
+        let storage = FileStorage::new(Some(keys_folder), StorageType::PUB, None).unwrap();
         let url = storage
             .compute_url(
                 &SIGNING_KEY_ID.to_string().to_lowercase(),
@@ -1096,8 +1096,7 @@ pub async fn execute_reencryption_contract(
         let num_kms_parties = kms_core_conf.parties.len();
         let mut res = Vec::new();
         for i in 1..=num_kms_parties {
-            let storage =
-                FileStorage::new_threshold(Some(keys_folder), StorageType::PUB, i).unwrap();
+            let storage = FileStorage::new(Some(keys_folder), StorageType::PUB, Some(i)).unwrap();
             let url = storage
                 .compute_url(
                     &SIGNING_KEY_ID.to_string().to_lowercase(),

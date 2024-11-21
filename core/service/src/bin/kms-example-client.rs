@@ -10,7 +10,7 @@ use kms_lib::{
     conf::init_trace,
     consts::{DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM, DEFAULT_THRESHOLD_KEY_ID},
     kms::InitRequest,
-    storage::{FileStorage, StorageType},
+    storage::{file::FileStorage, StorageType},
     util::key_setup::test_tools::compute_compressed_cipher_from_stored_key,
 };
 use rand::{Rng, SeedableRng};
@@ -99,8 +99,8 @@ async fn central_requests(address: String) -> anyhow::Result<()> {
         5,
         100
     )?;
-    let pub_storage = vec![FileStorage::new_centralized(None, StorageType::PUB).unwrap()];
-    let client_storage = FileStorage::new_centralized(None, StorageType::CLIENT).unwrap();
+    let pub_storage = vec![FileStorage::new(None, StorageType::PUB, None).unwrap()];
+    let client_storage = FileStorage::new(None, StorageType::CLIENT, None).unwrap();
     let mut internal_client = Client::new_client(client_storage, pub_storage, &DEFAULT_PARAM)
         .await
         .unwrap();
@@ -420,7 +420,7 @@ async fn threshold_requests(addresses: Vec<String>, init: bool) -> anyhow::Resul
     tracing::info!("Threshold Client - connecting to: {:?}", addresses);
     let num_parties = addresses.len();
     let mut pub_storage = Vec::with_capacity(num_parties);
-    let client_storage = FileStorage::new_centralized(None, StorageType::CLIENT).unwrap();
+    let client_storage = FileStorage::new(None, StorageType::CLIENT, None).unwrap();
     let mut core_endpoints = Vec::with_capacity(num_parties);
 
     for (i, address) in addresses.iter().enumerate() {
@@ -441,7 +441,7 @@ async fn threshold_requests(addresses: Vec<String>, init: bool) -> anyhow::Resul
 
         core_endpoints.push(core_endpoint);
 
-        pub_storage.push(FileStorage::new_threshold(None, StorageType::PUB, i + 1).unwrap());
+        pub_storage.push(FileStorage::new(None, StorageType::PUB, Some(i + 1)).unwrap());
     }
 
     let mut internal_client = Client::new_client(client_storage, pub_storage, &DEFAULT_PARAM)

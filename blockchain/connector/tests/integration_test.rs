@@ -45,7 +45,7 @@ use kms_lib::{
         DecryptionResponsePayload, ReencryptionResponse, ReencryptionResponsePayload, RequestId,
     },
     rpc::rpc_types::{protobuf_to_alloy_domain, Plaintext, CURRENT_FORMAT_VERSION},
-    storage::{FileStorage, StorageType},
+    storage::{file::FileStorage, StorageType},
     threshold::mock_threshold_kms::setup_mock_kms,
     util::key_setup::{
         ensure_central_keys_exist, ensure_central_server_signing_keys_exist,
@@ -382,12 +382,11 @@ const MOCK_EXTERNAL_HANDLES: &[&[u8]] = &[
 async fn setup_threshold_keys() {
     let mut threshold_pub_storages = Vec::with_capacity(AMOUNT_PARTIES);
     for i in 1..=AMOUNT_PARTIES {
-        threshold_pub_storages.push(FileStorage::new_threshold(None, StorageType::PUB, i).unwrap());
+        threshold_pub_storages.push(FileStorage::new(None, StorageType::PUB, Some(i)).unwrap());
     }
     let mut threshold_priv_storages = Vec::with_capacity(AMOUNT_PARTIES);
     for i in 1..=AMOUNT_PARTIES {
-        threshold_priv_storages
-            .push(FileStorage::new_threshold(None, StorageType::PRIV, i).unwrap());
+        threshold_priv_storages.push(FileStorage::new(None, StorageType::PRIV, Some(i)).unwrap());
     }
 
     ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
@@ -418,8 +417,8 @@ async fn setup_threshold_keys() {
 }
 
 async fn setup_central_keys() {
-    let mut central_pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
-    let mut central_priv_storage = FileStorage::new_centralized(None, StorageType::PRIV).unwrap();
+    let mut central_pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
+    let mut central_priv_storage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
 
     ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
     ensure_central_server_signing_keys_exist(
@@ -480,8 +479,8 @@ async fn generic_centralized_sunshine_test(
         "Not enough MOCK_CT_HANDLES defined!"
     );
 
-    let pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
-    let priv_storage = FileStorage::new_centralized(None, StorageType::PRIV).unwrap();
+    let pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
+    let priv_storage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
     let join_handle = test_tools::setup_centralized_no_client(pub_storage, priv_storage).await;
 
     let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", BASE_PORT + 1);
@@ -667,9 +666,9 @@ async fn generic_sunshine_test(
         let mut pub_storage = Vec::new();
         let mut priv_storage = Vec::new();
         for i in 1..=AMOUNT_PARTIES {
-            let cur_pub = FileStorage::new_threshold(None, StorageType::PUB, i).unwrap();
+            let cur_pub = FileStorage::new(None, StorageType::PUB, Some(i)).unwrap();
             pub_storage.push(cur_pub);
-            let cur_priv = FileStorage::new_threshold(None, StorageType::PRIV, i).unwrap();
+            let cur_priv = FileStorage::new(None, StorageType::PRIV, Some(i)).unwrap();
             priv_storage.push(cur_priv);
         }
         test_tools::setup_threshold_no_client(THRESHOLD as u8, pub_storage, priv_storage, true)
@@ -835,9 +834,9 @@ async fn reenc_sunshine(slow: bool) {
 
     let mut pub_storage = Vec::with_capacity(AMOUNT_PARTIES);
     for i in 1..=AMOUNT_PARTIES {
-        pub_storage.push(FileStorage::new_threshold(None, StorageType::PUB, i).unwrap());
+        pub_storage.push(FileStorage::new(None, StorageType::PUB, Some(i)).unwrap());
     }
-    let client_storage = FileStorage::new_centralized(None, StorageType::CLIENT).unwrap();
+    let client_storage = FileStorage::new(None, StorageType::CLIENT, None).unwrap();
     let mut kms_client =
         kms_lib::client::Client::new_client(client_storage, pub_storage, &TEST_PARAM)
             .await
@@ -935,9 +934,9 @@ async fn verify_proven_ct_sunshine(slow: bool) {
 
     let mut pub_storage = Vec::with_capacity(AMOUNT_PARTIES);
     for i in 1..=AMOUNT_PARTIES {
-        pub_storage.push(FileStorage::new_threshold(None, StorageType::PUB, i).unwrap());
+        pub_storage.push(FileStorage::new(None, StorageType::PUB, Some(i)).unwrap());
     }
-    let client_storage = FileStorage::new_centralized(None, StorageType::CLIENT).unwrap();
+    let client_storage = FileStorage::new(None, StorageType::CLIENT, None).unwrap();
     let kms_client = kms_lib::client::Client::new_client(client_storage, pub_storage, &TEST_PARAM)
         .await
         .unwrap();

@@ -2,7 +2,7 @@ use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::kms::{FheType, RequestId};
 use crate::rpc::rpc_types::Plaintext;
 use crate::rpc::rpc_types::{PubDataType, WrappedPublicKeyOwned};
-use crate::storage::{read_pk_at_request_id, FileStorage, StorageReader, StorageType};
+use crate::storage::{file::FileStorage, read_pk_at_request_id, StorageReader, StorageType};
 use crate::util::key_setup::FhePublicKey;
 use crate::{consts::AMOUNT_PARTIES, storage::delete_all_at_request_id};
 use distributed_decryption::expanded_encrypt;
@@ -330,7 +330,7 @@ impl From<tfhe::integer::bigint::U256> for TypedPlaintext {
 
 pub async fn load_pk_from_storage(pub_path: Option<&Path>, key_id: &str) -> FhePublicKey {
     // Try first with centralized storage
-    let storage = FileStorage::new_centralized(pub_path, StorageType::PUB).unwrap();
+    let storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
     let url = storage
         .compute_url(key_id, &PubDataType::PublicKey.to_string())
         .unwrap();
@@ -349,7 +349,7 @@ pub async fn load_pk_from_storage(pub_path: Option<&Path>, key_id: &str) -> FheP
     } else {
         // Try with the threshold storage
         tracing::info!("Fallback to threshold file storage with url {}", url);
-        let storage = FileStorage::new_threshold(pub_path, StorageType::PUB, 1).unwrap();
+        let storage = FileStorage::new(pub_path, StorageType::PUB, Some(1)).unwrap();
         let wrapped_pk = read_pk_at_request_id(
             &storage,
             &RequestId {
@@ -385,7 +385,7 @@ pub async fn compute_proven_ct_from_stored_key(
     metadata: &[u8],
 ) -> ProvenCompactCiphertextList {
     // Try first with centralized storage
-    let storage = FileStorage::new_centralized(pub_path, StorageType::PUB).unwrap();
+    let storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
     let key_url = storage
         .compute_url(key_id, &PubDataType::PublicKey.to_string())
         .unwrap();
@@ -406,7 +406,7 @@ pub async fn compute_proven_ct_from_stored_key(
         (pk, pp)
     } else {
         // Try with the threshold storage
-        let storage = FileStorage::new_threshold(pub_path, StorageType::PUB, 1).unwrap();
+        let storage = FileStorage::new(pub_path, StorageType::PUB, Some(1)).unwrap();
         let crs_url = storage
             .compute_url(crs_id, &PubDataType::CRS.to_string())
             .unwrap();
@@ -471,7 +471,7 @@ pub async fn compute_proven_ct_from_stored_key(
 }
 
 pub async fn get_server_key_from_storage(pub_path: Option<&Path>, key_id: &str) -> ServerKey {
-    let storage = FileStorage::new_centralized(pub_path, StorageType::PUB).unwrap();
+    let storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
     let url = storage
         .compute_url(key_id, &PubDataType::ServerKey.to_string())
         .unwrap();
@@ -482,7 +482,7 @@ pub async fn get_server_key_from_storage(pub_path: Option<&Path>, key_id: &str) 
     } else {
         // Try with the threshold storage
         tracing::info!("Fallback to threshold file storage");
-        let storage = FileStorage::new_threshold(pub_path, StorageType::PUB, 1).unwrap();
+        let storage = FileStorage::new(pub_path, StorageType::PUB, Some(1)).unwrap();
         let url = storage
             .compute_url(key_id, &PubDataType::ServerKey.to_string())
             .unwrap();
@@ -525,15 +525,14 @@ pub async fn compute_compressed_cipher_from_stored_key(
 /// This function should be used for testing only and it can panic.
 pub async fn purge(pub_path: Option<&Path>, priv_path: Option<&Path>, id: &str) {
     let req_id: RequestId = id.to_string().try_into().unwrap();
-    let mut pub_storage = FileStorage::new_centralized(pub_path, StorageType::PUB).unwrap();
+    let mut pub_storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
     delete_all_at_request_id(&mut pub_storage, &req_id).await;
-    let mut priv_storage = FileStorage::new_centralized(priv_path, StorageType::PRIV).unwrap();
+    let mut priv_storage = FileStorage::new(priv_path, StorageType::PRIV, None).unwrap();
     delete_all_at_request_id(&mut priv_storage, &req_id).await;
 
     for i in 1..=AMOUNT_PARTIES {
-        let mut threshold_pub = FileStorage::new_threshold(pub_path, StorageType::PUB, i).unwrap();
-        let mut threshold_priv =
-            FileStorage::new_threshold(priv_path, StorageType::PRIV, i).unwrap();
+        let mut threshold_pub = FileStorage::new(pub_path, StorageType::PUB, Some(i)).unwrap();
+        let mut threshold_priv = FileStorage::new(priv_path, StorageType::PRIV, Some(i)).unwrap();
         delete_all_at_request_id(&mut threshold_pub, &req_id).await;
         delete_all_at_request_id(&mut threshold_priv, &req_id).await;
     }
@@ -553,7 +552,7 @@ pub(crate) mod setup {
         util::key_setup::ensure_central_server_signing_keys_exist,
     };
     use crate::{
-        storage::{FileStorage, StorageType},
+        storage::{file::FileStorage, StorageType},
         util::key_setup::{
             ensure_threshold_crs_exists, ensure_threshold_keys_exist,
             ensure_threshold_server_signing_keys_exist,
@@ -568,18 +567,16 @@ pub(crate) mod setup {
     async fn testing_material() {
         ensure_dir_exist().await;
         ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
-        let mut central_pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
-        let mut central_priv_storage =
-            FileStorage::new_centralized(None, StorageType::PRIV).unwrap();
+        let mut central_pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
+        let mut central_priv_storage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
         let mut threshold_pub_storages = Vec::with_capacity(AMOUNT_PARTIES);
         for i in 1..=AMOUNT_PARTIES {
-            threshold_pub_storages
-                .push(FileStorage::new_threshold(None, StorageType::PUB, i).unwrap());
+            threshold_pub_storages.push(FileStorage::new(None, StorageType::PUB, Some(i)).unwrap());
         }
         let mut threshold_priv_storages = Vec::with_capacity(AMOUNT_PARTIES);
         for i in 1..=AMOUNT_PARTIES {
             threshold_priv_storages
-                .push(FileStorage::new_threshold(None, StorageType::PRIV, i).unwrap());
+                .push(FileStorage::new(None, StorageType::PRIV, Some(i)).unwrap());
         }
 
         ensure_dir_exist().await;
@@ -646,18 +643,16 @@ pub(crate) mod setup {
             OTHER_CENTRAL_DEFAULT_ID,
         };
         ensure_dir_exist().await;
-        let mut central_pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
-        let mut central_priv_storage =
-            FileStorage::new_centralized(None, StorageType::PRIV).unwrap();
+        let mut central_pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
+        let mut central_priv_storage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
         let mut threshold_pub_storages = Vec::with_capacity(AMOUNT_PARTIES);
         for i in 1..=AMOUNT_PARTIES {
-            threshold_pub_storages
-                .push(FileStorage::new_threshold(None, StorageType::PUB, i).unwrap());
+            threshold_pub_storages.push(FileStorage::new(None, StorageType::PUB, Some(i)).unwrap());
         }
         let mut threshold_priv_storages = Vec::with_capacity(AMOUNT_PARTIES);
         for i in 1..=AMOUNT_PARTIES {
             threshold_priv_storages
-                .push(FileStorage::new_threshold(None, StorageType::PRIV, i).unwrap());
+                .push(FileStorage::new(None, StorageType::PRIV, Some(i)).unwrap());
         }
 
         ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
@@ -727,10 +722,8 @@ async fn test_purge() {
 
     let temp_dir = tempfile::tempdir().unwrap();
     let test_prefix = Some(temp_dir.path());
-    let mut central_pub_storage =
-        FileStorage::new_centralized(test_prefix, StorageType::PUB).unwrap();
-    let mut central_priv_storage =
-        FileStorage::new_centralized(test_prefix, StorageType::PRIV).unwrap();
+    let mut central_pub_storage = FileStorage::new(test_prefix, StorageType::PUB, None).unwrap();
+    let mut central_priv_storage = FileStorage::new(test_prefix, StorageType::PRIV, None).unwrap();
     // Check no keys exist
     assert!(central_pub_storage
         .all_urls(&PubDataType::VerfKey.to_string())

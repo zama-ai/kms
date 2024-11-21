@@ -1,11 +1,10 @@
 #[cfg(feature = "insecure")]
 use super::generic::InsecureCrsGenerator;
-use crate::conf::threshold::{PeerConf, ThresholdConfig};
+use crate::conf::threshold::{PeerConf, ThresholdParty};
 use crate::consts::{MINIMUM_SESSIONS_PREPROC, PRSS_EPOCH_ID};
 use crate::cryptography::central_kms::{async_generate_crs, compute_info, BaseKmsStruct};
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey};
 use crate::cryptography::signcryption::signcrypt;
-use crate::kms::core_service_endpoint_server::CoreServiceEndpointServer;
 use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus,
@@ -37,7 +36,6 @@ use crate::util::meta_store::{handle_res_mapping, HandlerStatus, MetaStore};
 use crate::{anyhow_error_and_log, get_exactly_one};
 use aes_prng::AesRng;
 use anyhow::anyhow;
-use conf_trace::telemetry::{accept_trace, make_span, record_trace_id};
 use distributed_decryption::algebra::residue_poly::ResiduePoly128;
 use distributed_decryption::conf::party::CertificatePaths;
 use distributed_decryption::execution::endpoints::decryption::{
@@ -85,7 +83,6 @@ use tokio::task::JoinSet;
 use tokio::time::Instant;
 use tonic::transport::{Server, ServerTlsConfig};
 use tonic::{Request, Response, Status};
-use tower_http::trace::TraceLayer;
 use tracing::Instrument;
 
 const DECRYPTION_MODE: DecryptionMode = DecryptionMode::PRSSDecrypt;
@@ -108,7 +105,7 @@ pub async fn threshold_server_init<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
 >(
-    config: ThresholdConfig,
+    config: ThresholdParty,
     public_storage: PubS,
     private_storage: PrivS,
     run_prss: bool,
@@ -117,7 +114,7 @@ pub async fn threshold_server_init<
 
     //If no RedisConf is provided, we just use in-memory storage for the preprocessing buckets.
     //NOTE: This should probably only be allowed for testing
-    let factory = match config.preproc_redis_conf {
+    let factory = match config.preproc_redis {
         None => create_memory_factory(),
         Some(conf) => create_redis_factory(format!("PARTY_{}", config.my_id), &conf),
     };
@@ -135,16 +132,16 @@ pub async fn threshold_server_init<
         config.threshold,
         config.dec_capacity,
         config.min_dec_cache,
-        &config.listen_address_core,
-        config.listen_port_core,
+        &config.listen_address,
+        config.listen_port,
         config.my_id,
         factory,
         num_sessions_preproc,
-        config.peer_confs,
+        config.peers,
         public_storage,
         private_storage,
         cert_paths,
-        config.core_to_core_net_conf,
+        config.core_to_core_net,
         run_prss,
     )
     .await?;
@@ -154,51 +151,6 @@ pub async fn threshold_server_init<
         config.my_id
     );
     Ok(kms)
-}
-
-/// Starts threshold KMS server.
-///
-/// This function must be called after the server has been initialized.
-/// The server accepts requests from clients (not the other cores).
-pub async fn threshold_server_start<
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
->(
-    listen_address: String,
-    listen_port: u16,
-    timeout_secs: u64,
-    grpc_max_message_size: usize,
-    kms_server: RealThresholdKms<PubS, PrivS>,
-) -> anyhow::Result<()> {
-    let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
-    health_reporter
-        .set_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS>>>()
-        .await;
-
-    let socket_addr = format!("{}:{}", listen_address, listen_port)
-        .to_socket_addrs()?
-        .next()
-        .unwrap();
-
-    let trace_request = tower::ServiceBuilder::new()
-        .layer(TraceLayer::new_for_grpc().make_span_with(make_span))
-        .map_request(accept_trace)
-        .map_request(record_trace_id);
-
-    let server = Server::builder()
-        .layer(trace_request)
-        .timeout(tokio::time::Duration::from_secs(timeout_secs))
-        .add_service(
-            CoreServiceEndpointServer::new(kms_server)
-                .max_decoding_message_size(grpc_max_message_size)
-                .max_encoding_message_size(grpc_max_message_size),
-        )
-        .add_service(health_service)
-        .serve(socket_addr);
-
-    tracing::info!("Starting threshold KMS server on socket {socket_addr}");
-    server.await?;
-    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
@@ -2209,7 +2161,7 @@ mod tests {
     use crate::{
         client::test_tools,
         consts::{AMOUNT_PARTIES, PRSS_EPOCH_ID, THRESHOLD},
-        storage::{FileStorage, StorageType},
+        storage::{file::FileStorage, StorageType},
         threshold::threshold_kms::RequestId,
         util::key_setup::test_tools::purge,
     };
@@ -2221,9 +2173,9 @@ mod tests {
         let mut pub_storage = Vec::new();
         let mut priv_storage = Vec::new();
         for i in 1..=AMOUNT_PARTIES {
-            let cur_pub = FileStorage::new_threshold(None, StorageType::PUB, i).unwrap();
+            let cur_pub = FileStorage::new(None, StorageType::PUB, Some(i)).unwrap();
             pub_storage.push(cur_pub);
-            let cur_priv = FileStorage::new_threshold(None, StorageType::PRIV, i).unwrap();
+            let cur_priv = FileStorage::new(None, StorageType::PRIV, Some(i)).unwrap();
 
             // make sure the store does not contain any PRSS info (currently stored under ID 1)
             let req_id = RequestId::from(PRSS_EPOCH_ID);
