@@ -128,11 +128,11 @@ jobs:
         run: |
           echo "DOCKER_TAG_IMAGE=${{  github.ref_name }}" >> "$GITHUB_ENV"
 
-      - name: Docker Build and Push
+      - name: Docker Build and Push Multiarch
         uses: docker/build-push-action@5cd11c3a4ced054e52742c5fd54dca954e0edd85 # v6.7.0
         with:
           context: ${{ inputs.docker-context }}
-          platforms: linux/amd64
+          platforms: linux/amd64, linux/arm64
           secrets: BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           file: ${{ inputs.working-directory }}/operations/docker/${{ inputs.docker-file }}
           push: ${{ inputs.push_image }}
@@ -142,76 +142,62 @@ jobs:
           cache-from: ${{ inputs.cache-from }}
           cache-to: ${{ inputs.cache-to }}
 
+      # Commented to reenable the multiarch build of kms-service
+      # This part will be get out of this workflow
       # Our self-hosted runner AMI doesn't ship jq which we need during EIF build
-      - name: Install jq
-        if: ${{ inputs.generate-enclave-image }}
-        run: |
-          sudo apt update && sudo apt -y install jq
+      # - name: Install jq
+      #   if: ${{ inputs.generate-enclave-image }}
+      #   run: |
+      #     sudo apt update && sudo apt -y install jq
 
-      - name: Get Docker sock path
-        if: ${{ inputs.generate-enclave-image }}
-        run: echo "DOCKER_SOCK_PATH=$(docker context inspect | jq -r '.[0].Endpoints.docker.Host' | sed "s^unix://^^")" >> "$GITHUB_ENV"
+      # - name: Get Docker sock path
+      #   if: ${{ inputs.generate-enclave-image }}
+      #   run: echo "DOCKER_SOCK_PATH=$(docker context inspect | jq -r '.[0].Endpoints.docker.Host' | sed "s^unix://^^")" >> "$GITHUB_ENV"
 
-      - name: Set EIF output dir
-        if: ${{ inputs.generate-enclave-image }}
-        run: |
-          echo "EIF_OUTPUT_DIR=${{ github.workspace }}/${{ inputs.working-directory }}/eif-output" >> "$GITHUB_ENV"
+      # - name: Set EIF output dir
+      #   if: ${{ inputs.generate-enclave-image }}
+      #   run: |
+      #     echo "EIF_OUTPUT_DIR=${{ github.workspace }}/${{ inputs.working-directory }}/eif-output" >> "$GITHUB_ENV"
 
-      - name: Create EIF file
-        if: ${{ inputs.generate-enclave-image }}
-        uses: addnab/docker-run-action@4f65fabd2431ebc8d299f8e5a018d79a769ae185 #v3
-        with:
-          image: amazonlinux@sha256:5fe11d17e56571a26e20df3fa1493bdf9139fb9f2cb6d84fad13104c7b869217 # 2023.5.20240916.0
-          options: -v ${{ env.EIF_OUTPUT_DIR }}:/output -v ${{env.DOCKER_SOCK_PATH}}:/var/run/docker.sock
-          run: |
-            dnf install aws-nitro-enclaves-cli aws-nitro-enclaves-cli-devel -y
+      # - name: Create EIF file
+      #   if: ${{ inputs.generate-enclave-image }}
+      #   uses: addnab/docker-run-action@4f65fabd2431ebc8d299f8e5a018d79a769ae185 #v3
+      #   with:
+      #     image: amazonlinux@sha256:5fe11d17e56571a26e20df3fa1493bdf9139fb9f2cb6d84fad13104c7b869217 # 2023.5.20240916.0
+      #     options: -v ${{ env.EIF_OUTPUT_DIR }}:/output -v ${{env.DOCKER_SOCK_PATH}}:/var/run/docker.sock
+      #     run: |
+      #       dnf install aws-nitro-enclaves-cli aws-nitro-enclaves-cli-devel -y
 
-            nitro-cli build-enclave --docker-uri ghcr.io/zama-ai/${{ inputs.image-name }}:${{env.DOCKER_TAG_IMAGE}} --name ${{ inputs.image-name }} --output-file /output/enclave.eif
+      #       nitro-cli build-enclave --docker-uri ghcr.io/zama-ai/${{ inputs.image-name }}:${{env.DOCKER_TAG_IMAGE}} --name ${{ inputs.image-name }} --output-file /output/enclave.eif
 
-            nitro-cli describe-eif --eif-path /output/enclave.eif > /output/eif-info.txt
+      #       nitro-cli describe-eif --eif-path /output/enclave.eif > /output/eif-info.txt
 
-      - name: Export EIF measurements
-        if: ${{ inputs.generate-enclave-image }}
-        id: eif
-        run: |
-          EIF_MEASUREMENT_PCR0=$(jq '.Measurements.PCR0' ${{ env.EIF_OUTPUT_DIR }}/eif-info.txt)
-          echo "eif_pcr0=${EIF_MEASUREMENT_PCR0}" >> "$GITHUB_OUTPUT"
+      # - name: Export EIF measurements
+      #   if: ${{ inputs.generate-enclave-image }}
+      #   id: eif
+      #   run: |
+      #     EIF_MEASUREMENT_PCR0=$(jq '.Measurements.PCR0' ${{ env.EIF_OUTPUT_DIR }}/eif-info.txt)
+      #     echo "eif_pcr0=${EIF_MEASUREMENT_PCR0}" >> "$GITHUB_OUTPUT"
 
-      - name: Docker Build and Push Enclave Image
-        if: ${{ inputs.generate-enclave-image }}
-        uses: docker/build-push-action@5cd11c3a4ced054e52742c5fd54dca954e0edd85 # v6.7.0
-        with:
-          context: .
-          secrets: BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-          build-args: |
-            IMAGE_NAME=ghcr.io/zama-ai/${{ inputs.image-name }}
-            IMAGE_TAG=${{ env.DOCKER_TAG_IMAGE }}
-          build-contexts: eif=${{ env.EIF_OUTPUT_DIR }}
-          file: ${{ inputs.working-directory}}/operations/docker/${{ inputs.docker-file-enclave }}
-          push: ${{ inputs.push_image }}
-          pull: false
-          tags: ghcr.io/zama-ai/${{ inputs.image-enclave-name }}:${{env.DOCKER_TAG_IMAGE}},ghcr.io/zama-ai/${{ inputs.image-enclave-name }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          labels: |
-            zama.kms.version=${{ env.DOCKER_TAG_IMAGE }}
-            zama.kms.eif_pcr0=${{ steps.eif.outputs.eif_pcr0 }}
-
-      # the ARM64 build needs to happen separately from the AMD64 build so the
-      # EIF build isn't confused by locally available images
-      - name: Docker Build and Push ARM64
-        if: inputs.arm-build
-        uses: docker/build-push-action@5cd11c3a4ced054e52742c5fd54dca954e0edd85 # v6.7.0
-        with:
-          context: ${{ inputs.docker-context }}
-          platforms: linux/arm64
-          secrets: BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-          file: ${{ inputs.working-directory }}/operations/docker/${{ inputs.docker-file }}
-          push: ${{ inputs.push_image }}
-          pull: false
-          tags: ghcr.io/zama-ai/${{ inputs.image-name }}:${{env.DOCKER_TAG_IMAGE }},ghcr.io/zama-ai/${{ inputs.image-name }}:latest
-          cache-from: ${{ inputs.cache-from }}
-          cache-to: ${{ inputs.cache-to }}
+      # - name: Docker Build and Push Enclave Image
+      #   if: ${{ inputs.generate-enclave-image }}
+      #   uses: docker/build-push-action@5cd11c3a4ced054e52742c5fd54dca954e0edd85 # v6.7.0
+      #   with:
+      #     context: .
+      #     secrets: BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      #     build-args: |
+      #       IMAGE_NAME=ghcr.io/zama-ai/${{ inputs.image-name }}
+      #       IMAGE_TAG=${{ env.DOCKER_TAG_IMAGE }}
+      #     build-contexts: eif=${{ env.EIF_OUTPUT_DIR }}
+      #     file: ${{ inputs.working-directory}}/operations/docker/${{ inputs.docker-file-enclave }}
+      #     push: ${{ inputs.push_image }}
+      #     pull: false
+      #     tags: ghcr.io/zama-ai/${{ inputs.image-enclave-name }}:${{env.DOCKER_TAG_IMAGE}},ghcr.io/zama-ai/${{ inputs.image-enclave-name }}:latest
+      #     cache-from: type=gha
+      #     cache-to: type=gha,mode=max
+      #     labels: |
+      #       zama.kms.version=${{ env.DOCKER_TAG_IMAGE }}
+      #       zama.kms.eif_pcr0=${{ steps.eif.outputs.eif_pcr0 }}
 
       - name: Extract Docker metadata
         if: ${{ inputs.generate-dev-image }}
