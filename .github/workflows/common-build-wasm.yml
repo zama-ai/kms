@@ -57,7 +57,7 @@ jobs:
 
       - name: Build Wasm files
         run: |
-          cargo build --target wasm32-unknown-unknown --release --lib --manifest-path ${{ inputs.cargo-manifest-path }}Cargo.toml
+          cargo build --target wasm32-unknown-unknown --profile wasm --lib --manifest-path ${{ inputs.cargo-manifest-path }}Cargo.toml
 
       - name: Optimize Wasm files
         uses: NiklasEi/wasm-opt-action@c21a6d6a7c61df2b9dc3870c75ed9bf943e645df # v2.3.3

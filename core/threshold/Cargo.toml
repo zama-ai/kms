@@ -162,12 +162,6 @@ name = "ceremony"
 harness = false
 required-features = ["testing"]
 
-[profile.bench]
-debug = true
-
-[profile.test]
-opt-level = 3
-
 [features]
 default = ["non-wasm"]
 # Some utilities used in the `testing` feature require the `non-wasm` feature to be enabled

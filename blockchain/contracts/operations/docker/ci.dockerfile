@@ -10,26 +10,20 @@ RUN apk add --no-cache build-base clang llvm bash curl
 # Add wasm target
 RUN rustup target add wasm32-unknown-unknown
 
-# Set optimization env vars for cargo
-ENV CARGO_PROFILE_RELEASE_OPT_LEVEL='z'
-ENV CARGO_PROFILE_RELEASE_LTO='true'
-ENV CARGO_PROFILE_RELEASE_CODEGEN_UNITS='1'
-ENV CARGO_PROFILE_RELEASE_PANIC='abort'
-
 # Build ASC contract and report initial size
-RUN cargo build --target wasm32-unknown-unknown --release --lib \
+RUN cargo build --target wasm32-unknown-unknown --profile wasm --lib \
     --manifest-path /app/blockchain/contracts/asc/Cargo.toml && \
-    echo "ASC Pre-optimization size: $(wc -c < /app/target/wasm32-unknown-unknown/release/asc.wasm) bytes"
+    echo "ASC Pre-optimization size: $(wc -c < /app/target/wasm32-unknown-unknown/wasm/asc.wasm) bytes"
 
 # Build Tendermint-IPSC contract and report initial size
-RUN cargo build --target wasm32-unknown-unknown --release --lib \
+RUN cargo build --target wasm32-unknown-unknown --profile wasm --lib \
     --manifest-path /app/blockchain/contracts/tendermint-ipsc/Cargo.toml && \
-    echo "Tendermint-IPSC Pre-optimization size: $(wc -c < /app/target/wasm32-unknown-unknown/release/tendermint_ipsc.wasm) bytes"
+    echo "Tendermint-IPSC Pre-optimization size: $(wc -c < /app/target/wasm32-unknown-unknown/wasm/tendermint_ipsc.wasm) bytes"
 
 # Build Ethereum-IPSC contract and report initial size
-RUN cargo build --target wasm32-unknown-unknown --release --lib \
+RUN cargo build --target wasm32-unknown-unknown --profile wasm --lib \
     --manifest-path /app/blockchain/contracts/ethereum-ipsc/Cargo.toml && \
-    echo "Ethereum-IPSC Pre-optimization size: $(wc -c < /app/target/wasm32-unknown-unknown/release/ethereum_ipsc.wasm) bytes"
+    echo "Ethereum-IPSC Pre-optimization size: $(wc -c < /app/target/wasm32-unknown-unknown/wasm/ethereum_ipsc.wasm) bytes"
 
 # Install cargo-binstall and wasm-opt
 # Binstall provides a low-complexity mechanism for installing Rust binaries as an alternative to
@@ -52,7 +46,7 @@ RUN ARCH=$(uname -m); \
 RUN mkdir -p /app/optimized
 
 # Optimize ASC and report final size, check size limit. As of Oct. 23 optimized WASM size is around 657000 bytes
-RUN wasm-opt -Oz "/app/target/wasm32-unknown-unknown/release/asc.wasm" -o "/app/optimized/asc.wasm" && \
+RUN wasm-opt -Oz "/app/target/wasm32-unknown-unknown/wasm/asc.wasm" -o "/app/optimized/asc.wasm" && \
     size=$(wc -c < /app/optimized/asc.wasm) && \
     echo "ASC Post-optimization size: $size bytes" && \
     if [ "$size" -ge 819200 ]; then \
@@ -61,7 +55,7 @@ RUN wasm-opt -Oz "/app/target/wasm32-unknown-unknown/release/asc.wasm" -o "/app/
     fi
 
 # Optimize Tendermint-IPSC and report final size, check size limit
-RUN wasm-opt -Oz "/app/target/wasm32-unknown-unknown/release/tendermint_ipsc.wasm" -o "/app/optimized/tendermint_ipsc.wasm" && \
+RUN wasm-opt -Oz "/app/target/wasm32-unknown-unknown/wasm/tendermint_ipsc.wasm" -o "/app/optimized/tendermint_ipsc.wasm" && \
     size=$(wc -c < /app/optimized/tendermint_ipsc.wasm) && \
     echo "Tendermint-IPSC Post-optimization size: $size bytes" && \
     if [ "$size" -ge 819200 ]; then \
@@ -70,7 +64,7 @@ RUN wasm-opt -Oz "/app/target/wasm32-unknown-unknown/release/tendermint_ipsc.was
     fi
 
 # Optimize Ethereum-IPSC and report final size, check size limit
-RUN wasm-opt -Oz "/app/target/wasm32-unknown-unknown/release/ethereum_ipsc.wasm" -o "/app/optimized/ethereum_ipsc.wasm" && \
+RUN wasm-opt -Oz "/app/target/wasm32-unknown-unknown/wasm/ethereum_ipsc.wasm" -o "/app/optimized/ethereum_ipsc.wasm" && \
     size=$(wc -c < /app/optimized/ethereum_ipsc.wasm) && \
     echo "Ethereum-IPSC Post-optimization size: $size bytes" && \
     if [ "$size" -ge 819200 ]; then \
