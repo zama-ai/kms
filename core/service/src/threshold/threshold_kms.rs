@@ -3,7 +3,6 @@ use super::generic::InsecureCrsGenerator;
 use crate::conf::threshold::{PeerConf, ThresholdConfig};
 use crate::consts::{MINIMUM_SESSIONS_PREPROC, PRSS_EPOCH_ID};
 use crate::cryptography::central_kms::{async_generate_crs, compute_info, BaseKmsStruct};
-use crate::cryptography::decompression;
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey};
 use crate::cryptography::signcryption::signcrypt;
 use crate::kms::core_service_endpoint_server::CoreServiceEndpointServer;
@@ -57,7 +56,7 @@ use distributed_decryption::execution::runtime::session::{
     BaseSessionStruct, DecryptionMode, ParameterHandles, SessionParameters, SmallSession,
 };
 use distributed_decryption::execution::small_execution::prss::PRSSSetup;
-use distributed_decryption::execution::tfhe_internals::parameters::{Ciphertext64, DKGParams};
+use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 use distributed_decryption::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
 use distributed_decryption::execution::tfhe_internals::test_feature::{
     initialize_key_material, transfer_crs,
@@ -77,14 +76,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
-use tfhe::integer::ciphertext::BaseRadixCiphertext;
 use tfhe::integer::compression_keys::DecompressionKey;
-use tfhe::integer::IntegerCiphertext;
 use tfhe::named::Named;
-use tfhe::{
-    FheBool, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32,
-    FheUint4, FheUint512, FheUint64, FheUint8, Versionize,
-};
+use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
 use tokio::sync::{Mutex, RwLock, RwLockReadGuard};
 use tokio::task::JoinSet;
@@ -156,7 +150,7 @@ pub async fn threshold_server_init<
     .await?;
 
     tracing::info!(
-        "Initialization done! Starting threshold KMS server for {} ...",
+        "Initialization done! Starting threshold KMS server for party {} ...",
         config.my_id
     );
     Ok(kms)
@@ -205,113 +199,6 @@ pub async fn threshold_server_start<
     tracing::info!("Starting threshold KMS server on socket {socket_addr}");
     server.await?;
     Ok(())
-}
-
-// TODO should be moved to rpc_types.rs
-impl FheType {
-    pub fn deserialize_to_low_level(
-        &self,
-        serialized_high_level: &[u8],
-        decompression_key: &Option<DecompressionKey>,
-    ) -> anyhow::Result<Ciphertext64> {
-        let radix_ct = match self {
-            FheType::Ebool => {
-                let hl_ct: FheBool =
-                    decompression::from_bytes::<FheBool>(decompression_key, serialized_high_level)?;
-                let radix_ct = hl_ct.into_raw_parts();
-                BaseRadixCiphertext::from_blocks(vec![radix_ct])
-            }
-            FheType::Euint4 => {
-                let hl_ct: FheUint4 = decompression::from_bytes::<FheUint4>(
-                    decompression_key,
-                    serialized_high_level,
-                )?;
-                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
-                radix_ct
-            }
-            FheType::Euint8 => {
-                let hl_ct: FheUint8 = decompression::from_bytes::<FheUint8>(
-                    decompression_key,
-                    serialized_high_level,
-                )?;
-                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
-                radix_ct
-            }
-            FheType::Euint16 => {
-                let hl_ct: FheUint16 = decompression::from_bytes::<FheUint16>(
-                    decompression_key,
-                    serialized_high_level,
-                )?;
-                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
-                radix_ct
-            }
-            FheType::Euint32 => {
-                let hl_ct: FheUint32 = decompression::from_bytes::<FheUint32>(
-                    decompression_key,
-                    serialized_high_level,
-                )?;
-                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
-                radix_ct
-            }
-            FheType::Euint64 => {
-                let hl_ct: FheUint64 = decompression::from_bytes::<FheUint64>(
-                    decompression_key,
-                    serialized_high_level,
-                )?;
-                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
-                radix_ct
-            }
-            FheType::Euint128 => {
-                let hl_ct: FheUint128 = decompression::from_bytes::<FheUint128>(
-                    decompression_key,
-                    serialized_high_level,
-                )?;
-                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
-                radix_ct
-            }
-            FheType::Euint160 => {
-                let hl_ct: FheUint160 = decompression::from_bytes::<FheUint160>(
-                    decompression_key,
-                    serialized_high_level,
-                )?;
-                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
-                radix_ct
-            }
-            FheType::Euint256 => {
-                let hl_ct: FheUint256 = decompression::from_bytes::<FheUint256>(
-                    decompression_key,
-                    serialized_high_level,
-                )?;
-                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
-                radix_ct
-            }
-            FheType::Euint512 => {
-                let hl_ct: FheUint512 = decompression::from_bytes::<FheUint512>(
-                    decompression_key,
-                    serialized_high_level,
-                )?;
-                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
-                radix_ct
-            }
-            FheType::Euint1024 => {
-                let hl_ct: FheUint1024 = decompression::from_bytes::<FheUint1024>(
-                    decompression_key,
-                    serialized_high_level,
-                )?;
-                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
-                radix_ct
-            }
-            FheType::Euint2048 => {
-                let hl_ct: FheUint2048 = decompression::from_bytes::<FheUint2048>(
-                    decompression_key,
-                    serialized_high_level,
-                )?;
-                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
-                radix_ct
-            }
-        };
-        Ok(radix_ct)
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
@@ -439,7 +326,7 @@ where
     // compute corresponding public key and derive address from private sig key
     let pk = SigningKey::verifying_key(sk.sk());
     tracing::info!(
-        "Public address is {}",
+        "Public ethereum address is {}",
         alloy_signer::utils::public_key_to_address(pk)
     );
 
@@ -513,7 +400,7 @@ where
             Server::builder().tls_config(tls_config)?
         }
         _ => {
-            tracing::info!("Creating server without TLS support.");
+            tracing::warn!("Creating server without TLS support.");
             Server::builder()
         }
     };
@@ -788,7 +675,7 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
             }
             None => tracing::info!(
                 "Initializing threshold KMS server without PRSS Setup, \
-                        remember to call the init GRPC endpoint",
+                        remember to call the init GRPC endpoint!",
             ),
         }
 
@@ -1656,12 +1543,11 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         insecure: bool,
     ) -> Result<Response<Empty>, Status> {
         let req = request.into_inner();
-        tracing::info!("Request ID: {:?}", req.request_id);
+        tracing::info!("Keygen Request ID: {:?}", req.request_id);
         let request_id = tonic_some_or_err(
             req.request_id.clone(),
             "Request ID is not set (inner key gen)".to_string(),
         )?;
-        tracing::info!("Request ID after tonic: {:?}", request_id);
 
         // ensure the request ID is valid
         if !request_id.is_valid() {

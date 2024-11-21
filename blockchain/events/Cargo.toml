@@ -22,10 +22,15 @@ strum.workspace = true
 strum_macros.workspace = true
 thiserror = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["full"], optional = true }
-tonic = { workspace = true, features = ["transport","tls","tls-roots"], optional = true }
+tonic = { workspace = true, features = [
+    "transport",
+    "tls",
+    "tls-roots",
+], optional = true }
 tracing = { workspace = true, features = ["log"] }
 typed-builder.workspace = true
 tfhe-versionable.workspace = true
+kms = { path = "../../core/service", optional = true, default-features = false}
 
 [build-dependencies]
 tonic-build.workspace = true
@@ -40,6 +45,9 @@ kms-common = { workspace = true, features = ["testing"] }
 
 [features]
 default = []
+non-wasm = [
+    "dep:kms",
+] # We don't want the kms to be included in the smart contract as it requires protoc
 subscription = [
     "dep:async-trait",
     "dep:cosmos-proto",

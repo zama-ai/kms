@@ -268,16 +268,35 @@ impl_tokenizable!(u128, u128::MAX);
 #[derive(Debug, Parser)]
 pub struct NoParameters {}
 
+pub fn parse_hex(arg: &str) -> anyhow::Result<Vec<u8>> {
+    // Remove "0x" prefix if present
+    let hex_str = arg.strip_prefix("0x").unwrap_or(arg);
+
+    // Handle odd-length hex strings by padding with leading zero
+    let hex_str = if hex_str.len() % 2 == 1 {
+        format!("0{}", hex_str)
+    } else {
+        hex_str.to_string()
+    };
+
+    Ok(hex::decode(hex_str)?)
+}
+
 #[derive(Debug, Parser)]
 pub struct CipherParameters {
-    /// Value to encrypt for later re-encryption/decryption
+    /// Value that we want to encrypt and request a decryption/re-encryption.
+    /// The value will be converted from a little endian hex string to a `Vec<u8>`.
     #[clap(long, short = 'e')]
-    pub to_encrypt: u8,
-    /// Flag to activate ciphertext compression
-    #[clap(long, short = 'c', default_value_t = false)]
+    pub to_encrypt: String,
+    /// Data type of `to_encrypt`.
+    /// Expected one of ebool, euint4, ..., euint2048
+    #[clap(long, short = 'd')]
+    pub data_type: FheType,
+    /// Boolean to activate ciphertext compression or not.
+    #[clap(long, short = 'p', default_value_t = false)]
     pub compressed: bool,
     /// CRS identifier to use
-    #[clap(long, short = 'r')]
+    #[clap(long, short = 'c')]
     pub crs_id: String,
     /// Key identifier to use for decryption/re-encryption purposes
     #[clap(long, short = 'k')]
@@ -298,9 +317,19 @@ pub struct CrsParameters {
 
 #[derive(Debug, Parser)]
 pub struct VerifyProvenCtParameters {
+    /// Value that we want to encrypt and request a decryption/re-encryption.
+    /// The value will be converted from a little endian hex string to a `Vec<u8>`.
     #[clap(long, short = 'e')]
-    pub to_encrypt: u8,
+    pub to_encrypt: String,
+    /// Data type of `to_encrypt`.
+    /// Expected one of ebool, euint4, ..., euint2048
+    #[clap(long, short = 'd')]
+    pub data_type: FheType,
+    /// CRS identifier to use
+    #[clap(long, short = 'c')]
     pub crs_id: String,
+    /// Key identifier to use for decryption/re-encryption purposes
+    #[clap(long, short = 'k')]
     pub key_id: String,
 }
 
@@ -342,7 +371,7 @@ pub struct Config {
     // TODO: expose a log-level instead
     #[clap(long, short = 'l')]
     pub logs: bool,
-    #[clap(long, default_value = "20")]
+    #[clap(long, default_value = "40")]
     pub max_iter: u64,
     #[clap(long, short = 'a', default_value_t = false)]
     pub expect_all_responses: bool,
@@ -387,7 +416,7 @@ impl TryFrom<PlaintextWrapper> for Token {
     type Error = String;
 
     fn try_from(ptxt: PlaintextWrapper) -> Result<Self, Self::Error> {
-        let fhe_type: FheType = FheType::from_str_name(ptxt.fhe_type().as_str_name());
+        let fhe_type: FheType = FheType::from(ptxt.fhe_type);
         let res = match fhe_type {
             FheType::Ebool => ptxt.as_bool().to_token(),
             FheType::Euint4 => ptxt.as_u4().to_token(),
@@ -519,7 +548,8 @@ async fn wait_for_transaction(
 
 #[allow(clippy::too_many_arguments)]
 pub async fn encrypt_and_prove(
-    to_encrypt: u8,
+    to_encrypt: Vec<u8>,
+    data_type: FheType,
     domain: &Eip712Domain,
     contract_address: &alloy_primitives::Address,
     acl_address: &alloy_primitives::Address,
@@ -539,7 +569,12 @@ pub async fn encrypt_and_prove(
         "attempting to create proven ct using materials from {:?}",
         keys_folder
     );
-    let msgs = vec![TypedPlaintext::U8(to_encrypt)];
+
+    let msgs = vec![TypedPlaintext::from(Plaintext {
+        bytes: to_encrypt,
+        fhe_type: data_type.try_into()?,
+    })];
+
     Ok(compute_proven_ct_from_stored_key_and_serialize(
         Some(keys_folder),
         msgs,
@@ -551,16 +586,20 @@ pub async fn encrypt_and_prove(
 }
 
 pub async fn encrypt(
-    to_encrypt: u8,
+    to_encrypt: Vec<u8>,
+    fhe_type: FheType,
     key_id: &str,
     keys_folder: &Path,
     compressed: Option<bool>,
 ) -> Result<(Vec<u8>, Plaintext), Box<dyn std::error::Error + 'static>> {
-    let typed_to_encrypt = TypedPlaintext::U8(to_encrypt);
+    let typed_to_encrypt = TypedPlaintext::from(Plaintext {
+        bytes: to_encrypt,
+        fhe_type: fhe_type.try_into()?,
+    });
 
-    let ptxt = typed_to_encrypt.to_plaintext();
-    let fhe_type: FheType = FheType::from_str_name(ptxt.fhe_type().as_str_name());
+    let ptxt: Plaintext = typed_to_encrypt.into();
     tracing::info!("FheType: {:#?}", fhe_type);
+
     let res = match fhe_type {
         FheType::Ebool => ptxt.as_bool().to_token(),
         FheType::Euint4 => ptxt.as_u4().to_token(),
@@ -818,7 +857,8 @@ pub async fn execute_keygen_contract(
 pub async fn execute_verify_proven_ct_contract(
     client: &Client,
     query_client: &QueryClient,
-    to_encrypt: u8,
+    to_encrypt: Vec<u8>,
+    data_type: FheType,
     crs_id: &str,
     key_id: &str,
     keys_folder: &Path,
@@ -838,6 +878,7 @@ pub async fn execute_verify_proven_ct_contract(
 
     let proven_ct = encrypt_and_prove(
         to_encrypt,
+        data_type,
         &dummy_domain,
         &contract_address,
         &acl_address,
@@ -878,14 +919,15 @@ pub async fn execute_verify_proven_ct_contract(
 }
 
 pub async fn execute_decryption_contract(
-    to_encrypt: u8,
+    to_encrypt: Vec<u8>,
+    data_type: FheType,
     client: &Client,
     query_client: &QueryClient,
     key_id: &str,
     keys_folder: &Path,
     compressed: Option<bool>,
 ) -> Result<(KmsEvent, Plaintext, DecryptValues), Box<dyn std::error::Error + 'static>> {
-    let (cipher, ptxt) = encrypt(to_encrypt, key_id, keys_folder, compressed).await?;
+    let (cipher, ptxt) = encrypt(to_encrypt, data_type, key_id, keys_folder, compressed).await?;
     let kv_store_address = client
         .kv_store_address
         .clone()
@@ -897,7 +939,7 @@ pub async fn execute_decryption_contract(
     let dv = DecryptValues::new(
         hex::decode(key_id)?,
         vec![handle_bytes.clone()],
-        vec![FheType::Euint8],
+        vec![data_type],
         Some(vec![vec![5_u8; 32]]),
         1,
         "0xFFda6bf26964af9D7eed9e03e53415D37Aa960ee".to_string(),
@@ -922,14 +964,19 @@ pub async fn execute_decryption_contract(
     Ok((ev, ptxt, dv))
 }
 
+pub struct CiphertextConfig {
+    pub clear_value: Vec<u8>,
+    pub data_type: FheType,
+    pub compressed: Option<bool>,
+}
+
 pub async fn execute_reencryption_contract(
-    to_encrypt: u8,
+    ct_config: CiphertextConfig,
     client: &Client,
     query_client: &QueryClient,
     key_id: &str,
     keys_folder: &Path,
     kms_core_conf: KmsCoreConf,
-    compressed: Option<bool>,
 ) -> Result<
     (
         KmsEvent,
@@ -949,8 +996,15 @@ pub async fn execute_reencryption_contract(
         events::kms::FheParameter::Test => TEST_PARAM,
     };
 
+    let (cipher, ptxt) = encrypt(
+        ct_config.clear_value,
+        ct_config.data_type,
+        key_id,
+        keys_folder,
+        ct_config.compressed,
+    )
+    .await?;
     let dummy_external_ciphertext_handle = vec![0_u8, 32];
-    let (cipher, ptxt) = encrypt(to_encrypt, key_id, keys_folder, compressed).await?;
     let kv_store_address = client
         .kv_store_address
         .clone()
@@ -1001,7 +1055,7 @@ pub async fn execute_reencryption_contract(
         1,
         client_address.to_checksum(None),
         serialized_enc_key.clone(),
-        FheType::Euint8,
+        ct_config.data_type,
         hex::decode(key_id)?,
         dummy_external_ciphertext_handle,
         handle_bytes,
@@ -1095,8 +1149,12 @@ pub fn cosmos_to_eth_address(cosmos_address: &str) -> Result<String, Box<dyn std
     // Decode the bech32 address
     let (_, data, _) = bech32::decode(cosmos_address)?;
     let decoded = Vec::<u8>::from_base32(&data)?;
-    if decoded.len() != 20 {
-        return Err("Unexpected decoded length".into());
+    let decoded_len = decoded.len();
+    if decoded_len != 20 {
+        return Err(format!(
+            "Unexpected decoded length. Should be 20 Bytes but was {decoded_len}."
+        )
+        .into());
     }
     // Take the last 20 bytes
     let eth_address = format!("0x{}", hex::encode(decoded));
@@ -1401,7 +1459,7 @@ async fn wait_for_response(
     max_iter: u64,
     num_expected_responses: usize,
 ) -> anyhow::Result<Vec<OperationValue>> {
-    let time_to_wait = 10; // in seconds
+    let time_to_wait = 5; // in seconds
     tracing::info!("Event operation: {:?}", event.operation);
     let q = Query {
         txn_id: event.txn_id.to_hex(),
@@ -1569,12 +1627,6 @@ fn process_decrypt_responses(
                         "Decrypt Result #{idx}: Plaintext Decrypted = {:?}.",
                         actual_pt
                     );
-                    tracing::info!(
-                        "Decrypt Result: Plaintext Decrypted {:?} {:?}",
-                        actual_pt,
-                        actual_pt.as_u8(), // We know that we have u8 here but we should automatically
-                                           // detect it
-                    );
                 }
             }
             _ => {
@@ -1583,11 +1635,9 @@ fn process_decrypt_responses(
         }
     }
 
+    let tp_expected = TypedPlaintext::from(expected_answer);
     for result in results {
-        //For now we only support euint8
-        debug_assert_eq!(expected_answer.fhe_type(), kms_lib::kms::FheType::Euint8);
-        assert_eq!(expected_answer.fhe_type(), result.fhe_type());
-        assert_eq!(expected_answer.as_u8(), result.as_u8());
+        assert_eq!(tp_expected, TypedPlaintext::from(result));
     }
 
     tracing::info!("Decryption response successfully processed.");
@@ -1629,10 +1679,66 @@ fn process_reencrypt_responses(
 
     tracing::info!("Reconstructed {:?}", result);
 
-    //For now we only support euint8
-    debug_assert_eq!(expected_answer.fhe_type(), kms_lib::kms::FheType::Euint8);
-    assert_eq!(expected_answer.fhe_type(), result.fhe_type());
-    assert_eq!(expected_answer.as_u8(), result.as_u8());
+    assert_eq!(
+        TypedPlaintext::from(expected_answer),
+        TypedPlaintext::from(result)
+    );
+
+    tracing::info!("Reencryption response processed successfully.");
+    Ok(())
+}
+
+async fn fetch_key_and_crs(
+    key_id: &str,
+    crs_id: &str,
+    sim_conf: &SimulatorConfig,
+    destination_prefix: &Path,
+) -> Result<(), Box<dyn std::error::Error + 'static>> {
+    // Fetch all objects associated with TFHE keys
+    for object_name in ["PublicKey", "PublicKeyMetadata", "ServerKey"] {
+        fetch_global_key_and_write_to_file(
+            destination_prefix,
+            sim_conf
+                .s3_endpoint
+                .clone()
+                .expect("S3 endpoint should be provided")
+                .as_str(),
+            key_id,
+            object_name,
+            sim_conf.object_folder.first().unwrap(),
+        )
+        .await?;
+    }
+
+    // Fetch objects associated with Signature keys
+    for object_name in ["VerfAddress", "VerfKey"] {
+        fetch_local_key_and_write_to_file(
+            destination_prefix,
+            sim_conf
+                .s3_endpoint
+                .clone()
+                .expect("S3 endpoint should be provided")
+                .as_str(),
+            &SIGNING_KEY_ID.to_string(),
+            object_name,
+            &sim_conf.object_folder,
+        )
+        .await?;
+    }
+
+    // Fetch CRS
+    fetch_global_key_and_write_to_file(
+        destination_prefix,
+        sim_conf
+            .s3_endpoint
+            .clone()
+            .expect("S3 endpoint should be provided")
+            .as_str(),
+        crs_id,
+        "CRS",
+        sim_conf.object_folder.first().unwrap(),
+    )
+    .await?;
 
     Ok(())
 }
@@ -1666,7 +1772,6 @@ pub async fn main_from_config(
         .build()
         .try_into()?;
 
-    tracing::info!("Client address: {}", client.contract_address.to_string());
     tracing::info!("Contract address: {}", sim_conf.contract);
 
     // TODO: merge both clients
@@ -1694,51 +1799,23 @@ pub async fn main_from_config(
     }
 
     let mut return_value: Option<Vec<OperationValue>> = None;
+
     match command {
         SimulatorCommand::Decrypt(cipher_params) | SimulatorCommand::ReEncrypt(cipher_params) => {
-            // Fetch all objects associated with TFHE keys
-            for object_name in ["PublicKey", "PublicKeyMetadata", "ServerKey"] {
-                fetch_global_key_and_write_to_file(
-                    destination_prefix,
-                    sim_conf
-                        .s3_endpoint
-                        .clone()
-                        .expect("S3 endpoint should be provided")
-                        .as_str(),
-                    &cipher_params.key_id,
-                    object_name,
-                    sim_conf.object_folder.first().unwrap(),
-                )
-                .await?;
-            }
-
-            // Fetch objects associated with Signature keys
-            for object_name in ["VerfAddress", "VerfKey"] {
-                fetch_local_key_and_write_to_file(
-                    destination_prefix,
-                    sim_conf
-                        .s3_endpoint
-                        .clone()
-                        .expect("S3 endpoint should be provided")
-                        .as_str(),
-                    &SIGNING_KEY_ID.to_string(),
-                    object_name,
-                    &sim_conf.object_folder,
-                )
-                .await?;
-            }
-
-            // Fetch CRS
-            fetch_global_key_and_write_to_file(
+            fetch_key_and_crs(
+                cipher_params.key_id.as_str(),
+                cipher_params.crs_id.as_str(),
+                &sim_conf,
                 destination_prefix,
-                sim_conf
-                    .s3_endpoint
-                    .clone()
-                    .expect("S3 endpoint should be provided")
-                    .as_str(),
-                &cipher_params.crs_id,
-                "CRS",
-                sim_conf.object_folder.first().unwrap(),
+            )
+            .await?;
+        }
+        SimulatorCommand::VerifyProvenCt(cipher_params) => {
+            fetch_key_and_crs(
+                cipher_params.key_id.as_str(),
+                cipher_params.crs_id.as_str(),
+                &sim_conf,
+                destination_prefix,
             )
             .await?;
         }
@@ -1762,14 +1839,15 @@ pub async fn main_from_config(
     // TODO: stop here if insufficient gas and/or query faucet if setup
     // TODO: add optional faucet configuration in config file
 
-    let max_iter = max_iter.unwrap_or(20);
+    let max_iter = max_iter.unwrap_or(40);
     let num_parties = kms_core_conf.parties.len();
 
     // Execute the proper command
     match command {
         SimulatorCommand::Decrypt(cipher_params) => {
             let (event, ptxt, decrypt_values) = execute_decryption_contract(
-                cipher_params.to_encrypt,
+                parse_hex(cipher_params.to_encrypt.as_str())?,
+                cipher_params.data_type,
                 &client,
                 &query_client,
                 &cipher_params.key_id,
@@ -1804,13 +1882,16 @@ pub async fn main_from_config(
         SimulatorCommand::ReEncrypt(cipher_params) => {
             let (event, ptxt, request, kms_client, domain, enc_pk, enc_sk) =
                 execute_reencryption_contract(
-                    cipher_params.to_encrypt,
+                    CiphertextConfig {
+                        clear_value: parse_hex(cipher_params.to_encrypt.as_str())?,
+                        compressed: Some(cipher_params.compressed),
+                        data_type: cipher_params.data_type,
+                    },
                     &client,
                     &query_client,
                     &cipher_params.key_id,
                     destination_prefix,
                     kms_core_conf.clone(),
-                    Some(cipher_params.compressed),
                 )
                 .await?;
             return_value = Some(
@@ -1893,7 +1974,7 @@ pub async fn main_from_config(
                     //     &kms_addrs,
                     // )?;
                 } else {
-                    panic!("Receive response {:?} during InsecureKeyGen", response)
+                    panic!("Received response {:?} during InsecureKeyGen", response)
                 }
             }
         }
@@ -1934,7 +2015,7 @@ pub async fn main_from_config(
                     //     &kms_addrs,
                     // )?;
                 } else {
-                    panic!("Receive response {:?} during CrsGen", response)
+                    panic!("Received response {:?} during CrsGen", response)
                 }
             }
         }
@@ -1975,19 +2056,21 @@ pub async fn main_from_config(
                     //     &kms_addrs,
                     // )?;
                 } else {
-                    panic!("Receive response {:?} during InsecureCrsGen", response)
+                    panic!("Received response {:?} during InsecureCrsGen", response)
                 }
             }
         }
         SimulatorCommand::VerifyProvenCt(VerifyProvenCtParameters {
             to_encrypt,
+            data_type,
             crs_id,
             key_id,
         }) => {
             let event = execute_verify_proven_ct_contract(
                 &client,
                 &query_client,
-                *to_encrypt,
+                parse_hex(to_encrypt.as_str())?,
+                *data_type,
                 crs_id,
                 key_id,
                 destination_prefix,
@@ -2029,9 +2112,36 @@ pub async fn main_from_config(
     let wallet_amount_after = client.get_wallet_amount(None).await?;
     tracing::info!("Wallet amount: {:}", wallet_amount_after);
     tracing::info!(
-        "The whole operation costed: {:}",
+        "Whole operation cost was: {:}",
         wallet_amount_before - wallet_amount_after
     );
 
+    tracing::info!("Simulator terminated successfully.");
     Ok(return_value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_hex() {
+        assert_eq!(parse_hex("00").unwrap(), vec![0u8]);
+        assert_eq!(parse_hex("0x00").unwrap(), vec![0u8]);
+        assert_eq!(parse_hex("ff").unwrap(), vec![255u8]);
+        assert_eq!(parse_hex("0xff").unwrap(), vec![255u8]);
+        assert_eq!(parse_hex("0001").unwrap(), vec![0u8, 1u8]);
+        assert_eq!(parse_hex("0x1234").unwrap(), vec![18u8, 52u8]);
+        assert_eq!(parse_hex("1").unwrap(), vec![1u8]);
+        assert_eq!(parse_hex("0x1").unwrap(), vec![1u8]);
+    }
+
+    #[test]
+    fn test_invalid_hex() {
+        assert!(parse_hex("zz").is_err());
+        assert!(parse_hex("0xzz").is_err());
+        assert!(parse_hex("0x1234g").is_err());
+        assert!(parse_hex("0x12345g").is_err());
+        assert!(parse_hex("Ox01").is_err()); // leading O instead of 0
+    }
 }

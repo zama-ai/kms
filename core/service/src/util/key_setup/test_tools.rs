@@ -10,8 +10,9 @@ use std::path::Path;
 use tfhe::safe_serialization::safe_serialize;
 use tfhe::zk::CompactPkePublicParams;
 use tfhe::{
-    set_server_key, FheBool, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32,
-    FheUint64, FheUint8, ProvenCompactCiphertextList, ServerKey,
+    set_server_key, FheBool, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048,
+    FheUint256, FheUint32, FheUint4, FheUint512, FheUint64, FheUint8, ProvenCompactCiphertextList,
+    ServerKey,
 };
 
 macro_rules! serialize_ctxt {
@@ -46,7 +47,7 @@ pub fn compute_cipher(
     server_key: Option<&ServerKey>,
     compression: bool,
 ) -> (Vec<u8>, FheType) {
-    let fhe_type = msg.to_fhe_type();
+    let fhe_type = msg.into();
     (
         match msg {
             TypedPlaintext::Bool(x) => serialize_ctxt!(
@@ -57,6 +58,16 @@ pub fn compute_cipher(
                 FheBool::num_bits(),
                 compression
             ),
+            TypedPlaintext::U4(x) => {
+                serialize_ctxt!(
+                    FheUint4,
+                    x,
+                    pk,
+                    server_key,
+                    FheUint4::num_bits(),
+                    compression
+                )
+            }
             TypedPlaintext::U8(x) => {
                 serialize_ctxt!(
                     FheUint8,
@@ -115,6 +126,22 @@ pub fn compute_cipher(
                 FheUint256::num_bits(),
                 compression
             ),
+            TypedPlaintext::U512(x) => serialize_ctxt!(
+                FheUint512,
+                x,
+                pk,
+                server_key,
+                FheUint512::num_bits(),
+                compression
+            ),
+            TypedPlaintext::U1024(x) => serialize_ctxt!(
+                FheUint1024,
+                x,
+                pk,
+                server_key,
+                FheUint1024::num_bits(),
+                compression
+            ),
             TypedPlaintext::U2048(x) => serialize_ctxt!(
                 FheUint2048,
                 x,
@@ -130,24 +157,27 @@ pub fn compute_cipher(
 
 // TODO not sure how to deal with that clippy warning
 #[allow(clippy::large_enum_variant)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TypedPlaintext {
     Bool(bool),
     U8(u8),
+    U4(u8),
     U16(u16),
     U32(u32),
     U64(u64),
     U128(u128),
-    U160(tfhe::integer::U256),
-    U256(tfhe::integer::U256),
+    U160(tfhe::integer::bigint::U256),
+    U256(tfhe::integer::bigint::U256),
+    U512(tfhe::integer::bigint::U512),
+    U1024(tfhe::integer::bigint::U1024),
     U2048(tfhe::integer::bigint::U2048),
 }
 
-impl TypedPlaintext {
-    /// Convert [self] to [FheType].
-    pub fn to_fhe_type(&self) -> FheType {
-        match self {
+impl From<TypedPlaintext> for FheType {
+    fn from(val: TypedPlaintext) -> FheType {
+        match val {
             TypedPlaintext::Bool(_) => FheType::Ebool,
+            TypedPlaintext::U4(_) => FheType::Euint4,
             TypedPlaintext::U8(_) => FheType::Euint8,
             TypedPlaintext::U16(_) => FheType::Euint16,
             TypedPlaintext::U32(_) => FheType::Euint32,
@@ -155,28 +185,38 @@ impl TypedPlaintext {
             TypedPlaintext::U128(_) => FheType::Euint128,
             TypedPlaintext::U160(_) => FheType::Euint160,
             TypedPlaintext::U256(_) => FheType::Euint256,
+            TypedPlaintext::U512(_) => FheType::Euint512,
+            TypedPlaintext::U1024(_) => FheType::Euint1024,
             TypedPlaintext::U2048(_) => FheType::Euint2048,
         }
     }
+}
 
-    pub fn to_plaintext(&self) -> Plaintext {
-        match self {
-            TypedPlaintext::Bool(x) => Plaintext::from_bool(*x),
-            TypedPlaintext::U8(x) => Plaintext::from_u8(*x),
-            TypedPlaintext::U16(x) => Plaintext::from_u16(*x),
-            TypedPlaintext::U32(x) => Plaintext::from_u32(*x),
-            TypedPlaintext::U64(x) => Plaintext::from_u64(*x),
-            TypedPlaintext::U128(x) => Plaintext::from_u128(*x),
-            TypedPlaintext::U160(x) => Plaintext::from_u160(*x),
-            TypedPlaintext::U256(x) => Plaintext::from_u256(*x),
-            TypedPlaintext::U2048(x) => Plaintext::from_u2048(*x),
+impl From<TypedPlaintext> for Plaintext {
+    fn from(val: TypedPlaintext) -> Plaintext {
+        match val {
+            TypedPlaintext::Bool(x) => Plaintext::from_bool(x),
+            TypedPlaintext::U4(x) => Plaintext::from_u4(x),
+            TypedPlaintext::U8(x) => Plaintext::from_u8(x),
+            TypedPlaintext::U16(x) => Plaintext::from_u16(x),
+            TypedPlaintext::U32(x) => Plaintext::from_u32(x),
+            TypedPlaintext::U64(x) => Plaintext::from_u64(x),
+            TypedPlaintext::U128(x) => Plaintext::from_u128(x),
+            TypedPlaintext::U160(x) => Plaintext::from_u160(x),
+            TypedPlaintext::U256(x) => Plaintext::from_u256(x),
+            TypedPlaintext::U512(x) => Plaintext::from_u512(x),
+            TypedPlaintext::U1024(x) => Plaintext::from_u1024(x),
+            TypedPlaintext::U2048(x) => Plaintext::from_u2048(x),
         }
     }
+}
 
+impl TypedPlaintext {
     /// Return the number of bits in the plaintext.
     pub fn bits(&self) -> usize {
         match self {
             TypedPlaintext::Bool(_) => 1,
+            TypedPlaintext::U4(_) => 4,
             TypedPlaintext::U8(_) => 8,
             TypedPlaintext::U16(_) => 16,
             TypedPlaintext::U32(_) => 32,
@@ -184,11 +224,84 @@ impl TypedPlaintext {
             TypedPlaintext::U128(_) => 128,
             TypedPlaintext::U160(_) => 160,
             TypedPlaintext::U256(_) => 256,
+            TypedPlaintext::U512(_) => 512,
+            TypedPlaintext::U1024(_) => 1024,
             TypedPlaintext::U2048(_) => 2048,
         }
     }
 }
 
+impl From<Plaintext> for TypedPlaintext {
+    fn from(value: Plaintext) -> Self {
+        match value.fhe_type {
+            FheType::Ebool => TypedPlaintext::Bool(value.as_bool()),
+            FheType::Euint4 => TypedPlaintext::U4(value.as_u4()),
+            FheType::Euint8 => TypedPlaintext::U8(value.as_u8()),
+            FheType::Euint16 => TypedPlaintext::U16(value.as_u16()),
+            FheType::Euint32 => TypedPlaintext::U32(value.as_u32()),
+            FheType::Euint64 => TypedPlaintext::U64(value.as_u64()),
+            FheType::Euint128 => TypedPlaintext::U128(value.as_u128()),
+            FheType::Euint160 => TypedPlaintext::U160(value.as_u160()),
+            FheType::Euint256 => TypedPlaintext::U256(value.as_u256()),
+            FheType::Euint512 => TypedPlaintext::U512(value.as_u512()),
+            FheType::Euint1024 => TypedPlaintext::U1024(value.as_u1024()),
+            FheType::Euint2048 => TypedPlaintext::U2048(value.as_u2048()),
+        }
+    }
+}
+
+impl TryFrom<(String, String)> for Plaintext {
+    type Error = anyhow::Error;
+    fn try_from(value: (String, String)) -> Result<Self, Self::Error> {
+        let ptx = Plaintext {
+            bytes: value.0.into(),
+            fhe_type: FheType::try_from(value.1)?,
+        };
+        Ok(ptx)
+    }
+}
+
+impl From<(String, FheType)> for Plaintext {
+    fn from(value: (String, FheType)) -> Self {
+        Plaintext {
+            bytes: value.0.into(),
+            fhe_type: value.1,
+        }
+    }
+}
+
+impl TryFrom<(String, String)> for TypedPlaintext {
+    type Error = anyhow::Error;
+    fn try_from(value: (String, String)) -> Result<Self, Self::Error> {
+        let ptx = Plaintext {
+            bytes: value.0.into(),
+            fhe_type: FheType::try_from(value.1)?,
+        };
+        Ok(ptx.into())
+    }
+}
+
+impl From<(String, FheType)> for TypedPlaintext {
+    fn from(value: (String, FheType)) -> Self {
+        Plaintext {
+            bytes: value.0.into(),
+            fhe_type: value.1,
+        }
+        .into()
+    }
+}
+
+impl From<(Vec<u8>, FheType)> for TypedPlaintext {
+    fn from(value: (Vec<u8>, FheType)) -> Self {
+        Plaintext {
+            bytes: value.0,
+            fhe_type: value.1,
+        }
+        .into()
+    }
+}
+
+/// Implement from native type
 macro_rules! impl_from_for_typed_ptxt {
     ($t1:ident,$t2:ident) => {
         impl From<$t1> for TypedPlaintext {
@@ -198,7 +311,6 @@ macro_rules! impl_from_for_typed_ptxt {
         }
     };
 }
-
 impl_from_for_typed_ptxt!(bool, Bool);
 impl_from_for_typed_ptxt!(u8, U8);
 impl_from_for_typed_ptxt!(u16, U16);
@@ -206,7 +318,7 @@ impl_from_for_typed_ptxt!(u32, U32);
 impl_from_for_typed_ptxt!(u64, U64);
 impl_from_for_typed_ptxt!(u128, U128);
 
-impl From<tfhe::integer::U256> for TypedPlaintext {
+impl From<tfhe::integer::bigint::U256> for TypedPlaintext {
     fn from(value: tfhe::integer::U256) -> Self {
         let max_u160 = tfhe::integer::U256::from((u128::MAX, u32::MAX as u128));
         if value > max_u160 {
@@ -313,38 +425,43 @@ pub async fn compute_proven_ct_from_stored_key(
 
     let mut compact_list_builder = ProvenCompactCiphertextList::builder(&pk);
     for msg in msgs {
-        match msg.to_fhe_type() {
+        let msg_as_ptx: Plaintext = msg.into();
+        match msg.into() {
             FheType::Ebool => compact_list_builder
-                .push_with_num_bits(msg.to_plaintext().as_u8(), msg.bits())
+                .push_with_num_bits(msg_as_ptx.as_u8(), msg.bits())
                 .unwrap(),
             FheType::Euint4 => compact_list_builder
-                .push_with_num_bits(msg.to_plaintext().as_u4(), msg.bits())
+                .push_with_num_bits(msg_as_ptx.as_u4(), msg.bits())
                 .unwrap(),
             FheType::Euint8 => compact_list_builder
-                .push_with_num_bits(msg.to_plaintext().as_u8(), msg.bits())
+                .push_with_num_bits(msg_as_ptx.as_u8(), msg.bits())
                 .unwrap(),
             FheType::Euint16 => compact_list_builder
-                .push_with_num_bits(msg.to_plaintext().as_u16(), msg.bits())
+                .push_with_num_bits(msg_as_ptx.as_u16(), msg.bits())
                 .unwrap(),
             FheType::Euint32 => compact_list_builder
-                .push_with_num_bits(msg.to_plaintext().as_u32(), msg.bits())
+                .push_with_num_bits(msg_as_ptx.as_u32(), msg.bits())
                 .unwrap(),
             FheType::Euint64 => compact_list_builder
-                .push_with_num_bits(msg.to_plaintext().as_u64(), msg.bits())
+                .push_with_num_bits(msg_as_ptx.as_u64(), msg.bits())
                 .unwrap(),
             FheType::Euint128 => compact_list_builder
-                .push_with_num_bits(msg.to_plaintext().as_u128(), msg.bits())
+                .push_with_num_bits(msg_as_ptx.as_u128(), msg.bits())
                 .unwrap(),
             FheType::Euint160 => compact_list_builder
-                .push_with_num_bits(msg.to_plaintext().as_u160(), msg.bits())
+                .push_with_num_bits(msg_as_ptx.as_u160(), msg.bits())
                 .unwrap(),
             FheType::Euint256 => compact_list_builder
-                .push_with_num_bits(msg.to_plaintext().as_u256(), msg.bits())
+                .push_with_num_bits(msg_as_ptx.as_u256(), msg.bits())
                 .unwrap(),
-            FheType::Euint512 => panic!("Not implemented"),
-            FheType::Euint1024 => panic!("Not implemented"),
+            FheType::Euint512 => compact_list_builder
+                .push_with_num_bits(msg_as_ptx.as_u512(), msg.bits())
+                .unwrap(),
+            FheType::Euint1024 => compact_list_builder
+                .push_with_num_bits(msg_as_ptx.as_u256(), msg.bits())
+                .unwrap(),
             FheType::Euint2048 => compact_list_builder
-                .push_with_num_bits(msg.to_plaintext().as_u2048(), msg.bits())
+                .push_with_num_bits(msg_as_ptx.as_u2048(), msg.bits())
                 .unwrap(),
         };
     }

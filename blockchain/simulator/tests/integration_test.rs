@@ -1,3 +1,4 @@
+use events::kms::FheType;
 use events::kms::OperationValue;
 use serial_test::serial;
 use simulator::*;
@@ -119,8 +120,8 @@ async fn key_and_crs_gen<T: DockerComposeContext>(
     println!("Key-gen done");
 
     let command = match insecure_crs_gen {
-        true => SimulatorCommand::InsecureCrsGen(CrsParameters { max_num_bits: 32 }),
-        false => SimulatorCommand::CrsGen(CrsParameters { max_num_bits: 32 }),
+        true => SimulatorCommand::InsecureCrsGen(CrsParameters { max_num_bits: 2048 }),
+        false => SimulatorCommand::CrsGen(CrsParameters { max_num_bits: 2048 }),
     };
     let config = Config {
         file_conf: Some(String::from(path_to_config.to_str().unwrap())),
@@ -249,31 +250,36 @@ async fn integration_test_commands<T: DockerComposeContext>(
 ) {
     let commands = vec![
         SimulatorCommand::Decrypt(CipherParameters {
-            to_encrypt: 7_u8,
+            to_encrypt: "0x9".to_string(),
+            data_type: FheType::Euint64,
             compressed: false,
             crs_id: crs_id.clone(),
             key_id: key_id.clone(),
         }),
         SimulatorCommand::Decrypt(CipherParameters {
-            to_encrypt: 32_u8,
+            to_encrypt: "0x7".to_string(),
+            data_type: FheType::Euint16,
             compressed: true,
             crs_id: crs_id.clone(),
             key_id: key_id.clone(),
         }),
         SimulatorCommand::ReEncrypt(CipherParameters {
-            to_encrypt: 9_u8,
+            to_encrypt: "0x0".to_string(),
+            data_type: FheType::Ebool,
             compressed: false,
             crs_id: crs_id.clone(),
             key_id: key_id.clone(),
         }),
         SimulatorCommand::ReEncrypt(CipherParameters {
-            to_encrypt: 28_u8,
+            to_encrypt: "0x12".to_string(),
+            data_type: FheType::Euint160,
             compressed: true,
             crs_id: crs_id.clone(),
             key_id: key_id.clone(),
         }),
         SimulatorCommand::VerifyProvenCt(VerifyProvenCtParameters {
-            to_encrypt: 41,
+            to_encrypt: "0x11".to_string(),
+            data_type: FheType::Euint2048,
             crs_id: crs_id.clone(),
             key_id: key_id.clone(),
         }),

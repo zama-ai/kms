@@ -13,13 +13,21 @@ use tfhe::integer::bigint::StaticUnsignedBigInt;
 use tfhe::named::Named;
 use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
-use wasm_bindgen::prelude::wasm_bindgen;
 
 #[cfg(test)]
 use crate::kms::CrsGenRequest;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
+        use tfhe::{
+            FheBool, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32,
+            FheUint4, FheUint512, FheUint64, FheUint8,
+        };
+        use tfhe::integer::IntegerCiphertext;
+        use distributed_decryption::execution::tfhe_internals::parameters::Ciphertext64;
+        use tfhe::integer::ciphertext::BaseRadixCiphertext;
+        use tfhe::integer::compression_keys::DecompressionKey;
+        use crate::cryptography::decompression;
         use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey, PublicSigKey, Signature};
         use crate::cryptography::signcryption::{hash_element, Reencrypt,DecryptionResult, CiphertextVerificationForKMS, CRS, FhePubKey, FheServerKey};
         use crate::kms::VerifyProvenCtRequest;
@@ -105,6 +113,8 @@ pub enum PubDataTypeVersioned {
     V0(PubDataType),
 }
 
+/// PubDataType
+///
 /// Enum which represents the different kinds of public information that can be stored as part of
 /// key generation. In practice this means the CRS and different types of public keys.
 /// Data of this type is supposed to be readable by anyone on the internet
@@ -135,6 +145,8 @@ impl fmt::Display for PubDataType {
     }
 }
 
+/// PrivDataType
+///
 /// Enum which represents the different kinds of private information that can be stored as part of
 /// running the KMS. In practice this means the signing key, public key and CRS meta data and
 /// signatures. Data of this type is supposed to only be readable, writable and modifiable by a
@@ -232,6 +244,162 @@ pub(crate) fn alloy_to_protobuf_domain(domain: &Eip712Domain) -> anyhow::Result<
         salt: domain.salt.map(|x| x.to_vec()),
     };
     Ok(domain_msg)
+}
+
+#[cfg(feature = "non-wasm")]
+impl TryFrom<u8> for FheType {
+    type Error = anyhow::Error;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(FheType::Ebool),
+            1 => Ok(FheType::Euint4),
+            2 => Ok(FheType::Euint8),
+            3 => Ok(FheType::Euint16),
+            4 => Ok(FheType::Euint32),
+            5 => Ok(FheType::Euint64),
+            6 => Ok(FheType::Euint128),
+            7 => Ok(FheType::Euint160),
+            8 => Ok(FheType::Euint256),
+            9 => Ok(FheType::Euint512),
+            10 => Ok(FheType::Euint1024),
+            11 => Ok(FheType::Euint2048),
+            _ => Err(anyhow::anyhow!(
+                "Trying to import FheType from unsupported value"
+            )),
+        }
+    }
+}
+
+#[cfg(feature = "non-wasm")]
+impl TryFrom<String> for FheType {
+    type Error = anyhow::Error;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        match value.as_str() {
+            "Ebool" => Ok(FheType::Ebool),
+            "Euint4" => Ok(FheType::Euint4),
+            "Euint8" => Ok(FheType::Euint8),
+            "Euint16" => Ok(FheType::Euint16),
+            "Euint32" => Ok(FheType::Euint32),
+            "Euint64" => Ok(FheType::Euint64),
+            "Euint128" => Ok(FheType::Euint128),
+            "Euint160" => Ok(FheType::Euint160),
+            "Euint256" => Ok(FheType::Euint256),
+            "Euint512" => Ok(FheType::Euint512),
+            "Euint1024" => Ok(FheType::Euint1024),
+            "Euint2048" => Ok(FheType::Euint2048),
+            _ => Err(anyhow::anyhow!(
+                "Trying to import FheType from unsupported value"
+            )),
+        }
+    }
+}
+
+#[cfg(feature = "non-wasm")]
+impl FheType {
+    pub fn deserialize_to_low_level(
+        &self,
+        serialized_high_level: &[u8],
+        decompression_key: &Option<DecompressionKey>,
+    ) -> anyhow::Result<Ciphertext64> {
+        let radix_ct = match self {
+            FheType::Ebool => {
+                let hl_ct: FheBool =
+                    decompression::from_bytes::<FheBool>(decompression_key, serialized_high_level)?;
+                let radix_ct = hl_ct.into_raw_parts();
+                BaseRadixCiphertext::from_blocks(vec![radix_ct])
+            }
+            FheType::Euint4 => {
+                let hl_ct: FheUint4 = decompression::from_bytes::<FheUint4>(
+                    decompression_key,
+                    serialized_high_level,
+                )?;
+                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
+                radix_ct
+            }
+            FheType::Euint8 => {
+                let hl_ct: FheUint8 = decompression::from_bytes::<FheUint8>(
+                    decompression_key,
+                    serialized_high_level,
+                )?;
+                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
+                radix_ct
+            }
+            FheType::Euint16 => {
+                let hl_ct: FheUint16 = decompression::from_bytes::<FheUint16>(
+                    decompression_key,
+                    serialized_high_level,
+                )?;
+                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
+                radix_ct
+            }
+            FheType::Euint32 => {
+                let hl_ct: FheUint32 = decompression::from_bytes::<FheUint32>(
+                    decompression_key,
+                    serialized_high_level,
+                )?;
+                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
+                radix_ct
+            }
+            FheType::Euint64 => {
+                let hl_ct: FheUint64 = decompression::from_bytes::<FheUint64>(
+                    decompression_key,
+                    serialized_high_level,
+                )?;
+                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
+                radix_ct
+            }
+            FheType::Euint128 => {
+                let hl_ct: FheUint128 = decompression::from_bytes::<FheUint128>(
+                    decompression_key,
+                    serialized_high_level,
+                )?;
+                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
+                radix_ct
+            }
+            FheType::Euint160 => {
+                let hl_ct: FheUint160 = decompression::from_bytes::<FheUint160>(
+                    decompression_key,
+                    serialized_high_level,
+                )?;
+                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
+                radix_ct
+            }
+            FheType::Euint256 => {
+                let hl_ct: FheUint256 = decompression::from_bytes::<FheUint256>(
+                    decompression_key,
+                    serialized_high_level,
+                )?;
+                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
+                radix_ct
+            }
+            FheType::Euint512 => {
+                let hl_ct: FheUint512 = decompression::from_bytes::<FheUint512>(
+                    decompression_key,
+                    serialized_high_level,
+                )?;
+                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
+                radix_ct
+            }
+            FheType::Euint1024 => {
+                let hl_ct: FheUint1024 = decompression::from_bytes::<FheUint1024>(
+                    decompression_key,
+                    serialized_high_level,
+                )?;
+                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
+                radix_ct
+            }
+            FheType::Euint2048 => {
+                let hl_ct: FheUint2048 = decompression::from_bytes::<FheUint2048>(
+                    decompression_key,
+                    serialized_high_level,
+                )?;
+                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
+                radix_ct
+            }
+        };
+        Ok(radix_ct)
+    }
 }
 
 #[cfg(feature = "non-wasm")]
@@ -534,12 +702,14 @@ impl crate::kms::ReencryptionRequest {
     }
 }
 
+// TODO: We should probably implement some checks on the bytes according to the dtype
+// FIXME: https://github.com/zama-ai/kms-core/issues/1348
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
-#[wasm_bindgen(getter_with_clone)]
 pub struct Plaintext {
     pub bytes: Vec<u8>,
-    fhe_type: FheType,
+    pub fhe_type: FheType,
 }
+
 /// returns a slice of the first N bytes of the vector, padding with zeros if the vector is too short
 fn sub_slice<const N: usize>(vec: &[u8]) -> [u8; N] {
     // Get a slice of the first len bytes, if available
@@ -577,8 +747,11 @@ impl Plaintext {
         }
     }
 
-    pub fn from_bytes(bytes: Vec<u8>, fhe_type: FheType) -> Self {
-        Self { bytes, fhe_type }
+    pub fn from_bytes(bytes: Vec<u8>, fhe_type: impl Into<FheType>) -> Self {
+        Self {
+            bytes,
+            fhe_type: fhe_type.into(),
+        }
     }
 
     pub fn from_bool(value: bool) -> Self {
@@ -786,12 +959,33 @@ impl Plaintext {
         tfhe::integer::U256::from((low_128, high_128))
     }
 
+    pub fn as_u512(&self) -> tfhe::integer::U512 {
+        if self.fhe_type != FheType::Euint512 {
+            tracing::warn!("Plaintext is not of type u512. Returning the value modulo 2^512 or padding with leading zeros");
+        }
+        let slice = sub_slice::<64>(&self.bytes);
+        let mut value = tfhe::integer::bigint::U512::default();
+        tfhe::integer::bigint::U512::copy_from_le_byte_slice(&mut value, &slice);
+        value
+    }
+
+    pub fn as_u1024(&self) -> tfhe::integer::bigint::U1024 {
+        if self.fhe_type != FheType::Euint1024 {
+            tracing::warn!("Plaintext is not of type u1024. Returning the value modulo 2^1024 or padding with leading zeros");
+        }
+        let slice = sub_slice::<128>(&self.bytes);
+        let mut value = tfhe::integer::bigint::U1024::default();
+        tfhe::integer::bigint::U1024::copy_from_le_byte_slice(&mut value, &slice);
+        value
+    }
+
     pub fn as_u2048(&self) -> tfhe::integer::bigint::U2048 {
         if self.fhe_type != FheType::Euint2048 {
             tracing::warn!("Plaintext is not of type u2048. Returning the value modulo 2^2048 or padding with leading zeros");
         }
+        let slice = sub_slice::<256>(&self.bytes);
         let mut value = tfhe::integer::bigint::U2048::default();
-        tfhe::integer::bigint::U2048::copy_from_le_byte_slice(&mut value, &self.bytes);
+        tfhe::integer::bigint::U2048::copy_from_le_byte_slice(&mut value, &slice);
         value
     }
 
@@ -801,6 +995,11 @@ impl Plaintext {
     // TODO: Implement something that does something like `as_<fhe_type>`
 }
 
+impl From<Plaintext> for FheType {
+    fn from(value: Plaintext) -> Self {
+        value.fhe_type
+    }
+}
 impl From<Plaintext> for Vec<u8> {
     fn from(value: Plaintext) -> Self {
         match value.fhe_type {
@@ -873,6 +1072,7 @@ impl<'de> Deserialize<'de> for FheType {
         deserializer.deserialize_bytes(FheTypeVisitor)
     }
 }
+
 struct FheTypeVisitor;
 impl<'de> Visitor<'de> for FheTypeVisitor {
     type Value = FheType;

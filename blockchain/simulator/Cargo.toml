@@ -42,7 +42,7 @@ bincode.workspace = true
 clap = { workspace = true, features = ["derive"] }
 conf-trace.workspace = true
 cosmos-proto.workspace = true
-events.workspace = true
+events = { workspace = true, features = ["non-wasm"] }
 hex.workspace = true
 kms = { workspace = true, default-features = false, features = [
     "grpc-client",

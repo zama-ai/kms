@@ -122,6 +122,8 @@ impl ServerIdentities {
     }
 }
 
+/// Core Client
+///
 /// Simple client to interact with the KMS servers. This can be seen as a proof-of-concept
 /// and reference code for validating the KMS. The logic supplied by the client will be
 /// distributed across the aggregator/proxy and smart contracts.
@@ -158,7 +160,7 @@ pub struct TestingReencryptionTranscript {
     agg_resp: Vec<ReencryptionResponse>,
 }
 
-// TODO it would make sense to separate the wasm specific stuff into a separate file
+// TODO: it would make sense to separate the wasm specific stuff into a separate file
 
 /// This module is dedicated to making an re-encryption request
 /// and reconstruction of the re-encryption results on a web client
@@ -202,8 +204,8 @@ pub struct TestingReencryptionTranscript {
 /// The steps below must be followed for the JS tests to work.
 ///
 /// 1. Install wasm-pack and node (version 20)
-/// the preferred way is to use nvm (which is on homebrew)
-/// and the node version must be 20
+///    the preferred way is to use nvm (which is on homebrew)
+///    and the node version must be 20
 /// ```
 /// cargo install wasm-pack
 /// nvm install 20
@@ -305,7 +307,7 @@ pub mod js_api {
             server_identities,
             client_address,
             client_sk: None,
-            params: params,
+            params,
         })
     }
 
@@ -825,6 +827,8 @@ pub fn compute_link(
     Ok([pk_digest, req.ciphertext_digest.clone()].concat())
 }
 
+/// Client data type
+///
 /// Enum which represents the different kinds of public information that can be stored as part of key generation.
 /// In practice this means the CRS and different types of public keys.
 /// Data of this type is supposed to be readable by anyone on the internet
@@ -2734,6 +2738,8 @@ pub(crate) mod tests {
     use crate::cryptography::signcryption::Reencrypt;
     use crate::kms::core_service_endpoint_client::CoreServiceEndpointClient;
     use crate::kms::{FheType, ParamChoice, TypedCiphertext};
+    #[cfg(feature = "wasm_tests")]
+    use crate::rpc::rpc_types::Plaintext;
     use crate::rpc::rpc_types::RequestIdGetter;
     use crate::rpc::rpc_types::{protobuf_to_alloy_domain, BaseKms, PubDataType};
     use crate::storage::StorageReader;
@@ -3982,10 +3988,11 @@ pub(crate) mod tests {
 
             // check that the plaintexts are correct
             for (i, plaintext) in received_plaintexts.iter().enumerate() {
-                assert_eq!(msgs[i].to_fhe_type(), plaintext.fhe_type());
+                assert_eq!(FheType::from(msgs[i]), plaintext.fhe_type());
 
                 match msgs[i] {
                     TypedPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
+                    TypedPlaintext::U4(x) => assert_eq!(x, plaintext.as_u4()),
                     TypedPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
                     TypedPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
                     TypedPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
@@ -3993,6 +4000,8 @@ pub(crate) mod tests {
                     TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
                     TypedPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
                     TypedPlaintext::U256(x) => assert_eq!(x, plaintext.as_u256()),
+                    TypedPlaintext::U512(x) => assert_eq!(x, plaintext.as_u512()),
+                    TypedPlaintext::U1024(x) => assert_eq!(x, plaintext.as_u1024()),
                     TypedPlaintext::U2048(x) => assert_eq!(x, plaintext.as_u2048()),
                 }
             }
@@ -4219,8 +4228,8 @@ pub(crate) mod tests {
                     client_sk: internal_client.client_sk.clone(),
                     degree: 0,
                     params: internal_client.params,
-                    fhe_type: msg.to_fhe_type(),
-                    pt: msg.to_plaintext().bytes.clone(),
+                    fhe_type: msg.into(),
+                    pt: Plaintext::from(msg).bytes.clone(),
                     ct: reqs[0].0.payload.as_ref().unwrap().ciphertext().to_vec(),
                     request: Some(reqs[0].clone().0),
                     eph_sk: reqs[0].clone().2,
@@ -4282,10 +4291,11 @@ pub(crate) mod tests {
                     .unwrap()
             };
 
-            assert_eq!(msg.to_fhe_type(), plaintext.fhe_type());
+            assert_eq!(FheType::from(msg), plaintext.fhe_type());
 
             match msg {
                 TypedPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
+                TypedPlaintext::U4(x) => assert_eq!(x, plaintext.as_u4()),
                 TypedPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
                 TypedPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
                 TypedPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
@@ -4293,6 +4303,8 @@ pub(crate) mod tests {
                 TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
                 TypedPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
                 TypedPlaintext::U256(x) => assert_eq!(x, plaintext.as_u256()),
+                TypedPlaintext::U512(x) => assert_eq!(x, plaintext.as_u512()),
+                TypedPlaintext::U1024(x) => assert_eq!(x, plaintext.as_u1024()),
                 TypedPlaintext::U2048(x) => assert_eq!(x, plaintext.as_u2048()),
             }
         }
@@ -4503,10 +4515,11 @@ pub(crate) mod tests {
 
             // check that the plaintexts are correct
             for (i, plaintext) in received_plaintexts.iter().enumerate() {
-                assert_eq!(msgs[i].to_fhe_type(), plaintext.fhe_type());
+                assert_eq!(FheType::from(msgs[i]), FheType::from(plaintext.clone()));
 
                 match msgs[i] {
                     TypedPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
+                    TypedPlaintext::U4(x) => assert_eq!(x, plaintext.as_u4()),
                     TypedPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
                     TypedPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
                     TypedPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
@@ -4514,6 +4527,8 @@ pub(crate) mod tests {
                     TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
                     TypedPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
                     TypedPlaintext::U256(x) => assert_eq!(x, plaintext.as_u256()),
+                    TypedPlaintext::U512(x) => assert_eq!(x, plaintext.as_u512()),
+                    TypedPlaintext::U1024(x) => assert_eq!(x, plaintext.as_u1024()),
                     TypedPlaintext::U2048(x) => assert_eq!(x, plaintext.as_u2048()),
                 }
             }
@@ -4745,8 +4760,8 @@ pub(crate) mod tests {
                     client_sk: internal_client.client_sk.clone(),
                     degree: THRESHOLD as u32,
                     params: internal_client.params,
-                    fhe_type: msg.to_fhe_type(),
-                    pt: msg.to_plaintext().bytes.clone(),
+                    fhe_type: FheType::from(msg),
+                    pt: Plaintext::from(msg).bytes.clone(),
                     ct: reqs[0].0.payload.as_ref().unwrap().ciphertext().to_vec(),
                     request: Some(reqs[0].clone().0),
                     eph_sk: reqs[0].clone().2,
@@ -4796,9 +4811,10 @@ pub(crate) mod tests {
                     .insecure_process_reencryption_resp(responses, enc_pk, enc_sk)
                     .unwrap()
             };
-            assert_eq!(msg.to_fhe_type(), plaintext.fhe_type());
+            assert_eq!(FheType::from(msg), FheType::from(plaintext.clone()));
             match msg {
                 TypedPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
+                TypedPlaintext::U4(x) => assert_eq!(x, plaintext.as_u4()),
                 TypedPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
                 TypedPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
                 TypedPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
@@ -4806,6 +4822,8 @@ pub(crate) mod tests {
                 TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
                 TypedPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
                 TypedPlaintext::U256(x) => assert_eq!(x, plaintext.as_u256()),
+                TypedPlaintext::U512(x) => assert_eq!(x, plaintext.as_u512()),
+                TypedPlaintext::U1024(x) => assert_eq!(x, plaintext.as_u1024()),
                 TypedPlaintext::U2048(x) => assert_eq!(x, plaintext.as_u2048()),
             }
         }

@@ -1,6 +1,5 @@
 use super::conversions::*;
-use core::hash::Hash;
-use core::hash::Hasher;
+use core::hash::{Hash, Hasher};
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Api, Attribute, Event};
 use serde::ser::SerializeMap;
@@ -13,6 +12,8 @@ use strum_macros::{Display, EnumIs, EnumIter, EnumString};
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use typed_builder::TypedBuilder;
 
+#[cfg(feature = "non-wasm")]
+use kms_lib::kms::FheType as RPCFheType;
 /// Define a type alias for Vec<String>
 ///
 /// We define an alias with a trait instead of struct mostly because when we instantiate the ASC,
@@ -652,6 +653,48 @@ impl From<u8> for FheType {
             10 => FheType::Euint1024,
             11 => FheType::Euint2048,
             _ => FheType::Unknown,
+        }
+    }
+}
+
+#[cfg(feature = "non-wasm")]
+impl From<RPCFheType> for FheType {
+    fn from(value: RPCFheType) -> Self {
+        match value {
+            RPCFheType::Ebool => FheType::Ebool,
+            RPCFheType::Euint4 => FheType::Euint4,
+            RPCFheType::Euint8 => FheType::Euint8,
+            RPCFheType::Euint16 => FheType::Euint16,
+            RPCFheType::Euint32 => FheType::Euint32,
+            RPCFheType::Euint64 => FheType::Euint64,
+            RPCFheType::Euint128 => FheType::Euint128,
+            RPCFheType::Euint160 => FheType::Euint160,
+            RPCFheType::Euint256 => FheType::Euint256,
+            RPCFheType::Euint512 => FheType::Euint512,
+            RPCFheType::Euint1024 => FheType::Euint1024,
+            RPCFheType::Euint2048 => FheType::Euint2048,
+        }
+    }
+}
+
+#[cfg(feature = "non-wasm")]
+impl TryInto<RPCFheType> for FheType {
+    type Error = anyhow::Error;
+    fn try_into(self) -> Result<RPCFheType, Self::Error> {
+        match self {
+            FheType::Ebool => Ok(RPCFheType::Ebool),
+            FheType::Euint4 => Ok(RPCFheType::Euint4),
+            FheType::Euint8 => Ok(RPCFheType::Euint8),
+            FheType::Euint16 => Ok(RPCFheType::Euint16),
+            FheType::Euint32 => Ok(RPCFheType::Euint32),
+            FheType::Euint64 => Ok(RPCFheType::Euint64),
+            FheType::Euint128 => Ok(RPCFheType::Euint128),
+            FheType::Euint160 => Ok(RPCFheType::Euint160),
+            FheType::Euint256 => Ok(RPCFheType::Euint256),
+            FheType::Euint512 => Ok(RPCFheType::Euint512),
+            FheType::Euint1024 => Ok(RPCFheType::Euint1024),
+            FheType::Euint2048 => Ok(RPCFheType::Euint2048),
+            _ => Err(anyhow::anyhow!("Not supported")),
         }
     }
 }

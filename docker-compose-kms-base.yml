@@ -114,8 +114,8 @@ services:
       SECRET_KEY=$$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 40 | head -n 1) &&
       /usr/bin/mc admin user add myminio $$ACCESS_KEY $$SECRET_KEY &&
       /usr/bin/mc admin policy attach myminio readwrite --user $$ACCESS_KEY &&
-      echo '$ACCESS_KEY' &&
-      echo '$SECRET_KEY' &&
+      echo '$$ACCESS_KEY' &&
+      echo '$$SECRET_KEY' &&
       echo $$ACCESS_KEY > /minio_secrets/access_key &&
       echo $$SECRET_KEY > /minio_secrets/secret_key &&
       cat /minio_secrets/access_key &&

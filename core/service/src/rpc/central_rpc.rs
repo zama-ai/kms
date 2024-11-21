@@ -127,7 +127,6 @@ impl<
         &self,
         request: Request<KeyGenRequest>,
     ) -> Result<Response<Empty>, Status> {
-        tracing::info!("insecure_key_gen");
         self.key_gen(request).await
     }
 
@@ -443,11 +442,9 @@ impl<
         &self,
         request: Request<DecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
-        tracing::info!("Received a new request!");
+        tracing::info!("Received a new decryption request...");
         let start = tokio::time::Instant::now();
         let inner = request.into_inner();
-        tracing::info!("Request ID: {:?}", inner.request_id);
-        tracing::debug!("#CTs: {}", inner.ciphertexts.len());
 
         let (ciphertexts, req_digest, key_id, request_id, eip712_domain, acl_address) =
             tonic_handle_potential_err(
@@ -456,9 +453,10 @@ impl<
             )?;
 
         tracing::info!(
-            "Decrypting {:?} ciphertexts using key: {:?}",
+            "Decrypting {:?} ciphertexts using key {:?} with request id {:?}",
             ciphertexts.len(),
-            key_id.request_id
+            key_id.request_id,
+            inner.request_id
         );
 
         {
@@ -627,7 +625,6 @@ impl<
     /// starts the centralized CRS generation
     #[tracing::instrument(skip(self, request))]
     async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
-        tracing::info!("in crs generation function");
         let inner = request.into_inner();
         let request_id = tonic_some_or_err(
             inner.request_id,
@@ -769,7 +766,6 @@ impl<
         &self,
         request: Request<CrsGenRequest>,
     ) -> Result<Response<Empty>, Status> {
-        tracing::info!("insecure_crs_gen");
         self.crs_gen(request).await
     }
 

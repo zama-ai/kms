@@ -6,6 +6,7 @@ on:
     paths:
       - 'core/service/**'
       - 'core/threshold/**'
+      - 'conf-trace/**'
       - '.github/workflows/service-pr.yml'
 
 concurrency:
@@ -37,4 +38,3 @@ jobs:
         run: echo Pipeline Done
     needs:
       - build
-

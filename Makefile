@@ -11,7 +11,7 @@ stop-compose-threshold:
 	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml down --volumes --remove-orphans
 
 build-compose-centralized:
-	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-centralized.yml -f docker-compose-kms-gateway-threshold.yml build
+	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-centralized.yml build
 
 start-compose-centralized:
 	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-centralized.yml up -d --wait
@@ -52,4 +52,3 @@ linting-package:
 		exit 1; \
 	fi
 	RUSTFLAGS="-Aclippy::doc-lazy-continuation" cargo clippy --all-targets --all-features --package $(PACKAGE) -- -D warnings
-
