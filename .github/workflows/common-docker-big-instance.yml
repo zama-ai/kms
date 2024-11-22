@@ -119,24 +119,6 @@ jobs:
       docker-file-dev: ${{ inputs.docker-file-dev }}
       image-dev-description: ${{ inputs.image-dev-description }}
 
-  run-enclave:
-    needs: 
-      - start-runner
-      - run-docker
-    uses: ./.github/workflows/common-nitro-enclave.yml
-    secrets:
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-    with:
-      ref: ${{ inputs.ref }}
-      docker-context: ${{ inputs.docker-context }}
-      working-directory: ${{ inputs.working-directory }}
-      push_image: ${{ inputs.push_image }}
-      runs_on: ${{ needs.start-runner.outputs.label }}
-      image-name: ${{ inputs.image-name }}
-      image-enclave-name: ${{ inputs.image-enclave-name }}
-      generate-enclave-image: ${{ inputs.generate-enclave-image }}
-      docker-file-enclave: ${{ inputs.docker-file-enclave }}    
-
   stop-runner:
     name: Stops self-hosted EC2 runner
     needs:
