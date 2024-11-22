@@ -148,7 +148,7 @@ services:
       echo 'Generating signing keys' &&
       kms-gen-keys --pub-url s3://kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --priv-url file://./keys --cmd signing-keys threshold --signing-key-party-id 2 &&
       echo 'Starting kms service' &&
-      kms-server threshold --config-file config/compose_2.toml
+      kms-server --config-file config/compose_2.toml
       "
 
   dev-kms-connector-2:
@@ -203,7 +203,7 @@ services:
       echo 'Generating signing keys' &&
       kms-gen-keys --pub-url s3://kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --priv-url file://./keys --cmd signing-keys threshold --signing-key-party-id 3 &&
       echo 'Starting kms service' &&
-      kms-server threshold --config-file config/compose_3.toml
+      kms-server --config-file config/compose_3.toml
       "
 
   dev-kms-connector-3:
@@ -258,7 +258,7 @@ services:
       echo 'Generating signing keys' &&
       kms-gen-keys --pub-url s3://kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --priv-url file://./keys --cmd signing-keys threshold --signing-key-party-id 4 &&
       echo 'Starting kms service' &&
-      kms-server threshold --config-file config/compose_4.toml
+      kms-server --config-file config/compose_4.toml
       "
 
   dev-kms-connector-4:
