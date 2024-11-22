@@ -1,0 +1,139 @@
+name: Docker Build and Push nitro enclave
+
+on:
+  workflow_call:
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN:
+        required: true
+    inputs:
+      ref:
+        type: string
+        required: false
+        default: ''
+      working-directory:
+        type: string
+        required: true
+      docker-context:
+        type: string
+        required: false
+        default: '.'
+      image-name:
+        type: string
+        required: true
+      image-enclave-name:
+        type: string
+        required: false
+      push_image:
+        type: boolean
+        default: true
+        required: false
+      runs_on:
+        type: string
+        required: false
+        default: 'ubuntu-latest'
+      generate-enclave-image:
+        type: boolean
+        default: false
+        required: false
+      docker-file-enclave:
+        type: string
+        default: 'enclave.dockerfile'
+        required: false
+      cache-from:
+        type: string
+        required: false
+        default: 'type=gha'
+      cache-to:
+        type: string
+        required: false
+        default: 'type=gha,mode=max'
+
+jobs:
+  build-and-push-enclave:
+    runs-on: ${{ inputs.runs_on }}
+    env:
+      HOME: ${{ inputs.runs_on != 'ubuntu-latest' && '/root' || '/home/runner' }}
+    steps:
+      - name: Checkout Project
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d70bba72b1f3fd22344832f00baa16ece964efeb # v3.3.0
+        with:
+          platforms: linux/amd64
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Echo github event
+        run: echo "Github event ==> ${{ github.event_name }}"
+
+      - name: Current branch sha
+        if: github.event_name != 'release'
+        run: |
+          echo "DOCKER_TAG_IMAGE=$(git rev-parse --short "$GITHUB_SHA")" >> "$GITHUB_ENV"
+
+      - name: Current Tag
+        if: github.event_name == 'release'
+        run: |
+          echo "DOCKER_TAG_IMAGE=${{  github.ref_name }}" >> "$GITHUB_ENV"
+
+      # Our self-hosted runner AMI doesn't ship jq which we need during EIF build
+      - name: Install jq
+        if: ${{ inputs.generate-enclave-image }}
+        run: |
+          sudo apt update && sudo apt -y install jq
+
+      - name: Set EIF output dir
+        if: ${{ inputs.generate-enclave-image }}
+        run: |
+          echo "EIF_OUTPUT_DIR=${{ github.workspace }}/${{ inputs.working-directory }}/eif-output" >> "$GITHUB_ENV"
+
+      - name: Create EIF file
+        if: ${{ inputs.generate-enclave-image }}
+        uses: addnab/docker-run-action@4f65fabd2431ebc8d299f8e5a018d79a769ae185 #v3
+        with:
+          image: amazonlinux@sha256:5fe11d17e56571a26e20df3fa1493bdf9139fb9f2cb6d84fad13104c7b869217 # 2023.5.20240916.0
+          options: -v ${{ env.EIF_OUTPUT_DIR }}:/output -v ${{env.DOCKER_SOCK_PATH}}:/var/run/docker.sock
+          run: |
+            dnf install aws-nitro-enclaves-cli aws-nitro-enclaves-cli-devel docker -y
+
+            echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u USERNAME --password-stdin
+
+            docker pull --platform=linux/amd64 ghcr.io/zama-ai/${{ inputs.image-name }}:${{env.DOCKER_TAG_IMAGE}}
+
+            nitro-cli build-enclave --docker-uri ghcr.io/zama-ai/${{ inputs.image-name }}:${{env.DOCKER_TAG_IMAGE}} --name ${{ inputs.image-name }} --output-file /output/enclave.eif
+
+            nitro-cli describe-eif --eif-path /output/enclave.eif > /output/eif-info.txt
+
+      - name: Export EIF measurements
+        if: ${{ inputs.generate-enclave-image }}
+        id: eif
+        run: |
+          EIF_MEASUREMENT_PCR0=$(jq '.Measurements.PCR0' ${{ env.EIF_OUTPUT_DIR }}/eif-info.txt)
+          echo "eif_pcr0=${EIF_MEASUREMENT_PCR0}" >> "$GITHUB_OUTPUT"
+
+      - name: Docker Build and Push Enclave Image
+        if: ${{ inputs.generate-enclave-image }}
+        uses: docker/build-push-action@5cd11c3a4ced054e52742c5fd54dca954e0edd85 # v6.7.0
+        with:
+          context: .
+          secrets: BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          build-args: |
+            IMAGE_NAME=ghcr.io/zama-ai/${{ inputs.image-name }}
+            IMAGE_TAG=${{ env.DOCKER_TAG_IMAGE }}
+          build-contexts: eif=${{ env.EIF_OUTPUT_DIR }}
+          file: ${{ inputs.working-directory}}/operations/docker/${{ inputs.docker-file-enclave }}
+          push: ${{ inputs.push_image }}
+          pull: false
+          tags: ghcr.io/zama-ai/${{ inputs.image-enclave-name }}:${{env.DOCKER_TAG_IMAGE}},ghcr.io/zama-ai/${{ inputs.image-enclave-name }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: |
+            zama.kms.version=${{ env.DOCKER_TAG_IMAGE }}
+            zama.kms.eif_pcr0=${{ steps.eif.outputs.eif_pcr0 }}
+      
