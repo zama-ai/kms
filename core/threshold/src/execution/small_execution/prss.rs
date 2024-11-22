@@ -721,8 +721,6 @@ fn transpose_vdm<Z: Ring + RingEmbed>(rows: usize, columns: usize) -> anyhow::Re
 
 #[cfg(test)]
 mod tests {
-    use std::num::Wrapping;
-
     use super::*;
     use crate::execution::sharing::shamir::RevealOp;
     use crate::execution::small_execution::agree_random::DSEP_AR;
@@ -761,6 +759,7 @@ mod tests {
     use rstest::rstest;
     use sha3::digest::{ExtendableOutput, Update, XofReader};
     use sha3::Shake256;
+    use std::num::Wrapping;
     use std::sync::Arc;
     use tfhe::{set_server_key, FheUint8};
     use tokio::task::JoinSet;
@@ -1555,29 +1554,41 @@ mod tests {
         }
     }
 
-    #[test]
-    fn sunnshine_init_with_abort_res128() {
-        sunshine_init_with_abort::<ResiduePoly128>();
+    #[rstest]
+    #[case(4, 1)]
+    #[case(5, 1)]
+    #[case(7, 2)]
+    #[case(10, 3)]
+    fn sunnshine_init_with_abort_res128(#[case] parties: usize, #[case] threshold: u8) {
+        sunshine_init_with_abort::<ResiduePoly128>(parties, threshold);
     }
 
     #[cfg(feature = "experimental")]
-    #[test]
-    fn sunnshine_init_with_abort_levelone() {
+    #[rstest]
+    #[case(4, 1)]
+    #[case(5, 1)]
+    #[case(7, 2)]
+    #[case(10, 3)]
+    fn sunnshine_init_with_abort_levelone(#[case] parties: usize, #[case] threshold: u8) {
         use crate::experimental::algebra::levels::LevelOne;
-        sunshine_init_with_abort::<LevelOne>();
+        sunshine_init_with_abort::<LevelOne>(parties, threshold);
     }
 
     #[cfg(feature = "experimental")]
-    #[test]
-    fn sunnshine_init_with_abort_levelksw() {
+    #[rstest]
+    #[case(4, 1)]
+    #[case(5, 1)]
+    #[case(7, 2)]
+    #[case(10, 3)]
+    fn sunnshine_init_with_abort_levelksw(#[case] parties: usize, #[case] threshold: u8) {
         use crate::experimental::algebra::levels::LevelKsw;
-        sunshine_init_with_abort::<LevelKsw>();
+        sunshine_init_with_abort::<LevelKsw>(parties, threshold);
     }
 
-    fn sunshine_init_with_abort<Z: ErrorCorrect + Invert + RingEmbed + PRSSConversions>() {
-        let parties = 5;
-        let threshold = 1;
-
+    fn sunshine_init_with_abort<Z: ErrorCorrect + Invert + RingEmbed + PRSSConversions>(
+        parties: usize,
+        threshold: u8,
+    ) {
         let mut task = |mut session: SmallSession<Z>| async move {
             let prss_setup =
                 PRSSSetup::<Z>::init_with_abort::<DummyAgreeRandom, AesRng, SmallSession<Z>>(
@@ -1621,18 +1632,22 @@ mod tests {
                 .filter(|e| e.owner().one_based() != i)
                 .collect_vec();
             // And check we still get the correct result
+            // Note that we need to reduce the max-error by 1 since we are removing one share
             assert_eq!(
                 base,
-                cur_sharing.err_reconstruct(threshold, threshold).unwrap()
+                cur_sharing
+                    .err_reconstruct(threshold, threshold - 1)
+                    .unwrap()
             )
         }
     }
 
-    #[test]
-    fn sunshine_robust_init() {
-        let parties: usize = 5;
-        let threshold = 1;
-
+    #[rstest]
+    #[case(4, 1)]
+    #[case(5, 1)]
+    #[case(7, 2)]
+    #[case(10, 3)]
+    fn sunshine_robust_init(#[case] parties: usize, #[case] threshold: u8) {
         async fn task(mut session: SmallSession<ResiduePoly128>) -> Share<ResiduePoly128> {
             let prss_setup = PRSSSetup::robust_init(&mut session, &RealVss::default())
                 .await
@@ -1674,7 +1689,7 @@ mod tests {
 
     #[test]
     fn robust_init_party_drop() {
-        let parties = 5;
+        let parties = 4;
         let threshold = 1;
         let bad_party = 3;
 
@@ -1687,7 +1702,7 @@ mod tests {
                 let role = session.my_role().unwrap();
                 Share::new(role, state.prss_next(role).unwrap())
             } else {
-                Share::new(Role::indexed_by_one(bad_party), ResiduePoly::ZERO)
+                Share::new(Role::indexed_by_one(bad_party), ResiduePoly128::ZERO)
             }
         };
 
@@ -1701,10 +1716,11 @@ mod tests {
             &mut task,
         );
 
-        let sharing = ShamirSharings::create(result);
-        validate_prss_init::<ResiduePoly128>(sharing, parties, threshold.into());
+        let sharing = ShamirSharings::<ResiduePoly128>::create(result);
+        assert!(sharing
+            .err_reconstruct(threshold.into(), threshold.into())
+            .is_ok());
     }
-
     #[test]
     fn test_vdm_inverse() {
         let res = transpose_vdm(3, 4).unwrap();

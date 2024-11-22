@@ -98,7 +98,7 @@ const DECRYPTION_MODE: DecryptionMode = DecryptionMode::PRSSDecrypt;
 ///
 /// * `private_storage` - Abstract private storage for storing sensitive information.
 ///
-/// * `run_prss` - If this is true, a setup protocol will be executed in this funciton.
+/// * `run_prss` - If this is true, we execute a PRSS setup regardless of whether it already exists in the storage.
 ///   Otherwise, the setup must be done out of band by calling the init
 ///   GRPC endpoint, or using the kms-init binary.
 pub async fn threshold_server_init<
@@ -425,10 +425,16 @@ where
         initiator.init_prss().await?;
     } else {
         tracing::info!(
-            "Initializing threshold KMS server and reading PRSS from storage for {}",
+            "Trying to initializing threshold KMS server and reading PRSS from storage for {}",
             my_id
         );
-        initiator.init_prss_from_disk().await?;
+        if let Err(e) = initiator.init_prss_from_disk().await {
+            tracing::warn!(
+                "Error reading PRSS Setup from storage for {}: {}. You will need to call the init end-point later before you can use the KMS server",
+                my_id,
+                e
+            );
+        }
     }
 
     let reencryptor = RealReencryptor {
@@ -603,32 +609,35 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
     async fn init_prss_from_disk(&self) -> anyhow::Result<()> {
         // TODO pass epoch ID fom config? (once we have epochs)
         let epoch_id = PRSS_EPOCH_ID;
-
         let prss_setup_from_file = {
             let guarded_private_storage = self.private_storage.lock().await;
+            let base_session = self
+                .session_preparer
+                .make_base_session(SessionId(epoch_id), NetworkMode::Sync)
+                .await?;
             read_versioned_at_request_id(
                 &(*guarded_private_storage),
-                &RequestId::from(epoch_id),
+                &RequestId::derive(&format!(
+                    "PRSSSetup_ID_{epoch_id}_{}_{}",
+                    base_session.parameters.num_parties(),
+                    base_session.parameters.threshold()
+                ))?,
                 &PrivDataType::PrssSetup.to_string(),
             )
             .await
             .inspect_err(|e| {
                 tracing::warn!("failed to read PRSS from file with error: {e}");
             })
-            .ok()
         };
 
         // check if a PRSS setup already exists in storage.
         match prss_setup_from_file {
-            Some(prss_setup) => {
+            Ok(prss_setup) => {
                 let mut guarded_prss_setup = self.prss_setup.write().await;
                 *guarded_prss_setup = Some(prss_setup);
                 tracing::info!("Initializing threshold KMS server with PRSS Setup from disk",)
             }
-            None => tracing::info!(
-                "Initializing threshold KMS server without PRSS Setup, \
-                        remember to call the init GRPC endpoint!",
-            ),
+            Err(e) => return Err(e),
         }
 
         Ok(())
@@ -661,7 +670,11 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
         let mut priv_storage = private_storage.lock().await;
         store_versioned_at_request_id(
             &mut (*priv_storage),
-            &RequestId::from(epoch_id),
+            &RequestId::derive(&format!(
+                "PRSSSetup_ID_{epoch_id}_{}_{}",
+                base_session.parameters.num_parties(),
+                base_session.parameters.threshold(),
+            ))?,
             &prss_setup_obj,
             &PrivDataType::PrssSetup.to_string(),
         )
@@ -2160,8 +2173,9 @@ impl<PubS: Storage + Sync + Send + 'static> ProvenCtVerifier for RealProvenCtVer
 mod tests {
     use crate::{
         client::test_tools,
-        consts::{AMOUNT_PARTIES, PRSS_EPOCH_ID, THRESHOLD},
-        storage::{file::FileStorage, StorageType},
+        consts::{DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD, PRSS_EPOCH_ID},
+        storage::file::FileStorage,
+        storage::StorageType,
         threshold::threshold_kms::RequestId,
         util::key_setup::test_tools::purge,
     };
@@ -2172,27 +2186,31 @@ mod tests {
     async fn prss_disk_test() {
         let mut pub_storage = Vec::new();
         let mut priv_storage = Vec::new();
-        for i in 1..=AMOUNT_PARTIES {
+        for i in 1..=DEFAULT_AMOUNT_PARTIES {
             let cur_pub = FileStorage::new(None, StorageType::PUB, Some(i)).unwrap();
             pub_storage.push(cur_pub);
             let cur_priv = FileStorage::new(None, StorageType::PRIV, Some(i)).unwrap();
 
             // make sure the store does not contain any PRSS info (currently stored under ID 1)
-            let req_id = RequestId::from(PRSS_EPOCH_ID);
-            purge(None, None, &req_id.to_string()).await;
+            let req_id = &RequestId::derive(&format!(
+                "PRSSSetup_ID_{PRSS_EPOCH_ID}_{}_{}",
+                DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD
+            ))
+            .unwrap();
+            purge(None, None, &req_id.to_string(), DEFAULT_AMOUNT_PARTIES).await;
 
             priv_storage.push(cur_priv);
         }
 
         // create parties and run PrssSetup
         let core_handles = test_tools::setup_threshold_no_client(
-            THRESHOLD as u8,
+            DEFAULT_THRESHOLD as u8,
             pub_storage.clone(),
             priv_storage.clone(),
             true,
         )
         .await;
-        assert_eq!(core_handles.len(), AMOUNT_PARTIES);
+        assert_eq!(core_handles.len(), DEFAULT_AMOUNT_PARTIES);
 
         // shut parties down
         for h in core_handles.values() {
@@ -2206,16 +2224,17 @@ mod tests {
         assert!(!logs_contain(
             "Initializing threshold KMS server with PRSS Setup from disk"
         ));
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
         // create parties again without running PrssSetup this time (it should now be read from disk)
         let core_handles = test_tools::setup_threshold_no_client(
-            THRESHOLD as u8,
+            DEFAULT_THRESHOLD as u8,
             pub_storage,
             priv_storage,
             false,
         )
         .await;
-        assert_eq!(core_handles.len(), AMOUNT_PARTIES);
+        assert_eq!(core_handles.len(), DEFAULT_AMOUNT_PARTIES);
 
         // check that PRSS was not created, but instead read from disk now
         assert!(logs_contain(

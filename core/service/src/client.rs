@@ -2493,6 +2493,9 @@ pub mod test_tools {
     use tokio::task::JoinHandle;
     use tonic::transport::{Channel, Uri};
 
+    // Maximum number of attempts to try to wait for a result to be done on the server
+    pub const MAX_TRIES: usize = 50;
+
     #[cfg(feature = "slow_tests")]
     use crate::util::key_setup::test_tools::setup::ensure_default_material_exists;
 
@@ -2579,14 +2582,13 @@ pub mod test_tools {
             server_handles.insert(i as u32, handle);
         }
         // We need to sleep as the servers keep running in the background and hence do not return
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        tokio::time::sleep(tokio::time::Duration::from_secs(2 * (amount as u64) / 4)).await;
         server_handles
     }
 
     /// try to connect to a URI and retry every 200ms for 25 times before giving up after 5 seconds.
     async fn connect_with_retry(uri: Uri) -> Channel {
         tracing::info!("Client connecting to {}", uri);
-        const RETRY_COUNT: usize = 25;
         let mut channel = Channel::builder(uri.clone()).connect().await;
         let mut tries = 0usize;
         loop {
@@ -2599,7 +2601,7 @@ pub mod test_tools {
                     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
                     channel = Channel::builder(uri.clone()).connect().await;
                     tries += 1;
-                    if tries > RETRY_COUNT {
+                    if tries > MAX_TRIES {
                         break;
                     }
                 }
@@ -2629,6 +2631,7 @@ pub mod test_tools {
         HashMap<u32, CoreServiceEndpointClient<Channel>>,
     ) {
         let amount = priv_storage.len();
+        // Setup the threshold scheme with lazy PRSS generation
         let server_handles =
             setup_threshold_no_client(threshold, pub_storage, priv_storage, true).await;
         let mut client_handles = HashMap::new();
@@ -2670,7 +2673,7 @@ pub mod test_tools {
             .await;
         });
         // We have to wait for the server to start since it will keep running in the background
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
         server_handle
     }
 
@@ -2725,21 +2728,29 @@ pub mod test_tools {
 pub(crate) mod tests {
     use super::{recover_ecdsa_public_key_from_signature, Client};
     use crate::client::assemble_metadata_alloy;
+    use crate::client::test_tools::MAX_TRIES;
     #[cfg(feature = "wasm_tests")]
     use crate::client::TestingReencryptionTranscript;
     use crate::client::{ParsedReencryptionRequest, ServerIdentities};
     #[cfg(feature = "wasm_tests")]
     use crate::consts::TEST_CENTRAL_KEY_ID;
     use crate::consts::TEST_PARAM;
-    use crate::consts::TEST_THRESHOLD_KEY_ID;
+    use crate::consts::TEST_THRESHOLD_CRS_ID_10P;
+    use crate::consts::TEST_THRESHOLD_CRS_ID_4P;
+    use crate::consts::TEST_THRESHOLD_KEY_ID_10P;
+    use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
     #[cfg(feature = "slow_tests")]
-    use crate::consts::{DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_KEY_ID};
+    use crate::consts::{
+        DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_CRS_ID_10P, DEFAULT_THRESHOLD_CRS_ID_4P,
+        DEFAULT_THRESHOLD_KEY_ID_10P, DEFAULT_THRESHOLD_KEY_ID_4P,
+    };
     #[cfg(feature = "slow_tests")]
     use crate::cryptography::central_kms::tests::get_default_keys;
     use crate::cryptography::central_kms::{compute_handle, gen_sig_keys, BaseKmsStruct};
     use crate::cryptography::internal_crypto_types::Signature;
     use crate::cryptography::signcryption::Reencrypt;
     use crate::kms::core_service_endpoint_client::CoreServiceEndpointClient;
+    use crate::kms::ReencryptionResponse;
     use crate::kms::{FheType, ParamChoice, TypedCiphertext};
     #[cfg(feature = "wasm_tests")]
     use crate::rpc::rpc_types::Plaintext;
@@ -2750,6 +2761,7 @@ pub(crate) mod tests {
     use crate::util::file_handling::safe_read_element_versioned;
     #[cfg(feature = "wasm_tests")]
     use crate::util::file_handling::write_element;
+    use crate::util::key_setup::max_threshold;
     use crate::util::key_setup::test_tools::{
         compute_cipher_from_stored_key, compute_compressed_cipher_from_stored_key,
         load_pk_from_storage, purge, TypedPlaintext,
@@ -2757,10 +2769,6 @@ pub(crate) mod tests {
     use crate::{
         client::num_blocks,
         kms::{Empty, RequestId},
-    };
-    use crate::{
-        consts::{AMOUNT_PARTIES, THRESHOLD},
-        kms::ReencryptionResponse,
     };
     use alloy_primitives::Bytes;
     use alloy_signer::Signer;
@@ -2777,6 +2785,9 @@ pub(crate) mod tests {
     use tfhe::Tag;
     use tokio::task::{JoinHandle, JoinSet};
     use tonic::transport::Channel;
+
+    // Time to sleep to ensure that previous servers and tests have shut down properly.
+    const TIME_TO_SLEEP_MS: u64 = 800;
 
     fn dummy_domain() -> alloy_sol_types::Eip712Domain {
         alloy_sol_types::eip712_domain!(
@@ -2795,33 +2806,36 @@ pub(crate) mod tests {
     async fn threshold_handles(
         storage_version: StorageVersion,
         params: DKGParams,
+        amount_parties: usize,
     ) -> (
         HashMap<u32, JoinHandle<()>>,
         HashMap<u32, CoreServiceEndpointClient<Channel>>,
         Client,
     ) {
+        // Compute threshold < amount_parties/3
+        let threshold = max_threshold(amount_parties);
         let (kms_servers, kms_clients) = match storage_version {
             StorageVersion::Dev => {
                 let mut pub_storage = Vec::new();
                 let mut priv_storage = Vec::new();
-                for i in 1..=AMOUNT_PARTIES {
+                for i in 1..=amount_parties {
                     priv_storage.push(FileStorage::new(None, StorageType::PRIV, Some(i)).unwrap());
                     pub_storage.push(FileStorage::new(None, StorageType::PUB, Some(i)).unwrap());
                 }
-                super::test_tools::setup_threshold(THRESHOLD as u8, pub_storage, priv_storage).await
+                super::test_tools::setup_threshold(threshold as u8, pub_storage, priv_storage).await
             }
             StorageVersion::Ram => {
                 let mut pub_storage = Vec::new();
                 let mut priv_storage = Vec::new();
-                for _i in 1..=AMOUNT_PARTIES {
+                for _i in 1..=amount_parties {
                     priv_storage.push(RamStorage::new(StorageType::PRIV));
                     pub_storage.push(RamStorage::new(StorageType::PUB));
                 }
-                super::test_tools::setup_threshold(THRESHOLD as u8, pub_storage, priv_storage).await
+                super::test_tools::setup_threshold(threshold as u8, pub_storage, priv_storage).await
             }
         };
-        let mut pub_storage = Vec::with_capacity(AMOUNT_PARTIES);
-        for i in 1..=AMOUNT_PARTIES {
+        let mut pub_storage = Vec::with_capacity(amount_parties);
+        for i in 1..=amount_parties {
             pub_storage.push(FileStorage::new(None, StorageType::PUB, Some(i)).unwrap());
         }
         let client_storage = FileStorage::new(None, StorageType::CLIENT, None).unwrap();
@@ -2868,7 +2882,7 @@ pub(crate) mod tests {
     async fn test_key_gen_centralized() {
         let request_id = RequestId::derive("test_key_gen_centralized").unwrap();
         // Delete potentially old data
-        purge(None, None, &request_id.to_string()).await;
+        purge(None, None, &request_id.to_string(), 1).await;
         key_gen_centralized(TEST_PARAM, &request_id, Some(ParamChoice::Test)).await;
     }
 
@@ -2880,7 +2894,7 @@ pub(crate) mod tests {
 
         let request_id = RequestId::derive("default_key_gen_centralized").unwrap();
         // Delete potentially old data
-        purge(None, None, &request_id.to_string()).await;
+        purge(None, None, &request_id.to_string(), 1).await;
         key_gen_centralized(DEFAULT_PARAM, &request_id, Some(ParamChoice::Default)).await;
     }
 
@@ -2933,7 +2947,7 @@ pub(crate) mod tests {
     async fn test_crs_gen_manual() {
         let crs_req_id = RequestId::derive("test_crs_gen_manual").unwrap();
         // Delete potentially old data
-        purge(None, None, &crs_req_id.to_string()).await;
+        purge(None, None, &crs_req_id.to_string(), 1).await;
         crs_gen_centralized_manual(&TEST_PARAM, &crs_req_id, Some(ParamChoice::Test)).await;
     }
 
@@ -3021,7 +3035,7 @@ pub(crate) mod tests {
     async fn default_crs_gen_centralized() {
         let crs_req_id = RequestId::derive("default_crs_gen_centralized").unwrap();
         // Delete potentially old data
-        purge(None, None, &crs_req_id.to_string()).await;
+        purge(None, None, &crs_req_id.to_string(), 1).await;
         crs_gen_centralized(
             &crate::consts::DEFAULT_PARAM,
             &crs_req_id,
@@ -3036,7 +3050,7 @@ pub(crate) mod tests {
     async fn test_crs_gen_centralized() {
         let crs_req_id = RequestId::derive("test_crs_gen_centralized").unwrap();
         // Delete potentially old data
-        purge(None, None, &crs_req_id.to_string()).await;
+        purge(None, None, &crs_req_id.to_string(), 1).await;
         crs_gen_centralized(&TEST_PARAM, &crs_req_id, Some(ParamChoice::Test), false).await;
     }
 
@@ -3046,7 +3060,7 @@ pub(crate) mod tests {
     async fn test_insecure_crs_gen_centralized() {
         let crs_req_id = RequestId::derive("test_insecure_crs_gen_centralized").unwrap();
         // Delete potentially old data
-        purge(None, None, &crs_req_id.to_string()).await;
+        purge(None, None, &crs_req_id.to_string(), 1).await;
         crs_gen_centralized(&TEST_PARAM, &crs_req_id, Some(ParamChoice::Test), true).await;
     }
 
@@ -3056,7 +3070,7 @@ pub(crate) mod tests {
     async fn default_insecure_crs_gen_centralized() {
         let crs_req_id = RequestId::derive("default_insecure_crs_gen_centralized").unwrap();
         // Delete potentially old data
-        purge(None, None, &crs_req_id.to_string()).await;
+        purge(None, None, &crs_req_id.to_string(), 1).await;
         crs_gen_centralized(
             &crate::consts::DEFAULT_PARAM,
             &crs_req_id,
@@ -3148,7 +3162,7 @@ pub(crate) mod tests {
         verify_proven_ct_centralized(
             &crate::consts::DEFAULT_PARAM,
             &proven_ct_id,
-            &crate::consts::DEFAULT_CRS_ID,
+            &crate::consts::DEFAULT_CENTRAL_CRS_ID,
             &DEFAULT_CENTRAL_KEY_ID.to_string(),
         )
         .await;
@@ -3161,7 +3175,7 @@ pub(crate) mod tests {
         verify_proven_ct_centralized(
             &TEST_PARAM,
             &proven_ct_id,
-            &crate::consts::TEST_CRS_ID,
+            &crate::consts::TEST_CENTRAL_CRS_ID,
             &crate::consts::TEST_CENTRAL_KEY_ID.to_string(),
         )
         .await;
@@ -3304,31 +3318,52 @@ pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(1)]
-    #[case(4)]
+    #[case(1, 4)]
+    #[case(4, 4)]
+    #[case(1, 10)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    async fn test_crs_gen_threshold(#[case] parallelism: usize) {
+    async fn test_crs_gen_threshold(#[case] parallelism: usize, #[case] amount_parties: usize) {
         // CRS generation is slow
         // so we set this as a slow test
-        crs_gen_threshold(parallelism, &TEST_PARAM, Some(ParamChoice::Test), false).await
+        crs_gen_threshold(
+            parallelism,
+            &TEST_PARAM,
+            ParamChoice::Test,
+            amount_parties,
+            false,
+        )
+        .await
     }
 
     #[cfg(feature = "insecure")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[rstest::rstest]
+    #[case(10)]
+    #[case(4)]
     #[serial]
-    async fn test_insecure_crs_gen_threshold() {
-        crs_gen_threshold(1, &TEST_PARAM, Some(ParamChoice::Test), true).await
+    async fn test_insecure_crs_gen_threshold(#[case] amount_parties: usize) {
+        crs_gen_threshold(1, &TEST_PARAM, ParamChoice::Test, amount_parties, true).await
     }
 
     #[cfg(feature = "slow_tests")]
     #[cfg(feature = "insecure")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[rstest::rstest]
+    #[case(4)]
+    #[case(10)]
     #[serial]
-    async fn default_insecure_crs_gen_threshold() {
+    async fn default_insecure_crs_gen_threshold(#[case] amount_parties: usize) {
         use crate::consts::DEFAULT_PARAM;
 
-        crs_gen_threshold(1, &DEFAULT_PARAM, Some(ParamChoice::Default), true).await
+        crs_gen_threshold(
+            1,
+            &DEFAULT_PARAM,
+            ParamChoice::Default,
+            amount_parties,
+            true,
+        )
+        .await
     }
 
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
@@ -3370,16 +3405,15 @@ pub(crate) mod tests {
     // or error out until some timeout.
     // The requests from the `reqs` argument need to implement `RequestIdGetter`.
     macro_rules! par_poll_responses {
-        ($parallelism:expr,$kms_clients:expr,$reqs:expr,$f_to_poll:ident) => {{
-            const TRIES: usize = 20;
+        ($parallelism:expr,$kms_clients:expr,$reqs:expr,$f_to_poll:ident,$amount_parties:expr) => {{
             let mut joined_responses = vec![];
-            for count in 0..TRIES {
+            for count in 0..MAX_TRIES {
                 joined_responses = vec![];
                 tokio::time::sleep(tokio::time::Duration::from_secs(5 * $parallelism as u64)).await;
 
                 let mut tasks_get = JoinSet::new();
                 for req in &$reqs {
-                    for i in 1..=AMOUNT_PARTIES as u32 {
+                    for i in 1..=$amount_parties as u32 {
                         let mut cur_client = $kms_clients.get(&i).unwrap().clone();
                         let req_id_cloned = req.request_id().unwrap();
                         tasks_get.spawn(async move {
@@ -3400,12 +3434,12 @@ pub(crate) mod tests {
 
                 // add the responses in this iteration to the bigger vector
                 joined_responses.append(&mut responses_get);
-                if joined_responses.len() == AMOUNT_PARTIES * $parallelism {
+                if joined_responses.len() == $amount_parties * $parallelism {
                     break;
                 }
 
                 // fail if we can't find a response
-                if count == TRIES - 1 {
+                if count == MAX_TRIES - 1 {
                     panic!("could not get crs after {} tries", count);
                 }
             }
@@ -3418,43 +3452,50 @@ pub(crate) mod tests {
     async fn crs_gen_threshold(
         parallelism: usize,
         param: &DKGParams,
-        params: Option<ParamChoice>,
+        param_choice: ParamChoice,
+        amount_parties: usize,
         insecure: bool,
     ) {
         assert!(parallelism > 0);
         let req_ids: Vec<RequestId> = (0..parallelism)
-            .map(|j| RequestId::derive(&format!("crs_gen_threshold_{j}_{insecure}")).unwrap())
+            .map(|j| {
+                RequestId::derive(&format!(
+                    "crs_gen_threshold_{amount_parties}_{j}_{insecure}_{:?}",
+                    param_choice
+                ))
+                .unwrap()
+            })
             .collect();
 
         // Ensure the test is idempotent
         for req_id in &req_ids {
-            purge(None, None, &req_id.request_id).await;
+            purge(None, None, &req_id.request_id, amount_parties).await;
         }
 
+        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         // The threshold handle should only be started after the storage is purged
         // since the threshold parties will load the CRS from private storage
         let (kms_servers, kms_clients, internal_client) =
-            threshold_handles(StorageVersion::Dev, *param).await;
+            threshold_handles(StorageVersion::Dev, *param, amount_parties).await;
 
-        let max_num_bits = if params.unwrap() == ParamChoice::Test {
-            Some(1)
-        } else {
-            // The default is 2048 which is too slow for tests, so we switch to 256
-            Some(256)
-        };
+        let max_num_bits = Some(32);
         let reqs: Vec<_> = (0..parallelism)
             .map(|j| {
-                let request_id =
-                    RequestId::derive(&format!("crs_gen_threshold_{j}_{insecure}")).unwrap();
+                let request_id = RequestId::derive(&format!(
+                    "crs_gen_threshold_{amount_parties}_{j}_{insecure}_{:?}",
+                    param_choice
+                ))
+                .unwrap();
+                println!("request_id: {request_id}");
                 internal_client
-                    .crs_gen_request(&request_id, max_num_bits, params)
+                    .crs_gen_request(&request_id, max_num_bits, Some(param_choice))
                     .unwrap()
             })
             .collect();
 
         let mut tasks_gen = JoinSet::new();
         for req in &reqs {
-            for i in 1..=AMOUNT_PARTIES as u32 {
+            for i in 1..=amount_parties as u32 {
                 let mut cur_client = kms_clients.get(&i).unwrap().clone();
                 let req_clone = req.clone();
                 tasks_gen.spawn(async move {
@@ -3480,11 +3521,16 @@ pub(crate) mod tests {
             let resp = inner.unwrap().unwrap();
             responses_gen.push(resp.into_inner());
         }
-        assert_eq!(responses_gen.len(), AMOUNT_PARTIES * parallelism);
+        assert_eq!(responses_gen.len(), amount_parties * parallelism);
 
         // wait a bit for the crs generation to finish
-        let joined_responses =
-            par_poll_responses!(parallelism, kms_clients, reqs, get_crs_gen_result);
+        let joined_responses = par_poll_responses!(
+            parallelism,
+            kms_clients,
+            reqs,
+            get_crs_gen_result,
+            amount_parties
+        );
 
         // first check the happy path
         // the public parameter is checked in ddec tests, so we don't specifically check _pp
@@ -3515,8 +3561,9 @@ pub(crate) mod tests {
                     )
                 })
                 .unzip();
-
-            let min_count_agree = (THRESHOLD + 1) as u32;
+            // Compute threshold < amount_parties/3
+            let threshold = max_threshold(amount_parties);
+            let min_count_agree = (threshold + 1) as u32;
 
             let pp = internal_client
                 .process_distributed_crs_result(
@@ -3533,7 +3580,7 @@ pub(crate) mod tests {
             let _pp = internal_client
                 .process_distributed_crs_result(
                     &req_id,
-                    final_responses[0..final_responses.len() - THRESHOLD].to_vec(),
+                    final_responses[0..final_responses.len() - threshold].to_vec(),
                     &storage_readers,
                     min_count_agree,
                 )
@@ -3544,7 +3591,7 @@ pub(crate) mod tests {
             assert!(internal_client
                 .process_distributed_crs_result(
                     &req_id,
-                    final_responses[0..THRESHOLD].to_vec(),
+                    final_responses[0..threshold].to_vec(),
                     &storage_readers,
                     min_count_agree
                 )
@@ -3571,7 +3618,7 @@ pub(crate) mod tests {
                     .unwrap(),
             )
             .unwrap();
-            set_signatures(&mut final_responses_with_bad_sig, THRESHOLD, &bad_sig);
+            set_signatures(&mut final_responses_with_bad_sig, threshold, &bad_sig);
 
             let _pp = internal_client
                 .process_distributed_crs_result(
@@ -3583,10 +3630,10 @@ pub(crate) mod tests {
                 .await
                 .unwrap();
 
-            // having [AMOUNT-THRESHOLD] wrong signatures won't work
+            // having [amount_parties-threshold] wrong signatures won't work
             set_signatures(
                 &mut final_responses_with_bad_sig,
-                AMOUNT_PARTIES - THRESHOLD,
+                amount_parties - threshold,
                 &bad_sig,
             );
             assert!(internal_client
@@ -3599,11 +3646,11 @@ pub(crate) mod tests {
                 .await
                 .is_err());
 
-            // having [AMOUNT_PARTIES-(THRESHOLD+1)] wrong digests still works
+            // having [amount_parties-(threshold+1)] wrong digests still works
             let mut final_responses_with_bad_digest = final_responses.clone();
             set_digests(
                 &mut final_responses_with_bad_digest,
-                AMOUNT_PARTIES - (THRESHOLD + 1),
+                amount_parties - (threshold + 1),
                 "9fdca770403e2eed9dacb4cdd405a14fc6df7226",
             );
             let _pp = internal_client
@@ -3616,10 +3663,10 @@ pub(crate) mod tests {
                 .await
                 .unwrap();
 
-            // having [AMOUNT_PARTIES-THRESHOLD] wrong digests will fail
+            // having [amount_parties-threshold] wrong digests will fail
             set_digests(
                 &mut final_responses_with_bad_digest,
-                AMOUNT_PARTIES - THRESHOLD,
+                amount_parties - threshold,
                 "9fdca770403e2eed9dacb4cdd405a14fc6df7226",
             );
             assert!(internal_client
@@ -3641,29 +3688,37 @@ pub(crate) mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[rstest::rstest]
+    #[case(10, &TEST_THRESHOLD_KEY_ID_10P, &TEST_THRESHOLD_CRS_ID_10P)]
+    #[case(4, &TEST_THRESHOLD_KEY_ID_4P, &TEST_THRESHOLD_CRS_ID_4P)]
     #[serial]
-    async fn test_verify_proven_ct_threshold() {
-        verify_proven_ct_threshold(
-            1,
-            &crate::consts::TEST_CRS_ID,
-            &crate::consts::TEST_THRESHOLD_KEY_ID,
-            TEST_PARAM,
-        )
-        .await
+    async fn test_verify_proven_ct_threshold(
+        #[case] amount_parties: usize,
+        #[case] key_id: &RequestId,
+        #[case] crs_id: &RequestId,
+    ) {
+        verify_proven_ct_threshold(1, crs_id, key_id, TEST_PARAM, amount_parties).await
     }
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(1)]
-    #[case(4)]
+    #[case(1, 10, &DEFAULT_THRESHOLD_KEY_ID_10P, &DEFAULT_THRESHOLD_CRS_ID_10P)]
+    #[case(1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
+    #[case(4, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    async fn default_verify_proven_ct_threshold(#[case] parallelism: usize) {
+    async fn default_verify_proven_ct_threshold(
+        #[case] parallelism: usize,
+        #[case] amount_parties: usize,
+        #[case] key_id: &RequestId,
+        #[case] crs_id: &RequestId,
+    ) {
         verify_proven_ct_threshold(
             parallelism,
-            &crate::consts::DEFAULT_CRS_ID,
-            &crate::consts::DEFAULT_THRESHOLD_KEY_ID,
+            crs_id,
+            key_id,
             crate::consts::DEFAULT_PARAM,
+            amount_parties,
         )
         .await
     }
@@ -3673,13 +3728,15 @@ pub(crate) mod tests {
         crs_handle: &RequestId,
         key_handle: &RequestId,
         dkg_params: DKGParams,
+        amount_parties: usize,
     ) {
         assert!(parallelism > 0);
 
+        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         // The threshold handle should only be started after the storage is purged
         // since the threshold parties will load the CRS from private storage
         let (kms_servers, kms_clients, internal_client) =
-            threshold_handles(StorageVersion::Dev, dkg_params).await;
+            threshold_handles(StorageVersion::Dev, dkg_params, amount_parties).await;
 
         let pub_storage = FileStorage::new(None, StorageType::PUB, Some(1)).unwrap();
         let pp = internal_client
@@ -3711,7 +3768,8 @@ pub(crate) mod tests {
         let reqs: Vec<_> = (0..parallelism)
             .map(|j| {
                 let request_id =
-                    RequestId::derive(&format!("verify_proven_ct_threshold_{j}")).unwrap();
+                    RequestId::derive(&format!("verify_proven_ct_threshold_{amount_parties}_{j}"))
+                        .unwrap();
                 internal_client
                     .verify_proven_ct_request(
                         crs_handle,
@@ -3728,7 +3786,7 @@ pub(crate) mod tests {
 
         let mut tasks_gen = JoinSet::new();
         for req in &reqs {
-            for i in 1..=AMOUNT_PARTIES as u32 {
+            for i in 1..=amount_parties as u32 {
                 let mut cur_client = kms_clients.get(&i).unwrap().clone();
                 let req_clone = req.clone();
                 tasks_gen.spawn(async move {
@@ -3743,11 +3801,16 @@ pub(crate) mod tests {
             let resp = inner.unwrap().unwrap();
             responses_gen.push(resp.into_inner());
         }
-        assert_eq!(responses_gen.len(), AMOUNT_PARTIES * parallelism);
+        assert_eq!(responses_gen.len(), amount_parties * parallelism);
 
         // wait a bit for the validation to finish
-        let joined_responses =
-            par_poll_responses!(parallelism, kms_clients, reqs, get_verify_proven_ct_result);
+        let joined_responses = par_poll_responses!(
+            parallelism,
+            kms_clients,
+            reqs,
+            get_verify_proven_ct_result,
+            amount_parties
+        );
 
         for req in reqs {
             let req_id = req.request_id.unwrap();
@@ -3764,14 +3827,15 @@ pub(crate) mod tests {
                     },
                 )
                 .collect();
-
-            let min_count_agree = (THRESHOLD + 1) as u32;
+            // Compute threshold < amount_parties/3
+            let threshold = max_threshold(amount_parties);
+            let min_count_agree = (threshold + 1) as u32;
 
             let verify_proven_ct_sigs = internal_client
                 .process_verify_proven_ct_resp(&joined_responses, min_count_agree)
                 .unwrap();
 
-            assert_eq!(verify_proven_ct_sigs.len(), AMOUNT_PARTIES);
+            assert_eq!(verify_proven_ct_sigs.len(), amount_parties);
         }
         for handle in kms_servers.values() {
             handle.abort()
@@ -4315,11 +4379,17 @@ pub(crate) mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[rstest::rstest]
+    #[case(10, &TEST_THRESHOLD_KEY_ID_10P.to_string())]
+    #[case(4, &TEST_THRESHOLD_KEY_ID_4P.to_string())]
     #[serial]
-    async fn test_decryption_threshold_no_decompression() {
+    async fn test_decryption_threshold_no_decompression(
+        #[case] amount_parties: usize,
+        #[case] key_id: &str,
+    ) {
         decryption_threshold(
             TEST_PARAM,
-            &TEST_THRESHOLD_KEY_ID.to_string(),
+            key_id,
             vec![
                 TypedPlaintext::U8(42),
                 TypedPlaintext::U8(2),
@@ -4327,16 +4397,23 @@ pub(crate) mod tests {
             ],
             2,
             false,
+            amount_parties,
         )
         .await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[rstest::rstest]
+    #[case(10, &TEST_THRESHOLD_KEY_ID_10P.to_string())]
+    #[case(4, &TEST_THRESHOLD_KEY_ID_4P.to_string())]
     #[serial]
-    async fn test_decryption_threshold_with_decompression() {
+    async fn test_decryption_threshold_with_decompression(
+        #[case] amount_parties: usize,
+        #[case] key_id: &str,
+    ) {
         decryption_threshold(
             TEST_PARAM,
-            &TEST_THRESHOLD_KEY_ID.to_string(),
+            key_id,
             vec![
                 TypedPlaintext::U8(42),
                 TypedPlaintext::U8(2),
@@ -4344,20 +4421,22 @@ pub(crate) mod tests {
             ],
             2,
             true,
+            amount_parties,
         )
         .await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(vec![TypedPlaintext::Bool(true)], 4)]
-    #[case(vec![TypedPlaintext::U8(u8::MAX)], 1)]
-    #[case(vec![TypedPlaintext::U16(u16::MAX)], 1)]
-    #[case(vec![TypedPlaintext::U32(u32::MAX)], 1)]
-    #[case(vec![TypedPlaintext::U64(u64::MAX)], 1)]
-    #[case(vec![TypedPlaintext::U128(u128::MAX)], 1)]
-    #[case(vec![TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128)))], 1)]
-    #[case(vec![TypedPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX)))], 1)]
+    #[case(vec![TypedPlaintext::U8(u8::MAX)], 1, 10, &DEFAULT_THRESHOLD_KEY_ID_10P.to_string())]
+    #[case(vec![TypedPlaintext::Bool(true)], 4, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(vec![TypedPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(vec![TypedPlaintext::U16(u16::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(vec![TypedPlaintext::U32(u32::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(vec![TypedPlaintext::U64(u64::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(vec![TypedPlaintext::U128(u128::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(vec![TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128)))], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(vec![TypedPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX)))], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     // TODO: this takes approx. 138 secs locally.
     // #[case(vec![TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
@@ -4365,15 +4444,18 @@ pub(crate) mod tests {
     async fn default_decryption_threshold(
         #[case] msg: Vec<TypedPlaintext>,
         #[case] parallelism: usize,
+        #[case] amount_parties: usize,
+        #[case] key_id: &str,
     ) {
         use crate::consts::DEFAULT_PARAM;
 
         decryption_threshold(
             DEFAULT_PARAM,
-            &DEFAULT_THRESHOLD_KEY_ID.to_string(),
+            key_id,
             msg,
             parallelism,
             true,
+            amount_parties,
         )
         .await;
     }
@@ -4384,10 +4466,12 @@ pub(crate) mod tests {
         msgs: Vec<TypedPlaintext>,
         parallelism: usize,
         compression: bool,
+        amount_parties: usize,
     ) {
         assert!(parallelism > 0);
+        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (kms_servers, kms_clients, mut internal_client) =
-            threshold_handles(StorageVersion::Dev, dkg_params).await;
+            threshold_handles(StorageVersion::Dev, dkg_params, amount_parties).await;
         let key_id_req = key_id.to_string().try_into().unwrap();
 
         let mut cts = Vec::new();
@@ -4427,7 +4511,7 @@ pub(crate) mod tests {
                     .unwrap()
             })
             .collect();
-        for i in 1..=AMOUNT_PARTIES as u32 {
+        for i in 1..=amount_parties as u32 {
             for j in 0..parallelism {
                 let req_cloned = reqs.get(j).unwrap().clone();
                 let mut cur_client = kms_clients.get(&i).unwrap().clone();
@@ -4441,11 +4525,11 @@ pub(crate) mod tests {
         while let Some(inner) = req_tasks.join_next().await {
             req_response_vec.push(inner.unwrap().unwrap().into_inner());
         }
-        assert_eq!(req_response_vec.len(), AMOUNT_PARTIES * parallelism);
+        assert_eq!(req_response_vec.len(), amount_parties * parallelism);
 
         // get all responses
         let mut resp_tasks = JoinSet::new();
-        for i in 1..=AMOUNT_PARTIES as u32 {
+        for i in 1..=amount_parties as u32 {
             for req in &reqs {
                 let mut cur_client = kms_clients.get(&i).unwrap().clone();
                 let req_id_clone = req.request_id.as_ref().unwrap().clone();
@@ -4506,7 +4590,9 @@ pub(crate) mod tests {
                     }
                 })
                 .collect();
-            let min_count_agree = (THRESHOLD + 1) as u32;
+            // Compute threshold < amount_parties/3
+            let threshold = max_threshold(amount_parties);
+            let min_count_agree = (threshold + 1) as u32;
             let received_plaintexts = internal_client
                 .process_decryption_resp(Some(req.clone()), &responses, min_count_agree)
                 .unwrap();
@@ -4537,43 +4623,60 @@ pub(crate) mod tests {
     }
 
     #[rstest::rstest]
+    #[case(true, 10, &TEST_THRESHOLD_KEY_ID_10P.to_string())]
+    #[case(true, 4, &TEST_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(false, 4, &TEST_THRESHOLD_KEY_ID_4P.to_string())]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    async fn test_reencryption_threshold(#[values(true, false)] secure: bool) {
+    async fn test_reencryption_threshold(
+        #[case] secure: bool,
+        #[case] amount_parties: usize,
+        #[case] key_id: &str,
+    ) {
         reencryption_threshold(
             TEST_PARAM,
-            &TEST_THRESHOLD_KEY_ID.to_string(),
+            key_id,
             false,
             TypedPlaintext::U8(42),
             4,
             secure,
+            amount_parties,
         )
         .await;
     }
 
     #[cfg(feature = "wasm_tests")]
     #[rstest::rstest]
+    #[case(true, 10, &TEST_THRESHOLD_KEY_ID_10P.to_string())]
+    #[case(true, 4, &TEST_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(false, 4, &TEST_THRESHOLD_KEY_ID_4P.to_string())]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    async fn test_reencryption_threshold_and_write_transcript(#[values(true, false)] secure: bool) {
+    async fn test_reencryption_threshold_and_write_transcript(
+        #[case] secure: bool,
+        #[case] amount_parties: usize,
+        #[case] key_id: &str,
+    ) {
         reencryption_threshold(
             TEST_PARAM,
-            &TEST_THRESHOLD_KEY_ID.to_string(),
+            key_id,
             true,
             TypedPlaintext::U8(42),
             1,
             secure,
+            amount_parties,
         )
         .await;
     }
 
     #[cfg(all(feature = "wasm_tests", feature = "slow_tests"))]
     #[rstest::rstest]
-    #[case(TypedPlaintext::Bool(true))]
-    #[case(TypedPlaintext::U8(u8::MAX))]
-    #[case(TypedPlaintext::U16(u16::MAX))]
-    #[case(TypedPlaintext::U32(u32::MAX))]
-    #[case(TypedPlaintext::U64(u64::MAX))]
+    #[case(TypedPlaintext::U8(u8::MAX), 10, &DEFAULT_THRESHOLD_KEY_ID_10P.to_string())]
+    #[case(TypedPlaintext::Bool(true), 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TypedPlaintext::U8(u8::MAX), 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TypedPlaintext::U16(u16::MAX), 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TypedPlaintext::U32(u32::MAX), 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TypedPlaintext::U64(u64::MAX), 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     // #[case(TypedPlaintext::U128(u128::MAX))]
     // #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))))]
     // #[case(TypedPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))))]
@@ -4583,31 +4686,35 @@ pub(crate) mod tests {
     #[serial]
     async fn default_reencryption_threshold_and_write_transcript(
         #[case] msg: TypedPlaintext,
+        #[case] amount_parties: usize,
+        #[case] key_id: &str,
         #[values(true, false)] secure: bool,
     ) {
         use crate::consts::DEFAULT_PARAM;
 
         reencryption_threshold(
             DEFAULT_PARAM,
-            &DEFAULT_THRESHOLD_KEY_ID.to_string(),
+            key_id,
             true,
             msg,
             1, // wasm tests are single-threaded
             secure,
+            amount_parties,
         )
         .await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(TypedPlaintext::Bool(true), 4)]
-    #[case(TypedPlaintext::U8(u8::MAX), 1)]
-    #[case(TypedPlaintext::U16(u16::MAX), 1)]
-    #[case(TypedPlaintext::U32(u32::MAX), 1)]
-    #[case(TypedPlaintext::U64(u64::MAX), 1)]
-    #[case(TypedPlaintext::U128(u128::MAX), 1)]
-    #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1)]
-    #[case(TypedPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1)]
+    #[case(TypedPlaintext::U8(u8::MAX), 1, 10, &DEFAULT_THRESHOLD_KEY_ID_10P.to_string())]
+    #[case(TypedPlaintext::Bool(true), 4, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TypedPlaintext::U8(u8::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TypedPlaintext::U16(u16::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TypedPlaintext::U32(u32::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TypedPlaintext::U64(u64::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TypedPlaintext::U128(u128::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TypedPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     // TODO: this takes approx. 300 secs locally.
     // #[case(TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
@@ -4615,17 +4722,20 @@ pub(crate) mod tests {
     async fn default_reencryption_threshold(
         #[case] msg: TypedPlaintext,
         #[case] parallelism: usize,
+        #[case] amount_parties: usize,
+        #[case] key_id: &str,
         #[values(true, false)] secure: bool,
     ) {
         use crate::consts::DEFAULT_PARAM;
 
         reencryption_threshold(
             DEFAULT_PARAM,
-            &DEFAULT_THRESHOLD_KEY_ID.to_string(),
+            key_id,
             false,
             msg,
             parallelism,
             secure,
+            amount_parties,
         )
         .await;
     }
@@ -4637,12 +4747,14 @@ pub(crate) mod tests {
         msg: TypedPlaintext,
         parallelism: usize,
         secure: bool,
+        amount_parties: usize,
     ) {
         assert!(parallelism > 0);
         _ = write_transcript;
 
+        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (kms_servers, kms_clients, mut internal_client) =
-            threshold_handles(StorageVersion::Dev, dkg_params).await;
+            threshold_handles(StorageVersion::Dev, dkg_params, amount_parties).await;
         let (ct, fhe_type) = compute_cipher_from_stored_key(None, msg, key_id).await;
 
         internal_client.convert_to_addresses();
@@ -4667,7 +4779,7 @@ pub(crate) mod tests {
         // make queries to clients in parallel
         let mut req_tasks = JoinSet::new();
         for j in 0..parallelism {
-            for i in 1..=AMOUNT_PARTIES as u32 {
+            for i in 1..=amount_parties as u32 {
                 let mut cur_client = kms_clients.get(&i).unwrap().clone();
                 let req_clone = reqs.get(j).as_ref().unwrap().0.clone();
                 req_tasks.spawn(async move {
@@ -4680,11 +4792,11 @@ pub(crate) mod tests {
         while let Some(resp) = req_tasks.join_next().await {
             req_response_vec.push(resp.unwrap().unwrap().into_inner());
         }
-        assert_eq!(req_response_vec.len(), AMOUNT_PARTIES * parallelism);
+        assert_eq!(req_response_vec.len(), amount_parties * parallelism);
 
         let mut resp_tasks = JoinSet::new();
         for j in 0..parallelism {
-            for i in 1..=AMOUNT_PARTIES as u32 {
+            for i in 1..=amount_parties as u32 {
                 let mut cur_client = kms_clients.get(&i).unwrap().clone();
                 let req_id_clone = reqs.get(j).as_ref().unwrap().0.clone().request_id.unwrap();
                 let bits = msg.bits() as u64;
@@ -4746,6 +4858,8 @@ pub(crate) mod tests {
         #[cfg(feature = "wasm_tests")]
         {
             assert_eq!(parallelism, 1);
+            // Compute threshold < amount_parties/3
+            let threshold = max_threshold(amount_parties);
             if write_transcript {
                 // We write a plaintext/ciphertext to file as a workaround
                 // for tfhe encryption on the wasm side since it cannot
@@ -4759,7 +4873,7 @@ pub(crate) mod tests {
                     server_addrs: internal_client.get_server_addrs().unwrap().clone(),
                     client_address: internal_client.client_address,
                     client_sk: internal_client.client_sk.clone(),
-                    degree: THRESHOLD as u32,
+                    degree: threshold as u32,
                     params: internal_client.params,
                     fhe_type: FheType::from(msg),
                     pt: Plaintext::from(msg).bytes.clone(),
@@ -4922,7 +5036,7 @@ pub(crate) mod tests {
         kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     ) -> Vec<crate::kms::KeyGenPreprocStatus> {
         let mut tasks = JoinSet::new();
-        for i in 1..=AMOUNT_PARTIES as u32 {
+        for i in 1..=kms_clients.len() as u32 {
             let req_id = request.request_id.clone().unwrap();
             let mut cur_client = kms_clients.get(&i).unwrap().clone();
             tasks.spawn(async move {
@@ -4948,18 +5062,20 @@ pub(crate) mod tests {
     // issue: https://github.com/zama-ai/kms-core/issues/663
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(1)]
+    #[case(1, 4)]
+    #[case(1, 10)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    async fn test_preproc(#[case] parallelism: usize) {
+    async fn test_preproc(#[case] parallelism: usize, #[case] amount_parties: usize) {
         assert!(parallelism > 0);
         use crate::kms::{KeyGenPreprocRequest, KeyGenPreprocStatusEnum};
 
+        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (kms_servers, kms_clients, internal_client) =
-            threshold_handles(StorageVersion::Dev, TEST_PARAM).await;
+            threshold_handles(StorageVersion::Dev, TEST_PARAM, amount_parties).await;
 
         let request_ids: Vec<_> = (0..parallelism)
-            .map(|j| RequestId::derive(&format!("test_preproc_{j}")).unwrap())
+            .map(|j| RequestId::derive(&format!("test_preproc_{amount_parties}_{j}")).unwrap())
             .collect();
         let request_id_nok = RequestId::derive("not ok").unwrap();
 
@@ -4974,7 +5090,7 @@ pub(crate) mod tests {
 
         let mut tasks_gen = JoinSet::new();
         for req in &reqs {
-            for i in 1..=AMOUNT_PARTIES as u32 {
+            for i in 1..=amount_parties as u32 {
                 let mut cur_client = kms_clients.get(&i).unwrap().clone();
                 let req_clone = req.clone();
                 tasks_gen.spawn(async move {
@@ -4989,7 +5105,7 @@ pub(crate) mod tests {
         while let Some(resp) = tasks_gen.join_next().await {
             responses_gen.push(resp.unwrap().unwrap().into_inner());
         }
-        assert_eq!(responses_gen.len(), AMOUNT_PARTIES * parallelism);
+        assert_eq!(responses_gen.len(), amount_parties * parallelism);
 
         // Check status of preproc request
         async fn test_preproc_status(
@@ -5029,10 +5145,10 @@ pub(crate) mod tests {
         )
         .await;
 
-        //Wait for 5 min max (should be plenty of time for the test params)
+        // Wait at most MAX_TRIES times 15 seconds for all preprocessing to finish
         let mut finished: Vec<_> = Vec::new();
         let finished_enum: i32 = KeyGenPreprocStatusEnum::Finished.into();
-        for _ in 0..20 {
+        for _ in 0..MAX_TRIES {
             tokio::time::sleep(tokio::time::Duration::from_secs(15 * parallelism as u64)).await;
 
             let mut done = true;
@@ -5043,7 +5159,7 @@ pub(crate) mod tests {
                     .filter(|x| x.result == finished_enum)
                     .collect();
 
-                if finished.len() != AMOUNT_PARTIES {
+                if finished.len() != amount_parties {
                     done = false;
                 }
             }
@@ -5054,7 +5170,7 @@ pub(crate) mod tests {
         }
 
         //Make sure we did break because preproc is finished and not because of timeout
-        assert_eq!(finished.len(), AMOUNT_PARTIES * parallelism);
+        assert_eq!(finished.len(), amount_parties * parallelism);
 
         for handle in kms_servers.values() {
             handle.abort()
@@ -5072,7 +5188,7 @@ pub(crate) mod tests {
         insecure: bool,
     ) -> Vec<Result<tonic::Response<Empty>, tonic::Status>> {
         let mut tasks_gen = JoinSet::new();
-        for i in 1..=AMOUNT_PARTIES as u32 {
+        for i in 1..=kms_clients.len() as u32 {
             //Send kg request
             let mut cur_client = kms_clients.get(&i).unwrap().clone();
             let req_clone = req_keygen.clone();
@@ -5102,15 +5218,66 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "insecure")]
+    #[rstest::rstest]
+    #[case(4)]
+    #[case(10)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    async fn test_insecure_dkg() {
-        let req_preproc = RequestId::derive("test_dkg-preproc").unwrap();
-        let req_key = RequestId::derive("test_dkg-key").unwrap();
-        purge(None, None, &req_key.to_string()).await;
+    async fn test_insecure_dkg(#[case] amount_parties: usize) {
+        let req_preproc = RequestId::derive("test_dkg-preproc_{amount_parties}").unwrap();
+        let req_key = RequestId::derive("test_dkg-key_{amount_parties}").unwrap();
+        purge(None, None, &req_key.to_string(), amount_parties).await;
 
+        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (kms_servers, kms_clients, internal_client) =
-            threshold_handles(StorageVersion::Dev, TEST_PARAM).await;
+            threshold_handles(StorageVersion::Dev, TEST_PARAM, amount_parties).await;
+
+        let req_keygen = internal_client
+            .key_gen_request(
+                &req_key,
+                Some(req_preproc.clone()),
+                Some(ParamChoice::Test),
+                None,
+            )
+            .unwrap();
+        let responses = launch_dkg(req_keygen.clone(), &kms_clients, true).await;
+        for response in responses {
+            assert!(response.is_ok());
+        }
+
+        wait_for_keygen_result(
+            req_keygen.request_id.clone().unwrap(),
+            req_preproc,
+            &kms_clients,
+            &internal_client,
+            true,
+        )
+        .await;
+
+        for handle in kms_servers.values() {
+            handle.abort()
+        }
+        for (_, handle) in kms_servers {
+            assert!(handle.await.unwrap_err().is_cancelled());
+        }
+    }
+
+    #[cfg(feature = "insecure")]
+    #[rstest::rstest]
+    #[case(4)]
+    #[case(10)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
+    async fn default_insecure_dkg(#[case] amount_parties: usize) {
+        use crate::consts::DEFAULT_PARAM;
+
+        let req_preproc = RequestId::derive("test_dkg-preproc_{amount_parties}").unwrap();
+        let req_key = RequestId::derive("test_dkg-key_{amount_parties}").unwrap();
+        purge(None, None, &req_key.to_string(), amount_parties).await;
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
+        let (kms_servers, kms_clients, internal_client) =
+            threshold_handles(StorageVersion::Dev, DEFAULT_PARAM, amount_parties).await;
 
         let req_keygen = internal_client
             .key_gen_request(
@@ -5143,25 +5310,29 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
+    #[rstest::rstest]
+    #[case(4)]
+    #[case(10)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    async fn test_dkg() {
+    async fn test_dkg(#[case] amount_parties: usize) {
         use crate::kms::KeyGenPreprocStatusEnum;
         use itertools::Itertools;
 
-        let req_preproc = RequestId::derive("test_dkg-preproc").unwrap();
-        let req_key = RequestId::derive("test_dkg-key").unwrap();
-        purge(None, None, &req_key.to_string()).await;
+        let req_preproc = RequestId::derive("test_dkg-preproc_{amount_parties}").unwrap();
+        let req_key = RequestId::derive("test_dkg-key_{amount_parties}").unwrap();
+        purge(None, None, &req_key.to_string(), amount_parties).await;
 
+        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (kms_servers, kms_clients, internal_client) =
-            threshold_handles(StorageVersion::Dev, TEST_PARAM).await;
+            threshold_handles(StorageVersion::Dev, TEST_PARAM, amount_parties).await;
 
         let preprocessing_req_data = internal_client
             .preproc_request(&req_preproc, Some(ParamChoice::Test))
             .unwrap();
 
         let mut tasks_gen = JoinSet::new();
-        for i in 1..=AMOUNT_PARTIES as u32 {
+        for i in 1..=amount_parties as u32 {
             let mut cur_client = kms_clients.get(&i).unwrap().clone();
             let req_clone = preprocessing_req_data.clone();
             tasks_gen.spawn(async move {
@@ -5175,12 +5346,12 @@ pub(crate) mod tests {
         while let Some(resp) = tasks_gen.join_next().await {
             responses_gen.push(resp.unwrap().unwrap().into_inner());
         }
-        assert_eq!(responses_gen.len(), AMOUNT_PARTIES);
+        assert_eq!(responses_gen.len(), amount_parties);
 
-        //Wait for 5 min max (should be plenty of time for the test params)
         let finished_enum: i32 = KeyGenPreprocStatusEnum::Finished.into();
         let mut finished = Vec::new();
-        for _ in 0..20 {
+        // Wait at most MAX_TRIES times 15 seconds for all preprocessing to finish
+        for _ in 0..MAX_TRIES {
             tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
 
             let status = get_preproc_status(preprocessing_req_data.clone(), &kms_clients).await;
@@ -5188,13 +5359,13 @@ pub(crate) mod tests {
                 .into_iter()
                 .filter(|x| x.result == finished_enum)
                 .collect_vec();
-            if finished.len() == AMOUNT_PARTIES {
+            if finished.len() == amount_parties {
                 break;
             }
         }
 
         //Make sure we broke for loop because we indeed have finished preproc
-        assert_eq!(finished.len(), AMOUNT_PARTIES);
+        assert_eq!(finished.len(), amount_parties);
         //Preproc is now ready, start legitimate dkg
         let req_keygen = internal_client
             .key_gen_request(
@@ -5235,9 +5406,9 @@ pub(crate) mod tests {
         internal_client: &Client,
         insecure: bool,
     ) {
-        //Wait 5 min max (should be enough here too)
         let mut finished = Vec::new();
-        for _ in 0..20 {
+        // Wait at most MAX_TRIES times 15 seconds for all preprocessing to finish
+        for _ in 0..MAX_TRIES {
             tokio::time::sleep(tokio::time::Duration::from_secs(if insecure {
                 1
             } else {
@@ -5246,7 +5417,7 @@ pub(crate) mod tests {
             .await;
 
             let mut tasks = JoinSet::new();
-            for i in 1..=AMOUNT_PARTIES as u32 {
+            for i in 1..=kms_clients.len() as u32 {
                 let req_clone = req_get_keygen.clone();
                 let mut cur_client = kms_clients.get(&i).unwrap().clone();
                 tasks.spawn(async move {
@@ -5280,7 +5451,7 @@ pub(crate) mod tests {
                 .into_iter()
                 .filter(|x| x.1.is_ok())
                 .collect::<Vec<_>>();
-            if finished.len() == AMOUNT_PARTIES {
+            if finished.len() == kms_clients.len() {
                 break;
             }
         }

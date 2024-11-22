@@ -194,13 +194,13 @@ async fn test_template<T: DockerComposeContext>(ctx: &mut T, commands: Vec<Simul
             &config.file_conf.unwrap(),
             &config.command,
             keys_folder,
-            Some(50),
+            Some(config.max_iter),
             config.expect_all_responses,
         )
         .await
         .unwrap();
 
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
     }
 }
 

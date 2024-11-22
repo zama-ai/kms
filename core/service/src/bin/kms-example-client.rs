@@ -1,14 +1,14 @@
 use aes_prng::AesRng;
 use clap::{Parser, Subcommand};
 use kms_lib::client::{Client, ParsedReencryptionRequest};
-use kms_lib::consts::THRESHOLD;
+use kms_lib::consts::DEFAULT_THRESHOLD;
 use kms_lib::kms::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_lib::kms::{RequestId, TypedCiphertext};
 use kms_lib::rpc::rpc_types::protobuf_to_alloy_domain;
 use kms_lib::util::key_setup::ensure_client_keys_exist;
 use kms_lib::{
     conf::init_trace,
-    consts::{DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM, DEFAULT_THRESHOLD_KEY_ID},
+    consts::{DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM, DEFAULT_THRESHOLD_KEY_ID_4P},
     kms::InitRequest,
     storage::{file::FileStorage, StorageType},
     util::key_setup::test_tools::compute_compressed_cipher_from_stored_key,
@@ -215,7 +215,7 @@ async fn do_threshold_decryption(
     let (ct, fhe_type) = compute_compressed_cipher_from_stored_key(
         None,
         msg.into(),
-        &DEFAULT_THRESHOLD_KEY_ID.to_string(),
+        &DEFAULT_THRESHOLD_KEY_ID_4P.to_string(),
     )
     .await;
 
@@ -234,7 +234,7 @@ async fn do_threshold_decryption(
         &dummy_domain(),
         &random_req_id,
         &alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045"),
-        &DEFAULT_THRESHOLD_KEY_ID,
+        &DEFAULT_THRESHOLD_KEY_ID_4P,
     )?;
 
     // make parallel requests by calling [decrypt] in a thread
@@ -293,7 +293,7 @@ async fn do_threshold_decryption(
     match internal_client.process_decryption_resp(
         Some(dec_req),
         &resp_response_vec,
-        (THRESHOLD + 1) as u32,
+        (DEFAULT_THRESHOLD + 1) as u32,
     ) {
         Ok(plaintexts) => {
             tracing::info!(
@@ -319,7 +319,7 @@ async fn do_threshold_reencryption(
     let (ct, fhe_type) = compute_compressed_cipher_from_stored_key(
         None,
         msg.into(),
-        &DEFAULT_THRESHOLD_KEY_ID.to_string(),
+        &DEFAULT_THRESHOLD_KEY_ID_4P.to_string(),
     )
     .await;
 
@@ -334,7 +334,7 @@ async fn do_threshold_reencryption(
         &domain,
         fhe_type,
         &random_req_id,
-        &DEFAULT_THRESHOLD_KEY_ID,
+        &DEFAULT_THRESHOLD_KEY_ID_4P,
     )?;
     let (reenc_req, enc_pk, enc_sk) = reenc_req_tuple;
 

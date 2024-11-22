@@ -1,5 +1,6 @@
 #[cfg(any(test, feature = "testing"))]
 pub mod test_tools;
+use crate::client::ClientDataType;
 use crate::cryptography::central_kms::compute_info;
 use crate::cryptography::central_kms::{
     compute_handle, gen_centralized_crs, gen_sig_keys, generate_fhe_keys,
@@ -13,10 +14,6 @@ use crate::storage::{read_all_data_versioned, store_text_at_request_id};
 use crate::storage::{store_pk_at_request_id, Storage};
 use crate::storage::{StorageForText, StorageReader};
 use crate::threshold::threshold_kms::{compute_all_info, ThresholdFheKeys};
-use crate::{
-    client::ClientDataType,
-    consts::{AMOUNT_PARTIES, THRESHOLD},
-};
 use aes_prng::AesRng;
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 use distributed_decryption::execution::{
@@ -398,7 +395,7 @@ where
                 "Threshold server signing keys already exist for private storage \"{}\", skipping generation",
                 priv_storages[i-1].info()
             );
-            return false;
+            continue;
         }
         let (pk, sk) = gen_sig_keys(&mut rng);
 
@@ -452,7 +449,6 @@ where
     }
     true
 }
-
 /// Generates threshold key shares, meta data and public keys for an FHE keyset
 /// and stores them in the storages if they don't already exist under [key_id].
 ///
@@ -467,18 +463,34 @@ pub async fn ensure_threshold_keys_exist<S>(
 where
     S: Storage,
 {
-    // For simplicity just test if the first party has the keys
-    if pub_storages[0]
+    assert_eq!(
+        pub_storages.len(),
+        priv_storages.len(),
+        "Number of public storages and private storages must be equal"
+    );
+    let amount_parties = pub_storages.len();
+    // Compute threshold < amount_parties/3
+    let threshold = max_threshold(amount_parties);
+    // For simplicity just test if the last party has the keys
+    if pub_storages
+        .last()
+        .unwrap()
         .data_exists(
-            &pub_storages[0]
+            &pub_storages
+                .last()
+                .unwrap()
                 .compute_url(&key_id.to_string(), &PubDataType::PublicKey.to_string())
                 .unwrap(),
         )
         .await
         .unwrap()
-        && priv_storages[0]
+        && priv_storages
+            .last()
+            .unwrap()
             .data_exists(
-                &priv_storages[0]
+                &priv_storages
+                    .last()
+                    .unwrap()
                     .compute_url(&key_id.to_string(), &PrivDataType::FheKeyInfo.to_string())
                     .unwrap(),
             )
@@ -487,12 +499,12 @@ where
     {
         tracing::warn!(
             "Threshold FHE keys already exist for private storage \"{}\" and public storage \"{}\" with ID {}, skipping generation",
-            priv_storages[0].info(), pub_storages[0].info(), key_id
+            priv_storages.last().unwrap().info(), pub_storages.last().unwrap().info(), key_id
         );
         return false;
     }
 
-    let mut rng = get_rng(deterministic, Some(AMOUNT_PARTIES as u64));
+    let mut rng = get_rng(deterministic, Some(amount_parties as u64));
 
     let mut signing_keys = Vec::new();
     for cur_storage in priv_storages.iter() {
@@ -508,15 +520,15 @@ where
             .get_params_basics_handle()
             .to_classic_pbs_parameters(),
         &mut rng,
-        AMOUNT_PARTIES,
-        THRESHOLD,
+        amount_parties,
+        threshold,
     )
     .unwrap();
     let sns_key = key_set.public_keys.sns_key.to_owned().unwrap();
 
     let decompression_key = key_set.public_keys.server_key.to_owned().into_raw_parts().3;
 
-    for i in 1..=AMOUNT_PARTIES {
+    for i in 1..=amount_parties {
         // Get first signing key
         let sk = &signing_keys[i - 1];
         let info = compute_all_info(sk, &key_set.public_keys, None).unwrap();
@@ -582,17 +594,30 @@ pub async fn ensure_threshold_crs_exists<S>(
 where
     S: Storage,
 {
-    if pub_storages[0]
+    if pub_storages.len() != priv_storages.len() {
+        panic!("Number of public storages and private storages must be equal");
+    }
+    let amount_parties = pub_storages.len();
+    // Check if the last party has the CRS. If  so, we can stop, otherwise we need to generate it.
+    if pub_storages
+        .last()
+        .unwrap()
         .data_exists(
-            &pub_storages[0]
+            &pub_storages
+                .last()
+                .unwrap()
                 .compute_url(&crs_handle.to_string(), &PubDataType::CRS.to_string())
                 .unwrap(),
         )
         .await
         .unwrap()
-        && priv_storages[0]
+        && priv_storages
+            .last()
+            .unwrap()
             .data_exists(
-                &priv_storages[0]
+                &priv_storages
+                    .last()
+                    .unwrap()
                     .compute_url(&crs_handle.to_string(), &PrivDataType::CrsInfo.to_string())
                     .unwrap(),
             )
@@ -601,7 +626,7 @@ where
     {
         tracing::warn!(
             "Threshold CRS already exist for private storage \"{}\" and public storage \"{}\" for ID {}, skipping generation",
-            priv_storages[0].info(), pub_storages[0].info(), crs_handle
+            priv_storages.last().unwrap().info(), pub_storages.last().unwrap().info(), crs_handle
         );
         return false;
     }
@@ -610,7 +635,7 @@ where
         signing_keys.push(get_signing_key(cur_storage).await);
     }
 
-    let mut rng = get_rng(deterministic, Some(AMOUNT_PARTIES as u64));
+    let mut rng = get_rng(deterministic, Some(amount_parties as u64));
 
     let internal_pp = make_centralized_public_parameters(
         &dkg_params
@@ -654,4 +679,8 @@ where
         );
     }
     true
+}
+
+pub fn max_threshold(amount_parties: usize) -> usize {
+    usize::div_ceil(amount_parties, 3) - 1
 }

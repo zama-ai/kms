@@ -2,9 +2,10 @@ use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::kms::{FheType, RequestId};
 use crate::rpc::rpc_types::Plaintext;
 use crate::rpc::rpc_types::{PubDataType, WrappedPublicKeyOwned};
-use crate::storage::{file::FileStorage, read_pk_at_request_id, StorageReader, StorageType};
+use crate::storage::file::FileStorage;
+use crate::storage::{delete_all_at_request_id, StorageReader};
+use crate::storage::{read_pk_at_request_id, StorageType};
 use crate::util::key_setup::FhePublicKey;
-use crate::{consts::AMOUNT_PARTIES, storage::delete_all_at_request_id};
 use distributed_decryption::expanded_encrypt;
 use std::path::Path;
 use tfhe::safe_serialization::safe_serialize;
@@ -523,14 +524,19 @@ pub async fn compute_compressed_cipher_from_stored_key(
 /// Purge any kind of data, regardless of type, for a specific request ID.
 ///
 /// This function should be used for testing only and it can panic.
-pub async fn purge(pub_path: Option<&Path>, priv_path: Option<&Path>, id: &str) {
+pub async fn purge(
+    pub_path: Option<&Path>,
+    priv_path: Option<&Path>,
+    id: &str,
+    amount_parties: usize,
+) {
     let req_id: RequestId = id.to_string().try_into().unwrap();
     let mut pub_storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
     delete_all_at_request_id(&mut pub_storage, &req_id).await;
     let mut priv_storage = FileStorage::new(priv_path, StorageType::PRIV, None).unwrap();
     delete_all_at_request_id(&mut priv_storage, &req_id).await;
 
-    for i in 1..=AMOUNT_PARTIES {
+    for i in 1..=amount_parties {
         let mut threshold_pub = FileStorage::new(pub_path, StorageType::PUB, Some(i)).unwrap();
         let mut threshold_priv = FileStorage::new(priv_path, StorageType::PRIV, Some(i)).unwrap();
         delete_all_at_request_id(&mut threshold_pub, &req_id).await;
@@ -540,14 +546,17 @@ pub async fn purge(pub_path: Option<&Path>, priv_path: Option<&Path>, id: &str) 
 
 #[cfg(any(test, feature = "testing"))]
 pub(crate) mod setup {
+    use crate::consts::TEST_THRESHOLD_KEY_ID_10P;
+    use crate::kms::RequestId;
     use crate::util::key_setup::{
         ensure_central_crs_exists, ensure_central_keys_exist, ensure_client_keys_exist,
         ThresholdSigningKeyConfig,
     };
     use crate::{
         consts::{
-            AMOUNT_PARTIES, KEY_PATH_PREFIX, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID,
-            TEST_CENTRAL_KEY_ID, TEST_CRS_ID, TEST_PARAM, TEST_THRESHOLD_KEY_ID, TMP_PATH_PREFIX,
+            KEY_PATH_PREFIX, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID,
+            TEST_CENTRAL_KEY_ID, TEST_PARAM, TEST_THRESHOLD_CRS_ID_10P, TEST_THRESHOLD_CRS_ID_4P,
+            TEST_THRESHOLD_KEY_ID_4P, TMP_PATH_PREFIX,
         },
         util::key_setup::ensure_central_server_signing_keys_exist,
     };
@@ -558,6 +567,7 @@ pub(crate) mod setup {
             ensure_threshold_server_signing_keys_exist,
         },
     };
+    use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 
     pub async fn ensure_dir_exist() {
         tokio::fs::create_dir_all(TMP_PATH_PREFIX).await.unwrap();
@@ -567,95 +577,75 @@ pub(crate) mod setup {
     async fn testing_material() {
         ensure_dir_exist().await;
         ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
-        let mut central_pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
-        let mut central_priv_storage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
-        let mut threshold_pub_storages = Vec::with_capacity(AMOUNT_PARTIES);
-        for i in 1..=AMOUNT_PARTIES {
-            threshold_pub_storages.push(FileStorage::new(None, StorageType::PUB, Some(i)).unwrap());
-        }
-        let mut threshold_priv_storages = Vec::with_capacity(AMOUNT_PARTIES);
-        for i in 1..=AMOUNT_PARTIES {
-            threshold_priv_storages
-                .push(FileStorage::new(None, StorageType::PRIV, Some(i)).unwrap());
-        }
-
-        ensure_dir_exist().await;
-        ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
-        ensure_central_server_signing_keys_exist(
-            &mut central_pub_storage,
-            &mut central_priv_storage,
-            &SIGNING_KEY_ID,
-            true,
-        )
-        .await;
-        ensure_central_keys_exist(
-            &mut central_pub_storage,
-            &mut central_priv_storage,
-            TEST_PARAM,
+        central_material(
+            &TEST_PARAM,
             &TEST_CENTRAL_KEY_ID,
             &OTHER_CENTRAL_TEST_ID,
-            true,
-            false,
+            &TEST_CENTRAL_CRS_ID,
         )
         .await;
-        ensure_central_crs_exists(
-            &mut central_pub_storage,
-            &mut central_priv_storage,
-            TEST_PARAM,
-            &TEST_CRS_ID,
-            true,
+        threshold_material(
+            &TEST_PARAM,
+            &TEST_THRESHOLD_KEY_ID_4P,
+            &TEST_THRESHOLD_CRS_ID_4P,
+            4,
         )
         .await;
-        ensure_threshold_server_signing_keys_exist(
-            &mut threshold_pub_storages,
-            &mut threshold_priv_storages,
-            &SIGNING_KEY_ID,
-            true,
-            ThresholdSigningKeyConfig::AllParties(AMOUNT_PARTIES),
-        )
-        .await;
-        ensure_threshold_keys_exist(
-            &mut threshold_pub_storages,
-            &mut threshold_priv_storages,
-            TEST_PARAM,
-            &TEST_THRESHOLD_KEY_ID,
-            true,
-        )
-        .await;
-        ensure_threshold_crs_exists(
-            &mut threshold_pub_storages,
-            &mut threshold_priv_storages,
-            TEST_PARAM,
-            &TEST_CRS_ID,
-            true,
+        // Generate for 10 parties with a different key ID
+        threshold_material(
+            &TEST_PARAM,
+            &TEST_THRESHOLD_KEY_ID_10P,
+            &TEST_THRESHOLD_CRS_ID_10P,
+            10,
         )
         .await;
     }
 
     pub(crate) async fn ensure_testing_material_exists() {
-        testing_material().await
+        testing_material().await;
     }
 
     #[cfg(feature = "slow_tests")]
     async fn default_material() {
         use crate::consts::{
-            DEFAULT_CENTRAL_KEY_ID, DEFAULT_CRS_ID, DEFAULT_PARAM, DEFAULT_THRESHOLD_KEY_ID,
-            OTHER_CENTRAL_DEFAULT_ID,
+            DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM,
+            DEFAULT_THRESHOLD_CRS_ID_10P, DEFAULT_THRESHOLD_CRS_ID_4P,
+            DEFAULT_THRESHOLD_KEY_ID_10P, DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_DEFAULT_ID,
         };
         ensure_dir_exist().await;
+        ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
+        central_material(
+            &DEFAULT_PARAM,
+            &DEFAULT_CENTRAL_KEY_ID,
+            &OTHER_CENTRAL_DEFAULT_ID,
+            &DEFAULT_CENTRAL_CRS_ID,
+        )
+        .await;
+        threshold_material(
+            &DEFAULT_PARAM,
+            &DEFAULT_THRESHOLD_KEY_ID_4P,
+            &DEFAULT_THRESHOLD_CRS_ID_4P,
+            4,
+        )
+        .await;
+        threshold_material(
+            &DEFAULT_PARAM,
+            &DEFAULT_THRESHOLD_KEY_ID_10P,
+            &DEFAULT_THRESHOLD_CRS_ID_10P,
+            10,
+        )
+        .await;
+    }
+
+    async fn central_material(
+        params: &DKGParams,
+        fhe_key_id: &RequestId,
+        other_fhe_key_id: &RequestId,
+        crs_id: &RequestId,
+    ) {
         let mut central_pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
         let mut central_priv_storage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
-        let mut threshold_pub_storages = Vec::with_capacity(AMOUNT_PARTIES);
-        for i in 1..=AMOUNT_PARTIES {
-            threshold_pub_storages.push(FileStorage::new(None, StorageType::PUB, Some(i)).unwrap());
-        }
-        let mut threshold_priv_storages = Vec::with_capacity(AMOUNT_PARTIES);
-        for i in 1..=AMOUNT_PARTIES {
-            threshold_priv_storages
-                .push(FileStorage::new(None, StorageType::PRIV, Some(i)).unwrap());
-        }
 
-        ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
         ensure_central_server_signing_keys_exist(
             &mut central_pub_storage,
             &mut central_priv_storage,
@@ -666,9 +656,9 @@ pub(crate) mod setup {
         ensure_central_keys_exist(
             &mut central_pub_storage,
             &mut central_priv_storage,
-            DEFAULT_PARAM,
-            &DEFAULT_CENTRAL_KEY_ID,
-            &OTHER_CENTRAL_DEFAULT_ID,
+            params.to_owned(),
+            fhe_key_id,
+            other_fhe_key_id,
             true,
             false,
         )
@@ -676,32 +666,50 @@ pub(crate) mod setup {
         ensure_central_crs_exists(
             &mut central_pub_storage,
             &mut central_priv_storage,
-            DEFAULT_PARAM,
-            &DEFAULT_CRS_ID,
+            params.to_owned(),
+            crs_id,
             true,
         )
         .await;
+    }
+
+    async fn threshold_material(
+        params: &DKGParams,
+        fhe_key_id: &RequestId,
+        crs_id: &RequestId,
+        amount_parties: usize,
+    ) {
+        let mut threshold_pub_storages = Vec::with_capacity(amount_parties);
+        for i in 1..=amount_parties {
+            threshold_pub_storages.push(FileStorage::new(None, StorageType::PUB, Some(i)).unwrap());
+        }
+        let mut threshold_priv_storages = Vec::with_capacity(amount_parties);
+        for i in 1..=amount_parties {
+            threshold_priv_storages
+                .push(FileStorage::new(None, StorageType::PRIV, Some(i)).unwrap());
+        }
+
         ensure_threshold_server_signing_keys_exist(
             &mut threshold_pub_storages,
             &mut threshold_priv_storages,
             &SIGNING_KEY_ID,
             true,
-            ThresholdSigningKeyConfig::AllParties(AMOUNT_PARTIES),
+            ThresholdSigningKeyConfig::AllParties(amount_parties),
         )
         .await;
         ensure_threshold_keys_exist(
             &mut threshold_pub_storages,
             &mut threshold_priv_storages,
-            DEFAULT_PARAM,
-            &DEFAULT_THRESHOLD_KEY_ID,
+            params.to_owned(),
+            fhe_key_id,
             true,
         )
         .await;
         ensure_threshold_crs_exists(
             &mut threshold_pub_storages,
             &mut threshold_priv_storages,
-            DEFAULT_PARAM,
-            &DEFAULT_CRS_ID,
+            params.to_owned(),
+            crs_id,
             true,
         )
         .await;
@@ -709,7 +717,7 @@ pub(crate) mod setup {
 
     #[cfg(feature = "slow_tests")]
     pub(crate) async fn ensure_default_material_exists() {
-        default_material().await
+        default_material().await;
     }
 }
 
@@ -756,7 +764,13 @@ async fn test_purge() {
         .await
         .unwrap();
     assert_eq!(priv_urls.len(), 1);
-    purge(test_prefix, test_prefix, pub_urls.keys().collect_vec()[0]).await;
+    purge(
+        test_prefix,
+        test_prefix,
+        pub_urls.keys().collect_vec()[0],
+        1,
+    )
+    .await;
     // Check the keys were deleted
     assert!(central_pub_storage
         .all_urls(&PubDataType::VerfKey.to_string())

@@ -104,7 +104,6 @@ async fn health_check() -> impl Responder {
     HttpResponse::Ok().body("Gateway is listening for reencryption requests")
 }
 
-// TODO don't we miss publishers for key and crs generation?
 #[derive(Debug, Clone)]
 pub struct DecryptionEvent {
     pub(crate) filter: EventDecryptionFilter,
@@ -366,11 +365,11 @@ pub async fn start_kms_event_publisher(sender: Sender<GatewayEvent>) {
     let kms_publisher = KmsEventPublisher::new(sender.clone()).await;
     tokio::spawn(async move {
         if let Err(e) = kms_publisher.run().await {
-            tracing::error!("Failed to run KeyUrlEventPublisher: {:?}", e);
+            tracing::error!("Failed to run KmsEventPublisher: {:?}", e);
             std::process::exit(1);
         }
     });
-    tracing::info!("KeyUrlEventPublisher created");
+    tracing::info!("KmsEventPublisher created");
 }
 
 #[derive(Clone)]

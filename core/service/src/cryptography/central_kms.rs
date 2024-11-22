@@ -796,7 +796,7 @@ pub(crate) mod tests {
     use crate::consts::{
         DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM, OTHER_CENTRAL_DEFAULT_ID,
     };
-    use crate::consts::{DEFAULT_THRESHOLD_KEY_ID, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID};
+    use crate::consts::{DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID};
     use crate::consts::{TEST_CENTRAL_KEYS_PATH, TEST_PARAM};
     use crate::cryptography::central_kms::SoftwareKmsKeys;
     use crate::cryptography::central_kms::{gen_sig_keys, SoftwareKms};
@@ -1275,7 +1275,7 @@ pub(crate) mod tests {
         let ciphertext = vec![1, 2, 3];
         let ciphertext_digest = hash_element(&ciphertext);
         let (enc_pk, _) = ephemeral_encryption_key_generation(&mut rng);
-        let key_id = DEFAULT_THRESHOLD_KEY_ID.clone();
+        let key_id = DEFAULT_THRESHOLD_KEY_ID_4P.clone();
 
         let payload = crate::kms::ReencryptionRequestPayload {
             version: CURRENT_FORMAT_VERSION,

@@ -175,10 +175,14 @@ impl Vss for DummyVss {
                 //NOTE: received_data was init with default 0 values,
                 //so no need to do anything when p2p fails
                 Err(e) => {
-                    tracing::error!("Error {:?}", e);
+                    tracing::error!("Error in Dummy VSS round 1 {:?}", e);
                 }
-                Ok((_party_id, Err(e))) => {
-                    tracing::error!("Error {:?}", e);
+                Ok((party_id, Err(e))) => {
+                    tracing::error!(
+                        "Error in Dummy VSS round 1, when receiving from party {}: {:?}",
+                        party_id,
+                        e
+                    );
                 }
             }
         }
@@ -321,10 +325,14 @@ async fn round_1<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
             //NOTE: received_data was init with default 0 values,
             //so no need to do anything when p2p fails
             Err(e) => {
-                tracing::error!("Error {:?}", e);
+                tracing::error!("Error in VSS round 1 {:?}", e);
             }
-            Ok((_party_id, Err(e))) => {
-                tracing::error!("Error {:?}", e);
+            Ok((party_id, Err(e))) => {
+                tracing::error!(
+                    "Error in VSS round 1, when receiving from party {}: {:?}",
+                    party_id,
+                    e
+                );
             }
         }
     }

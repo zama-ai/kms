@@ -11,8 +11,8 @@ use kms_lib::{
 };
 use kms_lib::{
     consts::{
-        AMOUNT_PARTIES, DEFAULT_CENTRAL_KEY_ID, DEFAULT_CRS_ID, DEFAULT_THRESHOLD_KEY_ID,
-        OTHER_CENTRAL_DEFAULT_ID,
+        DEFAULT_AMOUNT_PARTIES, DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID,
+        DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_DEFAULT_ID,
     },
     storage::{make_storage, Storage, StorageType},
     util::key_setup::{ensure_central_keys_exist, ensure_central_server_signing_keys_exist},
@@ -165,7 +165,7 @@ async fn main() {
         Mode::Centralized { write_privkey: _ } => 1,
         Mode::Threshold {
             signing_key_party_id: _,
-        } => AMOUNT_PARTIES,
+        } => DEFAULT_AMOUNT_PARTIES,
     };
     let mut pub_storages = Vec::with_capacity(amount_storages);
     let mut priv_storages = Vec::with_capacity(amount_storages);
@@ -318,7 +318,7 @@ async fn handle_central_cmd<'a, S: StorageForText>(
             process_crs_cmds(
                 args.pub_storage,
                 args.priv_storage,
-                &DEFAULT_CRS_ID,
+                &DEFAULT_CENTRAL_CRS_ID,
                 args.show_existing,
                 args.overwrite,
             )
@@ -327,14 +327,14 @@ async fn handle_central_cmd<'a, S: StorageForText>(
                 args.pub_storage,
                 args.priv_storage,
                 params,
-                &DEFAULT_CRS_ID,
+                &DEFAULT_CENTRAL_CRS_ID,
                 args.deterministic,
             )
             .await
             {
                 tracing::warn!(
                     "CRS with default ID {} already exist, skipping generation",
-                    DEFAULT_CRS_ID.to_string()
+                    DEFAULT_CENTRAL_CRS_ID.to_string()
                 );
             }
         }
@@ -376,14 +376,14 @@ async fn handle_threshold_cmd<'a, S: StorageForText>(
                 args.deterministic,
                 match args.signing_key_party_id {
                     Some(i) => ThresholdSigningKeyConfig::OneParty(i),
-                    None => ThresholdSigningKeyConfig::AllParties(AMOUNT_PARTIES),
+                    None => ThresholdSigningKeyConfig::AllParties(DEFAULT_AMOUNT_PARTIES),
                 },
             )
             .await
             {
                 tracing::warn!(
                     "Threshold signing keys with ID {} already exist, skipping generation",
-                    DEFAULT_THRESHOLD_KEY_ID.to_string()
+                    DEFAULT_THRESHOLD_KEY_ID_4P.to_string()
                 );
             }
         }
@@ -396,7 +396,7 @@ async fn handle_threshold_cmd<'a, S: StorageForText>(
                 process_fhe_cmds(
                     pub_storage,
                     priv_storage,
-                    &DEFAULT_THRESHOLD_KEY_ID,
+                    &DEFAULT_THRESHOLD_KEY_ID_4P,
                     args.show_existing,
                     args.overwrite,
                 )
@@ -406,14 +406,14 @@ async fn handle_threshold_cmd<'a, S: StorageForText>(
                 args.pub_storages,
                 args.priv_storages,
                 params,
-                &DEFAULT_THRESHOLD_KEY_ID,
+                &DEFAULT_THRESHOLD_KEY_ID_4P,
                 args.deterministic,
             )
             .await
             {
                 tracing::warn!(
                     "Threshold FHE keys with ID {} already exist, skipping generation",
-                    DEFAULT_THRESHOLD_KEY_ID.to_string()
+                    DEFAULT_THRESHOLD_KEY_ID_4P.to_string()
                 );
             }
         }
@@ -426,7 +426,7 @@ async fn handle_threshold_cmd<'a, S: StorageForText>(
                 process_crs_cmds(
                     pub_storage,
                     priv_storage,
-                    &DEFAULT_CRS_ID,
+                    &DEFAULT_THRESHOLD_CRS_ID_4P,
                     args.show_existing,
                     args.overwrite,
                 )
@@ -436,14 +436,14 @@ async fn handle_threshold_cmd<'a, S: StorageForText>(
                 args.pub_storages,
                 args.priv_storages,
                 params,
-                &DEFAULT_CRS_ID,
+                &DEFAULT_THRESHOLD_CRS_ID_4P,
                 args.deterministic,
             )
             .await
             {
                 tracing::warn!(
-                    "Threshold CRS with default ID {} already exist, skipping generation",
-                    DEFAULT_CRS_ID.to_string()
+                    "Threshold CRS for 4 parties with default ID {} already exist, skipping generation",
+                    DEFAULT_THRESHOLD_CRS_ID_4P.to_string()
                 );
             }
         }

@@ -34,7 +34,7 @@ pub async fn setup_mock_kms(n: usize) -> HashMap<u32, JoinHandle<()>> {
         out.insert(i as u32, handle);
     }
     // We need to sleep as the servers keep running in the background and hence do not return
-    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    tokio::time::sleep(tokio::time::Duration::from_secs(2 * (n as u64) / 4)).await;
     out
 }
 
