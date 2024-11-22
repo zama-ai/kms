@@ -1,8 +1,9 @@
-use crate::contract::KmsContract;
 use cosmwasm_std::{Response, StdResult, Storage};
-use events::kms::{KmsCoreConf, KmsEvent, KmsOperation, OperationValue, TransactionId};
+use events::kms::{KmsCoreConf, KmsOperation, OperationValue, TransactionId};
 
 pub trait EventEmitStrategy {
+    // TODO: remove this dead_code allowing once the BSC is fully implemented
+    #![allow(dead_code)]
     fn emit_event(
         &self,
         storage: &mut dyn Storage,
@@ -16,65 +17,6 @@ pub trait EventEmitStrategy {
         txn_id: &TransactionId,
         operation: &KmsOperation,
     ) -> StdResult<bool>;
-}
-
-impl EventEmitStrategy for KmsContract {
-    /// Emit a KmsEvent if relevant
-    ///
-    /// An event is always emitted if the operation is a request. For responses, the event is emitted
-    /// if the transaction has received enough operations (of the same response type) to satisfy the
-    /// core configuration's thresholds.
-    fn emit_event(
-        &self,
-        storage: &mut dyn Storage,
-        txn_id: &TransactionId,
-        operation: &OperationValue,
-    ) -> StdResult<Response> {
-        let mut response = Response::new();
-
-        let operation = operation.into_kms_operation();
-        let should_emit = self.should_emit_event(storage, txn_id, &operation)?;
-
-        if should_emit {
-            response = response.add_event(
-                KmsEvent::builder()
-                    .txn_id(txn_id.to_vec())
-                    .operation(operation)
-                    .build(),
-            );
-        }
-
-        Ok(response)
-    }
-
-    /// Check if an event should be emitted for a given operation
-    ///
-    /// An event is always emitted if the operation is a request. For responses, the event is emitted
-    /// if the transaction has received enough operations (of the same response type) to satisfy the
-    /// core configuration's thresholds.
-    fn should_emit_event(
-        &self,
-        storage: &mut dyn Storage,
-        txn_id: &TransactionId,
-        operation: &KmsOperation,
-    ) -> StdResult<bool> {
-        // Always emit events for requests
-        if operation.is_request() {
-            return Ok(true);
-        }
-
-        // Emit events for responses if the core configuration's thresholds are met
-        if operation.is_response() {
-            let response_values = self
-                .storage
-                .get_values_from_transaction_and_operation(storage, txn_id, operation)?;
-            let core_conf = self.storage.load_core_conf(storage)?;
-            return Ok(operation.should_emit_response_event(&core_conf, &response_values));
-        }
-
-        // This should never happen: currently, an operation is either a request or a response
-        Ok(false)
-    }
 }
 
 /// Check if a given number of operations of a certain type have been received
@@ -119,7 +61,7 @@ where
     )
 }
 
-trait EmitEventVerifier {
+pub trait EmitEventVerifier {
     fn should_emit_response_event(
         &self,
         core_conf: &KmsCoreConf,
