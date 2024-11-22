@@ -10,6 +10,8 @@ services:
   # anyway where the keys really are
   dev-kms-core:
     image: ghcr.io/zama-ai/kms-service:latest
+    environment:
+      DOCKER_BUILDKIT: 1
     build:
       context: .
       dockerfile: core/service/operations/docker/dev.dockerfile
@@ -51,6 +53,7 @@ services:
       - "--conf-file"
       - "config/default.toml"
     environment:
+      - DOCKER_BUILDKIT=1
       - ASC_CONN__BLOCKCHAIN__ADDRESSES=http://dev-kms-blockchain-validator:9090
       - ASC_CONN__CORE__ADDRESSES=http://dev-kms-core:50051
       - ASC_CONN__STORE__URL=http://dev-kv-store:8088

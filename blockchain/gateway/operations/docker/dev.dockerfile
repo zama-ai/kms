@@ -1,41 +1,53 @@
+# syntax=docker/dockerfile:1
 # Multistage build to reduce image size
-# First stage builds the binary
-FROM rust:1.81-slim-bookworm AS base
+FROM rust:1.82-slim-bookworm AS base
 
-RUN apt --allow-releaseinfo-change update && \
-    apt install -y make protobuf-compiler ssh git gcc libssl-dev libprotobuf-dev pkg-config
+# Install build dependencies
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+    gcc \
+    git \
+    libprotobuf-dev \
+    libssl-dev \
+    make \
+    pkg-config \
+    protobuf-compiler \
+    ssh \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app/gateway
 COPY . .
 
-# Add github.com to the list of known hosts. .ssh folder needs to be created first to avoid permission errors
-RUN mkdir -p -m 0600 /root/.ssh
-RUN ssh-keyscan -H github.com >> ~/.ssh/known_hosts
+# Setup SSH and git
+RUN mkdir -p -m 0600 /root/.ssh && \
+    ssh-keyscan -H github.com >> ~/.ssh/known_hosts && \
+    mkdir -p /app/gateway/bin
 
-# Install the binary leaving it in the WORKDIR/bin folder
-RUN mkdir -p /app/gateway/bin
-RUN git config --global url."https://${BLOCKCHAIN_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
-RUN --mount=type=cache,target=/usr/local/cargo/registry cargo install --path blockchain/gateway --root blockchain/gateway --bins
+# Configure git with secure token handling
+RUN --mount=type=secret,id=BLOCKCHAIN_ACTIONS_TOKEN,env=BLOCKCHAIN_ACTIONS_TOKEN \
+    git config --global url."https://$BLOCKCHAIN_ACTIONS_TOKEN@github.com".insteadOf ssh://git@github.com
 
-# Second stage builds the runtime image.
-# This stage will be the final image
-FROM debian:stable-slim AS go-runtime
+# Build with improved caching
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/gateway/target,sharing=locked \
+    cargo install --path blockchain/gateway --root blockchain/gateway --bins
 
-RUN apt --allow-releaseinfo-change update && \
-    apt install -y libssl-dev libprotobuf-dev curl netcat-openbsd
-WORKDIR /app/gateway
-RUN mkdir -p /app/gateway/config
-
-# Set the path to include the binaries and not just the default /usr/local/bin
-ENV PATH="$PATH:/app/gateway/bin"
-
-# Third stage: Copy the binaries from the base stage and the go-runtime stage
+# Final runtime stage
 FROM debian:stable-slim AS runtime
-RUN apt --allow-releaseinfo-change update && apt install -y libssl3 wget
+
+# Install runtime dependencies
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+    libssl3 \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app/gateway
-# Set the path to include the binaries and not just the default /usr/local/bin
 ENV PATH="$PATH:/app/gateway/bin"
 
-# Copy the binaries from the base stage
+# Copy binaries and config
 COPY --from=base /app/gateway/blockchain/gateway/bin/ /app/gateway/bin/
 COPY ./blockchain/gateway/config/ /app/gateway/config/

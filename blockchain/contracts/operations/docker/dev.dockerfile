@@ -5,23 +5,33 @@ WORKDIR /app
 COPY . .
 
 # Install build dependencies for Alpine
-RUN apk add --no-cache build-base clang llvm bash curl
+RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
+    apk add --no-cache build-base clang llvm bash curl
 
 # Add wasm target
 RUN rustup target add wasm32-unknown-unknown
 
 # Build ASC contract and report initial size
-RUN cargo build --target wasm32-unknown-unknown --profile wasm --lib \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,sharing=locked \
+    cargo build --target wasm32-unknown-unknown --profile wasm --lib \
     --manifest-path /app/blockchain/contracts/asc/Cargo.toml && \
     echo "ASC Pre-optimization size: $(wc -c < /app/target/wasm32-unknown-unknown/wasm/asc.wasm) bytes"
 
 # Build Tendermint-IPSC contract and report initial size
-RUN cargo build --target wasm32-unknown-unknown --profile wasm --lib \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,sharing=locked \
+    cargo build --target wasm32-unknown-unknown --profile wasm --lib \
     --manifest-path /app/blockchain/contracts/tendermint-ipsc/Cargo.toml && \
     echo "Tendermint-IPSC Pre-optimization size: $(wc -c < /app/target/wasm32-unknown-unknown/wasm/tendermint_ipsc.wasm) bytes"
 
 # Build Ethereum-IPSC contract and report initial size
-RUN cargo build --target wasm32-unknown-unknown --profile wasm --lib \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,sharing=locked \
+    cargo build --target wasm32-unknown-unknown --profile wasm --lib \
     --manifest-path /app/blockchain/contracts/ethereum-ipsc/Cargo.toml && \
     echo "Ethereum-IPSC Pre-optimization size: $(wc -c < /app/target/wasm32-unknown-unknown/wasm/ethereum_ipsc.wasm) bytes"
 
@@ -43,10 +53,15 @@ RUN ARCH=$(uname -m); \
     --target $TARGET
 
 # Create optimized directory
-RUN mkdir -p /app/optimized
+# Create directories for intermediate and final optimized files
+RUN mkdir -p /app/optimized-input /app/optimized
 
-# Optimize ASC and report final size, check size limit. As of Oct. 23 optimized WASM size is around 657000 bytes
-RUN wasm-opt -Oz "/app/target/wasm32-unknown-unknown/wasm/asc.wasm" -o "/app/optimized/asc.wasm" && \
+# Copy built WASM files to intermediate directory
+RUN --mount=type=cache,target=/app/target,sharing=locked \
+    cp /app/target/wasm32-unknown-unknown/wasm/*.wasm /app/optimized-input/
+
+# Optimize ASC and report final size, check size limit
+RUN wasm-opt -Oz "/app/optimized-input/asc.wasm" -o "/app/optimized/asc.wasm" && \
     size=$(wc -c < /app/optimized/asc.wasm) && \
     echo "ASC Post-optimization size: $size bytes" && \
     if [ "$size" -ge 819200 ]; then \
@@ -55,7 +70,7 @@ RUN wasm-opt -Oz "/app/target/wasm32-unknown-unknown/wasm/asc.wasm" -o "/app/opt
     fi
 
 # Optimize Tendermint-IPSC and report final size, check size limit
-RUN wasm-opt -Oz "/app/target/wasm32-unknown-unknown/wasm/tendermint_ipsc.wasm" -o "/app/optimized/tendermint_ipsc.wasm" && \
+RUN wasm-opt -Oz "/app/optimized-input/tendermint_ipsc.wasm" -o "/app/optimized/tendermint_ipsc.wasm" && \
     size=$(wc -c < /app/optimized/tendermint_ipsc.wasm) && \
     echo "Tendermint-IPSC Post-optimization size: $size bytes" && \
     if [ "$size" -ge 819200 ]; then \
@@ -64,7 +79,7 @@ RUN wasm-opt -Oz "/app/target/wasm32-unknown-unknown/wasm/tendermint_ipsc.wasm" 
     fi
 
 # Optimize Ethereum-IPSC and report final size, check size limit
-RUN wasm-opt -Oz "/app/target/wasm32-unknown-unknown/wasm/ethereum_ipsc.wasm" -o "/app/optimized/ethereum_ipsc.wasm" && \
+RUN wasm-opt -Oz "/app/optimized-input/ethereum_ipsc.wasm" -o "/app/optimized/ethereum_ipsc.wasm" && \
     size=$(wc -c < /app/optimized/ethereum_ipsc.wasm) && \
     echo "Ethereum-IPSC Post-optimization size: $size bytes" && \
     if [ "$size" -ge 819200 ]; then \

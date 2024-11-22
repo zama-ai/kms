@@ -1,36 +1,47 @@
-# Multistage build to reduce image size
-# First stage builds the binary
-FROM rust:1.81-slim-bookworm AS base
+# syntax=docker/dockerfile:1.4
 
-RUN apt update && \
-    apt install -y make protobuf-compiler iproute2 iputils-ping iperf net-tools dnsutils ssh git gcc libssl-dev libprotobuf-dev pkg-config
+# Build Stage
+FROM rust:1.82-slim-bookworm AS builder
+
+# Install build dependencies with cache mount
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+    gcc \
+    libprotobuf-dev \
+    libssl-dev \
+    make \
+    pkg-config \
+    protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app/kms-connector
+
+# Copy entire project for workspace support
 COPY . .
 
-# Install the binary leaving it in the WORKDIR/bin folder
-RUN mkdir -p /app/kms-connector/bin
-RUN cargo install --path blockchain/connector --root blockchain/connector --bins
+# Create bin directory and build using cargo install with caching
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/kms-connector/target,sharing=locked \
+    mkdir -p /app/kms-connector/bin && \
+    cargo install --path blockchain/connector --root blockchain/connector --bins
 
-# Second stage builds the runtime image.
-# This stage will be the final image
-FROM debian:stable-slim AS go-runtime
+# Runtime Stage
+FROM debian:stable-slim
 
-RUN apt update && \
-    apt install -y iproute2 iputils-ping iperf net-tools dnsutils libssl-dev libprotobuf-dev curl netcat-openbsd
+# Install only required runtime dependencies
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        libssl3 \
+        libprotobuf-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app/kms-connector
-RUN mkdir -p /app/kms-connector/config
 
-# Set the path to include the binaries and not just the default /usr/local/bin
-ENV PATH="$PATH:/app/kms-connector/bin"
-
-# Third stage: Copy the binaries from the base stage and the go-runtime stage
-FROM debian:stable-slim AS runtime
-RUN apt update && apt install -y libssl3
-WORKDIR /app/kms-connector
-# Set the path to include the binaries and not just the default /usr/local/bin
-ENV PATH="$PATH:/app/kms-connector/bin"
-
-# Copy the binaries from the base stage
-COPY --from=base /app/kms-connector/blockchain/connector/bin/ /app/kms-connector/bin/
+# Copy binaries and config
+COPY --from=builder /app/kms-connector/blockchain/connector/bin/ /app/kms-connector/bin/
 COPY ./blockchain/connector/config/ /app/kms-connector/config/
+
+ENV PATH="/app/kms-connector/bin:$PATH"

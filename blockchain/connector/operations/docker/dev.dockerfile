@@ -1,41 +1,58 @@
+# syntax=docker/dockerfile:1
 # Multistage build to reduce image size
-# First stage builds the binary
-FROM rust:1.81-slim-bookworm AS base
+FROM rust:1.82-slim-bookworm AS base
 
-RUN apt update && \
-    apt install -y make protobuf-compiler iproute2 iputils-ping iperf net-tools dnsutils ssh git gcc libssl-dev libprotobuf-dev pkg-config
+# Install build dependencies
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+    gcc \
+    git \
+    libprotobuf-dev \
+    libssl-dev \
+    pkg-config \
+    protobuf-compiler \
+    ssh \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app/kms-connector
 COPY . .
 
-# Add github.com to the list of known hosts. .ssh folder needs to be created first to avoid permission errors
-RUN mkdir -p -m 0600 /root/.ssh
-RUN ssh-keyscan -H github.com >> ~/.ssh/known_hosts
+# Setup SSH and git
+RUN mkdir -p -m 0600 /root/.ssh && \
+    ssh-keyscan -H github.com >> ~/.ssh/known_hosts && \
+    mkdir -p /app/kms-connector/bin
 
-# Install the binary leaving it in the WORKDIR/bin folder
-RUN mkdir -p /app/kms-connector/bin
-RUN git config --global url."https://${BLOCKCHAIN_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
-RUN --mount=type=cache,target=/usr/local/cargo/registry cargo install --path blockchain/connector --root blockchain/connector --bins
+# Configure git with secure token handling
+RUN --mount=type=secret,id=BLOCKCHAIN_ACTIONS_TOKEN,env=BLOCKCHAIN_ACTIONS_TOKEN \
+    git config --global url."https://$BLOCKCHAIN_ACTIONS_TOKEN@github.com".insteadOf ssh://git@github.com
 
-# Second stage builds the runtime image.
-# This stage will be the final image
-FROM debian:stable-slim AS go-runtime
+# Build with improved caching
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/kms-connector/target,sharing=locked \
+    cargo install --path blockchain/connector --root blockchain/connector --bins
 
-RUN apt update && \
-    apt install -y iproute2 iputils-ping iperf net-tools dnsutils libssl-dev libprotobuf-dev curl netcat-openbsd
+# Dependencies stage
+FROM debian:stable-slim AS dependencies
+
 WORKDIR /app/kms-connector
 RUN mkdir -p /app/kms-connector/config
-
-# Set the path to include the binaries and not just the default /usr/local/bin
 ENV PATH="$PATH:/app/kms-connector/bin"
 
-# Third stage: Copy the binaries from the base stage and the go-runtime stage
+# Final runtime stage
 FROM debian:stable-slim AS runtime
-RUN apt update && apt install -y libssl3
+
+# Install minimal runtime dependencies
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app/kms-connector
-# Set the path to include the binaries and not just the default /usr/local/bin
 ENV PATH="$PATH:/app/kms-connector/bin"
 
-# Copy the binaries from the base stage
+# Copy binaries and config
 COPY --from=base /app/kms-connector/blockchain/connector/bin/ /app/kms-connector/bin/
 COPY ./blockchain/connector/config/ /app/kms-connector/config/
