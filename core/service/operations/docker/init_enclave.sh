@@ -31,11 +31,28 @@ get_value() {
     yq -e -p toml -oy ".$KEY" "$KMS_SERVER_CONFIG_FILE" || fail "$KEY not present in config"
 }
 
-start_aws_api_proxy() {
-    local SERVICE_NAME="$1"
+is_threshold() {
+    yq -e -p toml -oy '.threshold' "$KMS_SERVER_CONFIG_FILE" &>/dev/null
+}
+
+start_tcp_proxy_out() {
+    local NAME="$1"
     local PORT="$2"
-    log "starting enclave-side AWS $SERVICE_NAME proxy"
-    socat TCP-LISTEN:"$PORT",fork VSOCK-CONNECT:$PARENT_CID:"$PORT" |& logger &
+    log "starting enclave-side $NAME proxy"
+    socat \
+	TCP-LISTEN:"$PORT",fork,reuseaddr \
+	VSOCK-CONNECT:$PARENT_CID:"$PORT" \
+	|& logger &
+}
+
+start_tcp_proxy_in() {
+    local NAME="$1"
+    local PORT="$2"
+    log "starting enclave-side $NAME proxy"
+    socat \
+	VSOCK-LISTEN:"$PORT",fork,reuseaddr \
+	TCP:127.0.0.1:"$PORT" \
+	|& logger &
 }
 
 export PATH="/app/kms/core/service/bin:$PATH"
@@ -52,13 +69,13 @@ log "requesting kms-server config"
 socat -u VSOCK-CONNECT:$PARENT_CID:$CONFIG_PORT CREATE:$KMS_SERVER_CONFIG_FILE |& logger || fail "cannot receive kms-server config"
 
 # AWS API proxies
-start_aws_api_proxy "IMDS" "$(get_configured_port "aws.imds_endpoint")"
-start_aws_api_proxy "S3" "$(get_configured_port "aws.s3_endpoint")"
-start_aws_api_proxy "KMS" "$(get_configured_port "aws.awskms_endpoint")"
+start_tcp_proxy_out "AWS IMDS" "$(get_configured_port "aws.imds_endpoint")"
+start_tcp_proxy_out "AWS S3" "$(get_configured_port "aws.s3_endpoint")"
+start_tcp_proxy_out "AWS KMS" "$(get_configured_port "aws.awskms_endpoint")"
 
 # ensure that keys exist if running in centralized mode
 # do nothing if [threshold] config section exists
-yq -e -p toml -oy '.threshold' "$KMS_SERVER_CONFIG_FILE" &>/dev/null || \
+is_threshold || \
     {
 	log "generating keys for centralized KMS"
 	kms-gen-keys \
@@ -73,10 +90,19 @@ yq -e -p toml -oy '.threshold' "$KMS_SERVER_CONFIG_FILE" &>/dev/null || \
 	    |& logger || fail "cannot generate keys"
     }
 
-# gRPC proxy
-log "starting gRPC proxy"
-KMS_SERVER_GRPC_PORT=$(get_configured_port "service.listen_port")
-socat VSOCK-LISTEN:"$KMS_SERVER_GRPC_PORT",fork TCP:127.0.0.1:"$KMS_SERVER_GRPC_PORT" |& logger &
+# gRPC proxies
+start_tcp_proxy_in "gRPC client" "$(get_configured_port "service.listen_port")"
+is_threshold && \
+    {
+	start_tcp_proxy_in "gRPC peer" "$(get_configured_port "threshold.listen_port")" &
+
+	# one outgoing proxy for each threshold peer
+	EXPR="start_tcp_proxy_out 'threshold party \(.party_id)' \(.port);"
+	START_TCP_PROXY_OUT_CMDS=$( \
+	    yq -p toml -op ".threshold.peers | map (\"$EXPR\")" $KMS_SERVER_CONFIG_FILE \
+		| sed 's/^.* = //g')
+	eval "$START_TCP_PROXY_OUT_CMDS"
+    }
 
 # showtime!
 log "starting kms-server"

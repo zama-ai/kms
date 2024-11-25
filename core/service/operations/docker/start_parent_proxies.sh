@@ -25,12 +25,23 @@ get_value() {
     yq -e -p toml -oy ".$KEY" "$KMS_SERVER_CONFIG_FILE"
 }
 
-start_aws_api_proxy() {
-    local SERVICE_NAME="$1"
+is_threshold() {
+    yq -e -p toml -oy '.threshold' "$KMS_SERVER_CONFIG_FILE" &>/dev/null
+}
+
+start_tcp_proxy_out() {
+    local NAME="$1"
     local VSOCK_PORT="$2"
     local TCP_DST="$3"
-    echo "start_proxies: starting parent-side AWS $SERVICE_NAME proxy"
+    echo "start_proxies: starting parent-side $NAME proxy"
     socat VSOCK-LISTEN:"$VSOCK_PORT",fork,reuseaddr TCP:"$TCP_DST" &
+}
+
+start_tcp_proxy_in() {
+    local NAME="$1"
+    local PORT="$2"
+    echo "start_proxies: starting parent-side $NAME proxy"
+    socat TCP-LISTEN:"$PORT",fork,reuseaddr VSOCK-CONNECT:"$ENCLAVE_CID":"$PORT"
 }
 
 # start the log stream for the enclave
@@ -43,11 +54,22 @@ socat VSOCK-LISTEN:"$ENCLAVE_CONFIG_PORT",fork,reuseaddr OPEN:"$KMS_SERVER_CONFI
 
 # start TCP proxies to let the enclave access AWS APIs
 AWS_REGION=$(get_value "aws.region")
-start_aws_api_proxy "IMDS" "$(get_configured_port "aws.imds_endpoint")" "169.254.169.254:80"
-start_aws_api_proxy "S3" "$(get_configured_port "aws.s3_endpoint")" "s3.$AWS_REGION.amazonaws.com:443"
-start_aws_api_proxy "KMS" "$(get_configured_port "aws.awskms_endpoint")" "kms.$AWS_REGION.amazonaws.com:443"
+start_tcp_proxy_out "AWS IMDS" "$(get_configured_port "aws.imds_endpoint")" "169.254.169.254:80"
+start_tcp_proxy_out "AWS S3" "$(get_configured_port "aws.s3_endpoint")" "s3.$AWS_REGION.amazonaws.com:443"
+start_tcp_proxy_out "AWS KMS" "$(get_configured_port "aws.awskms_endpoint")" "kms.$AWS_REGION.amazonaws.com:443"
+
+# if needed, start TCP proxies for threshold peer-to-peer connections
+is_threshold && \
+    {
+	start_tcp_proxy_in "gRPC peer" "$(get_configured_port "threshold.listen_port")" &
+
+	# one outgoing proxy for each threshold peer
+	EXPR="start_tcp_proxy_out 'threshold party \(.party_id)' \(.port) \(.address):\(.port);"
+	START_TCP_PROXY_OUT_CMDS=$(\
+	    yq -p toml -op ".threshold.peers | map(\"$EXPR\")" "$KMS_SERVER_CONFIG_FILE" \
+		| sed 's/^.* = //g')
+	eval "$START_TCP_PROXY_OUT_CMDS"
+    }
 
 # start a TCP proxy to let the world access the gRPC API in the enclave
-echo "start_enclave: starting parent-side gRPC proxy"
-KMS_SERVER_GRPC_PORT=$(get_configured_port "service.listen_port")
-socat TCP-LISTEN:"$KMS_SERVER_GRPC_PORT",fork,reuseaddr VSOCK-CONNECT:"$ENCLAVE_CID":"$KMS_SERVER_GRPC_PORT"
+start_tcp_proxy_in "gRPC client" "$(get_configured_port "service.listen_port")"
