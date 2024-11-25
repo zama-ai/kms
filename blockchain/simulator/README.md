@@ -85,11 +85,8 @@ $ cargo run -- -f <path-to-toml-config-file> insecure-key-gen
 A CRS can be created using the following command, where `<max-num-bits>` is the number of bits that one can proof with the CRS:
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> crs-gen --max-num-bits <max-num-bits>
+$ cargo run -- -f <path-to-toml-config-file> insecure-crs-gen --max-num-bits <max-num-bits>
 ```
-
-Note that threshold generation of a CRS with more than a handful of bits will take in the order of multiple minutes! Timeouts might need to be adjusted for that.
-
 
 ### Decrypt
 

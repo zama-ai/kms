@@ -18,13 +18,13 @@ services:
       sleep 2 &&
       echo \"Threshold core setup\" &&
       simulator -f /app/config/local_threshold_from_compose.toml insecure-key-gen &&
-      simulator -f /app/config/local_threshold_from_compose.toml crs-gen --max-num-bits 256
+      simulator -f /app/config/local_threshold_from_compose.toml insecure-crs-gen --max-num-bits 256
       "
     volumes:
       - ./blockchain/simulator/config:/app/config
 
   # 6. Start gateway with key-id from key-gen
-  # TODO: 
+  # TODO:
   dev-kms-gateway:
     depends_on:
       dev-kms-simulator-keygen:
