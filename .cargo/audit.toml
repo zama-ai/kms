@@ -4,7 +4,8 @@
 [advisories]
 # The ignored vulnerability RUSTSEC-2024-0376 is tracked by #1162
 # The ignored vulnerability RUSTSEC-2023-0071 is not applicable in our use-case
-ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2024-0376"]
+# The ignored vulnerability RUSTSEC-2024-0399 is tracked by #1556
+ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2024-0376", "RUSTSEC-2024-0399"]
 informational_warnings = ["unmaintained"]
 severity_threshold = "medium"
 
