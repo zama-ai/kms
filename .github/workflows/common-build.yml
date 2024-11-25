@@ -1,3 +1,4 @@
+# Main build workflow that handles both x86 and ARM builds
 name: Compile Rust Project and Run Tests
 
 on:
@@ -58,7 +59,10 @@ on:
 env:
   CARGO_TERM_COLOR: always
   DOCKER_BUILD_TEST_SIMULATOR: 1
+  CARGO_INCREMENTAL: 1
+  DOCKER_BUILDKIT: 1
   NPM_TAG: ""
+  CACHE_PREFIX: "${{ github.event.pull_request.number || github.ref_name }}"
 
 jobs:
   compile-rust-unit-tests:
@@ -93,24 +97,36 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Setup Cache
+        uses: actions/cache@6849a6489940f00c2f30c0fb92c6274307ccb58a  # v4.1.2
+        with:
+          path: |
+            /app
+            /tmp/.buildx-cache
+          key: |
+            "key: ${{ env.CACHE_PREFIX }}-cargo-${{ hashFiles('**/Cargo.lock') }}"
+          restore-keys: |
+            "${{ env.CACHE_PREFIX }}-cargo"
+            "${{ env.CACHE_PREFIX }}-"
+
       - name: Set up Docker Buildx
+        # Initialize Docker Buildx for multi-platform builds.
         if: ${{ inputs.package-name == 'simulator' }}
         uses: docker/setup-buildx-action@d70bba72b1f3fd22344832f00baa16ece964efeb # v3.3.0
         with:
           platforms: linux/amd64,linux/arm64
+          buildkitd-flags: --debug
 
       - name: Setup Home
         if: ${{ inputs.runs-on != 'ubuntu-latest' }}
         run: echo "HOME=/home/ubuntu" >> "${GITHUB_ENV}"
 
+      # Rust toolchain setup
       - name: Set up Rust
         uses: actions-rust-lang/setup-rust-toolchain@11df97af8e8102fd60b60a77dfbf58d40cd843b8 # v1.10.1
         with:
           toolchain: stable
           components: rustfmt, clippy, llvm-tools-preview
-
-      - name: Setup Rust Cache
-        uses: Swatinem/rust-cache@82a92a6e8fbeee089604da2575dc567ae9ddeaab # v2.7.5
 
       - name: Install Protoc
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
@@ -120,12 +136,14 @@ jobs:
       - name: Setup usage of private repo
         run: git config --global url."https://${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}@github.com".insteadOf ssh://git@github.com
 
+      # Code quality checks
       - name: Formatting
         run: cargo fmt --all -- --check
 
       - name: Linting
         run: cargo clippy --all-targets --all-features --package ${{inputs.package-name}} -- -D warnings
 
+      # Test execution
       - name: Run Tests
         if: ${{ ! inputs.test-coverage }}
         env:
@@ -135,6 +153,7 @@ jobs:
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
         run: cargo test ${{ inputs.args-tests }} ${{ inputs.args-tests-fhe }}
 
+      # Coverage reporting
       - name: Run Tests with Coverage
         if: ${{ inputs.test-coverage }}
         env:
@@ -169,6 +188,7 @@ jobs:
           path: "${{inputs.working-directory}}/lcov"
           min_coverage: ${{ inputs.test-minimum-coverage }}
 
+      # Documentation
       - name: Build Documentation
         if: ${{ inputs.build-publish-docs }}
         run: cargo doc --no-deps
@@ -181,6 +201,7 @@ jobs:
           publish_dir: ./target/doc
           destination_dir: ${{ inputs.working-directory }}
 
+      # WASM handling
       - name: Install
         if: ${{ inputs.run-wasm }}
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
@@ -205,6 +226,7 @@ jobs:
         if: ${{ inputs.run-wasm }}
         run: node --test tests/js
 
+      # NPM package handling
       - name: Set NPM version tag to latest
         if: ${{ !github.event.release.prerelease }}
         run: |
@@ -215,8 +237,9 @@ jobs:
         run: |
           echo "NPM_TAG=prerelease" >> "${GITHUB_ENV}"
 
+      # Node package build and publish
       - name: NPM build node package
-        if: ${{ inputs.npm-release  }}
+        if: ${{ inputs.npm-release }}
         working-directory: ./core/service
         run: |
           rm -rf pkg
@@ -234,6 +257,7 @@ jobs:
           provenance: false # change to true when repo is public (see #1048)
           tag: ${{ env.NPM_TAG }}
 
+      # Web package build and publish
       - name: NPM build web package
         if: ${{ inputs.npm-release }}
         working-directory: ./core/service

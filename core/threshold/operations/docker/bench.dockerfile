@@ -1,57 +1,90 @@
+# syntax=docker/dockerfile:1.4
 # Multistage build to reduce image size
-# First stage builds the binary
-FROM rust:1.81-slim-bookworm AS base
+FROM rust:1.82-slim-bookworm AS builder
 
-ARG CONCRETE_ACTIONS_TOKEN
-
-RUN apt update && \
-    apt install -y make protobuf-compiler iproute2 iputils-ping iperf net-tools dnsutils ssh git gcc libssl-dev libprotobuf-dev pkg-config
+# Install only essential build dependencies, alphabetically sorted
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        gcc \
+        git \
+        libprotobuf-dev \
+        libssl-dev \
+        make \
+        pkg-config \
+        protobuf-compiler \
+        ssh \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app/ddec
-COPY . .
 
-# Add github.com to the list of known hosts. .ssh folder needs to be created first to avoid permission errors
-RUN mkdir -p -m 0600 /root/.ssh
-RUN ssh-keyscan -H github.com >> ~/.ssh/known_hosts
+# Setup SSH and git access
+RUN mkdir -p -m 0600 /root/.ssh && \
+    ssh-keyscan -H github.com >> ~/.ssh/known_hosts && \
+    mkdir -p /app/ddec/bin
 
-# Install the binary leaving it in the WORKDIR/bin folder
-RUN mkdir -p /app/ddec/bin
-RUN git config --global url."https://${CONCRETE_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
-RUN --mount=type=cache,target=/usr/local/cargo/registry cargo install --path core/threshold --root . --bins --features=choreographer --features=testing
+# Configure git with secure token handling
+RUN --mount=type=secret,id=BLOCKCHAIN_ACTIONS_TOKEN \
+    export BLOCKCHAIN_ACTIONS_TOKEN=$(cat /run/secrets/BLOCKCHAIN_ACTIONS_TOKEN) && \
+    git config --global url."https://${BLOCKCHAIN_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
 
-# Second stage builds the runtime image.
-# This stage will be the final image
-FROM debian:stable-slim AS go-runtime
+# Copy project files
+COPY . /app/ddec
 
-RUN apt update && \
-    apt install -y iproute2 iputils-ping iperf net-tools dnsutils libssl-dev libprotobuf-dev curl netcat-openbsd
-WORKDIR /app/ddec
-RUN mkdir -p /app/ddec/config
+# Build with improved caching
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/ddec/target,sharing=locked \
+    cargo install --path core/threshold --root core/threshold --bins --features=choreographer
 
-# Set the path to include the binaries and not just the default /usr/local/bin
-ENV PATH="$PATH:/app/ddec/bin"
+# Go toolchain stage for grpc-health-probe
+FROM debian:stable-slim AS go-builder
 
-# We are going to need grpc-health-probe to check the health of the grpc server for docker-compose or future deployments
-# Install go because grpc-health-probe is written in go and we need to compile it
+# Install minimal Go build dependencies
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Go with platform support
 ARG TARGETOS
 ARG TARGETARCH
-ARG go_file=go1.21.6.$TARGETOS-$TARGETARCH.tar.gz
-RUN curl -OL https://go.dev/dl/$go_file
-RUN rm -rf /usr/local/go && tar -C /usr/local -xzf $go_file
-RUN rm $go_file
-ENV PATH="$PATH:/usr/local/go/bin:/root/go/bin"
-# Install grpc-health-probe
-RUN go install github.com/grpc-ecosystem/grpc-health-probe@latest
+ARG GO_VERSION=1.21.6
+RUN curl -o go.tgz -L "https://go.dev/dl/go${GO_VERSION}.${TARGETOS}-${TARGETARCH}.tar.gz" && \
+    tar -C /usr/local -xzf go.tgz && \
+    rm go.tgz
 
-# Third stage: Copy the binaries from the base stage and the go-runtime stage
-FROM debian:stable-slim AS runtime
+ENV PATH="/usr/local/go/bin:/root/go/bin:$PATH"
+
+# Install grpc-health-probe with caching
+ARG GRPC_HEALTH_PROBE_VERSION=v0.4.35
+RUN --mount=type=cache,target=/root/go/pkg \
+    go install github.com/grpc-ecosystem/grpc-health-probe@${GRPC_HEALTH_PROBE_VERSION}
+
+# Final minimal runtime stage
+FROM debian:stable-slim
+
+# Install only required runtime dependencies
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libprotobuf-dev \
+        libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app/ddec
-# Set the path to include the binaries and not just the default /usr/local/bin
-ENV PATH="$PATH:/app/ddec/bin"
+ENV PATH="/app/ddec/bin:$PATH"
 
-
-# Copy the binaries from the base stage
-COPY --from=base /app/ddec/bin/ /app/ddec/bin/
-COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/ddec/bin/grpc-health-probe
+# Copy only necessary binaries
+COPY --from=builder /app/ddec/core/threshold/bin/ /app/ddec/bin/
+COPY --from=go-builder /root/go/bin/grpc-health-probe /app/ddec/bin/grpc-health-probe
 
 EXPOSE 50000
+
+# Health check configuration
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD ["grpc-health-probe", "-addr=:50000"]

@@ -4,8 +4,24 @@
 ## First stage sets up basic Rust build environment
 FROM rust:1.82-slim-bookworm AS base
 
-RUN --mount=type=cache,sharing=locked,target=/var/cache/apt apt update && \
-    apt install -y make protobuf-compiler iproute2 iputils-ping iperf net-tools dnsutils ssh git gcc libssl-dev libprotobuf-dev pkg-config
+# Added memory usage optimization through `--no-install-recommends`
+RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        dnsutils \
+        gcc \
+        git \
+        iperf \
+        iproute2 \
+        iputils-ping \
+        libprotobuf-dev \
+        libssl-dev \
+        make \
+        net-tools \
+        pkg-config \
+        protobuf-compiler \
+        ssh \
+    && rm -rf /var/lib/apt/lists/*
 
 # Add github.com to the list of known hosts. .ssh folder needs to be created first to avoid permission errors
 RUN mkdir -p -m 0600 /root/.ssh
@@ -49,7 +65,8 @@ RUN rm -rf /usr/local/go && tar -C /usr/local -xzf $go_file
 RUN rm $go_file
 ENV PATH="$PATH:/usr/local/go/bin:/root/go/bin"
 # Install grpc-health-probe
-RUN go install github.com/grpc-ecosystem/grpc-health-probe@latest
+ARG GRPC_HEALTH_PROBE_VERSION=v0.4.35
+RUN go install github.com/grpc-ecosystem/grpc-health-probe@${GRPC_HEALTH_PROBE_VERSION}
 # Install yq-go to parse TOML configs in scripts
 RUN go install github.com/mikefarah/yq/v4@latest
 

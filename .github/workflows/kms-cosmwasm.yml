@@ -12,9 +12,10 @@ on:
         required: true
         type: string
       graviton-build-host:
-          type: string
-          required: false
-          default: 'ec2-15-188-101-126.eu-west-3.compute.amazonaws.com'
+        description: 'Defining a build host for graviton instance'
+        type: string
+        required: false
+        default: 'ec2-15-188-101-126.eu-west-3.compute.amazonaws.com'
 
 jobs:
   build-and-push-docker:

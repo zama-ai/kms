@@ -7,9 +7,9 @@ on:
         required: false
         default: ''
       args-tests-fhe:
-          type: string
-          required: false
-          default: '-F tfhe/seeder_unix -F tfhe/x86_64'
+        type: string
+        required: false
+        default: '-F tfhe/seeder_unix -F tfhe/x86_64'
       working-directory:
         type: string
         required: true

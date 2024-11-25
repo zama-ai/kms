@@ -1,55 +1,87 @@
-# Multistage build to reduce image size
-# First stage builds the binary
-FROM rust:1.81-slim-bookworm AS base
+# syntax=docker/dockerfile:1.4
 
-RUN apt update && \
-    apt install -y make protobuf-compiler iproute2 iputils-ping iperf net-tools dnsutils ssh git gcc libssl-dev libprotobuf-dev pkg-config
+# Build Stage - Rust binary
+FROM rust:1.82-slim-bookworm AS builder
+
+# Install minimal build dependencies, alphabetically sorted
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        gcc \
+        git \
+        libprotobuf-dev \
+        libssl-dev \
+        make \
+        pkg-config \
+        protobuf-compiler \
+        ssh \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app/ddec
+
+# Setup SSH keys for git
+RUN mkdir -p -m 0600 /root/.ssh && \
+    ssh-keyscan -H github.com >> ~/.ssh/known_hosts
+
+# Copy project files
 COPY . .
 
-# Add github.com to the list of known hosts. .ssh folder needs to be created first to avoid permission errors
-RUN mkdir -p -m 0600 /root/.ssh
-RUN ssh-keyscan -H github.com >> ~/.ssh/known_hosts
+# Build with cargo install and caching
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/ddec/target,sharing=locked \
+    mkdir -p /app/ddec/bin && \
+    cargo install --path core/threshold --root . --bins ${FEATURES}
 
-# Install the binary leaving it in the WORKDIR/bin folder
-RUN mkdir -p /app/ddec/bin
-ARG FEATURES=""
-RUN cargo install --path core/threshold --root . --bins ${FEATURES}
+# Go tooling stage - only for grpc-health-probe
+FROM debian:stable-slim AS go-builder
 
-# Second stage builds the runtime image.
-# This stage will be the final image
-FROM debian:stable-slim AS go-runtime
+# Install minimal Go build dependencies
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN apt update && \
-    apt install -y iproute2 iputils-ping iperf net-tools dnsutils libssl-dev libprotobuf-dev curl netcat-openbsd
-WORKDIR /app/ddec
-RUN mkdir -p /app/ddec/config
-
-# Set the path to include the binaries and not just the default /usr/local/bin
-ENV PATH="$PATH:/app/ddec/bin"
-
-# We are going to need grpc-health-probe to check the health of the grpc server for docker-compose or future deployments
-# Install go because grpc-health-probe is written in go and we need to compile it
+# Install Go and grpc-health-probe
 ARG TARGETOS
 ARG TARGETARCH
-ARG go_file=go1.21.6.$TARGETOS-$TARGETARCH.tar.gz
-RUN curl -OL https://go.dev/dl/$go_file
-RUN rm -rf /usr/local/go && tar -C /usr/local -xzf $go_file
-RUN rm $go_file
-ENV PATH="$PATH:/usr/local/go/bin:/root/go/bin"
-# Install grpc-health-probe
-RUN go install github.com/grpc-ecosystem/grpc-health-probe@latest
+ARG GO_VERSION=1.21.6
+RUN curl -o go.tgz -L "https://go.dev/dl/go${GO_VERSION}.${TARGETOS}-${TARGETARCH}.tar.gz" && \
+    tar -C /usr/local -xzf go.tgz && \
+    rm go.tgz
 
-# Third stage: Copy the binaries from the base stage and the go-runtime stage
-FROM debian:stable-slim AS runtime
+ENV PATH="/usr/local/go/bin:/root/go/bin:$PATH"
+
+# Install grpc-health-probe with caching
+ARG GRPC_HEALTH_PROBE_VERSION=v0.4.35
+RUN --mount=type=cache,target=/root/go/pkg \
+    go install github.com/grpc-ecosystem/grpc-health-probe@${GRPC_HEALTH_PROBE_VERSION}
+
+# Final runtime stage
+FROM debian:stable-slim
+
+# Install minimal runtime dependencies
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libprotobuf-dev \
+        libssl3 \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app/ddec
-# Set the path to include the binaries and not just the default /usr/local/bin
-ENV PATH="$PATH:/app/ddec/bin"
 
-# Copy the binaries from the base stage
-COPY --from=base /app/ddec/bin/ /app/ddec/bin/
-COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/ddec/bin/grpc-health-probe
+# Copy binaries from previous stages
+COPY --from=builder /app/ddec/bin/ /app/ddec/bin/
+COPY --from=go-builder /root/go/bin/grpc-health-probe /app/ddec/bin/
+
+ENV PATH="/app/ddec/bin:$PATH"
 
 EXPOSE 50000
+
+# Add health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD ["grpc-health-probe", "-addr=:50000"]

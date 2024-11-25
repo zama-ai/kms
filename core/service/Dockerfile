@@ -1,25 +1,32 @@
-FROM rust:1.81-bookworm AS builder
+# syntax=docker/dockerfile:1.4
 
-WORKDIR /usr/src/kms-server
+FROM rust:1.82-slim-bookworm AS builder
+
+# Install only necessary build dependencies
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy entire project for workspace support
 COPY . .
 
-# Add github.com to the list of known hosts. .ssh folder needs to be created first to avoid permission errors
-RUN mkdir -p -m 0600 /root/.ssh
-RUN ssh-keyscan -H github.com >> ~/.ssh/known_hosts
+# Build with cargo install using caching
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,sharing=locked \
+    cargo install --path . --bin kms-server
 
+# Runtime stage
+FROM debian:bookworm-slim
 
-# install protoc
-RUN apt-get update \
-    && DEBIAN_FRONTEND=noninteractive \
-    apt-get install --no-install-recommends --assume-yes \
-    protobuf-compiler
-
-RUN --mount=type=ssh cargo install --path . --bin kms-server
-
-FROM debian:bookworm
-COPY --from=builder /usr/src/kms-server/target/release/kms-server /usr/local/bin/kms-server
-RUN mkdir -p -m 0600 /app/parameters
-COPY --from=builder /usr/src/kms-server/parameters /app/parameters
 WORKDIR /app
+
+# Copy binary and parameters
+COPY --from=builder /usr/local/cargo/bin/kms-server /usr/local/bin/
+COPY parameters /app/parameters
 
 CMD ["kms-server"]
