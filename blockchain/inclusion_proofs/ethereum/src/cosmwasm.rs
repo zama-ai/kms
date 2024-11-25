@@ -172,7 +172,7 @@ pub mod proof_handler {
         proof: EthGetProofResult,
         evm_storage_key: String,
     ) -> Option<Result<bool, Error>> {
-        let storage_hash = match hex::decode(&proof.storageHash) {
+        let storage_hash = match hex::decode(&proof.storageHash[2..]) {
             Ok(hash) => H256::from_slice(&hash),
             Err(_) => return Some(Err(anyhow!("invalid storage hash"))),
         };
