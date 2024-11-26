@@ -22,3 +22,5 @@ data/
 .github
 target/
 target-analyzer/
+**/keys
+**/temp
