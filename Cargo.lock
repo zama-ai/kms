@@ -307,7 +307,7 @@ dependencies = [
 
 [[package]]
 name = "aipsc"
-version = "0.9.0-rc25"
+version = "0.10.0-rc1"
 dependencies = [
  "cosmwasm-schema",
  "cosmwasm-std",
@@ -927,7 +927,7 @@ checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 
 [[package]]
 name = "asc"
-version = "0.9.0-rc25"
+version = "0.10.0-rc1"
 dependencies = [
  "aipsc",
  "byteorder",
@@ -1796,7 +1796,7 @@ dependencies = [
 
 [[package]]
 name = "backward-compatibility"
-version = "0.9.0-rc25"
+version = "0.9.0-rc34"
 dependencies = [
  "aes-prng",
  "bincode",
@@ -2497,7 +2497,7 @@ dependencies = [
 
 [[package]]
 name = "conf-trace"
-version = "0.9.0-rc25"
+version = "0.10.0-rc1"
 dependencies = [
  "anyhow",
  "config",
@@ -2680,7 +2680,7 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
 name = "cosmos-proto"
-version = "0.9.0-rc25"
+version = "0.10.0-rc1"
 dependencies = [
  "glob",
  "prost 0.12.6",
@@ -3339,7 +3339,7 @@ dependencies = [
 
 [[package]]
 name = "distributed-decryption"
-version = "0.9.0-rc25"
+version = "0.10.0-rc1"
 dependencies = [
  "aes",
  "aes-prng",
@@ -4074,7 +4074,7 @@ dependencies = [
 
 [[package]]
 name = "events"
-version = "0.9.0-rc25"
+version = "0.10.0-rc1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4433,7 +4433,7 @@ checksum = "0fd8b261ccf00df8c5cc60c082bb7d7aa64c33a433cfcc091ca244326c924b2c"
 
 [[package]]
 name = "gateway"
-version = "0.9.0-rc25"
+version = "0.10.0-rc1"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -5310,9 +5310,9 @@ dependencies = [
 
 [[package]]
 name = "itoa"
-version = "1.0.13"
+version = "1.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "540654e97a3f4470a492cd30ff187bc95d89557a903a2bbf112e2fae98104ef2"
+checksum = "d75a2a4b1b190afb6f5425f10f6a8f959d2ea0b9c2b1d79553551850539e4674"
 
 [[package]]
 name = "jobserver"
@@ -5392,7 +5392,7 @@ dependencies = [
 
 [[package]]
 name = "kms"
-version = "0.9.0-rc25"
+version = "0.10.0-rc1"
 dependencies = [
  "aes",
  "aes-gcm-siv",
@@ -5467,7 +5467,7 @@ dependencies = [
 
 [[package]]
 name = "kms-blockchain-client"
-version = "0.9.0-rc25"
+version = "0.10.0-rc1"
 dependencies = [
  "base64 0.22.1",
  "bip32",
@@ -5498,7 +5498,7 @@ dependencies = [
 
 [[package]]
 name = "kms-blockchain-connector"
-version = "0.9.0-rc25"
+version = "0.10.0-rc1"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -5537,7 +5537,7 @@ dependencies = [
 
 [[package]]
 name = "kms-common"
-version = "0.9.0-rc25"
+version = "0.10.0-rc1"
 dependencies = [
  "backward-compatibility",
  "tfhe-versionable",
@@ -5642,9 +5642,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.164"
+version = "0.2.165"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "433bfe06b8c75da9b2e3fbea6e5329ff87748f0b144ef75306e674c3f6f7c13f"
+checksum = "fcb4d3d38eab6c5239a362fa8bae48c03baf980a6e7079f063942d563ef3533e"
 
 [[package]]
 name = "libm"
@@ -6437,9 +6437,9 @@ checksum = "1e91099d4268b0e11973f036e885d652fb0b21fedcf69738c627f94db6a44f42"
 
 [[package]]
 name = "pathdiff"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d61c5ce1153ab5b689d0c074c4e7fc613e942dfb7dd9eea5ab202d2ad91fe361"
+checksum = "df94ce210e5bc13cb6651479fa48d14f601d9858cfe0467f43ae157023b938d3"
 
 [[package]]
 name = "pbkdf2"
@@ -8518,7 +8518,7 @@ dependencies = [
 
 [[package]]
 name = "simulator"
-version = "0.9.0-rc25"
+version = "0.10.0-rc1"
 dependencies = [
  "aes-prng",
  "alloy-primitives",
@@ -9004,7 +9004,7 @@ dependencies = [
 
 [[package]]
 name = "tendermint-ipsc"
-version = "0.9.0-rc25"
+version = "0.10.0-rc1"
 dependencies = [
  "aipsc",
  "anyhow",
@@ -9141,11 +9141,11 @@ dependencies = [
 
 [[package]]
 name = "test-utilities"
-version = "0.9.0-rc25"
+version = "0.10.0-rc1"
 
 [[package]]
 name = "tests-utils"
-version = "0.9.0-rc25"
+version = "0.10.0-rc1"
 
 [[package]]
 name = "tfhe"
@@ -9751,9 +9751,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-core"
-version = "0.1.32"
+version = "0.1.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c06d3da6113f116aaee68e4d601191614c9053067f9ab7f6edbcb161237daa54"
+checksum = "e672c95779cf947c5311f83787af4fa8fffd12fb27e4993211a84bdfd9610f9c"
 dependencies = [
  "once_cell",
  "valuable",
@@ -9950,9 +9950,9 @@ checksum = "42ff0bf0c66b8238c6f3b578df37d0b7848e55df8577b3f74f92a69acceeb825"
 
 [[package]]
 name = "typewit"
-version = "1.9.0"
+version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6fb9ae6a3cafaf0a5d14c2302ca525f9ae8e07a0f0e6949de88d882c37a6e24"
+checksum = "d51dbd25812f740f45e2a9769f84711982e000483b13b73a8a1852e092abac8c"
 dependencies = [
  "typewit_proc_macros",
 ]

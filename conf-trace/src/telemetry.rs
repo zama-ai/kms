@@ -13,7 +13,7 @@ use tonic::metadata::{MetadataKey, MetadataMap, MetadataValue};
 use tonic::service::Interceptor;
 use tonic::transport::Body;
 use tonic::Status;
-use tracing::{field, info_span, trace_span, warn, Id, Span};
+use tracing::{field, info_span, trace_span, warn, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::fmt::{layer, Layer};
@@ -151,8 +151,8 @@ pub fn make_span(request: &Request<Body>) -> Span {
         .get(TRACER_REQUEST_ID)
         .map(|r| r.to_str().map(|x| x.to_string()));
 
-    let span = if endpoint.contains("Health/Check") {
-        return trace_span!("healt_grpc_request", ?endpoint, ?headers);
+    if endpoint.contains("Health/Check") {
+        trace_span!("healt_grpc_request", ?endpoint, ?headers)
     } else {
         match request_id {
             Some(Ok(request_id)) => {
@@ -160,27 +160,7 @@ pub fn make_span(request: &Request<Body>) -> Span {
             }
             _ => info_span!("grpc_request", ?endpoint, ?headers, trace_id = field::Empty),
         }
-    };
-
-    match headers.get(TRACER_PARENT_SPAN_ID).map(|r| {
-        tracing::debug!("Span header: {:?}", r);
-        r.to_str()
-            .unwrap_or("0")
-            .to_string()
-            .parse::<u64>()
-            .unwrap_or(0)
-    }) {
-        Some(parent_span_id_u64) if parent_span_id_u64 > 0 => {
-            tracing::debug!("Propagating span id {parent_span_id_u64}");
-            let id = Id::from_u64(parent_span_id_u64);
-            span.follows_from(id);
-            tracing::debug!("Span id propagated.");
-        }
-        Some(_) | None => {
-            tracing::warn!("Invalid or missing parent span id: {TRACER_PARENT_SPAN_ID}");
-        }
     }
-    span
 }
 
 /// Trace context propagation: associate the current span with the OTel trace of the given request,

@@ -35,7 +35,7 @@ tfhe.workspace = true
 [dev-dependencies]
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
-kms = { path = "../../core/service", features = ["testing"] , version = "0.9.0-rc25" }
+kms = { path = "../../core/service", features = ["testing"] , version = "0.10.0-rc1" }
 rand.workspace = true
 rstest = "=0.23.0"
 serial_test = "=3.1.1"
