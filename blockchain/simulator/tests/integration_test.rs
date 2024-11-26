@@ -105,7 +105,7 @@ async fn key_and_crs_gen<T: DockerComposeContext>(
         command: SimulatorCommand::InsecureKeyGen(NoParameters {}),
         logs: true,
         max_iter: 200,
-        expect_all_responses: false,
+        expect_all_responses: true,
     };
     println!("Doing key-gen");
     let key_gen_results = main_from_config(
@@ -128,7 +128,7 @@ async fn key_and_crs_gen<T: DockerComposeContext>(
         command,
         logs: true,
         max_iter: 200,
-        expect_all_responses: false,
+        expect_all_responses: true,
     };
 
     let key_ids: Vec<String> = match key_gen_results {
@@ -187,7 +187,7 @@ async fn test_template<T: DockerComposeContext>(ctx: &mut T, commands: Vec<Simul
             command,
             logs: true,
             max_iter: 50,
-            expect_all_responses: false,
+            expect_all_responses: true,
         };
 
         main_from_config(
