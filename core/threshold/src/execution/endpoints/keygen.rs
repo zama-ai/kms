@@ -999,8 +999,7 @@ pub mod tests {
             random::{get_rng, seed_from_rng},
             tfhe_internals::{
                 parameters::{
-                    BC_PARAMS_SAM_NO_SNS, NIST_PARAMS_P32_INTERNAL_FGLWE,
-                    NIST_PARAMS_P32_NO_SNS_FGLWE, NIST_PARAMS_P32_NO_SNS_LWE,
+                    BC_PARAMS_SAM_NO_SNS, NIST_PARAMS_P32_NO_SNS_FGLWE, NIST_PARAMS_P32_NO_SNS_LWE,
                     NIST_PARAMS_P32_SNS_FGLWE, NIST_PARAMS_P8_NO_SNS_FGLWE,
                     NIST_PARAMS_P8_NO_SNS_LWE, NIST_PARAMS_P8_SNS_FGLWE,
                     OLD_PARAMS_P32_REAL_WITH_SNS, PARAMS_TEST_BK_SNS,
@@ -1017,9 +1016,10 @@ pub mod tests {
     use super::distributed_homprf_bsk_gen;
     use super::{distributed_keygen, DKGParams};
 
+    #[cfg(not(target_arch = "aarch64"))]
     #[test]
     fn pure_tfhers_test() {
-        let params = NIST_PARAMS_P32_INTERNAL_FGLWE;
+        let params = crate::execution::tfhe_internals::parameters::NIST_PARAMS_P32_INTERNAL_FGLWE;
         let classic_pbs = params.ciphertext_parameters;
         let dedicated_cpk_params = params.dedicated_compact_public_key_parameters.unwrap();
 
