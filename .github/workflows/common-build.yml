@@ -145,7 +145,7 @@ jobs:
 
       # Test execution
       - name: Run Tests
-        if: ${{ ! inputs.test-coverage }}
+        if: ${{ ! inputs.test-coverage || !contains(github.event.pull_request.labels.*.name, 'coverage') }}
         env:
           # some integration tests run docker compose
           # which builds images which need git access
@@ -155,7 +155,7 @@ jobs:
 
       # Coverage reporting
       - name: Run Tests with Coverage
-        if: ${{ inputs.test-coverage }}
+        if: ${{ inputs.test-coverage && contains(github.event.pull_request.labels.*.name, 'coverage') }}
         env:
           # some integration tests run docker compose
           # which builds images which need private git access
@@ -174,7 +174,7 @@ jobs:
           cat coverage/markdown.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Report code coverage
-        if: ${{ inputs.test-coverage }}
+        if: ${{ inputs.test-coverage && contains(github.event.pull_request.labels.*.name, 'coverage') }}
         uses: romeovs/lcov-reporter-action@87a815f34ec27a5826abba44ce09bbc688da58fd # v0.4.0
         with:
           title: ${{inputs.package-name}}-test-coverage
@@ -182,7 +182,7 @@ jobs:
           working-directory: ${{ inputs.working-directory }}/
 
       - name: Check minimum coverage
-        if: ${{ inputs.test-coverage }}
+        if: ${{ inputs.test-coverage && contains(github.event.pull_request.labels.*.name, 'coverage') }}
         uses: VeryGoodOpenSource/very_good_coverage@c953fca3e24a915e111cc6f55f03f756dcb3964c # v3.0.0
         with:
           path: "${{inputs.working-directory}}/lcov"
