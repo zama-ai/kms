@@ -107,6 +107,7 @@ address = "http://localhost:9090"
 # Key ID used within the KMS.
 # Identifies the specific key to be used for cryptographic operations within the KMS.
 key_id = "d4d17a412a6533599b010c8ffc3d6ebdc6b1cfad"
+crs_id = "?"
 
 # List of prefixed of URL endpoints for the public storage of the KMS.
 # The key in the map is the MPC ID of the party. I.e. [1; amount of parties]

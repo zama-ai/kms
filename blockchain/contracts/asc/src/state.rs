@@ -2,8 +2,8 @@ use crate::versioned_storage::{VersionedItem, VersionedMap};
 use cosmwasm_std::{Api, Env, Order, StdError, StdResult, Storage};
 use cw_storage_plus::PrefixBound;
 use events::kms::{
-    AdminsOperations, AllowedAddresses, KmsCoreConf, KmsOperation, OperationType, OperationValue,
-    Transaction, TransactionId,
+    AdminsOperations, AllowedAddresses, CrsGenResponseValues, KeyGenResponseValues, KmsCoreConf,
+    KmsOperation, OperationType, OperationValue, Transaction, TransactionId,
 };
 
 const ERR_MODIFY_NUM_PARTIES: &str =
@@ -27,6 +27,8 @@ pub struct KmsContractStorage {
     transactions: VersionedMap<Vec<u8>, Transaction>,
     response_values: VersionedMap<(Vec<u8>, u32), OperationValue>,
     response_counters: VersionedMap<Vec<u8>, u32>,
+    key_gen_response_values: VersionedMap<String, Vec<KeyGenResponseValues>>,
+    crs_gen_response_values: VersionedMap<String, Vec<CrsGenResponseValues>>,
     debug_proof: VersionedItem<bool>,
     verify_proof_contract_address: VersionedItem<String>,
     allowed_addresses: VersionedItem<AllowedAddresses>,
@@ -39,6 +41,8 @@ impl Default for KmsContractStorage {
             transactions: VersionedMap::new("transactions"),
             response_values: VersionedMap::new("response_values"),
             response_counters: VersionedMap::new("response_counters"),
+            key_gen_response_values: VersionedMap::new("key_gen_response_values"),
+            crs_gen_response_values: VersionedMap::new("crs_gen_response_values"),
             debug_proof: VersionedItem::new("debug_proof"),
             verify_proof_contract_address: VersionedItem::new("verify_proof_contract_address"),
             allowed_addresses: VersionedItem::new("allowed_addresses"),
@@ -186,6 +190,13 @@ impl KmsContractStorage {
             (transaction_id.to_vec(), new_counter),
             operation_value,
         )?;
+
+        // Save the key and CRS gen response values separately for more efficient queries
+        if let OperationValue::KeyGenResponse(keygen_response_values) = operation_value {
+            self.save_key_gen_response_values(storage, keygen_response_values.clone())?;
+        } else if let OperationValue::CrsGenResponse(crs_response_values) = operation_value {
+            self.save_crs_response_values(storage, crs_response_values.clone())?;
+        }
         Ok(())
     }
 
@@ -279,31 +290,69 @@ impl KmsContractStorage {
         Ok(response_values)
     }
 
-    /// Return the list of all operation values found in the storage and associated to the given
-    /// KMS operation.
+    /// Save a key gen response value in the storage
     ///
-    /// This includes all values from different transactions that ran the same operation
-    pub fn get_all_values_from_operation(
+    /// Note that this assumes we won't have too many key generations, else we might encounter the
+    /// same read/write conflict as explained in the comments of `save_response_value`
+    pub fn save_key_gen_response_values(
+        &self,
+        storage: &mut dyn Storage,
+        key_response_values: KeyGenResponseValues,
+    ) -> StdResult<()> {
+        self.key_gen_response_values.update(
+            storage,
+            key_response_values.request_id().to_string(),
+            |key_response| {
+                let mut response = key_response.unwrap_or_default();
+                response.push(key_response_values);
+                Ok(response) as Result<Vec<KeyGenResponseValues>, StdError>
+            },
+        )?;
+        Ok(())
+    }
+
+    /// Get the list of all key gen response values for a given key ID
+    ///
+    /// These values are stored separately than usual transaction response values because it avoids
+    /// having to loop through all transaction values to find them.
+    pub fn get_key_gen_response_values(
         &self,
         storage: &dyn Storage,
-        operation: &KmsOperation,
-    ) -> StdResult<Vec<OperationValue>> {
-        let mut operation_values = Vec::new();
+        key_id: &str,
+    ) -> StdResult<Vec<KeyGenResponseValues>> {
+        self.key_gen_response_values
+            .load(storage, key_id.to_string())
+    }
 
-        // We use `keys` instead of `range` to avoid loading all the transactions in memory directly
-        // Instead, they are loaded on demand based on the operation type later
-        for txn_id_result in self
-            .transactions
-            .keys(storage, None, None, Order::Ascending)
-        {
-            let txn_id = txn_id_result?;
-            let ops =
-                self.get_values_from_transaction_and_operation(storage, &txn_id.into(), operation)?;
+    /// Save a CRS gen response value in the storage
+    pub fn save_crs_response_values(
+        &self,
+        storage: &mut dyn Storage,
+        crs_response_values: CrsGenResponseValues,
+    ) -> StdResult<()> {
+        self.crs_gen_response_values.update(
+            storage,
+            crs_response_values.request_id().to_string(),
+            |crs_response| {
+                let mut response = crs_response.unwrap_or_default();
+                response.push(crs_response_values);
+                Ok(response) as Result<Vec<CrsGenResponseValues>, StdError>
+            },
+        )?;
+        Ok(())
+    }
 
-            operation_values.extend(ops);
-        }
-
-        Ok(operation_values)
+    /// Get the list of all CRS gen response values for a given CRS ID
+    ///
+    /// These values are stored separately than usual transaction response values because it avoids
+    /// having to loop through all transaction values to find them.
+    pub fn get_crs_gen_response_values(
+        &self,
+        storage: &dyn Storage,
+        crs_id: &str,
+    ) -> StdResult<Vec<CrsGenResponseValues>> {
+        self.crs_gen_response_values
+            .load(storage, crs_id.to_string())
     }
 
     pub fn set_verify_proof_contract_address(

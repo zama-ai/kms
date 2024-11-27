@@ -1,5 +1,5 @@
 use cosmwasm_std::{StdError, StdResult, Storage};
-use cw_storage_plus::{Bound, Item, KeyDeserialize, Map, PrefixBound, PrimaryKey};
+use cw_storage_plus::{Item, Map, PrefixBound, PrimaryKey};
 use serde::{de::DeserializeOwned, Serialize};
 use tfhe_versionable::{Unversionize, VersionizeOwned};
 
@@ -179,26 +179,6 @@ where
     }
 }
 
-impl<'a, K, T> VersionedMap<K, T>
-where
-    K: PrimaryKey<'a> + KeyDeserialize,
-    T: Serialize + DeserializeOwned + VersionizeOwned + Unversionize + Clone,
-{
-    // Collect the different keys found within the given CosmWasm storage
-    pub fn keys<'c>(
-        &self,
-        store: &'c dyn Storage,
-        min: Option<Bound<'a, K>>,
-        max: Option<Bound<'a, K>>,
-        order: cosmwasm_std::Order,
-    ) -> Box<dyn Iterator<Item = StdResult<K::Output>> + 'c>
-    where
-        T: 'c,
-        K::Output: 'static,
-    {
-        self.versioned_map.keys(store, min, max, order)
-    }
-}
 #[cfg(test)]
 pub(crate) mod tests {
     use cosmwasm_std::{testing::MockStorage, Order, StdError};
@@ -578,60 +558,6 @@ pub(crate) mod tests {
         // the update function: when trying to load the new struct, since the namespace is new and
         // empty, no errors will be thrown and the struct will be simply added to the storage (under
         // the same key but different storage namespace)
-    }
-
-    #[test]
-    fn test_versioned_keys() {
-        // Create an old VersionedStorage instance
-        let old_versioned_storage = v0::VersionedStorage::default();
-
-        let dyn_store = &mut MockStorage::new();
-
-        // Build an old struct
-        let old_test_key = "old_test_key".to_string();
-        let old_test_value = "old_test_value";
-        let my_old_struct = v0::MyStruct::new(old_test_value);
-
-        // Insert the old struct into the old storage
-        old_versioned_storage
-            .my_versioned_map
-            .save(dyn_store, old_test_key.clone(), &my_old_struct)
-            .expect("Failed to save old struct");
-
-        // Create a new VersionedStorage instance
-        let new_versioned_storage = v1::VersionedStorage::default();
-
-        // Build a new struct
-        let new_test_key = "new_test_key".to_string();
-        let new_test_value = "new_test_value";
-        let my_new_struct = v1::MyStruct::new(new_test_value);
-
-        // Insert the new struct into the new storage
-        new_versioned_storage
-            .my_versioned_map
-            .save(dyn_store, new_test_key.clone(), &my_new_struct)
-            .expect("Failed to save new struct");
-
-        let mut my_test_keys = Vec::new();
-
-        // Iterate over the storage
-        new_versioned_storage
-            .my_versioned_map
-            .keys(dyn_store, None, None, Order::Ascending)
-            .for_each(|my_struct_key| {
-                if let Ok(my_struct_key) = my_struct_key {
-                    my_test_keys.push(my_struct_key);
-                }
-            });
-
-        // Test that we have fetched both the new and old keys
-        // Note: the vec's order is important here, as CosmWasm's `keys` function orders by
-        // lexicographical order on key names
-        assert_eq!(my_test_keys, vec![new_test_key, old_test_key]);
-
-        // Note that there no real reason to test with the "broken storage" because of the nature of
-        // the keys function: when iterating through the items, since the namespace is new and
-        // empty, no errors will be thrown and an empty vector is returned
     }
 
     #[test]

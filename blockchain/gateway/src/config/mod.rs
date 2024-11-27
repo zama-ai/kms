@@ -218,6 +218,7 @@ pub struct KmsConfig {
     pub mnemonic: String,
     pub address: String,
     pub key_id: String, //TODO: remove this field as part of https://github.com/zama-ai/fhevm/issues/548
+    pub crs_id: String, //TODO: remove this field as part of https://github.com/zama-ai/fhevm/issues/548
     pub public_storage: HashMap<u32, String>,
 }
 

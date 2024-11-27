@@ -4,9 +4,9 @@ use cosmwasm_std::{Event, Response, StdError, StdResult};
 use cw2::{ensure_from_older_version, set_contract_version};
 use events::kms::{
     AllowedAddresses, CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues,
-    InsecureCrsGenValues, KeyGenResponseValues, KeyGenValues, KmsCoreConf, KmsEvent, KmsOperation,
-    OperationType, OperationValue, ReencryptResponseValues, ReencryptValues, SenderAllowedEvent,
-    Transaction, TransactionId, UpdateAllowedAddressesEvent, VerifyProvenCtValues,
+    InsecureCrsGenValues, KeyGenResponseValues, KeyGenValues, KmsCoreConf, KmsEvent, OperationType,
+    OperationValue, ReencryptResponseValues, ReencryptValues, SenderAllowedEvent, Transaction,
+    TransactionId, UpdateAllowedAddressesEvent, VerifyProvenCtValues,
 };
 use events::kms::{InsecureKeyGenValues, MigrationEvent, VerifyProvenCtResponseValues};
 use sylvia::{
@@ -244,10 +244,10 @@ impl KmsContract {
             .load_transaction_with_response_values(ctx.deps.storage, &txn_id)
     }
 
-    /// Return the list of all operation values found in the storage and associated to the given
+    /// Get the list of all operation values found in the storage and associated to the given
     /// KMS event (a KMS operation and a transaction ID).
     #[sv::msg(query)]
-    pub fn get_operations_value(
+    pub fn get_operations_values_from_event(
         &self,
         ctx: QueryCtx,
         event: KmsEvent,
@@ -259,18 +259,26 @@ impl KmsContract {
         )
     }
 
-    /// Return the list of all operation values found in the storage and associated to the given
-    /// KMS operation.
-    ///
-    /// This includes all values from different transactions that ran the same operation
+    /// Get the list of all key gen response values for a given key ID
     #[sv::msg(query)]
-    pub fn get_all_values_from_operation(
+    pub fn get_key_gen_response_values(
         &self,
         ctx: QueryCtx,
-        operation: KmsOperation,
-    ) -> StdResult<Vec<OperationValue>> {
+        key_id: String,
+    ) -> StdResult<Vec<KeyGenResponseValues>> {
         self.storage
-            .get_all_values_from_operation(ctx.deps.storage, &operation)
+            .get_key_gen_response_values(ctx.deps.storage, &key_id)
+    }
+
+    /// Get the list of all CRS gen response values for a given CRS ID
+    #[sv::msg(query)]
+    pub fn get_crs_gen_response_values(
+        &self,
+        ctx: QueryCtx,
+        crs_id: String,
+    ) -> StdResult<Vec<CrsGenResponseValues>> {
+        self.storage
+            .get_crs_gen_response_values(ctx.deps.storage, &crs_id)
     }
 
     #[sv::msg(exec)]
@@ -1152,8 +1160,11 @@ mod tests {
             .as_str(),
         );
 
+        // Key id should be a hex string
+        let key_id = "a1b2c3d4e5f67890123456789abcdef0fedcba98";
+
         let keygen_response = KeyGenResponseValues::new(
-            txn_id.to_vec(),
+            hex::decode(key_id).unwrap(),
             "digest1".to_string(),
             vec![4, 5, 6],
             "digest2".to_string(),
@@ -1190,6 +1201,45 @@ mod tests {
                 )
                 .as_str(),
             );
+
+        // Key id should be a hex string
+        let new_key_id = "a7f391e4d8c2b5f6e09d3c1a4b7852e9f0d6c3b9";
+
+        let new_keygen_response = KeyGenResponseValues::new(
+            hex::decode(new_key_id).unwrap(),
+            "digest1".to_string(),
+            vec![4, 5, 6],
+            "digest2".to_string(),
+            vec![7, 8, 9],
+            FheParameter::Test,
+        );
+
+        let response = contract
+            .keygen_response(txn_id.clone(), new_keygen_response.clone())
+            .call(&owner)
+            .unwrap();
+
+        // We now have one more response event
+        assert_eq!(response.events.len(), 3);
+
+        // Test `get_key_gen_response_values` function
+        let keygen_response_values = contract.get_key_gen_response_values(key_id.to_string());
+        if let Err(err) = keygen_response_values {
+            panic!(
+                "Failed to get key gen response values for key id {}: {}",
+                key_id, err
+            );
+        }
+
+        // We triggered two response events for `key_id` so we should get two KeyGenResponseValues
+        let keygen_response_values = keygen_response_values.unwrap();
+        assert_eq!(
+            keygen_response_values.len(),
+            2,
+            "Unexpected number of keygen response values for key id {}: {:?}",
+            key_id,
+            keygen_response_values
+        );
     }
 
     #[test]
@@ -1448,8 +1498,10 @@ mod tests {
 
         assert_event(&response.events, &expected_event);
 
+        let crs_id = "crs_id";
+
         let crs_gen_response = CrsGenResponseValues::new(
-            txn_id.to_hex(),
+            crs_id.to_string(),
             "my digest".to_string(),
             vec![4, 5, 6],
             256,
@@ -1477,9 +1529,46 @@ mod tests {
         assert_event(&response.events, &expected_event);
 
         contract
-            .crs_gen_response(txn_id, crs_gen_response)
+            .crs_gen_response(txn_id.clone(), crs_gen_response.clone())
             .call(&fake_owner)
             .expect_err("User wasn't allowed to call CRS gen response but somehow succeeded.");
+
+        let new_crs_id = "new_crs_id";
+
+        let new_crs_gen_response = CrsGenResponseValues::new(
+            new_crs_id.to_string(),
+            "my digest".to_string(),
+            vec![4, 5, 6],
+            256,
+            FheParameter::Test,
+        );
+
+        let response = contract
+            .crs_gen_response(txn_id.clone(), new_crs_gen_response.clone())
+            .call(&owner)
+            .unwrap();
+
+        // We now have one more response event
+        assert_eq!(response.events.len(), 3);
+
+        // Test `get_crs_gen_response_values` function
+        let crs_response_values = contract.get_crs_gen_response_values(crs_id.to_string());
+        if let Err(err) = crs_response_values {
+            panic!(
+                "Failed to get CRS gen response values for CRS id {}: {}",
+                crs_id, err
+            );
+        }
+
+        // We triggered two response events for `crs_id` so we should get two CRSGenResponseValues
+        let crs_response_values = crs_response_values.unwrap();
+        assert_eq!(
+            crs_response_values.len(),
+            2,
+            "Unexpected number of CRS gen response values for CRS id {}: {:?}",
+            crs_id,
+            crs_response_values
+        );
     }
 
     fn assert_event(events: &[Event], kms_event: &KmsEvent) {
@@ -1499,7 +1588,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_operation_values_functions() {
+    fn test_get_operations_values_from_event() {
         let caller = Addr::unchecked("caller");
         let app = cw_multi_test::App::new(|router, _api, storage| {
             router
@@ -1584,8 +1673,10 @@ mod tests {
 
         assert_event(&response.events, &expected_event);
 
-        // Test `get_operations_value` function
-        let keygen_data = contract.get_operations_value(expected_event).unwrap();
+        // Test `get_operations_values_from_event` function
+        let keygen_data = contract
+            .get_operations_values_from_event(expected_event)
+            .unwrap();
         assert_eq!(keygen_data.len(), 2);
 
         let not_expected_event = KmsEvent::builder()
@@ -1594,100 +1685,8 @@ mod tests {
             .build();
 
         // There should not be any decrypt operation
-        let not_expected_data = contract.get_operations_value(not_expected_event);
+        let not_expected_data = contract.get_operations_values_from_event(not_expected_event);
         assert!(not_expected_data.unwrap().is_empty());
-
-        // Test `get_all_values_from_operation` function for KeyGenResponse
-        let keygen_response_operation = KmsOperation::KeyGenResponse;
-        let keygen_response_values =
-            contract.get_all_values_from_operation(keygen_response_operation);
-        assert!(keygen_response_values.is_ok());
-
-        // Two keygen operations give two KeyGenResponseValues
-        let keygen_response_values = keygen_response_values.unwrap();
-        assert_eq!(
-            keygen_response_values.len(),
-            2,
-            "Unexpected number of keygen response values: {:?}",
-            keygen_response_values
-        );
-
-        // Check that values are actually KeyGenResponse
-        for keygen_response_value in keygen_response_values {
-            assert!(
-                matches!(keygen_response_value, OperationValue::KeyGenResponse(_)),
-                "Unexpected keygen response value: {:?}",
-                keygen_response_value
-            );
-        }
-
-        // There should not be any Decrypt operation
-        let not_expected_operation = KmsOperation::Decrypt;
-        let not_expected_values = contract.get_all_values_from_operation(not_expected_operation);
-        assert!(not_expected_values.unwrap().is_empty());
-
-        // Then, trigger a decrypt operation
-        let ciphertext_handle =
-            hex::decode("000a17c82f8cd9fe41c871f12b391a2afaf5b640ea4fdd0420a109aa14c674d3e385b955")
-                .unwrap();
-
-        let batch_size = 2_usize;
-
-        let data_size = extract_ciphertext_size(&ciphertext_handle) * batch_size as u32;
-        assert_eq!(data_size, 661448 * batch_size as u32);
-
-        let decrypt = DecryptValues::new(
-            vec![1, 2, 3],
-            vec![ciphertext_handle; batch_size],
-            vec![FheType::Euint8; batch_size],
-            Some(vec![vec![23_u8; 32]]),
-            1,
-            "0xEEdA6bf26964aF9D7Eed9e03e53415D37aa960EE".to_string(),
-            "some proof".to_string(),
-            "eip712name".to_string(),
-            "1".to_string(),
-            vec![101; 32],
-            "0x33dA6bF26964af9d7eed9e03E53415D37aA960EE".to_string(),
-            Some(vec![42; 32]),
-        )
-        .unwrap();
-
-        let response = contract
-            .decrypt(decrypt.clone())
-            .with_funds(&[coin(data_size.into(), UCOSM)])
-            .call(&caller)
-            .unwrap();
-        println!("response: {:#?}", response);
-
-        assert_eq!(response.events.len(), 2);
-
-        let decrypt_response = DecryptResponseValues::new(vec![4, 5, 6], vec![6, 7, 8]);
-
-        // Get the transaction id from the decrypt event, since response values can only be stored
-        // along an already-existing transaction ID
-        let txn_id: TransactionId = hex::decode(
-            response.events[1]
-                .attributes
-                .iter()
-                .find(|attr| attr.key == "txn_id")
-                .unwrap()
-                .value
-                .clone(),
-        )
-        .unwrap()
-        .into();
-
-        // Decrypt response event
-        let response = contract
-            .decrypt_response(txn_id.clone(), decrypt_response.clone())
-            .call(&owner)
-            .unwrap();
-        assert_eq!(response.events.len(), 2);
-
-        // There should not be any Reencrypt operation
-        let not_expected_operation = KmsOperation::Reencrypt;
-        let not_expected_values = contract.get_all_values_from_operation(not_expected_operation);
-        assert!(not_expected_values.unwrap().is_empty());
     }
 
     /// Test the `allowed_to_gen` list's logic. In particular this test makes sure to consider all

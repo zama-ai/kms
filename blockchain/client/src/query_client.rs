@@ -7,7 +7,7 @@ use cosmos_proto::messages::cosmwasm::wasm::v1::{
     QueryContractInfoRequest, QueryContractInfoResponse, QueryContractsByCodeRequest,
     QueryContractsByCodeResponse, QuerySmartContractStateRequest,
 };
-use events::kms::{KmsEvent, KmsOperation, TransactionId};
+use events::kms::{KmsEvent, TransactionId};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::str;
@@ -48,12 +48,6 @@ pub struct QueryClient {
     client: Channel,
 }
 
-/// Query for the blockchain used when querying it in relation to a specific operation.
-#[derive(Debug, Serialize, Clone, PartialEq, Default, TypedBuilder)]
-pub struct OperationQuery {
-    pub operation: KmsOperation,
-}
-
 /// Query for the blockchain used when querying it in relation to a specific event, i.e. transaction.
 #[derive(Debug, Serialize, Clone, PartialEq, Default, TypedBuilder)]
 pub struct EventQuery {
@@ -65,14 +59,22 @@ pub struct TransactionQuery {
     pub txn_id: TransactionId,
 }
 
+#[derive(Debug, Serialize, Clone, PartialEq, Default, TypedBuilder)]
+pub struct GenIdQuery {
+    pub id: String,
+}
+
 #[derive(Debug, EnumString, Serialize, Clone, PartialEq)]
 pub enum ContractQuery {
-    #[strum(serialize = "get_all_values_from_operation")]
-    #[serde(rename = "get_all_values_from_operation")]
-    GetAllValuesFromOperation(OperationQuery),
-    #[strum(serialize = "get_operations_value")]
-    #[serde(rename = "get_operations_value")]
-    GetOperationsValue(EventQuery),
+    #[strum(serialize = "get_key_gen_response_values")]
+    #[serde(rename = "get_key_gen_response_values")]
+    GetKeyGenResponseValues(GenIdQuery),
+    #[strum(serialize = "get_crs_gen_response_values")]
+    #[serde(rename = "get_crs_gen_response_values")]
+    GetCrsGenResponseValues(GenIdQuery),
+    #[strum(serialize = "get_operations_values_from_event")]
+    #[serde(rename = "get_operations_values_from_event")]
+    GetOperationsValuesFromEvent(EventQuery),
     #[strum(serialize = "get_transaction")]
     #[serde(rename = "get_transaction")]
     GetTransaction(TransactionQuery),

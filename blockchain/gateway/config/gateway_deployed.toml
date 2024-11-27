@@ -106,7 +106,8 @@ address = "http://localhost:9090"
 # Should be removed as part of https://github.com/zama-ai/fhevm/issues/548
 # Key ID used within the KMS.
 # Identifies the specific key to be used for cryptographic operations within the KMS.
-key_id = "408d8cbaa51dece7f782fe04ba0b1c1d017b1088"
+key_id = "beb70cb9fdbabf785242de498d6ec0ed282921d7"
+crs_id = "?"
 
 # List of prefixed of URL endpoints for the public storage of the KMS.
 # The key in the map is the MPC ID of the party. I.e. [1; amount of parties]

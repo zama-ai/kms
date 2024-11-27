@@ -18,18 +18,19 @@ use ethereum_inclusion_proofs::types::{
 use ethers::abi::Token;
 use ethers::prelude::*;
 use events::kms::{
-    DecryptValues, FheParameter, FheType, KmsCoreConf, KmsEvent, KmsMessage, KmsOperation,
-    OperationValue, ReencryptResponseValues, ReencryptValues, TransactionId,
-    VerifyProvenCtResponseValues, VerifyProvenCtValues,
+    CrsGenResponseValues, DecryptValues, FheParameter, FheType, KeyGenResponseValues, KmsCoreConf,
+    KmsEvent, KmsMessage, KmsOperation, OperationValue, ReencryptResponseValues, ReencryptValues,
+    TransactionId, VerifyProvenCtResponseValues, VerifyProvenCtValues,
 };
 use events::{HexVector, HexVectorList};
 use kms_blockchain_client::client::Client;
 use kms_blockchain_client::client::ClientBuilder;
 use kms_blockchain_client::client::ExecuteContractRequest;
 use kms_blockchain_client::client::ProtoCoin;
+use kms_blockchain_client::errors::Error;
 use kms_blockchain_client::query_client::ContractQuery;
 use kms_blockchain_client::query_client::EventQuery;
-use kms_blockchain_client::query_client::OperationQuery;
+use kms_blockchain_client::query_client::GenIdQuery;
 use kms_blockchain_client::query_client::QueryClient;
 use kms_blockchain_client::query_client::QueryClientBuilder;
 use kms_blockchain_client::query_client::QueryContractRequest;
@@ -254,112 +255,87 @@ impl<'a> KmsBlockchainImpl {
         Ok(handle_bytes)
     }
 
-    /// Helper function to all values stored in realtion to a specific blockchain operation.
-    /// This is useful for getting information about keys or CRS'.
-    async fn get_old_operations(
+    /// Helper function to get all the KeyGenResponseValues from the KMS blockchain.
+    async fn get_key_gen_response_values(
         &self,
-        operation: KmsOperation,
-    ) -> anyhow::Result<Vec<OperationValue>> {
-        let query_client = Arc::clone(&self.query_client);
+        key_id: String,
+    ) -> Result<Vec<KeyGenResponseValues>, Error> {
         let request = QueryContractRequest::builder()
             .contract_address(self.config.kms.contract_address.to_string())
-            .query(ContractQuery::GetAllValuesFromOperation(
-                OperationQuery::builder()
-                    .operation(operation.clone())
-                    .build(),
+            .query(ContractQuery::GetKeyGenResponseValues(
+                GenIdQuery::builder().id(key_id).build(),
             ))
             .build();
-        let results: Vec<OperationValue> = query_client.query_contract(request).await?;
-        let mut parsed_results = Vec::new();
-        for cur_res in results.iter() {
-            if cur_res.into_kms_operation().eq(&operation) {
-                parsed_results.push(cur_res.to_owned());
-            } else {
-                return Err(anyhow::anyhow!(
-                    "Expected a response of type {:?}, got {:?}",
-                    operation,
-                    cur_res.into_kms_operation()
-                ));
-            }
-        }
-        Ok(parsed_results)
+        let query_client = Arc::clone(&self.query_client);
+        query_client.query_contract(request).await
     }
 
-    /// Retrive the newest key id on the ASC.
-    /// NOTE this is temporary until we have a way to get the key id from the fhevm/co-processor.
-    /// See https://github.com/zama-ai/fhevm/issues/548
+    /// Helper function to get all the CrsGenResponseValues from the KMS blockchain.
+    async fn get_crs_gen_response_values(
+        &self,
+        crs_id: String,
+    ) -> Result<Vec<CrsGenResponseValues>, Error> {
+        let request = QueryContractRequest::builder()
+            .contract_address(self.config.kms.contract_address.to_string())
+            .query(ContractQuery::GetCrsGenResponseValues(
+                GenIdQuery::builder().id(crs_id).build(),
+            ))
+            .build();
+        let query_client = Arc::clone(&self.query_client);
+        query_client.query_contract(request).await
+    }
+
+    /// Get the key id from the config.
+    ///
+    /// This is because, in case of multiple key generations, the ASC can return multiple
+    /// key IDss and the client is not able to tell which ones should be used.
+    /// This is temporary and will be removed once we properly handle public key IDs across
+    /// the different components: https://github.com/zama-ai/kms-core/issues/1519
     async fn get_key_id(&self) -> anyhow::Result<String> {
-        let key_ops = self
-            .get_old_operations(KmsOperation::KeyGenResponse)
-            .await?;
-        if key_ops.len() > 1 {
-            tracing::warn!(
-                "More than one KeyGenResponse found in the blockchain, specifically {:}.
-             Using the newest one since I have no way to know which one is the correct one.",
-                key_ops.len()
-            );
-        }
-        match key_ops.last() {
-            Some(OperationValue::KeyGenResponse(key_resp)) => {
-                let key_id = key_resp.request_id().to_hex();
-                tracing::debug!("Using key with ID {}", key_id);
-                Ok(key_id)
-            }
-            _ => Err(anyhow::anyhow!("No KeyGenResponse found in the blockchain")),
-        }
+        Ok(self.config.kms.key_id.clone())
     }
 
     /// Helper function to parse the KeyGenResponses from the KMS blockchain.
     /// Takes a vector of KeyGenResponses as input and returns a map of key IDs to a tuple of parameter choice, public key signatures followed by server signatures.
     fn parse_signed_key_data(
-        vals: Vec<OperationValue>,
+        vals: Vec<KeyGenResponseValues>,
     ) -> anyhow::Result<HashMap<String, (FheParameter, HexVectorList, HexVectorList)>> {
         let mut id_sig_map: HashMap<String, (FheParameter, HexVectorList, HexVectorList)> =
             HashMap::new();
         // Go through each operation value returned and branch into the keygen case.
         // Then combine all signatures on the same ID into a vector for that ID.
-        for cur_res in vals.iter() {
-            match cur_res {
-                OperationValue::KeyGenResponse(key_resp) => {
-                    match id_sig_map.get_mut(&key_resp.request_id().to_hex()) {
-                        // First the case where the ID is already in the map
-                        Some((param, pk_sigs, server_sigs)) => {
-                            if param != key_resp.param() {
-                                tracing::error!("Discrepency between the parties choice of parameter. Specifically the inital parameter choice is {:?} and the current one is {:?}", key_resp.param(), param);
-                            }
-                            // NOTE: This is just a sanity check and pretty slow, so can be removed if we end up with many MPC servers.
-                            if pk_sigs.contains(key_resp.public_key_signature()) {
-                                tracing::error!("The response from the blockchain on KeyGenResponse already contains duplicate signatures. Specifically the signature {:?}", key_resp.public_key_signature());
-                            } else {
-                                pk_sigs.0.push(key_resp.public_key_signature().to_owned());
-                            }
-                            // NOTE: This is just a sanity check and pretty slow, so can be removed if we end up with many MPC servers.
-                            if server_sigs.contains(key_resp.server_key_signature()) {
-                                tracing::error!("The response from the blockchain on KeyGenResponse already contains duplicate signatures. Specifically the signature {:?}", key_resp.public_key_signature());
-                            } else {
-                                server_sigs
-                                    .0
-                                    .push(key_resp.server_key_signature().to_owned());
-                            }
-                        }
-                        // Then the case where it is the first time we see the ID
-                        None => {
-                            id_sig_map.insert(
-                                key_resp.request_id().to_hex(),
-                                (
-                                    key_resp.param().to_owned(),
-                                    HexVectorList(vec![key_resp.public_key_signature().to_owned()]),
-                                    HexVectorList(vec![key_resp.server_key_signature().to_owned()]),
-                                ),
-                            );
-                        }
+        for key_resp in vals.iter() {
+            match id_sig_map.get_mut(&key_resp.request_id().to_hex()) {
+                // First the case where the ID is already in the map
+                Some((param, pk_sigs, server_sigs)) => {
+                    if param != key_resp.param() {
+                        tracing::error!("Discrepancy between the parties choice of parameter. Specifically the initial parameter choice is {:?} and the current one is {:?}", key_resp.param(), param);
+                    }
+                    // NOTE: This is just a sanity check and pretty slow, so can be removed if we end up with many MPC servers.
+                    if pk_sigs.contains(key_resp.public_key_signature()) {
+                        tracing::error!("The response from the blockchain on KeyGenResponse already contains duplicate signatures. Specifically the signature {:?}", key_resp.public_key_signature());
+                    } else {
+                        pk_sigs.0.push(key_resp.public_key_signature().to_owned());
+                    }
+                    // NOTE: This is just a sanity check and pretty slow, so can be removed if we end up with many MPC servers.
+                    if server_sigs.contains(key_resp.server_key_signature()) {
+                        tracing::error!("The response from the blockchain on KeyGenResponse already contains duplicate signatures. Specifically the signature {:?}", key_resp.public_key_signature());
+                    } else {
+                        server_sigs
+                            .0
+                            .push(key_resp.server_key_signature().to_owned());
                     }
                 }
-                _ => {
-                    return Err(anyhow::anyhow!(
-                        "Expected a response of either KeyGenResponse got {:?}",
-                        cur_res.into_kms_operation()
-                    ));
+                // Then the case where it is the first time we see the ID
+                None => {
+                    id_sig_map.insert(
+                        key_resp.request_id().to_hex(),
+                        (
+                            key_resp.param().to_owned(),
+                            HexVectorList(vec![key_resp.public_key_signature().to_owned()]),
+                            HexVectorList(vec![key_resp.server_key_signature().to_owned()]),
+                        ),
+                    );
                 }
             }
         }
@@ -369,48 +345,38 @@ impl<'a> KmsBlockchainImpl {
     /// Helper function to parse the CrsGenResponses from the KMS blockchain.
     /// Takes a vector of CrsGenResponses as input and returns a map of key IDs to a tuple of public key signatures followed by a tuple of the max number of bits and the list of signatures.
     fn parse_signed_crs_data(
-        vals: Vec<OperationValue>,
+        vals: Vec<CrsGenResponseValues>,
     ) -> anyhow::Result<HashMap<String, (u32, FheParameter, HexVectorList)>> {
         let mut id_sig_map: HashMap<String, (u32, FheParameter, HexVectorList)> = HashMap::new();
         // Go through each operation value returned and branch into the crsgen case.
         // Then combine all signatures on the same ID into a vector for that ID.
-        for cur_res in vals.iter() {
-            match cur_res {
-                OperationValue::CrsGenResponse(crs_resp) => {
-                    match id_sig_map.get_mut(crs_resp.request_id()) {
-                        // First the case where the ID is already in the map
-                        Some((max_num_bits, fhe_param, sigs)) => {
-                            if *max_num_bits != crs_resp.max_num_bits() {
-                                tracing::error!("Discrepency between the parties choice of max number of bits. Specifically the inital choice is {:?} and the current one is {:?}", max_num_bits, crs_resp.max_num_bits());
-                            }
-                            if fhe_param != crs_resp.param() {
-                                tracing::error!("Discrepency between the parties choice of parameter. Specifically the inital parameter choice is {:?} and the current one is {:?}", fhe_param, crs_resp.param());
-                            }
-                            // NOTE: This is just a sanity check and pretty slow, so can be removed if we end up with many MPC servers.
-                            if sigs.contains(crs_resp.signature()) {
-                                tracing::error!("The response from the blockchain on CrsGenResponse already contains duplicate signatures. Specifically the signature {:?}", crs_resp.signature());
-                            } else {
-                                sigs.0.push(crs_resp.signature().to_owned());
-                            }
-                        }
-                        // Then the case where it is the first time we see the ID
-                        None => {
-                            id_sig_map.insert(
-                                crs_resp.request_id().to_owned(),
-                                (
-                                    crs_resp.max_num_bits(),
-                                    crs_resp.param().to_owned(),
-                                    HexVectorList(vec![crs_resp.signature().to_owned()]),
-                                ),
-                            );
-                        }
+        for crs_resp in vals.iter() {
+            match id_sig_map.get_mut(crs_resp.request_id()) {
+                // First the case where the ID is already in the map
+                Some((max_num_bits, fhe_param, sigs)) => {
+                    if *max_num_bits != crs_resp.max_num_bits() {
+                        tracing::error!("Discrepancy between the parties choice of max number of bits. Specifically the initial choice is {:?} and the current one is {:?}", max_num_bits, crs_resp.max_num_bits());
+                    }
+                    if fhe_param != crs_resp.param() {
+                        tracing::error!("Discrepancy between the parties choice of parameter. Specifically the initial parameter choice is {:?} and the current one is {:?}", fhe_param, crs_resp.param());
+                    }
+                    // NOTE: This is just a sanity check and pretty slow, so can be removed if we end up with many MPC servers.
+                    if sigs.contains(crs_resp.signature()) {
+                        tracing::error!("The response from the blockchain on CrsGenResponse already contains duplicate signatures. Specifically the signature {:?}", crs_resp.signature());
+                    } else {
+                        sigs.0.push(crs_resp.signature().to_owned());
                     }
                 }
-                _ => {
-                    return Err(anyhow::anyhow!(
-                        "Expected a response of either CrsGenResponse got {:?}",
-                        cur_res.into_kms_operation()
-                    ));
+                // Then the case where it is the first time we see the ID
+                None => {
+                    id_sig_map.insert(
+                        crs_resp.request_id().to_owned(),
+                        (
+                            crs_resp.max_num_bits(),
+                            crs_resp.param().to_owned(),
+                            HexVectorList(vec![crs_resp.signature().to_owned()]),
+                        ),
+                    );
                 }
             }
         }
@@ -658,10 +624,10 @@ impl Blockchain for KmsBlockchainImpl {
         }
         tracing::info!("🍊 Received callback from KMS: {:?}", event.txn_id());
         // Because we have seen the event, we now know that the result is ready to be queried
-        // so we query the GetOperationsValue endpoint of the ASC
+        // so we query the GetOperationsValuesFromEvent endpoint of the ASC
         let request = QueryContractRequest::builder()
             .contract_address(self.config.kms.contract_address.to_string())
-            .query(ContractQuery::GetOperationsValue(
+            .query(ContractQuery::GetOperationsValuesFromEvent(
                 EventQuery::builder().event(event.clone()).build(),
             ))
             .build();
@@ -946,7 +912,7 @@ impl Blockchain for KmsBlockchainImpl {
         tracing::info!("🍊 Received callback from KMS: {:?}", event.txn_id());
         let request = QueryContractRequest::builder()
             .contract_address(self.config.kms.contract_address.to_string())
-            .query(ContractQuery::GetOperationsValue(
+            .query(ContractQuery::GetOperationsValuesFromEvent(
                 EventQuery::builder().event(event.clone()).build(),
             ))
             .build();
@@ -1076,7 +1042,7 @@ impl Blockchain for KmsBlockchainImpl {
         tracing::info!("🍊 Received callback from KMS: {:?}", event.txn_id());
         let request = QueryContractRequest::builder()
             .contract_address(self.config.kms.contract_address.to_string())
-            .query(ContractQuery::GetOperationsValue(
+            .query(ContractQuery::GetOperationsValuesFromEvent(
                 EventQuery::builder().event(event.clone()).build(),
             ))
             .build();
@@ -1121,15 +1087,28 @@ impl Blockchain for KmsBlockchainImpl {
     }
 
     async fn keyurl(&self) -> anyhow::Result<KeyUrlResponseValues> {
-        let key_ops = self
-            .get_old_operations(KmsOperation::KeyGenResponse)
+        // Only get the key url info for the key id that matches the one in the config
+        // This is because, in case of multiple key generations, the ASC can return multiple
+        // key url infos and the client is not able to tell which ones should be used.
+        // This is temporary and will be removed once we properly handle public key IDs across
+        // the different components: https://github.com/zama-ai/kms-core/issues/1519
+        let key_values = self
+            .get_key_gen_response_values(self.config.kms.key_id.clone())
             .await?;
-        if key_ops.is_empty() {
-            tracing::warn!("key_ops is empty");
+
+        if key_values.is_empty() {
+            tracing::warn!(
+                "No key response values found associated with key ID {:?}. Please update the `key_id` parameter in the gateway's config.",
+                self.config.kms.key_id
+            );
         } else {
-            tracing::info!("got {} key_ops", key_ops.len());
+            tracing::info!(
+                "Got {} key response values for key ID {:?}",
+                key_values.len(),
+                self.config.kms.key_id
+            );
         }
-        let key_data = KmsBlockchainImpl::parse_signed_key_data(key_ops)?;
+        let key_data = KmsBlockchainImpl::parse_signed_key_data(key_values)?;
         let mut fhe_url_info = Vec::new();
         for (key_id, (param, pk_sigs, server_sigs)) in key_data.iter() {
             fhe_url_info.push(KmsBlockchainImpl::prepare_fhe_key_urls(
@@ -1141,15 +1120,15 @@ impl Blockchain for KmsBlockchainImpl {
             )?);
         }
 
-        let crs_ops = self
-            .get_old_operations(KmsOperation::CrsGenResponse)
+        let crs_values = self
+            .get_crs_gen_response_values(self.config.kms.crs_id.clone())
             .await?;
-        if crs_ops.is_empty() {
-            tracing::warn!("crs_ops is empty");
+        if crs_values.is_empty() {
+            tracing::warn!("No crs response values found. Were CRS generated?");
         } else {
-            tracing::info!("got {} crs_ops", crs_ops.len());
+            tracing::info!("Got {} crs response values", crs_values.len());
         }
-        let crs_data = KmsBlockchainImpl::parse_signed_crs_data(crs_ops)?;
+        let crs_data = KmsBlockchainImpl::parse_signed_crs_data(crs_values)?;
         let crs = KmsBlockchainImpl::get_crs_info(&self.config.kms.public_storage, &crs_data)?;
 
         let verf_key_info = KmsBlockchainImpl::get_verf_key_info(
@@ -1213,7 +1192,7 @@ fn most_common_element<T: Eq + std::hash::Hash + Clone>(vec: &[T]) -> Option<(T,
 mod tests {
     use crate::blockchain::kms_blockchain::{most_common_element, KmsBlockchainImpl};
     use events::{
-        kms::{CrsGenResponseValues, FheParameter, KeyGenResponseValues, OperationValue},
+        kms::{CrsGenResponseValues, FheParameter, KeyGenResponseValues},
         HexVector, HexVectorList,
     };
     use kms_lib::{
@@ -1248,36 +1227,36 @@ mod tests {
                 .to_string(),
         )
         .unwrap();
-        let key_operations = vec![
+        let key_response_values = vec![
             // Server 1 response
-            OperationValue::KeyGenResponse(KeyGenResponseValues::new(
+            KeyGenResponseValues::new(
                 req_id.clone(),
                 "digest_pk_1".to_string(),
                 HexVector::from_hex("111111111111111111111111111111111111111100").unwrap(), // pk_sig
                 "digest_server_1".to_string(),
                 HexVector::from_hex("111111111111111111111111111111111111111111").unwrap(), // server_sig
                 FheParameter::Test,
-            )),
+            ),
             // Server 2 response
-            OperationValue::KeyGenResponse(KeyGenResponseValues::new(
+            KeyGenResponseValues::new(
                 req_id.clone(),
                 "digest_pk_2".to_string(),
                 HexVector::from_hex("222222222222222222222222222222222222222200").unwrap(), // pk_sig
                 "digest_server_2".to_string(),
                 HexVector::from_hex("222222222222222222222222222222222222222211").unwrap(), // server_sig
                 FheParameter::Test,
-            )),
+            ),
             // Server 1 response to other key
-            OperationValue::KeyGenResponse(KeyGenResponseValues::new(
+            KeyGenResponseValues::new(
                 other_req_id.clone(),
                 "digest_pk_1_other".to_string(),
                 HexVector::from_hex("abcdef").unwrap(), // pk_sig
                 "digest_server_1_other".to_string(),
                 HexVector::from_hex("abcdef").unwrap(), // server_sig
                 FheParameter::Test,
-            )),
+            ),
         ];
-        let res = KmsBlockchainImpl::parse_signed_key_data(key_operations).unwrap();
+        let res = KmsBlockchainImpl::parse_signed_key_data(key_response_values).unwrap();
         assert_eq!(res.len(), 2);
         let (param, res_pk_sig, res_server_sig) = res.get(&req_id.to_hex()).unwrap();
         assert_eq!(param, &FheParameter::Test);
@@ -1309,33 +1288,33 @@ mod tests {
             .to_string();
         let max_bits = 256;
         let param = FheParameter::Test;
-        let key_operations = vec![
+        let crs_response_values = vec![
             // Server 1 response
-            OperationValue::CrsGenResponse(CrsGenResponseValues::new(
+            CrsGenResponseValues::new(
                 req_id.clone(),
                 "digest_1".to_string(),
                 HexVector::from_hex("111111111111111111111111111111111111111111").unwrap(),
                 max_bits,
                 param,
-            )),
+            ),
             // Server 2 response
-            OperationValue::CrsGenResponse(CrsGenResponseValues::new(
+            CrsGenResponseValues::new(
                 req_id.clone(),
                 "digest_pk_2".to_string(),
                 HexVector::from_hex("222222222222222222222222222222222222222222").unwrap(),
                 max_bits,
                 param,
-            )),
+            ),
             // Server 1 response to other crs
-            OperationValue::CrsGenResponse(CrsGenResponseValues::new(
+            CrsGenResponseValues::new(
                 other_req_id.clone(),
                 "digest_1_other".to_string(),
                 HexVector::from_hex("abcdef").unwrap(),
                 max_bits,
                 param,
-            )),
+            ),
         ];
-        let res = KmsBlockchainImpl::parse_signed_crs_data(key_operations).unwrap();
+        let res = KmsBlockchainImpl::parse_signed_crs_data(crs_response_values).unwrap();
         assert_eq!(res.len(), 2);
         let (retrieved_max_bits, retrieved_param, sig) = res.get(&req_id).unwrap();
         assert_eq!(max_bits, *retrieved_max_bits);

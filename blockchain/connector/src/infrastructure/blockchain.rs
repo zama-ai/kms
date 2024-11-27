@@ -92,7 +92,7 @@ impl Blockchain for KmsBlockchain {
         let query_client = self.query_client.lock().await;
         let request = QueryContractRequest::builder()
             .contract_address(self.config.contract.to_owned())
-            .query(ContractQuery::GetOperationsValue(
+            .query(ContractQuery::GetOperationsValuesFromEvent(
                 EventQuery::builder().event(event.clone()).build(),
             ))
             .build();

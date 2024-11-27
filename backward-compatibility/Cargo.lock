@@ -1235,7 +1235,7 @@ dependencies = [
 
 [[package]]
 name = "backward-compatibility"
-version = "0.9.0-rc25"
+version = "0.9.0-rc34"
 dependencies = [
  "aes-prng",
  "bincode",

@@ -1135,7 +1135,8 @@ pub async fn query_contract(
         .build();
 
     tracing::info!("contract address: {:?}", sim_config.contract);
-    let query_req = ContractQuery::GetOperationsValue(EventQuery::builder().event(ev).build());
+    let query_req =
+        ContractQuery::GetOperationsValuesFromEvent(EventQuery::builder().event(ev).build());
     let request = QueryContractRequest::builder()
         .contract_address(sim_config.contract.clone())
         .query(query_req)
