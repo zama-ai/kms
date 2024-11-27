@@ -28,12 +28,12 @@ jobs:
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@84ca29d5c1719e79e23b6af147555a8f4dac79d6 # v1.10.14
       
-      # Use cargo-binstall to efficiently install required cargo tools
+      # Use cargo-binstall to efficiently install required cargo tools with versiones specified
       - name: Install cargo tools
         run: |
-          cargo binstall --no-confirm \
+          cargo binstall --no-confirm --force \
             cargo-audit@0.21.0 \
-            cargo-deny@0.16.1
+            cargo-deny@0.16.2
 
       - name: Check that Cargo.lock is the source of truth
         run: cargo update -w --locked
