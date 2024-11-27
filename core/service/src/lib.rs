@@ -20,6 +20,7 @@ pub mod util {
     pub mod file_handling;
     pub mod key_setup;
     pub mod meta_store;
+    pub mod port_cleanup;
 }
 pub mod cryptography {
     #[cfg(feature = "non-wasm")]

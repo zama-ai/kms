@@ -1,4 +1,5 @@
 use crate::conf::{ExecutionEnvironment, Tracing, ENVIRONMENT};
+use anyhow::Context;
 use opentelemetry::propagation::Injector;
 use opentelemetry::trace::{TraceContextExt, TracerProvider as _};
 use opentelemetry::{global, KeyValue};
@@ -9,6 +10,7 @@ use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::runtime::Tokio;
 use opentelemetry_sdk::trace::{Config, Tracer, TracerProvider};
 use opentelemetry_sdk::Resource;
+use std::time::Duration;
 use tonic::metadata::{MetadataKey, MetadataMap, MetadataValue};
 use tonic::service::Interceptor;
 use tonic::transport::Body;
@@ -24,6 +26,11 @@ use tracing_subscriber::{EnvFilter, Registry};
 pub const TRACER_REQUEST_ID: &str = "x-zama-kms-request-id";
 pub const TRACER_PARENT_SPAN_ID: &str = "x-zama-kms-parent-span-id";
 
+/// Default timeout for trace export operations
+const DEFAULT_EXPORT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Default timeout for initialization operations
+const DEFAULT_INIT_TIMEOUT: Duration = Duration::from_secs(10);
+
 impl From<Tracing> for Tracer {
     fn from(settings: Tracing) -> Self {
         let result;
@@ -37,20 +44,27 @@ impl From<Tracing> for Tracer {
                 .with_exporter(
                     opentelemetry_otlp::new_exporter()
                         .tonic()
-                        .with_endpoint(endpoint),
+                        .with_endpoint(endpoint)
+                        .with_timeout(DEFAULT_EXPORT_TIMEOUT),
                 )
-                .with_trace_config(opentelemetry_sdk::trace::config().with_resource(
-                    Resource::new(vec![KeyValue::new(
-                        opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
-                        settings.service_name().to_string(),
-                    )]),
-                ));
+                .with_trace_config(
+                    opentelemetry_sdk::trace::config()
+                        .with_resource(Resource::new(vec![KeyValue::new(
+                            opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
+                            settings.service_name().to_string(),
+                        )]))
+                        .with_sampler(opentelemetry_sdk::trace::Sampler::ParentBased(Box::new(
+                            opentelemetry_sdk::trace::Sampler::TraceIdRatioBased(0.1),
+                        ))),
+                );
+
             if let Some(batch) = settings.batch() {
                 let batch_config = opentelemetry_sdk::trace::BatchConfigBuilder::default()
                     .with_max_queue_size(batch.max_queue_size())
                     .with_scheduled_delay(batch.scheduled_delay())
                     .with_max_export_batch_size(batch.max_export_batch_size())
                     .with_max_concurrent_exports(batch.max_concurrent_exports())
+                    .with_max_export_timeout(DEFAULT_EXPORT_TIMEOUT)
                     .build();
                 pipeline = pipeline.with_batch_config(batch_config);
             }
@@ -110,55 +124,87 @@ fn fmt_layer<S>() -> Layer<S> {
     }
 }
 
-pub fn init_tracing(settings: Tracing) -> Result<(), anyhow::Error> {
-    // Define Tracer
-    let tracer: Tracer = settings.clone().into();
+pub async fn init_tracing(settings: Tracing) -> Result<(), anyhow::Error> {
+    let init_span = info_span!("init_tracing").entered();
 
-    // Layer to filter traces based on level - trace, debug, info, warn, error.
-    let fmt_layer = fmt_layer();
-    let env_filter = EnvFilter::try_from_default_env()
-        .or_else(|_| EnvFilter::try_new("info"))
-        .unwrap();
+    // Initialize components concurrently with timeout
+    let init_result = tokio::time::timeout(DEFAULT_INIT_TIMEOUT, async {
+        // Create tracer and metrics concurrently
+        let settings_for_tracer = settings.clone();
+        let settings_for_metrics = settings.clone();
+        let (tracer, metrics) = tokio::join!(
+            tokio::task::spawn_blocking(move || -> Result<Tracer, anyhow::Error> {
+                Ok(settings_for_tracer.into())
+            }),
+            tokio::task::spawn_blocking(move || -> Result<SdkMeterProvider, anyhow::Error> {
+                Ok(init_metrics(settings_for_metrics))
+            })
+        );
 
-    // Layer to add our configured tracer.
-    let tracing_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+        let tracer = tracer.context("Failed to create tracer")?;
+        let metrics = metrics.context("Failed to create metrics provider")?;
 
-    // Setting a trace context propagation data.
-    global::set_text_map_propagator(TraceContextPropagator::new());
-    global::set_error_handler(|error| tracing::error!("OpenTelemetry error: {:?}", error)).unwrap();
+        // Set up propagator and error handler in background
+        tokio::task::spawn_blocking(move || {
+            global::set_text_map_propagator(TraceContextPropagator::new());
+            global::set_error_handler(|error| tracing::error!("OpenTelemetry error: {:?}", error))
+                .unwrap();
+        })
+        .await?;
 
-    let subscriber = Registry::default().with(tracing_layer).with(env_filter);
+        // Layer to filter traces based on level
+        let fmt_layer = fmt_layer();
+        let env_filter = EnvFilter::try_from_default_env()
+            .or_else(|_| EnvFilter::try_new("info"))
+            .unwrap();
 
-    // Simplest option to have conditional subscribers because of tracing-subscriber inability to
-    // Clone
-    if settings.json_logs().unwrap_or(false) {
-        tracing::subscriber::set_global_default(subscriber.with(Layer::default().json()))
-            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
-    } else {
-        tracing::subscriber::set_global_default(subscriber.with(fmt_layer))
-            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
-    };
+        // Layer to add our configured tracer
+        let tracing_layer = tracing_opentelemetry::layer().with_tracer(tracer?);
 
-    let metrics = init_metrics(settings);
-    global::set_meter_provider(metrics);
-    Ok(())
+        let subscriber = Registry::default().with(tracing_layer).with(env_filter);
+
+        // Set up subscriber based on json_logs setting
+        if settings.json_logs().unwrap_or(false) {
+            tracing::subscriber::set_global_default(subscriber.with(Layer::default().json()))
+                .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        } else {
+            tracing::subscriber::set_global_default(subscriber.with(fmt_layer))
+                .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        }
+
+        // Set meter provider
+        global::set_meter_provider(metrics?);
+
+        Ok::<(), anyhow::Error>(())
+    })
+    .await
+    .context("Initialization timed out")?;
+
+    init_span.exit();
+    init_result
 }
 
 pub fn make_span(request: &Request<Body>) -> Span {
-    let headers = request.headers();
-    let endpoint = request.uri().path();
+    let headers = request.headers().clone();
+    let endpoint = request.uri().path().to_owned();
     let request_id = headers
         .get(TRACER_REQUEST_ID)
-        .map(|r| r.to_str().map(|x| x.to_string()));
+        .and_then(|r| r.to_str().ok())
+        .map(String::from);
 
+    // Create span without blocking
     if endpoint.contains("Health/Check") {
-        trace_span!("healt_grpc_request", ?endpoint, ?headers)
+        trace_span!("health_grpc_request", ?endpoint)
     } else {
         match request_id {
-            Some(Ok(request_id)) => {
-                info_span!("grpc_request", ?endpoint, ?headers, trace_id = %request_id)
+            Some(request_id) => {
+                info_span!("grpc_request",
+                    ?endpoint,
+                    trace_id = %request_id,
+                    %request_id
+                )
             }
-            _ => info_span!("grpc_request", ?endpoint, ?headers, trace_id = field::Empty),
+            None => info_span!("grpc_request", ?endpoint, trace_id = field::Empty),
         }
     }
 }

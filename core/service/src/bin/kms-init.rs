@@ -23,7 +23,7 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    init_trace()?;
+    init_trace().await?;
     let args = Args::parse();
 
     let mut handles = Vec::new();

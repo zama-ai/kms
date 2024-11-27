@@ -20,8 +20,9 @@ async fn main() -> Result<()> {
     let opts = Opts::parse();
     let provider = Provider::<Ws>::connect_with_reconnects(&opts.url, 10).await?;
     provider.get_chainid().await?;
-    let config: GatewayConfig =
-        init_conf_with_trace_gateway("config/gateway").map_err(|e| eyre::eyre!(e))?;
+    let config: GatewayConfig = init_conf_with_trace_gateway("config/gateway")
+        .await
+        .map_err(|e| eyre::eyre!(e))?;
 
     let chain_id = provider.get_chainid().await?;
     println!("chain_id: {}", chain_id);

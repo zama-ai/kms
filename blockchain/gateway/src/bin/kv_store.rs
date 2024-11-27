@@ -10,11 +10,13 @@ use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    let _config: GatewayConfig = init_conf_with_trace_gateway("config/gateway").map_err(|e| {
-        let error_str = format!("Failed to initialize gateway config: {:?}", e);
-        tracing::error!(error_str);
-        std::io::Error::new(std::io::ErrorKind::Other, error_str)
-    })?;
+    let _config: GatewayConfig = init_conf_with_trace_gateway("config/gateway")
+        .await
+        .map_err(|e| {
+            let error_str = format!("Failed to initialize gateway config: {:?}", e);
+            tracing::error!(error_str);
+            std::io::Error::new(std::io::ErrorKind::Other, error_str)
+        })?;
     tracing::info!("Setting up KV store...");
 
     tokio::fs::create_dir_all(".store").await.unwrap();

@@ -33,6 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .tracing
             .clone()
             .unwrap_or(Tracing::builder().service_name("moby").build()),
-    )?;
+    )
+    .await?;
     grpc::server::run(&settings).await
 }

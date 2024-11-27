@@ -215,7 +215,7 @@ async fn write_certs_and_keys(
 /// Execute TLS certificate generation.
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    init_trace()?;
+    init_trace().await?;
 
     let args = Cli::parse();
 

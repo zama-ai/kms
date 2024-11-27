@@ -21,7 +21,8 @@ async fn main() -> anyhow::Result<()> {
         std::env::var("GATEWAY_CONFIG")
             .unwrap_or_else(|_| "config/gateway.toml".to_string())
             .as_str(),
-    )?;
+    )
+    .await?;
     // Some starting logs
     print_intro(&config);
     // Channel for communication

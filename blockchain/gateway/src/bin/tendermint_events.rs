@@ -11,7 +11,7 @@ use tendermint_rpc::{
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let url = Url::from_str("ws://localhost:36657/websocket").unwrap();
-    let config: GatewayConfig = init_conf_with_trace_gateway("config/gateway")?;
+    let config: GatewayConfig = init_conf_with_trace_gateway("config/gateway").await?;
     let contract_addr = config.kms.contract_address.to_string();
 
     let event_manager = EventManager::new(url, &contract_addr);

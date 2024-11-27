@@ -11,7 +11,7 @@ abigen!(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config: GatewayConfig = init_conf_with_trace_gateway("config/gateway")?;
+    let config: GatewayConfig = init_conf_with_trace_gateway("config/gateway").await?;
 
     // Generate a new wallet with a random private key
     let wallet = LocalWallet::new(&mut rand::thread_rng());

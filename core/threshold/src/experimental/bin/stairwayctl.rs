@@ -306,7 +306,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .clone()
         .unwrap_or(Tracing::builder().service_name("stairwayctl").build());
 
-    init_tracing(tracing)?;
+    init_tracing(tracing).await?;
 
     let runtime = ChoreoRuntime::new_from_conf(&conf)?;
     match args.command {

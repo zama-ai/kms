@@ -476,7 +476,7 @@ async fn threshold_requests(addresses: Vec<String>, init: bool) -> anyhow::Resul
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use kms_lib::consts::SIGNING_KEY_ID;
 
-    init_trace()?;
+    init_trace().await?;
 
     ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
 

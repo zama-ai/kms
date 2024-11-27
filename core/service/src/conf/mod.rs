@@ -66,21 +66,21 @@ pub fn init_conf<'a, T: Deserialize<'a> + std::fmt::Debug>(config_file: &str) ->
 }
 
 /// Initialize the configuration from the given file and initialize tracing.
-pub fn init_conf_trace<'a, T: Deserialize<'a> + std::fmt::Debug + ConfigTracing>(
+pub async fn init_conf_trace<'a, T: Deserialize<'a> + std::fmt::Debug + ConfigTracing>(
     config_file: &str,
 ) -> anyhow::Result<T> {
     let full_config: T = init_conf(config_file)?;
     let tracing = full_config
         .tracing()
         .unwrap_or_else(|| Tracing::builder().service_name("kms_core").build());
-    init_tracing(tracing)?;
+    init_tracing(tracing).await?;
     Ok(full_config)
 }
 
 /// Initialize the tracing configuration with default values
-pub fn init_trace() -> anyhow::Result<()> {
+pub async fn init_trace() -> anyhow::Result<()> {
     let tracing = Tracing::builder().service_name("kms_core").build();
-    init_tracing(tracing)
+    init_tracing(tracing).await
 }
 
 #[cfg(test)]

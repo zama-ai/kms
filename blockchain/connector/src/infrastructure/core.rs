@@ -388,7 +388,7 @@ where
 
         let metrics = self.operation_val.kms_client.metrics.clone();
 
-        let request = make_request(req.clone(), Some(request_id.clone()))?;
+        let request = make_request(req.clone(), Some(request_id.clone()), None)?;
         // the response should be empty
         let _resp = client.decrypt(request).await.inspect_err(|e| {
             let err_msg = e.to_string();
@@ -432,7 +432,11 @@ where
             .decryption
             .clone();
         poller!(
-            client.get_decrypt_result(make_request(req_id.clone(), Some(request_id.clone()))?),
+            client.get_decrypt_result(make_request(
+                req_id.clone(),
+                Some(request_id.clone()),
+                None
+            )?),
             g,
             timeout_triple,
             "(Decrypt)",
@@ -500,7 +504,7 @@ where
 
         let metrics = self.operation_val.kms_client.metrics.clone();
 
-        let request = make_request(req.clone(), Some(tx_id.clone()))?;
+        let request = make_request(req.clone(), Some(tx_id.clone()), None)?;
 
         // the response should be empty
         let _resp = client.reencrypt(request).await.inspect_err(|e| {
@@ -549,7 +553,7 @@ where
 
         // loop to get response
         poller!(
-            client.get_reencrypt_result(make_request(req_id.clone(), Some(tx_id.clone()))?),
+            client.get_reencrypt_result(make_request(req_id.clone(), Some(tx_id.clone()), None)?),
             g,
             timeout_triple,
             "(Reencrypt)",
@@ -608,7 +612,7 @@ where
 
         let metrics = self.operation_val.kms_client.metrics.clone();
 
-        let request = make_request(req.clone(), Some(tx_id.clone()))?;
+        let request = make_request(req.clone(), Some(tx_id.clone()), None)?;
         // Response is just empty
         let _resp = client.verify_proven_ct(request).await.inspect_err(|e| {
             let err_msg = e.to_string();
@@ -652,7 +656,11 @@ where
 
         // loop to get response
         poller!(
-            client.get_verify_proven_ct_result(make_request(req_id.clone(), Some(tx_id.clone()))?),
+            client.get_verify_proven_ct_result(make_request(
+                req_id.clone(),
+                Some(tx_id.clone()),
+                None
+            )?),
             g,
             timeout_triple,
             "(VerifyProvenCt)",
@@ -695,7 +703,7 @@ where
 
         let metrics = self.operation_val.kms_client.metrics.clone();
 
-        let request = make_request(req.clone(), Some(request_id.clone()))?;
+        let request = make_request(req.clone(), Some(request_id.clone()), None)?;
 
         // the response should be empty
         let _resp = client.key_gen_preproc(request).await.inspect_err(|e| {
@@ -744,7 +752,11 @@ where
         let timeout_triple = self.operation_val.kms_client.timeout_config.preproc.clone();
 
         poller!(
-            client.get_preproc_status(make_request(req_id.clone(), Some(request_id.clone()))?),
+            client.get_preproc_status(make_request(
+                req_id.clone(),
+                Some(request_id.clone()),
+                None
+            )?),
             g,
             timeout_triple,
             "(KeyGenPreproc)",
@@ -790,7 +802,7 @@ where
 
         let metrics = self.operation_val.kms_client.metrics.clone();
 
-        let request = make_request(req.clone(), Some(request_id.clone()))?;
+        let request = make_request(req.clone(), Some(request_id.clone()), None)?;
 
         // the response should be empty
         let _resp = client.key_gen(request).await.inspect_err(|e| {
@@ -844,7 +856,11 @@ where
         // loop to get response
         let timeout_triple = self.operation_val.kms_client.timeout_config.keygen.clone();
         poller!(
-            client.get_key_gen_result(make_request(req_id.clone(), Some(request_id.clone()))?),
+            client.get_key_gen_result(make_request(
+                req_id.clone(),
+                Some(request_id.clone()),
+                None
+            )?),
             g,
             timeout_triple,
             "(KeyGen)",
@@ -892,7 +908,7 @@ where
 
         let metrics = self.operation_val.kms_client.metrics.clone();
 
-        let request = make_request(req.clone(), Some(request_id.clone()))?;
+        let request = make_request(req.clone(), Some(request_id.clone()), None)?;
 
         // the response should be empty
         let _resp = client.insecure_key_gen(request).await.inspect_err(|e| {
@@ -954,7 +970,11 @@ where
             .clone();
 
         poller!(
-            client.get_key_gen_result(make_request(req_id.clone(), Some(request_id.clone()))?),
+            client.get_key_gen_result(make_request(
+                req_id.clone(),
+                Some(request_id.clone()),
+                None
+            )?),
             g,
             timeout_triple,
             "(InsecureKeyGen)",
@@ -1000,7 +1020,7 @@ where
 
         let metrics = self.operation_val.kms_client.metrics.clone();
 
-        let request = make_request(req.clone(), Some(request_id.clone()))?;
+        let request = make_request(req.clone(), Some(request_id.clone()), None)?;
 
         // the response should be empty
         let _resp = client.crs_gen(request).await.inspect_err(|e| {
@@ -1045,7 +1065,11 @@ where
 
         let timeout_triple = self.operation_val.kms_client.timeout_config.crs.clone();
         poller!(
-            client.get_crs_gen_result(make_request(req_id.clone(), Some(request_id.clone()))?),
+            client.get_crs_gen_result(make_request(
+                req_id.clone(),
+                Some(request_id.clone()),
+                None
+            )?),
             g,
             timeout_triple,
             "(CRS)",
@@ -1094,7 +1118,7 @@ where
 
         let metrics = self.operation_val.kms_client.metrics.clone();
 
-        let request = make_request(req.clone(), Some(request_id.clone()))?;
+        let request = make_request(req.clone(), Some(request_id.clone()), None)?;
 
         // the response should be empty
         let _resp = client.insecure_crs_gen(request).await.inspect_err(|e| {
@@ -1141,7 +1165,11 @@ where
             .insecure_crs
             .clone();
         poller!(
-            client.get_crs_gen_result(make_request(req_id.clone(), Some(request_id.clone()))?),
+            client.get_crs_gen_result(make_request(
+                req_id.clone(),
+                Some(request_id.clone()),
+                None
+            )?),
             g,
             timeout_triple,
             "(InsecureCRS)",

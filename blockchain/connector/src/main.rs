@@ -17,7 +17,7 @@ pub struct Cli {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let mode = cli.mode.unwrap_or(Mode::KmsCore);
-    let config: ConnectorConfig = init_conf_with_trace(cli.conf_file.as_deref().unwrap())?;
+    let config: ConnectorConfig = init_conf_with_trace(cli.conf_file.as_deref().unwrap()).await?;
 
     tracing::info!(
         "Starting kms-asc-connector in mode '{:?}' - config {:?}",

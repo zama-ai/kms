@@ -151,8 +151,8 @@ struct ThresholdCmdArgs<'a, S: Storage> {
 /// ./kms-key-gen --help
 /// ```
 #[tokio::main]
-async fn main() {
-    init_trace().unwrap();
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    init_trace().await?;
     let args = Args::parse();
     let aws_config = AWSConfig {
         region: args.aws_region,
@@ -251,6 +251,7 @@ async fn main() {
             }
         }
     }
+    Ok(())
 }
 
 async fn handle_central_cmd<'a, S: StorageForText>(

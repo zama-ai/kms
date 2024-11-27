@@ -47,7 +47,7 @@ struct KmsArgs {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = KmsArgs::parse();
-    let core_config: CoreConfig = init_conf_trace(&args.config_file)?;
+    let core_config: CoreConfig = init_conf_trace(&args.config_file).await?;
     let party_id = core_config.threshold.as_ref().map(|t| t.my_id);
 
     // initialize storage

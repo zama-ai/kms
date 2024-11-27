@@ -122,8 +122,8 @@ async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
     option_env!("RUST_LOG")
         .map(|_| ())
         .unwrap_or_else(|| set_var("RUST_LOG", "error"));
-    // Ignore in case the tracing has already been initialized
-    let _ = init_tracing(Tracing::builder().service_name("connector_test").build());
+    // Initialize tracing if not already initialized
+    let _guard = init_tracing(Tracing::builder().service_name("connector_test").build());
 
     let mnemonic = Some("whisper stereo great helmet during hollow nominee skate frown daughter donor pool ozone few find risk cigar practice essay sketch rhythm novel dumb host".to_string());
     let addresses = vec!["http://localhost:9090"];

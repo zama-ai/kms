@@ -264,13 +264,13 @@ pub fn init_conf_gateway(config_file: &str) -> anyhow::Result<GatewayConfig> {
         .map_err(|e| e.into())
 }
 
-pub fn init_conf_with_trace_gateway(config_file: &str) -> anyhow::Result<GatewayConfig> {
+pub async fn init_conf_with_trace_gateway(config_file: &str) -> anyhow::Result<GatewayConfig> {
     let conf = init_conf_gateway(config_file)?;
     let tracing = conf
         .tracing
         .clone()
         .unwrap_or_else(|| Tracing::builder().service_name("gateway").build());
-    init_tracing(tracing)?;
+    init_tracing(tracing).await?;
     Ok(conf)
 }
 
