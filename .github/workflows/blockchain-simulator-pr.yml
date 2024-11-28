@@ -2,7 +2,6 @@ name: "[Blockchain-Simulator-PR] Pipeline Run"
 
 on:
   pull_request:
-    branches: ['*']
     paths:
       - 'blockchain/**'
       - 'core/**'

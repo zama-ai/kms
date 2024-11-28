@@ -2,7 +2,6 @@ name: "[Blockchain-Events-PR] Pipeline Run"
 
 on:
   pull_request:
-    branches: ['*']
     paths:
       - 'blockchain/events/**'
       - 'blockchain/cosmos-proto/**'

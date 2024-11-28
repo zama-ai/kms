@@ -2,7 +2,6 @@ name: '[Blockchain-Smart-Contracts-PR] Pipeline Run'
 
 on:
   pull_request:
-    branches: ['*']
     paths:
       - 'blockchain/contracts/**'
       - 'blockchain/events/**'
