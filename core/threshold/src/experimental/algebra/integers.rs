@@ -154,7 +154,7 @@ impl Mul for IntQ {
     }
 }
 
-impl<'l, 'r> Mul<&'r IntQ> for &'l IntQ {
+impl<'r> Mul<&'r IntQ> for &IntQ {
     type Output = IntQ;
     fn mul(self, rhs: &'r IntQ) -> Self::Output {
         let sign = self.sign() * rhs.sign();
@@ -174,7 +174,7 @@ impl Sub for IntQ {
     }
 }
 
-impl<'l, 'r> Sub<&'r IntQ> for &'l IntQ {
+impl<'r> Sub<&'r IntQ> for &IntQ {
     type Output = IntQ;
     #[allow(clippy::suspicious_arithmetic_impl)]
     fn sub(self, rhs: &'r IntQ) -> Self::Output {
@@ -229,7 +229,7 @@ impl Add for IntQ {
     }
 }
 
-impl<'l, 'r> Add<&'r IntQ> for &'l IntQ {
+impl<'r> Add<&'r IntQ> for &IntQ {
     type Output = IntQ;
     fn add(self, rhs: &'r IntQ) -> Self::Output {
         let (is_negative, data) = {

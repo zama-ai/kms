@@ -1074,7 +1074,7 @@ impl<'de> Deserialize<'de> for FheType {
 }
 
 struct FheTypeVisitor;
-impl<'de> Visitor<'de> for FheTypeVisitor {
+impl Visitor<'_> for FheTypeVisitor {
     type Value = FheType;
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {

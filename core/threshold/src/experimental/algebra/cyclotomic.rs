@@ -438,7 +438,7 @@ impl Mul<IntQ> for RingElement<IntQ> {
     }
 }
 
-impl<'l, 'r> Mul<&'r IntQ> for &'l RingElement<IntQ> {
+impl<'r> Mul<&'r IntQ> for &RingElement<IntQ> {
     type Output = RingElement<IntQ>;
     fn mul(self, rhs: &'r IntQ) -> Self::Output {
         let data: Vec<_> = self.data.iter().map(|v| v * rhs).collect();

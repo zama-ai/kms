@@ -9,14 +9,15 @@ use test_context::{test_context, AsyncTestContext};
 use tests_utils::{DockerCompose, KMSMode};
 use tokio::fs;
 
-/// IMPORTANT: These integration tests require Docker running and images build.
-/// You can build the images by running the following commands from the root of the repo:
-/// ```
-/// docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml build
-/// docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-centralized.yml build
-/// ```
-/// Any issue might be related to the fact that some obsolete Docker images exist.
+// IMPORTANT: These integration tests require Docker running and images build.
+// You can build the images by running the following commands from the root of the repo:
+// ```
+// docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml build
+// docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-centralized.yml build
+// ```
+// Any issue might be related to the fact that some obsolete Docker images exist.
 
+/// Wait 1 minute for everything to setup properly
 const BOOTSTRAP_TIME_TO_SLEEP: u64 = 60;
 
 trait DockerComposeContext {

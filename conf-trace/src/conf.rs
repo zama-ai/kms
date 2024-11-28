@@ -99,8 +99,7 @@ pub struct Tracing {
     #[builder(setter(into))]
     service_name: String,
 
-    /// All the following settings are optional.
-
+    // All the following settings are optional.
     /// The endpoint of the tracing system. If it is not set, tracing will be redirected to stdout.
     #[builder(default, setter(strip_option))]
     endpoint: Option<String>,
@@ -109,7 +108,7 @@ pub struct Tracing {
     /// If this is set, the tracing system will not batch the spans before exporting them.
     #[builder(default, setter(strip_option))]
     batch: Option<BatchConf>,
-    ///
+
     /// Batch configuration.
     /// If this is set, the tracing system will not batch the spans before exporting them.
     #[builder(default, setter(strip_option))]
@@ -249,7 +248,7 @@ fn mode() -> ExecutionEnvironment {
         .unwrap_or_else(|_| ExecutionEnvironment::Local)
 }
 
-impl<'a> Settings<'a> {
+impl Settings<'_> {
     /// Creates a new instance of `Settings`.
     ///
     /// # Errors

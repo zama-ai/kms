@@ -114,7 +114,8 @@ impl Kms for KmsMock {
     }
 }
 
-const BOOTSTRAP_TIME_TO_SLEEP: u64 = 60; // Wait a minute for everything to setup properly
+/// Wait 1 minute for everything to setup properly
+const BOOTSTRAP_TIME_TO_SLEEP: u64 = 60;
 
 #[test_context(DockerComposeContext)]
 #[tokio::test]

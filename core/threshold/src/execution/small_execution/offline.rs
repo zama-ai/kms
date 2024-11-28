@@ -664,7 +664,8 @@ mod test {
             "did not broadcast the correct type and is thus malicious"
         ));
         assert_eq!(1, res.len());
-        assert!(res.first().is_some());
+        let first = res.first();
+        assert!(first.is_some());
     }
 
     #[test]

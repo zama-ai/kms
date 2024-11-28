@@ -32,7 +32,7 @@ impl<'de> Deserialize<'de> for PublicEncKey {
 }
 struct PublicEncKeyVisitor;
 /// Serialize a point encryption key for libsodium's ECIES. Concretely as a Montgomery point
-impl<'de> Visitor<'de> for PublicEncKeyVisitor {
+impl Visitor<'_> for PublicEncKeyVisitor {
     type Value = PublicEncKey;
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -80,7 +80,7 @@ impl<'de> Deserialize<'de> for PrivateEncKey {
 }
 
 struct PrivateEncKeyVisitor;
-impl<'de> Visitor<'de> for PrivateEncKeyVisitor {
+impl Visitor<'_> for PrivateEncKeyVisitor {
     type Value = PrivateEncKey;
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -168,7 +168,7 @@ impl From<PrivateSigKey> for PublicSigKey {
 }
 
 struct PublicSigKeyVisitor;
-impl<'de> Visitor<'de> for PublicSigKeyVisitor {
+impl Visitor<'_> for PublicSigKeyVisitor {
     type Value = WrappedVerifyingKey;
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -241,7 +241,7 @@ impl<'de> Deserialize<'de> for WrappedSigningKey {
 }
 
 struct PrivateSigKeyVisitor;
-impl<'de> Visitor<'de> for PrivateSigKeyVisitor {
+impl Visitor<'_> for PrivateSigKeyVisitor {
     type Value = WrappedSigningKey;
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -314,7 +314,7 @@ impl<'de> Deserialize<'de> for Signature {
     }
 }
 struct SignatureVisitor;
-impl<'de> Visitor<'de> for SignatureVisitor {
+impl Visitor<'_> for SignatureVisitor {
     type Value = Signature;
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {

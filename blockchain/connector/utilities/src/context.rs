@@ -11,7 +11,7 @@ pub struct DockerComposeCmd {
 // Wrapper struct for Output
 pub struct OutputWrapper<'a>(&'a Output);
 
-impl<'a> fmt::Display for OutputWrapper<'a> {
+impl fmt::Display for OutputWrapper<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let stdout = String::from_utf8_lossy(&self.0.stdout);
         let stderr = String::from_utf8_lossy(&self.0.stderr);
