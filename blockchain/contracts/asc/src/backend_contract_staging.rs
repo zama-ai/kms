@@ -455,12 +455,42 @@ impl BackendContract {
     ) -> StdResult<Response> {
         // Check that the transaction exists. We should not store response values for a
         // transaction if the transaction does not exist
-        // Note that we might also check that this transaction (if it exists) also has the corresponding
-        // request value in the future
         if !kms_storage.has_transaction(storage, transaction_id) {
             return Err(StdError::generic_err(format!(
                 "Transaction with id {:?} not found while trying to save response operation value `{:?}`",
                 transaction_id,
+                operation
+            )));
+        }
+
+        // Get all request values associated to the transaction
+        let request_values =
+            kms_storage.get_request_values_from_transaction(storage, transaction_id, None)?;
+
+        // Get the list of request operations associated to the response operation
+        // This is a list because in case of generation (key or CRS) responses, which can be associated
+        // to two different request operations: the normal one and the insecure one.
+        let associated_requests =
+            operation
+                .into_kms_operation()
+                .to_requests()
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "No associated requests found for response operation: {:?}",
+                        operation
+                    )
+                });
+        // Check that at least one of the request values matches one of the associated request operations
+        let has_matching_request = request_values
+            .iter()
+            .any(|req_val| associated_requests.contains(&req_val.into_kms_operation()));
+
+        // A response operation must be associated with a request operation of relevant type (ex:
+        // `DecryptResponse` must be associated to `Decrypt`)
+        if !has_matching_request {
+            return Err(StdError::generic_err(format!(
+                "No matching request operation found for response operation `{:?}`. A response 
+                operation must be associated with a request operation of relevant type.",
                 operation
             )));
         }

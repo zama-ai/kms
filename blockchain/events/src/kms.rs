@@ -1927,6 +1927,29 @@ impl KmsOperation {
             )),
         }
     }
+
+    /// Return the list of request operations associated to the response operation
+    ///
+    /// This returns a list because in case of generation (key or CRS) responses, there are two
+    /// possible request operations associated: the normal one and the insecure one.
+    pub fn to_requests(&self) -> Result<Vec<KmsOperation>, anyhow::Error> {
+        match *self {
+            KmsOperation::DecryptResponse => Ok(vec![KmsOperation::Decrypt]),
+            KmsOperation::ReencryptResponse => Ok(vec![KmsOperation::Reencrypt]),
+            KmsOperation::KeyGenPreprocResponse => Ok(vec![KmsOperation::KeyGenPreproc]),
+            KmsOperation::KeyGenResponse => {
+                Ok(vec![KmsOperation::KeyGen, KmsOperation::InsecureKeyGen])
+            }
+            KmsOperation::CrsGenResponse => {
+                Ok(vec![KmsOperation::CrsGen, KmsOperation::InsecureCrsGen])
+            }
+            KmsOperation::VerifyProvenCtResponse => Ok(vec![KmsOperation::VerifyProvenCt]),
+            _ => Err(anyhow::anyhow!(
+                "To requests is not supported for self: {:?}",
+                self
+            )),
+        }
+    }
 }
 
 #[derive(Eq, PartialEq, Clone, Debug, TypedBuilder)]

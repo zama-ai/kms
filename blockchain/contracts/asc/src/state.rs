@@ -227,7 +227,7 @@ impl KmsContractStorage {
     /// Return the list of all request operation values found in the storage and associated to the
     /// given transaction ID
     /// Optionally, a specific operation type can be provided to filter the returned values
-    fn get_request_values_from_transaction(
+    pub fn get_request_values_from_transaction(
         &self,
         storage: &dyn Storage,
         transaction_id: &TransactionId,
