@@ -23,7 +23,7 @@ use tracing::instrument;
 use zeroize::Zeroize;
 
 use super::constants::{
-    ZK_DEFAULT_MAX_NUM_CLEARTEXT, ZK_DSEP_HASH_AGG_PADDED, ZK_DSEP_HASH_LMAP_PADDED,
+    ZK_DEFAULT_MAX_NUM_BITS, ZK_DSEP_HASH_AGG_PADDED, ZK_DSEP_HASH_LMAP_PADDED,
     ZK_DSEP_HASH_PADDED, ZK_DSEP_HASH_T_PADDED, ZK_DSEP_HASH_W_PADDED, ZK_DSEP_HASH_Z_PADDED,
 };
 
@@ -43,6 +43,7 @@ struct MetaParameter {
     b_r: u64,
     q: u64,
     t: u64,
+    max_num_bits: usize,
 }
 
 fn compute_meta_parameter(
@@ -55,10 +56,19 @@ fn compute_meta_parameter(
     // Our plaintext modulus does not take into account the bit of padding
     plaintext_modulus *= 2;
 
-    let max_num_cleartext = match max_num_bits {
-        Some(b) => b,
-        None => ZK_DEFAULT_MAX_NUM_CLEARTEXT,
+    let max_bit_size = max_num_bits.unwrap_or(ZK_DEFAULT_MAX_NUM_BITS);
+    let max_num_cleartext = {
+        if params.carry_modulus.0 < params.message_modulus.0 {
+            return Err(anyhow_error_and_log(
+                "parameters must have CarryModulus >= MessageModulus".to_string(),
+            ));
+        }
+
+        let carry_and_message_bit_capacity =
+            (params.carry_modulus.0 * params.message_modulus.0).ilog2() as usize;
+        max_bit_size.div_ceil(carry_and_message_bit_capacity)
     };
+
     let (d, k, b, q, t) = tfhe::zk::CompactPkeCrs::prepare_crs_parameters(
         size,
         max_num_cleartext,
@@ -73,11 +83,12 @@ fn compute_meta_parameter(
         big_d,
         n,
         d: d.0,
-        k, // this is the max_num_bits
+        k,
         b,
         b_r,
         q,
         t,
+        max_num_bits: max_bit_size,
     })
 }
 
@@ -122,6 +133,7 @@ impl InternalPublicParameter {
             b_r,
             q,
             t,
+            max_num_bits: _,
         } = compute_meta_parameter(params, Some(self.max_num_bits))?;
 
         let g_list = self
@@ -161,13 +173,10 @@ impl InternalPublicParameter {
 
     /// Create new PublicParameter for given witness dimension containing the generators
     pub fn new(witness_dim: usize, max_num_bits: Option<u32>) -> Self {
-        let max_num_cleartext = match max_num_bits {
-            Some(b) => b as usize,
-            None => ZK_DEFAULT_MAX_NUM_CLEARTEXT,
-        };
+        let max_num_bits = max_num_bits.unwrap_or(ZK_DEFAULT_MAX_NUM_BITS as u32) as usize;
         InternalPublicParameter {
             round: 0,
-            max_num_bits: max_num_cleartext,
+            max_num_bits,
             inner: WrappedG1G2s::new(
                 vec![curve::G1::GENERATOR; witness_dim * 2],
                 vec![curve::G2::GENERATOR; witness_dim],
@@ -181,7 +190,7 @@ impl InternalPublicParameter {
     ) -> anyhow::Result<Self> {
         let meta_param = compute_meta_parameter(params, max_num_bits)?;
         let witness_dim = meta_param.n;
-        let max_num_bits = meta_param.k;
+        let max_num_bits = meta_param.max_num_bits;
         Ok(InternalPublicParameter {
             round: 0,
             max_num_bits,
@@ -634,7 +643,7 @@ mod tests {
         ) -> anyhow::Result<InternalPublicParameter> {
             let max_num_cleartext = match max_num_bits {
                 Some(b) => b as usize,
-                None => ZK_DEFAULT_MAX_NUM_CLEARTEXT,
+                None => ZK_DEFAULT_MAX_NUM_BITS,
             };
             Ok(InternalPublicParameter {
                 round: session.num_parties(),

@@ -100,6 +100,7 @@ tower = { workspace = true, features = ["retry", "timeout"], optional = true }
 tower-http = { workspace = true, features = ["trace"], optional = true }
 tracing = { workspace = true, features = ["log"] }
 url = { version = "=2.5.4", features = ["serde"] }
+ordermap = "=0.5.3"
 
 # [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = { version = "=0.1.7" }

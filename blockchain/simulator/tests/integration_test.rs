@@ -248,6 +248,7 @@ async fn integration_test_commands<T: DockerComposeContext>(
     key_id: String,
     crs_id: String,
 ) {
+    // some commands are tested twice to see the cache in action
     let commands = vec![
         SimulatorCommand::Decrypt(CipherParameters {
             to_encrypt: "0x9".to_string(),
@@ -279,6 +280,12 @@ async fn integration_test_commands<T: DockerComposeContext>(
         }),
         SimulatorCommand::VerifyProvenCt(VerifyProvenCtParameters {
             to_encrypt: "0x11".to_string(),
+            data_type: FheType::Euint2048,
+            crs_id: crs_id.clone(),
+            key_id: key_id.clone(),
+        }),
+        SimulatorCommand::VerifyProvenCt(VerifyProvenCtParameters {
+            to_encrypt: "0x22".to_string(),
             data_type: FheType::Euint2048,
             crs_id: crs_id.clone(),
             key_id: key_id.clone(),

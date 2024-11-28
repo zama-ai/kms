@@ -2,7 +2,7 @@ use super::{Storage, StorageForText, StorageReader, StorageType};
 use crate::cryptography::nitro_enclave::ENCLAVE_SK_SIZE;
 use crate::util::aws::{
     build_aws_kms_client, build_aws_sdk_config, build_s3_client, nitro_enclave_decrypt_app_key,
-    nitro_enclave_encrypt_app_key, s3_get_blob, s3_put_blob, s3_put_blob_bytes,
+    nitro_enclave_encrypt_app_key, s3_get_blob, s3_put_blob, s3_put_blob_bytes, S3Cache,
 };
 use crate::{anyhow_error_and_log, some_or_err};
 use anyhow::ensure;
@@ -14,7 +14,9 @@ use rand::rngs::OsRng;
 use rsa::{RsaPrivateKey, RsaPublicKey};
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tfhe::{named::Named, Unversionize, Versionize};
+use tokio::sync::Mutex;
 use url::Url;
 
 pub struct S3Storage {
@@ -22,6 +24,7 @@ pub struct S3Storage {
     pub s3_client: S3Client,
     pub blob_bucket: String,
     pub blob_path: String,
+    cache: Arc<Mutex<S3Cache>>,
 }
 
 impl S3Storage {
@@ -47,11 +50,13 @@ impl S3Storage {
         };
         let aws_sdk_config = build_aws_sdk_config(aws_region, aws_imds_endpoint).await;
         let s3_client = build_s3_client(&aws_sdk_config, aws_s3_endpoint).await?;
+        let cache = Arc::new(Mutex::new(S3Cache::new(1000)));
         Ok(S3Storage {
             aws_sdk_config,
             s3_client,
             blob_bucket,
             blob_path,
+            cache,
         })
     }
 
@@ -107,7 +112,10 @@ impl StorageReader for S3Storage {
 
         tracing::info!("Reading object from bucket {} under key {}", bucket, key);
 
-        s3_get_blob(&self.s3_client, &bucket, &key).await
+        let cache = Arc::clone(&self.cache);
+
+        let mut guarded_cache = cache.lock().await;
+        s3_get_blob(&self.s3_client, &bucket, &key, &mut guarded_cache).await
     }
 
     fn compute_url(&self, data_id: &str, data_type: &str) -> anyhow::Result<Url> {
@@ -167,7 +175,10 @@ impl Storage for S3Storage {
 
         tracing::info!("Storing object in bucket {} under key {}", bucket, key);
 
-        s3_put_blob(&self.s3_client, &bucket, &key, data).await
+        let cache = Arc::clone(&self.cache);
+
+        let mut guarded_cache = cache.lock().await;
+        s3_put_blob(&self.s3_client, &bucket, &key, data, &mut guarded_cache).await
     }
 
     async fn delete_data(&mut self, url: &Url) -> anyhow::Result<()> {

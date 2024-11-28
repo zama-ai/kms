@@ -803,16 +803,18 @@ where
     let sigkey = Arc::clone(&client_sk);
     let _handle = tokio::spawn(
         async move {
+            let verify_proven_ct_start_instant = tokio::time::Instant::now();
             let res = verify_proven_ct_and_sign(request, public_storage, &sigkey).await;
 
             let mut guarded_meta_store = meta_store.write().await;
             match res {
                 Ok(inner_res) => {
-                    tracing::debug!(
-                        "storing verify proven ct result for request_id {}",
-                        request_id
-                    );
                     let _ = guarded_meta_store.update(&request_id, HandlerStatus::Done(inner_res));
+                    tracing::info!(
+                        "verify proven ct result for request_id {} done, it took {:?} ms",
+                        request_id,
+                        verify_proven_ct_start_instant.elapsed().as_millis(),
+                    );
                 }
                 Err(e) => {
                     let _ = guarded_meta_store.update(
@@ -899,25 +901,38 @@ where
             tracing::error!("could not deserialize the ciphertext list ({e})");
         })?;
 
-    let pub_storage = public_storage.lock().await;
-    let pp: CompactPkePublicParams =
-        read_versioned_at_request_id(&(*pub_storage), crs_handle, &PubDataType::CRS.to_string())
-            .await
-            .inspect_err(|e| {
-                tracing::error!("Failed to read CRS with the handle {} ({e})", crs_handle);
-            })?;
-
-    let wrapped_pk = read_pk_at_request_id(&(*pub_storage), key_handle)
+    let load_crs_pk_start_instant = tokio::time::Instant::now();
+    let (pp, wrapped_pk) = {
+        // create a new block so that the storage gets dropped
+        let pub_storage = public_storage.lock().await;
+        let pp: CompactPkePublicParams = read_versioned_at_request_id(
+            &(*pub_storage),
+            crs_handle,
+            &PubDataType::CRS.to_string(),
+        )
         .await
         .inspect_err(|e| {
-            tracing::error!("Failed to fetch pk with handle {} ({e})", key_handle);
+            tracing::error!("Failed to read CRS with the handle {} ({e})", crs_handle);
         })?;
+
+        let wrapped_pk = read_pk_at_request_id(&(*pub_storage), key_handle)
+            .await
+            .inspect_err(|e| {
+                tracing::error!("Failed to fetch pk with handle {} ({e})", key_handle);
+            })?;
+        (pp, wrapped_pk)
+    };
+    tracing::info!(
+        "It took {:?} ms to load crs and pk",
+        load_crs_pk_start_instant.elapsed().as_millis()
+    );
 
     let metadata = tonic_handle_potential_err(
         assemble_metadata_req(&req),
         "Error assembling ZKP metadata".to_string(),
     )?;
 
+    let proof_start_instant = tokio::time::Instant::now();
     let (send, recv) = tokio::sync::oneshot::channel();
     rayon::spawn(move || {
         let ok = verify_ct_proofs(&proven_ct, &pp, &wrapped_pk, &metadata);
@@ -926,6 +941,10 @@ where
     let signature_ok = recv.await.inspect_err(|e| {
         tracing::error!("channel error for key handle {} ({e})", key_handle);
     })?;
+    tracing::info!(
+        "It took {:?} ms to verify",
+        proof_start_instant.elapsed().as_millis()
+    );
 
     let ct_digest = keccak256(&req.ct_bytes).to_vec();
     if signature_ok {

@@ -2,7 +2,7 @@ use lazy_static::lazy_static;
 
 // We default to the maximum number of bits for the largest
 // type that we support, which is `Euint2048`.
-pub const ZK_DEFAULT_MAX_NUM_CLEARTEXT: usize = 2048;
+pub const ZK_DEFAULT_MAX_NUM_BITS: usize = 2048;
 
 //Need to be careful that one DSEP isn't the prefix of another
 pub const ZK_DSEP_HASH: [u8; 12] = *b"ZK_DSEP_HASH";

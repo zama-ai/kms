@@ -26,6 +26,7 @@ use aws_smithy_runtime_api::{
 use aws_smithy_types::config_bag::ConfigBag;
 use http::{header::HOST, HeaderValue};
 use hyper_rustls::HttpsConnectorBuilder;
+use ordermap::OrderMap;
 use rsa::{RsaPrivateKey, RsaPublicKey};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -103,6 +104,37 @@ impl Intercept for HostHeaderInterceptor {
     }
 }
 
+pub(crate) struct S3Cache {
+    cache: OrderMap<(String, String), Vec<u8>>,
+    max_cache_size: usize,
+}
+
+impl S3Cache {
+    pub(crate) fn new(max_cache_size: usize) -> Self {
+        Self {
+            cache: OrderMap::new(),
+            max_cache_size,
+        }
+    }
+
+    pub(crate) fn insert(&mut self, bucket: &str, key: &str, data: &[u8]) -> Option<Vec<u8>> {
+        let out = self
+            .cache
+            .insert((bucket.to_string(), key.to_string()), data.to_vec());
+
+        if self.cache.len() > self.max_cache_size {
+            _ = self.cache.remove_index(0);
+        }
+
+        out
+    }
+
+    pub(crate) fn get(&self, bucket: &str, key: &str) -> Option<&Vec<u8>> {
+        // do we have to use to_string()?
+        self.cache.get(&(bucket.to_string(), key.to_string()))
+    }
+}
+
 /// Given the address of a vsock-to-TCP proxy, constructs an S3 client for use inside of a Nitro
 /// enclave.
 pub async fn build_s3_client(
@@ -154,17 +186,28 @@ pub async fn build_s3_client(
     Ok(S3Client::from_conf(s3_config))
 }
 
-pub async fn s3_get_blob<T: DeserializeOwned + Unversionize + Named>(
+pub(crate) async fn s3_get_blob<T: DeserializeOwned + Unversionize + Named>(
     s3_client: &S3Client,
     bucket: &str,
     path: &str,
+    cache: &mut S3Cache,
 ) -> anyhow::Result<T> {
-    let blob_bytes = s3_get_blob_bytes(s3_client, bucket, path).await?;
+    let blob_bytes = match cache.get(bucket, path) {
+        Some(buf) => {
+            tracing::info!("found bucket={bucket}, path={path} from cache");
+            buf.clone()
+        }
+        None => {
+            let data = s3_get_blob_bytes(s3_client, bucket, path).await?;
+            cache.insert(bucket, path, &data);
+            data
+        }
+    };
     let mut buf = std::io::Cursor::new(blob_bytes);
     safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| anyhow::anyhow!(e))
 }
 
-pub async fn s3_get_blob_bytes(
+async fn s3_get_blob_bytes(
     s3_client: &S3Client,
     bucket: &str,
     path: &str,
@@ -181,14 +224,17 @@ pub async fn s3_get_blob_bytes(
     Ok(blob_bytes)
 }
 
-pub async fn s3_put_blob<T: Serialize + Versionize + Named>(
+pub(crate) async fn s3_put_blob<T: Serialize + Versionize + Named>(
     s3_client: &S3Client,
     bucket: &str,
     path: &str,
     blob: &T,
+    cache: &mut S3Cache,
 ) -> anyhow::Result<()> {
     let mut buf = Vec::new();
     safe_serialize(blob, &mut buf, SAFE_SER_SIZE_LIMIT)?;
+
+    cache.insert(bucket, path, &buf);
     s3_put_blob_bytes(s3_client, bucket, path, buf).await
 }
 
@@ -338,4 +384,39 @@ pub async fn nitro_enclave_decrypt_app_key<T: DeserializeOwned + Unversionize + 
     )?;
     let mut buf = std::io::Cursor::new(&app_key_blob.ciphertext);
     safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| anyhow::anyhow!(e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::S3Cache;
+
+    #[test]
+    fn ordered_map() {
+        let mut om = S3Cache::new(2);
+        let bucket = "abc".to_string();
+        let key = "efg".to_string();
+        let data = vec![1, 2, 3];
+        om.insert(&bucket, &key, &data);
+        assert_eq!(om.cache.len(), 1);
+        assert_eq!(*om.get(&bucket, &key).as_ref().unwrap(), &data);
+
+        // insert the same thing preserves the length
+        om.insert(&bucket, &key, &data);
+        assert_eq!(om.cache.len(), 1);
+
+        // insert a new item
+        let key2 = "key2".to_string();
+        om.insert(&bucket, &key2, &data);
+        assert_eq!(om.cache.len(), 2);
+        assert_eq!(*om.get(&bucket, &key).as_ref().unwrap(), &data);
+        assert_eq!(*om.get(&bucket, &key2).as_ref().unwrap(), &data);
+
+        // insert a third item causes the first item to be lost
+        let key3 = "key3".to_string();
+        om.insert(&bucket, &key3, &data);
+        assert_eq!(om.cache.len(), 2);
+        assert_eq!(om.get(&bucket, &key), None);
+        assert_eq!(*om.get(&bucket, &key2).as_ref().unwrap(), &data);
+        assert_eq!(*om.get(&bucket, &key3).as_ref().unwrap(), &data);
+    }
 }
