@@ -60,18 +60,23 @@ pub struct TransactionQuery {
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Default, TypedBuilder)]
-pub struct GenIdQuery {
-    pub id: String,
+pub struct GenKeyIdQuery {
+    pub key_id: String,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Default, TypedBuilder)]
+pub struct GenCrsIdQuery {
+    pub crs_id: String,
 }
 
 #[derive(Debug, EnumString, Serialize, Clone, PartialEq)]
 pub enum ContractQuery {
     #[strum(serialize = "get_key_gen_response_values")]
     #[serde(rename = "get_key_gen_response_values")]
-    GetKeyGenResponseValues(GenIdQuery),
+    GetKeyGenResponseValues(GenKeyIdQuery),
     #[strum(serialize = "get_crs_gen_response_values")]
     #[serde(rename = "get_crs_gen_response_values")]
-    GetCrsGenResponseValues(GenIdQuery),
+    GetCrsGenResponseValues(GenCrsIdQuery),
     #[strum(serialize = "get_operations_values_from_event")]
     #[serde(rename = "get_operations_values_from_event")]
     GetOperationsValuesFromEvent(EventQuery),

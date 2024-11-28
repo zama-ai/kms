@@ -30,7 +30,8 @@ use kms_blockchain_client::client::ProtoCoin;
 use kms_blockchain_client::errors::Error;
 use kms_blockchain_client::query_client::ContractQuery;
 use kms_blockchain_client::query_client::EventQuery;
-use kms_blockchain_client::query_client::GenIdQuery;
+use kms_blockchain_client::query_client::GenCrsIdQuery;
+use kms_blockchain_client::query_client::GenKeyIdQuery;
 use kms_blockchain_client::query_client::QueryClient;
 use kms_blockchain_client::query_client::QueryClientBuilder;
 use kms_blockchain_client::query_client::QueryContractRequest;
@@ -263,7 +264,7 @@ impl<'a> KmsBlockchainImpl {
         let request = QueryContractRequest::builder()
             .contract_address(self.config.kms.contract_address.to_string())
             .query(ContractQuery::GetKeyGenResponseValues(
-                GenIdQuery::builder().id(key_id).build(),
+                GenKeyIdQuery::builder().key_id(key_id).build(),
             ))
             .build();
         let query_client = Arc::clone(&self.query_client);
@@ -278,7 +279,7 @@ impl<'a> KmsBlockchainImpl {
         let request = QueryContractRequest::builder()
             .contract_address(self.config.kms.contract_address.to_string())
             .query(ContractQuery::GetCrsGenResponseValues(
-                GenIdQuery::builder().id(crs_id).build(),
+                GenCrsIdQuery::builder().crs_id(crs_id).build(),
             ))
             .build();
         let query_client = Arc::clone(&self.query_client);

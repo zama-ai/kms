@@ -106,7 +106,7 @@ address = "http://localhost:9090"
 # Should be removed as part of https://github.com/zama-ai/fhevm/issues/548
 # Key ID used within the KMS.
 # Identifies the specific key to be used for cryptographic operations within the KMS.
-key_id = "d4d17a412a6533599b010c8ffc3d6ebdc6b1cfad"
+key_id = "?"
 crs_id = "?"
 
 # List of prefixed of URL endpoints for the public storage of the KMS.
