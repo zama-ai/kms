@@ -24,10 +24,12 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@11df97af8e8102fd60b60a77dfbf58d40cd843b8 # v1.10.1
         with:
           toolchain: stable
+          cache: false
+
       # to calculate hash use `curl -s https://api.github.com/repos/cargo-bins/cargo-binstall/git/refs/tags/v1.10.14 | jq -r .object.sha`
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@84ca29d5c1719e79e23b6af147555a8f4dac79d6 # v1.10.14
-      
+
       # Use cargo-binstall to efficiently install required cargo tools with versiones specified
       - name: Install cargo tools
         run: |
@@ -39,10 +41,10 @@ jobs:
         run: cargo update -w --locked
 
       - name: License whitelist
-        run: cargo deny check license
+        run: cargo-deny deny check license --deny license-not-encountered
 
       - name: Security issue whitelist
-        run: cargo audit
+        run: cargo-audit audit
 
 permissions:
   contents: read
