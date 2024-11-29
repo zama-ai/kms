@@ -62,8 +62,10 @@ jobs:
         include:
           - platform: linux/amd64
             runs-on: ${{ inputs.runs-on-amd }}
+            tag: amd64
           - platform: linux/arm64
             runs-on: ${{ inputs.runs-on-arm }}
+            tag: arm64
     runs-on: ${{ matrix.runs-on }}
     steps:
       - name: Checkout Project
@@ -101,7 +103,7 @@ jobs:
           push: ${{ inputs.push_image }}
           pull: false
           tags: |
-            ghcr.io/zama-ai/${{ inputs.image-name }}:${{env.DOCKER_TAG_IMAGE}}-${{ matrix.platform }}
+            ghcr.io/zama-ai/${{ inputs.image-name }}:${{env.DOCKER_TAG_IMAGE}}-${{ matrix.tag }}
           cache-from: ${{ inputs.cache-from }}
           cache-to: ${{ inputs.cache-to }}
 
@@ -122,13 +124,13 @@ jobs:
         run: |
           docker manifest create \
             ghcr.io/zama-ai/${{ inputs.image-name }}:${{env.DOCKER_TAG_IMAGE}} \
-            --amend ghcr.io/zama-ai/${{ inputs.image-name }}:${{env.DOCKER_TAG_IMAGE}}-linux/amd64 \
-            --amend ghcr.io/zama-ai/${{ inputs.image-name }}:${{env.DOCKER_TAG_IMAGE}}-linux/arm64
+            --amend ghcr.io/zama-ai/${{ inputs.image-name }}:${{env.DOCKER_TAG_IMAGE}}-amd64 \
+            --amend ghcr.io/zama-ai/${{ inputs.image-name }}:${{env.DOCKER_TAG_IMAGE}}-arm64
           
           docker manifest create \
             ghcr.io/zama-ai/${{ inputs.image-name }}:latest \
-            --amend ghcr.io/zama-ai/${{ inputs.image-name }}:${{env.DOCKER_TAG_IMAGE}}-linux/amd64 \
-            --amend ghcr.io/zama-ai/${{ inputs.image-name }}:${{env.DOCKER_TAG_IMAGE}}-linux/arm64
+            --amend ghcr.io/zama-ai/${{ inputs.image-name }}:${{env.DOCKER_TAG_IMAGE}}-amd64 \
+            --amend ghcr.io/zama-ai/${{ inputs.image-name }}:${{env.DOCKER_TAG_IMAGE}}-arm64
           
           docker manifest push ghcr.io/zama-ai/${{ inputs.image-name }}:${{env.DOCKER_TAG_IMAGE}}
           docker manifest push ghcr.io/zama-ai/${{ inputs.image-name }}:latest
