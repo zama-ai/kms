@@ -98,11 +98,6 @@ jobs:
       working-directory: './blockchain/contracts'
       push_image: true
       image-name: 'kms-blockchain-asc'
-      image-dev-name: 'kms-blockchain-asc-dev'
-      generate-dev-image: true
-      docker-file-dev: 'dev.dockerfile'
-      image-dev-description: 'KMS ASC Dev Docker Image'
-      arm-build: true
     needs:
         - build-asc
         - build-tendermint-ipsc

@@ -10,9 +10,9 @@ on:
         type: string
         required: true
       docker-context:
-          type: string
-          required: false
-          default: '.'
+        type: string
+        required: false
+        default: '.'
       push_image:
         type: boolean
         required: false
@@ -20,41 +20,9 @@ on:
       image-name:
         type: string
         required: true
-      image-enclave-name:
-        type: string
-        required: false
-        default: 'kms-service-enclave'
-      image-dev-name:
-        type: string
-        required: false
-        default: 'kms-service-dev'
-      generate-enclave-image:
-        type: boolean
-        default: false
-        required: false
-      generate-dev-image:
-        type: boolean
-        default: false
-        required: false
-      arm-build:
-          type: boolean
-          default: false
-          required: false
-      image-dev-description:
-        type: string
-        required: false
-        default: 'KMS Service Development Image'
       docker-file:
         type: string
         default: 'ci.dockerfile'
-        required: false
-      docker-file-enclave:
-        type: string
-        default: 'enclave.dockerfile'
-        required: false
-      docker-file-dev:
-        type: string
-        default: 'dev.dockerfile'
         required: false
     secrets:
       SLAB_ACTION_TOKEN:
@@ -79,14 +47,14 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  start-runner:
-    name: Start self-hosted EC2 runner
+  start-amd64-runner:
+    name: Start self-hosted EC2 runner (AMD64)
     runs-on: ubuntu-latest
     outputs:
-      label: ${{ steps.start-ec2-runner.outputs.label }}
+      label: ${{ steps.start-ec2-runner-amd64.outputs.label }}
     steps:
-      - name: Start EC2 runner
-        id: start-ec2-runner
+      - name: Start EC2 runner AMD64
+        id: start-ec2-runner-amd64
         uses: zama-ai/slab-github-runner@801df0b8db5ea2b06128b7476c652f5ed5f193a8
         with:
           mode: start
@@ -97,7 +65,7 @@ jobs:
           profile: docker-big-instance
 
   run-docker:
-    needs: start-runner
+    needs: [start-amd64-runner]
     uses: ./.github/workflows/common-docker.yml
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -107,33 +75,24 @@ jobs:
       docker-context: ${{ inputs.docker-context }}
       working-directory: ${{ inputs.working-directory }}
       push_image: ${{ inputs.push_image }}
-      runs_on: ${{ needs.start-runner.outputs.label }}
+      runs-on-amd: ${{ needs.start-amd64-runner.outputs.label }}
+      runs-on-arm: 'large_ubuntu_16_arm'
       image-name: ${{ inputs.image-name }}
-      image-enclave-name: ${{ inputs.image-enclave-name }}
-      image-dev-name: ${{ inputs.image-dev-name }}
-      generate-enclave-image: ${{ inputs.generate-enclave-image }}
-      generate-dev-image: ${{ inputs.generate-dev-image }}
-      arm-build: ${{ inputs.arm-build }}
       docker-file: ${{ inputs.docker-file }}
-      docker-file-enclave: ${{ inputs.docker-file-enclave }}
-      docker-file-dev: ${{ inputs.docker-file-dev }}
-      image-dev-description: ${{ inputs.image-dev-description }}
 
-  stop-runner:
-    name: Stops self-hosted EC2 runner
+  stop-runners:
+    name: Stop self-hosted EC2 runners
     needs:
-      - start-runner
+      - start-amd64-runner
       - run-docker
     runs-on: ubuntu-latest
-    if: ${{ always() }} # required to stop the runner even if the error happened in the previous jobs
+    if: always()
     steps:
-      - name: Stop EC2 runner
+      - name: Stop AMD64 runner
         uses: zama-ai/slab-github-runner@801df0b8db5ea2b06128b7476c652f5ed5f193a8
         with:
           mode: stop
           github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
           slab-url: ${{ secrets.SLAB_BASE_URL }}
           job-secret: ${{ secrets.JOB_SECRET }}
-          label: ${{ needs.start-runner.outputs.label }}
-
-
+          label: ${{ needs.start-amd64-runner.outputs.label }}

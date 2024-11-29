@@ -42,10 +42,6 @@ jobs:
       working-directory: "./blockchain/connector"
       push_image: true
       image-name: 'kms-blockchain-connector'
-      image-dev-name: 'kms-blockchain-connector-dev'
-      generate-dev-image: true
-      image-dev-description: 'KMS Blockchain Connector Dev Docker Image'
-      arm-build: true
     needs:
       - build
     secrets:

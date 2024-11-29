@@ -39,10 +39,6 @@ jobs:
       working-directory: "./blockchain/simulator"
       push_image: true
       image-name: 'kms-blockchain-simulator'
-      image-dev-name: 'kms-blockchain-simulator-dev'
-      generate-dev-image: false
-      image-dev-description: 'KMS Blockchain Simulator Dev Docker Image'
-      arm-build: true
     needs:
       - build
     secrets:

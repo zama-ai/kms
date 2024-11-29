@@ -20,3 +20,4 @@ kms-core.sublime-project
 kms-core.sublime-workspace
 /artifacts
 **/logs/*.log.*
+.idea/
