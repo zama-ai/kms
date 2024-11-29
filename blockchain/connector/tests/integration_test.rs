@@ -487,7 +487,8 @@ async fn generic_centralized_sunshine_test(
 
     let pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
     let priv_storage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
-    let join_handle = test_tools::setup_centralized_no_client(pub_storage, priv_storage).await;
+    let join_handle =
+        test_tools::setup_centralized_no_client(pub_storage, priv_storage, None).await;
 
     let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", BASE_PORT + 1);
     let config = CoreConfig {
@@ -679,8 +680,14 @@ async fn generic_sunshine_test(
             let cur_priv = FileStorage::new(None, StorageType::PRIV, Some(i)).unwrap();
             priv_storage.push(cur_priv);
         }
-        test_tools::setup_threshold_no_client(threshold as u8, pub_storage, priv_storage, true)
-            .await
+        test_tools::setup_threshold_no_client(
+            threshold as u8,
+            pub_storage,
+            priv_storage,
+            true,
+            None,
+        )
+        .await
     } else {
         setup_mock_kms(amount_parties).await
     };

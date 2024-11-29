@@ -21,6 +21,7 @@ pub mod util {
     pub mod key_setup;
     pub mod meta_store;
     pub mod port_cleanup;
+    pub mod rate_limiter;
 }
 pub mod cryptography {
     #[cfg(feature = "non-wasm")]

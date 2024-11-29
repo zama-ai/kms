@@ -71,13 +71,23 @@ async fn main() -> anyhow::Result<()> {
     // initialize KMS core
     match core_config.threshold {
         Some(threshold_config) => {
-            let kms =
-                threshold_server_init(threshold_config, public_storage, private_storage, false)
-                    .await?;
+            let kms = threshold_server_init(
+                threshold_config,
+                public_storage,
+                private_storage,
+                false,
+                core_config.rate_limiter_conf,
+            )
+            .await?;
             run_server(core_config.service, kms).await
         }
         None => {
-            let kms = SoftwareKms::new(public_storage, private_storage).await?;
+            let kms = SoftwareKms::new(
+                public_storage,
+                private_storage,
+                core_config.rate_limiter_conf,
+            )
+            .await?;
             run_server(core_config.service, kms).await
         }
     }

@@ -83,3 +83,19 @@ max_en_decode_message_size = 2147483648
 
 # [threshold.preproc_redis]
 # host = "redis://127.0.0.1"
+
+# Optional rate limiting configuration.
+# All parties **must** use the same configuration, even on different hardware,
+# to avoid diverging behaviour which could lead to uncontrolled issues
+# the MPC protocol.
+# The `bucket_size` represents the total amount of tokens available for processing in the core.
+# The fields other fields represents the price of each operation in the core. I.e. how many tokens will be taken while the operation is executing.
+# If all tokens are in use then the core will refuse further operations until a sufficient amount of tokens are released.
+[rate_limiter_conf]
+bucket_size = 50000
+dec = 1
+reenc = 1
+crsgen = 100
+preproc = 5000
+keygen = 1000
+verify_proven_ct = 1

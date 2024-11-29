@@ -39,7 +39,7 @@ use std::sync::Arc;
 use tfhe::safe_serialization::safe_deserialize;
 use tfhe::zk::CompactPkePublicParams;
 use tfhe::ProvenCompactCiphertextList;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock};
 use tonic::{Request, Response, Status};
 use tracing::Instrument;
 
@@ -99,6 +99,11 @@ impl<
     /// starts the centralized KMS key generation
     #[tracing::instrument(skip(self, request))]
     async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
+        let permit = self
+            .rate_limiter
+            .start_keygen()
+            .await
+            .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
         let inner = request.into_inner();
         tracing::info!(
             "centralized key-gen with request id: {:?}",
@@ -131,121 +136,120 @@ impl<
         let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref());
 
         let _handle = tokio::spawn(async move {
+            let _permit = permit;
+            let start = tokio::time::Instant::now();
             {
-                let start = tokio::time::Instant::now();
-                {
-                    // Check if the key already exists
-                    let key_handles = fhe_keys.read().await;
-                    if key_handles.contains_key(&req_id) {
-                        let mut guarded_meta_store = meta_store.write().await;
-                        let _ = guarded_meta_store.update(
-                            &req_id,
-                            HandlerStatus::Error(format!(
-                                "Failed key generation: Key with ID {req_id} already exists!"
-                            )),
-                        );
-                        return;
-                    }
+                // Check if the key already exists
+                let key_handles = fhe_keys.read().await;
+                if key_handles.contains_key(&req_id) {
+                    let mut guarded_meta_store = meta_store.write().await;
+                    let _ = guarded_meta_store.update(
+                        &req_id,
+                        HandlerStatus::Error(format!(
+                            "Failed key generation: Key with ID {req_id} already exists!"
+                        )),
+                    );
+                    return;
                 }
-                let (fhe_key_set, key_info) = match async_generate_fhe_keys(
-                    &sk,
-                    params,
-                    None,
-                    eip712_domain.as_ref(),
-                )
-                .await
-                {
-                    Ok((fhe_key_set, key_info)) => (fhe_key_set, key_info),
-                    Err(_e) => {
-                        let mut guarded_meta_store = meta_store.write().await;
-                        let _ = guarded_meta_store.update(
-                            &req_id,
-                            HandlerStatus::Error(format!(
-                                "Failed key generation: Key with ID {req_id}!"
-                            )),
-                        );
-                        return;
-                    }
-                };
+            }
+            let (fhe_key_set, key_info) = match async_generate_fhe_keys(
+                &sk,
+                params,
+                None,
+                eip712_domain.as_ref(),
+            )
+            .await
+            {
+                Ok((fhe_key_set, key_info)) => (fhe_key_set, key_info),
+                Err(_e) => {
+                    let mut guarded_meta_store = meta_store.write().await;
+                    let _ = guarded_meta_store.update(
+                        &req_id,
+                        HandlerStatus::Error(format!(
+                            "Failed key generation: Key with ID {req_id}!"
+                        )),
+                    );
+                    return;
+                }
+            };
 
-                let mut pub_storage = public_storage.lock().await;
-                let mut priv_storage = private_storage.lock().await;
-                //Try to store the new data
-                if store_versioned_at_request_id(
-                    &mut (*priv_storage),
+            let mut pub_storage = public_storage.lock().await;
+            let mut priv_storage = private_storage.lock().await;
+            //Try to store the new data
+            if store_versioned_at_request_id(
+                &mut (*priv_storage),
+                &req_id,
+                &key_info,
+                &PrivDataType::FheKeyInfo.to_string(),
+            )
+            .await
+            .is_ok()
+                && store_pk_at_request_id(
+                    &mut (*pub_storage),
                     &req_id,
-                    &key_info,
-                    &PrivDataType::FheKeyInfo.to_string(),
+                    WrappedPublicKey::Compact(&fhe_key_set.public_key),
                 )
                 .await
                 .is_ok()
-                    && store_pk_at_request_id(
-                        &mut (*pub_storage),
-                        &req_id,
-                        WrappedPublicKey::Compact(&fhe_key_set.public_key),
-                    )
-                    .await
-                    .is_ok()
-                    && store_versioned_at_request_id(
-                        &mut (*pub_storage),
-                        &req_id,
-                        &fhe_key_set.server_key,
-                        &PubDataType::ServerKey.to_string(),
-                    )
-                    .await
-                    .is_ok()
+                && store_versioned_at_request_id(
+                    &mut (*pub_storage),
+                    &req_id,
+                    &fhe_key_set.server_key,
+                    &PubDataType::ServerKey.to_string(),
+                )
+                .await
+                .is_ok()
+            {
                 {
-                    {
-                        let mut fhe_key_map = fhe_keys.write().await;
-                        // If something is already in the map, then there is a bug as we already checked for the key not existing
-                        fhe_key_map.insert(req_id.clone(), key_info.clone());
-                    };
-                    {
-                        let mut guarded_meta_store = meta_store.write().await;
-                        let _ = guarded_meta_store.update(
-                            &req_id,
-                            HandlerStatus::Done(key_info.public_key_info.to_owned()),
-                        );
-                    }
-                } else {
-                    tracing::error!("Could not store all the key data from request ID {req_id}. Deleting any dangling data.");
-                    // Try to delete stored data to avoid anything dangling
-                    // Ignore any failure to delete something since it might be because the data did not get created
-                    // In any case, we can't do much.
-                    let _ = delete_pk_at_request_id(&mut (*pub_storage), &req_id).await;
-                    let _ = delete_at_request_id(
-                        &mut (*pub_storage),
-                        &req_id,
-                        &PubDataType::ServerKey.to_string(),
-                    )
-                    .await;
-                    let _ = delete_at_request_id(
-                        &mut (*pub_storage),
-                        &req_id,
-                        &PubDataType::SnsKey.to_string(),
-                    )
-                    .await;
-                    let _ = delete_at_request_id(
-                        &mut (*priv_storage),
-                        &req_id,
-                        &PrivDataType::FheKeyInfo.to_string(),
-                    )
-                    .await;
+                    let mut fhe_key_map = fhe_keys.write().await;
+                    // If something is already in the map, then there is a bug as we already checked for the key not existing
+                    fhe_key_map.insert(req_id.clone(), key_info.clone());
+                };
+                {
                     let mut guarded_meta_store = meta_store.write().await;
                     let _ = guarded_meta_store.update(
-                            &req_id,
-                            HandlerStatus::Error(format!(
-                                "Failed key generation: Key with ID {req_id}, could not insert result persistant storage!"
-                            )),
-                        );
+                        &req_id,
+                        HandlerStatus::Done(key_info.public_key_info.to_owned()),
+                    );
                 }
-
-
-                tracing::info!(
-                    "⏱️ Core Event Time for Keygen: {:?}",
-                    start.elapsed()
-                );
+            } else {
+                tracing::error!("Could not store all the key data from request ID {req_id}. Deleting any dangling data.");
+                // Try to delete stored data to avoid anything dangling
+                // Ignore any failure to delete something since it might be because the data did not get created
+                // In any case, we can't do much.
+                let _ = delete_pk_at_request_id(&mut (*pub_storage), &req_id).await;
+                let _ = delete_at_request_id(
+                    &mut (*pub_storage),
+                    &req_id,
+                    &PubDataType::ServerKey.to_string(),
+                )
+                .await;
+                let _ = delete_at_request_id(
+                    &mut (*pub_storage),
+                    &req_id,
+                    &PubDataType::SnsKey.to_string(),
+                )
+                .await;
+                let _ = delete_at_request_id(
+                    &mut (*priv_storage),
+                    &req_id,
+                    &PrivDataType::FheKeyInfo.to_string(),
+                )
+                .await;
+                let mut guarded_meta_store = meta_store.write().await;
+                let _ = guarded_meta_store.update(
+                        &req_id,
+                        HandlerStatus::Error(format!(
+                            "Failed key generation: Key with ID {req_id}, could not insert result persistant storage!"
+                        )),
+                    );
             }
+
+
+            tracing::info!(
+                "⏱️ Core Event Time for Keygen: {:?}",
+                start.elapsed()
+            );
         }.instrument(tracing::Span::current()));
 
         Ok(Response::new(Empty {}))
@@ -276,6 +280,11 @@ impl<
         &self,
         request: Request<ReencryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
+        let permit = self
+            .rate_limiter
+            .start_reenc()
+            .await
+            .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
         let inner = request.into_inner();
         let (ciphertext, fhe_type, link, client_enc_key, client_address, key_id, request_id) =
             tonic_handle_potential_err(
@@ -299,6 +308,7 @@ impl<
         // the result of the computation is tracked by the reenc_meta_store
         let _handle = tokio::spawn(
             async move {
+                let _permit = permit;
                 let fhe_keys_rlock = fhe_keys.read().await;
                 let keys = match fhe_keys_rlock.get(&key_id) {
                     Some(keys) => keys,
@@ -400,6 +410,12 @@ impl<
         request: Request<DecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
         tracing::info!("Received a new decryption request...");
+        let permit = self
+            .rate_limiter
+            .start_dec()
+            .await
+            .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
+
         let start = tokio::time::Instant::now();
         let inner = request.into_inner();
 
@@ -432,6 +448,7 @@ impl<
         // the result of the computation is tracked by the dec_meta_store
         let _handle = tokio::spawn(
             async move {
+                let _permit = permit;
                 let fhe_keys_rlock = fhe_keys.read().await;
                 let keys = match fhe_keys_rlock.get(&key_id) {
                     Some(keys) => keys.clone(),
@@ -582,6 +599,13 @@ impl<
     /// starts the centralized CRS generation
     #[tracing::instrument(skip(self, request))]
     async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
+        tracing::info!("Received CRS generation request");
+        let permit = self
+            .rate_limiter
+            .start_crsgen()
+            .await
+            .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
+
         let inner = request.into_inner();
         let request_id = tonic_some_or_err(
             inner.request_id,
@@ -609,88 +633,86 @@ impl<
         let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref());
 
         let _handle = tokio::spawn(async move {
-            {
-                let start = tokio::time::Instant::now();
+            let _permit = permit;
+            let start = tokio::time::Instant::now();
 
-                let (pp, crs_info) = match async_generate_crs(
-                    &sk,
-                    rng,
-                    params,
-                    inner.max_num_bits,
-                    eip712_domain.as_ref(),
-                )
-                .await
-                {
-                    Ok((pp, crs_info)) => (pp, crs_info),
-                    Err(e) => {
-                        tracing::error!("Error in inner CRS generation: {}", e);
-                        let mut guarded_meta_store = meta_store.write().await;
-                        let _ = guarded_meta_store.update(
-                            &request_id,
-                            HandlerStatus::Error(format!(
-                                "Failed CRS generation for CRS with ID {request_id}!"
-                            )),
-                        );
-                        return;
-                    }
-                };
-                let mut pub_storage = public_storage.lock().await;
-                let mut priv_storage = private_storage.lock().await;
-                //Try to store the new data
-                if store_versioned_at_request_id(
-                    &mut (*priv_storage),
+            let (pp, crs_info) = match async_generate_crs(
+                &sk,
+                rng,
+                params,
+                inner.max_num_bits,
+                eip712_domain.as_ref(),
+            )
+            .await
+            {
+                Ok((pp, crs_info)) => (pp, crs_info),
+                Err(e) => {
+                    tracing::error!("Error in inner CRS generation: {}", e);
+                    let mut guarded_meta_store = meta_store.write().await;
+                    let _ = guarded_meta_store.update(
+                        &request_id,
+                        HandlerStatus::Error(format!(
+                            "Failed CRS generation for CRS with ID {request_id}!"
+                        )),
+                    );
+                    return;
+                }
+            };
+            let mut pub_storage = public_storage.lock().await;
+            let mut priv_storage = private_storage.lock().await;
+            //Try to store the new data
+            if store_versioned_at_request_id(
+                &mut (*priv_storage),
+                &request_id,
+                &crs_info,
+                &PrivDataType::CrsInfo.to_string(),
+            )
+            .await
+            .is_ok()
+                && store_versioned_at_request_id(
+                    &mut (*pub_storage),
                     &request_id,
-                    &crs_info,
-                    &PrivDataType::CrsInfo.to_string(),
+                    &pp,
+                    &PubDataType::CRS.to_string(),
                 )
                 .await
                 .is_ok()
-                    && store_versioned_at_request_id(
-                        &mut (*pub_storage),
-                        &request_id,
-                        &pp,
-                        &PubDataType::CRS.to_string(),
-                    )
-                    .await
-                    .is_ok()
+            {
+                let mut guarded_meta_store = meta_store.write().await;
+                let _ = guarded_meta_store.update(&request_id, HandlerStatus::Done(crs_info));
+            } else {
+                tracing::error!("Could not store all the CRS data from request ID {request_id}. Deleting any dangling data.");
+                // Try to delete stored data to avoid anything dangling
+                // Ignore any failure to delete something since it might be because the data did not get created
+                // In any case, we can't do much.
+                let _ = delete_at_request_id(
+                    &mut (*pub_storage),
+                    &request_id,
+                    &PubDataType::CRS.to_string(),
+                )
+                .await;
+                let _ = delete_at_request_id(
+                    &mut (*priv_storage),
+                    &request_id,
+                    &PrivDataType::CrsInfo.to_string(),
+                )
+                .await;
                 {
                     let mut guarded_meta_store = meta_store.write().await;
-                    let _ = guarded_meta_store.update(&request_id, HandlerStatus::Done(crs_info));
-                } else {
-                    tracing::error!("Could not store all the CRS data from request ID {request_id}. Deleting any dangling data.");
-                    // Try to delete stored data to avoid anything dangling
-                    // Ignore any failure to delete something since it might be because the data did not get created
-                    // In any case, we can't do much.
-                    let _ = delete_at_request_id(
-                        &mut (*pub_storage),
+                    // We cannot do much if updating the storage fails at this point...
+                    let _ = guarded_meta_store.update(
                         &request_id,
-                        &PubDataType::CRS.to_string(),
-                    )
-                    .await;
-                    let _ = delete_at_request_id(
-                        &mut (*priv_storage),
-                        &request_id,
-                        &PrivDataType::CrsInfo.to_string(),
-                    )
-                    .await;
-                    {
-                        let mut guarded_meta_store = meta_store.write().await;
-                        // We cannot do much if updating the storage fails at this point...
-                        let _ = guarded_meta_store.update(
-                            &request_id,
-                            HandlerStatus::Error(format!(
-                                "Failed to store CRS data to public storage for ID {}",
-                                request_id
-                            )),
-                        );
-                    }
+                        HandlerStatus::Error(format!(
+                            "Failed to store CRS data to public storage for ID {}",
+                            request_id
+                        )),
+                    );
                 }
-                tracing::info!(
-                    "⏱️ Core Event Time for CRS-gen: {:?}",
-                    start.elapsed()
-                );
-
             }
+            tracing::info!(
+                "⏱️ Core Event Time for CRS-gen: {:?}",
+                start.elapsed()
+            );
         }.instrument(tracing::Span::current()));
         Ok(Response::new(Empty {}))
     }
@@ -740,6 +762,12 @@ impl<
         &self,
         request: Request<VerifyProvenCtRequest>,
     ) -> Result<Response<Empty>, Status> {
+        let permit = self
+            .rate_limiter
+            .start_verify_proven_ct()
+            .await
+            .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
+
         let meta_store = Arc::clone(&self.proven_ct_payload_meta_map);
         let sigkey = Arc::clone(&self.base_kms.sig_key);
 
@@ -765,6 +793,7 @@ impl<
             request_id.clone(),
             request.into_inner(),
             sigkey,
+            permit,
         )
         .await
         .map_err(|e| {
@@ -792,6 +821,7 @@ pub(crate) async fn non_blocking_verify_proven_ct<PubS>(
     request_id: RequestId,
     request: VerifyProvenCtRequest,
     client_sk: Arc<PrivateSigKey>,
+    permit: OwnedSemaphorePermit,
 ) -> anyhow::Result<()>
 where
     PubS: Storage + Sync + Send + 'static,
@@ -803,6 +833,7 @@ where
     let sigkey = Arc::clone(&client_sk);
     let _handle = tokio::spawn(
         async move {
+            let _permit = permit;
             let verify_proven_ct_start_instant = tokio::time::Instant::now();
             let res = verify_proven_ct_and_sign(request, public_storage, &sigkey).await;
 

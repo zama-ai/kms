@@ -33,6 +33,7 @@ use crate::threshold::generic::{
     ProvenCtVerifier, Reencryptor,
 };
 use crate::util::meta_store::{handle_res_mapping, HandlerStatus, MetaStore};
+use crate::util::rate_limiter::{RateLimiter, RateLimiterConfig};
 use crate::{anyhow_error_and_log, get_exactly_one};
 use aes_prng::AesRng;
 use anyhow::anyhow;
@@ -78,7 +79,7 @@ use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::named::Named;
 use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
-use tokio::sync::{Mutex, RwLock, RwLockReadGuard};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, RwLockReadGuard};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 use tonic::transport::{Server, ServerTlsConfig};
@@ -109,6 +110,7 @@ pub async fn threshold_server_init<
     public_storage: PubS,
     private_storage: PrivS,
     run_prss: bool,
+    rate_limiter_conf: Option<RateLimiterConfig>,
 ) -> anyhow::Result<RealThresholdKms<PubS, PrivS>> {
     let cert_paths = config.get_tls_cert_paths();
 
@@ -143,6 +145,7 @@ pub async fn threshold_server_init<
         cert_paths,
         config.core_to_core_net,
         run_prss,
+        rate_limiter_conf,
     )
     .await?;
 
@@ -260,6 +263,7 @@ async fn new_real_threshold_kms<PubS, PrivS>(
     cert_paths: Option<CertificatePaths>,
     core_to_core_net_conf: Option<CoreToCoreNetworkConfig>,
     run_prss: bool,
+    rate_limiter_conf: Option<RateLimiterConfig>,
 ) -> anyhow::Result<RealThresholdKms<PubS, PrivS>>
 where
     PubS: Storage + Sync + Send + 'static,
@@ -437,11 +441,14 @@ where
         }
     }
 
+    let rate_limiter = RateLimiter::new(rate_limiter_conf.unwrap_or_default());
+
     let reencryptor = RealReencryptor {
         fhe_keys: Arc::clone(&fhe_keys),
         base_kms: base_kms.new_instance().await,
         reenc_meta_store,
         session_preparer: session_preparer.new_instance().await,
+        rate_limiter: rate_limiter.clone(),
     };
 
     let decryptor = RealDecryptor {
@@ -449,6 +456,7 @@ where
         base_kms: base_kms.new_instance().await,
         dec_meta_store,
         session_preparer: session_preparer.new_instance().await,
+        rate_limiter: rate_limiter.clone(),
     };
 
     let keygenerator = RealKeyGenerator {
@@ -459,6 +467,7 @@ where
         private_storage: Arc::clone(&private_storage),
         dkg_pubinfo_meta_store,
         session_preparer: session_preparer.new_instance().await,
+        rate_limiter: rate_limiter.clone(),
     };
 
     #[cfg(feature = "insecure")]
@@ -470,6 +479,7 @@ where
         preproc_factory,
         num_sessions_preproc,
         session_preparer: session_preparer.new_instance().await,
+        rate_limiter: rate_limiter.clone(),
     };
 
     let crs_generator = RealCrsGenerator {
@@ -478,6 +488,7 @@ where
         private_storage,
         crs_meta_store,
         session_preparer,
+        rate_limiter: rate_limiter.clone(),
     };
 
     #[cfg(feature = "insecure")]
@@ -487,6 +498,7 @@ where
         base_kms,
         ct_verifier_payload_meta_store,
         public_storage,
+        rate_limiter: rate_limiter.clone(),
     };
 
     let kms = GenericKms::new(
@@ -703,11 +715,14 @@ pub struct RealReencryptor {
     base_kms: BaseKmsStruct,
     reenc_meta_store: Arc<RwLock<MetaStore<ReencMetaStore>>>,
     session_preparer: SessionPreparer,
+    rate_limiter: RateLimiter,
 }
 
 impl RealReencryptor {
     /// Helper method for reencryptin which carries out the actual threshold decryption using noise
     /// flooding.
+    ///
+    /// This function does not perform reencryption in a background thread.
     #[allow(clippy::too_many_arguments)]
     async fn inner_reencrypt(
         session: &mut SmallSession<ResiduePoly128>,
@@ -780,6 +795,12 @@ impl Reencryptor for RealReencryptor {
         &self,
         request: Request<ReencryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
+        let permit = self
+            .rate_limiter
+            .start_reenc()
+            .await
+            .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
+
         let inner = request.into_inner();
         tracing::info!(
             "Party {:?} received a new reencryption request with request_id {:?}",
@@ -821,6 +842,8 @@ impl Reencryptor for RealReencryptor {
         // the result of the computation is tracked the crs_meta_store
         let _handle = tokio::spawn(
             async move {
+                // explicitly move the rate limiter context
+                let _permit = permit;
                 let fhe_keys_rlock = fhe_keys.read().await;
                 let tmp = Self::inner_reencrypt(
                     &mut session,
@@ -912,6 +935,7 @@ pub struct RealDecryptor {
     base_kms: BaseKmsStruct,
     dec_meta_store: Arc<RwLock<MetaStore<DecMetaStore>>>,
     session_preparer: SessionPreparer,
+    rate_limiter: RateLimiter,
 }
 
 impl RealDecryptor {
@@ -979,6 +1003,12 @@ impl Decryptor for RealDecryptor {
         &self,
         request: Request<DecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
+        let permit = self
+            .rate_limiter
+            .start_dec()
+            .await
+            .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
+
         let inner = request.into_inner();
         tracing::info!(
             "Party {:?} received a new decryption request with request_id {:?}",
@@ -1124,7 +1154,8 @@ impl Decryptor for RealDecryptor {
         // collect decryption results in async mgmt task so we can return from this call without waiting for the decryption(s) to finish
         let meta_store = Arc::clone(&self.dec_meta_store);
         let sigkey = Arc::clone(&self.base_kms.sig_key);
-        let my_future = || async move {
+        let my_future = |_permit| async move {
+            // NOTE: _permit should be dropped at the end of this function
             let mut decs = HashMap::new();
             while let Some(resp) = dec_tasks.join_next().await {
                 match resp {
@@ -1167,7 +1198,7 @@ impl Decryptor for RealDecryptor {
                 HandlerStatus::Done((req_digest.clone(), pts, external_sig)),
             );
         };
-        let _handle = tokio::spawn(my_future().instrument(tracing::Span::current()));
+        let _handle = tokio::spawn(my_future(permit).instrument(tracing::Span::current()));
 
         Ok(Response::new(Empty {}))
     }
@@ -1242,6 +1273,7 @@ pub struct RealKeyGenerator<
     private_storage: Arc<Mutex<PrivS>>,
     dkg_pubinfo_meta_store: Arc<RwLock<MetaStore<DkgMetaStore>>>,
     session_preparer: SessionPreparer,
+    rate_limiter: RateLimiter,
 }
 
 #[cfg(feature = "insecure")]
@@ -1266,6 +1298,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 private_storage: Arc::clone(&value.private_storage),
                 dkg_pubinfo_meta_store: Arc::clone(&value.dkg_pubinfo_meta_store),
                 session_preparer: value.session_preparer.new_instance().await,
+                rate_limiter: value.rate_limiter.clone(),
             },
         }
     }
@@ -1312,6 +1345,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         preproc_handle_w_mode: PreprocHandleWithMode,
         req_id: RequestId,
         eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
+        permit: OwnedSemaphorePermit,
     ) -> anyhow::Result<()> {
         // Update status
         {
@@ -1335,7 +1369,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         let fhe_keys = Arc::clone(&self.fhe_keys);
         let eip712_domain_copy = eip712_domain.cloned();
 
-        let my_future = || async move {
+        let my_future = |_permit| async move {
             let dkg_res = match preproc_handle_w_mode {
                 PreprocHandleWithMode::Insecure => {
                     initialize_key_material(&mut base_session, dkg_params).await
@@ -1498,7 +1532,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 }
             }
         };
-        let _handle = tokio::spawn(my_future().instrument(tracing::Span::current()));
+        let _handle = tokio::spawn(my_future(permit).instrument(tracing::Span::current()));
         Ok(())
     }
 
@@ -1507,6 +1541,12 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         request: Request<KeyGenRequest>,
         insecure: bool,
     ) -> Result<Response<Empty>, Status> {
+        let permit = self
+            .rate_limiter
+            .start_keygen()
+            .await
+            .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
+
         let req = request.into_inner();
         tracing::info!("Keygen Request ID: {:?}", req.request_id);
         let request_id = tonic_some_or_err(
@@ -1603,6 +1643,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 preproc_handle,
                 request_id.clone(),
                 eip712_domain.as_ref(),
+                permit,
             )
             .await,
             format!("Error launching dkg for request ID {request_id}"),
@@ -1653,6 +1694,7 @@ pub struct RealPreprocessor {
     preproc_factory: Arc<Mutex<Box<dyn PreprocessorFactory>>>,
     num_sessions_preproc: u16,
     session_preparer: SessionPreparer,
+    rate_limiter: RateLimiter,
 }
 
 impl RealPreprocessor {
@@ -1660,6 +1702,7 @@ impl RealPreprocessor {
         &self,
         dkg_params: DKGParams,
         request_id: RequestId,
+        permit: OwnedSemaphorePermit,
     ) -> anyhow::Result<()> {
         {
             let mut guarded_meta_store = self.preproc_buckets.write().await;
@@ -1706,6 +1749,7 @@ impl RealPreprocessor {
         // endpoint
         let _handle = tokio::spawn(
             async move {
+                let _permit = permit; // dropped at the end of the function
                 let sessions = create_sessions(base_sessions, prss_setup);
                 let orchestrator = {
                     let mut factory_guard = factory.lock().await;
@@ -1739,6 +1783,12 @@ impl KeyGenPreprocessor for RealPreprocessor {
         &self,
         request: Request<KeyGenPreprocRequest>,
     ) -> Result<Response<Empty>, Status> {
+        let permit = self
+            .rate_limiter
+            .start_preproc()
+            .await
+            .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
+
         let inner = request.into_inner();
         let request_id = tonic_some_or_err(
             inner.request_id.clone(),
@@ -1769,7 +1819,7 @@ impl KeyGenPreprocessor for RealPreprocessor {
         //If the entry did not exist before, start the preproc
         if !entry_exists {
             tracing::info!("Starting preproc generation for Request ID {}", request_id);
-            tonic_handle_potential_err(self.launch_dkg_preproc(dkg_params, request_id.clone()).await, format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {:?}",dkg_params))?;
+            tonic_handle_potential_err(self.launch_dkg_preproc(dkg_params, request_id.clone(), permit).await, format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {:?}",dkg_params))?;
         } else {
             tracing::warn!(
                 "Tried to generate preproc multiple times for the same Request ID {} -- skipped it!",
@@ -1824,6 +1874,7 @@ pub struct RealCrsGenerator<
     private_storage: Arc<Mutex<PrivS>>,
     crs_meta_store: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
     session_preparer: SessionPreparer,
+    rate_limiter: RateLimiter,
 }
 
 impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
@@ -1834,6 +1885,12 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         request: Request<CrsGenRequest>,
         insecure: bool,
     ) -> Result<Response<Empty>, Status> {
+        let permit = self
+            .rate_limiter
+            .start_crsgen()
+            .await
+            .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
+
         let req = request.into_inner();
         tracing::info!(
             "Starting crs generation on kms for request ID {:?}",
@@ -1869,6 +1926,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             req.max_num_bits,
             &dkg_params,
             eip712_domain.as_ref(),
+            permit,
             insecure,
         )
         .await
@@ -1876,6 +1934,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         Ok(Response::new(Empty {}))
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn inner_crs_gen(
         &self,
         req_id: &RequestId,
@@ -1883,6 +1942,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         max_num_bits: Option<u32>,
         dkg_params: &DKGParams,
         eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
+        permit: OwnedSemaphorePermit,
         insecure: bool,
     ) -> anyhow::Result<()> {
         {
@@ -1919,6 +1979,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             .get_compact_pk_enc_params();
         let dkg_params_copy = *dkg_params;
         let _handle = tokio::spawn(async move {
+            let _permit = permit;
             let crs_start_timer = Instant::now();
             let pp = if insecure {
                 // We let the first party sample the seed (we are using 1-based party IDs)
@@ -2083,6 +2144,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 private_storage: Arc::clone(&value.private_storage),
                 crs_meta_store: Arc::clone(&value.crs_meta_store),
                 session_preparer: value.session_preparer.new_instance().await,
+                rate_limiter: value.rate_limiter.clone(),
             },
         }
     }
@@ -2115,6 +2177,7 @@ pub struct RealProvenCtVerifier<PubS: Storage + Sync + Send + 'static> {
     base_kms: BaseKmsStruct,
     ct_verifier_payload_meta_store: Arc<RwLock<MetaStore<VerifyProvenCtResponsePayload>>>,
     public_storage: Arc<Mutex<PubS>>,
+    rate_limiter: RateLimiter,
 }
 
 #[tonic::async_trait]
@@ -2123,6 +2186,12 @@ impl<PubS: Storage + Sync + Send + 'static> ProvenCtVerifier for RealProvenCtVer
         &self,
         request: Request<VerifyProvenCtRequest>,
     ) -> Result<Response<Empty>, Status> {
+        let permit = self
+            .rate_limiter
+            .start_verify_proven_ct()
+            .await
+            .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
+
         let meta_store = Arc::clone(&self.ct_verifier_payload_meta_store);
         let sigkey = Arc::clone(&self.base_kms.sig_key);
 
@@ -2148,6 +2217,7 @@ impl<PubS: Storage + Sync + Send + 'static> ProvenCtVerifier for RealProvenCtVer
             request_id.clone(),
             request.into_inner(),
             sigkey,
+            permit,
         )
         .await
         .map_err(|e| {
@@ -2208,6 +2278,7 @@ mod tests {
             pub_storage.clone(),
             priv_storage.clone(),
             true,
+            None,
         )
         .await;
         assert_eq!(core_handles.len(), DEFAULT_AMOUNT_PARTIES);
@@ -2232,6 +2303,7 @@ mod tests {
             pub_storage,
             priv_storage,
             false,
+            None,
         )
         .await;
         assert_eq!(core_handles.len(), DEFAULT_AMOUNT_PARTIES);

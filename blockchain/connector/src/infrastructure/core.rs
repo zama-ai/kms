@@ -969,6 +969,7 @@ where
             .insecure_key_gen
             .clone();
 
+        // NOTE: get_insecure_key_gen_result should give us the same
         poller!(
             client.get_key_gen_result(make_request(
                 req_id.clone(),
@@ -1154,7 +1155,10 @@ where
                             },
                         )))
                     }
-                    Err(_) => Ok(PollerStatus::Poll),
+                    Err(e) => {
+                        tracing::warn!("InsecureCrsGen Response Poller error {:?}", e);
+                        Ok(PollerStatus::Poll)
+                    },
                 }
             };
 
@@ -1164,6 +1168,7 @@ where
             .timeout_config
             .insecure_crs
             .clone();
+        // NOTE: get_insecure_crs_gen_result should give us the same
         poller!(
             client.get_crs_gen_result(make_request(
                 req_id.clone(),

@@ -25,6 +25,7 @@ use crate::storage::Storage;
 #[cfg(feature = "non-wasm")]
 use crate::util::key_setup::{FhePrivateKey, FhePublicKey};
 use crate::util::meta_store::{HandlerStatus, MetaStore};
+use crate::util::rate_limiter::{RateLimiter, RateLimiterConfig};
 use crate::{anyhow_error_and_log, get_exactly_one};
 use crate::{consts::ID_LENGTH, cryptography::signcryption::check_normalized};
 use crate::{
@@ -487,6 +488,8 @@ pub struct SoftwareKms<PubS: Storage, PrivS: Storage> {
     pub(crate) crs_meta_map: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
     // Map storing the completed proven ciphertext verification tasks.
     pub(crate) proven_ct_payload_meta_map: Arc<RwLock<MetaStore<VerifyProvenCtResponsePayload>>>,
+    // Rate limiting
+    pub(crate) rate_limiter: RateLimiter,
 }
 
 /// Perform asynchronous decryption and serialize the result
@@ -687,7 +690,11 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
     SoftwareKms<PubS, PrivS>
 {
-    pub async fn new(public_storage: PubS, private_storage: PrivS) -> anyhow::Result<Self> {
+    pub async fn new(
+        public_storage: PubS,
+        private_storage: PrivS,
+        rate_limiter_conf: Option<RateLimiterConfig>,
+    ) -> anyhow::Result<Self> {
         let sks: HashMap<RequestId, PrivateSigKey> =
             read_all_data_versioned(&private_storage, &PrivDataType::SigningKey.to_string())
                 .await?;
@@ -746,6 +753,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 DEC_CAPACITY,
                 MIN_DEC_CACHE,
             ))),
+            rate_limiter: RateLimiter::new(rate_limiter_conf.unwrap_or_default()),
         })
     }
 }
@@ -1010,6 +1018,7 @@ pub(crate) mod tests {
                 RamStorage::from_existing_keys(&keys.software_kms_keys)
                     .await
                     .unwrap(),
+                None,
             )
             .await
             .unwrap();
@@ -1157,6 +1166,7 @@ pub(crate) mod tests {
                 RamStorage::from_existing_keys(&keys.software_kms_keys)
                     .await
                     .unwrap(),
+                None,
             )
             .await
             .unwrap();
@@ -1255,6 +1265,7 @@ pub(crate) mod tests {
                 RamStorage::from_existing_keys(&keys.software_kms_keys)
                     .await
                     .unwrap(),
+                None,
             )
             .await
             .unwrap()

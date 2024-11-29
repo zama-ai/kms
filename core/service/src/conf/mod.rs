@@ -1,3 +1,5 @@
+use crate::util::rate_limiter::RateLimiterConfig;
+
 use self::threshold::ThresholdParty;
 use conf_trace::conf::{Settings, Tracing};
 use conf_trace::telemetry::init_tracing;
@@ -14,6 +16,7 @@ pub struct CoreConfig {
     pub aws: Option<AWSConfig>,
     pub public_vault: Option<Vault>,
     pub private_vault: Option<Vault>,
+    pub rate_limiter_conf: Option<RateLimiterConfig>,
     pub threshold: Option<ThresholdParty>,
 }
 
@@ -86,6 +89,7 @@ pub async fn init_trace() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::rate_limiter::RateLimiterConfig;
 
     #[test]
     fn test_threshold_config() {
@@ -122,6 +126,11 @@ mod tests {
             Url::parse("file://./keys").unwrap()
         );
 
+        assert_eq!(
+            core_config.rate_limiter_conf.unwrap(),
+            RateLimiterConfig::default()
+        );
+
         let core_to_core_net = threshold_config.core_to_core_net;
         assert!(core_to_core_net.is_some());
         let core_to_core_net = core_to_core_net.unwrap();
@@ -148,6 +157,10 @@ mod tests {
         assert_eq!(
             core_config.public_vault.unwrap().storage,
             Url::parse("file://./keys").unwrap()
+        );
+        assert_eq!(
+            core_config.rate_limiter_conf.unwrap(),
+            RateLimiterConfig::default()
         );
     }
 }

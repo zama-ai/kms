@@ -18,3 +18,16 @@ storage = "s3://kms"
 
 [private_vault]
 storage = "file://./keys"
+
+# Optional rate limiting configuration.
+# The `bucket_size` represents the total amount of tokens available for processing in the core.
+# The fields other fields represents the price of each operation in the core. I.e. how many tokens will be taken while the operation is executing.
+# If all tokens are in use then the core will refuse further operations until a sufficient amount of tokens are released.
+[rate_limiter_conf]
+bucket_size = 50000
+dec = 1
+reenc = 1
+crsgen = 100
+preproc = 5000
+keygen = 1000
+verify_proven_ct = 1

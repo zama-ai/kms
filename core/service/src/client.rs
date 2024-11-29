@@ -2487,6 +2487,7 @@ pub mod test_tools {
     };
     use crate::threshold::threshold_kms::threshold_server_init;
     use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
+    use crate::util::rate_limiter::RateLimiterConfig;
     use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
     use itertools::Itertools;
     use std::str::FromStr;
@@ -2518,6 +2519,7 @@ pub mod test_tools {
         pub_storage: Vec<PubS>,
         priv_storage: Vec<PrivS>,
         run_prss: bool,
+        rate_limiter_conf: Option<RateLimiterConfig>,
     ) -> HashMap<u32, JoinHandle<()>> {
         ensure_testing_material_exists().await;
         #[cfg(feature = "slow_tests")]
@@ -2536,6 +2538,7 @@ pub mod test_tools {
                 timeout_secs: 60u64,
                 grpc_max_message_size: 2 * 10 * 1024 * 1024, // 20 MiB
             };
+            let rl_conf = rate_limiter_conf.clone();
             handles.push(tokio::spawn(async move {
                 let threshold_config = ThresholdParty {
                     listen_address: peers[i - 1].address.clone(),
@@ -2557,6 +2560,7 @@ pub mod test_tools {
                     cur_pub_storage,
                     cur_priv_storage,
                     run_prss,
+                    rl_conf,
                 )
                 .await;
                 (i, server, service_config)
@@ -2626,14 +2630,21 @@ pub mod test_tools {
         threshold: u8,
         pub_storage: Vec<PubS>,
         priv_storage: Vec<PrivS>,
+        rate_limiter_conf: Option<RateLimiterConfig>,
     ) -> (
         HashMap<u32, JoinHandle<()>>,
         HashMap<u32, CoreServiceEndpointClient<Channel>>,
     ) {
         let amount = priv_storage.len();
         // Setup the threshold scheme with lazy PRSS generation
-        let server_handles =
-            setup_threshold_no_client(threshold, pub_storage, priv_storage, true).await;
+        let server_handles = setup_threshold_no_client(
+            threshold,
+            pub_storage,
+            priv_storage,
+            true,
+            rate_limiter_conf,
+        )
+        .await;
         let mut client_handles = HashMap::new();
         for i in 1..=amount {
             // NOTE: calculation of port must match what's done in [setup_threshold_no_client]
@@ -2654,6 +2665,7 @@ pub mod test_tools {
     >(
         pub_storage: PubS,
         priv_storage: PrivS,
+        rate_limiter_conf: Option<RateLimiterConfig>,
     ) -> JoinHandle<()> {
         ensure_testing_material_exists().await;
         #[cfg(feature = "slow_tests")]
@@ -2668,7 +2680,9 @@ pub mod test_tools {
             };
             let _ = run_server(
                 config,
-                SoftwareKms::new(pub_storage, priv_storage).await.unwrap(),
+                SoftwareKms::new(pub_storage, priv_storage, rate_limiter_conf)
+                    .await
+                    .unwrap(),
             )
             .await;
         });
@@ -2683,11 +2697,13 @@ pub mod test_tools {
     >(
         pub_storage: PubS,
         priv_storage: PrivS,
+        rate_limiter_conf: Option<RateLimiterConfig>,
     ) -> (
         JoinHandle<()>,
         CoreServiceEndpointClient<tonic::transport::Channel>,
     ) {
-        let server_handle = setup_centralized_no_client(pub_storage, priv_storage).await;
+        let server_handle =
+            setup_centralized_no_client(pub_storage, priv_storage, rate_limiter_conf).await;
         let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", BASE_PORT + 1);
         let uri = Uri::from_str(&url).unwrap();
         let channel = connect_with_retry(uri).await;
@@ -2701,17 +2717,18 @@ pub mod test_tools {
     pub async fn centralized_handles(
         storage_version: StorageVersion,
         param: &DKGParams,
+        rate_limiter_conf: Option<RateLimiterConfig>,
     ) -> (JoinHandle<()>, CoreServiceEndpointClient<Channel>, Client) {
         let (kms_server, kms_client) = match storage_version {
             StorageVersion::Dev => {
                 let priv_storage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
                 let pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
-                setup_centralized(pub_storage, priv_storage).await
+                setup_centralized(pub_storage, priv_storage, rate_limiter_conf).await
             }
             StorageVersion::Ram => {
                 let pub_storage = RamStorage::new(StorageType::PUB);
                 let priv_storage = RamStorage::new(StorageType::PRIV);
-                setup_centralized(pub_storage, priv_storage).await
+                setup_centralized(pub_storage, priv_storage, rate_limiter_conf).await
             }
         };
         // TODO why are these FileStorage and not depend on the StorageVersion?
@@ -2766,6 +2783,7 @@ pub(crate) mod tests {
         compute_cipher_from_stored_key, compute_compressed_cipher_from_stored_key,
         load_pk_from_storage, purge, TypedPlaintext,
     };
+    use crate::util::rate_limiter::RateLimiterConfig;
     use crate::{
         client::num_blocks,
         kms::{Empty, RequestId},
@@ -2807,6 +2825,7 @@ pub(crate) mod tests {
         storage_version: StorageVersion,
         params: DKGParams,
         amount_parties: usize,
+        rate_limiter_conf: Option<RateLimiterConfig>,
     ) -> (
         HashMap<u32, JoinHandle<()>>,
         HashMap<u32, CoreServiceEndpointClient<Channel>>,
@@ -2822,7 +2841,13 @@ pub(crate) mod tests {
                     priv_storage.push(FileStorage::new(None, StorageType::PRIV, Some(i)).unwrap());
                     pub_storage.push(FileStorage::new(None, StorageType::PUB, Some(i)).unwrap());
                 }
-                super::test_tools::setup_threshold(threshold as u8, pub_storage, priv_storage).await
+                super::test_tools::setup_threshold(
+                    threshold as u8,
+                    pub_storage,
+                    priv_storage,
+                    rate_limiter_conf,
+                )
+                .await
             }
             StorageVersion::Ram => {
                 let mut pub_storage = Vec::new();
@@ -2831,7 +2856,13 @@ pub(crate) mod tests {
                     priv_storage.push(RamStorage::new(StorageType::PRIV));
                     pub_storage.push(RamStorage::new(StorageType::PUB));
                 }
-                super::test_tools::setup_threshold(threshold as u8, pub_storage, priv_storage).await
+                super::test_tools::setup_threshold(
+                    threshold as u8,
+                    pub_storage,
+                    priv_storage,
+                    rate_limiter_conf,
+                )
+                .await
             }
         };
         let mut pub_storage = Vec::with_capacity(amount_parties);
@@ -2903,8 +2934,21 @@ pub(crate) mod tests {
         request_id: &RequestId,
         params: Option<ParamChoice>,
     ) {
-        let (kms_server, mut kms_client, internal_client) =
-            super::test_tools::centralized_handles(StorageVersion::Dev, &dkg_params).await;
+        let rate_limiter_conf = RateLimiterConfig {
+            bucket_size: 100,
+            dec: 1,
+            reenc: 1,
+            crsgen: 1,
+            preproc: 1,
+            keygen: 100,
+            verify_proven_ct: 1,
+        };
+        let (kms_server, mut kms_client, internal_client) = super::test_tools::centralized_handles(
+            StorageVersion::Dev,
+            &dkg_params,
+            Some(rate_limiter_conf),
+        )
+        .await;
 
         let gen_req = internal_client
             .key_gen_request(request_id, None, params, None)
@@ -2915,6 +2959,18 @@ pub(crate) mod tests {
             .await
             .unwrap();
         assert_eq!(gen_response.into_inner(), Empty {});
+
+        // Try to do another request during keygen,
+        // the request should be rejected due to rate limiter
+        {
+            let req_id = RequestId::derive("test rate limiter").unwrap();
+            let req = internal_client
+                .crs_gen_request(&req_id, Some(1), Some(ParamChoice::Test))
+                .unwrap();
+            let e = kms_client.crs_gen(req).await.unwrap_err();
+            assert_eq!(e.code(), tonic::Code::ResourceExhausted);
+        }
+
         let mut response = kms_client
             .get_key_gen_result(tonic::Request::new(req_id.clone()))
             .await;
@@ -2958,7 +3014,7 @@ pub(crate) mod tests {
         params: Option<ParamChoice>,
     ) {
         let (kms_server, mut kms_client, internal_client) =
-            super::test_tools::centralized_handles(StorageVersion::Dev, dkg_params).await;
+            super::test_tools::centralized_handles(StorageVersion::Dev, dkg_params, None).await;
 
         let max_num_bits = if params.unwrap() == ParamChoice::Test {
             Some(1)
@@ -3087,8 +3143,21 @@ pub(crate) mod tests {
         params: Option<ParamChoice>,
         insecure: bool,
     ) {
-        let (kms_server, mut kms_client, internal_client) =
-            super::test_tools::centralized_handles(StorageVersion::Dev, dkg_params).await;
+        let rate_limiter_conf = RateLimiterConfig {
+            bucket_size: 100,
+            dec: 1,
+            reenc: 1,
+            crsgen: 100,
+            preproc: 1,
+            keygen: 1,
+            verify_proven_ct: 1,
+        };
+        let (kms_server, mut kms_client, internal_client) = super::test_tools::centralized_handles(
+            StorageVersion::Dev,
+            dkg_params,
+            Some(rate_limiter_conf),
+        )
+        .await;
 
         let max_num_bits = if params.unwrap() == ParamChoice::Test {
             Some(1)
@@ -3129,6 +3198,17 @@ pub(crate) mod tests {
                 kms_client.get_crs_gen_result(crs_req_id.clone()).await
             }
         };
+
+        // Try to do another request during crs,
+        // the request should be rejected due to rate limiter
+        {
+            let req_id = RequestId::derive("test rate limiter").unwrap();
+            let req = internal_client
+                .crs_gen_request(&req_id, Some(1), Some(ParamChoice::Test))
+                .unwrap();
+            let e = kms_client.crs_gen(req).await.unwrap_err();
+            assert_eq!(e.code(), tonic::Code::ResourceExhausted);
+        }
 
         let mut ctr = 0;
         while response.is_err() && ctr < 200 {
@@ -3190,7 +3270,7 @@ pub(crate) mod tests {
     ) {
         let message = 32;
         let (kms_server, mut kms_client, internal_client) =
-            super::test_tools::centralized_handles(StorageVersion::Dev, dkg_params).await;
+            super::test_tools::centralized_handles(StorageVersion::Dev, dkg_params, None).await;
 
         // next use the verify endpoint to check the proof
         // for this we need to read the key
@@ -3475,8 +3555,22 @@ pub(crate) mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         // The threshold handle should only be started after the storage is purged
         // since the threshold parties will load the CRS from private storage
-        let (kms_servers, kms_clients, internal_client) =
-            threshold_handles(StorageVersion::Dev, *param, amount_parties).await;
+        let rate_limiter_conf = RateLimiterConfig {
+            bucket_size: 100 * parallelism,
+            dec: 1,
+            reenc: 1,
+            crsgen: 100,
+            preproc: 1,
+            keygen: 1,
+            verify_proven_ct: 1,
+        };
+        let (kms_servers, kms_clients, internal_client) = threshold_handles(
+            StorageVersion::Dev,
+            *param,
+            amount_parties,
+            Some(rate_limiter_conf),
+        )
+        .await;
 
         let max_num_bits = Some(32);
         let reqs: Vec<_> = (0..parallelism)
@@ -3522,6 +3616,18 @@ pub(crate) mod tests {
             responses_gen.push(resp.into_inner());
         }
         assert_eq!(responses_gen.len(), amount_parties * parallelism);
+
+        // Try to do another request during preproc,
+        // the request should be rejected due to rate limiter
+        {
+            let req_id = RequestId::derive("test rate limiter").unwrap();
+            let req = internal_client
+                .crs_gen_request(&req_id, Some(1), Some(ParamChoice::Test))
+                .unwrap();
+            let mut cur_client = kms_clients.get(&1).unwrap().clone();
+            let e = cur_client.crs_gen(req).await.unwrap_err();
+            assert_eq!(e.code(), tonic::Code::ResourceExhausted);
+        }
 
         // wait a bit for the crs generation to finish
         let joined_responses = par_poll_responses!(
@@ -3736,7 +3842,7 @@ pub(crate) mod tests {
         // The threshold handle should only be started after the storage is purged
         // since the threshold parties will load the CRS from private storage
         let (kms_servers, kms_clients, internal_client) =
-            threshold_handles(StorageVersion::Dev, dkg_params, amount_parties).await;
+            threshold_handles(StorageVersion::Dev, dkg_params, amount_parties, None).await;
 
         let pub_storage = FileStorage::new(None, StorageType::PUB, Some(1)).unwrap();
         let pp = internal_client
@@ -3925,7 +4031,7 @@ pub(crate) mod tests {
     ) {
         assert!(parallelism > 0);
         let (kms_server, kms_client, mut internal_client) =
-            super::test_tools::centralized_handles(StorageVersion::Dev, dkg_params).await;
+            super::test_tools::centralized_handles(StorageVersion::Dev, dkg_params, None).await;
         let req_key_id = key_id.to_owned().try_into().unwrap();
 
         let mut cts = Vec::new();
@@ -4184,7 +4290,7 @@ pub(crate) mod tests {
     ) {
         assert!(parallelism > 0);
         let (kms_server, kms_client, mut internal_client) =
-            super::test_tools::centralized_handles(StorageVersion::Dev, dkg_params).await;
+            super::test_tools::centralized_handles(StorageVersion::Dev, dkg_params, None).await;
         let (ct, fhe_type) = compute_compressed_cipher_from_stored_key(None, msg, key_id).await;
         let req_key_id = key_id.to_owned().try_into().unwrap();
 
@@ -4470,8 +4576,22 @@ pub(crate) mod tests {
     ) {
         assert!(parallelism > 0);
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-        let (kms_servers, kms_clients, mut internal_client) =
-            threshold_handles(StorageVersion::Dev, dkg_params, amount_parties).await;
+        let rate_limiter_conf = RateLimiterConfig {
+            bucket_size: 100 * parallelism,
+            dec: 100,
+            reenc: 1,
+            crsgen: 1,
+            preproc: 1,
+            keygen: 1,
+            verify_proven_ct: 1,
+        };
+        let (kms_servers, kms_clients, mut internal_client) = threshold_handles(
+            StorageVersion::Dev,
+            dkg_params,
+            amount_parties,
+            Some(rate_limiter_conf),
+        )
+        .await;
         let key_id_req = key_id.to_string().try_into().unwrap();
 
         let mut cts = Vec::new();
@@ -4754,7 +4874,7 @@ pub(crate) mod tests {
 
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (kms_servers, kms_clients, mut internal_client) =
-            threshold_handles(StorageVersion::Dev, dkg_params, amount_parties).await;
+            threshold_handles(StorageVersion::Dev, dkg_params, amount_parties, None).await;
         let (ct, fhe_type) = compute_cipher_from_stored_key(None, msg, key_id).await;
 
         internal_client.convert_to_addresses();
@@ -4950,11 +5070,21 @@ pub(crate) mod tests {
     #[serial]
     async fn test_largecipher() {
         let keys = get_default_keys().await;
+        let rate_limiter_conf = RateLimiterConfig {
+            bucket_size: 100,
+            dec: 1,
+            reenc: 100,
+            crsgen: 1,
+            preproc: 1,
+            keygen: 1,
+            verify_proven_ct: 1,
+        };
         let (kms_server, mut kms_client) = super::test_tools::setup_centralized(
             RamStorage::new(StorageType::PUB),
             RamStorage::from_existing_keys(&keys.software_kms_keys)
                 .await
                 .unwrap(),
+            Some(rate_limiter_conf),
         )
         .await;
         let ct = Vec::from([1_u8; 100000]);
@@ -5072,7 +5202,7 @@ pub(crate) mod tests {
 
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (kms_servers, kms_clients, internal_client) =
-            threshold_handles(StorageVersion::Dev, TEST_PARAM, amount_parties).await;
+            threshold_handles(StorageVersion::Dev, TEST_PARAM, amount_parties, None).await;
 
         let request_ids: Vec<_> = (0..parallelism)
             .map(|j| RequestId::derive(&format!("test_preproc_{amount_parties}_{j}")).unwrap())
@@ -5230,7 +5360,7 @@ pub(crate) mod tests {
 
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (kms_servers, kms_clients, internal_client) =
-            threshold_handles(StorageVersion::Dev, TEST_PARAM, amount_parties).await;
+            threshold_handles(StorageVersion::Dev, TEST_PARAM, amount_parties, None).await;
 
         let req_keygen = internal_client
             .key_gen_request(
@@ -5277,7 +5407,7 @@ pub(crate) mod tests {
 
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (kms_servers, kms_clients, internal_client) =
-            threshold_handles(StorageVersion::Dev, DEFAULT_PARAM, amount_parties).await;
+            threshold_handles(StorageVersion::Dev, DEFAULT_PARAM, amount_parties, None).await;
 
         let req_keygen = internal_client
             .key_gen_request(
@@ -5288,6 +5418,7 @@ pub(crate) mod tests {
             )
             .unwrap();
         let responses = launch_dkg(req_keygen.clone(), &kms_clients, true).await;
+
         for response in responses {
             assert!(response.is_ok());
         }
@@ -5324,8 +5455,26 @@ pub(crate) mod tests {
         purge(None, None, &req_key.to_string(), amount_parties).await;
 
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-        let (kms_servers, kms_clients, internal_client) =
-            threshold_handles(StorageVersion::Dev, TEST_PARAM, amount_parties).await;
+        // Preproc should use all the tokens in the bucket,
+        // then they're returned to the bucket before keygen starts.
+        // If something is wrong with the rate limiter logic
+        // then the keygen step should fail since there are not enough tokens.
+        let rate_limiter_conf = RateLimiterConfig {
+            bucket_size: 100,
+            dec: 1,
+            reenc: 1,
+            crsgen: 1,
+            preproc: 100,
+            keygen: 100,
+            verify_proven_ct: 1,
+        };
+        let (kms_servers, kms_clients, internal_client) = threshold_handles(
+            StorageVersion::Dev,
+            TEST_PARAM,
+            amount_parties,
+            Some(rate_limiter_conf),
+        )
+        .await;
 
         let preprocessing_req_data = internal_client
             .preproc_request(&req_preproc, Some(ParamChoice::Test))
@@ -5348,6 +5497,21 @@ pub(crate) mod tests {
         }
         assert_eq!(responses_gen.len(), amount_parties);
 
+        // Try to do another request during preproc,
+        // the request should be rejected due to rate limiter.
+        // This should be done after the requests above start being
+        // processed in the kms.
+        {
+            let req_id = RequestId::derive("test rate limiter").unwrap();
+            let req = internal_client
+                .crs_gen_request(&req_id, Some(1), Some(ParamChoice::Test))
+                .unwrap();
+            let mut cur_client = kms_clients.get(&1).unwrap().clone();
+            let e = cur_client.crs_gen(req).await.unwrap_err();
+            assert_eq!(e.code(), tonic::Code::ResourceExhausted);
+        }
+
+        //Wait for 5 min max (should be plenty of time for the test params)
         let finished_enum: i32 = KeyGenPreprocStatusEnum::Finished.into();
         let mut finished = Vec::new();
         // Wait at most MAX_TRIES times 15 seconds for all preprocessing to finish
