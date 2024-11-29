@@ -68,7 +68,8 @@ route add -net 127.0.0.0 netmask 255.0.0.0 lo |& logger || fail "cannot add loop
 log "requesting kms-server config"
 socat -u VSOCK-CONNECT:$PARENT_CID:$CONFIG_PORT CREATE:$KMS_SERVER_CONFIG_FILE |& logger || fail "cannot receive kms-server config"
 
-# AWS API proxies
+# tracing and AWS API proxies
+start_tcp_proxy_out "tracing" "$(get_configured_port "tracing.endpoint")"
 start_tcp_proxy_out "AWS IMDS" "$(get_configured_port "aws.imds_endpoint")"
 start_tcp_proxy_out "AWS S3" "$(get_configured_port "aws.s3_endpoint")"
 start_tcp_proxy_out "AWS KMS" "$(get_configured_port "aws.awskms_endpoint")"

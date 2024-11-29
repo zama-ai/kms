@@ -15,6 +15,11 @@ ENCLAVE_LOG_PORT="$2"
 ENCLAVE_CONFIG_PORT="$3"
 KMS_SERVER_CONFIG_FILE="$4"
 
+get_configured_host_and_port() {
+    local SERVICE_NAME="$1"
+    get_value "$SERVICE_NAME" | sed 's/^https\?:\/\///'
+}
+
 get_configured_port() {
     local SERVICE_NAME="$1"
     get_value "$SERVICE_NAME" | cut -d ":" -f 3
@@ -52,8 +57,9 @@ socat -u VSOCK-LISTEN:"$ENCLAVE_LOG_PORT",fork STDOUT &
 echo "start_proxies: starting enclave config stream"
 socat VSOCK-LISTEN:"$ENCLAVE_CONFIG_PORT",fork,reuseaddr OPEN:"$KMS_SERVER_CONFIG_FILE",rdonly &
 
-# start TCP proxies to let the enclave access AWS APIs
+# start TCP proxies to let the enclave use tracing and AWS APIs
 AWS_REGION=$(get_value "aws.region")
+start_tcp_proxy_out "tracing" "$(get_configured_port "tracing.endpoint")" "$(get_configured_host_and_port "tracing.endpoint")"
 start_tcp_proxy_out "AWS IMDS" "$(get_configured_port "aws.imds_endpoint")" "169.254.169.254:80"
 start_tcp_proxy_out "AWS S3" "$(get_configured_port "aws.s3_endpoint")" "s3.$AWS_REGION.amazonaws.com:443"
 start_tcp_proxy_out "AWS KMS" "$(get_configured_port "aws.awskms_endpoint")" "kms.$AWS_REGION.amazonaws.com:443"
