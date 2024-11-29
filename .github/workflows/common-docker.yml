@@ -110,6 +110,8 @@ jobs:
           file: ${{ inputs.working-directory }}/operations/docker/${{ inputs.docker-file }}
           push: ${{ inputs.push_image }}
           pull: false
+          provenance: false
+          sbom: false
           tags: |
             ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }}-${{ matrix.platform-tag }}
           cache-from: ${{ inputs.cache-from }}
