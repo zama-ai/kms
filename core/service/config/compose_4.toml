@@ -18,6 +18,7 @@ s3_endpoint = "http://dev-s3-mock:9000"
 
 [public_vault]
 storage = "s3://kms"
+storage_cache_size = 1000
 
 [private_vault]
 storage = "file://./keys"

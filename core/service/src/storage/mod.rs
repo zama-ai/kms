@@ -5,6 +5,7 @@ use crate::rpc::rpc_types::{
 };
 use crate::{anyhow_error_and_log, some_or_err};
 use anyhow::anyhow;
+use ordermap::OrderMap;
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::HashMap;
 use std::fmt::{self};
@@ -384,6 +385,7 @@ pub async fn make_storage(
     keychain: Option<Url>,
     storage_type: StorageType,
     party_id: Option<usize>,
+    storage_cache: Option<StorageCache>,
 ) -> anyhow::Result<StorageProxy> {
     let storage = match storage {
         Some(storage_url) => match storage_url.scheme() {
@@ -399,6 +401,7 @@ pub async fn make_storage(
                     Some(storage_url.path().to_string()),
                     storage_type,
                     party_id,
+                    storage_cache,
                 )
                 .await?;
                 match storage_type {
@@ -434,6 +437,41 @@ pub async fn make_storage(
         None => StorageProxy::File(file::FileStorage::new(None, storage_type, party_id)?),
     };
     Ok(storage)
+}
+
+pub struct StorageCache {
+    cache: OrderMap<(String, String), Vec<u8>>,
+    max_cache_size: usize,
+}
+
+impl StorageCache {
+    pub fn new(max_cache_size: usize) -> anyhow::Result<Self> {
+        if max_cache_size != 0 {
+            Ok(Self {
+                cache: OrderMap::new(),
+                max_cache_size,
+            })
+        } else {
+            anyhow::bail!("storage cache size should not be zero");
+        }
+    }
+
+    pub(crate) fn insert(&mut self, key: &str, subkey: &str, data: &[u8]) -> Option<Vec<u8>> {
+        let out = self
+            .cache
+            .insert((key.to_string(), subkey.to_string()), data.to_vec());
+
+        if self.cache.len() > self.max_cache_size {
+            _ = self.cache.remove_index(0);
+        }
+
+        out
+    }
+
+    pub(crate) fn get(&self, key: &str, subkey: &str) -> Option<&Vec<u8>> {
+        // do we have to use to_string()?
+        self.cache.get(&(key.to_string(), subkey.to_string()))
+    }
 }
 
 #[cfg(test)]
@@ -561,5 +599,35 @@ pub mod tests {
                 .await
                 .unwrap();
         assert!(pks.is_empty());
+    }
+
+    #[test]
+    fn ordered_map() {
+        let mut om = StorageCache::new(2).unwrap();
+        let bucket = "abc".to_string();
+        let key = "efg".to_string();
+        let data = vec![1, 2, 3];
+        om.insert(&bucket, &key, &data);
+        assert_eq!(om.cache.len(), 1);
+        assert_eq!(*om.get(&bucket, &key).as_ref().unwrap(), &data);
+
+        // insert the same thing preserves the length
+        om.insert(&bucket, &key, &data);
+        assert_eq!(om.cache.len(), 1);
+
+        // insert a new item
+        let key2 = "key2".to_string();
+        om.insert(&bucket, &key2, &data);
+        assert_eq!(om.cache.len(), 2);
+        assert_eq!(*om.get(&bucket, &key).as_ref().unwrap(), &data);
+        assert_eq!(*om.get(&bucket, &key2).as_ref().unwrap(), &data);
+
+        // insert a third item causes the first item to be lost
+        let key3 = "key3".to_string();
+        om.insert(&bucket, &key3, &data);
+        assert_eq!(om.cache.len(), 2);
+        assert_eq!(om.get(&bucket, &key), None);
+        assert_eq!(*om.get(&bucket, &key2).as_ref().unwrap(), &data);
+        assert_eq!(*om.get(&bucket, &key3).as_ref().unwrap(), &data);
     }
 }

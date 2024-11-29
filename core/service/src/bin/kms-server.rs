@@ -2,7 +2,7 @@ use kms_lib::{
     conf::{init_conf_trace, CoreConfig},
     cryptography::central_kms::SoftwareKms,
     rpc::run_server,
-    storage::{make_storage, StorageType},
+    storage::{make_storage, StorageCache, StorageType},
     threshold::threshold_kms::threshold_server_init,
 };
 
@@ -50,6 +50,17 @@ async fn main() -> anyhow::Result<()> {
     let core_config: CoreConfig = init_conf_trace(&args.config_file).await?;
     let party_id = core_config.threshold.as_ref().map(|t| t.my_id);
 
+    // storage cache (don't forget to remove `storage_cache_size` from the
+    // config if weird inconsistencies appear)
+    let public_storage_cache = core_config
+        .public_vault
+        .as_ref()
+        .and_then(|v| v.storage_cache_size.and_then(|s| StorageCache::new(s).ok()));
+    let private_storage_cache = core_config
+        .private_vault
+        .as_ref()
+        .and_then(|v| v.storage_cache_size.and_then(|s| StorageCache::new(s).ok()));
+
     // initialize storage
     let public_storage = make_storage(
         core_config.aws.clone(),
@@ -57,6 +68,7 @@ async fn main() -> anyhow::Result<()> {
         None,
         StorageType::PUB,
         party_id,
+        public_storage_cache,
     )
     .await?;
     let private_storage = make_storage(
@@ -65,6 +77,7 @@ async fn main() -> anyhow::Result<()> {
         core_config.private_vault.and_then(|v| v.keychain),
         StorageType::PRIV,
         party_id,
+        private_storage_cache,
     )
     .await?;
 

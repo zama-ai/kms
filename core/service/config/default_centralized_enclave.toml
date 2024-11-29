@@ -25,7 +25,9 @@ awskms_endpoint = "https://localhost:7000"
 
 [public_vault]
 storage = "s3://zama_kms_public_keys"
+storage_cache_size = 1000
 
 [private_vault]
 storage = "s3://zama_kms_private_keys"
+storage_cache_size = 1000
 keychain = "awskms://zama_kms_storage_root_key"

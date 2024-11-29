@@ -187,6 +187,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None,
                 StorageType::PUB,
                 party_id,
+                None,
             )
             .await
             .unwrap(),
@@ -198,6 +199,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 root_key_id.clone(),
                 StorageType::PRIV,
                 party_id,
+                None,
             )
             .await
             .unwrap(),

@@ -55,6 +55,7 @@ pub struct AWSConfig {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Vault {
     pub storage: Url,
+    pub storage_cache_size: Option<usize>,
     pub keychain: Option<Url>,
 }
 

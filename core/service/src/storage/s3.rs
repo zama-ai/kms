@@ -1,8 +1,9 @@
-use super::{Storage, StorageForText, StorageReader, StorageType};
+use super::{Storage, StorageCache, StorageForText, StorageReader, StorageType};
+use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::nitro_enclave::ENCLAVE_SK_SIZE;
 use crate::util::aws::{
     build_aws_kms_client, build_aws_sdk_config, build_s3_client, nitro_enclave_decrypt_app_key,
-    nitro_enclave_encrypt_app_key, s3_get_blob, s3_put_blob, s3_put_blob_bytes, S3Cache,
+    nitro_enclave_encrypt_app_key, s3_get_blob, s3_put_blob,
 };
 use crate::{anyhow_error_and_log, some_or_err};
 use anyhow::ensure;
@@ -15,7 +16,11 @@ use rsa::{RsaPrivateKey, RsaPublicKey};
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tfhe::{named::Named, Unversionize, Versionize};
+use tfhe::{
+    named::Named,
+    safe_serialization::{safe_deserialize, safe_serialize},
+    Unversionize, Versionize,
+};
 use tokio::sync::Mutex;
 use url::Url;
 
@@ -24,10 +29,11 @@ pub struct S3Storage {
     pub s3_client: S3Client,
     pub blob_bucket: String,
     pub blob_path: String,
-    cache: Arc<Mutex<S3Cache>>,
+    cache: Option<Arc<Mutex<StorageCache>>>,
 }
 
 impl S3Storage {
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         aws_region: String,
         aws_imds_endpoint: Option<Url>,
@@ -36,6 +42,7 @@ impl S3Storage {
         path: Option<String>,
         storage_type: StorageType,
         party_id: Option<usize>,
+        cache: Option<StorageCache>,
     ) -> anyhow::Result<Self> {
         let extra_prefix = match party_id {
             Some(party_id) => format!("{storage_type}-p{party_id}"),
@@ -50,13 +57,12 @@ impl S3Storage {
         };
         let aws_sdk_config = build_aws_sdk_config(aws_region, aws_imds_endpoint).await;
         let s3_client = build_s3_client(&aws_sdk_config, aws_s3_endpoint).await?;
-        let cache = Arc::new(Mutex::new(S3Cache::new(1000)));
         Ok(S3Storage {
             aws_sdk_config,
             s3_client,
             blob_bucket,
             blob_path,
-            cache,
+            cache: cache.map(|x| Arc::new(Mutex::new(x))),
         })
     }
 
@@ -111,11 +117,26 @@ impl StorageReader for S3Storage {
         let (bucket, key) = S3Storage::parse_url(url)?;
 
         tracing::info!("Reading object from bucket {} under key {}", bucket, key);
-
-        let cache = Arc::clone(&self.cache);
-
-        let mut guarded_cache = cache.lock().await;
-        s3_get_blob(&self.s3_client, &bucket, &key, &mut guarded_cache).await
+        let buf = match &self.cache {
+            Some(cache) => {
+                let cache = Arc::clone(cache);
+                let mut guarded_cache = cache.lock().await;
+                match guarded_cache.get(&bucket, &key) {
+                    Some(buf) => {
+                        tracing::info!("found bucket={bucket}, path={key} in storage cache");
+                        buf.clone()
+                    }
+                    None => {
+                        let data = s3_get_blob(&self.s3_client, &bucket, &key).await?;
+                        guarded_cache.insert(&bucket, &key, &data);
+                        data
+                    }
+                }
+            }
+            None => s3_get_blob(&self.s3_client, &bucket, &key).await?,
+        };
+        safe_deserialize(&mut std::io::Cursor::new(buf), SAFE_SER_SIZE_LIMIT)
+            .map_err(|e| anyhow::anyhow!(e))
     }
 
     fn compute_url(&self, data_id: &str, data_type: &str) -> anyhow::Result<Url> {
@@ -174,11 +195,12 @@ impl Storage for S3Storage {
         let (bucket, key) = S3Storage::parse_url(url)?;
 
         tracing::info!("Storing object in bucket {} under key {}", bucket, key);
-
-        let cache = Arc::clone(&self.cache);
-
-        let mut guarded_cache = cache.lock().await;
-        s3_put_blob(&self.s3_client, &bucket, &key, data, &mut guarded_cache).await
+        let mut buf = Vec::new();
+        safe_serialize(data, &mut buf, SAFE_SER_SIZE_LIMIT)?;
+        self.cache.as_ref().map(|cache| async {
+            Arc::clone(cache).lock().await.insert(&bucket, &key, &buf);
+        });
+        s3_put_blob(&self.s3_client, &bucket, &key, buf).await
     }
 
     async fn delete_data(&mut self, url: &Url) -> anyhow::Result<()> {
@@ -204,7 +226,7 @@ impl StorageForText for S3Storage {
 
         tracing::info!("Storing text in bucket {} under key {}", bucket, key);
 
-        s3_put_blob_bytes(&self.s3_client, &bucket, &key, text.as_bytes().to_vec()).await
+        s3_put_blob(&self.s3_client, &bucket, &key, text.as_bytes().to_vec()).await
     }
 }
 
@@ -353,6 +375,7 @@ pub mod tests {
             Some("blob_key_prefix".to_string()),
             StorageType::PUB,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -378,6 +401,7 @@ pub mod tests {
             BUCKET_NAME.to_string(),
             Some(temp_dir.path().to_str().unwrap().to_string()),
             StorageType::PUB,
+            None,
             None,
         )
         .await
