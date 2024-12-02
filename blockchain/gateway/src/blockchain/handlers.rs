@@ -54,37 +54,48 @@ pub(crate) async fn handle_event_decryption(
     tracing::debug!("Encoded bytes: {:?}", hex::encode(encoded_bytes.clone()));
 
     let client = Arc::new(http_provider(config).await.unwrap());
-    let current_gas_price = client.provider().get_gas_price().await.unwrap();
-    tracing::debug!("Current gas price: {:?}", current_gas_price);
-
-    let (max_fee_per_gas, max_priority_fee_per_gas) =
-        client.provider().estimate_eip1559_fees(None).await.unwrap();
-    tracing::debug!("Max fee per gas: {:?}", max_fee_per_gas);
-    tracing::debug!("Max priority fee per gas: {:?}", max_priority_fee_per_gas);
 
     let gas_price = match config.ethereum.gas_price {
         Some(gas_price) => {
             tracing::debug!("⛽ Using configured gas price: {:?}", gas_price);
             U256::from(gas_price)
         }
+        // let max_priority_fee_per_gas = U256::from(3000000000u64);
+        // let gas_price_factor = U256::from(20) + U256::from(100);
+        // let calculated_gas_price =
+        //     (max_priority_fee_per_gas.mul(gas_price_factor)).div_mod(U256::from(100));
         None => match config.ethereum.base_gas {
             BaseGasPrice::CurrentGasPrice => {
-                let gas_price = client.provider().get_gas_price().await?;
-                let gas_price = gas_price.mul(1 + (config.ethereum.gas_escalator_increase / 100));
+                let current_network_gas_price = client.provider().get_gas_price().await?;
+                let gas_price_factor_percentage =
+                    U256::from(config.ethereum.gas_escalator_increase) + U256::from(100);
+                let (calculated_gas_price, _) = current_network_gas_price
+                    .mul(gas_price_factor_percentage)
+                    .div_mod(U256::from(100));
+                tracing::debug!(
+                        "⛽ Calculated gas price: {:?} (current network gas price: {:?}, factor : {:?}%)",
+                        calculated_gas_price,
+                        current_network_gas_price,
+                        gas_price_factor_percentage
+                    );
 
-                tracing::debug!("⛽ Calculated CurrentGasPrice gas price: {:?}", gas_price);
-                gas_price
+                calculated_gas_price
             }
             BaseGasPrice::Eip1559MaxPriorityFeePerGas => {
                 let (_, max_priority_fee_per_gas) =
                     client.provider().estimate_eip1559_fees(None).await?;
-                let gas_price = max_priority_fee_per_gas
-                    .mul(1 + (config.ethereum.gas_escalator_increase / 100));
-                tracing::debug!(
-                    "⛽ Calculated Eip1559MaxPriorityFeePerGas gas price: {:?}",
-                    gas_price
-                );
-                gas_price
+                let gas_price_factor_percentage =
+                    U256::from(config.ethereum.gas_escalator_increase) + U256::from(100);
+                let (calculated_gas_price, _) = max_priority_fee_per_gas
+                    .mul(gas_price_factor_percentage)
+                    .div_mod(U256::from(100));
+
+                tracing::debug!("⛽ Calculated gas price: {:?} (max priority fee per gas: {:?}, factor : {:?}%)",
+                        calculated_gas_price,
+                        max_priority_fee_per_gas,
+                        gas_price_factor_percentage);
+
+                calculated_gas_price
             }
         },
     };

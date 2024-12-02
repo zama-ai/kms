@@ -210,6 +210,14 @@ pub struct EthereumConfig {
     pub acl_address: H160,
     pub reenc_domain_name: String,
     pub reenc_domain_version: String,
+    pub get_ciphertext_retry: ExponentialRetryConfig,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder)]
+pub struct ExponentialRetryConfig {
+    pub exponential_base: u64,
+    pub max_retries: u64,
+    pub factor: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder)]
