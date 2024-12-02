@@ -2,10 +2,12 @@ use conf_trace::conf::Tracing;
 use conf_trace::telemetry::init_tracing;
 use events::kms::CrsGenValues;
 use events::kms::{
-    DecryptResponseValues, DecryptValues, FheParameter, FheType, KeyGenPreprocValues, KmsCoreConf,
-    KmsCoreParty, KmsEvent, KmsMessage, Transaction, TransactionId, VerifyProvenCtValues,
+    DecryptResponseValues, DecryptValues, FheParameter, FheType, InsecureKeyGenValues,
+    KeyGenPreprocValues, KeyGenResponseValues, KmsCoreConf, KmsCoreParty, KmsEvent, KmsMessage,
+    Transaction, TransactionId, VerifyProvenCtValues,
 };
 use events::kms::{KmsOperation, OperationValue};
+use events::subscription::TxResponse;
 use events::{
     kms::{KeyGenValues, ReencryptValues},
     HexVector,
@@ -128,6 +130,7 @@ async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
 
     let mnemonic = Some("whisper stereo great helmet during hollow nominee skate frown daughter donor pool ozone few find risk cigar practice essay sketch rhythm novel dumb host".to_string());
     let addresses = vec!["http://localhost:9090"];
+    let key_id = vec![1, 2, 3];
 
     // Initialize the query client for checking the blockchain state
     let query_client: QueryClient = QueryClientBuilder::builder()
@@ -170,8 +173,27 @@ async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
         .await;
     });
 
+    // Execute insecure key generation flow to enable the subsequent decryption request
+    let keygen_request_txhash = send_insecure_key_generation_request(&client).await;
+    let keygen_tx_response =
+        wait_for_tx_processed(Arc::clone(&query_client), keygen_request_txhash.clone())
+            .await
+            .unwrap();
+    let txn_id = get_event_value_from_response(keygen_tx_response.clone(), "txn_id".to_string())
+        .map_err(|e| tracing::error!("{}", e))
+        .unwrap();
+    let keygen_response_txhash = send_key_generation_response(
+        &client,
+        TransactionId::from_hex(&txn_id).unwrap(),
+        key_id.clone(),
+    )
+    .await;
+    wait_for_tx_processed(Arc::clone(&query_client), keygen_response_txhash.clone())
+        .await
+        .unwrap();
+
     // Send decryption request to the blockchain in order to get events after
-    let txhash = send_decrypt_request(&client).await;
+    let txhash = send_decrypt_request(&client, key_id).await;
 
     wait_for_tx_processed(query_client, txhash.clone())
         .await
@@ -226,7 +248,7 @@ async fn wait_for_event_response<T>(
 async fn wait_for_tx_processed(
     query_client: Arc<QueryClient>,
     txhash: String,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<TxResponse> {
     let r = query_client
         .query_tx(txhash.clone())
         .await
@@ -235,7 +257,7 @@ async fn wait_for_tx_processed(
         Err(anyhow::anyhow!("Transaction not found"))
     } else {
         tracing::info!("Tx processed: {:?}", r);
-        Ok(())
+        Ok(r.unwrap())
     }
 }
 
@@ -330,9 +352,82 @@ async fn start_sync_handler(
         .build()
 }
 
-async fn send_decrypt_request(client: &RwLock<Client>) -> String {
+/// Extracts the event value of a specified event key from a transaction response.
+fn get_event_value_from_response(
+    tx_response: TxResponse,
+    event_key: String,
+) -> anyhow::Result<String> {
+    for event in tx_response.events {
+        if let Some(attribute) = event.attributes.iter().find(|attr| attr.key == event_key) {
+            return Ok(attribute.value.clone());
+        }
+    }
+    Err(anyhow::anyhow!(
+        "Event key <{}> not found in the tx response",
+        event_key
+    ))
+}
+
+async fn send_insecure_key_generation_request(client: &RwLock<Client>) -> String {
+    let keygen_request = InsecureKeyGenValues::new(
+        "eip712name".to_string(),
+        "version".to_string(),
+        vec![1; 32],
+        "0x33dA6bF26964af9d7eed9e03E53415D37aA960EE".to_string(),
+        Some(vec![42; 32]),
+    )
+    .unwrap();
+    let operation = events::kms::OperationValue::InsecureKeyGen(keygen_request);
+    let request = ExecuteContractRequest::builder()
+        .message(KmsMessage::builder().value(operation).build())
+        .gas_limit(200000u64)
+        .funds(vec![ProtoCoin::builder()
+            .denom("ucosm".to_string())
+            .amount(100_000u64)
+            .build()])
+        .build();
+    let resp = client.write().await.execute_contract(request).await;
+    tracing::info!("Insecure key generation request transaction: {:?}", resp);
+
+    resp.unwrap().txhash
+}
+
+async fn send_key_generation_response(
+    client: &RwLock<Client>,
+    txn_id: TransactionId,
+    key_id: Vec<u8>,
+) -> String {
+    let keygen_response = KeyGenResponseValues::new(
+        key_id,
+        "digest1".to_string(),
+        vec![4, 5, 6],
+        "digest2".to_string(),
+        vec![7, 8, 9],
+        FheParameter::Test,
+    );
+    let operation = events::kms::OperationValue::KeyGenResponse(keygen_response);
+    let request = ExecuteContractRequest::builder()
+        .message(
+            KmsMessage::builder()
+                .value(operation)
+                .txn_id(txn_id)
+                .build(),
+        )
+        .gas_limit(200000u64)
+        .funds(vec![ProtoCoin::builder()
+            .denom("ucosm".to_string())
+            .amount(100_000u64)
+            .build()])
+        .build();
+    let resp = client.write().await.execute_contract(request).await;
+    tracing::info!("Key generation response transaction: {:?}", resp);
+
+    resp.unwrap().txhash
+}
+
+async fn send_decrypt_request(client: &RwLock<Client>, key_id: Vec<u8>) -> String {
     let decrypt = DecryptValues::new(
-        vec![1, 2, 3],
+        key_id,
         vec![[0, 0, 0, 0, 0, 1, 1, 1, 1, 1].to_vec()],
         vec![FheType::Euint8],
         Some(vec![[1, 0, 0, 0, 0, 1, 1, 1, 1, 1].to_vec()]),

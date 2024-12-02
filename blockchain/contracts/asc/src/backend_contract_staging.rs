@@ -4,10 +4,11 @@ use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{to_json_binary, Env, Response, StdError, StdResult, Storage, WasmMsg};
 use cw_utils::must_pay;
 use events::kms::{
-    CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues, InsecureCrsGenValues,
-    KeyGenPreprocResponseValues, KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues, KmsEvent,
-    KmsOperation, OperationType, OperationValue, ReencryptResponseValues, ReencryptValues,
-    SenderAllowedEvent, TransactionId, VerifyProvenCtValues,
+    ContractAclUpdatedEvent, CrsGenResponseValues, CrsGenValues, DecryptResponseValues,
+    DecryptValues, InsecureCrsGenValues, KeyAccessAllowedEvent, KeyGenPreprocResponseValues,
+    KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues, KmsEvent, KmsOperation, OperationType,
+    OperationValue, ReencryptResponseValues, ReencryptValues, SenderAllowedEvent, TransactionId,
+    VerifyProvenCtValues,
 };
 use events::kms::{InsecureKeyGenValues, VerifyProvenCtResponseValues};
 use sha3::{Digest, Sha3_256};
@@ -36,19 +37,25 @@ impl BackendContract {
     /// Processes a decryption request by performing these steps:
     /// - Verify the sender's payment capacity
     /// - Process the transaction (which emits a KmsEvent)
-    /// - Add a proof verification message to the response
+    /// - Add a proof verification message and key access allowed event to the response
     pub fn process_decryption_request(
         ctx: &mut ExecCtx,
         kms_storage: &KmsContractStorage,
         decrypt: DecryptValues,
     ) -> StdResult<Response> {
+        let key_access_allowed_event = BackendContract::check_key_access_is_allowed(
+            ctx,
+            kms_storage,
+            decrypt.key_id().to_string(),
+        )?;
+
         let ciphertext_handle_vectors: Vec<Vec<u8>> = decrypt
             .ciphertext_handles()
             .0
             .iter()
             .map(|ct| ct.to_vec())
             .collect();
-        BackendContract::verify_payment_capacity(ctx, &ciphertext_handle_vectors)?;
+        BackendContract::verify_sender_payment_capacity(ctx, &ciphertext_handle_vectors)?;
 
         let external_handles_vector: Vec<Vec<u8>> = decrypt
             .external_handles()
@@ -59,9 +66,10 @@ impl BackendContract {
             .into();
         let external_handles_string =
             BackendContract::stringify_ciphertext_handles(&external_handles_vector)?;
-        let response =
-            BackendContract::process_request_transaction(ctx, kms_storage, decrypt.clone().into())?;
 
+        let response =
+            BackendContract::process_request_transaction(ctx, kms_storage, decrypt.clone().into())?
+                .add_event(key_access_allowed_event);
         BackendContract::add_proof_verification_message(
             ctx,
             kms_storage,
@@ -82,7 +90,7 @@ impl BackendContract {
         decrypt_response: DecryptResponseValues,
     ) -> StdResult<Response> {
         let operation = "decryption_response";
-        BackendContract::check_sender_is_allowed(
+        let sender_allowed_event = BackendContract::check_sender_is_allowed(
             &ctx,
             kms_storage,
             OperationType::Response,
@@ -93,21 +101,28 @@ impl BackendContract {
             kms_storage,
             &transaction_id,
             decrypt_response.into(),
-        )?;
-        BackendContract::add_sender_allowed_event(&ctx, response, operation)
+        )?
+        .add_event(sender_allowed_event);
+        Ok(response)
     }
 
     /// Processes a reencryption request by performing these steps:
     /// - Verify the sender's payment capacity
     /// - Process the transaction (which emits a KmsEvent)
-    /// - Add a proof verification message to the response
+    /// - Add a proof verification message and key access allowed event to the response
     pub fn process_reencryption_request(
         ctx: &mut ExecCtx,
         kms_storage: &KmsContractStorage,
         reencrypt: ReencryptValues,
     ) -> StdResult<Response> {
+        let key_access_allowed_event = BackendContract::check_key_access_is_allowed(
+            ctx,
+            kms_storage,
+            reencrypt.key_id().to_string(),
+        )?;
+
         let ciphertext_handle_vector: Vec<u8> = reencrypt.ciphertext_handle().deref().into();
-        BackendContract::verify_payment_capacity(ctx, &[ciphertext_handle_vector])?;
+        BackendContract::verify_sender_payment_capacity(ctx, &[ciphertext_handle_vector])?;
 
         let external_ciphertext_handle_vector: Vec<u8> = reencrypt
             .external_ciphertext_handle()
@@ -116,11 +131,13 @@ impl BackendContract {
             .into();
         let external_handles_string =
             BackendContract::stringify_ciphertext_handles(&[external_ciphertext_handle_vector])?;
+
         let response = BackendContract::process_request_transaction(
             ctx,
             kms_storage,
             reencrypt.clone().into(),
-        )?;
+        )?
+        .add_event(key_access_allowed_event);
         BackendContract::add_proof_verification_message(
             ctx,
             kms_storage,
@@ -141,7 +158,7 @@ impl BackendContract {
         reencrypt_response: ReencryptResponseValues,
     ) -> StdResult<Response> {
         let operation = "reencryption_response";
-        BackendContract::check_sender_is_allowed(
+        let sender_allowed_event = BackendContract::check_sender_is_allowed(
             &ctx,
             kms_storage,
             OperationType::Response,
@@ -152,8 +169,9 @@ impl BackendContract {
             kms_storage,
             &transaction_id,
             reencrypt_response.into(),
-        )?;
-        BackendContract::add_sender_allowed_event(&ctx, response, operation)
+        )?
+        .add_event(sender_allowed_event);
+        Ok(response)
     }
 
     /// Processes a proven ciphertext verification request (which emits a KmsEvent)
@@ -176,7 +194,7 @@ impl BackendContract {
         verify_proven_ct_response: VerifyProvenCtResponseValues,
     ) -> StdResult<Response> {
         let operation = "proven_ct_verification_response";
-        BackendContract::check_sender_is_allowed(
+        let sender_allowed_event = BackendContract::check_sender_is_allowed(
             &ctx,
             kms_storage,
             OperationType::Response,
@@ -187,8 +205,9 @@ impl BackendContract {
             kms_storage,
             &transaction_id,
             verify_proven_ct_response.into(),
-        )?;
-        BackendContract::add_sender_allowed_event(&ctx, response, operation)
+        )?
+        .add_event(sender_allowed_event);
+        Ok(response)
     }
 
     /// Processes a key generation preproc request by performing these steps:
@@ -200,13 +219,19 @@ impl BackendContract {
         kms_storage: &KmsContractStorage,
     ) -> StdResult<Response> {
         let operation = "key_generation_preproc";
-        BackendContract::check_sender_is_allowed(ctx, kms_storage, OperationType::Gen, operation)?;
+        let sender_allowed_event = BackendContract::check_sender_is_allowed(
+            ctx,
+            kms_storage,
+            OperationType::Gen,
+            operation,
+        )?;
         let response = BackendContract::process_request_transaction(
             ctx,
             kms_storage,
             KeyGenPreprocValues::default().into(),
-        )?;
-        BackendContract::add_sender_allowed_event(ctx, response, operation)
+        )?
+        .add_event(sender_allowed_event);
+        Ok(response)
     }
 
     /// Processes a key generation preproc request response by performing these steps:
@@ -219,7 +244,7 @@ impl BackendContract {
         transaction_id: TransactionId,
     ) -> StdResult<Response> {
         let operation = "key_generation_preproc_response";
-        BackendContract::check_sender_is_allowed(
+        let sender_allowed_event = BackendContract::check_sender_is_allowed(
             &ctx,
             kms_storage,
             OperationType::Response,
@@ -230,8 +255,9 @@ impl BackendContract {
             kms_storage,
             &transaction_id,
             KeyGenPreprocResponseValues::default().into(),
-        )?;
-        BackendContract::add_sender_allowed_event(&ctx, response, operation)
+        )?
+        .add_event(sender_allowed_event);
+        Ok(response)
     }
 
     /// Processes a key generation request by performing these steps:
@@ -244,16 +270,23 @@ impl BackendContract {
         keygen: KeyGenValues,
     ) -> StdResult<Response> {
         let operation = "key_generation";
-        BackendContract::check_sender_is_allowed(ctx, kms_storage, OperationType::Gen, operation)?;
+        let sender_allowed_event = BackendContract::check_sender_is_allowed(
+            ctx,
+            kms_storage,
+            OperationType::Gen,
+            operation,
+        )?;
         let response =
-            BackendContract::process_request_transaction(ctx, kms_storage, keygen.into())?;
-        BackendContract::add_sender_allowed_event(ctx, response, operation)
+            BackendContract::process_request_transaction(ctx, kms_storage, keygen.into())?
+                .add_event(sender_allowed_event);
+        Ok(response)
     }
 
     /// Processes a key generation response by performing these steps:
     /// - Check if the sender is allowed to execute this operation
+    /// - Include the sender in the stored ACL for generated key ID
     /// - Process the transaction (which emits a KmsEvent)
-    /// - Add a sender allowed event to the response
+    /// - Add contract ACL updated and sender allowed events to the response
     pub fn process_key_generation_response(
         ctx: ExecCtx,
         kms_storage: &KmsContractStorage,
@@ -261,19 +294,31 @@ impl BackendContract {
         keygen_response: KeyGenResponseValues,
     ) -> StdResult<Response> {
         let operation = "key_generation_response";
-        BackendContract::check_sender_is_allowed(
+        let key_id = keygen_response.request_id().to_string();
+
+        let sender_allowed_event = BackendContract::check_sender_is_allowed(
             &ctx,
             kms_storage,
             OperationType::Response,
             operation,
         )?;
+
+        let transaction_sender =
+            kms_storage.get_transaction_sender(ctx.deps.storage, &transaction_id)?;
+        kms_storage.add_address_to_acl(ctx.deps.storage, &key_id, &transaction_sender)?;
+        let contract_acl_updated_event =
+            ContractAclUpdatedEvent::new(key_id, ctx.info.sender.to_string());
+
         let response = BackendContract::process_response_transaction(
             ctx.deps.storage,
             kms_storage,
             &transaction_id,
             keygen_response.into(),
-        )?;
-        BackendContract::add_sender_allowed_event(&ctx, response, operation)
+        )?
+        .add_event(sender_allowed_event)
+        .add_event(contract_acl_updated_event);
+
+        Ok(response)
     }
 
     /// Processes an insecure key generation request by skipping the
@@ -288,13 +333,19 @@ impl BackendContract {
         insecure_key_gen: InsecureKeyGenValues,
     ) -> StdResult<Response> {
         let operation = "insecure_key_generation";
-        BackendContract::check_sender_is_allowed(ctx, kms_storage, OperationType::Gen, operation)?;
+        let sender_allowed_event = BackendContract::check_sender_is_allowed(
+            ctx,
+            kms_storage,
+            OperationType::Gen,
+            operation,
+        )?;
         let response = BackendContract::process_request_transaction(
             ctx,
             kms_storage,
             insecure_key_gen.into(),
-        )?;
-        BackendContract::add_sender_allowed_event(ctx, response, operation)
+        )?
+        .add_event(sender_allowed_event);
+        Ok(response)
     }
 
     /// Processes an insecure key generation response by performing these steps:
@@ -308,19 +359,30 @@ impl BackendContract {
         keygen_response: KeyGenResponseValues,
     ) -> StdResult<Response> {
         let operation = "insecure_key_generation_response";
-        BackendContract::check_sender_is_allowed(
+        let key_id = keygen_response.request_id().to_string();
+
+        let sender_allowed_event = BackendContract::check_sender_is_allowed(
             &ctx,
             kms_storage,
             OperationType::Response,
             operation,
         )?;
+
+        let transaction_sender =
+            kms_storage.get_transaction_sender(ctx.deps.storage, &transaction_id)?;
+        kms_storage.add_address_to_acl(ctx.deps.storage, &key_id, &transaction_sender)?;
+        let contract_acl_updated_event =
+            ContractAclUpdatedEvent::new(key_id, ctx.info.sender.to_string());
+
         let response = BackendContract::process_response_transaction(
             ctx.deps.storage,
             kms_storage,
             &transaction_id,
             keygen_response.into(),
         )?;
-        BackendContract::add_sender_allowed_event(&ctx, response, operation)
+        Ok(response
+            .add_event(sender_allowed_event)
+            .add_event(contract_acl_updated_event))
     }
 
     /// Processes a CRS generation request by performing these steps:
@@ -333,10 +395,16 @@ impl BackendContract {
         crs_gen: CrsGenValues,
     ) -> StdResult<Response> {
         let operation = "crs_generation";
-        BackendContract::check_sender_is_allowed(ctx, kms_storage, OperationType::Gen, operation)?;
+        let sender_allowed_event = BackendContract::check_sender_is_allowed(
+            ctx,
+            kms_storage,
+            OperationType::Gen,
+            operation,
+        )?;
         let response =
-            BackendContract::process_request_transaction(ctx, kms_storage, crs_gen.into())?;
-        BackendContract::add_sender_allowed_event(ctx, response, operation)
+            BackendContract::process_request_transaction(ctx, kms_storage, crs_gen.into())?
+                .add_event(sender_allowed_event);
+        Ok(response)
     }
 
     /// Processes a CRS generation response by performing these steps:
@@ -350,7 +418,7 @@ impl BackendContract {
         crs_gen_response: CrsGenResponseValues,
     ) -> StdResult<Response> {
         let operation = "crs_generation_response";
-        BackendContract::check_sender_is_allowed(
+        let sender_allowed_event = BackendContract::check_sender_is_allowed(
             &ctx,
             kms_storage,
             OperationType::Response,
@@ -361,8 +429,9 @@ impl BackendContract {
             kms_storage,
             &transaction_id,
             crs_gen_response.into(),
-        )?;
-        BackendContract::add_sender_allowed_event(&ctx, response, operation)
+        )?
+        .add_event(sender_allowed_event);
+        Ok(response)
     }
 
     /// Processes an insecure CRS generation request by performing these steps:
@@ -375,13 +444,19 @@ impl BackendContract {
         insecure_crs_gen: InsecureCrsGenValues,
     ) -> StdResult<Response> {
         let operation = "insecure_crs_generation";
-        BackendContract::check_sender_is_allowed(ctx, kms_storage, OperationType::Gen, operation)?;
+        let sender_allowed_event = BackendContract::check_sender_is_allowed(
+            ctx,
+            kms_storage,
+            OperationType::Gen,
+            operation,
+        )?;
         let response = BackendContract::process_request_transaction(
             ctx,
             kms_storage,
             insecure_crs_gen.into(),
-        )?;
-        BackendContract::add_sender_allowed_event(ctx, response, operation)
+        )?
+        .add_event(sender_allowed_event);
+        Ok(response)
     }
 
     /// Processes an insecure CRS generation response by performing these steps:
@@ -395,14 +470,36 @@ impl BackendContract {
         crs_gen_response: CrsGenResponseValues,
     ) -> StdResult<Response> {
         let operation = "insecure_crs_generation_response";
-        BackendContract::check_sender_is_allowed(&ctx, kms_storage, OperationType::Gen, operation)?;
+        let sender_allowed_event = BackendContract::check_sender_is_allowed(
+            &ctx,
+            kms_storage,
+            OperationType::Gen,
+            operation,
+        )?;
         let response = BackendContract::process_response_transaction(
             ctx.deps.storage,
             kms_storage,
             &transaction_id,
             crs_gen_response.into(),
-        )?;
-        BackendContract::add_sender_allowed_event(&ctx, response, operation)
+        )?
+        .add_event(sender_allowed_event);
+        Ok(response)
+    }
+
+    pub fn grant_key_access_to_address(
+        ctx: &mut ExecCtx,
+        kms_storage: &KmsContractStorage,
+        key_id: String,
+        new_address: String,
+    ) -> StdResult<Response> {
+        let key_access_allowed_event =
+            BackendContract::check_key_access_is_allowed(ctx, kms_storage, key_id.clone())?;
+        kms_storage.add_address_to_acl(ctx.deps.storage, &key_id, &new_address)?;
+        let contract_acl_updated_event = ContractAclUpdatedEvent::new(key_id, new_address);
+        let response = Response::new()
+            .add_event(key_access_allowed_event)
+            .add_event(contract_acl_updated_event);
+        Ok(response)
     }
 
     /// Returns the transaction ID by hashing the combination of the current block height
@@ -436,6 +533,16 @@ impl BackendContract {
     ) -> StdResult<Response> {
         let txn_id = BackendContract::compute_transaction_id(&ctx.env)?;
         kms_storage.update_request_transaction(ctx.deps.storage, &ctx.env, &txn_id, &operation)?;
+
+        // We only store the sender of the transaction for key generation operations
+        // This sender is then retrieved at the key generation response stage to add it to the ACL.
+        if operation.is_key_gen() || operation.is_insecure_key_gen() {
+            kms_storage.save_transaction_sender(
+                ctx.deps.storage,
+                &txn_id,
+                &ctx.info.sender.to_string(),
+            )?;
+        }
         let response =
             BackendContract::emit_event(kms_storage, ctx.deps.storage, &txn_id, &operation)?;
         Ok(response)
@@ -503,7 +610,7 @@ impl BackendContract {
     }
 
     /// Verifies that sender has sufficient funds to cover the ciphertext storage payment amount.
-    fn verify_payment_capacity(
+    fn verify_sender_payment_capacity(
         ctx: &ExecCtx,
         ciphertext_handle_vectors: &[Vec<u8>],
     ) -> StdResult<()> {
@@ -559,26 +666,37 @@ impl BackendContract {
         }
     }
 
-    fn add_sender_allowed_event(
-        ctx: &ExecCtx,
-        response: Response,
-        operation: &str,
-    ) -> StdResult<Response> {
-        let sender_allowed_event =
-            SenderAllowedEvent::new(operation.to_string(), ctx.info.sender.to_string());
-        Ok(response.add_event(sender_allowed_event))
-    }
-
     /// Check that the sender's address is allowed to trigger the given operation type.
-    pub fn check_sender_is_allowed(
+    fn check_sender_is_allowed(
         ctx: &ExecCtx,
         kms_storage: &KmsContractStorage,
         operation_type: OperationType,
         operation: &str,
-    ) -> StdResult<()> {
+    ) -> StdResult<SenderAllowedEvent> {
         kms_storage
             .check_address_is_allowed(ctx.deps.storage, ctx.info.sender.as_str(), operation_type)
-            .map_err(|e| StdError::generic_err(format!("Operation `{}`: {}", operation, e)))
+            .map_err(|e| StdError::generic_err(format!("Operation `{}`: {}", operation, e)))?;
+        Ok(SenderAllowedEvent::new(
+            operation.to_string(),
+            ctx.info.sender.to_string(),
+        ))
+    }
+
+    /// Check that the sender's address is allowed to access given key ID.
+    fn check_key_access_is_allowed(
+        ctx: &ExecCtx,
+        kms_storage: &KmsContractStorage,
+        key_id: String,
+    ) -> StdResult<KeyAccessAllowedEvent> {
+        let address_set = kms_storage.get_acl_address_set(ctx.deps.storage, &key_id)?;
+        let sender = ctx.info.sender.to_string();
+        if !address_set.contains(&sender) {
+            return Err(StdError::generic_err(format!(
+                "Sender {} is not allowed to access key with ID: {}",
+                sender, key_id
+            )));
+        }
+        Ok(KeyAccessAllowedEvent::new(key_id, sender))
     }
 
     /// Returns a String representation of the given handles. Serialization is done using serde_json.

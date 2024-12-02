@@ -2223,6 +2223,54 @@ impl From<SenderAllowedEvent> for Event {
     }
 }
 
+#[derive(Debug)]
+pub struct KeyAccessAllowedEvent {
+    key_id: String,
+    sender_allowed: String,
+}
+
+impl KeyAccessAllowedEvent {
+    pub fn new(key_id: String, sender_allowed: String) -> Self {
+        Self {
+            key_id,
+            sender_allowed,
+        }
+    }
+}
+
+impl From<KeyAccessAllowedEvent> for Event {
+    fn from(event: KeyAccessAllowedEvent) -> Self {
+        Event::new("key_access_allowed").add_attributes([
+            ("key_id", event.key_id),
+            ("sender_allowed", event.sender_allowed),
+        ])
+    }
+}
+
+#[derive(Debug)]
+pub struct ContractAclUpdatedEvent {
+    key_id: String,
+    address_added: String,
+}
+
+impl ContractAclUpdatedEvent {
+    pub fn new(key_id: String, address_added: String) -> Self {
+        Self {
+            key_id,
+            address_added,
+        }
+    }
+}
+
+impl From<ContractAclUpdatedEvent> for Event {
+    fn from(event: ContractAclUpdatedEvent) -> Self {
+        Event::new("contract_acl_updated").add_attributes([
+            ("key_id", event.key_id),
+            ("address_added", event.address_added),
+        ])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

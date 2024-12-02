@@ -5,9 +5,13 @@ use events::kms::{
     AdminsOperations, AllowedAddresses, CrsGenResponseValues, KeyGenResponseValues, KmsCoreConf,
     KmsOperation, OperationType, OperationValue, Transaction, TransactionId,
 };
+use std::collections::HashSet;
 
 const ERR_MODIFY_NUM_PARTIES: &str =
     "It is not possible to change the number of parties participating";
+
+type KeyId = String;
+type Address = String;
 
 // This storage struct is used to handle storage in the ASC contract. It contains:
 // - the configuration parameters for the KMS (centralized or threshold mode)
@@ -32,6 +36,8 @@ pub struct KmsContractStorage {
     debug_proof: VersionedItem<bool>,
     verify_proof_contract_address: VersionedItem<String>,
     allowed_addresses: VersionedItem<AllowedAddresses>,
+    acl: VersionedMap<KeyId, HashSet<Address>>,
+    transaction_senders: VersionedMap<Vec<u8>, Address>,
 }
 
 impl Default for KmsContractStorage {
@@ -46,11 +52,53 @@ impl Default for KmsContractStorage {
             debug_proof: VersionedItem::new("debug_proof"),
             verify_proof_contract_address: VersionedItem::new("verify_proof_contract_address"),
             allowed_addresses: VersionedItem::new("allowed_addresses"),
+            acl: VersionedMap::new("acl"),
+            transaction_senders: VersionedMap::new("transaction_senders"),
         }
     }
 }
 
 impl KmsContractStorage {
+    pub fn get_transaction_sender(
+        &self,
+        storage: &dyn Storage,
+        transaction_id: &TransactionId,
+    ) -> StdResult<Address> {
+        self.transaction_senders
+            .load(storage, transaction_id.to_vec())
+    }
+
+    pub fn get_acl_address_set(
+        &self,
+        storage: &dyn Storage,
+        key_id: &KeyId,
+    ) -> StdResult<HashSet<Address>> {
+        self.acl.load(storage, key_id.clone())
+    }
+
+    pub fn add_address_to_acl(
+        &self,
+        storage: &mut dyn Storage,
+        key_id: &KeyId,
+        address: &Address,
+    ) -> StdResult<()> {
+        self.acl
+            .update(storage, key_id.to_string(), |address_set| {
+                let updated_address_set = address_set
+                    .map(|mut address_set| {
+                        address_set.insert(address.to_string());
+                        Ok(address_set) as Result<HashSet<String>, StdError>
+                    })
+                    .unwrap_or_else(|| {
+                        let mut address_set = HashSet::new();
+                        address_set.insert(address.to_string());
+                        Ok(address_set)
+                    })?;
+                Ok(updated_address_set) as Result<HashSet<String>, StdError>
+            })?;
+        Ok(())
+    }
+
     // Load the configuration parameters from the storage
     pub fn load_core_conf(&self, storage: &dyn Storage) -> StdResult<KmsCoreConf> {
         self.core_conf.load(storage)
@@ -197,6 +245,17 @@ impl KmsContractStorage {
         } else if let OperationValue::CrsGenResponse(crs_response_values) = operation_value {
             self.save_crs_response_values(storage, crs_response_values.clone())?;
         }
+        Ok(())
+    }
+
+    pub fn save_transaction_sender(
+        &self,
+        storage: &mut dyn Storage,
+        txn_id: &TransactionId,
+        sender: &Address,
+    ) -> StdResult<()> {
+        self.transaction_senders
+            .save(storage, txn_id.to_vec(), sender)?;
         Ok(())
     }
 

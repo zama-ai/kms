@@ -168,6 +168,16 @@ impl KmsContract {
         Ok(response)
     }
 
+    #[sv::msg(exec)]
+    pub fn grant_key_access_to_address(
+        &self,
+        mut ctx: ExecCtx,
+        key_id: String,
+        new_address: String,
+    ) -> StdResult<Response> {
+        BackendContract::grant_key_access_to_address(&mut ctx, &self.storage, key_id, new_address)
+    }
+
     /// Forbid an address from triggering the given operation type.
     ///
     /// This call is restricted to specific addresses defined at instantiation (`AllowedAddresses`).
@@ -528,6 +538,7 @@ impl KmsContract {
 #[cfg(test)]
 mod tests {
     use super::sv::mt::KmsContractProxy;
+    use super::KmsContract;
     use crate::backend_contract_staging::BackendContract;
     use crate::contract::sv::mt::CodeId;
     use cosmwasm_std::{coin, coins, testing::mock_env, Addr, Binary, Env, Event, TransactionInfo};
@@ -555,8 +566,9 @@ mod tests {
     use events::kms::TransactionId;
     use events::kms::VerifyProvenCtResponseValues;
     use events::kms::VerifyProvenCtValues;
+    use events::HexVector;
     use sylvia::cw_multi_test::IntoAddr as _;
-    use sylvia::multitest::App;
+    use sylvia::multitest::{App, Proxy};
     use tendermint_ipsc::mock::sv::mt::CodeId as ProofCodeId;
 
     const UCOSM: &str = "ucosm";
@@ -574,6 +586,39 @@ mod tests {
             index: MOCK_TRANSACTION_INDEX,
         });
         mocked_env
+    }
+
+    /// Triggers the key generation process for a given key ID and sender address (implicit ACL inclusion).
+    fn add_address_to_contract_acl(
+        contract: &Proxy<'_, CwApp, KmsContract>,
+        key_id: &[u8],
+        address: &Addr,
+    ) {
+        let keygen_val = KeyGenValues::new(
+            "preproc_id".as_bytes().to_vec(),
+            "eip712name".to_string(),
+            "version".to_string(),
+            vec![1; 32],
+            "contract".to_string(),
+            Some(vec![42; 32]),
+        )
+        .unwrap();
+        contract.keygen(keygen_val.clone()).call(address).unwrap();
+
+        let mocked_env = get_mock_env();
+        let keygen_txn_id = BackendContract::compute_transaction_id(&mocked_env).unwrap();
+        let keygen_response = KeyGenResponseValues::new(
+            key_id.to_vec(),
+            "digest1".to_string(),
+            vec![4, 5, 6],
+            "digest2".to_string(),
+            vec![7, 8, 9],
+            FheParameter::Test,
+        );
+        contract
+            .keygen_response(keygen_txn_id, keygen_response.clone())
+            .call(address)
+            .unwrap();
     }
 
     #[test]
@@ -812,7 +857,7 @@ mod tests {
 
     #[test]
     fn test_decrypt() {
-        let gateway = Addr::unchecked("gateway");
+        let gateway = "gateway".into_addr();
 
         let app = cw_multi_test::App::new(|router, _api, storage| {
             router
@@ -824,6 +869,7 @@ mod tests {
         let app = App::new(app);
         let code_id = CodeId::store_code(&app);
         let owner = "owner".into_addr();
+        let key_id = vec![1, 2, 3];
 
         let contract = code_id
             .instantiate(
@@ -836,7 +882,12 @@ mod tests {
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 },
-                Some(AllowedAddresses::default_all_to(owner.as_str())),
+                Some(AllowedAddresses {
+                    admins: vec![owner.to_string()],
+                    allowed_to_gen: vec![owner.to_string(), gateway.to_string()],
+                    allowed_to_response: vec![owner.to_string(), gateway.to_string()],
+                    super_admins: vec![owner.to_string()],
+                }),
             )
             .call(&owner)
             .unwrap();
@@ -851,7 +902,7 @@ mod tests {
         assert_eq!(data_size, 661448 * batch_size as u32);
 
         let decrypt = DecryptValues::new(
-            vec![1, 2, 3],
+            key_id.clone(),
             vec![ciphertext_handle; batch_size],
             vec![FheType::Euint8; batch_size],
             Some(vec![vec![23_u8; 32]]),
@@ -866,8 +917,16 @@ mod tests {
         )
         .unwrap();
 
+        contract
+            .decrypt(decrypt.clone())
+            .with_funds(&[coin(data_size.into(), UCOSM)])
+            .call(&gateway)
+            .expect_err("An address not included into contract ACL was allowed to encrypt");
+
+        add_address_to_contract_acl(&contract, &key_id, &gateway);
+
         // test insufficient funds
-        let _failed_response = contract
+        contract
             .decrypt(decrypt.clone())
             .with_funds(&[coin(42_u128, UCOSM)])
             .call(&gateway)
@@ -878,10 +937,9 @@ mod tests {
             .with_funds(&[coin(data_size.into(), UCOSM)])
             .call(&gateway)
             .unwrap();
-        println!("response: {:#?}", response);
-        let txn_id = BackendContract::compute_transaction_id(&get_mock_env()).unwrap();
-        assert_eq!(response.events.len(), 2);
+        assert_eq!(response.events.len(), 3);
 
+        let txn_id = BackendContract::compute_transaction_id(&get_mock_env()).unwrap();
         let expected_event = KmsEvent::builder()
             .operation(KmsOperation::Decrypt)
             .txn_id(txn_id.clone())
@@ -920,13 +978,13 @@ mod tests {
         let response = contract.get_transaction(txn_id.clone()).unwrap();
         assert_eq!(response.block_height(), MOCK_BLOCK_HEIGHT);
         assert_eq!(response.transaction_index(), MOCK_TRANSACTION_INDEX);
-        // three operations: one decrypt and two decrypt response
-        assert_eq!(response.operations().len(), 3);
+        // Five operations: one decrypt, two decrypt and two from key generation
+        assert_eq!(response.operations().len(), 5);
     }
 
     #[test]
     fn test_decrypt_with_proof() {
-        let test = Addr::unchecked("test");
+        let test = "test".into_addr();
 
         let app = cw_multi_test::App::new(|router, _api, storage| {
             router
@@ -939,6 +997,7 @@ mod tests {
         let code_id = CodeId::store_code(&app);
         let proof_code_id = ProofCodeId::store_code(&app);
         let owner = "owner".into_addr();
+        let key_id = vec![1, 2, 3];
         let ciphertext_handle =
             hex::decode("000a17c82f8cd9fe41c871f12b391a2afaf5b640ea4fdd0420a109aa14c674d3e385b955")
                 .unwrap();
@@ -959,7 +1018,12 @@ mod tests {
                     degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 },
-                Some(AllowedAddresses::default_all_to(owner.as_str())),
+                Some(AllowedAddresses {
+                    admins: vec![owner.to_string()],
+                    allowed_to_gen: vec![owner.to_string(), test.to_string()],
+                    allowed_to_response: vec![owner.to_string(), test.to_string()],
+                    super_admins: vec![owner.to_string()],
+                }),
             )
             .call(&owner)
             .unwrap();
@@ -968,7 +1032,7 @@ mod tests {
         assert_eq!(data_size, 661448 * batch_size as u32);
 
         let decrypt = DecryptValues::new(
-            vec![1, 2, 3],
+            key_id.clone(),
             vec![ciphertext_handle; batch_size],
             vec![FheType::Euint8; batch_size],
             Some(vec![vec![23_u8; 32]]),
@@ -983,8 +1047,10 @@ mod tests {
         )
         .unwrap();
 
+        add_address_to_contract_acl(&contract, &key_id, &test);
+
         // test insufficient funds
-        let _failed_response = contract
+        contract
             .decrypt(decrypt.clone())
             .with_funds(&[coin(42_u128, UCOSM)])
             .call(&test)
@@ -996,7 +1062,7 @@ mod tests {
             .call(&test)
             .unwrap();
         let txn_id = BackendContract::compute_transaction_id(&get_mock_env()).unwrap();
-        assert_eq!(response.events.len(), 3);
+        assert_eq!(response.events.len(), 4);
 
         let expected_event = KmsEvent::builder()
             .operation(KmsOperation::Decrypt)
@@ -1036,8 +1102,8 @@ mod tests {
         let response = contract.get_transaction(txn_id.clone()).unwrap();
         assert_eq!(response.block_height(), MOCK_BLOCK_HEIGHT);
         assert_eq!(response.transaction_index(), MOCK_TRANSACTION_INDEX);
-        // three operations: one decrypt and two decrypt response
-        assert_eq!(response.operations().len(), 3);
+        // Five operations: one decrypt, two decrypt and two from key generation
+        assert_eq!(response.operations().len(), 5);
     }
 
     #[test]
@@ -1114,6 +1180,7 @@ mod tests {
         let code_id = CodeId::store_code(&app);
         let owner = "owner".into_addr();
         let fake_owner = "fake_owner".into_addr();
+        let fake_txn_id = vec![1, 2, 3];
         let contract = code_id
             .instantiate(
                 Some(true),
@@ -1141,7 +1208,6 @@ mod tests {
         .unwrap();
 
         let response = contract.keygen(keygen_val.clone()).call(&owner).unwrap();
-        println!("response: {:#?}", response);
         let txn_id = BackendContract::compute_transaction_id(&get_mock_env()).unwrap();
         assert_eq!(response.events.len(), 3);
 
@@ -1172,18 +1238,23 @@ mod tests {
             FheParameter::Test,
         );
 
+        contract
+            .keygen_response(fake_txn_id.into(), keygen_response.clone())
+            .call(&owner)
+            .expect_err("A non-existent transaction sender was included into contract ACL");
+
         let response = contract
             .keygen_response(txn_id.clone(), keygen_response.clone())
             .call(&owner)
             .unwrap();
-        assert_eq!(response.events.len(), 2);
+        assert_eq!(response.events.len(), 3);
 
         let response = contract
             .keygen_response(txn_id.clone(), keygen_response.clone())
             .call(&owner)
             .unwrap();
         // one exec and two response events + the check sender event
-        assert_eq!(response.events.len(), 3);
+        assert_eq!(response.events.len(), 4);
 
         let expected_event = KmsEvent::builder()
             .operation(KmsOperation::KeyGenResponse)
@@ -1220,7 +1291,7 @@ mod tests {
             .unwrap();
 
         // We now have one more response event
-        assert_eq!(response.events.len(), 3);
+        assert_eq!(response.events.len(), 4);
 
         // Test `get_key_gen_response_values` function
         let keygen_response_values = contract.get_key_gen_response_values(key_id.to_string());
@@ -1248,6 +1319,7 @@ mod tests {
         let code_id = CodeId::store_code(&app);
         let owner = "owner".into_addr();
         let fake_owner = "fake_owner".into_addr();
+        let fake_txn_id = vec![1, 2, 3];
         let contract = code_id
             .instantiate(
                 Some(true),
@@ -1307,17 +1379,22 @@ mod tests {
             FheParameter::Test,
         );
 
-        let response = contract
-            .insecure_key_gen_response(txn_id.clone(), keygen_response.clone())
+        contract
+            .insecure_key_gen_response(fake_txn_id.into(), keygen_response.clone())
             .call(&owner)
-            .unwrap();
-        assert_eq!(response.events.len(), 2);
+            .expect_err("A non-existent transaction sender was included into contract ACL");
 
         let response = contract
             .insecure_key_gen_response(txn_id.clone(), keygen_response.clone())
             .call(&owner)
             .unwrap();
         assert_eq!(response.events.len(), 3);
+
+        let response = contract
+            .insecure_key_gen_response(txn_id.clone(), keygen_response.clone())
+            .call(&owner)
+            .unwrap();
+        assert_eq!(response.events.len(), 4);
 
         let expected_event = KmsEvent::builder()
             .operation(KmsOperation::KeyGenResponse)
@@ -1340,6 +1417,7 @@ mod tests {
     #[test]
     fn test_reencrypt() {
         let owner = Addr::unchecked("owner");
+        let key_id = vec![5];
 
         let app = cw_multi_test::App::new(|router, _api, storage| {
             router
@@ -1349,10 +1427,7 @@ mod tests {
         });
 
         let app = App::new(app);
-
-        //let app = App::default();
         let code_id = CodeId::store_code(&app);
-        //let owner = "owner".into_addr();
 
         let contract = code_id
             .instantiate(
@@ -1383,7 +1458,7 @@ mod tests {
             "0x1234".to_string(),
             vec![4],
             FheType::Euint8,
-            vec![5],
+            key_id.clone(),
             dummy_external_ciphertext_handle.clone(),
             ciphertext_handle.clone(),
             vec![9],
@@ -1397,7 +1472,15 @@ mod tests {
         )
         .unwrap();
 
-        let _failed_response = contract
+        contract
+            .reencrypt(reencrypt.clone())
+            .with_funds(&[coin(data_size.into(), UCOSM)])
+            .call(&owner)
+            .expect_err("An address not included into contract ACL was allowed to reencrypt");
+
+        add_address_to_contract_acl(&contract, &key_id, &owner);
+
+        contract
             .reencrypt(reencrypt.clone())
             .with_funds(&[coin(42_u128, UCOSM)])
             .call(&owner)
@@ -1410,7 +1493,7 @@ mod tests {
             .unwrap();
 
         let txn_id = BackendContract::compute_transaction_id(&get_mock_env()).unwrap();
-        assert_eq!(response.events.len(), 2);
+        assert_eq!(response.events.len(), 3);
 
         let expected_event = KmsEvent::builder()
             .operation(KmsOperation::Reencrypt)
@@ -1658,13 +1741,13 @@ mod tests {
             .keygen_response(txn_id.clone(), keygen_response.clone())
             .call(&owner)
             .unwrap();
-        assert_eq!(response.events.len(), 2);
+        assert_eq!(response.events.len(), 3);
 
         let response = contract
             .keygen_response(txn_id.clone(), keygen_response.clone())
             .call(&owner)
             .unwrap();
-        assert_eq!(response.events.len(), 3);
+        assert_eq!(response.events.len(), 4);
 
         let expected_event = KmsEvent::builder()
             .operation(KmsOperation::KeyGenResponse)
@@ -2073,6 +2156,48 @@ mod tests {
             .call(&owner)
             .unwrap_err();
     }
+
+    #[test]
+    fn test_grant_key_access_to_address() {
+        let app = App::default();
+        let code_id = CodeId::store_code(&app);
+        let owner = "owner".into_addr();
+        let new_address = "new_address".into_addr();
+        let key_id = HexVector::from(vec![1, 2, 3]);
+
+        let contract = code_id
+            .instantiate(
+                Some(true),
+                DUMMY_BECH32_ADDR.to_string(),
+                KmsCoreConf {
+                    parties: vec![KmsCoreParty::default(); 4],
+                    response_count_for_majority_vote: 2,
+                    response_count_for_reconstruction: 3,
+                    degree_for_reconstruction: 1,
+                    param_choice: FheParameter::Test,
+                },
+                Some(AllowedAddresses::default_all_to(owner.as_str())),
+            )
+            .call(&owner)
+            .unwrap();
+
+        contract
+            .grant_key_access_to_address(key_id.to_hex(), new_address.to_string())
+            .call(&owner)
+            .expect_err(
+                "An address without key access was allowed to grant access to other address",
+            );
+
+        add_address_to_contract_acl(&contract, &key_id, &owner);
+
+        let response = contract
+            .grant_key_access_to_address(key_id.to_hex(), new_address.to_string())
+            .call(&owner)
+            .unwrap();
+
+        assert_eq!(response.events.len(), 3);
+    }
+
     // Provide an "old" dummy versioned smart contract implementation
     mod v0 {
         use cosmwasm_std::{Addr, Response, StdResult};
