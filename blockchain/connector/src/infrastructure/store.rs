@@ -1,7 +1,7 @@
 use crate::conf::StoreConfig;
 use crate::domain::storage::Storage;
 use byteorder::{BigEndian, ByteOrder};
-use reqwest::Client;
+use reqwest::{Client, StatusCode};
 use sha2::{Digest, Sha256};
 
 #[derive(Clone)]
@@ -37,11 +37,16 @@ impl Storage for KVStore {
             .send()
             .await?;
 
+        let status = response.status();
+        let response_text = response.text().await.unwrap_or_else(|_| String::new());
+        if status != StatusCode::OK || response_text.is_empty() {
+            anyhow::bail!("Invalid response: status={status} text={response_text}");
+        }
+
         // Print the response
-        let response_text = response.text().await?;
         tracing::debug!("Response: {}", response_text);
         // Decode the hex response to bytes
-        let response_bytes = hex::decode(response_text).expect("Invalid hex data");
+        let response_bytes = hex::decode(response_text)?;
 
         tracing::info!("Verifying...");
         // verify the size of the data
