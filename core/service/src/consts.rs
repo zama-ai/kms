@@ -50,7 +50,6 @@ lazy_static! {
 
 cfg_if::cfg_if! {
     if #[cfg(any(test, feature = "testing"))] {
-        pub const BASE_PORT: u16 = 50050;
         pub const DEFAULT_URL: &str = "127.0.0.1";
         pub const DEFAULT_PROT: &str = "http";
         pub const TMP_PATH_PREFIX: &str = "temp";
@@ -61,25 +60,25 @@ cfg_if::cfg_if! {
                 RequestId::derive("TEST_CENTRAL_KEY_ID").unwrap();
             pub static ref TEST_THRESHOLD_KEY_ID_4P: RequestId =
                 RequestId::derive("TEST_THRESHOLD_KEY_ID_4P").unwrap();
-            // This key is currently used for testing with 10 threshold parties
-            pub static ref TEST_THRESHOLD_KEY_ID_10P: RequestId =
-                RequestId::derive("TEST_THRESHOLD_KEY_ID_10P").unwrap();
+            // This key is currently used for testing with 7 threshold parties
+            pub static ref TEST_THRESHOLD_KEY_ID_7P: RequestId =
+                RequestId::derive("TEST_THRESHOLD_KEY_ID_7P").unwrap();
             pub static ref TEST_CENTRAL_CRS_ID: RequestId = RequestId::derive("TEST_CENTRAL_CRS_ID").unwrap();
             pub static ref TEST_THRESHOLD_CRS_ID_4P: RequestId = RequestId::derive("TEST_THRESHOLD_CRS_ID_4P").unwrap();
-            // This crs is currently used for testing with 10 threshold parties
-            pub static ref TEST_THRESHOLD_CRS_ID_10P: RequestId = RequestId::derive("TEST_THRESHOLD_CRS_ID_10P").unwrap();
+            // This crs is currently used for testing with 7 threshold parties
+            pub static ref TEST_THRESHOLD_CRS_ID_7P: RequestId = RequestId::derive("TEST_THRESHOLD_CRS_ID_7P").unwrap();
             pub static ref OTHER_CENTRAL_TEST_ID: RequestId = RequestId::derive("OTHER_TEST_ID").unwrap();
             pub static ref DEFAULT_CENTRAL_KEY_ID: RequestId =
                 RequestId::derive("DEFAULT_CENTRAL_KEY_ID").unwrap();
             pub static ref DEFAULT_THRESHOLD_KEY_ID_4P: RequestId =
                 RequestId::derive("DEFAULT_THRESHOLD_KEY_ID_4P").unwrap();
-            // This key is currently used for testing with 10 threshold parties
-            pub static ref DEFAULT_THRESHOLD_KEY_ID_10P: RequestId =
-                RequestId::derive("DEFAULT_THRESHOLD_KEY_ID_10P").unwrap();
+            // This key is currently used for testing with 7 threshold parties
+            pub static ref DEFAULT_THRESHOLD_KEY_ID_7P: RequestId =
+                RequestId::derive("DEFAULT_THRESHOLD_KEY_ID_7P").unwrap();
             pub static ref DEFAULT_CENTRAL_CRS_ID: RequestId = RequestId::derive("DEFAULT_CENTRAL_CRS_ID").unwrap();
             pub static ref DEFAULT_THRESHOLD_CRS_ID_4P: RequestId = RequestId::derive("DEFAULT_THRESHOLD_CRS_ID_4P").unwrap();
-            // This crs is currently used for testing with 10 threshold parties
-            pub static ref DEFAULT_THRESHOLD_CRS_ID_10P: RequestId = RequestId::derive("DEFAULT_THRESHOLD_CRS_ID_10P").unwrap();
+            // This crs is currently used for testing with 7 threshold parties
+            pub static ref DEFAULT_THRESHOLD_CRS_ID_7P: RequestId = RequestId::derive("DEFAULT_THRESHOLD_CRS_ID_10P").unwrap();
             pub static ref DEFAULT_DEC_ID: RequestId = RequestId::derive("DEFAULT_DEC_ID").unwrap();
             pub static ref OTHER_CENTRAL_DEFAULT_ID: RequestId =
                 RequestId::derive("OTHER_DEFAULT_ID").unwrap();

@@ -22,6 +22,7 @@ use crate::rpc::rpc_types::{
     PrivDataType, PubDataType, SigncryptionPayload, SignedPubDataHandleInternal, WrappedPublicKey,
     CURRENT_FORMAT_VERSION,
 };
+use crate::rpc::{prepare_shutdown_signals, INFLIGHT_REQUEST_WAITING_TIME};
 use crate::storage::{
     delete_at_request_id, delete_pk_at_request_id, read_all_data_versioned,
     read_versioned_at_request_id, store_pk_at_request_id, store_versioned_at_request_id, Storage,
@@ -105,12 +106,14 @@ const DECRYPTION_MODE: DecryptionMode = DecryptionMode::PRSSDecrypt;
 pub async fn threshold_server_init<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
+    F: std::future::Future<Output = ()> + Send + 'static,
 >(
     config: ThresholdParty,
     public_storage: PubS,
     private_storage: PrivS,
     run_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
+    shutdown_signal: F,
 ) -> anyhow::Result<RealThresholdKms<PubS, PrivS>> {
     let cert_paths = config.get_tls_cert_paths();
 
@@ -146,6 +149,7 @@ pub async fn threshold_server_init<
         config.core_to_core_net,
         run_prss,
         rate_limiter_conf,
+        shutdown_signal,
     )
     .await?;
 
@@ -248,7 +252,7 @@ impl std::fmt::Display for FileNotFoundError {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn new_real_threshold_kms<PubS, PrivS>(
+async fn new_real_threshold_kms<PubS, PrivS, F>(
     threshold: u8,
     dec_capacity: usize,
     min_dec_cache: usize,
@@ -264,10 +268,12 @@ async fn new_real_threshold_kms<PubS, PrivS>(
     core_to_core_net_conf: Option<CoreToCoreNetworkConfig>,
     run_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
+    shutdown_signal: F,
 ) -> anyhow::Result<RealThresholdKms<PubS, PrivS>>
 where
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
+    F: std::future::Future<Output = ()> + Send + 'static,
 {
     tracing::info!(
         "Starting threshold KMS Server. Party ID {my_id}, listening on {listen_address}:{listen_port} ...",
@@ -377,11 +383,45 @@ where
         own_identity,
         socket_addr
     );
+    // Ensure the port is available before starting
+    if !crate::util::random_free_port::is_free(socket_addr.port(), &socket_addr.ip()).await {
+        return Err(anyhow::anyhow!(
+            "socket address {socket_addr} is not free for core/threshold"
+        ));
+    }
     let ddec_handle = tokio::spawn(async move {
-        match router.serve(socket_addr).await {
-            Ok(handle) => Ok(handle),
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(prepare_shutdown_signals(shutdown_signal, tx));
+
+        match router
+            .serve_with_shutdown(socket_addr, async {
+                // await is the same as recv on a oneshot channel
+                _ = rx.await;
+                tracing::info!(
+                    "Starting graceful shutdown of core/threshold {}",
+                    socket_addr
+                );
+
+                // Allow time for in-flight requests to complete
+                tokio::time::sleep(tokio::time::Duration::from_secs(
+                    INFLIGHT_REQUEST_WAITING_TIME,
+                ))
+                .await;
+            })
+            .await
+        {
+            Ok(handle) => {
+                tracing::info!(
+                    "core/threshold on {} shutdown completed successfully",
+                    socket_addr
+                );
+                Ok(handle)
+            }
             Err(e) => {
-                let msg = format!("Failed to launch ddec server with error: {:?}", e);
+                let msg = format!(
+                    "Failed to launch ddec server on {} with error: {:?}",
+                    socket_addr, e
+                );
                 Err(anyhow_error_and_log(msg))
             }
         }
@@ -2284,11 +2324,8 @@ mod tests {
         assert_eq!(core_handles.len(), DEFAULT_AMOUNT_PARTIES);
 
         // shut parties down
-        for h in core_handles.values() {
-            h.abort();
-        }
-        for (_, handle) in core_handles {
-            assert!(handle.await.unwrap_err().is_cancelled());
+        for h in core_handles.into_values() {
+            h.assert_shutdown().await;
         }
 
         // check that PRSS was created (and not read from disk)
@@ -2313,11 +2350,8 @@ mod tests {
             "Initializing threshold KMS server with PRSS Setup from disk"
         ));
 
-        for h in core_handles.values() {
-            h.abort();
-        }
-        for (_, handle) in core_handles {
-            assert!(handle.await.unwrap_err().is_cancelled());
+        for h in core_handles.into_values() {
+            h.assert_shutdown().await;
         }
     }
 }

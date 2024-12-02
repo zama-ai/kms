@@ -1,0 +1,94 @@
+use std::net::IpAddr;
+
+use tokio::net::{TcpListener, UdpSocket};
+
+#[cfg(any(test, feature = "testing"))]
+#[cfg(feature = "non-wasm")]
+pub(crate) async fn random_free_ports(
+    from: u16,
+    to: u16,
+    host: &IpAddr,
+    n: usize,
+) -> anyhow::Result<Vec<u16>> {
+    use itertools::Itertools;
+    use rand::{thread_rng, Rng};
+    use std::collections::HashSet;
+
+    if from >= to {
+        return Err(anyhow::anyhow!("from {} >= to {}", from, to));
+    }
+
+    if from < 1024 {
+        return Err(anyhow::anyhow!("port range is too low"));
+    }
+
+    let mut rng = thread_rng();
+    let tries = 2 * (to - from);
+    let mut ports = HashSet::new();
+    for _ in 0..n {
+        let mut pushed = false;
+        for _ in 0..tries {
+            let port = rng.gen_range(from..to);
+            if !ports.contains(&port) && is_free(port, host).await {
+                ports.insert(port);
+                pushed = true;
+                break;
+            }
+        }
+
+        if !pushed {
+            return Err(anyhow::anyhow!(
+                "failed find to free port after {} tries",
+                tries
+            ));
+        }
+    }
+    Ok(ports.into_iter().collect_vec())
+}
+
+pub(crate) async fn is_free(port: u16, host: &IpAddr) -> bool {
+    is_free_tcp(port, host).await && is_free_udp(port, host).await
+}
+
+async fn is_free_tcp(port: u16, host: &IpAddr) -> bool {
+    let socket_addr = std::net::SocketAddr::new(*host, port);
+    let result = TcpListener::bind(socket_addr).await;
+    result.is_ok()
+}
+
+async fn is_free_udp(port: u16, host: &IpAddr) -> bool {
+    let socket_addr = std::net::SocketAddr::new(*host, port);
+    let result = UdpSocket::bind(socket_addr).await;
+    result.is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[tokio::test]
+    async fn test_random_free_ports() {
+        let ip_addr = "127.0.0.1".parse().unwrap();
+        let ports = random_free_ports(50000, 60000, &ip_addr, 100)
+            .await
+            .unwrap();
+
+        let port_set: HashSet<u16> = HashSet::from_iter(ports.into_iter());
+        assert_eq!(port_set.len(), 100);
+
+        for port in port_set {
+            assert!((50000..60000).contains(&port));
+        }
+    }
+    #[tokio::test]
+    async fn test_used_port() {
+        let ip_addr = "127.0.0.1".parse().unwrap();
+        let addr = std::net::SocketAddr::new(ip_addr, 50001);
+        let _listener = tokio::net::TcpListener::bind(addr).await;
+
+        let ports = random_free_ports(50000, 50002, &ip_addr, 1).await.unwrap();
+        assert_eq!(ports.len(), 1);
+        assert_eq!(ports[0], 50000);
+    }
+}

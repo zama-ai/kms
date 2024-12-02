@@ -454,6 +454,11 @@ pub async fn reliable_broadcast<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandl
     }
 
     let threshold = session.threshold();
+    if num_parties <= threshold.into() {
+        return Err(anyhow_error_and_log(format!(
+            "The number of parties {num_parties} is less or equal to the threshold {threshold}"
+        )));
+    }
     let min_honest_nodes = num_parties as u32 - threshold as u32;
 
     let my_role = session.my_role()?;
@@ -633,6 +638,7 @@ async fn broadcast_w_corruption_helper<Z: Ring, R: Rng + CryptoRng, Ses: BaseSes
     let old_role_assignments = session.role_assignments().clone();
     let mut new_role_assignments = session.role_assignments().clone();
     session.corrupt_roles().iter().for_each(|r| {
+        tracing::warn!("I'm {:?}, removing corrupt player {r}", session.my_role());
         new_role_assignments.remove(r);
     });
 

@@ -3,11 +3,11 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 
 use bincode::serialize;
-use tokio::task::JoinHandle;
 use tonic::{transport, Request, Response, Status};
 
 use super::generic::*;
-use crate::consts::{BASE_PORT, DEFAULT_URL};
+use crate::client::test_tools::ServerHandle;
+use crate::consts::DEFAULT_URL;
 use crate::kms::core_service_endpoint_server::CoreServiceEndpointServer;
 use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
@@ -17,21 +17,26 @@ use crate::kms::{
     VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
 };
 use crate::rpc::rpc_types::{Plaintext, PubDataType, CURRENT_FORMAT_VERSION};
+use crate::util::random_free_port::random_free_ports;
+use futures_util::FutureExt;
 
-pub async fn setup_mock_kms(n: usize) -> HashMap<u32, JoinHandle<()>> {
+pub async fn setup_mock_kms(n: usize) -> HashMap<u32, ServerHandle> {
     let mut out = HashMap::new();
+    let ip_addr = DEFAULT_URL.parse().unwrap();
+    let client_ports = random_free_ports(50000, 55000, &ip_addr, n).await.unwrap();
     for i in 1..=n {
-        let port = BASE_PORT + (i as u16) * 100;
-        let url = format!("{DEFAULT_URL}:{}", port);
+        let port = client_ports[i - 1];
+        let url = format!("{ip_addr}:{port}");
         let addr = SocketAddr::from_str(url.as_str()).unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel();
         let handle = tokio::spawn(async move {
             let kms = new_dummy_threshold_kms();
             let _ = transport::Server::builder()
                 .add_service(CoreServiceEndpointServer::new(kms))
-                .serve(addr)
+                .serve_with_shutdown(addr, rx.map(drop))
                 .await;
         });
-        out.insert(i as u32, handle);
+        out.insert(i as u32, ServerHandle::new(port, handle, tx, None));
     }
     // We need to sleep as the servers keep running in the background and hence do not return
     tokio::time::sleep(tokio::time::Duration::from_secs(2 * (n as u64) / 4)).await;

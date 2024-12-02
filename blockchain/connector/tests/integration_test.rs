@@ -40,9 +40,9 @@ use kms_lib::util::key_setup::{
 use kms_lib::{
     client::{test_tools, ParsedReencryptionRequest},
     consts::{
-        BASE_PORT, DEFAULT_PROT, DEFAULT_URL, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID,
-        TEST_CENTRAL_CRS_ID, TEST_CENTRAL_KEY_ID, TEST_THRESHOLD_CRS_ID_10P,
-        TEST_THRESHOLD_CRS_ID_4P, TEST_THRESHOLD_KEY_ID_10P, TEST_THRESHOLD_KEY_ID_4P,
+        DEFAULT_PROT, DEFAULT_URL, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID,
+        TEST_CENTRAL_KEY_ID, TEST_THRESHOLD_CRS_ID_4P, TEST_THRESHOLD_CRS_ID_7P,
+        TEST_THRESHOLD_KEY_ID_4P, TEST_THRESHOLD_KEY_ID_7P,
     },
     kms::{
         DecryptionResponsePayload, ReencryptionResponse, ReencryptionResponsePayload, RequestId,
@@ -490,7 +490,7 @@ async fn generic_centralized_sunshine_test(
     let join_handle =
         test_tools::setup_centralized_no_client(pub_storage, priv_storage, None).await;
 
-    let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", BASE_PORT + 1);
+    let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", join_handle.port);
     let config = CoreConfig {
         addresses: vec![url],
         timeout_config: TimeoutConfig::mocking_default(),
@@ -530,7 +530,7 @@ async fn generic_centralized_sunshine_test(
         .await
         .unwrap();
 
-    join_handle.abort();
+    join_handle.assert_shutdown().await;
     (result, txn_id)
 }
 
@@ -694,9 +694,9 @@ async fn generic_sunshine_test(
     assert_eq!(core_handles.len(), amount_parties);
 
     // create configs
-    let configs = (0..amount_parties as u16)
+    let configs = (0..amount_parties as u32)
         .map(|i| {
-            let port = BASE_PORT + (i + 1) * 100;
+            let port = core_handles.get(&(i + 1)).as_ref().unwrap().port;
             let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{port}");
             CoreConfig {
                 addresses: vec![url],
@@ -755,11 +755,8 @@ async fn generic_sunshine_test(
     }
     assert_eq!(results.len(), amount_parties);
 
-    for h in core_handles.values() {
-        h.abort();
-    }
-    for (_, handle) in core_handles {
-        assert!(handle.await.unwrap_err().is_cancelled());
+    for h in core_handles.into_values() {
+        h.assert_shutdown().await;
     }
 
     (results, txn_id, ids)
@@ -1171,7 +1168,7 @@ async fn crs_sunshine(key_id: &RequestId, amount_parties: usize, slow: bool) {
 
 #[tokio::test]
 #[rstest::rstest]
-#[case(&TEST_THRESHOLD_KEY_ID_10P, 10)]
+#[case(&TEST_THRESHOLD_KEY_ID_7P, 10)]
 #[case(&TEST_THRESHOLD_KEY_ID_4P, 4)]
 #[serial_test::serial]
 #[tracing_test::traced_test]
@@ -1181,7 +1178,7 @@ async fn ddec_sunshine_mocked_core(#[case] key_id: &RequestId, #[case] amount_pa
 
 #[tokio::test]
 #[rstest::rstest]
-#[case(&TEST_THRESHOLD_KEY_ID_10P, 10)]
+#[case(&TEST_THRESHOLD_KEY_ID_7P, 10)]
 #[case(&TEST_THRESHOLD_KEY_ID_4P, 4)]
 #[serial_test::serial]
 #[tracing_test::traced_test]
@@ -1191,7 +1188,7 @@ async fn reenc_sunshine_mocked_core(#[case] key_id: &RequestId, #[case] amount_p
 
 #[tokio::test]
 #[rstest::rstest]
-#[case(&TEST_THRESHOLD_CRS_ID_10P, &TEST_THRESHOLD_KEY_ID_10P, 10)]
+#[case(&TEST_THRESHOLD_CRS_ID_7P, &TEST_THRESHOLD_KEY_ID_7P, 10)]
 #[case(&TEST_THRESHOLD_CRS_ID_4P, &TEST_THRESHOLD_KEY_ID_4P, 4)]
 #[serial_test::serial]
 #[tracing_test::traced_test]
@@ -1205,7 +1202,7 @@ async fn verify_proven_ct_sunshine_mocked_core(
 
 #[tokio::test]
 #[rstest::rstest]
-#[case(&TEST_THRESHOLD_KEY_ID_10P, 10)]
+#[case(&TEST_THRESHOLD_KEY_ID_7P, 10)]
 #[case(&TEST_THRESHOLD_KEY_ID_4P, 4)]
 #[serial_test::serial]
 #[tracing_test::traced_test]
@@ -1215,7 +1212,7 @@ async fn keygen_sunshine_mocked_core(#[case] key_id: &RequestId, #[case] amount_
 
 #[tokio::test]
 #[rstest::rstest]
-#[case(&TEST_THRESHOLD_KEY_ID_10P, 10)]
+#[case(&TEST_THRESHOLD_KEY_ID_7P, 10)]
 #[case(&TEST_THRESHOLD_KEY_ID_4P, 4)]
 #[serial_test::serial]
 #[tracing_test::traced_test]
@@ -1225,7 +1222,7 @@ async fn preproc_sunshine_mocked_core(#[case] key_id: &RequestId, #[case] amount
 
 #[tokio::test]
 #[rstest::rstest]
-#[case(&TEST_THRESHOLD_KEY_ID_10P, 10)]
+#[case(&TEST_THRESHOLD_KEY_ID_7P, 10)]
 #[case(&TEST_THRESHOLD_KEY_ID_4P, 4)]
 #[serial_test::serial]
 #[tracing_test::traced_test]

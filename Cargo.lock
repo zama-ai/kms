@@ -5435,6 +5435,7 @@ dependencies = [
  "console_error_panic_hook",
  "crypto_box",
  "distributed-decryption",
+ "futures-util",
  "hex",
  "http 0.2.12",
  "hyper-rustls 0.24.2",

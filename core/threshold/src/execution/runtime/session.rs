@@ -263,6 +263,7 @@ impl<R: Rng + CryptoRng + SeedableRng + Sync + Send + Clone, P: ParameterHandles
         // Observe we never add ourself to the list of corrupt parties to keep the execution going
         // This is logically the attack model we expect and hence make testing malicious behaviour easier
         if role != self.my_role()? {
+            tracing::warn!("I'm {}, marking {role} as corrupt", self.my_role()?);
             Ok(self.corrupt_roles.insert(role))
         } else {
             Ok(false)

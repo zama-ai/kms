@@ -366,9 +366,12 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::parallel]
     fn test_cert_paths() {
         // make a temporary directory for the certificates
         let temp_dir = tempdir().unwrap();
+        println!("temp_dir path: {:?}", temp_dir.path());
+        assert!(temp_dir.path().exists());
 
         // NOTE: that this binary won't work if
         // `core/threshold` is made independent from `core/service`.
