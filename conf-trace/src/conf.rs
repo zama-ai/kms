@@ -104,6 +104,10 @@ pub struct Tracing {
     #[builder(default, setter(strip_option))]
     endpoint: Option<String>,
 
+    /// Port for exposing Prometheus metrics. Defaults to 9464 if not specified.
+    #[builder(default, setter(strip_option))]
+    metrics_port: Option<u16>,
+
     /// Batch configuration.
     /// If this is set, the tracing system will not batch the spans before exporting them.
     #[builder(default, setter(strip_option))]
@@ -164,6 +168,11 @@ impl Tracing {
     /// Returns whether async initialization is enabled
     pub fn async_init(&self) -> bool {
         self.async_init.unwrap_or(true)
+    }
+
+    /// Returns the metrics port
+    pub fn metrics_port(&self) -> u16 {
+        self.metrics_port.unwrap_or(9464)
     }
 
     /// Validates the configuration

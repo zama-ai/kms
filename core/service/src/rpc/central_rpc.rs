@@ -31,6 +31,12 @@ use crate::util::meta_store::{handle_res_mapping, HandlerStatus, MetaStore};
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
 use alloy_primitives::{keccak256, Address};
 use alloy_sol_types::Eip712Domain;
+use conf_trace::metrics::METRICS;
+use conf_trace::metrics_names::{
+    ERR_DECRYPTION_FAILED, ERR_KEY_EXISTS, ERR_KEY_NOT_FOUND, ERR_RATE_LIMIT_EXCEEDED, OP_DECRYPT,
+    OP_KEYGEN, OP_REENCRYPT, OP_TYPE_CT_PROOF, OP_TYPE_LOAD_CRS_PK, OP_TYPE_PROOF_VERIFICATION,
+    OP_TYPE_TOTAL, OP_VERIFY_PROVEN_CT, TAG_OPERATION_TYPE,
+};
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 use std::collections::HashMap;
 use std::fmt;
@@ -99,11 +105,20 @@ impl<
     /// starts the centralized KMS key generation
     #[tracing::instrument(skip(self, request))]
     async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
-        let permit = self
-            .rate_limiter
-            .start_keygen()
-            .await
-            .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
+        let _timer = METRICS
+            .time_operation(OP_KEYGEN)
+            .map_err(|e| Status::internal(format!("Failed to start metrics: {}", e)))?
+            .start();
+        METRICS
+            .increment_request_counter(OP_KEYGEN)
+            .map_err(|e| Status::internal(format!("Failed to increment counter: {}", e)))?;
+
+        let permit = self.rate_limiter.start_keygen().await.map_err(|e| {
+            if let Err(e) = METRICS.increment_error_counter(OP_KEYGEN, ERR_RATE_LIMIT_EXCEEDED) {
+                tracing::warn!("Failed to increment error counter: {:?}", e);
+            }
+            Status::resource_exhausted(e.to_string())
+        })?;
         let inner = request.into_inner();
         tracing::info!(
             "centralized key-gen with request id: {:?}",
@@ -143,6 +158,12 @@ impl<
                 let key_handles = fhe_keys.read().await;
                 if key_handles.contains_key(&req_id) {
                     let mut guarded_meta_store = meta_store.write().await;
+                    if let Err(e) = METRICS
+                        .increment_error_counter(OP_KEYGEN, ERR_KEY_EXISTS)
+                        .map_err(|e| tracing::warn!("Failed to increment error counter: {:?}", e))
+                    {
+                        tracing::warn!("Failed to increment error counter: {:?}", e);
+                    }
                     let _ = guarded_meta_store.update(
                         &req_id,
                         HandlerStatus::Error(format!(
@@ -264,6 +285,7 @@ impl<
         let request_id = request.into_inner();
         tracing::debug!("Received get key gen result request with id {}", request_id);
         validate_request_id(&request_id)?;
+
         let status = {
             let guarded_meta_store = self.key_meta_map.read().await;
             guarded_meta_store.retrieve(&request_id).cloned()
@@ -280,11 +302,20 @@ impl<
         &self,
         request: Request<ReencryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
-        let permit = self
-            .rate_limiter
-            .start_reenc()
-            .await
-            .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
+        let _timer = METRICS
+            .time_operation(OP_REENCRYPT)
+            .map_err(|e| Status::internal(format!("Failed to start metrics: {}", e)))?
+            .start();
+        METRICS
+            .increment_request_counter(OP_REENCRYPT)
+            .map_err(|e| Status::internal(format!("Failed to increment counter: {}", e)))?;
+
+        let permit = self.rate_limiter.start_reenc().await.map_err(|e| {
+            if let Err(e) = METRICS.increment_error_counter(OP_REENCRYPT, ERR_RATE_LIMIT_EXCEEDED) {
+                tracing::warn!("Failed to increment error counter: {:?}", e);
+            }
+            Status::resource_exhausted(e.to_string())
+        })?;
         let inner = request.into_inner();
         let (ciphertext, fhe_type, link, client_enc_key, client_address, key_id, request_id) =
             tonic_handle_potential_err(
@@ -314,6 +345,11 @@ impl<
                     Some(keys) => keys,
                     None => {
                         let mut guarded_meta_store = meta_store.write().await;
+                        if let Err(e) =
+                            METRICS.increment_error_counter(OP_REENCRYPT, ERR_KEY_NOT_FOUND)
+                        {
+                            tracing::warn!("Failed to increment error counter: {:?}", e);
+                        }
                         let _ = guarded_meta_store.update(
                             &request_id,
                             HandlerStatus::Error(format!(
@@ -358,6 +394,7 @@ impl<
             }
             .instrument(tracing::Span::current()),
         );
+
         Ok(Response::new(Empty {}))
     }
 
@@ -377,6 +414,7 @@ impl<
             handle_res_mapping(status, &request_id, "Reencryption")?;
 
         let server_verf_key = self.get_serialized_verf_key();
+
         let payload = ReencryptionResponsePayload {
             version: CURRENT_FORMAT_VERSION,
             signcrypted_ciphertext: partial_dec,
@@ -409,12 +447,20 @@ impl<
         &self,
         request: Request<DecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
-        tracing::info!("Received a new decryption request...");
-        let permit = self
-            .rate_limiter
-            .start_dec()
-            .await
-            .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
+        let _timer = METRICS
+            .time_operation(OP_DECRYPT)
+            .map_err(|e| Status::internal(e.to_string()))?
+            .start();
+        METRICS
+            .increment_request_counter(OP_DECRYPT)
+            .map_err(|e| Status::internal(e.to_string()))?;
+
+        let permit = self.rate_limiter.start_dec().await.map_err(|e| {
+            if let Err(e) = METRICS.increment_error_counter(OP_DECRYPT, ERR_RATE_LIMIT_EXCEEDED) {
+                tracing::warn!("Failed to increment error counter: {:?}", e);
+            }
+            tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string())
+        })?;
 
         let start = tokio::time::Instant::now();
         let inner = request.into_inner();
@@ -454,6 +500,9 @@ impl<
                     Some(keys) => keys.clone(),
                     None => {
                         let mut guarded_meta_store = meta_store.write().await;
+                        if let Err(e) = METRICS.increment_error_counter(OP_DECRYPT, ERR_KEY_NOT_FOUND) {
+                            tracing::warn!("Failed to increment error counter: {:?}", e);
+                        }
                         let _ = guarded_meta_store.update(
                             &request_id,
                             HandlerStatus::Error(format!(
@@ -514,20 +563,17 @@ impl<
                         let mut guarded_meta_store = meta_store.write().await;
                         let _ = guarded_meta_store.update(
                             &request_id,
-                            HandlerStatus::Error(format!(
-                                "Error collecting decrypt result: {:?}",
-                                e
-                            )),
+                            HandlerStatus::Error(format!("Error collecting decrypt result: {:?}", e)),
                         );
                     }
                     Ok(Err(e)) => {
                         let mut guarded_meta_store = meta_store.write().await;
+                        if let Err(e) = METRICS.increment_error_counter(OP_DECRYPT, ERR_DECRYPTION_FAILED) {
+                            tracing::warn!("Failed to increment error counter: {:?}", e);
+                        }
                         let _ = guarded_meta_store.update(
                             &request_id,
-                            HandlerStatus::Error(format!(
-                                "Error during decryption computation: {}",
-                                e
-                            )),
+                            HandlerStatus::Error(format!("Error during decryption computation: {}", e)),
                         );
                     }
                 }
@@ -840,11 +886,23 @@ where
             let mut guarded_meta_store = meta_store.write().await;
             match res {
                 Ok(inner_res) => {
+                    tracing::debug!(
+                        "storing verify proven ct result for request_id {}",
+                        request_id
+                    );
                     let _ = guarded_meta_store.update(&request_id, HandlerStatus::Done(inner_res));
+                    let duration = verify_proven_ct_start_instant.elapsed();
+                    METRICS
+                        .observe_duration_with_tags(
+                            OP_VERIFY_PROVEN_CT,
+                            duration,
+                            &[(TAG_OPERATION_TYPE, OP_TYPE_TOTAL.to_string())],
+                        )
+                        .expect("Failed to record total verification time");
                     tracing::info!(
                         "verify proven ct result for request_id {} done, it took {:?} ms",
                         request_id,
-                        verify_proven_ct_start_instant.elapsed().as_millis(),
+                        duration.as_millis(),
                     );
                 }
                 Err(e) => {
@@ -953,10 +1011,15 @@ where
             })?;
         (pp, wrapped_pk)
     };
-    tracing::info!(
-        "It took {:?} ms to load crs and pk",
-        load_crs_pk_start_instant.elapsed().as_millis()
-    );
+    let duration = load_crs_pk_start_instant.elapsed();
+    METRICS
+        .observe_duration_with_tags(
+            OP_VERIFY_PROVEN_CT,
+            duration,
+            &[(TAG_OPERATION_TYPE, OP_TYPE_LOAD_CRS_PK.to_string())],
+        )
+        .expect("Failed to record CRS and PK load time");
+    tracing::info!("It took {:?} ms to load crs and pk", duration.as_millis());
 
     let metadata = tonic_handle_potential_err(
         assemble_metadata_req(&req),
@@ -972,10 +1035,15 @@ where
     let signature_ok = recv.await.inspect_err(|e| {
         tracing::error!("channel error for key handle {} ({e})", key_handle);
     })?;
-    tracing::info!(
-        "It took {:?} ms to verify",
-        proof_start_instant.elapsed().as_millis()
-    );
+    let duration = proof_start_instant.elapsed();
+    METRICS
+        .observe_duration_with_tags(
+            OP_VERIFY_PROVEN_CT,
+            duration,
+            &[(TAG_OPERATION_TYPE, OP_TYPE_PROOF_VERIFICATION.to_string())],
+        )
+        .expect("Failed to record proof verification time");
+    tracing::info!("It took {:?} ms to verify", duration.as_millis());
 
     let ct_digest = keccak256(&req.ct_bytes).to_vec();
     if signature_ok {
@@ -1016,6 +1084,12 @@ fn verify_ct_proofs(
     wrapped_pk: &WrappedPublicKeyOwned,
     metadata: &[u8],
 ) -> bool {
+    let _guard = METRICS
+        .time_operation(OP_VERIFY_PROVEN_CT)
+        .expect("Failed to create timing metric")
+        .tag(TAG_OPERATION_TYPE, OP_TYPE_CT_PROOF)
+        .expect("Failed to add tag")
+        .start();
     match wrapped_pk {
         WrappedPublicKeyOwned::Compact(pk) => {
             if let tfhe::zk::ZkVerificationOutCome::Invalid = proven_ct.verify(pp, pk, metadata) {

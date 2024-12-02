@@ -8,10 +8,12 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
 config = "=0.14.1"
-futures = { version = "0.3", features = ["std"] }
+futures = { workspace = true, features = ["std"] }
+http = "0.2.9"
 lazy_static.workspace = true
-opentelemetry.workspace = true
+opentelemetry = { workspace = true, features = ["metrics"] }
 opentelemetry-http = "=0.12.0"
 opentelemetry-otlp = { version = "=0.16.0", features = ["tokio"] }
 opentelemetry-prometheus = "=0.16.0"
@@ -19,12 +21,15 @@ opentelemetry-semantic-conventions = "=0.15.0"
 opentelemetry-stdout = { version = "=0.4.0", features = ["trace"] }
 opentelemetry_sdk = { version = "=0.23.0", features = ["rt-tokio", "logs"] }
 prometheus = "=0.13.4"
+axum = { version = "0.7", features = ["tokio"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net"] }
 serde = { workspace = true, features = ["derive", "rc"] }
+serde_json.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
 tonic.workspace = true
+tower.workspace = true
 tracing = { workspace = true, features = ["log", "async-await"] }
 tracing-opentelemetry.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "json"] }
@@ -32,7 +37,13 @@ tracing-test = "0.2"
 typed-builder.workspace = true
 uuid = { version = "=1.11.0", features = ["v4", "fast-rng"] }
 
+[features]
+default = []
+metrics_test = []
+
 [dev-dependencies]
+reqwest = { workspace = true, features = ["json"] }
+tokio.workspace = true
 tokio-test = "0.4"
 test-log = { version = "0.2", features = ["trace"] }
 pretty_assertions = "1.0"

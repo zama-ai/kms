@@ -1714,6 +1714,8 @@ dependencies = [
  "http 1.1.0",
  "http-body 1.0.1",
  "http-body-util",
+ "hyper 1.5.1",
+ "hyper-util",
  "itoa",
  "matchit",
  "memchr",
@@ -1722,10 +1724,15 @@ dependencies = [
  "pin-project-lite",
  "rustversion",
  "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "serde_urlencoded",
  "sync_wrapper 1.0.2",
+ "tokio",
  "tower 0.5.1",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -1763,6 +1770,7 @@ dependencies = [
  "sync_wrapper 1.0.2",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -2500,8 +2508,11 @@ name = "conf-trace"
 version = "0.10.0-rc1"
 dependencies = [
  "anyhow",
+ "axum 0.7.9",
+ "clap",
  "config",
  "futures",
+ "http 0.2.12",
  "lazy_static",
  "opentelemetry",
  "opentelemetry-http",
@@ -2512,7 +2523,9 @@ dependencies = [
  "opentelemetry_sdk",
  "pretty_assertions",
  "prometheus",
+ "reqwest 0.12.9",
  "serde",
+ "serde_json",
  "strum",
  "strum_macros",
  "test-log",
@@ -2520,6 +2533,7 @@ dependencies = [
  "tokio",
  "tokio-test",
  "tonic 0.11.0",
+ "tower 0.5.1",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
@@ -8363,6 +8377,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_path_to_error"
+version = "0.1.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af99884400da37c88f5e9146b7f1fd0fbcae8f6eec4e9da38b67d05486f814a6"
+dependencies = [
+ "itoa",
+ "serde",
+]
+
+[[package]]
 name = "serde_repr"
 version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9741,6 +9765,7 @@ dependencies = [
  "tokio",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]

@@ -1,8 +1,15 @@
 use crate::conf::{ExecutionEnvironment, Tracing, ENVIRONMENT};
 use anyhow::Context;
+use axum::{
+    http::{header::CONTENT_TYPE, StatusCode},
+    response::IntoResponse,
+    routing::get,
+    Router,
+};
+use opentelemetry::global;
 use opentelemetry::propagation::Injector;
 use opentelemetry::trace::{TraceContextExt, TracerProvider as _};
-use opentelemetry::{global, KeyValue};
+use opentelemetry::KeyValue;
 use opentelemetry_http::{HeaderExtractor, Request};
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::metrics::SdkMeterProvider;
@@ -10,7 +17,11 @@ use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::runtime::Tokio;
 use opentelemetry_sdk::trace::{Config, Tracer, TracerProvider};
 use opentelemetry_sdk::Resource;
+use prometheus::{Encoder, Registry as PrometheusRegistry, TextEncoder};
+use std::net::SocketAddr;
+use std::sync::mpsc;
 use std::time::Duration;
+use tokio::runtime::Runtime;
 use tonic::metadata::{MetadataKey, MetadataMap, MetadataValue};
 use tonic::service::Interceptor;
 use tonic::transport::Body;
@@ -19,7 +30,7 @@ use tracing::{field, info_span, trace_span, warn, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::fmt::{layer, Layer};
-use tracing_subscriber::layer::SubscriberExt as _;
+use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, Registry};
 
 /// This is the HEADER key that will be used to store the request ID in the tracing context.
@@ -87,19 +98,92 @@ impl From<Tracing> for Tracer {
     }
 }
 
-fn init_metrics(settings: Tracing) -> SdkMeterProvider {
-    let registry = prometheus::Registry::new();
+/// Initialize metrics with the given settings and return a shutdown signal sender
+pub fn init_metrics(settings: Tracing) -> (SdkMeterProvider, tokio::sync::oneshot::Sender<()>) {
+    let registry = PrometheusRegistry::new();
     let exporter = opentelemetry_prometheus::exporter()
         .with_registry(registry.clone())
         .build()
         .expect("Failed to create Prometheus exporter.");
-    SdkMeterProvider::builder()
+
+    // Create and install the meter provider first
+    let provider = SdkMeterProvider::builder()
         .with_reader(exporter)
         .with_resource(Resource::new(vec![KeyValue::new(
             opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
             settings.service_name().to_string(),
         )]))
-        .build()
+        .build();
+
+    // Set the global meter provider
+    opentelemetry::global::set_meter_provider(provider.clone());
+
+    // Start metrics HTTP server
+    let port = settings.metrics_port();
+    let addr = format!("0.0.0.0:{}", port)
+        .parse::<SocketAddr>()
+        .expect("Failed to parse metrics address");
+
+    // Create a new Tokio runtime for the metrics server
+    let rt = Runtime::new().expect("Failed to create Tokio runtime");
+
+    // Create shutdown channel
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+
+    // Create a channel to signal when the server is ready
+    let (tx, rx) = mpsc::channel();
+
+    std::thread::spawn(move || {
+        rt.block_on(async move {
+            let app = Router::new()
+                .route(
+                    "/metrics",
+                    get(move || {
+                        let registry = registry.clone();
+                        async move {
+                            let encoder = TextEncoder::new();
+                            let metric_families = registry.gather();
+                            let mut buffer = vec![];
+                            encoder.encode(&metric_families, &mut buffer).unwrap();
+
+                            (
+                                StatusCode::OK,
+                                [(CONTENT_TYPE, "text/plain; version=0.0.4")],
+                                buffer,
+                            )
+                                .into_response()
+                        }
+                    }),
+                )
+                .route(
+                    "/health",
+                    get(|| async { (StatusCode::OK, [(CONTENT_TYPE, "text/plain")], "ok") }),
+                );
+
+            let server = axum::serve(
+                tokio::net::TcpListener::bind(&addr)
+                    .await
+                    .expect("Failed to bind metrics server"),
+                app,
+            )
+            .with_graceful_shutdown(async {
+                shutdown_rx.await.ok();
+            });
+
+            // Signal that we're ready to accept connections
+            tx.send(()).expect("Failed to send ready signal");
+
+            // Start serving
+            server.await.expect("Metrics server error");
+        });
+    });
+
+    // Wait for server to be ready
+    rx.recv().expect("Failed to receive ready signal");
+
+    tracing::info!("Metrics server listening on {}", addr);
+
+    (provider, shutdown_tx)
 }
 
 fn stdout_pipeline(service_name: &str) -> Tracer {
@@ -137,7 +221,7 @@ pub async fn init_tracing(settings: Tracing) -> Result<(), anyhow::Error> {
                 Ok(settings_for_tracer.into())
             }),
             tokio::task::spawn_blocking(move || -> Result<SdkMeterProvider, anyhow::Error> {
-                Ok(init_metrics(settings_for_metrics))
+                Ok(init_metrics(settings_for_metrics).0)
             })
         );
 
@@ -172,8 +256,11 @@ pub async fn init_tracing(settings: Tracing) -> Result<(), anyhow::Error> {
                 .map_err(|e| anyhow::anyhow!("{e:?}"))?;
         }
 
-        // Set meter provider
+        // Set meter provider and initialize metrics registry
         global::set_meter_provider(metrics?);
+
+        // Initialize the global metrics instance
+        let _ = crate::metrics::METRICS.clone();
 
         Ok::<(), anyhow::Error>(())
     })

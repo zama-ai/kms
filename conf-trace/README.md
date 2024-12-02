@@ -9,11 +9,10 @@ Conf-trace is a library shared by multiple KMS services that provides configurat
 - Robust gRPC request handling with automatic request ID generation
 - Flexible sampling and batching configuration
 - Comprehensive error handling and retry mechanisms
-- Performance monitoring and timing information
+- Performance monitoring with OpenTelemetry metrics
+- RAII-based operation tracking
 
-## Usage
-
-### Basic Setup
+## Tracing Setup
 
 ```rust
 use conf_trace::{conf::Tracing, telemetry};
@@ -114,7 +113,7 @@ match *ENVIRONMENT {
 }
 ```
 
-## Configuration Options
+### Configuration Options
 
 ### Tracing Configuration
 - `service_name`: Name of the service for identification (required)
@@ -144,7 +143,7 @@ let retry_config = RetryConfig::builder()
     .build();
 ```
 
-## Best Practices
+### Best Practices
 
 1. **Async Initialization**
    - Always use async initialization when possible
@@ -170,7 +169,7 @@ let retry_config = RetryConfig::builder()
    - Use structured logging for errors
    - Include context in error messages
 
-## Error Handling
+### Error Handling
 
 The library provides comprehensive error handling:
 
@@ -188,7 +187,7 @@ let result = make_request(payload, request_id, config)
     .context("Failed to create request")?;
 ```
 
-## Testing
+### Testing
 
 Run tests with different log levels:
 
@@ -206,21 +205,19 @@ RUST_LOG=info cargo test -- --nocapture
 cargo test --features "test-log"
 ```
 
-## Monitoring
+## Metrics Overview
 
-Monitor your application's telemetry:
+The metrics system provides several types of measurements:
 
-1. **Prometheus Metrics**
-   - Export metrics to Prometheus
-   - Track request latencies
-   - Monitor error rates
+### Counters
+- `{prefix}_operations_total`: Total number of operations processed
+- `{prefix}_operation_errors_total`: Total number of operation errors
 
-2. **Trace Visualization**
-   - Use Jaeger UI for trace analysis
-   - Track request flow across services
-   - Identify performance bottlenecks
+### Histograms
+- `{prefix}_operation_duration_ms`: Duration of operations in milliseconds
+- `{prefix}_payload_size_bytes`: Size of operation payloads in bytes
 
-3. **Log Analysis**
-   - Parse JSON logs for analytics
-   - Track error patterns
-   - Monitor system health
+### Gauges
+- `{prefix}_gauge`: A general-purpose gauge for recording independent values. Unlike counters and histograms which track cumulative values or distributions, gauges record instantaneous values that can go up or down. They are useful for metrics like number of active connections, current memory usage, or any other point-in-time measurements.
+
+For detailed metrics documentation and best practices, see [Metrics Guide](docs/metrics.md).

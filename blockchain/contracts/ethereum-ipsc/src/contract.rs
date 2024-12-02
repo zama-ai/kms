@@ -80,7 +80,9 @@ impl InclusionProofContract for ProofContract {
         let proof = EvmPermissionProof::decode(&*proof).unwrap();
         let ciphertext_handles: Vec<Vec<u8>> = serde_json::from_str(&ciphertext_handles).unwrap();
 
-        let result = EthereumProofHandler::verify_proof(proof, ciphertext_handles).unwrap();
+        let result = EthereumProofHandler::verify_proof(proof, ciphertext_handles)
+            .map_err(|e| StdError::generic_err(format!("Proof verification failed: {}", e)))?;
+
         Ok(Response::new()
             .add_attribute("method", "verify ethereum proof")
             .add_attribute("result", result.to_string()))
