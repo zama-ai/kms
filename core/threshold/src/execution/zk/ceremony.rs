@@ -641,13 +641,10 @@ mod tests {
             witness_dim: usize,
             max_num_bits: Option<u32>,
         ) -> anyhow::Result<InternalPublicParameter> {
-            let max_num_cleartext = match max_num_bits {
-                Some(b) => b as usize,
-                None => ZK_DEFAULT_MAX_NUM_BITS,
-            };
+            let max_num_bits = max_num_bits.unwrap_or(ZK_DEFAULT_MAX_NUM_BITS as u32) as usize;
             Ok(InternalPublicParameter {
                 round: session.num_parties(),
-                max_num_bits: max_num_cleartext,
+                max_num_bits,
                 inner: WrappedG1G2s::new(
                     vec![curve::G1::GENERATOR; witness_dim * 2],
                     vec![curve::G2::GENERATOR; witness_dim],
