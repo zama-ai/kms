@@ -3199,7 +3199,9 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn double_tcp_bind() {
+        // this is a serial test because another test might randomly select port 50050
         // double tcp bind should fail
         let addr = std::net::SocketAddr::new(crate::consts::DEFAULT_URL.parse().unwrap(), 50050);
         let _zz = tokio::net::TcpListener::bind(addr).await.unwrap();

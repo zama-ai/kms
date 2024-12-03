@@ -71,25 +71,24 @@ mod tests {
     #[tokio::test]
     async fn test_random_free_ports() {
         let ip_addr = "127.0.0.1".parse().unwrap();
-        let ports = random_free_ports(50000, 60000, &ip_addr, 100)
-            .await
-            .unwrap();
+        let ports = random_free_ports(41000, 50000, &ip_addr, 10).await.unwrap();
 
         let port_set: HashSet<u16> = HashSet::from_iter(ports.into_iter());
-        assert_eq!(port_set.len(), 100);
+        assert_eq!(port_set.len(), 10);
 
         for port in port_set {
-            assert!((50000..60000).contains(&port));
+            assert!((41000..50000).contains(&port));
         }
     }
+
     #[tokio::test]
     async fn test_used_port() {
         let ip_addr = "127.0.0.1".parse().unwrap();
-        let addr = std::net::SocketAddr::new(ip_addr, 50001);
+        let addr = std::net::SocketAddr::new(ip_addr, 40001);
         let _listener = tokio::net::TcpListener::bind(addr).await;
 
-        let ports = random_free_ports(50000, 50002, &ip_addr, 1).await.unwrap();
+        let ports = random_free_ports(40001, 40003, &ip_addr, 1).await.unwrap();
         assert_eq!(ports.len(), 1);
-        assert_eq!(ports[0], 50000);
+        assert_eq!(ports[0], 40002);
     }
 }

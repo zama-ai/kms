@@ -83,7 +83,7 @@ mod kms_init_binary_test {
         let buf = Command::cargo_bin(KMS_INIT)
             .unwrap()
             .arg("-a")
-            .arg("http://127.0.0.1:55555")
+            .arg("http://127.0.0.1:41555")
             .output()
             .unwrap()
             .stderr;
