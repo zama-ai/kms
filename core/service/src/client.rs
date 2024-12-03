@@ -79,10 +79,12 @@ fn decrypted_blocks_to_plaintext(
                 .map(Plaintext::from_u2048)
         }
         FheType::Euint1024 => {
-            todo!("Implement Euint1024")
+            combine_decryptions::<tfhe::integer::bigint::U1024>(bits_in_block, recon_blocks)
+                .map(Plaintext::from_u1024)
         }
         FheType::Euint512 => {
-            todo!("Implement Euint512")
+            combine_decryptions::<tfhe::integer::bigint::U512>(bits_in_block, recon_blocks)
+                .map(Plaintext::from_u512)
         }
         FheType::Euint256 => {
             combine_decryptions::<tfhe::integer::U256>(bits_in_block, recon_blocks)
@@ -4275,6 +4277,8 @@ pub(crate) mod tests {
     #[case(vec![TypedPlaintext::U128(0)], 1)]
     #[case(vec![TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128)))], 1)]
     #[case(vec![TypedPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX)))], 1)]
+    #[case(vec![TypedPlaintext::U512(tfhe::integer::bigint::U512::from([512_u64; 8]))], 1)]
+    #[case(vec![TypedPlaintext::U1024(tfhe::integer::bigint::U1024::from([1024_u64; 16]))], 1)]
     #[case(vec![TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1)]
     #[case(vec![TypedPlaintext::U8(0), TypedPlaintext::U64(999), TypedPlaintext::U32(32),TypedPlaintext::U128(99887766)], 1)] // test mixed types in batch
     #[case(vec![TypedPlaintext::U8(0), TypedPlaintext::U64(999), TypedPlaintext::U32(32)], 3)] // test mixed types in batch and in parallel

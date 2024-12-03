@@ -1157,12 +1157,6 @@ impl Decryptor for RealDecryptor {
 
                 let fhe_keys_rlock = fhe_keys.read().await;
                 let res_plaintext = match fhe_type {
-                    FheType::Euint512 => {
-                        todo!("Implement decryption for Euint512")
-                    }
-                    FheType::Euint1024 => {
-                        todo!("Implement decryption for Euint1024")
-                    }
                     FheType::Euint2048 => Self::inner_decrypt::<tfhe::integer::bigint::U2048>(
                         &mut session,
                         &mut protocol,
@@ -1173,6 +1167,26 @@ impl Decryptor for RealDecryptor {
                     )
                     .await
                     .map(Plaintext::from_u2048),
+                    FheType::Euint1024 => Self::inner_decrypt::<tfhe::integer::bigint::U1024>(
+                        &mut session,
+                        &mut protocol,
+                        ciphertext,
+                        fhe_type,
+                        &key_id,
+                        fhe_keys_rlock,
+                    )
+                    .await
+                    .map(Plaintext::from_u1024),
+                    FheType::Euint512 => Self::inner_decrypt::<tfhe::integer::bigint::U512>(
+                        &mut session,
+                        &mut protocol,
+                        ciphertext,
+                        fhe_type,
+                        &key_id,
+                        fhe_keys_rlock,
+                    )
+                    .await
+                    .map(Plaintext::from_u512),
                     FheType::Euint256 => Self::inner_decrypt::<tfhe::integer::U256>(
                         &mut session,
                         &mut protocol,

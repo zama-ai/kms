@@ -772,10 +772,24 @@ impl Blockchain for KmsBlockchainImpl {
                     U256::from_big_endian(&cake).to_token()
                 }
                 FheType::Euint512 => {
-                    todo!("Implement Euint512")
+                    let mut cake = vec![0u8; 64];
+                    ptxt.as_u512().copy_to_be_byte_slice(cake.as_mut_slice());
+                    let token = Token::Bytes(cake);
+                    info!(
+                        "🍰 Euint512 Token: {:#?}, ",
+                        hex::encode(token.clone().into_bytes().unwrap())
+                    );
+                    token
                 }
                 FheType::Euint1024 => {
-                    todo!("Implement Euint1024")
+                    let mut cake = vec![0u8; 128];
+                    ptxt.as_u1024().copy_to_be_byte_slice(cake.as_mut_slice());
+                    let token = Token::Bytes(cake);
+                    info!(
+                        "🍰 Euint1024 Token: {:#?}, ",
+                        hex::encode(token.clone().into_bytes().unwrap())
+                    );
+                    token
                 }
                 FheType::Euint2048 => {
                     let mut cake = vec![0u8; 256];

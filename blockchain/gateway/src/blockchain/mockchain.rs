@@ -42,9 +42,10 @@ impl Blockchain for MockchainImpl {
                 FheType::Euint64 => 42_u64.to_token(),
                 FheType::Euint128 => 42_u128.to_token(),
                 FheType::Euint160 => Address::zero().to_token(),
-                FheType::Euint256 => Address::zero().to_token(),
-                events::kms::FheType::Euint512 | events::kms::FheType::Euint1024 => todo!(),
-                FheType::Euint2048 => Address::zero().to_token(),
+                FheType::Euint256 => U256::zero().to_token(),
+                FheType::Euint512 => Token::Bytes(vec![0u8; 64]),
+                FheType::Euint1024 => Token::Bytes(vec![0u8; 128]),
+                FheType::Euint2048 => Token::Bytes(vec![0u8; 256]),
                 FheType::Unknown => anyhow::bail!("Invalid ciphertext type"),
             };
             tracing::info!("🍊 plaintext: {:#?}", res);

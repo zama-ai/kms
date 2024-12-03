@@ -432,7 +432,7 @@ pub async fn make_storage(
                 storage_type,
                 party_id,
             )?),
-            _ => todo!(),
+            _ => panic!("Unknown storage type"),
         },
         None => StorageProxy::File(file::FileStorage::new(None, storage_type, party_id)?),
     };

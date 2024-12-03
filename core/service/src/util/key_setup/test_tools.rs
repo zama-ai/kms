@@ -459,7 +459,7 @@ pub async fn compute_proven_ct_from_stored_key(
                 .push_with_num_bits(msg_as_ptx.as_u512(), msg.bits())
                 .unwrap(),
             FheType::Euint1024 => compact_list_builder
-                .push_with_num_bits(msg_as_ptx.as_u256(), msg.bits())
+                .push_with_num_bits(msg_as_ptx.as_u1024(), msg.bits())
                 .unwrap(),
             FheType::Euint2048 => compact_list_builder
                 .push_with_num_bits(msg_as_ptx.as_u2048(), msg.bits())

@@ -374,7 +374,7 @@ pub struct Config {
     // TODO: expose a log-level instead
     #[clap(long, short = 'l')]
     pub logs: bool,
-    #[clap(long, default_value = "40")]
+    #[clap(long, default_value = "60")]
     pub max_iter: u64,
     #[clap(long, short = 'a', default_value_t = false)]
     pub expect_all_responses: bool,
@@ -430,10 +430,34 @@ impl TryFrom<PlaintextWrapper> for Token {
                 U256::from_big_endian(&cake).to_token()
             }
             FheType::Euint512 => {
-                todo!("Implement Euint512")
+                let mut cake = vec![0u8; 64];
+                ptxt.as_u512().copy_to_be_byte_slice(cake.as_mut_slice());
+                let token = Token::Bytes(cake);
+                tracing::info!(
+                    "🍰 Euint512 Token: {:#?}, ",
+                    hex::encode(
+                        token
+                            .clone()
+                            .into_bytes()
+                            .expect("Token resulted in None bytes.")
+                    )
+                );
+                token
             }
             FheType::Euint1024 => {
-                todo!("Implement Euint1024")
+                let mut cake = vec![0u8; 128];
+                ptxt.as_u1024().copy_to_be_byte_slice(cake.as_mut_slice());
+                let token = Token::Bytes(cake);
+                tracing::info!(
+                    "🍰 Euint1024 Token: {:#?}, ",
+                    hex::encode(
+                        token
+                            .clone()
+                            .into_bytes()
+                            .expect("Token resulted in None bytes.")
+                    )
+                );
+                token
             }
             FheType::Euint2048 => {
                 let mut cake = vec![0u8; 256];
@@ -586,12 +610,17 @@ pub async fn encrypt(
     keys_folder: &Path,
     compressed: Option<bool>,
 ) -> Result<(Vec<u8>, Plaintext), Box<dyn std::error::Error + 'static>> {
-    let typed_to_encrypt = TypedPlaintext::from(Plaintext {
+    if to_encrypt.len() != fhe_type.bits().div_ceil(8) {
+        tracing::warn!("Byte length of value to encrypt ({}) does not match FHE type ({}) and will be padded/truncated.", to_encrypt.len(), fhe_type);
+    }
+
+    let ptxt = Plaintext {
         bytes: to_encrypt,
         fhe_type: fhe_type.try_into()?,
-    });
+    };
 
-    let ptxt: Plaintext = typed_to_encrypt.into();
+    let typed_to_encrypt = TypedPlaintext::from(ptxt.clone());
+
     tracing::info!("FheType: {:#?}", fhe_type);
 
     let res = match fhe_type {
@@ -613,10 +642,34 @@ pub async fn encrypt(
             U256::from_big_endian(&cake).to_token()
         }
         FheType::Euint512 => {
-            todo!("Implement Euint512")
+            let mut cake = vec![0u8; 64];
+            ptxt.as_u512().copy_to_be_byte_slice(cake.as_mut_slice());
+            let token = Token::Bytes(cake);
+            tracing::info!(
+                "🍰 Euint512 Token: {:#?}, ",
+                hex::encode(
+                    token
+                        .clone()
+                        .into_bytes()
+                        .expect("Token resulted in empty bytes.")
+                )
+            );
+            token
         }
         FheType::Euint1024 => {
-            todo!("Implement Euint1024")
+            let mut cake = vec![0u8; 128];
+            ptxt.as_u1024().copy_to_be_byte_slice(cake.as_mut_slice());
+            let token = Token::Bytes(cake);
+            tracing::info!(
+                "🍰 Euint1024 Token: {:#?}, ",
+                hex::encode(
+                    token
+                        .clone()
+                        .into_bytes()
+                        .expect("Token resulted in empty bytes.")
+                )
+            );
+            token
         }
         FheType::Euint2048 => {
             let mut cake = vec![0u8; 256];
@@ -634,11 +687,11 @@ pub async fn encrypt(
             token
         }
         FheType::Unknown => {
-            todo!("Implement Unknown")
+            panic!("Unknown FheType to encrypt")
         }
     };
     tracing::info!(
-        "Starting plaintext: {:?}, {:?}, {:?}, {:?}",
+        "Encrypting plaintext: {:?}, {:?}, {:?}, {:?}",
         res,
         ptxt,
         fhe_type,
@@ -706,7 +759,7 @@ async fn execute_contract(
 
     let response = client.execute_contract(request).await?;
 
-    let max_iter: u64 = max_iter.unwrap_or(20);
+    let max_iter: u64 = max_iter.unwrap_or(30);
     let resp;
     let mut counter: u64 = 0;
     loop {
@@ -1834,7 +1887,7 @@ pub async fn main_from_config(
     // TODO: stop here if insufficient gas and/or query faucet if setup
     // TODO: add optional faucet configuration in config file
 
-    let max_iter = max_iter.unwrap_or(40);
+    let max_iter = max_iter.unwrap_or(80);
     let num_parties = kms_configuration.parties.len();
 
     // Execute the proper command

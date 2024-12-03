@@ -47,7 +47,7 @@ max_poll_count = 1150
 [core.timeout_config.decryption]
 initial_wait_time = 1
 retry_interval = 1
-max_poll_count = 24
+max_poll_count = 100
 
 [core.timeout_config.insecure_key_gen]
 initial_wait_time = 9

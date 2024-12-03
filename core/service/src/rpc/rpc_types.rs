@@ -409,7 +409,7 @@ fn abi_encode_plaintexts(ptxts: &[Plaintext]) -> Bytes {
     // Every offset needs to be shifted by 32 bytes (256 bits), so we prepend a U256 and delete it at the and, after encoding.
     let mut data = vec![DynSolValue::Uint(U256::from(0), 256)];
 
-    // This is another hack to handle Euint2048 Bytes properly (alloy adds another all-zero 256 bytes to the beginning of the encoded bytes)
+    // This is another hack to handle Euint512, Euint1024 and Euint2048 Bytes properly (alloy adds another all-zero 256 bytes to the beginning of the encoded bytes)
     let mut offset_mul = 1;
 
     for ptxt in ptxts.iter() {
@@ -435,18 +435,26 @@ fn abi_encode_plaintexts(ptxts: &[Plaintext]) -> Bytes {
                 ptxt.as_u256().copy_to_be_byte_slice(cake.as_mut_slice());
                 DynSolValue::Uint(U256::from_be_slice(&cake), 256)
             }
+            FheType::Euint512 => {
+                // if we have at least 1 Euint larger than 256 bits, we need to throw away 256 more bytes at the beginning of the encoding below, thus set offset_mul to 2
+                offset_mul = 2;
+                let mut cake = vec![0u8; 64];
+                ptxt.as_u512().copy_to_be_byte_slice(cake.as_mut_slice());
+                DynSolValue::Bytes(cake)
+            }
+            FheType::Euint1024 => {
+                // if we have at least 1 Euint larger than 256 bits, we need to throw away 256 more bytes at the beginning of the encoding below, thus set offset_mul to 2
+                offset_mul = 2;
+                let mut cake = vec![0u8; 128];
+                ptxt.as_u1024().copy_to_be_byte_slice(cake.as_mut_slice());
+                DynSolValue::Bytes(cake)
+            }
             FheType::Euint2048 => {
-                // if we have at least 1 Euint2048, we need to throw away 256 more bytes at the beginning of the encoding below, thus set offset_mul to 2
+                // if we have at least 1 Euint larger than 256 bits, we need to throw away 256 more bytes at the beginning of the encoding below, thus set offset_mul to 2
                 offset_mul = 2;
                 let mut cake = vec![0u8; 256];
                 ptxt.as_u2048().copy_to_be_byte_slice(cake.as_mut_slice());
                 DynSolValue::Bytes(cake)
-            }
-            FheType::Euint512 => {
-                todo!("Implement Euint512")
-            }
-            FheType::Euint1024 => {
-                todo!("Implement Euint1024")
             }
         };
         data.push(res);
@@ -866,7 +874,7 @@ impl Plaintext {
     pub fn as_bool(&self) -> bool {
         if self.fhe_type != FheType::Ebool {
             tracing::warn!(
-                "Plaintext is not of type Bool. Returning the least significant bit as Bool"
+                "Plaintext is not of type Bool or has more than 1 Byte. Returning the least significant bit as Bool"
             );
         }
         if self.bytes[0] > 1 {
@@ -892,12 +900,18 @@ impl Plaintext {
         if self.fhe_type != FheType::Euint8 {
             tracing::warn!("Plaintext is not of type u8. Returning the value modulo 256");
         }
+        if self.bytes.len() != 1 {
+            tracing::warn!("U8 Plaintext should have 1 Byte, but was bigger ({} Bytes). Returning the least significant Byte", self.bytes.len());
+        }
         self.bytes[0]
     }
 
     pub fn as_u16(&self) -> u16 {
         if self.fhe_type != FheType::Euint16 {
             tracing::warn!("Plaintext is not of type u16. Returning the value modulo 65536 or padding with leading zeros");
+        }
+        if self.bytes.len() != 2 {
+            tracing::warn!("U16 Plaintext should have 2 Bytes, but was not ({} Bytes). Truncating/Padding to 2 Bytes", self.bytes.len());
         }
         u16::from_le_bytes(sub_slice::<2>(&self.bytes))
     }
@@ -906,11 +920,17 @@ impl Plaintext {
         if self.fhe_type != FheType::Euint32 {
             tracing::warn!("Plaintext is not of type u32. Returning the value modulo 2^32 or padding with leading zeros");
         }
+        if self.bytes.len() != 4 {
+            tracing::warn!("U32 Plaintext should have 4 Bytes, but was not ({} Bytes). Truncating/Padding to 4 Bytes", self.bytes.len());
+        }
         u32::from_le_bytes(sub_slice::<4>(&self.bytes))
     }
     pub fn as_u64(&self) -> u64 {
         if self.fhe_type != FheType::Euint64 {
             tracing::warn!("Plaintext is not of type u64. Returning the value modulo 2^64 or padding with leading zeros");
+        }
+        if self.bytes.len() != 8 {
+            tracing::warn!("U64 Plaintext should have 8 Bytes, but was not ({} Bytes). Truncating/Padding to 8 Bytes", self.bytes.len());
         }
         u64::from_le_bytes(sub_slice::<8>(&self.bytes))
     }
@@ -919,6 +939,9 @@ impl Plaintext {
         if self.fhe_type != FheType::Euint128 {
             tracing::warn!("Plaintext is not of type u128. Returning the value modulo 2^128 or padding with leading zeros");
         }
+        if self.bytes.len() != 16 {
+            tracing::warn!("U128 Plaintext should have 16 Bytes, but was not ({} Bytes). Truncating/Padding to 16 Bytes", self.bytes.len());
+        }
         u128::from_le_bytes(sub_slice::<16>(&self.bytes))
     }
 
@@ -926,7 +949,9 @@ impl Plaintext {
         if self.fhe_type != FheType::Euint160 {
             tracing::warn!("Plaintext is not of type u160. Returning the value modulo 2^160 or padding with leading zeros");
         }
-
+        if self.bytes.len() != 20 {
+            tracing::warn!("U160 Plaintext should have 20 Bytes, but was not ({} Bytes). Truncating/Padding to 20 Bytes", self.bytes.len());
+        }
         let slice = sub_slice::<20>(&self.bytes);
         let low_128 = u128::from_le_bytes(
             slice[0..16]
@@ -944,6 +969,9 @@ impl Plaintext {
     pub fn as_u256(&self) -> tfhe::integer::U256 {
         if self.fhe_type != FheType::Euint256 {
             tracing::warn!("Plaintext is not of type u256. Returning the value modulo 2^256 or padding with leading zeros");
+        }
+        if self.bytes.len() != 32 {
+            tracing::warn!("U256 Plaintext should have 32 Bytes, but was not ({} Bytes). Truncating/Padding to 32 Bytes", self.bytes.len());
         }
         let slice = sub_slice::<32>(&self.bytes);
         let low_128 = u128::from_le_bytes(
@@ -963,6 +991,9 @@ impl Plaintext {
         if self.fhe_type != FheType::Euint512 {
             tracing::warn!("Plaintext is not of type u512. Returning the value modulo 2^512 or padding with leading zeros");
         }
+        if self.bytes.len() != 64 {
+            tracing::warn!("U512 Plaintext should have 64 Bytes, but was not ({} Bytes). Truncating/Padding to 64 Bytes", self.bytes.len());
+        }
         let slice = sub_slice::<64>(&self.bytes);
         let mut value = tfhe::integer::bigint::U512::default();
         tfhe::integer::bigint::U512::copy_from_le_byte_slice(&mut value, &slice);
@@ -973,6 +1004,9 @@ impl Plaintext {
         if self.fhe_type != FheType::Euint1024 {
             tracing::warn!("Plaintext is not of type u1024. Returning the value modulo 2^1024 or padding with leading zeros");
         }
+        if self.bytes.len() != 128 {
+            tracing::warn!("U1024 Plaintext should have 128 Bytes, but was not ({} Bytes). Truncating/Padding to 128 Bytes", self.bytes.len());
+        }
         let slice = sub_slice::<128>(&self.bytes);
         let mut value = tfhe::integer::bigint::U1024::default();
         tfhe::integer::bigint::U1024::copy_from_le_byte_slice(&mut value, &slice);
@@ -982,6 +1016,9 @@ impl Plaintext {
     pub fn as_u2048(&self) -> tfhe::integer::bigint::U2048 {
         if self.fhe_type != FheType::Euint2048 {
             tracing::warn!("Plaintext is not of type u2048. Returning the value modulo 2^2048 or padding with leading zeros");
+        }
+        if self.bytes.len() != 256 {
+            tracing::warn!("U256 Plaintext should have 256 Bytes, but was not ({} Bytes). Truncating/Padding to 256 Bytes", self.bytes.len());
         }
         let slice = sub_slice::<256>(&self.bytes);
         let mut value = tfhe::integer::bigint::U2048::default();

@@ -417,6 +417,24 @@ impl FheType {
         }
     }
 
+    pub fn bits(&self) -> usize {
+        match self {
+            FheType::Ebool => 1,
+            FheType::Euint4 => 4,
+            FheType::Euint8 => 8,
+            FheType::Euint16 => 16,
+            FheType::Euint32 => 32,
+            FheType::Euint64 => 64,
+            FheType::Euint128 => 128,
+            FheType::Euint160 => 160,
+            FheType::Euint256 => 256,
+            FheType::Euint512 => 512,
+            FheType::Euint1024 => 1024,
+            FheType::Euint2048 => 2048,
+            FheType::Unknown => 0,
+        }
+    }
+
     pub fn from_str_name(value: &str) -> FheType {
         match value {
             "Ebool" => Self::Ebool,
