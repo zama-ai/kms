@@ -238,6 +238,7 @@ pub(crate) enum ExecutionEnvironment {
     Stage,
     #[strum(serialize = "prod")]
     Production,
+    Integration,
     #[cfg(test)]
     Test,
 }

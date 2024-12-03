@@ -100,6 +100,13 @@ impl From<Tracing> for Tracer {
 
 /// Initialize metrics with the given settings and return a shutdown signal sender
 pub fn init_metrics(settings: Tracing) -> (SdkMeterProvider, tokio::sync::oneshot::Sender<()>) {
+    // Skip metrics initialization in test mode
+    if matches!(*ENVIRONMENT, ExecutionEnvironment::Integration) {
+        // Return a completely empty meter provider that does nothing
+        let (tx, _) = tokio::sync::oneshot::channel();
+        return (SdkMeterProvider::default(), tx);
+    }
+
     let registry = PrometheusRegistry::new();
     let exporter = opentelemetry_prometheus::exporter()
         .with_registry(registry.clone())
