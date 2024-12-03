@@ -210,7 +210,7 @@ mod tests {
                 TimeoutTriple {
                     initial_wait_time: 1,
                     retry_interval: 1,
-                    max_poll_count: 24,
+                    max_poll_count: 100,
                 }
             );
 
