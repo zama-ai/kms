@@ -24,7 +24,7 @@ name: zama-gateway
 services:
 
   gateway:
-    image: ghcr.io/zama-ai/kms-blockchain-gateway-dev:latest
+    image: ghcr.io/zama-ai/kms-blockchain-gateway:latest
     command:
       - "gateway"
     environment:
@@ -73,7 +73,7 @@ docker compose -f docker-compose-gateway.yml up -d
 To obtain the `Key Id` to set up in the `GATEWAY__KMS__KEY_ID` environment variable, run the following command:
 
 ```bash
-> docker run -ti ghcr.io/zama-ai/kms-service-dev:latest ls keys/PUB/PublicKey
+> docker run -ti ghcr.io/zama-ai/kms-service:latest ls keys/PUB/PublicKey
 04a1aa8ba5e95fb4dc42e06add00b0c2ce3ea424  8e917efb2fe00ebbe8f73b2ba2ed80e7e28970de
 ```
 

@@ -29,10 +29,10 @@ services:
     depends_on:
       dev-kms-simulator-keygen:
         condition: service_completed_successfully
-    image: ghcr.io/zama-ai/kms-blockchain-gateway-dev:latest
+    image: ghcr.io/zama-ai/kms-blockchain-gateway:latest
     build:
       context: .
-      dockerfile: blockchain/gateway/operations/docker/dev.dockerfile
+      dockerfile: blockchain/gateway/operations/docker/ci.dockerfile
     ports:
       - "7077:7077"
     entrypoint: >

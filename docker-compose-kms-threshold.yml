@@ -93,10 +93,7 @@ services:
       "
 
   dev-kms-connector-1:
-    build:
-      context: .
-      dockerfile: blockchain/connector/operations/docker/dev.dockerfile
-    image: ghcr.io/zama-ai/kms-blockchain-connector-dev:latest
+    image: ghcr.io/zama-ai/kms-blockchain-connector:latest
     volumes:
       - ./blockchain/connector/config/:/app/kms-connector/config
     command:
@@ -152,7 +149,7 @@ services:
       "
 
   dev-kms-connector-2:
-    image: ghcr.io/zama-ai/kms-blockchain-connector-dev:latest
+    image: ghcr.io/zama-ai/kms-blockchain-connector:latest
     volumes:
       - ./blockchain/connector/config/:/app/kms-connector/config
     command:
@@ -207,7 +204,7 @@ services:
       "
 
   dev-kms-connector-3:
-    image: ghcr.io/zama-ai/kms-blockchain-connector-dev:latest
+    image: ghcr.io/zama-ai/kms-blockchain-connector:latest
     volumes:
       - ./blockchain/connector/config/:/app/kms-connector/config
     command:
@@ -262,7 +259,7 @@ services:
       "
 
   dev-kms-connector-4:
-    image: ghcr.io/zama-ai/kms-blockchain-connector-dev:latest
+    image: ghcr.io/zama-ai/kms-blockchain-connector:latest
     volumes:
       - ./blockchain/connector/config/:/app/kms-connector/config
     command:

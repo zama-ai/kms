@@ -14,7 +14,7 @@ services:
       DOCKER_BUILDKIT: 1
     build:
       context: .
-      dockerfile: core/service/operations/docker/dev.dockerfile
+      dockerfile: core/service/operations/docker/ci.dockerfile
     ports:
       - "50051:50051"
     healthcheck:
@@ -44,8 +44,8 @@ services:
   dev-kms-connector:
     build:
       context: .
-      dockerfile: blockchain/connector/operations/docker/dev.dockerfile
-    image: ghcr.io/zama-ai/kms-blockchain-connector-dev:latest
+      dockerfile: blockchain/connector/operations/docker/ci.dockerfile
+    image: ghcr.io/zama-ai/kms-blockchain-connector:latest
     volumes:
       - ./blockchain/connector/config/:/app/kms-connector/config
     command:

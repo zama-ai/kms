@@ -13,12 +13,12 @@ name: zama-kms-base
 services:
   # KMS-Blockchain validator node
   dev-kms-blockchain-validator:
-    image: ghcr.io/zama-ai/kms-blockchain-asc-dev:${DOCKER_IMAGES_TAG}
+    image: ghcr.io/zama-ai/kms-blockchain-asc:${DOCKER_IMAGES_TAG}
 
   # KV-Store
   # TODO: add healthcheck
   dev-kv-store:
-    image: ghcr.io/zama-ai/kms-blockchain-gateway-dev:${DOCKER_IMAGES_TAG}
+    image: ghcr.io/zama-ai/kms-blockchain-gateway:${DOCKER_IMAGES_TAG}
 
   # S3 mock
   dev-s3-mock:

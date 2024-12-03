@@ -65,12 +65,12 @@ services:
 
   # KV-Store
   dev-kv-store:
-    image: ghcr.io/zama-ai/kms-blockchain-gateway-dev:latest
+    image: ghcr.io/zama-ai/kms-blockchain-gateway:latest
     environment:
       DOCKER_BUILDKIT: 1
     build:
       context: .
-      dockerfile: blockchain/gateway/operations/docker/dev.dockerfile
+      dockerfile: blockchain/gateway/operations/docker/ci.dockerfile
     ports:
       - "8088:8088"
     volumes:

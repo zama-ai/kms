@@ -6,6 +6,7 @@
 .vscode/launch.json
 .DS_Store
 .vscode/
+.idea/
 *.eif
 .crates.toml
 .crates2.json
