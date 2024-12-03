@@ -136,3 +136,7 @@ opt-level = 3
 
 [profile.bench]
 debug = true
+
+[profile.release]
+opt-level = 3
+lto = "fat"
