@@ -5521,6 +5521,7 @@ dependencies = [
  "strum_macros",
  "sysinfo",
  "tempfile",
+ "test-utils",
  "tfhe",
  "tfhe-versionable",
  "tfhe-zk-pok",
@@ -5599,6 +5600,7 @@ dependencies = [
  "temp-env",
  "test-context",
  "test-utilities",
+ "test-utils",
  "tfhe",
  "tokio",
  "tonic 0.11.0",
@@ -9243,6 +9245,15 @@ dependencies = [
 [[package]]
 name = "test-utilities"
 version = "0.10.0-rc1"
+
+[[package]]
+name = "test-utils"
+version = "0.10.0-rc1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.89",
+]
 
 [[package]]
 name = "tests-utils"

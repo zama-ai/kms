@@ -20,6 +20,7 @@ members = [
     "core/threshold",
     "blockchain/inclusion_proofs/ethereum",
     "blockchain/inclusion_proofs/ethereum-triedb",
+    "test-utils",
 ]
 
 # The backward-compatibility module is excluded from the workspace in order to avoid dependency

@@ -131,6 +131,7 @@ backward-compatibility = { workspace = true, features = [
     "load",
     "tests",
 ] }
+test-utils = { path = "../../test-utils" }
 
 [build-dependencies]
 tonic-build.workspace = true

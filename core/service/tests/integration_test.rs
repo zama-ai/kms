@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::{fs, thread, time::Duration};
 use sysinfo::System;
+use test_utils::integration_test;
 
 const KMS_SERVER: &str = "kms-server";
 const KMS_GEN_KEYS: &str = "kms-gen-keys";
@@ -60,24 +61,13 @@ fn purge_all() {
     }
 }
 
-mod test_setup {
-    use std::sync::Once;
-    static INIT: Once = Once::new();
-
-    pub fn setup() {
-        INIT.call_once(|| {
-            std::env::set_var("RUN_MODE", "integration");
-        });
-    }
-}
-
 #[cfg(test)]
 mod kms_init_binary_test {
     use super::*;
 
     #[test]
+    #[integration_test]
     fn help() {
-        test_setup::setup();
         Command::cargo_bin(KMS_INIT)
             .unwrap()
             .arg("--help")
@@ -88,8 +78,8 @@ mod kms_init_binary_test {
     }
 
     #[test]
+    #[integration_test]
     fn init() {
-        test_setup::setup();
         let buf = Command::cargo_bin(KMS_INIT)
             .unwrap()
             .arg("-a")
@@ -110,8 +100,8 @@ mod kms_gen_keys_binary_test {
     use super::*;
 
     #[test]
+    #[integration_test]
     fn help() {
-        test_setup::setup();
         Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
             .arg("--help")
@@ -153,15 +143,15 @@ mod kms_gen_keys_binary_test {
 
     #[test]
     #[serial_test::serial]
+    #[integration_test]
     fn gen_key_centralized() {
-        test_setup::setup();
         gen_key("centralized")
     }
 
     #[test]
     #[serial_test::serial]
+    #[integration_test]
     fn gen_key_threshold() {
-        test_setup::setup();
         gen_key("threshold")
     }
 
@@ -192,14 +182,14 @@ mod kms_gen_keys_binary_test {
     }
 
     #[test]
+    #[integration_test]
     fn gen_key_tempdir_centralized() {
-        test_setup::setup();
         gen_key_tempdir("centralized")
     }
 
     #[test]
+    #[integration_test]
     fn gen_key_tempdir_threshold() {
-        test_setup::setup();
         gen_key_tempdir("threshold")
     }
 }
@@ -216,8 +206,8 @@ mod kms_server_binary_test {
 
     #[test]
     #[serial_test::serial]
+    #[integration_test]
     fn help() {
-        test_setup::setup();
         Command::cargo_bin(KMS_SERVER)
             .unwrap()
             .arg("--help")
@@ -256,8 +246,8 @@ mod kms_server_binary_test {
 
     #[test]
     #[serial_test::serial]
+    #[integration_test]
     fn subcommand_dev_centralized() {
-        test_setup::setup();
         purge_all();
         Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
@@ -272,8 +262,8 @@ mod kms_server_binary_test {
 
     #[test]
     #[serial_test::serial]
+    #[integration_test]
     fn subcommand_dev_threshold() {
-        test_setup::setup();
         purge_all();
         Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
@@ -305,10 +295,11 @@ mod kms_server_binary_test {
 
     #[test]
     #[serial_test::serial]
+    #[integration_test]
     fn central_signing_keys_overwrite() {
-        test_setup::setup();
         let output = Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
+            .arg("--centralized")
             .arg("--param-test")
             .arg("--cmd=signing-keys")
             .arg("--overwrite")
@@ -335,8 +326,8 @@ mod kms_server_binary_test {
 
     #[test]
     #[serial_test::serial]
+    #[integration_test]
     fn central_signing_address_format() {
-        test_setup::setup();
         let temp_dir_priv = tempdir().unwrap();
         let temp_dir_pub = tempdir().unwrap();
         let output = Command::cargo_bin(KMS_GEN_KEYS)
@@ -373,8 +364,8 @@ mod kms_server_binary_test {
     #[cfg(feature = "s3_tests")]
     #[test]
     #[serial_test::serial]
+    #[integration_test]
     fn central_s3() {
-        test_setup::setup();
         use kms_lib::storage::s3::{AWS_REGION, AWS_S3_ENDPOINT, BUCKET_NAME};
 
         let s3_url = format!("s3://{}/central_s3/", BUCKET_NAME);

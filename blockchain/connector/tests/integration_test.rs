@@ -66,6 +66,7 @@ use std::env::set_var;
 use std::sync::Arc;
 use test_context::{test_context, AsyncTestContext};
 use test_utilities::context::DockerCompose;
+use test_utils::integration_test;
 use tokio::fs;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::{oneshot, RwLock};
@@ -121,6 +122,7 @@ const BOOTSTRAP_TIME_TO_SLEEP: u64 = 60;
 
 #[test_context(DockerComposeContext)]
 #[tokio::test]
+#[integration_test]
 async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
     option_env!("RUST_LOG")
         .map(|_| ())
@@ -636,6 +638,7 @@ async fn generic_centralized_sunshine_test(
 }
 
 #[tokio::test]
+#[integration_test]
 #[serial_test::serial]
 async fn ddec_centralized_sunshine() {
     let msg1 = 110u8;
@@ -698,6 +701,7 @@ async fn ddec_centralized_sunshine() {
 }
 
 #[tokio::test]
+#[integration_test]
 #[serial_test::serial]
 async fn keygen_sunshine_central() {
     setup_central_keys(&TEST_CENTRAL_KEY_ID, &OTHER_CENTRAL_TEST_ID).await;
@@ -731,6 +735,7 @@ async fn keygen_sunshine_central() {
 }
 
 #[tokio::test]
+#[integration_test]
 #[serial_test::serial]
 async fn crs_sunshine_central() {
     setup_central_keys(&TEST_CENTRAL_KEY_ID, &OTHER_CENTRAL_TEST_ID).await;
@@ -1273,6 +1278,7 @@ async fn crs_sunshine(key_id: &RequestId, amount_parties: usize, slow: bool) {
 #[case(&TEST_THRESHOLD_KEY_ID_4P, 4)]
 #[serial_test::serial]
 #[tracing_test::traced_test]
+#[integration_test]
 async fn ddec_sunshine_mocked_core(#[case] key_id: &RequestId, #[case] amount_parties: usize) {
     ddec_sunshine(key_id, amount_parties, false).await
 }
@@ -1283,6 +1289,7 @@ async fn ddec_sunshine_mocked_core(#[case] key_id: &RequestId, #[case] amount_pa
 #[case(&TEST_THRESHOLD_KEY_ID_4P, 4)]
 #[serial_test::serial]
 #[tracing_test::traced_test]
+#[integration_test]
 async fn reenc_sunshine_mocked_core(#[case] key_id: &RequestId, #[case] amount_parties: usize) {
     reenc_sunshine(key_id, amount_parties, false).await
 }
@@ -1293,6 +1300,7 @@ async fn reenc_sunshine_mocked_core(#[case] key_id: &RequestId, #[case] amount_p
 #[case(&TEST_THRESHOLD_CRS_ID_4P, &TEST_THRESHOLD_KEY_ID_4P, 4)]
 #[serial_test::serial]
 #[tracing_test::traced_test]
+#[integration_test]
 async fn verify_proven_ct_sunshine_mocked_core(
     #[case] crs_id: &RequestId,
     #[case] key_id: &RequestId,
@@ -1307,6 +1315,7 @@ async fn verify_proven_ct_sunshine_mocked_core(
 #[case(&TEST_THRESHOLD_KEY_ID_4P, 4)]
 #[serial_test::serial]
 #[tracing_test::traced_test]
+#[integration_test]
 async fn keygen_sunshine_mocked_core(#[case] key_id: &RequestId, #[case] amount_parties: usize) {
     keygen_sunshine(key_id, amount_parties, false).await
 }
@@ -1317,6 +1326,7 @@ async fn keygen_sunshine_mocked_core(#[case] key_id: &RequestId, #[case] amount_
 #[case(&TEST_THRESHOLD_KEY_ID_4P, 4)]
 #[serial_test::serial]
 #[tracing_test::traced_test]
+#[integration_test]
 async fn preproc_sunshine_mocked_core(#[case] key_id: &RequestId, #[case] amount_parties: usize) {
     preproc_sunshine(key_id, amount_parties, false).await
 }
@@ -1327,6 +1337,7 @@ async fn preproc_sunshine_mocked_core(#[case] key_id: &RequestId, #[case] amount
 #[case(&TEST_THRESHOLD_KEY_ID_4P, 4)]
 #[serial_test::serial]
 #[tracing_test::traced_test]
+#[integration_test]
 async fn crs_sunshine_mocked_core(#[case] key_id: &RequestId, #[case] amount_parties: usize) {
     crs_sunshine(key_id, amount_parties, false).await
 }
@@ -1335,6 +1346,7 @@ async fn crs_sunshine_mocked_core(#[case] key_id: &RequestId, #[case] amount_par
 #[tokio::test]
 #[serial_test::serial]
 #[tracing_test::traced_test]
+#[integration_test]
 async fn ddec_sunshine_slow() {
     ddec_sunshine(&TEST_THRESHOLD_KEY_ID_4P, 4, true).await
 }
@@ -1342,6 +1354,7 @@ async fn ddec_sunshine_slow() {
 #[cfg(feature = "slow_tests")]
 #[tokio::test]
 #[serial_test::serial]
+#[integration_test]
 async fn reenc_sunshine_slow() {
     reenc_sunshine(&TEST_THRESHOLD_KEY_ID_4P, 4, true).await
 }
@@ -1349,6 +1362,7 @@ async fn reenc_sunshine_slow() {
 #[cfg(feature = "slow_tests")]
 #[tokio::test]
 #[serial_test::serial]
+#[integration_test]
 async fn verify_proven_ct_sunshine_slow() {
     verify_proven_ct_sunshine(
         &TEST_THRESHOLD_CRS_ID_4P,
@@ -1362,6 +1376,7 @@ async fn verify_proven_ct_sunshine_slow() {
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial]
+#[integration_test]
 async fn preproc_sunshine_slow() {
     preproc_sunshine(&TEST_THRESHOLD_KEY_ID_4P, 4, true).await
 }
@@ -1369,6 +1384,7 @@ async fn preproc_sunshine_slow() {
 #[cfg(feature = "slow_tests")]
 #[tokio::test]
 #[serial_test::serial]
+#[integration_test]
 async fn crs_sunshine_slow() {
     crs_sunshine(&TEST_THRESHOLD_KEY_ID_4P, 4, true).await
 }
