@@ -83,9 +83,9 @@ pub enum ContractQuery {
     #[strum(serialize = "get_transaction")]
     #[serde(rename = "get_transaction")]
     GetTransaction(TransactionQuery),
-    #[strum(serialize = "get_kms_core_conf")]
-    #[serde(rename = "get_kms_core_conf")]
-    GetKmsCoreConf {},
+    #[strum(serialize = "get_kms_configuration")]
+    #[serde(rename = "get_kms_configuration")]
+    GetKmsConfig {},
 }
 
 #[derive(TypedBuilder, Clone)]
@@ -224,26 +224,32 @@ impl QueryClient {
         Ok(result)
     }
 
-    pub async fn list_contracts(&self) -> Result<QueryContractsByCodeResponse, Error> {
+    /// Lists all contracts for a given code ID.
+    ///
+    /// Code ID are defined by the order of contract upload in `deploy_contracts.sh`, starting from 1.
+    pub async fn list_contracts(
+        &self,
+        code_id: u64,
+    ) -> Result<QueryContractsByCodeResponse, Error> {
         let mut query = WasmQueryClient::new(self.client.clone());
         let req = QueryContractsByCodeRequest {
             pagination: None,
-            code_id: 1,
+            code_id,
         };
         let result = query
             .contracts_by_code(req)
             .await
             .map(|response| response.into_inner())?;
 
-        tracing::info!("Query Contracts executed successfully {:?}", result);
+        tracing::info!("Query contracts executed successfully {:?}", result);
 
         Ok(result)
     }
 }
 
 #[test]
-fn test_get_kms_core_conf_serialization() {
-    let obj = ContractQuery::GetKmsCoreConf {};
+fn test_get_kms_configuration_serialization() {
+    let obj = ContractQuery::GetKmsConfig {};
     let ser = serde_json::json!(obj).to_string();
-    assert_eq!(ser, "{\"get_kms_core_conf\":{}}");
+    assert_eq!(ser, "{\"get_kms_configuration\":{}}");
 }

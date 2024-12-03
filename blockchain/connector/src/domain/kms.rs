@@ -1,4 +1,4 @@
-use events::kms::{KmsCoreConf, KmsEvent, OperationValue};
+use events::kms::{KmsConfig, KmsEvent, OperationValue};
 use tonic::async_trait;
 
 use super::blockchain::KmsOperationResponse;
@@ -9,6 +9,6 @@ pub trait Kms {
         &self,
         event: KmsEvent,
         operation: OperationValue,
-        config: Option<KmsCoreConf>,
+        config: Option<KmsConfig>,
     ) -> anyhow::Result<KmsOperationResponse>;
 }

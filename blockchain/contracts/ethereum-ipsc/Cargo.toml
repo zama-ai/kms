@@ -7,6 +7,8 @@ publish.workspace = true
 edition.workspace = true
 license.workspace = true
 
+# These libraries are necessary for make this a smart contract within Sylvia :
+# https://cosmwasm.github.io/sylvia-book/basics/create-project.html
 [lib]
 crate-type = ["cdylib", "rlib"]
 
@@ -25,7 +27,7 @@ schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sylvia.workspace = true
-events.workspace = true
 ethereum-inclusion-proofs = { path = "../../inclusion_proofs/ethereum", default-features = false, features = [
     "cosmwasm",
 ] }
+contracts-common.workspace = true

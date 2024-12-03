@@ -1,14 +1,15 @@
-use crate::versioned_storage::{VersionedItem, VersionedMap};
-use cosmwasm_std::{Api, Env, Order, StdError, StdResult, Storage};
+use crate::allowlists::AllowlistsAsc;
+use contracts_common::{
+    allowlists::AllowlistsStateManager,
+    versioned_states::{VersionedItem, VersionedMap},
+};
+use cosmwasm_std::{Env, Order, StdError, StdResult, Storage};
 use cw_storage_plus::PrefixBound;
 use events::kms::{
-    AdminsOperations, AllowedAddresses, CrsGenResponseValues, KeyGenResponseValues, KmsCoreConf,
-    KmsOperation, OperationType, OperationValue, Transaction, TransactionId,
+    CrsGenResponseValues, KeyGenResponseValues, KmsOperation, OperationValue, Transaction,
+    TransactionId,
 };
 use std::collections::HashSet;
-
-const ERR_MODIFY_NUM_PARTIES: &str =
-    "It is not possible to change the number of parties participating";
 
 type KeyId = String;
 type Address = String;
@@ -27,7 +28,6 @@ type Address = String;
 // These versioned types are defined in the `versioned_storage` module and use the versionize features
 // from tfhe-rs
 pub struct KmsContractStorage {
-    core_conf: VersionedItem<KmsCoreConf>,
     transactions: VersionedMap<Vec<u8>, Transaction>,
     response_values: VersionedMap<(Vec<u8>, u32), OperationValue>,
     response_counters: VersionedMap<Vec<u8>, u32>,
@@ -35,7 +35,8 @@ pub struct KmsContractStorage {
     crs_gen_response_values: VersionedMap<String, Vec<CrsGenResponseValues>>,
     debug_proof: VersionedItem<bool>,
     verify_proof_contract_address: VersionedItem<String>,
-    allowed_addresses: VersionedItem<AllowedAddresses>,
+    csc_address: VersionedItem<String>,
+    allowlists: VersionedItem<AllowlistsAsc>,
     acl: VersionedMap<KeyId, HashSet<Address>>,
     transaction_senders: VersionedMap<Vec<u8>, Address>,
 }
@@ -43,7 +44,6 @@ pub struct KmsContractStorage {
 impl Default for KmsContractStorage {
     fn default() -> Self {
         Self {
-            core_conf: VersionedItem::new("core_conf"),
             transactions: VersionedMap::new("transactions"),
             response_values: VersionedMap::new("response_values"),
             response_counters: VersionedMap::new("response_counters"),
@@ -51,10 +51,22 @@ impl Default for KmsContractStorage {
             crs_gen_response_values: VersionedMap::new("crs_gen_response_values"),
             debug_proof: VersionedItem::new("debug_proof"),
             verify_proof_contract_address: VersionedItem::new("verify_proof_contract_address"),
-            allowed_addresses: VersionedItem::new("allowed_addresses"),
+            csc_address: VersionedItem::new("csc_address"),
+            allowlists: VersionedItem::new("allowlists"),
             acl: VersionedMap::new("acl"),
             transaction_senders: VersionedMap::new("transaction_senders"),
         }
+    }
+}
+
+/// Implement the `AllowlistsStateManager` trait for the ASC's state
+///
+/// This allows to set, check or update the allowlists in the storage
+impl AllowlistsStateManager for KmsContractStorage {
+    type Allowlists = AllowlistsAsc;
+
+    fn allowlists(&self) -> &VersionedItem<AllowlistsAsc> {
+        &self.allowlists
     }
 }
 
@@ -98,37 +110,6 @@ impl KmsContractStorage {
             })?;
         Ok(())
     }
-
-    // Load the configuration parameters from the storage
-    pub fn load_core_conf(&self, storage: &dyn Storage) -> StdResult<KmsCoreConf> {
-        self.core_conf.load(storage)
-    }
-
-    // Update the configuration parameters in the storage
-    pub fn update_core_conf(&self, storage: &mut dyn Storage, value: KmsCoreConf) -> StdResult<()> {
-        if !value.is_conformant() {
-            return Err(cosmwasm_std::StdError::generic_err(
-                "KMS core configuration is not conformant.",
-            ));
-        }
-        match &self.core_conf.may_load(storage)? {
-            Some(conf) => {
-                // Following https://github.com/zama-ai/planning-blockchain/issues/182#issuecomment-2429482934
-                // we disallow changing the amount of parties participating
-                if conf.parties.len() != value.parties.len() {
-                    return Err(StdError::generic_err(ERR_MODIFY_NUM_PARTIES));
-                }
-
-                self.core_conf
-                    .update(storage, |_| -> StdResult<KmsCoreConf> { Ok(value) })?;
-            }
-            None => {
-                self.core_conf.save(storage, &value)?;
-            }
-        };
-        Ok(())
-    }
-
     /// Load a transaction from the storage and include its associated response values
     pub fn load_transaction_with_response_values(
         &self,
@@ -426,6 +407,14 @@ impl KmsContractStorage {
         self.verify_proof_contract_address.load(storage)
     }
 
+    pub fn set_csc_address(&self, storage: &mut dyn Storage, value: String) -> StdResult<()> {
+        self.csc_address.save(storage, &value)
+    }
+
+    pub fn get_csc_address(&self, storage: &dyn Storage) -> StdResult<String> {
+        self.csc_address.load(storage)
+    }
+
     // Save the debug proof flag in the storage
     pub fn set_debug_proof(&self, storage: &mut dyn Storage, value: bool) -> StdResult<()> {
         self.debug_proof.save(storage, &value)
@@ -435,98 +424,6 @@ impl KmsContractStorage {
     #[allow(dead_code)]
     pub fn get_debug_proof(&self, storage: &dyn Storage) -> StdResult<bool> {
         self.debug_proof.load(storage)
-    }
-
-    /// Set allowed addresses.
-    ///
-    /// Some exec operations must not be accessible to anyone. To allow some finer-grain control
-    /// on who can launch said operations the contract holds several lists of addresses of who can
-    /// call these operations:
-    /// - `allowed_to_gen`: who can trigger gen calls (ex: `keygen`, `crs_gen`)
-    /// - `allowed_to_response`: who can trigger response calls (ex: `decrypt_response`, `keygen_response`)
-    /// - `allowed_to_admin`: who can trigger admin calls (ex: `update_kms_core_conf`, `remove_allowed_address`)
-    pub fn set_allowed_addresses(
-        &self,
-        storage: &mut dyn Storage,
-        allowed_addresses: AllowedAddresses,
-    ) -> StdResult<()> {
-        self.allowed_addresses.save(storage, &allowed_addresses)
-    }
-
-    /// Check that the given address is allowed to trigger the given operation type
-    pub fn check_address_is_allowed(
-        &self,
-        storage: &dyn Storage,
-        address: &str,
-        operation_type: OperationType,
-    ) -> Result<(), cosmwasm_std::StdError> {
-        let allowed_addresses = self.allowed_addresses.load(storage)?;
-        allowed_addresses
-            .get_addresses(operation_type.clone())
-            .check_is_allowed(address)
-            .map_err(|e| StdError::generic_err(format!("Type `{}`: {}", operation_type, e)))
-    }
-
-    /// Allow an address to trigger the given operation type.
-    pub fn add_allowed_address(
-        &self,
-        storage: &mut dyn Storage,
-        address: &str,
-        operation_type: OperationType,
-        cosmwasm_api: &dyn Api,
-    ) -> StdResult<()> {
-        self.allowed_addresses
-            .update(storage, |mut allowed_addresses| {
-                allowed_addresses
-                    .get_addresses_mut(operation_type.clone())
-                    .add_allowed(address.to_string(), cosmwasm_api)
-                    .map_err(|e| {
-                        StdError::generic_err(format!("Type `{}`: {}", operation_type, e))
-                    })?;
-                Ok(allowed_addresses) as Result<AllowedAddresses, StdError>
-            })?;
-        Ok(())
-    }
-
-    /// Forbid an address from triggering the given operation type.
-    pub fn remove_allowed_address(
-        &self,
-        storage: &mut dyn Storage,
-        address: &str,
-        operation_type: OperationType,
-    ) -> StdResult<()> {
-        self.allowed_addresses
-            .update(storage, |mut allowed_addresses| {
-                allowed_addresses
-                    .get_addresses_mut(operation_type.clone())
-                    .remove_allowed(address)
-                    .map_err(|e| {
-                        StdError::generic_err(format!("Type `{}`: {}", operation_type, e))
-                    })?;
-                Ok(allowed_addresses) as Result<AllowedAddresses, StdError>
-            })?;
-        Ok(())
-    }
-
-    /// Replace all of the allowed addresses for the given operation type.
-    pub fn replace_allowed_addresses(
-        &self,
-        storage: &mut dyn Storage,
-        addresses: Vec<String>,
-        operation_type: OperationType,
-        cosmwasm_api: &dyn Api,
-    ) -> StdResult<()> {
-        self.allowed_addresses
-            .update(storage, |mut allowed_addresses| {
-                allowed_addresses
-                    .get_addresses_mut(operation_type.clone())
-                    .replace_allowed(addresses, cosmwasm_api)
-                    .map_err(|e| {
-                        StdError::generic_err(format!("Type `{}`: {}", operation_type, e))
-                    })?;
-                Ok(allowed_addresses) as Result<AllowedAddresses, StdError>
-            })?;
-        Ok(())
     }
 }
 
@@ -538,70 +435,8 @@ mod tests {
         BlockInfo, ContractInfo, DepsMut, Empty, Env, MessageInfo, QuerierWrapper, TransactionInfo,
     };
     use cw_multi_test::IntoAddr;
-    use events::kms::{DecryptValues, FheParameter, KmsCoreParty, TransactionId};
+    use events::kms::{DecryptValues, TransactionId};
     use sylvia::types::ExecCtx;
-
-    #[test]
-    fn test_core_conf_threshold() {
-        let dyn_store = &mut MockStorage::new();
-        let storage = KmsContractStorage::default();
-        let core_conf = KmsCoreConf {
-            parties: vec![KmsCoreParty::default(); 4],
-            response_count_for_majority_vote: 3,
-            response_count_for_reconstruction: 3,
-            degree_for_reconstruction: 1,
-            param_choice: FheParameter::Test,
-        };
-        storage
-            .update_core_conf(dyn_store, core_conf.clone())
-            .unwrap();
-        assert_eq!(storage.load_core_conf(dyn_store).unwrap(), core_conf);
-
-        // next try to update from threshold to centralized, which should fail
-        let central_conf = KmsCoreConf {
-            parties: vec![KmsCoreParty::default(); 1],
-            response_count_for_majority_vote: 1,
-            response_count_for_reconstruction: 1,
-            degree_for_reconstruction: 0,
-            param_choice: FheParameter::Test,
-        };
-        assert!(storage
-            .update_core_conf(dyn_store, central_conf)
-            .unwrap_err()
-            .to_string()
-            .contains(ERR_MODIFY_NUM_PARTIES));
-    }
-
-    #[test]
-    fn test_core_conf_centralized() {
-        let dyn_store = &mut MockStorage::new();
-        let storage = KmsContractStorage::default();
-        let core_conf = KmsCoreConf {
-            parties: vec![KmsCoreParty::default(); 1],
-            response_count_for_majority_vote: 1,
-            response_count_for_reconstruction: 1,
-            degree_for_reconstruction: 0,
-            param_choice: FheParameter::Test,
-        };
-        storage
-            .update_core_conf(dyn_store, core_conf.clone())
-            .unwrap();
-        assert_eq!(storage.load_core_conf(dyn_store).unwrap(), core_conf);
-
-        // next try to update from centralized to threshold, which should fail
-        let threshold_conf = KmsCoreConf {
-            parties: vec![KmsCoreParty::default(); 4],
-            response_count_for_majority_vote: 3,
-            response_count_for_reconstruction: 3,
-            degree_for_reconstruction: 1,
-            param_choice: FheParameter::Test,
-        };
-        assert!(storage
-            .update_core_conf(dyn_store, threshold_conf)
-            .unwrap_err()
-            .to_string()
-            .contains(ERR_MODIFY_NUM_PARTIES));
-    }
 
     #[test]
     fn test_transaction() {

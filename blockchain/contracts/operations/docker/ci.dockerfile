@@ -11,6 +11,14 @@ RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
 # Add wasm target
 RUN rustup target add wasm32-unknown-unknown
 
+# Build CSC and report initial size
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,sharing=locked \
+    cargo build --target wasm32-unknown-unknown --profile wasm --lib \
+    --manifest-path /app/blockchain/contracts/csc/Cargo.toml && \
+    echo "CSC Pre-optimization size: $(wc -c < /app/target/wasm32-unknown-unknown/wasm/csc.wasm) bytes"
+
 # Build ASC contract and report initial size
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
@@ -59,6 +67,16 @@ RUN mkdir -p /app/optimized-input /app/optimized
 RUN --mount=type=cache,target=/app/target,sharing=locked \
     cp /app/target/wasm32-unknown-unknown/wasm/*.wasm /app/optimized-input/
 
+# Optimize CSC and report final size, check size limit
+RUN wasm-opt -Oz "/app/optimized-input/csc.wasm" -o "/app/optimized/csc.wasm" && \
+    size=$(wc -c < /app/optimized/csc.wasm) && \
+    echo "Config Post-optimization size: $size bytes" && \
+    if [ "$size" -ge 819200 ]; then \
+        echo "Error: CSC wasm size ($size bytes) exceeds limit of 819,200 bytes" && \
+        exit 1; \
+    fi
+
+
 # Optimize ASC and report final size, check size limit
 RUN wasm-opt -Oz "/app/optimized-input/asc.wasm" -o "/app/optimized/asc.wasm" && \
     size=$(wc -c < /app/optimized/asc.wasm) && \
@@ -92,6 +110,7 @@ FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms-blockchain-validator:v0.51.0 
 WORKDIR /app
 RUN apk add jq
 
+COPY --from=compiler /app/optimized/csc.wasm /app/csc.wasm
 COPY --from=compiler /app/optimized/asc.wasm /app/asc.wasm
 COPY --from=compiler /app/optimized/tendermint_ipsc.wasm /app/tendermint_ipsc.wasm
 COPY --from=compiler /app/optimized/ethereum_ipsc.wasm /app/ethereum_ipsc.wasm

@@ -7,6 +7,8 @@ publish.workspace = true
 edition.workspace = true
 license.workspace = true
 
+# These libraries are necessary for make this a smart contract within Sylvia :
+# https://cosmwasm.github.io/sylvia-book/basics/create-project.html
 [lib]
 crate-type = ["cdylib", "rlib"]
 
@@ -21,7 +23,6 @@ base64.workspace = true
 cosmwasm-schema.workspace = true
 cosmwasm-std.workspace = true
 cw2.workspace = true
-events.workspace = true
 hex = { workspace = true, features = ["serde"] }
 ics23 = "=0.11.3"
 percent-encoding = "=2.3.1"
@@ -33,6 +34,7 @@ sha3.workspace = true
 sylvia.workspace = true
 tendermint.workspace = true
 tendermint-proto.workspace = true
+contracts-common.workspace = true
 
 [dev-dependencies]
 byteorder = "=1.5.0"

@@ -1,12 +1,13 @@
 use super::state::KmsContractStorage;
 use crate::events::EmitEventVerifier as _;
+use contracts_common::allowlists::{AllowlistsManager, AllowlistsStateManager};
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{to_json_binary, Env, Response, StdError, StdResult, Storage, WasmMsg};
+use cosmwasm_std::{to_json_binary, DepsMut, Empty, Env, Response, StdError, StdResult, WasmMsg};
 use cw_utils::must_pay;
 use events::kms::{
     ContractAclUpdatedEvent, CrsGenResponseValues, CrsGenValues, DecryptResponseValues,
     DecryptValues, InsecureCrsGenValues, KeyAccessAllowedEvent, KeyGenPreprocResponseValues,
-    KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues, KmsEvent, KmsOperation, OperationType,
+    KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues, KmsConfig, KmsEvent, KmsOperation,
     OperationValue, ReencryptResponseValues, ReencryptValues, SenderAllowedEvent, TransactionId,
     VerifyProvenCtValues,
 };
@@ -17,6 +18,13 @@ use sylvia::types::ExecCtx;
 
 const UCOSM: &str = "ucosm";
 
+// Type aliases for the allowlists and operation types to use in the ASC
+// We recover them from the storage for better maintainability
+// Note that the BSC will have its own allowlists and operation types, so these aliases won't
+// be used in the ASC like it's currently done
+pub type Allowlists = <KmsContractStorage as AllowlistsStateManager>::Allowlists;
+pub type AllowlistType = <Allowlists as AllowlistsManager>::AllowlistType;
+
 #[cw_serde]
 pub struct ProofPayload {
     pub proof: String,
@@ -26,6 +34,19 @@ pub struct ProofPayload {
 #[cw_serde]
 pub struct ProofMessage {
     pub verify_proof: ProofPayload,
+}
+
+// Query message for getting the KMS configuration
+// Note that we need to do this instead of importing the msg directly from the CSC's
+// crate because having a contract as a dependency of another one creates some conflict when
+// building them
+// This means:
+// - the struct must contain the targeted method's name as a field
+// - this field must provide the necessary inputs as specified in the method's definition (here,
+// it is empty since we are only querying the KMS configuration)
+#[cw_serde]
+struct KmsConfigQueryMsg {
+    get_kms_configuration: Empty,
 }
 
 /// Backend Smart Contract staging
@@ -84,20 +105,20 @@ impl BackendContract {
     /// - Process the transaction (which emits a KmsEvent)
     /// - Add a sender allowed event to the response
     pub fn process_decryption_response(
-        ctx: ExecCtx,
+        ctx: &mut ExecCtx,
         kms_storage: &KmsContractStorage,
         transaction_id: TransactionId,
         decrypt_response: DecryptResponseValues,
     ) -> StdResult<Response> {
         let operation = "decryption_response";
         let sender_allowed_event = BackendContract::check_sender_is_allowed(
-            &ctx,
+            ctx,
             kms_storage,
-            OperationType::Response,
+            AllowlistType::Response,
             operation,
         )?;
         let response = BackendContract::process_response_transaction(
-            ctx.deps.storage,
+            ctx,
             kms_storage,
             &transaction_id,
             decrypt_response.into(),
@@ -152,20 +173,20 @@ impl BackendContract {
     /// - Process the transaction (which emits a KmsEvent)
     /// - Add a sender allowed event to the response
     pub fn process_reencryption_response(
-        ctx: ExecCtx,
+        ctx: &mut ExecCtx,
         kms_storage: &KmsContractStorage,
         transaction_id: TransactionId,
         reencrypt_response: ReencryptResponseValues,
     ) -> StdResult<Response> {
         let operation = "reencryption_response";
         let sender_allowed_event = BackendContract::check_sender_is_allowed(
-            &ctx,
+            ctx,
             kms_storage,
-            OperationType::Response,
+            AllowlistType::Response,
             operation,
         )?;
         let response = BackendContract::process_response_transaction(
-            ctx.deps.storage,
+            ctx,
             kms_storage,
             &transaction_id,
             reencrypt_response.into(),
@@ -188,20 +209,20 @@ impl BackendContract {
     /// - Process the transaction (which emits a KmsEvent)
     /// - Add a sender allowed event to the response
     pub fn process_proven_ct_verification_response(
-        ctx: ExecCtx,
+        ctx: &mut ExecCtx,
         kms_storage: &KmsContractStorage,
         transaction_id: TransactionId,
         verify_proven_ct_response: VerifyProvenCtResponseValues,
     ) -> StdResult<Response> {
         let operation = "proven_ct_verification_response";
         let sender_allowed_event = BackendContract::check_sender_is_allowed(
-            &ctx,
+            ctx,
             kms_storage,
-            OperationType::Response,
+            AllowlistType::Response,
             operation,
         )?;
         let response = BackendContract::process_response_transaction(
-            ctx.deps.storage,
+            ctx,
             kms_storage,
             &transaction_id,
             verify_proven_ct_response.into(),
@@ -222,7 +243,7 @@ impl BackendContract {
         let sender_allowed_event = BackendContract::check_sender_is_allowed(
             ctx,
             kms_storage,
-            OperationType::Gen,
+            AllowlistType::Generate,
             operation,
         )?;
         let response = BackendContract::process_request_transaction(
@@ -239,19 +260,19 @@ impl BackendContract {
     /// - Process the transaction (which emits a KmsEvent)
     /// - Add a sender allowed event to the response
     pub fn process_key_generation_preproc_response(
-        ctx: ExecCtx,
+        ctx: &mut ExecCtx,
         kms_storage: &KmsContractStorage,
         transaction_id: TransactionId,
     ) -> StdResult<Response> {
         let operation = "key_generation_preproc_response";
         let sender_allowed_event = BackendContract::check_sender_is_allowed(
-            &ctx,
+            ctx,
             kms_storage,
-            OperationType::Response,
+            AllowlistType::Response,
             operation,
         )?;
         let response = BackendContract::process_response_transaction(
-            ctx.deps.storage,
+            ctx,
             kms_storage,
             &transaction_id,
             KeyGenPreprocResponseValues::default().into(),
@@ -273,7 +294,7 @@ impl BackendContract {
         let sender_allowed_event = BackendContract::check_sender_is_allowed(
             ctx,
             kms_storage,
-            OperationType::Gen,
+            AllowlistType::Generate,
             operation,
         )?;
         let response =
@@ -288,7 +309,7 @@ impl BackendContract {
     /// - Process the transaction (which emits a KmsEvent)
     /// - Add contract ACL updated and sender allowed events to the response
     pub fn process_key_generation_response(
-        ctx: ExecCtx,
+        ctx: &mut ExecCtx,
         kms_storage: &KmsContractStorage,
         transaction_id: TransactionId,
         keygen_response: KeyGenResponseValues,
@@ -297,20 +318,22 @@ impl BackendContract {
         let key_id = keygen_response.request_id().to_string();
 
         let sender_allowed_event = BackendContract::check_sender_is_allowed(
-            &ctx,
+            ctx,
             kms_storage,
-            OperationType::Response,
+            AllowlistType::Response,
             operation,
         )?;
 
         let transaction_sender =
             kms_storage.get_transaction_sender(ctx.deps.storage, &transaction_id)?;
+
         kms_storage.add_address_to_acl(ctx.deps.storage, &key_id, &transaction_sender)?;
+
         let contract_acl_updated_event =
             ContractAclUpdatedEvent::new(key_id, ctx.info.sender.to_string());
 
         let response = BackendContract::process_response_transaction(
-            ctx.deps.storage,
+            ctx,
             kms_storage,
             &transaction_id,
             keygen_response.into(),
@@ -336,7 +359,7 @@ impl BackendContract {
         let sender_allowed_event = BackendContract::check_sender_is_allowed(
             ctx,
             kms_storage,
-            OperationType::Gen,
+            AllowlistType::Generate,
             operation,
         )?;
         let response = BackendContract::process_request_transaction(
@@ -353,7 +376,7 @@ impl BackendContract {
     /// - Process the transaction (which emits a KmsEvent)
     /// - Add a sender allowed event to the response
     pub fn process_insecure_key_generation_response(
-        ctx: ExecCtx,
+        ctx: &mut ExecCtx,
         kms_storage: &KmsContractStorage,
         transaction_id: TransactionId,
         keygen_response: KeyGenResponseValues,
@@ -362,9 +385,9 @@ impl BackendContract {
         let key_id = keygen_response.request_id().to_string();
 
         let sender_allowed_event = BackendContract::check_sender_is_allowed(
-            &ctx,
+            ctx,
             kms_storage,
-            OperationType::Response,
+            AllowlistType::Response,
             operation,
         )?;
 
@@ -375,7 +398,7 @@ impl BackendContract {
             ContractAclUpdatedEvent::new(key_id, ctx.info.sender.to_string());
 
         let response = BackendContract::process_response_transaction(
-            ctx.deps.storage,
+            ctx,
             kms_storage,
             &transaction_id,
             keygen_response.into(),
@@ -398,7 +421,7 @@ impl BackendContract {
         let sender_allowed_event = BackendContract::check_sender_is_allowed(
             ctx,
             kms_storage,
-            OperationType::Gen,
+            AllowlistType::Generate,
             operation,
         )?;
         let response =
@@ -412,20 +435,20 @@ impl BackendContract {
     /// - Process the transaction (which emits a KmsEvent)
     /// - Add a sender allowed event to the response
     pub fn process_crs_generation_response(
-        ctx: ExecCtx,
+        ctx: &mut ExecCtx,
         kms_storage: &KmsContractStorage,
         transaction_id: TransactionId,
         crs_gen_response: CrsGenResponseValues,
     ) -> StdResult<Response> {
         let operation = "crs_generation_response";
         let sender_allowed_event = BackendContract::check_sender_is_allowed(
-            &ctx,
+            ctx,
             kms_storage,
-            OperationType::Response,
+            AllowlistType::Response,
             operation,
         )?;
         let response = BackendContract::process_response_transaction(
-            ctx.deps.storage,
+            ctx,
             kms_storage,
             &transaction_id,
             crs_gen_response.into(),
@@ -447,7 +470,7 @@ impl BackendContract {
         let sender_allowed_event = BackendContract::check_sender_is_allowed(
             ctx,
             kms_storage,
-            OperationType::Gen,
+            AllowlistType::Generate,
             operation,
         )?;
         let response = BackendContract::process_request_transaction(
@@ -464,20 +487,20 @@ impl BackendContract {
     /// - Process the transaction (which emits a KmsEvent)
     /// - Add a sender allowed event to the response
     pub fn process_insecure_crs_generation_response(
-        ctx: ExecCtx,
+        ctx: &mut ExecCtx,
         kms_storage: &KmsContractStorage,
         transaction_id: TransactionId,
         crs_gen_response: CrsGenResponseValues,
     ) -> StdResult<Response> {
         let operation = "insecure_crs_generation_response";
         let sender_allowed_event = BackendContract::check_sender_is_allowed(
-            &ctx,
+            ctx,
             kms_storage,
-            OperationType::Gen,
+            AllowlistType::Generate,
             operation,
         )?;
         let response = BackendContract::process_response_transaction(
-            ctx.deps.storage,
+            ctx,
             kms_storage,
             &transaction_id,
             crs_gen_response.into(),
@@ -543,8 +566,7 @@ impl BackendContract {
                 &ctx.info.sender.to_string(),
             )?;
         }
-        let response =
-            BackendContract::emit_event(kms_storage, ctx.deps.storage, &txn_id, &operation)?;
+        let response = BackendContract::emit_event(kms_storage, &ctx.deps, &txn_id, &operation)?;
         Ok(response)
     }
 
@@ -555,14 +577,14 @@ impl BackendContract {
     /// Note that response values cannot be saved along a transaction ID if this ID cannot be found
     /// in the `transactions` map, which means not request has been saved for this transaction.
     fn process_response_transaction(
-        storage: &mut dyn Storage,
+        ctx: &mut ExecCtx,
         kms_storage: &KmsContractStorage,
         transaction_id: &TransactionId,
         operation: OperationValue,
     ) -> StdResult<Response> {
         // Check that the transaction exists. We should not store response values for a
         // transaction if the transaction does not exist
-        if !kms_storage.has_transaction(storage, transaction_id) {
+        if !kms_storage.has_transaction(ctx.deps.storage, transaction_id) {
             return Err(StdError::generic_err(format!(
                 "Transaction with id {:?} not found while trying to save response operation value `{:?}`",
                 transaction_id,
@@ -571,8 +593,11 @@ impl BackendContract {
         }
 
         // Get all request values associated to the transaction
-        let request_values =
-            kms_storage.get_request_values_from_transaction(storage, transaction_id, None)?;
+        let request_values = kms_storage.get_request_values_from_transaction(
+            ctx.deps.storage,
+            transaction_id,
+            None,
+        )?;
 
         // Get the list of request operations associated to the response operation
         // This is a list because in case of generation (key or CRS) responses, which can be associated
@@ -602,10 +627,10 @@ impl BackendContract {
             )));
         }
 
-        kms_storage.save_response_value(storage, transaction_id, &operation)?;
+        kms_storage.save_response_value(ctx.deps.storage, transaction_id, &operation)?;
 
         let response =
-            BackendContract::emit_event(kms_storage, storage, transaction_id, &operation)?;
+            BackendContract::emit_event(kms_storage, &ctx.deps, transaction_id, &operation)?;
         Ok(response)
     }
 
@@ -667,10 +692,12 @@ impl BackendContract {
     }
 
     /// Check that the sender's address is allowed to trigger the given operation type.
+    ///
+    /// TODO: Remove this once the BSC implements the `AllowlistsContractManager` trait
     fn check_sender_is_allowed(
         ctx: &ExecCtx,
         kms_storage: &KmsContractStorage,
-        operation_type: OperationType,
+        operation_type: AllowlistType,
         operation: &str,
     ) -> StdResult<SenderAllowedEvent> {
         kms_storage
@@ -724,10 +751,10 @@ impl BackendContract {
     ///
     /// An event is always emitted if the operation is a request. For responses, the event is emitted
     /// if the transaction has received enough operations (of the same response type) to satisfy the
-    /// core configuration's thresholds.
+    /// KMS configuration's thresholds.
     fn emit_event(
         kms_storage: &KmsContractStorage,
-        storage: &mut dyn Storage,
+        deps: &DepsMut,
         txn_id: &TransactionId,
         operation: &OperationValue,
     ) -> StdResult<Response> {
@@ -735,7 +762,7 @@ impl BackendContract {
 
         let operation = operation.into_kms_operation();
         let should_emit =
-            BackendContract::should_emit_event(kms_storage, storage, txn_id, &operation)?;
+            BackendContract::should_emit_event(kms_storage, deps, txn_id, &operation)?;
 
         if should_emit {
             response = response.add_event(
@@ -756,10 +783,10 @@ impl BackendContract {
     ///
     /// An event is always emitted if the operation is a request. For responses, the event is emitted
     /// if the transaction has received enough operations (of the same response type) to satisfy the
-    /// core configuration's thresholds.
+    /// KMS configuration's thresholds.
     fn should_emit_event(
         kms_storage: &KmsContractStorage,
-        storage: &mut dyn Storage,
+        deps: &DepsMut,
         txn_id: &TransactionId,
         operation: &KmsOperation,
     ) -> StdResult<bool> {
@@ -768,12 +795,23 @@ impl BackendContract {
             return Ok(true);
         }
 
-        // Emit events for responses if the core configuration's thresholds are met
+        // Emit events for responses if the configuration's thresholds are met
         if operation.is_response() {
-            let response_values = kms_storage
-                .get_values_from_transaction_and_operation(storage, txn_id, operation)?;
-            let core_conf = kms_storage.load_core_conf(storage)?;
-            return Ok(operation.should_emit_response_event(&core_conf, &response_values));
+            let response_values = kms_storage.get_values_from_transaction_and_operation(
+                deps.storage,
+                txn_id,
+                operation,
+            )?;
+
+            // Get the KMS configuration from the CSC
+            let kms_configuration: KmsConfig = deps.querier.query_wasm_smart(
+                kms_storage.get_csc_address(deps.storage)?,
+                &KmsConfigQueryMsg {
+                    get_kms_configuration: Empty {},
+                },
+            )?;
+
+            return Ok(operation.should_emit_response_event(&kms_configuration, &response_values));
         }
 
         // This should never happen: currently, an operation is either a request or a response

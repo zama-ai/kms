@@ -18,7 +18,7 @@ use ethereum_inclusion_proofs::types::{
 use ethers::abi::Token;
 use ethers::prelude::*;
 use events::kms::{
-    CrsGenResponseValues, DecryptValues, FheParameter, FheType, KeyGenResponseValues, KmsCoreConf,
+    CrsGenResponseValues, DecryptValues, FheParameter, FheType, KeyGenResponseValues, KmsConfig,
     KmsEvent, KmsMessage, KmsOperation, OperationValue, ReencryptResponseValues, ReencryptValues,
     TransactionId, VerifyProvenCtResponseValues, VerifyProvenCtValues,
 };
@@ -60,7 +60,7 @@ pub(crate) struct KmsBlockchainImpl {
     pub(crate) responders: Arc<DashMap<TransactionId, oneshot::Sender<KmsEvent>>>,
     pub(crate) event_sender: Arc<mpsc::Sender<KmsEvent>>,
     pub(crate) config: GatewayConfig,
-    pub(crate) kms_core_conf: Option<KmsCoreConf>,
+    pub(crate) kms_configuration: Option<KmsConfig>,
 }
 
 #[async_trait]
@@ -78,7 +78,8 @@ impl<'a> KmsBlockchainImpl {
     fn new(
         mnemonic: Option<String>,
         addresses: Vec<&'a str>,
-        contract_address: &'a str,
+        asc_address: &'a str,
+        csc_address: &'a str,
         config: GatewayConfig,
     ) -> Self {
         let (tx, mut rx) = mpsc::channel::<KmsEvent>(100);
@@ -105,7 +106,8 @@ impl<'a> KmsBlockchainImpl {
                 ClientBuilder::builder()
                     .mnemonic_wallet(mnemonic.as_deref())
                     .grpc_addresses(addresses.clone())
-                    .contract_address(contract_address)
+                    .asc_address(asc_address)
+                    .csc_address(csc_address)
                     .kv_store_address(Some(config.storage.url.as_str()))
                     .build()
                     .try_into()
@@ -121,7 +123,7 @@ impl<'a> KmsBlockchainImpl {
             responders,
             event_sender: tx.into(),
             config,
-            kms_core_conf: None, // needs to be fetched later using [fetch_kms_core_conf], if needed
+            kms_configuration: None, // needs to be fetched later using [fetch_kms_configuration], if needed
         }
     }
 
@@ -129,28 +131,30 @@ impl<'a> KmsBlockchainImpl {
         let mnemonic = Some(config.kms.mnemonic.to_string());
         let binding = config.kms.address.to_string();
         let addresses = vec![binding.as_str()];
-        let contract_address = &config.kms.contract_address;
+        let asc_address = &config.kms.asc_address;
+        let csc_address = &config.kms.csc_address;
         let mut kms_bc_impl = Self::new(
             mnemonic,
             addresses,
-            contract_address.to_string().as_str(),
+            asc_address.to_string().as_str(),
+            csc_address.to_string().as_str(),
             config,
         );
 
-        kms_bc_impl.fetch_kms_core_conf().await?;
+        kms_bc_impl.fetch_kms_configuration().await?;
 
         Ok(kms_bc_impl)
     }
 
-    // query KMS config contract to get/update KMS core conf (threshold values, etc.)
-    pub(crate) async fn fetch_kms_core_conf(&mut self) -> anyhow::Result<()> {
+    // query KMS CSC to get/update KMS configuration (threshold values, etc.)
+    pub(crate) async fn fetch_kms_configuration(&mut self) -> anyhow::Result<()> {
         let query_client = Arc::clone(&self.query_client);
         let request = QueryContractRequest::builder()
-            .contract_address(self.config.kms.contract_address.to_string())
-            .query(ContractQuery::GetKmsCoreConf {})
+            .contract_address(self.config.kms.csc_address.to_string())
+            .query(ContractQuery::GetKmsConfig {})
             .build();
-        let kms_core_conf: KmsCoreConf = query_client.query_contract(request).await?;
-        self.kms_core_conf = Some(kms_core_conf);
+        let kms_configuration: KmsConfig = query_client.query_contract(request).await?;
+        self.kms_configuration = Some(kms_configuration);
         Ok(())
     }
 
@@ -262,7 +266,7 @@ impl<'a> KmsBlockchainImpl {
         key_id: String,
     ) -> Result<Vec<KeyGenResponseValues>, Error> {
         let request = QueryContractRequest::builder()
-            .contract_address(self.config.kms.contract_address.to_string())
+            .contract_address(self.config.kms.asc_address.to_string())
             .query(ContractQuery::GetKeyGenResponseValues(
                 GenKeyIdQuery::builder().key_id(key_id).build(),
             ))
@@ -277,7 +281,7 @@ impl<'a> KmsBlockchainImpl {
         crs_id: String,
     ) -> Result<Vec<CrsGenResponseValues>, Error> {
         let request = QueryContractRequest::builder()
-            .contract_address(self.config.kms.contract_address.to_string())
+            .contract_address(self.config.kms.asc_address.to_string())
             .query(ContractQuery::GetCrsGenResponseValues(
                 GenCrsIdQuery::builder().crs_id(crs_id).build(),
             ))
@@ -627,7 +631,7 @@ impl Blockchain for KmsBlockchainImpl {
         // Because we have seen the event, we now know that the result is ready to be queried
         // so we query the GetOperationsValuesFromEvent endpoint of the ASC
         let request = QueryContractRequest::builder()
-            .contract_address(self.config.kms.contract_address.to_string())
+            .contract_address(self.config.kms.asc_address.to_string())
             .query(ContractQuery::GetOperationsValuesFromEvent(
                 EventQuery::builder().event(event.clone()).build(),
             ))
@@ -668,23 +672,23 @@ impl Blockchain for KmsBlockchainImpl {
                 let mut ptxts = Vec::new();
                 let mut sigs = Vec::new();
 
-                // Fetch threshold KMS core config (the config is read at start once, currently)
-                let threshold_kms_core_conf = if let Some(conf) = &self.kms_core_conf {
+                // Fetch threshold KMS configuration (the configuration is read at start once, currently)
+                let threshold_kms_configuration = if let Some(conf) = &self.kms_configuration {
                     conf
                 } else {
                     return Err(anyhow::anyhow!(
-                        "Error reading KMS core config (wrong config type or config not set)."
+                        "Error reading KMS configuration (wrong config type or config not set)."
                     ));
                 };
 
                 // We need at least 2t + 1 responses for secure majority voting (at most t could be malicious).
                 // The reason ist that the KMS ASC simply counts responses without checking equality, so we might receive up to t malicious responses.
-                // The value (2t + 1) comes from the KMS core config.
-                if results.len() < threshold_kms_core_conf.response_count_for_majority_vote {
+                // The value (2t + 1) comes from the KMS configuration.
+                if results.len() < threshold_kms_configuration.response_count_for_majority_vote {
                     return Err(anyhow::anyhow!(
                         "Have not received enough decryption results: received {}, needed at least {}",
                         results.len(),
-                        threshold_kms_core_conf.response_count_for_majority_vote
+                        threshold_kms_configuration.response_count_for_majority_vote
                     ));
                 }
 
@@ -723,7 +727,7 @@ impl Blockchain for KmsBlockchainImpl {
                     .ok_or_else(|| anyhow::anyhow!("No plaintext found."))?; // this cannot happen, since we have some responses, but just to be sure
 
                 // We need at least t + 1 identical batch responses as majority, so we can return the majority plaintext (at most t others were corrupted)
-                let required_majority = threshold_kms_core_conf.degree_for_reconstruction + 1;
+                let required_majority = threshold_kms_configuration.degree_for_reconstruction + 1;
                 if majority_count >= required_majority {
                     // deserialize the individual plaintexts in this batch
                     let ptxts = majority_pts
@@ -912,7 +916,7 @@ impl Blockchain for KmsBlockchainImpl {
 
         tracing::info!("🍊 Received callback from KMS: {:?}", event.txn_id());
         let request = QueryContractRequest::builder()
-            .contract_address(self.config.kms.contract_address.to_string())
+            .contract_address(self.config.kms.asc_address.to_string())
             .query(ContractQuery::GetOperationsValuesFromEvent(
                 EventQuery::builder().event(event.clone()).build(),
             ))
@@ -1042,7 +1046,7 @@ impl Blockchain for KmsBlockchainImpl {
         }
         tracing::info!("🍊 Received callback from KMS: {:?}", event.txn_id());
         let request = QueryContractRequest::builder()
-            .contract_address(self.config.kms.contract_address.to_string())
+            .contract_address(self.config.kms.asc_address.to_string())
             .query(ContractQuery::GetOperationsValuesFromEvent(
                 EventQuery::builder().event(event.clone()).build(),
             ))

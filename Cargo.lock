@@ -931,8 +931,10 @@ version = "0.10.0-rc1"
 dependencies = [
  "aipsc",
  "byteorder",
+ "contracts-common",
  "cosmwasm-schema",
  "cosmwasm-std",
+ "csc",
  "cw-controllers",
  "cw-multi-test",
  "cw-storage-plus",
@@ -946,6 +948,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sha3",
+ "strum",
+ "strum_macros",
  "sylvia",
  "tendermint",
  "tendermint-ipsc",
@@ -2649,6 +2653,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c74b8349d32d297c9134b8c88677813a227df8f779daa29bfc29c183fe3dca6"
 
 [[package]]
+name = "contracts-common"
+version = "0.10.0-rc1"
+dependencies = [
+ "contracts-common",
+ "cosmwasm-schema",
+ "cosmwasm-std",
+ "cw-multi-test",
+ "cw-storage-plus",
+ "cw2",
+ "events",
+ "schemars",
+ "serde",
+ "strum",
+ "sylvia",
+ "tfhe-versionable",
+]
+
+[[package]]
 name = "convert_case"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2996,6 +3018,25 @@ dependencies = [
  "salsa20",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "csc"
+version = "0.10.0-rc1"
+dependencies = [
+ "contracts-common",
+ "cosmwasm-schema",
+ "cosmwasm-std",
+ "cw-multi-test",
+ "cw2",
+ "events",
+ "paste",
+ "schemars",
+ "serde",
+ "strum",
+ "strum_macros",
+ "sylvia",
+ "tfhe-versionable",
 ]
 
 [[package]]
@@ -3761,11 +3802,11 @@ name = "ethereum-ipsc"
 version = "0.1.0"
 dependencies = [
  "aipsc",
+ "contracts-common",
  "cosmwasm-schema",
  "cosmwasm-std",
  "cw2",
  "ethereum-inclusion-proofs",
- "events",
  "hex",
  "prost 0.12.6",
  "schemars",
@@ -9070,11 +9111,11 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "byteorder",
+ "contracts-common",
  "cosmwasm-schema",
  "cosmwasm-std",
  "cw-multi-test",
  "cw2",
- "events",
  "hex",
  "ics23",
  "percent-encoding",

@@ -221,8 +221,9 @@ pub struct ExponentialRetryConfig {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder)]
-pub struct KmsConfig {
-    pub contract_address: String,
+pub struct KmsBlockchainConfig {
+    pub asc_address: String,
+    pub csc_address: String,
     pub mnemonic: String,
     pub address: String,
     pub key_id: String, //TODO: remove this field as part of https://github.com/zama-ai/fhevm/issues/548
@@ -241,7 +242,7 @@ pub struct GatewayConfig {
     pub api_url: String,
     pub mode: KmsMode,
     pub ethereum: EthereumConfig,
-    pub kms: KmsConfig,
+    pub kms: KmsBlockchainConfig,
     pub storage: StorageConfig,
     pub tracing: Option<Tracing>,
 }
@@ -378,12 +379,16 @@ mod tests {
             );
             assert_eq!(gateway_config.ethereum.gas_escalator_increase, 20);
             assert_eq!(
-                gateway_config.kms.contract_address,
-                "wasm1cnuw3f076wgdyahssdkd0g3nr96ckq8cwa2mh029fn5mgf2fmcms9ax00l"
+                gateway_config.kms.asc_address,
+                "wasm1aakfpghcanxtc45gpqlx8j3rq0zcpyf49qmhm9mdjrfx036h4z5se0hfnq"
             );
             assert_eq!(
                 gateway_config.kms.mnemonic,
                 "bachelor similar spirit copper rely carbon web hobby conduct wrap conduct wire shine parrot erosion divert crucial balance lock reason price ignore educate open"
+            );
+            assert_eq!(
+                gateway_config.kms.csc_address,
+                "wasm14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9s0phg4d"
             );
             assert_eq!(gateway_config.kms.address, "http://localhost:9090");
         });
@@ -436,12 +441,16 @@ mod tests {
             ),
             ("GATEWAY__ETHEREUM__GAS_ESCALATOR_INCREASE", Some("35")),
             (
-                "GATEWAY__KMS__CONTRACT_ADDRESS",
+                "GATEWAY__KMS__ASC_ADDRESS",
                 Some("wasm14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9s0phg4f"),
             ),
             (
                 "GATEWAY__KMS__MNEMONIC",
                 Some("some mnemonic for testing purpose only"),
+            ),
+            (
+                "GATEWAY__KMS__CSC_ADDRESS",
+                Some("wasm1qr8j3tzl4nfg7xveu589yyvvq4gjnmzh5mkpjk2r9z6y3lt7m8dqgm37dp"),
             ),
             ("GATEWAY__KMS__ADDRESS", Some("http://test_with_var:9091")),
             (
@@ -495,12 +504,16 @@ mod tests {
             );
             assert_eq!(gateway_config.ethereum.gas_escalator_increase, 35);
             assert_eq!(
-                gateway_config.kms.contract_address,
+                gateway_config.kms.asc_address,
                 "wasm14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9s0phg4f"
             );
             assert_eq!(
                 gateway_config.kms.mnemonic,
                 "some mnemonic for testing purpose only"
+            );
+            assert_eq!(
+                gateway_config.kms.csc_address,
+                "wasm1qr8j3tzl4nfg7xveu589yyvvq4gjnmzh5mkpjk2r9z6y3lt7m8dqgm37dp"
             );
             assert_eq!(gateway_config.kms.address, "http://test_with_var:9091");
             assert_eq!(

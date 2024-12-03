@@ -9,10 +9,12 @@ members = [
     "blockchain/contracts/asc",
     "blockchain/contracts/tendermint-ipsc",
     "blockchain/contracts/ethereum-ipsc",
+    "blockchain/contracts/csc",
     "blockchain/cosmos-proto",
     "blockchain/events",
     "blockchain/gateway",
     "blockchain/simulator",
+    "blockchain/contracts/common",
     "conf-trace",
     "core/service",
     "core/threshold",
@@ -63,6 +65,8 @@ futures = "=0.3.31"
 hex = "=0.4.3"
 itertools = "=0.13.0"
 k256 = "=0.13.4"
+csc = { path = "./blockchain/contracts/csc" }
+contracts-common = { path = "./blockchain/contracts/common" }
 kms = { path = "./core/service", default-features = false }
 kms-blockchain-client = { path = "./blockchain/client" }
 kms-blockchain-connector = { path = "./blockchain/connector" }
@@ -70,6 +74,7 @@ kms-common = { path = "./common" }
 lazy_static = "=1.5.0"
 mockall = "=0.13.0"
 opentelemetry = "=0.23.0"
+paste = "=1.0"
 prost = "=0.12.6"
 prost-build = "=0.12.6"
 prost-types = "=0.12.6"

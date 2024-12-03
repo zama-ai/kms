@@ -1,14 +1,17 @@
 use super::state::KmsContractStorage;
-use crate::backend_contract_staging::BackendContract;
-use cosmwasm_std::{Event, Response, StdError, StdResult};
-use cw2::{ensure_from_older_version, set_contract_version};
-use events::kms::{
-    AllowedAddresses, CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues,
-    InsecureCrsGenValues, KeyGenResponseValues, KeyGenValues, KmsCoreConf, KmsEvent, OperationType,
-    OperationValue, ReencryptResponseValues, ReencryptValues, SenderAllowedEvent, Transaction,
-    TransactionId, UpdateAllowedAddressesEvent, VerifyProvenCtValues,
+use crate::backend_contract_staging::{AllowlistType, Allowlists, BackendContract};
+use contracts_common::{
+    allowlists::{AllowlistsContractManager, AllowlistsManager, AllowlistsStateManager},
+    migrations::Migration,
 };
-use events::kms::{InsecureKeyGenValues, MigrationEvent, VerifyProvenCtResponseValues};
+use cosmwasm_std::{Response, StdResult};
+use cw2::set_contract_version;
+use events::kms::{
+    CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues, InsecureCrsGenValues,
+    InsecureKeyGenValues, KeyGenResponseValues, KeyGenValues, KmsEvent, OperationValue,
+    ReencryptResponseValues, ReencryptValues, Transaction, TransactionId,
+    VerifyProvenCtResponseValues, VerifyProvenCtValues,
+};
 use sylvia::{
     contract, entry_points,
     types::{ExecCtx, InstantiateCtx, MigrateCtx, QueryCtx},
@@ -23,27 +26,30 @@ pub struct KmsContract {
     pub(crate) storage: KmsContractStorage,
 }
 
+/// Implement the `AllowlistsContractManager` trait
+///
+/// This allows to set and update allowed lists in the contract. It also provides a way to check
+/// that the sender is allowed to trigger a given operation
+impl AllowlistsContractManager for KmsContract {
+    type Allowlists = Allowlists;
+
+    fn storage(&self) -> &dyn AllowlistsStateManager<Allowlists = Allowlists> {
+        &self.storage
+    }
+}
+
+/// Implement the `Migration` trait
+///
+/// This allows to migrate the contract's state from an old version to a new version, without
+/// changing its address. This will automatically use versioning to ensure compatibility between
+/// versions
+impl Migration for KmsContract {}
+
 #[entry_points]
 #[contract]
 impl KmsContract {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Check that the sender's address is allowed to trigger the given operation type.
-    pub fn check_sender_is_allowed(
-        &self,
-        ctx: &ExecCtx,
-        operation_type: OperationType,
-        operation: &str,
-    ) -> std::result::Result<(), cosmwasm_std::StdError> {
-        self.storage
-            .check_address_is_allowed(
-                ctx.deps.storage,
-                ctx.info.sender.as_str(),
-                operation_type.clone(),
-            )
-            .map_err(|e| StdError::generic_err(format!("Operation `{}`: {}", operation, e)))
     }
 
     /// ASC contract instantiation
@@ -52,7 +58,7 @@ impl KmsContract {
     ///
     /// # Arguments
     ///
-    /// * `allowed_addresses` - an optional struct containing several lists of addresses that define
+    /// * `allowlists` - an optional struct containing several lists of addresses that define
     /// who can trigger certain operations (ex: `gen`, `response` or `admin` operations).
     /// Providing None will default to use the sender's address for all operation types.
     #[sv::msg(instantiate)]
@@ -61,16 +67,9 @@ impl KmsContract {
         ctx: InstantiateCtx,
         debug_proof: Option<bool>,
         verify_proof_contract_addr: String,
-        kms_core_conf: KmsCoreConf,
-        allowed_addresses: Option<AllowedAddresses>,
+        csc_address: String,
+        allowlists: Option<Allowlists>,
     ) -> StdResult<Response> {
-        // Check conformance of threshold config
-        if !kms_core_conf.is_conformant() {
-            return Err(cosmwasm_std::StdError::generic_err(
-                "KMS core configuration is not conformant.",
-            ));
-        }
-
         // Inclusion proof debug configuration
         // While developing without a blockchain against which to verify we might need to skip the
         // call to a inclusion proof smart contract altogether. This allows that
@@ -81,28 +80,27 @@ impl KmsContract {
             self.storage.set_debug_proof(ctx.deps.storage, false)?;
         }
 
-        // Configure allowed addresses for some operations
-        let allowed_addresses = match allowed_addresses {
+        // Configure allowlists for some operations
+        let allowlists = match allowlists {
             Some(addresses) => {
                 addresses.check_all_addresses_are_valid(ctx.deps.api)?;
                 addresses
             }
             None => {
                 // Default to only allowing the contract instantiator
-                AllowedAddresses::default_all_to(ctx.info.sender.as_str())
+                Allowlists::default_all_to(ctx.info.sender.as_str())
             }
         };
 
-        self.storage
-            .set_allowed_addresses(ctx.deps.storage, allowed_addresses)?;
+        self.storage.set_allowlists(ctx.deps.storage, allowlists)?;
 
         // Inclusion proof smart contract configuration
         self.storage
             .set_verify_proof_contract_address(ctx.deps.storage, verify_proof_contract_addr)?;
 
-        // KMS Core configuration
+        // CSC configuration
         self.storage
-            .update_core_conf(ctx.deps.storage, kms_core_conf)?;
+            .set_csc_address(ctx.deps.storage, csc_address)?;
 
         // Set contract name and version in the storage
         set_contract_version(ctx.deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
@@ -110,62 +108,17 @@ impl KmsContract {
         Ok(Response::default())
     }
 
-    #[sv::msg(query)]
-    pub fn get_kms_core_conf(&self, ctx: QueryCtx) -> StdResult<KmsCoreConf> {
-        self.storage.load_core_conf(ctx.deps.storage)
-    }
-
-    /// Update KMS core configuration
-    ///
-    /// This call is restricted to specific addresses defined at instantiation (`AllowedAddresses`).
-    #[sv::msg(exec)]
-    pub fn update_kms_core_conf(&self, ctx: ExecCtx, conf: KmsCoreConf) -> StdResult<Response> {
-        let operation = "update_kms_core_conf";
-
-        self.check_sender_is_allowed(&ctx, OperationType::Admin, operation)?;
-        self.storage.update_core_conf(ctx.deps.storage, conf)?;
-
-        let sender_allowed_event =
-            SenderAllowedEvent::new(operation.to_string(), ctx.info.sender.to_string());
-        let response = Response::new().add_event(Into::<Event>::into(sender_allowed_event));
-        Ok(response)
-    }
-
     /// Allow an address to trigger the given operation type.
     ///
-    /// This call is restricted to specific addresses defined at instantiation (`AllowedAddresses`).
+    /// This call is restricted to specific addresses defined at instantiation (`Allowlists`).
     #[sv::msg(exec)]
-    pub fn add_allowed_address(
+    pub fn add_allowlist(
         &self,
         ctx: ExecCtx,
         address: String,
-        operation_type: OperationType,
+        operation_type: AllowlistType,
     ) -> StdResult<Response> {
-        let operation = "add_allowed_address";
-
-        self.check_sender_is_allowed(&ctx, OperationType::SuperAdmin, operation)?;
-
-        let sender_allowed_event =
-            SenderAllowedEvent::new(operation.to_string(), ctx.info.sender.to_string());
-
-        self.storage.add_allowed_address(
-            ctx.deps.storage,
-            &address,
-            operation_type.clone(),
-            ctx.deps.api,
-        )?;
-
-        let update_allowed_addresses_event = UpdateAllowedAddressesEvent {
-            new_addresses: vec![address.to_string()],
-            operation: operation.to_string(),
-            operation_type,
-            sender: ctx.info.sender.to_string(),
-        };
-
-        let response = Response::new()
-            .add_event(Into::<Event>::into(sender_allowed_event))
-            .add_event(Into::<Event>::into(update_allowed_addresses_event));
-        Ok(response)
+        self.impl_add_allowlist(ctx, address, operation_type)
     }
 
     #[sv::msg(exec)]
@@ -180,72 +133,28 @@ impl KmsContract {
 
     /// Forbid an address from triggering the given operation type.
     ///
-    /// This call is restricted to specific addresses defined at instantiation (`AllowedAddresses`).
+    /// This call is restricted to specific addresses defined at instantiation (`Allowlists`).
     #[sv::msg(exec)]
-    pub fn remove_allowed_address(
+    pub fn remove_allowlist(
         &self,
         ctx: ExecCtx,
         address: String,
-        operation_type: OperationType,
+        operation_type: AllowlistType,
     ) -> StdResult<Response> {
-        let operation = "remove_allowed_address";
-
-        self.check_sender_is_allowed(&ctx, OperationType::SuperAdmin, operation)?;
-
-        let sender_allowed_event =
-            SenderAllowedEvent::new(operation.to_string(), ctx.info.sender.to_string());
-
-        self.storage
-            .remove_allowed_address(ctx.deps.storage, &address, operation_type.clone())?;
-
-        let update_allowed_addresses_event = UpdateAllowedAddressesEvent {
-            new_addresses: vec![address.to_string()],
-            operation: operation.to_string(),
-            operation_type,
-            sender: ctx.info.sender.to_string(),
-        };
-
-        let response = Response::new()
-            .add_event(Into::<Event>::into(sender_allowed_event))
-            .add_event(Into::<Event>::into(update_allowed_addresses_event));
-        Ok(response)
+        self.impl_remove_allowlist(ctx, address, operation_type)
     }
 
-    /// Replace all of the allowed addresses for the given operation type.
+    /// Replace all of the allowlists for the given operation type.
     ///
-    /// This call is restricted to specific addresses defined at instantiation (`AllowedAddresses`).
+    /// This call is restricted to specific addresses defined at instantiation (`Allowlists`).
     #[sv::msg(exec)]
-    pub fn replace_allowed_addresses(
+    pub fn replace_allowlists(
         &self,
         ctx: ExecCtx,
         addresses: Vec<String>,
-        operation_type: OperationType,
+        operation_type: AllowlistType,
     ) -> StdResult<Response> {
-        let operation = "replace_allowed_addresses";
-
-        self.check_sender_is_allowed(&ctx, OperationType::SuperAdmin, operation)?;
-
-        let sender_allowed_event =
-            SenderAllowedEvent::new(operation.to_string(), ctx.info.sender.to_string());
-
-        self.storage.replace_allowed_addresses(
-            ctx.deps.storage,
-            addresses.clone(),
-            operation_type.clone(),
-            ctx.deps.api,
-        )?;
-
-        let update_allowed_addresses_event = UpdateAllowedAddressesEvent {
-            new_addresses: addresses,
-            operation: operation.to_string(),
-            operation_type,
-            sender: ctx.info.sender.to_string(),
-        };
-
-        let response = Response::new()
-            .add_event(Into::<Event>::into(sender_allowed_event))
-            .add_event(Into::<Event>::into(update_allowed_addresses_event));
-        Ok(response)
+        self.impl_replace_allowlists(ctx, addresses, operation_type)
     }
 
     #[sv::msg(query)]
@@ -298,20 +207,25 @@ impl KmsContract {
 
     /// Decrypt response
     ///
-    /// This call is restricted to specific addresses defined at instantiation (`AllowedAddresses`).
+    /// This call is restricted to specific addresses defined at instantiation (`Allowlists`).
     #[sv::msg(exec)]
     pub fn decrypt_response(
         &self,
-        ctx: ExecCtx,
+        mut ctx: ExecCtx,
         txn_id: TransactionId,
         decrypt_response: DecryptResponseValues,
     ) -> StdResult<Response> {
-        BackendContract::process_decryption_response(ctx, &self.storage, txn_id, decrypt_response)
+        BackendContract::process_decryption_response(
+            &mut ctx,
+            &self.storage,
+            txn_id,
+            decrypt_response,
+        )
     }
 
     /// Keygen preproc
     ///
-    /// This call is restricted to specific addresses defined at instantiation (`AllowedAddresses`).
+    /// This call is restricted to specific addresses defined at instantiation (`Allowlists`).
     #[sv::msg(exec)]
     pub fn keygen_preproc(&self, mut ctx: ExecCtx) -> StdResult<Response> {
         BackendContract::process_key_generation_preproc_request(&mut ctx, &self.storage)
@@ -319,19 +233,19 @@ impl KmsContract {
 
     /// Keygen preproc response
     ///
-    /// This call is restricted to specific addresses defined at instantiation (`AllowedAddresses`).
+    /// This call is restricted to specific addresses defined at instantiation (`Allowlists`).
     #[sv::msg(exec)]
     pub fn keygen_preproc_response(
         &self,
-        ctx: ExecCtx,
+        mut ctx: ExecCtx,
         txn_id: TransactionId,
     ) -> StdResult<Response> {
-        BackendContract::process_key_generation_preproc_response(ctx, &self.storage, txn_id)
+        BackendContract::process_key_generation_preproc_response(&mut ctx, &self.storage, txn_id)
     }
 
     /// Insecure keygen
     ///
-    /// This call is restricted to specific addresses defined at instantiation (`AllowedAddresses`).
+    /// This call is restricted to specific addresses defined at instantiation (`Allowlists`).
     #[sv::msg(exec)]
     pub fn insecure_key_gen(
         &self,
@@ -347,16 +261,16 @@ impl KmsContract {
 
     /// Insecure keygen response
     ///
-    /// This call is restricted to specific addresses defined at instantiation (`AllowedAddresses`).
+    /// This call is restricted to specific addresses defined at instantiation (`Allowlists`).
     #[sv::msg(exec)]
     pub fn insecure_key_gen_response(
         &self,
-        ctx: ExecCtx,
+        mut ctx: ExecCtx,
         txn_id: TransactionId,
         keygen_response: KeyGenResponseValues,
     ) -> StdResult<Response> {
         BackendContract::process_insecure_key_generation_response(
-            ctx,
+            &mut ctx,
             &self.storage,
             txn_id,
             keygen_response,
@@ -365,7 +279,7 @@ impl KmsContract {
 
     /// Keygen
     ///
-    /// This call is restricted to specific addresses defined at instantiation (`AllowedAddresses`).
+    /// This call is restricted to specific addresses defined at instantiation (`Allowlists`).
     #[sv::msg(exec)]
     pub fn keygen(&self, mut ctx: ExecCtx, keygen: KeyGenValues) -> StdResult<Response> {
         BackendContract::process_key_generation_request(&mut ctx, &self.storage, keygen)
@@ -373,16 +287,16 @@ impl KmsContract {
 
     /// Keygen response
     ///
-    /// This call is restricted to specific addresses defined at instantiation (`AllowedAddresses`).
+    /// This call is restricted to specific addresses defined at instantiation (`Allowlists`).
     #[sv::msg(exec)]
     pub fn keygen_response(
         &self,
-        ctx: ExecCtx,
+        mut ctx: ExecCtx,
         txn_id: TransactionId,
         keygen_response: KeyGenResponseValues,
     ) -> StdResult<Response> {
         BackendContract::process_key_generation_response(
-            ctx,
+            &mut ctx,
             &self.storage,
             txn_id,
             keygen_response,
@@ -396,16 +310,16 @@ impl KmsContract {
 
     /// Reencrypt response
     ///
-    /// This call is restricted to specific addresses defined at instantiation (`AllowedAddresses`).
+    /// This call is restricted to specific addresses defined at instantiation (`Allowlists`).
     #[sv::msg(exec)]
     pub fn reencrypt_response(
         &self,
-        ctx: ExecCtx,
+        mut ctx: ExecCtx,
         txn_id: TransactionId,
         reencrypt_response: ReencryptResponseValues,
     ) -> StdResult<Response> {
         BackendContract::process_reencryption_response(
-            ctx,
+            &mut ctx,
             &self.storage,
             txn_id,
             reencrypt_response,
@@ -427,16 +341,16 @@ impl KmsContract {
 
     /// Verify proven ct response
     ///
-    /// This call is restricted to specific addresses defined at instantiation (`AllowedAddresses`).
+    /// This call is restricted to specific addresses defined at instantiation (`Allowlists`).
     #[sv::msg(exec)]
     pub fn verify_proven_ct_response(
         &self,
-        ctx: ExecCtx,
+        mut ctx: ExecCtx,
         txn_id: TransactionId,
         verify_proven_ct_response: VerifyProvenCtResponseValues,
     ) -> StdResult<Response> {
         BackendContract::process_proven_ct_verification_response(
-            ctx,
+            &mut ctx,
             &self.storage,
             txn_id,
             verify_proven_ct_response,
@@ -445,7 +359,7 @@ impl KmsContract {
 
     /// CRS gen
     ///
-    /// This call is restricted to specific addresses defined at instantiation (`AllowedAddresses`).
+    /// This call is restricted to specific addresses defined at instantiation (`Allowlists`).
     #[sv::msg(exec)]
     pub fn crs_gen(&self, mut ctx: ExecCtx, crs_gen: CrsGenValues) -> StdResult<Response> {
         BackendContract::process_crs_generation_request(&mut ctx, &self.storage, crs_gen)
@@ -453,16 +367,16 @@ impl KmsContract {
 
     /// CRS gen response
     ///
-    /// This call is restricted to specific addresses defined at instantiation (`AllowedAddresses`).
+    /// This call is restricted to specific addresses defined at instantiation (`Allowlists`).
     #[sv::msg(exec)]
     pub fn crs_gen_response(
         &self,
-        ctx: ExecCtx,
+        mut ctx: ExecCtx,
         txn_id: TransactionId,
         crs_gen_response: CrsGenResponseValues,
     ) -> StdResult<Response> {
         BackendContract::process_crs_generation_response(
-            ctx,
+            &mut ctx,
             &self.storage,
             txn_id,
             crs_gen_response,
@@ -471,7 +385,7 @@ impl KmsContract {
 
     /// Insecure CRS gen
     ///
-    /// This call might be restricted to specific addresses defined at instantiation (`AllowedAddresses`).
+    /// This call might be restricted to specific addresses defined at instantiation (`Allowlists`).
     #[sv::msg(exec)]
     pub fn insecure_crs_gen(
         &self,
@@ -487,51 +401,30 @@ impl KmsContract {
 
     /// Insecure CRS gen response
     ///
-    /// This call might be restricted to specific addresses defined at instantiation (`AllowedAddresses`).
+    /// This call might be restricted to specific addresses defined at instantiation (`Allowlists`).
     #[sv::msg(exec)]
     pub fn insecure_crs_gen_response(
         &self,
-        ctx: ExecCtx,
+        mut ctx: ExecCtx,
         txn_id: TransactionId,
         crs_gen_response: CrsGenResponseValues,
     ) -> StdResult<Response> {
         BackendContract::process_insecure_crs_generation_response(
-            ctx,
+            &mut ctx,
             &self.storage,
             txn_id,
             crs_gen_response,
         )
     }
 
-    // Migrate function to migrate from old version to new version
-    // As there is only one version of the ASC for now, this function has no real use. Future
-    // versions of the ASC will be required to provide this function, with additional migration
-    // logic if needed. This might include changing the function's signature.
+    /// Function to migrate from old version to new version
+    ///
+    /// As there is only one version of the contract for now, this function has no real use. Future
+    /// versions of the contract will be required to provide this function, with additional migration
+    /// logic if needed. This might include changing the function's signature.
     #[sv::msg(migrate)]
     fn migrate(&self, ctx: MigrateCtx) -> StdResult<Response> {
-        // Check that the given storage (representing the old contract's storage) is compatible with
-        // the new version of the ASC by :
-        // - checking that the new contract name is the same
-        // - checking that the new contract version is more recent than the current version
-        // If both conditions are met, the storage is updated with the new contract version
-        let original_version =
-            ensure_from_older_version(ctx.deps.storage, CONTRACT_NAME, CONTRACT_VERSION).map_err(
-                |e| {
-                    StdError::generic_err(format!(
-                        "ASC migration failed while checking version compatibility: {}",
-                        e
-                    ))
-                },
-            )?;
-
-        let mut migration_event =
-            MigrationEvent::new(original_version.to_string(), CONTRACT_VERSION.to_string());
-
-        // Since there no real migration logic for now, we set it to successful
-        migration_event.set_success();
-
-        let response = Response::new().add_event(Into::<Event>::into(migration_event));
-        Ok(response)
+        self.apply_migration(ctx.deps.storage)
     }
 }
 
@@ -539,46 +432,37 @@ impl KmsContract {
 mod tests {
     use super::sv::mt::KmsContractProxy;
     use super::KmsContract;
-    use crate::backend_contract_staging::BackendContract;
-    use crate::contract::sv::mt::CodeId;
-    use cosmwasm_std::{coin, coins, testing::mock_env, Addr, Binary, Env, Event, TransactionInfo};
-    use cw_multi_test::{App as CwApp, Executor};
-    use events::kms::AllowedAddresses;
-    use events::kms::CrsGenResponseValues;
-    use events::kms::CrsGenValues;
-    use events::kms::DecryptResponseValues;
-    use events::kms::DecryptValues;
-    use events::kms::FheParameter;
-    use events::kms::FheType;
-    use events::kms::InsecureKeyGenValues;
-    use events::kms::KeyGenPreprocResponseValues;
-    use events::kms::KeyGenPreprocValues;
-    use events::kms::KeyGenResponseValues;
-    use events::kms::KeyGenValues;
-    use events::kms::KmsCoreConf;
-    use events::kms::KmsCoreParty;
-    use events::kms::KmsEvent;
-    use events::kms::KmsOperation;
-    use events::kms::OperationType;
-    use events::kms::OperationValue;
-    use events::kms::ReencryptResponseValues;
-    use events::kms::ReencryptValues;
-    use events::kms::TransactionId;
-    use events::kms::VerifyProvenCtResponseValues;
-    use events::kms::VerifyProvenCtValues;
-    use events::HexVector;
-    use sylvia::cw_multi_test::IntoAddr as _;
+    use crate::{
+        allowlists::{AllowlistTypeAsc, AllowlistsAsc},
+        backend_contract_staging::BackendContract,
+        contract::sv::mt::CodeId,
+    };
+    use contracts_common::allowlists::AllowlistsManager;
+    use cosmwasm_std::{coin, coins, testing::mock_env, Addr, Env, Event, TransactionInfo};
+    use csc::{allowlists::AllowlistsCsc, contract::sv::mt::CodeId as CSCCodeId};
+    use cw_multi_test::{App as MtApp, IntoAddr as _};
+    use events::{
+        kms::{
+            CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues, FheParameter,
+            FheType, InsecureKeyGenValues, KeyGenPreprocResponseValues, KeyGenPreprocValues,
+            KeyGenResponseValues, KeyGenValues, KmsConfig, KmsCoreParty, KmsEvent, KmsOperation,
+            OperationValue, ReencryptResponseValues, ReencryptValues, TransactionId,
+            VerifyProvenCtResponseValues, VerifyProvenCtValues,
+        },
+        HexVector,
+    };
     use sylvia::multitest::{App, Proxy};
     use tendermint_ipsc::mock::sv::mt::CodeId as ProofCodeId;
 
     const UCOSM: &str = "ucosm";
 
-    const DUMMY_BECH32_ADDR: &str =
+    const DUMMY_PROOF_CONTRACT_ADDR: &str =
         "cosmwasm1ejpjr43ht3y56pplm5pxpusmcrk9rkkvna4tklusnnwdxpqm0zls40599z";
 
     const MOCK_BLOCK_HEIGHT: u64 = 12_345;
     const MOCK_TRANSACTION_INDEX: u32 = 0;
 
+    // Helper function to get a mocked environment with the mock block height and transaction index
     fn get_mock_env() -> Env {
         let mut mocked_env = mock_env();
         mocked_env.block.height = MOCK_BLOCK_HEIGHT;
@@ -590,7 +474,7 @@ mod tests {
 
     /// Triggers the key generation process for a given key ID and sender address (implicit ACL inclusion).
     fn add_address_to_contract_acl(
-        contract: &Proxy<'_, CwApp, KmsContract>,
+        contract: &Proxy<'_, MtApp, KmsContract>,
         key_id: &[u8],
         address: &Addr,
     ) {
@@ -615,131 +499,77 @@ mod tests {
             vec![7, 8, 9],
             FheParameter::Test,
         );
+
+        // Call the keygen response function using the owner address if provided
+        // Else we use the address and consider that the address is already the owner (or is simply
+        // allowed to response)
         contract
             .keygen_response(keygen_txn_id, keygen_response.clone())
             .call(address)
             .unwrap();
     }
 
-    #[test]
-    fn test_instantiate() {
-        let app = App::default();
-        let code_id = CodeId::store_code(&app);
+    // Helper function to set up test environment
+    fn setup_test_env(app_default: bool) -> (App<MtApp>, Addr, String) {
         let owner = "owner".into_addr();
 
-        // first make a few tries that will fail
-        // `degree_for_reconstruction` is too high
-        assert!(code_id
-            .instantiate(
-                Some(true),
-                DUMMY_BECH32_ADDR.to_string(),
-                KmsCoreConf {
-                    parties: vec![KmsCoreParty::default(); 4],
-                    response_count_for_majority_vote: 3,
-                    response_count_for_reconstruction: 3,
-                    degree_for_reconstruction: 2,
-                    param_choice: FheParameter::Test,
-                },
-                Some(AllowedAddresses::default_all_to(owner.as_str())),
-            )
-            .call(&owner)
-            .is_err());
+        let app: App<MtApp> = if app_default {
+            App::default()
+        } else {
+            // Set up the app with initial balance for owner
+            let mt_app = cw_multi_test::App::new(|router, _api, storage| {
+                router
+                    .bank
+                    .init_balance(storage, &owner, coins(5000000, UCOSM))
+                    .unwrap();
+            });
+            App::new(mt_app)
+        };
 
-        // `response_count_for_majority_vote` is greater than the no. of parties
-        assert!(code_id
-            .instantiate(
-                Some(true),
-                DUMMY_BECH32_ADDR.to_string(),
-                KmsCoreConf {
-                    parties: vec![KmsCoreParty::default(); 4],
-                    response_count_for_majority_vote: 5,
-                    response_count_for_reconstruction: 3,
-                    degree_for_reconstruction: 1,
-                    param_choice: FheParameter::Test,
-                },
-                Some(AllowedAddresses::default_all_to(owner.as_str())),
-            )
-            .call(&owner)
-            .is_err());
+        let init_kms_configuration = KmsConfig {
+            parties: vec![KmsCoreParty::default(); 4],
+            response_count_for_majority_vote: 2,
+            response_count_for_reconstruction: 3,
+            degree_for_reconstruction: 1,
+            param_choice: FheParameter::Test,
+        };
+        let storage_base_urls = vec!["https://dummy-storage-base-url.example.com".to_string()];
+        let allowlists_config = AllowlistsCsc::default_all_to(owner.as_str());
 
-        // `response_count_for_reconstruction` is greater than the no. of parties
-        assert!(code_id
+        // Store and instantiate CSC
+        let config_code_id = CSCCodeId::store_code(&app);
+        let csc_address = config_code_id
             .instantiate(
-                Some(true),
-                DUMMY_BECH32_ADDR.to_string(),
-                KmsCoreConf {
-                    parties: vec![KmsCoreParty::default(); 4],
-                    response_count_for_majority_vote: 3,
-                    response_count_for_reconstruction: 5,
-                    degree_for_reconstruction: 1,
-                    param_choice: FheParameter::Test,
-                },
-                Some(AllowedAddresses::default_all_to(owner.as_str())),
+                init_kms_configuration,
+                storage_base_urls,
+                Some(allowlists_config),
             )
             .call(&owner)
-            .is_err());
+            .unwrap()
+            .contract_addr
+            .to_string();
+
+        (app, owner, csc_address)
+    }
+
+    #[test]
+    fn test_instantiate() {
+        let (app, owner, csc_address) = setup_test_env(true);
+        let code_id = CodeId::store_code(&app);
 
         // finally we make a successful attempt
         let contract = code_id
             .instantiate(
                 Some(true),
-                DUMMY_BECH32_ADDR.to_string(),
-                KmsCoreConf {
-                    parties: vec![KmsCoreParty::default(); 4],
-                    response_count_for_majority_vote: 3,
-                    response_count_for_reconstruction: 3,
-                    degree_for_reconstruction: 1,
-                    param_choice: FheParameter::Test,
-                },
-                Some(AllowedAddresses::default_all_to(owner.as_str())),
+                DUMMY_PROOF_CONTRACT_ADDR.to_string(),
+                csc_address.to_string(),
+                Some(AllowlistsAsc::default_all_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
-        let value = contract.get_kms_core_conf();
-        assert!(value.is_ok());
 
         let value = contract.get_transaction(TransactionId::default());
         assert!(value.is_err());
-    }
-
-    #[test]
-    fn test_update_kms_core_conf() {
-        let app = App::default();
-        let code_id = CodeId::store_code(&app);
-
-        let owner = "owner".into_addr();
-
-        let contract = code_id
-            .instantiate(
-                Some(true),
-                DUMMY_BECH32_ADDR.to_string(),
-                KmsCoreConf {
-                    parties: vec![KmsCoreParty::default(); 4],
-                    response_count_for_majority_vote: 3,
-                    response_count_for_reconstruction: 3,
-                    degree_for_reconstruction: 1,
-                    param_choice: FheParameter::Test,
-                },
-                Some(AllowedAddresses::default_all_to(owner.as_str())),
-            )
-            .call(&owner)
-            .unwrap();
-
-        let value = KmsCoreConf {
-            parties: vec![KmsCoreParty::default(); 4],
-            response_count_for_majority_vote: 3,
-            response_count_for_reconstruction: 3,
-            degree_for_reconstruction: 1,
-            param_choice: FheParameter::Test,
-        };
-
-        contract
-            .update_kms_core_conf(value.clone())
-            .call(&owner)
-            .unwrap();
-
-        let result = contract.get_kms_core_conf().unwrap();
-        assert_eq!(result, value);
     }
 
     fn extract_ciphertext_size(ciphertext_handle: &[u8]) -> u32 {
@@ -751,32 +581,17 @@ mod tests {
 
     #[test]
     fn test_verify_proven_ct() {
-        let gateway = Addr::unchecked("gateway");
-
-        let app = cw_multi_test::App::new(|router, _api, storage| {
-            router
-                .bank
-                .init_balance(storage, &gateway, coins(5000000, UCOSM))
-                .unwrap();
-        });
-
-        let app = App::new(app);
+        let (app, owner, csc_address) = setup_test_env(false);
         let code_id = CodeId::store_code(&app);
-        let owner = "owner".into_addr();
+
         let fake_owner = "fake_owner".into_addr();
 
         let contract = code_id
             .instantiate(
                 Some(true),
-                DUMMY_BECH32_ADDR.to_string(),
-                KmsCoreConf {
-                    parties: vec![KmsCoreParty::default(); 4],
-                    response_count_for_majority_vote: 2,
-                    response_count_for_reconstruction: 3,
-                    degree_for_reconstruction: 1,
-                    param_choice: FheParameter::Test,
-                },
-                Some(AllowedAddresses::default_all_to(owner.as_str())),
+                DUMMY_PROOF_CONTRACT_ADDR.to_string(),
+                csc_address,
+                Some(AllowlistsAsc::default_all_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
@@ -798,8 +613,9 @@ mod tests {
 
         let response = contract
             .verify_proven_ct(proven_val.clone())
-            .call(&gateway)
+            .call(&owner)
             .unwrap();
+
         let txn_id = BackendContract::compute_transaction_id(&get_mock_env()).unwrap();
         assert_eq!(response.events.len(), 2);
 
@@ -816,16 +632,19 @@ mod tests {
             .verify_proven_ct_response(txn_id.clone(), proven_ct_response.clone())
             .call(&owner)
             .unwrap();
-        // one event because there's always an execute event + the check sender event
+
+        // Two events because there's always an execute event
+        // + the check sender event
         assert_eq!(response.events.len(), 2);
 
         let response = contract
             .verify_proven_ct_response(txn_id.clone(), proven_ct_response.clone())
             .call(&owner)
             .unwrap();
-        // two events because there's always an execute event
-        // plus the verify ct request since it reached the threshold
-        // plus the check sender event
+
+        // Three events because there's always an execute event
+        // + the verify ct request since it reached the threshold
+        // + the check sender event
         assert_eq!(response.events.len(), 3);
 
         let expected_event = KmsEvent::builder()
@@ -857,37 +676,17 @@ mod tests {
 
     #[test]
     fn test_decrypt() {
-        let gateway = "gateway".into_addr();
-
-        let app = cw_multi_test::App::new(|router, _api, storage| {
-            router
-                .bank
-                .init_balance(storage, &gateway, coins(5000000, UCOSM))
-                .unwrap();
-        });
-
-        let app = App::new(app);
+        let (app, owner, csc_address) = setup_test_env(false);
         let code_id = CodeId::store_code(&app);
-        let owner = "owner".into_addr();
+
         let key_id = vec![1, 2, 3];
 
         let contract = code_id
             .instantiate(
                 Some(true),
-                DUMMY_BECH32_ADDR.to_string(),
-                KmsCoreConf {
-                    parties: vec![KmsCoreParty::default(); 4],
-                    response_count_for_majority_vote: 2,
-                    response_count_for_reconstruction: 3,
-                    degree_for_reconstruction: 1,
-                    param_choice: FheParameter::Test,
-                },
-                Some(AllowedAddresses {
-                    admins: vec![owner.to_string()],
-                    allowed_to_gen: vec![owner.to_string(), gateway.to_string()],
-                    allowed_to_response: vec![owner.to_string(), gateway.to_string()],
-                    super_admins: vec![owner.to_string()],
-                }),
+                DUMMY_PROOF_CONTRACT_ADDR.to_string(),
+                csc_address,
+                Some(AllowlistsAsc::default_all_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
@@ -920,22 +719,22 @@ mod tests {
         contract
             .decrypt(decrypt.clone())
             .with_funds(&[coin(data_size.into(), UCOSM)])
-            .call(&gateway)
+            .call(&owner)
             .expect_err("An address not included into contract ACL was allowed to encrypt");
 
-        add_address_to_contract_acl(&contract, &key_id, &gateway);
+        add_address_to_contract_acl(&contract, &key_id, &owner);
 
         // test insufficient funds
         contract
             .decrypt(decrypt.clone())
             .with_funds(&[coin(42_u128, UCOSM)])
-            .call(&gateway)
+            .call(&owner)
             .expect_err("Insufficient funds sent to cover the data size");
 
         let response = contract
             .decrypt(decrypt.clone())
             .with_funds(&[coin(data_size.into(), UCOSM)])
-            .call(&gateway)
+            .call(&owner)
             .unwrap();
         assert_eq!(response.events.len(), 3);
 
@@ -953,16 +752,19 @@ mod tests {
             .decrypt_response(txn_id.clone(), decrypt_response.clone())
             .call(&owner)
             .unwrap();
-        // one event because there's always an execute event + the check sender event
+
+        // Two events because there's always an execute event
+        // + the check sender event
         assert_eq!(response.events.len(), 2);
 
         let response = contract
             .decrypt_response(txn_id.clone(), decrypt_response)
             .call(&owner)
             .unwrap();
-        // two events because there's always an execute event
-        // plus the decryption request since it reached the threshold
-        // plus the check sender event
+
+        // Three events because there's always an execute event
+        // + the decryption request since it reached the threshold
+        // + the check sender event
         assert_eq!(response.events.len(), 3);
 
         let expected_event = KmsEvent::builder()
@@ -984,20 +786,12 @@ mod tests {
 
     #[test]
     fn test_decrypt_with_proof() {
-        let test = "test".into_addr();
-
-        let app = cw_multi_test::App::new(|router, _api, storage| {
-            router
-                .bank
-                .init_balance(storage, &test, coins(5000000, UCOSM))
-                .unwrap();
-        });
-
-        let app = App::new(app);
+        let (app, owner, csc_address) = setup_test_env(false);
         let code_id = CodeId::store_code(&app);
         let proof_code_id = ProofCodeId::store_code(&app);
-        let owner = "owner".into_addr();
+
         let key_id = vec![1, 2, 3];
+
         let ciphertext_handle =
             hex::decode("000a17c82f8cd9fe41c871f12b391a2afaf5b640ea4fdd0420a109aa14c674d3e385b955")
                 .unwrap();
@@ -1011,19 +805,8 @@ mod tests {
             .instantiate(
                 Some(false),
                 proof_addr.to_string(),
-                KmsCoreConf {
-                    parties: vec![KmsCoreParty::default(); 4],
-                    response_count_for_majority_vote: 2,
-                    response_count_for_reconstruction: 3,
-                    degree_for_reconstruction: 1,
-                    param_choice: FheParameter::Test,
-                },
-                Some(AllowedAddresses {
-                    admins: vec![owner.to_string()],
-                    allowed_to_gen: vec![owner.to_string(), test.to_string()],
-                    allowed_to_response: vec![owner.to_string(), test.to_string()],
-                    super_admins: vec![owner.to_string()],
-                }),
+                csc_address,
+                Some(AllowlistsAsc::default_all_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
@@ -1047,20 +830,21 @@ mod tests {
         )
         .unwrap();
 
-        add_address_to_contract_acl(&contract, &key_id, &test);
+        add_address_to_contract_acl(&contract, &key_id, &owner);
 
         // test insufficient funds
         contract
             .decrypt(decrypt.clone())
             .with_funds(&[coin(42_u128, UCOSM)])
-            .call(&test)
+            .call(&owner)
             .expect_err("Insufficient funds sent to cover the data size");
 
         let response = contract
             .decrypt(decrypt.clone())
             .with_funds(&[coin(data_size.into(), UCOSM)])
-            .call(&test)
+            .call(&owner)
             .unwrap();
+
         let txn_id = BackendContract::compute_transaction_id(&get_mock_env()).unwrap();
         assert_eq!(response.events.len(), 4);
 
@@ -1077,16 +861,19 @@ mod tests {
             .decrypt_response(txn_id.clone(), decrypt_response.clone())
             .call(&owner)
             .unwrap();
-        // one event because there's always an execute event + the check sender event
+
+        // Two events because there's always an execute event
+        // + the check sender event
         assert_eq!(response.events.len(), 2);
 
         let response = contract
             .decrypt_response(txn_id.clone(), decrypt_response)
             .call(&owner)
             .unwrap();
-        // two events because there's always an execute event
-        // plus the decryption request since it reached the threshold
-        // plus the check sender event
+
+        // Three events because there's always an execute event
+        // + the decryption request since it reached the threshold
+        // + the check sender event
         assert_eq!(response.events.len(), 3);
 
         let expected_event = KmsEvent::builder()
@@ -1108,22 +895,17 @@ mod tests {
 
     #[test]
     fn test_preproc() {
-        let app = App::default();
+        let (app, owner, csc_address) = setup_test_env(true);
         let code_id = CodeId::store_code(&app);
-        let owner = "owner".into_addr();
+
         let fake_owner = "fake_owner".into_addr();
+
         let contract = code_id
             .instantiate(
                 Some(true),
-                DUMMY_BECH32_ADDR.to_string(),
-                KmsCoreConf {
-                    parties: vec![KmsCoreParty::default(); 4],
-                    response_count_for_majority_vote: 2,
-                    response_count_for_reconstruction: 3,
-                    degree_for_reconstruction: 1,
-                    param_choice: FheParameter::Test,
-                },
-                Some(AllowedAddresses::default_all_to(owner.as_str())),
+                DUMMY_PROOF_CONTRACT_ADDR.to_string(),
+                csc_address,
+                Some(AllowlistsAsc::default_all_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
@@ -1176,23 +958,18 @@ mod tests {
 
     #[test]
     fn test_keygen() {
-        let app = App::default();
+        let (app, owner, csc_address) = setup_test_env(true);
         let code_id = CodeId::store_code(&app);
-        let owner = "owner".into_addr();
+
         let fake_owner = "fake_owner".into_addr();
         let fake_txn_id = vec![1, 2, 3];
+
         let contract = code_id
             .instantiate(
                 Some(true),
-                DUMMY_BECH32_ADDR.to_string(),
-                KmsCoreConf {
-                    parties: vec![KmsCoreParty::default(); 4],
-                    response_count_for_majority_vote: 2,
-                    response_count_for_reconstruction: 3,
-                    degree_for_reconstruction: 1,
-                    param_choice: FheParameter::Test,
-                },
-                Some(AllowedAddresses::default_all_to(owner.as_str())),
+                DUMMY_PROOF_CONTRACT_ADDR.to_string(),
+                csc_address,
+                Some(AllowlistsAsc::default_all_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
@@ -1208,9 +985,9 @@ mod tests {
         .unwrap();
 
         let response = contract.keygen(keygen_val.clone()).call(&owner).unwrap();
-        let txn_id = BackendContract::compute_transaction_id(&get_mock_env()).unwrap();
         assert_eq!(response.events.len(), 3);
 
+        let txn_id = BackendContract::compute_transaction_id(&get_mock_env()).unwrap();
         let expected_event = KmsEvent::builder()
             .operation(KmsOperation::KeyGen)
             .txn_id(txn_id.clone())
@@ -1247,13 +1024,21 @@ mod tests {
             .keygen_response(txn_id.clone(), keygen_response.clone())
             .call(&owner)
             .unwrap();
+
+        // Two events because there's always an execute event
+        // + the check sender event
+        // + ACL update event
         assert_eq!(response.events.len(), 3);
 
         let response = contract
             .keygen_response(txn_id.clone(), keygen_response.clone())
             .call(&owner)
             .unwrap();
-        // one exec and two response events + the check sender event
+
+        // Three events because there's always an execute event
+        // + the keygen request since it reached the threshold
+        // + the check sender event
+        // + ACL update event
         assert_eq!(response.events.len(), 4);
 
         let expected_event = KmsEvent::builder()
@@ -1315,23 +1100,18 @@ mod tests {
 
     #[test]
     fn test_insecure_keygen() {
-        let app = App::default();
+        let (app, owner, csc_address) = setup_test_env(true);
         let code_id = CodeId::store_code(&app);
-        let owner = "owner".into_addr();
+
         let fake_owner = "fake_owner".into_addr();
         let fake_txn_id = vec![1, 2, 3];
+
         let contract = code_id
             .instantiate(
                 Some(true),
-                DUMMY_BECH32_ADDR.to_string(),
-                KmsCoreConf {
-                    parties: vec![KmsCoreParty::default(); 4],
-                    response_count_for_majority_vote: 2,
-                    response_count_for_reconstruction: 3,
-                    degree_for_reconstruction: 1,
-                    param_choice: FheParameter::Test,
-                },
-                Some(AllowedAddresses::default_all_to(owner.as_str())),
+                DUMMY_PROOF_CONTRACT_ADDR.to_string(),
+                csc_address,
+                Some(AllowlistsAsc::default_all_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
@@ -1416,30 +1196,16 @@ mod tests {
 
     #[test]
     fn test_reencrypt() {
-        let owner = Addr::unchecked("owner");
-        let key_id = vec![5];
-
-        let app = cw_multi_test::App::new(|router, _api, storage| {
-            router
-                .bank
-                .init_balance(storage, &owner, coins(5000000, UCOSM))
-                .unwrap();
-        });
-
-        let app = App::new(app);
+        let (app, owner, csc_address) = setup_test_env(false);
         let code_id = CodeId::store_code(&app);
+
+        let key_id = vec![5];
 
         let contract = code_id
             .instantiate(
                 Some(true),
-                DUMMY_BECH32_ADDR.to_string(),
-                KmsCoreConf {
-                    parties: vec![KmsCoreParty::default(); 4],
-                    response_count_for_majority_vote: 2,
-                    response_count_for_reconstruction: 3,
-                    degree_for_reconstruction: 1,
-                    param_choice: FheParameter::Test,
-                },
+                DUMMY_PROOF_CONTRACT_ADDR.to_string(),
+                csc_address,
                 None,
             )
             .call(&owner)
@@ -1492,8 +1258,9 @@ mod tests {
             .call(&owner)
             .unwrap();
 
-        let txn_id = BackendContract::compute_transaction_id(&get_mock_env()).unwrap();
         assert_eq!(response.events.len(), 3);
+
+        let txn_id = BackendContract::compute_transaction_id(&get_mock_env()).unwrap();
 
         let expected_event = KmsEvent::builder()
             .operation(KmsOperation::Reencrypt)
@@ -1520,7 +1287,10 @@ mod tests {
             .reencrypt_response(txn_id.clone(), response_values.clone())
             .call(&owner)
             .unwrap();
-        // one exec and one response event (+ the check sender event) since we hit the threshold of 3
+
+        // Three events because there's always an execute event
+        // + the reencrypt request since it reached the threshold
+        // + the check sender event
         assert_eq!(response.events.len(), 3);
 
         let expected_event = KmsEvent::builder()
@@ -1533,23 +1303,17 @@ mod tests {
 
     #[test]
     fn test_crs_gen() {
-        let app = App::default();
+        let (app, owner, csc_address) = setup_test_env(true);
         let code_id = CodeId::store_code(&app);
-        let owner = "owner".into_addr();
+
         let fake_owner = "fake_owner".into_addr();
 
         let contract = code_id
             .instantiate(
                 Some(true),
-                DUMMY_BECH32_ADDR.to_string(),
-                KmsCoreConf {
-                    parties: vec![KmsCoreParty::default(); 4],
-                    response_count_for_majority_vote: 2,
-                    response_count_for_reconstruction: 3,
-                    degree_for_reconstruction: 1,
-                    param_choice: FheParameter::Test,
-                },
-                Some(AllowedAddresses::default_all_to(owner.as_str())),
+                DUMMY_PROOF_CONTRACT_ADDR.to_string(),
+                csc_address,
+                Some(AllowlistsAsc::default_all_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
@@ -1595,13 +1359,19 @@ mod tests {
             .crs_gen_response(txn_id.clone(), crs_gen_response.clone())
             .call(&owner)
             .unwrap();
+
+        // Two events because there's always an execute event
+        // + the check sender event
         assert_eq!(response.events.len(), 2);
 
         let response = contract
             .crs_gen_response(txn_id.clone(), crs_gen_response.clone())
             .call(&owner)
             .unwrap();
-        // one exec and two response events + the check sender event
+
+        // Three events because there's always an execute event
+        // + the crs gen request since it reached the threshold
+        // + the check sender event
         assert_eq!(response.events.len(), 3);
 
         let expected_event = KmsEvent::builder()
@@ -1672,29 +1442,15 @@ mod tests {
 
     #[test]
     fn test_get_operations_values_from_event() {
-        let caller = Addr::unchecked("caller");
-        let app = cw_multi_test::App::new(|router, _api, storage| {
-            router
-                .bank
-                .init_balance(storage, &caller, coins(5000000, UCOSM))
-                .unwrap();
-        });
-        let app = App::new(app);
+        let (app, owner, csc_address) = setup_test_env(false);
         let code_id = CodeId::store_code(&app);
-        let owner = "owner".into_addr();
 
         let contract = code_id
             .instantiate(
                 Some(true),
-                DUMMY_BECH32_ADDR.to_string(),
-                KmsCoreConf {
-                    parties: vec![KmsCoreParty::default(); 4],
-                    response_count_for_majority_vote: 2,
-                    response_count_for_reconstruction: 3,
-                    degree_for_reconstruction: 1,
-                    param_choice: FheParameter::Test,
-                },
-                Some(AllowedAddresses::default_all_to(owner.as_str())),
+                DUMMY_PROOF_CONTRACT_ADDR.to_string(),
+                csc_address,
+                Some(AllowlistsAsc::default_all_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
@@ -1736,17 +1492,25 @@ mod tests {
             FheParameter::Test,
         );
 
-        // Two keygen response event
         let response = contract
             .keygen_response(txn_id.clone(), keygen_response.clone())
             .call(&owner)
             .unwrap();
+
+        // Two events because there's always an execute event
+        // + the check sender event
+        // + ACL update event
         assert_eq!(response.events.len(), 3);
 
         let response = contract
             .keygen_response(txn_id.clone(), keygen_response.clone())
             .call(&owner)
             .unwrap();
+
+        // Three events because there's always an execute event
+        // + the keygen response since it reached the threshold
+        // + the check sender event
+        // + ACL update event
         assert_eq!(response.events.len(), 4);
 
         let expected_event = KmsEvent::builder()
@@ -1772,19 +1536,18 @@ mod tests {
         assert!(not_expected_data.unwrap().is_empty());
     }
 
-    /// Test the `allowed_to_gen` list's logic. In particular this test makes sure to consider all
+    /// Test the `generate` list's logic. In particular this test makes sure to consider all
     /// kinds of possible inputs for this list.
     #[test]
-    fn test_is_allowed_to_gen() {
-        let owner = "owner".into_addr();
+    fn test_is_allowed_to_generate() {
+        let (app, owner, csc_address) = setup_test_env(true);
+
         let user = "user".into_addr();
         let another_user = "another_user".into_addr();
         let connector = "connector".into_addr();
-        let app = App::default();
 
         let allowed_to_response = vec![connector.to_string()];
         let admins = vec![owner.to_string()];
-        let super_admins = vec![owner.to_string()];
 
         let crsgen_val = CrsGenValues::new(
             192,
@@ -1796,7 +1559,7 @@ mod tests {
         )
         .unwrap();
 
-        for (allowed_to_gen, allowed, instantiation_ok) in [
+        for (allowed_to_generate, allowed, instantiation_ok) in [
             (None, vec![true, false, false], true), // Defaults to owner only
             (Some(vec![]), vec![false, false, false], true), // Empty -> no one can operate (not sure this is really useful)
             (Some(vec!["".to_string()]), vec![false, false, false], false), // Instantiation error -> not a valid address
@@ -1818,21 +1581,14 @@ mod tests {
                 let contract = code_id
                     .instantiate(
                         Some(true),
-                        DUMMY_BECH32_ADDR.to_string(),
-                        KmsCoreConf {
-                            parties: vec![KmsCoreParty::default(); 4],
-                            response_count_for_majority_vote: 2,
-                            response_count_for_reconstruction: 3,
-                            degree_for_reconstruction: 1,
-                            param_choice: FheParameter::Test,
-                        },
-                        allowed_to_gen
+                        DUMMY_PROOF_CONTRACT_ADDR.to_string(),
+                        csc_address.clone(),
+                        allowed_to_generate
                             .clone()
-                            .map(|allowed_to_gen| AllowedAddresses {
-                                allowed_to_gen,
-                                allowed_to_response: allowed_to_response.clone(),
-                                admins: admins.clone(),
-                                super_admins: super_admins.clone(),
+                            .map(|allowed_to_generate| AllowlistsAsc {
+                                generate: allowed_to_generate,
+                                response: allowed_to_response.clone(),
+                                admin: admins.clone(),
                             }),
                     )
                     .call(&owner)
@@ -1850,10 +1606,10 @@ mod tests {
                         // Failure
                         contract.crs_gen(crsgen_val.clone()).call(&wallet).expect_err(
                             format!(
-                                "{} ({}) wasn't allowed to call CRS gen but somehow succeeded with `allowed_to_gen` list: {:?}.",
+                                "{} ({}) wasn't allowed to call CRS gen but somehow succeeded with `generate` list: {:?}.",
                                 wallet_name,
                                 wallet,
-                                allowed_to_gen,
+                                allowed_to_generate,
                             )
                             .as_str(),
                         );
@@ -1863,28 +1619,21 @@ mod tests {
                 code_id
                     .instantiate(
                         Some(true),
-                        DUMMY_BECH32_ADDR.to_string(),
-                        KmsCoreConf {
-                            parties: vec![KmsCoreParty::default(); 4],
-                            response_count_for_majority_vote: 2,
-                            response_count_for_reconstruction: 3,
-                            degree_for_reconstruction: 1,
-                            param_choice: FheParameter::Test,
-                        },
-                        allowed_to_gen.clone().map(|allowed_to_gen: Vec<String>| {
-                            AllowedAddresses {
-                                allowed_to_gen,
-                                allowed_to_response: allowed_to_response.clone(),
-                                admins: admins.clone(),
-                                super_admins: super_admins.clone(),
-                            }
-                        }),
+                        DUMMY_PROOF_CONTRACT_ADDR.to_string(),
+                        csc_address.clone(),
+                        allowed_to_generate
+                            .clone()
+                            .map(|allowed_to_generate: Vec<String>| AllowlistsAsc {
+                                generate: allowed_to_generate,
+                                response: allowed_to_response.clone(),
+                                admin: admins.clone(),
+                            }),
                     )
                     .call(&owner)
                     .expect_err(
                         format!(
                             "Instantiation didn't fail as expected with allow-list: {:?}.",
-                            allowed_to_gen
+                            allowed_to_generate
                         )
                         .as_str(),
                     );
@@ -1897,24 +1646,14 @@ mod tests {
     /// the same logic).
     #[test]
     fn test_is_allowed_to_response() {
-        let gateway = Addr::unchecked("gateway");
-
-        let app = cw_multi_test::App::new(|router, _api, storage| {
-            router
-                .bank
-                .init_balance(storage, &gateway, coins(5000000, UCOSM))
-                .unwrap();
-        });
-
-        let app = App::new(app);
+        let (app, owner, csc_address) = setup_test_env(true);
         let code_id = CodeId::store_code(&app);
-        let owner = "owner".into_addr();
+
         let fake_owner = "fake_owner".into_addr();
         let friend_owner = "friend_owner".into_addr();
 
-        let allowed_to_gen = vec![owner.to_string()];
+        let allowed_to_generate = vec![owner.to_string()];
         let admins = vec![owner.to_string()];
-        let super_admins = vec![owner.to_string()];
 
         // Only the `owner` and `friend_owner` are allowed to trigger a decrypt response
         let allowed_to_response = vec![owner.to_string(), friend_owner.to_string()];
@@ -1923,19 +1662,12 @@ mod tests {
         let contract = code_id
             .instantiate(
                 Some(true),
-                DUMMY_BECH32_ADDR.to_string(),
-                KmsCoreConf {
-                    parties: vec![KmsCoreParty::default(); 4],
-                    response_count_for_majority_vote: 2,
-                    response_count_for_reconstruction: 3,
-                    degree_for_reconstruction: 1,
-                    param_choice: FheParameter::Test,
-                },
-                Some(AllowedAddresses {
-                    allowed_to_gen,
-                    allowed_to_response: allowed_to_response.clone(),
-                    admins: admins.clone(),
-                    super_admins: super_admins.clone(),
+                DUMMY_PROOF_CONTRACT_ADDR.to_string(),
+                csc_address,
+                Some(AllowlistsAsc {
+                    generate: allowed_to_generate,
+                    response: allowed_to_response.clone(),
+                    admin: admins.clone(),
                 }),
             )
             .call(&owner)
@@ -1972,7 +1704,7 @@ mod tests {
 
         assert!(
             response_not_allowed_error.contains("is not allowed"),
-            "Fake owner was allowed to call a decrypt response with address {}, whitelist {:?} and error: {}",
+            "Fake owner was allowed to call a decrypt response with address {}, allowlist {:?} and error: {}",
             fake_owner,
             allowed_to_response,
             response_not_allowed_error
@@ -1981,202 +1713,90 @@ mod tests {
 
     #[test]
     fn test_is_allowed_to_admin() {
-        let gateway = Addr::unchecked("gateway");
-
-        let app = cw_multi_test::App::new(|router, _api, storage| {
-            router
-                .bank
-                .init_balance(storage, &gateway, coins(5000000, UCOSM))
-                .unwrap();
-        });
-
-        let app = App::new(app);
+        let (app, owner, csc_address) = setup_test_env(true);
         let code_id = CodeId::store_code(&app);
-        let owner = "owner".into_addr();
-        let fake_owner = "fake_owner".into_addr();
 
-        let allowed_to_gen = vec![owner.to_string()];
+        let friend_owner = "friend_owner".into_addr();
+
+        let allowed_to_generate = vec![owner.to_string()];
         let allowed_to_response = vec![owner.to_string()];
-        let super_admins = vec![owner.to_string()];
 
         // Only the `owner` is allowed to trigger admin operations for now
         let admins = vec![owner.to_string()];
 
-        let initial_kms_core_conf = KmsCoreConf {
-            parties: vec![KmsCoreParty::default(); 4],
-            response_count_for_majority_vote: 2,
-            response_count_for_reconstruction: 3,
-            degree_for_reconstruction: 1,
-            param_choice: FheParameter::Test,
-        };
-
         // Instantiate the contract
         let contract = code_id
             .instantiate(
                 Some(true),
-                DUMMY_BECH32_ADDR.to_string(),
-                initial_kms_core_conf.clone(),
-                Some(AllowedAddresses {
-                    allowed_to_gen,
-                    allowed_to_response: allowed_to_response.clone(),
-                    admins: admins.clone(),
-                    super_admins: super_admins.clone(),
+                DUMMY_PROOF_CONTRACT_ADDR.to_string(),
+                csc_address,
+                Some(AllowlistsAsc {
+                    generate: allowed_to_generate,
+                    response: allowed_to_response.clone(),
+                    admin: admins.clone(),
                 }),
             )
             .call(&owner)
             .unwrap();
 
-        // Fake owner is not allowed to trigger admin operations, like updating the KMS
-        // core configuration
+        // Friend owner is not allowed to trigger admin operations
         contract
-            .update_kms_core_conf(initial_kms_core_conf.clone())
-            .call(&fake_owner)
-            .unwrap_err();
-
-        // Only the owner can do so
-        contract
-            .update_kms_core_conf(initial_kms_core_conf.clone())
-            .call(&owner)
-            .unwrap();
-    }
-
-    #[test]
-    fn test_is_allowed_to_super_admin() {
-        let gateway = Addr::unchecked("gateway");
-
-        let app = cw_multi_test::App::new(|router, _api, storage| {
-            router
-                .bank
-                .init_balance(storage, &gateway, coins(5000000, UCOSM))
-                .unwrap();
-        });
-
-        let app = App::new(app);
-        let code_id = CodeId::store_code(&app);
-        let owner = "owner".into_addr();
-        let friend_owner = "friend_owner".into_addr();
-
-        let allowed_to_gen = vec![owner.to_string()];
-        let allowed_to_response = vec![owner.to_string()];
-
-        // Only the `owner` is allowed to trigger super-admin operations for now
-        let admins = vec![owner.to_string()];
-
-        // Only the `owner` is allowed to trigger super-admin operations
-        let super_admins = vec![owner.to_string()];
-
-        let initial_kms_core_conf = KmsCoreConf {
-            parties: vec![KmsCoreParty::default(); 4],
-            response_count_for_majority_vote: 2,
-            response_count_for_reconstruction: 3,
-            degree_for_reconstruction: 1,
-            param_choice: FheParameter::Test,
-        };
-
-        // Instantiate the contract
-        let contract = code_id
-            .instantiate(
-                Some(true),
-                DUMMY_BECH32_ADDR.to_string(),
-                initial_kms_core_conf.clone(),
-                Some(AllowedAddresses {
-                    allowed_to_gen,
-                    allowed_to_response: allowed_to_response.clone(),
-                    admins: admins.clone(),
-                    super_admins: super_admins.clone(),
-                }),
-            )
-            .call(&owner)
-            .unwrap();
-
-        // Friend owner is still not allowed to trigger admin operations, like updating the KMS
-        // core configuration
-        contract
-            .update_kms_core_conf(initial_kms_core_conf.clone())
+            .add_allowlist(friend_owner.to_string(), AllowlistTypeAsc::Admin)
             .call(&friend_owner)
             .unwrap_err();
-
-        // Owner can do so
-        contract
-            .update_kms_core_conf(initial_kms_core_conf.clone())
-            .call(&owner)
-            .unwrap();
 
         // Owner can add friend owner to the admin list
         contract
-            .add_allowed_address(friend_owner.to_string(), OperationType::Admin)
+            .add_allowlist(friend_owner.to_string(), AllowlistTypeAsc::Admin)
             .call(&owner)
             .unwrap();
 
-        // Now, friend owner can update the KMS core configuration
+        // Now, friend owner can remove owner from the admin list
         contract
-            .update_kms_core_conf(initial_kms_core_conf.clone())
+            .remove_allowlist(owner.to_string(), AllowlistTypeAsc::Admin)
             .call(&friend_owner)
             .unwrap();
 
-        // Owner can also remove friend owner from the admin list
+        // Owner is no longer an admin
         contract
-            .remove_allowed_address(friend_owner.to_string(), OperationType::Admin)
+            .add_allowlist(owner.to_string(), AllowlistTypeAsc::Admin)
             .call(&owner)
-            .unwrap();
+            .unwrap_err();
 
-        // Friend owner is no longer an admin
+        // Friend owner cannot remove himself from the admin list since there is only one
+        // admin
         contract
-            .update_kms_core_conf(initial_kms_core_conf.clone())
+            .remove_allowlist(friend_owner.to_string(), AllowlistTypeAsc::Admin)
             .call(&friend_owner)
             .unwrap_err();
 
-        // Owner cannot remove himself from the super-admin list since there is only one super-admin
+        // Friend owner replaces the entire admin list with [owner]
         contract
-            .remove_allowed_address(owner.to_string(), OperationType::SuperAdmin)
-            .call(&owner)
-            .unwrap_err();
-
-        // Owner replaces the entire admin list
-        contract
-            .replace_allowed_addresses(vec![friend_owner.to_string()], OperationType::Admin)
-            .call(&owner)
-            .unwrap();
-
-        // Friend owner can now update the KMS core configuration again
-        contract
-            .update_kms_core_conf(initial_kms_core_conf.clone())
+            .replace_allowlists(vec![owner.to_string()], AllowlistTypeAsc::Admin)
             .call(&friend_owner)
             .unwrap();
 
-        // Owner cannot update the KMS core configuration anymore
+        // Owner can update the admin list back again, but cannot replace it with an empty one
         contract
-            .update_kms_core_conf(initial_kms_core_conf)
-            .call(&owner)
-            .unwrap_err();
-
-        // Owner cannot replace the admin list with an empty one
-        contract
-            .replace_allowed_addresses(vec![], OperationType::Admin)
+            .replace_allowlists(vec![], AllowlistTypeAsc::Admin)
             .call(&owner)
             .unwrap_err();
     }
 
     #[test]
     fn test_grant_key_access_to_address() {
-        let app = App::default();
+        let (app, owner, csc_address) = setup_test_env(true);
         let code_id = CodeId::store_code(&app);
-        let owner = "owner".into_addr();
+
         let new_address = "new_address".into_addr();
         let key_id = HexVector::from(vec![1, 2, 3]);
 
         let contract = code_id
             .instantiate(
                 Some(true),
-                DUMMY_BECH32_ADDR.to_string(),
-                KmsCoreConf {
-                    parties: vec![KmsCoreParty::default(); 4],
-                    response_count_for_majority_vote: 2,
-                    response_count_for_reconstruction: 3,
-                    degree_for_reconstruction: 1,
-                    param_choice: FheParameter::Test,
-                },
-                Some(AllowedAddresses::default_all_to(owner.as_str())),
+                DUMMY_PROOF_CONTRACT_ADDR.to_string(),
+                csc_address,
+                Some(AllowlistsAsc::default_all_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
@@ -2196,243 +1816,5 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.events.len(), 3);
-    }
-
-    // Provide an "old" dummy versioned smart contract implementation
-    mod v0 {
-        use cosmwasm_std::{Addr, Response, StdResult};
-        use cw2::set_contract_version;
-        use sylvia::types::{InstantiateCtx, QueryCtx};
-        use sylvia::{contract, entry_points};
-
-        use crate::versioned_storage::tests::v0::{MyStruct, VersionedStorage};
-
-        // Info for migration
-        const CONTRACT_NAME: &str = "my_contract_name";
-        const CONTRACT_VERSION: &str = "1.0.0";
-
-        #[derive(Default)]
-        pub struct MyContract {
-            pub storage: VersionedStorage,
-        }
-
-        #[entry_points]
-        #[contract]
-        impl MyContract {
-            pub fn new() -> Self {
-                Self::default()
-            }
-
-            // Entrypoint for instantiating the contract
-            // It also sets the contract name and version in the storage
-            #[sv::msg(instantiate)]
-            pub fn instantiate(&self, ctx: InstantiateCtx) -> StdResult<Response> {
-                set_contract_version(ctx.deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
-
-                self.storage
-                    .my_versioned_item
-                    .save(ctx.deps.storage, &MyStruct::new("v0"))?;
-                Ok(Response::default())
-            }
-
-            // Entrypoint for querying the contract
-            #[sv::msg(query)]
-            pub fn load_my_struct(&self, ctx: QueryCtx) -> StdResult<MyStruct> {
-                self.storage.my_versioned_item.load(ctx.deps.storage)
-            }
-
-            // Get the contract's address
-            #[sv::msg(query)]
-            pub fn get_address(&self, ctx: QueryCtx) -> StdResult<Addr> {
-                Ok(ctx.env.contract.address)
-            }
-
-            // Note that there is no entrypoint for migrating the contract since this is the first
-            // version
-        }
-    }
-
-    // Provide a "new" dummy versioned smart contract implementation with a migrate entrypoint
-    mod v1 {
-        use cosmwasm_std::{Addr, Binary, Response, StdResult};
-        use cw2::{ensure_from_older_version, set_contract_version};
-        use sylvia::types::{InstantiateCtx, MigrateCtx, QueryCtx};
-        use sylvia::{contract, entry_points};
-
-        use crate::versioned_storage::tests::v1::{MyStruct, VersionedStorage};
-
-        // Info for migration
-        const CONTRACT_NAME: &str = "my_contract_name";
-        const CONTRACT_VERSION: &str = "2.0.0";
-
-        #[derive(Default)]
-        pub struct MyContract {
-            pub storage: VersionedStorage,
-        }
-
-        #[entry_points]
-        #[contract]
-        impl MyContract {
-            pub fn new() -> Self {
-                Self::default()
-            }
-
-            // Entrypoint for instantiating the contract
-            // It also sets the contract name and version in the storage
-            // None: since we are going to migrate the old contract to this new code, this
-            // instantiation entrypoint should not be called
-            #[sv::msg(instantiate)]
-            pub fn instantiate(&self, ctx: InstantiateCtx) -> StdResult<Response> {
-                set_contract_version(ctx.deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
-
-                self.storage
-                    .my_versioned_item
-                    .save(ctx.deps.storage, &MyStruct::new("v1"))?;
-                Ok(Response::default())
-            }
-
-            // Entrypoint for querying the contract
-            #[sv::msg(query)]
-            pub fn load_my_struct(&self, ctx: QueryCtx) -> StdResult<MyStruct<u8>> {
-                self.storage.my_versioned_item.load(ctx.deps.storage)
-            }
-
-            // Entrypoint for migrating the contract from old to new version
-            // Use a `_test` parameter for testing purposes only
-            // It also checks that the given storage (representing the old contract's storage) is
-            // compatible with the new version
-            #[allow(unused_variables)]
-            #[sv::msg(migrate)]
-            pub fn migrate(&self, ctx: MigrateCtx, _test: Binary) -> StdResult<Response> {
-                let _original_version =
-                    ensure_from_older_version(ctx.deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
-                Ok(Response::default())
-            }
-
-            // Get the contract's address
-            #[sv::msg(query)]
-            pub fn get_address(&self, ctx: QueryCtx) -> StdResult<Addr> {
-                Ok(ctx.env.contract.address)
-            }
-        }
-    }
-
-    #[test]
-    fn test_contract_migration() {
-        use crate::versioned_storage::tests::v1::MyStruct as MyNewStruct;
-        use v0::sv::mt::MyContractProxy;
-
-        // Define the blockchain application simulator
-        let cw_app = CwApp::default();
-        let sylvia_app = App::new(cw_app);
-
-        // Define the contract's owner
-        let owner = "owner".into_addr();
-
-        // Instantiate the old contract
-        let old_code_id = v0::sv::mt::CodeId::store_code(&sylvia_app);
-        let old_contract = old_code_id
-            .instantiate()
-            .with_admin(owner.as_str())
-            .call(&owner)
-            .unwrap();
-
-        // Load the old struct. This requires `MyContractProxy` to be in scope
-        let old_item = old_contract.load_my_struct().unwrap();
-        assert_eq!(old_item.attribute_0, "v0");
-
-        // Get the old contract's address and make sure it matches the address of CosmWasm's proxy contract
-        let old_address = old_contract.get_address().unwrap();
-        assert_eq!(old_address, old_contract.contract_addr);
-
-        // Store the new code and get its code id
-        // Note that the new contract must not be instantiated at any time
-        let new_code_id = v1::sv::mt::CodeId::store_code(&sylvia_app);
-
-        // Build the migrate message for the new code
-        // There might be a way to automatically build this message (via the `Sylvia` framework)
-        let migrate_msg = v1::sv::MigrateMsg {
-            _test: Binary::default(),
-        };
-
-        // Define a fake owner for the contract
-        let fake_owner = "fake_owner".into_addr();
-
-        // Check that the migration fails when using the wrong owner as the sender. This is because
-        // this fake owner has not been registered as an admin when instantiating the old contract.
-        // Note that CosmWasm does provide a way to update admins for a contract
-        sylvia_app
-            .app_mut()
-            .migrate_contract(
-                fake_owner.clone(),
-                old_contract.contract_addr.clone(),
-                &migrate_msg,
-                new_code_id.code_id(),
-            )
-            .unwrap_err();
-
-        // Define a fake code id
-        let fake_code_id = new_code_id.code_id() + 10;
-
-        // Check that the migration fails when using a non-registered code id. This is because this
-        // `fake_code_id` has not been stored in the blockchain app at any time
-        sylvia_app
-            .app_mut()
-            .migrate_contract(
-                fake_owner.clone(),
-                old_contract.contract_addr.clone(),
-                &migrate_msg,
-                fake_code_id,
-            )
-            .unwrap_err();
-
-        // Migrate the old contract to the new code using the underlying CosmWasm app
-        // The `Sylvia` framework does provide a migrate feature but does not seem to fully support
-        // it when testing it. More specifically, it does not allow migrate a contract to a new code
-        // without having the old contract exposing a migrate entrypoint. Additionally, it will pass
-        // the old contract's migrate message (after building it automatically) instead of the new one,
-        // which does not make much sense. This is why we directly use the underlying CosmWasm app to
-        // perform the migration
-        // Note that this requires the `Executor` trait from `cw_multi_test` to be in scope
-        sylvia_app
-            .app_mut()
-            .migrate_contract(
-                owner.clone(),
-                old_contract.contract_addr.clone(),
-                &migrate_msg,
-                new_code_id.code_id(),
-            )
-            .unwrap();
-
-        // Build the new query message for the new contract
-        // Similarly, there might be a way to automatically build this message (via the `Sylvia`
-        // framework)
-        let query_msg = v1::sv::QueryMsg::LoadMyStruct {};
-
-        // Query the new contract to load the new struct
-        // Similarly, the `Sylvia` framework does not support querying the new contract after
-        // migration. Because the new contract is never really built, meaning we need to keep using
-        // the old contract instance, which does not provide the right methods and/or signatures
-        // (i.e. the ones of the new contract). This is why we directly use the underlying CosmWasm
-        // app to query the new contract
-        let new_item: MyNewStruct<u8> = sylvia_app
-            .app()
-            .wrap()
-            .query_wasm_smart(&old_contract.contract_addr, &query_msg)
-            .unwrap();
-
-        // Test that the old struct has been loaded and updated to its new version
-        assert_eq!(new_item.attribute_0, "v0");
-        assert_eq!(new_item.attribute_1, 0);
-
-        // Get the new contract's address and make sure it matches the old contract's one
-        let query_msg = v1::sv::QueryMsg::GetAddress {};
-        let new_address: Addr = sylvia_app
-            .app()
-            .wrap()
-            .query_wasm_smart(&old_contract.contract_addr, &query_msg)
-            .unwrap();
-
-        assert_eq!(new_address, old_address);
     }
 }

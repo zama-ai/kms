@@ -14,7 +14,7 @@ use conf_trace::telemetry::ContextPropagator;
 use enum_dispatch::enum_dispatch;
 use events::kms::{
     CrsGenValues, DecryptResponseValues, DecryptValues, InsecureCrsGenValues, InsecureKeyGenValues,
-    KeyGenPreprocResponseValues, KeyGenResponseValues, KeyGenValues, KmsCoreConf, KmsEvent,
+    KeyGenPreprocResponseValues, KeyGenResponseValues, KeyGenValues, KmsConfig, KmsEvent,
     OperationValue, ReencryptResponseValues, ReencryptValues, TransactionId,
     VerifyProvenCtResponseValues, VerifyProvenCtValues,
 };
@@ -98,26 +98,26 @@ where
 {
     async fn run_operation(
         &self,
-        config_contract: Option<KmsCoreConf>,
+        kms_configuration: Option<KmsConfig>,
     ) -> anyhow::Result<KmsOperationResponse> {
         match self {
-            KmsOperationRequest::Decrypt(decrypt) => decrypt.run_operation(config_contract).await,
+            KmsOperationRequest::Decrypt(decrypt) => decrypt.run_operation(kms_configuration).await,
             KmsOperationRequest::Reencrypt(reencrypt) => {
-                reencrypt.run_operation(config_contract).await
+                reencrypt.run_operation(kms_configuration).await
             }
             KmsOperationRequest::VerifyProvenCt(verify_proven_ct) => {
-                verify_proven_ct.run_operation(config_contract).await
+                verify_proven_ct.run_operation(kms_configuration).await
             }
             KmsOperationRequest::KeyGenPreproc(keygen_preproc) => {
-                keygen_preproc.run_operation(config_contract).await
+                keygen_preproc.run_operation(kms_configuration).await
             }
-            KmsOperationRequest::KeyGen(keygen) => keygen.run_operation(config_contract).await,
+            KmsOperationRequest::KeyGen(keygen) => keygen.run_operation(kms_configuration).await,
             KmsOperationRequest::InsecureKeyGen(insecure_key_gen) => {
-                insecure_key_gen.run_operation(config_contract).await
+                insecure_key_gen.run_operation(kms_configuration).await
             }
-            KmsOperationRequest::CrsGen(crsgen) => crsgen.run_operation(config_contract).await,
+            KmsOperationRequest::CrsGen(crsgen) => crsgen.run_operation(kms_configuration).await,
             KmsOperationRequest::InsecureCrsGen(insecure_crs_gen) => {
-                insecure_crs_gen.run_operation(config_contract).await
+                insecure_crs_gen.run_operation(kms_configuration).await
             }
         }
     }
@@ -132,10 +132,10 @@ where
         &self,
         event: KmsEvent,
         operation_value: OperationValue,
-        config_contract: Option<KmsCoreConf>,
+        kms_configuration: Option<KmsConfig>,
     ) -> anyhow::Result<KmsOperationResponse> {
         let operation = self.create_kms_operation(event, operation_value)?;
-        operation.run_operation(config_contract).await
+        operation.run_operation(kms_configuration).await
     }
 }
 
@@ -144,7 +144,7 @@ where
 pub trait KmsEventHandler {
     async fn run_operation(
         &self,
-        config_contract: Option<KmsCoreConf>,
+        kms_configuration: Option<KmsConfig>,
     ) -> anyhow::Result<KmsOperationResponse>;
 }
 
@@ -312,7 +312,7 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
-        _config_contract: Option<KmsCoreConf>,
+        _kms_configuration: Option<KmsConfig>,
     ) -> anyhow::Result<KmsOperationResponse> {
         let chan = &self.operation_val.kms_client.channel;
         let mut client =
@@ -453,7 +453,7 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
-        _config_contract: Option<KmsCoreConf>,
+        _kms_configuration: Option<KmsConfig>,
     ) -> anyhow::Result<KmsOperationResponse> {
         let chan = &self.operation_val.kms_client.channel;
         let mut client =
@@ -570,7 +570,7 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
-        _config_contract: Option<KmsCoreConf>,
+        _kms_configuration: Option<KmsConfig>,
     ) -> anyhow::Result<KmsOperationResponse> {
         let chan = &self.operation_val.kms_client.channel;
         let mut client =
@@ -677,10 +677,10 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
-        config_contract: Option<KmsCoreConf>,
+        kms_configuration: Option<KmsConfig>,
     ) -> anyhow::Result<KmsOperationResponse> {
-        let param_choice_str = config_contract
-            .ok_or_else(|| anyhow!("config contract missing"))?
+        let param_choice_str = kms_configuration
+            .ok_or_else(|| anyhow!("KMS configuration is missing"))?
             .param_choice_string();
         let param_choice = ParamChoice::from_str_name(&param_choice_str).ok_or_else(|| {
             anyhow!(
@@ -773,10 +773,10 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
-        config_contract: Option<KmsCoreConf>,
+        kms_configuration: Option<KmsConfig>,
     ) -> anyhow::Result<KmsOperationResponse> {
-        let param_choice = config_contract
-            .ok_or_else(|| anyhow!("config contract missing"))?
+        let param_choice = kms_configuration
+            .ok_or_else(|| anyhow!("KMS configuration is missing"))?
             .param_choice();
         let chan = &self.operation_val.kms_client.channel;
         let mut client =
@@ -877,10 +877,10 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
-        config_contract: Option<KmsCoreConf>,
+        kms_configuration: Option<KmsConfig>,
     ) -> anyhow::Result<KmsOperationResponse> {
-        let param_choice = config_contract
-            .ok_or_else(|| anyhow!("config contract missing"))?
+        let param_choice = kms_configuration
+            .ok_or_else(|| anyhow!("KMS configuration is missing"))?
             .param_choice();
 
         let chan = &self.operation_val.kms_client.channel;
@@ -992,10 +992,10 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
-        config_contract: Option<KmsCoreConf>,
+        kms_configuration: Option<KmsConfig>,
     ) -> anyhow::Result<KmsOperationResponse> {
-        let param_choice = config_contract
-            .ok_or_else(|| anyhow!("config contract missing"))?
+        let param_choice = kms_configuration
+            .ok_or_else(|| anyhow!("KMS configuration is missing"))?
             .param_choice();
 
         let chan = &self.operation_val.kms_client.channel;
@@ -1087,10 +1087,10 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
-        config_contract: Option<KmsCoreConf>,
+        kms_configuration: Option<KmsConfig>,
     ) -> anyhow::Result<KmsOperationResponse> {
-        let param_choice = config_contract
-            .ok_or_else(|| anyhow!("config contract missing"))?
+        let param_choice = kms_configuration
+            .ok_or_else(|| anyhow!("KMS configuration is missing"))?
             .param_choice();
 
         let chan = &self.operation_val.kms_client.channel;

@@ -27,7 +27,8 @@ impl std::fmt::Debug for SignKeyConfig {
 #[derive(TypedBuilder, Deserialize, Serialize, Clone, Default, Debug)]
 pub struct BlockchainConfig {
     pub addresses: Vec<String>,
-    pub contract: String,
+    pub asc_address: String,
+    pub csc_address: String,
     pub fee: ContractFee,
     pub signkey: SignKeyConfig,
     pub kv_store_address: Option<String>,

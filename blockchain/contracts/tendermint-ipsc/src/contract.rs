@@ -1,9 +1,9 @@
 use crate::proof::strategy::TendermintProofStrategy;
 use aipsc::contract::InclusionProofContract;
 use anyhow::{anyhow, Error};
-use cosmwasm_std::{Event, Response, StdError, StdResult};
-use cw2::{ensure_from_older_version, set_contract_version};
-use events::kms::MigrationEvent;
+use contracts_common::migrations::Migration;
+use cosmwasm_std::{Response, StdError, StdResult};
+use cw2::set_contract_version;
 use prost::Message;
 use sha3::{Digest, Keccak256};
 use sylvia::{
@@ -17,6 +17,13 @@ const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Default)]
 pub struct ProofContract {}
+
+/// Implement the `Migration` trait
+///
+/// This allows to migrate the contract's state from an old version to a new version, without
+/// changing its address. This will automatically use versioning to ensure compatibility between
+/// versions
+impl Migration for ProofContract {}
 
 #[entry_points]
 #[contract]
@@ -33,35 +40,14 @@ impl ProofContract {
         Ok(Response::default())
     }
 
-    // Migrate function to migrate from old version to new version
-    // As there is only one version of the ethereum-ipsc for now, this function has no real use. Future
-    // versions of the ethereum-ipsc will be required to provide this function, with additional migration
-    // logic if needed. This might include changing the function's signature.
+    /// Function to migrate from old version to new version
+    ///
+    /// As there is only one version of the contract for now, this function has no real use. Future
+    /// versions of the contract will be required to provide this function, with additional migration
+    /// logic if needed. This might include changing the function's signature.
     #[sv::msg(migrate)]
     fn migrate(&self, ctx: MigrateCtx) -> StdResult<Response> {
-        // Check that the given storage (representing the old contract's storage) is compatible with
-        // the new version of the tendermint-ipsc by :
-        // - checking that the new contract name is the same
-        // - checking that the new contract version is more recent than the current version
-        // If both conditions are met, the storage is updated with the new contract version
-        let original_version =
-            ensure_from_older_version(ctx.deps.storage, CONTRACT_NAME, CONTRACT_VERSION).map_err(
-                |e| {
-                    StdError::generic_err(format!(
-                        "Tendermint-ipsc migration failed while checking version compatibility: {}",
-                        e
-                    ))
-                },
-            )?;
-
-        let mut migration_event =
-            MigrationEvent::new(original_version.to_string(), CONTRACT_VERSION.to_string());
-
-        // Since there no real migration logic for now, we set it to successful
-        migration_event.set_success();
-
-        let response = Response::new().add_event(Into::<Event>::into(migration_event));
-        Ok(response)
+        self.apply_migration(ctx.deps.storage)
     }
 }
 

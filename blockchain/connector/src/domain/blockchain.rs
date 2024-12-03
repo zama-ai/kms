@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use events::kms::{
     CrsGenResponseValues, DecryptResponseValues, KeyGenPreprocResponseValues, KeyGenResponseValues,
-    KmsCoreConf, KmsEvent, KmsMessage, OperationValue, ReencryptResponseValues, TransactionId,
+    KmsConfig, KmsEvent, KmsMessage, OperationValue, ReencryptResponseValues, TransactionId,
     VerifyProvenCtResponseValues,
 };
 use strum_macros::{Display, EnumString};
@@ -119,5 +119,5 @@ pub trait Blockchain {
     /// Note that this method may be called automatically by the
     /// [SubscriptionHandler], which is an extra round-trip,
     /// since some KMS operations needs this information.
-    async fn get_config_contract(&self) -> anyhow::Result<KmsCoreConf>;
+    async fn get_kms_configuration(&self) -> anyhow::Result<KmsConfig>;
 }

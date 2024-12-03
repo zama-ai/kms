@@ -17,7 +17,7 @@ use ethers::abi::Token;
 use ethers::types::{Address, U256};
 use events::kms::{
     CrsGenValues, DecryptValues, Eip712Values, FheType, InsecureCrsGenValues, InsecureKeyGenValues,
-    KeyGenPreprocValues, KeyGenValues, KmsCoreConf, KmsEvent, KmsMessage, KmsOperation,
+    KeyGenPreprocValues, KeyGenValues, KmsConfig, KmsEvent, KmsMessage, KmsOperation,
     OperationValue, ReencryptValues, TransactionId, VerifyProvenCtValues,
 };
 use events::HexVector;
@@ -65,7 +65,6 @@ use thiserror::Error;
 use tokio::sync::oneshot;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::writer::MakeWriterExt;
-use typed_builder::TypedBuilder;
 
 // TODO: remove hard coded values -> should be either cli arguments or configuration
 const EIP712_NAME: &str = "eip712_name";
@@ -93,9 +92,11 @@ pub struct SimulatorConfig {
     /// Key-value store endpoint
     pub kv_store_address: String,
     /// ASC contract address
-    pub contract: String,
+    pub asc_address: String,
     /// Mnemonic of the user wallet to use
     pub mnemonic: String,
+    /// Address of the CSC
+    pub csc_address: String,
 }
 
 fn parse_contract_address(
@@ -123,14 +124,15 @@ impl<'de> Deserialize<'de> for SimulatorConfig {
             pub validator_addresses: Vec<String>,
             pub http_validator_endpoints: Vec<String>,
             pub kv_store_address: String,
-            pub contract: String,
+            pub asc_address: String,
             pub mnemonic: String,
+            pub csc_address: String,
         }
 
         let temp = SimulatorConfigBuffer::deserialize(deserializer)?;
 
-        let contract_address =
-            parse_contract_address(&temp.contract, &temp.http_validator_endpoints[0])
+        let asc_address =
+            parse_contract_address(&temp.asc_address, &temp.http_validator_endpoints[0])
                 .unwrap_or_default();
 
         Ok(SimulatorConfig {
@@ -139,8 +141,9 @@ impl<'de> Deserialize<'de> for SimulatorConfig {
             validator_addresses: temp.validator_addresses,
             http_validator_endpoints: temp.http_validator_endpoints,
             kv_store_address: temp.kv_store_address,
-            contract: contract_address,
+            asc_address,
             mnemonic: temp.mnemonic,
+            csc_address: temp.csc_address,
         })
     }
 }
@@ -375,15 +378,6 @@ pub struct Config {
     pub max_iter: u64,
     #[clap(long, short = 'a', default_value_t = false)]
     pub expect_all_responses: bool,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder)]
-pub struct KmsConfig {
-    pub contract_address: String,
-    pub mnemonic: String,
-    pub address: String,
-    pub key_id: String,
-    pub mode: KmsMode,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, EnumString, Display)]
@@ -976,7 +970,7 @@ pub async fn execute_reencryption_contract(
     query_client: &QueryClient,
     key_id: &str,
     keys_folder: &Path,
-    kms_core_conf: KmsCoreConf,
+    kms_configuration: KmsConfig,
 ) -> Result<
     (
         KmsEvent,
@@ -991,7 +985,7 @@ pub async fn execute_reencryption_contract(
 > {
     //NOTE: I(Titouan) believe we don't really even care
     //given how we'll use the client
-    let params = match kms_core_conf.param_choice() {
+    let params = match kms_configuration.param_choice() {
         events::kms::FheParameter::Default => DEFAULT_PARAM,
         events::kms::FheParameter::Test => TEST_PARAM,
     };
@@ -1081,7 +1075,7 @@ pub async fn execute_reencryption_contract(
     // Finally, create a kms-core client for reconstruction later on.
     // NOTE: The wasm code that deals with reencryption on the browser side
     // also uses the client.
-    let verf_keys = if kms_core_conf.is_centralized() {
+    let verf_keys = if kms_configuration.is_centralized() {
         let storage = FileStorage::new(Some(keys_folder), StorageType::PUB, None).unwrap();
         let url = storage
             .compute_url(
@@ -1093,7 +1087,7 @@ pub async fn execute_reencryption_contract(
         let verf_key: PublicSigKey = storage.read_data(&url).await.unwrap();
         vec![verf_key]
     } else {
-        let num_kms_parties = kms_core_conf.parties.len();
+        let num_kms_parties = kms_configuration.parties.len();
         let mut res = Vec::new();
         for i in 1..=num_kms_parties {
             let storage = FileStorage::new(Some(keys_folder), StorageType::PUB, Some(i)).unwrap();
@@ -1134,11 +1128,11 @@ pub async fn query_contract(
         .txn_id(txn_id)
         .build();
 
-    tracing::info!("contract address: {:?}", sim_config.contract);
+    tracing::info!("ASC address: {:?}", sim_config.asc_address);
     let query_req =
         ContractQuery::GetOperationsValuesFromEvent(EventQuery::builder().event(ev).build());
     let request = QueryContractRequest::builder()
-        .contract_address(sim_config.contract.clone())
+        .contract_address(sim_config.asc_address.clone())
         .query(query_req)
         .build();
     let values: Vec<OperationValue> = query_client.query_contract(request).await?;
@@ -1316,16 +1310,16 @@ async fn check_contract(
 
 // TODO: Incompatible with "latest" in the configuration
 // make it compatible and update the configuration accordingly
-pub async fn wait_for_contract_to_be_deployed(
+pub async fn wait_for_asc_to_be_deployed(
     node_url: &str,
-    contract_address: &str,
+    asc_address: &str,
     max_retries: u64,
     time_to_wait: tokio::time::Duration,
 ) -> Result<(), Box<dyn std::error::Error + 'static>> {
     for retry_index in 0..max_retries {
-        match check_contract(node_url, contract_address).await {
+        match check_contract(node_url, asc_address).await {
             Ok(_) => {
-                tracing::info!("Contract {:?} found", contract_address);
+                tracing::info!("Found ASC address: {:?}", asc_address);
                 return Ok(());
             }
             Err(error) => {
@@ -1402,13 +1396,13 @@ async fn fetch_local_key_and_write_to_file(
 /// This fetches the kms ethereum address from local storage
 async fn fetch_kms_addresses(
     sim_conf: &SimulatorConfig,
-    kms_core_conf: &KmsCoreConf,
+    kms_configuration: &KmsConfig,
 ) -> Result<Vec<alloy_primitives::Address>, Box<dyn std::error::Error + 'static>> {
     // TODO: handle local file
     let key_id = &SIGNING_KEY_ID.to_string();
 
     let mut addr_bytes = Vec::new();
-    if kms_core_conf.is_centralized() {
+    if kms_configuration.is_centralized() {
         let content = fetch_object(
             &sim_conf
                 .s3_endpoint
@@ -1767,12 +1761,13 @@ pub async fn main_from_config(
     let client: Client = ClientBuilder::builder()
         .kv_store_address(Some(sim_conf.kv_store_address.as_str()))
         .grpc_addresses(validator_addresses.clone())
-        .contract_address(&sim_conf.contract)
+        .asc_address(&sim_conf.asc_address)
+        .csc_address(&sim_conf.csc_address)
         .mnemonic_wallet(Some(&sim_conf.mnemonic.clone()))
         .build()
         .try_into()?;
 
-    tracing::info!("Contract address: {}", sim_conf.contract);
+    tracing::info!("ASC address: {}", sim_conf.asc_address);
 
     // TODO: merge both clients
     let query_client: QueryClient = QueryClientBuilder::builder()
@@ -1780,9 +1775,9 @@ pub async fn main_from_config(
         .build()
         .try_into()?;
 
-    wait_for_contract_to_be_deployed(
+    wait_for_asc_to_be_deployed(
         sim_conf.http_validator_endpoints[0].as_str(),
-        &sim_conf.contract,
+        &sim_conf.asc_address,
         120,
         tokio::time::Duration::from_secs(1),
     )
@@ -1790,12 +1785,12 @@ pub async fn main_from_config(
 
     //Retrieve params from ASC
     let request = QueryContractRequest::builder()
-        .contract_address(client.contract_address.to_string())
-        .query(ContractQuery::GetKmsCoreConf {})
+        .contract_address(client.csc_address.to_string())
+        .query(ContractQuery::GetKmsConfig {})
         .build();
-    let kms_core_conf: KmsCoreConf = query_client.query_contract(request).await?;
-    if !kms_core_conf.is_conformant() {
-        return Err(anyhow!("Kms Core configuration is not conformant!").into());
+    let kms_configuration: KmsConfig = query_client.query_contract(request).await?;
+    if !kms_configuration.is_conformant() {
+        return Err(anyhow!("KMS configuration is not conformant!").into());
     }
 
     let mut return_value: Option<Vec<OperationValue>> = None;
@@ -1822,7 +1817,7 @@ pub async fn main_from_config(
         _ => {}
     }
 
-    let kms_addrs = fetch_kms_addresses(&sim_conf, &kms_core_conf).await?;
+    let kms_addrs = fetch_kms_addresses(&sim_conf, &kms_configuration).await?;
 
     // Log account address
     let cosmwasm_address = client.get_account_address()?;
@@ -1840,7 +1835,7 @@ pub async fn main_from_config(
     // TODO: add optional faucet configuration in config file
 
     let max_iter = max_iter.unwrap_or(40);
-    let num_parties = kms_core_conf.parties.len();
+    let num_parties = kms_configuration.parties.len();
 
     // Execute the proper command
     match command {
@@ -1864,7 +1859,7 @@ pub async fn main_from_config(
                     if expect_all_responses {
                         num_parties
                     } else {
-                        kms_core_conf.response_count_for_majority_vote()
+                        kms_configuration.response_count_for_majority_vote()
                     },
                 )
                 .await?,
@@ -1891,7 +1886,7 @@ pub async fn main_from_config(
                     &query_client,
                     &cipher_params.key_id,
                     destination_prefix,
-                    kms_core_conf.clone(),
+                    kms_configuration.clone(),
                 )
                 .await?;
             return_value = Some(
@@ -1903,7 +1898,7 @@ pub async fn main_from_config(
                     if expect_all_responses {
                         num_parties
                     } else {
-                        kms_core_conf.response_count_for_reconstruction()
+                        kms_configuration.response_count_for_reconstruction()
                     },
                 )
                 .await?,
@@ -1948,7 +1943,7 @@ pub async fn main_from_config(
                 if expect_all_responses {
                     num_parties
                 } else {
-                    kms_core_conf.response_count_for_majority_vote()
+                    kms_configuration.response_count_for_majority_vote()
                 },
             )
             .await?;
@@ -1990,7 +1985,7 @@ pub async fn main_from_config(
                 if expect_all_responses {
                     num_parties
                 } else {
-                    kms_core_conf.response_count_for_majority_vote()
+                    kms_configuration.response_count_for_majority_vote()
                 },
             )
             .await?;
@@ -2031,7 +2026,7 @@ pub async fn main_from_config(
                 if expect_all_responses {
                     num_parties
                 } else {
-                    kms_core_conf.response_count_for_majority_vote()
+                    kms_configuration.response_count_for_majority_vote()
                 },
             )
             .await?;
@@ -2086,7 +2081,7 @@ pub async fn main_from_config(
                     if expect_all_responses {
                         num_parties
                     } else {
-                        kms_core_conf.response_count_for_majority_vote()
+                        kms_configuration.response_count_for_majority_vote()
                     },
                 )
                 .await?,

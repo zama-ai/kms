@@ -59,7 +59,8 @@ pub struct ClientBuilder<'a> {
     grpc_addresses: Vec<&'a str>,
     #[builder(setter(into), default = None)]
     kv_store_address: Option<&'a str>,
-    contract_address: &'a str,
+    asc_address: &'a str,
+    csc_address: &'a str,
     #[builder(default = None)]
     mnemonic_wallet: Option<&'a str>,
     #[builder(default = None)]
@@ -113,7 +114,9 @@ impl TryFrom<ClientBuilder<'_>> for Client {
 
         let coin_denom = value.coin_denom.unwrap_or(DENOM).to_string();
 
-        let contract_address = AccountId::from_str(value.contract_address)?;
+        let asc_address = AccountId::from_str(value.asc_address)?;
+
+        let csc_address = AccountId::from_str(value.csc_address)?;
 
         let gas_price = value.gas_price;
 
@@ -125,7 +128,8 @@ impl TryFrom<ClientBuilder<'_>> for Client {
             sender_key,
             chain_id,
             coin_denom,
-            contract_address,
+            asc_address,
+            csc_address,
             gas_price,
         })
     }
@@ -136,7 +140,8 @@ pub struct Client {
     client: Channel,
     pub kv_store_address: Option<String>,
     sender_key: SigningKey,
-    pub contract_address: AccountId,
+    pub asc_address: AccountId,
+    pub csc_address: AccountId,
     coin_denom: String,
     chain_id: String,
     gas_price: f64,
@@ -277,7 +282,7 @@ impl Client {
 
         let msg = MsgExecuteContract {
             sender: sender_account_id.to_string(),
-            contract: self.contract_address.to_string(),
+            contract: self.asc_address.to_string(),
             msg: msg_payload.to_vec(),
             funds,
         };

@@ -16,7 +16,7 @@ use backward_compatibility::{
 use events::kms::{
     CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues, FheParameter,
     FheType, InsecureCrsGenValues, InsecureKeyGenValues, KeyGenPreprocResponseValues,
-    KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues, KmsCoreConf, KmsCoreParty,
+    KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues, KmsConfig, KmsCoreParty,
     OperationValue, ReencryptResponseValues, ReencryptValues, Transaction,
     VerifyProvenCtResponseValues, VerifyProvenCtValues,
 };
@@ -530,12 +530,12 @@ fn test_insecure_crs_gen_values(
     }
 }
 
-fn test_kms_core_conf(
+fn test_kms_configuration(
     dir: &Path,
     test: &KmsCoreConfTest,
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
-    let original_versionized: KmsCoreConf = load_and_unversionize(dir, test, format)?;
+    let original_versionized: KmsConfig = load_and_unversionize(dir, test, format)?;
 
     let parties = vec![KmsCoreParty {
         party_id: test.parties_party_id.to_vec().into(),
@@ -550,7 +550,7 @@ fn test_kms_core_conf(
         _ => panic!("Invalid FHE parameter"),
     };
 
-    let new_versionized = KmsCoreConf {
+    let new_versionized = KmsConfig {
         parties,
         response_count_for_majority_vote: test.response_count_for_majority_vote,
         response_count_for_reconstruction: test.response_count_for_reconstruction,
@@ -561,7 +561,7 @@ fn test_kms_core_conf(
     if original_versionized != new_versionized {
         Err(test.failure(
             format!(
-                "Invalid KmsCoreConf (threshold):\n Expected :\n{:?}\nGot:\n{:?}",
+                "Invalid KmsConfig (threshold):\n Expected :\n{:?}\nGot:\n{:?}",
                 original_versionized, new_versionized
             ),
             format,
@@ -626,7 +626,7 @@ impl TestedModule for Events {
                 test_insecure_crs_gen_values(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::KmsCoreConf(test) => {
-                test_kms_core_conf(test_dir.as_ref(), test, format).into()
+                test_kms_configuration(test_dir.as_ref(), test, format).into()
             }
         }
     }

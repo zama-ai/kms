@@ -101,7 +101,7 @@ where
         let grpc_addresses = self.config.blockchain.grpc_addresses();
 
         let subscription = SubscriptionEventBuilder::builder()
-            .contract_address(&self.config.blockchain.contract)
+            .contract_address(&self.config.blockchain.asc_address)
             .tick_time_in_sec(self.config.tick_interval_secs)
             .grpc_addresses(&grpc_addresses)
             .storage_path(&self.config.storage_path)

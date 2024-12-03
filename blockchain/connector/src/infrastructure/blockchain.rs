@@ -3,7 +3,7 @@ use crate::conf::BlockchainConfig;
 use crate::domain::blockchain::{Blockchain, KmsOperationResponse};
 use crate::infrastructure::metrics::{MetricType, Metrics};
 use async_trait::async_trait;
-use events::kms::{KmsCoreConf, KmsEvent, KmsMessage, OperationValue};
+use events::kms::{KmsConfig, KmsEvent, KmsMessage, OperationValue};
 use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractRequest};
 use kms_blockchain_client::query_client::{
     ContractQuery, EventQuery, QueryClient, QueryClientBuilder, QueryContractRequest,
@@ -27,7 +27,8 @@ impl KmsBlockchain {
         metrics: OpenTelemetryMetrics,
     ) -> Result<Self, anyhow::Error> {
         let client: Client = ClientBuilder::builder()
-            .contract_address(&config.contract)
+            .asc_address(&config.asc_address)
+            .csc_address(&config.csc_address)
             .grpc_addresses(config.grpc_addresses())
             .coin_denom(&config.fee.denom)
             .mnemonic_wallet(config.signkey.mnemonic.as_deref())
@@ -91,7 +92,7 @@ impl Blockchain for KmsBlockchain {
     async fn get_operation_value(&self, event: &KmsEvent) -> anyhow::Result<OperationValue> {
         let query_client = self.query_client.lock().await;
         let request = QueryContractRequest::builder()
-            .contract_address(self.config.contract.to_owned())
+            .contract_address(self.config.asc_address.to_owned())
             .query(ContractQuery::GetOperationsValuesFromEvent(
                 EventQuery::builder().event(event.clone()).build(),
             ))
@@ -104,11 +105,11 @@ impl Blockchain for KmsBlockchain {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn get_config_contract(&self) -> anyhow::Result<KmsCoreConf> {
+    async fn get_kms_configuration(&self) -> anyhow::Result<KmsConfig> {
         let query_client = self.query_client.lock().await;
         let request = QueryContractRequest::builder()
-            .contract_address(self.config.contract.to_owned())
-            .query(ContractQuery::GetKmsCoreConf {})
+            .contract_address(self.config.csc_address.to_owned())
+            .query(ContractQuery::GetKmsConfig {})
             .build();
         let result = query_client.query_contract(request).await?;
         Ok(result)

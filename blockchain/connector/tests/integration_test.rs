@@ -3,7 +3,7 @@ use conf_trace::telemetry::init_tracing;
 use events::kms::CrsGenValues;
 use events::kms::{
     DecryptResponseValues, DecryptValues, FheParameter, FheType, InsecureKeyGenValues,
-    KeyGenPreprocValues, KeyGenResponseValues, KmsCoreConf, KmsCoreParty, KmsEvent, KmsMessage,
+    KeyGenPreprocValues, KeyGenResponseValues, KmsConfig, KmsCoreParty, KmsEvent, KmsMessage,
     Transaction, TransactionId, VerifyProvenCtValues,
 };
 use events::kms::{KmsOperation, OperationValue};
@@ -101,7 +101,7 @@ impl Kms for KmsMock {
         &self,
         event: KmsEvent,
         _operation_value: OperationValue,
-        _config: Option<KmsCoreConf>,
+        _config: Option<KmsConfig>,
     ) -> anyhow::Result<KmsOperationResponse> {
         self.channel.send(event.clone()).await?;
         Ok(KmsOperationResponse::DecryptResponse(DecryptResponseVal {
@@ -126,7 +126,7 @@ async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
         .map(|_| ())
         .unwrap_or_else(|| set_var("RUST_LOG", "error"));
     // Initialize tracing if not already initialized
-    let _guard = init_tracing(Tracing::builder().service_name("connector_test").build());
+    let _guard = init_tracing(Tracing::builder().service_name("connector_test").build()).await;
 
     let mnemonic = Some("whisper stereo great helmet during hollow nominee skate frown daughter donor pool ozone few find risk cigar practice essay sketch rhythm novel dumb host".to_string());
     let addresses = vec!["http://localhost:9090"];
@@ -142,14 +142,20 @@ async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
     // Wait for the contract to be deployed
     sleep(Duration::from_secs(BOOTSTRAP_TIME_TO_SLEEP)).await;
 
-    // Get the contract address dynamically
-    let contract_address = get_contract_address(&query_client).await.unwrap();
+    // The CSC is the first contract uploaded (see `deploy_contracts.sh`). We therefore
+    // get the address for code_id = 1.
+    let csc_address = get_contract_address(&query_client, 1).await.unwrap();
+
+    // The ASC is the second contract uploaded (see `deploy_contracts.sh`). We therefore
+    // get the address for code_id = 2.
+    let asc_address = get_contract_address(&query_client, 2).await.unwrap();
 
     let client: RwLock<Client> = RwLock::new(
         ClientBuilder::builder()
             .mnemonic_wallet(mnemonic.as_deref())
             .grpc_addresses(addresses.clone())
-            .contract_address(&contract_address)
+            .asc_address(&asc_address)
+            .csc_address(&csc_address)
             .kv_store_address(None)
             .build()
             .try_into()
@@ -158,19 +164,14 @@ async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
 
     let (tx, mut rc) = channel(1);
     // Start SyncHandler to listen events
-    let handler = start_sync_handler(addresses.clone(), &contract_address, mnemonic, tx).await;
+    let handler =
+        start_sync_handler(addresses.clone(), &asc_address, &csc_address, mnemonic, tx).await;
 
     // Wait for the event to be processed and send the response back to the blockchain
     let query_client = Arc::new(query_client);
     let cloned_query_client = Arc::clone(&query_client);
     let handle = tokio::spawn(async move {
-        wait_for_event_response(
-            handler,
-            &contract_address.clone(),
-            cloned_query_client,
-            &mut rc,
-        )
-        .await;
+        wait_for_event_response(handler, &asc_address.clone(), cloned_query_client, &mut rc).await;
     });
 
     // Execute insecure key generation flow to enable the subsequent decryption request
@@ -204,7 +205,7 @@ async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
 
 async fn wait_for_event_response<T>(
     handler: T,
-    contract_address: &str,
+    asc_address: &str,
     query_client: Arc<QueryClient>,
     rc: &mut Receiver<KmsEvent>,
 ) where
@@ -230,7 +231,7 @@ async fn wait_for_event_response<T>(
                     _ = interval.tick() => {
                     }
                     event = rc.recv() => {
-                        tokio::spawn(check_event(event.unwrap(), contract_address.to_string(), query_client.clone(), tx_response.clone()));
+                        tokio::spawn(check_event(event.unwrap(), asc_address.to_string(), query_client.clone(), tx_response.clone()));
                     }
                     _ = rc_response.recv() => {
                         counter.fetch_add(1, std::sync::atomic::Ordering::Release);
@@ -265,12 +266,12 @@ async fn wait_for_tx_processed(
 /// the decryption response was sent back to the blockchain
 async fn check_event(
     event: KmsEvent,
-    contract_address: String,
+    asc_address: String,
     query_client: Arc<QueryClient>,
     tx_sender: Sender<()>,
 ) {
     let request = QueryContractRequest::builder()
-        .contract_address(contract_address)
+        .contract_address(asc_address)
         .query(ContractQuery::GetTransaction(
             TransactionQuery::builder()
                 .txn_id(event.txn_id().clone())
@@ -288,10 +289,13 @@ async fn check_event(
     }
 }
 
+/// Get the contract address for a given code ID.
+///
+/// Code ID are defined by the order of contract upload in `deploy_contracts.sh`, starting from 1.
 #[retry(stop=(attempts(12)|duration(130)),wait=fixed(10))]
-async fn get_contract_address(client: &QueryClient) -> anyhow::Result<String> {
+async fn get_contract_address(client: &QueryClient, code_id: u64) -> anyhow::Result<String> {
     tracing::info!("Getting contract address....");
-    let result = client.list_contracts().await.unwrap();
+    let result = client.list_contracts(code_id).await.unwrap();
     if !result.contracts.is_empty() {
         tracing::info!("Found {} contracts", result.contracts.len());
         let contract_address = result.contracts[0].clone();
@@ -307,7 +311,8 @@ async fn get_contract_address(client: &QueryClient) -> anyhow::Result<String> {
 
 async fn start_sync_handler(
     addresses: Vec<&str>,
-    contract_address: &str,
+    asc_address: &str,
+    csc_address: &str,
     mnemonic: Option<String>,
     tx: Sender<KmsEvent>,
 ) -> KmsCoreSyncHandler<KmsBlockchain, KmsMock, OpenTelemetryMetrics> {
@@ -317,9 +322,10 @@ async fn start_sync_handler(
             .into_iter()
             .map(|x| x.to_string())
             .collect(),
-        contract: contract_address.to_string(),
+        asc_address: asc_address.to_string(),
+        csc_address: csc_address.to_string(),
         fee: ContractFee {
-            amount: 200_000u64,
+            amount: 250_000u64,
             denom: "ucosm".to_string(),
         },
         signkey: SignKeyConfig {
@@ -413,7 +419,7 @@ async fn send_key_generation_response(
                 .txn_id(txn_id)
                 .build(),
         )
-        .gas_limit(200000u64)
+        .gas_limit(250000u64)
         .funds(vec![ProtoCoin::builder()
             .denom("ucosm".to_string())
             .amount(100_000u64)
@@ -610,7 +616,7 @@ async fn generic_centralized_sunshine_test(
         .txn_id(txn_id.clone())
         .build();
 
-    let conf = KmsCoreConf {
+    let conf = KmsConfig {
         param_choice: FheParameter::Test,
         parties: vec![KmsCoreParty::default(); 1],
         response_count_for_majority_vote: 1,
@@ -831,7 +837,7 @@ async fn generic_sunshine_test(
     assert_eq!(events.len(), clients.len());
     let mut tasks = JoinSet::new();
     for (i, (event, client)) in events.into_iter().zip(clients).enumerate() {
-        let conf = KmsCoreConf {
+        let conf = KmsConfig {
             parties: vec![KmsCoreParty::default(); amount_parties],
             response_count_for_majority_vote: 2 * threshold + 1,
             response_count_for_reconstruction: threshold + 2,

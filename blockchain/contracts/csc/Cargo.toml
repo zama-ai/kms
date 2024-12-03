@@ -1,0 +1,30 @@
+[package]
+name = "csc"
+version.workspace = true
+authors.workspace = true
+publish.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# These libraries are necessary for make this a smart contract within Sylvia :
+# https://cosmwasm.github.io/sylvia-book/basics/create-project.html
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+events.workspace = true
+cosmwasm-std = { workspace = true, features = ["staking"] }
+paste.workspace = true
+contracts-common.workspace = true
+cosmwasm-schema.workspace = true
+cw2.workspace = true
+sylvia.workspace = true
+serde.workspace = true
+schemars.workspace = true
+strum.workspace = true
+strum_macros.workspace = true
+tfhe-versionable.workspace = true
+
+[dev-dependencies]
+cw-multi-test = "=2.1.1"
+sylvia = { workspace = true, features = ["mt"] }

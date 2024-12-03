@@ -659,6 +659,8 @@ impl TestType for InsecureCrsGenValuesTest {
     }
 }
 
+// TODO: rename to KmsConfigTest once we enable backward compatibility tests :
+// https://github.com/zama-ai/kms-core/issues/1089
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct KmsCoreConfTest {
     pub test_filename: Cow<'static, str>,
@@ -702,7 +704,9 @@ pub enum TestMetadataDD {
     PRSSSetup(PRSSSetupTest),
 }
 
-// Events blockchain metadata
+// TODO: rename to KmsCoreConf to KmsConfig once we enable backward compatibility tests :
+// https://github.com/zama-ai/kms-core/issues/1089
+//Events blockchain metadata
 // All these tests first build a operation value, and then uses it to build a transaction object
 // before versionizing and serializing it
 #[derive(Serialize, Deserialize, Clone, Debug, Display)]
