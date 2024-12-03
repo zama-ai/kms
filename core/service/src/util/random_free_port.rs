@@ -4,6 +4,7 @@ use tokio::net::{TcpListener, UdpSocket};
 
 #[cfg(any(test, feature = "testing"))]
 #[cfg(feature = "non-wasm")]
+/// Find [`n`] free ports in the range [from, to). Returns a vector of random ports.
 pub(crate) async fn random_free_ports(
     from: u16,
     to: u16,
@@ -23,7 +24,7 @@ pub(crate) async fn random_free_ports(
     }
 
     let mut rng = thread_rng();
-    let tries = 2 * (to - from);
+    let tries = 3 * (to - from);
     let mut ports = HashSet::new();
     for _ in 0..n {
         let mut pushed = false;

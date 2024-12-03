@@ -1,12 +1,16 @@
+use std::sync::Arc;
+
 use kms_lib::{
     conf::{init_conf_trace, CoreConfig},
     cryptography::central_kms::SoftwareKms,
+    kms::core_service_endpoint_server::CoreServiceEndpointServer,
     rpc::run_server,
-    storage::{make_storage, StorageCache, StorageType},
+    storage::{make_storage, StorageCache, StorageProxy, StorageType},
     threshold::threshold_kms::threshold_server_init,
 };
 
 use clap::Parser;
+use tokio::sync::RwLock;
 
 pub const SIG_SK_BLOB_KEY: &str = "private_sig_key";
 pub const SIG_PK_BLOB_KEY: &str = "public_sig_key";
@@ -81,7 +85,9 @@ async fn main() -> anyhow::Result<()> {
     )
     .await?;
 
-    // Initialize KMS core
+    let (health_reporter, health_service) = tonic_health::server::health_reporter();
+    let thread_health_reporter = Arc::new(RwLock::new(health_reporter));
+    // initialize KMS core
     match core_config.threshold {
         Some(threshold_config) => {
             let kms = threshold_server_init(
@@ -90,10 +96,18 @@ async fn main() -> anyhow::Result<()> {
                 private_storage,
                 false,
                 core_config.rate_limiter_conf,
+                thread_health_reporter.clone(),
                 std::future::pending(),
             )
             .await?;
-            run_server(core_config.service, kms, std::future::pending()).await
+            run_server(
+                core_config.service,
+                kms,
+                thread_health_reporter,
+                health_service,
+                std::future::pending(),
+            )
+            .await?;
         }
         None => {
             let kms = SoftwareKms::new(
@@ -102,7 +116,20 @@ async fn main() -> anyhow::Result<()> {
                 core_config.rate_limiter_conf,
             )
             .await?;
-            run_server(core_config.service, kms, std::future::pending()).await
+            run_server(
+                core_config.service,
+                kms,
+                thread_health_reporter.clone(),
+                health_service,
+                std::future::pending(),
+            )
+            .await?;
+            thread_health_reporter
+                .write()
+                .await
+                .set_serving::<CoreServiceEndpointServer<SoftwareKms<StorageProxy, StorageProxy>>>()
+                .await;
         }
     }
+    Ok(())
 }

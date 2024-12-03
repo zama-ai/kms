@@ -2489,12 +2489,15 @@ pub mod test_tools {
             threshold::{PeerConf, ThresholdParty},
             ServiceEndpoint,
         },
+        kms::core_service_endpoint_server::CoreServiceEndpointServer,
         util::random_free_port::random_free_ports,
     };
     use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
     use futures_util::FutureExt;
     use itertools::Itertools;
     use std::str::FromStr;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
     use tokio::task::JoinHandle;
     use tonic::transport::{Channel, Uri};
 
@@ -2560,6 +2563,8 @@ pub mod test_tools {
             let (tx, rx) = tokio::sync::oneshot::channel();
             ddec_shutdown_txs.push(tx);
             let rl_conf = rate_limiter_conf.clone();
+            let (health_reporter, health_service) = tonic_health::server::health_reporter();
+            let thread_health_reporter = Arc::new(RwLock::new(health_reporter));
             handles.push(tokio::spawn(async move {
                 let threshold_config = ThresholdParty {
                     listen_address: peers[i - 1].address.clone(),
@@ -2575,6 +2580,7 @@ pub mod test_tools {
                     peers,
                     core_to_core_net: None,
                 };
+
                 // TODO pass in cert_paths for testing TLS
                 let server = threshold_server_init(
                     threshold_config,
@@ -2582,10 +2588,17 @@ pub mod test_tools {
                     cur_priv_storage,
                     run_prss,
                     rl_conf,
+                    thread_health_reporter.clone(),
                     rx.map(drop),
                 )
                 .await;
-                (i, server, service_config)
+                (
+                    i,
+                    server,
+                    service_config,
+                    thread_health_reporter,
+                    health_service,
+                )
             }));
         }
         assert_eq!(handles.len(), num_parties);
@@ -2593,19 +2606,35 @@ pub mod test_tools {
         tracing::info!("Client waiting for server");
         let mut servers = Vec::with_capacity(num_parties);
         for cur_handle in handles {
-            let (i, kms_server_res, service_config) = cur_handle.await.unwrap();
+            let (i, kms_server_res, service_config, health_reporter, health_service) =
+                cur_handle.await.unwrap();
             match kms_server_res {
-                Ok(kms_server) => servers.push((i, kms_server, service_config)),
+                Ok(kms_server) => servers.push((
+                    i,
+                    kms_server,
+                    service_config,
+                    health_reporter,
+                    health_service,
+                )),
                 Err(e) => panic!("Failed to start server {i} with error {:?}", e),
             }
         }
         tracing::info!("Servers initialized. Starting servers...");
         let mut server_handles = HashMap::new();
-        for ((i, cur_server, service_config), ddec_tx) in servers.into_iter().zip(ddec_shutdown_txs)
+        for ((i, cur_server, service_config, cur_health_reporter, cur_health_service), ddec_tx) in
+            servers.into_iter().zip(ddec_shutdown_txs)
         {
             let (core_shutdown_tx, core_shutdown_rx) = tokio::sync::oneshot::channel();
             let handle = tokio::spawn(async move {
-                let _ = run_server(service_config, cur_server, core_shutdown_rx.map(drop)).await;
+                run_server(
+                    service_config,
+                    cur_server,
+                    cur_health_reporter,
+                    cur_health_service,
+                    core_shutdown_rx.map(drop),
+                )
+                .await
+                .expect("Failed to start threshold server");
             });
             server_handles.insert(
                 i as u32,
@@ -2621,7 +2650,7 @@ pub mod test_tools {
     }
 
     /// try to connect to a URI and retry every 200ms for 25 times before giving up after 5 seconds.
-    async fn connect_with_retry(uri: Uri) -> Channel {
+    pub async fn connect_with_retry(uri: Uri) -> Channel {
         tracing::info!("Client connecting to {}", uri);
         let mut channel = Channel::builder(uri.clone()).connect().await;
         let mut tries = 0usize;
@@ -2724,6 +2753,7 @@ pub mod test_tools {
         threshold: u8,
         pub_storage: Vec<PubS>,
         priv_storage: Vec<PrivS>,
+        run_prss: bool,
         rate_limiter_conf: Option<RateLimiterConfig>,
     ) -> (
         HashMap<u32, ServerHandle>,
@@ -2735,7 +2765,7 @@ pub mod test_tools {
             threshold,
             pub_storage,
             priv_storage,
-            true,
+            run_prss,
             rate_limiter_conf,
         )
         .await;
@@ -2777,14 +2807,25 @@ pub mod test_tools {
                 timeout_secs: 360,
                 grpc_max_message_size: 2 * 10 * 1024 * 1024, // 20 MiB to allow for 2048 bit encryptions
             };
-            let _ = run_server(
+            let (health_reporter, health_service) = tonic_health::server::health_reporter();
+            let thread_health_reporter = Arc::new(RwLock::new(health_reporter));
+            // We will serve as soon as the server is started
+            thread_health_reporter
+                .write()
+                .await
+                .set_serving::<CoreServiceEndpointServer<SoftwareKms<PubS, PrivS>>>()
+                .await;
+            run_server(
                 config,
                 SoftwareKms::new(pub_storage, priv_storage, rate_limiter_conf)
                     .await
-                    .unwrap(),
+                    .expect("Could not create KMS"),
+                thread_health_reporter,
+                health_service,
                 rx.map(drop),
             )
-            .await;
+            .await
+            .expect("Could not start server");
         });
         // We have to wait for the server to start since it will keep running in the background
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
@@ -2850,6 +2891,8 @@ pub(crate) mod tests {
     #[cfg(feature = "wasm_tests")]
     use crate::client::TestingReencryptionTranscript;
     use crate::client::{ParsedReencryptionRequest, ServerIdentities};
+    use crate::consts::DEFAULT_THRESHOLD;
+    use crate::consts::PRSS_EPOCH_ID;
     #[cfg(feature = "wasm_tests")]
     use crate::consts::TEST_CENTRAL_KEY_ID;
     use crate::consts::TEST_PARAM;
@@ -2857,6 +2900,7 @@ pub(crate) mod tests {
     use crate::consts::TEST_THRESHOLD_CRS_ID_7P;
     use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
     use crate::consts::TEST_THRESHOLD_KEY_ID_7P;
+    use crate::consts::{DEFAULT_AMOUNT_PARTIES, DEFAULT_PROT, DEFAULT_URL};
     #[cfg(feature = "slow_tests")]
     use crate::consts::{
         DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_CRS_ID_7P,
@@ -2864,18 +2908,22 @@ pub(crate) mod tests {
     };
     #[cfg(feature = "slow_tests")]
     use crate::cryptography::central_kms::tests::get_default_keys;
-    use crate::cryptography::central_kms::{compute_handle, gen_sig_keys, BaseKmsStruct};
+    use crate::cryptography::central_kms::{
+        compute_handle, gen_sig_keys, BaseKmsStruct, SoftwareKms,
+    };
     use crate::cryptography::internal_crypto_types::Signature;
     use crate::cryptography::signcryption::Reencrypt;
     use crate::kms::core_service_endpoint_client::CoreServiceEndpointClient;
-    use crate::kms::ReencryptionResponse;
+    use crate::kms::core_service_endpoint_server::CoreServiceEndpointServer;
     use crate::kms::{FheType, ParamChoice, TypedCiphertext};
+    use crate::kms::{InitRequest, ReencryptionResponse};
     #[cfg(feature = "wasm_tests")]
     use crate::rpc::rpc_types::Plaintext;
     use crate::rpc::rpc_types::RequestIdGetter;
     use crate::rpc::rpc_types::{protobuf_to_alloy_domain, BaseKms, PubDataType};
     use crate::storage::StorageReader;
     use crate::storage::{file::FileStorage, ram::RamStorage, StorageType, StorageVersion};
+    use crate::threshold::threshold_kms::RealThresholdKms;
     use crate::util::file_handling::safe_read_element_versioned;
     #[cfg(feature = "wasm_tests")]
     use crate::util::file_handling::write_element;
@@ -2903,7 +2951,11 @@ pub(crate) mod tests {
     use tfhe::ProvenCompactCiphertextList;
     use tfhe::Tag;
     use tokio::task::JoinSet;
+    use tonic::server::NamedService;
     use tonic::transport::Channel;
+    use tonic_health::pb::health_check_response::ServingStatus;
+    use tonic_health::pb::health_client::HealthClient;
+    use tonic_health::pb::HealthCheckRequest;
 
     // Time to sleep to ensure that previous servers and tests have shut down properly.
     const TIME_TO_SLEEP_MS: u64 = 800;
@@ -2926,6 +2978,7 @@ pub(crate) mod tests {
         storage_version: StorageVersion,
         params: DKGParams,
         amount_parties: usize,
+        run_prss: bool,
         rate_limiter_conf: Option<RateLimiterConfig>,
     ) -> (
         HashMap<u32, ServerHandle>,
@@ -2946,6 +2999,7 @@ pub(crate) mod tests {
                     threshold as u8,
                     pub_storage,
                     priv_storage,
+                    run_prss,
                     rate_limiter_conf,
                 )
                 .await
@@ -2961,6 +3015,7 @@ pub(crate) mod tests {
                     threshold as u8,
                     pub_storage,
                     priv_storage,
+                    run_prss,
                     rate_limiter_conf,
                 )
                 .await
@@ -3009,7 +3064,118 @@ pub(crate) mod tests {
         assert_eq!(recovered_pk, client_pk);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test]
+    #[serial]
+    async fn test_central_health_endpoint_availability() {
+        let (kms_server, _kms_client, _internal_client) =
+            super::test_tools::centralized_handles(StorageVersion::Dev, &TEST_PARAM, None).await;
+        let server_address = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", kms_server.port);
+
+        let channel_builder = Channel::from_shared(server_address).unwrap();
+        let channel = channel_builder.connect().await.unwrap();
+        let mut client = HealthClient::new(channel);
+        let service_name = <CoreServiceEndpointServer<SoftwareKms<FileStorage, FileStorage>> as NamedService>::NAME;
+        let request = tonic::Request::new(HealthCheckRequest {
+            service: service_name.to_string(),
+        });
+
+        let response = client
+            .check(request)
+            .await
+            .expect("Health check request failed");
+
+        let status = response.into_inner().status;
+        assert_eq!(
+            status,
+            ServingStatus::Serving as i32,
+            "Service is not in SERVING status. Got status: {}",
+            status
+        );
+    }
+
+    /// Test that the health endpoint is available for the threshold service only *after* they have been initialized.
+    ///
+    /// We do this by *not* running PRSS at boot and ensure no old PRSS data is there.
+    #[tokio::test]
+    #[serial]
+    async fn test_threshold_health_endpoint_availability() {
+        // make sure the store does not contain any PRSS info (currently stored under ID PRSS_EPOCH_ID)
+        let req_id = &RequestId::derive(&format!(
+            "PRSSSetup_ID_{}_{}_{}",
+            PRSS_EPOCH_ID, DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD
+        ))
+        .unwrap();
+        purge(None, None, &req_id.to_string(), DEFAULT_AMOUNT_PARTIES).await;
+
+        // DON'T setup PRSS in order to ensure the server is not ready yet
+        let (kms_servers, kms_clients, _internal_client) = threshold_handles(
+            StorageVersion::Dev,
+            TEST_PARAM,
+            DEFAULT_AMOUNT_PARTIES,
+            false,
+            None,
+        )
+        .await;
+
+        // Set server address for server 1
+        let server_address = &format!(
+            "{DEFAULT_PROT}://{DEFAULT_URL}:{}",
+            kms_servers.get(&1).unwrap().port
+        );
+
+        let channel_builder = Channel::from_shared(server_address.to_string()).unwrap();
+        let channel = channel_builder.connect().await.unwrap();
+        let mut health_client = HealthClient::new(channel);
+        let service_name = <CoreServiceEndpointServer<RealThresholdKms<FileStorage, FileStorage>> as NamedService>::NAME;
+        let request = tonic::Request::new(HealthCheckRequest {
+            service: service_name.to_string(),
+        });
+
+        let response = health_client
+            .check(request)
+            .await
+            .expect("Health check request failed");
+
+        let status = response.into_inner().status;
+        assert_eq!(
+            status,
+            ServingStatus::NotServing as i32,
+            "Service is not in NOT_SERVING status. Got status: {}",
+            status
+        );
+
+        // Now initialize and check that the server is serving
+        let mut req_tasks = JoinSet::new();
+        for i in 1..=DEFAULT_AMOUNT_PARTIES as u32 {
+            let mut cur_client = kms_clients.get(&i).unwrap().clone();
+            req_tasks.spawn(async move {
+                cur_client
+                    .init(tonic::Request::new(InitRequest { config: None }))
+                    .await
+            });
+        }
+        while let Some(inner) = req_tasks.join_next().await {
+            assert!(inner.unwrap().is_ok());
+        }
+
+        let request = tonic::Request::new(HealthCheckRequest {
+            service: service_name.to_string(),
+        });
+        let response = health_client
+            .check(request)
+            .await
+            .expect("Health check request failed");
+
+        let status = response.into_inner().status;
+        assert_eq!(
+            status,
+            ServingStatus::Serving as i32,
+            "Service is not in SERVING status. Got status: {}",
+            status
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn test_key_gen_centralized() {
         let request_id = RequestId::derive("test_key_gen_centralized").unwrap();
@@ -3678,6 +3844,7 @@ pub(crate) mod tests {
             StorageVersion::Dev,
             *param,
             amount_parties,
+            true,
             Some(rate_limiter_conf),
         )
         .await;
@@ -3951,7 +4118,7 @@ pub(crate) mod tests {
         // The threshold handle should only be started after the storage is purged
         // since the threshold parties will load the CRS from private storage
         let (kms_servers, kms_clients, internal_client) =
-            threshold_handles(StorageVersion::Dev, dkg_params, amount_parties, None).await;
+            threshold_handles(StorageVersion::Dev, dkg_params, amount_parties, true, None).await;
 
         let pub_storage = FileStorage::new(None, StorageType::PUB, Some(1)).unwrap();
         let pp = internal_client
@@ -4305,7 +4472,7 @@ pub(crate) mod tests {
 
     #[cfg(feature = "wasm_tests")]
     #[rstest::rstest]
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn test_reencryption_centralized_and_write_transcript(
         #[values(true, false)] secure: bool,
@@ -4697,6 +4864,7 @@ pub(crate) mod tests {
             StorageVersion::Dev,
             dkg_params,
             amount_parties,
+            true,
             Some(rate_limiter_conf),
         )
         .await;
@@ -4982,7 +5150,7 @@ pub(crate) mod tests {
 
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (kms_servers, kms_clients, mut internal_client) =
-            threshold_handles(StorageVersion::Dev, dkg_params, amount_parties, None).await;
+            threshold_handles(StorageVersion::Dev, dkg_params, amount_parties, true, None).await;
         let (ct, fhe_type) = compute_cipher_from_stored_key(None, msg, key_id).await;
 
         internal_client.convert_to_addresses();
@@ -5306,7 +5474,7 @@ pub(crate) mod tests {
 
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (kms_servers, kms_clients, internal_client) =
-            threshold_handles(StorageVersion::Dev, TEST_PARAM, amount_parties, None).await;
+            threshold_handles(StorageVersion::Dev, TEST_PARAM, amount_parties, true, None).await;
 
         let request_ids: Vec<_> = (0..parallelism)
             .map(|j| RequestId::derive(&format!("test_preproc_{amount_parties}_{j}")).unwrap())
@@ -5461,7 +5629,7 @@ pub(crate) mod tests {
 
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (kms_servers, kms_clients, internal_client) =
-            threshold_handles(StorageVersion::Dev, TEST_PARAM, amount_parties, None).await;
+            threshold_handles(StorageVersion::Dev, TEST_PARAM, amount_parties, true, None).await;
 
         let req_keygen = internal_client
             .key_gen_request(
@@ -5504,8 +5672,14 @@ pub(crate) mod tests {
         purge(None, None, &req_key.to_string(), amount_parties).await;
 
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-        let (kms_servers, kms_clients, internal_client) =
-            threshold_handles(StorageVersion::Dev, DEFAULT_PARAM, amount_parties, None).await;
+        let (kms_servers, kms_clients, internal_client) = threshold_handles(
+            StorageVersion::Dev,
+            DEFAULT_PARAM,
+            amount_parties,
+            true,
+            None,
+        )
+        .await;
 
         let req_keygen = internal_client
             .key_gen_request(
@@ -5568,6 +5742,7 @@ pub(crate) mod tests {
             StorageVersion::Dev,
             TEST_PARAM,
             amount_parties,
+            true,
             Some(rate_limiter_conf),
         )
         .await;

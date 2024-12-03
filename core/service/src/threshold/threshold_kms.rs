@@ -5,6 +5,7 @@ use crate::consts::{MINIMUM_SESSIONS_PREPROC, PRSS_EPOCH_ID};
 use crate::cryptography::central_kms::{async_generate_crs, compute_info, BaseKmsStruct};
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey};
 use crate::cryptography::signcryption::signcrypt;
+use crate::kms::core_service_endpoint_server::CoreServiceEndpointServer;
 use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus,
@@ -64,7 +65,9 @@ use distributed_decryption::execution::tfhe_internals::test_feature::{
 use distributed_decryption::execution::zk::ceremony::{
     compute_witness_dim, Ceremony, RealCeremony,
 };
-use distributed_decryption::networking::grpc::{CoreToCoreNetworkConfig, GrpcNetworkingManager};
+use distributed_decryption::networking::grpc::{
+    CoreToCoreNetworkConfig, GrpcNetworkingManager, GrpcServer,
+};
 use distributed_decryption::networking::NetworkMode;
 use distributed_decryption::networking::NetworkingStrategy;
 use distributed_decryption::session_id::SessionId;
@@ -85,6 +88,7 @@ use tokio::task::JoinSet;
 use tokio::time::Instant;
 use tonic::transport::{Server, ServerTlsConfig};
 use tonic::{Request, Response, Status};
+use tonic_health::server::HealthReporter;
 use tracing::Instrument;
 
 const DECRYPTION_MODE: DecryptionMode = DecryptionMode::PRSSDecrypt;
@@ -113,6 +117,7 @@ pub async fn threshold_server_init<
     private_storage: PrivS,
     run_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
+    health_reporter: Arc<RwLock<HealthReporter>>,
     shutdown_signal: F,
 ) -> anyhow::Result<RealThresholdKms<PubS, PrivS>> {
     let cert_paths = config.get_tls_cert_paths();
@@ -149,6 +154,7 @@ pub async fn threshold_server_init<
         config.core_to_core_net,
         run_prss,
         rate_limiter_conf,
+        health_reporter,
         shutdown_signal,
     )
     .await?;
@@ -268,6 +274,7 @@ async fn new_real_threshold_kms<PubS, PrivS, F>(
     core_to_core_net_conf: Option<CoreToCoreNetworkConfig>,
     run_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
+    core_service_health_reporter: Arc<RwLock<HealthReporter>>,
     shutdown_signal: F,
 ) -> anyhow::Result<RealThresholdKms<PubS, PrivS>>
 where
@@ -368,15 +375,18 @@ where
     };
 
     // This will setup TLS if cert_paths is set to Some(...)
+    let (mut threshold_health_reporter, threshold_health_service) =
+        tonic_health::server::health_reporter();
     let networking_manager =
         GrpcNetworkingManager::new(own_identity.to_owned(), cert_paths, core_to_core_net_conf);
     let networking_server = networking_manager.new_server();
-
-    let router = server.add_service(networking_server);
+    let router = server
+        .add_service(networking_server)
+        .add_service(threshold_health_service);
     let socket_addr = format!("{}:{}", listen_address, listen_port)
         .to_socket_addrs()?
         .next()
-        .unwrap();
+        .expect("Failed to parse socket address for internal core network");
 
     tracing::info!(
         "Starting core-to-core server for identity {} on address {}.",
@@ -395,12 +405,17 @@ where
 
         match router
             .serve_with_shutdown(socket_addr, async {
+                // Set the server to be serving when we boot
+                threshold_health_reporter.set_serving::<GrpcServer>().await;
                 // await is the same as recv on a oneshot channel
                 _ = rx.await;
                 tracing::info!(
                     "Starting graceful shutdown of core/threshold {}",
                     socket_addr
                 );
+                threshold_health_reporter
+                    .set_not_serving::<GrpcServer>()
+                    .await;
 
                 // Allow time for in-flight requests to complete
                 tokio::time::sleep(tokio::time::Duration::from_secs(
@@ -456,10 +471,19 @@ where
         prss_setup: prss_setup.clone(),
     };
 
+    {
+        // We are only serving after initialization
+        core_service_health_reporter
+            .write()
+            .await
+            .set_not_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS>>>()
+            .await;
+    }
     let initiator = RealInitiator {
         prss_setup: Arc::clone(&prss_setup),
         private_storage: Arc::clone(&private_storage),
         session_preparer: session_preparer.new_instance().await,
+        health_reporter: core_service_health_reporter.clone(),
     };
     if run_prss {
         tracing::info!(
@@ -637,7 +661,7 @@ impl SessionPreparer {
         Ok(session)
     }
 
-    /// Returns a copy of the `SessionPreparer` with a fresh randomness generator so it is safe to use.
+    /// Retuns a copy of the `SessionPreparer` with a fresh randomness generator so it is safe to use.
     async fn new_instance(&self) -> Self {
         Self {
             base_kms: self.base_kms.new_instance().await,
@@ -655,6 +679,7 @@ pub struct RealInitiator<PrivS: Storage + Send + Sync + 'static> {
     prss_setup: Arc<RwLock<Option<PRSSSetup<ResiduePoly128>>>>,
     private_storage: Arc<Mutex<PrivS>>,
     session_preparer: SessionPreparer,
+    health_reporter: Arc<RwLock<HealthReporter>>,
 }
 
 impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
@@ -691,7 +716,14 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
             }
             Err(e) => return Err(e),
         }
-
+        {
+            // Notice that this is a hack to get the health reporter to report serving. The type `PrivS` has no influence on the service name.
+            self.health_reporter
+                .write()
+                .await
+                .set_serving::<CoreServiceEndpointServer<RealThresholdKms<PrivS, PrivS>>>()
+                .await;
+        }
         Ok(())
     }
 
@@ -731,7 +763,14 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
             &PrivDataType::PrssSetup.to_string(),
         )
         .await?;
-
+        {
+            // Notice that this is a hack to get the health reporter to report serving. The type `PrivS` has no influence on the service name.
+            self.health_reporter
+                .write()
+                .await
+                .set_serving::<CoreServiceEndpointServer<RealThresholdKms<PrivS, PrivS>>>()
+                .await;
+        }
         tracing::info!("PRSS completed successfully for identity {}.", own_identity);
         Ok(())
     }

@@ -12,10 +12,17 @@ use std::net::ToSocketAddrs;
 use tonic::transport::Server;
 #[cfg(feature = "non-wasm")]
 use tower_http::trace::TraceLayer;
-
 #[cfg(feature = "non-wasm")]
 pub mod central_rpc;
 pub mod rpc_types;
+#[cfg(feature = "non-wasm")]
+use std::sync::Arc;
+#[cfg(feature = "non-wasm")]
+use tokio::sync::RwLock;
+#[cfg(feature = "non-wasm")]
+use tonic_health::pb::health_server::{Health, HealthServer};
+#[cfg(feature = "non-wasm")]
+use tonic_health::server::HealthReporter;
 
 pub const INFLIGHT_REQUEST_WAITING_TIME: u64 = 1;
 
@@ -77,6 +84,8 @@ pub async fn run_server<
 >(
     config: ServiceEndpoint,
     kms_service: S,
+    health_reporter: Arc<RwLock<HealthReporter>>,
+    health_service: HealthServer<impl Health>,
     shutdown_signal: F,
 ) -> anyhow::Result<()> {
     let socket_addr_str = format!("{}:{}", config.listen_address, config.listen_port);
@@ -106,11 +115,6 @@ pub async fn run_server<
         .map_request(accept_trace)
         .map_request(record_trace_id);
 
-    let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
-    health_reporter
-        .set_serving::<CoreServiceEndpointServer<S>>()
-        .await;
-
     let server = Server::builder()
         .layer(trace_request)
         .timeout(tokio::time::Duration::from_secs(config.timeout_secs))
@@ -133,10 +137,13 @@ pub async fn run_server<
         );
 
         // Set health check to not serving
-        health_reporter
-            .set_not_serving::<CoreServiceEndpointServer<S>>()
-            .await;
-
+        {
+            health_reporter
+                .write()
+                .await
+                .set_not_serving::<CoreServiceEndpointServer<S>>()
+                .await;
+        }
         // Allow time for in-flight requests to complete
         tokio::time::sleep(tokio::time::Duration::from_secs(
             INFLIGHT_REQUEST_WAITING_TIME,
