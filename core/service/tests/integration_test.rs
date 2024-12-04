@@ -370,10 +370,9 @@ mod kms_server_binary_test {
         let s3_url = format!("s3://{}/central_s3/", BUCKET_NAME);
         let file_url = "file://temp/keys/";
         // Test the following command:
-        // cargo run --features testing  --bin kms-gen-keys -- --centralized --param-test --aws-region eu-north-1 --pub-url=s3://jot2re-kms-key-test/central_s3/ --priv-url=file://temp/keys/ --cmd=signing-keys --overwrite --deterministic
+        // cargo run --features testing  --bin kms-gen-keys -- --param-test --aws-region eu-north-1 --pub-url=s3://jot2re-kms-key-test/central_s3/ --priv-url=file://temp/keys/ --cmd=signing-keys --overwrite --deterministic
         let output = Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
-            .arg("--centralized")
             .arg("--param-test")
             .arg(format!("--aws-region={}", AWS_REGION))
             .arg(format!("--aws-s3-endpoint={}", AWS_S3_ENDPOINT))

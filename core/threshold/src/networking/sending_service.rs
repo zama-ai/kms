@@ -142,7 +142,7 @@ impl GrpcSendingService {
         exponential_backoff: ExponentialBackoff<SystemClock>,
     ) {
         let mut received_request = 0;
-        let mut incorrectly_sended = 0;
+        let mut incorrectly_sent = 0;
         while let Some(value) = receiver.recv().await {
             received_request += 1;
             let send_fn = || async {
@@ -163,20 +163,21 @@ impl GrpcSendingService {
 
             let res = retry_notify(exponential_backoff.clone(), send_fn, on_network_fail).await;
             if let Err(err) = res {
-                incorrectly_sended += 1;
+                incorrectly_sent += 1;
                 tracing::error!(
-                    "Error sending, {err}, after {:?} timeout and {nb_retry} retries, and {incorrectly_sended} errors so far",
+                    "Error sending, {err}, after {:?} timeout and {nb_retry} retries, and {incorrectly_sent} errors so far",
                     exponential_backoff.max_elapsed_time
                 );
             }
         }
         if received_request == 0 {
-            tracing::error!("No more listeners, nothing happened, shutting down network task");
-        } else if incorrectly_sended == received_request {
-            tracing::error!("No more listeners, everything failed, {incorrectly_sended} errors, shutting down network task");
-        } else if incorrectly_sended > 0 {
+            // This is not necessarily an error since we may use the network to only receive in certain protocols
+            tracing::info!("No more listeners, nothing happened, shutting down network task");
+        } else if incorrectly_sent == received_request {
+            tracing::error!("No more listeners, everything failed, {incorrectly_sent} errors, shutting down network task");
+        } else if incorrectly_sent > 0 {
             tracing::warn!(
-                "Network task finished with: {incorrectly_sended}/{received_request} errors"
+                "Network task finished with: {incorrectly_sent}/{received_request} errors"
             );
         } else {
             tracing::info!("Network task succeeded and transmitted {received_request} values");

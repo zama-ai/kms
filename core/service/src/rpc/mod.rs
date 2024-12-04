@@ -1,28 +1,26 @@
-#[cfg(feature = "non-wasm")]
-use crate::{
-    anyhow_error_and_log,
-    conf::ServiceEndpoint,
-    kms::core_service_endpoint_server::{CoreServiceEndpoint, CoreServiceEndpointServer},
-};
-#[cfg(feature = "non-wasm")]
-use conf_trace::telemetry::{accept_trace, make_span, record_trace_id};
-#[cfg(feature = "non-wasm")]
-use std::net::ToSocketAddrs;
-#[cfg(feature = "non-wasm")]
-use tonic::transport::Server;
-#[cfg(feature = "non-wasm")]
-use tower_http::trace::TraceLayer;
-#[cfg(feature = "non-wasm")]
-pub mod central_rpc;
+cfg_if::cfg_if! {
+    if #[cfg(feature = "non-wasm")] {
+        use crate::{
+            anyhow_error_and_log,
+            conf::ServiceEndpoint,
+            kms::core_service_endpoint_server::{CoreServiceEndpoint, CoreServiceEndpointServer},
+        };
+
+        use conf_trace::telemetry::{accept_trace, make_span, record_trace_id};
+        use std::net::ToSocketAddrs;
+        use std::time::Duration;
+        use tonic::transport::Server;
+        use tower_http::classify::{GrpcCode, GrpcFailureClass};
+        use tower_http::trace::TraceLayer;
+        use tracing::Span;
+        pub mod central_rpc;
+        use tonic_health::pb::health_server::{Health, HealthServer};
+        use tonic_health::server::HealthReporter;
+        use std::sync::Arc;
+        use tokio::sync::RwLock;
+    }
+}
 pub mod rpc_types;
-#[cfg(feature = "non-wasm")]
-use std::sync::Arc;
-#[cfg(feature = "non-wasm")]
-use tokio::sync::RwLock;
-#[cfg(feature = "non-wasm")]
-use tonic_health::pb::health_server::{Health, HealthServer};
-#[cfg(feature = "non-wasm")]
-use tonic_health::server::HealthReporter;
 
 pub const INFLIGHT_REQUEST_WAITING_TIME: u64 = 1;
 
@@ -111,7 +109,22 @@ pub async fn run_server<
     tokio::spawn(prepare_shutdown_signals(shutdown_signal, tx));
 
     let trace_request = tower::ServiceBuilder::new()
-        .layer(TraceLayer::new_for_grpc().make_span_with(make_span))
+        .layer(
+            TraceLayer::new_for_grpc()
+                .make_span_with(make_span)
+                .on_failure(
+                    |error: GrpcFailureClass, _latency: Duration, _span: &Span| {
+                        if let GrpcFailureClass::Code(status_code) = error {
+                            // The server only returns SERVICE_UNAVAILABLE status code when the request is not done yet
+                            if i32::from(status_code) == GrpcCode::Unavailable as i32 {
+                                tracing::info!("Grpc info from KMS Core server: {}", error)
+                            } else {
+                                tracing::error!("Grpc error from KMS Core server: {}", error)
+                            }
+                        }
+                    },
+                ),
+        )
         .map_request(accept_trace)
         .map_request(record_trace_id);
 

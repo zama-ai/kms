@@ -189,7 +189,8 @@ pub(crate) fn handle_res_mapping<T>(
                     "Could not retrieve {request_type_info} with request ID {} since it is not completed yet",
                     req_id
                 );
-            tracing::warn!(msg);
+            // Note that this is not logged as an error as we expect calls to take some time to be completed
+            tracing::info!(msg);
             Err(tonic::Status::new(tonic::Code::Unavailable, msg))
         }
         Some(HandlerStatus::Error(e)) => {

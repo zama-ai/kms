@@ -157,7 +157,7 @@ async fn central_requests(address: String) -> anyhow::Result<()> {
             );
             assert_eq!(plaintext[0].as_u32(), msg);
         }
-        Err(e) => tracing::error!("Decryption response is NOT valid! Error: {}", e),
+        Err(e) => tracing::warn!("Decryption response is NOT valid! Reason: {}", e),
     };
 
     // REENCRYPTION REQUEST
@@ -204,7 +204,7 @@ async fn central_requests(address: String) -> anyhow::Result<()> {
             );
             assert_eq!(plaintext.as_u32(), msg);
         }
-        Err(e) => tracing::error!("Reencryption response is NOT valid! Error: {}", e),
+        Err(e) => tracing::warn!("Reencryption response is NOT valid! Reason: {}", e),
     };
 
     Ok(())
@@ -413,7 +413,7 @@ async fn do_threshold_reencryption(
             );
             assert_eq!(plaintext.as_u8(), msg);
         }
-        Err(e) => tracing::error!("Reencryption response is NOT valid! Error: {}", e),
+        Err(e) => tracing::warn!("Reencryption response is NOT valid! Reason: {}", e),
     };
 
     Ok(())

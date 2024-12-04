@@ -498,7 +498,7 @@ where
         );
         if let Err(e) = initiator.init_prss_from_disk().await {
             tracing::warn!(
-                "Error reading PRSS Setup from storage for {}: {}. You will need to call the init end-point later before you can use the KMS server",
+                "Could not read PRSS Setup from storage for {}: {}. You will need to call the init end-point later before you can use the KMS server",
                 my_id,
                 e
             );

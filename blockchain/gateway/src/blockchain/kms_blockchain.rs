@@ -203,7 +203,7 @@ impl<'a> KmsBlockchainImpl {
                 resp = qr;
                 break;
             } else {
-                tracing::warn!("Waiting for transaction to be included in a block");
+                tracing::info!("Waiting for transaction to be included in a block");
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                 continue;
             }
@@ -558,7 +558,8 @@ impl Blockchain for KmsBlockchainImpl {
         let key_id_str = match self.get_key_id().await {
             Ok(key_id) => key_id,
             Err(e) => {
-                tracing::warn!("Could not retrieve the key id from the blockchain: {}", e);
+                // It is expected that the result will not be immidiately available after the request. Hence this is only logged as info.
+                tracing::info!("Could not retrieve the key id from the blockchain: {}", e);
                 self.config.kms.key_id.clone()
             }
         };
@@ -843,7 +844,8 @@ impl Blockchain for KmsBlockchainImpl {
         let key_id_str = match self.get_key_id().await {
             Ok(key_id) => key_id,
             Err(e) => {
-                tracing::warn!("Could not retrieve the key id from the blockchain: {}", e);
+                // It is expected that the result will not be immidiately available after the request. Hence this is only logged as info.
+                tracing::info!("Could not retrieve the key id from the blockchain: {}", e);
                 self.config.kms.key_id.clone()
             }
         };

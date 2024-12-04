@@ -295,7 +295,7 @@ fn check_signature_and_log(
         .pk()
         .verify(&msg_signed[..], &sig.sig)
         .map_err(|e| {
-            tracing::error!("signature verification failed with error {e}");
+            tracing::warn!("signature verification failed with error {e}");
             anyhow::Error::new(e)
         })
 }
