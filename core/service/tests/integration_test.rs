@@ -299,7 +299,6 @@ mod kms_server_binary_test {
     fn central_signing_keys_overwrite() {
         let output = Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
-            .arg("--centralized")
             .arg("--param-test")
             .arg("--cmd=signing-keys")
             .arg("--overwrite")
