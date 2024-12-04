@@ -28,7 +28,7 @@ impl Storage for KVStore {
         let hash = &identifier[8..];
 
         // Decode the size
-        let size_bytes = hex::decode(size_hex).unwrap();
+        let size_bytes = hex::decode(size_hex)?;
         let data_size = BigEndian::read_u32(&size_bytes);
         tracing::info!("Data size: {}", data_size);
         // Send a GET request to the Actix web service

@@ -80,7 +80,7 @@ This is used as a unique identifier to each request.
 `request_id` must be a 20 bytes hex string.
 
 
-If a request contains a malformed `request_id`, the response will be an error with `tonic::Code::InvalidArgument`. 
+If a request contains a malformed `request_id`, the response will be an error with `tonic::Code::InvalidArgument`.
 
 </details>
 
@@ -106,7 +106,7 @@ enum FheType {
 ```
 
 #### Description
-This enum is used as metada that accompany a ciphertext to specify its underlying type.
+This enum is used as metadata that accompanies a ciphertext to specify its underlying type.
 </details>
 
 <details>
@@ -162,7 +162,7 @@ message SignedPubDataHandle {
 #### Description
 This is the common structure for all public cryptographic material (i.e public TFHE keys and tfhe CRS).
 
-- `key_handle`: a `SHA3-256` hash of the `tfhe::safe_serialization` of the underlying struct truncated to 20 bytes. This handle serves as the `URI` to locate the actual object in the `storage`. (___NOTE_ Do we want to further define `storage` here?__) 
+- `key_handle`: a `SHA3-256` hash of the `tfhe::safe_serialization` of the underlying struct truncated to 20 bytes. This handle serves as the `URI` to locate the actual object in the `storage`.
 - `signature`: a `bincode::serialize` of `Secp256k1` signature on the `key_handle`. With the `s` value normalized. That is, ensured that the `s` value will always be in the lower part of the space.
 - `external_signature`: a `EIP-712` signature on the _solidity-compatible_  `SHA3-256` hash of the `tfhe::safe_serialization` of the underlying struct. Observe the same signing key is used as for the above `signature`.
 
@@ -174,11 +174,11 @@ __NOTE__: `signature` and `external_signature` look quite redundant.
 
 ### Endpoints (including insecure ones)
 
-### Key Generation 
+### Key Generation
 <details>
     <summary> KeyGenPreproc </summary>
 
-#### Input 
+#### Input
 
 ```proto
 message KeyGenPreprocRequest {
@@ -200,14 +200,14 @@ It triggers the __asynchronous__ correlated randomness generation that is necess
 
 This correlated randomness will then be consumed when calling `KeyGen` with the `preproc_id` set to the current `request_id`.
 
-Observe that this **must** be completed once before *each* key generation call. 
+Observe that this **must** be completed once before *each* key generation call.
 Completion status can be validated using the `GetPreprocStatus` end-point.
 </details>
 
 <details>
     <summary> GetPreprocStatus </summary>
 
-#### Input 
+#### Input
 
 ```proto
 message RequestId { string request_id = 1; }
@@ -231,11 +231,11 @@ Correlated randomness generation is a slow process (several hours), and we thus 
 This is because, to initiate a Distributed Key Generation, we must provide a `preproc_id` that is the `RequestId` of a `Finished` preprocessing.
 
 The meaning of the enum is as follows:
-- `Missing`: There has not been a `KeyGenPreprocRequest` for the provided `request_id`. 
+- `Missing`: There has not been a `KeyGenPreprocRequest` for the provided `request_id`.
 - `InProgess`: The core is still generating the correlated randomness for the specified `request_id`.
-- `Finished`: The core is done generating the correlated randomness, and we can thus now call `KeyGen` with `preproc_id` set to the current `request_id`. 
+- `Finished`: The core is done generating the correlated randomness, and we can thus now call `KeyGen` with `preproc_id` set to the current `request_id`.
 - `Error`: An irrecoverable internal server error has occurred during the correlated randomness generation.
-- `WrongRequest`: __deperecated__ Indicates that the `request_id` is tied to different parameters. 
+- `WrongRequest`: __deprecated__ Indicates that the `request_id` is tied to different parameters.
 
 
 </details>
@@ -243,7 +243,7 @@ The meaning of the enum is as follows:
 <details>
     <summary> KeyGen </summary>
 
-#### Input 
+#### Input
 ```proto
 message KeyGenRequest {
   ParamChoice params = 1;
@@ -262,16 +262,16 @@ message Empty {}
 #### Description
 This RPC initiates the __asynchronous__ generation of a new TFHE keyset with parameters defined by the provided `params`. The status or result can be retrieved using the `GetKeyGenResult` end-point.
 
-The `preproc_id` must be the `request_id` of a `Finished` `KeyGenPreprocRequest` in the __threshold__ setting. In the __centralized__ setting, this can be ignored.   
+The `preproc_id` must be the `request_id` of a `Finished` `KeyGenPreprocRequest` in the __threshold__ setting. In the __centralized__ setting, this can be ignored.
 
-All the public material produced during this key generation will be EIP712-signed using the core's private key and the provided `domain` as `Eip712Domain`. This EIP712 signature is referred to as the `external_signature`. 
+All the public material produced during this key generation will be EIP712-signed using the core's private key and the provided `domain` as `Eip712Domain`. This EIP712 signature is referred to as the `external_signature`.
 
 </details>
 
 <details>
     <summary> GetKeyGenResult </summary>
 
-#### Input 
+#### Input
 
 ```proto
 message RequestId { string request_id = 1; }
@@ -294,7 +294,7 @@ Because this call is dependent on previous call, it may fail with the following 
 - `Unavailable`: The `KeyGen` for the queried `request_id` has started but is not finished yet.
 - `Internal`: The `KeyGen` for the queried `request_id` has failed due to an internal and unrecoverable server error.
 
-If the call is successful, the `KeyGenResul` will contain the `request_id` used in the query, as well as the following map:
+If the call is successful, the `KeyGenResult` will contain the `request_id` used in the query, as well as the following map:
 - Key: `"PublicKey"`, Value: The `SignedPubDataHandle` corresponding to the generated `tfhe::CompactPublicKey`.
 - Key: `"ServerKey"`, Value: The `SignedPubDataHandle` corresponding to the generated `tfhe::ServerKey`.
 - __If the setting is threshold__ Key: `"SnsKey"`, Value: The `SignedPubDataHandle` corresponding to the generated `SwitchAndSquashKey`.
@@ -307,7 +307,7 @@ If the call is successful, the `KeyGenResul` will contain the `request_id` used 
 
 ___NOTE_: This is a temporary workaround and will only be available in testing/debugging setups. **NOT in production**__
 
-#### Input 
+#### Input
 
 ```proto
 message KeyGenRequest {
@@ -327,9 +327,9 @@ message Empty {}
 #### Description
 This RPC initiates the __asynchronous__ generation of a new TFHE keyset with parameters defined by the provided `params`.
 
-The `preproc_id` can be ignored.   
+The `preproc_id` can be ignored.
 
-All the public material produced during this key generation will be EIP712-signed using the core's private key and the provided `domain` as `Eip712Domain`. This EIP712 signature is referred to as the `external_signature`. 
+All the public material produced during this key generation will be EIP712-signed using the core's private key and the provided `domain` as `Eip712Domain`. This EIP712 signature is referred to as the `external_signature`.
 </details>
 
 <details>
@@ -367,7 +367,7 @@ If the call is successful, the `KeyGenResult` will contain the `request_id` used
 <details>
     <summary> CrsGen </summary>
 
-#### Input 
+#### Input
 
 ```proto
 message CrsGenRequest {
@@ -389,13 +389,13 @@ This RPC initiates the __asynchronous__ generation of a new CRS defined by the p
 If no value is given for `max_num_bits`, it defaults to `2048`.
 
 The status or result of this call can be retrieved with the `GetCrsGenResult` end-point.
-The CRS produced during the generation will be EIP712-signeds using the KMS core's private key and the provided `domain` as `Eip712Domain`. This `EIP712` signature is referred to as the `external_signature`.
+The CRS produced during the generation will be EIP712-signed using the KMS core's private key and the provided `domain` as `Eip712Domain`. This `EIP712` signature is referred to as the `external_signature`.
 </details>
 
 <details>
     <summary> GetCrsGenResult </summary>
 
-#### Input 
+#### Input
 
 ```proto
 message RequestId { string request_id = 1; }
@@ -427,7 +427,7 @@ If the call is successful, the `CrsGenResult` will contain the `request_id` used
 <details>
     <summary> VerifyProvenCt </summary>
 
-#### Input 
+#### Input
 
 ```proto
 message VerifyProvenCtRequest {
@@ -466,7 +466,7 @@ The response will be EIP712-signed using the KMS core's private key and the prov
 <details>
     <summary> GetVerifyProvenCtResult </summary>
 
-#### Input 
+#### Input
 
 ```proto
 message RequestId { string request_id = 1; }
@@ -497,7 +497,7 @@ The `signature` is a `secp256k1` signature on the `bincode::serialize` of the `p
 
 ##### The `payload` is composed of:
 
-The `request_id`, `contract_address` and `client_address` are the one provided in the corresponding `VerifyProvenCt` call. 
+The `request_id`, `contract_address` and `client_address` are the one provided in the corresponding `VerifyProvenCt` call.
 
 The `ct_digest` is a `keccak256` digest of the `ct_bytes` provided in the corresponding `VerifyProvenCt` call.
 
@@ -513,7 +513,7 @@ struct CiphertextVerificationForKMS {
 ```
 where:
 - `acl_address` is the one provided in the request,
-- `HashOfCiphertext` is the `keccak256` digest of the provided `ct_bytes`, 
+- `HashOfCiphertext` is the `keccak256` digest of the provided `ct_bytes`,
 - `userAddress` is the `client_address` provided in the request
 - `contractAddress` is the `contract_address` provided in the request
 </details>
@@ -523,7 +523,7 @@ where:
 <details>
     <summary> Decrypt </summary>
 
-#### Input 
+#### Input
 
 
 ```proto
@@ -572,7 +572,7 @@ The response will be EIP712-signed using the KMS core's private key and the prov
 <details>
     <summary> GetDecryptResult </summary>
 
-#### Input 
+#### Input
 
 ```proto
 message RequestId { string request_id = 1; }
@@ -604,14 +604,14 @@ The `signature` is a `secp256k1` signature on the `bincode::serialize` of the `p
 ##### The `payload` is composed of:
 - `version`: __deprecated__ the version number of the request format.
 - `verification_key`: the `bincode::serialize` `ECDSA/secp256k1` verification key of the core.
-- `digest`: The `SHA3-256` digest of the corresponding `bincode::serialize` `Decrypt` request. 
-- `plaintexts`: An array of `bincode::serialize` `Plaintext` that are the requested decryptions. 
+- `digest`: The `SHA3-256` digest of the corresponding `bincode::serialize` `Decrypt` request.
+- `plaintexts`: An array of `bincode::serialize` `Plaintext` that are the requested decryptions.
 - `external_signature`: The `EIP-712` signature on the `DecryptionResult` solidity-compatible structure defined below using the KMS core's private key.
 
 
 The `Plaintext` struct which is serialized in the `plaintexts` field is:
 
-```rust 
+```rust
 pub struct Plaintext {
     pub bytes: Vec<u8>,
     fhe_type: FheType,
@@ -631,7 +631,7 @@ struct DecryptionResult {
 
 Where:
 - `aclAddress`: the `alloy_primitives::bits::address::Address`
-    from the  `acl_address` provided in the corresponding `Decrypt` request.
+    from the `acl_address` provided in the corresponding `Decrypt` request.
 - `handlesList`: the array of provided `external_handle` of each `TypedCiphertext` converted back to a `U256`.
 - `decryptedResult`: the ordered list of plaintexts that are ABI encoded into Solidity Bytes.
 </details>
@@ -642,7 +642,7 @@ Where:
 <details>
     <summary> Reencrypt </summary>
 
-#### Input 
+#### Input
 
 ```proto
 message ReencryptionRequest {
@@ -672,8 +672,8 @@ message Empty {}
 
 #### Description
 
-This RPC initiates the __asynchronous__ reencryption of the provided `ciphertext`. 
-Meaning that a specified ciphertext will get _privately_ decrypted and encrypted under a specified non-homomorphic public key. 
+This RPC initiates the __asynchronous__ reencryption of the provided `ciphertext`.
+Meaning that a specified ciphertext will get _privately_ decrypted and encrypted under a specified non-homomorphic public key.
 The process ensures that no-one (even the MPC parties) learn the decrypted value unless they know the private decryption key for the non-homomorphic public key.
 
 It expects:
@@ -681,7 +681,7 @@ It expects:
 - `payload`: the `ReencryptionRequestPayload` described below.
 
 The `ReencryptionRequestPayload` contains all the information necessary to perform the reencryption:
-- `version`: the version number of the request format. __NOTE: what is taht exactly?__
+- `version`: the version number of the request format. __NOTE: what is that exactly?__
 - `client_address`: An EIP-55 encoded address (including the `0x` prefix) of the end-user who is supposed to learn the reencrypted response.
 - `enc_key`: The `bincode::serialize` of `PublicEncKey`, which is a wrapper around a `crypto_box::PublicKey` to be used for encrypting the result.
 - `fhe_type`: The type of the ciphertext to reencrypt
@@ -696,7 +696,7 @@ The response will be EIP712-signed using the KMS core's private key and the prov
 <details>
     <summary> GetReencryptResult </summary>
 
-#### Input 
+#### Input
 
 ```proto
 message RequestId { string request_id = 1; }
@@ -739,5 +739,3 @@ The signature is a `secp256k1` signature on the `bincode::serialize` of the `pay
 ## Contribution
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-

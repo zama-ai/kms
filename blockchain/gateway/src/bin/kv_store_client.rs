@@ -57,7 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let hash = &identifier[8..];
 
                 // Decode the size
-                let size_bytes = hex::decode(size_hex).unwrap();
+                let size_bytes = hex::decode(size_hex).expect("Invalid hex size");
                 let data_size = BigEndian::read_u32(&size_bytes);
                 println!("Data size: {}", data_size);
                 // Send a GET request to the Actix web service
@@ -70,7 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let response_text = response.text().await?;
                 println!("Response: {}", response_text);
                 // Decode the hex response to bytes
-                let response_bytes = hex::decode(response_text).expect("Invalid hex data");
+                let response_bytes = hex::decode(response_text).expect("Invalid response hex data");
 
                 // Convert the bytes to a string
                 let response_string =

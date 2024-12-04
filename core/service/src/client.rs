@@ -59,7 +59,6 @@ cfg_if::cfg_if! {
         use crate::{storage::StorageReader};
         use std::collections::HashMap;
         use std::fmt;
-        use std::str::FromStr;
         use tfhe::ProvenCompactCiphertextList;
         use tfhe::ServerKey;
         use tfhe_versionable::{Versionize, Unversionize};
@@ -2378,9 +2377,10 @@ pub fn assemble_metadata_alloy(
 /// metadata is `contract_addr || user_addr || acl_addr || chain_id` i.e. 92 bytes since chain ID is encoded as a 32 byte big endian integer
 #[cfg(feature = "non-wasm")]
 pub fn assemble_metadata_req(req: &VerifyProvenCtRequest) -> anyhow::Result<[u8; 92]> {
-    let contract_address = alloy_primitives::Address::from_str(&req.contract_address)?;
-    let client_address = alloy_primitives::Address::from_str(&req.client_address)?;
-    let acl_address = alloy_primitives::Address::from_str(&req.acl_address)?;
+    let contract_address =
+        alloy_primitives::Address::parse_checksummed(&req.contract_address, None)?;
+    let client_address = alloy_primitives::Address::parse_checksummed(&req.client_address, None)?;
+    let acl_address = alloy_primitives::Address::parse_checksummed(&req.acl_address, None)?;
 
     let domain = req
         .domain

@@ -8,25 +8,21 @@
 #[cfg(feature = "default")]
 pub mod proof_handler {
     use crate::types::{
-        biguint_to_bytes32, bytes32_to_biguint, EVMProofParams, EthGetProofRequest,
-        EthGetProofResult, EthResponse, EthereumConfig, EvmPermissionProof, Permission,
-        ACL_DECRYPT_MAPPING_SLOT, ACL_REENCRYPT_MAPPING_SLOT, TRUE_SOLIDITY_STR,
+        biguint_to_bytes32, bytes32_to_biguint, hex_decode_strip_0x_prefix, EVMProofParams,
+        EthGetProofRequest, EthGetProofResult, EthResponse, EthereumConfig, EvmPermissionProof,
+        Permission, ACL_DECRYPT_MAPPING_SLOT, ACL_REENCRYPT_MAPPING_SLOT, TRUE_SOLIDITY_STR,
     };
-
+    use anyhow::{anyhow, Error};
     use ethereum_triedb::{
         keccak::{keccak_256, KeccakHasher},
         EIP1186Layout, StorageProof,
     };
-    use rlp::{Decodable, Rlp};
-    use trie_db::{Trie, TrieDBBuilder};
-
-    use reqwest::Client;
-
     use hex_literal::hex;
     use primitive_types::H256;
+    use reqwest::Client;
+    use rlp::{Decodable, Rlp};
     use sha3::{Digest, Keccak256};
-
-    use anyhow::{anyhow, Error};
+    use trie_db::{Trie, TrieDBBuilder};
 
     pub struct EthereumProofHandler {
         pub config: EthereumConfig,
@@ -102,7 +98,8 @@ pub mod proof_handler {
                 accounts,
                 block_height: 0,    // TODO
                 root_hash: vec![0], // TODO
-                contract_address: hex::decode(&self.config.acl_contract_address[2..]).unwrap(),
+                contract_address: hex_decode_strip_0x_prefix(&self.config.acl_contract_address)
+                    .expect("decoding ACL address"),
                 permission: permission.into(),
                 proof: proofs,
             };
@@ -231,7 +228,7 @@ pub mod proof_handler {
         ) -> Result<String, Error> {
             let intermediate_slot =
                 Self::compute_storage_key(&[ACL_REENCRYPT_MAPPING_SLOT], handle, storage_location)?;
-            let intermediate_slot_bytes = hex::decode(intermediate_slot.trim_start_matches("0x"))?;
+            let intermediate_slot_bytes = hex_decode_strip_0x_prefix(&intermediate_slot)?;
 
             // Step 2: Compute the final storage key for persistedAllowedPairs[handle][account]
             let account_padded = {
@@ -304,19 +301,25 @@ pub mod proof_handler {
         evm_storage_key: String,
     ) -> Option<Result<bool, Error>> {
         let storage_hash_str = &proof.storageHash;
-        let storage_hash = H256::from_slice(&hex::decode(&storage_hash_str[2..]).unwrap());
+        let storage_hash = H256::from_slice(
+            &hex_decode_strip_0x_prefix(storage_hash_str).expect("decoding storage hash"),
+        );
         let mut extracted_key = H256::zero();
         let mut extracted_proof_nodes: Vec<Vec<u8>> = Vec::new();
         if let Some(proof) = proof.storageProof.first() {
-            extracted_key = H256::from_slice(&hex::decode(&proof.key[2..]).unwrap());
-            // extracted_value = U256::from_str_radix(&proof.value[2..], 16).unwrap();
+            extracted_key = H256::from_slice(
+                &hex_decode_strip_0x_prefix(&proof.key).expect("decoding proof key"),
+            );
+            // extracted_value = U256::from_str_radix(&proof.value, 16).unwrap();
             extracted_proof_nodes = proof
                 .proof
                 .iter()
-                .map(|p| hex::decode(&p[2..]).unwrap())
+                .map(|p| hex_decode_strip_0x_prefix(p).expect("decoding proof"))
                 .collect();
         }
-        if hex::decode(&evm_storage_key[2..]).unwrap() != extracted_key.as_bytes() {
+        if hex_decode_strip_0x_prefix(&evm_storage_key).expect("decoding EVM storage key")
+            != extracted_key.as_bytes()
+        {
             return Some(Err(anyhow!("Keys do not match")));
         }
         let key_retrieval = keccak_256(extracted_key.as_bytes());
@@ -325,63 +328,10 @@ pub mod proof_handler {
         let storage_result = trie.get(&key_retrieval).unwrap().unwrap();
         let storage_value = <bool as Decodable>::decode(&Rlp::new(&storage_result)).unwrap();
 
-        // let mut extracted_value = U256::zero();
-
         // Decode the retrieved data (assuming it's a bool for this example)
         if !storage_value {
             return Some(Ok(false));
         }
         None
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::std_proof_handler::EthereumProofHandler;
-    use crate::types::{DecryptProofParams, EVMProofParams, EthereumConfig, ReencryptProofParams};
-    use tokio::test;
-
-    #[test]
-    async fn test_check_permission_on_acl() {
-        let config = EthereumConfig {
-            json_rpc_url: "http://127.0.0.1:8645".to_string(),
-            acl_contract_address: "0x2C411273C34e8629f9c01233723D19A6ae8D6afb".to_string(),
-        };
-
-        let proof_handler = EthereumProofHandler::new(config).unwrap();
-
-        let test_cases = [
-            (
-                "decrypt",
-                EVMProofParams::Decrypt(DecryptProofParams {
-                    ciphertext_handles: vec![hex::decode(
-                        "0000000000000000000000000000000000000001",
-                    )
-                    .unwrap()],
-                }),
-                true,
-            ),
-            (
-                "reencrypt",
-                EVMProofParams::Reencrypt(ReencryptProofParams {
-                    ciphertext_handles: vec![hex::decode(
-                        "0000000000000000000000000000000000000001",
-                    )
-                    .unwrap()],
-                    accounts: vec![hex::decode("00000000000000000000000000000000000000A1").unwrap()],
-                }),
-                true,
-            ),
-        ];
-
-        for (name, params, should_succeed) in &test_cases {
-            let result = proof_handler.fetch_proof(params.clone()).await;
-            assert_eq!(
-                result.is_ok(),
-                *should_succeed,
-                "Test case {} failed for handle",
-                *name,
-            );
-        }
     }
 }

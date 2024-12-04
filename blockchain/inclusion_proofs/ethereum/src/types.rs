@@ -1,3 +1,4 @@
+use hex::FromHexError;
 use num_bigint::BigUint;
 use serde::{Deserialize, Serialize};
 
@@ -151,4 +152,11 @@ pub fn biguint_to_bytes32(value: &BigUint) -> [u8; 32] {
     result[start_index..].copy_from_slice(&bytes);
 
     result
+}
+
+// calls hex::decode on the argument, stripping the 0x or 0X prefix if present
+pub(crate) fn hex_decode_strip_0x_prefix(arg: &str) -> Result<Vec<u8>, FromHexError> {
+    let arg = arg.strip_prefix("0x").unwrap_or(arg);
+    let arg = arg.strip_prefix("0X").unwrap_or(arg);
+    hex::decode(arg)
 }

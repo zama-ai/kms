@@ -40,7 +40,6 @@ use conf_trace::metrics_names::{
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 use std::collections::HashMap;
 use std::fmt;
-use std::str::FromStr;
 use std::sync::Arc;
 use tfhe::safe_serialization::safe_deserialize;
 use tfhe::zk::CompactPkePublicParams;
@@ -1258,7 +1257,7 @@ pub(crate) fn validate_decrypt_req(
     let eip712_domain = protobuf_to_alloy_domain_option(req.domain.as_ref());
 
     let acl_address = if let Some(address) = req.acl_address.as_ref() {
-        match Address::from_str(address) {
+        match Address::parse_checksummed(address, None) {
             Ok(address) => Some(address),
             Err(e) => {
                 tracing::warn!(

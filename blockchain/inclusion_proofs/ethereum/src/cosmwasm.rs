@@ -6,20 +6,18 @@
 
 #[cfg(feature = "cosmwasm")]
 pub mod proof_handler {
-    use crate::types::{
-        biguint_to_bytes32, bytes32_to_biguint, EthGetProofResult, EvmPermissionProof, Permission,
-        ACL_DECRYPT_MAPPING_SLOT, ACL_REENCRYPT_MAPPING_SLOT,
-    };
-
     use crate::cosmwasm_nodecodec::nodecodec::{keccak_256, EIP1186Layout, KeccakHasher};
+    use crate::types::{
+        biguint_to_bytes32, bytes32_to_biguint, hex_decode_strip_0x_prefix, EthGetProofResult,
+        EvmPermissionProof, Permission, ACL_DECRYPT_MAPPING_SLOT, ACL_REENCRYPT_MAPPING_SLOT,
+    };
+    use anyhow::{anyhow, Error};
     use ethereum_triedb_local::StorageProof;
     use hex_literal::hex;
     use primitive_types::H256;
     use rlp::{Decodable, Rlp};
     use sha3::{Digest, Keccak256};
     use trie_db::{Trie, TrieDBBuilder};
-
-    use anyhow::{anyhow, Error};
 
     pub struct EthereumProofHandler {}
 
@@ -100,7 +98,7 @@ pub mod proof_handler {
         ) -> Result<String, Error> {
             let intermediate_slot =
                 Self::compute_storage_key(&[ACL_REENCRYPT_MAPPING_SLOT], handle, storage_location)?;
-            let intermediate_slot_bytes = hex::decode(intermediate_slot.trim_start_matches("0x"))?;
+            let intermediate_slot_bytes = hex_decode_strip_0x_prefix(&intermediate_slot)?;
 
             // Step 2: Compute the final storage key for persistedAllowedPairs[handle][account]
             let account_padded = {
@@ -172,22 +170,26 @@ pub mod proof_handler {
         proof: EthGetProofResult,
         evm_storage_key: String,
     ) -> Option<Result<bool, Error>> {
-        let storage_hash = match hex::decode(&proof.storageHash[2..]) {
+        let storage_hash = match hex_decode_strip_0x_prefix(&proof.storageHash) {
             Ok(hash) => H256::from_slice(&hash),
             Err(_) => return Some(Err(anyhow!("invalid storage hash"))),
         };
         let mut extracted_key = H256::zero();
         let mut extracted_proof_nodes: Vec<Vec<u8>> = Vec::new();
         if let Some(proof) = proof.storageProof.first() {
-            extracted_key = H256::from_slice(&hex::decode(&proof.key[2..]).unwrap());
+            extracted_key = H256::from_slice(
+                &hex_decode_strip_0x_prefix(&proof.key).expect("decoding proof key"),
+            );
             // extracted_value = U256::from_str_radix(&proof.value[2..], 16).unwrap();
             extracted_proof_nodes = proof
                 .proof
                 .iter()
-                .map(|p| hex::decode(&p[2..]).unwrap())
+                .map(|p| hex_decode_strip_0x_prefix(p).expect("decoding proof"))
                 .collect();
         }
-        if hex::decode(&evm_storage_key[2..]).unwrap() != extracted_key.as_bytes() {
+        if hex_decode_strip_0x_prefix(&evm_storage_key).expect("decoding EVM storage key")
+            != extracted_key.as_bytes()
+        {
             return Some(Err(anyhow!("Keys do not match")));
         }
         let key_retrieval = keccak_256(extracted_key.as_bytes());

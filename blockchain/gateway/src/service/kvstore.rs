@@ -21,7 +21,7 @@ pub async fn home() -> impl Responder {
 #[post("/store")]
 pub async fn put(req_body: String, storage: web::Data<Storage>) -> impl Responder {
     tracing::debug!("📦 Received ciphertext: {}", req_body);
-    let data = hex::decode(req_body).unwrap();
+    let data = hex::decode(req_body).expect("Hex decoding received ct");
     let combined_identifier = store(data, storage).await;
     HttpResponse::Ok().body(combined_identifier)
 }
@@ -73,7 +73,7 @@ pub async fn get(path: web::Path<String>, storage: web::Data<Storage>) -> impl R
     let _hash = &combined_identifier[8..];
 
     // Decode the size
-    let size_bytes = hex::decode(size_hex).unwrap();
+    let size_bytes = hex::decode(size_hex).expect("Decoding hex size");
     let data_size = BigEndian::read_u32(&size_bytes);
     tracing::info!("Data size: {}", data_size);
 

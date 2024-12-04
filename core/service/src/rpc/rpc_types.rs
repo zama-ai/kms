@@ -38,7 +38,6 @@ cfg_if::cfg_if! {
         use alloy_signer_local::PrivateKeySigner;
         use alloy_sol_types::SolStruct;
         use rand::{CryptoRng, RngCore};
-        use std::str::FromStr;
     }
 }
 
@@ -545,10 +544,10 @@ pub(crate) fn compute_external_verify_proven_ct_signature(
 
     // the solidity structure to sign with EIP-712
     let message = CiphertextVerificationForKMS {
-        aclAddress: alloy_primitives::Address::from_str(&req.acl_address)?,
+        aclAddress: alloy_primitives::Address::parse_checksummed(&req.acl_address, None)?,
         hashOfCiphertext: ct_digest.as_slice().try_into()?,
-        userAddress: alloy_primitives::Address::from_str(&req.client_address)?,
-        contractAddress: alloy_primitives::Address::from_str(&req.contract_address)?,
+        userAddress: alloy_primitives::Address::parse_checksummed(&req.client_address, None)?,
+        contractAddress: alloy_primitives::Address::parse_checksummed(&req.contract_address, None)?,
     };
 
     let signer = PrivateKeySigner::from_signing_key(client_sk.sk().clone());

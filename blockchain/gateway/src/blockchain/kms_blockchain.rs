@@ -256,7 +256,7 @@ impl<'a> KmsBlockchainImpl {
         tracing::debug!("Response: {}", handle);
         tracing::info!("📦 Stored ciphertext, handle: {}", handle);
 
-        let handle_bytes = hex::decode(handle).unwrap();
+        let handle_bytes = hex::decode(handle)?;
         Ok(handle_bytes)
     }
 

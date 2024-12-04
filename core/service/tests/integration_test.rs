@@ -354,7 +354,7 @@ mod kms_server_binary_test {
         // read address from file
         let address = fs::read_to_string(adress_path).expect("Unable to read Verification Address");
 
-        // make sure its well-formed (starts with 0x and has 40 hex digits)
+        // make sure its well-formed (starts with 0x and has 40 hex digits) and can be decoded
         assert!(address.starts_with("0x"));
         assert_eq!(address.len(), 42);
         hex::decode(address[2..].to_lowercase()).unwrap();

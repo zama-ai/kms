@@ -72,7 +72,7 @@ macro_rules! retry {
     };
 }
 
-/// an Eip-712 domain for testing
+/// a dummy Eip-712 domain for testing
 fn dummy_domain() -> alloy_sol_types::Eip712Domain {
     alloy_sol_types::eip712_domain!(
         name: "Authorization token",
@@ -80,6 +80,11 @@ fn dummy_domain() -> alloy_sol_types::Eip712Domain {
         chain_id: 8006,
         verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
     )
+}
+
+/// a dummy ACL address for testing
+fn dummy_acl_address() -> alloy_primitives::Address {
+    alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045")
 }
 
 async fn central_requests(address: String) -> anyhow::Result<()> {
@@ -125,7 +130,7 @@ async fn central_requests(address: String) -> anyhow::Result<()> {
         ct.clone(),
         &dummy_domain(),
         &random_req_id,
-        &alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045"),
+        &dummy_acl_address(),
         &DEFAULT_CENTRAL_KEY_ID,
     )?;
     let response = kms_client.decrypt(tonic::Request::new(req.clone())).await?;
@@ -233,7 +238,7 @@ async fn do_threshold_decryption(
         ct,
         &dummy_domain(),
         &random_req_id,
-        &alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045"),
+        &dummy_acl_address(),
         &DEFAULT_THRESHOLD_KEY_ID_4P,
     )?;
 

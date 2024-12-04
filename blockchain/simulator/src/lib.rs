@@ -271,9 +271,11 @@ impl_tokenizable!(u128, u128::MAX);
 #[derive(Debug, Parser)]
 pub struct NoParameters {}
 
+/// Parse a string as hex string. The string can optionally start with "0x". Odd-length strings will be padded with a leading zero.
 pub fn parse_hex(arg: &str) -> anyhow::Result<Vec<u8>> {
-    // Remove "0x" prefix if present
-    let hex_str = arg.strip_prefix("0x").unwrap_or(arg);
+    // Remove "0x" or "0X" prefix if present
+    let arg = arg.strip_prefix("0x").unwrap_or(arg);
+    let hex_str = arg.strip_prefix("0X").unwrap_or(arg);
 
     // Handle odd-length hex strings by padding with leading zero
     let hex_str = if hex_str.len() % 2 == 1 {
@@ -1489,9 +1491,12 @@ async fn fetch_kms_addresses(
     let kms_addrs: Vec<_> = addr_bytes
         .iter()
         .map(|x| {
-            alloy_primitives::Address::from_str(str::from_utf8(x).unwrap_or_else(|_| {
-                panic!("cannot convert address bytes into UTF-8 string: {:?}", x)
-            }))
+            alloy_primitives::Address::parse_checksummed(
+                str::from_utf8(x).unwrap_or_else(|_| {
+                    panic!("cannot convert address bytes into UTF-8 string: {:?}", x)
+                }),
+                None,
+            )
             .unwrap_or_else(|_| panic!("invalid ethereum address: {:?}", x))
         })
         .collect();
@@ -1610,7 +1615,8 @@ fn check_ext_pt_signature(
     };
     let domain = protobuf_to_alloy_domain(&edm)?;
 
-    let acl_address = alloy_primitives::Address::from_str(decrypt_vals.acl_address())?;
+    let acl_address =
+        alloy_primitives::Address::parse_checksummed(decrypt_vals.acl_address(), None)?;
     let plaintexts: Vec<Plaintext> = pts
         .iter()
         .map(|pt| bincode::deserialize::<Plaintext>(pt))
