@@ -20,6 +20,7 @@ where
     R: Oracle + Send + Sync + Clone + 'static,
     O: Metrics + Send + Sync,
 {
+    #[tracing::instrument(level = "info", skip(self))]
     async fn on_message(
         &self,
         message: TransactionEvent,
