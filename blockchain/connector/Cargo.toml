@@ -13,6 +13,7 @@ bincode.workspace = true
 byteorder = "=1.5.0"
 clap = { workspace = true, features = ["derive", "env"] }
 conf-trace.workspace = true
+cosmos-proto.workspace = true
 dashmap = "=6.1.0"
 enum_dispatch = "=0.3.13"
 events = { workspace = true, features = ["subscription"] }
@@ -20,6 +21,7 @@ hex.workspace = true
 kms = { workspace = true, default-features = false, features = ["grpc-client", "insecure"] }
 kms-blockchain-client.workspace = true
 opentelemetry = { workspace = true, features = ["metrics"] }
+prost-types.workspace = true
 reqwest.workspace = true
 retrying = { version = "=0.1.0", features = ["tokio"] }
 serde = { workspace = true, features = ["derive"] }

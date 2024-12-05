@@ -2,7 +2,8 @@ use super::metrics::{Metrics, OpenTelemetryMetrics};
 use super::{BlockchainService, GrpcBlockchainService, StorageService, TomlStorageServiceImpl};
 use crate::kms::{KmsEvent, KmsOperation, TransactionEvent};
 use async_trait::async_trait;
-use cosmos_proto::messages::cosmos::base::abci::v1beta1::TxResponse;
+use cosmos_proto::messages::cosmos::{base::abci::v1beta1::TxResponse, tx::v1beta1::Tx};
+
 use cosmwasm_std::Event;
 use koit_toml::KoitError;
 #[cfg(test)]
@@ -10,6 +11,7 @@ use mockall::{automock, mock, predicate::*};
 use retrying::retry;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::Arc;
 use strum::IntoEnumIterator as _;
 use strum_macros::EnumString;
 use thiserror::Error;
@@ -63,17 +65,14 @@ pub struct SubscriptionEventChannel<B, S, M> {
     tick_time_in_sec: u64,
 }
 
-impl<'a, 'b> SubscriptionEventBuilder<'a>
-where
-    'a: 'b,
-{
+impl<'a> SubscriptionEventBuilder<'a> {
     pub async fn subscription(
         self,
     ) -> Result<
         SubscriptionEventChannel<
-            GrpcBlockchainService<'b>,
-            TomlStorageServiceImpl,
-            OpenTelemetryMetrics,
+            Arc<GrpcBlockchainService>,
+            Arc<TomlStorageServiceImpl>,
+            Arc<OpenTelemetryMetrics>,
         >,
         SubscriptionError,
     > {
@@ -86,30 +85,42 @@ where
         let metrics = OpenTelemetryMetrics::new();
         Ok(SubscriptionEventChannel {
             tick_time_in_sec: self.tick_time_in_sec,
-            blockchain,
-            storage,
-            metrics,
+            blockchain: Arc::new(blockchain),
+            storage: Arc::new(storage),
+            metrics: Arc::new(metrics),
         })
     }
 }
 
 /// Subscription Handler Trait
+///
 /// This trait is used to define the behavior of the Subscription handler
 /// The handler will be called when a message is received from the Event Server
 #[cfg_attr(test, automock)]
 #[async_trait]
-pub trait SubscriptionHandler {
+pub trait SubscriptionHandler<T: 'static + Send + Sync> {
+    /// Dictates what the handler does on receiving a message
     async fn on_message(
         &self,
         message: TransactionEvent,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>>;
+
+    /// Dictates what the handler does to catch up on passed messages
+    async fn on_catchup(
+        &self,
+        message: TransactionEvent,
+        past_txs: &mut Vec<T>,
+        past_events_responses: &mut Vec<TransactionEvent>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>>;
+
+    fn filter_for_catchup(&self, tx: Tx) -> Option<T>;
 }
 
 impl<B, S, M> SubscriptionEventChannel<B, S, M>
 where
-    B: BlockchainService,
-    S: StorageService,
-    M: Metrics,
+    B: BlockchainService + Clone + 'static,
+    S: StorageService + 'static,
+    M: Metrics + 'static,
 {
     /// Subscribe to the Event server
     /// The handler will be called when a message is received from the Event server
@@ -124,33 +135,130 @@ where
     ///
     ///
     ///
-    pub async fn subscribe<U>(self, handler: U) -> Result<(), SubscriptionError>
+    pub async fn subscribe<U, T>(
+        self,
+        handler: U,
+        catchup_num_blocks: Option<usize>,
+    ) -> Result<(), SubscriptionError>
     where
-        U: SubscriptionHandler + Clone + Send + Sync + 'static,
+        U: SubscriptionHandler<T> + Clone + Send + Sync + 'static,
+        T: 'static + Send + Sync,
     {
-        //Init once the block height
-        let bc_height = self.blockchain.get_last_height().await;
-        let height = bc_height.unwrap_or(0);
-        self.update_last_seen_height(height).await?;
-        tracing::info!("Starting polling Blockchain on block {height}");
+        // Init once the block height
+        let bc_height = self.blockchain.get_last_height().await?;
+        let starting_height = if let Some(catchup_num_blocks) = catchup_num_blocks {
+            if (catchup_num_blocks as u64) < bc_height {
+                bc_height - (catchup_num_blocks as u64)
+            } else {
+                1
+            }
+        } else {
+            bc_height
+        };
+        self.update_last_seen_height(starting_height).await?;
+        tracing::info!("Starting polling Blockchain on block {starting_height}");
+        let mut last_height = starting_height;
         loop {
-            tracing::trace!(
-                "Waiting {} secs for next tick before getting events",
-                self.tick_time_in_sec
-            );
-            sleep(Duration::from_secs(self.tick_time_in_sec)).await;
-            self.handle_events(handler.clone())
+            //We don't sleep when catching up
+            if last_height >= bc_height {
+                tracing::trace!(
+                    "Waiting {} secs for next tick before getting events",
+                    self.tick_time_in_sec
+                );
+                sleep(Duration::from_secs(self.tick_time_in_sec)).await;
+            }
+            last_height = self
+                .handle_events(handler.clone(), bc_height)
                 .await
                 .unwrap_or_else(|e| {
                     tracing::error!("Error handling events: {:?}", e);
+                    last_height
                 });
         }
     }
 
-    /// Handle one round of events received from the Event Server
-    pub async fn handle_events<U>(&self, handler: U) -> Result<(), SubscriptionError>
+    /// Queries the KMS BC during catchup
+    /// - `height` is the current minimum height we are looking for events
+    /// - `catchup_until_height` is the maximum height until we want to use the catchup mechanism
+    ///
+    /// Returns
+    /// - `Vec<TxResponse>` : The list of transactions we look for events to handle
+    /// - `Option<(Vec<T>, Vec<TransactionEvent>)>` : Which is `Some` in the catchup case and contains respectively the past transactions (filtered with [`Self::get_all_tx_from_to_height_filter_map`]) and the past response events.
+    pub async fn query_bc_during_catchup<T, U>(
+        &self,
+        height: u64,
+        catchup_until_height: u64,
+        handler: Arc<U>,
+    ) -> Result<(Vec<TxResponse>, Option<(Vec<T>, Vec<TransactionEvent>)>), SubscriptionError>
     where
-        U: SubscriptionHandler + Clone + Send + Sync + 'static,
+        U: SubscriptionHandler<T> + Clone + Send + Sync + 'static,
+        T: 'static + Send + Sync,
+    {
+        // Query for all txs emitted by the KMS BC
+        let past_tx = tokio::spawn(Self::get_all_tx_from_to_height_filter_map(
+            self.blockchain.clone(),
+            height,
+            catchup_until_height,
+            handler,
+        ));
+
+        // Query for past response events
+        let past_responses_events = tokio::spawn(Self::get_txs_events_responses(
+            self.blockchain.clone(),
+            height,
+        ));
+
+        // Query for all events emitted by the KMS BC with block height > height
+        let results = tokio::spawn(Self::get_txs_events(self.blockchain.clone(), height));
+
+        let results = tokio::join!(results, past_tx, past_responses_events);
+
+        let tx_result = results
+            .0
+            .map_err(|e| SubscriptionError::UnknownError(e.into()))?
+            .inspect_err(|e| {
+                self.metrics
+                    .increment_connection_errors(1, &[("error", &e.to_string())]);
+            })?;
+        let past_tx = results
+            .1
+            .map_err(|e| SubscriptionError::UnknownError(e.into()))?
+            .inspect_err(|e| {
+                self.metrics
+                    .increment_connection_errors(1, &[("error", &e.to_string())]);
+            })?;
+        let past_responses_events = results
+            .2
+            .map_err(|e| SubscriptionError::UnknownError(e.into()))?
+            .inspect_err(|e| {
+                self.metrics
+                    .increment_connection_errors(1, &[("error", &e.to_string())]);
+            })?
+            .iter()
+            .map(|tx| {
+                Self::try_from(tx)
+                    .map_err(|e| SubscriptionError::DeserializationError(e.to_string()))
+            })
+            .collect::<Result<Vec<Vec<TransactionEvent>>, _>>()?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<TransactionEvent>>();
+
+        Ok((tx_result, Some((past_tx, past_responses_events))))
+    }
+
+    /// Handle one round of events received from the Event Server.
+    ///
+    /// Uses the catchup mechanism of the `handler` until we reach the
+    /// heigh `catchup_until_height`.
+    pub async fn handle_events<U, T>(
+        &self,
+        handler: U,
+        catchup_until_height: u64,
+    ) -> Result<u64, SubscriptionError>
+    where
+        U: SubscriptionHandler<T> + Clone + Send + Sync + 'static,
+        T: 'static + Send + Sync,
     {
         let enter = tracing::span!(
             tracing::Level::TRACE,
@@ -159,60 +267,135 @@ where
         );
         let _guard = enter.enter();
         let height = self.storage.get_last_height().await?;
-        tracing::debug!("Getting events from Blockchain from height {:?}", height);
-        let results = self.get_txs_events(height).await.inspect_err(|e| {
-            self.metrics
-                .increment_connection_errors(1, &[("error", &e.to_string())]);
-        })?;
-        if results.is_empty() {
-            tracing::debug!("No events received from Blockchain. Incrementing height by one.");
-            self.update_last_seen_height(height + 1).await?;
-            return Ok(());
+        let handler = Arc::new(handler);
+
+        // Query the blockchain
+        let (results, mut past_txs_and_responses) = if height < catchup_until_height {
+            self.query_bc_during_catchup(height, catchup_until_height, Arc::clone(&handler))
+                .await?
         } else {
-            tracing::debug!("Received {:?} events from Blockchain", results.len());
-        }
-        let last_height = results.iter().map(|tx| tx.height).max().unwrap_or(0) as u64;
-        let events = results
+            // Query for all events emitted by the KMS BC with block height > height
+            // this wil internally filter on request or answer depending on how the internal BlockchainService
+            // was instantiated
+            let results = Self::get_txs_events(self.blockchain.clone(), height)
+                .await
+                .inspect_err(|e| {
+                    self.metrics
+                        .increment_connection_errors(1, &[("error", &e.to_string())]);
+                })?;
+            (results, None)
+        };
+        tracing::debug!("Getting events from Blockchain from height {:?}", height);
+
+        // Last seen height is the height of the most recent tx,
+        // if no tx, the last height remains the same
+        let last_height = results
+            .iter()
+            .map(|tx| tx.height as u64)
+            .max()
+            .unwrap_or(height);
+
+        // Transform the TxResponses into TransactionEvents
+        let events_with_height = results
             .iter()
             .map(|tx| {
-                Self::try_from(tx)
-                    .map_err(|e| SubscriptionError::DeserializationError(e.to_string()))
-            })
-            .collect::<Result<Vec<Vec<TransactionEvent>>, _>>()?;
-        let events = events
-            .into_iter()
-            .flatten()
-            .collect::<Vec<TransactionEvent>>();
-        let results_size = events.len();
-        tracing::debug!("Sending events to be processed to handler {}", results_size);
-        for result in events {
-            let handler = handler.clone();
-            let handle = async move {
-                let enter = tracing::span!(
-                    tracing::Level::DEBUG,
-                    "on_message",
-                    payload = ?result,
-                    "Received message from Event Server"
-                );
-                let _guard = enter.enter();
-                let result = handler.on_message(result).await;
-                if let Err(e) = &result {
-                    tracing::error!("Error processing message: {:?}", e);
+                let event = Self::try_from(tx);
+                match event {
+                    Ok(event) => Ok((event, tx.height as u64)),
+                    Err(e) => Err(SubscriptionError::DeserializationError(e.to_string())),
                 }
-                drop(_guard);
-                result
+            })
+            .collect::<Result<Vec<(Vec<TransactionEvent>, u64)>, _>>()?
+            .into_iter()
+            .flat_map(|(event, height)| event.into_iter().map(move |event| (event, height)))
+            .collect::<Vec<(TransactionEvent, u64)>>();
+
+        let results_size = events_with_height.len();
+        tracing::debug!(
+            "Sending {} events to be processed to handler.",
+            results_size
+        );
+
+        // For each Transaction event, let the handler deal with it
+        // (NOTE: we leave it to the handler to decide whether it wants
+        // to return async or sync as GW and Connector may have different behavior here)
+        // Note: here the handler is either:
+        // - the OracleEventHandler if this is ran by the GW
+        //  (which basically forwards stuff to KmsEventPublisher)
+        // - the KmsCoreEventHandler if this is ran by the connector
+        for (event, height_of_event) in events_with_height {
+            let result = if height_of_event < catchup_until_height {
+                tracing::debug!(
+                    "Catching up on event: {:?} at height {}",
+                    event,
+                    height_of_event
+                );
+                if let Some((past_txs, past_events_responses)) = &mut past_txs_and_responses {
+                    handler
+                        .on_catchup(event, past_txs, past_events_responses)
+                        .await
+                } else {
+                    tracing::error!(
+                        "Unable to catch up {:?} due to unexpectedly missing past_txs_and_response",
+                        event
+                    );
+                    // Continue anyway as we might be able to handle some other events
+                    // that are not part of the catchup mechanism
+                    continue;
+                }
+            } else {
+                tracing::debug!(
+                    "Processing event: {:?} at height {}",
+                    event,
+                    height_of_event
+                );
+                handler.on_message(event).await
             };
-            tokio::spawn(handle);
+            if let Err(e) = &result {
+                tracing::error!("Error processing message: {:?}", e);
+            }
         }
 
         self.metrics
             .increment_tx_processed(results_size as u64, &[]);
-        self.update_last_seen_height(last_height).await
+        // We will now look for new tx not older than last_height
+        self.update_last_seen_height(last_height).await?;
+        Ok(last_height)
     }
 
     #[retry(stop=(attempts(4)|duration(5)),wait=fixed(10))]
-    async fn get_txs_events(&self, height: u64) -> Result<Vec<TxResponse>, SubscriptionError> {
-        self.blockchain.get_events(height).await
+    async fn get_txs_events(
+        blockchain: B,
+        height: u64,
+    ) -> Result<Vec<TxResponse>, SubscriptionError> {
+        blockchain.get_events(height).await
+    }
+
+    #[retry(stop=(attempts(4)|duration(5)),wait=fixed(10))]
+    async fn get_txs_events_responses(
+        blockchain: B,
+        height: u64,
+    ) -> Result<Vec<TxResponse>, SubscriptionError> {
+        blockchain.get_events_responses(height).await
+    }
+
+    #[retry(stop=(attempts(4)|duration(5)),wait=fixed(10))]
+    async fn get_all_tx_from_to_height_filter_map<U, T>(
+        blockchain: B,
+        from_height: u64,
+        to_height: u64,
+        handler: Arc<U>,
+    ) -> Result<Vec<T>, SubscriptionError>
+    where
+        T: 'static + Send + Sync,
+        U: SubscriptionHandler<T> + Clone + Send + Sync + 'static,
+    {
+        let handler = handler.clone();
+        blockchain
+            .get_all_tx_from_to_height_filter_map(from_height, to_height, move |tx| {
+                handler.filter_for_catchup(tx)
+            })
+            .await
     }
 
     async fn update_last_seen_height(&self, last_height: u64) -> Result<(), SubscriptionError> {
@@ -263,8 +446,10 @@ mod tests {
         }
 
         #[async_trait::async_trait]
-        impl SubscriptionHandler for NeverCalledSubscriptionHandler {
+        impl SubscriptionHandler<Tx> for NeverCalledSubscriptionHandler {
             async fn on_message(&self, _message: TransactionEvent) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>>;
+            async fn on_catchup(&self, _message: TransactionEvent, _past_tx: &mut Vec<Tx>, _past_events_responses: &mut Vec<TransactionEvent>) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>>;
+            fn filter_for_catchup(&self, tx: Tx) -> Option<Tx>;
         }
 
     }
@@ -278,15 +463,54 @@ mod tests {
         }
     }
 
+    mock! {
+        GrpcBlockchainService {}
+        impl Clone for GrpcBlockchainService {
+            fn clone(&self) -> Self;
+        }
+
+        #[async_trait]
+        impl BlockchainService for GrpcBlockchainService {
+            async fn get_events(&self, from_height: u64) -> Result<Vec<TxResponse>, SubscriptionError>;
+            async fn get_events_requests(
+                &self,
+                from_height: u64,
+            ) -> Result<Vec<TxResponse>, SubscriptionError>;
+            async fn get_events_responses(
+                &self,
+                from_height: u64,
+            ) -> Result<Vec<TxResponse>, SubscriptionError>;
+            async fn get_last_height(&self) -> Result<u64, SubscriptionError>;
+            async fn get_all_tx_from_to_height(
+                &self,
+                from_height: u64,
+                to_height: u64,
+            ) -> Result<Vec<Tx>, SubscriptionError>;
+
+            async fn get_all_tx_from_to_height_filter_map<
+                T: 'static + Send,
+                F: Fn(Tx) -> Option<T> + Send + 'static,
+            >(
+                &self,
+                from_height: u64,
+                to_height: u64,
+                filter: F,
+            ) -> Result<Vec<T>, SubscriptionError>;
+        }
+    }
+
     struct SubscriptionContext {
-        subscription:
-            SubscriptionEventChannel<MockBlockchainService, MockStorageService, MockMetricService>,
+        subscription: SubscriptionEventChannel<
+            MockGrpcBlockchainService,
+            MockStorageService,
+            MockMetricService,
+        >,
     }
 
     impl AsyncTestContext for SubscriptionContext {
         async fn setup() -> SubscriptionContext {
             async {
-                let blockchain = MockBlockchainService::new();
+                let blockchain = MockGrpcBlockchainService::new();
                 let storage = MockStorageService::new();
                 SubscriptionContext {
                     subscription: SubscriptionEventChannel {
@@ -309,7 +533,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl crate::subscription::handler::SubscriptionHandler for TestHandler {
+    impl crate::subscription::handler::SubscriptionHandler<Tx> for TestHandler {
         async fn on_message(
             &self,
             message: TransactionEvent,
@@ -317,6 +541,19 @@ mod tests {
             tracing::info!("Received message: {:?}", message);
             self.sender.send(()).await?;
             Ok(())
+        }
+        async fn on_catchup(
+            &self,
+            message: TransactionEvent,
+            _past_tx: &mut Vec<Tx>,
+            _past_events_responses: &mut Vec<TransactionEvent>,
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+            tracing::info!("Catching up on message: {:?}", message);
+            self.sender.send(()).await?;
+            Ok(())
+        }
+        fn filter_for_catchup(&self, tx: Tx) -> Option<Tx> {
+            Some(tx)
         }
     }
 
@@ -344,10 +581,24 @@ mod tests {
         server
             .subscription
             .blockchain
-            .expect_get_events()
-            .withf(|_| true)
+            .expect_clone()
+            .once()
+            .returning(|| {
+                let mut new_mock = MockGrpcBlockchainService::new();
+                new_mock
+                    .expect_get_events()
+                    .withf(|_| true)
+                    .times(1)
+                    .returning(move |_| Ok(vec![]));
+                new_mock
+            });
+
+        server
+            .subscription
+            .metrics
+            .expect_increment_tx_processed()
             .times(1)
-            .returning(move |_| Ok(vec![]));
+            .returning(|_, _| ());
 
         server
             .subscription
@@ -367,7 +618,10 @@ mod tests {
         let mut on_message_mock = MockNeverCalledSubscriptionHandler::new();
         on_message_mock.expect_on_message().never();
 
-        server.subscription.handle_events(on_message_mock).await?;
+        server
+            .subscription
+            .handle_events(on_message_mock, 0)
+            .await?;
         Ok(())
     }
 
@@ -399,13 +653,22 @@ mod tests {
                     )
                     .collect(),
             });
+
         server
             .subscription
             .blockchain
-            .expect_get_events()
-            .withf(|_| true)
-            .times(1)
-            .returning(move |_| Ok(vec![tx_response.clone(); amount as usize]));
+            .expect_clone()
+            .once()
+            .returning(move || {
+                let tx_response = tx_response.clone();
+                let mut new_mock = MockGrpcBlockchainService::new();
+                new_mock
+                    .expect_get_events()
+                    .withf(|_| true)
+                    .times(1)
+                    .returning(move |_| Ok(vec![tx_response.clone(); amount as usize]));
+                new_mock
+            });
 
         server
             .subscription
@@ -430,7 +693,10 @@ mod tests {
             .withf(|_, _| true)
             .returning(|_, _| ());
 
-        let result = server.subscription.handle_events(on_message.clone()).await;
+        let result = server
+            .subscription
+            .handle_events(on_message.clone(), 0)
+            .await;
         assert!(result.is_ok());
 
         let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));

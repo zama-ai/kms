@@ -24,9 +24,9 @@ use kms_blockchain_connector::conf::{
     BlockchainConfig, ConnectorConfig, ContractFee, CoreConfig, SignKeyConfig, TimeoutConfig,
 };
 use kms_blockchain_connector::domain::blockchain::{
-    BlockchainOperationVal, DecryptResponseVal, KmsOperationResponse,
+    Blockchain, BlockchainOperationVal, DecryptResponseVal, KmsOperationResponse,
 };
-use kms_blockchain_connector::domain::kms::Kms;
+use kms_blockchain_connector::domain::kms::{CatchupResult, Kms};
 use kms_blockchain_connector::domain::storage::Storage;
 use kms_blockchain_connector::infrastructure::blockchain::KmsBlockchain;
 use kms_blockchain_connector::infrastructure::core::{KmsCore, KmsEventHandler};
@@ -103,17 +103,43 @@ impl Kms for KmsMock {
         event: KmsEvent,
         _operation_value: OperationValue,
         _config: Option<KmsConfig>,
-    ) -> anyhow::Result<KmsOperationResponse> {
+    ) -> anyhow::Result<tokio::sync::oneshot::Receiver<anyhow::Result<KmsOperationResponse>>> {
         self.channel.send(event.clone()).await?;
-        Ok(KmsOperationResponse::DecryptResponse(DecryptResponseVal {
-            decrypt_response: DecryptResponseValues::new(
-                vec![1, 2, 3],
-                "Hello World".as_bytes().to_vec(),
-            ),
-            operation_val: BlockchainOperationVal {
-                tx_id: event.txn_id().clone(),
-            },
-        }))
+
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let res = Ok(KmsOperationResponse::DecryptResponse(DecryptResponseVal {
+                decrypt_response: DecryptResponseValues::new(
+                    vec![1, 2, 3],
+                    "Hello World".as_bytes().to_vec(),
+                ),
+                operation_val: BlockchainOperationVal {
+                    tx_id: event.txn_id().clone(),
+                },
+            }));
+            let _ = sender.send(res);
+        });
+        Ok(receiver)
+    }
+
+    async fn run_catchup(
+        &self,
+        event: KmsEvent,
+        _operation_value: OperationValue,
+        _config: Option<KmsConfig>,
+    ) -> anyhow::Result<CatchupResult> {
+        self.channel.send(event.clone()).await?;
+        Ok(CatchupResult::Now(Ok(
+            KmsOperationResponse::DecryptResponse(DecryptResponseVal {
+                decrypt_response: DecryptResponseValues::new(
+                    vec![1, 2, 3],
+                    "Hello World".as_bytes().to_vec(),
+                ),
+                operation_val: BlockchainOperationVal {
+                    tx_id: event.txn_id().clone(),
+                },
+            }),
+        )))
     }
 }
 
@@ -221,7 +247,7 @@ async fn wait_for_event_response<T>(
         timeout_tx.send(()).unwrap();
     };
     let (tx_response, mut rc_response) = channel(1);
-    tokio::spawn(handler.listen_for_events());
+    tokio::spawn(handler.listen_for_events(None));
     tokio::spawn(timeout_task);
     tokio::select! {
         _ = timeout_rx => {
@@ -346,14 +372,16 @@ async fn start_sync_handler(
         blockchain: blockchain_config,
         ..Default::default()
     };
+    let my_pk = blockchain.get_public_key().await;
     KmsCoreSyncHandler::builder()
         .kms_connector_handler(
             KmsCoreEventHandler::builder()
-                .blockchain(blockchain)
+                .blockchain(Arc::new(blockchain))
                 .kms(KmsMock {
                     channel: Arc::new(tx),
                 })
-                .observability(metrics)
+                .observability(Arc::new(metrics))
+                .my_pk(my_pk)
                 .build(),
         )
         .config(connector_config)
@@ -421,7 +449,7 @@ async fn send_key_generation_response(
                 .txn_id(txn_id)
                 .build(),
         )
-        .gas_limit(250000u64)
+        .gas_limit(300000u64)
         .funds(vec![ProtoCoin::builder()
             .denom("ucosm".to_string())
             .amount(100_000u64)
@@ -631,6 +659,9 @@ async fn generic_centralized_sunshine_test(
         .unwrap()
         .run_operation(Some(conf))
         .await
+        .unwrap()
+        .await
+        .unwrap()
         .unwrap();
 
     join_handle.assert_shutdown().await;
@@ -856,7 +887,7 @@ async fn generic_sunshine_test(
     let mut ids = vec![];
 
     while let Some(Ok((i, Ok(res)))) = tasks.join_next().await {
-        results.push(res);
+        results.push(res.await.unwrap().unwrap());
         ids.push(i);
     }
     assert_eq!(results.len(), amount_parties);

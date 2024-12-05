@@ -26,7 +26,7 @@ pub async fn listen() -> anyhow::Result<()> {
 
     OracleSyncHandler::new_with_config_and_listener(config, gateway)
         .await?
-        .listen_for_events()
+        .listen_for_events(None)
         .await
 }
 

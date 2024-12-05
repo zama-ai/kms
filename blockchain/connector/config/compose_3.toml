@@ -10,9 +10,7 @@ asc_address = "wasm1aakfpghcanxtc45gpqlx8j3rq0zcpyf49qmhm9mdjrfx036h4z5se0hfnq"
 csc_address = "wasm14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9s0phg4d"
 
 [blockchain.signkey]
-# It should be either mnemonic or bip32
-mnemonic = "whisper stereo great helmet during hollow nominee skate frown daughter donor pool ozone few find risk cigar practice essay sketch rhythm novel dumb host"
-bip32 = "xprv9s21ZrQH143K3FQVQn1Z6"
+mnemonic = "reason now crater relief demise panic setup deny student sing math ski brush riot inflict lens dutch shuffle host bulb viable animal sketch problem"
 
 [blockchain.fee]
 denom = "ucosm"

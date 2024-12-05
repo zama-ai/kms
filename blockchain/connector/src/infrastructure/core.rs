@@ -1,10 +1,10 @@
 use super::metrics::OpenTelemetryMetrics;
-use crate::conf::TimeoutConfig;
+use crate::conf::{TimeoutConfig, TimeoutTriple};
 use crate::domain::blockchain::{
     BlockchainOperationVal, DecryptResponseVal, KmsOperationResponse, ReencryptResponseVal,
     VerifyProvenCtResponseVal,
 };
-use crate::domain::kms::Kms;
+use crate::domain::kms::{CatchupResult, Kms};
 use crate::domain::storage::Storage;
 use crate::infrastructure::metrics::{MetricType, Metrics};
 use anyhow::anyhow;
@@ -13,9 +13,9 @@ use conf_trace::grpc::make_request;
 use conf_trace::telemetry::ContextPropagator;
 use enum_dispatch::enum_dispatch;
 use events::kms::{
-    CrsGenValues, DecryptResponseValues, DecryptValues, InsecureCrsGenValues, InsecureKeyGenValues,
-    KeyGenPreprocResponseValues, KeyGenResponseValues, KeyGenValues, KmsConfig, KmsEvent,
-    OperationValue, ReencryptResponseValues, ReencryptValues, TransactionId,
+    CrsGenValues, DecryptResponseValues, DecryptValues, FheParameter, InsecureCrsGenValues,
+    InsecureKeyGenValues, KeyGenPreprocResponseValues, KeyGenResponseValues, KeyGenValues,
+    KmsConfig, KmsEvent, OperationValue, ReencryptResponseValues, ReencryptValues, TransactionId,
     VerifyProvenCtResponseValues, VerifyProvenCtValues,
 };
 use events::HexVector;
@@ -32,8 +32,11 @@ use kms_lib::rpc::rpc_types::{PubDataType, CURRENT_FORMAT_VERSION};
 use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::oneshot::Receiver;
+use tonic::service::interceptor::InterceptedService;
 use tonic::transport::{Channel, Endpoint};
-use tonic::{Response, Status};
+use tonic::{Code, Response, Status};
+use tracing::Instrument;
 use typed_builder::TypedBuilder;
 
 pub struct KmsOperationVal<S> {
@@ -41,9 +44,189 @@ pub struct KmsOperationVal<S> {
     pub tx_id: TransactionId,
 }
 
+struct SetupOperationVal {
+    client: CoreServiceEndpointClient<InterceptedService<Channel, ContextPropagator>>,
+    request_id: String,
+    req_id: RequestId,
+    tx_id: TransactionId,
+    timeout_triple: TimeoutTriple,
+    metrics: Arc<OpenTelemetryMetrics>,
+}
+
+trait OperationVal<S> {
+    fn get_operation_val(&self) -> &KmsOperationVal<S>;
+    fn get_timeout_triple(&self) -> TimeoutTriple;
+    fn get_setup(&self) -> anyhow::Result<SetupOperationVal> {
+        let chan = &self.get_operation_val().kms_client.channel;
+        let client = CoreServiceEndpointClient::with_interceptor(chan.clone(), ContextPropagator);
+        let metrics = self.get_operation_val().kms_client.metrics.clone();
+        let request_id = self.get_operation_val().tx_id.to_hex();
+        let req_id: RequestId = request_id.clone().try_into()?;
+        let tx_id = self.get_operation_val().tx_id.clone();
+        Ok(SetupOperationVal {
+            client,
+            request_id,
+            req_id,
+            tx_id,
+            timeout_triple: self.get_timeout_triple(),
+            metrics,
+        })
+    }
+}
+
+#[derive(Clone)]
+struct GenericPollerInput {
+    tx_id: TransactionId,
+    fhe_params: Option<FheParameter>,
+    max_num_bits: Option<u32>,
+}
+struct GenericMapResponseInput<T> {
+    response: Response<T>,
+    tx_id: TransactionId,
+    fhe_params: Option<FheParameter>,
+    max_num_bits: Option<u32>,
+}
+
+impl<T> GenericMapResponseInput<T> {
+    fn new_from_poller_input(response: Response<T>, input: GenericPollerInput) -> Self {
+        Self {
+            response,
+            tx_id: input.tx_id,
+            fhe_params: input.fhe_params,
+            max_num_bits: input.max_num_bits,
+        }
+    }
+}
+
+impl<T> GenericMapResponseInput<T> {
+    fn get_response_and_id(self) -> (Response<T>, TransactionId) {
+        (self.response, self.tx_id)
+    }
+    fn get_response_id_and_fhe_params(
+        self,
+    ) -> anyhow::Result<(Response<T>, TransactionId, FheParameter)> {
+        let fhe_params = self
+            .fhe_params
+            .ok_or_else(|| anyhow!("Missing fhe parameters"))?;
+        Ok((self.response, self.tx_id, fhe_params))
+    }
+    fn get_response_id_fhe_params_and_max_num_bits(
+        self,
+    ) -> anyhow::Result<(Response<T>, TransactionId, FheParameter, u32)> {
+        let fhe_params = self
+            .fhe_params
+            .ok_or_else(|| anyhow!("Missing fhe parameters"))?;
+        let max_num_bits = self
+            .max_num_bits
+            .ok_or_else(|| anyhow!("Missing max num bits"))?;
+
+        Ok((self.response, self.tx_id, fhe_params, max_num_bits))
+    }
+}
+
+#[async_trait]
+trait Poller<T: Send + 'static> {
+    fn map_response(input: GenericMapResponseInput<T>) -> anyhow::Result<KmsOperationResponse>;
+    fn poll_for_result(
+        &self,
+        input: GenericPollerInput,
+    ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>>;
+
+    /// Returns a mapping between result and [`PollerStatus`].
+    ///
+    /// Takes as input [`GenericPollerInput`] used to create the [`KmsOperationResponse`]
+    /// using [`Self::map_response`] in case of 'Ok'.
+    fn res_map_poller(
+        description: &str,
+        input: GenericPollerInput,
+    ) -> impl Fn(Result<Response<T>, Status>) -> Result<PollerStatus<KmsOperationResponse>, anyhow::Error>
+    {
+        move |res: Result<Response<T>, Status>| -> anyhow::Result<PollerStatus<_>, anyhow::Error> {
+            match res {
+                Ok(res) => {
+                    let input =
+                        GenericMapResponseInput::<T>::new_from_poller_input(res, input.clone());
+                    Ok(PollerStatus::Done(Self::map_response(input)?))
+                }
+                Err(e) => {
+                    //TODO(#1693): We probably want to react differently to different kinds of errors
+                    //i.e. continue polling for Unavailable, stop else
+                    tracing::warn!("{description} Response Poller error {:?}", e);
+                    Ok(PollerStatus::Poll)
+                }
+            }
+        }
+    }
+
+    /// Decides what to do according to the kind of response received from the Core.
+    ///
+    /// - `Ok(res)`: The KMS Core directly answered with the response, we can send it back as is to connector
+    /// - `Err(e)`: Look at the status of the error:
+    ///     - `NotFound`: Request was absent from the Core, we return to Connector
+    ///     - `Unavailable`: Core is currently treating the request, keep polling and return a channel in which we will push the answer to the Connector
+    ///     - `Internal`: The error code we use on Core to say something wrong happened, just log
+    ///     - `_`: Anything else means something very wrong happened
+    fn dispatch_catchup_response(
+        &self,
+        response: Result<Response<T>, Status>,
+        setup: SetupOperationVal,
+        input_poller: GenericPollerInput,
+        description: &str,
+    ) -> anyhow::Result<CatchupResult> {
+        match response {
+            Ok(res) => {
+                setup
+                    .metrics
+                    .increment(MetricType::CoreResponseSuccess, 1, &[("ok", "ok")]);
+                let input_map_response =
+                    GenericMapResponseInput::<T>::new_from_poller_input(res, input_poller);
+                Ok(CatchupResult::Now(Self::map_response(input_map_response)))
+            }
+            Err(e) => match e.code() {
+                Code::NotFound => Ok(CatchupResult::NotFound),
+                Code::Unavailable => Ok(CatchupResult::Later(self.poll_for_result(input_poller)?)),
+                Code::Internal => {
+                    setup.metrics.increment(
+                        MetricType::CoreError,
+                        1,
+                        &[("error", &format!("{:?}", e))],
+                    );
+                    tracing::error!("KMS Core failed in {description} : {:?}", e);
+                    Err(anyhow!("{:?}", e))
+                }
+                _ => {
+                    setup.metrics.increment(
+                        MetricType::CoreError,
+                        1,
+                        &[("error", &format!("{:?}", e))],
+                    );
+                    tracing::error!(
+                        "Something went very wrong querying KMS Core in {description} : {:?}",
+                        e
+                    );
+                    Err(anyhow!("{:?}", e))
+                }
+            },
+        }
+    }
+}
+
 pub struct DecryptVal<S> {
     pub decrypt: DecryptValues,
     pub operation_val: KmsOperationVal<S>,
+}
+
+impl<S> OperationVal<S> for DecryptVal<S> {
+    fn get_operation_val(&self) -> &KmsOperationVal<S> {
+        &self.operation_val
+    }
+    fn get_timeout_triple(&self) -> TimeoutTriple {
+        self.operation_val
+            .kms_client
+            .timeout_config
+            .decryption
+            .clone()
+    }
 }
 
 pub struct ReencryptVal<S> {
@@ -51,13 +234,48 @@ pub struct ReencryptVal<S> {
     pub operation_val: KmsOperationVal<S>,
 }
 
+impl<S> OperationVal<S> for ReencryptVal<S> {
+    fn get_operation_val(&self) -> &KmsOperationVal<S> {
+        &self.operation_val
+    }
+    fn get_timeout_triple(&self) -> TimeoutTriple {
+        self.operation_val
+            .kms_client
+            .timeout_config
+            .reencryption
+            .clone()
+    }
+}
+
 pub struct VerifyProvenCtVal<S> {
     pub verify_proven_ct: VerifyProvenCtValues,
     pub operation_val: KmsOperationVal<S>,
 }
 
+impl<S> OperationVal<S> for VerifyProvenCtVal<S> {
+    fn get_operation_val(&self) -> &KmsOperationVal<S> {
+        &self.operation_val
+    }
+    fn get_timeout_triple(&self) -> TimeoutTriple {
+        self.operation_val
+            .kms_client
+            .timeout_config
+            .verify_proven_ct
+            .clone()
+    }
+}
+
 pub struct KeyGenPreprocVal<S> {
     pub operation_val: KmsOperationVal<S>,
+}
+
+impl<S> OperationVal<S> for KeyGenPreprocVal<S> {
+    fn get_operation_val(&self) -> &KmsOperationVal<S> {
+        &self.operation_val
+    }
+    fn get_timeout_triple(&self) -> TimeoutTriple {
+        self.operation_val.kms_client.timeout_config.preproc.clone()
+    }
 }
 
 pub struct KeyGenVal<S> {
@@ -65,9 +283,31 @@ pub struct KeyGenVal<S> {
     pub operation_val: KmsOperationVal<S>,
 }
 
+impl<S> OperationVal<S> for KeyGenVal<S> {
+    fn get_operation_val(&self) -> &KmsOperationVal<S> {
+        &self.operation_val
+    }
+    fn get_timeout_triple(&self) -> TimeoutTriple {
+        self.operation_val.kms_client.timeout_config.keygen.clone()
+    }
+}
+
 pub struct InsecureKeyGenVal<S> {
     pub insecure_key_gen: InsecureKeyGenValues,
     pub operation_val: KmsOperationVal<S>,
+}
+
+impl<S> OperationVal<S> for InsecureKeyGenVal<S> {
+    fn get_operation_val(&self) -> &KmsOperationVal<S> {
+        &self.operation_val
+    }
+    fn get_timeout_triple(&self) -> TimeoutTriple {
+        self.operation_val
+            .kms_client
+            .timeout_config
+            .insecure_key_gen
+            .clone()
+    }
 }
 
 pub struct CrsGenVal<S> {
@@ -75,9 +315,31 @@ pub struct CrsGenVal<S> {
     pub operation_val: KmsOperationVal<S>,
 }
 
+impl<S> OperationVal<S> for CrsGenVal<S> {
+    fn get_operation_val(&self) -> &KmsOperationVal<S> {
+        &self.operation_val
+    }
+    fn get_timeout_triple(&self) -> TimeoutTriple {
+        self.operation_val.kms_client.timeout_config.crs.clone()
+    }
+}
+
 pub struct InsecureCrsGenVal<S> {
     pub insecure_crs_gen: InsecureCrsGenValues,
     pub operation_val: KmsOperationVal<S>,
+}
+
+impl<S> OperationVal<S> for InsecureCrsGenVal<S> {
+    fn get_operation_val(&self) -> &KmsOperationVal<S> {
+        &self.operation_val
+    }
+    fn get_timeout_triple(&self) -> TimeoutTriple {
+        self.operation_val
+            .kms_client
+            .timeout_config
+            .insecure_crs
+            .clone()
+    }
 }
 
 pub enum KmsOperationRequest<S> {
@@ -99,7 +361,7 @@ where
     async fn run_operation(
         &self,
         kms_configuration: Option<KmsConfig>,
-    ) -> anyhow::Result<KmsOperationResponse> {
+    ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
         match self {
             KmsOperationRequest::Decrypt(decrypt) => decrypt.run_operation(kms_configuration).await,
             KmsOperationRequest::Reencrypt(reencrypt) => {
@@ -121,6 +383,32 @@ where
             }
         }
     }
+
+    async fn run_catchup(
+        &self,
+        kms_configuration: Option<KmsConfig>,
+    ) -> anyhow::Result<CatchupResult> {
+        match self {
+            KmsOperationRequest::Decrypt(decrypt) => decrypt.run_catchup(kms_configuration).await,
+            KmsOperationRequest::Reencrypt(reencrypt) => {
+                reencrypt.run_catchup(kms_configuration).await
+            }
+            KmsOperationRequest::VerifyProvenCt(verify_proven_ct) => {
+                verify_proven_ct.run_catchup(kms_configuration).await
+            }
+            KmsOperationRequest::KeyGenPreproc(keygen_preproc) => {
+                keygen_preproc.run_catchup(kms_configuration).await
+            }
+            KmsOperationRequest::KeyGen(keygen) => keygen.run_catchup(kms_configuration).await,
+            KmsOperationRequest::InsecureKeyGen(insecure_key_gen) => {
+                insecure_key_gen.run_catchup(kms_configuration).await
+            }
+            KmsOperationRequest::CrsGen(crsgen) => crsgen.run_catchup(kms_configuration).await,
+            KmsOperationRequest::InsecureCrsGen(insecure_crs_gen) => {
+                insecure_crs_gen.run_catchup(kms_configuration).await
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -133,9 +421,19 @@ where
         event: KmsEvent,
         operation_value: OperationValue,
         kms_configuration: Option<KmsConfig>,
-    ) -> anyhow::Result<KmsOperationResponse> {
+    ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
         let operation = self.create_kms_operation(event, operation_value)?;
         operation.run_operation(kms_configuration).await
+    }
+
+    async fn run_catchup(
+        &self,
+        event: KmsEvent,
+        operation_value: OperationValue,
+        kms_configuration: Option<KmsConfig>,
+    ) -> anyhow::Result<CatchupResult> {
+        let operation = self.create_kms_operation(event, operation_value)?;
+        operation.run_catchup(kms_configuration).await
     }
 }
 
@@ -145,10 +443,22 @@ pub trait KmsEventHandler {
     async fn run_operation(
         &self,
         kms_configuration: Option<KmsConfig>,
-    ) -> anyhow::Result<KmsOperationResponse>;
+    ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>>;
+
+    /// Poll the KMS Core for a potentially existing request.
+    /// This __HEAVILY__ rely on the assumption that the KMS Core
+    /// will return a [`Code::NotFound`] error if there
+    /// has been no request for the given [`RequestId`]
+    async fn run_catchup(
+        &self,
+        kms_configuration: Option<KmsConfig>,
+    ) -> anyhow::Result<CatchupResult>;
 }
 
 #[derive(Clone, TypedBuilder)]
+/// This is used by the [`crate::application::kms_core_sync::KmsCoreEventHandler`]
+/// to interact with the KMS core upon receiving events
+/// from the KMS BC
 pub struct KmsCore<S> {
     channel: Channel,
     metrics: Arc<OpenTelemetryMetrics>,
@@ -252,7 +562,7 @@ enum PollerStatus<T> {
 /// [Result<PollerStatus>]. These two inputs are split because rust does not
 /// currently support async closures.
 macro_rules! poller {
-    ($f_to_poll:expr,$res_map:expr,$timeout_triple:expr,$info:expr,$metrics:expr) => {
+    ($f_to_poll:expr,$res_map:expr,$timeout_triple:expr,$info:expr,$metrics:expr) => {{
         // first wait a bit because some requests are slow.
         tokio::time::sleep(tokio::time::Duration::from_secs(
             $timeout_triple.initial_wait_time,
@@ -271,7 +581,7 @@ macro_rules! poller {
             match $res_map(resp) {
                 Ok(PollerStatus::Done(res)) => {
                     $metrics.increment(MetricType::CoreResponseSuccess, 1, &[("ok", "ok")]);
-                    return Ok(res);
+                    break Ok(res);
                 }
                 Ok(PollerStatus::Poll) => {
                     if cnt > $timeout_triple.max_poll_count {
@@ -283,7 +593,7 @@ macro_rules! poller {
                             1,
                             &[("error", &err_msg)],
                         );
-                        return Err(anyhow!(err_msg));
+                        break Err(anyhow!(err_msg));
                     } else {
                         cnt += 1;
                         tracing::debug!(
@@ -297,11 +607,68 @@ macro_rules! poller {
                     let err_msg = format!("error while trying to get response {e}");
                     $metrics.increment(MetricType::CoreResponseError, 1, &[("error", &err_msg)]);
                     tracing::error!(err_msg);
-                    return Err(anyhow!(err_msg));
+                    break Err(anyhow!(err_msg));
                 }
             }
         }
-    };
+    }};
+}
+
+#[async_trait]
+impl<S> Poller<DecryptionResponse> for DecryptVal<S> {
+    /// Maps a [`DecryptionResponse`] sent by the KMS Core
+    /// to a [`KmsOperationResponse`] for the BC KMS
+    fn map_response(
+        input: GenericMapResponseInput<DecryptionResponse>,
+    ) -> anyhow::Result<KmsOperationResponse> {
+        let (response, tx_id) = input.get_response_and_id();
+        let inner = response.into_inner();
+        let payload: DecryptionResponsePayload = inner
+            .payload
+            .ok_or_else(|| anyhow!("empty decryption payload"))?;
+        Ok(KmsOperationResponse::DecryptResponse(DecryptResponseVal {
+            decrypt_response: DecryptResponseValues::new(
+                inner.signature,
+                bincode::serialize(&payload)?,
+            ),
+            operation_val: BlockchainOperationVal {
+                tx_id: tx_id.clone(),
+            },
+        }))
+    }
+
+    /// Poll the KMS Core for results
+    fn poll_for_result(
+        &self,
+        input: GenericPollerInput,
+    ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
+        let mut setup = self.get_setup()?;
+
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        // A bit of a hack, make sure we can actually do the request
+        // so we can unwrap in the macro right after
+        let _ = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
+        // loop to get response
+        tokio::spawn(
+            async move {
+                let res = poller!(
+                    setup.client.get_decrypt_result(
+                        //This unwrap is safe cause we just made sure this doesn't error out
+                        make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None).unwrap()
+                    ),
+                    Self::res_map_poller("Decrypt",input.clone()),
+                    setup.timeout_triple,
+                    "(Decrypt)",
+                    setup.metrics
+                );
+                if sender.send(res).is_err() {
+                    tracing::error!("KMS Connector error in DecryptVal, received response from Core but receiver dropped : {:?}", setup.req_id);
+                }
+            }
+            .instrument(tracing::Span::current()),
+        );
+        Ok(receiver)
+    }
 }
 
 #[async_trait]
@@ -313,10 +680,8 @@ where
     async fn run_operation(
         &self,
         _kms_configuration: Option<KmsConfig>,
-    ) -> anyhow::Result<KmsOperationResponse> {
-        let chan = &self.operation_val.kms_client.channel;
-        let mut client =
-            CoreServiceEndpointClient::with_interceptor(chan.clone(), ContextPropagator);
+    ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
+        let mut setup = self.get_setup()?;
 
         if CURRENT_FORMAT_VERSION != self.decrypt.version() {
             return Err(anyhow!(
@@ -326,13 +691,8 @@ where
             ));
         }
 
-        let request_id = self.operation_val.tx_id.to_hex();
-
-        let req_id: RequestId = request_id.clone().try_into()?;
-
         let version = self.decrypt.version();
         let key_id = self.decrypt.key_id().to_hex();
-
         let kv_ct_handles = self.decrypt.ciphertext_handles();
         let fhe_types = self.decrypt.fhe_types();
         let external_handles = self.decrypt.external_handles();
@@ -375,7 +735,7 @@ where
             version,
             ciphertexts,
             key_id: Some(RequestId { request_id: key_id }),
-            request_id: Some(req_id.clone()),
+            request_id: Some(setup.req_id.clone()),
             domain: Some(Eip712DomainMsg {
                 name: self.decrypt.eip712_name().to_string(),
                 version: self.decrypt.eip712_version().to_string(),
@@ -386,11 +746,11 @@ where
             acl_address: Some(self.decrypt.acl_address().to_string()),
         };
 
-        let metrics = self.operation_val.kms_client.metrics.clone();
+        let metrics = setup.metrics.clone();
 
-        let request = make_request(req.clone(), Some(request_id.clone()), None)?;
+        let request = make_request(req.clone(), Some(setup.request_id.clone()), None)?;
         // the response should be empty
-        let _resp = client.decrypt(request).await.inspect_err(|e| {
+        let _resp = setup.client.decrypt(request).await.inspect_err(|e| {
             let err_msg = e.to_string();
             tracing::error!(
                 "Error communicating decryption to core. Error message:\n{}\nRequest:\n{:?}",
@@ -401,47 +761,86 @@ where
         })?;
         metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "Decrypt")]);
 
-        let g =
-            |res: Result<Response<DecryptionResponse>, Status>| -> anyhow::Result<PollerStatus<_>, anyhow::Error> {
-            match res {
-                Ok(res) => {
-                    let inner = res.into_inner();
-                    let payload: DecryptionResponsePayload = inner.payload.ok_or_else(||anyhow!("empty decryption payload"))?;
-                        Ok(PollerStatus::Done(KmsOperationResponse::DecryptResponse(DecryptResponseVal {
-                            decrypt_response: DecryptResponseValues::new(
-                                inner.signature,
-                                bincode::serialize(&payload)?,
-                            ),
-                            operation_val: BlockchainOperationVal {
-                                tx_id: self.operation_val.tx_id.clone(),
-                            },
-                        })))
-                }
-                Err(e) => {
-                    tracing::warn!("Decrypt Response Poller error {:?}", e);
-                    Ok(PollerStatus::Poll)
-                },
-            }
+        let generic_poller_input = GenericPollerInput {
+            tx_id: setup.tx_id,
+            fhe_params: None,
+            max_num_bits: None,
+        };
+        self.poll_for_result(generic_poller_input)
+    }
+
+    #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
+    async fn run_catchup(
+        &self,
+        _kms_configuration: Option<KmsConfig>,
+    ) -> anyhow::Result<CatchupResult> {
+        let mut setup = self.get_setup()?;
+        let req = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
+
+        let response = setup.client.get_decrypt_result(req).await;
+
+        let generic_poller_input = GenericPollerInput {
+            tx_id: setup.tx_id.clone(),
+            fhe_params: None,
+            max_num_bits: None,
         };
 
+        self.dispatch_catchup_response(response, setup, generic_poller_input, "DecryptVal")
+    }
+}
+
+impl<S> Poller<ReencryptionResponse> for ReencryptVal<S> {
+    fn map_response(
+        input: GenericMapResponseInput<ReencryptionResponse>,
+    ) -> anyhow::Result<KmsOperationResponse> {
+        let (response, tx_id) = input.get_response_and_id();
+        let inner = response.into_inner();
+        let payload: ReencryptionResponsePayload = inner
+            .payload
+            .ok_or_else(|| anyhow!("empty reencryption payload"))?;
+        Ok(KmsOperationResponse::ReencryptResponse(
+            ReencryptResponseVal {
+                reencrypt_response: ReencryptResponseValues::new(
+                    inner.signature,
+                    bincode::serialize(&payload)?,
+                ),
+                operation_val: BlockchainOperationVal {
+                    tx_id: tx_id.clone(),
+                },
+            },
+        ))
+    }
+
+    fn poll_for_result(
+        &self,
+        input: GenericPollerInput,
+    ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
+        let mut setup = self.get_setup()?;
+
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        // A bit of a hack, make sure we can actually do the request
+        // so we can unwrap in the macro right after
+        let _ = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
         // loop to get response
-        let timeout_triple = self
-            .operation_val
-            .kms_client
-            .timeout_config
-            .decryption
-            .clone();
-        poller!(
-            client.get_decrypt_result(make_request(
-                req_id.clone(),
-                Some(request_id.clone()),
-                None
-            )?),
-            g,
-            timeout_triple,
-            "(Decrypt)",
-            metrics
+        tokio::spawn(
+            async move {
+                let res = poller!(
+                    setup.client.get_reencrypt_result(
+                        //This unwrap is safe cause we just made sure this doesn't error out
+                        make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None).unwrap()
+                    ),
+                    Self::res_map_poller("Reencryption", input.clone()),
+                    setup.timeout_triple,
+                    "(Reencrypt)",
+                    setup.metrics
+                );
+                if sender.send(res).is_err() {
+                    tracing::error!("KMS Connector error in ReencryptVal, received response from Core but receiver dropped : {:?}", setup.req_id);
+                }
+            }
+            .instrument(tracing::Span::current()),
         );
+        Ok(receiver)
     }
 }
 
@@ -454,14 +853,8 @@ where
     async fn run_operation(
         &self,
         _kms_configuration: Option<KmsConfig>,
-    ) -> anyhow::Result<KmsOperationResponse> {
-        let chan = &self.operation_val.kms_client.channel;
-        let mut client =
-            CoreServiceEndpointClient::with_interceptor(chan.clone(), ContextPropagator);
-
-        let tx_id = self.operation_val.tx_id.to_hex();
-
-        let req_id: RequestId = tx_id.clone().try_into()?;
+    ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
+        let mut setup = self.get_setup()?;
 
         if CURRENT_FORMAT_VERSION != self.reencrypt.version() {
             return Err(anyhow!(
@@ -499,15 +892,15 @@ where
                 verifying_contract: reencrypt.eip712_verifying_contract().to_string(),
                 salt: self.reencrypt.eip712_salt().map(|salt| salt.to_vec()),
             }),
-            request_id: Some(req_id.clone()),
+            request_id: Some(setup.req_id.clone()),
         };
 
-        let metrics = self.operation_val.kms_client.metrics.clone();
+        let metrics = setup.metrics.clone();
 
-        let request = make_request(req.clone(), Some(tx_id.clone()), None)?;
+        let request = make_request(req.clone(), Some(setup.request_id.clone()), None)?;
 
         // the response should be empty
-        let _resp = client.reencrypt(request).await.inspect_err(|e| {
+        let _resp = setup.client.reencrypt(request).await.inspect_err(|e| {
             let err_msg = e.to_string();
             tracing::error!(
                 "Error communicating reencryption to core. Error message:\n{}\nRequest:\n{:?}",
@@ -518,47 +911,86 @@ where
         })?;
         metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "Reencrypt")]);
 
-        let g =
-            |res: Result<Response<ReencryptionResponse>, Status>| -> anyhow::Result<PollerStatus<_>, anyhow::Error> {
-            match res {
-                Ok(res) => {
-                    let inner = res.into_inner();
-                    let payload: ReencryptionResponsePayload = inner.payload.ok_or_else(||anyhow!("empty reencryption payload"))?;
-                    Ok(PollerStatus::Done(KmsOperationResponse::ReencryptResponse(
-                        ReencryptResponseVal {
-                            reencrypt_response: ReencryptResponseValues::new(
-                                inner.signature,
-                                bincode::serialize(&payload)?,
-                            ),
-                            operation_val: BlockchainOperationVal {
-                                tx_id: self.operation_val.tx_id.clone(),
-                            },
-                        },
-                    )))
-                }
-                Err(e) => {
-                    tracing::warn!("Reencrypt Response Poller error {:?}", e);
-                    Ok(PollerStatus::Poll)
-                },
-            }
+        let generic_poller_input = GenericPollerInput {
+            tx_id: setup.tx_id,
+            fhe_params: None,
+            max_num_bits: None,
+        };
+        self.poll_for_result(generic_poller_input)
+    }
+
+    #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
+    async fn run_catchup(
+        &self,
+        _kms_configuration: Option<KmsConfig>,
+    ) -> anyhow::Result<CatchupResult> {
+        let mut setup = self.get_setup()?;
+
+        let request = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
+        let response = setup.client.get_reencrypt_result(request).await;
+
+        let generic_poller_input = GenericPollerInput {
+            tx_id: setup.tx_id.clone(),
+            fhe_params: None,
+            max_num_bits: None,
         };
 
-        // we wait for a bit before even trying
-        let timeout_triple = self
-            .operation_val
-            .kms_client
-            .timeout_config
-            .reencryption
-            .clone();
+        self.dispatch_catchup_response(response, setup, generic_poller_input, "ReencryptVal")
+    }
+}
 
+impl<S> Poller<VerifyProvenCtResponse> for VerifyProvenCtVal<S> {
+    fn map_response(
+        input: GenericMapResponseInput<VerifyProvenCtResponse>,
+    ) -> anyhow::Result<KmsOperationResponse> {
+        let (response, tx_id) = input.get_response_and_id();
+        let inner = response.into_inner();
+        let payload: VerifyProvenCtResponsePayload = inner
+            .payload
+            .ok_or_else(|| anyhow!("empty verify_ct payload"))?;
+        Ok(KmsOperationResponse::VerifyProvenCtResponse(
+            VerifyProvenCtResponseVal {
+                verify_proven_ct_response: VerifyProvenCtResponseValues::new(
+                    inner.signature,
+                    bincode::serialize(&payload)?,
+                ),
+                operation_val: BlockchainOperationVal {
+                    tx_id: tx_id.clone(),
+                },
+            },
+        ))
+    }
+
+    fn poll_for_result(
+        &self,
+        input: GenericPollerInput,
+    ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
+        let mut setup = self.get_setup()?;
+
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        // A bit of a hack, make sure we can actually do the request
+        // so we can unwrap in the macro right after
+        let _ = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
         // loop to get response
-        poller!(
-            client.get_reencrypt_result(make_request(req_id.clone(), Some(tx_id.clone()), None)?),
-            g,
-            timeout_triple,
-            "(Reencrypt)",
-            metrics
+        tokio::spawn(
+            async move {
+                let res = poller!(
+                    setup.client.get_verify_proven_ct_result(
+                        //This unwrap is safe cause we just made sure this doesn't error out
+                        make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None).unwrap()
+                    ),
+                    Self::res_map_poller("VerifyCt", input.clone()),
+                    setup.timeout_triple,
+                    "(VerifyProvenCt)",
+                    setup.metrics
+                );
+                if sender.send(res).is_err() {
+                    tracing::error!("KMS Connector error in VerifyProvenCtVal, received response from Core but receiver dropped : {:?}", setup.req_id);
+                }
+            }
+            .instrument(tracing::Span::current()),
         );
+        Ok(receiver)
     }
 }
 
@@ -571,13 +1003,9 @@ where
     async fn run_operation(
         &self,
         _kms_configuration: Option<KmsConfig>,
-    ) -> anyhow::Result<KmsOperationResponse> {
-        let chan = &self.operation_val.kms_client.channel;
-        let mut client =
-            CoreServiceEndpointClient::with_interceptor(chan.clone(), ContextPropagator);
+    ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
+        let mut setup = self.get_setup()?;
 
-        let tx_id = self.operation_val.tx_id.to_hex();
-        let req_id: RequestId = tx_id.clone().try_into()?;
         let verify_proven_ct = &self.verify_proven_ct;
         let ct_proof_handle: Vec<u8> = verify_proven_ct.ct_proof_handle().deref().into();
         let ct_proof = self
@@ -587,7 +1015,7 @@ where
             .get_ciphertext(ct_proof_handle)
             .await?;
         let req = VerifyProvenCtRequest {
-            request_id: Some(req_id.clone()),
+            request_id: Some(setup.req_id.clone()),
             key_handle: Some(RequestId {
                 request_id: verify_proven_ct.key_id().to_hex(),
             }),
@@ -610,62 +1038,191 @@ where
             }),
         };
 
-        let metrics = self.operation_val.kms_client.metrics.clone();
+        let metrics = setup.metrics.clone();
 
-        let request = make_request(req.clone(), Some(tx_id.clone()), None)?;
+        let request = make_request(req.clone(), Some(setup.request_id.clone()), None)?;
         // Response is just empty
-        let _resp = client.verify_proven_ct(request).await.inspect_err(|e| {
-            let err_msg = e.to_string();
-            tracing::error!("Error in Verify proven ct verification: {}", err_msg);
-            metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
-        })?;
+        let _resp = setup
+            .client
+            .verify_proven_ct(request)
+            .await
+            .inspect_err(|e| {
+                let err_msg = e.to_string();
+                tracing::error!("Error in Verify proven ct verification: {}", err_msg);
+                metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
+            })?;
         metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "VerifyProvenCt")]);
 
-        let g =
-            |res: Result<Response<VerifyProvenCtResponse>, Status>| -> anyhow::Result<PollerStatus<_>, anyhow::Error> {
-            match res {
-                Ok(res) => {
-                    let inner = res.into_inner();
-                    let payload: VerifyProvenCtResponsePayload = inner.payload.ok_or_else(||anyhow!("empty decryption payload"))?;
-                    Ok(PollerStatus::Done(KmsOperationResponse::VerifyProvenCtResponse(
-                        VerifyProvenCtResponseVal {
-                            verify_proven_ct_response: VerifyProvenCtResponseValues::new(
-                                inner.signature,
-                                bincode::serialize(&payload)?,
-                            ),
-                            operation_val: BlockchainOperationVal {
-                                tx_id: self.operation_val.tx_id.clone(),
-                            },
-                        },
-                    )))
-                }
-                Err(e) => {
-                    tracing::warn!("VerifyCt Response Poller error {:?}", e);
-                    Ok(PollerStatus::Poll)
-                },
-            }
+        let generic_poller_input = GenericPollerInput {
+            tx_id: setup.tx_id,
+            fhe_params: None,
+            max_num_bits: None,
         };
+        self.poll_for_result(generic_poller_input)
+    }
 
-        // we wait for a bit before even trying
-        let timeout_triple = self
-            .operation_val
-            .kms_client
-            .timeout_config
-            .verify_proven_ct
-            .clone();
+    #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
+    async fn run_catchup(
+        &self,
+        _kms_configuration: Option<KmsConfig>,
+    ) -> anyhow::Result<CatchupResult> {
+        let mut setup = self.get_setup()?;
+        let req = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
 
+        let response = setup.client.get_verify_proven_ct_result(req).await;
+
+        let generic_poller_input = GenericPollerInput {
+            tx_id: setup.tx_id.clone(),
+            fhe_params: None,
+            max_num_bits: None,
+        };
+        self.dispatch_catchup_response(response, setup, generic_poller_input, "VerifyProvenCtVal")
+    }
+}
+
+impl<S> Poller<KeyGenPreprocStatus> for KeyGenPreprocVal<S> {
+    fn map_response(
+        input: GenericMapResponseInput<KeyGenPreprocStatus>,
+    ) -> anyhow::Result<KmsOperationResponse> {
+        Ok(KmsOperationResponse::KeyGenPreprocResponse(
+            crate::domain::blockchain::KeyGenPreprocResponseVal {
+                keygen_preproc_response: KeyGenPreprocResponseValues {},
+                operation_val: crate::domain::blockchain::BlockchainOperationVal {
+                    tx_id: input.tx_id.clone(),
+                },
+            },
+        ))
+    }
+
+    fn poll_for_result(
+        &self,
+        input: GenericPollerInput,
+    ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
+        let mut setup = self.get_setup()?;
+
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        // A bit of a hack, make sure we can actually do the request
+        // so we can unwrap in the macro right after
+        let _ = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
         // loop to get response
-        poller!(
-            client.get_verify_proven_ct_result(make_request(
-                req_id.clone(),
-                Some(tx_id.clone()),
-                None
-            )?),
-            g,
-            timeout_triple,
-            "(VerifyProvenCt)",
-            metrics
+        tokio::spawn(
+            async move {
+                let res = poller!(
+                    setup.client.get_preproc_status(
+                        //This unwrap is safe cause we just made sure this doesn't error out
+                        make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None).unwrap()
+                    ),
+                    Self::res_map_poller("KeyGenPreproc", input.clone()),
+                    setup.timeout_triple,
+                    "(KeyGenPreproc)",
+                    setup.metrics
+                );
+                if sender.send(res).is_err() {
+                    tracing::error!("KMS Connector error in KeyGenPreprocVal, received response from Core but receiver dropped : {:?}", setup.req_id);
+                }
+            }
+            .instrument(tracing::Span::current()),
         );
+        Ok(receiver)
+    }
+
+    // This res_map_poller doesn't exactly follow the standard template so
+    // we have to define it here
+    fn res_map_poller(
+        description: &str,
+        input: GenericPollerInput,
+    ) -> impl Fn(
+        Result<Response<KeyGenPreprocStatus>, Status>,
+    ) -> Result<PollerStatus<KmsOperationResponse>, anyhow::Error> {
+        move |res: Result<Response<KeyGenPreprocStatus>, Status>| -> anyhow::Result<PollerStatus<_>, anyhow::Error> {
+        match res {
+            Ok(res) => {
+                let inner = res.into_inner();
+                let status = KeyGenPreprocStatusEnum::try_from(inner.result)?;
+                match status {
+                    KeyGenPreprocStatusEnum::Finished => {
+                    let input = GenericMapResponseInput::new_from_poller_input(Response::new(inner), input.clone());
+                        Ok(PollerStatus::Done(Self::map_response(input)?))
+                    }
+                    KeyGenPreprocStatusEnum::InProgress => {
+                        Ok(PollerStatus::Poll)
+                    }
+                    other => {
+                        Err(anyhow!("{description} error while getting status: {}", other.as_str_name()))
+                    }
+                }
+            }
+            Err(e) => {
+                Err(anyhow!(e.to_string()))
+            }
+        }
+    }
+    }
+
+    // This dispatch_catchup_response doesn't exactly follow the standard template so
+    // we have to define it here
+    fn dispatch_catchup_response(
+        &self,
+        response: Result<Response<KeyGenPreprocStatus>, Status>,
+        setup: SetupOperationVal,
+        input_poller: GenericPollerInput,
+        _description: &str,
+    ) -> anyhow::Result<CatchupResult> {
+        match response {
+            Ok(res) => {
+                let inner = res.into_inner();
+                let status = KeyGenPreprocStatusEnum::try_from(inner.result)?;
+                // NOTE: KeyGenPreproc comes with its own status mechanism,
+                // should this be unified with the rest ?
+                match status {
+                    KeyGenPreprocStatusEnum::Missing => Ok(CatchupResult::NotFound),
+                    KeyGenPreprocStatusEnum::InProgress => {
+                        Ok(CatchupResult::Later(self.poll_for_result(input_poller)?))
+                    }
+                    KeyGenPreprocStatusEnum::Finished => {
+                        let input_map_response = GenericMapResponseInput::new_from_poller_input(
+                            Response::new(inner),
+                            input_poller,
+                        );
+                        Ok(CatchupResult::Now(Self::map_response(input_map_response)))
+                    }
+                    _ => {
+                        setup.metrics.increment(
+                            MetricType::CoreError,
+                            1,
+                            &[("error", "KeyGenPreprocVal error")],
+                        );
+                        tracing::error!("KMS Core failed in KeyGenPreprocVal");
+                        Err(anyhow!("KMS Core failed in KeyGenPreprocVal"))
+                    }
+                }
+            }
+            Err(e) => match e.code() {
+                Code::NotFound => Ok(CatchupResult::NotFound),
+                Code::Unavailable => Ok(CatchupResult::Later(self.poll_for_result(input_poller)?)),
+                Code::Internal => {
+                    setup.metrics.increment(
+                        MetricType::CoreError,
+                        1,
+                        &[("error", &format!("{:?}", e))],
+                    );
+                    tracing::error!("KMS Core failed in KeyGenPreprocVal : {:?}", e);
+                    Err(anyhow!("{:?}", e))
+                }
+                _ => {
+                    setup.metrics.increment(
+                        MetricType::CoreError,
+                        1,
+                        &[("error", &format!("{:?}", e))],
+                    );
+                    tracing::error!(
+                        "Something went very wrong querying KMS Core in KeyGenPreprocVal : {:?}",
+                        e
+                    );
+                    Err(anyhow!("{:?}", e))
+                }
+            },
+        }
     }
 }
 
@@ -678,9 +1235,10 @@ where
     async fn run_operation(
         &self,
         kms_configuration: Option<KmsConfig>,
-    ) -> anyhow::Result<KmsOperationResponse> {
+    ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
+        let mut setup = self.get_setup()?;
         let param_choice_str = kms_configuration
-            .ok_or_else(|| anyhow!("KMS configuration is missing"))?
+            .ok_or_else(|| anyhow!("config contract missing"))?
             .param_choice_string();
         let param_choice = ParamChoice::from_str_name(&param_choice_str).ok_or_else(|| {
             anyhow!(
@@ -689,79 +1247,125 @@ where
             )
         })?;
 
-        let chan = &self.operation_val.kms_client.channel;
-        let mut client =
-            CoreServiceEndpointClient::with_interceptor(chan.clone(), ContextPropagator);
-
-        let request_id = self.operation_val.tx_id.to_hex();
-
-        let req_id: RequestId = request_id.clone().try_into()?;
         let req = KeyGenPreprocRequest {
             params: param_choice.into(),
-            request_id: Some(req_id.clone()),
+            request_id: Some(setup.req_id.clone()),
         };
 
-        let metrics = self.operation_val.kms_client.metrics.clone();
-
-        let request = make_request(req.clone(), Some(request_id.clone()), None)?;
+        let request = make_request(req.clone(), Some(setup.request_id.clone()), None)?;
 
         // the response should be empty
-        let _resp = client.key_gen_preproc(request).await.inspect_err(|e| {
-            let err_msg = e.to_string();
-            tracing::error!(
+        let _resp = setup
+            .client
+            .key_gen_preproc(request)
+            .await
+            .inspect_err(|e| {
+                let err_msg = e.to_string();
+                tracing::error!(
                 "Error communicating Keygen Preproc to core. Error message:\n{}\nRequest:\n{:?}",
                 err_msg,
                 req,
             );
-            metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
-        })?;
-        metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "KeyGenPreproc")]);
+                setup
+                    .metrics
+                    .increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
+            })?;
+        setup
+            .metrics
+            .increment(MetricType::CoreSuccess, 1, &[("ok", "KeyGenPreproc")]);
 
-        let g =
-            |res: Result<Response<KeyGenPreprocStatus>, Status>| -> anyhow::Result<PollerStatus<_>, anyhow::Error> {
-            match res {
-                Ok(res) => {
-                    let inner = res.into_inner().result;
-                    let status = KeyGenPreprocStatusEnum::try_from(inner)?;
-                    match status {
-                        KeyGenPreprocStatusEnum::Finished => {
-                            Ok(PollerStatus::Done(KmsOperationResponse::KeyGenPreprocResponse(
-                                crate::domain::blockchain::KeyGenPreprocResponseVal {
-                                    keygen_preproc_response: KeyGenPreprocResponseValues {},
-                                    operation_val: crate::domain::blockchain::BlockchainOperationVal {
-                                        tx_id: self.operation_val.tx_id.clone(),
-                                    },
-                                },
-                            )))
-                        }
-                        KeyGenPreprocStatusEnum::InProgress => {
-                            Ok(PollerStatus::Poll)
-                        }
-                        other => {
-                            Err(anyhow!("error while getting status: {}", other.as_str_name()))
-                        }
-                    }
-                }
-                Err(e) => {
-                    Err(anyhow!(e.to_string()))
-                }
-            }
+        let generic_poller_input = GenericPollerInput {
+            tx_id: setup.tx_id,
+            fhe_params: None,
+            max_num_bits: None,
+        };
+        self.poll_for_result(generic_poller_input)
+    }
+
+    #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
+    async fn run_catchup(
+        &self,
+        _kms_configuration: Option<KmsConfig>,
+    ) -> anyhow::Result<CatchupResult> {
+        let mut setup = self.get_setup()?;
+        let req = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
+
+        let response = setup.client.get_preproc_status(req).await;
+
+        let generic_poller_input = GenericPollerInput {
+            tx_id: setup.tx_id.clone(),
+            fhe_params: None,
+            max_num_bits: None,
         };
 
-        // loop to get response
-        let timeout_triple = self.operation_val.kms_client.timeout_config.preproc.clone();
+        self.dispatch_catchup_response(response, setup, generic_poller_input, "KeyGenPreprocVal")
+    }
+}
 
-        poller!(
-            client.get_preproc_status(make_request(
-                req_id.clone(),
-                Some(request_id.clone()),
-                None
-            )?),
-            g,
-            timeout_triple,
-            "(KeyGenPreproc)",
-            metrics
+impl<S> Poller<KeyGenResult> for KeyGenVal<S> {
+    fn map_response(
+        input: GenericMapResponseInput<KeyGenResult>,
+    ) -> anyhow::Result<KmsOperationResponse> {
+        let (response, tx_id, param_choice) = input.get_response_id_and_fhe_params()?;
+        let inner = response.into_inner();
+        let request_id = inner
+            .request_id
+            .ok_or_else(|| anyhow!("empty request_id for keygen"))?;
+        let pk_info = inner
+            .key_results
+            .get(&PubDataType::PublicKey.to_string())
+            .ok_or_else(|| anyhow!("empty public key info"))?;
+        let ek_info = inner
+            .key_results
+            .get(&PubDataType::ServerKey.to_string())
+            .ok_or_else(|| anyhow!("empty evaluation key info"))?;
+        Ok(KmsOperationResponse::KeyGenResponse(
+            crate::domain::blockchain::KeyGenResponseVal {
+                keygen_response: KeyGenResponseValues::new(
+                    HexVector::from_hex(&request_id.request_id)?,
+                    pk_info.key_handle.clone(),
+                    pk_info.signature.clone(),
+                    ek_info.key_handle.clone(),
+                    ek_info.signature.clone(),
+                    param_choice,
+                ),
+                operation_val: crate::domain::blockchain::BlockchainOperationVal {
+                    tx_id: tx_id.clone(),
+                },
+            },
+        ))
+    }
+
+    fn poll_for_result(
+        &self,
+        input: GenericPollerInput,
+    ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
+        let mut setup = self.get_setup()?;
+
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        // A bit of a hack, make sure we can actually do the request
+        // so we can unwrap in the macro right after
+        let _ = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
+        // loop to get response
+        tokio::spawn(
+            async move {
+                let res = poller!(
+                    setup.client.get_key_gen_result(
+                        //This unwrap is safe cause we just made sure this doesn't error out
+                        make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None).unwrap()
+                    ),
+                    Self::res_map_poller("KeyGen", input.clone()),
+                    setup.timeout_triple,
+                    "(KeyGen)",
+                    setup.metrics
+                );
+                if sender.send(res).is_err() {
+                    tracing::error!("KMS Connector error in KeyGenVal, received response from Core but receiver dropped : {:?}", setup.req_id);
+                }
+            }
+            .instrument(tracing::Span::current()),
         );
+        Ok(receiver)
     }
 }
 
@@ -774,23 +1378,18 @@ where
     async fn run_operation(
         &self,
         kms_configuration: Option<KmsConfig>,
-    ) -> anyhow::Result<KmsOperationResponse> {
+    ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
+        let mut setup = self.get_setup()?;
         let param_choice = kms_configuration
-            .ok_or_else(|| anyhow!("KMS configuration is missing"))?
+            .ok_or_else(|| anyhow!("config contract missing"))?
             .param_choice();
-        let chan = &self.operation_val.kms_client.channel;
-        let mut client =
-            CoreServiceEndpointClient::with_interceptor(chan.clone(), ContextPropagator);
-
-        let request_id = self.operation_val.tx_id.to_hex();
         let keygen = &self.keygen;
-
-        let req_id: RequestId = request_id.clone().try_into()?;
         let preproc_id = keygen.preproc_id().to_hex().try_into()?;
+
         let req = KeyGenRequest {
             params: param_choice.into(),
             preproc_id: Some(preproc_id),
-            request_id: Some(req_id.clone()),
+            request_id: Some(setup.req_id.clone()),
             domain: Some(Eip712DomainMsg {
                 name: keygen.eip712_name().to_string(),
                 version: keygen.eip712_version().to_string(),
@@ -800,72 +1399,119 @@ where
             }),
         };
 
-        let metrics = self.operation_val.kms_client.metrics.clone();
-
-        let request = make_request(req.clone(), Some(request_id.clone()), None)?;
+        let request = make_request(req.clone(), Some(setup.request_id.clone()), None)?;
 
         // the response should be empty
-        let _resp = client.key_gen(request).await.inspect_err(|e| {
+        let _resp = setup.client.key_gen(request).await.inspect_err(|e| {
             let err_msg = e.to_string();
             tracing::error!(
                 "Error communicating Keygen to core. Error message:\n{}\nRequest:\n{:?}",
                 err_msg,
                 req,
             );
-            metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
+            setup
+                .metrics
+                .increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
         })?;
-        metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "KeyGen")]);
-        let g =
-            |res: Result<Response<KeyGenResult>, Status>| -> anyhow::Result<PollerStatus<_>, anyhow::Error> {
-                match res {
-                    Ok(response) => {
-                        let inner = response.into_inner();
-                        let request_id = inner.request_id.ok_or_else(||anyhow!("empty request_id for keygen"))?;
-                        let pk_info = inner
-                            .key_results
-                            .get(&PubDataType::PublicKey.to_string())
-                            .ok_or_else(||anyhow!("empty public key info"))?;
-                        let ek_info = inner
-                            .key_results
-                            .get(&PubDataType::ServerKey.to_string())
-                            .ok_or_else(||anyhow!("empty evaluation key info"))?;
-                        Ok(PollerStatus::Done(KmsOperationResponse::KeyGenResponse(
-                            crate::domain::blockchain::KeyGenResponseVal {
-                                keygen_response: KeyGenResponseValues::new(
-                                    HexVector::from_hex(&request_id.request_id)?,
-                                    pk_info.key_handle.clone(),
-                                    pk_info.signature.clone(),
-                                    ek_info.key_handle.clone(),
-                                    ek_info.signature.clone(),
-                                    param_choice,
-                                ),
-                                operation_val: crate::domain::blockchain::BlockchainOperationVal {
-                                    tx_id: self.operation_val.tx_id.clone(),
-                                },
-                            },
-                        )))
-                    }
-                    // we ignore all errors and just poll
-                    Err(e) => {
-                        tracing::warn!("Keygen Response Poller error {:?}", e);
-                        Ok(PollerStatus::Poll)
-                    },
-                }
-            };
+        setup
+            .metrics
+            .increment(MetricType::CoreSuccess, 1, &[("ok", "KeyGen")]);
 
+        let generic_poller_input = GenericPollerInput {
+            tx_id: setup.tx_id,
+            fhe_params: Some(param_choice),
+            max_num_bits: None,
+        };
+        self.poll_for_result(generic_poller_input)
+    }
+
+    #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
+    async fn run_catchup(
+        &self,
+        kms_configuration: Option<KmsConfig>,
+    ) -> anyhow::Result<CatchupResult> {
+        let mut setup = self.get_setup()?;
+        let param_choice = kms_configuration
+            .clone()
+            .ok_or_else(|| anyhow!("config contract missing"))?
+            .param_choice();
+        let req = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
+
+        let response = setup.client.get_key_gen_result(req).await;
+
+        let generic_poller_input = GenericPollerInput {
+            tx_id: setup.tx_id.clone(),
+            fhe_params: Some(param_choice),
+            max_num_bits: None,
+        };
+        self.dispatch_catchup_response(response, setup, generic_poller_input, "KeyGenVal")
+    }
+}
+
+impl<S> Poller<KeyGenResult> for InsecureKeyGenVal<S> {
+    fn map_response(
+        input: GenericMapResponseInput<KeyGenResult>,
+    ) -> anyhow::Result<KmsOperationResponse> {
+        let (response, tx_id, param_choice) = input.get_response_id_and_fhe_params()?;
+        let inner = response.into_inner();
+        let request_id = inner
+            .request_id
+            .ok_or_else(|| anyhow!("empty request_id"))?;
+        let pk_info = inner
+            .key_results
+            .get(&PubDataType::PublicKey.to_string())
+            .ok_or_else(|| anyhow!("empty public key info"))?;
+        let ek_info = inner
+            .key_results
+            .get(&PubDataType::ServerKey.to_string())
+            .ok_or_else(|| anyhow!("empty evaluation key info"))?;
+        Ok(KmsOperationResponse::KeyGenResponse(
+            crate::domain::blockchain::KeyGenResponseVal {
+                keygen_response: KeyGenResponseValues::new(
+                    HexVector::from_hex(&request_id.request_id)?,
+                    pk_info.key_handle.clone(),
+                    pk_info.signature.clone(),
+                    ek_info.key_handle.clone(),
+                    ek_info.signature.clone(),
+                    param_choice,
+                ),
+                operation_val: crate::domain::blockchain::BlockchainOperationVal {
+                    tx_id: tx_id.clone(),
+                },
+            },
+        ))
+    }
+
+    fn poll_for_result(
+        &self,
+        input: GenericPollerInput,
+    ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
+        let mut setup = self.get_setup()?;
+
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        // A bit of a hack, make sure we can actually do the request
+        // so we can unwrap in the macro right after
+        let _ = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
         // loop to get response
-        let timeout_triple = self.operation_val.kms_client.timeout_config.keygen.clone();
-        poller!(
-            client.get_key_gen_result(make_request(
-                req_id.clone(),
-                Some(request_id.clone()),
-                None
-            )?),
-            g,
-            timeout_triple,
-            "(KeyGen)",
-            metrics
+        tokio::spawn(
+            async move {
+                let res = poller!(
+                    setup.client.get_key_gen_result(
+                        //This unwrap is safe cause we just made sure this doesn't error out
+                        make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None).unwrap()
+                    ),
+                    Self::res_map_poller("InsecureKeyGen", input.clone()),
+                    setup.timeout_triple,
+                    "(InsecureKeyGen)",
+                    setup.metrics
+                );
+                if sender.send(res).is_err() {
+                    tracing::error!("KMS Connector error in InsecureKeyGenVal, received response from Core but receiver dropped : {:?}", setup.req_id);
+                }
+            }
+            .instrument(tracing::Span::current()),
         );
+        Ok(receiver)
     }
 }
 
@@ -878,24 +1524,17 @@ where
     async fn run_operation(
         &self,
         kms_configuration: Option<KmsConfig>,
-    ) -> anyhow::Result<KmsOperationResponse> {
+    ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
+        let mut setup = self.get_setup()?;
         let param_choice = kms_configuration
-            .ok_or_else(|| anyhow!("KMS configuration is missing"))?
+            .ok_or_else(|| anyhow!("config contract missing"))?
             .param_choice();
-
-        let chan = &self.operation_val.kms_client.channel;
-        let mut client =
-            CoreServiceEndpointClient::with_interceptor(chan.clone(), ContextPropagator);
-
-        let request_id = self.operation_val.tx_id.to_hex();
-
-        let req_id: RequestId = request_id.clone().try_into()?;
         let keygen = &self.insecure_key_gen;
 
-        tracing::debug!("Insecure Keygen with request ID: {:?}", req_id);
+        tracing::debug!("Insecure Keygen with request ID: {:?}", setup.req_id);
         let req = KeyGenRequest {
             params: param_choice.into(),
-            request_id: Some(req_id.clone()),
+            request_id: Some(setup.req_id.clone()),
             preproc_id: None,
             domain: Some(Eip712DomainMsg {
                 name: keygen.eip712_name().to_string(),
@@ -906,81 +1545,118 @@ where
             }),
         };
 
-        let metrics = self.operation_val.kms_client.metrics.clone();
-
-        let request = make_request(req.clone(), Some(request_id.clone()), None)?;
+        let request = make_request(req.clone(), Some(setup.request_id.clone()), None)?;
 
         // the response should be empty
-        let _resp = client.insecure_key_gen(request).await.inspect_err(|e| {
-            let err_msg = e.to_string();
-            tracing::error!(
+        let _resp = setup
+            .client
+            .insecure_key_gen(request)
+            .await
+            .inspect_err(|e| {
+                let err_msg = e.to_string();
+                tracing::error!(
                 "Error communicating insecure keygen to core. Error message:\n{}\nRequest:\n{:?}",
                 err_msg,
                 req,
             );
-            metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
-        })?;
-        metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "InsecureKeyGen")]);
+                setup
+                    .metrics
+                    .increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
+            })?;
+        setup
+            .metrics
+            .increment(MetricType::CoreSuccess, 1, &[("ok", "InsecureKeyGen")]);
 
-        let g =
-            |res: Result<Response<KeyGenResult>, Status>| -> anyhow::Result<PollerStatus<_>, anyhow::Error> {
-                match res {
-                    Ok(response) => {
-                        let inner = response.into_inner();
-                        let request_id = inner.request_id.ok_or_else(||anyhow!("empty request_id"))?;
-                        let pk_info = inner
-                            .key_results
-                            .get(&PubDataType::PublicKey.to_string())
-                            .ok_or_else(||anyhow!("empty public key info"))?;
-                        let ek_info = inner
-                            .key_results
-                            .get(&PubDataType::ServerKey.to_string())
-                            .ok_or_else(||anyhow!("empty evaluation key info"))?;
-                        Ok(PollerStatus::Done(KmsOperationResponse::KeyGenResponse(
-                            crate::domain::blockchain::KeyGenResponseVal {
-                                keygen_response: KeyGenResponseValues::new(
-                                    HexVector::from_hex(&request_id.request_id)?,
-                                    pk_info.key_handle.clone(),
-                                    pk_info.signature.clone(),
-                                    ek_info.key_handle.clone(),
-                                    ek_info.signature.clone(),
-                                    param_choice,
-                                ),
-                                operation_val: crate::domain::blockchain::BlockchainOperationVal {
-                                    tx_id: self.operation_val.tx_id.clone(),
-                                },
-                            },
-                        )))
-                    }
-                    // we ignore all errors and just poll
-                    Err(e) => {
-                        tracing::warn!("Insecure Keygen Response Poller error {:?}", e);
-                        Ok(PollerStatus::Poll)
-                    },
-                }
+        let generic_poller_input = GenericPollerInput {
+            tx_id: setup.tx_id,
+            fhe_params: Some(param_choice),
+            max_num_bits: None,
+        };
+        self.poll_for_result(generic_poller_input)
+    }
 
-            };
+    #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
+    async fn run_catchup(
+        &self,
+        kms_configuration: Option<KmsConfig>,
+    ) -> anyhow::Result<CatchupResult> {
+        let mut setup = self.get_setup()?;
+        let param_choice = kms_configuration
+            .clone()
+            .ok_or_else(|| anyhow!("config contract missing"))?
+            .param_choice();
+        let req = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
 
+        let response = setup.client.get_key_gen_result(req).await;
+
+        let generic_poller_input = GenericPollerInput {
+            tx_id: setup.tx_id.clone(),
+            fhe_params: Some(param_choice),
+            max_num_bits: None,
+        };
+        self.dispatch_catchup_response(response, setup, generic_poller_input, "InsecureKeyGenVal")
+    }
+}
+
+impl<S> Poller<CrsGenResult> for CrsGenVal<S> {
+    fn map_response(
+        input: GenericMapResponseInput<CrsGenResult>,
+    ) -> anyhow::Result<KmsOperationResponse> {
+        let (response, tx_id, param_choice, max_num_bits) =
+            input.get_response_id_fhe_params_and_max_num_bits()?;
+        let inner = response.into_inner();
+        let request_id = inner
+            .request_id
+            .ok_or_else(|| anyhow!("empty request_id for CRS generation"))?;
+        let crs_results = inner
+            .crs_results
+            .ok_or_else(|| anyhow!("empty crs result"))?;
+        Ok(KmsOperationResponse::CrsGenResponse(
+            crate::domain::blockchain::CrsGenResponseVal {
+                crs_gen_response: events::kms::CrsGenResponseValues::new(
+                    request_id.request_id,
+                    crs_results.key_handle,
+                    crs_results.signature,
+                    max_num_bits,
+                    param_choice,
+                ),
+                operation_val: crate::domain::blockchain::BlockchainOperationVal {
+                    tx_id: tx_id.clone(),
+                },
+            },
+        ))
+    }
+
+    fn poll_for_result(
+        &self,
+        input: GenericPollerInput,
+    ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
+        let mut setup = self.get_setup()?;
+
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        // A bit of a hack, make sure we can actually do the request
+        // so we can unwrap in the macro right after
+        let _ = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
         // loop to get response
-        let timeout_triple = self
-            .operation_val
-            .kms_client
-            .timeout_config
-            .insecure_key_gen
-            .clone();
-
-        // NOTE: get_insecure_key_gen_result should give us the same
-        poller!(
-            client.get_key_gen_result(make_request(
-                req_id.clone(),
-                Some(request_id.clone()),
-                None
-            )?),
-            g,
-            timeout_triple,
-            "(InsecureKeyGen)",
-            metrics
-        );
+        tokio::spawn(
+                async move {
+                    let res = poller!(
+                        setup.client.get_crs_gen_result(
+                            //This unwrap is safe cause we just made sure this doesn't error out
+                            make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None).unwrap()
+                        ),
+                        Self::res_map_poller("CrsGen", input.clone()),
+                        setup.timeout_triple,
+                        "(CRS)",
+                        setup.metrics
+                    );
+                    if sender.send(res).is_err() {
+                        tracing::error!("KMS Connector error in CrsGenVal, received response from Core but receiver dropped : {:?}", setup.req_id);
+                    }
+                }
+                .instrument(tracing::Span::current()),
+            );
+        Ok(receiver)
     }
 }
 
@@ -993,22 +1669,17 @@ where
     async fn run_operation(
         &self,
         kms_configuration: Option<KmsConfig>,
-    ) -> anyhow::Result<KmsOperationResponse> {
+    ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
+        let mut setup = self.get_setup()?;
         let param_choice = kms_configuration
-            .ok_or_else(|| anyhow!("KMS configuration is missing"))?
+            .ok_or_else(|| anyhow!("config contract missing"))?
             .param_choice();
 
-        let chan = &self.operation_val.kms_client.channel;
-        let mut client =
-            CoreServiceEndpointClient::with_interceptor(chan.clone(), ContextPropagator);
-
-        let request_id = self.operation_val.tx_id.to_hex();
         let crsgen = &self.crsgen;
 
-        let req_id: RequestId = request_id.clone().try_into()?;
         let req = CrsGenRequest {
             params: param_choice.into(),
-            request_id: Some(req_id.clone()),
+            request_id: Some(setup.req_id.clone()),
             max_num_bits: Some(self.crsgen.max_num_bits()),
             domain: Some(Eip712DomainMsg {
                 name: crsgen.eip712_name().to_string(),
@@ -1019,63 +1690,116 @@ where
             }),
         };
 
-        let metrics = self.operation_val.kms_client.metrics.clone();
-
-        let request = make_request(req.clone(), Some(request_id.clone()), None)?;
+        let request = make_request(req.clone(), Some(setup.request_id.clone()), None)?;
 
         // the response should be empty
-        let _resp = client.crs_gen(request).await.inspect_err(|e| {
+        let _resp = setup.client.crs_gen(request).await.inspect_err(|e| {
             let err_msg = e.to_string();
             tracing::error!(
                 "Error communicating CRS generation to core. Error message:\n{}\nRequest:\n{:?}",
                 err_msg,
                 req,
             );
-            metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
+            setup
+                .metrics
+                .increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
         })?;
-        metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "CRS")]);
+        setup
+            .metrics
+            .increment(MetricType::CoreSuccess, 1, &[("ok", "CRS")]);
 
-        let g =
-            |res: Result<Response<CrsGenResult>, Status>| -> anyhow::Result<PollerStatus<_>, anyhow::Error> {
-                match res {
-                    Ok(response) => {
-                        let inner = response.into_inner();
-                        let request_id = inner.request_id.ok_or_else(||anyhow!("empty request_id for CRS generation"))?;
-                        let crs_results = inner.crs_results.ok_or_else(||anyhow!("empty crs result"))?;
-                        Ok(PollerStatus::Done(KmsOperationResponse::CrsGenResponse(
-                            crate::domain::blockchain::CrsGenResponseVal {
-                                crs_gen_response: events::kms::CrsGenResponseValues::new(
-                                    request_id.request_id,
-                                    crs_results.key_handle,
-                                    crs_results.signature,
-                                    self.crsgen.max_num_bits(),
-                                    param_choice,
-                                ),
-                                operation_val: crate::domain::blockchain::BlockchainOperationVal {
-                                    tx_id: self.operation_val.tx_id.clone(),
-                                },
-                            },
-                        )))
+        let generic_poller_input = GenericPollerInput {
+            tx_id: setup.tx_id,
+            fhe_params: Some(param_choice),
+            max_num_bits: Some(self.crsgen.max_num_bits()),
+        };
+
+        self.poll_for_result(generic_poller_input)
+    }
+
+    #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
+    async fn run_catchup(
+        &self,
+        kms_configuration: Option<KmsConfig>,
+    ) -> anyhow::Result<CatchupResult> {
+        let mut setup = self.get_setup()?;
+        let param_choice = kms_configuration
+            .clone()
+            .ok_or_else(|| anyhow!("config contract missing"))?
+            .param_choice();
+        let max_num_bits = self.crsgen.max_num_bits();
+        let req = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
+
+        let response = setup.client.get_crs_gen_result(req).await;
+
+        let generic_poller_input = GenericPollerInput {
+            tx_id: setup.tx_id.clone(),
+            fhe_params: Some(param_choice),
+            max_num_bits: Some(max_num_bits),
+        };
+        self.dispatch_catchup_response(response, setup, generic_poller_input, "CrsGenVal")
+    }
+}
+
+impl<S> Poller<CrsGenResult> for InsecureCrsGenVal<S> {
+    fn map_response(
+        input: GenericMapResponseInput<CrsGenResult>,
+    ) -> anyhow::Result<KmsOperationResponse> {
+        let (response, tx_id, param_choice, max_num_bits) =
+            input.get_response_id_fhe_params_and_max_num_bits()?;
+        let inner = response.into_inner();
+        let request_id = inner
+            .request_id
+            .ok_or_else(|| anyhow!("empty request_id for insecure CRS generation"))?;
+        let crs_results = inner
+            .crs_results
+            .ok_or_else(|| anyhow!("empty insecure crs result"))?;
+        Ok(KmsOperationResponse::CrsGenResponse(
+            crate::domain::blockchain::CrsGenResponseVal {
+                crs_gen_response: events::kms::CrsGenResponseValues::new(
+                    request_id.request_id,
+                    crs_results.key_handle,
+                    crs_results.signature,
+                    max_num_bits,
+                    param_choice,
+                ),
+                operation_val: crate::domain::blockchain::BlockchainOperationVal {
+                    tx_id: tx_id.clone(),
+                },
+            },
+        ))
+    }
+
+    fn poll_for_result(
+        &self,
+        input: GenericPollerInput,
+    ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
+        let mut setup = self.get_setup()?;
+
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        // A bit of a hack, make sure we can actually do the request
+        // so we can unwrap in the macro right after
+        let _ = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
+        // loop to get response
+        tokio::spawn(
+                async move {
+                    let res = poller!(
+                        setup.client.get_crs_gen_result(
+                            //This unwrap is safe cause we just made sure this doesn't error out
+                            make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None).unwrap()
+                        ),
+                        Self::res_map_poller("InsecureCrsGen", input.clone()),
+                        setup.timeout_triple,
+                        "(InsecureCRS)",
+                        setup.metrics
+                    );
+                    if sender.send(res).is_err() {
+                        tracing::error!("KMS Connector error in InsecureCrsGenVal, received response from Core but receiver dropped : {:?}", setup.req_id);
                     }
-                    Err(e) => {
-                        tracing::warn!("CrsGen Response Poller error {:?}", e);
-                        Ok(PollerStatus::Poll)
-                    },
                 }
-            };
-
-        let timeout_triple = self.operation_val.kms_client.timeout_config.crs.clone();
-        poller!(
-            client.get_crs_gen_result(make_request(
-                req_id.clone(),
-                Some(request_id.clone()),
-                None
-            )?),
-            g,
-            timeout_triple,
-            "(CRS)",
-            metrics
-        );
+                .instrument(tracing::Span::current()),
+            );
+        Ok(receiver)
     }
 }
 
@@ -1088,22 +1812,17 @@ where
     async fn run_operation(
         &self,
         kms_configuration: Option<KmsConfig>,
-    ) -> anyhow::Result<KmsOperationResponse> {
+    ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
+        let mut setup = self.get_setup()?;
         let param_choice = kms_configuration
-            .ok_or_else(|| anyhow!("KMS configuration is missing"))?
+            .ok_or_else(|| anyhow!("config contract missing"))?
             .param_choice();
 
-        let chan = &self.operation_val.kms_client.channel;
-        let mut client =
-            CoreServiceEndpointClient::with_interceptor(chan.clone(), ContextPropagator);
-
-        let request_id = self.operation_val.tx_id.to_hex();
         let insecure_crs_gen = &self.insecure_crs_gen;
 
-        let req_id: RequestId = request_id.clone().try_into()?;
         let req = CrsGenRequest {
             params: param_choice.into(),
-            request_id: Some(req_id.clone()),
+            request_id: Some(setup.req_id.clone()),
             max_num_bits: Some(self.insecure_crs_gen.max_num_bits()),
             domain: Some(Eip712DomainMsg {
                 name: insecure_crs_gen.eip712_name().to_string(),
@@ -1117,68 +1836,50 @@ where
             }),
         };
 
-        let metrics = self.operation_val.kms_client.metrics.clone();
-
-        let request = make_request(req.clone(), Some(request_id.clone()), None)?;
+        let request = make_request(req.clone(), Some(setup.request_id.clone()), None)?;
 
         // the response should be empty
-        let _resp = client.insecure_crs_gen(request).await.inspect_err(|e| {
+        let _resp = setup.client.insecure_crs_gen(request).await.inspect_err(|e| {
             let err_msg = e.to_string();
             tracing::error!(
                 "Error communicating insecure CRS generation to core. Error message:\n{}\nRequest:\n{:?}",
                 err_msg,
                 req,
             );
-            metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
+            setup.metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
         })?;
-        metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "InsecureCRS")]);
+        setup
+            .metrics
+            .increment(MetricType::CoreSuccess, 1, &[("ok", "InsecureCRS")]);
 
-        let g =
-            |res: Result<Response<CrsGenResult>, Status>| -> anyhow::Result<PollerStatus<_>, anyhow::Error> {
-                match res {
-                    Ok(response) => {
-                        let inner = response.into_inner();
-                        let request_id = inner.request_id.ok_or_else(||anyhow!("empty request_id for insecure CRS generation"))?;
-                        let crs_results = inner.crs_results.ok_or_else(||anyhow!("empty insecure crs result"))?;
-                        Ok(PollerStatus::Done(KmsOperationResponse::CrsGenResponse(
-                            crate::domain::blockchain::CrsGenResponseVal {
-                                crs_gen_response: events::kms::CrsGenResponseValues::new(
-                                    request_id.request_id,
-                                    crs_results.key_handle,
-                                    crs_results.signature,
-                                    self.insecure_crs_gen.max_num_bits(),
-                                    param_choice,
-                                ),
-                                operation_val: crate::domain::blockchain::BlockchainOperationVal {
-                                    tx_id: self.operation_val.tx_id.clone(),
-                                },
-                            },
-                        )))
-                    }
-                    Err(e) => {
-                        tracing::warn!("InsecureCrsGen Response Poller error {:?}", e);
-                        Ok(PollerStatus::Poll)
-                    },
-                }
-            };
+        let generic_poller_input = GenericPollerInput {
+            tx_id: setup.tx_id,
+            fhe_params: Some(param_choice),
+            max_num_bits: Some(self.insecure_crs_gen.max_num_bits()),
+        };
+        self.poll_for_result(generic_poller_input)
+    }
 
-        let timeout_triple = self
-            .operation_val
-            .kms_client
-            .timeout_config
-            .insecure_crs
-            .clone();
-        // NOTE: get_insecure_crs_gen_result should give us the same
-        poller!(
-            client.get_crs_gen_result(make_request(
-                req_id.clone(),
-                Some(request_id.clone()),
-                None
-            )?),
-            g,
-            timeout_triple,
-            "(InsecureCRS)",
-            metrics
-        );
+    #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
+    async fn run_catchup(
+        &self,
+        kms_configuration: Option<KmsConfig>,
+    ) -> anyhow::Result<CatchupResult> {
+        let mut setup = self.get_setup()?;
+        let param_choice = kms_configuration
+            .clone()
+            .ok_or_else(|| anyhow!("config contract missing"))?
+            .param_choice();
+        let max_num_bits = self.insecure_crs_gen.max_num_bits();
+        let request = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
+
+        let response = setup.client.get_crs_gen_result(request).await;
+
+        let generic_poller_input = GenericPollerInput {
+            tx_id: setup.tx_id.clone(),
+            fhe_params: Some(param_choice),
+            max_num_bits: Some(max_num_bits),
+        };
+        self.dispatch_catchup_response(response, setup, generic_poller_input, "InsecureCrsGenVal")
     }
 }

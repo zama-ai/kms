@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use super::handler::SubscriptionError;
 use async_trait::async_trait;
@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 #[cfg_attr(test, automock)]
 #[async_trait]
-pub trait StorageService {
+pub trait StorageService: Send + Sync {
     async fn get_last_height(&self) -> Result<u64, SubscriptionError>;
     async fn save_last_height(&self, height: u64) -> Result<(), SubscriptionError>;
 }
@@ -64,5 +64,18 @@ impl StorageService for TomlStorageServiceImpl {
         self.db
             .read(|pointer| Ok(pointer.height.unwrap_or(self.outside_height.unwrap_or(0))))
             .await
+    }
+}
+
+#[async_trait]
+impl<A> StorageService for Arc<A>
+where
+    A: StorageService,
+{
+    async fn get_last_height(&self) -> Result<u64, SubscriptionError> {
+        (**self).get_last_height().await
+    }
+    async fn save_last_height(&self, height: u64) -> Result<(), SubscriptionError> {
+        (**self).save_last_height(height).await
     }
 }

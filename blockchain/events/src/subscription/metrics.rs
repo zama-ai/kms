@@ -1,7 +1,9 @@
+use std::sync::Arc;
+
 use opentelemetry::metrics::ObservableCounter;
 use opentelemetry::{global, KeyValue};
 
-pub trait Metrics {
+pub trait Metrics: Send + Sync {
     fn increment_tx_processed(&self, amount: u64, tags: &[(&str, &str)]);
     fn increment_tx_error(&self, amount: u64, tags: &[(&str, &str)]);
     fn increment_connection_errors(&self, amount: u64, tags: &[(&str, &str)]);
@@ -69,5 +71,21 @@ impl Metrics for OpenTelemetryMetrics {
                 .collect::<Vec<KeyValue>>()
                 .as_slice(),
         );
+    }
+}
+
+// Trivial implementation for the Arc version
+impl<A> Metrics for Arc<A>
+where
+    A: Metrics,
+{
+    fn increment_tx_processed(&self, amount: u64, tags: &[(&str, &str)]) {
+        (**self).increment_tx_processed(amount, tags);
+    }
+    fn increment_tx_error(&self, amount: u64, tags: &[(&str, &str)]) {
+        (**self).increment_tx_error(amount, tags);
+    }
+    fn increment_connection_errors(&self, amount: u64, tags: &[(&str, &str)]) {
+        (**self).increment_connection_errors(amount, tags);
     }
 }

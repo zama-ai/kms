@@ -90,14 +90,16 @@ impl Blockchain for KmsBlockchain {
 
     #[tracing::instrument(skip(self))]
     async fn get_operation_value(&self, event: &KmsEvent) -> anyhow::Result<OperationValue> {
-        let query_client = self.query_client.lock().await;
         let request = QueryContractRequest::builder()
             .contract_address(self.config.asc_address.to_owned())
             .query(ContractQuery::GetOperationsValuesFromEvent(
                 EventQuery::builder().event(event.clone()).build(),
             ))
             .build();
-        let result: Vec<OperationValue> = query_client.query_contract(request).await?;
+        let result: Vec<OperationValue> = {
+            let query_client = self.query_client.lock().await;
+            query_client.query_contract(request).await?
+        };
         result
             .first()
             .cloned()
@@ -106,12 +108,18 @@ impl Blockchain for KmsBlockchain {
 
     #[tracing::instrument(skip(self))]
     async fn get_kms_configuration(&self) -> anyhow::Result<KmsConfig> {
-        let query_client = self.query_client.lock().await;
         let request = QueryContractRequest::builder()
             .contract_address(self.config.csc_address.to_owned())
             .query(ContractQuery::GetKmsConfig {})
             .build();
-        let result = query_client.query_contract(request).await?;
+        let result: KmsConfig = {
+            let query_client = self.query_client.lock().await;
+            query_client.query_contract(request).await?
+        };
         Ok(result)
+    }
+
+    async fn get_public_key(&self) -> kms_blockchain_client::crypto::pubkey::PublicKey {
+        self.client.lock().await.get_public_key()
     }
 }

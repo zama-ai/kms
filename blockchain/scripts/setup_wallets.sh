@@ -28,7 +28,10 @@ tail -n 1 /app/secrets/validator_stderr.log > /app/secrets/validator.mnemonic
 echo "Using wasmd node: ${WASMD_NODE}"
 
 # Add Connector account
-export PUB_KEY_KMS_CONN='{"@type":"/cosmos.crypto.secp256k1.PubKey","key":"A/ZoCPf+L7Uxf3snWT+RU5+ivCmT8XR+NFpuhjm5cTP2"}'
+export PUB_KEY_KMS_CONN_1='{"@type":"/cosmos.crypto.secp256k1.PubKey","key":"A/ZoCPf+L7Uxf3snWT+RU5+ivCmT8XR+NFpuhjm5cTP2"}'
+export PUB_KEY_KMS_CONN_2='{"@type":"/cosmos.crypto.secp256k1.PubKey","key":"A+4f+SgCkMgQ97WhaSVaC04iQV8fRUfIbOWPUd/Mmdg/"}'
+export PUB_KEY_KMS_CONN_3='{"@type":"/cosmos.crypto.secp256k1.PubKey","key":"AwRMcO6zUOfBOCyKKIm9KCa8Ge6nIAf6PEsBE5deivPR"}'
+export PUB_KEY_KMS_CONN_4='{"@type":"/cosmos.crypto.secp256k1.PubKey","key":"AuzAYX6PMK2o39Ijin5fEUOwsL3Td4TUNGRJk1VLESRC"}'
 export PUB_KEY_KMS_GATEWAY='{"@type":"/cosmos.crypto.secp256k1.PubKey","key":"AqAodaWg+3JUxIz6CeH0hKN8rxUzuBgQ67SR0KemoDnp"}'
 
 # Add accounts
@@ -38,14 +41,23 @@ echo "Adding validator wallet keys"
 (cat /app/secrets/validator.mnemonic; echo $KEYRING_PASSWORD; echo $KEYRING_PASSWORD) | wasmd keys add validator --recover
 sleep 1
 echo "Adding connector wallet keys"
-(echo $KEYRING_PASSWORD; echo $KEYRING_PASSWORD) | wasmd keys add connector --pubkey "$PUB_KEY_KMS_CONN"
+(echo $KEYRING_PASSWORD; echo $KEYRING_PASSWORD) | wasmd keys add connector1 --pubkey "$PUB_KEY_KMS_CONN_1"
+sleep 1
+(echo $KEYRING_PASSWORD; echo $KEYRING_PASSWORD) | wasmd keys add connector2 --pubkey "$PUB_KEY_KMS_CONN_2"
+sleep 1
+(echo $KEYRING_PASSWORD; echo $KEYRING_PASSWORD) | wasmd keys add connector3 --pubkey "$PUB_KEY_KMS_CONN_3"
+sleep 1
+(echo $KEYRING_PASSWORD; echo $KEYRING_PASSWORD) | wasmd keys add connector4 --pubkey "$PUB_KEY_KMS_CONN_4"
 sleep 1
 echo "Adding gateway wallet keys"
 (echo $KEYRING_PASSWORD; echo $KEYRING_PASSWORD) | wasmd keys add gateway --pubkey "$PUB_KEY_KMS_GATEWAY"
 sleep 1
 
 # Get addresses
-CONN_ADDRESS=$(echo $KEYRING_PASSWORD | wasmd keys show connector --output json |jq -r '.address')
+CONN_ADDRESS_1=$(echo $KEYRING_PASSWORD | wasmd keys show connector1 --output json |jq -r '.address')
+CONN_ADDRESS_2=$(echo $KEYRING_PASSWORD | wasmd keys show connector2 --output json |jq -r '.address')
+CONN_ADDRESS_3=$(echo $KEYRING_PASSWORD | wasmd keys show connector3 --output json |jq -r '.address')
+CONN_ADDRESS_4=$(echo $KEYRING_PASSWORD | wasmd keys show connector4 --output json |jq -r '.address')
 GATEWAY_ADDRESS=$(echo $KEYRING_PASSWORD | wasmd keys show gateway --output json |jq -r '.address')
 VALIDATOR_ADDRESS=$(echo $KEYRING_PASSWORD | wasmd keys show validator --output json |jq -r '.address')
 
@@ -56,7 +68,7 @@ VALIDATOR_ADDRESS=$(echo $KEYRING_PASSWORD | wasmd keys show validator --output 
 # Send tokens to connector and gateway accounts
 echo "Sending tokens from validator to connector and gateway accounts"
 # The validator has 1000000000ucosm (setup_NODE="$NODE" wasmd.sh)
-NODE="$NODE" echo $KEYRING_PASSWORD | wasmd tx bank multi-send "$VALIDATOR_ADDRESS" "$CONN_ADDRESS" "$GATEWAY_ADDRESS" "4500000000ucosm" -y --chain-id testing
+NODE="$NODE" echo $KEYRING_PASSWORD | wasmd tx bank multi-send "$VALIDATOR_ADDRESS" "$CONN_ADDRESS_1" "$CONN_ADDRESS_2" "$CONN_ADDRESS_3" "$CONN_ADDRESS_4" "$GATEWAY_ADDRESS" "4500000000ucosm" -y --chain-id testing
 
 echo ""
 echo "+++++++++++++++++++++++"

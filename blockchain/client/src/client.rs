@@ -4,6 +4,7 @@
 //! contracts, specifically targeting the CosmWasm smart contracts within the Cosmos SDK. It includes functionality
 //! for cryptographic operations, RPC communications, and transaction handling.
 use crate::cosmos::account::AccountId;
+use crate::crypto::pubkey::PublicKey;
 use crate::crypto::signing_key::SigningKey;
 use crate::errors::Error;
 use crate::prost::ext::MessageExt as _;
@@ -181,6 +182,10 @@ impl Client {
             .public_key()
             .account_id(ACCOUNT_PREFIX)?
             .to_string())
+    }
+
+    pub fn get_public_key(&self) -> PublicKey {
+        self.sender_key.public_key()
     }
 
     /// Queries the blockchain for the account details of the sender.

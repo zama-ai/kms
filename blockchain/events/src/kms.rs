@@ -2,6 +2,7 @@ use super::conversions::*;
 use core::hash::{Hash, Hasher};
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Attribute, Event};
+use serde::de::Error;
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -1769,12 +1770,14 @@ impl KmsOperation {
     }
 }
 
-#[derive(Eq, PartialEq, Clone, Debug, TypedBuilder)]
+#[derive(Eq, PartialEq, Clone, Debug, TypedBuilder, Deserialize)]
 pub struct KmsMessage {
     #[builder(setter(into), default = None)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     txn_id: Option<TransactionId>,
     #[builder(setter(into))]
-    value: OperationValue,
+    #[serde(flatten, skip_serializing_if = "OperationValue::has_no_inner_value")]
+    pub value: OperationValue,
 }
 
 pub type KmsMessageWithoutProof = KmsMessage;
@@ -1814,6 +1817,28 @@ impl KmsMessage {
 
     pub fn to_json(&self) -> Result<Value, serde_json::error::Error> {
         serde_json::to_value(self)
+    }
+
+    // NOTE: This logic is most likely already somewhere deep in the macros
+    // as the ASC needs to do this too...
+    pub fn from_json(value: &str) -> Result<Self, serde_json::error::Error> {
+        let value: Value = serde_json::from_str(value)?;
+        match value {
+            serde_json::Value::Object(mut map) => {
+                if map.keys().len() == 1 {
+                    //Can unwrap safely here as we just checked the length
+                    let op = map.keys().next().unwrap().clone();
+                    serde_json::from_value(map.remove(&op).unwrap())
+                } else {
+                    Err(serde_json::error::Error::custom(
+                        "Unexpected value when parsing json",
+                    ))
+                }
+            }
+            _ => Err(serde_json::error::Error::custom(
+                "Unexpected value when parsing json",
+            )),
+        }
     }
 }
 
@@ -2386,6 +2411,8 @@ mod tests {
             }
         });
         assert_eq!(json, json_str);
+        let reconstructed_json = KmsMessage::from_json(&json_str.to_string()).unwrap();
+        assert_eq!(reconstructed_json, message);
     }
 
     #[test]
@@ -2407,6 +2434,9 @@ mod tests {
             }
         });
         assert_eq!(json, json_str);
+
+        let reconstructed_json = KmsMessage::from_json(&json_str.to_string()).unwrap();
+        assert_eq!(reconstructed_json, message);
     }
 
     #[test]
@@ -2456,6 +2486,8 @@ mod tests {
             }
         });
         assert_eq!(json, json_str);
+        let reconstructed_json = KmsMessage::from_json(&json_str.to_string()).unwrap();
+        assert_eq!(reconstructed_json, message);
     }
 
     #[test]
@@ -2477,6 +2509,8 @@ mod tests {
             }
         });
         assert_eq!(json, json_str);
+        let reconstructed_json = KmsMessage::from_json(&json_str.to_string()).unwrap();
+        assert_eq!(reconstructed_json, message);
     }
 
     #[test]
@@ -2517,6 +2551,8 @@ mod tests {
             }
         });
         assert_eq!(json, json_str);
+        let reconstructed_json = KmsMessage::from_json(&json_str.to_string()).unwrap();
+        assert_eq!(reconstructed_json, message);
     }
 
     #[test]
@@ -2537,6 +2573,8 @@ mod tests {
             }
         });
         assert_eq!(json, json_str);
+        let reconstructed_json = KmsMessage::from_json(&json_str.to_string()).unwrap();
+        assert_eq!(reconstructed_json, message);
     }
 
     #[test]
@@ -2568,6 +2606,8 @@ mod tests {
             }
         });
         assert_eq!(json, json_str);
+        let reconstructed_json = KmsMessage::from_json(&json_str.to_string()).unwrap();
+        assert_eq!(reconstructed_json, message);
     }
 
     #[test]
@@ -2599,6 +2639,8 @@ mod tests {
             }
         });
         assert_eq!(json, json_str);
+        let reconstructed_json = KmsMessage::from_json(&json_str.to_string()).unwrap();
+        assert_eq!(reconstructed_json, message);
     }
 
     #[test]
@@ -2633,6 +2675,8 @@ mod tests {
             }
         });
         assert_eq!(json, json_str);
+        let reconstructed_json = KmsMessage::from_json(&json_str.to_string()).unwrap();
+        assert_eq!(reconstructed_json, message);
     }
 
     #[test]
@@ -2664,6 +2708,8 @@ mod tests {
             }
         });
         assert_eq!(json, json_str);
+        let reconstructed_json = KmsMessage::from_json(&json_str.to_string()).unwrap();
+        assert_eq!(reconstructed_json, message);
     }
 
     #[quickcheck]

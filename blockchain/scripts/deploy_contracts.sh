@@ -35,7 +35,10 @@ export STORAGE_BASE_URL="http://localhost:dummy"
 # NOTE: here we use the connector address because it's the one we allow to do key-gen
 # but this is only because the default configuration of the simulator when running in
 # the docker compose setup uses the connectors wallet.
-CONNECTOR_ADDRESS=$(echo $KEYRING_PASSWORD | wasmd keys show connector --output json |jq -r '.address')
+CONNECTOR_ADDRESS_1=$(echo $KEYRING_PASSWORD | wasmd keys show connector1 --output json |jq -r '.address')
+CONNECTOR_ADDRESS_2=$(echo $KEYRING_PASSWORD | wasmd keys show connector2 --output json |jq -r '.address')
+CONNECTOR_ADDRESS_3=$(echo $KEYRING_PASSWORD | wasmd keys show connector3 --output json |jq -r '.address')
+CONNECTOR_ADDRESS_4=$(echo $KEYRING_PASSWORD | wasmd keys show connector4 --output json |jq -r '.address')
 VALIDATOR_ADDRESS=$(echo $KEYRING_PASSWORD | wasmd keys show validator --output json |jq -r '.address')
 
 # Upload CSC
@@ -144,10 +147,10 @@ echo "Ethereum IPSC code ID: ${TM_IPSC_ETHEREUM_CODE_ID}"
 echo "Instantiating CSC"
 if [ "$MODE" = "threshold" ]; then
   echo "(for threshold mode)"
-  CSC_INST_TX_HASH=$(echo $KEYRING_PASSWORD | wasmd tx wasm instantiate "${CSC_CODE_ID}" '{"kms_configuration": { "parties":[{"party_id": "01", "address": ""}, {"party_id": "02", "address": ""}, {"party_id": "03", "address": ""}, {"party_id": "04", "address": ""}], "response_count_for_majority_vote": 3, "response_count_for_reconstruction": 3, "degree_for_reconstruction": 1, "param_choice": "default"}, "storage_base_urls": ["'"${STORAGE_BASE_URL}"'"], "allowlists":{"admin": ["'"${CONNECTOR_ADDRESS}"'"], "configure": ["'"${CONNECTOR_ADDRESS}"'"]} }' --label "csc-threshold" --from validator --output json --node "$NODE" --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" | jq -r '.txhash')
+  CSC_INST_TX_HASH=$(echo $KEYRING_PASSWORD | wasmd tx wasm instantiate "${CSC_CODE_ID}" '{"kms_configuration": { "parties":[{"party_id": "01", "address": ""}, {"party_id": "02", "address": ""}, {"party_id": "03", "address": ""}, {"party_id": "04", "address": ""}], "response_count_for_majority_vote": 3, "response_count_for_reconstruction": 3, "degree_for_reconstruction": 1, "param_choice": "default"}, "storage_base_urls": ["'"${STORAGE_BASE_URL}"'"], "allowlists":{"admin": ["'"${CONNECTOR_ADDRESS_1}"'"], "configure": ["'"${CONNECTOR_ADDRESS_1}"'"]} }' --label "csc-threshold" --from validator --output json --node "$NODE" --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" | jq -r '.txhash')
 elif [ "$MODE" = "centralized" ]; then
   echo "(for centralized mode)"
-  CSC_INST_TX_HASH=$(echo $KEYRING_PASSWORD | wasmd tx wasm instantiate "${CSC_CODE_ID}" '{"kms_configuration": { "parties":[{"party_id": "01", "address": ""}], "response_count_for_majority_vote": 1, "response_count_for_reconstruction": 1, "degree_for_reconstruction": 0, "param_choice": "default" }, "storage_base_urls": ["'"${STORAGE_BASE_URL}"'"], "allowlists":{"admin": ["'"${CONNECTOR_ADDRESS}"'"], "configure": ["'"${CONNECTOR_ADDRESS}"'"]} }' --label "csc-centralized" --from validator --output json --node "$NODE" --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" | jq -r '.txhash')
+  CSC_INST_TX_HASH=$(echo $KEYRING_PASSWORD | wasmd tx wasm instantiate "${CSC_CODE_ID}" '{"kms_configuration": { "parties":[{"party_id": "01", "address": ""}], "response_count_for_majority_vote": 1, "response_count_for_reconstruction": 1, "degree_for_reconstruction": 0, "param_choice": "default" }, "storage_base_urls": ["'"${STORAGE_BASE_URL}"'"], "allowlists":{"admin": ["'"${CONNECTOR_ADDRESS_1}"'"], "configure": ["'"${CONNECTOR_ADDRESS_1}"'"]} }' --label "csc-centralized" --from validator --output json --node "$NODE" --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" | jq -r '.txhash')
 else
     echo "MODE is ${MODE} which is neither 'threshold' nor 'centralized', can't instantiate smart contract"
     exit 1
@@ -222,19 +225,20 @@ fi
 
 
 # Instantiate the ASC smart contracts using addresses of the IPSC above
+# Always allow all connectors' addresses to answer even if we might be in centralized case
 echo "Instantiating ASCs"
 echo "Instantiating threshold ASC debug"
-ASC_INST_DEBUG_TX_HASH=$(echo $KEYRING_PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": true, "verify_proof_contract_addr": "dummy", "csc_address": "'"${CSC_ADDRESS}"'", "allowlists":{"generate": ["'"${CONNECTOR_ADDRESS}"'"], "response": ["'"${CONNECTOR_ADDRESS}"'"], "admin": ["'"${CONNECTOR_ADDRESS}"'"]} }' --label "debug-asc" --from validator --output json --node "$NODE" --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3  | jq -r '.txhash')
+ASC_INST_DEBUG_TX_HASH=$(echo $KEYRING_PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": true, "verify_proof_contract_addr": "dummy", "csc_address": "'"${CSC_ADDRESS}"'", "allowlists":{"generate": ["'"${CONNECTOR_ADDRESS_1}"'"], "response": ["'"${CONNECTOR_ADDRESS_1}"'","'"${CONNECTOR_ADDRESS_2}"'","'"${CONNECTOR_ADDRESS_3}"'","'"${CONNECTOR_ADDRESS_4}"'"], "admin": ["'"${CONNECTOR_ADDRESS_1}"'"]} }' --label "debug-asc" --from validator --output json --node "$NODE" --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3  | jq -r '.txhash')
 
 sleep 6
 
 echo "Instantiating threshold ASC Ethermint"
-ASC_INST_ETHERMINT_TX_HASH=$(echo $KEYRING_PASSWORD | NODE="$NODE" wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": false, "verify_proof_contract_addr": "'"${IPSC_ETHERMINT_ADDRESS}"'", "csc_address": "'"${CSC_ADDRESS}"'", "allowlists":{"generate": ["'"${CONNECTOR_ADDRESS}"'"], "response": ["'"${CONNECTOR_ADDRESS}"'"], "admin": ["'"${CONNECTOR_ADDRESS}"'"]} }' --label "tendermint-asc" --from validator --output json --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3  |  jq -r '.txhash')
+ASC_INST_ETHERMINT_TX_HASH=$(echo $KEYRING_PASSWORD | NODE="$NODE" wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": false, "verify_proof_contract_addr": "'"${IPSC_ETHERMINT_ADDRESS}"'", "csc_address": "'"${CSC_ADDRESS}"'", "allowlists":{"generate": ["'"${CONNECTOR_ADDRESS_1}"'"], "response": ["'"${CONNECTOR_ADDRESS_1}"'","'"${CONNECTOR_ADDRESS_2}"'","'"${CONNECTOR_ADDRESS_3}"'","'"${CONNECTOR_ADDRESS_4}"'"], "admin": ["'"${CONNECTOR_ADDRESS_1}"'"]} }' --label "tendermint-asc" --from validator --output json --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3  |  jq -r '.txhash')
 
 sleep 6
 
 echo "Instantiating threshold ASC Ethereum"
-ASC_INST_ETHEREUM_TX_HASH=$(echo $KEYRING_PASSWORD | NODE="$NODE" wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": false, "verify_proof_contract_addr": "'"${IPSC_ETHEREUM_ADDRESS}"'", "csc_address": "'"${CSC_ADDRESS}"'", "allowlists":{"generate": ["'"${CONNECTOR_ADDRESS}"'"], "response": ["'"${CONNECTOR_ADDRESS}"'"], "admin": ["'"${CONNECTOR_ADDRESS}"'"]} }' --label "ethereum-asc" --from validator --output json --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3  | jq -r '.txhash')
+ASC_INST_ETHEREUM_TX_HASH=$(echo $KEYRING_PASSWORD | NODE="$NODE" wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": false, "verify_proof_contract_addr": "'"${IPSC_ETHEREUM_ADDRESS}"'", "csc_address": "'"${CSC_ADDRESS}"'", "allowlists":{"generate": ["'"${CONNECTOR_ADDRESS_1}"'"], "response": ["'"${CONNECTOR_ADDRESS_1}"'","'"${CONNECTOR_ADDRESS_2}"'","'"${CONNECTOR_ADDRESS_3}"'","'"${CONNECTOR_ADDRESS_4}"'"], "admin": ["'"${CONNECTOR_ADDRESS_1}"'"]} }' --label "ethereum-asc" --from validator --output json --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3  | jq -r '.txhash')
 
 sleep 6
 

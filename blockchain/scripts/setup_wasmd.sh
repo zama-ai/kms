@@ -25,12 +25,12 @@ sed -i 's/"time_iota_ms": "1000"/"time_iota_ms": "10"/' "$HOME"/.wasmd/config/ge
 
 # hardcode the validator account for this instance
 echo "Add validator genesis account"
-echo "$PASSWORD" | wasmd genesis add-genesis-account validator "10000000000$STAKE,10000000000$FEE"
+echo "$PASSWORD" | wasmd genesis add-genesis-account validator "100000000000$STAKE,100000000000$FEE"
 
 # (optionally) add a few more genesis accounts
 for addr in "$@"; do
   echo "$addr"
-  wasmd genesis add-genesis-account "$addr" "10000000000$STAKE,10000000000$FEE"
+  wasmd genesis add-genesis-account "$addr" "100000000000$STAKE,100000000000$FEE"
 done
 
 # submit a genesis validator tx

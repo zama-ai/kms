@@ -286,6 +286,7 @@ impl RunnablePublisher<DecryptionEvent> for DecryptionEventPublisher {
     }
 }
 
+/// Picks up decryption events from the L1 and publish them to our GW
 pub async fn start_decryption_publisher(sender: Sender<GatewayEvent>, config: GatewayConfig) {
     let provider = get_provider(&config.ethereum).await.unwrap_or_else(|e| {
         tracing::error!("Failed to set up provider: {:?}", e);
@@ -355,12 +356,15 @@ impl RunnablePublisher<KmsEvent> for KmsEventPublisher {
 
         let _ = OracleSyncHandler::new_with_config_and_listener(config, self.clone())
             .await?
-            .listen_for_events()
+            .listen_for_events(None)
             .await;
         Ok(())
     }
 }
 
+/// Picks up events from the KMS BC and publish them to our GW
+///
+/// Internally uses some form of the _connector_
 pub async fn start_kms_event_publisher(sender: Sender<GatewayEvent>) {
     let kms_publisher = KmsEventPublisher::new(sender.clone()).await;
     tokio::spawn(async move {
@@ -671,6 +675,17 @@ impl GatewaySubscriber {
     }
 }
 
+/// Start the GW which subscribes to events emitted
+/// on the sender end of the provider receiver by:
+/// - The L1 blockchain for decryption events through [`start_decryption_publisher`]
+/// - The http_server through [`start_http_server`]
+/// - The KMS blockchain through [`start_kms_event_publisher`]
+///
+/// The usual logic for the gateway is to:
+/// - (1) catch an event comming from L1 or http_sever
+/// - (2) forward it to the KMS BC
+/// - (3) poll the KMS BC for the answer to (2)
+/// - (4) send back the answer to the emitter of (1)
 pub async fn start_gateway(
     receiver: Receiver<GatewayEvent>,
     config: GatewayConfig,

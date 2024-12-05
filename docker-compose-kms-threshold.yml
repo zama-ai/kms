@@ -211,6 +211,8 @@ services:
       - "kms-blockchain-connector"
       - "--conf-file"
       - "config/compose_3.toml"
+      - "--catch-up-num-blocks"
+      - "100000" # Each block takes about a second so this is around 27 hours. Should be adjusted in a real deployment
     environment:
       - RUST_LOG=info
       - ASC_CONN__BLOCKCHAIN__ADDRESSES=http://dev-kms-blockchain-validator:9090
