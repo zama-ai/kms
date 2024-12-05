@@ -47,7 +47,7 @@ impl From<Tracing> for Tracer {
         let result;
         if *ENVIRONMENT == ExecutionEnvironment::Local {
             result = stdout_pipeline(settings.service_name());
-            tracing::info!("Environment is {:?}. Logging to stdout", *ENVIRONMENT);
+            println!("Environment is {:?}. Logging to stdout", *ENVIRONMENT);
             result
         } else if let Some(endpoint) = settings.endpoint() {
             let mut pipeline = opentelemetry_otlp::new_pipeline()
@@ -84,15 +84,14 @@ impl From<Tracing> for Tracer {
                 .install_batch(Tokio)
                 .expect("Failed to install OpenTelemetry tracer.");
 
-            tracing::info!(
+            println!(
                 "Environment is {:?}. Logging to endpoint: {:?}",
-                *ENVIRONMENT,
-                endpoint,
+                *ENVIRONMENT, endpoint
             );
             result
         } else {
             result = stdout_pipeline(settings.service_name());
-            tracing::info!("Environment is {:?}. Logging to stdout", *ENVIRONMENT);
+            println!("Environment is {:?}. Logging to stdout", *ENVIRONMENT);
             result
         }
     }
@@ -100,8 +99,10 @@ impl From<Tracing> for Tracer {
 
 /// Initialize metrics with the given settings and return a shutdown signal sender
 pub fn init_metrics(settings: Tracing) -> (SdkMeterProvider, tokio::sync::oneshot::Sender<()>) {
+    println!("Starting metrics initialization...");
     // Skip metrics initialization in test mode
     if matches!(*ENVIRONMENT, ExecutionEnvironment::Integration) {
+        println!("Skipping metrics initialization in test mode");
         // Return a completely empty meter provider that does nothing
         let (tx, _) = tokio::sync::oneshot::channel();
         return (SdkMeterProvider::default(), tx);
@@ -113,6 +114,7 @@ pub fn init_metrics(settings: Tracing) -> (SdkMeterProvider, tokio::sync::onesho
         .build()
         .expect("Failed to create Prometheus exporter.");
 
+    println!("Creating meter provider...");
     // Create and install the meter provider first
     let provider = SdkMeterProvider::builder()
         .with_reader(exporter)
@@ -131,6 +133,7 @@ pub fn init_metrics(settings: Tracing) -> (SdkMeterProvider, tokio::sync::onesho
         .parse::<SocketAddr>()
         .expect("Failed to parse metrics address");
 
+    println!("Creating Tokio runtime for metrics server...");
     // Create a new Tokio runtime for the metrics server
     let rt = Runtime::new().expect("Failed to create Tokio runtime");
 
@@ -140,6 +143,7 @@ pub fn init_metrics(settings: Tracing) -> (SdkMeterProvider, tokio::sync::onesho
     // Create a channel to signal when the server is ready
     let (tx, rx) = mpsc::channel();
 
+    println!("Starting metrics server thread...");
     std::thread::spawn(move || {
         rt.block_on(async move {
             let app = Router::new()
@@ -167,6 +171,7 @@ pub fn init_metrics(settings: Tracing) -> (SdkMeterProvider, tokio::sync::onesho
                     get(|| async { (StatusCode::OK, [(CONTENT_TYPE, "text/plain")], "ok") }),
                 );
 
+            println!("Binding metrics server to {}", addr);
             let server = axum::serve(
                 tokio::net::TcpListener::bind(&addr)
                     .await
@@ -180,6 +185,7 @@ pub fn init_metrics(settings: Tracing) -> (SdkMeterProvider, tokio::sync::onesho
             // Signal that we're ready to accept connections
             tx.send(()).expect("Failed to send ready signal");
 
+            println!("Starting metrics server...");
             // Start serving
             server.await.expect("Metrics server error");
         });
@@ -188,7 +194,7 @@ pub fn init_metrics(settings: Tracing) -> (SdkMeterProvider, tokio::sync::onesho
     // Wait for server to be ready
     rx.recv().expect("Failed to receive ready signal");
 
-    tracing::info!("Metrics server listening on {}", addr);
+    println!("Metrics server listening on {}", addr);
 
     (provider, shutdown_tx)
 }
@@ -216,45 +222,40 @@ fn fmt_layer<S>() -> Layer<S> {
 }
 
 pub async fn init_tracing(settings: Tracing) -> Result<(), anyhow::Error> {
+    println!(
+        "Starting tracing initialization with settings: {:?}",
+        settings
+    );
     let init_span = info_span!("init_tracing").entered();
 
-    // Initialize components concurrently with timeout
+    // Initialize components with timeout
     let init_result = tokio::time::timeout(DEFAULT_INIT_TIMEOUT, async {
-        // Create tracer and metrics concurrently
-        let settings_for_tracer = settings.clone();
-        let settings_for_metrics = settings.clone();
-        let (tracer, metrics) = tokio::join!(
-            tokio::task::spawn_blocking(move || -> Result<Tracer, anyhow::Error> {
-                Ok(settings_for_tracer.into())
-            }),
-            tokio::task::spawn_blocking(move || -> Result<SdkMeterProvider, anyhow::Error> {
-                Ok(init_metrics(settings_for_metrics).0)
-            })
-        );
+        // Initialize tracer first
+        println!("Initializing tracer...");
+        let tracer: Tracer = settings.clone().into();
 
-        let tracer = tracer.context("Failed to create tracer")?;
-        let metrics = metrics.context("Failed to create metrics provider")?;
+        // Set up propagator and error handler
+        println!("Setting up propagator and error handler...");
+        global::set_text_map_propagator(TraceContextPropagator::new());
+        global::set_error_handler(|error| tracing::error!("OpenTelemetry error: {:?}", error))
+            .unwrap();
 
-        // Set up propagator and error handler in background
-        tokio::task::spawn_blocking(move || {
-            global::set_text_map_propagator(TraceContextPropagator::new());
-            global::set_error_handler(|error| tracing::error!("OpenTelemetry error: {:?}", error))
-                .unwrap();
-        })
-        .await?;
-
-        // Layer to filter traces based on level
+        // Configure tracing layers
+        println!("Configuring tracing layers...");
         let fmt_layer = fmt_layer();
         let env_filter = EnvFilter::try_from_default_env()
             .or_else(|_| EnvFilter::try_new("info"))
             .unwrap();
 
         // Layer to add our configured tracer
-        let tracing_layer = tracing_opentelemetry::layer().with_tracer(tracer?);
-
+        let tracing_layer = tracing_opentelemetry::layer().with_tracer(tracer);
         let subscriber = Registry::default().with(tracing_layer).with(env_filter);
 
         // Set up subscriber based on json_logs setting
+        println!(
+            "Setting up subscriber with json_logs={}",
+            settings.json_logs().unwrap_or(false)
+        );
         if settings.json_logs().unwrap_or(false) {
             tracing::subscriber::set_global_default(subscriber.with(Layer::default().json()))
                 .map_err(|e| anyhow::anyhow!("{e:?}"))?;
@@ -263,11 +264,19 @@ pub async fn init_tracing(settings: Tracing) -> Result<(), anyhow::Error> {
                 .map_err(|e| anyhow::anyhow!("{e:?}"))?;
         }
 
-        // Set meter provider and initialize metrics registry
-        global::set_meter_provider(metrics?);
+        println!("Tracing setup completed, initializing metrics...");
+
+        // Now that tracing is set up, we can use tracing macros
+        tracing::debug!("Initializing metrics...");
+        let metrics = init_metrics(settings.clone()).0;
+
+        tracing::debug!("Setting up meter provider...");
+        global::set_meter_provider(metrics);
 
         // Initialize the global metrics instance
+        tracing::debug!("Initializing global metrics instance...");
         let _ = crate::metrics::METRICS.clone();
+        tracing::info!("Successfully completed tracing and metrics initialization");
 
         Ok::<(), anyhow::Error>(())
     })
