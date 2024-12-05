@@ -6,7 +6,7 @@ cfg_if::cfg_if! {
             kms::core_service_endpoint_server::{CoreServiceEndpoint, CoreServiceEndpointServer},
         };
 
-        use conf_trace::telemetry::{accept_trace, make_span, record_trace_id};
+        use conf_trace::telemetry::make_span;
         use std::net::ToSocketAddrs;
         use std::time::Duration;
         use tonic::transport::Server;
@@ -108,25 +108,22 @@ pub async fn run_server<
     // Set up signal handlers for graceful shutdown
     tokio::spawn(prepare_shutdown_signals(shutdown_signal, tx));
 
-    let trace_request = tower::ServiceBuilder::new()
-        .layer(
-            TraceLayer::new_for_grpc()
-                .make_span_with(make_span)
-                .on_failure(
-                    |error: GrpcFailureClass, _latency: Duration, _span: &Span| {
-                        if let GrpcFailureClass::Code(status_code) = error {
-                            // The server only returns SERVICE_UNAVAILABLE status code when the request is not done yet
-                            if i32::from(status_code) == GrpcCode::Unavailable as i32 {
-                                tracing::info!("Grpc info from KMS Core server: {}", error)
-                            } else {
-                                tracing::error!("Grpc error from KMS Core server: {}", error)
-                            }
+    let trace_request = tower::ServiceBuilder::new().layer(
+        TraceLayer::new_for_grpc()
+            .make_span_with(make_span)
+            .on_failure(
+                |error: GrpcFailureClass, _latency: Duration, _span: &Span| {
+                    if let GrpcFailureClass::Code(status_code) = error {
+                        // The server only returns SERVICE_UNAVAILABLE status code when the request is not done yet
+                        if i32::from(status_code) == GrpcCode::Unavailable as i32 {
+                            tracing::info!("Grpc info from KMS Core server: {}", error)
+                        } else {
+                            tracing::error!("Grpc error from KMS Core server: {}", error)
                         }
-                    },
-                ),
-        )
-        .map_request(accept_trace)
-        .map_request(record_trace_id);
+                    }
+                },
+            ),
+    );
 
     let server = Server::builder()
         .layer(trace_request)

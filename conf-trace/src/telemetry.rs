@@ -8,7 +8,7 @@ use axum::{
 };
 use opentelemetry::global;
 use opentelemetry::propagation::Injector;
-use opentelemetry::trace::{TraceContextExt, TracerProvider as _};
+use opentelemetry::trace::TracerProvider as _;
 use opentelemetry::KeyValue;
 use opentelemetry_http::{HeaderExtractor, Request};
 use opentelemetry_otlp::WithExportConfig;
@@ -26,7 +26,7 @@ use tonic::metadata::{MetadataKey, MetadataMap, MetadataValue};
 use tonic::service::Interceptor;
 use tonic::transport::Body;
 use tonic::Status;
-use tracing::{field, info_span, trace_span, warn, Span};
+use tracing::{info_span, trace_span, warn, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::fmt::{layer, Layer};
@@ -279,49 +279,30 @@ pub async fn init_tracing(settings: Tracing) -> Result<(), anyhow::Error> {
 }
 
 pub fn make_span(request: &Request<Body>) -> Span {
-    let headers = request.headers().clone();
-    let endpoint = request.uri().path().to_owned();
+    let endpoint = request.uri().path();
+
+    // Create span without blocking
+    if endpoint.contains("Health/Check") {
+        return trace_span!("health_grpc_request", ?endpoint);
+    }
+
+    let headers = request.headers();
+
     let request_id = headers
         .get(TRACER_REQUEST_ID)
         .and_then(|r| r.to_str().ok())
         .map(String::from);
 
-    // Create span without blocking
-    if endpoint.contains("Health/Check") {
-        trace_span!("health_grpc_request", ?endpoint)
+    let span = if let Some(request_id) = request_id {
+        info_span!("grpc_request", ?endpoint, %request_id)
     } else {
-        match request_id {
-            Some(request_id) => {
-                info_span!("grpc_request",
-                    ?endpoint,
-                    trace_id = %request_id,
-                    %request_id
-                )
-            }
-            None => info_span!("grpc_request", ?endpoint, trace_id = field::Empty),
-        }
-    }
-}
+        info_span!("grpc_request", ?endpoint)
+    };
 
-/// Trace context propagation: associate the current span with the OTel trace of the given request,
-/// if any and valid.
-pub fn accept_trace(request: Request<Body>) -> Request<Body> {
-    // Current context, if no or invalid data is received.
-    let parent_context = global::get_text_map_propagator(|propagator| {
-        propagator.extract(&HeaderExtractor(request.headers()))
-    });
-    Span::current().set_parent(parent_context);
-
-    request
-}
-
-/// Record the OTel trace ID of the given request as "trace_id" field in the current span.
-pub fn record_trace_id(request: Request<Body>) -> Request<Body> {
-    let span = Span::current(); // Tokio tracing span.
-    let trace_id = span.context().span().span_context().trace_id(); // OpenTelemetry trace ID.
-    span.record("trace_id", trace_id.to_string());
-
-    request
+    let parent_context =
+        global::get_text_map_propagator(|propagator| propagator.extract(&HeaderExtractor(headers)));
+    span.set_parent(parent_context);
+    span
 }
 
 /// Propagate the current span context to the outgoing request.
