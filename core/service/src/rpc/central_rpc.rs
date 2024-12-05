@@ -33,9 +33,10 @@ use alloy_primitives::{keccak256, Address};
 use alloy_sol_types::Eip712Domain;
 use conf_trace::metrics::METRICS;
 use conf_trace::metrics_names::{
-    ERR_DECRYPTION_FAILED, ERR_KEY_EXISTS, ERR_KEY_NOT_FOUND, ERR_RATE_LIMIT_EXCEEDED, OP_DECRYPT,
-    OP_KEYGEN, OP_REENCRYPT, OP_TYPE_CT_PROOF, OP_TYPE_LOAD_CRS_PK, OP_TYPE_PROOF_VERIFICATION,
-    OP_TYPE_TOTAL, OP_VERIFY_PROVEN_CT, TAG_OPERATION_TYPE,
+    ERR_CRS_GEN_FAILED, ERR_DECRYPTION_FAILED, ERR_KEY_EXISTS, ERR_KEY_NOT_FOUND,
+    ERR_RATE_LIMIT_EXCEEDED, ERR_REENCRYPTION_FAILED, ERR_VERIFICATION_FAILED, OP_CRS_GEN,
+    OP_DECRYPT, OP_KEYGEN, OP_REENCRYPT, OP_TYPE_CT_PROOF, OP_TYPE_LOAD_CRS_PK,
+    OP_TYPE_PROOF_VERIFICATION, OP_TYPE_TOTAL, OP_VERIFY_PROVEN_CT, TAG_OPERATION_TYPE,
 };
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 use std::collections::HashMap;
@@ -388,6 +389,9 @@ impl<
                             &request_id,
                             HandlerStatus::Error(format!("Failed reencryption: {e}")),
                         );
+                        METRICS
+                            .increment_error_counter(OP_REENCRYPT, ERR_REENCRYPTION_FAILED)
+                            .ok();
                     }
                 }
             }
@@ -645,6 +649,14 @@ impl<
     #[tracing::instrument(skip(self, request))]
     async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
         tracing::info!("Received CRS generation request");
+        let _timer = METRICS
+            .time_operation(OP_CRS_GEN)
+            .map_err(|e| Status::internal(format!("Failed to start metrics: {}", e)))?
+            .start();
+        METRICS
+            .increment_request_counter(OP_CRS_GEN)
+            .map_err(|e| Status::internal(format!("Failed to increment counter: {}", e)))?;
+
         let permit = self
             .rate_limiter
             .start_crsgen()
@@ -700,6 +712,7 @@ impl<
                             "Failed CRS generation for CRS with ID {request_id}!"
                         )),
                     );
+                    METRICS.increment_error_counter(OP_CRS_GEN, ERR_CRS_GEN_FAILED).ok();
                     return;
                 }
             };
@@ -807,6 +820,14 @@ impl<
         &self,
         request: Request<VerifyProvenCtRequest>,
     ) -> Result<Response<Empty>, Status> {
+        let _timer = METRICS
+            .time_operation(OP_VERIFY_PROVEN_CT)
+            .map_err(|e| Status::internal(format!("Failed to start metrics: {}", e)))?
+            .start();
+        METRICS
+            .increment_request_counter(OP_VERIFY_PROVEN_CT)
+            .map_err(|e| Status::internal(format!("Failed to increment counter: {}", e)))?;
+
         let permit = self
             .rate_limiter
             .start_verify_proven_ct()
@@ -912,6 +933,9 @@ where
                             request_id
                         )),
                     );
+                    METRICS
+                        .increment_error_counter(OP_VERIFY_PROVEN_CT, ERR_VERIFICATION_FAILED)
+                        .ok();
                 }
             }
         }

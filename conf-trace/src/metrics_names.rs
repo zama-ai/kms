@@ -27,6 +27,9 @@ pub const ERR_RATE_LIMIT_EXCEEDED: &str = "rate_limit_exceeded";
 pub const ERR_KEY_EXISTS: &str = "key_already_exists";
 pub const ERR_KEY_NOT_FOUND: &str = "key_not_found";
 pub const ERR_DECRYPTION_FAILED: &str = "decryption_failed";
+pub const ERR_REENCRYPTION_FAILED: &str = "reencryption_failed";
+pub const ERR_VERIFICATION_FAILED: &str = "verification_failed";
+pub const ERR_CRS_GEN_FAILED: &str = "crs_gen_failed";
 
 // Common operation type values
 pub const OP_TYPE_TOTAL: &str = "total";
