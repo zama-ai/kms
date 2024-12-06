@@ -192,12 +192,183 @@ mod kms_gen_keys_binary_test {
     fn gen_key_tempdir_threshold() {
         gen_key_tempdir("threshold")
     }
+
+    #[test]
+    #[serial_test::serial]
+    #[integration_test]
+    fn central_signing_keys_overwrite() {
+        let output = Command::cargo_bin(KMS_GEN_KEYS)
+            .unwrap()
+            .arg("--param-test")
+            .arg("--cmd=signing-keys")
+            .arg("--overwrite")
+            .arg("centralized")
+            .output()
+            .unwrap();
+        let log = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success());
+        assert!(log.contains("Deleting VerfKey under request ID"));
+        assert!(log.contains("Deleting SigningKey under request ID "));
+        assert!(log.contains("Successfully stored public server signing key under the handle"));
+
+        let new_output = Command::cargo_bin(KMS_GEN_KEYS)
+            .unwrap()
+            .arg("--param-test")
+            .arg("--cmd=signing-keys")
+            .arg("centralized")
+            .output()
+            .unwrap();
+        assert!(new_output.status.success());
+        let new_log = String::from_utf8_lossy(&new_output.stdout);
+        assert!(new_log.contains("Signing keys already exist, skipping generation"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    #[integration_test]
+    fn central_signing_address_format() {
+        let temp_dir_priv = tempdir().unwrap();
+        let temp_dir_pub = tempdir().unwrap();
+        let output = Command::cargo_bin(KMS_GEN_KEYS)
+            .unwrap()
+            .arg("--param-test")
+            .arg("--priv-url")
+            .arg(format!("file://{}", temp_dir_priv.path().display()))
+            .arg("--pub-url")
+            .arg(format!("file://{}", temp_dir_pub.path().display()))
+            .arg("--cmd=signing-keys")
+            .arg("centralized")
+            .output()
+            .unwrap();
+
+        let log = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success());
+        assert!(log.contains("Successfully stored ethereum address 0x"));
+        assert!(
+            log.contains("under the handle e164d9de0bec6656928726433cc56bef6ee8417a in storage")
+        );
+
+        let mut adress_path = temp_dir_pub.path().to_path_buf();
+        adress_path.push("PUB/VerfAddress/e164d9de0bec6656928726433cc56bef6ee8417a");
+
+        // read address from file
+        let address = fs::read_to_string(adress_path).expect("Unable to read Verification Address");
+
+        // make sure its well-formed (starts with 0x and has 40 hex digits) and can be decoded
+        assert!(address.starts_with("0x"));
+        assert_eq!(address.len(), 42);
+        hex::decode(address[2..].to_lowercase()).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    #[integration_test]
+    fn threshold_wrong_num_parties() {
+        let temp_dir_priv = tempdir().unwrap();
+        let temp_dir_pub = tempdir().unwrap();
+
+        // the command below should fail because --num-parties should be
+        // greater or equal to 2
+        let output = Command::cargo_bin(KMS_GEN_KEYS)
+            .unwrap()
+            .arg("--priv-url")
+            .arg(format!("file://{}", temp_dir_priv.path().display()))
+            .arg("--pub-url")
+            .arg(format!("file://{}", temp_dir_pub.path().display()))
+            .arg("threshold")
+            .arg("--num-parties=1")
+            .output()
+            .unwrap();
+
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr)
+            .contains("the number of parties should be larger or equal to 2"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    #[integration_test]
+    fn threshold_signing_key_wrong_party_id() {
+        let temp_dir_priv = tempdir().unwrap();
+        let temp_dir_pub = tempdir().unwrap();
+
+        // the command below should fail because `--num-parties` default to 4
+        // but we're asking the CLI to generate a key for party 5
+        let output = Command::cargo_bin(KMS_GEN_KEYS)
+            .unwrap()
+            .arg("--priv-url")
+            .arg(format!("file://{}", temp_dir_priv.path().display()))
+            .arg("--pub-url")
+            .arg(format!("file://{}", temp_dir_pub.path().display()))
+            .arg("--cmd=signing-keys")
+            .arg("threshold")
+            .arg("--signing-key-party-id=5")
+            .output()
+            .unwrap();
+
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr)
+            .contains("party ID (5) cannot be greater than num_parties (4)"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    #[integration_test]
+    fn threshold_signing_key() {
+        let temp_dir_priv = tempdir().unwrap();
+        let temp_dir_pub = tempdir().unwrap();
+
+        // finally we run the command with the right args
+        let output = Command::cargo_bin(KMS_GEN_KEYS)
+            .unwrap()
+            .arg("--priv-url")
+            .arg(format!("file://{}", temp_dir_priv.path().display()))
+            .arg("--pub-url")
+            .arg(format!("file://{}", temp_dir_pub.path().display()))
+            .arg("--cmd=signing-keys")
+            .arg("threshold")
+            .arg("--signing-key-party-id=5")
+            .arg("--num-parties=5")
+            .output()
+            .unwrap();
+
+        assert!(output.status.success());
+        assert!(String::from_utf8_lossy(&output.stdout)
+            .contains("Successfully stored ethereum address 0x"));
+    }
+
+    #[cfg(feature = "s3_tests")]
+    #[test]
+    #[serial_test::serial]
+    #[integration_test]
+    fn central_s3() {
+        use kms_lib::storage::s3::{AWS_REGION, AWS_S3_ENDPOINT, BUCKET_NAME};
+
+        let s3_url = format!("s3://{}/central_s3/", BUCKET_NAME);
+        let file_url = "file://temp/keys/";
+        // Test the following command:
+        // cargo run --features testing  --bin kms-gen-keys -- --param-test --aws-region eu-north-1 --pub-url=s3://jot2re-kms-key-test/central_s3/ --priv-url=file://temp/keys/ --cmd=signing-keys --overwrite --deterministic
+        let output = Command::cargo_bin(KMS_GEN_KEYS)
+            .unwrap()
+            .arg("--param-test")
+            .arg(format!("--aws-region={}", AWS_REGION))
+            .arg(format!("--aws-s3-endpoint={}", AWS_S3_ENDPOINT))
+            .arg(format!("--pub-url={}", s3_url))
+            .arg(format!("--priv-url={}", file_url))
+            .arg("--cmd=signing-keys")
+            .arg("--overwrite")
+            .arg("--deterministic")
+            .output()
+            .unwrap();
+        let log = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success());
+        assert!(log.contains("Successfully stored public server signing key under the handle e164d9de0bec6656928726433cc56bef6ee8417a with storage \"S3 storage with bucket"));
+        assert!(log.contains("Successfully stored public server signing key under the handle e164d9de0bec6656928726433cc56bef6ee8417a with storage \"file storage with"));
+    }
 }
 
 #[cfg(test)]
 mod kms_server_binary_test {
-    use tempfile::tempdir;
-
     use super::*;
 
     fn kill_kms_server() {
@@ -291,101 +462,5 @@ mod kms_server_binary_test {
             .assert()
             .success();
         run_subcommand_no_args("config/default_1.toml");
-    }
-
-    #[test]
-    #[serial_test::serial]
-    #[integration_test]
-    fn central_signing_keys_overwrite() {
-        let output = Command::cargo_bin(KMS_GEN_KEYS)
-            .unwrap()
-            .arg("--param-test")
-            .arg("--cmd=signing-keys")
-            .arg("--overwrite")
-            .arg("centralized")
-            .output()
-            .unwrap();
-        let log = String::from_utf8_lossy(&output.stdout);
-        assert!(output.status.success());
-        assert!(log.contains("Deleting VerfKey under request ID"));
-        assert!(log.contains("Deleting SigningKey under request ID "));
-        assert!(log.contains("Successfully stored public server signing key under the handle"));
-
-        let new_output = Command::cargo_bin(KMS_GEN_KEYS)
-            .unwrap()
-            .arg("--param-test")
-            .arg("--cmd=signing-keys")
-            .arg("centralized")
-            .output()
-            .unwrap();
-        assert!(new_output.status.success());
-        let new_log = String::from_utf8_lossy(&new_output.stdout);
-        assert!(new_log.contains("Signing keys already exist, skipping generation"));
-    }
-
-    #[test]
-    #[serial_test::serial]
-    #[integration_test]
-    fn central_signing_address_format() {
-        let temp_dir_priv = tempdir().unwrap();
-        let temp_dir_pub = tempdir().unwrap();
-        let output = Command::cargo_bin(KMS_GEN_KEYS)
-            .unwrap()
-            .arg("--param-test")
-            .arg("--priv-url")
-            .arg(format!("file://{}", temp_dir_priv.path().display()))
-            .arg("--pub-url")
-            .arg(format!("file://{}", temp_dir_pub.path().display()))
-            .arg("--cmd=signing-keys")
-            .arg("centralized")
-            .output()
-            .unwrap();
-
-        let log = String::from_utf8_lossy(&output.stdout);
-        assert!(output.status.success());
-        assert!(log.contains("Successfully stored ethereum address 0x"));
-        assert!(
-            log.contains("under the handle e164d9de0bec6656928726433cc56bef6ee8417a in storage")
-        );
-
-        let mut adress_path = temp_dir_pub.path().to_path_buf();
-        adress_path.push("PUB/VerfAddress/e164d9de0bec6656928726433cc56bef6ee8417a");
-
-        // read address from file
-        let address = fs::read_to_string(adress_path).expect("Unable to read Verification Address");
-
-        // make sure its well-formed (starts with 0x and has 40 hex digits) and can be decoded
-        assert!(address.starts_with("0x"));
-        assert_eq!(address.len(), 42);
-        hex::decode(address[2..].to_lowercase()).unwrap();
-    }
-
-    #[cfg(feature = "s3_tests")]
-    #[test]
-    #[serial_test::serial]
-    #[integration_test]
-    fn central_s3() {
-        use kms_lib::storage::s3::{AWS_REGION, AWS_S3_ENDPOINT, BUCKET_NAME};
-
-        let s3_url = format!("s3://{}/central_s3/", BUCKET_NAME);
-        let file_url = "file://temp/keys/";
-        // Test the following command:
-        // cargo run --features testing  --bin kms-gen-keys -- --param-test --aws-region eu-north-1 --pub-url=s3://jot2re-kms-key-test/central_s3/ --priv-url=file://temp/keys/ --cmd=signing-keys --overwrite --deterministic
-        let output = Command::cargo_bin(KMS_GEN_KEYS)
-            .unwrap()
-            .arg("--param-test")
-            .arg(format!("--aws-region={}", AWS_REGION))
-            .arg(format!("--aws-s3-endpoint={}", AWS_S3_ENDPOINT))
-            .arg(format!("--pub-url={}", s3_url))
-            .arg(format!("--priv-url={}", file_url))
-            .arg("--cmd=signing-keys")
-            .arg("--overwrite")
-            .arg("--deterministic")
-            .output()
-            .unwrap();
-        let log = String::from_utf8_lossy(&output.stdout);
-        assert!(output.status.success());
-        assert!(log.contains("Successfully stored public server signing key under the handle e164d9de0bec6656928726433cc56bef6ee8417a with storage \"S3 storage with bucket"));
-        assert!(log.contains("Successfully stored public server signing key under the handle e164d9de0bec6656928726433cc56bef6ee8417a with storage \"file storage with"));
     }
 }

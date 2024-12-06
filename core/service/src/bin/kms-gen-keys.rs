@@ -11,8 +11,8 @@ use kms_lib::{
 };
 use kms_lib::{
     consts::{
-        DEFAULT_AMOUNT_PARTIES, DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID,
-        DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_DEFAULT_ID,
+        DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_CRS_ID_4P,
+        DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_DEFAULT_ID,
     },
     storage::{make_storage, Storage, StorageType},
     util::key_setup::{ensure_central_keys_exist, ensure_central_server_signing_keys_exist},
@@ -105,13 +105,22 @@ enum Mode {
 
     /// Generate shares of FHE key shares and signing keys.
     /// The FHE key shares should only be used for testing.
-    /// At the moment it's only limited to 4 parties.
     Threshold {
         /// When using `--cmd signing-keys`, this option can be set
         /// to generate the signing key for a specific party.
         /// If it's not used, then the signing keys are generated for all parties.
+        ///
+        /// If this option is used, the party ID cannot be higher than
+        /// what is given in `num_parties`.
         #[clap(long, default_value = None)]
         signing_key_party_id: Option<usize>,
+
+        /// Set the total number of parties.
+        ///
+        /// This configuration is required even when `signing_key_party_id``
+        /// is given.
+        #[clap(long, default_value_t = 4)]
+        num_parties: usize,
     },
 }
 
@@ -131,6 +140,41 @@ struct ThresholdCmdArgs<'a, S: Storage> {
     overwrite: bool,
     show_existing: bool,
     signing_key_party_id: Option<usize>,
+    num_parties: usize,
+}
+
+impl<'a, S: Storage> ThresholdCmdArgs<'a, S> {
+    fn new(
+        pub_storages: &'a mut [S],
+        priv_storages: &'a mut [S],
+        deterministic: bool,
+        overwrite: bool,
+        show_existing: bool,
+        signing_key_party_id: Option<usize>,
+        num_parties: usize,
+    ) -> anyhow::Result<Self> {
+        if num_parties < 2 {
+            anyhow::bail!("the number of parties should be larger or equal to 2");
+        }
+        if let Some(id) = signing_key_party_id {
+            if id > num_parties {
+                anyhow::bail!(
+                    "party ID ({}) cannot be greater than num_parties ({})",
+                    id,
+                    num_parties
+                );
+            }
+        }
+        Ok(Self {
+            pub_storages,
+            priv_storages,
+            deterministic,
+            overwrite,
+            show_existing,
+            signing_key_party_id,
+            num_parties,
+        })
+    }
 }
 
 /// Execute the KMS key generation
@@ -165,7 +209,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Mode::Centralized { write_privkey: _ } => 1,
         Mode::Threshold {
             signing_key_party_id: _,
-        } => DEFAULT_AMOUNT_PARTIES,
+            num_parties: n,
+        } => n,
     };
     let mut pub_storages = Vec::with_capacity(amount_storages);
     let mut priv_storages = Vec::with_capacity(amount_storages);
@@ -174,6 +219,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Mode::Centralized { write_privkey: _ } => None,
             Mode::Threshold {
                 signing_key_party_id: _,
+                num_parties: _,
             } => Some(i),
         };
         let root_key_id = args
@@ -228,19 +274,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Mode::Threshold {
             signing_key_party_id,
+            num_parties,
         } => {
-            let mut cmdargs = ThresholdCmdArgs {
-                pub_storages: &mut pub_storages,
-                priv_storages: &mut priv_storages,
-                deterministic: args.deterministic,
-                overwrite: args.deterministic,
-                show_existing: args.show_existing,
+            let mut cmdargs = ThresholdCmdArgs::new(
+                &mut pub_storages,
+                &mut priv_storages,
+                args.deterministic,
+                args.deterministic,
+                args.show_existing,
                 // the `signing_party_id` is only used when the cmd is signing-keys
-                signing_key_party_id: match args.cmd {
+                match args.cmd {
                     ConstructCommand::SigningKeys => signing_key_party_id,
                     _ => None,
                 },
-            };
+                num_parties,
+            )?;
 
             if args.cmd == ConstructCommand::All {
                 handle_threshold_cmd(args.param_test, &mut cmdargs, ConstructCommand::SigningKeys)
@@ -379,7 +427,7 @@ async fn handle_threshold_cmd<'a, S: StorageForText>(
                 args.deterministic,
                 match args.signing_key_party_id {
                     Some(i) => ThresholdSigningKeyConfig::OneParty(i),
-                    None => ThresholdSigningKeyConfig::AllParties(DEFAULT_AMOUNT_PARTIES),
+                    None => ThresholdSigningKeyConfig::AllParties(args.num_parties),
                 },
             )
             .await
