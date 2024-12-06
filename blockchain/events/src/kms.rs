@@ -88,7 +88,7 @@ impl std::fmt::Display for KmsConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "KmsConfig{{parties: {:?}, response_count_for_majority_vote: {}, 
+            "KmsConfig{{parties: {:?}, response_count_for_majority_vote: {},
             response_count_for_reconstruction: {}, degree_for_reconstruction: {}, param_choice: {}}}",
             self.parties,
             self.response_count_for_majority_vote,
@@ -1866,6 +1866,19 @@ impl TransactionId {
     pub fn to_vec(&self) -> Vec<u8> {
         self.deref().deref().clone()
     }
+
+    /// converts the transaction id to a little endian u64 value.
+    /// value is padded with zeros if smaller than 8 bytes.
+    /// values in bytes 9 and onward are discarded
+    pub fn to_u64(&self) -> u64 {
+        let mut padded_vec = self.to_vec();
+        padded_vec.resize(8, 0); // Pad with zeros if less than 8 bytes, or truncate to 8 bytes
+        let mut out = 0u64;
+        for (i, v) in padded_vec.into_iter().enumerate().take(8) {
+            out |= (v as u64) << (8 * i);
+        }
+        out
+    }
 }
 
 impl From<&HexVector> for TransactionId {
@@ -2750,5 +2763,26 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn txn_id_to_u64() {
+        // test padding
+        let t = TransactionId::from_hex("00").unwrap();
+        assert_eq!(t.to_u64(), 0);
+        let t = TransactionId::from_hex("01").unwrap();
+        assert_eq!(t.to_u64(), 1);
+        let t = TransactionId::from_hex("0102").unwrap();
+        assert_eq!(t.to_u64(), 513);
+
+        // 8 byte value
+        let t = TransactionId::from_hex("2023232323232323").unwrap();
+        assert_eq!(t.to_u64(), 2531906049332683552);
+
+        // test truncation
+        let t = TransactionId::from_hex("2023232323232323FFEEDD").unwrap();
+        assert_eq!(t.to_u64(), 2531906049332683552);
+        let t = TransactionId::from_hex("21232323232323230000DD42").unwrap();
+        assert_eq!(t.to_u64(), 2531906049332683553);
     }
 }

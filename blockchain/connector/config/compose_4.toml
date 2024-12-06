@@ -16,6 +16,10 @@ mnemonic = "false since tiny tobacco help blame fade renew index tag crew cluste
 denom = "ucosm"
 amount = 3000000
 
+[sharding]
+index = 0
+total = 1
+
 [core]
 addresses = ["http://localhost:50051"]
 

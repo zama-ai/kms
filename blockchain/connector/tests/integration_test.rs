@@ -21,7 +21,8 @@ use kms_blockchain_connector::application::kms_core_sync::{
 };
 use kms_blockchain_connector::application::SyncHandler;
 use kms_blockchain_connector::conf::{
-    BlockchainConfig, ConnectorConfig, ContractFee, CoreConfig, SignKeyConfig, TimeoutConfig,
+    BlockchainConfig, ConnectorConfig, ContractFee, CoreConfig, ShardingConfig, SignKeyConfig,
+    TimeoutConfig,
 };
 use kms_blockchain_connector::domain::blockchain::{
     Blockchain, BlockchainOperationVal, DecryptResponseVal, KmsOperationResponse,
@@ -382,6 +383,7 @@ async fn start_sync_handler(
                 })
                 .observability(Arc::new(metrics))
                 .my_pk(my_pk)
+                .sharding(ShardingConfig::default())
                 .build(),
         )
         .config(connector_config)

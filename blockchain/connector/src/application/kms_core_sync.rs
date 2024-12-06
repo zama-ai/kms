@@ -1,12 +1,12 @@
-use std::sync::Arc;
-
-use crate::conf::ConnectorConfig;
+use super::SyncHandler;
+use crate::conf::{ConnectorConfig, ShardingConfig};
 use crate::domain::blockchain::{Blockchain, KmsOperationResponse};
 use crate::domain::kms::{CatchupResult, Kms};
 use crate::infrastructure::blockchain::KmsBlockchain;
 use crate::infrastructure::core::KmsCore;
 use crate::infrastructure::metrics::{MetricType, Metrics, OpenTelemetryMetrics};
 use crate::infrastructure::store::KVStore;
+use anyhow::{anyhow, Result};
 use cosmos_proto::messages::cosmwasm::wasm::v1::MsgExecuteContract;
 use events::kms::{
     KmsConfig, KmsEvent, KmsMessage, OperationValue, TransactionEvent, TransactionId,
@@ -16,10 +16,9 @@ use events::subscription::Tx;
 use kms_blockchain_client::crypto::pubkey::PublicKey;
 use kms_blockchain_client::errors::Error;
 use prost_types::Any;
+use std::sync::Arc;
 use tracing::Instrument;
 use typed_builder::TypedBuilder;
-
-use super::SyncHandler;
 
 #[derive(Clone, TypedBuilder)]
 pub struct KmsCoreEventHandler<B, K, O> {
@@ -27,6 +26,7 @@ pub struct KmsCoreEventHandler<B, K, O> {
     kms: K,
     observability: Arc<O>,
     my_pk: PublicKey,
+    sharding: ShardingConfig,
 }
 
 ///__NOTE__: We have to enforce partial synchronicity here as
@@ -201,49 +201,65 @@ where
         message: TransactionEvent,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
         tracing::info!("Received message: {:?}", message);
-        let (operation_value, kms_config) = self.get_op_and_conf(&message.event).await?;
 
-        // Interact with the KMS to resolve the query
-        let result_receiver = self
-            .kms
-            .run(message.event, operation_value, kms_config)
-            .await
-            .inspect_err(|e| {
-                tracing::error!("KMS connector error running kms operation: {:?}", e);
-                self.observability
-                    .increment(MetricType::TxError, 1, &[("error", &e.to_string())]);
-            })?;
-        let blockchain = Arc::clone(&self.blockchain);
-        let observability = Arc::clone(&self.observability);
-        tokio::spawn(
-            async move {
-                if let Ok(result) = result_receiver.await {
-                    match result {
-                        Ok(result) => {
-                            if let Err(e) =
-                                Self::answer_back_to_kms_bc(result, blockchain, observability).await
-                            {
+        // answer this message only if this conector is in the right shard
+        let target_shard = message.event.txn_id().to_u64() % self.sharding.total;
+        if target_shard != self.sharding.index {
+            tracing::info!("Message is for another shard ({target_shard}). I am in shard {} and will ignore it.", self.sharding.index);
+        } else {
+            let (operation_value, kms_config) = self.get_op_and_conf(&message.event).await?;
+
+            // Interact with the KMS to resolve the query
+            let result_receiver = self
+                .kms
+                .run(message.event, operation_value, kms_config)
+                .await
+                .inspect_err(|e| {
+                    tracing::error!("KMS connector error running kms operation: {:?}", e);
+                    self.observability.increment(
+                        MetricType::TxError,
+                        1,
+                        &[("error", &e.to_string())],
+                    );
+                })?;
+            let blockchain = Arc::clone(&self.blockchain);
+            let observability = Arc::clone(&self.observability);
+            tokio::spawn(
+                async move {
+                    if let Ok(result) = result_receiver.await {
+                        match result {
+                            Ok(result) => {
+                                if let Err(e) =
+                                    Self::answer_back_to_kms_bc(result, blockchain, observability)
+                                        .await
+                                {
+                                    tracing::error!(
+                                        "KMS connector error trying to answer back to BC: {:?}",
+                                        e
+                                    );
+                                }
+                            }
+                            Err(e) => {
                                 tracing::error!(
-                                    "KMS connector error trying to answer back to BC: {:?}",
+                                    "KMS connector error running kms operation: {:?}",
                                     e
                                 );
                             }
                         }
-                        Err(e) => {
-                            tracing::error!("KMS connector error running kms operation: {:?}", e);
-                        }
+                    } else {
+                        tracing::error!(
+                            "KMS connector error running kms operation, sender dropped"
+                        );
                     }
-                } else {
-                    tracing::error!("KMS connector error running kms operation, sender dropped");
                 }
-            }
-            .instrument(tracing::Span::current()),
-        );
+                .instrument(tracing::Span::current()),
+            );
+        }
         Ok(())
     }
 
     /// Performs catchup on the given `message``.
-    ///  
+    ///
     /// During catchup phase, we first check whether we've
     /// already sent an answer for the corresponding event by looking through the given `past_txs``.
     ///
@@ -259,41 +275,57 @@ where
         // Thanks to the [`Self::filter_for_catchup`] we only have KmsMessage which match our
         // pk here (i.e messages we have sent)
         let wanted_tx_id = message.event.txn_id.clone();
-        tracing::info!(
-            "Catching up on event {:?} with id {:?}",
-            message.event.operation.to_string(),
-            wanted_tx_id,
-        );
 
-        // Look over all the past responses for one with the wanted tx id
-        // if it exists, we do not need to do anything else
-        if has_response_with_wanted_id(past_txs, &wanted_tx_id) {
+        // answer this message only if this conector is in the right shard
+        let target_shard = wanted_tx_id.to_u64() % self.sharding.total;
+        if target_shard != self.sharding.index {
+            tracing::info!("Catchup message is for another shard ({target_shard}). I am in shard {} and will ignore it.", self.sharding.index);
+            Ok(())
+        } else {
             tracing::info!(
-                "Successfully caught up on event {:?} with id {:?}. BC already has my answer.",
+                "Catching up on event {:?} with id {:?}",
                 message.event.operation.to_string(),
-                wanted_tx_id
+                wanted_tx_id,
             );
-            return Ok(());
-        }
 
-        let (operation_value, kms_configuration) = self.get_op_and_conf(&message.event).await?;
-        // Then first try polling the KMS for existing requests
-        let catchup_result = self
-            .kms
-            .run_catchup(
-                message.event.clone(),
-                operation_value.clone(),
-                kms_configuration.clone(),
+            // Look over all the past responses for one with the wanted tx id
+            // if it exists, we do not need to do anything else
+            if has_response_with_wanted_id(past_txs, &wanted_tx_id) {
+                tracing::info!(
+                    "Successfully caught up on event {:?} with id {:?}. BC already has my answer.",
+                    message.event.operation.to_string(),
+                    wanted_tx_id
+                );
+                return Ok(());
+            }
+
+            let (operation_value, kms_configuration) = self.get_op_and_conf(&message.event).await?;
+            // Then first try polling the KMS for existing requests
+            let catchup_result = self
+                .kms
+                .run_catchup(
+                    message.event.clone(),
+                    operation_value.clone(),
+                    kms_configuration.clone(),
+                )
+                .await
+                .inspect_err(|e| {
+                    tracing::error!("KMS connector error running kms operation: {:?}", e);
+                    self.observability.increment(
+                        MetricType::TxError,
+                        1,
+                        &[("error", &e.to_string())],
+                    );
+                })?;
+
+            self.dispatch_catchup_result(
+                catchup_result,
+                wanted_tx_id,
+                message,
+                past_events_responses,
             )
             .await
-            .inspect_err(|e| {
-                tracing::error!("KMS connector error running kms operation: {:?}", e);
-                self.observability
-                    .increment(MetricType::TxError, 1, &[("error", &e.to_string())]);
-            })?;
-
-        self.dispatch_catchup_result(catchup_result, wanted_tx_id, message, past_events_responses)
-            .await
+        }
     }
 
     /// Keep only the transactions that contain my signature
@@ -376,13 +408,19 @@ where
     K: Kms + Clone + 'static + Send + Sync,
     O: Metrics + Clone + 'static + Send + Sync,
 {
-    pub async fn new(blockchain: B, kms: K, metrics: O) -> anyhow::Result<Self> {
+    pub async fn new(
+        blockchain: B,
+        kms: K,
+        metrics: O,
+        sharding: ShardingConfig,
+    ) -> anyhow::Result<Self> {
         let my_pk = blockchain.get_public_key().await;
         let handler = KmsCoreEventHandler {
             blockchain: Arc::new(blockchain),
             kms,
             observability: Arc::new(metrics),
             my_pk,
+            sharding,
         };
         Ok(Self {
             kms_connector_handler: handler,
@@ -400,11 +438,28 @@ impl KmsCoreSyncHandler<KmsBlockchain, KmsCore<KVStore>, OpenTelemetryMetrics> {
         // instead of the config
         let kms = KmsCore::new(config.core.clone(), storage, metrics.clone())?;
         let my_pk = blockchain.get_public_key().await;
+
+        let sharding = match config.sharding.clone() {
+            Some(s) => {
+                if s.index >= s.total {
+                    return Err(anyhow!(
+                        "Shard index ({}) is bigger than total number of shards ({}). Must be in [0 ... {}]",
+                        s.index,
+                        s.total,
+                        s.total - 1
+                    ));
+                }
+                s
+            }
+            None => ShardingConfig::default(),
+        };
+
         let handler = KmsCoreEventHandler {
             blockchain: Arc::new(blockchain),
             kms,
             observability: Arc::new(metrics),
             my_pk,
+            sharding,
         };
         Ok(Self {
             kms_connector_handler: handler,

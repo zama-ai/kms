@@ -16,6 +16,10 @@ mnemonic = "sugar vapor common surprise ice absorb exhaust blouse one lady remai
 denom = "ucosm"
 amount = 3000000
 
+[sharding]
+index = 0
+total = 1
+
 [core]
 addresses = ["http://localhost:50051"]
 

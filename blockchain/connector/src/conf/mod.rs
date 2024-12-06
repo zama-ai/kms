@@ -136,6 +136,20 @@ pub struct StoreConfig {
     pub url: String,
 }
 
+#[derive(TypedBuilder, Deserialize, Serialize, Clone, Debug)]
+pub struct ShardingConfig {
+    /// the total number of shards (replicated connector/core deployments with N parties each)
+    pub total: u64,
+    /// shard index of this set of parties, in the range [0 ... total_shards-1]
+    pub index: u64,
+}
+
+impl Default for ShardingConfig {
+    fn default() -> Self {
+        ShardingConfig { total: 1, index: 0 }
+    }
+}
+
 #[derive(TypedBuilder, Deserialize, Serialize, Clone, Default, Debug)]
 pub struct ConnectorConfig {
     pub tick_interval_secs: u64,
@@ -145,6 +159,7 @@ pub struct ConnectorConfig {
     pub core: CoreConfig,
     pub oracle: OracleConfig,
     pub store: StoreConfig,
+    pub sharding: Option<ShardingConfig>,
 }
 
 impl BlockchainConfig {
