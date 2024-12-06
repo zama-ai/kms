@@ -15,6 +15,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use itertools::Itertools;
+use kms_common::MAX_ITER;
 use num_integer::div_ceil;
 use rand::{CryptoRng, Rng};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -69,7 +70,7 @@ impl<C: Coinflip, S: ShareDispute> LocalDoubleShare for RealLocalDoubleShare<C, 
             ));
         }
         //Keeps executing til verification passes
-        loop {
+        for _ in 0..MAX_ITER {
             //ShareDispute will fill shares from corrupted parties with 0s
             let mut shared_secrets_double =
                 self.share_dispute.execute_double(session, secrets).await?;
@@ -90,6 +91,9 @@ impl<C: Coinflip, S: ShareDispute> LocalDoubleShare for RealLocalDoubleShare<C, 
                 return format_output(shared_secrets_double);
             }
         }
+        Err(anyhow_error_and_log(
+            "Failed to verify sharing after {MAX_ITER} iterations for `RealLocalDoubleShare`",
+        ))
     }
 }
 
@@ -319,7 +323,9 @@ async fn verify_sharing<
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::{format_output, send_receive_pads_double, verify_sharing, DoubleShares};
+    use super::{
+        anyhow_error_and_log, format_output, send_receive_pads_double, verify_sharing, DoubleShares,
+    };
     #[cfg(feature = "slow_tests")]
     use crate::execution::large_execution::{
         coinflip::tests::{DroppingCoinflipAfterVss, MaliciousCoinflipRecons},
@@ -359,6 +365,7 @@ pub(crate) mod tests {
     use aes_prng::AesRng;
     use async_trait::async_trait;
     use itertools::Itertools;
+    use kms_common::MAX_ITER;
     use rand::SeedableRng;
     use rand::{CryptoRng, Rng};
     use rstest::rstest;
@@ -430,7 +437,7 @@ pub(crate) mod tests {
             secrets: &[Z],
         ) -> anyhow::Result<HashMap<Role, DoubleShares<Z>>> {
             //Keeps executing til verification passes
-            loop {
+            for _ in 0..MAX_ITER {
                 //ShareDispute will fill shares from corrupted parties with 0s
                 let mut shared_secrets_double =
                     self.share_dispute.execute_double(session, secrets).await?;
@@ -475,6 +482,9 @@ pub(crate) mod tests {
                     return format_output(shared_secrets_double);
                 }
             }
+            Err(anyhow_error_and_log(
+                "Failed to verify sharing after {MAX_ITER} iterations for `MaliciousSenderLocalDoubleShare`",
+            ))
         }
     }
 
@@ -490,7 +500,7 @@ pub(crate) mod tests {
             secrets: &[Z],
         ) -> anyhow::Result<HashMap<Role, DoubleShares<Z>>> {
             //Keeps executing til verification passes
-            loop {
+            for _ in 0..MAX_ITER {
                 //ShareDispute will fill shares from corrupted parties with 0s
                 let mut shared_secrets_double =
                     self.share_dispute.execute_double(session, secrets).await?;
@@ -535,6 +545,9 @@ pub(crate) mod tests {
                     return format_output(shared_secrets_double);
                 }
             }
+            Err(anyhow_error_and_log(
+                "Failed to verify sharing after {MAX_ITER} iterations for `MaliciousReceiverLocalDoubleShare`",
+            ))
         }
     }
 

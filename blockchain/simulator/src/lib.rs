@@ -25,6 +25,7 @@ use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractReques
 use kms_blockchain_client::query_client::{
     ContractQuery, EventQuery, QueryClient, QueryClientBuilder, QueryContractRequest,
 };
+use kms_common::loop_fn;
 use kms_lib::client::{assemble_metadata_alloy, ParsedReencryptionRequest};
 use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
 use kms_lib::cryptography::central_kms::gen_sig_keys;
@@ -760,28 +761,19 @@ async fn execute_contract(
         .build();
 
     let response = client.execute_contract(request).await?;
-
-    let max_iter: u64 = max_iter.unwrap_or(30);
-    let resp;
-    let mut counter: u64 = 0;
-    loop {
-        tracing::info!("Querying client for tx hash: {:?}...", response.txhash);
-        let query_response = query_client.query_tx(response.txhash.clone()).await?;
-        if let Some(qr) = query_response {
-            resp = qr;
-            break;
-        } else {
-            tracing::info!("Waiting 1 second for transaction to be included in a block.");
-            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-            if counter == max_iter {
-                return Err(anyhow::anyhow!(
-                    "Max-iteration ({}) reached waiting for transaction to be included in a block",
-                    max_iter,
-                ));
+    let resp = loop_fn!(
+        || async {
+            tracing::info!("Querying client for tx hash: {:?}...", response.txhash);
+            let query_response = query_client.query_tx(response.txhash.clone()).await?;
+            if let Some(qr) = query_response {
+                anyhow::Ok(Some(qr))
+            } else {
+                tracing::info!("Waiting for transaction to be included in a block.");
+                anyhow::Ok(None)
             }
-        }
-        counter += 1;
-    }
+        },
+        max_iter.unwrap_or(30)
+    )?;
 
     tracing::info!("Filtering events");
     resp.events

@@ -32,6 +32,7 @@ hex.workspace = true
 hmac = "=0.12.1"
 k256.workspace = true
 kms = { workspace = true, default-features = false, features = ["grpc-client"] }
+kms-common = { workspace = true }
 kms-blockchain-client.workspace = true
 kms-blockchain-connector.workspace = true
 prost.workspace = true

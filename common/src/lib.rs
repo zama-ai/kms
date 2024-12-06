@@ -6,6 +6,48 @@ use {
     tfhe_versionable::Unversionize,
 };
 
+/// The maximum number of iterations before terminating a loop that is expected to only iterate a couple of times.
+pub const MAX_ITER: u64 = 30;
+
+/// Helper macro to try a piece of code until it succeeds but not more than [`MAX_ITER`] times.
+/// The [`func`] argument is a function that should return a `Result<Option<T>>` where `T` is the type of the result.
+/// If the function returns `Ok(None)`, then the loop will continue.
+/// If the function returns `Ok(Some(T))`, then the loop will stop and return `Ok(T)`.
+/// If the function returns `Err(e)`, then the loop will stop and return `Err(e)`.
+/// The [`max_iter`] argument is specifies the maximum number of iterations.
+#[macro_export]
+macro_rules! loop_fn {
+    ($func:expr,$max_iter:expr) => {{
+        let mut ctr = 0;
+        loop {
+            if ctr > $max_iter {
+                break Err(anyhow::anyhow!(
+                    "Failed to get result after {} tries",
+                    $max_iter
+                ));
+            }
+            ctr += 1;
+            match $func().await {
+                Ok(Some(inner_res)) => {
+                    break Ok(inner_res);
+                }
+                Ok(None) => {
+                    // No result is done yet so we need to go again
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                }
+                Err(e) => {
+                    // An error happened so we return this
+                    break Err(anyhow::anyhow!("Loop failed with the internal error: {e}"));
+                }
+            }
+        }
+    }};
+    ($func:expr) => {{
+        use kms_common::MAX_ITER;
+        loop_fn!($func, MAX_ITER)
+    }};
+}
+
 #[macro_export]
 macro_rules! impl_generic_versionize {
     ($t:ty) => {

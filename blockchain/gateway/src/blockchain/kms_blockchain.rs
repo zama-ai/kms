@@ -35,6 +35,7 @@ use kms_blockchain_client::query_client::GenKeyIdQuery;
 use kms_blockchain_client::query_client::QueryClient;
 use kms_blockchain_client::query_client::QueryClientBuilder;
 use kms_blockchain_client::query_client::QueryContractRequest;
+use kms_common::loop_fn;
 use kms_lib::consts::SIGNING_KEY_ID;
 use kms_lib::cryptography::signcryption::hash_element;
 use kms_lib::kms::DecryptionResponsePayload;
@@ -195,19 +196,26 @@ impl<'a> KmsBlockchainImpl {
         // Broadcast the transaction so it gets picked up by a validator
         let response = self.call_execute_contract(&mut client, &request).await?;
 
-        let resp;
-        loop {
+        // Loop until we get a query response
+        let resp = loop_fn!(|| async {
             // Keep querying using the txhash to make sure it appeared on the blockchain
-            let query_response = self.query_client.query_tx(response.txhash.clone()).await?;
+            let query_response = self
+                .query_client
+                .query_tx(response.txhash.clone())
+                .await
+                .map_err(|e| {
+                    let msg = format!("Error querying a response from the KMS blockchain {:?}", e);
+                    tracing::error!(msg);
+                    anyhow::anyhow!(msg)
+                })?;
             if let Some(qr) = query_response {
-                resp = qr;
-                break;
+                Ok::<_, anyhow::Error>(Some(qr))
             } else {
                 tracing::info!("Waiting for transaction to be included in a block");
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                continue;
+                Ok::<_, anyhow::Error>(None)
             }
-        }
+        })?;
+
         let events = resp
             .events
             .iter()
@@ -218,7 +226,7 @@ impl<'a> KmsBlockchainImpl {
 
         // At this point evs should contain a single event
         if events.len() != 1 {
-            return Err(anyhow!(
+            return Err(anyhow::anyhow!(
                 "Expected a single KmsEvent, but received: {:?}",
                 events
             ));
@@ -227,7 +235,7 @@ impl<'a> KmsBlockchainImpl {
         let expected_kms_op = <OperationValue as std::convert::Into<KmsOperation>>::into(operation);
         // Make sure this is indeed the expected event
         if ev.operation != expected_kms_op {
-            return Err(anyhow!(
+            return Err(anyhow::anyhow!(
                 "Expected a {:?} , but received: {:?}",
                 expected_kms_op,
                 ev
