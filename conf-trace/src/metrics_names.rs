@@ -21,6 +21,7 @@ pub const TAG_ERROR: &str = "error";
 pub const TAG_KEY_ID: &str = "key_id";
 pub const TAG_ALGORITHM: &str = "algorithm";
 pub const TAG_OPERATION_TYPE: &str = "operation_type";
+pub const TAG_PARTY_ID: &str = "party_id";
 
 // Common error values
 pub const ERR_RATE_LIMIT_EXCEEDED: &str = "rate_limit_exceeded";

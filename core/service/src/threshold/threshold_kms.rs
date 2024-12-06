@@ -39,6 +39,10 @@ use crate::util::rate_limiter::{RateLimiter, RateLimiterConfig};
 use crate::{anyhow_error_and_log, get_exactly_one};
 use aes_prng::AesRng;
 use anyhow::anyhow;
+use conf_trace::metrics;
+use conf_trace::metrics_names::{
+    ERR_DECRYPTION_FAILED, ERR_RATE_LIMIT_EXCEEDED, OP_DECRYPT, OP_REENCRYPT, TAG_PARTY_ID,
+};
 use distributed_decryption::algebra::residue_poly::ResiduePoly128;
 use distributed_decryption::conf::party::CertificatePaths;
 use distributed_decryption::execution::endpoints::decryption::{
@@ -874,12 +878,21 @@ impl Reencryptor for RealReencryptor {
         &self,
         request: Request<ReencryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
-        let permit = self
-            .rate_limiter
-            .start_reenc()
-            .await
-            .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
+        let _timer = metrics::METRICS
+            .time_operation(OP_REENCRYPT)
+            .map_err(|e| Status::internal(format!("Failed to start metrics: {}", e)))?
+            .tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
+            .map_err(|e| Status::internal(format!("Failed to add tag: {}", e)))?
+            .start();
 
+        let _ = metrics::METRICS
+            .increment_request_counter(OP_REENCRYPT)
+            .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
+
+        let permit = self.rate_limiter.start_reenc().await.map_err(|e| {
+            let _ = metrics::METRICS.increment_error_counter(OP_REENCRYPT, ERR_RATE_LIMIT_EXCEEDED);
+            Status::resource_exhausted(e.to_string())
+        })?;
         let inner = request.into_inner();
         tracing::info!(
             "Party {:?} received a new reencryption request with request_id {:?}",
@@ -1078,10 +1091,25 @@ impl RealDecryptor {
 
 #[tonic::async_trait]
 impl Decryptor for RealDecryptor {
+    #[tracing::instrument(skip(self, request), fields(
+        party_id = ?self.session_preparer.my_id,
+        operation = "decrypt"
+    ))]
     async fn decrypt(
         &self,
         request: Request<DecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
+        let _timer = metrics::METRICS
+            .time_operation(OP_DECRYPT)
+            .map_err(|e| Status::internal(format!("Failed to start metrics: {}", e)))?
+            .tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
+            .map_err(|e| Status::internal(format!("Failed to add tag: {}", e)))?
+            .start();
+
+        let _ = metrics::METRICS
+            .increment_request_counter(OP_DECRYPT)
+            .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
+
         let permit = self
             .rate_limiter
             .start_dec()
@@ -1090,16 +1118,31 @@ impl Decryptor for RealDecryptor {
 
         let inner = request.into_inner();
         tracing::info!(
-            "Party {:?} received a new decryption request with request_id {:?}",
-            self.session_preparer.own_identity(),
-            inner.request_id
+            request_id = ?inner.request_id,
+            "Received new decryption request"
         );
+
         let (ciphertexts, req_digest, key_id, req_id, eip712_domain, acl_address) =
             tonic_handle_potential_err(
                 validate_decrypt_req(&inner),
                 format!("Invalid key in request {:?}", inner),
-            )?;
+            )
+            .map_err(|e| {
+                tracing::error!(
+                    error = ?e,
+                    request_id = ?inner.request_id,
+                    "Failed to validate decrypt request"
+                );
+                let _ = metrics::METRICS.increment_error_counter(OP_DECRYPT, ERR_DECRYPTION_FAILED);
+                e
+            })?;
 
+        tracing::debug!(
+            request_id = ?req_id,
+            key_id = ?key_id,
+            ciphertexts_count = ciphertexts.len(),
+            "Starting decryption process"
+        );
         // the session id that is used between the threshold engines to identify the decryption session, derived from the request id
         let internal_sid = tonic_handle_potential_err(
             u128::try_from(req_id.clone()),
@@ -1301,16 +1344,7 @@ impl Decryptor for RealDecryptor {
         request: Request<RequestId>,
     ) -> Result<Response<DecryptionResponse>, Status> {
         let request_id = request.into_inner();
-        if !request_id.is_valid() {
-            tracing::warn!(
-                "The value {} is not a valid request ID!",
-                request_id.to_string()
-            );
-            return Err(tonic::Status::new(
-                tonic::Code::InvalidArgument,
-                format!("The value {} is not a valid request ID!", request_id),
-            ));
-        }
+        validate_request_id(&request_id)?;
         let status = {
             let guarded_meta_store = self.dec_meta_store.read().await;
             guarded_meta_store.retrieve(&request_id).cloned()
@@ -2052,6 +2086,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             .session_preparer
             .prepare_ddec_data_from_sessionid(session_id)
             .await?;
+
         let meta_store = Arc::clone(&self.crs_meta_store);
         let public_storage = Arc::clone(&self.public_storage);
         let private_storage = Arc::clone(&self.private_storage);
@@ -2114,8 +2149,10 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                     Err(e) => {
                         let mut guarded_meta_store = meta_store.write().await;
                         // We cannot do much if updating the storage fails at this point...
-                        let _ = guarded_meta_store
-                            .update(&owned_req_id, HandlerStatus::Error(e.to_string()));
+                        let _ = guarded_meta_store.update(
+                            &owned_req_id,
+                            HandlerStatus::Error(e.to_string()),
+                        );
                         return;
                     }
                 };
