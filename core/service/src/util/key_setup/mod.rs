@@ -7,13 +7,15 @@ use crate::cryptography::central_kms::{
 };
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::kms::RequestId;
-use crate::rpc::rpc_types::PubDataType;
 use crate::rpc::rpc_types::{PrivDataType, WrappedPublicKey};
+use crate::rpc::rpc_types::{PubDataType, WrappedPublicKeyOwned};
 use crate::storage::{file::FileStorage, store_versioned_at_request_id, StorageType};
 use crate::storage::{read_all_data_versioned, store_text_at_request_id};
 use crate::storage::{store_pk_at_request_id, Storage};
 use crate::storage::{StorageForText, StorageReader};
-use crate::threshold::threshold_kms::{compute_all_info, ThresholdFheKeys};
+use crate::threshold::threshold_kms::{
+    compute_all_info, ThresholdFheKeys, WrappedThresholdFheKeys,
+};
 use aes_prng::AesRng;
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 use distributed_decryption::execution::{
@@ -524,19 +526,22 @@ where
         threshold,
     )
     .unwrap();
-    let sns_key = key_set.public_keys.sns_key.to_owned().unwrap();
 
+    let sns_key = key_set.public_keys.sns_key.to_owned().unwrap();
     let decompression_key = key_set.public_keys.server_key.to_owned().into_raw_parts().3;
 
     for i in 1..=amount_parties {
         // Get first signing key
         let sk = &signing_keys[i - 1];
         let info = compute_all_info(sk, &key_set.public_keys, None).unwrap();
-        let threshold_fhe_keys = ThresholdFheKeys {
-            private_keys: key_shares[i - 1].to_owned(),
-            sns_key: sns_key.clone(),
-            decompression_key: decompression_key.clone(),
-            pk_meta_data: info,
+        let threshold_fhe_keys = WrappedThresholdFheKeys {
+            inner: ThresholdFheKeys {
+                private_keys: key_shares[i - 1].to_owned(),
+                sns_key: sns_key.clone(),
+                decompression_key: decompression_key.clone(),
+                pk_meta_data: info,
+            },
+            public_key: WrappedPublicKeyOwned::Compact(key_set.public_keys.public_key.clone()),
         };
         store_pk_at_request_id(
             &mut pub_storages[i - 1],
@@ -566,7 +571,7 @@ where
         store_versioned_at_request_id(
             &mut priv_storages[i - 1],
             key_id,
-            &threshold_fhe_keys,
+            &threshold_fhe_keys.inner,
             &PrivDataType::FheKeyInfo.to_string(),
         )
         .await

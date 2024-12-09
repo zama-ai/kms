@@ -4,6 +4,9 @@ use crate::conf::threshold::{PeerConf, ThresholdParty};
 use crate::consts::{MINIMUM_SESSIONS_PREPROC, PRSS_EPOCH_ID};
 use crate::cryptography::central_kms::{async_generate_crs, compute_info, BaseKmsStruct};
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey};
+use crate::cryptography::proven_ct_verifier::{
+    get_verify_proven_ct_result, non_blocking_verify_proven_ct, PkGetter,
+};
 use crate::cryptography::signcryption::signcrypt;
 use crate::kms::core_service_endpoint_server::CoreServiceEndpointServer;
 use crate::kms::{
@@ -14,18 +17,17 @@ use crate::kms::{
     VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
 };
 use crate::rpc::central_rpc::{
-    convert_key_response, get_verify_proven_ct_result, non_blocking_verify_proven_ct,
-    retrieve_parameters, tonic_handle_potential_err, tonic_some_or_err, validate_decrypt_req,
-    validate_reencrypt_req, validate_request_id,
+    convert_key_response, retrieve_parameters, tonic_handle_potential_err, tonic_some_or_err,
+    validate_decrypt_req, validate_reencrypt_req, validate_request_id,
 };
 use crate::rpc::rpc_types::{
     compute_external_pt_signature, protobuf_to_alloy_domain_option, BaseKms, Plaintext,
     PrivDataType, PubDataType, SigncryptionPayload, SignedPubDataHandleInternal, WrappedPublicKey,
-    CURRENT_FORMAT_VERSION,
+    WrappedPublicKeyOwned, CURRENT_FORMAT_VERSION,
 };
 use crate::rpc::{prepare_shutdown_signals, INFLIGHT_REQUEST_WAITING_TIME};
 use crate::storage::{
-    delete_at_request_id, delete_pk_at_request_id, read_all_data_versioned,
+    delete_at_request_id, delete_pk_at_request_id, read_all_data_versioned, read_pk_at_request_id,
     read_versioned_at_request_id, store_pk_at_request_id, store_versioned_at_request_id, Storage,
 };
 #[cfg(feature = "insecure")]
@@ -85,6 +87,7 @@ use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::named::Named;
+use tfhe::zk::CompactPkePublicParams;
 use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, RwLockReadGuard};
@@ -170,11 +173,31 @@ pub async fn threshold_server_init<
     Ok(kms)
 }
 
+/// This is an internal structure that is a wrapper around [ThresholdFheKeys]
+/// because we want to keep some unversioned data along with [ThresholdFheKeys],
+/// which is versioned. We do not want to liberally add/remove things into
+/// versioned data structures.
+// This is needed because it's a clearner to have one data structure for
+// accessing all the keys and key materials that we need.
+// In the future we'd like make a unified interface for storing all key materials.
+pub(crate) struct WrappedThresholdFheKeys {
+    pub(crate) inner: ThresholdFheKeys,
+    pub(crate) public_key: WrappedPublicKeyOwned,
+}
+
+impl PkGetter for HashMap<RequestId, WrappedThresholdFheKeys> {
+    fn get_pk(&self, req_id: &RequestId) -> Option<&WrappedPublicKeyOwned> {
+        self.get(req_id).map(|v| &v.public_key)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum ThresholdFheKeysVersioned {
     V0(ThresholdFheKeys),
 }
 
+/// These are the internal key materials (public and private)
+/// that's needed for decryption, reencryption and verifying a proven input.
 #[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
 #[versionize(ThresholdFheKeysVersioned)]
 pub struct ThresholdFheKeys {
@@ -232,7 +255,7 @@ pub type RealThresholdKms<PubS, PrivS> = GenericKms<
     RealKeyGenerator<PubS, PrivS>,
     RealPreprocessor,
     RealCrsGenerator<PubS, PrivS>,
-    RealProvenCtVerifier<PubS>,
+    RealProvenCtVerifier,
 >;
 
 #[cfg(feature = "insecure")]
@@ -245,7 +268,7 @@ pub type RealThresholdKms<PubS, PrivS> = GenericKms<
     RealPreprocessor,
     RealCrsGenerator<PubS, PrivS>,
     RealInsecureCrsGenerator<PubS, PrivS>,
-    RealProvenCtVerifier<PubS>,
+    RealProvenCtVerifier,
 >;
 
 #[derive(Debug)]
@@ -303,21 +326,33 @@ where
         alloy_signer::utils::public_key_to_address(pk)
     );
 
+    // load keys from storage
     let key_info_versioned: HashMap<RequestId, ThresholdFheKeys> =
         read_all_data_versioned(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
     let mut key_info = HashMap::new();
     let mut key_info_w_status = HashMap::new();
     for (id, info) in key_info_versioned.into_iter() {
         key_info_w_status.insert(id.clone(), HandlerStatus::Done(info.pk_meta_data.clone()));
-        key_info.insert(id, info);
+        let keys = WrappedThresholdFheKeys {
+            inner: info,
+            public_key: read_pk_at_request_id(&public_storage, &id).await?,
+        };
+        key_info.insert(id, keys);
     }
-    let cs: HashMap<RequestId, SignedPubDataHandleInternal> =
+
+    // load crs_info (roughly hashes of CRS) from storage
+    let crs_info: HashMap<RequestId, SignedPubDataHandleInternal> =
         read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
-    let mut cs_w_status: HashMap<RequestId, HandlerStatus<SignedPubDataHandleInternal>> =
+    let mut crs_info_w_status: HashMap<RequestId, HandlerStatus<SignedPubDataHandleInternal>> =
         HashMap::new();
-    for (id, crs) in cs {
-        cs_w_status.insert(id.to_owned(), HandlerStatus::Done(crs));
+    for (id, crs) in crs_info {
+        crs_info_w_status.insert(id.to_owned(), HandlerStatus::Done(crs));
     }
+
+    // load crs from storage
+    let crs: HashMap<RequestId, CompactPkePublicParams> =
+        read_all_data_versioned(&public_storage, &PubDataType::CRS.to_string()).await?;
+
     let role_assignments: RoleAssignment = peer_configs
         .into_iter()
         .map(|peer_config| peer_config.into_role_identity())
@@ -454,12 +489,13 @@ where
     let base_kms = BaseKmsStruct::new(sk)?;
 
     let fhe_keys = Arc::new(RwLock::new(key_info));
+    let crs_materials = Arc::new(RwLock::new(crs));
     let prss_setup = Arc::new(RwLock::new(None));
     let preproc_buckets = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     let preproc_factory = Arc::new(Mutex::new(preproc_factory));
     let public_storage = Arc::new(Mutex::new(public_storage));
     let private_storage = Arc::new(Mutex::new(private_storage));
-    let crs_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(cs_w_status)));
+    let crs_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(crs_info_w_status)));
     let dkg_pubinfo_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(key_info_w_status)));
     let dec_meta_store = Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache)));
     let reenc_meta_store = Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache)));
@@ -528,7 +564,7 @@ where
     };
 
     let keygenerator = RealKeyGenerator {
-        fhe_keys,
+        fhe_keys: Arc::clone(&fhe_keys),
         base_kms: base_kms.new_instance().await,
         preproc_buckets: Arc::clone(&preproc_buckets),
         public_storage: Arc::clone(&public_storage),
@@ -551,6 +587,7 @@ where
     };
 
     let crs_generator = RealCrsGenerator {
+        crs_materials: Arc::clone(&crs_materials),
         base_kms: base_kms.new_instance().await,
         public_storage: Arc::clone(&public_storage),
         private_storage,
@@ -563,9 +600,10 @@ where
     let insecure_crs_generator = RealInsecureCrsGenerator::from_real_crsgen(&crs_generator).await;
 
     let proven_ct_verifier = RealProvenCtVerifier {
+        crs_materials,
+        fhe_keys,
         base_kms,
         ct_verifier_payload_meta_store,
-        public_storage,
         rate_limiter: rate_limiter.clone(),
     };
 
@@ -794,7 +832,7 @@ impl<PrivS: Storage + Send + Sync + 'static> Initiator for RealInitiator<PrivS> 
     }
 }
 pub struct RealReencryptor {
-    fhe_keys: Arc<RwLock<HashMap<RequestId, ThresholdFheKeys>>>,
+    fhe_keys: Arc<RwLock<HashMap<RequestId, WrappedThresholdFheKeys>>>,
     base_kms: BaseKmsStruct,
     reenc_meta_store: Arc<RwLock<MetaStore<ReencMetaStore>>>,
     session_preparer: SessionPreparer,
@@ -818,10 +856,10 @@ impl RealReencryptor {
         client_enc_key: &PublicEncKey,
         client_address: &alloy_primitives::Address,
         sig_key: Arc<PrivateSigKey>,
-        fhe_keys: RwLockReadGuard<'_, HashMap<RequestId, ThresholdFheKeys>>,
+        fhe_keys: RwLockReadGuard<'_, HashMap<RequestId, WrappedThresholdFheKeys>>,
     ) -> anyhow::Result<Vec<u8>> {
         let keys = match fhe_keys.get(key_handle) {
-            Some(keys) => keys,
+            Some(keys) => &keys.inner,
             None => return Err(anyhow!("Could not deserialize meta store")),
         };
         let low_level_ct = fhe_type.deserialize_to_low_level(ct, &keys.decompression_key)?;
@@ -1023,7 +1061,7 @@ impl Reencryptor for RealReencryptor {
 }
 
 pub struct RealDecryptor {
-    fhe_keys: Arc<RwLock<HashMap<RequestId, ThresholdFheKeys>>>,
+    fhe_keys: Arc<RwLock<HashMap<RequestId, WrappedThresholdFheKeys>>>,
     base_kms: BaseKmsStruct,
     dec_meta_store: Arc<RwLock<MetaStore<DecMetaStore>>>,
     session_preparer: SessionPreparer,
@@ -1039,7 +1077,7 @@ impl RealDecryptor {
         ct: &[u8],
         fhe_type: FheType,
         key_handle: &RequestId,
-        fhe_keys: RwLockReadGuard<'_, HashMap<RequestId, ThresholdFheKeys>>,
+        fhe_keys: RwLockReadGuard<'_, HashMap<RequestId, WrappedThresholdFheKeys>>,
     ) -> anyhow::Result<T>
     where
         T: tfhe::integer::block_decomposition::Recomposable
@@ -1047,7 +1085,7 @@ impl RealDecryptor {
     {
         tracing::info!("{:?} started inner_decrypt", session.own_identity());
         let keys = match fhe_keys.get(key_handle) {
-            Some(keys) => keys,
+            Some(keys) => &keys.inner,
             None => {
                 return Err(anyhow_error_and_log(format!(
                     "Key handle {key_handle} does not exist"
@@ -1391,7 +1429,7 @@ pub struct RealKeyGenerator<
 > {
     // NOTE: To avoid deadlocks the fhe_keys SHOULD NOT be written to while holding a meta storage
     // mutex!
-    fhe_keys: Arc<RwLock<HashMap<RequestId, ThresholdFheKeys>>>,
+    fhe_keys: Arc<RwLock<HashMap<RequestId, WrappedThresholdFheKeys>>>,
     base_kms: BaseKmsStruct,
     // TODO eventually add mode to allow for nlarge as well.
     preproc_buckets: Arc<RwLock<MetaStore<BucketMetaStore>>>,
@@ -1569,11 +1607,14 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             let mut pub_storage = public_storage.lock().await;
             let mut priv_storage = private_storage.lock().await;
 
-            let unversioned_keys = ThresholdFheKeys {
-                private_keys,
-                sns_key,
-                decompression_key,
-                pk_meta_data: info.clone(),
+            let wrapped_threshold_fhe_keys = WrappedThresholdFheKeys {
+                inner: ThresholdFheKeys {
+                    private_keys,
+                    sns_key,
+                    decompression_key,
+                    pk_meta_data: info.clone(),
+                },
+                public_key: WrappedPublicKeyOwned::Compact(pub_key_set.public_key.clone()),
             };
 
             //Try to store the new data
@@ -1581,7 +1622,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             if store_versioned_at_request_id(
                 &mut (*priv_storage),
                 &req_id,
-                &unversioned_keys,
+                &wrapped_threshold_fhe_keys.inner,
                 &PrivDataType::FheKeyInfo.to_string(),
             )
             .await
@@ -1605,7 +1646,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 && store_versioned_at_request_id(
                     &mut (*pub_storage),
                     &req_id,
-                    &unversioned_keys.sns_key,
+                    &wrapped_threshold_fhe_keys.inner.sns_key,
                     &PubDataType::SnsKey.to_string(),
                 )
                 .await
@@ -1613,7 +1654,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             {
                 {
                     let mut guarded_fhe_keys = fhe_keys.write().await;
-                    guarded_fhe_keys.insert(req_id.clone(), unversioned_keys);
+                    guarded_fhe_keys.insert(req_id.clone(), wrapped_threshold_fhe_keys);
                 }
                 //If everything succeeded, update state and store private key
                 {
@@ -1996,6 +2037,7 @@ pub struct RealCrsGenerator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
 > {
+    crs_materials: Arc<RwLock<HashMap<RequestId, CompactPkePublicParams>>>,
     base_kms: BaseKmsStruct,
     public_storage: Arc<Mutex<PubS>>,
     private_storage: Arc<Mutex<PrivS>>,
@@ -2090,6 +2132,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         let meta_store = Arc::clone(&self.crs_meta_store);
         let public_storage = Arc::clone(&self.public_storage);
         let private_storage = Arc::clone(&self.private_storage);
+        let crs_materials = Arc::clone(&self.crs_materials);
         let owned_req_id = req_id.to_owned();
         let eip712_domain_copy = eip712_domain.cloned();
 
@@ -2139,10 +2182,12 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                     compute_info(&sig_key, &pp, eip712_domain_copy.as_ref()).map(|info| (pp, info))
             });
             let f = || async {
-                // we take these two locks at the same time in case there are races
-                // on return, the two locks should be dropped in the correct order also
+                // we take these locks at the same time in case there are races
+                // on return, the locks should be dropped in the correct order also
                 let mut pub_storage = public_storage.lock().await;
                 let mut priv_storage = private_storage.lock().await;
+                let mut guarded_meta_store = meta_store.write().await;
+                let mut crs_materials_guard = crs_materials.write().await;
 
                 let (pp_id, meta_data) = match res_info_pp {
                     Ok((meta, pp_id)) => (meta, pp_id),
@@ -2165,20 +2210,27 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 )
                 .await
                 .is_ok()
-                // Only store the CRS if no other server has already stored it
-                    && store_versioned_at_request_id(
-                        &mut (*pub_storage),
-                        &owned_req_id,
-                        &pp_id,
-                        &PubDataType::CRS.to_string(),
-                    )
-                    .await
-                    .is_ok()
+                && store_versioned_at_request_id(
+                    &mut (*pub_storage),
+                    &owned_req_id,
+                    &pp_id,
+                    &PubDataType::CRS.to_string(),
+                )
+                .await
+                .is_ok() &&
+                guarded_meta_store.update(&owned_req_id, HandlerStatus::Done(meta_data))
+                    .inspect_err(|e| {
+                        tracing::error!("Error ({e}) while updating CRS meta store for {}", owned_req_id)
+                    })
+                .is_ok() &&
                 {
-                    let mut guarded_meta_store = meta_store.write().await;
-                    // We cannot do much if updating the storage fails at this point...
-                    let _ =
-                        guarded_meta_store.update(&owned_req_id, HandlerStatus::Done(meta_data));
+                    match crs_materials_guard.insert(owned_req_id.clone(), pp_id) {
+                        Some(_) => Err(anyhow_error_and_log(format!("CRS already exists in crs_materials for {}", owned_req_id))),
+                        None => Ok(())
+                    }
+                }.is_ok()
+                {
+                    /* no need to clean up if everything is ok */
                 } else {
                     tracing::error!("Could not store all the CRS data from request ID {owned_req_id}. Deleting any dangling data.");
                     // Try to delete stored data to avoid anything dangling
@@ -2196,17 +2248,17 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                         &PrivDataType::CrsInfo.to_string(),
                     )
                     .await;
-                    {
-                        let mut guarded_meta_store = meta_store.write().await;
-                        // We cannot do much if updating the storage fails at this point...
-                        let _ = guarded_meta_store.update(
-                            &owned_req_id,
-                            HandlerStatus::Error(format!(
-                                "failed to store data to public storage for ID {}",
-                                owned_req_id
-                            )),
-                        );
-                    }
+                    // We cannot do much if updating the storage fails at this point...
+                    let _ = guarded_meta_store.update(
+                        &owned_req_id,
+                        HandlerStatus::Error(format!(
+                            "failed to store data to public storage for ID {}",
+                            owned_req_id
+                        )),
+                    );
+                    let _ = crs_materials_guard.remove(&owned_req_id).ok_or(
+                        anyhow_error_and_log(format!("Removing CRS, but CRS already exists in crs_materials for {}", owned_req_id))
+                    );
                 }
             };
             let _ = f().await;
@@ -2269,6 +2321,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
     async fn from_real_crsgen(value: &RealCrsGenerator<PubS, PrivS>) -> Self {
         Self {
             real_crs_generator: RealCrsGenerator {
+                crs_materials: Arc::clone(&value.crs_materials),
                 base_kms: value.base_kms.new_instance().await,
                 public_storage: Arc::clone(&value.public_storage),
                 private_storage: Arc::clone(&value.private_storage),
@@ -2303,15 +2356,16 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
     }
 }
 
-pub struct RealProvenCtVerifier<PubS: Storage + Sync + Send + 'static> {
+pub struct RealProvenCtVerifier {
+    crs_materials: Arc<RwLock<HashMap<RequestId, CompactPkePublicParams>>>,
+    fhe_keys: Arc<RwLock<HashMap<RequestId, WrappedThresholdFheKeys>>>,
     base_kms: BaseKmsStruct,
     ct_verifier_payload_meta_store: Arc<RwLock<MetaStore<VerifyProvenCtResponsePayload>>>,
-    public_storage: Arc<Mutex<PubS>>,
     rate_limiter: RateLimiter,
 }
 
 #[tonic::async_trait]
-impl<PubS: Storage + Sync + Send + 'static> ProvenCtVerifier for RealProvenCtVerifier<PubS> {
+impl ProvenCtVerifier for RealProvenCtVerifier {
     async fn verify(
         &self,
         request: Request<VerifyProvenCtRequest>,
@@ -2339,11 +2393,11 @@ impl<PubS: Storage + Sync + Send + 'static> ProvenCtVerifier for RealProvenCtVer
             .clone();
         validate_request_id(&request_id)?;
 
-        let public_storage = Arc::clone(&self.public_storage);
-
+        // Arc::clone doesn't work here for dyn Trait
         non_blocking_verify_proven_ct(
+            self.crs_materials.clone(),
+            self.fhe_keys.clone(),
             meta_store,
-            public_storage,
             request_id.clone(),
             request.into_inner(),
             sigkey,

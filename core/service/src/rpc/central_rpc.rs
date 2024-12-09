@@ -2,50 +2,45 @@ use super::rpc_types::{
     compute_external_pt_signature, BaseKms, PrivDataType, SignedPubDataHandleInternal,
     CURRENT_FORMAT_VERSION,
 };
-use crate::client::assemble_metadata_req;
-use crate::consts::SAFE_SER_SIZE_LIMIT;
-use crate::cryptography::central_kms::verify_reencryption_eip712;
 use crate::cryptography::central_kms::{
     async_generate_crs, async_generate_fhe_keys, async_reencrypt, central_decrypt, BaseKmsStruct,
     SoftwareKms,
 };
-use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey};
+use crate::cryptography::central_kms::{verify_reencryption_eip712, WrappedKmsFheKeyHandles};
+use crate::cryptography::internal_crypto_types::PublicEncKey;
+use crate::cryptography::proven_ct_verifier::{
+    get_verify_proven_ct_result, non_blocking_verify_proven_ct,
+};
 use crate::kms::core_service_endpoint_server::CoreServiceEndpoint;
 use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenRequest,
     KeyGenResult, ParamChoice, ReencryptionRequest, ReencryptionResponse,
     ReencryptionResponsePayload, RequestId, SignedPubDataHandle, TypedCiphertext,
-    VerifyProvenCtRequest, VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
+    VerifyProvenCtRequest, VerifyProvenCtResponse,
 };
 use crate::rpc::rpc_types::{
-    compute_external_verify_proven_ct_signature, protobuf_to_alloy_domain_option, PubDataType,
-    WrappedPublicKey, WrappedPublicKeyOwned,
+    protobuf_to_alloy_domain_option, PubDataType, WrappedPublicKey, WrappedPublicKeyOwned,
 };
+use crate::storage::Storage;
 use crate::storage::{
-    delete_at_request_id, delete_pk_at_request_id, read_pk_at_request_id, store_pk_at_request_id,
+    delete_at_request_id, delete_pk_at_request_id, store_pk_at_request_id,
     store_versioned_at_request_id,
 };
-use crate::storage::{read_versioned_at_request_id, Storage};
-use crate::util::meta_store::{handle_res_mapping, HandlerStatus, MetaStore};
+use crate::util::meta_store::{handle_res_mapping, HandlerStatus};
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
-use alloy_primitives::{keccak256, Address};
+use alloy_primitives::Address;
 use alloy_sol_types::Eip712Domain;
 use conf_trace::metrics::METRICS;
 use conf_trace::metrics_names::{
     ERR_CRS_GEN_FAILED, ERR_DECRYPTION_FAILED, ERR_KEY_EXISTS, ERR_KEY_NOT_FOUND,
-    ERR_RATE_LIMIT_EXCEEDED, ERR_REENCRYPTION_FAILED, ERR_VERIFICATION_FAILED, OP_CRS_GEN,
-    OP_DECRYPT, OP_KEYGEN, OP_REENCRYPT, OP_TYPE_CT_PROOF, OP_TYPE_LOAD_CRS_PK,
-    OP_TYPE_PROOF_VERIFICATION, OP_TYPE_TOTAL, OP_VERIFY_PROVEN_CT, TAG_OPERATION_TYPE,
+    ERR_RATE_LIMIT_EXCEEDED, ERR_REENCRYPTION_FAILED, OP_CRS_GEN, OP_DECRYPT, OP_KEYGEN,
+    OP_REENCRYPT, OP_VERIFY_PROVEN_CT,
 };
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
-use tfhe::safe_serialization::safe_deserialize;
-use tfhe::zk::CompactPkePublicParams;
-use tfhe::ProvenCompactCiphertextList;
-use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock};
 use tonic::{Request, Response, Status};
 use tracing::Instrument;
 
@@ -196,6 +191,7 @@ impl<
 
             let mut pub_storage = public_storage.lock().await;
             let mut priv_storage = private_storage.lock().await;
+
             //Try to store the new data
             if store_versioned_at_request_id(
                 &mut (*priv_storage),
@@ -221,16 +217,21 @@ impl<
                 .await
                 .is_ok()
             {
+                let pk_info = key_info.public_key_info.to_owned();
+                let wrapped_key_info = WrappedKmsFheKeyHandles {
+                    inner: key_info,
+                    public_key: WrappedPublicKeyOwned::Compact(fhe_key_set.public_key.clone()),
+                };
                 {
                     let mut fhe_key_map = fhe_keys.write().await;
                     // If something is already in the map, then there is a bug as we already checked for the key not existing
-                    fhe_key_map.insert(req_id.clone(), key_info.clone());
+                    fhe_key_map.insert(req_id.clone(), wrapped_key_info);
                 };
                 {
                     let mut guarded_meta_store = meta_store.write().await;
                     let _ = guarded_meta_store.update(
                         &req_id,
-                        HandlerStatus::Done(key_info.public_key_info.to_owned()),
+                        HandlerStatus::Done(pk_info),
                     );
                 }
             } else {
@@ -365,7 +366,7 @@ impl<
                     &request_id
                 );
                 match async_reencrypt::<PubS, PrivS>(
-                    keys,
+                    &keys.inner,
                     &sig_key,
                     &mut rng,
                     &ciphertext,
@@ -529,7 +530,7 @@ impl<
                 // run the computation in a separate rayon thread to avoid blocking the tokio runtime
                 let (send, recv) = tokio::sync::oneshot::channel();
                 rayon::spawn(move || {
-                    let decryptions = central_decrypt::<PubS, PrivS>(&keys, &ciphertexts);
+                    let decryptions = central_decrypt::<PubS, PrivS>(&keys.inner, &ciphertexts);
                     let _ = send.send(decryptions);
                 });
                 let decryptions = recv.await;
@@ -684,6 +685,7 @@ impl<
         let public_storage = Arc::clone(&self.public_storage);
         let private_storage = Arc::clone(&self.private_storage);
         let meta_store = Arc::clone(&self.crs_meta_map);
+        let crs_materials = Arc::clone(&self.crs_materials);
         let sk = Arc::clone(&self.base_kms.sig_key);
         let rng = self.base_kms.new_rng().await;
 
@@ -716,29 +718,45 @@ impl<
                     return;
                 }
             };
+
+            // take these locks at the same time to avoid deadlocks
             let mut pub_storage = public_storage.lock().await;
             let mut priv_storage = private_storage.lock().await;
-            //Try to store the new data
+            let mut guarded_meta_store = meta_store.write().await;
+            let mut crs_materials_guard = crs_materials.write().await;
+
+            // try to store all the necessary data making use of short circuiting
             if store_versioned_at_request_id(
                 &mut (*priv_storage),
                 &request_id,
                 &crs_info,
                 &PrivDataType::CrsInfo.to_string(),
             )
-            .await
+            .await.is_ok()
+            && store_versioned_at_request_id(
+                &mut (*pub_storage),
+                &request_id,
+                &pp,
+                &PubDataType::CRS.to_string(),
+            )
+            .await.is_ok()
+            && guarded_meta_store.update(&request_id, HandlerStatus::Done(crs_info)).inspect_err(|e|
+                tracing::error!("Error ({e}) while updating CRS meta store for {}", request_id)
+            )
             .is_ok()
-                && store_versioned_at_request_id(
-                    &mut (*pub_storage),
-                    &request_id,
-                    &pp,
-                    &PubDataType::CRS.to_string(),
-                )
-                .await
-                .is_ok()
+            && {
+                match  crs_materials_guard.insert(request_id.clone(), pp) {
+                    Some(_) => {
+                        Err(anyhow_error_and_log(format!("CRS already exists in crs_materials for {}", request_id)))
+                    }
+                    None => Ok(())
+                }
+            }
+            .is_ok()
             {
-                let mut guarded_meta_store = meta_store.write().await;
-                let _ = guarded_meta_store.update(&request_id, HandlerStatus::Done(crs_info));
-            } else {
+                /* no need to clean up if everything is ok */
+            }
+            else {
                 tracing::error!("Could not store all the CRS data from request ID {request_id}. Deleting any dangling data.");
                 // Try to delete stored data to avoid anything dangling
                 // Ignore any failure to delete something since it might be because the data did not get created
@@ -755,17 +773,17 @@ impl<
                     &PrivDataType::CrsInfo.to_string(),
                 )
                 .await;
-                {
-                    let mut guarded_meta_store = meta_store.write().await;
-                    // We cannot do much if updating the storage fails at this point...
-                    let _ = guarded_meta_store.update(
-                        &request_id,
-                        HandlerStatus::Error(format!(
-                            "Failed to store CRS data to public storage for ID {}",
-                            request_id
-                        )),
-                    );
-                }
+                // We cannot do much if updating the meta store fails at this point...
+                let _ = guarded_meta_store.update(
+                    &request_id,
+                    HandlerStatus::Error(format!(
+                        "Failed to store CRS data to public storage for ID {}",
+                        request_id
+                    )),
+                );
+                let _ = crs_materials_guard.remove(&request_id).ok_or(
+                    anyhow_error_and_log(format!("Removing CRS; but CRS already exists in crs_materials for {}", request_id))
+                );
             }
             tracing::info!(
                 "⏱️ Core Event Time for CRS-gen: {:?}",
@@ -851,11 +869,10 @@ impl<
             .clone();
         validate_request_id(&request_id)?;
 
-        let public_storage = Arc::clone(&self.public_storage);
-
         non_blocking_verify_proven_ct(
+            self.crs_materials.clone(),
+            self.fhe_keys.clone(),
             meta_store,
-            public_storage,
             request_id.clone(),
             request.into_inner(),
             sigkey,
@@ -879,248 +896,6 @@ impl<
         let meta_store = Arc::clone(&self.proven_ct_payload_meta_map);
         get_verify_proven_ct_result(self, meta_store, request).await
     }
-}
-
-pub(crate) async fn non_blocking_verify_proven_ct<PubS>(
-    meta_store: Arc<RwLock<MetaStore<VerifyProvenCtResponsePayload>>>,
-    public_storage: Arc<Mutex<PubS>>,
-    request_id: RequestId,
-    request: VerifyProvenCtRequest,
-    client_sk: Arc<PrivateSigKey>,
-    permit: OwnedSemaphorePermit,
-) -> anyhow::Result<()>
-where
-    PubS: Storage + Sync + Send + 'static,
-{
-    {
-        let mut guarded_meta_store = meta_store.write().await;
-        guarded_meta_store.insert(&request_id)?;
-    }
-    let sigkey = Arc::clone(&client_sk);
-    let _handle = tokio::spawn(
-        async move {
-            let _permit = permit;
-            let verify_proven_ct_start_instant = tokio::time::Instant::now();
-            let res = verify_proven_ct_and_sign(request, public_storage, &sigkey).await;
-
-            let mut guarded_meta_store = meta_store.write().await;
-            match res {
-                Ok(inner_res) => {
-                    tracing::debug!(
-                        "storing verify proven ct result for request_id {}",
-                        request_id
-                    );
-                    let _ = guarded_meta_store.update(&request_id, HandlerStatus::Done(inner_res));
-                    let duration = verify_proven_ct_start_instant.elapsed();
-                    METRICS
-                        .observe_duration_with_tags(
-                            OP_VERIFY_PROVEN_CT,
-                            duration,
-                            &[(TAG_OPERATION_TYPE, OP_TYPE_TOTAL.to_string())],
-                        )
-                        .expect("Failed to record total verification time");
-                    tracing::info!(
-                        "verify proven ct result for request_id {} done, it took {:?} ms",
-                        request_id,
-                        duration.as_millis(),
-                    );
-                }
-                Err(e) => {
-                    let _ = guarded_meta_store.update(
-                        &request_id,
-                        HandlerStatus::Error(format!(
-                            "Zk verification failed for ID {} with error {e}",
-                            request_id
-                        )),
-                    );
-                    METRICS
-                        .increment_error_counter(OP_VERIFY_PROVEN_CT, ERR_VERIFICATION_FAILED)
-                        .ok();
-                }
-            }
-        }
-        .instrument(tracing::Span::current()),
-    );
-    Ok(())
-}
-
-pub(crate) async fn get_verify_proven_ct_result<KMS>(
-    base_kms: &KMS,
-    meta_store: Arc<RwLock<MetaStore<VerifyProvenCtResponsePayload>>>,
-    request: Request<RequestId>,
-) -> Result<Response<VerifyProvenCtResponse>, Status>
-where
-    KMS: BaseKms,
-{
-    let request_id = request.into_inner();
-    validate_request_id(&request_id)?;
-
-    let status = {
-        let guarded_meta_store = meta_store.read().await;
-        guarded_meta_store.retrieve(&request_id).cloned()
-    };
-
-    let payload: VerifyProvenCtResponsePayload = { handle_res_mapping(status, &request_id, "ZK")? };
-
-    let sig_payload_vec = tonic_handle_potential_err(
-        bincode::serialize(&payload),
-        format!("Could not convert payload to bytes {:?}", payload),
-    )?;
-
-    let sig = tonic_handle_potential_err(
-        base_kms.sign(&sig_payload_vec),
-        format!("Could not sign payload {:?}", payload),
-    )?;
-
-    Ok(Response::new(VerifyProvenCtResponse {
-        payload: Some(payload),
-        signature: sig.sig.to_vec(),
-    }))
-}
-
-// Verifies the ZK proof and returns the metadata payload, including a KMS signature, if the proof is valid
-async fn verify_proven_ct_and_sign<PubS>(
-    req: VerifyProvenCtRequest,
-    public_storage: Arc<Mutex<PubS>>,
-    client_sk: &PrivateSigKey,
-) -> anyhow::Result<VerifyProvenCtResponsePayload>
-where
-    PubS: Storage + Sync + Send + 'static,
-{
-    let crs_handle = tonic_some_or_err_ref(&req.crs_handle, "CRS handle is not set".to_string())?;
-    validate_request_id(crs_handle)?;
-
-    let key_handle = tonic_some_or_err_ref(&req.key_handle, "Key handle is not set".to_string())?;
-    validate_request_id(key_handle)?;
-
-    let request_id = tonic_some_or_err_ref(&req.request_id, "Request ID is not set".to_string())?;
-    validate_request_id(request_id)?;
-
-    tracing::info!("starting proof verification for request {}", request_id);
-    tracing::debug!(
-        "proof verification request: crs_handle: {:?}, key_handle: {:?}, contract_address: {}, client_address: {}, acl_address: {}, domain: {:?}",
-        req.crs_handle,
-        req.key_handle,
-        req.contract_address,
-        req.client_address,
-        req.acl_address,
-        req.domain
-    );
-    let mut cursor = std::io::Cursor::new(&req.ct_bytes);
-    let proven_ct: ProvenCompactCiphertextList = safe_deserialize(&mut cursor, SAFE_SER_SIZE_LIMIT)
-        .map_err(|e| anyhow::anyhow!(e))
-        .inspect_err(|e| {
-            tracing::error!("could not deserialize the ciphertext list ({e})");
-        })?;
-
-    let load_crs_pk_start_instant = tokio::time::Instant::now();
-    let (pp, wrapped_pk) = {
-        // create a new block so that the storage gets dropped
-        let pub_storage = public_storage.lock().await;
-        let pp: CompactPkePublicParams = read_versioned_at_request_id(
-            &(*pub_storage),
-            crs_handle,
-            &PubDataType::CRS.to_string(),
-        )
-        .await
-        .inspect_err(|e| {
-            tracing::error!("Failed to read CRS with the handle {} ({e})", crs_handle);
-        })?;
-
-        let wrapped_pk = read_pk_at_request_id(&(*pub_storage), key_handle)
-            .await
-            .inspect_err(|e| {
-                tracing::error!("Failed to fetch pk with handle {} ({e})", key_handle);
-            })?;
-        (pp, wrapped_pk)
-    };
-    let duration = load_crs_pk_start_instant.elapsed();
-    METRICS
-        .observe_duration_with_tags(
-            OP_VERIFY_PROVEN_CT,
-            duration,
-            &[(TAG_OPERATION_TYPE, OP_TYPE_LOAD_CRS_PK.to_string())],
-        )
-        .expect("Failed to record CRS and PK load time");
-    tracing::info!("It took {:?} ms to load crs and pk", duration.as_millis());
-
-    let metadata = tonic_handle_potential_err(
-        assemble_metadata_req(&req),
-        "Error assembling ZKP metadata".to_string(),
-    )?;
-
-    let proof_start_instant = tokio::time::Instant::now();
-    let (send, recv) = tokio::sync::oneshot::channel();
-    rayon::spawn(move || {
-        let ok = verify_ct_proofs(&proven_ct, &pp, &wrapped_pk, &metadata);
-        let _ = send.send(ok);
-    });
-    let signature_ok = recv.await.inspect_err(|e| {
-        tracing::error!("channel error for key handle {} ({e})", key_handle);
-    })?;
-    let duration = proof_start_instant.elapsed();
-    METRICS
-        .observe_duration_with_tags(
-            OP_VERIFY_PROVEN_CT,
-            duration,
-            &[(TAG_OPERATION_TYPE, OP_TYPE_PROOF_VERIFICATION.to_string())],
-        )
-        .expect("Failed to record proof verification time");
-    tracing::info!("It took {:?} ms to verify", duration.as_millis());
-
-    let ct_digest = keccak256(&req.ct_bytes).to_vec();
-    if signature_ok {
-        // REMARK: usually we should use `serialize_hash_element(proven_ct)`
-        // but because the hash is checked on chain, we'll use keccak,
-        // which is what is supported in solidity.
-
-        let external_signature =
-            compute_external_verify_proven_ct_signature(client_sk, &ct_digest, &req)?;
-
-        tracing::info!("finished proof verification for request {}", request_id);
-
-        let payload = VerifyProvenCtResponsePayload {
-            request_id: req.request_id,
-            contract_address: req.contract_address,
-            client_address: req.client_address,
-            ct_digest,
-            external_signature,
-        };
-
-        Ok(payload)
-    } else {
-        tracing::error!(
-            "verification failed using medatata: {:x?} and digest {:x?}",
-            &metadata,
-            &ct_digest
-        );
-        Err(anyhow_error_and_log(format!(
-            "proven ciphertext verification failed for ciphertext request: {}",
-            request_id
-        )))
-    }
-}
-
-fn verify_ct_proofs(
-    proven_ct: &ProvenCompactCiphertextList,
-    pp: &CompactPkePublicParams,
-    wrapped_pk: &WrappedPublicKeyOwned,
-    metadata: &[u8],
-) -> bool {
-    let _guard = METRICS
-        .time_operation(OP_VERIFY_PROVEN_CT)
-        .expect("Failed to create timing metric")
-        .tag(TAG_OPERATION_TYPE, OP_TYPE_CT_PROOF)
-        .expect("Failed to add tag")
-        .start();
-    match wrapped_pk {
-        WrappedPublicKeyOwned::Compact(pk) => {
-            if let tfhe::zk::ZkVerificationOutCome::Invalid = proven_ct.verify(pp, pk, metadata) {
-                return false;
-            }
-        }
-    }
-    true
 }
 
 /// Validates a request ID and returns an appropriate tonic error if it is invalid.

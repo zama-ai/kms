@@ -29,6 +29,8 @@ pub mod cryptography {
     pub mod decompression;
     pub mod internal_crypto_types;
     pub mod nitro_enclave;
+    #[cfg(feature = "non-wasm")]
+    pub mod proven_ct_verifier;
     pub mod signcryption;
 }
 #[cfg(feature = "non-wasm")]

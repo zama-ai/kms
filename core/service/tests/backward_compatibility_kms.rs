@@ -191,6 +191,7 @@ fn test_threshold_fhe_keys(
         load_and_unversionize_auxiliary(dir, test, &test.decompression_key_filename, format)?;
 
     let original_versionized: ThresholdFheKeys = load_and_unversionize(dir, test, format)?;
+
     let new_versionized = ThresholdFheKeys {
         private_keys: private_key_set,
         sns_key,

@@ -30,13 +30,15 @@ impl RamStorage {
     }
 
     // Construct a storage for private keys
-    pub async fn from_existing_keys(keys: &SoftwareKmsKeys) -> anyhow::Result<Self> {
+    pub async fn from_existing_keys_for_private_storage(
+        keys: &SoftwareKmsKeys,
+    ) -> anyhow::Result<Self> {
         let mut ram_storage = Self::new(StorageType::PRIV);
         for (cur_req_id, cur_keys) in &keys.key_info {
             store_versioned_at_request_id(
                 &mut ram_storage,
                 cur_req_id,
-                cur_keys,
+                &cur_keys.inner,
                 &PrivDataType::FheKeyInfo.to_string(),
             )
             .await?;
@@ -48,6 +50,21 @@ impl RamStorage {
                 &ram_storage.compute_url(&sk_handle, &PrivDataType::SigningKey.to_string())?,
             )
             .await?;
+        Ok(ram_storage)
+    }
+
+    pub async fn from_existing_keys_for_public_storage(
+        keys: &SoftwareKmsKeys,
+    ) -> anyhow::Result<Self> {
+        let mut ram_storage = Self::new(StorageType::PUB);
+        for (cur_req_id, cur_keys) in &keys.key_info {
+            super::store_pk_at_request_id(
+                &mut ram_storage,
+                cur_req_id,
+                (&cur_keys.public_key).into(),
+            )
+            .await?;
+        }
         Ok(ram_storage)
     }
 }

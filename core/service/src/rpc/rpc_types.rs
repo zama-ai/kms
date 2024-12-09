@@ -1272,10 +1272,18 @@ pub enum WrappedPublicKey<'a> {
     Compact(&'a tfhe::CompactPublicKey),
 }
 
-#[derive(Debug, Clone)]
-#[cfg_attr(test, derive(Serialize))]
+#[derive(Clone)]
+#[cfg_attr(any(test, feature = "testing"), derive(Serialize, Deserialize))]
 pub enum WrappedPublicKeyOwned {
     Compact(tfhe::CompactPublicKey),
+}
+
+impl<'a> From<&'a WrappedPublicKeyOwned> for WrappedPublicKey<'a> {
+    fn from(value: &'a WrappedPublicKeyOwned) -> Self {
+        match value {
+            WrappedPublicKeyOwned::Compact(pk) => WrappedPublicKey::Compact(pk),
+        }
+    }
 }
 
 #[cfg(test)]
