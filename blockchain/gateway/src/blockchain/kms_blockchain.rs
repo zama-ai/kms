@@ -159,15 +159,20 @@ impl<'a> KmsBlockchainImpl {
         Ok(())
     }
 
-    #[retrying::retry(stop=(attempts(5)|duration(30)),wait=fixed(1))]
     pub(crate) async fn wait_for_transaction(
         &self,
         txn_id: &TransactionId,
     ) -> anyhow::Result<KmsEvent> {
-        let (tx, rx) = oneshot::channel();
-        tracing::info!("🤠🤠🤠 Waiting for transaction: {:?}", txn_id);
-        self.responders.insert(txn_id.clone(), tx);
-        rx.await.map_err(|e| anyhow!(e.to_string()))
+        loop_fn!(
+            || async {
+                let (tx, rx) = oneshot::channel();
+                tracing::info!("🤠🤠🤠 Waiting for transaction: {:?}", txn_id);
+                self.responders.insert(txn_id.clone(), tx);
+                rx.await.map_err(|e| anyhow!(e.to_string()))
+            },
+            1000,
+            5
+        )
     }
 
     pub(crate) async fn call_execute_contract(
@@ -197,7 +202,7 @@ impl<'a> KmsBlockchainImpl {
         let response = self.call_execute_contract(&mut client, &request).await?;
 
         // Loop until we get a query response
-        let resp = loop_fn!(|| async {
+        let resp: anyhow::Result<TxResponse> = loop_fn!(|| async {
             // Keep querying using the txhash to make sure it appeared on the blockchain
             let query_response = self
                 .query_client
@@ -209,14 +214,15 @@ impl<'a> KmsBlockchainImpl {
                     anyhow::anyhow!(msg)
                 })?;
             if let Some(qr) = query_response {
-                Ok::<_, anyhow::Error>(Some(qr))
+                Ok(qr)
             } else {
-                tracing::info!("Waiting for transaction to be included in a block");
-                Ok::<_, anyhow::Error>(None)
+                let msg = ("Waiting for transaction to be included in a block").to_string();
+                tracing::info!(msg);
+                Err(anyhow::anyhow!(msg))
             }
-        })?;
+        });
 
-        let events = resp
+        let events = resp?
             .events
             .iter()
             .filter(|x| KmsOperation::iter().any(|attr| x.r#type == format!("wasm-{}", attr)))

@@ -8,7 +8,7 @@ use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractReques
 use kms_blockchain_client::query_client::{
     ContractQuery, EventQuery, QueryClient, QueryClientBuilder, QueryContractRequest,
 };
-use retrying::retry;
+use kms_common::loop_fn;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use typed_builder::TypedBuilder;
@@ -51,17 +51,16 @@ impl KmsBlockchain {
         })
     }
 
-    #[retry(stop=(attempts(4)|duration(10)),wait=fixed(2))]
     async fn call_execute_contract(
         &self,
         client: &mut Client,
         request: &ExecuteContractRequest,
     ) -> anyhow::Result<()> {
-        client
-            .execute_contract(request.clone())
-            .await
-            .map(|_| ())
-            .map_err(|e| e.into())
+        loop_fn!(
+            || async { client.execute_contract(request.clone()).await.map(|_| ()) },
+            2000,
+            4
+        )
     }
 }
 

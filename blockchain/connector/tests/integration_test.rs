@@ -32,6 +32,7 @@ use kms_blockchain_connector::domain::storage::Storage;
 use kms_blockchain_connector::infrastructure::blockchain::KmsBlockchain;
 use kms_blockchain_connector::infrastructure::core::{KmsCore, KmsEventHandler};
 use kms_blockchain_connector::infrastructure::metrics::OpenTelemetryMetrics;
+use kms_common::loop_fn;
 use kms_lib::client::assemble_metadata_alloy;
 use kms_lib::consts::SAFE_SER_SIZE_LIMIT;
 use kms_lib::consts::TEST_PARAM;
@@ -61,7 +62,6 @@ use kms_lib::{
     },
 };
 use rand::RngCore;
-use retrying::retry;
 use std::collections::HashMap;
 use std::env::set_var;
 use std::sync::Arc;
@@ -274,21 +274,26 @@ async fn wait_for_event_response<T>(
     assert_eq!(counter.load(std::sync::atomic::Ordering::Acquire), 1);
 }
 
-#[retry(stop=(attempts(4)|duration(20)),wait=fixed(5))]
 async fn wait_for_tx_processed(
     query_client: Arc<QueryClient>,
     txhash: String,
 ) -> anyhow::Result<TxResponse> {
-    let r = query_client
-        .query_tx(txhash.clone())
-        .await
-        .map_err(|e| anyhow::anyhow!("Transaction error {:?}", e))?;
-    if r.is_none() {
-        Err(anyhow::anyhow!("Transaction not found"))
-    } else {
-        tracing::info!("Tx processed: {:?}", r);
-        Ok(r.unwrap())
-    }
+    loop_fn!(
+        || async {
+            let r = query_client
+                .query_tx(txhash.clone())
+                .await
+                .map_err(|e| anyhow::anyhow!("Transaction error {:?}", e))?;
+            if r.is_none() {
+                Err(anyhow::anyhow!("Transaction not found"))
+            } else {
+                tracing::info!("Tx processed: {:?}", r);
+                Ok(r.unwrap())
+            }
+        },
+        5000,
+        4
+    )
 }
 
 /// Check the event status in the blockchain to verify if it was processed and
@@ -321,21 +326,26 @@ async fn check_event(
 /// Get the contract address for a given code ID.
 ///
 /// Code ID are defined by the order of contract upload in `deploy_contracts.sh`, starting from 1.
-#[retry(stop=(attempts(12)|duration(130)),wait=fixed(10))]
 async fn get_contract_address(client: &QueryClient, code_id: u64) -> anyhow::Result<String> {
-    tracing::info!("Getting contract address....");
-    let result = client.list_contracts(code_id).await.unwrap();
-    if !result.contracts.is_empty() {
-        tracing::info!("Found {} contracts", result.contracts.len());
-        let contract_address = result.contracts[0].clone();
-        let contract_metadata = client
-            .get_contract_metadata(contract_address.clone())
-            .await?;
-        tracing::info!("Contract metadata {:?}", contract_metadata);
-        Ok(contract_address)
-    } else {
-        Err(anyhow::anyhow!("Contract not found"))
-    }
+    loop_fn!(
+        || async {
+            tracing::info!("Getting contract address....");
+            let result = client.list_contracts(code_id).await.unwrap();
+            if !result.contracts.is_empty() {
+                tracing::info!("Found {} contracts", result.contracts.len());
+                let contract_address = result.contracts[0].clone();
+                let contract_metadata = client
+                    .get_contract_metadata(contract_address.clone())
+                    .await?;
+                tracing::info!("Contract metadata {:?}", contract_metadata);
+                Ok(contract_address)
+            } else {
+                Err(anyhow::anyhow!("Contract not found"))
+            }
+        },
+        10000,
+        12
+    )
 }
 
 async fn start_sync_handler(

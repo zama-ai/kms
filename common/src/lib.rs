@@ -8,43 +8,81 @@ use {
 
 /// The maximum number of iterations before terminating a loop that is expected to only iterate a couple of times.
 pub const MAX_ITER: u64 = 30;
+/// The number of milliseconds to sleep between iterations of a loop.
+pub const SLEEP_MS: u64 = 1000;
 
-/// Helper macro to try a piece of code until it succeeds but not more than [`MAX_ITER`] times.
-/// The [`func`] argument is a function that should return a `Result<Option<T>>` where `T` is the type of the result.
-/// If the function returns `Ok(None)`, then the loop will continue.
-/// If the function returns `Ok(Some(T))`, then the loop will stop and return `Ok(T)`.
-/// If the function returns `Err(e)`, then the loop will stop and return `Err(e)`.
+/// Helper macro to try a piece of code until it succeeds but not more than [`MAX_ITER`] times with a constant sleep time after each iteration.
+/// The [`func`] argument is a function that should return a `Result<T>`.
+/// If the function returns `Ok(T)`, then the loop will stop and return `Ok(T)`.
+/// If the function returns `Err(e)`, then the loop will continue.
 /// The [`max_iter`] argument is specifies the maximum number of iterations.
 #[macro_export]
 macro_rules! loop_fn {
-    ($func:expr,$max_iter:expr) => {{
+    ($func:expr,$ms_sleep:expr,$max_iter:expr) => {{
         let mut ctr = 0;
+        let mut last_error = "".to_string();
         loop {
             if ctr > $max_iter {
                 break Err(anyhow::anyhow!(
-                    "Failed to get result after {} tries",
-                    $max_iter
-                ));
+                    "Loop failed to get result after {} tries. The last error was: {}.",
+                    $max_iter,
+                    last_error
+                )
+                .into());
             }
-            ctr += 1;
             match $func().await {
-                Ok(Some(inner_res)) => {
+                Ok(inner_res) => {
                     break Ok(inner_res);
                 }
-                Ok(None) => {
-                    // No result is done yet so we need to go again
-                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                }
                 Err(e) => {
-                    // An error happened so we return this
-                    break Err(anyhow::anyhow!("Loop failed with the internal error: {e}"));
+                    // An error happened so we try again
+                    tracing::info!("Loop failed with the error: {e}");
+                    tokio::time::sleep(tokio::time::Duration::from_millis($ms_sleep)).await;
+                    ctr += 1;
+                    last_error = e.to_string();
                 }
             }
         }
     }};
     ($func:expr) => {{
-        use kms_common::MAX_ITER;
-        loop_fn!($func, MAX_ITER)
+        use kms_common::{MAX_ITER, SLEEP_MS};
+        loop_fn!($func, SLEEP_MS, MAX_ITER)
+    }};
+}
+
+#[macro_export]
+macro_rules! exp_loop_fn {
+    ($func:expr,$ms_sleep:expr,$max_iter:expr) => {{
+        let mut ctr = 0;
+        let mut sleep_time = $ms_sleep;
+        let mut last_error = "".to_string();
+        loop {
+            if ctr > $max_iter {
+                break Err(anyhow::anyhow!(
+                    "Exponential loop failed to get result after {} tries. The last error was: {}.",
+                    $max_iter,
+                    last_error
+                )
+                .into());
+            }
+            match $func().await {
+                Ok(inner_res) => {
+                    break Ok(inner_res);
+                }
+                Err(e) => {
+                    // An error happened so we try again
+                    tracing::info!("Exponential loop failed with the error: {e}");
+                    tokio::time::sleep(tokio::time::Duration::from_millis(sleep_time)).await;
+                    sleep_time *= 2;
+                    ctr += 1;
+                    last_error = e.to_string();
+                }
+            }
+        }
+    }};
+    ($func:expr) => {{
+        use kms_common::{MAX_ITER, SLEEP_MS};
+        exp_loop_fn!($func, SLEEP_MS, MAX_ITER)
     }};
 }
 

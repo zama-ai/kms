@@ -556,15 +556,21 @@ pub fn to_event(event: &cosmos_proto::messages::tendermint::abci::Event) -> Even
     result
 }
 
-#[retrying::retry(stop=(attempts(5)|duration(30)),wait=fixed(1))]
+#[allow(dead_code)]
 async fn wait_for_transaction(
     responders: Arc<DashMap<TransactionId, oneshot::Sender<KmsEvent>>>,
     txn_id: &TransactionId,
 ) -> Result<KmsEvent, anyhow::Error> {
-    let (tx, rx) = oneshot::channel();
-    tracing::info!("🤠🤠🤠 Waiting for transaction: {:?}", txn_id);
-    responders.insert(txn_id.clone(), tx);
-    rx.await.map_err(|e| anyhow::anyhow!(e.to_string()))
+    loop_fn!(
+        || async {
+            let (tx, rx) = oneshot::channel();
+            tracing::info!("🤠🤠🤠 Waiting for transaction: {:?}", txn_id);
+            responders.insert(txn_id.clone(), tx);
+            rx.await.map_err(|e| anyhow::anyhow!(e.to_string()))
+        },
+        1000,
+        5
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -761,22 +767,25 @@ async fn execute_contract(
         .build();
 
     let response = client.execute_contract(request).await?;
-    let resp = loop_fn!(
+    let resp: Result<_, anyhow::Error> = loop_fn!(
         || async {
             tracing::info!("Querying client for tx hash: {:?}...", response.txhash);
             let query_response = query_client.query_tx(response.txhash.clone()).await?;
             if let Some(qr) = query_response {
-                anyhow::Ok(Some(qr))
+                anyhow::Ok(qr)
             } else {
-                tracing::info!("Waiting for transaction to be included in a block.");
-                anyhow::Ok(None)
+                let msg = ("Waiting for transaction to be included in a block").to_string();
+                tracing::info!(msg);
+                Err(anyhow::anyhow!(msg))
             }
         },
-        max_iter.unwrap_or(30)
-    )?;
+        1000,                   // Sleep for 1 second
+        max_iter.unwrap_or(30)  // Try at most 30 times
+    );
 
     tracing::info!("Filtering events");
-    resp.events
+    resp?
+        .events
         .iter()
         .filter(|x| KmsOperation::iter().any(|attr| x.r#type == format!("wasm-{}", attr)))
         .map(to_event)

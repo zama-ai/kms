@@ -5,10 +5,10 @@ use async_trait::async_trait;
 use cosmos_proto::messages::cosmos::{base::abci::v1beta1::TxResponse, tx::v1beta1::Tx};
 
 use cosmwasm_std::Event;
+use kms_common::loop_fn;
 use koit_toml::KoitError;
 #[cfg(test)]
 use mockall::{automock, mock, predicate::*};
-use retrying::retry;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -363,23 +363,26 @@ where
         Ok(last_height)
     }
 
-    #[retry(stop=(attempts(4)|duration(5)),wait=fixed(10))]
     async fn get_txs_events(
         blockchain: B,
         height: u64,
     ) -> Result<Vec<TxResponse>, SubscriptionError> {
-        blockchain.get_events(height).await
+        // Retry at most 4 times, waiting 10 seconds between each retry
+        loop_fn!(|| async { blockchain.get_events(height).await }, 10000, 4)
     }
 
-    #[retry(stop=(attempts(4)|duration(5)),wait=fixed(10))]
     async fn get_txs_events_responses(
         blockchain: B,
         height: u64,
     ) -> Result<Vec<TxResponse>, SubscriptionError> {
-        blockchain.get_events_responses(height).await
+        // Retry at most 4 times, waiting 10 seconds between each retry
+        loop_fn!(
+            || async { blockchain.get_events_responses(height).await },
+            10000,
+            4
+        )
     }
 
-    #[retry(stop=(attempts(4)|duration(5)),wait=fixed(10))]
     async fn get_all_tx_from_to_height_filter_map<U, T>(
         blockchain: B,
         from_height: u64,
@@ -390,12 +393,19 @@ where
         T: 'static + Send + Sync,
         U: SubscriptionHandler<T> + Clone + Send + Sync + 'static,
     {
-        let handler = handler.clone();
-        blockchain
-            .get_all_tx_from_to_height_filter_map(from_height, to_height, move |tx| {
-                handler.filter_for_catchup(tx)
-            })
-            .await
+        // Retry at most 4 times, waiting 10 seconds between each retry
+        loop_fn!(
+            || async {
+                let handler = handler.clone();
+                blockchain
+                    .get_all_tx_from_to_height_filter_map(from_height, to_height, move |tx| {
+                        handler.filter_for_catchup(tx)
+                    })
+                    .await
+            },
+            10000,
+            4
+        )
     }
 
     async fn update_last_seen_height(&self, last_height: u64) -> Result<(), SubscriptionError> {

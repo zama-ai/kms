@@ -17,6 +17,7 @@ use ethers::types::{BlockId, Bytes as EthersBytes, TransactionRequest};
 use events::kms::FheType;
 use events::HexVectorList;
 use hex;
+use kms_common::exp_loop_fn;
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::Arc;
@@ -25,8 +26,6 @@ use coprocessor::fhevm_coprocessor_client::FhevmCoprocessorClient;
 use coprocessor::{GetCiphertextBatch, InputToUpload, InputUploadBatch, InputUploadResponse};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use tokio_retry::strategy::ExponentialBackoff;
-use tokio_retry::Retry;
 use tonic::metadata::MetadataValue;
 
 // Trait to define the interface for getting ciphertext
@@ -175,73 +174,67 @@ impl CiphertextProvider for CoprocessorCiphertextProvider {
     ) -> anyhow::Result<(Vec<u8>, FheType)> {
         let ct_handle_as_hex = hex::encode(ct_handle.clone());
 
-        let retry_strategy =
-            ExponentialBackoff::from_millis(self.config.get_ciphertext_retry.exponential_base)
-                .factor(self.config.get_ciphertext_retry.factor)
-                .take(self.config.get_ciphertext_retry.max_retries as usize);
-
         let attempt = AtomicUsize::new(0);
 
         // Authorization token
         let api_key = &self.config.coprocessor_api_key;
         let api_key_header = format!("bearer {}", api_key);
 
-        Retry::spawn(retry_strategy, || async {
-            let current_attempt = attempt.fetch_add(1, Ordering::SeqCst) + 1;
-            tracing::info!(
-                "fetching ciphertext for handle {}: attempt #{}",
-                &ct_handle_as_hex,
-                current_attempt
-            );
-
-            // Set up the gRPC client
-            let mut client = FhevmCoprocessorClient::connect(self.config.coprocessor_url.clone())
-                .await
-                .context("Failed to connect to gRPC server")?;
-
-            // Prepare the request with the ciphertext handle
-            let mut request = tonic::Request::new(GetCiphertextBatch {
-                handles: vec![ct_handle.clone()],
-            });
-
-            // Add the authorization header to the request
-            request.metadata_mut().append(
-                "authorization",
-                MetadataValue::from_str(&api_key_header)
-                    .context("Failed to set authorization metadata")?,
-            );
-
-            // Make the gRPC call and process the response
-            let response = client
-                .get_ciphertexts(request)
-                .await
-                .context("Failed to fetch ciphertexts from the server")?;
-
-            // Check if the response contains data
-            let output = response.get_ref();
-            if output.responses.is_empty() {
-                tracing::error!("No responses found in the gRPC response.");
-                anyhow::bail!("No responses found in the gRPC response.");
-            }
-
-            let first_response = &output.responses[0];
-            if let Some(ciphertext) = &first_response.ciphertext {
-                let ciphertext_bytes = ciphertext.ciphertext_bytes.clone();
-                let c_type: u8 = ciphertext.ciphertext_type.try_into()?;
-
+        exp_loop_fn!(
+            || async {
+                let current_attempt = attempt.fetch_add(1, Ordering::SeqCst) + 1;
                 tracing::info!(
-                    "Ciphertext bytes (first 5): {:?}",
-                    &ciphertext_bytes[0..5.min(ciphertext_bytes.len())]
+                    "fetching ciphertext for handle {}: attempt #{}",
+                    &ct_handle_as_hex,
+                    current_attempt
                 );
-                tracing::info!("Ciphertext type: {}", c_type);
 
-                Ok((ciphertext_bytes, FheType::from(c_type)))
-            } else {
-                tracing::error!("Ciphertext is missing in the response.");
-                anyhow::bail!("Ciphertext is missing in the response.");
-            }
-        })
-        .await
+                // Set up the gRPC client
+                let mut client =
+                    FhevmCoprocessorClient::connect(self.config.coprocessor_url.clone()).await?;
+
+                // Prepare the request with the ciphertext handle
+                let mut request = tonic::Request::new(GetCiphertextBatch {
+                    handles: vec![ct_handle.clone()],
+                });
+
+                // Add the authorization header to the request
+                request.metadata_mut().append(
+                    "authorization",
+                    MetadataValue::from_str(&api_key_header)
+                        .context("Failed to set authorization metadata")?,
+                );
+
+                // Make the gRPC call and process the response
+                let response = client.get_ciphertexts(request).await?;
+
+                // Check if the response contains data
+                let output = response.get_ref();
+                if output.responses.is_empty() {
+                    tracing::error!("No responses found in the gRPC response.");
+                    return Err(anyhow::anyhow!("No responses found in the gRPC response."));
+                }
+
+                let first_response = &output.responses[0];
+                if let Some(ciphertext) = &first_response.ciphertext {
+                    let ciphertext_bytes = ciphertext.ciphertext_bytes.clone();
+                    let c_type: u8 = ciphertext.ciphertext_type.try_into()?;
+
+                    tracing::info!(
+                        "Ciphertext bytes (first 5): {:?}",
+                        &ciphertext_bytes[0..5.min(ciphertext_bytes.len())]
+                    );
+                    tracing::info!("Ciphertext type: {}", c_type);
+
+                    Ok((ciphertext_bytes, FheType::from(c_type)))
+                } else {
+                    tracing::error!("Ciphertext is missing in the response.");
+                    Err(anyhow::anyhow!("No responses found in the gRPC response."))
+                }
+            },
+            self.config.get_ciphertext_retry.factor,
+            self.config.get_ciphertext_retry.max_retries
+        )
     }
 
     /// In the Coprocessor case, we need

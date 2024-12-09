@@ -215,7 +215,6 @@ pub struct EthereumConfig {
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder)]
 pub struct ExponentialRetryConfig {
-    pub exponential_base: u64,
     pub max_retries: u64,
     pub factor: u64,
 }

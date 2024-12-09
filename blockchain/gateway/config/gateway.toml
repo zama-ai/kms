@@ -88,10 +88,10 @@ relayer_key = "7ec931411ad75a7c201469a385d6f18a325d4923f9f213bd882bbea87e160b67"
 
 
 # Retry config for get_cipertext in coprocessor mode
-# MAX_RETRIES sets the maximum retry count (6), resulting in an exponential backoff delay
-# that can reach up to 120 seconds (1s, 2s, 4s, 8s, 16s, 32s).
+# max_retries sets the maximum retry count (6), resulting in an exponential backoff delay
+# factor is the base delay in milliseconds (1000)
+# that can reach up to 32 seconds (1s, 2s, 4s, 8s, 16s, 32s).
 [ethereum.get_ciphertext_retry]
-exponential_base = 2
 max_retries = 6
 factor = 1000 # in milliseconds
 
