@@ -249,9 +249,12 @@ impl Client {
             .map(|r| r.into_inner())?;
 
         if let Some(ref tx) = result.tx_response {
-            if tx.code != 0 {
+            // Observe return code 0 indicates success.
+            // However, for unclear reasons (yet), an out-of-gas error will incorrectly make the transaction succeed.
+            // This is a hack to fix this issue. See [here](https://github.com/zama-ai/kms-core/issues/1490) for more details.
+            if tx.code != 0 || tx.raw_log.contains("out of gas") {
                 return Err(Error::ExecutionContractError(format!(
-                    "Execution contract failed with error code {:?} and message {:?}",
+                    "Execution contract failed with error code {:?} and message: {:?}",
                     tx.code, tx.raw_log
                 )));
             }
