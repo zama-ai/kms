@@ -11,13 +11,19 @@ pub enum HexVectorVersioned {
     V0(HexVector),
 }
 
-#[derive(Eq, Hash, PartialEq, Default, Clone, Debug, JsonSchema, Versionize)]
+#[derive(Eq, Hash, PartialEq, Default, Clone, JsonSchema, Versionize)]
 #[versionize(HexVectorVersioned)]
 pub struct HexVector(pub Vec<u8>);
 
 impl Display for HexVector {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         write!(f, "{}", self.to_hex())
+    }
+}
+
+impl Debug for HexVector {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "HexVector({})", self.to_hex())
     }
 }
 
