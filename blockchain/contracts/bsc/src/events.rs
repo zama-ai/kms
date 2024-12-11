@@ -1,20 +1,7 @@
 use crate::contract::BackendContract;
-use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{DepsMut, Empty, Response, StdResult};
-use events::kms::{KmsConfig, KmsEvent, KmsOperation, OperationValue, TransactionId};
-
-// Query message for getting the KMS configuration
-// Note that we need to do this instead of importing the msg directly from the CSC's
-// crate because having a contract as a dependency of another one creates some conflict when
-// building them
-// This means:
-// - the struct must contain the targeted method's name as a field
-// - this field must provide the necessary inputs as specified in the method's definition (here,
-// it is empty since we are only querying the KMS configuration)
-#[cw_serde]
-struct KmsConfigQueryMsg {
-    get_kms_configuration: Empty,
-}
+use crate::external_queries::KmsConfigQuery;
+use cosmwasm_std::{DepsMut, Response, StdResult};
+use events::kms::{KmsEvent, KmsOperation, OperationValue, TransactionId};
 
 pub trait EventEmitStrategy {
     fn emit_event(
@@ -85,15 +72,10 @@ impl EventEmitStrategy for BackendContract {
                 operation,
             )?;
 
-            // Get the KMS configuration from the CSC
-            let kms_configuration = deps.querier.query_wasm_smart::<KmsConfig>(
-                self.storage.get_csc_address(deps.storage)?,
-                &KmsConfigQueryMsg {
-                    get_kms_configuration: Empty {},
-                },
-            )?;
+            // Get the CSC address
+            let csc_address = self.storage.get_csc_address(deps.storage)?;
 
-            return Ok(operation.should_emit_response_event(&kms_configuration, &response_values));
+            return operation.should_emit_response_event(deps, csc_address, &response_values);
         }
 
         // This should never happen: currently, an operation is either a request or a response
@@ -112,43 +94,50 @@ where
 /// Check if a given number of operations of a certain type have been received to satisfy the
 /// majority vote threshold
 fn reach_majority_vote_threshold<F>(
-    kms_configuration: &KmsConfig,
+    deps: &DepsMut,
+    csc_address: String,
     operation_values: &[OperationValue],
     check_type: F,
-) -> bool
+) -> StdResult<bool>
 where
     F: FnMut(&&OperationValue) -> bool,
 {
-    reach(
-        operation_values,
-        kms_configuration.response_count_for_majority_vote(),
-        check_type,
-    )
+    // Get the response_count_for_majority_vote from the CSC
+    let amount: usize = deps.querier.query_wasm_smart(
+        csc_address,
+        &KmsConfigQuery::GetResponseCountForMajorityVote {},
+    )?;
+
+    Ok(reach(operation_values, amount, check_type))
 }
 
 /// Check if a given number of operations of a certain type have been received to satisfy the
 /// reconstruction threshold
 fn reach_reconstruction_threshold<F>(
-    kms_configuration: &KmsConfig,
+    deps: &DepsMut,
+    csc_address: String,
     operation_values: &[OperationValue],
     check_type: F,
-) -> bool
+) -> StdResult<bool>
 where
     F: FnMut(&&OperationValue) -> bool,
 {
-    reach(
-        operation_values,
-        kms_configuration.response_count_for_reconstruction(),
-        check_type,
-    )
+    // Get the response_count_for_reconstruction from the CSC
+    let amount: usize = deps.querier.query_wasm_smart(
+        csc_address,
+        &KmsConfigQuery::GetResponseCountForReconstruction {},
+    )?;
+
+    Ok(reach(operation_values, amount, check_type))
 }
 
 pub trait EmitEventVerifier {
     fn should_emit_response_event(
         &self,
-        kms_configuration: &KmsConfig,
+        deps: &DepsMut,
+        csc_address: String,
         operation_values: &[OperationValue],
-    ) -> bool;
+    ) -> StdResult<bool>;
 }
 
 impl EmitEventVerifier for KmsOperation {
@@ -158,38 +147,39 @@ impl EmitEventVerifier for KmsOperation {
     /// response type) to satisfy the KMS configuration's thresholds.
     fn should_emit_response_event(
         &self,
-        kms_configuration: &KmsConfig,
+        deps: &DepsMut,
+        csc_address: String,
         operation_values: &[OperationValue],
-    ) -> bool {
+    ) -> StdResult<bool> {
         match self {
             KmsOperation::VerifyProvenCtResponse => {
-                reach_majority_vote_threshold(kms_configuration, operation_values, |t| {
+                reach_majority_vote_threshold(deps, csc_address, operation_values, |t| {
                     t.is_verify_proven_ct_response()
                 })
             }
             KmsOperation::ReencryptResponse => {
-                reach_reconstruction_threshold(kms_configuration, operation_values, |t| {
+                reach_reconstruction_threshold(deps, csc_address, operation_values, |t| {
                     t.is_reencrypt_response()
                 })
             }
             KmsOperation::DecryptResponse => {
-                reach_majority_vote_threshold(kms_configuration, operation_values, |t| {
+                reach_majority_vote_threshold(deps, csc_address, operation_values, |t| {
                     t.is_decrypt_response()
                 })
             }
             KmsOperation::KeyGenResponse => {
-                reach_majority_vote_threshold(kms_configuration, operation_values, |t| {
+                reach_majority_vote_threshold(deps, csc_address, operation_values, |t| {
                     t.is_key_gen_response()
                 })
             }
             KmsOperation::CrsGenResponse => {
-                reach_majority_vote_threshold(kms_configuration, operation_values, |t| {
+                reach_majority_vote_threshold(deps, csc_address, operation_values, |t| {
                     t.is_crs_gen_response()
                 })
             }
-            KmsOperation::KeyGenPreprocResponse => true,
+            KmsOperation::KeyGenPreprocResponse => Ok(true),
 
-            _ => false,
+            _ => Ok(false),
         }
     }
 }

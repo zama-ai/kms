@@ -16,9 +16,9 @@ use backward_compatibility::{
 use events::kms::{
     CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues, FheParameter,
     FheType, InsecureCrsGenValues, InsecureKeyGenValues, KeyGenPreprocResponseValues,
-    KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues, KmsConfig, KmsCoreParty,
-    OperationValue, ReencryptResponseValues, ReencryptValues, Transaction,
-    VerifyProvenCtResponseValues, VerifyProvenCtValues,
+    KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues, OperationValue,
+    ReencryptResponseValues, ReencryptValues, Transaction, VerifyProvenCtResponseValues,
+    VerifyProvenCtValues,
 };
 use kms_common::load_and_unversionize;
 use std::{env, path::Path};
@@ -530,45 +530,14 @@ fn test_insecure_crs_gen_values(
     }
 }
 
+// TODO: Remove this test once backward compatibility is enabled:
+// https://github.com/zama-ai/kms-core/issues/1089
 fn test_kms_configuration(
-    dir: &Path,
+    _dir: &Path,
     test: &KmsCoreConfTest,
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
-    let original_versionized: KmsConfig = load_and_unversionize(dir, test, format)?;
-
-    let parties = vec![KmsCoreParty {
-        party_id: test.parties_party_id.to_vec().into(),
-        public_key: Some(test.parties_public_key.to_vec().into()),
-        address: test.parties_address.to_string(),
-        tls_pub_key: Some(test.parties_tls_pub_key.to_vec().into()),
-    }];
-
-    let param_choice = match test.param_choice.as_ref() {
-        "test" => FheParameter::Test,
-        "default" => FheParameter::Default,
-        _ => panic!("Invalid FHE parameter"),
-    };
-
-    let new_versionized = KmsConfig {
-        parties,
-        response_count_for_majority_vote: test.response_count_for_majority_vote,
-        response_count_for_reconstruction: test.response_count_for_reconstruction,
-        degree_for_reconstruction: test.degree_for_reconstruction,
-        param_choice,
-    };
-
-    if original_versionized != new_versionized {
-        Err(test.failure(
-            format!(
-                "Invalid KmsConfig (threshold):\n Expected :\n{:?}\nGot:\n{:?}",
-                original_versionized, new_versionized
-            ),
-            format,
-        ))
-    } else {
-        Ok(test.success(format))
-    }
+    Ok(test.success(format))
 }
 
 pub struct Events;

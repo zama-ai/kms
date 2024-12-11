@@ -60,13 +60,13 @@ fn print_intro(config: &GatewayConfig) {
     );
     tracing::info!(
         "{:<width$}{}",
-        "⭐ KMS ASC contract address:",
+        "⭐ KMS ASC address:",
         config.kms.asc_address,
         width = width
     );
     tracing::info!(
         "{:<width$}{}",
-        "⭐ KMS CSC contract address:",
+        "⭐ KMS CSC address:",
         config.kms.csc_address,
         width = width
     );

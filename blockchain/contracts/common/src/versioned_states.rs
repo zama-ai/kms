@@ -9,7 +9,7 @@ pub struct VersionedItem<T: VersionizeOwned> {
 
 // Implement a versionized Item for a given type T
 // Not all methods supported by CosmWasm's Item are currently implemented by VersionedItem, only the
-// ones needed by the ASC contract are. However, it should be easy to add the missing methods if
+// ones needed by the ASC are. However, it should be easy to add the missing methods if
 // needed in the future
 impl<T> VersionedItem<T>
 where
@@ -69,7 +69,7 @@ where
 
 // Implement a versionized Map for a given type T
 // Not all methods supported by CosmWasm's Map are currently implemented by VersionedMap, only the
-// ones needed by the ASC contract are. However, it should be easy to add the missing methods if
+// ones needed by the ASC are. However, it should be easy to add the missing methods if
 // needed in the future
 pub struct VersionedMap<K, T: VersionizeOwned> {
     versioned_map: Map<K, <T as VersionizeOwned>::VersionedOwned>,

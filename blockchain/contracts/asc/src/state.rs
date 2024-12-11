@@ -14,7 +14,7 @@ use std::collections::HashSet;
 type KeyId = String;
 type Address = String;
 
-// This storage struct is used to handle storage in the ASC contract. It contains:
+// This storage struct is used to handle storage in the ASC. It contains:
 // - the configuration parameters for the KMS (centralized or threshold mode)
 // - the transactions stored in the ASC, along their operation request values (indexed by transaction ID)
 // - the response values stored in the ASC (indexed by transaction ID and a counter)

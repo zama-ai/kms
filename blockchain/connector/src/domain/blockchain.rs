@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use events::kms::{
-    CrsGenResponseValues, DecryptResponseValues, KeyGenPreprocResponseValues, KeyGenResponseValues,
-    KmsConfig, KmsEvent, KmsMessage, OperationValue, ReencryptResponseValues, TransactionId,
-    VerifyProvenCtResponseValues,
+    CrsGenResponseValues, DecryptResponseValues, FheParameter, KeyGenPreprocResponseValues,
+    KeyGenResponseValues, KmsEvent, KmsMessage, OperationValue, ReencryptResponseValues,
+    TransactionId, VerifyProvenCtResponseValues,
 };
 use strum_macros::{Display, EnumString};
 
@@ -114,12 +114,12 @@ pub trait Blockchain {
     /// to fetch the operation value that corresponds to a specific event.
     async fn get_operation_value(&self, event: &KmsEvent) -> anyhow::Result<OperationValue>;
 
-    /// Fetch the configuration contract from the KMS blockchain.
+    /// Query the param choice from the CSC.
     ///
     /// Note that this method may be called automatically by the
     /// [SubscriptionHandler], which is an extra round-trip,
     /// since some KMS operations needs this information.
-    async fn get_kms_configuration(&self) -> anyhow::Result<KmsConfig>;
+    async fn get_param_choice(&self) -> anyhow::Result<FheParameter>;
 
     /// Get the public key of the wallet used to interact with the KMS BC
     async fn get_public_key(&self) -> kms_blockchain_client::crypto::pubkey::PublicKey;

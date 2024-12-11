@@ -48,50 +48,60 @@ pub struct QueryClient {
     client: Channel,
 }
 
-/// Query for the blockchain used when querying it in relation to a specific event, i.e. transaction.
-#[derive(Debug, Serialize, Clone, PartialEq, Default, TypedBuilder)]
+/// Message input for getting the operation values associated to an event from the ASC
+#[derive(Debug, Serialize, Clone, PartialEq, Default)]
 pub struct EventQuery {
     pub event: KmsEvent,
 }
 
-#[derive(Debug, Serialize, Clone, PartialEq, Default, TypedBuilder)]
+/// Message input for getting the transaction from the ASC
+#[derive(Debug, Serialize, Clone, PartialEq, Default)]
 pub struct TransactionQuery {
     pub txn_id: TransactionId,
 }
 
-#[derive(Debug, Serialize, Clone, PartialEq, Default, TypedBuilder)]
+/// Message input for getting the key ID from the ASC
+#[derive(Debug, Serialize, Clone, PartialEq, Default)]
 pub struct GenKeyIdQuery {
     pub key_id: String,
 }
 
-#[derive(Debug, Serialize, Clone, PartialEq, Default, TypedBuilder)]
+/// Message input for getting the CRS ID from the ASC
+#[derive(Debug, Serialize, Clone, PartialEq, Default)]
 pub struct GenCrsIdQuery {
     pub crs_id: String,
 }
 
-#[derive(Debug, EnumString, Serialize, Clone, PartialEq)]
-pub enum ContractQuery {
-    #[strum(serialize = "get_key_gen_response_values")]
+/// Messages for querying the ASC
+///
+/// Important: serde's rename must exactly match the ASC's associated method name
+#[derive(EnumString, Serialize, Debug)]
+pub enum AscQuery {
     #[serde(rename = "get_key_gen_response_values")]
     GetKeyGenResponseValues(GenKeyIdQuery),
-    #[strum(serialize = "get_crs_gen_response_values")]
     #[serde(rename = "get_crs_gen_response_values")]
     GetCrsGenResponseValues(GenCrsIdQuery),
-    #[strum(serialize = "get_operations_values_from_event")]
     #[serde(rename = "get_operations_values_from_event")]
     GetOperationsValuesFromEvent(EventQuery),
-    #[strum(serialize = "get_transaction")]
     #[serde(rename = "get_transaction")]
     GetTransaction(TransactionQuery),
-    #[strum(serialize = "get_kms_configuration")]
-    #[serde(rename = "get_kms_configuration")]
-    GetKmsConfig {},
 }
 
-#[derive(TypedBuilder, Clone)]
-pub struct QueryContractRequest {
-    contract_address: String,
-    query: ContractQuery,
+/// Messages for querying the CSC
+///
+/// Important: serde's rename must exactly match the CSC's associated method name
+#[derive(EnumString, Serialize, Debug)]
+pub enum CscQuery {
+    #[serde(rename = "get_param_choice")]
+    GetParamChoice {},
+    #[serde(rename = "get_parties")]
+    GetParties {},
+    #[serde(rename = "get_response_count_for_majority_vote")]
+    GetResponseCountForMajorityVote {},
+    #[serde(rename = "response_count_for_reconstruction")]
+    GetResponseCountForReconstruction {},
+    #[serde(rename = "degree_for_reconstruction")]
+    GetDegreeForReconstruction {},
 }
 
 impl QueryClient {
@@ -99,27 +109,63 @@ impl QueryClient {
         QueryClientBuilder::builder()
     }
 
-    /// Queries the contract state on the blockchain.
+    /// Query ASC's state with a specific message.
     ///
     /// # Arguments
-    /// * `request` - The query data to be sent to the contract.
+    /// * `contract_address` - The ASC's address to query.
+    /// * `query_msg` - The message to be sent to the ASC.
+    ///
+    /// # Returns
+    /// A `Result` containing the response from the ASC or an error.
+    #[tracing::instrument(skip(self))]
+    pub async fn query_asc<T: DeserializeOwned>(
+        &self,
+        contract_address: String,
+        query_msg: AscQuery,
+    ) -> Result<T, Error> {
+        tracing::info!("contract address: {}", contract_address);
+        let request = QuerySmartContractStateRequest {
+            address: contract_address,
+            query_data: serde_json::json!(query_msg).to_string().as_bytes().to_vec(),
+        };
+        self.send_request(request).await
+    }
+
+    /// Query CSC's state with a specific message.
+    ///
+    /// # Arguments
+    /// * `contract_address` - The CSC's address to query.
+    /// * `query_msg` - The message to be sent to the CSC.
+    ///
+    /// # Returns
+    /// A `Result` containing the response from the CSC or an error.
+    #[tracing::instrument(skip(self))]
+    pub async fn query_csc<T: DeserializeOwned>(
+        &self,
+        contract_address: String,
+        query_msg: CscQuery,
+    ) -> Result<T, Error> {
+        tracing::info!("contract address: {}", contract_address);
+        let request = QuerySmartContractStateRequest {
+            address: contract_address,
+            query_data: serde_json::json!(query_msg).to_string().as_bytes().to_vec(),
+        };
+        self.send_request(request).await
+    }
+
+    /// Send a request
+    ///
+    /// # Arguments
+    /// * `request` - The request to be sent, containing the contract's address and the query data.
     ///
     /// # Returns
     /// A `Result` containing the response from the contract or an error.
-    #[tracing::instrument(skip(self, request))]
-    pub async fn query_contract<T: DeserializeOwned>(
+    #[tracing::instrument(skip(self))]
+    pub async fn send_request<T: DeserializeOwned>(
         &self,
-        request: QueryContractRequest,
+        request: QuerySmartContractStateRequest,
     ) -> Result<T, Error> {
         let mut query = WasmQueryClient::new(self.client.clone());
-        tracing::info!("contract address: {}", request.contract_address);
-        let request = QuerySmartContractStateRequest {
-            address: request.contract_address,
-            query_data: serde_json::json!(request.query)
-                .to_string()
-                .as_bytes()
-                .to_vec(),
-        };
         let result = query
             .smart_contract_state(request)
             .await
@@ -248,8 +294,8 @@ impl QueryClient {
 }
 
 #[test]
-fn test_get_kms_configuration_serialization() {
-    let obj = ContractQuery::GetKmsConfig {};
+fn test_get_param_choice_serialization() {
+    let obj = CscQuery::GetParamChoice {};
     let ser = serde_json::json!(obj).to_string();
-    assert_eq!(ser, "{\"get_kms_configuration\":{}}");
+    assert_eq!(ser, "{\"get_param_choice\":{}}");
 }

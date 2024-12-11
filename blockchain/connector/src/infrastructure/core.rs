@@ -15,7 +15,7 @@ use enum_dispatch::enum_dispatch;
 use events::kms::{
     CrsGenValues, DecryptResponseValues, DecryptValues, FheParameter, InsecureCrsGenValues,
     InsecureKeyGenValues, KeyGenPreprocResponseValues, KeyGenResponseValues, KeyGenValues,
-    KmsConfig, KmsEvent, OperationValue, ReencryptResponseValues, ReencryptValues, TransactionId,
+    KmsEvent, OperationValue, ReencryptResponseValues, ReencryptValues, TransactionId,
     VerifyProvenCtResponseValues, VerifyProvenCtValues,
 };
 use events::HexVector;
@@ -360,52 +360,50 @@ where
 {
     async fn run_operation(
         &self,
-        kms_configuration: Option<KmsConfig>,
+        param_choice: Option<FheParameter>,
     ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
         match self {
-            KmsOperationRequest::Decrypt(decrypt) => decrypt.run_operation(kms_configuration).await,
+            KmsOperationRequest::Decrypt(decrypt) => decrypt.run_operation(param_choice).await,
             KmsOperationRequest::Reencrypt(reencrypt) => {
-                reencrypt.run_operation(kms_configuration).await
+                reencrypt.run_operation(param_choice).await
             }
             KmsOperationRequest::VerifyProvenCt(verify_proven_ct) => {
-                verify_proven_ct.run_operation(kms_configuration).await
+                verify_proven_ct.run_operation(param_choice).await
             }
             KmsOperationRequest::KeyGenPreproc(keygen_preproc) => {
-                keygen_preproc.run_operation(kms_configuration).await
+                keygen_preproc.run_operation(param_choice).await
             }
-            KmsOperationRequest::KeyGen(keygen) => keygen.run_operation(kms_configuration).await,
+            KmsOperationRequest::KeyGen(keygen) => keygen.run_operation(param_choice).await,
             KmsOperationRequest::InsecureKeyGen(insecure_key_gen) => {
-                insecure_key_gen.run_operation(kms_configuration).await
+                insecure_key_gen.run_operation(param_choice).await
             }
-            KmsOperationRequest::CrsGen(crsgen) => crsgen.run_operation(kms_configuration).await,
+            KmsOperationRequest::CrsGen(crsgen) => crsgen.run_operation(param_choice).await,
             KmsOperationRequest::InsecureCrsGen(insecure_crs_gen) => {
-                insecure_crs_gen.run_operation(kms_configuration).await
+                insecure_crs_gen.run_operation(param_choice).await
             }
         }
     }
 
     async fn run_catchup(
         &self,
-        kms_configuration: Option<KmsConfig>,
+        param_choice: Option<FheParameter>,
     ) -> anyhow::Result<CatchupResult> {
         match self {
-            KmsOperationRequest::Decrypt(decrypt) => decrypt.run_catchup(kms_configuration).await,
-            KmsOperationRequest::Reencrypt(reencrypt) => {
-                reencrypt.run_catchup(kms_configuration).await
-            }
+            KmsOperationRequest::Decrypt(decrypt) => decrypt.run_catchup(param_choice).await,
+            KmsOperationRequest::Reencrypt(reencrypt) => reencrypt.run_catchup(param_choice).await,
             KmsOperationRequest::VerifyProvenCt(verify_proven_ct) => {
-                verify_proven_ct.run_catchup(kms_configuration).await
+                verify_proven_ct.run_catchup(param_choice).await
             }
             KmsOperationRequest::KeyGenPreproc(keygen_preproc) => {
-                keygen_preproc.run_catchup(kms_configuration).await
+                keygen_preproc.run_catchup(param_choice).await
             }
-            KmsOperationRequest::KeyGen(keygen) => keygen.run_catchup(kms_configuration).await,
+            KmsOperationRequest::KeyGen(keygen) => keygen.run_catchup(param_choice).await,
             KmsOperationRequest::InsecureKeyGen(insecure_key_gen) => {
-                insecure_key_gen.run_catchup(kms_configuration).await
+                insecure_key_gen.run_catchup(param_choice).await
             }
-            KmsOperationRequest::CrsGen(crsgen) => crsgen.run_catchup(kms_configuration).await,
+            KmsOperationRequest::CrsGen(crsgen) => crsgen.run_catchup(param_choice).await,
             KmsOperationRequest::InsecureCrsGen(insecure_crs_gen) => {
-                insecure_crs_gen.run_catchup(kms_configuration).await
+                insecure_crs_gen.run_catchup(param_choice).await
             }
         }
     }
@@ -420,29 +418,31 @@ where
         &self,
         event: KmsEvent,
         operation_value: OperationValue,
-        kms_configuration: Option<KmsConfig>,
+        param_choice: Option<FheParameter>,
     ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
         let operation = self.create_kms_operation(event, operation_value)?;
-        operation.run_operation(kms_configuration).await
+        operation.run_operation(param_choice).await
     }
 
     async fn run_catchup(
         &self,
         event: KmsEvent,
         operation_value: OperationValue,
-        kms_configuration: Option<KmsConfig>,
+        param_choice: Option<FheParameter>,
     ) -> anyhow::Result<CatchupResult> {
         let operation = self.create_kms_operation(event, operation_value)?;
-        operation.run_catchup(kms_configuration).await
+        operation.run_catchup(param_choice).await
     }
 }
 
+// Gen operations (key/crs generation) need to know which parameters to use
+// For other operations, `param_choice` should be None and will not be used
 #[async_trait]
 #[enum_dispatch(KmsOperationRequest)]
 pub trait KmsEventHandler {
     async fn run_operation(
         &self,
-        kms_configuration: Option<KmsConfig>,
+        param_choice: Option<FheParameter>,
     ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>>;
 
     /// Poll the KMS Core for a potentially existing request.
@@ -451,7 +451,7 @@ pub trait KmsEventHandler {
     /// has been no request for the given [`RequestId`]
     async fn run_catchup(
         &self,
-        kms_configuration: Option<KmsConfig>,
+        param_choice: Option<FheParameter>,
     ) -> anyhow::Result<CatchupResult>;
 }
 
@@ -679,7 +679,7 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
-        _kms_configuration: Option<KmsConfig>,
+        _param_choice: Option<FheParameter>,
     ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
         let mut setup = self.get_setup()?;
 
@@ -772,7 +772,7 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_catchup(
         &self,
-        _kms_configuration: Option<KmsConfig>,
+        _param_choice: Option<FheParameter>,
     ) -> anyhow::Result<CatchupResult> {
         let mut setup = self.get_setup()?;
         let req = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
@@ -852,7 +852,7 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
-        _kms_configuration: Option<KmsConfig>,
+        _param_choice: Option<FheParameter>,
     ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
         let mut setup = self.get_setup()?;
 
@@ -922,7 +922,7 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_catchup(
         &self,
-        _kms_configuration: Option<KmsConfig>,
+        _param_choice: Option<FheParameter>,
     ) -> anyhow::Result<CatchupResult> {
         let mut setup = self.get_setup()?;
 
@@ -1002,7 +1002,7 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
-        _kms_configuration: Option<KmsConfig>,
+        _param_choice: Option<FheParameter>,
     ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
         let mut setup = self.get_setup()?;
 
@@ -1064,7 +1064,7 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_catchup(
         &self,
-        _kms_configuration: Option<KmsConfig>,
+        _param_choice: Option<FheParameter>,
     ) -> anyhow::Result<CatchupResult> {
         let mut setup = self.get_setup()?;
         let req = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
@@ -1234,12 +1234,12 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
-        kms_configuration: Option<KmsConfig>,
+        param_choice: Option<FheParameter>,
     ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
         let mut setup = self.get_setup()?;
-        let param_choice_str = kms_configuration
-            .ok_or_else(|| anyhow!("config contract missing"))?
-            .param_choice_string();
+        let param_choice_str = param_choice
+            .ok_or_else(|| anyhow!("Param choice is missing"))?
+            .to_param_choice_string();
         let param_choice = ParamChoice::from_str_name(&param_choice_str).ok_or_else(|| {
             anyhow!(
                 "invalid parameter choice string in prep: {}",
@@ -1285,7 +1285,7 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_catchup(
         &self,
-        _kms_configuration: Option<KmsConfig>,
+        _param_choice: Option<FheParameter>,
     ) -> anyhow::Result<CatchupResult> {
         let mut setup = self.get_setup()?;
         let req = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
@@ -1377,12 +1377,10 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
-        kms_configuration: Option<KmsConfig>,
+        param_choice: Option<FheParameter>,
     ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
         let mut setup = self.get_setup()?;
-        let param_choice = kms_configuration
-            .ok_or_else(|| anyhow!("config contract missing"))?
-            .param_choice();
+        let param_choice = param_choice.ok_or_else(|| anyhow!("Param choice is missing"))?;
         let keygen = &self.keygen;
         let preproc_id = keygen.preproc_id().to_hex().try_into()?;
 
@@ -1428,13 +1426,10 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_catchup(
         &self,
-        kms_configuration: Option<KmsConfig>,
+        param_choice: Option<FheParameter>,
     ) -> anyhow::Result<CatchupResult> {
         let mut setup = self.get_setup()?;
-        let param_choice = kms_configuration
-            .clone()
-            .ok_or_else(|| anyhow!("config contract missing"))?
-            .param_choice();
+        let param_choice = param_choice.ok_or_else(|| anyhow!("Param choice is missing"))?;
         let req = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
 
         let response = setup.client.get_key_gen_result(req).await;
@@ -1523,12 +1518,10 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
-        kms_configuration: Option<KmsConfig>,
+        param_choice: Option<FheParameter>,
     ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
         let mut setup = self.get_setup()?;
-        let param_choice = kms_configuration
-            .ok_or_else(|| anyhow!("config contract missing"))?
-            .param_choice();
+        let param_choice = param_choice.ok_or_else(|| anyhow!("Param choice is missing"))?;
         let keygen = &self.insecure_key_gen;
 
         tracing::debug!("Insecure Keygen with request ID: {:?}", setup.req_id);
@@ -1578,13 +1571,10 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_catchup(
         &self,
-        kms_configuration: Option<KmsConfig>,
+        param_choice: Option<FheParameter>,
     ) -> anyhow::Result<CatchupResult> {
         let mut setup = self.get_setup()?;
-        let param_choice = kms_configuration
-            .clone()
-            .ok_or_else(|| anyhow!("config contract missing"))?
-            .param_choice();
+        let param_choice = param_choice.ok_or_else(|| anyhow!("Param choice is missing"))?;
         let req = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
 
         let response = setup.client.get_key_gen_result(req).await;
@@ -1668,12 +1658,10 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
-        kms_configuration: Option<KmsConfig>,
+        param_choice: Option<FheParameter>,
     ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
         let mut setup = self.get_setup()?;
-        let param_choice = kms_configuration
-            .ok_or_else(|| anyhow!("config contract missing"))?
-            .param_choice();
+        let param_choice = param_choice.ok_or_else(|| anyhow!("Param choice is missing"))?;
 
         let crsgen = &self.crsgen;
 
@@ -1720,13 +1708,10 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_catchup(
         &self,
-        kms_configuration: Option<KmsConfig>,
+        param_choice: Option<FheParameter>,
     ) -> anyhow::Result<CatchupResult> {
         let mut setup = self.get_setup()?;
-        let param_choice = kms_configuration
-            .clone()
-            .ok_or_else(|| anyhow!("config contract missing"))?
-            .param_choice();
+        let param_choice = param_choice.ok_or_else(|| anyhow!("Param choice is missing"))?;
         let max_num_bits = self.crsgen.max_num_bits();
         let req = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
 
@@ -1811,12 +1796,10 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
-        kms_configuration: Option<KmsConfig>,
+        param_choice: Option<FheParameter>,
     ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
         let mut setup = self.get_setup()?;
-        let param_choice = kms_configuration
-            .ok_or_else(|| anyhow!("config contract missing"))?
-            .param_choice();
+        let param_choice = param_choice.ok_or_else(|| anyhow!("Param choice is missing"))?;
 
         let insecure_crs_gen = &self.insecure_crs_gen;
 
@@ -1863,13 +1846,10 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_catchup(
         &self,
-        kms_configuration: Option<KmsConfig>,
+        param_choice: Option<FheParameter>,
     ) -> anyhow::Result<CatchupResult> {
         let mut setup = self.get_setup()?;
-        let param_choice = kms_configuration
-            .clone()
-            .ok_or_else(|| anyhow!("config contract missing"))?
-            .param_choice();
+        let param_choice = param_choice.ok_or_else(|| anyhow!("Param choice is missing"))?;
         let max_num_bits = self.insecure_crs_gen.max_num_bits();
         let request = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
 

@@ -16,14 +16,14 @@ use dashmap::DashMap;
 use ethers::abi::Token;
 use ethers::types::{Address, U256};
 use events::kms::{
-    CrsGenValues, DecryptValues, Eip712Values, FheType, InsecureCrsGenValues, InsecureKeyGenValues,
-    KeyGenPreprocValues, KeyGenValues, KmsConfig, KmsEvent, KmsMessage, KmsOperation,
-    OperationValue, ReencryptValues, TransactionId, VerifyProvenCtValues,
+    CrsGenValues, DecryptValues, Eip712Values, FheParameter, FheType, InsecureCrsGenValues,
+    InsecureKeyGenValues, KeyGenPreprocValues, KeyGenValues, KmsCoreParty, KmsEvent, KmsMessage,
+    KmsOperation, OperationValue, ReencryptValues, TransactionId, VerifyProvenCtValues,
 };
 use events::HexVector;
 use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractRequest, ProtoCoin};
 use kms_blockchain_client::query_client::{
-    ContractQuery, EventQuery, QueryClient, QueryClientBuilder, QueryContractRequest,
+    AscQuery, CscQuery, EventQuery, QueryClient, QueryClientBuilder,
 };
 use kms_common::loop_fn;
 use kms_lib::client::{assemble_metadata_alloy, ParsedReencryptionRequest};
@@ -46,7 +46,7 @@ use kms_lib::util::key_setup::test_tools::{
     compute_proven_ct_from_stored_key_and_serialize, TypedPlaintext,
 };
 use rand::SeedableRng;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::convert::TryFrom;
@@ -92,7 +92,7 @@ pub struct SimulatorConfig {
     pub http_validator_endpoints: Vec<String>,
     /// Key-value store endpoint
     pub kv_store_address: String,
-    /// ASC contract address
+    /// Address of the ASC
     pub asc_address: String,
     /// Mnemonic of the user wallet to use
     pub mnemonic: String,
@@ -1026,7 +1026,8 @@ pub async fn execute_reencryption_contract(
     query_client: &QueryClient,
     key_id: &str,
     keys_folder: &Path,
-    kms_configuration: KmsConfig,
+    param_choice: FheParameter,
+    num_parties: usize,
 ) -> Result<
     (
         KmsEvent,
@@ -1041,7 +1042,7 @@ pub async fn execute_reencryption_contract(
 > {
     //NOTE: I(Titouan) believe we don't really even care
     //given how we'll use the client
-    let params = match kms_configuration.param_choice() {
+    let params = match param_choice {
         events::kms::FheParameter::Default => DEFAULT_PARAM,
         events::kms::FheParameter::Test => TEST_PARAM,
     };
@@ -1131,7 +1132,8 @@ pub async fn execute_reencryption_contract(
     // Finally, create a kms-core client for reconstruction later on.
     // NOTE: The wasm code that deals with reencryption on the browser side
     // also uses the client.
-    let verf_keys = if kms_configuration.is_centralized() {
+    // If centralized (ie there is only one party)
+    let verf_keys = if num_parties == 1 {
         let storage = FileStorage::new(Some(keys_folder), StorageType::PUB, None).unwrap();
         let url = storage
             .compute_url(
@@ -1143,9 +1145,8 @@ pub async fn execute_reencryption_contract(
         let verf_key: PublicSigKey = storage.read_data(&url).await.unwrap();
         vec![verf_key]
     } else {
-        let num_kms_parties = kms_configuration.parties.len();
         let mut res = Vec::new();
-        for i in 1..=num_kms_parties {
+        for i in 1..=num_parties {
             let storage = FileStorage::new(Some(keys_folder), StorageType::PUB, Some(i)).unwrap();
             let url = storage
                 .compute_url(
@@ -1171,28 +1172,6 @@ pub async fn execute_reencryption_contract(
 
     tracing::info!("TxId: {:?}", ev.txn_id().to_hex(),);
     Ok((ev, ptxt, parsed_request, kms_client, domain, enc_pk, enc_sk))
-}
-
-pub async fn query_contract(
-    sim_config: &SimulatorConfig,
-    query: Query,
-    query_client: &QueryClient,
-) -> Result<Vec<OperationValue>, Box<dyn std::error::Error + 'static>> {
-    let txn_id = HexVector::from_hex(&query.txn_id)?;
-    let ev = KmsEvent::builder()
-        .operation(query.kms_operation)
-        .txn_id(txn_id)
-        .build();
-
-    tracing::info!("ASC address: {:?}", sim_config.asc_address);
-    let query_req =
-        ContractQuery::GetOperationsValuesFromEvent(EventQuery::builder().event(ev).build());
-    let request = QueryContractRequest::builder()
-        .contract_address(sim_config.asc_address.clone())
-        .query(query_req)
-        .build();
-    let values: Vec<OperationValue> = query_client.query_contract(request).await?;
-    Ok(values)
 }
 
 pub fn cosmos_to_eth_address(cosmos_address: &str) -> Result<String, Box<dyn std::error::Error>> {
@@ -1452,13 +1431,13 @@ async fn fetch_local_key_and_write_to_file(
 /// This fetches the kms ethereum address from local storage
 async fn fetch_kms_addresses(
     sim_conf: &SimulatorConfig,
-    kms_configuration: &KmsConfig,
+    is_centralized: bool,
 ) -> Result<Vec<alloy_primitives::Address>, Box<dyn std::error::Error + 'static>> {
     // TODO: handle local file
     let key_id = &SIGNING_KEY_ID.to_string();
 
     let mut addr_bytes = Vec::new();
-    if kms_configuration.is_centralized() {
+    if is_centralized {
         let content = fetch_object(
             &sim_conf
                 .s3_endpoint
@@ -1505,6 +1484,47 @@ async fn fetch_kms_addresses(
     Ok(kms_addrs)
 }
 
+/// Query the CSC
+async fn query_csc<T: DeserializeOwned>(
+    query_client: &QueryClient,
+    sim_conf: &SimulatorConfig,
+    contract_query: CscQuery,
+) -> Result<T, Box<dyn std::error::Error + 'static>> {
+    let values: T = query_client
+        .query_csc(sim_conf.csc_address.to_string(), contract_query)
+        .await?;
+    Ok(values)
+}
+
+/// Query the ASC
+async fn query_asc<T: DeserializeOwned>(
+    query_client: &QueryClient,
+    sim_conf: &SimulatorConfig,
+    contract_query: AscQuery,
+) -> Result<T, Box<dyn std::error::Error + 'static>> {
+    let values: T = query_client
+        .query_asc(sim_conf.asc_address.to_string(), contract_query)
+        .await?;
+    Ok(values)
+}
+
+/// Get all operation values associated with the given event (operation type + transaction ID)
+pub async fn get_values_from_event(
+    sim_config: &SimulatorConfig,
+    query: Query,
+    query_client: &QueryClient,
+) -> Result<Vec<OperationValue>, Box<dyn std::error::Error + 'static>> {
+    let txn_id = HexVector::from_hex(&query.txn_id)?;
+    let event = KmsEvent::builder()
+        .operation(query.kms_operation)
+        .txn_id(txn_id)
+        .build();
+
+    tracing::info!("ASC address: {:?}", sim_config.asc_address);
+    let query_req = AscQuery::GetOperationsValuesFromEvent(EventQuery { event });
+    query_asc(query_client, sim_config, query_req).await
+}
+
 async fn wait_for_response(
     event: KmsEvent,
     query_client: &QueryClient,
@@ -1514,12 +1534,12 @@ async fn wait_for_response(
 ) -> anyhow::Result<Vec<OperationValue>> {
     let time_to_wait = 5; // in seconds
     tracing::info!("Event operation: {:?}", event.operation);
-    let q = Query {
+    let query = Query {
         txn_id: event.txn_id.to_hex(),
         kms_operation: event.operation.to_response()?,
     };
     for _ in 1..=max_iter {
-        match query_contract(sim_conf, q.clone(), query_client).await {
+        match get_values_from_event(sim_conf, query.clone(), query_client).await {
             Ok(results) => {
                 if results.len() < num_expected_responses {
                     tracing::info!(
@@ -1843,16 +1863,6 @@ pub async fn main_from_config(
     )
     .await?;
 
-    //Retrieve params from ASC
-    let request = QueryContractRequest::builder()
-        .contract_address(client.csc_address.to_string())
-        .query(ContractQuery::GetKmsConfig {})
-        .build();
-    let kms_configuration: KmsConfig = query_client.query_contract(request).await?;
-    if !kms_configuration.is_conformant() {
-        return Err(anyhow!("KMS configuration is not conformant!").into());
-    }
-
     let mut return_value: Option<Vec<OperationValue>> = None;
 
     match command {
@@ -1877,7 +1887,22 @@ pub async fn main_from_config(
         _ => {}
     }
 
-    let kms_addrs = fetch_kms_addresses(&sim_conf, &kms_configuration).await?;
+    // Get the current list of parties from the CSC
+    let parties: Vec<KmsCoreParty> =
+        query_csc(&query_client, &sim_conf, CscQuery::GetParties {}).await?;
+
+    // Get the number of parties and check if the KMS is centralized (ie, there is only one party)
+    let num_parties = parties.len();
+    let is_centralized = num_parties == 1;
+
+    tracing::info!(
+        "Retrieved {} parties: {:?} (centralized: {})",
+        num_parties,
+        parties,
+        is_centralized
+    );
+
+    let kms_addrs = fetch_kms_addresses(&sim_conf, is_centralized).await?;
 
     // Log account address
     let cosmwasm_address = client.get_account_address()?;
@@ -1892,10 +1917,9 @@ pub async fn main_from_config(
     tracing::info!("Wallet amount: {:}", wallet_amount_before);
 
     // TODO: stop here if insufficient gas and/or query faucet if setup
-    // TODO: add optional faucet configuration in config file
+    // TODO: add optional faucet configuration in CSC
 
     let max_iter = max_iter.unwrap_or(80);
-    let num_parties = kms_configuration.parties.len();
 
     // Execute the proper command
     match command {
@@ -1910,17 +1934,26 @@ pub async fn main_from_config(
                 Some(cipher_params.compressed),
             )
             .await?;
+
+            let num_expected_responses = if expect_all_responses {
+                num_parties
+            } else {
+                // Get the number of responses needed for a majority vote from the CSC if we accept less
+                // responses than the number of parties
+                query_csc(
+                    &query_client,
+                    &sim_conf,
+                    CscQuery::GetResponseCountForMajorityVote {},
+                )
+                .await?
+            };
             return_value = Some(
                 wait_for_response(
                     event,
                     &query_client,
                     &sim_conf,
                     max_iter,
-                    if expect_all_responses {
-                        num_parties
-                    } else {
-                        kms_configuration.response_count_for_majority_vote()
-                    },
+                    num_expected_responses,
                 )
                 .await?,
             );
@@ -1935,6 +1968,10 @@ pub async fn main_from_config(
             .unwrap();
         }
         SimulatorCommand::ReEncrypt(cipher_params) => {
+            // Get the parameter choice from the CSC
+            let param_choice: FheParameter =
+                query_csc(&query_client, &sim_conf, CscQuery::GetParamChoice {}).await?;
+
             let (event, ptxt, request, kms_client, domain, enc_pk, enc_sk) =
                 execute_reencryption_contract(
                     CiphertextConfig {
@@ -1946,20 +1983,30 @@ pub async fn main_from_config(
                     &query_client,
                     &cipher_params.key_id,
                     destination_prefix,
-                    kms_configuration.clone(),
+                    param_choice,
+                    num_parties,
                 )
                 .await?;
+
+            let num_expected_responses = if expect_all_responses {
+                num_parties
+            } else {
+                // Get the number of responses needed for reconstruction from the CSC if we accept less
+                // responses than the number of parties
+                query_csc(
+                    &query_client,
+                    &sim_conf,
+                    CscQuery::GetResponseCountForReconstruction {},
+                )
+                .await?
+            };
             return_value = Some(
                 wait_for_response(
                     event,
                     &query_client,
                     &sim_conf,
                     max_iter,
-                    if expect_all_responses {
-                        num_parties
-                    } else {
-                        kms_configuration.response_count_for_reconstruction()
-                    },
+                    num_expected_responses,
                 )
                 .await?,
             );
@@ -1995,16 +2042,25 @@ pub async fn main_from_config(
         SimulatorCommand::InsecureKeyGen(NoParameters {}) => {
             let (event, _insecure_keygen_vals) =
                 execute_insecure_key_gen_contract(&client, &query_client).await?;
+
+            let num_expected_responses = if expect_all_responses {
+                num_parties
+            } else {
+                // Get the number of responses needed for a majority vote from the CSC if we accept less
+                // responses than the number of parties
+                query_csc(
+                    &query_client,
+                    &sim_conf,
+                    CscQuery::GetResponseCountForMajorityVote {},
+                )
+                .await?
+            };
             let responses = wait_for_response(
                 event,
                 &query_client,
                 &sim_conf,
                 max_iter,
-                if expect_all_responses {
-                    num_parties
-                } else {
-                    kms_configuration.response_count_for_majority_vote()
-                },
+                num_expected_responses,
             )
             .await?;
             return_value = Some(responses.clone());
@@ -2037,16 +2093,24 @@ pub async fn main_from_config(
             // the actual CRS ceremony takes time
             let (event, _crs_values) =
                 execute_crsgen_contract(&client, &query_client, *max_num_bits).await?;
+            let num_expected_responses = if expect_all_responses {
+                num_parties
+            } else {
+                // Get the number of responses needed for a majority vote from the CSC if we accept less
+                // responses than the number of parties
+                query_csc(
+                    &query_client,
+                    &sim_conf,
+                    CscQuery::GetResponseCountForMajorityVote {},
+                )
+                .await?
+            };
             let responses = wait_for_response(
                 event,
                 &query_client,
                 &sim_conf,
                 max_iter,
-                if expect_all_responses {
-                    num_parties
-                } else {
-                    kms_configuration.response_count_for_majority_vote()
-                },
+                num_expected_responses,
             )
             .await?;
             return_value = Some(responses.clone());
@@ -2078,16 +2142,24 @@ pub async fn main_from_config(
             // the actual CRS ceremony takes time
             let (event, _crs_values) =
                 execute_insecure_crsgen_contract(&client, &query_client, *max_num_bits).await?;
+            let num_expected_responses = if expect_all_responses {
+                num_parties
+            } else {
+                // Get the number of responses needed for a majority vote from the CSC if we accept less
+                // responses than the number of parties
+                query_csc(
+                    &query_client,
+                    &sim_conf,
+                    CscQuery::GetResponseCountForMajorityVote {},
+                )
+                .await?
+            };
             let responses = wait_for_response(
                 event,
                 &query_client,
                 &sim_conf,
                 max_iter,
-                if expect_all_responses {
-                    num_parties
-                } else {
-                    kms_configuration.response_count_for_majority_vote()
-                },
+                num_expected_responses,
             )
             .await?;
             return_value = Some(responses.clone());
@@ -2131,6 +2203,18 @@ pub async fn main_from_config(
                 destination_prefix,
             )
             .await?;
+            let num_expected_responses = if expect_all_responses {
+                num_parties
+            } else {
+                // Get the number of responses needed for a majority vote from the CSC if we accept less
+                // responses than the number of parties
+                query_csc(
+                    &query_client,
+                    &sim_conf,
+                    CscQuery::GetResponseCountForMajorityVote {},
+                )
+                .await?
+            };
             //Do nothing with the response (for now ?)
             return_value = Some(
                 wait_for_response(
@@ -2138,17 +2222,15 @@ pub async fn main_from_config(
                     &query_client,
                     &sim_conf,
                     max_iter,
-                    if expect_all_responses {
-                        num_parties
-                    } else {
-                        kms_configuration.response_count_for_majority_vote()
-                    },
+                    num_expected_responses,
                 )
                 .await?,
             );
         }
-        SimulatorCommand::QueryContract(q) => {
-            return_value = Some(query_contract(&sim_conf, q.clone(), &query_client).await?);
+        SimulatorCommand::QueryContract(query) => {
+            // Get the values associated to the event from the ASC
+            return_value =
+                Some(get_values_from_event(&sim_conf, query.clone(), &query_client).await?);
             // tracing::info!("Query result: {:?}", return_value);
         }
         SimulatorCommand::GetFunds(faucet_params) => {

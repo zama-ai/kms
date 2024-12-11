@@ -3,8 +3,8 @@ use conf_trace::telemetry::init_tracing;
 use events::kms::CrsGenValues;
 use events::kms::{
     DecryptResponseValues, DecryptValues, FheParameter, FheType, InsecureKeyGenValues,
-    KeyGenPreprocValues, KeyGenResponseValues, KmsConfig, KmsCoreParty, KmsEvent, KmsMessage,
-    Transaction, TransactionId, VerifyProvenCtValues,
+    KeyGenPreprocValues, KeyGenResponseValues, KmsEvent, KmsMessage, Transaction, TransactionId,
+    VerifyProvenCtValues,
 };
 use events::kms::{KmsOperation, OperationValue};
 use events::subscription::TxResponse;
@@ -14,7 +14,7 @@ use events::{
 };
 use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractRequest, ProtoCoin};
 use kms_blockchain_client::query_client::{
-    ContractQuery, QueryClient, QueryClientBuilder, QueryContractRequest, TransactionQuery,
+    AscQuery, QueryClient, QueryClientBuilder, TransactionQuery,
 };
 use kms_blockchain_connector::application::kms_core_sync::{
     KmsCoreEventHandler, KmsCoreSyncHandler,
@@ -103,7 +103,7 @@ impl Kms for KmsMock {
         &self,
         event: KmsEvent,
         _operation_value: OperationValue,
-        _config: Option<KmsConfig>,
+        _param_choice: Option<FheParameter>,
     ) -> anyhow::Result<tokio::sync::oneshot::Receiver<anyhow::Result<KmsOperationResponse>>> {
         self.channel.send(event.clone()).await?;
 
@@ -127,7 +127,7 @@ impl Kms for KmsMock {
         &self,
         event: KmsEvent,
         _operation_value: OperationValue,
-        _config: Option<KmsConfig>,
+        _param_choice: Option<FheParameter>,
     ) -> anyhow::Result<CatchupResult> {
         self.channel.send(event.clone()).await?;
         Ok(CatchupResult::Now(Ok(
@@ -304,16 +304,16 @@ async fn check_event(
     query_client: Arc<QueryClient>,
     tx_sender: Sender<()>,
 ) {
-    let request = QueryContractRequest::builder()
-        .contract_address(asc_address)
-        .query(ContractQuery::GetTransaction(
-            TransactionQuery::builder()
-                .txn_id(event.txn_id().clone())
-                .build(),
-        ))
-        .build();
     loop {
-        let tx: Transaction = query_client.query_contract(request.clone()).await.unwrap();
+        let tx: Transaction = query_client
+            .query_asc(
+                asc_address.clone(),
+                AscQuery::GetTransaction(TransactionQuery {
+                    txn_id: event.txn_id().clone(),
+                }),
+            )
+            .await
+            .unwrap();
         if tx.operations().iter().any(|x| {
             <OperationValue as Into<KmsOperation>>::into(x.clone()) == KmsOperation::DecryptResponse
         }) {
@@ -658,18 +658,12 @@ async fn generic_centralized_sunshine_test(
         .txn_id(txn_id.clone())
         .build();
 
-    let conf = KmsConfig {
-        param_choice: FheParameter::Test,
-        parties: vec![KmsCoreParty::default(); 1],
-        response_count_for_majority_vote: 1,
-        response_count_for_reconstruction: 1,
-        degree_for_reconstruction: 0,
-    };
+    let param_choice = FheParameter::Test;
 
     let result = client
         .create_kms_operation(event, op.clone())
         .unwrap()
-        .run_operation(Some(conf))
+        .run_operation(Some(param_choice))
         .await
         .unwrap()
         .await
@@ -885,15 +879,9 @@ async fn generic_sunshine_test(
     assert_eq!(events.len(), clients.len());
     let mut tasks = JoinSet::new();
     for (i, (event, client)) in events.into_iter().zip(clients).enumerate() {
-        let conf = KmsConfig {
-            parties: vec![KmsCoreParty::default(); amount_parties],
-            response_count_for_majority_vote: 2 * threshold + 1,
-            response_count_for_reconstruction: threshold + 2,
-            degree_for_reconstruction: threshold,
-            param_choice: FheParameter::Test,
-        };
+        let param_choice = FheParameter::Test;
         let op = client.create_kms_operation(event, op.clone()).unwrap();
-        tasks.spawn(async move { (i as u32 + 1, op.run_operation(Some(conf)).await) });
+        tasks.spawn(async move { (i as u32 + 1, op.run_operation(Some(param_choice)).await) });
     }
     let mut results = vec![];
     let mut ids = vec![];

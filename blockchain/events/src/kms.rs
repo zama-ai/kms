@@ -21,8 +21,7 @@ pub enum FheParameterVersioned {
     V0(FheParameter),
 }
 
-/// This type needs to match the protobuf type
-/// called [ParamChoice].
+/// This type needs to match the protobuf type called [ParamChoice].
 #[cw_serde]
 #[derive(Copy, Default, EnumString, Eq, Display, EnumIter, Versionize)]
 #[versionize(FheParameterVersioned)]
@@ -55,103 +54,16 @@ impl TryFrom<i32> for FheParameter {
     }
 }
 
-#[derive(VersionsDispatch)]
-pub enum KmsConfigVersioned {
-    V0(KmsConfig),
-}
-
-/// This type describes the configuration of the KMS.
-///
-/// It can be used to represent both the centralized and threshold case.
-/// It includes:
-/// - The list of core parties and their associated information (id, public key, address, TLS public key)
-/// - The number of responses needed for majority voting (used for sending responses to the client with all operations except reencryption)
-/// - The number of responses needed for reconstruction (used for sending responses to the client with reencryption operations)
-/// - The degree of the polynomial for reconstruction (used for checking majority and conformance)
-/// - The FHE parameter choice (either default or test)
-///
-/// Note that the conformance of `KmsConfig` is supposed to be checked at initialization time.
-/// More information in the `is_conformant` method.
-#[cw_serde]
-#[derive(Versionize)]
-#[versionize(KmsConfigVersioned)]
-pub struct KmsConfig {
-    pub parties: Vec<KmsCoreParty>,
-    pub response_count_for_majority_vote: usize,
-    pub response_count_for_reconstruction: usize,
-    pub degree_for_reconstruction: usize,
-    pub param_choice: FheParameter,
-}
-
-// Add Display implementation
-impl std::fmt::Display for KmsConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "KmsConfig{{parties: {:?}, response_count_for_majority_vote: {},
-            response_count_for_reconstruction: {}, degree_for_reconstruction: {}, param_choice: {}}}",
-            self.parties,
-            self.response_count_for_majority_vote,
-            self.response_count_for_reconstruction,
-            self.degree_for_reconstruction,
-            self.param_choice
-        )
-    }
-}
-
-impl KmsConfig {
-    /// We use the number of parties as a proxy to know whether
-    /// we are in centralized case or threshold
-    pub fn is_centralized(&self) -> bool {
-        self.parties.len() == 1
-    }
-
-    pub fn is_conformant(&self) -> bool {
-        if self.is_centralized() {
-            self.degree_for_reconstruction == 0
-                && self.response_count_for_majority_vote == 1
-                && self.response_count_for_reconstruction == 1
-        } else {
-            let num_parties = self.parties.len();
-            let majority = num_parties.div_ceil(2);
-            // We assume we are always looking for highest possible threshold
-            3*self.degree_for_reconstruction + 1 == num_parties
-            // We require at least degree + 2 responses to be able to do error detection
-            && self.response_count_for_reconstruction >= self.degree_for_reconstruction + 2
-            // We can not expect more responses than there are parties
-            && self.response_count_for_reconstruction <= num_parties
-            && self.response_count_for_majority_vote >= majority
-            && self.response_count_for_majority_vote <= num_parties
-        }
-    }
-
-    pub fn param_choice(&self) -> FheParameter {
-        self.param_choice
-    }
-
-    pub fn param_choice_string(&self) -> String {
+impl FheParameter {
+    pub fn to_param_choice_string(&self) -> String {
         // Our string representation is defined by the serialized json,
         // but the json encoding surrounds the string with double quotes,
         // so we need to extract the inner string so this result can be
         // processed by other functions, e.g., turned into a [ParamChoice].
-        serde_json::json!(self.param_choice())
+        serde_json::json!(self)
             .to_string()
             .trim_matches('\"')
             .to_string()
-    }
-
-    /// The number of responses to perform majority voting.
-    ///
-    /// In the centralized setting, this is always 1.
-    pub fn response_count_for_majority_vote(&self) -> usize {
-        self.response_count_for_majority_vote
-    }
-
-    /// The number of shares needed to perform reconstruction.
-    ///
-    /// In the centralized setting, this is always 1.
-    pub fn response_count_for_reconstruction(&self) -> usize {
-        self.response_count_for_reconstruction
     }
 }
 
@@ -245,14 +157,11 @@ impl OperationValue {
         )
     }
 
-    /// Returns true if this operation needs information
-    /// from the configuration smart contract to operate.
-    pub fn needs_kms_config(&self) -> bool {
+    /// Returns true if this operation is a key or crs generation operation
+    pub fn is_gen(&self) -> bool {
         matches!(
             self,
-            Self::Decrypt(_)
-                | Self::Reencrypt(_)
-                | Self::CrsGen(_)
+            Self::CrsGen(_)
                 | Self::InsecureCrsGen(_)
                 | Self::KeyGenPreproc(_)
                 | Self::KeyGen(_)
@@ -2766,20 +2675,13 @@ mod tests {
     #[test]
     fn param_choice_serialization() {
         // make sure these strings match what's in the protobuf [ParamChoice]
-        for choice in FheParameter::iter() {
-            let conf = KmsConfig {
-                param_choice: choice,
-                parties: Vec::new(),
-                response_count_for_majority_vote: 0,
-                response_count_for_reconstruction: 0,
-                degree_for_reconstruction: 0,
-            };
-            match choice {
+        for param_choice in FheParameter::iter() {
+            match param_choice {
                 FheParameter::Default => {
-                    assert_eq!(conf.param_choice_string(), "default");
+                    assert_eq!(param_choice.to_param_choice_string(), "default");
                 }
                 FheParameter::Test => {
-                    assert_eq!(conf.param_choice_string(), "test");
+                    assert_eq!(param_choice.to_param_choice_string(), "test");
                 }
             }
         }

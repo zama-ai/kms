@@ -1,58 +1,49 @@
-use crate::blockchain::Blockchain;
-use crate::blockchain::KmsEventSubscriber;
-use crate::config::{
-    FheKeyUrlInfo, GatewayConfig, KeyUrlInfo, KeyUrlResponseValues, KmsMode, VerfKeyUrlInfo,
+use crate::{
+    blockchain::{Blockchain, KmsEventSubscriber},
+    config::{
+        FheKeyUrlInfo, GatewayConfig, KeyUrlInfo, KeyUrlResponseValues, KmsMode, VerfKeyUrlInfo,
+    },
+    util::{conversion::TokenizableFrom, footprint},
 };
-use crate::util::conversion::TokenizableFrom;
-use crate::util::footprint;
 use alloy_primitives::Address;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use bincode::deserialize;
 use cosmos_proto::messages::cosmos::base::abci::v1beta1::TxResponse;
 use dashmap::DashMap;
-use ethereum_inclusion_proofs::std_proof_handler::EthereumProofHandler;
-use ethereum_inclusion_proofs::types::{
-    DecryptProofParams, EVMProofParams, EthereumConfig, ReencryptProofParams,
+use ethereum_inclusion_proofs::{
+    std_proof_handler::EthereumProofHandler,
+    types::{DecryptProofParams, EVMProofParams, EthereumConfig, ReencryptProofParams},
 };
-use ethers::abi::Token;
-use ethers::prelude::*;
-use events::kms::{
-    CrsGenResponseValues, DecryptValues, FheParameter, FheType, KeyGenResponseValues, KmsConfig,
-    KmsEvent, KmsMessage, KmsOperation, OperationValue, ReencryptResponseValues, ReencryptValues,
-    TransactionId, VerifyProvenCtResponseValues, VerifyProvenCtValues,
+use ethers::{abi::Token, prelude::*};
+use events::{
+    kms::{
+        CrsGenResponseValues, DecryptValues, FheParameter, FheType, KeyGenResponseValues, KmsEvent,
+        KmsMessage, KmsOperation, OperationValue, ReencryptResponseValues, ReencryptValues,
+        TransactionId, VerifyProvenCtResponseValues, VerifyProvenCtValues,
+    },
+    HexVector, HexVectorList,
 };
-use events::{HexVector, HexVectorList};
-use kms_blockchain_client::client::Client;
-use kms_blockchain_client::client::ClientBuilder;
-use kms_blockchain_client::client::ExecuteContractRequest;
-use kms_blockchain_client::client::ProtoCoin;
-use kms_blockchain_client::errors::Error;
-use kms_blockchain_client::query_client::ContractQuery;
-use kms_blockchain_client::query_client::EventQuery;
-use kms_blockchain_client::query_client::GenCrsIdQuery;
-use kms_blockchain_client::query_client::GenKeyIdQuery;
-use kms_blockchain_client::query_client::QueryClient;
-use kms_blockchain_client::query_client::QueryClientBuilder;
-use kms_blockchain_client::query_client::QueryContractRequest;
+use kms_blockchain_client::{
+    client::{Client, ClientBuilder, ExecuteContractRequest, ProtoCoin},
+    errors::Error,
+    query_client::{
+        AscQuery, CscQuery, EventQuery, GenCrsIdQuery, GenKeyIdQuery, QueryClient,
+        QueryClientBuilder,
+    },
+};
 use kms_common::loop_fn;
-use kms_lib::consts::SIGNING_KEY_ID;
-use kms_lib::cryptography::signcryption::hash_element;
-use kms_lib::kms::DecryptionResponsePayload;
-use kms_lib::kms::Eip712DomainMsg;
-use kms_lib::kms::VerifyProvenCtResponsePayload;
-use kms_lib::rpc::rpc_types::Plaintext;
-use kms_lib::rpc::rpc_types::PubDataType;
-use kms_lib::rpc::rpc_types::CURRENT_FORMAT_VERSION;
+use kms_lib::{
+    consts::SIGNING_KEY_ID,
+    cryptography::signcryption::hash_element,
+    kms::{DecryptionResponsePayload, Eip712DomainMsg, VerifyProvenCtResponsePayload},
+    rpc::rpc_types::{Plaintext, PubDataType, CURRENT_FORMAT_VERSION},
+};
 use prost::Message;
-use std::collections::HashMap;
-use std::path::MAIN_SEPARATOR_STR;
-use std::str::FromStr;
-use std::sync::Arc;
+use serde::de::DeserializeOwned;
+use std::{collections::HashMap, path::MAIN_SEPARATOR_STR, str::FromStr, sync::Arc};
 use strum::IntoEnumIterator;
-use tokio::sync::mpsc;
-use tokio::sync::oneshot;
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, oneshot, RwLock};
 use tracing::info;
 
 pub(crate) struct KmsBlockchainImpl {
@@ -61,7 +52,6 @@ pub(crate) struct KmsBlockchainImpl {
     pub(crate) responders: Arc<DashMap<TransactionId, oneshot::Sender<KmsEvent>>>,
     pub(crate) event_sender: Arc<mpsc::Sender<KmsEvent>>,
     pub(crate) config: GatewayConfig,
-    pub(crate) kms_configuration: Option<KmsConfig>,
 }
 
 #[async_trait]
@@ -124,7 +114,6 @@ impl<'a> KmsBlockchainImpl {
             responders,
             event_sender: tx.into(),
             config,
-            kms_configuration: None, // needs to be fetched later using [fetch_kms_configuration], if needed
         }
     }
 
@@ -134,7 +123,7 @@ impl<'a> KmsBlockchainImpl {
         let addresses = vec![binding.as_str()];
         let asc_address = &config.kms.asc_address;
         let csc_address = &config.kms.csc_address;
-        let mut kms_bc_impl = Self::new(
+        let kms_bc_impl = Self::new(
             mnemonic,
             addresses,
             asc_address.to_string().as_str(),
@@ -142,21 +131,7 @@ impl<'a> KmsBlockchainImpl {
             config,
         );
 
-        kms_bc_impl.fetch_kms_configuration().await?;
-
         Ok(kms_bc_impl)
-    }
-
-    // query KMS CSC to get/update KMS configuration (threshold values, etc.)
-    pub(crate) async fn fetch_kms_configuration(&mut self) -> anyhow::Result<()> {
-        let query_client = Arc::clone(&self.query_client);
-        let request = QueryContractRequest::builder()
-            .contract_address(self.config.kms.csc_address.to_string())
-            .query(ContractQuery::GetKmsConfig {})
-            .build();
-        let kms_configuration: KmsConfig = query_client.query_contract(request).await?;
-        self.kms_configuration = Some(kms_configuration);
-        Ok(())
     }
 
     pub(crate) async fn wait_for_transaction(
@@ -274,19 +249,43 @@ impl<'a> KmsBlockchainImpl {
         Ok(handle_bytes)
     }
 
+    /// Helper function to query the CSC.
+    async fn query_csc<T: DeserializeOwned>(&self, contract_query: CscQuery) -> Result<T, Error> {
+        let query_client = Arc::clone(&self.query_client);
+        let values: T = query_client
+            .query_csc(self.config.kms.csc_address.to_string(), contract_query)
+            .await?;
+        Ok(values)
+    }
+
+    /// Helper function to get the response count for majority vote.
+    async fn get_response_count_for_majority_vote(&self) -> Result<usize, Error> {
+        let csc_query = CscQuery::GetResponseCountForMajorityVote {};
+        self.query_csc(csc_query).await
+    }
+
+    /// Helper function to get the degree for reconstruction.
+    async fn get_degree_for_reconstruction(&self) -> Result<usize, Error> {
+        let csc_query = CscQuery::GetDegreeForReconstruction {};
+        self.query_csc(csc_query).await
+    }
+
+    /// Helper function to query the ASC.
+    async fn query_asc<T: DeserializeOwned>(&self, contract_query: AscQuery) -> Result<T, Error> {
+        let query_client = Arc::clone(&self.query_client);
+        let values: T = query_client
+            .query_asc(self.config.kms.asc_address.to_string(), contract_query)
+            .await?;
+        Ok(values)
+    }
+
     /// Helper function to get all the KeyGenResponseValues from the KMS blockchain.
     async fn get_key_gen_response_values(
         &self,
         key_id: String,
     ) -> Result<Vec<KeyGenResponseValues>, Error> {
-        let request = QueryContractRequest::builder()
-            .contract_address(self.config.kms.asc_address.to_string())
-            .query(ContractQuery::GetKeyGenResponseValues(
-                GenKeyIdQuery::builder().key_id(key_id).build(),
-            ))
-            .build();
-        let query_client = Arc::clone(&self.query_client);
-        query_client.query_contract(request).await
+        let asc_query = AscQuery::GetKeyGenResponseValues(GenKeyIdQuery { key_id });
+        self.query_asc(asc_query).await
     }
 
     /// Helper function to get all the CrsGenResponseValues from the KMS blockchain.
@@ -294,14 +293,19 @@ impl<'a> KmsBlockchainImpl {
         &self,
         crs_id: String,
     ) -> Result<Vec<CrsGenResponseValues>, Error> {
-        let request = QueryContractRequest::builder()
-            .contract_address(self.config.kms.asc_address.to_string())
-            .query(ContractQuery::GetCrsGenResponseValues(
-                GenCrsIdQuery::builder().crs_id(crs_id).build(),
-            ))
-            .build();
-        let query_client = Arc::clone(&self.query_client);
-        query_client.query_contract(request).await
+        let asc_query = AscQuery::GetCrsGenResponseValues(GenCrsIdQuery { crs_id });
+        self.query_asc(asc_query).await
+    }
+
+    /// Helper function to get the operations values from an event.
+    async fn get_operations_values_from_event(
+        &self,
+        event: KmsEvent,
+    ) -> Result<Vec<OperationValue>, Error> {
+        let asc_query = AscQuery::GetOperationsValuesFromEvent(EventQuery {
+            event: event.clone(),
+        });
+        self.query_asc(asc_query).await
     }
 
     /// Get the key id from the config.
@@ -645,14 +649,9 @@ impl Blockchain for KmsBlockchainImpl {
         tracing::info!("🍊 Received callback from KMS: {:?}", event.txn_id());
         // Because we have seen the event, we now know that the result is ready to be queried
         // so we query the GetOperationsValuesFromEvent endpoint of the ASC
-        let request = QueryContractRequest::builder()
-            .contract_address(self.config.kms.asc_address.to_string())
-            .query(ContractQuery::GetOperationsValuesFromEvent(
-                EventQuery::builder().event(event.clone()).build(),
-            ))
-            .build();
+        let results: Vec<OperationValue> =
+            self.get_operations_values_from_event(event.clone()).await?;
 
-        let results: Vec<OperationValue> = self.query_client.query_contract(request).await?;
         let (ptxts, sigs) = match self.config.mode {
             KmsMode::Centralized => match results.first().unwrap() {
                 OperationValue::DecryptResponse(decrypt_response) => {
@@ -687,23 +686,18 @@ impl Blockchain for KmsBlockchainImpl {
                 let mut ptxts = Vec::new();
                 let mut sigs = Vec::new();
 
-                // Fetch threshold KMS configuration (the configuration is read at start once, currently)
-                let threshold_kms_configuration = if let Some(conf) = &self.kms_configuration {
-                    conf
-                } else {
-                    return Err(anyhow::anyhow!(
-                        "Error reading KMS configuration (wrong config type or config not set)."
-                    ));
-                };
+                // Get the number of responses needed for a majority vote from the CSC
+                let response_count_for_majority_vote: usize =
+                    self.get_response_count_for_majority_vote().await?;
 
                 // We need at least 2t + 1 responses for secure majority voting (at most t could be malicious).
                 // The reason ist that the KMS ASC simply counts responses without checking equality, so we might receive up to t malicious responses.
-                // The value (2t + 1) comes from the KMS configuration.
-                if results.len() < threshold_kms_configuration.response_count_for_majority_vote {
+                // The value (2t + 1) comes from the configuration set in the CSC.
+                if results.len() < response_count_for_majority_vote {
                     return Err(anyhow::anyhow!(
                         "Have not received enough decryption results: received {}, needed at least {}",
                         results.len(),
-                        threshold_kms_configuration.response_count_for_majority_vote
+                        response_count_for_majority_vote
                     ));
                 }
 
@@ -741,8 +735,11 @@ impl Blockchain for KmsBlockchainImpl {
                 let (majority_pts, majority_count) = most_common_element(&ptxts)
                     .ok_or_else(|| anyhow::anyhow!("No plaintext found."))?; // this cannot happen, since we have some responses, but just to be sure
 
+                // Get the degree for reconstruction from the CSC
+                let degree_for_reconstruction: usize = self.get_degree_for_reconstruction().await?;
+
                 // We need at least t + 1 identical batch responses as majority, so we can return the majority plaintext (at most t others were corrupted)
-                let required_majority = threshold_kms_configuration.degree_for_reconstruction + 1;
+                let required_majority = degree_for_reconstruction + 1;
                 if majority_count >= required_majority {
                     // deserialize the individual plaintexts in this batch
                     let ptxts = majority_pts
@@ -945,14 +942,9 @@ impl Blockchain for KmsBlockchainImpl {
         }
 
         tracing::info!("🍊 Received callback from KMS: {:?}", event.txn_id());
-        let request = QueryContractRequest::builder()
-            .contract_address(self.config.kms.asc_address.to_string())
-            .query(ContractQuery::GetOperationsValuesFromEvent(
-                EventQuery::builder().event(event.clone()).build(),
-            ))
-            .build();
 
-        let results: Vec<OperationValue> = self.query_client.query_contract(request).await?;
+        let results: Vec<OperationValue> =
+            self.get_operations_values_from_event(event.clone()).await?;
 
         match self.config.mode {
             KmsMode::Centralized => match results.first().unwrap() {
@@ -1075,14 +1067,9 @@ impl Blockchain for KmsBlockchainImpl {
             ));
         }
         tracing::info!("🍊 Received callback from KMS: {:?}", event.txn_id());
-        let request = QueryContractRequest::builder()
-            .contract_address(self.config.kms.asc_address.to_string())
-            .query(ContractQuery::GetOperationsValuesFromEvent(
-                EventQuery::builder().event(event.clone()).build(),
-            ))
-            .build();
 
-        let results: Vec<OperationValue> = self.query_client.query_contract(request).await?;
+        let results: Vec<OperationValue> =
+            self.get_operations_values_from_event(event.clone()).await?;
 
         let proven_ct_responses = match self.config.mode {
             KmsMode::Centralized => match results.first().unwrap() {

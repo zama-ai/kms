@@ -91,12 +91,12 @@ export CONFIGURATOR_ADDRESS=$KMS_CONNECTOR_ADDRESS
    - in threshold mode :
 
    ```
-   CSC_INST_TX_HASH=$(echo $KEYRING_PASSWORD | wasmd tx wasm instantiate "${CSC_CODE_ID}" '{"kms_configuration": { "parties":[{"party_id": "01", "address": ""}, {"party_id": "02", "address": ""}, {"party_id": "03", "address": ""}, {"party_id": "04", "address": ""}], "response_count_for_majority_vote": 3, "response_count_for_reconstruction": 3, "degree_for_reconstruction": 1, "param_choice": "default"}, "storage_base_urls": ["'"${STORAGE_BASE_URL}"'"], "allowlists":{"admin": ["'"${CONNECTOR_ADDRESS}"'"], "configure": ["'"${CONNECTOR_ADDRESS}"'"]} }' --label "csc-threshold" --from validator --output json --node "$NODE" --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" | jq -r '.txhash')
+   CSC_INST_TX_HASH=$(echo $KEYRING_PASSWORD | wasmd tx wasm instantiate "${CSC_CODE_ID}" '{ "parties":[{"party_id": "01", "address": ""}, {"party_id": "02", "address": ""}, {"party_id": "03", "address": ""}, {"party_id": "04", "address": ""}], "response_count_for_majority_vote": 3, "response_count_for_reconstruction": 3, "degree_for_reconstruction": 1, "param_choice": "default", "storage_base_urls": ["'"${STORAGE_BASE_URL}"'"], "allowlists":{"admin": ["'"${CONNECTOR_ADDRESS}"'"], "configure": ["'"${CONNECTOR_ADDRESS}"'"]} }' --label "csc-threshold" --from validator --output json --node "$NODE" --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" | jq -r '.txhash')
    ```
 
    - in centralized mode :
    ```
-   CSC_INST_TX_HASH=$(echo $KEYRING_PASSWORD | wasmd tx wasm instantiate "${CSC_CODE_ID}" '{"kms_configuration": { "parties":[{"party_id": "01", "address": ""}], "response_count_for_majority_vote": 1, "response_count_for_reconstruction": 1, "degree_for_reconstruction": 0, "param_choice": "default" }, "storage_base_urls": ["'"${STORAGE_BASE_URL}"'"], "allowlists":{"admin": ["'"${CONNECTOR_ADDRESS}"'"], "configure": ["'"${CONNECTOR_ADDRESS}"'"]} }' --label "csc-centralized" --from validator --output json --node "$NODE" --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" | jq -r '.txhash')
+   CSC_INST_TX_HASH=$(echo $KEYRING_PASSWORD | wasmd tx wasm instantiate "${CSC_CODE_ID}" '{ "parties":[{"party_id": "01", "address": ""}], "response_count_for_majority_vote": 1, "response_count_for_reconstruction": 1, "degree_for_reconstruction": 0, "param_choice": "default", "storage_base_urls": ["'"${STORAGE_BASE_URL}"'"], "allowlists":{"admin": ["'"${CONNECTOR_ADDRESS}"'"], "configure": ["'"${CONNECTOR_ADDRESS}"'"]} }' --label "csc-centralized" --from validator --output json --node "$NODE" --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" | jq -r '.txhash')
 
    ```
 

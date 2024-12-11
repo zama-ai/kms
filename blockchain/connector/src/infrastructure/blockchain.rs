@@ -3,10 +3,10 @@ use crate::conf::BlockchainConfig;
 use crate::domain::blockchain::{Blockchain, KmsOperationResponse};
 use crate::infrastructure::metrics::{MetricType, Metrics};
 use async_trait::async_trait;
-use events::kms::{KmsConfig, KmsEvent, KmsMessage, OperationValue};
+use events::kms::{FheParameter, KmsEvent, KmsMessage, OperationValue};
 use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractRequest};
 use kms_blockchain_client::query_client::{
-    ContractQuery, EventQuery, QueryClient, QueryClientBuilder, QueryContractRequest,
+    AscQuery, CscQuery, EventQuery, QueryClient, QueryClientBuilder,
 };
 use kms_common::loop_fn;
 use std::sync::Arc;
@@ -87,17 +87,19 @@ impl Blockchain for KmsBlockchain {
             })
     }
 
+    /// Get all the operation values associated with a given event (operation type + transaction ID) from the ASC
     #[tracing::instrument(skip(self))]
     async fn get_operation_value(&self, event: &KmsEvent) -> anyhow::Result<OperationValue> {
-        let request = QueryContractRequest::builder()
-            .contract_address(self.config.asc_address.to_owned())
-            .query(ContractQuery::GetOperationsValuesFromEvent(
-                EventQuery::builder().event(event.clone()).build(),
-            ))
-            .build();
         let result: Vec<OperationValue> = {
             let query_client = self.query_client.lock().await;
-            query_client.query_contract(request).await?
+            query_client
+                .query_asc(
+                    self.config.asc_address.to_owned(),
+                    AscQuery::GetOperationsValuesFromEvent(EventQuery {
+                        event: event.clone(),
+                    }),
+                )
+                .await?
         };
         result
             .first()
@@ -105,17 +107,19 @@ impl Blockchain for KmsBlockchain {
             .ok_or_else(|| anyhow::anyhow!("Operation value not found for tx_id: {:?}", event))
     }
 
+    /// Get the param choice from the CSC
     #[tracing::instrument(skip(self))]
-    async fn get_kms_configuration(&self) -> anyhow::Result<KmsConfig> {
-        let request = QueryContractRequest::builder()
-            .contract_address(self.config.csc_address.to_owned())
-            .query(ContractQuery::GetKmsConfig {})
-            .build();
-        let result: KmsConfig = {
+    async fn get_param_choice(&self) -> anyhow::Result<FheParameter> {
+        let param_choice = {
             let query_client = self.query_client.lock().await;
-            query_client.query_contract(request).await?
+            query_client
+                .query_csc(
+                    self.config.csc_address.to_owned(),
+                    CscQuery::GetParamChoice {},
+                )
+                .await?
         };
-        Ok(result)
+        Ok(param_choice)
     }
 
     async fn get_public_key(&self) -> kms_blockchain_client::crypto::pubkey::PublicKey {

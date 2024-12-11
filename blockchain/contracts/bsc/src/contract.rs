@@ -780,9 +780,9 @@ mod tests {
         kms::{
             CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues, FheParameter,
             FheType, InsecureCrsGenValues, InsecureKeyGenValues, KeyGenPreprocResponseValues,
-            KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues, KmsConfig, KmsCoreParty,
-            KmsEvent, KmsOperation, OperationValue, ReencryptResponseValues, ReencryptValues,
-            TransactionId, VerifyProvenCtResponseValues, VerifyProvenCtValues,
+            KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues, KmsCoreParty, KmsEvent,
+            KmsOperation, OperationValue, ReencryptResponseValues, ReencryptValues, TransactionId,
+            VerifyProvenCtResponseValues, VerifyProvenCtValues,
         },
         HexVector,
     };
@@ -809,13 +809,6 @@ mod tests {
             App::new(mt_app)
         };
 
-        let init_kms_configuration = KmsConfig {
-            parties: vec![KmsCoreParty::default(); 4],
-            response_count_for_majority_vote: 2,
-            response_count_for_reconstruction: 3,
-            degree_for_reconstruction: 1,
-            param_choice: FheParameter::Test,
-        };
         let storage_base_urls = vec!["https://dummy-storage-base-url.example.com".to_string()];
         let allowlists_config = AllowlistsCsc::default_all_to(owner.as_str());
 
@@ -823,7 +816,11 @@ mod tests {
         let config_code_id = CSCCodeId::store_code(&app);
         let csc_address = config_code_id
             .instantiate(
-                init_kms_configuration,
+                vec![KmsCoreParty::default(); 4],
+                2,
+                3,
+                1,
+                FheParameter::Test,
                 storage_base_urls,
                 Some(allowlists_config),
             )

@@ -12,6 +12,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  build-csc:
+    uses: ./.github/workflows/common-build.yml
+    with:
+      working-directory: './blockchain/contracts/csc'
+      args-tests-fhe: ''
+      package-name: 'csc'
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+
   build-asc:
     uses: ./.github/workflows/common-build.yml
     with:
@@ -60,6 +72,19 @@ jobs:
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
+
+  optimize-csc:
+    uses: ./.github/workflows/common-build-wasm.yml
+    with:
+      working-directory: './blockchain/'
+      # relative to working-directory
+      cargo-manifest-path: './contracts/csc/'
+      target-path: 'contracts/csc/'
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
   optimize-asc:
     uses: ./.github/workflows/common-build-wasm.yml
@@ -120,10 +145,12 @@ jobs:
       - name: Success
         run: echo Pipeline Done
     needs:
+      - build-csc
       - build-asc
       - build-bsc
       - build-tendermint-ipsc
       - build-ethereum-ipsc
+      - optimize-csc
       - optimize-asc
       - optimize-bsc
       - optimize-tendermint-ipsc

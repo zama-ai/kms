@@ -1,13 +1,15 @@
 use super::state::KmsContractStorage;
-use crate::events::EmitEventVerifier as _;
+use crate::{
+    events::EmitEventVerifier as _,
+    external_queries::{ProofMessage, ProofPayload},
+};
 use contracts_common::allowlists::{AllowlistsManager, AllowlistsStateManager};
-use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{to_json_binary, DepsMut, Empty, Env, Response, StdError, StdResult, WasmMsg};
+use cosmwasm_std::{to_json_binary, DepsMut, Env, Response, StdError, StdResult, WasmMsg};
 use cw_utils::must_pay;
 use events::kms::{
     ContractAclUpdatedEvent, CrsGenResponseValues, CrsGenValues, DecryptResponseValues,
     DecryptValues, InsecureCrsGenValues, KeyAccessAllowedEvent, KeyGenPreprocResponseValues,
-    KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues, KmsConfig, KmsEvent, KmsOperation,
+    KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues, KmsEvent, KmsOperation,
     OperationValue, ReencryptResponseValues, ReencryptValues, SenderAllowedEvent, TransactionId,
     VerifyProvenCtValues,
 };
@@ -24,30 +26,6 @@ const UCOSM: &str = "ucosm";
 // be used in the ASC like it's currently done
 pub type Allowlists = <KmsContractStorage as AllowlistsStateManager>::Allowlists;
 pub type AllowlistType = <Allowlists as AllowlistsManager>::AllowlistType;
-
-#[cw_serde]
-pub struct ProofPayload {
-    pub proof: String,
-    pub ciphertext_handles: String,
-}
-
-#[cw_serde]
-pub struct ProofMessage {
-    pub verify_proof: ProofPayload,
-}
-
-// Query message for getting the KMS configuration
-// Note that we need to do this instead of importing the msg directly from the CSC's
-// crate because having a contract as a dependency of another one creates some conflict when
-// building them
-// This means:
-// - the struct must contain the targeted method's name as a field
-// - this field must provide the necessary inputs as specified in the method's definition (here,
-// it is empty since we are only querying the KMS configuration)
-#[cw_serde]
-struct KmsConfigQueryMsg {
-    get_kms_configuration: Empty,
-}
 
 /// Backend Smart Contract staging
 /// - The following is a transitional implementation for the incoming CosmWasm smart contract.
@@ -803,15 +781,9 @@ impl BackendContract {
                 operation,
             )?;
 
-            // Get the KMS configuration from the CSC
-            let kms_configuration: KmsConfig = deps.querier.query_wasm_smart(
-                kms_storage.get_csc_address(deps.storage)?,
-                &KmsConfigQueryMsg {
-                    get_kms_configuration: Empty {},
-                },
-            )?;
+            let csc_address = kms_storage.get_csc_address(deps.storage)?;
 
-            return Ok(operation.should_emit_response_event(&kms_configuration, &response_values));
+            return operation.should_emit_response_event(deps, csc_address, &response_values);
         }
 
         // This should never happen: currently, an operation is either a request or a response

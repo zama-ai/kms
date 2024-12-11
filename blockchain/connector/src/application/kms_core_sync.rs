@@ -9,7 +9,7 @@ use crate::infrastructure::store::KVStore;
 use anyhow::{anyhow, Result};
 use cosmos_proto::messages::cosmwasm::wasm::v1::MsgExecuteContract;
 use events::kms::{
-    KmsConfig, KmsEvent, KmsMessage, OperationValue, TransactionEvent, TransactionId,
+    FheParameter, KmsEvent, KmsMessage, OperationValue, TransactionEvent, TransactionId,
 };
 use events::subscription::handler::{EventsMode, SubscriptionEventBuilder, SubscriptionHandler};
 use events::subscription::Tx;
@@ -44,11 +44,11 @@ where
     O: Metrics + Send + Sync + 'static,
 {
     /// Query the KMS BC for the operation that corresponds to the given event
-    async fn get_op_and_conf(
+    async fn get_op_and_param_choice(
         &self,
         event: &KmsEvent,
     ) -> Result<
-        (OperationValue, Option<KmsConfig>),
+        (OperationValue, Option<FheParameter>),
         Box<dyn std::error::Error + Send + Sync + 'static>,
     > {
         let operation_value = self
@@ -64,13 +64,25 @@ where
         // It seems to be used by some [`KmsEventHandler`] impl to retrieve
         // the [`FheParameter`]
         tracing::info!("Running KMS operation with value: {:?}", operation_value);
-        let kms_config = if operation_value.needs_kms_config() {
-            Some(self.blockchain.get_kms_configuration().await?)
+
+        // If this is a gen operation (key/crs generation), we need to get the param choice from the CSC
+        let param_choice = if operation_value.is_gen() {
+            let param_choice = self.blockchain.get_param_choice().await?;
+            tracing::info!(
+                "Successfully retrieved param choice `{:?}` for operation `{:?}`",
+                param_choice,
+                operation_value
+            );
+            Some(param_choice)
         } else {
+            tracing::info!(
+                "No param choice needed for operation `{:?}`",
+                operation_value
+            );
             None
         };
-        tracing::info!("Successfully retrieved kms configuration {:?}", kms_config);
-        Ok((operation_value, kms_config))
+
+        Ok((operation_value, param_choice))
     }
 
     /// Answer back to the KMS BC by making a transaction containing the [`KmsOperationResponse`]
@@ -207,12 +219,13 @@ where
         if target_shard != self.sharding.index {
             tracing::info!("Message is for another shard ({target_shard}). I am in shard {} and will ignore it.", self.sharding.index);
         } else {
-            let (operation_value, kms_config) = self.get_op_and_conf(&message.event).await?;
+            let (operation_value, param_choice) =
+                self.get_op_and_param_choice(&message.event).await?;
 
             // Interact with the KMS to resolve the query
             let result_receiver = self
                 .kms
-                .run(message.event, operation_value, kms_config)
+                .run(message.event, operation_value, param_choice)
                 .await
                 .inspect_err(|e| {
                     tracing::error!("KMS connector error running kms operation: {:?}", e);
@@ -299,15 +312,12 @@ where
                 return Ok(());
             }
 
-            let (operation_value, kms_configuration) = self.get_op_and_conf(&message.event).await?;
+            let (operation_value, param_choice) =
+                self.get_op_and_param_choice(&message.event).await?;
             // Then first try polling the KMS for existing requests
             let catchup_result = self
                 .kms
-                .run_catchup(
-                    message.event.clone(),
-                    operation_value.clone(),
-                    kms_configuration.clone(),
-                )
+                .run_catchup(message.event.clone(), operation_value.clone(), param_choice)
                 .await
                 .inspect_err(|e| {
                     tracing::error!("KMS connector error running kms operation: {:?}", e);
