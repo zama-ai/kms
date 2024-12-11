@@ -2117,6 +2117,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "bsc"
+version = "0.10.0-rc1"
+dependencies = [
+ "contracts-common",
+ "cosmwasm-schema",
+ "cosmwasm-std",
+ "csc",
+ "cw-multi-test",
+ "cw-storage-plus",
+ "cw-utils",
+ "cw2",
+ "events",
+ "hex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha3",
+ "strum",
+ "strum_macros",
+ "sylvia",
+ "tendermint-ipsc",
+ "tfhe-versionable",
+ "thiserror",
+]
+
+[[package]]
 name = "bstr"
 version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

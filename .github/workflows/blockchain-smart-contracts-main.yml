@@ -25,6 +25,18 @@ jobs:
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
+  build-bsc:
+    uses: ./.github/workflows/common-build.yml
+    with:
+      working-directory: './blockchain/contracts/bsc'
+      args-tests-fhe: ''
+      package-name: 'bsc'
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+
   build-tendermint-ipsc:
     uses: ./.github/workflows/common-build.yml
     with:
@@ -56,6 +68,19 @@ jobs:
       # relative to working-directory
       cargo-manifest-path: './contracts/asc/'
       target-path: 'contracts/asc/'
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+
+  optimize-bsc:
+    uses: ./.github/workflows/common-build-wasm.yml
+    with:
+      working-directory: './blockchain/'
+      # relative to working-directory
+      cargo-manifest-path: './contracts/bsc/'
+      target-path: 'contracts/bsc/'
     permissions:
       contents: 'read'
       id-token: 'write'
@@ -117,9 +142,11 @@ jobs:
         run: echo Pipeline Done
     needs:
       - build-asc
+      - build-bsc
       - build-tendermint-ipsc
       - build-ethereum-ipsc
       - optimize-asc
+      - optimize-bsc
       - optimize-tendermint-ipsc
       - optimize-ethereum-ipsc
       - docker-smart-contracts

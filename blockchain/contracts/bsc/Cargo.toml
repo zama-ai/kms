@@ -1,0 +1,38 @@
+[package]
+name = "bsc"
+authors.workspace = true
+publish.workspace = true
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+schema = []
+
+[dependencies]
+contracts-common.workspace = true
+cosmwasm-std = { workspace = true, features = ["staking"] }
+cosmwasm-schema.workspace = true
+cw-utils.workspace = true
+cw2.workspace = true
+cw-storage-plus = { workspace = true, features = ["iterator"] }
+thiserror.workspace = true
+events.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha3.workspace = true
+sylvia.workspace = true
+strum.workspace = true
+strum_macros.workspace = true
+tfhe-versionable.workspace = true
+
+[dev-dependencies]
+csc.workspace = true
+cw-multi-test = "=2.1.1"
+hex.workspace = true
+tendermint-ipsc = { path = "../tendermint-ipsc", features = ["mock"] }
+sylvia = { workspace = true, features = ["mt"] }

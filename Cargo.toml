@@ -20,6 +20,7 @@ members = [
     "core/threshold",
     "blockchain/inclusion_proofs/ethereum",
     "blockchain/inclusion_proofs/ethereum-triedb",
+    "blockchain/contracts/bsc",
     "test-utils",
 ]
 

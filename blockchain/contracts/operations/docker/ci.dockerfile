@@ -19,6 +19,14 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --manifest-path /app/blockchain/contracts/csc/Cargo.toml && \
     echo "CSC Pre-optimization size: $(wc -c < /app/target/wasm32-unknown-unknown/wasm/csc.wasm) bytes"
 
+# Build BSC contract and report initial size
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,sharing=locked \
+    cargo build --target wasm32-unknown-unknown --profile wasm --lib \
+    --manifest-path /app/blockchain/contracts/bsc/Cargo.toml && \
+    echo "BSC Pre-optimization size: $(wc -c < /app/target/wasm32-unknown-unknown/wasm/bsc.wasm) bytes"
+
 # Build ASC contract and report initial size
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
@@ -76,6 +84,14 @@ RUN wasm-opt -Oz "/app/optimized-input/csc.wasm" -o "/app/optimized/csc.wasm" &&
         exit 1; \
     fi
 
+# Optimize BSC and report final size, check size limit
+RUN wasm-opt -Oz "/app/optimized-input/bsc.wasm" -o "/app/optimized/bsc.wasm" && \
+size=$(wc -c < /app/optimized/bsc.wasm) && \
+echo "BSC Post-optimization size: $size bytes" && \
+if [ "$size" -ge 819200 ]; then \
+    echo "Error: BSC wasm size ($size bytes) exceeds limit of 819,200 bytes" && \
+    exit 1; \
+fi
 
 # Optimize ASC and report final size, check size limit
 RUN wasm-opt -Oz "/app/optimized-input/asc.wasm" -o "/app/optimized/asc.wasm" && \
@@ -111,6 +127,7 @@ WORKDIR /app
 RUN apk add jq
 
 COPY --from=compiler /app/optimized/csc.wasm /app/csc.wasm
+COPY --from=compiler /app/optimized/bsc.wasm /app/bsc.wasm
 COPY --from=compiler /app/optimized/asc.wasm /app/asc.wasm
 COPY --from=compiler /app/optimized/tendermint_ipsc.wasm /app/tendermint_ipsc.wasm
 COPY --from=compiler /app/optimized/ethereum_ipsc.wasm /app/ethereum_ipsc.wasm

@@ -1225,6 +1225,26 @@ impl From<CrsGenResponseValues> for OperationValue {
     }
 }
 
+#[derive(Debug)]
+pub struct GenResponseValuesSavedEvent {
+    operation_value: OperationValue,
+}
+
+impl GenResponseValuesSavedEvent {
+    pub fn new(operation_value: OperationValue) -> Self {
+        Self { operation_value }
+    }
+}
+
+impl From<GenResponseValuesSavedEvent> for Event {
+    fn from(event: GenResponseValuesSavedEvent) -> Self {
+        Event::new("gen_response_values_saved").add_attributes([(
+            event.operation_value.values_name(),
+            event.operation_value.to_string(),
+        )])
+    }
+}
+
 #[derive(Serialize, Deserialize, VersionsDispatch)]
 pub enum KeyGenPreprocValuesVersioned {
     V0(KeyGenPreprocValues),
