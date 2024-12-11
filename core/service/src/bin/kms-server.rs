@@ -116,6 +116,11 @@ async fn main() -> anyhow::Result<()> {
                 core_config.rate_limiter_conf,
             )
             .await?;
+            thread_health_reporter
+                .write()
+                .await
+                .set_serving::<CoreServiceEndpointServer<SoftwareKms<StorageProxy, StorageProxy>>>()
+                .await;
             run_server(
                 core_config.service,
                 kms,
@@ -124,11 +129,6 @@ async fn main() -> anyhow::Result<()> {
                 std::future::pending(),
             )
             .await?;
-            thread_health_reporter
-                .write()
-                .await
-                .set_serving::<CoreServiceEndpointServer<SoftwareKms<StorageProxy, StorageProxy>>>()
-                .await;
         }
     }
     Ok(())
