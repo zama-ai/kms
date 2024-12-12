@@ -14,6 +14,7 @@ use tfhe::{named::Named, Unversionize, Versionize};
 use tracing;
 use url::Url;
 
+pub mod crypto_material;
 pub mod file;
 pub mod ram;
 pub mod s3;

@@ -5529,7 +5529,7 @@ pub(crate) mod tests {
             verify_proven_ct: 1,
         };
         let (kms_server, mut kms_client) = super::test_tools::setup_centralized(
-            RamStorage::from_existing_keys_for_public_storage(&keys.software_kms_keys)
+            RamStorage::from_existing_keys_for_public_storage(&keys.pub_fhe_keys)
                 .await
                 .unwrap(),
             RamStorage::from_existing_keys_for_private_storage(&keys.software_kms_keys)

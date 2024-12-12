@@ -6,7 +6,7 @@ use conf_trace::{
         OP_TYPE_TOTAL, OP_VERIFY_PROVEN_CT, TAG_OPERATION_TYPE,
     },
 };
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 use tfhe::{
     safe_serialization::safe_deserialize, zk::CompactPkePublicParams, ProvenCompactCiphertextList,
 };
@@ -25,26 +25,15 @@ use crate::{
         central_rpc::{tonic_handle_potential_err, tonic_some_or_err_ref, validate_request_id},
         rpc_types::{compute_external_verify_proven_ct_signature, BaseKms, WrappedPublicKeyOwned},
     },
+    storage::{crypto_material::CryptoMaterialStorage, Storage},
     util::meta_store::{handle_res_mapping, HandlerStatus, MetaStore},
 };
 
-pub trait PkGetter {
-    fn get_pk(&self, req_id: &RequestId) -> Option<&WrappedPublicKeyOwned>;
-}
-
-pub trait CrsGetter {
-    fn get_crs(&self, req_id: &RequestId) -> Option<&CompactPkePublicParams>;
-}
-
-impl CrsGetter for HashMap<RequestId, CompactPkePublicParams> {
-    fn get_crs(&self, req_id: &RequestId) -> Option<&CompactPkePublicParams> {
-        self.get(req_id)
-    }
-}
-
-pub(crate) async fn non_blocking_verify_proven_ct(
-    crs_getter: Arc<RwLock<dyn CrsGetter + Send + Sync + 'static>>,
-    pk_getter: Arc<RwLock<dyn PkGetter + Send + Sync + 'static>>,
+pub(crate) async fn non_blocking_verify_proven_ct<
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: Storage + Send + Sync + 'static,
+>(
+    crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
     meta_store: Arc<RwLock<MetaStore<VerifyProvenCtResponsePayload>>>,
     request_id: RequestId,
     request: VerifyProvenCtRequest,
@@ -56,13 +45,11 @@ pub(crate) async fn non_blocking_verify_proven_ct(
         guarded_meta_store.insert(&request_id)?;
     }
     let sigkey = Arc::clone(&client_sk);
-    let pk_getter = Arc::clone(&pk_getter);
-    let crs_getter = Arc::clone(&crs_getter);
     let _handle = tokio::spawn(
         async move {
             let _permit = permit;
             let verify_proven_ct_start_instant = tokio::time::Instant::now();
-            let res = verify_proven_ct_and_sign(pk_getter, crs_getter, request, &sigkey).await;
+            let res = verify_proven_ct_and_sign(crypto_storage, request, &sigkey).await;
 
             let mut guarded_meta_store = meta_store.write().await;
             match res {
@@ -140,9 +127,11 @@ where
 }
 
 // Verifies the ZK proof and returns the metadata payload, including a KMS signature, if the proof is valid
-async fn verify_proven_ct_and_sign(
-    pk_getter: Arc<RwLock<dyn PkGetter + Send + Sync + 'static>>,
-    crs_getter: Arc<RwLock<dyn CrsGetter + Send + Sync + 'static>>,
+async fn verify_proven_ct_and_sign<
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: Storage + Send + Sync + 'static,
+>(
+    crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
     req: VerifyProvenCtRequest,
     client_sk: &PrivateSigKey,
 ) -> anyhow::Result<VerifyProvenCtResponsePayload> {
@@ -173,27 +162,17 @@ async fn verify_proven_ct_and_sign(
         })?;
 
     let load_crs_pk_start_instant = tokio::time::Instant::now();
+    let wrapped_pk = crypto_storage.read_cloned_pk(key_handle).await?;
 
-    let pp = {
-        let pp_guard = crs_getter.read().await;
-        let pp = pp_guard.get_crs(crs_handle);
-        pp.ok_or(anyhow_error_and_log(format!(
-            "missing public parameter for handle {}",
-            crs_handle
-        )))?
-        .clone()
-    };
-
-    let wrapped_pk = {
-        let pk_guard = pk_getter.read().await;
-        let wrapped_pk = pk_guard.get_pk(key_handle);
-        wrapped_pk
-            .ok_or(anyhow_error_and_log(format!(
-                "missing public key for handle {}",
-                key_handle
-            )))?
-            .clone()
-    };
+    // NOTE: CRS is a bit big so we try to avoid cloning
+    // but this will highly depend on how often we generate a CRS,
+    // if there are a lot of verification requests along with CRS generation
+    // requests, then the CRS generation endpoint might not be able to
+    // make a write lock.
+    crypto_storage.refresh_crs(crs_handle).await?;
+    let pp_guard = crypto_storage
+        .read_guarded_crs_from_cache(crs_handle)
+        .await?;
 
     let duration = load_crs_pk_start_instant.elapsed();
     METRICS
@@ -213,7 +192,7 @@ async fn verify_proven_ct_and_sign(
     let proof_start_instant = tokio::time::Instant::now();
     let (send, recv) = tokio::sync::oneshot::channel();
     rayon::spawn(move || {
-        let ok = verify_ct_proofs(&proven_ct, &pp, &wrapped_pk, &metadata);
+        let ok = verify_ct_proofs(&proven_ct, &pp_guard, &wrapped_pk, &metadata);
         let _ = send.send(ok);
     });
     let signature_ok = recv.await.inspect_err(|e| {

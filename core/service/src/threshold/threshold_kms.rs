@@ -2,10 +2,13 @@
 use super::generic::InsecureCrsGenerator;
 use crate::conf::threshold::{PeerConf, ThresholdParty};
 use crate::consts::{MINIMUM_SESSIONS_PREPROC, PRSS_EPOCH_ID};
-use crate::cryptography::central_kms::{async_generate_crs, compute_info, BaseKmsStruct};
+use crate::cryptography::central_kms::{
+    async_generate_crs, compute_info, BaseKmsStruct, DecCallValues, KeyGenCallValues,
+    ReencCallValues,
+};
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey};
 use crate::cryptography::proven_ct_verifier::{
-    get_verify_proven_ct_result, non_blocking_verify_proven_ct, PkGetter,
+    get_verify_proven_ct_result, non_blocking_verify_proven_ct,
 };
 use crate::cryptography::signcryption::signcrypt;
 use crate::kms::core_service_endpoint_server::CoreServiceEndpointServer;
@@ -22,13 +25,14 @@ use crate::rpc::central_rpc::{
 };
 use crate::rpc::rpc_types::{
     compute_external_pt_signature, protobuf_to_alloy_domain_option, BaseKms, Plaintext,
-    PrivDataType, PubDataType, SigncryptionPayload, SignedPubDataHandleInternal, WrappedPublicKey,
-    WrappedPublicKeyOwned, CURRENT_FORMAT_VERSION,
+    PrivDataType, PubDataType, SigncryptionPayload, SignedPubDataHandleInternal,
+    CURRENT_FORMAT_VERSION,
 };
 use crate::rpc::{prepare_shutdown_signals, INFLIGHT_REQUEST_WAITING_TIME};
+use crate::storage::crypto_material::ThresholdCryptoMaterialStorage;
 use crate::storage::{
-    delete_at_request_id, delete_pk_at_request_id, read_all_data_versioned, read_pk_at_request_id,
-    read_versioned_at_request_id, store_pk_at_request_id, store_versioned_at_request_id, Storage,
+    read_all_data_versioned, read_pk_at_request_id, read_versioned_at_request_id,
+    store_versioned_at_request_id, Storage,
 };
 #[cfg(feature = "insecure")]
 use crate::threshold::generic::InsecureKeyGenerator;
@@ -90,7 +94,7 @@ use tfhe::named::Named;
 use tfhe::zk::CompactPkePublicParams;
 use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
-use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, RwLockReadGuard};
+use tokio::sync::{Mutex, OwnedRwLockReadGuard, OwnedSemaphorePermit, RwLock};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 use tonic::transport::{Server, ServerTlsConfig};
@@ -115,8 +119,8 @@ const DECRYPTION_MODE: DecryptionMode = DecryptionMode::PRSSDecrypt;
 ///   Otherwise, the setup must be done out of band by calling the init
 ///   GRPC endpoint, or using the kms-init binary.
 pub async fn threshold_server_init<
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: Storage + Send + Sync + 'static,
     F: std::future::Future<Output = ()> + Send + 'static,
 >(
     config: ThresholdParty,
@@ -173,24 +177,6 @@ pub async fn threshold_server_init<
     Ok(kms)
 }
 
-/// This is an internal structure that is a wrapper around [ThresholdFheKeys]
-/// because we want to keep some unversioned data along with [ThresholdFheKeys],
-/// which is versioned. We do not want to liberally add/remove things into
-/// versioned data structures.
-// This is needed because it's a clearner to have one data structure for
-// accessing all the keys and key materials that we need.
-// In the future we'd like make a unified interface for storing all key materials.
-pub(crate) struct WrappedThresholdFheKeys {
-    pub(crate) inner: ThresholdFheKeys,
-    pub(crate) public_key: WrappedPublicKeyOwned,
-}
-
-impl PkGetter for HashMap<RequestId, WrappedThresholdFheKeys> {
-    fn get_pk(&self, req_id: &RequestId) -> Option<&WrappedPublicKeyOwned> {
-        self.get(req_id).map(|v| &v.public_key)
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum ThresholdFheKeysVersioned {
     V0(ThresholdFheKeys),
@@ -204,29 +190,21 @@ pub struct ThresholdFheKeys {
     pub private_keys: PrivateKeySet,
     pub sns_key: SwitchAndSquashKey,
     pub decompression_key: Option<DecompressionKey>,
-    pub pk_meta_data: DkgMetaStore,
+    pub pk_meta_data: KeyGenCallValues,
 }
 
 impl Named for ThresholdFheKeys {
     const NAME: &'static str = "ThresholdFheKeys";
 }
 
-// Request digest, and resultant plaintext
-type DecMetaStore = (Vec<u8>, Vec<Plaintext>, Vec<u8>);
-// Request digest, fhe type of encryption and resultant partial decryption
-type ReencMetaStore = (Vec<u8>, FheType, Vec<u8>);
-// Hashmap of `PubDataType` to the corresponding `SignedPubDataHandleInternal` information for all the different
-// public keys
-type DkgMetaStore = HashMap<PubDataType, SignedPubDataHandleInternal>;
-
 type BucketMetaStore = Box<dyn DKGPreprocessing<ResiduePoly128>>;
 
-/// Compute all the info of a [FhePubKeySet] and return the result as as [DkgMetaStore]
+/// Compute all the info of a [FhePubKeySet] and return the result as as [KeyGenCallValues]
 pub fn compute_all_info(
     sig_key: &PrivateSigKey,
     fhe_key_set: &FhePubKeySet,
     domain: Option<&alloy_sol_types::Eip712Domain>,
-) -> anyhow::Result<DkgMetaStore> {
+) -> anyhow::Result<KeyGenCallValues> {
     //Compute all the info required for storing
     let pub_key_info = compute_info(sig_key, &fhe_key_set.public_key, domain);
     let serv_key_info = compute_info(sig_key, &fhe_key_set.server_key, domain);
@@ -250,25 +228,25 @@ pub fn compute_all_info(
 #[cfg(not(feature = "insecure"))]
 pub type RealThresholdKms<PubS, PrivS> = GenericKms<
     RealInitiator<PrivS>,
-    RealReencryptor,
-    RealDecryptor,
+    RealReencryptor<PubS, PrivS>,
+    RealDecryptor<PubS, PrivS>,
     RealKeyGenerator<PubS, PrivS>,
     RealPreprocessor,
     RealCrsGenerator<PubS, PrivS>,
-    RealProvenCtVerifier,
+    RealProvenCtVerifier<PubS, PrivS>,
 >;
 
 #[cfg(feature = "insecure")]
 pub type RealThresholdKms<PubS, PrivS> = GenericKms<
     RealInitiator<PrivS>,
-    RealReencryptor,
-    RealDecryptor,
+    RealReencryptor<PubS, PrivS>,
+    RealDecryptor<PubS, PrivS>,
     RealKeyGenerator<PubS, PrivS>,
     RealInsecureKeyGenerator<PubS, PrivS>,
     RealPreprocessor,
     RealCrsGenerator<PubS, PrivS>,
     RealInsecureCrsGenerator<PubS, PrivS>,
-    RealProvenCtVerifier,
+    RealProvenCtVerifier<PubS, PrivS>,
 >;
 
 #[derive(Debug)]
@@ -305,8 +283,8 @@ async fn new_real_threshold_kms<PubS, PrivS, F>(
     shutdown_signal: F,
 ) -> anyhow::Result<RealThresholdKms<PubS, PrivS>>
 where
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: Storage + Send + Sync + 'static,
     F: std::future::Future<Output = ()> + Send + 'static,
 {
     tracing::info!(
@@ -329,15 +307,13 @@ where
     // load keys from storage
     let key_info_versioned: HashMap<RequestId, ThresholdFheKeys> =
         read_all_data_versioned(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
-    let mut key_info = HashMap::new();
     let mut key_info_w_status = HashMap::new();
-    for (id, info) in key_info_versioned.into_iter() {
+    let mut pk_map = HashMap::new();
+    for (id, info) in key_info_versioned.clone().into_iter() {
         key_info_w_status.insert(id.clone(), HandlerStatus::Done(info.pk_meta_data.clone()));
-        let keys = WrappedThresholdFheKeys {
-            inner: info,
-            public_key: read_pk_at_request_id(&public_storage, &id).await?,
-        };
-        key_info.insert(id, keys);
+
+        let pk = read_pk_at_request_id(&public_storage, &id).await?;
+        pk_map.insert(id, pk);
     }
 
     // load crs_info (roughly hashes of CRS) from storage
@@ -350,7 +326,7 @@ where
     }
 
     // load crs from storage
-    let crs: HashMap<RequestId, CompactPkePublicParams> =
+    let crs_map: HashMap<RequestId, CompactPkePublicParams> =
         read_all_data_versioned(&public_storage, &PubDataType::CRS.to_string()).await?;
 
     let role_assignments: RoleAssignment = peer_configs
@@ -488,19 +464,22 @@ where
     )));
     let base_kms = BaseKmsStruct::new(sk)?;
 
-    let fhe_keys = Arc::new(RwLock::new(key_info));
-    let crs_materials = Arc::new(RwLock::new(crs));
     let prss_setup = Arc::new(RwLock::new(None));
     let preproc_buckets = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     let preproc_factory = Arc::new(Mutex::new(preproc_factory));
-    let public_storage = Arc::new(Mutex::new(public_storage));
-    let private_storage = Arc::new(Mutex::new(private_storage));
     let crs_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(crs_info_w_status)));
     let dkg_pubinfo_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(key_info_w_status)));
     let dec_meta_store = Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache)));
     let reenc_meta_store = Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache)));
     let ct_verifier_payload_meta_store =
         Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache)));
+    let crypto_storage = ThresholdCryptoMaterialStorage::new(
+        public_storage,
+        private_storage,
+        pk_map,
+        crs_map,
+        key_info_versioned,
+    );
 
     let session_preparer = SessionPreparer {
         base_kms: base_kms.new_instance().await,
@@ -521,7 +500,7 @@ where
     }
     let initiator = RealInitiator {
         prss_setup: Arc::clone(&prss_setup),
-        private_storage: Arc::clone(&private_storage),
+        private_storage: crypto_storage.get_private_storage(),
         session_preparer: session_preparer.new_instance().await,
         health_reporter: core_service_health_reporter.clone(),
     };
@@ -548,27 +527,25 @@ where
     let rate_limiter = RateLimiter::new(rate_limiter_conf.unwrap_or_default());
 
     let reencryptor = RealReencryptor {
-        fhe_keys: Arc::clone(&fhe_keys),
         base_kms: base_kms.new_instance().await,
+        crypto_storage: crypto_storage.clone(),
         reenc_meta_store,
         session_preparer: session_preparer.new_instance().await,
         rate_limiter: rate_limiter.clone(),
     };
 
     let decryptor = RealDecryptor {
-        fhe_keys: Arc::clone(&fhe_keys),
         base_kms: base_kms.new_instance().await,
+        crypto_storage: crypto_storage.clone(),
         dec_meta_store,
         session_preparer: session_preparer.new_instance().await,
         rate_limiter: rate_limiter.clone(),
     };
 
     let keygenerator = RealKeyGenerator {
-        fhe_keys: Arc::clone(&fhe_keys),
         base_kms: base_kms.new_instance().await,
+        crypto_storage: crypto_storage.clone(),
         preproc_buckets: Arc::clone(&preproc_buckets),
-        public_storage: Arc::clone(&public_storage),
-        private_storage: Arc::clone(&private_storage),
         dkg_pubinfo_meta_store,
         session_preparer: session_preparer.new_instance().await,
         rate_limiter: rate_limiter.clone(),
@@ -587,10 +564,8 @@ where
     };
 
     let crs_generator = RealCrsGenerator {
-        crs_materials: Arc::clone(&crs_materials),
         base_kms: base_kms.new_instance().await,
-        public_storage: Arc::clone(&public_storage),
-        private_storage,
+        crypto_storage: crypto_storage.clone(),
         crs_meta_store,
         session_preparer,
         rate_limiter: rate_limiter.clone(),
@@ -600,8 +575,7 @@ where
     let insecure_crs_generator = RealInsecureCrsGenerator::from_real_crsgen(&crs_generator).await;
 
     let proven_ct_verifier = RealProvenCtVerifier {
-        crs_materials,
-        fhe_keys,
+        crypto_storage: crypto_storage.clone(),
         base_kms,
         ct_verifier_payload_meta_store,
         rate_limiter: rate_limiter.clone(),
@@ -831,15 +805,20 @@ impl<PrivS: Storage + Send + Sync + 'static> Initiator for RealInitiator<PrivS> 
         Ok(Response::new(Empty {}))
     }
 }
-pub struct RealReencryptor {
-    fhe_keys: Arc<RwLock<HashMap<RequestId, WrappedThresholdFheKeys>>>,
+pub struct RealReencryptor<
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: Storage + Send + Sync + 'static,
+> {
     base_kms: BaseKmsStruct,
-    reenc_meta_store: Arc<RwLock<MetaStore<ReencMetaStore>>>,
+    crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
+    reenc_meta_store: Arc<RwLock<MetaStore<ReencCallValues>>>,
     session_preparer: SessionPreparer,
     rate_limiter: RateLimiter,
 }
 
-impl RealReencryptor {
+impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
+    RealReencryptor<PubS, PrivS>
+{
     /// Helper method for reencryptin which carries out the actual threshold decryption using noise
     /// flooding.
     ///
@@ -852,16 +831,12 @@ impl RealReencryptor {
         ct: &[u8],
         fhe_type: FheType,
         link: Vec<u8>,
-        key_handle: &RequestId,
         client_enc_key: &PublicEncKey,
         client_address: &alloy_primitives::Address,
         sig_key: Arc<PrivateSigKey>,
-        fhe_keys: RwLockReadGuard<'_, HashMap<RequestId, WrappedThresholdFheKeys>>,
+        fhe_keys: OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>,
     ) -> anyhow::Result<Vec<u8>> {
-        let keys = match fhe_keys.get(key_handle) {
-            Some(keys) => &keys.inner,
-            None => return Err(anyhow!("Could not deserialize meta store")),
-        };
+        let keys = fhe_keys;
         let low_level_ct = fhe_type.deserialize_to_low_level(ct, &keys.decompression_key)?;
         let partial_signcryption = match partial_decrypt_using_noiseflooding(
             session,
@@ -911,7 +886,9 @@ impl RealReencryptor {
 }
 
 #[tonic::async_trait]
-impl Reencryptor for RealReencryptor {
+impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static> Reencryptor
+    for RealReencryptor<PubS, PrivS>
+{
     async fn reencrypt(
         &self,
         request: Request<ReencryptionRequest>,
@@ -951,7 +928,7 @@ impl Reencryptor for RealReencryptor {
         )?;
         let mut protocol = Small::new(session.clone());
         let meta_store = Arc::clone(&self.reenc_meta_store);
-        let fhe_keys = Arc::clone(&self.fhe_keys);
+        let crypto_storage = self.crypto_storage.clone();
         let mut rng = self.base_kms.new_rng().await;
         let sig_key = Arc::clone(&self.base_kms.sig_key);
 
@@ -968,33 +945,44 @@ impl Reencryptor for RealReencryptor {
             )?;
         }
 
+        tonic_handle_potential_err(
+            crypto_storage.refresh_threshold_fhe_keys(&key_id).await,
+            "Cannot find threshold keys".to_string(),
+        )?;
+
         // we do not need to hold the handle,
         // the result of the computation is tracked the crs_meta_store
         let _handle = tokio::spawn(
             async move {
                 // explicitly move the rate limiter context
                 let _permit = permit;
-                let fhe_keys_rlock = fhe_keys.read().await;
-                let tmp = Self::inner_reencrypt(
-                    &mut session,
-                    &mut protocol,
-                    &mut rng,
-                    &ciphertext,
-                    fhe_type,
-                    link.clone(),
-                    &key_id,
-                    &client_enc_key,
-                    &client_address,
-                    sig_key,
-                    fhe_keys_rlock,
-                )
-                .await;
+                let fhe_keys_rlock = crypto_storage
+                    .read_guarded_threshold_fhe_keys_from_cache(&key_id)
+                    .await;
+                let tmp = match fhe_keys_rlock {
+                    Ok(k) => {
+                        Self::inner_reencrypt(
+                            &mut session,
+                            &mut protocol,
+                            &mut rng,
+                            &ciphertext,
+                            fhe_type,
+                            link.clone(),
+                            &client_enc_key,
+                            &client_address,
+                            sig_key,
+                            k,
+                        )
+                        .await
+                    }
+                    Err(e) => Err(e),
+                };
                 let mut guarded_meta_store = meta_store.write().await;
                 match tmp {
                     Ok(partial_dec) => {
                         // We cannot do much if updating the storage fails at this point...
                         let _ = guarded_meta_store
-                            .update(&req_id, HandlerStatus::Done((link, fhe_type, partial_dec)));
+                            .update(&req_id, HandlerStatus::Done((fhe_type, link, partial_dec)));
                     }
                     Result::Err(e) => {
                         // We cannot do much if updating the storage fails at this point...
@@ -1031,7 +1019,7 @@ impl Reencryptor for RealReencryptor {
             let guarded_meta_store = self.reenc_meta_store.read().await;
             guarded_meta_store.retrieve(&request_id).cloned()
         };
-        let (link, fhe_type, signcrypted_ciphertext) =
+        let (fhe_type, link, signcrypted_ciphertext) =
             handle_res_mapping(status, &request_id, "Reencryption")?;
         let server_verf_key = self.base_kms.get_serialized_verf_key();
         let payload = ReencryptionResponsePayload {
@@ -1060,15 +1048,20 @@ impl Reencryptor for RealReencryptor {
     }
 }
 
-pub struct RealDecryptor {
-    fhe_keys: Arc<RwLock<HashMap<RequestId, WrappedThresholdFheKeys>>>,
+pub struct RealDecryptor<
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: Storage + Send + Sync + 'static,
+> {
     base_kms: BaseKmsStruct,
-    dec_meta_store: Arc<RwLock<MetaStore<DecMetaStore>>>,
+    crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
+    dec_meta_store: Arc<RwLock<MetaStore<DecCallValues>>>,
     session_preparer: SessionPreparer,
     rate_limiter: RateLimiter,
 }
 
-impl RealDecryptor {
+impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
+    RealDecryptor<PubS, PrivS>
+{
     /// Helper method for decryption which carries out the actual threshold decryption using noise
     /// flooding.
     async fn inner_decrypt<T>(
@@ -1076,22 +1069,14 @@ impl RealDecryptor {
         protocol: &mut Small,
         ct: &[u8],
         fhe_type: FheType,
-        key_handle: &RequestId,
-        fhe_keys: RwLockReadGuard<'_, HashMap<RequestId, WrappedThresholdFheKeys>>,
+        fhe_keys: OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>,
     ) -> anyhow::Result<T>
     where
         T: tfhe::integer::block_decomposition::Recomposable
             + tfhe::core_crypto::commons::traits::CastFrom<u128>,
     {
         tracing::info!("{:?} started inner_decrypt", session.own_identity());
-        let keys = match fhe_keys.get(key_handle) {
-            Some(keys) => &keys.inner,
-            None => {
-                return Err(anyhow_error_and_log(format!(
-                    "Key handle {key_handle} does not exist"
-                )))
-            }
-        };
+        let keys = fhe_keys;
         let low_level_ct = fhe_type.deserialize_to_low_level(ct, &keys.decompression_key)?;
         let raw_decryption = match decrypt_using_noiseflooding(
             session,
@@ -1128,7 +1113,9 @@ impl RealDecryptor {
 }
 
 #[tonic::async_trait]
-impl Decryptor for RealDecryptor {
+impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static> Decryptor
+    for RealDecryptor<PubS, PrivS>
+{
     #[tracing::instrument(skip(self, request), fields(
         party_id = ?self.session_preparer.my_id,
         operation = "decrypt"
@@ -1200,6 +1187,13 @@ impl Decryptor for RealDecryptor {
             )?;
         }
 
+        tonic_handle_potential_err(
+            self.crypto_storage
+                .refresh_threshold_fhe_keys(&key_id)
+                .await,
+            "Cannot find threshold keys".to_string(),
+        )?;
+
         let ext_handles_bytes = ciphertexts
             .iter()
             .map(|c| c.external_handle.to_owned())
@@ -1220,7 +1214,7 @@ impl Decryptor for RealDecryptor {
             )?;
 
             let mut protocol = Small::new(session.clone());
-            let fhe_keys = Arc::clone(&self.fhe_keys);
+            let crypto_storage = self.crypto_storage.clone();
 
             // we do not need to hold the handle,
             // the result of the computation is tracked by the dec_meta_store
@@ -1235,15 +1229,16 @@ impl Decryptor for RealDecryptor {
                 };
 
                 let ciphertext = &ct.ciphertext;
+                let fhe_keys_rlock = crypto_storage
+                    .read_guarded_threshold_fhe_keys_from_cache(&key_id)
+                    .await?;
 
-                let fhe_keys_rlock = fhe_keys.read().await;
                 let res_plaintext = match fhe_type {
                     FheType::Euint2048 => Self::inner_decrypt::<tfhe::integer::bigint::U2048>(
                         &mut session,
                         &mut protocol,
                         ciphertext,
                         fhe_type,
-                        &key_id,
                         fhe_keys_rlock,
                     )
                     .await
@@ -1253,7 +1248,6 @@ impl Decryptor for RealDecryptor {
                         &mut protocol,
                         ciphertext,
                         fhe_type,
-                        &key_id,
                         fhe_keys_rlock,
                     )
                     .await
@@ -1263,7 +1257,6 @@ impl Decryptor for RealDecryptor {
                         &mut protocol,
                         ciphertext,
                         fhe_type,
-                        &key_id,
                         fhe_keys_rlock,
                     )
                     .await
@@ -1273,7 +1266,6 @@ impl Decryptor for RealDecryptor {
                         &mut protocol,
                         ciphertext,
                         fhe_type,
-                        &key_id,
                         fhe_keys_rlock,
                     )
                     .await
@@ -1283,7 +1275,6 @@ impl Decryptor for RealDecryptor {
                         &mut protocol,
                         ciphertext,
                         fhe_type,
-                        &key_id,
                         fhe_keys_rlock,
                     )
                     .await
@@ -1293,7 +1284,6 @@ impl Decryptor for RealDecryptor {
                         &mut protocol,
                         ciphertext,
                         fhe_type,
-                        &key_id,
                         fhe_keys_rlock,
                     )
                     .await
@@ -1308,7 +1298,6 @@ impl Decryptor for RealDecryptor {
                         &mut protocol,
                         ciphertext,
                         fhe_type,
-                        &key_id,
                         fhe_keys_rlock,
                     )
                     .await
@@ -1424,43 +1413,36 @@ impl Decryptor for RealDecryptor {
 }
 
 pub struct RealKeyGenerator<
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: Storage + Send + Sync + 'static,
 > {
-    // NOTE: To avoid deadlocks the fhe_keys SHOULD NOT be written to while holding a meta storage
-    // mutex!
-    fhe_keys: Arc<RwLock<HashMap<RequestId, WrappedThresholdFheKeys>>>,
     base_kms: BaseKmsStruct,
+    crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     // TODO eventually add mode to allow for nlarge as well.
     preproc_buckets: Arc<RwLock<MetaStore<BucketMetaStore>>>,
-    // NOTE: To avoid deadlocks the public_storage MUST ALWAYS be accessed BEFORE the private_storage when both are needed concurrently
-    public_storage: Arc<Mutex<PubS>>,
-    private_storage: Arc<Mutex<PrivS>>,
-    dkg_pubinfo_meta_store: Arc<RwLock<MetaStore<DkgMetaStore>>>,
+    dkg_pubinfo_meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
     session_preparer: SessionPreparer,
     rate_limiter: RateLimiter,
 }
 
 #[cfg(feature = "insecure")]
 pub struct RealInsecureKeyGenerator<
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: Storage + Send + Sync + 'static,
 > {
     real_key_generator: RealKeyGenerator<PubS, PrivS>,
 }
 
 #[cfg(feature = "insecure")]
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
+impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
     RealInsecureKeyGenerator<PubS, PrivS>
 {
     async fn from_real_keygen(value: &RealKeyGenerator<PubS, PrivS>) -> Self {
         Self {
             real_key_generator: RealKeyGenerator {
-                fhe_keys: Arc::clone(&value.fhe_keys),
                 base_kms: value.base_kms.new_instance().await,
+                crypto_storage: value.crypto_storage.clone(),
                 preproc_buckets: Arc::clone(&value.preproc_buckets),
-                public_storage: Arc::clone(&value.public_storage),
-                private_storage: Arc::clone(&value.private_storage),
                 dkg_pubinfo_meta_store: Arc::clone(&value.dkg_pubinfo_meta_store),
                 session_preparer: value.session_preparer.new_instance().await,
                 rate_limiter: value.rate_limiter.clone(),
@@ -1471,7 +1453,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 
 #[cfg(feature = "insecure")]
 #[tonic::async_trait]
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
+impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
     InsecureKeyGenerator for RealInsecureKeyGenerator<PubS, PrivS>
 {
     async fn insecure_key_gen(
@@ -1501,7 +1483,7 @@ enum PreprocHandleWithMode {
     Insecure,
 }
 
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
+impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
     RealKeyGenerator<PubS, PrivS>
 {
     async fn launch_dkg(
@@ -1528,13 +1510,12 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 
         // Clone all the Arcs to give them to the tokio thread
         let meta_store = Arc::clone(&self.dkg_pubinfo_meta_store);
-        let public_storage = Arc::clone(&self.public_storage);
-        let private_storage = Arc::clone(&self.private_storage);
         let sig_key = Arc::clone(&self.base_kms.sig_key);
-        let fhe_keys = Arc::clone(&self.fhe_keys);
+        let crypto_storage = self.crypto_storage.clone();
         let eip712_domain_copy = eip712_domain.cloned();
 
         let my_future = |_permit| async move {
+            let start = Instant::now();
             let dkg_res = match preproc_handle_w_mode {
                 PreprocHandleWithMode::Insecure => {
                     initialize_key_material(&mut base_session, dkg_params).await
@@ -1603,102 +1584,32 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 raw_tag,
             );
 
-            //Take lock on all the storage at once, so we either update everything or nothing
-            let mut pub_storage = public_storage.lock().await;
-            let mut priv_storage = private_storage.lock().await;
-
-            let wrapped_threshold_fhe_keys = WrappedThresholdFheKeys {
-                inner: ThresholdFheKeys {
-                    private_keys,
-                    sns_key,
-                    decompression_key,
-                    pk_meta_data: info.clone(),
-                },
-                public_key: WrappedPublicKeyOwned::Compact(pub_key_set.public_key.clone()),
+            let threshold_fhe_keys = ThresholdFheKeys {
+                private_keys,
+                sns_key,
+                decompression_key,
+                pk_meta_data: info.clone(),
             };
-
-            //Try to store the new data
-            tracing::info!("Storing objects");
-            if store_versioned_at_request_id(
-                &mut (*priv_storage),
-                &req_id,
-                &wrapped_threshold_fhe_keys.inner,
-                &PrivDataType::FheKeyInfo.to_string(),
-            )
-            .await
-            .is_ok()
-            // Only store the public keys if no other server has already stored them
-                && store_pk_at_request_id(
-                    &mut (*pub_storage),
+            if let Err(e) = crypto_storage
+                .write_threshold_keys_with_meta_store(
                     &req_id,
-                    WrappedPublicKey::Compact(&pub_key_set.public_key),
+                    threshold_fhe_keys,
+                    pub_key_set,
+                    info,
+                    meta_store,
                 )
                 .await
-                .is_ok()
-                && store_versioned_at_request_id(
-                    &mut (*pub_storage),
-                    &req_id,
-                    &pub_key_set.server_key,
-                    &PubDataType::ServerKey.to_string(),
-                )
-                .await
-                .is_ok()
-                && store_versioned_at_request_id(
-                    &mut (*pub_storage),
-                    &req_id,
-                    &wrapped_threshold_fhe_keys.inner.sns_key,
-                    &PubDataType::SnsKey.to_string(),
-                )
-                .await
-                .is_ok()
             {
-                {
-                    let mut guarded_fhe_keys = fhe_keys.write().await;
-                    guarded_fhe_keys.insert(req_id.clone(), wrapped_threshold_fhe_keys);
-                }
-                //If everything succeeded, update state and store private key
-                {
-                    let mut guarded_meta_storage = meta_store.write().await;
-                    // We cannot do much if updating the storage fails at this point...
-                    let _ = guarded_meta_storage.update(&req_id, HandlerStatus::Done(info));
-                }
-                tracing::info!("Finished DKG for Request Id {req_id}.");
-            } else {
-                tracing::error!("Could not store all the key data from request ID {req_id}. Deleting any dangling data.");
-                // Try to delete stored data to avoid anything dangling
-                // Ignore any failure to delete something since it might be because the data did not get created
-                // In any case, we can't do much.
-                let _ = delete_pk_at_request_id(&mut (*pub_storage), &req_id).await;
-                let _ = delete_at_request_id(
-                    &mut (*pub_storage),
-                    &req_id,
-                    &PubDataType::ServerKey.to_string(),
-                )
-                .await;
-                let _ = delete_at_request_id(
-                    &mut (*pub_storage),
-                    &req_id,
-                    &PubDataType::SnsKey.to_string(),
-                )
-                .await;
-                let _ = delete_at_request_id(
-                    &mut (*priv_storage),
-                    &req_id,
-                    &PrivDataType::FheKeyInfo.to_string(),
-                )
-                .await;
-                //If writing to public store failed, update status
-                {
-                    let mut guarded_meta_storage = meta_store.write().await;
-                    // We cannot do much if updating the storage fails at this point...
-                    let _ = guarded_meta_storage.update(
-                        &req_id,
-                        HandlerStatus::Error(
-                            "Failed to write the public key to public store".to_string(),
-                        ),
-                    );
-                }
+                tracing::error!(
+                    "Error \"{e:?}\" occured to store KeyGen result for request {req_id}",
+                );
+                return;
             }
+
+            tracing::info!(
+                "DKG protocol took {} ms to complete for request {req_id}",
+                start.elapsed().as_millis()
+            );
         };
         let _handle = tokio::spawn(my_future(permit).instrument(tracing::Span::current()));
         Ok(())
@@ -1729,54 +1640,6 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 tonic::Code::InvalidArgument,
                 format!("Request ID {} is not valid!", request_id),
             ));
-        }
-
-        let storage = Arc::clone(&self.public_storage);
-        {
-            let storage = storage.lock().await;
-            // TODO I don't think we need to do this check since the key will only be stored if it
-            // is already persisted in dkg_pubinfo_meta_store
-            if tonic_handle_potential_err(
-                storage
-                    .data_exists(&tonic_handle_potential_err(
-                        storage.compute_url(
-                            &request_id.to_string(),
-                            &PubDataType::PublicKey.to_string(),
-                        ),
-                        "Could not compute url for public key".to_string(),
-                    )?)
-                    .await,
-                "Could not validate if the public key exist".to_string(),
-            )? || tonic_handle_potential_err(
-                storage
-                    .data_exists(&tonic_handle_potential_err(
-                        storage.compute_url(
-                            &request_id.to_string(),
-                            &PubDataType::ServerKey.to_string(),
-                        ),
-                        "Could not compute url for server key".to_string(),
-                    )?)
-                    .await,
-                "Could not validate if the server key exist".to_string(),
-            )? || tonic_handle_potential_err(
-                storage
-                    .data_exists(&tonic_handle_potential_err(
-                        storage
-                            .compute_url(&request_id.to_string(), &PubDataType::SnsKey.to_string()),
-                        "Could not compute url for SnS key".to_string(),
-                    )?)
-                    .await,
-                "Could not validate if the SnS key exist".to_string(),
-            )? {
-                tracing::warn!(
-                    "Keys with request ID {} already exist!",
-                    request_id.to_string()
-                );
-                return Err(tonic::Status::new(
-                    tonic::Code::AlreadyExists,
-                    format!("Keys with request ID {} already exist!", request_id),
-                ));
-            }
         }
 
         //Retrieve kg params and preproc_id
@@ -1840,7 +1703,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 }
 
 #[tonic::async_trait]
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> KeyGenerator
+impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static> KeyGenerator
     for RealKeyGenerator<PubS, PrivS>
 {
     async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
@@ -2034,19 +1897,17 @@ impl KeyGenPreprocessor for RealPreprocessor {
 }
 
 pub struct RealCrsGenerator<
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: Storage + Send + Sync + 'static,
 > {
-    crs_materials: Arc<RwLock<HashMap<RequestId, CompactPkePublicParams>>>,
     base_kms: BaseKmsStruct,
-    public_storage: Arc<Mutex<PubS>>,
-    private_storage: Arc<Mutex<PrivS>>,
+    crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     crs_meta_store: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
     session_preparer: SessionPreparer,
     rate_limiter: RateLimiter,
 }
 
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
+impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
     RealCrsGenerator<PubS, PrivS>
 {
     async fn inner_crs_gen_from_request(
@@ -2130,9 +1991,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             .await?;
 
         let meta_store = Arc::clone(&self.crs_meta_store);
-        let public_storage = Arc::clone(&self.public_storage);
-        let private_storage = Arc::clone(&self.private_storage);
-        let crs_materials = Arc::clone(&self.crs_materials);
+        let crypto_storage = self.crypto_storage.clone();
         let owned_req_id = req_id.to_owned();
         let eip712_domain_copy = eip712_domain.cloned();
 
@@ -2149,127 +2008,77 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             .get_params_basics_handle()
             .get_compact_pk_enc_params();
         let dkg_params_copy = *dkg_params;
-        let _handle = tokio::spawn(async move {
-            let _permit = permit;
-            let crs_start_timer = Instant::now();
-            let pp = if insecure {
-                // We let the first party sample the seed (we are using 1-based party IDs)
-                let input_party_id = 1;
-                if my_role.one_based() == input_party_id {
-                    let crs_res = async_generate_crs(&sig_key, rng, dkg_params_copy, max_num_bits, eip712_domain_copy.as_ref()).await;
-                    let crs = match crs_res {
-                        Ok((crs, _)) => crs,
-                        Err(e) => {
-                            let mut guarded_meta_store = meta_store.write().await;
-                            let _ = guarded_meta_store
-                                .update(&owned_req_id, HandlerStatus::Error(e.to_string()));
-                            return;
-                        }
-                    };
-                    transfer_crs(&session, Some(crs), input_party_id).await
+        let _handle = tokio::spawn(
+            async move {
+                let _permit = permit;
+                let crs_start_timer = Instant::now();
+                let pp = if insecure {
+                    // We let the first party sample the seed (we are using 1-based party IDs)
+                    let input_party_id = 1;
+                    if my_role.one_based() == input_party_id {
+                        let crs_res = async_generate_crs(
+                            &sig_key,
+                            rng,
+                            dkg_params_copy,
+                            max_num_bits,
+                            eip712_domain_copy.as_ref(),
+                        )
+                        .await;
+                        let crs = match crs_res {
+                            Ok((crs, _)) => crs,
+                            Err(e) => {
+                                let mut guarded_meta_store = meta_store.write().await;
+                                let _ = guarded_meta_store
+                                    .update(&owned_req_id, HandlerStatus::Error(e.to_string()));
+                                return;
+                            }
+                        };
+                        transfer_crs(&session, Some(crs), input_party_id).await
+                    } else {
+                        transfer_crs(&session, None, input_party_id).await
+                    }
                 } else {
-                    transfer_crs(&session, None, input_party_id).await
-                }
-            } else {
-                // real, secure ceremony (insecure = false)
-                let real_ceremony = RealCeremony::default();
-                let internal_pp = real_ceremony
-                    .execute::<Z64, _, _>(&mut session, witness_dim, max_num_bits)
-                    .await;
-                internal_pp.and_then(|internal| internal.try_into_tfhe_zk_pok_pp(&pke_params))
-            };
-            let res_info_pp = pp.and_then(|pp| {
+                    // real, secure ceremony (insecure = false)
+                    let real_ceremony = RealCeremony::default();
+                    let internal_pp = real_ceremony
+                        .execute::<Z64, _, _>(&mut session, witness_dim, max_num_bits)
+                        .await;
+                    internal_pp.and_then(|internal| internal.try_into_tfhe_zk_pok_pp(&pke_params))
+                };
+                let res_info_pp = pp.and_then(|pp| {
                     compute_info(&sig_key, &pp, eip712_domain_copy.as_ref()).map(|info| (pp, info))
-            });
-            let f = || async {
-                // we take these locks at the same time in case there are races
-                // on return, the locks should be dropped in the correct order also
-                let mut pub_storage = public_storage.lock().await;
-                let mut priv_storage = private_storage.lock().await;
-                let mut guarded_meta_store = meta_store.write().await;
-                let mut crs_materials_guard = crs_materials.write().await;
+                });
 
                 let (pp_id, meta_data) = match res_info_pp {
                     Ok((meta, pp_id)) => (meta, pp_id),
                     Err(e) => {
                         let mut guarded_meta_store = meta_store.write().await;
                         // We cannot do much if updating the storage fails at this point...
-                        let _ = guarded_meta_store.update(
-                            &owned_req_id,
-                            HandlerStatus::Error(e.to_string()),
-                        );
+                        let _ = guarded_meta_store
+                            .update(&owned_req_id, HandlerStatus::Error(e.to_string()));
                         return;
                     }
                 };
 
-                if store_versioned_at_request_id(
-                    &mut (*priv_storage),
-                    &owned_req_id,
-                    &meta_data,
-                    &PrivDataType::CrsInfo.to_string(),
-                )
-                .await
-                .is_ok()
-                && store_versioned_at_request_id(
-                    &mut (*pub_storage),
-                    &owned_req_id,
-                    &pp_id,
-                    &PubDataType::CRS.to_string(),
-                )
-                .await
-                .is_ok() &&
-                guarded_meta_store.update(&owned_req_id, HandlerStatus::Done(meta_data))
-                    .inspect_err(|e| {
-                        tracing::error!("Error ({e}) while updating CRS meta store for {}", owned_req_id)
-                    })
-                .is_ok() &&
+                if let Err(e) = crypto_storage
+                    .write_crs_with_meta_store(&owned_req_id, pp_id, meta_data, meta_store)
+                    .await
                 {
-                    match crs_materials_guard.insert(owned_req_id.clone(), pp_id) {
-                        Some(_) => Err(anyhow_error_and_log(format!("CRS already exists in crs_materials for {}", owned_req_id))),
-                        None => Ok(())
-                    }
-                }.is_ok()
-                {
-                    /* no need to clean up if everything is ok */
-                } else {
-                    tracing::error!("Could not store all the CRS data from request ID {owned_req_id}. Deleting any dangling data.");
-                    // Try to delete stored data to avoid anything dangling
-                    // Ignore any failure to delete something since it might be because the data did not get created
-                    // In any case, we can't do much.
-                    let _ = delete_at_request_id(
-                        &mut (*pub_storage),
-                        &owned_req_id,
-                        &PubDataType::CRS.to_string(),
-                    )
-                    .await;
-                    let _ = delete_at_request_id(
-                        &mut (*priv_storage),
-                        &owned_req_id,
-                        &PrivDataType::CrsInfo.to_string(),
-                    )
-                    .await;
-                    // We cannot do much if updating the storage fails at this point...
-                    let _ = guarded_meta_store.update(
-                        &owned_req_id,
-                        HandlerStatus::Error(format!(
-                            "failed to store data to public storage for ID {}",
-                            owned_req_id
-                        )),
+                    tracing::error!(
+                        "Error \"{e:?}\" occured to store CrsGen result for request {owned_req_id}"
                     );
-                    let _ = crs_materials_guard.remove(&owned_req_id).ok_or(
-                        anyhow_error_and_log(format!("Removing CRS, but CRS already exists in crs_materials for {}", owned_req_id))
-                    );
+                    return;
                 }
-            };
-            let _ = f().await;
 
-            let crs_stop_timer = Instant::now();
-            let elapsed_time = crs_stop_timer.duration_since(crs_start_timer);
-            tracing::info!(
-                "CRS stored. CRS ceremony time was {:?} ms",
-                (elapsed_time).as_millis()
-            );
-        }.instrument(tracing::Span::current()));
+                let crs_stop_timer = Instant::now();
+                let elapsed_time = crs_stop_timer.duration_since(crs_start_timer);
+                tracing::info!(
+                    "CRS stored. CRS ceremony time was {:?} ms",
+                    (elapsed_time).as_millis()
+                );
+            }
+            .instrument(tracing::Span::current()),
+        );
         Ok(())
     }
 
@@ -2291,7 +2100,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 }
 
 #[tonic::async_trait]
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> CrsGenerator
+impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static> CrsGenerator
     for RealCrsGenerator<PubS, PrivS>
 {
     async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
@@ -2308,23 +2117,21 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 
 #[cfg(feature = "insecure")]
 pub struct RealInsecureCrsGenerator<
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: Storage + Send + Sync + 'static,
 > {
     real_crs_generator: RealCrsGenerator<PubS, PrivS>,
 }
 
 #[cfg(feature = "insecure")]
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
+impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
     RealInsecureCrsGenerator<PubS, PrivS>
 {
     async fn from_real_crsgen(value: &RealCrsGenerator<PubS, PrivS>) -> Self {
         Self {
             real_crs_generator: RealCrsGenerator {
-                crs_materials: Arc::clone(&value.crs_materials),
                 base_kms: value.base_kms.new_instance().await,
-                public_storage: Arc::clone(&value.public_storage),
-                private_storage: Arc::clone(&value.private_storage),
+                crypto_storage: value.crypto_storage.clone(),
                 crs_meta_store: Arc::clone(&value.crs_meta_store),
                 session_preparer: value.session_preparer.new_instance().await,
                 rate_limiter: value.rate_limiter.clone(),
@@ -2335,7 +2142,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 
 #[cfg(feature = "insecure")]
 #[tonic::async_trait]
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
+impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
     InsecureCrsGenerator for RealInsecureCrsGenerator<PubS, PrivS>
 {
     async fn insecure_crs_gen(
@@ -2356,16 +2163,20 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
     }
 }
 
-pub struct RealProvenCtVerifier {
-    crs_materials: Arc<RwLock<HashMap<RequestId, CompactPkePublicParams>>>,
-    fhe_keys: Arc<RwLock<HashMap<RequestId, WrappedThresholdFheKeys>>>,
+pub struct RealProvenCtVerifier<
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: Storage + Send + Sync + 'static,
+> {
     base_kms: BaseKmsStruct,
+    crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     ct_verifier_payload_meta_store: Arc<RwLock<MetaStore<VerifyProvenCtResponsePayload>>>,
     rate_limiter: RateLimiter,
 }
 
 #[tonic::async_trait]
-impl ProvenCtVerifier for RealProvenCtVerifier {
+impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static> ProvenCtVerifier
+    for RealProvenCtVerifier<PubS, PrivS>
+{
     async fn verify(
         &self,
         request: Request<VerifyProvenCtRequest>,
@@ -2378,6 +2189,7 @@ impl ProvenCtVerifier for RealProvenCtVerifier {
 
         let meta_store = Arc::clone(&self.ct_verifier_payload_meta_store);
         let sigkey = Arc::clone(&self.base_kms.sig_key);
+        let crypto_storage = self.crypto_storage.clone();
 
         // Check well-formedness of the request and return an error early if there's an error
         let request_id = request
@@ -2393,10 +2205,8 @@ impl ProvenCtVerifier for RealProvenCtVerifier {
             .clone();
         validate_request_id(&request_id)?;
 
-        // Arc::clone doesn't work here for dyn Trait
         non_blocking_verify_proven_ct(
-            self.crs_materials.clone(),
-            self.fhe_keys.clone(),
+            (&crypto_storage).into(),
             meta_store,
             request_id.clone(),
             request.into_inner(),

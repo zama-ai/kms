@@ -1,12 +1,11 @@
 use super::rpc_types::{
-    compute_external_pt_signature, BaseKms, PrivDataType, SignedPubDataHandleInternal,
-    CURRENT_FORMAT_VERSION,
+    compute_external_pt_signature, BaseKms, SignedPubDataHandleInternal, CURRENT_FORMAT_VERSION,
 };
+use crate::cryptography::central_kms::verify_reencryption_eip712;
 use crate::cryptography::central_kms::{
     async_generate_crs, async_generate_fhe_keys, async_reencrypt, central_decrypt, BaseKmsStruct,
     SoftwareKms,
 };
-use crate::cryptography::central_kms::{verify_reencryption_eip712, WrappedKmsFheKeyHandles};
 use crate::cryptography::internal_crypto_types::PublicEncKey;
 use crate::cryptography::proven_ct_verifier::{
     get_verify_proven_ct_result, non_blocking_verify_proven_ct,
@@ -19,14 +18,8 @@ use crate::kms::{
     ReencryptionResponsePayload, RequestId, SignedPubDataHandle, TypedCiphertext,
     VerifyProvenCtRequest, VerifyProvenCtResponse,
 };
-use crate::rpc::rpc_types::{
-    protobuf_to_alloy_domain_option, PubDataType, WrappedPublicKey, WrappedPublicKeyOwned,
-};
+use crate::rpc::rpc_types::{protobuf_to_alloy_domain_option, PubDataType};
 use crate::storage::Storage;
-use crate::storage::{
-    delete_at_request_id, delete_pk_at_request_id, store_pk_at_request_id,
-    store_versioned_at_request_id,
-};
 use crate::util::meta_store::{handle_res_mapping, HandlerStatus};
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
 use alloy_primitives::Address;
@@ -137,142 +130,78 @@ impl<
             )?;
         }
 
-        let public_storage = Arc::clone(&self.public_storage);
-        let private_storage = Arc::clone(&self.private_storage);
         let meta_store = Arc::clone(&self.key_meta_map);
-        let fhe_keys = Arc::clone(&self.fhe_keys);
+        let crypto_storage = self.crypto_storage.clone();
         let sk = Arc::clone(&self.base_kms.sig_key);
 
         let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref());
 
-        let _handle = tokio::spawn(async move {
-            let _permit = permit;
-            let start = tokio::time::Instant::now();
-            {
-                // Check if the key already exists
-                let key_handles = fhe_keys.read().await;
-                if key_handles.contains_key(&req_id) {
-                    let mut guarded_meta_store = meta_store.write().await;
-                    if let Err(e) = METRICS
-                        .increment_error_counter(OP_KEYGEN, ERR_KEY_EXISTS)
-                        .map_err(|e| tracing::warn!("Failed to increment error counter: {:?}", e))
+        let _handle =
+            tokio::spawn(
+                async move {
+                    let _permit = permit;
+                    let start = tokio::time::Instant::now();
                     {
-                        tracing::warn!("Failed to increment error counter: {:?}", e);
+                        // Check if the key already exists
+                        if crypto_storage
+                            .read_cloned_centralized_fhe_keys_from_cache(&req_id)
+                            .await
+                            .is_ok()
+                        {
+                            let mut guarded_meta_store = meta_store.write().await;
+                            if let Err(e) = METRICS
+                                .increment_error_counter(OP_KEYGEN, ERR_KEY_EXISTS)
+                                .map_err(|e| {
+                                    tracing::warn!("Failed to increment error counter: {:?}", e)
+                                })
+                            {
+                                tracing::warn!("Failed to increment error counter: {:?}", e);
+                            }
+                            let _ = guarded_meta_store.update(
+                                &req_id,
+                                HandlerStatus::Error(format!(
+                                    "Failed key generation: Key with ID {req_id} already exists!"
+                                )),
+                            );
+                            return;
+                        }
                     }
-                    let _ = guarded_meta_store.update(
-                        &req_id,
-                        HandlerStatus::Error(format!(
-                            "Failed key generation: Key with ID {req_id} already exists!"
-                        )),
-                    );
-                    return;
+                    let (fhe_key_set, key_info) =
+                        match async_generate_fhe_keys(&sk, params, None, eip712_domain.as_ref())
+                            .await
+                        {
+                            Ok((fhe_key_set, key_info)) => (fhe_key_set, key_info),
+                            Err(_e) => {
+                                let mut guarded_meta_store = meta_store.write().await;
+                                let _ = guarded_meta_store.update(
+                                    &req_id,
+                                    HandlerStatus::Error(format!(
+                                        "Failed key generation: Key with ID {req_id}!"
+                                    )),
+                                );
+                                return;
+                            }
+                        };
+
+                    if let Err(e) = crypto_storage
+                        .write_centralized_keys_with_meta_store(
+                            &req_id,
+                            key_info,
+                            fhe_key_set,
+                            meta_store,
+                        )
+                        .await
+                    {
+                        tracing::error!(
+                            "Error \"{e:?}\" occured to store KeyGen result for request {req_id}",
+                        );
+                        return;
+                    };
+
+                    tracing::info!("⏱️ Core Event Time for Keygen: {:?}", start.elapsed());
                 }
-            }
-            let (fhe_key_set, key_info) = match async_generate_fhe_keys(
-                &sk,
-                params,
-                None,
-                eip712_domain.as_ref(),
-            )
-            .await
-            {
-                Ok((fhe_key_set, key_info)) => (fhe_key_set, key_info),
-                Err(_e) => {
-                    let mut guarded_meta_store = meta_store.write().await;
-                    let _ = guarded_meta_store.update(
-                        &req_id,
-                        HandlerStatus::Error(format!(
-                            "Failed key generation: Key with ID {req_id}!"
-                        )),
-                    );
-                    return;
-                }
-            };
-
-            let mut pub_storage = public_storage.lock().await;
-            let mut priv_storage = private_storage.lock().await;
-
-            //Try to store the new data
-            if store_versioned_at_request_id(
-                &mut (*priv_storage),
-                &req_id,
-                &key_info,
-                &PrivDataType::FheKeyInfo.to_string(),
-            )
-            .await
-            .is_ok()
-                && store_pk_at_request_id(
-                    &mut (*pub_storage),
-                    &req_id,
-                    WrappedPublicKey::Compact(&fhe_key_set.public_key),
-                )
-                .await
-                .is_ok()
-                && store_versioned_at_request_id(
-                    &mut (*pub_storage),
-                    &req_id,
-                    &fhe_key_set.server_key,
-                    &PubDataType::ServerKey.to_string(),
-                )
-                .await
-                .is_ok()
-            {
-                let pk_info = key_info.public_key_info.to_owned();
-                let wrapped_key_info = WrappedKmsFheKeyHandles {
-                    inner: key_info,
-                    public_key: WrappedPublicKeyOwned::Compact(fhe_key_set.public_key.clone()),
-                };
-                {
-                    let mut fhe_key_map = fhe_keys.write().await;
-                    // If something is already in the map, then there is a bug as we already checked for the key not existing
-                    fhe_key_map.insert(req_id.clone(), wrapped_key_info);
-                };
-                {
-                    let mut guarded_meta_store = meta_store.write().await;
-                    let _ = guarded_meta_store.update(
-                        &req_id,
-                        HandlerStatus::Done(pk_info),
-                    );
-                }
-            } else {
-                tracing::error!("Could not store all the key data from request ID {req_id}. Deleting any dangling data.");
-                // Try to delete stored data to avoid anything dangling
-                // Ignore any failure to delete something since it might be because the data did not get created
-                // In any case, we can't do much.
-                let _ = delete_pk_at_request_id(&mut (*pub_storage), &req_id).await;
-                let _ = delete_at_request_id(
-                    &mut (*pub_storage),
-                    &req_id,
-                    &PubDataType::ServerKey.to_string(),
-                )
-                .await;
-                let _ = delete_at_request_id(
-                    &mut (*pub_storage),
-                    &req_id,
-                    &PubDataType::SnsKey.to_string(),
-                )
-                .await;
-                let _ = delete_at_request_id(
-                    &mut (*priv_storage),
-                    &req_id,
-                    &PrivDataType::FheKeyInfo.to_string(),
-                )
-                .await;
-                let mut guarded_meta_store = meta_store.write().await;
-                let _ = guarded_meta_store.update(
-                        &req_id,
-                        HandlerStatus::Error(format!(
-                            "Failed key generation: Key with ID {req_id}, could not insert result persistant storage!"
-                        )),
-                    );
-            }
-
-
-            tracing::info!(
-                "⏱️ Core Event Time for Keygen: {:?}",
-                start.elapsed()
+                .instrument(tracing::Span::current()),
             );
-        }.instrument(tracing::Span::current()));
 
         Ok(Response::new(Empty {}))
     }
@@ -332,19 +261,26 @@ impl<
         }
 
         let meta_store = Arc::clone(&self.reenc_meta_map);
-        let fhe_keys = Arc::clone(&self.fhe_keys);
         let sig_key = Arc::clone(&self.base_kms.sig_key);
+        let crypto_storage = self.crypto_storage.clone();
         let mut rng = self.base_kms.new_rng().await;
+
+        tonic_handle_potential_err(
+            crypto_storage.refresh_centralized_fhe_keys(&key_id).await,
+            "Cannot find centralized keys".to_string(),
+        )?;
 
         // we do not need to hold the handle,
         // the result of the computation is tracked by the reenc_meta_store
         let _handle = tokio::spawn(
             async move {
                 let _permit = permit;
-                let fhe_keys_rlock = fhe_keys.read().await;
-                let keys = match fhe_keys_rlock.get(&key_id) {
-                    Some(keys) => keys,
-                    None => {
+                let keys = match crypto_storage
+                    .read_cloned_centralized_fhe_keys_from_cache(&key_id)
+                    .await
+                {
+                    Ok(k) => k,
+                    Err(e) => {
                         let mut guarded_meta_store = meta_store.write().await;
                         if let Err(e) =
                             METRICS.increment_error_counter(OP_REENCRYPT, ERR_KEY_NOT_FOUND)
@@ -354,7 +290,7 @@ impl<
                         let _ = guarded_meta_store.update(
                             &request_id,
                             HandlerStatus::Error(format!(
-                                "Failed reencryption: Key with ID {key_id} does not exist!"
+                                "Failed to get key ID {key_id} with error {e:?}"
                             )),
                         );
                         return;
@@ -366,7 +302,7 @@ impl<
                     &request_id
                 );
                 match async_reencrypt::<PubS, PrivS>(
-                    &keys.inner,
+                    &keys,
                     &sig_key,
                     &mut rng,
                     &ciphertext,
@@ -491,18 +427,22 @@ impl<
         }
 
         let meta_store = Arc::clone(&self.dec_meta_store);
-        let fhe_keys = Arc::clone(&self.fhe_keys);
         let sigkey = Arc::clone(&self.base_kms.sig_key);
+        let crypto_storage = self.crypto_storage.clone();
+
+        tonic_handle_potential_err(
+            crypto_storage.refresh_centralized_fhe_keys(&key_id).await,
+            "Cannot find centralized keys".to_string(),
+        )?;
 
         // we do not need to hold the handle,
         // the result of the computation is tracked by the dec_meta_store
         let _handle = tokio::spawn(
             async move {
                 let _permit = permit;
-                let fhe_keys_rlock = fhe_keys.read().await;
-                let keys = match fhe_keys_rlock.get(&key_id) {
-                    Some(keys) => keys.clone(),
-                    None => {
+                let keys = match crypto_storage.read_cloned_centralized_fhe_keys_from_cache(&key_id).await {
+                    Ok(k) => k,
+                    Err(e) => {
                         let mut guarded_meta_store = meta_store.write().await;
                         if let Err(e) = METRICS.increment_error_counter(OP_DECRYPT, ERR_KEY_NOT_FOUND) {
                             tracing::warn!("Failed to increment error counter: {:?}", e);
@@ -510,7 +450,7 @@ impl<
                         let _ = guarded_meta_store.update(
                             &request_id,
                             HandlerStatus::Error(format!(
-                                "Failed decryption: Key with ID {key_id} does not exist!"
+                                "Failed to get key ID {key_id} with error {e:?}"
                             )),
                         );
                         return;
@@ -530,7 +470,7 @@ impl<
                 // run the computation in a separate rayon thread to avoid blocking the tokio runtime
                 let (send, recv) = tokio::sync::oneshot::channel();
                 rayon::spawn(move || {
-                    let decryptions = central_decrypt::<PubS, PrivS>(&keys.inner, &ciphertexts);
+                    let decryptions = central_decrypt::<PubS, PrivS>(&keys, &ciphertexts);
                     let _ = send.send(decryptions);
                 });
                 let decryptions = recv.await;
@@ -665,11 +605,11 @@ impl<
             .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
 
         let inner = request.into_inner();
-        let request_id = tonic_some_or_err(
+        let req_id = tonic_some_or_err(
             inner.request_id,
             "Request ID is not set (crs gen)".to_string(),
         )?;
-        validate_request_id(&request_id)?;
+        validate_request_id(&req_id)?;
         let params = tonic_handle_potential_err(
             retrieve_parameters(inner.params),
             "Parameter choice is not recognized".to_string(),
@@ -677,119 +617,63 @@ impl<
         {
             let mut guarded_meta_store = self.crs_meta_map.write().await;
             tonic_handle_potential_err(
-                guarded_meta_store.insert(&request_id),
+                guarded_meta_store.insert(&req_id),
                 "Could not insert CRS generation into meta store".to_string(),
             )?;
         }
 
-        let public_storage = Arc::clone(&self.public_storage);
-        let private_storage = Arc::clone(&self.private_storage);
         let meta_store = Arc::clone(&self.crs_meta_map);
-        let crs_materials = Arc::clone(&self.crs_materials);
+        let crypto_storage = self.crypto_storage.clone();
         let sk = Arc::clone(&self.base_kms.sig_key);
         let rng = self.base_kms.new_rng().await;
 
         let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref());
 
-        let _handle = tokio::spawn(async move {
-            let _permit = permit;
-            let start = tokio::time::Instant::now();
+        let _handle = tokio::spawn(
+            async move {
+                let _permit = permit;
+                let start = tokio::time::Instant::now();
 
-            let (pp, crs_info) = match async_generate_crs(
-                &sk,
-                rng,
-                params,
-                inner.max_num_bits,
-                eip712_domain.as_ref(),
-            )
-            .await
-            {
-                Ok((pp, crs_info)) => (pp, crs_info),
-                Err(e) => {
-                    tracing::error!("Error in inner CRS generation: {}", e);
-                    let mut guarded_meta_store = meta_store.write().await;
-                    let _ = guarded_meta_store.update(
-                        &request_id,
-                        HandlerStatus::Error(format!(
-                            "Failed CRS generation for CRS with ID {request_id}!"
-                        )),
+                let (pp, crs_info) = match async_generate_crs(
+                    &sk,
+                    rng,
+                    params,
+                    inner.max_num_bits,
+                    eip712_domain.as_ref(),
+                )
+                .await
+                {
+                    Ok((pp, crs_info)) => (pp, crs_info),
+                    Err(e) => {
+                        tracing::error!("Error in inner CRS generation: {}", e);
+                        let mut guarded_meta_store = meta_store.write().await;
+                        let _ = guarded_meta_store.update(
+                            &req_id,
+                            HandlerStatus::Error(format!(
+                                "Failed CRS generation for CRS with ID {req_id}!"
+                            )),
+                        );
+                        METRICS
+                            .increment_error_counter(OP_CRS_GEN, ERR_CRS_GEN_FAILED)
+                            .ok();
+                        return;
+                    }
+                };
+
+                if let Err(e) = crypto_storage
+                    .write_crs_with_meta_store(&req_id, pp, crs_info, meta_store)
+                    .await
+                {
+                    tracing::error!(
+                        "Error \"{e:?}\" occured to store CrsGen result for request {req_id}"
                     );
-                    METRICS.increment_error_counter(OP_CRS_GEN, ERR_CRS_GEN_FAILED).ok();
                     return;
                 }
-            };
 
-            // take these locks at the same time to avoid deadlocks
-            let mut pub_storage = public_storage.lock().await;
-            let mut priv_storage = private_storage.lock().await;
-            let mut guarded_meta_store = meta_store.write().await;
-            let mut crs_materials_guard = crs_materials.write().await;
-
-            // try to store all the necessary data making use of short circuiting
-            if store_versioned_at_request_id(
-                &mut (*priv_storage),
-                &request_id,
-                &crs_info,
-                &PrivDataType::CrsInfo.to_string(),
-            )
-            .await.is_ok()
-            && store_versioned_at_request_id(
-                &mut (*pub_storage),
-                &request_id,
-                &pp,
-                &PubDataType::CRS.to_string(),
-            )
-            .await.is_ok()
-            && guarded_meta_store.update(&request_id, HandlerStatus::Done(crs_info)).inspect_err(|e|
-                tracing::error!("Error ({e}) while updating CRS meta store for {}", request_id)
-            )
-            .is_ok()
-            && {
-                match  crs_materials_guard.insert(request_id.clone(), pp) {
-                    Some(_) => {
-                        Err(anyhow_error_and_log(format!("CRS already exists in crs_materials for {}", request_id)))
-                    }
-                    None => Ok(())
-                }
+                tracing::info!("⏱️ Core Event Time for CRS-gen: {:?}", start.elapsed());
             }
-            .is_ok()
-            {
-                /* no need to clean up if everything is ok */
-            }
-            else {
-                tracing::error!("Could not store all the CRS data from request ID {request_id}. Deleting any dangling data.");
-                // Try to delete stored data to avoid anything dangling
-                // Ignore any failure to delete something since it might be because the data did not get created
-                // In any case, we can't do much.
-                let _ = delete_at_request_id(
-                    &mut (*pub_storage),
-                    &request_id,
-                    &PubDataType::CRS.to_string(),
-                )
-                .await;
-                let _ = delete_at_request_id(
-                    &mut (*priv_storage),
-                    &request_id,
-                    &PrivDataType::CrsInfo.to_string(),
-                )
-                .await;
-                // We cannot do much if updating the meta store fails at this point...
-                let _ = guarded_meta_store.update(
-                    &request_id,
-                    HandlerStatus::Error(format!(
-                        "Failed to store CRS data to public storage for ID {}",
-                        request_id
-                    )),
-                );
-                let _ = crs_materials_guard.remove(&request_id).ok_or(
-                    anyhow_error_and_log(format!("Removing CRS; but CRS already exists in crs_materials for {}", request_id))
-                );
-            }
-            tracing::info!(
-                "⏱️ Core Event Time for CRS-gen: {:?}",
-                start.elapsed()
-            );
-        }.instrument(tracing::Span::current()));
+            .instrument(tracing::Span::current()),
+        );
         Ok(Response::new(Empty {}))
     }
 
@@ -870,8 +754,7 @@ impl<
         validate_request_id(&request_id)?;
 
         non_blocking_verify_proven_ct(
-            self.crs_materials.clone(),
-            self.fhe_keys.clone(),
+            (&self.crypto_storage).into(),
             meta_store,
             request_id.clone(),
             request.into_inner(),

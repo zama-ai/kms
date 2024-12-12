@@ -1,4 +1,3 @@
-use super::proven_ct_verifier::PkGetter;
 use super::signcryption::{
     internal_verify_sig, safe_serialize_hash_element_versioned, sign, signcrypt,
 };
@@ -14,12 +13,13 @@ use crate::kms::ReencryptionRequest;
 #[cfg(feature = "non-wasm")]
 use crate::kms::RequestId;
 use crate::kms::{TypedCiphertext, VerifyProvenCtResponsePayload};
+use crate::rpc::rpc_types::compute_external_pubdata_signature;
 #[cfg(feature = "non-wasm")]
 use crate::rpc::rpc_types::SignedPubDataHandleInternal;
-use crate::rpc::rpc_types::{compute_external_pubdata_signature, WrappedPublicKeyOwned};
 use crate::rpc::rpc_types::{
     BaseKms, Kms, Plaintext, PrivDataType, PubDataType, SigncryptionPayload,
 };
+use crate::storage::crypto_material::CentralizedCryptoMaterialStorage;
 #[cfg(feature = "non-wasm")]
 use crate::storage::Storage;
 use crate::storage::{read_all_data_versioned, read_pk_at_request_id};
@@ -382,7 +382,7 @@ pub(crate) fn verify_reencryption_eip712(request: &ReencryptionRequest) -> anyho
 #[cfg(feature = "non-wasm")]
 #[cfg_attr(any(test, feature = "testing"), derive(Serialize, Deserialize))]
 pub struct SoftwareKmsKeys {
-    pub(crate) key_info: KeysInfoHashMap,
+    pub(crate) key_info: HashMap<RequestId, KmsFheKeyHandles>,
     pub(crate) sig_sk: PrivateSigKey,
     pub(crate) sig_pk: PublicSigKey,
 }
@@ -397,14 +397,6 @@ pub struct CentralizedTestingKeys {
     pub client_pk: PublicSigKey,
     pub client_sk: PrivateSigKey,
     pub server_keys: Vec<PublicSigKey>,
-}
-
-pub(crate) type KeysInfoHashMap = HashMap<RequestId, WrappedKmsFheKeyHandles>;
-
-impl PkGetter for KeysInfoHashMap {
-    fn get_pk(&self, req_id: &RequestId) -> Option<&WrappedPublicKeyOwned> {
-        self.get(req_id).map(|v| &v.public_key)
-    }
 }
 
 #[cfg(feature = "non-wasm")]
@@ -427,21 +419,6 @@ pub struct KmsFheKeyHandles {
 
 impl Named for KmsFheKeyHandles {
     const NAME: &'static str = "KmsFheKeyHandles";
-}
-
-/// This is an internal structure that is a wrapper around [KmsFheKeyHandles]
-/// because we want to keep some unversioned data along with [KmsFheKeyHandles],
-/// which is versioned since we do not want to liberally add/remove things into
-/// versioned data structures.
-// This is needed because it's a clearner to have one data structure for
-// accessing all the keys and key materials that we need.
-// In the future we'd like make a unified interface for storing all key materials.
-// We only need to derive (de)serialize for test, which is why they're under a cfg_attr.
-#[derive(Clone)]
-#[cfg_attr(any(test, feature = "testing"), derive(Serialize, Deserialize))]
-pub(crate) struct WrappedKmsFheKeyHandles {
-    pub(crate) inner: KmsFheKeyHandles,
-    pub(crate) public_key: WrappedPublicKeyOwned,
 }
 
 #[cfg(feature = "non-wasm")]
@@ -480,10 +457,11 @@ impl KmsFheKeyHandles {
 
 // Values that need to be stored temporarily as part of an async key generation call.
 #[cfg(feature = "non-wasm")]
-type KeyGenCallValues = HashMap<PubDataType, SignedPubDataHandleInternal>;
+pub type KeyGenCallValues = HashMap<PubDataType, SignedPubDataHandleInternal>;
 
 // Values that need to be stored temporarily as part of an async decryption call.
-// Represents the digest of the request and the result of the decryption (a batch of plaintests), as well as an external signature on the batch.
+// Represents the digest of the request and the result of the decryption (a batch of plaintests),
+// as well as an external signature on the batch.
 #[cfg(feature = "non-wasm")]
 pub type DecCallValues = (Vec<u8>, Vec<Plaintext>, Vec<u8>);
 
@@ -496,18 +474,12 @@ pub type ReencCallValues = (FheType, Vec<u8>, Vec<u8>);
 /// Observe that the order of write access MUST be as follows to avoid dead locks:
 /// PublicStorage -> PrivateStorage -> FheKeys/XXX_meta_map
 #[cfg(feature = "non-wasm")]
-pub struct SoftwareKms<PubS: Storage, PrivS: Storage> {
+pub struct SoftwareKms<
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: Storage + Send + Sync + 'static,
+> {
     pub(crate) base_kms: BaseKmsStruct,
-    // Storage for data that is supposed to be readable by anyone on the internet,
-    // but _may_ be suseptible to malicious modifications.
-    pub(crate) public_storage: Arc<Mutex<PubS>>,
-    // Storage for data that is supposed to only be readable, writable and modifiable by the entity
-    // owner and where any modification will be detected.
-    pub(crate) private_storage: Arc<Mutex<PrivS>>,
-    // Map storing the already generated FHE keys.
-    pub(crate) fhe_keys: Arc<RwLock<KeysInfoHashMap>>,
-    // Map storing the already generated CRS.
-    pub(crate) crs_materials: Arc<RwLock<HashMap<RequestId, CompactPkePublicParams>>>,
+    pub(crate) crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
     // Map storing ongoing key generation requests.
     pub(crate) key_meta_map: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
     // Map storing ongoing decryption requests.
@@ -739,19 +711,13 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             alloy_signer::utils::public_key_to_address(pk)
         );
 
-        let key_info_versioned: HashMap<RequestId, KmsFheKeyHandles> =
+        let key_info: HashMap<RequestId, KmsFheKeyHandles> =
             read_all_data_versioned(&private_storage, &PrivDataType::FheKeyInfo.to_string())
                 .await?;
-        let mut key_info = HashMap::new();
-        for (id, versioned_handles) in key_info_versioned {
-            let public_key = read_pk_at_request_id(&public_storage, &id).await?;
-            key_info.insert(
-                id,
-                WrappedKmsFheKeyHandles {
-                    inner: versioned_handles,
-                    public_key,
-                },
-            );
+        let mut pk_map = HashMap::new();
+        for id in key_info.keys() {
+            let public_key = read_pk_at_request_id(&public_storage, id).await?;
+            pk_map.insert(id.clone(), public_key);
         }
         tracing::info!(
             "loaded key_info with key_ids: {:?}",
@@ -765,7 +731,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             .map(|(id, info)| {
                 (
                     id.to_owned(),
-                    HandlerStatus::Done(info.inner.public_key_info.to_owned()),
+                    HandlerStatus::Done(info.public_key_info.to_owned()),
                 )
             })
             .collect();
@@ -781,12 +747,17 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         let crs: HashMap<RequestId, CompactPkePublicParams> =
             read_all_data_versioned(&public_storage, &PubDataType::CRS.to_string()).await?;
 
+        let crypto_storage = CentralizedCryptoMaterialStorage::new(
+            public_storage,
+            private_storage,
+            pk_map,
+            crs,
+            key_info,
+        );
+
         Ok(SoftwareKms {
             base_kms: BaseKmsStruct::new(sk)?,
-            public_storage: Arc::new(Mutex::new(public_storage)),
-            private_storage: Arc::new(Mutex::new(private_storage)),
-            fhe_keys: Arc::new(RwLock::new(key_info)),
-            crs_materials: Arc::new(RwLock::new(crs)),
+            crypto_storage,
             key_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(key_info_w_status))),
             dec_meta_store: Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE))),
             reenc_meta_map: Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE))),
@@ -841,25 +812,25 @@ where
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::{verify_reencryption_eip712, KmsFheKeyHandles, Storage};
+    use super::{verify_reencryption_eip712, Storage};
     #[cfg(feature = "slow_tests")]
     use crate::consts::{
         DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM, OTHER_CENTRAL_DEFAULT_ID,
     };
     use crate::consts::{DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID};
     use crate::consts::{TEST_CENTRAL_KEYS_PATH, TEST_PARAM};
+    use crate::cryptography::central_kms::SoftwareKmsKeys;
     use crate::cryptography::central_kms::{gen_sig_keys, SoftwareKms};
     use crate::cryptography::central_kms::{
         CentralizedTestingKeys, ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR,
     };
-    use crate::cryptography::central_kms::{SoftwareKmsKeys, WrappedKmsFheKeyHandles};
     use crate::cryptography::internal_crypto_types::PrivateSigKey;
     use crate::cryptography::signcryption::{
         decrypt_signcryption, ephemeral_encryption_key_generation,
         ephemeral_signcryption_key_generation, hash_element,
     };
     use crate::kms::{FheType, RequestId};
-    use crate::rpc::rpc_types::{Kms, WrappedPublicKeyOwned, CURRENT_FORMAT_VERSION};
+    use crate::rpc::rpc_types::{Kms, CURRENT_FORMAT_VERSION};
     use crate::storage::{file::FileStorage, ram::RamStorage};
     use crate::util::file_handling::read_element;
     use crate::util::key_setup::test_tools::compute_cipher;
@@ -940,25 +911,13 @@ pub(crate) mod tests {
         let seed = Some(Seed(42));
         let (sig_pk, sig_sk) = gen_sig_keys(&mut rng);
         let (pub_fhe_keys, key_info) = generate_fhe_keys(&sig_sk, dkg_params, seed, None).unwrap();
-        let mut key_info_map = HashMap::from([(
-            key_id.to_string().try_into().unwrap(),
-            WrappedKmsFheKeyHandles {
-                inner: key_info,
-                public_key: WrappedPublicKeyOwned::Compact(pub_fhe_keys.public_key.clone()),
-            },
-        )]);
+        let mut key_info_map = HashMap::from([(key_id.to_string().try_into().unwrap(), key_info)]);
 
         let (other_pub_fhe_keys, other_key_info) =
             generate_fhe_keys(&sig_sk, dkg_params, seed, None).unwrap();
 
         // Insert a key with another handle to setup a KMS with multiple keys
-        key_info_map.insert(
-            other_key_id.to_string().try_into().unwrap(),
-            WrappedKmsFheKeyHandles {
-                inner: other_key_info,
-                public_key: WrappedPublicKeyOwned::Compact(other_pub_fhe_keys.public_key.clone()),
-            },
-        );
+        key_info_map.insert(other_key_id.to_string().try_into().unwrap(), other_key_info);
         let pub_fhe_map = HashMap::from([
             (key_id.to_string().try_into().unwrap(), pub_fhe_keys.clone()),
             (
@@ -1068,7 +1027,7 @@ pub(crate) mod tests {
         };
         let kms = {
             let inner = SoftwareKms::new(
-                RamStorage::from_existing_keys_for_public_storage(&keys.software_kms_keys)
+                RamStorage::from_existing_keys_for_public_storage(&keys.pub_fhe_keys)
                     .await
                     .unwrap(),
                 RamStorage::from_existing_keys_for_private_storage(&keys.software_kms_keys)
@@ -1083,11 +1042,13 @@ pub(crate) mod tests {
             }
             inner
         };
-        let raw_plaintext = SoftwareKms::<FileStorage, FileStorage>::decrypt(
-            &kms.fhe_keys.read().await.get(key_id).unwrap().inner,
-            &ct,
-            fhe_type,
-        );
+        let key_handle = kms
+            .crypto_storage
+            .read_cloned_centralized_fhe_keys_from_cache(key_id)
+            .await
+            .unwrap();
+        let raw_plaintext =
+            SoftwareKms::<FileStorage, FileStorage>::decrypt(&key_handle, &ct, fhe_type);
         // if bad FHE key is used, then it *might* panic
         let plaintext = if sim_type == SimulationType::BadFheKey {
             match raw_plaintext {
@@ -1179,14 +1140,11 @@ pub(crate) mod tests {
             .to_classic_pbs_parameters();
         let config = ConfigBuilder::with_custom_parameters(pbs_params);
         let wrong_client_key = tfhe::ClientKey::generate(config);
-        let mut key_info = inner.fhe_keys.write().await;
-        let x: &mut KmsFheKeyHandles = &mut key_info.get_mut(key_handle).unwrap().inner;
-        let wrong_handles = KmsFheKeyHandles {
-            client_key: wrong_client_key,
-            decompression_key: None,
-            public_key_info: x.public_key_info.clone(),
-        };
-        *x = wrong_handles;
+        inner
+            .crypto_storage
+            .set_wrong_cached_client_key(key_handle, wrong_client_key)
+            .await
+            .unwrap();
     }
 
     fn set_wrong_sig_key<
@@ -1218,7 +1176,7 @@ pub(crate) mod tests {
 
         let kms = {
             let mut inner = SoftwareKms::new(
-                RamStorage::from_existing_keys_for_public_storage(&keys.software_kms_keys)
+                RamStorage::from_existing_keys_for_public_storage(&keys.pub_fhe_keys)
                     .await
                     .unwrap(),
                 RamStorage::from_existing_keys_for_private_storage(&keys.software_kms_keys)
@@ -1248,7 +1206,10 @@ pub(crate) mod tests {
         };
         let mut rng = kms.base_kms.new_rng().await;
         let raw_cipher = SoftwareKms::<FileStorage, FileStorage>::reencrypt(
-            &kms.fhe_keys.read().await.get(key_handle).unwrap().inner,
+            &kms.crypto_storage
+                .read_cloned_centralized_fhe_keys_from_cache(key_handle)
+                .await
+                .unwrap(),
             &kms.base_kms.sig_key,
             &mut rng,
             &ct,
@@ -1319,7 +1280,7 @@ pub(crate) mod tests {
         let keys = get_test_keys().await;
         let kms = {
             SoftwareKms::new(
-                RamStorage::from_existing_keys_for_public_storage(&keys.software_kms_keys)
+                RamStorage::from_existing_keys_for_public_storage(&keys.pub_fhe_keys)
                     .await
                     .unwrap(),
                 RamStorage::from_existing_keys_for_private_storage(&keys.software_kms_keys)
