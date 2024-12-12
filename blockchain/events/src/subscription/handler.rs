@@ -158,22 +158,36 @@ where
         self.update_last_seen_height(starting_height).await?;
         tracing::info!("Starting polling Blockchain on block {starting_height}");
         let mut last_height = starting_height;
+        let clonable_self = Arc::new(self);
         loop {
             //We don't sleep when catching up
             if last_height >= bc_height {
                 tracing::trace!(
                     "Waiting {} secs for next tick before getting events",
-                    self.tick_time_in_sec
+                    clonable_self.tick_time_in_sec
                 );
-                sleep(Duration::from_secs(self.tick_time_in_sec)).await;
+                sleep(Duration::from_secs(clonable_self.tick_time_in_sec)).await;
             }
-            last_height = self
-                .handle_events(handler.clone(), bc_height)
-                .await
-                .unwrap_or_else(|e| {
+            let cloned_handler = handler.clone();
+            let cloned_self = Arc::clone(&clonable_self);
+            // Spawn a task here, so in the event of a panic we catch it as a JoinError
+            // but keep going
+            let handler_handle = tokio::spawn(async move {
+                cloned_self
+                    .handle_events(cloned_handler, bc_height)
+                    .await
+                    .unwrap_or_else(|e| {
+                        tracing::error!("Error handling events: {:?}", e);
+                        last_height
+                    })
+            });
+            last_height = match handler_handle.await {
+                Ok(height) => height,
+                Err(e) => {
                     tracing::error!("Error handling events: {:?}", e);
                     last_height
-                });
+                }
+            };
         }
     }
 
