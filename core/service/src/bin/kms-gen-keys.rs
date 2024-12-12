@@ -60,9 +60,9 @@ struct Args {
     /// Optional AWS KMS API endpoint
     #[clap(long, default_value = None)]
     aws_kms_endpoint: Option<Url>,
-    /// Optional root key ID
+    /// Optional root key ID (must start with awskms://)
     #[clap(long, default_value = None)]
-    root_key_id: Option<String>,
+    root_key_id: Option<Url>,
     /// Optional parameter for the private storage URL
     #[clap(long, default_value = None)]
     priv_url: Option<Url>,
@@ -222,10 +222,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 num_parties: _,
             } => Some(i),
         };
-        let root_key_id = args
-            .root_key_id
-            .as_ref()
-            .map(|k| Url::parse(format!("awskms://{}", k).as_str()).unwrap());
         pub_storages.push(
             make_storage(
                 Some(aws_config.clone()),
@@ -242,7 +238,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             make_storage(
                 Some(aws_config.clone()),
                 args.priv_url.clone(),
-                root_key_id.clone(),
+                args.root_key_id.clone(),
                 StorageType::PRIV,
                 party_id,
                 None,

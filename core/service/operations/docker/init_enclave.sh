@@ -74,8 +74,7 @@ start_tcp_proxy_out "AWS IMDS" "$(get_configured_port "aws.imds_endpoint")"
 start_tcp_proxy_out "AWS S3" "$(get_configured_port "aws.s3_endpoint")"
 start_tcp_proxy_out "AWS KMS" "$(get_configured_port "aws.awskms_endpoint")"
 
-# ensure that keys exist if running in centralized mode
-# do nothing if [threshold] config section exists
+# ensure that all keys exist if running in centralized mode
 is_threshold || \
     {
 	log "generating keys for centralized KMS"
@@ -88,6 +87,22 @@ is_threshold || \
 	    --aws-s3-endpoint "$(get_value "aws.s3_endpoint")" \
 	    --aws-kms-endpoint "$(get_value "aws.awskms_endpoint")" \
 	    centralized --write-privkey \
+	    |& logger || fail "cannot generate keys"
+    }
+# ensure that signing keys if running in threshold mode
+is_threshold && \
+    {
+	log "generating signing keys for threshold KMS"
+	kms-gen-keys \
+	    --pub-url "$(get_value "public_vault.storage")" \
+	    --priv-url "$(get_value "private_vault.storage")" \
+	    --root-key-id "$(get_value "private_vault.keychain")" \
+	    --aws-region "$(get_value "aws.region")" \
+	    --aws-imds-endpoint "$(get_value "aws.imds_endpoint")" \
+	    --aws-s3-endpoint "$(get_value "aws.s3_endpoint")" \
+	    --aws-kms-endpoint "$(get_value "aws.awskms_endpoint")" \
+	    --cmd signing-keys \
+	    threshold \
 	    |& logger || fail "cannot generate keys"
     }
 
