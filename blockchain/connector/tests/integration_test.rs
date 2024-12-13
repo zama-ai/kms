@@ -150,6 +150,7 @@ const BOOTSTRAP_TIME_TO_SLEEP: u64 = 60;
 #[test_context(DockerComposeContext)]
 #[tokio::test]
 #[integration_test]
+#[serial_test::serial]
 async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
     option_env!("RUST_LOG")
         .map(|_| ())
