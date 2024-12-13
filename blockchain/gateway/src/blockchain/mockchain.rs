@@ -143,6 +143,12 @@ impl Blockchain for MockchainImpl {
                      "0011223344556677889900112233445566778899",
                      "0011223344556677889900112233445566778899"
                  ],
+                 "external_signatures": [
+                     "ffee2233445566778823ffee2233445566778823",
+                     "ffee2233445566778823ffee2233445566778823",
+                     "ffee2233445566778823ffee2233445566778823",
+                     "ffee2233445566778823ffee2233445566778823"
+                 ],
                  "urls": [
                      "https://s3.amazonaws.com/bucket-name-1/PUB-p1/CRS/d8d94eb3a23d22d3eb6b5e7b694e8afcd571d906",
                      "https://s3.amazonaws.com/bucket-name-4/PUB-p4/CRS/d8d94eb3a23d22d3eb6b5e7b694e8afcd571d906",
@@ -162,6 +168,12 @@ impl Blockchain for MockchainImpl {
                          "0011223344556677889900112233445566778899",
                          "0011223344556677889900112233445566778899"
                      ],
+                     "external_signatures": [
+                     "ffee2233445566778823ffee2233445566778823",
+                     "ffee2233445566778823ffee2233445566778823",
+                     "ffee2233445566778823ffee2233445566778823",
+                     "ffee2233445566778823ffee2233445566778823"
+                     ],
                      "urls": [
                          "https://s3.amazonaws.com/bucket-name-1/PUB-p1/PublicKey/408d8cbaa51dece7f782fe04ba0b1c1d017b1088",
                          "https://s3.amazonaws.com/bucket-name-4/PUB-p4/PublicKey/408d8cbaa51dece7f782fe04ba0b1c1d017b1088",
@@ -177,6 +189,12 @@ impl Blockchain for MockchainImpl {
                          "0011223344556677889900112233445566778899",
                          "0011223344556677889900112233445566778899",
                          "0011223344556677889900112233445566778899"
+                     ],
+                     "external_signatures": [
+                     "ffee2233445566778823ffee2233445566778823",
+                     "ffee2233445566778823ffee2233445566778823",
+                     "ffee2233445566778823ffee2233445566778823",
+                     "ffee2233445566778823ffee2233445566778823"
                      ],
                      "urls": [
                          "https://s3.amazonaws.com/bucket-name-1/PUB-p1/ServerKey/408d8cbaa51dece7f782fe04ba0b1c1d017b1088",

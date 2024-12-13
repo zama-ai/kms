@@ -450,8 +450,10 @@ async fn send_key_generation_response(
         key_id,
         "digest1".to_string(),
         vec![4, 5, 6],
+        vec![9, 9, 9],
         "digest2".to_string(),
         vec![7, 8, 9],
+        vec![7, 7, 7],
         FheParameter::Test,
     );
     let operation = events::kms::OperationValue::KeyGenResponse(keygen_response);

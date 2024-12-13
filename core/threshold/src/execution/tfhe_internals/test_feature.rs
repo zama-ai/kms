@@ -264,7 +264,7 @@ pub async fn initialize_key_material<R: Rng + CryptoRng, S: BaseSessionHandles<R
     let mut lwe_key_shares64 = Vec::new();
     // iterate through sk and share each element
     // TODO(Dragos) this sharing can be done in a single round
-    tracing::info!("Sharing key64 to be send {}", lwe_sk_container64.len());
+    tracing::debug!("Sharing key64 to be sent: len {}", lwe_sk_container64.len());
     for cur in lwe_sk_container64 {
         let secret = match own_role.one_based() {
             1 => Some(ResiduePoly::from_scalar(Wrapping::<u64>(cur))),
@@ -278,7 +278,10 @@ pub async fn initialize_key_material<R: Rng + CryptoRng, S: BaseSessionHandles<R
     let sns_key_shares128 = if let Some(sns_sk_container128) = sns_sk_container128 {
         let mut sns_key_shares128 = Vec::new();
         // TODO(Dragos) this sharing can be done in a single round
-        tracing::info!("Sharing key128 to be send {}", sns_sk_container128.len());
+        tracing::debug!(
+            "Sharing key128 to be sent: len {}",
+            sns_sk_container128.len()
+        );
         for cur in sns_sk_container128 {
             let secret = match own_role.one_based() {
                 1 => Some(ResiduePoly::from_scalar(Wrapping::<u128>(cur))),

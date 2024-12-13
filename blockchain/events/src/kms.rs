@@ -918,9 +918,11 @@ pub struct KeyGenResponseValues {
     request_id: HexVector,
     public_key_digest: String,
     public_key_signature: HexVector,
+    public_key_external_signature: HexVector,
     // server key is bootstrap key
     server_key_digest: String,
     server_key_signature: HexVector,
+    server_key_external_signature: HexVector,
     // we do not need SnS key
     // The parameter used to generate the public keys
     // Note that it is fetched from the ASC
@@ -928,20 +930,25 @@ pub struct KeyGenResponseValues {
 }
 
 impl KeyGenResponseValues {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         request_id: impl Into<HexVector>,
         public_key_digest: String,
         public_key_signature: impl Into<HexVector>,
+        public_key_external_signature: impl Into<HexVector>,
         server_key_digest: String,
         server_key_signature: impl Into<HexVector>,
+        server_key_external_signature: impl Into<HexVector>,
         param: impl Into<FheParameter>,
     ) -> Self {
         Self {
             request_id: request_id.into(),
             public_key_digest,
             public_key_signature: public_key_signature.into(),
+            public_key_external_signature: public_key_external_signature.into(),
             server_key_digest,
             server_key_signature: server_key_signature.into(),
+            server_key_external_signature: server_key_external_signature.into(),
             param: param.into(),
         }
     }
@@ -958,12 +965,20 @@ impl KeyGenResponseValues {
         &self.public_key_signature
     }
 
+    pub fn public_key_external_signature(&self) -> &HexVector {
+        &self.public_key_external_signature
+    }
+
     pub fn server_key_digest(&self) -> &str {
         &self.server_key_digest
     }
 
     pub fn server_key_signature(&self) -> &HexVector {
         &self.server_key_signature
+    }
+
+    pub fn server_key_external_signature(&self) -> &HexVector {
+        &self.server_key_external_signature
     }
 
     pub fn param(&self) -> &FheParameter {
@@ -1084,6 +1099,8 @@ pub struct CrsGenResponseValues {
     digest: String,
     /// The signature on the digest.
     signature: HexVector,
+    /// The external signature on the digest (e.g. EIP-712).
+    external_signature: HexVector,
     max_num_bits: u32,
     // The parameter for which the CRS was generated
     // Note that parameter is fetched from the ASC
@@ -1095,6 +1112,7 @@ impl CrsGenResponseValues {
         request_id: String,
         digest: String,
         signature: impl Into<HexVector>,
+        external_signature: impl Into<HexVector>,
         max_num_bits: u32,
         param: impl Into<FheParameter>,
     ) -> Self {
@@ -1102,6 +1120,7 @@ impl CrsGenResponseValues {
             request_id,
             digest,
             signature: signature.into(),
+            external_signature: external_signature.into(),
             max_num_bits,
             param: param.into(),
         }
@@ -1117,6 +1136,10 @@ impl CrsGenResponseValues {
 
     pub fn signature(&self) -> &HexVector {
         &self.signature
+    }
+
+    pub fn external_signature(&self) -> &HexVector {
+        &self.external_signature
     }
 
     pub fn max_num_bits(&self) -> u32 {
@@ -2223,8 +2246,10 @@ mod tests {
                 request_id: HexVector::arbitrary(g),
                 public_key_digest: String::arbitrary(g),
                 public_key_signature: HexVector::arbitrary(g),
+                public_key_external_signature: HexVector::arbitrary(g),
                 server_key_digest: String::arbitrary(g),
                 server_key_signature: HexVector::arbitrary(g),
+                server_key_external_signature: HexVector::arbitrary(g),
                 param: FheParameter::arbitrary(g),
             }
         }
@@ -2257,6 +2282,7 @@ mod tests {
                 request_id: String::arbitrary(g),
                 digest: String::arbitrary(g),
                 signature: HexVector::arbitrary(g),
+                external_signature: HexVector::arbitrary(g),
                 max_num_bits: u32::arbitrary(g),
                 param: FheParameter::arbitrary(g),
             }
@@ -2558,8 +2584,10 @@ mod tests {
             vec![2, 2, 2],
             "abc".to_string(),
             vec![1, 2, 3],
+            vec![1, 2, 3],
             "def".to_string(),
             vec![4, 5, 6],
+            vec![7, 2, 7],
             FheParameter::Test,
         );
         let message: KmsMessageWithoutProof = KmsMessage::builder()
@@ -2573,8 +2601,10 @@ mod tests {
                     "request_id": hex::encode([2, 2, 2]),
                     "public_key_digest": "abc",
                     "public_key_signature": hex::encode([1, 2, 3]),
+                    "public_key_external_signature": hex::encode([1, 2, 3]),
                     "server_key_digest": "def",
                     "server_key_signature": hex::encode([4, 5, 6]),
+                    "server_key_external_signature": hex::encode([7, 2 ,7]),
                     "param": FheParameter::Test.to_string(),
                 },
                 "txn_id": hex::encode(vec![1])
@@ -2627,6 +2657,7 @@ mod tests {
             "abcdef".to_string(),
             "123456".to_string(),
             vec![1, 2, 3],
+            vec![5, 3, 1],
             256,
             FheParameter::Test,
         );
@@ -2643,6 +2674,7 @@ mod tests {
                     "request_id": "abcdef",
                     "digest": "123456",
                     "signature": hex::encode([1, 2, 3]),
+                    "external_signature": hex::encode([5, 3, 1]),
                     "max_num_bits": 256,
                     "param": FheParameter::Test.to_string(),
                 },

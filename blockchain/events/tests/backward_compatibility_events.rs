@@ -310,8 +310,10 @@ fn test_key_gen_response_values(
         .request_id(test.request_id.to_vec().into())
         .public_key_digest(test.public_key_digest.to_string())
         .public_key_signature(test.public_key_signature.to_vec().into())
+        .public_key_external_signature(test.public_key_external_signature.to_vec().into())
         .server_key_digest(test.server_key_digest.to_string())
         .server_key_signature(test.server_key_signature.to_vec().into())
+        .server_key_external_signature(test.server_key_external_signature.to_vec().into())
         .param(test.param.try_into().unwrap())
         .build();
 
@@ -472,6 +474,7 @@ fn test_crs_gen_response_values(
         .request_id(test.request_id.to_string())
         .digest(test.digest.to_string())
         .signature(test.signature.to_vec().into())
+        .external_signature(test.external_signature.to_vec().into())
         .max_num_bits(256)
         .param(FheParameter::Test)
         .build();

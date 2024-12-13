@@ -3,7 +3,7 @@ use crate::kms::{FheType, RequestId};
 use crate::rpc::rpc_types::Plaintext;
 use crate::rpc::rpc_types::{PubDataType, WrappedPublicKeyOwned};
 use crate::storage::file::FileStorage;
-use crate::storage::{delete_all_at_request_id, StorageReader};
+use crate::storage::{delete_all_at_request_id, read_versioned_at_request_id, StorageReader};
 use crate::storage::{read_pk_at_request_id, StorageType};
 use crate::util::key_setup::FhePublicKey;
 use distributed_decryption::expanded_encrypt;
@@ -329,39 +329,66 @@ impl From<tfhe::integer::bigint::U256> for TypedPlaintext {
     }
 }
 
-pub async fn load_pk_from_storage(pub_path: Option<&Path>, key_id: &str) -> FhePublicKey {
+async fn get_storage(pub_path: Option<&Path>, data_id: &str, data_type: &str) -> FileStorage {
     // Try first with centralized storage
-    let storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
-    let url = storage
-        .compute_url(key_id, &PubDataType::PublicKey.to_string())
-        .unwrap();
+    let mut storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
+    let url = storage.compute_url(data_id, data_type).unwrap();
     if storage.data_exists(&url).await.unwrap() {
         tracing::info!("Trying centralized storage at url {}", url);
-        let wrapped_pk = read_pk_at_request_id(
-            &storage,
-            &RequestId {
-                request_id: key_id.to_string(),
-            },
-        )
-        .await
-        .unwrap();
-        let WrappedPublicKeyOwned::Compact(pk) = wrapped_pk;
-        pk
     } else {
         // Try with the threshold storage
         tracing::info!("Fallback to threshold file storage with url {}", url);
-        let storage = FileStorage::new(pub_path, StorageType::PUB, Some(1)).unwrap();
-        let wrapped_pk = read_pk_at_request_id(
-            &storage,
-            &RequestId {
-                request_id: key_id.to_string(),
-            },
-        )
-        .await
-        .unwrap();
-        let WrappedPublicKeyOwned::Compact(pk) = wrapped_pk;
-        pk
+        storage = FileStorage::new(pub_path, StorageType::PUB, Some(1)).unwrap();
     }
+    storage
+}
+
+pub async fn load_server_key_from_storage(
+    pub_path: Option<&Path>,
+    key_id: &str,
+) -> tfhe::ServerKey {
+    let storage = get_storage(pub_path, key_id, &PubDataType::ServerKey.to_string()).await;
+    let sk: tfhe::ServerKey = read_versioned_at_request_id(
+        &storage,
+        &RequestId {
+            request_id: key_id.to_string(),
+        },
+        &PubDataType::ServerKey.to_string(),
+    )
+    .await
+    .unwrap();
+    sk
+}
+
+pub async fn load_pk_from_storage(pub_path: Option<&Path>, key_id: &str) -> FhePublicKey {
+    let storage = get_storage(pub_path, key_id, &PubDataType::PublicKey.to_string()).await;
+    let wrapped_pk = read_pk_at_request_id(
+        &storage,
+        &RequestId {
+            request_id: key_id.to_string(),
+        },
+    )
+    .await
+    .unwrap();
+    let WrappedPublicKeyOwned::Compact(pk) = wrapped_pk;
+    pk
+}
+
+pub async fn load_crs_from_storage(
+    pub_path: Option<&Path>,
+    crs_id: &str,
+) -> CompactPkePublicParams {
+    let storage = get_storage(pub_path, crs_id, &PubDataType::CRS.to_string()).await;
+    let crs: CompactPkePublicParams = read_versioned_at_request_id(
+        &storage,
+        &RequestId {
+            request_id: crs_id.to_string(),
+        },
+        &PubDataType::CRS.to_string(),
+    )
+    .await
+    .unwrap();
+    crs
 }
 
 pub async fn compute_proven_ct_from_stored_key_and_serialize(

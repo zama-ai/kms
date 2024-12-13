@@ -215,7 +215,7 @@ pub fn protobuf_to_alloy_domain(pb_domain: &Eip712DomainMsg) -> anyhow::Result<E
     Ok(out)
 }
 
-pub(crate) fn alloy_to_protobuf_domain(domain: &Eip712Domain) -> anyhow::Result<Eip712DomainMsg> {
+pub fn alloy_to_protobuf_domain(domain: &Eip712Domain) -> anyhow::Result<Eip712DomainMsg> {
     let name = domain
         .name
         .as_ref()
@@ -528,7 +528,7 @@ pub(crate) fn compute_external_pt_signature(
 
 #[cfg(feature = "non-wasm")]
 /// Take the ZK proof verification metadata, convert it to the required solidity types and sign them using EIP-712 for external verification (e.g. in the fhevm).
-pub(crate) fn compute_external_verify_proven_ct_signature(
+pub fn compute_external_verify_proven_ct_signature(
     client_sk: &PrivateSigKey,
     ct_digest: &Vec<u8>,
     req: &VerifyProvenCtRequest,
@@ -611,7 +611,7 @@ pub fn compute_external_pubdata_message_hash<D: Serialize + Versionize + Named>(
 
 #[cfg(feature = "non-wasm")]
 /// take some public data (e.g. public key or CRS) and sign it using EIP-712 for external verification (e.g. in the fhevm).
-pub(crate) fn compute_external_pubdata_signature<D: Serialize + Versionize + Named>(
+pub fn compute_external_pubdata_signature<D: Serialize + Versionize + Named>(
     client_sk: &PrivateSigKey,
     data: &D,
     eip712_domain: &Eip712Domain,

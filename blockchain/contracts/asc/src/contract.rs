@@ -495,8 +495,10 @@ mod tests {
             key_id.to_vec(),
             "digest1".to_string(),
             vec![4, 5, 6],
+            vec![9, 9, 9],
             "digest2".to_string(),
             vec![7, 8, 9],
+            vec![9, 9, 9],
             FheParameter::Test,
         );
 
@@ -1007,8 +1009,10 @@ mod tests {
             hex::decode(key_id).unwrap(),
             "digest1".to_string(),
             vec![4, 5, 6],
+            vec![9, 9, 9],
             "digest2".to_string(),
             vec![7, 8, 9],
+            vec![9, 9, 9],
             FheParameter::Test,
         );
 
@@ -1062,8 +1066,10 @@ mod tests {
             hex::decode(new_key_id).unwrap(),
             "digest1".to_string(),
             vec![4, 5, 6],
+            vec![9, 9, 9],
             "digest2".to_string(),
             vec![7, 8, 9],
+            vec![9, 9, 9],
             FheParameter::Test,
         );
 
@@ -1151,8 +1157,10 @@ mod tests {
             txn_id.to_vec(),
             "digest1".to_string(),
             vec![4, 5, 6],
+            vec![9, 9, 9],
             "digest2".to_string(),
             vec![7, 8, 9],
+            vec![9, 9, 9],
             FheParameter::Test,
         );
 
@@ -1348,6 +1356,7 @@ mod tests {
             crs_id.to_string(),
             "my digest".to_string(),
             vec![4, 5, 6],
+            vec![9, 8, 7],
             256,
             FheParameter::Test,
         );
@@ -1389,6 +1398,7 @@ mod tests {
             new_crs_id.to_string(),
             "my digest".to_string(),
             vec![4, 5, 6],
+            vec![9, 8, 7],
             256,
             FheParameter::Test,
         );
@@ -1484,8 +1494,10 @@ mod tests {
             txn_id.to_vec(),
             "digest1".to_string(),
             vec![4, 5, 6],
+            vec![9, 9, 9],
             "digest2".to_string(),
             vec![7, 8, 9],
+            vec![9, 9, 9],
             FheParameter::Test,
         );
 

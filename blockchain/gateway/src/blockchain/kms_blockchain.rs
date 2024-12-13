@@ -65,6 +65,24 @@ impl KmsEventSubscriber for KmsBlockchainImpl {
     }
 }
 
+/// Tuple that holds parameter and signature information on a (public) key.
+/// Fields are the parameter, the public key signature, the public key external signature, the server key signature, and the server key external signature
+type KeyData = (
+    FheParameter,
+    HexVectorList,
+    HexVectorList,
+    HexVectorList,
+    HexVectorList,
+);
+
+fn add_unless_duplicate(list: &mut HexVectorList, val: &HexVector, resp: &str) {
+    if list.contains(val) {
+        tracing::error!("The response from the blockchain on {resp} already contains the signature {:?}. Will not add again.", val);
+    } else {
+        list.0.push(val.to_owned());
+    }
+}
+
 impl<'a> KmsBlockchainImpl {
     fn new(
         mnemonic: Option<String>,
@@ -319,35 +337,33 @@ impl<'a> KmsBlockchainImpl {
     }
 
     /// Helper function to parse the KeyGenResponses from the KMS blockchain.
-    /// Takes a vector of KeyGenResponses as input and returns a map of key IDs to a tuple of parameter choice, public key signatures followed by server signatures.
+    /// Takes a vector of KeyGenResponses as input and returns a map of key IDs to a tuple of parameter choice, public key signatures (internal and external) followed by server signatures (internal and external).
     fn parse_signed_key_data(
         vals: Vec<KeyGenResponseValues>,
-    ) -> anyhow::Result<HashMap<String, (FheParameter, HexVectorList, HexVectorList)>> {
-        let mut id_sig_map: HashMap<String, (FheParameter, HexVectorList, HexVectorList)> =
-            HashMap::new();
+    ) -> anyhow::Result<HashMap<String, KeyData>> {
+        let mut id_sig_map: HashMap<String, KeyData> = HashMap::new();
         // Go through each operation value returned and branch into the keygen case.
         // Then combine all signatures on the same ID into a vector for that ID.
         for key_resp in vals.iter() {
             match id_sig_map.get_mut(&key_resp.request_id().to_hex()) {
                 // First the case where the ID is already in the map
-                Some((param, pk_sigs, server_sigs)) => {
+                Some((param, pk_sigs, pk_external_sigs, server_sigs, server_external_sigs)) => {
                     if param != key_resp.param() {
                         tracing::error!("Discrepancy between the parties choice of parameter. Specifically the initial parameter choice is {:?} and the current one is {:?}", key_resp.param(), param);
                     }
-                    // NOTE: This is just a sanity check and pretty slow, so can be removed if we end up with many MPC servers.
-                    if pk_sigs.contains(key_resp.public_key_signature()) {
-                        tracing::error!("The response from the blockchain on KeyGenResponse already contains duplicate signatures. Specifically the signature {:?}", key_resp.public_key_signature());
-                    } else {
-                        pk_sigs.0.push(key_resp.public_key_signature().to_owned());
-                    }
-                    // NOTE: This is just a sanity check and pretty slow, so can be removed if we end up with many MPC servers.
-                    if server_sigs.contains(key_resp.server_key_signature()) {
-                        tracing::error!("The response from the blockchain on KeyGenResponse already contains duplicate signatures. Specifically the signature {:?}", key_resp.public_key_signature());
-                    } else {
-                        server_sigs
-                            .0
-                            .push(key_resp.server_key_signature().to_owned());
-                    }
+                    // NOTE: These are just  sanity checks and pretty slow, so can be removed if we end up with many MPC servers.
+                    add_unless_duplicate(pk_sigs, key_resp.public_key_signature(), "KeyGen");
+                    add_unless_duplicate(
+                        pk_external_sigs,
+                        key_resp.public_key_external_signature(),
+                        "KeyGen",
+                    );
+                    add_unless_duplicate(server_sigs, key_resp.server_key_signature(), "KeyGen");
+                    add_unless_duplicate(
+                        server_external_sigs,
+                        key_resp.server_key_external_signature(),
+                        "KeyGen",
+                    );
                 }
                 // Then the case where it is the first time we see the ID
                 None => {
@@ -356,7 +372,13 @@ impl<'a> KmsBlockchainImpl {
                         (
                             key_resp.param().to_owned(),
                             HexVectorList(vec![key_resp.public_key_signature().to_owned()]),
+                            HexVectorList(vec![key_resp
+                                .public_key_external_signature()
+                                .to_owned()]),
                             HexVectorList(vec![key_resp.server_key_signature().to_owned()]),
+                            HexVectorList(vec![key_resp
+                                .server_key_external_signature()
+                                .to_owned()]),
                         ),
                     );
                 }
@@ -369,14 +391,15 @@ impl<'a> KmsBlockchainImpl {
     /// Takes a vector of CrsGenResponses as input and returns a map of key IDs to a tuple of public key signatures followed by a tuple of the max number of bits and the list of signatures.
     fn parse_signed_crs_data(
         vals: Vec<CrsGenResponseValues>,
-    ) -> anyhow::Result<HashMap<String, (u32, FheParameter, HexVectorList)>> {
-        let mut id_sig_map: HashMap<String, (u32, FheParameter, HexVectorList)> = HashMap::new();
+    ) -> anyhow::Result<HashMap<String, (u32, FheParameter, HexVectorList, HexVectorList)>> {
+        let mut id_sig_map: HashMap<String, (u32, FheParameter, HexVectorList, HexVectorList)> =
+            HashMap::new();
         // Go through each operation value returned and branch into the crsgen case.
         // Then combine all signatures on the same ID into a vector for that ID.
         for crs_resp in vals.iter() {
             match id_sig_map.get_mut(crs_resp.request_id()) {
                 // First the case where the ID is already in the map
-                Some((max_num_bits, fhe_param, sigs)) => {
+                Some((max_num_bits, fhe_param, sigs, ext_sigs)) => {
                     if *max_num_bits != crs_resp.max_num_bits() {
                         tracing::error!("Discrepancy between the parties choice of max number of bits. Specifically the initial choice is {:?} and the current one is {:?}", max_num_bits, crs_resp.max_num_bits());
                     }
@@ -384,11 +407,8 @@ impl<'a> KmsBlockchainImpl {
                         tracing::error!("Discrepancy between the parties choice of parameter. Specifically the initial parameter choice is {:?} and the current one is {:?}", fhe_param, crs_resp.param());
                     }
                     // NOTE: This is just a sanity check and pretty slow, so can be removed if we end up with many MPC servers.
-                    if sigs.contains(crs_resp.signature()) {
-                        tracing::error!("The response from the blockchain on CrsGenResponse already contains duplicate signatures. Specifically the signature {:?}", crs_resp.signature());
-                    } else {
-                        sigs.0.push(crs_resp.signature().to_owned());
-                    }
+                    add_unless_duplicate(sigs, crs_resp.signature(), "CrsGen");
+                    add_unless_duplicate(ext_sigs, crs_resp.external_signature(), "CrsGen");
                 }
                 // Then the case where it is the first time we see the ID
                 None => {
@@ -398,6 +418,7 @@ impl<'a> KmsBlockchainImpl {
                             crs_resp.max_num_bits(),
                             crs_resp.param().to_owned(),
                             HexVectorList(vec![crs_resp.signature().to_owned()]),
+                            HexVectorList(vec![crs_resp.external_signature().to_owned()]),
                         ),
                     );
                 }
@@ -413,16 +434,25 @@ impl<'a> KmsBlockchainImpl {
         key_id: &str,
         param: &FheParameter,
         pk_sig: HexVectorList,
+        pk_ext_sig: HexVectorList,
         server_sig: HexVectorList,
+        server_ext_sig: HexVectorList,
     ) -> anyhow::Result<FheKeyUrlInfo> {
-        let fhe_public_key =
-            Self::get_fhe_key_info(PubDataType::PublicKey, storage_urls, key_id, param, pk_sig)?;
+        let fhe_public_key = Self::get_fhe_key_info(
+            PubDataType::PublicKey,
+            storage_urls,
+            key_id,
+            param,
+            pk_sig,
+            pk_ext_sig,
+        )?;
         let fhe_server_key = Self::get_fhe_key_info(
             PubDataType::ServerKey,
             storage_urls,
             key_id,
             param,
             server_sig,
+            server_ext_sig,
         )?;
         Ok(FheKeyUrlInfo::builder()
             .fhe_public_key(fhe_public_key)
@@ -437,6 +467,7 @@ impl<'a> KmsBlockchainImpl {
         key_id: &str,
         param: &FheParameter,
         sigs: HexVectorList,
+        ext_sigs: HexVectorList,
     ) -> anyhow::Result<KeyUrlInfo> {
         let mut urls = Vec::new();
         for base_url in storage_urls.values() {
@@ -452,6 +483,7 @@ impl<'a> KmsBlockchainImpl {
             .param_choice(param.to_owned().into())
             .urls(urls)
             .signatures(sigs)
+            .external_signatures(ext_sigs)
             .build())
     }
 
@@ -488,10 +520,10 @@ impl<'a> KmsBlockchainImpl {
     /// The key in the resultant map is the maximum number of bits of the CRS and the value is the CRS information including the URL and signature.
     fn get_crs_info(
         storage_urls: &HashMap<u32, String>,
-        crs_data: &HashMap<String, (u32, FheParameter, HexVectorList)>,
+        crs_data: &HashMap<String, (u32, FheParameter, HexVectorList, HexVectorList)>,
     ) -> anyhow::Result<HashMap<u32, KeyUrlInfo>> {
         let mut res = HashMap::new();
-        for (crs_id, (max_bits, param, sigs)) in crs_data.iter() {
+        for (crs_id, (max_bits, param, sigs, ext_sigs)) in crs_data.iter() {
             let mut urls = Vec::new();
             for base_url in storage_urls.values() {
                 let crs_type = PubDataType::CRS.to_string();
@@ -508,6 +540,7 @@ impl<'a> KmsBlockchainImpl {
                     .param_choice(param.to_owned().into())
                     .urls(urls)
                     .signatures(sigs.to_owned())
+                    .external_signatures(ext_sigs.to_owned())
                     .build(),
             );
         }
@@ -1132,13 +1165,16 @@ impl Blockchain for KmsBlockchainImpl {
         }
         let key_data = KmsBlockchainImpl::parse_signed_key_data(key_values)?;
         let mut fhe_url_info = Vec::new();
-        for (key_id, (param, pk_sigs, server_sigs)) in key_data.iter() {
+        for (key_id, (param, pk_sigs, pk_ext_sigs, server_sigs, server_ext_sigs)) in key_data.iter()
+        {
             fhe_url_info.push(KmsBlockchainImpl::prepare_fhe_key_urls(
                 &self.config.kms.public_storage,
                 key_id,
                 param,
                 pk_sigs.to_owned(),
+                pk_ext_sigs.to_owned(),
                 server_sigs.to_owned(),
+                server_ext_sigs.to_owned(),
             )?);
         }
 
@@ -1255,8 +1291,10 @@ mod tests {
                 req_id.clone(),
                 "digest_pk_1".to_string(),
                 HexVector::from_hex("111111111111111111111111111111111111111100").unwrap(), // pk_sig
+                HexVector::from_hex("1111111111111111111111111111111111111111FF").unwrap(), // pk_ext_sig
                 "digest_server_1".to_string(),
                 HexVector::from_hex("111111111111111111111111111111111111111111").unwrap(), // server_sig
+                HexVector::from_hex("1111111111111111111111111111111111111111EE").unwrap(), // server_ext_sig
                 FheParameter::Test,
             ),
             // Server 2 response
@@ -1264,23 +1302,28 @@ mod tests {
                 req_id.clone(),
                 "digest_pk_2".to_string(),
                 HexVector::from_hex("222222222222222222222222222222222222222200").unwrap(), // pk_sig
+                HexVector::from_hex("2222222222222222222222222222222222222222FF").unwrap(), // pk_ext_sig
                 "digest_server_2".to_string(),
                 HexVector::from_hex("222222222222222222222222222222222222222211").unwrap(), // server_sig
+                HexVector::from_hex("2222222222222222222222222222222222222222EE").unwrap(), // server_ext_sig
                 FheParameter::Test,
             ),
             // Server 1 response to other key
             KeyGenResponseValues::new(
                 other_req_id.clone(),
                 "digest_pk_1_other".to_string(),
+                HexVector::from_hex("abcdef").unwrap(), // pk_ext_sig
                 HexVector::from_hex("abcdef").unwrap(), // pk_sig
                 "digest_server_1_other".to_string(),
                 HexVector::from_hex("abcdef").unwrap(), // server_sig
+                HexVector::from_hex("abcdef").unwrap(), // server_ext_sig
                 FheParameter::Test,
             ),
         ];
         let res = KmsBlockchainImpl::parse_signed_key_data(key_response_values).unwrap();
         assert_eq!(res.len(), 2);
-        let (param, res_pk_sig, res_server_sig) = res.get(&req_id.to_hex()).unwrap();
+        let (param, res_pk_sig, res_pk_ext_sig, res_server_sig, res_server_ext_sig) =
+            res.get(&req_id.to_hex()).unwrap();
         assert_eq!(param, &FheParameter::Test);
         // Check pk sigs
         assert_eq!(
@@ -1290,12 +1333,28 @@ mod tests {
                 HexVector::from_hex("222222222222222222222222222222222222222200").unwrap()
             ]
         );
+        // Check pk external sigs
+        assert_eq!(
+            res_pk_ext_sig.0,
+            vec![
+                HexVector::from_hex("1111111111111111111111111111111111111111FF").unwrap(),
+                HexVector::from_hex("2222222222222222222222222222222222222222FF").unwrap()
+            ]
+        );
         // Check server sigs
         assert_eq!(
             res_server_sig.0,
             vec![
                 HexVector::from_hex("111111111111111111111111111111111111111111").unwrap(),
                 HexVector::from_hex("222222222222222222222222222222222222222211").unwrap()
+            ]
+        );
+        // Check server sigs
+        assert_eq!(
+            res_server_ext_sig.0,
+            vec![
+                HexVector::from_hex("1111111111111111111111111111111111111111EE").unwrap(),
+                HexVector::from_hex("2222222222222222222222222222222222222222EE").unwrap()
             ]
         );
     }
@@ -1316,14 +1375,16 @@ mod tests {
                 req_id.clone(),
                 "digest_1".to_string(),
                 HexVector::from_hex("111111111111111111111111111111111111111111").unwrap(),
+                HexVector::from_hex("F1111111111111111111111111111111111111111F").unwrap(),
                 max_bits,
                 param,
             ),
             // Server 2 response
             CrsGenResponseValues::new(
                 req_id.clone(),
-                "digest_pk_2".to_string(),
+                "digest_crs_2".to_string(),
                 HexVector::from_hex("222222222222222222222222222222222222222222").unwrap(),
+                HexVector::from_hex("EE222222222222222222222222222222222222222E").unwrap(),
                 max_bits,
                 param,
             ),
@@ -1332,13 +1393,14 @@ mod tests {
                 other_req_id.clone(),
                 "digest_1_other".to_string(),
                 HexVector::from_hex("abcdef").unwrap(),
+                HexVector::from_hex("ffeedd").unwrap(),
                 max_bits,
                 param,
             ),
         ];
         let res = KmsBlockchainImpl::parse_signed_crs_data(crs_response_values).unwrap();
         assert_eq!(res.len(), 2);
-        let (retrieved_max_bits, retrieved_param, sig) = res.get(&req_id).unwrap();
+        let (retrieved_max_bits, retrieved_param, sig, ext_sig) = res.get(&req_id).unwrap();
         assert_eq!(max_bits, *retrieved_max_bits);
         assert_eq!(&param, retrieved_param);
         assert_eq!(
@@ -1348,18 +1410,23 @@ mod tests {
                 HexVector::from_hex("222222222222222222222222222222222222222222").unwrap()
             ]
         );
+        assert_eq!(
+            ext_sig.0,
+            vec![
+                HexVector::from_hex("F1111111111111111111111111111111111111111F").unwrap(),
+                HexVector::from_hex("EE222222222222222222222222222222222222222E").unwrap()
+            ]
+        );
     }
 
     #[test]
     fn sunshine_fhe_key_info() {
         let key_id = "00112233445566778899aabbccddeeff0011223344";
         let base_sig = HexVector::from_hex("00112233445566778899aabbccddeeff0011223344").unwrap();
-        let sigs = HexVectorList(vec![
-            base_sig.clone(),
-            base_sig.clone(),
-            base_sig.clone(),
-            base_sig.clone(),
-        ]);
+        let base_ext_sig =
+            HexVector::from_hex("ffee2233445566778899aabbccddeeff001122DDEF").unwrap();
+        let sigs = HexVectorList(vec![base_sig.clone(); 4]);
+        let ext_sigs = HexVectorList(vec![base_ext_sig.clone(); 4]);
         let storages_urls: HashMap<u32, String> = HashMap::from([
             (1, "http://127.0.0.1:8081/PUB-p1/".to_string()),
             (2, "http://127.0.0.1:8082/PUB-p2".to_string()),
@@ -1372,6 +1439,7 @@ mod tests {
             key_id,
             &FheParameter::Test,
             sigs,
+            ext_sigs,
         )
         .unwrap();
         assert_eq!(fhe_server_key.data_id().to_hex(), key_id);
@@ -1433,22 +1501,22 @@ mod tests {
             (4, "http://127.0.0.1:8084/PUB-p4".to_string()), // Ensure that suffix / is not needed
         ]);
         let base_sig = HexVector::from_hex("00112233445566778899aabbccddeeff0011223344").unwrap();
-        let sigs = HexVectorList(vec![
-            base_sig.clone(),
-            base_sig.clone(),
-            base_sig.clone(),
-            base_sig.clone(),
-        ]);
-        let crs_ids: HashMap<String, (u32, FheParameter, HexVectorList)> = HashMap::from([
-            (
-                "00112233445566778899aabbccddeeff0011223344".to_string(),
-                (128, FheParameter::Test, sigs.clone()),
-            ),
-            (
-                "9988776655443322110099887766554433221100aa".to_string(),
-                (256, FheParameter::Default, sigs.clone()),
-            ),
-        ]);
+        let sigs = HexVectorList(vec![base_sig.clone(); 4]);
+
+        let base_ext_sig =
+            HexVector::from_hex("FFFF2233445566778899aabbccddeeff0011220000").unwrap();
+        let ext_sigs = HexVectorList(vec![base_ext_sig.clone(); 4]);
+        let crs_ids: HashMap<String, (u32, FheParameter, HexVectorList, HexVectorList)> =
+            HashMap::from([
+                (
+                    "00112233445566778899aabbccddeeff0011223344".to_string(),
+                    (128, FheParameter::Test, sigs.clone(), ext_sigs.clone()),
+                ),
+                (
+                    "9988776655443322110099887766554433221100aa".to_string(),
+                    (256, FheParameter::Default, sigs.clone(), ext_sigs.clone()),
+                ),
+            ]);
         let crs_info = KmsBlockchainImpl::get_crs_info(&storages_urls, &crs_ids).unwrap();
         assert_eq!(crs_info.len(), crs_ids.len());
         for (max_bits, cur_info) in &crs_info {

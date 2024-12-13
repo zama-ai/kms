@@ -43,7 +43,8 @@ use kms_lib::rpc::rpc_types::{
 use kms_lib::storage::{file::FileStorage, StorageReader, StorageType};
 use kms_lib::util::key_setup::test_tools::{
     compute_cipher_from_stored_key, compute_compressed_cipher_from_stored_key,
-    compute_proven_ct_from_stored_key_and_serialize, TypedPlaintext,
+    compute_proven_ct_from_stored_key_and_serialize, load_crs_from_storage, load_pk_from_storage,
+    load_server_key_from_storage, TypedPlaintext,
 };
 use rand::SeedableRng;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -1373,7 +1374,7 @@ pub async fn wait_for_asc_to_be_deployed(
 
 /// This fetches material which is global
 /// i.e. everything related to CRS and FHE public materials
-async fn fetch_global_key_and_write_to_file(
+async fn fetch_global_pub_object_and_write_to_file(
     destination_prefix: &Path,
     s3_endpoint: &str,
     object_id: &str,
@@ -1403,7 +1404,7 @@ async fn fetch_local_key_and_write_to_file(
 ) -> Result<(), Box<dyn std::error::Error + 'static>> {
     // Fetch pub-key from storage and dump it for later use
     if object_folder.len() == 1 {
-        fetch_global_key_and_write_to_file(
+        fetch_global_pub_object_and_write_to_file(
             destination_prefix,
             s3_endpoint,
             object_id,
@@ -1565,11 +1566,11 @@ async fn wait_for_response(
     ))
 }
 
-/// check that the external signature on the CRS or pubkey is valid
-fn _check_ext_pubdata_signature<D: Serialize + Versionize + Named>(
+/// check that the external signature on the CRS or pubkey is valid, i.e. was made by one of the supplied addresses
+fn check_ext_pubdata_signature<D: Serialize + Versionize + Named>(
     data: &D,
     external_sig: &[u8],
-    vals: impl Eip712Values,
+    vals: &impl Eip712Values,
     kms_addrs: &[alloy_primitives::Address],
 ) -> anyhow::Result<()> {
     // convert received data into proper format for EIP-712 verification
@@ -1579,7 +1580,7 @@ fn _check_ext_pubdata_signature<D: Serialize + Versionize + Named>(
             external_sig.len()
         ));
     }
-    // this reverses the call to `signature.as_bytes()` that we use for serialization
+    // Deserialize the Signature. It reverses the call to `signature.as_bytes()` that we use for serialization.
     let sig = Signature::from_bytes_and_parity(external_sig, external_sig[64] & 0x01 == 0)?;
 
     let edm = Eip712DomainMsg {
@@ -1610,7 +1611,7 @@ fn _check_ext_pubdata_signature<D: Serialize + Versionize + Named>(
     }
 }
 
-/// check that the external signature on the decryption result(s) is valid
+/// check that the external signature on the decryption result(s) is valid, i.e. was made by one of the supplied addresses
 fn check_ext_pt_signature(
     external_sig: &[u8],
     pts: Vec<Vec<u8>>,
@@ -1768,22 +1769,6 @@ async fn fetch_key_and_crs(
     sim_conf: &SimulatorConfig,
     destination_prefix: &Path,
 ) -> Result<(), Box<dyn std::error::Error + 'static>> {
-    // Fetch all objects associated with TFHE keys
-    for object_name in ["PublicKey", "PublicKeyMetadata", "ServerKey"] {
-        fetch_global_key_and_write_to_file(
-            destination_prefix,
-            sim_conf
-                .s3_endpoint
-                .clone()
-                .expect("S3 endpoint should be provided")
-                .as_str(),
-            key_id,
-            object_name,
-            sim_conf.object_folder.first().unwrap(),
-        )
-        .await?;
-    }
-
     // Fetch objects associated with Signature keys
     for object_name in ["VerfAddress", "VerfKey"] {
         fetch_local_key_and_write_to_file(
@@ -1800,8 +1785,44 @@ async fn fetch_key_and_crs(
         .await?;
     }
 
-    // Fetch CRS
-    fetch_global_key_and_write_to_file(
+    fetch_key(key_id, sim_conf, destination_prefix).await?;
+    fetch_crs(crs_id, sim_conf, destination_prefix).await?;
+
+    Ok(())
+}
+
+/// Fetch all remote objects associated with TFHE keys and store locally for the simulator
+async fn fetch_key(
+    key_id: &str,
+    sim_conf: &SimulatorConfig,
+    destination_prefix: &Path,
+) -> Result<(), Box<dyn std::error::Error + 'static>> {
+    tracing::info!("Fetching public key and server key with id {key_id}");
+    for object_name in ["PublicKey", "PublicKeyMetadata", "ServerKey"] {
+        fetch_global_pub_object_and_write_to_file(
+            destination_prefix,
+            sim_conf
+                .s3_endpoint
+                .clone()
+                .expect("S3 endpoint should be provided")
+                .as_str(),
+            key_id,
+            object_name,
+            sim_conf.object_folder.first().unwrap(),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// Fetch the remote CRS and store locally for the simulator
+async fn fetch_crs(
+    crs_id: &str,
+    sim_conf: &SimulatorConfig,
+    destination_prefix: &Path,
+) -> Result<(), Box<dyn std::error::Error + 'static>> {
+    tracing::info!("Fetching CRS with id {crs_id}");
+    fetch_global_pub_object_and_write_to_file(
         destination_prefix,
         sim_conf
             .s3_endpoint
@@ -1813,7 +1834,6 @@ async fn fetch_key_and_crs(
         sim_conf.object_folder.first().unwrap(),
     )
     .await?;
-
     Ok(())
 }
 
@@ -2040,8 +2060,9 @@ pub async fn main_from_config(
             //let _responses = wait_for_response(event, &query_client, &sim_conf, max_iter).await?;
         }
         SimulatorCommand::InsecureKeyGen(NoParameters {}) => {
-            let (event, _insecure_keygen_vals) =
+            let (event, insecure_keygen_vals) =
                 execute_insecure_key_gen_contract(&client, &query_client).await?;
+            let req_id = &event.txn_id.to_hex();
 
             let num_expected_responses = if expect_all_responses {
                 num_parties
@@ -2063,6 +2084,13 @@ pub async fn main_from_config(
                 num_expected_responses,
             )
             .await?;
+
+            // Download the generated keys. We do this just once, to save time, assuming that all generated keys are indentical.
+            // If we want to test for malicious behavior in the threshold case, we need to download all keys and compare them.
+            fetch_key(req_id, &sim_conf, destination_prefix).await?;
+            let pk = load_pk_from_storage(Some(destination_prefix), req_id).await;
+            let sk = load_server_key_from_storage(Some(destination_prefix), req_id).await;
+
             return_value = Some(responses.clone());
             for response in responses {
                 if let OperationValue::KeyGenResponse(response) = &response {
@@ -2074,16 +2102,27 @@ pub async fn main_from_config(
                             response.server_key_digest(),
                             response.server_key_signature().to_hex(),
                         );
+                    assert_eq!(
+                        req_id,
+                        &response.request_id().to_string(),
+                        "Request ID of response does not match the transaction"
+                    );
 
-                    // TODO fetch generated public key and corresponding key info (containing external signature)
+                    check_ext_pubdata_signature(
+                        &pk,
+                        &response.public_key_external_signature().0,
+                        &insecure_keygen_vals,
+                        &kms_addrs,
+                    )?;
 
-                    // TODO verify external signature
-                    // check_ext_pubdata_signature(
-                    //     pubkey,
-                    //     pk_info.external_signature,
-                    //     &insecure_keygen_vals,
-                    //     &kms_addrs,
-                    // )?;
+                    check_ext_pubdata_signature(
+                        &sk,
+                        &response.server_key_external_signature().0,
+                        &insecure_keygen_vals,
+                        &kms_addrs,
+                    )?;
+
+                    tracing::info!("EIP712 verification of Public Key and Server Key successful.");
                 } else {
                     panic!("Received response {:?} during InsecureKeyGen", response)
                 }
@@ -2091,8 +2130,10 @@ pub async fn main_from_config(
         }
         SimulatorCommand::CrsGen(CrsParameters { max_num_bits }) => {
             // the actual CRS ceremony takes time
-            let (event, _crs_values) =
+            let (event, crs_values) =
                 execute_crsgen_contract(&client, &query_client, *max_num_bits).await?;
+            let req_id = &event.txn_id.to_hex();
+
             let num_expected_responses = if expect_all_responses {
                 num_parties
             } else {
@@ -2115,24 +2156,34 @@ pub async fn main_from_config(
             .await?;
             return_value = Some(responses.clone());
 
+            // Download the generated CRS. We do this just once, to save time, assuming that all generated CRSes are indentical.
+            // If we want to test for malicious behavior in the threshold case, we need to download all CRSes and compare them.
+            fetch_crs(req_id, &sim_conf, destination_prefix).await?;
+            let crs = load_crs_from_storage(Some(destination_prefix), req_id).await;
+
             for response in responses {
                 if let OperationValue::CrsGenResponse(response) = &response {
                     tracing::info!(
-                        "Received CrsGenResponse with request ID {}, digest {} and signature {}",
+                        "Received CrsGenResponse with request ID {}, digest {}, signature {}, and external signature {}",
                         response.request_id(),
                         response.digest(),
                         response.signature().to_hex(),
+                        response.external_signature().to_hex(),
+                    );
+                    assert_eq!(
+                        req_id,
+                        response.request_id(),
+                        "Request ID of response does not match the transaction"
                     );
 
-                    //TODO fetch CRS and CRS-info (containing external signature)
+                    check_ext_pubdata_signature(
+                        &crs,
+                        &response.external_signature().0,
+                        &crs_values,
+                        &kms_addrs,
+                    )?;
 
-                    // TODO verify external signature
-                    // check_ext_pubdata_signature(
-                    //     crs,
-                    //     crs_info.external_signature,
-                    //     &crs_vals,
-                    //     &kms_addrs,
-                    // )?;
+                    tracing::info!("EIP712 verification of CRS successful.");
                 } else {
                     panic!("Received response {:?} during CrsGen", response)
                 }
@@ -2140,8 +2191,10 @@ pub async fn main_from_config(
         }
         SimulatorCommand::InsecureCrsGen(CrsParameters { max_num_bits }) => {
             // the actual CRS ceremony takes time
-            let (event, _crs_values) =
+            let (event, crs_values) =
                 execute_insecure_crsgen_contract(&client, &query_client, *max_num_bits).await?;
+            let req_id = &event.txn_id.to_hex();
+
             let num_expected_responses = if expect_all_responses {
                 num_parties
             } else {
@@ -2164,24 +2217,34 @@ pub async fn main_from_config(
             .await?;
             return_value = Some(responses.clone());
 
+            // Download the generated CRS. We do this just once, to save time, assuming that all generated CRSes are indentical.
+            // If we want to test for malicious behavior in the threshold case, we need to download all CRSes and compare them.
+            fetch_crs(req_id, &sim_conf, destination_prefix).await?;
+            let crs = load_crs_from_storage(Some(destination_prefix), req_id).await;
+
             for response in responses {
                 if let OperationValue::CrsGenResponse(response) = &response {
                     tracing::info!(
-                        "Received CrsGenResponse with request ID {}, digest {} and signature {}",
+                        "Received CrsGenResponse with request ID {}, digest {}, signature {}, and external signature {}",
                         response.request_id(),
                         response.digest(),
                         response.signature().to_hex(),
+                        response.external_signature().to_hex(),
+                    );
+                    assert_eq!(
+                        req_id,
+                        response.request_id(),
+                        "Request ID of response does not match the transaction"
                     );
 
-                    //TODO fetch CRS and CRS-info (containing external signature)
+                    check_ext_pubdata_signature(
+                        &crs,
+                        &response.external_signature().0,
+                        &crs_values,
+                        &kms_addrs,
+                    )?;
 
-                    // TODO verify external signature
-                    // check_ext_pubdata_signature(
-                    //     crs,
-                    //     crs_info.external_signature,
-                    //     &crs_vals,
-                    //     &kms_addrs,
-                    // )?;
+                    tracing::info!("EIP712 verification of CRS successful.");
                 } else {
                     panic!("Received response {:?} during InsecureCrsGen", response)
                 }
@@ -2259,6 +2322,19 @@ pub async fn main_from_config(
 
 #[cfg(test)]
 mod tests {
+    use alloy_signer::k256::ecdsa::SigningKey;
+    use kms_lib::{
+        consts::TEST_CENTRAL_CRS_ID,
+        cryptography::internal_crypto_types::PrivateSigKey,
+        kms::RequestId,
+        rpc::rpc_types::{
+            alloy_to_protobuf_domain, compute_external_pubdata_signature, PrivDataType,
+        },
+        storage::{ram::RamStorage, read_versioned_at_request_id},
+        util::key_setup::{ensure_central_crs_exists, ensure_central_server_signing_keys_exist},
+    };
+    use tfhe::zk::CompactPkePublicParams;
+
     use super::*;
 
     #[test]
@@ -2280,5 +2356,115 @@ mod tests {
         assert!(parse_hex("0x1234g").is_err());
         assert!(parse_hex("0x12345g").is_err());
         assert!(parse_hex("Ox01").is_err()); // leading O instead of 0
+    }
+
+    #[tokio::test]
+    async fn test_eip712_sigs() {
+        let mut pub_storage = RamStorage::new(StorageType::PUB);
+        let mut priv_storage = RamStorage::new(StorageType::PRIV);
+
+        // make sure signing keys exist
+        ensure_central_server_signing_keys_exist(
+            &mut pub_storage,
+            &mut priv_storage,
+            &SIGNING_KEY_ID,
+            true,
+        )
+        .await;
+
+        // compute a small CRS for testing
+        ensure_central_crs_exists(
+            &mut pub_storage,
+            &mut priv_storage,
+            TEST_PARAM,
+            &TEST_CENTRAL_CRS_ID,
+            true,
+        )
+        .await;
+        let crs: CompactPkePublicParams = read_versioned_at_request_id(
+            &pub_storage,
+            &RequestId {
+                request_id: TEST_CENTRAL_CRS_ID.to_string(),
+            },
+            &PubDataType::CRS.to_string(),
+        )
+        .await
+        .unwrap();
+
+        // read generated private signature key, derive public verifcation key and address from it
+        let sk: PrivateSigKey = read_versioned_at_request_id(
+            &priv_storage,
+            &RequestId {
+                request_id: SIGNING_KEY_ID.to_string(),
+            },
+            &PrivDataType::SigningKey.to_string(),
+        )
+        .await
+        .unwrap();
+        let pk = SigningKey::verifying_key(sk.sk());
+        let addr = alloy_signer::utils::public_key_to_address(pk);
+
+        // set up a dummy EIP 712 domain
+        let domain = alloy_sol_types::eip712_domain!(
+            name: "dummy",
+            version: "1",
+            chain_id: 0,
+            verifying_contract: alloy_primitives::Address::ZERO,
+            // No salt
+        );
+        let domain_msg = alloy_to_protobuf_domain(&domain).unwrap();
+
+        // set up the metadata for a CRS generation request message (that is used in the signature generation)
+        let vals = CrsGenValues::new(
+            32,
+            domain_msg.name,
+            domain_msg.version,
+            domain_msg.chain_id,
+            domain_msg.verifying_contract,
+            domain_msg.salt,
+        )
+        .unwrap();
+
+        // sign with EIP712
+        let sig = compute_external_pubdata_signature(&sk, &crs, &domain).unwrap();
+
+        // check that the signature verifies and unwraps without error
+        check_ext_pubdata_signature(&crs, &sig, &vals, &[addr]).unwrap();
+
+        // check that verification fails for a wrong address
+        let wrong_address = alloy_primitives::address!("0EdA6bf26964aF942Eed9e03e53442D37aa960EE");
+        assert!(
+            check_ext_pubdata_signature(&crs, &sig, &vals, &[wrong_address])
+                .unwrap_err()
+                .to_string()
+                .contains("External crs/pubkey signature verification failed!")
+        );
+
+        // check that verification fails for signature that is too short
+        let short_sig = [0_u8; 37];
+        assert!(
+            check_ext_pubdata_signature(&crs, &short_sig, &vals, &[addr])
+                .unwrap_err()
+                .to_string()
+                .contains("Expected external signature of length 65 Bytes, but got 37")
+        );
+
+        // check that verification fails for a byte string that is not a signature
+        let malformed_sig = [23_u8; 65];
+        assert!(
+            check_ext_pubdata_signature(&crs, &malformed_sig, &vals, &[addr])
+                .unwrap_err()
+                .to_string()
+                .contains("signature error")
+        );
+
+        // check that verification fails for a signature that does not match the message
+        let wrong_sig = hex::decode("cf92fe4c0b7c72fd8571c9a6680f2cd7481ebed7a3c8c7c7a6e6eaf27f5654f36100c146e609e39950953602ed73a3c10c1672729295ed8b33009b375813e5801b").unwrap();
+        assert!(
+            check_ext_pubdata_signature(&crs, &wrong_sig, &vals, &[addr])
+                .unwrap_err()
+                .to_string()
+                .contains("External crs/pubkey signature verification failed!")
+        );
     }
 }

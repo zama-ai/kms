@@ -66,6 +66,8 @@ pub struct KeyUrlInfo {
     urls: Vec<String>,
     // List of signatures for the data element.
     signatures: HexVectorList,
+    // List of signatures for the data element.
+    external_signatures: HexVectorList,
 }
 
 impl KeyUrlInfo {
