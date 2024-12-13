@@ -34,7 +34,7 @@ These steps are similar to what is done in the [ci.dockerfile](../operations/doc
    cd blockchain/contracts/bsc
    ```
 
-3. Set the environment variable that points to the final compiled and optimized wasm file after steps 3 and 4.
+3. Set the environment variable that points to the final compiled and optimized wasm file after steps 4 and 5.
 
    ```bash
    BSC_WASMFILE=../../../target/wasm32-unknown-unknown/wasm/bsc.wasm
@@ -64,10 +64,10 @@ To deploy the service, follow these steps from the project root directory:
 3. Run the following command to start the Docker Compose service:
 
     ```bash
-    docker compose -f docker-compose-kms-base.yml up
+    docker compose -f docker-compose-kms-base.yml run --build dev-kms-blockchain-asc-deploy
     ```
 
-This will start the `dev-kms-blockchain-asc-deploy` service and execute the necessary scripts to set up wallets and deploy contracts.
+This will build and start the `dev-kms-blockchain-asc-deploy` service and execute the necessary scripts to set up wallets and deploy contracts.
 
 ### Local Setup
 
@@ -102,7 +102,7 @@ add/remove members to the allowlist, migrate the contract from one version to
 another, etc. Also, will be allowed to submit any kind of operations to the contract (such as
 decryption, CRS generation, etc.). Usually this will be the KMS connector.
 
-For simplicity, we will use the same address (`ADMIN_ADDRESS`) for all the smart contract instantiations.
+For simplicity, we could use the connector's address for the address above.
 
 ```bash
 export ADMIN_ADDRESS=$(wasmd keys show connector -a)
@@ -123,6 +123,7 @@ export ADMIN_ADDRESS=$(wasmd keys show connector -a)
    ```
 
 #### 4. Deploy the Configuration Smart Contract (CSC)
+
 Follow the [CSC readme](../csc/README.md) for more details. Steps are similar to the above, with the difference that it can be instantiated in either threshold or centralized mode. Retrieve the CSC's address: `CSC_ADDRESS`
 
 #### 5. Instantiate the BSC and fetch its address
@@ -136,12 +137,6 @@ Follow the [CSC readme](../csc/README.md) for more details. Steps are similar to
 
    ```bash
    BSC_ADDRESS=$(echo $BSC_INST_RESULT | jq -r '.events[] | select(.type=="instantiate") | .attributes[] | select(.key=="_contract_address") | .value')
-   ```
-
-#### 6. Print the addresses
-
-   ```bash
-   echo "BSC_ADDRESS: $BSC_ADDRESS"
    ```
 
 # Migration: Upgrade the BSC code

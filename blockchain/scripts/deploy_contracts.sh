@@ -28,7 +28,7 @@ export KEYRING_PASSWORD="1234567890"
 export VALIDATOR_NODE_ENDPOINT="${VALIDATOR_NODE_ENDPOINT:-tcp://localhost:26657}"
 export NODE="$VALIDATOR_NODE_ENDPOINT"
 export WASMD_NODE="$VALIDATOR_NODE_ENDPOINT"
-export MODE="${MODE:-default}"
+export MODE="${MODE:-centralized}"
 export STORAGE_BASE_URL="http://localhost:dummy"
 
 # Get addresses
