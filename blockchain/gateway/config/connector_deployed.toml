@@ -1,3 +1,5 @@
+# See blockchain/connector/config/default.toml for the documentation.
+
 tick_interval_secs = 1
 storage_path = "./temp/events.toml"
 
@@ -10,9 +12,8 @@ asc_address = "wasm18shslphc8j358hpeqmjlxz77u6hvq5ly8dzxnkhz4266z8qyj46qq9afqf" 
 csc_address = "wasm14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9s0phg4d"
 
 [blockchain.signkey]
-# It should be either mnemonic or bip32
 mnemonic = "put movie amateur ginger invite ski twenty sentence critic suspect elder gadget rude assault metal salute stock act glass crowd jacket accident profit banana"
-bip32 = "xprv9s21ZrQH143K3FQVQn1Z6"
+# bip32 = "xprv9s21ZrQH143K3FQVQn1Z6"
 
 [blockchain.fee]
 denom = "ucosm"

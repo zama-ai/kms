@@ -182,8 +182,6 @@ impl CertificatePaths {
 /// The `peers` field is a list of `Party` struct.
 /// The tracing, redis and certpaths fields are also optional.
 /// Core-to-core TLS will be enabled if certpaths is not empty.
-/// Choreographer-to-core TLS will be enabled if `choreo_use_tls`
-/// is also enabled.
 impl PartyConf {
     /// Returns the protocol configuration.
     pub fn protocol(&self) -> &Protocol {
@@ -308,7 +306,6 @@ mod tests {
         env::set_var("DDEC__CERTPATHS__CERT", "/path/to/cert");
         env::set_var("DDEC__CERTPATHS__KEY", "/path/to/key");
         env::set_var("DDEC__CERTPATHS__CALIST", "/path/one,/path/two");
-        env::set_var("DDEC__CHOREO_USE_TLS", "true");
         env::set_var("DDEC__TRACING__SERVICE_NAME", "moby-p3");
         env::set_var("DDEC__TRACING__ENDPOINT", "moby-p3-endpoint");
 
@@ -351,7 +348,6 @@ mod tests {
         env::remove_var("DDEC__CERTPATHS__CERT");
         env::remove_var("DDEC__CERTPATHS__KEY");
         env::remove_var("DDEC__CERTPATHS__CALIST");
-        env::remove_var("DDEC__CHOREO_USE_TLS");
         env::remove_var("DDEC__TRACING__SERVICE_NAME");
         env::remove_var("DDEC__TRACING__ENDPOINT");
 

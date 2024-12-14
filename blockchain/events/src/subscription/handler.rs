@@ -132,9 +132,6 @@ where
     /// # Returns
     /// * `Result<(), SubscriptionError>` - The result of the Subscription
     /// * `SubscriptionError` - The error that occurred during the Subscription
-    ///
-    ///
-    ///
     pub async fn subscribe<U, T>(
         self,
         handler: U,

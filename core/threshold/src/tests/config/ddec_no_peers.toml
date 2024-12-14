@@ -1,5 +1,3 @@
-choreo_use_tls = false
-
 [protocol.host]
 address = "p1"
 port = 50000

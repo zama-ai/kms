@@ -1,15 +1,21 @@
-#Parameters related to otel tracing
+# This file holds the configuration for mobygo,
+# this is a binary that runs a grpc client for interacting with the core/threshold service (moby).
+
+# Parameters related to opentelemetry (otel) tracing.
 [tracing]
-#Service name to use in otel spans
+
+# Service name to use in otel spans.
 service_name = "choreographer"
-#Address of the otel exporter
+
+# Address of the otel exporter.
 endpoint = "http://localhost:4317"
 
-#Parameters related to the network topology
+# Parameters related to the network topology of core/threshold nodes.
 [threshold_topology]
-#Maximum number of corrupted parties
+
+# Maximum number of corrupted parties.
 threshold = 1
-#Information on the parties
+
 peers = [
     
     { physical_address = "localhost", logical_address = "p1", physical_port = 50001, logical_port = 50000, choreo_physical_port = 60001, choreo_logical_port = 60000, id = 1, use_tls = true },

@@ -23,7 +23,6 @@ services:
       - DDEC__CERTPATHS__CERT=/app/ddec/certs/cert_p{{ i+1 }}.pem
       - DDEC__CERTPATHS__KEY=/app/ddec/certs/key_p{{ i+1 }}.pem
       - DDEC__CERTPATHS__CALIST={% for j in range(n_parties) %}/app/ddec/certs/cert_p{{ j+1 }}.pem,{% endfor %}
-      - DDEC__CHOREO_USE_TLS=false
     volumes:
       - ../parameters:/app/ddec/parameters
       - ../test_certs:/app/ddec/certs

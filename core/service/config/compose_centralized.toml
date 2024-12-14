@@ -1,8 +1,9 @@
+# See default_1.toml for the documentation.
+
 [service]
 listen_address = "0.0.0.0"
 listen_port = 50051
 timeout_secs = 360
-# maximum grpc message size in bytes
 grpc_max_message_size = 20971520 # 20 MiB
 
 [tracing]
@@ -20,10 +21,6 @@ storage_cache_size = 1000
 [private_vault]
 storage = "file://./keys"
 
-# Optional rate limiting configuration.
-# The `bucket_size` represents the total amount of tokens available for processing in the core.
-# The fields other fields represents the price of each operation in the core. I.e. how many tokens will be taken while the operation is executing.
-# If all tokens are in use then the core will refuse further operations until a sufficient amount of tokens are released.
 [rate_limiter_conf]
 bucket_size = 50000
 dec = 1

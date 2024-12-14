@@ -1,44 +1,76 @@
-###This is an example config file for Party 1
-#Whether or not to use TLS for communication with choreographer
-choreo_use_tls = false
+# Moby is a GRPC service that runs only the core/threshold protocols.
+# This is for experimental purposes only!
+# Below is an example config file for Party 1
 
-#Description of the party
+# Description of the party.
 [protocol.host]
-#Network address of the party
+
+# Network address of the party
 address = "localhost"
-#Port for MPC protocol communication
+
+# Port for MPC protocol communication.
 port = 50000
-#ID of the party within the MPC protocol
+
+# ID of the party within the MPC protocol.
+# The ID must be unique for all parties.
 id = 1
-#Port for communication with the choreographer
+
+# Port for communication with the choreographer,
+# namely the grpc client that sends requests to this party.
 choreoport = 60000
 
-
-#Parameters related to otel tracing
+# Parameters related to opentelemetry (otel) tracing.
 [tracing]
-#Service name to use in otel spans
+
+# Service name to use in otel spans.
 service_name = "moby"
-#Address of the otel exporter
+
+# Address of the otel exporter.
 endpoint = "http://localhost:4317"
 
-#Address of the redis server the party uses for storing preprocessing data
+# Address of the redis server the party uses for storing preprocessing data
 [redis]
 host = "redis://127.0.0.1"
 
+# Configuration regarding TLS configuration.
+# TLS is not used if this section is empty.
+# For testing, these certificates and keys can be generated using the kms-gen-tls-keys binary.
 [certpaths]
-#Path to the party's certificate for TLS
+
+# Path to the party's TLS certificate in PEM format.
 cert = "test_certs/cert_p1.pem"
-#Path to the party's key for TLS
+
+# Path to this party's TLS key in PEM format.
 key = "test_certs/key_p1.pem"
-#Path to all the parties' TLS certificate
+
+# Path to all the parties' TLS certificates.
 calist = "test_certs/cert_p1.pem,test_certs/cert_p2.pem,test_certs/cert_p3.pem,test_certs/cert_p4.pem,test_certs/cert_p5.pem"
 
+# This section 
 [net_conf]
+
+# The message limit in the internal channels.
 message_limit = 70
+
+# The multiplier that controls the exponential backoff policy for message retries.
+# It is to multiply the current interval with for each retry attempt.
 multiplier = 1.1
-max_interval = 5 
-max_elapsed_time = 300 
+
+# The maximum value of the back off period. Once the retry interval reaches this value it stops increasing.
+max_interval = 5
+
+# The maximum elapsed time after instantiating ExponentialBackfff or calling reset after which next_backoff returns None.
+# For details see https://docs.rs/backoff/latest/backoff/.
+max_elapsed_time = 300
+
+# The default network timeout in seconds.
 network_timeout = 10
-network_timeout_bk = 300 
-network_timeout_bk_sns = 1200 
+
+# The network timeout for generating a TFHE bootstrapping key.
+network_timeout_bk = 300
+
+# The network timeout for generating a switch and squash boostrapping key.
+network_timeout_bk_sns = 1200
+
+# The maximum message size for encoding and decoding grpc messages.
 max_en_decode_message_size = 2147483648

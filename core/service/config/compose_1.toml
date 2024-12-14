@@ -1,7 +1,6 @@
+# See default_1.toml for the documentation.
+
 [service]
-# The address and port that tcp listener binds on to
-# accept client requests.
-# This endpoint should not be exposed externally.
 listen_address = "0.0.0.0"
 listen_port = 50100
 timeout_secs = 360
@@ -24,27 +23,19 @@ storage_cache_size = 1000
 storage = "file://./keys"
 
 [threshold]
-# The address and port that tcp listener binds on to
-# communicate with the other cores.
 listen_address = "dev-kms-core-1"
 listen_port = 50001
 
 my_id = 1
 
-# Threshold is the number of corruptions that the protocol handles.
 threshold = 1
 dec_capacity = 10000
 min_dec_cache = 6000
 num_sessions_preproc = 2
 
-# The below is optional and used for TLS certificates
 tls_cert_path = "certs/cert_dev-kms-core-1.pem"
 tls_key_path = "certs/key_dev-kms-core-1.pem"
 
-# The number of peer_confs dictates the total number of parties.
-# This list should be the same for all parties.
-# Addresses and ports below are for communicating with the cores
-# to perform MPC tasks.
 [[threshold.peers]]
 party_id = 1
 address = "dev-kms-core-1"
@@ -69,9 +60,6 @@ address = "dev-kms-core-4"
 port = 50004
 tls_cert_path = "certs/cert_dev-kms-core-4.pem"
 
-# Specify the network configuration of the core-to-core communication
-# Values below are the same as the one in the constant file for the core network
-# This is optional, and falls back to constant file if not provided
 [threshold.core_to_core_net]
 message_limit = 70
 multiplier = 1.1
@@ -85,13 +73,6 @@ max_en_decode_message_size = 2147483648
 # [threshold.preproc_redis]
 # host = "redis://127.0.0.1"
 
-# Optional rate limiting configuration.
-# All parties **must** use the same configuration, even on different hardware,
-# to avoid diverging behaviour which could lead to uncontrolled issues
-# the MPC protocol.
-# The `bucket_size` represents the total amount of tokens available for processing in the core.
-# The fields other fields represents the price of each operation in the core. I.e. how many tokens will be taken while the operation is executing.
-# If all tokens are in use then the core will refuse further operations until a sufficient amount of tokens are released.
 [rate_limiter_conf]
 bucket_size = 50000
 dec = 1

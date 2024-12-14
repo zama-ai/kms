@@ -113,8 +113,7 @@ pub struct Tracing {
     #[builder(default, setter(strip_option))]
     batch: Option<BatchConf>,
 
-    /// Batch configuration.
-    /// If this is set, the tracing system will not batch the spans before exporting them.
+    /// If this is set, the tracing system will use json logs.
     #[builder(default, setter(strip_option))]
     json_logs: Option<bool>,
 
