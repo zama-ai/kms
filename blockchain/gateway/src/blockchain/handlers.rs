@@ -20,7 +20,9 @@ use events::kms::ReencryptResponseValues;
 use kms_lib::kms::Eip712DomainMsg;
 use std::ops::Mul;
 use std::sync::Arc;
+use tracing::trace_span;
 
+#[tracing::instrument(skip(config, blockchain, middleware))]
 pub(crate) async fn handle_event_decryption(
     event: &Arc<DecryptionEvent>,
     config: &GatewayConfig,
@@ -101,34 +103,38 @@ pub(crate) async fn handle_event_decryption(
     };
     tracing::debug!("⛽ Using calculated gas price: {:?}", gas_price);
 
-    let contract = GatewayContract::new(config.ethereum.oracle_predeploy_address, client);
-    let fullfillment = contract
-        .fulfill_request(event.filter.request_id, encoded_bytes.into(), signatures)
-        .gas_price(gas_price)
-        .gas(config.ethereum.gas_limit.unwrap_or(1_000_000));
+    {
+        let span = trace_span!("gateway-contract-call");
+        let _guard = span.enter();
+        let contract = GatewayContract::new(config.ethereum.oracle_predeploy_address, client);
+        let fullfillment = contract
+            .fulfill_request(event.filter.request_id, encoded_bytes.into(), signatures)
+            .gas_price(gas_price)
+            .gas(config.ethereum.gas_limit.unwrap_or(1_000_000));
 
-    match fullfillment.send().await {
-        Ok(pending_tx) => match pending_tx.await {
-            Ok(receipt) => {
-                tracing::info!(
-                    "✅ Fulfilled Ethereum request: {:?}",
-                    event.filter.request_id
-                );
-                tracing::trace!("Transaction receipt: {:?}", receipt);
-            }
+        match fullfillment.send().await {
+            Ok(pending_tx) => match pending_tx.await {
+                Ok(receipt) => {
+                    tracing::info!(
+                        "✅ Fulfilled Ethereum request: {:?}",
+                        event.filter.request_id
+                    );
+                    tracing::trace!("Transaction receipt: {:?}", receipt);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to await transaction receipt: {:?}", e);
+                }
+            },
             Err(e) => {
-                tracing::error!("Failed to await transaction receipt: {:?}", e);
+                tracing::error!("Failed to send fulfill_request transaction: {:?}", e);
             }
-        },
-        Err(e) => {
-            tracing::error!("Failed to send fulfill_request transaction: {:?}", e);
-        }
-    }
-
+        };
+    };
     tracing::debug!("🍻 handle_event_decryption exit");
     Ok(())
 }
 
+#[tracing::instrument(skip(client, config, blockchain))]
 async fn decrypt(
     client: Arc<Box<dyn InternalMiddleware>>,
     config: &GatewayConfig,
@@ -178,6 +184,7 @@ async fn decrypt(
     blockchain.decrypt(typed_cts, domain, acl_address).await
 }
 
+#[tracing::instrument(skip(config, ct_provider, middleware, blockchain))]
 pub(crate) async fn handle_reencryption_event(
     event: &ApiReencryptValues,
     config: &GatewayConfig,
@@ -233,6 +240,7 @@ pub(crate) async fn handle_reencryption_event(
     response
 }
 
+#[tracing::instrument(skip(config, blockchain, middleware, ciphertext_provider))]
 pub(crate) async fn handle_verify_proven_ct_event(
     event: &ApiVerifyProvenCtValues,
     config: &GatewayConfig,
@@ -296,6 +304,7 @@ pub(crate) async fn handle_verify_proven_ct_event(
         .await
 }
 
+#[tracing::instrument(skip(blockchain))]
 pub(crate) async fn handle_keyurl_event(
     blockchain: Arc<dyn Blockchain>,
 ) -> anyhow::Result<KeyUrlResponseValues> {

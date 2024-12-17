@@ -47,7 +47,7 @@ use serde::de::DeserializeOwned;
 use std::{collections::HashMap, path::MAIN_SEPARATOR_STR, str::FromStr, sync::Arc};
 use strum::IntoEnumIterator;
 use tokio::sync::{mpsc, oneshot, RwLock};
-use tracing::info;
+use tracing::{info, Instrument};
 
 pub(crate) struct KmsBlockchainImpl {
     pub(crate) client: Arc<RwLock<Client>>,
@@ -155,6 +155,7 @@ impl<'a> KmsBlockchainImpl {
         Ok(kms_bc_impl)
     }
 
+    #[tracing::instrument(skip(self))]
     pub(crate) async fn wait_for_transaction(
         &self,
         txn_id: &TransactionId,
@@ -180,6 +181,7 @@ impl<'a> KmsBlockchainImpl {
     }
 
     #[allow(clippy::assign_op_pattern)]
+    #[tracing::instrument(skip(self, operation), fields(op_name=operation.values_name()))]
     async fn make_req_to_kms_blockchain(
         &self,
         data_size: u32,
@@ -217,7 +219,8 @@ impl<'a> KmsBlockchainImpl {
                 tracing::info!(msg);
                 Err(anyhow::anyhow!(msg))
             }
-        });
+        }
+        .instrument(tracing::Span::current()));
 
         let events = resp?
             .events
@@ -229,6 +232,7 @@ impl<'a> KmsBlockchainImpl {
 
         // At this point evs should contain a single event
         if events.len() != 1 {
+            tracing::error!("Expected a single KmsEvent, but received: {:?}", events);
             return Err(anyhow::anyhow!(
                 "Expected a single KmsEvent, but received: {:?}",
                 events
@@ -238,6 +242,7 @@ impl<'a> KmsBlockchainImpl {
         let expected_kms_op = <OperationValue as std::convert::Into<KmsOperation>>::into(operation);
         // Make sure this is indeed the expected event
         if ev.operation != expected_kms_op {
+            tracing::error!("Expected a {:?} , but received: {:?}", expected_kms_op, ev);
             return Err(anyhow::anyhow!(
                 "Expected a {:?} , but received: {:?}",
                 expected_kms_op,
@@ -247,6 +252,7 @@ impl<'a> KmsBlockchainImpl {
         Ok(ev)
     }
 
+    #[tracing::instrument(skip(self, ctxt), fields(ctxt_len = ctxt.len()))]
     async fn store_ciphertext(&self, ctxt: Vec<u8>) -> anyhow::Result<Vec<u8>> {
         // Convert the Vec<u8> to a hex string
         let hex_data = hex::encode(&ctxt);
@@ -552,6 +558,7 @@ impl<'a> KmsBlockchainImpl {
     }
 }
 
+#[tracing::instrument]
 async fn fetch_ethereum_proof(
     params: EVMProofParams,
     config: EthereumConfig,
@@ -579,6 +586,8 @@ fn reencrypt_proof_params(
 
 #[async_trait]
 impl Blockchain for KmsBlockchainImpl {
+    // TODO: Properly choose which parameters should be kept in the trace or not
+    #[tracing::instrument(skip(self))]
     async fn decrypt(
         &self,
         typed_cts: Vec<(Vec<u8>, FheType, Vec<u8>)>,
@@ -860,6 +869,7 @@ impl Blockchain for KmsBlockchainImpl {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(skip(self, signature, enc_key, ciphertext, eip712_salt))]
     async fn reencrypt(
         &self,
         signature: Vec<u8>,
@@ -1036,6 +1046,7 @@ impl Blockchain for KmsBlockchainImpl {
     /// Returns a [`HexVectorList`]
     /// filled with the kms_signatures
     /// (as that is the only info the KMS Blockchain provides)
+    #[tracing::instrument(skip(self, ct_proof, eip712_domain), fields(verifying_contract = eip712_domain.verifying_contract))]
     async fn verify_proven_ct(
         &self,
         client_address: String,
@@ -1098,6 +1109,10 @@ impl Blockchain for KmsBlockchainImpl {
         );
         let event = self.wait_for_transaction(ev.txn_id()).await?;
         if event.operation != KmsOperation::VerifyProvenCtResponse {
+            tracing::error!(
+                "Expected to receive a VerifyProvenCtResponse, but received {:?}",
+                event
+            );
             return Err(anyhow!(
                 "Expected to receive a VerifyProvenCtResponse, but received {:?}",
                 event
@@ -1145,6 +1160,7 @@ impl Blockchain for KmsBlockchainImpl {
         parse_verify_proven_ct_responses_to_client(proven_ct_responses)
     }
 
+    #[tracing::instrument(skip(self))]
     async fn keyurl(&self) -> anyhow::Result<KeyUrlResponseValues> {
         // Only get the key url info for the key id that matches the one in the config
         // This is because, in case of multiple key generations, the ASC can return multiple

@@ -40,7 +40,7 @@ use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace_span, Instrument};
 use tracing_actix_web::TracingLogger;
 
 pub const HTTP_PAYLOAD_LIMIT: usize = 10 * 1024 * 1024; // 10 MB
@@ -598,78 +598,89 @@ impl GatewaySubscriber {
                 let kms_blockchain = Arc::clone(&kms);
                 let ct_provider = Arc::clone(&ct_provider);
                 let middleware = Arc::clone(&middleware);
-                tokio::task::spawn(async move {
-                    let start = tokio::time::Instant::now();
-                    match event {
-                        GatewayEvent::Decryption(msg_event) => {
-                            debug!("🫐🫐🫐 Received Decryption Event");
-                            if let Err(e) = handle_event_decryption(
-                                &Arc::new(msg_event.clone()),
-                                &config,
-                                kms_blockchain,
-                                middleware,
-                            )
-                            .await
-                            {
-                                error!("Error handling event decryption: {:?}", e);
-                            }
-                            debug!("Received Message: {:?}", msg_event);
-                        }
-                        GatewayEvent::Reencryption(reencrypt_event) => {
-                            debug!("🫐🫐🫐 Received Reencryption Event");
-                            match handle_reencryption_event(
-                                &reencrypt_event.values,
-                                &config,
-                                ct_provider,
-                                middleware,
-                                kms_blockchain,
-                            )
-                            .await
-                            {
-                                Ok(resp) => {
-                                    let _ = reencrypt_event.sender.send(resp);
+                tokio::task::spawn(
+                    async move {
+                        let start = tokio::time::Instant::now();
+                        match event {
+                            GatewayEvent::Decryption(msg_event) => {
+                                let span = trace_span!("decrypt");
+                                let _guard = span.enter();
+                                debug!("🫐🫐🫐 Received Decryption Event");
+                                if let Err(e) = handle_event_decryption(
+                                    &Arc::new(msg_event.clone()),
+                                    &config,
+                                    kms_blockchain,
+                                    middleware,
+                                )
+                                .await
+                                {
+                                    error!("Error handling event decryption: {:?}", e);
                                 }
-                                Err(e) => {
-                                    error!("failed to handle reencryption with error {e}");
-                                }
+                                debug!("Received Message: {:?}", msg_event);
                             }
-                        }
-                        GatewayEvent::VerifyProvenCt(verify_proven_ct_event) => {
-                            debug!("🫐🫐🫐 Received VerifyProvenCt Event");
-                            let result = handle_verify_proven_ct_event(
-                                &verify_proven_ct_event.values,
-                                &config,
-                                middleware,
-                                kms_blockchain,
-                                ct_provider,
-                            )
-                            .await;
-                            let sended = verify_proven_ct_event.sender.send(result);
-                            if let Err(_result) = sended {
-                                error!("failed to send message back");
-                            }
-                        }
-                        GatewayEvent::KeyUrl(keyurl_event) => {
-                            debug!("🫐🫐🫐 Received KeyUrl Event");
-                            match handle_keyurl_event(kms_blockchain).await {
-                                Ok(keyurl_response) => {
-                                    let _ = keyurl_event.sender.send(keyurl_response);
-                                }
-                                Err(e) => {
-                                    error!("failed to handle keyurl request with error {e}");
+                            GatewayEvent::Reencryption(reencrypt_event) => {
+                                let span = trace_span!("re-encrypt");
+                                let _guard = span.enter();
+                                debug!("🫐🫐🫐 Received Reencryption Event");
+                                match handle_reencryption_event(
+                                    &reencrypt_event.values,
+                                    &config,
+                                    ct_provider,
+                                    middleware,
+                                    kms_blockchain,
+                                )
+                                .await
+                                {
+                                    Ok(resp) => {
+                                        let _ = reencrypt_event.sender.send(resp);
+                                    }
+                                    Err(e) => {
+                                        error!("failed to handle reencryption with error {e}");
+                                    }
                                 }
                             }
-                        }
-                        GatewayEvent::KmsEvent(kms_event) => {
-                            debug!("🫐🫐🫐 Received KmsEvent: {:?}", kms_event);
-                            if let Err(e) = kms_blockchain.receive(kms_event).await {
-                                error!("failed to handle kms request with error {e}");
+                            GatewayEvent::VerifyProvenCt(verify_proven_ct_event) => {
+                                let span = trace_span!("verify-proven-ct");
+                                let _guard = span.enter();
+                                debug!("🫐🫐🫐 Received VerifyProvenCt Event");
+                                let result = handle_verify_proven_ct_event(
+                                    &verify_proven_ct_event.values,
+                                    &config,
+                                    middleware,
+                                    kms_blockchain,
+                                    ct_provider,
+                                )
+                                .await;
+                                let sended = verify_proven_ct_event.sender.send(result);
+                                if let Err(_result) = sended {
+                                    error!("failed to send message back");
+                                }
+                            }
+                            GatewayEvent::KeyUrl(keyurl_event) => {
+                                let span = trace_span!("key-url");
+                                let _guard = span.enter();
+                                debug!("🫐🫐🫐 Received KeyUrl Event");
+                                match handle_keyurl_event(kms_blockchain).await {
+                                    Ok(keyurl_response) => {
+                                        let _ = keyurl_event.sender.send(keyurl_response);
+                                    }
+                                    Err(e) => {
+                                        error!("failed to handle keyurl request with error {e}");
+                                    }
+                                }
+                            }
+                            GatewayEvent::KmsEvent(kms_event) => {
+                                debug!("🫐🫐🫐 Received KmsEvent: {:?}", kms_event);
+                                if let Err(e) = kms_blockchain.receive(kms_event).await {
+                                    error!("failed to handle kms request with error {e}");
+                                }
                             }
                         }
+                        let duration = start.elapsed();
+                        info!("⏱️ E2E Event Time elapsed: {:?}", duration);
                     }
-                    let duration = start.elapsed();
-                    info!("⏱️ E2E Event Time elapsed: {:?}", duration);
-                });
+                    .instrument(tracing::info_span!("process event")),
+                );
             }
         });
     }

@@ -9,23 +9,24 @@ pub const TRUE_SOLIDITY_STR: &str = "0x1";
 
 type Hex = Vec<u8>;
 
+#[derive(Debug)]
 pub struct EthereumConfig {
     pub json_rpc_url: String,
     pub acl_contract_address: String,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum EVMProofParams {
     Decrypt(DecryptProofParams),
     Reencrypt(ReencryptProofParams),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DecryptProofParams {
     pub ciphertext_handles: Vec<Hex>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ReencryptProofParams {
     pub ciphertext_handles: Vec<Hex>,
     pub accounts: Vec<Hex>,
