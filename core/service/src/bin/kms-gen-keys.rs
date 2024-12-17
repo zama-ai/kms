@@ -4,7 +4,7 @@ use kms_lib::consts::{DEFAULT_PARAM, TEST_PARAM};
 use kms_lib::storage::StorageForText;
 use kms_lib::util::key_setup::ThresholdSigningKeyConfig;
 use kms_lib::{
-    conf::{init_trace, AWSConfig},
+    conf::{init_kms_core_telemetry, AWSConfig},
     consts::SIGNING_KEY_ID,
     kms::RequestId,
     util::key_setup::ensure_central_crs_exists,
@@ -196,7 +196,7 @@ impl<'a, S: Storage> ThresholdCmdArgs<'a, S> {
 /// ```
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    init_trace().await?;
+    init_kms_core_telemetry()?;
     let args = Args::parse();
     let aws_config = AWSConfig {
         region: args.aws_region,

@@ -1,6 +1,6 @@
 use clap::Parser;
-use conf_trace::conf::{Settings, Tracing};
-use conf_trace::telemetry::init_tracing;
+use conf_trace::conf::{Settings, TelemetryConfig};
+use conf_trace::telemetry::init_telemetry;
 use distributed_decryption::conf::party::PartyConf;
 use distributed_decryption::grpc;
 
@@ -28,12 +28,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         settings_builder.env_prefix("DDEC").build().init_conf()?
     };
 
-    init_tracing(
-        settings
-            .tracing
-            .clone()
-            .unwrap_or(Tracing::builder().service_name("moby").build()),
-    )
-    .await?;
+    let telemetry_config = settings.telemetry.clone().unwrap_or(
+        TelemetryConfig::builder()
+            .tracing_service_name("moby".to_string())
+            .build(),
+    );
+
+    init_telemetry(&telemetry_config)?;
     grpc::server::run(&settings).await
 }

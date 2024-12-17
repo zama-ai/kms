@@ -4,24 +4,100 @@ use std::env;
 use std::str::FromStr;
 use std::time::Duration;
 use strum_macros::{AsRefStr, Display, EnumString};
+use tracing::{debug, warn};
 use typed_builder::TypedBuilder;
 
 // Default configuration constants
 const TRACER_MAX_QUEUE_SIZE: usize = 8192;
 const TRACER_MAX_EXPORT_BATCH_SIZE: usize = 2048;
 const TRACER_MAX_CONCURRENT_EXPORTS: usize = 4;
-const TRACER_DEFAULT_TIMEOUT_SECS: u64 = 5;
-const TRACER_DEFAULT_INIT_TIMEOUT_SECS: u64 = 10;
+const TRACER_DEFAULT_TIMEOUT_MS: u64 = 5000;
+const TRACER_OTLP_TIMEOUT_MS: u64 = 10000;
 const TRACER_DEFAULT_RETRY_COUNT: u32 = 3;
-const TRACER_DEFAULT_SAMPLING_RATIO: u64 = 10;
+const TRACER_DEFAULT_SCHEDULED_DELAY_MS: u64 = 500;
+const TRACER_DEFAULT_RETRY_INITIAL_DELAY_MS: u64 = 100;
+const TRACER_DEFAULT_RETRY_MAX_DELAY_MS: u64 = 1000;
 
 lazy_static::lazy_static! {
     pub(crate) static ref ENVIRONMENT: ExecutionEnvironment = mode();
-    static ref TRACER_SCHEDULED_DELAY: Duration = Duration::from_millis(500);
+    static ref TRACER_SCHEDULED_DELAY: Duration = Duration::from_millis(TRACER_DEFAULT_SCHEDULED_DELAY_MS);
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, TypedBuilder, Eq)]
-pub struct BatchConf {
+#[derive(Debug, Deserialize, Serialize, Clone, TypedBuilder, PartialEq, Eq)]
+#[serde(rename = "telemetry")]
+pub struct TelemetryConfig {
+    /// Service name for tracing
+    #[builder(default, setter(strip_option))]
+    pub tracing_service_name: Option<String>,
+
+    /// Endpoint for tracing
+    #[builder(default, setter(strip_option))]
+    pub tracing_endpoint: Option<String>,
+
+    /// Timeout for OTLP exporter operations (HTTP/gRPC requests) in milliseconds
+    #[builder(default, setter(strip_option))]
+    pub tracing_otlp_timeout_ms: Option<u64>,
+
+    /// Address to expose metrics on
+    #[builder(default, setter(strip_option))]
+    pub metrics_bind_address: Option<String>,
+
+    /// Batch configuration for tracing
+    #[builder(default, setter(strip_option))]
+    pub batch: Option<Batch>,
+}
+
+impl TelemetryConfig {
+    pub fn tracing_service_name(&self) -> Option<&str> {
+        let res = self.tracing_service_name.as_deref();
+        debug!(
+            "Getting tracing_service_name: {}",
+            res.unwrap_or("tracing_service_name not found.")
+        );
+        res
+    }
+
+    pub fn tracing_endpoint(&self) -> Option<&str> {
+        self.tracing_endpoint.as_deref()
+    }
+
+    pub fn tracing_otlp_timeout(&self) -> Duration {
+        Duration::from_millis(
+            self.tracing_otlp_timeout_ms
+                .unwrap_or(TRACER_OTLP_TIMEOUT_MS),
+        )
+    }
+
+    pub fn metrics_bind_address(&self) -> Option<&str> {
+        let res = self.metrics_bind_address.as_deref();
+        debug!(
+            "Getting metrics_bind_address: {}",
+            res.unwrap_or("metrics_bind_address not found.")
+        );
+        res
+    }
+
+    pub fn batch(&self) -> Option<&Batch> {
+        self.batch.as_ref()
+    }
+
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        debug!("Validating telemetry config: {:?}", self);
+        if let Some(endpoint) = &self.tracing_endpoint {
+            if endpoint.is_empty() {
+                warn!("Empty tracing endpoint provided");
+                return Err(ConfigError::Message(
+                    "tracing endpoint cannot be empty".to_string(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, TypedBuilder, Eq)]
+#[serde(rename_all = "lowercase")]
+pub struct Batch {
     /// The maximum number of spans that can be queued before they are exported.
     /// Defaults to `telemetry::TRACER_MAX_QUEUE_SIZE`
     #[builder(default, setter(strip_option))]
@@ -36,21 +112,44 @@ pub struct BatchConf {
     #[builder(default, setter(strip_option))]
     max_concurrent_exports: Option<usize>,
 
-    /// The delay between two consecutive exports.
-    /// Defaults to `telemetry::TRACER_SCHEDULED_DELAY`
+    /// The delay between two consecutive exports in milliseconds.
+    /// Defaults to `telemetry::TRACER_SCHEDULED_DELAY_MS`
     #[builder(default, setter(strip_option))]
-    scheduled_delay: Option<Duration>,
+    scheduled_delay_ms: Option<u64>,
 
-    /// Timeout for export operations
+    /// Timeout for export operations in milliseconds
     #[builder(default, setter(strip_option))]
-    export_timeout: Option<Duration>,
-
-    /// Retry configuration for failed exports
-    #[builder(default, setter(strip_option))]
-    retry_config: Option<RetryConfig>,
+    export_timeout_ms: Option<u64>,
 }
 
-impl BatchConf {
+impl<'de> Deserialize<'de> for Batch {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "lowercase")]
+        struct BatchHelper {
+            max_queue_size: Option<usize>,
+            max_export_batch_size: Option<usize>,
+            max_concurrent_exports: Option<usize>,
+            scheduled_delay_ms: Option<u64>,
+            export_timeout_ms: Option<u64>,
+        }
+
+        let helper = BatchHelper::deserialize(deserializer)?;
+
+        Ok(Batch {
+            max_queue_size: helper.max_queue_size,
+            max_export_batch_size: helper.max_export_batch_size,
+            max_concurrent_exports: helper.max_concurrent_exports,
+            scheduled_delay_ms: helper.scheduled_delay_ms,
+            export_timeout_ms: helper.export_timeout_ms,
+        })
+    }
+}
+
+impl Batch {
     /// Returns the max queue size.
     pub fn max_queue_size(&self) -> usize {
         self.max_queue_size.unwrap_or(TRACER_MAX_QUEUE_SIZE)
@@ -70,133 +169,19 @@ impl BatchConf {
 
     /// Returns the scheduled delay.
     pub fn scheduled_delay(&self) -> Duration {
-        self.scheduled_delay.unwrap_or(*TRACER_SCHEDULED_DELAY)
+        Duration::from_millis(
+            self.scheduled_delay_ms
+                .unwrap_or(TRACER_DEFAULT_SCHEDULED_DELAY_MS),
+        )
     }
 
     /// Returns the export timeout
     pub fn export_timeout(&self) -> Duration {
-        self.export_timeout
-            .unwrap_or_else(|| Duration::from_secs(TRACER_DEFAULT_TIMEOUT_SECS))
-    }
-
-    /// Returns the retry configuration
-    pub fn retry_config(&self) -> Option<RetryConfig> {
-        self.retry_config.clone()
+        Duration::from_millis(self.export_timeout_ms.unwrap_or(TRACER_DEFAULT_TIMEOUT_MS))
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, TypedBuilder, PartialEq, Eq)]
-pub struct Tracing {
-    /// The service name. This is used to identify the service in the tracing system.
-    /// It is recommended to use the same service name across all instances of the service.
-    ///
-    /// Service Name should contain the following pattern:
-    ///
-    /// ```text
-    /// <service_name> := <alpha>_<service_name> | <alpha>
-    /// <alpha> := [a-z]*
-    /// ```
-    #[builder(setter(into))]
-    service_name: String,
-
-    // All the following settings are optional.
-    /// The endpoint of the tracing system. If it is not set, tracing will be redirected to stdout.
-    #[builder(default, setter(strip_option))]
-    endpoint: Option<String>,
-
-    /// Port for exposing Prometheus metrics. Defaults to 9464 if not specified.
-    #[builder(default, setter(strip_option))]
-    metrics_port: Option<u16>,
-
-    /// Batch configuration.
-    /// If this is set, the tracing system will not batch the spans before exporting them.
-    #[builder(default, setter(strip_option))]
-    batch: Option<BatchConf>,
-
-    /// If this is set, the tracing system will use json logs.
-    #[builder(default, setter(strip_option))]
-    json_logs: Option<bool>,
-
-    /// Sampling configuration (0 - 100, where 100 means 100% sampling)
-    #[builder(default, setter(strip_option))]
-    sampling_ratio: Option<u64>,
-
-    /// Initialization timeout in seconds
-    #[builder(default, setter(strip_option))]
-    init_timeout_secs: Option<u64>,
-
-    /// Whether to enable async initialization
-    #[builder(default, setter(strip_option))]
-    async_init: Option<bool>,
-}
-
-impl Tracing {
-    /// Returns the service name.
-    pub fn service_name(&self) -> &str {
-        &self.service_name
-    }
-
-    /// Returns the endpoint.
-    pub fn endpoint(&self) -> &Option<String> {
-        &self.endpoint
-    }
-
-    /// Returns the batch configuration.
-    pub fn batch(&self) -> &Option<BatchConf> {
-        &self.batch
-    }
-
-    /// Returns the json configuration.
-    pub fn json_logs(&self) -> &Option<bool> {
-        &self.json_logs
-    }
-
-    /// Returns the sampling ratio (0 - 100)
-    pub fn sampling_ratio(&self) -> u64 {
-        self.sampling_ratio.unwrap_or(TRACER_DEFAULT_SAMPLING_RATIO)
-    }
-
-    /// Returns the initialization timeout
-    pub fn init_timeout(&self) -> Duration {
-        Duration::from_secs(
-            self.init_timeout_secs
-                .unwrap_or(TRACER_DEFAULT_INIT_TIMEOUT_SECS),
-        )
-    }
-
-    /// Returns whether async initialization is enabled
-    pub fn async_init(&self) -> bool {
-        self.async_init.unwrap_or(true)
-    }
-
-    /// Returns the metrics port
-    pub fn metrics_port(&self) -> u16 {
-        self.metrics_port.unwrap_or(9464)
-    }
-
-    /// Validates the configuration
-    pub fn validate(&self) -> Result<(), ConfigError> {
-        if let Some(ratio) = self.sampling_ratio {
-            if !(0..=100).contains(&ratio) {
-                return Err(ConfigError::Message(
-                    "sampling_ratio must be between 0 and 100".to_string(),
-                ));
-            }
-        }
-
-        if let Some(endpoint) = &self.endpoint {
-            if endpoint.trim().is_empty() {
-                return Err(ConfigError::Message(
-                    "endpoint must not be empty if specified".to_string(),
-                ));
-            }
-        }
-
-        Ok(())
-    }
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder)]
+#[derive(Debug, Serialize, Clone, TypedBuilder, PartialEq, Eq)]
 pub struct RetryConfig {
     /// Maximum number of retry attempts
     #[builder(default, setter(strip_option))]
@@ -211,17 +196,55 @@ pub struct RetryConfig {
     max_delay_ms: Option<u64>,
 }
 
+impl<'de> Deserialize<'de> for RetryConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RetryConfigHelper {
+            max_retries: Option<u32>,
+            initial_delay_ms: Option<u64>,
+            max_delay_ms: Option<u64>,
+        }
+
+        let helper = RetryConfigHelper::deserialize(deserializer)?;
+        println!(
+            "Deserializing RetryConfig: max_retries={:?}, initial_delay_ms={:?}, max_delay_ms={:?}",
+            helper.max_retries, helper.initial_delay_ms, helper.max_delay_ms,
+        );
+
+        Ok(RetryConfig {
+            max_retries: helper.max_retries,
+            initial_delay_ms: helper.initial_delay_ms,
+            max_delay_ms: helper.max_delay_ms,
+        })
+    }
+}
+
 impl RetryConfig {
     pub fn max_retries(&self) -> u32 {
-        self.max_retries.unwrap_or(TRACER_DEFAULT_RETRY_COUNT)
+        let retries = self.max_retries.unwrap_or(TRACER_DEFAULT_RETRY_COUNT);
+        debug!("Getting max_retries: {}", retries);
+        retries
     }
 
     pub fn initial_delay(&self) -> Duration {
-        Duration::from_millis(self.initial_delay_ms.unwrap_or(100))
+        let delay = Duration::from_millis(
+            self.initial_delay_ms
+                .unwrap_or(TRACER_DEFAULT_RETRY_INITIAL_DELAY_MS),
+        );
+        debug!("Getting initial_delay: {:?}", delay);
+        delay
     }
 
     pub fn max_delay(&self) -> Duration {
-        Duration::from_millis(self.max_delay_ms.unwrap_or(5000))
+        let delay = Duration::from_millis(
+            self.max_delay_ms
+                .unwrap_or(TRACER_DEFAULT_RETRY_MAX_DELAY_MS),
+        );
+        debug!("Getting max_delay: {:?}", delay);
+        delay
     }
 }
 
@@ -252,9 +275,11 @@ pub struct Settings<'a> {
 }
 
 fn mode() -> ExecutionEnvironment {
-    env::var("RUN_MODE")
+    let res = env::var("RUN_MODE")
         .map(|enum_str| ExecutionEnvironment::from_str(enum_str.as_str()).unwrap_or_default())
-        .unwrap_or_else(|_| ExecutionEnvironment::Local)
+        .unwrap_or_else(|_| ExecutionEnvironment::Local);
+    println!("RUN_MODE={res}");
+    res
 }
 
 impl Settings<'_> {
@@ -264,6 +289,14 @@ impl Settings<'_> {
     ///
     /// Returns an error if the configuration cannot be created or deserialized.
     pub fn init_conf<'de, T: Deserialize<'de> + std::fmt::Debug>(&self) -> Result<T, ConfigError> {
+        println!(
+            "Initializing configuration with prefix: {}",
+            self.env_prefix
+        );
+        if let Some(path) = self.path {
+            println!("Using config file: {}", path);
+        }
+
         let mut env_conf = config::Environment::default()
             .prefix(self.env_prefix)
             .separator("__")
@@ -274,6 +307,7 @@ impl Settings<'_> {
         for key in &self.parse_keys {
             env_conf = env_conf.with_list_parse_key(key);
         }
+
         let mut config_builder = Config::builder()
             .add_source(File::with_name("config/default").required(false))
             .add_source(

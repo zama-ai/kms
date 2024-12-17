@@ -4,8 +4,8 @@ use tokio::time::Duration;
 use aes_prng::AesRng;
 use clap::{Args, Parser, Subcommand};
 use conf_trace::{
-    conf::{Settings, Tracing},
-    telemetry::init_tracing,
+    conf::{Settings, TelemetryConfig},
+    telemetry::init_telemetry,
 };
 use distributed_decryption::{
     choreography::choreographer::ChoreoRuntime,
@@ -301,12 +301,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()
         .init_conf()?;
 
-    let tracing = conf
-        .tracing
-        .clone()
-        .unwrap_or(Tracing::builder().service_name("stairwayctl").build());
+    let telemetry = conf.telemetry.clone().unwrap_or(
+        TelemetryConfig::builder()
+            .tracing_service_name("stairwayctl".to_string())
+            .build(),
+    );
 
-    init_tracing(tracing).await?;
+    init_telemetry(&telemetry)?;
 
     let runtime = ChoreoRuntime::new_from_conf(&conf)?;
     match args.command {

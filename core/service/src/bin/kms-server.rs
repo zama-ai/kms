@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use kms_lib::{
-    conf::{init_conf_trace, CoreConfig},
+    conf::{init_conf_kms_core_telemetry, CoreConfig},
     cryptography::central_kms::SoftwareKms,
     kms::core_service_endpoint_server::CoreServiceEndpointServer,
     rpc::run_server,
@@ -51,7 +51,7 @@ struct KmsArgs {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = KmsArgs::parse();
-    let core_config: CoreConfig = init_conf_trace(&args.config_file).await?;
+    let core_config: CoreConfig = init_conf_kms_core_telemetry(&args.config_file)?;
     let party_id = core_config.threshold.as_ref().map(|t| t.my_id);
 
     // storage cache (don't forget to remove `storage_cache_size` from the

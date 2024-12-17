@@ -1,8 +1,8 @@
 use crate::util::rate_limiter::RateLimiterConfig;
 
 use self::threshold::ThresholdParty;
-use conf_trace::conf::{Settings, Tracing};
-use conf_trace::telemetry::init_tracing;
+use conf_trace::conf::{Settings, TelemetryConfig};
+use conf_trace::telemetry::init_telemetry;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -12,7 +12,7 @@ pub mod threshold;
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct CoreConfig {
     pub service: ServiceEndpoint,
-    pub tracing: Option<Tracing>,
+    pub telemetry: Option<TelemetryConfig>,
     pub aws: Option<AWSConfig>,
     pub public_vault: Option<Vault>,
     pub private_vault: Option<Vault>,
@@ -32,12 +32,12 @@ pub struct ServiceEndpoint {
 }
 
 pub trait ConfigTracing {
-    fn tracing(&self) -> Option<Tracing>;
+    fn telemetry(&self) -> Option<TelemetryConfig>;
 }
 
 impl ConfigTracing for CoreConfig {
-    fn tracing(&self) -> Option<Tracing> {
-        self.tracing.clone()
+    fn telemetry(&self) -> Option<TelemetryConfig> {
+        self.telemetry.clone()
     }
 }
 
@@ -70,21 +70,26 @@ pub fn init_conf<'a, T: Deserialize<'a> + std::fmt::Debug>(config_file: &str) ->
 }
 
 /// Initialize the configuration from the given file and initialize tracing.
-pub async fn init_conf_trace<'a, T: Deserialize<'a> + std::fmt::Debug + ConfigTracing>(
+pub fn init_conf_kms_core_telemetry<'a, T: Deserialize<'a> + std::fmt::Debug + ConfigTracing>(
     config_file: &str,
 ) -> anyhow::Result<T> {
     let full_config: T = init_conf(config_file)?;
-    let tracing = full_config
-        .tracing()
-        .unwrap_or_else(|| Tracing::builder().service_name("kms_core").build());
-    init_tracing(tracing).await?;
+    let telemetry = full_config.telemetry().unwrap_or_else(|| {
+        TelemetryConfig::builder()
+            .tracing_service_name("kms_core".to_string())
+            .build()
+    });
+    init_telemetry(&telemetry)?;
     Ok(full_config)
 }
 
 /// Initialize the tracing configuration with default values
-pub async fn init_trace() -> anyhow::Result<()> {
-    let tracing = Tracing::builder().service_name("kms_core").build();
-    init_tracing(tracing).await
+pub fn init_kms_core_telemetry() -> anyhow::Result<()> {
+    let telemetry = TelemetryConfig::builder()
+        .tracing_service_name("kms_core".to_string())
+        .build();
+    init_telemetry(&telemetry)?;
+    Ok(())
 }
 
 #[cfg(test)]

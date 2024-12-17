@@ -17,8 +17,8 @@ services:
       - DDEC__PROTOCOL__HOST__PORT=50000
       - DDEC__PROTOCOL__HOST__ID={{ i+1 }}
       - DDEC__PROTOCOL__HOST__CHOREOPORT=60000
-      - DDEC__TRACING__SERVICE_NAME=moby-party-{{ i+1 }}
-      - DDEC__TRACING__ENDPOINT=http://otel-collector:4317
+      - DDEC__TELEMETRY__TRACING_SERVICE_NAME=moby-party-{{ i+1 }}
+      - DDEC__TELEMETRY__TRACING_ENDPOINT=http://otel-collector:4317
       - DDEC__REDIS__HOST=redis://redis-p{{ i+1 }}:6379
       - DDEC__CERTPATHS__CERT=/app/ddec/certs/cert_p{{ i+1 }}.pem
       - DDEC__CERTPATHS__KEY=/app/ddec/certs/key_p{{ i+1 }}.pem

@@ -1,5 +1,5 @@
-use conf_trace::conf::{Settings, Tracing};
-use conf_trace::telemetry::init_tracing;
+use conf_trace::conf::{Settings, TelemetryConfig};
+use conf_trace::telemetry::init_telemetry;
 use ethers::types::H160;
 use events::{HexVector, HexVectorList};
 use kms_blockchain_connector::conf::ConnectorConfig;
@@ -245,7 +245,7 @@ pub struct GatewayConfig {
     pub ethereum: EthereumConfig,
     pub kms: KmsBlockchainConfig,
     pub storage: StorageConfig,
-    pub tracing: Option<Tracing>,
+    pub telemetry: Option<TelemetryConfig>,
 }
 
 impl GatewayConfig {
@@ -276,11 +276,12 @@ pub fn init_conf_gateway(config_file: &str) -> anyhow::Result<GatewayConfig> {
 
 pub async fn init_conf_with_trace_gateway(config_file: &str) -> anyhow::Result<GatewayConfig> {
     let conf = init_conf_gateway(config_file)?;
-    let tracing = conf
-        .tracing
-        .clone()
-        .unwrap_or_else(|| Tracing::builder().service_name("gateway").build());
-    init_tracing(tracing).await?;
+    let telemetry = conf.telemetry.clone().unwrap_or_else(|| {
+        TelemetryConfig::builder()
+            .tracing_service_name("gateway".to_string())
+            .build()
+    });
+    init_telemetry(&telemetry)?;
     Ok(conf)
 }
 

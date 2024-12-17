@@ -1,293 +1,273 @@
-use crate::conf::{ExecutionEnvironment, Tracing, ENVIRONMENT};
+use crate::conf::{ExecutionEnvironment, TelemetryConfig, ENVIRONMENT};
 use anyhow::Context;
 use axum::{
-    http::{header::CONTENT_TYPE, StatusCode},
-    response::IntoResponse,
+    extract::State,
+    http::{header, StatusCode},
+    response::{IntoResponse, Response},
     routing::get,
     Router,
 };
-use opentelemetry::global;
 use opentelemetry::propagation::Injector;
 use opentelemetry::trace::TracerProvider as _;
-use opentelemetry::KeyValue;
-use opentelemetry_http::{HeaderExtractor, Request};
+use opentelemetry::{global, KeyValue};
+use opentelemetry_http::HeaderExtractor;
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::metrics::SdkMeterProvider;
-use opentelemetry_sdk::propagation::TraceContextPropagator;
-use opentelemetry_sdk::runtime::Tokio;
-use opentelemetry_sdk::trace::{Config, Tracer, TracerProvider};
 use opentelemetry_sdk::Resource;
+use opentelemetry_sdk::{metrics::SdkMeterProvider, runtime::Tokio};
 use prometheus::{Encoder, Registry as PrometheusRegistry, TextEncoder};
-use std::net::SocketAddr;
-use std::sync::mpsc;
-use std::time::Duration;
-use tokio::runtime::Runtime;
+use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 use tonic::metadata::{MetadataKey, MetadataMap, MetadataValue};
 use tonic::service::Interceptor;
 use tonic::transport::Body;
 use tonic::Status;
-use tracing::{info_span, trace_span, warn, Span};
+use tracing::{info, info_span, trace_span, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::fmt::{layer, Layer};
 use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::{EnvFilter, Registry};
+use tracing_subscriber::{util::SubscriberInitExt, EnvFilter};
 
 /// This is the HEADER key that will be used to store the request ID in the tracing context.
 pub const TRACER_REQUEST_ID: &str = "x-zama-kms-request-id";
 pub const TRACER_PARENT_SPAN_ID: &str = "x-zama-kms-parent-span-id";
 
-/// Default timeout for trace export operations
-const DEFAULT_EXPORT_TIMEOUT: Duration = Duration::from_secs(5);
-/// Default timeout for initialization operations
-const DEFAULT_INIT_TIMEOUT: Duration = Duration::from_secs(10);
+#[derive(Clone)]
+struct MetricsState {
+    registry: Arc<PrometheusRegistry>,
+    start_time: std::time::SystemTime,
+}
 
-impl From<Tracing> for Tracer {
-    fn from(settings: Tracing) -> Self {
-        let result;
-        if *ENVIRONMENT == ExecutionEnvironment::Local {
-            result = stdout_pipeline(settings.service_name());
-            println!("Environment is {:?}. Logging to stdout", *ENVIRONMENT);
-            result
-        } else if let Some(endpoint) = settings.endpoint() {
-            let mut pipeline = opentelemetry_otlp::new_pipeline()
-                .tracing()
-                .with_exporter(
-                    opentelemetry_otlp::new_exporter()
-                        .tonic()
-                        .with_endpoint(endpoint)
-                        .with_timeout(DEFAULT_EXPORT_TIMEOUT),
-                )
-                .with_trace_config(
-                    opentelemetry_sdk::trace::config()
-                        .with_resource(Resource::new(vec![KeyValue::new(
-                            opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
-                            settings.service_name().to_string(),
-                        )]))
-                        .with_sampler(opentelemetry_sdk::trace::Sampler::ParentBased(Box::new(
-                            opentelemetry_sdk::trace::Sampler::TraceIdRatioBased(0.1),
-                        ))),
-                );
-
-            if let Some(batch) = settings.batch() {
-                let batch_config = opentelemetry_sdk::trace::BatchConfigBuilder::default()
-                    .with_max_queue_size(batch.max_queue_size())
-                    .with_scheduled_delay(batch.scheduled_delay())
-                    .with_max_export_batch_size(batch.max_export_batch_size())
-                    .with_max_concurrent_exports(batch.max_concurrent_exports())
-                    .with_max_export_timeout(DEFAULT_EXPORT_TIMEOUT)
-                    .build();
-                pipeline = pipeline.with_batch_config(batch_config);
-            }
-
-            result = pipeline
-                .install_batch(Tokio)
-                .expect("Failed to install OpenTelemetry tracer.");
-
-            println!(
-                "Environment is {:?}. Logging to endpoint: {:?}",
-                *ENVIRONMENT, endpoint
-            );
-            result
-        } else {
-            result = stdout_pipeline(settings.service_name());
-            println!("Environment is {:?}. Logging to stdout", *ENVIRONMENT);
-            result
+impl MetricsState {
+    fn new(registry: PrometheusRegistry) -> Self {
+        Self {
+            registry: Arc::new(registry),
+            start_time: std::time::SystemTime::now(),
         }
     }
 }
 
-/// Initialize metrics with the given settings and return a shutdown signal sender
-pub fn init_metrics(settings: Tracing) -> (SdkMeterProvider, tokio::sync::oneshot::Sender<()>) {
-    println!("Starting metrics initialization...");
-    // Skip metrics initialization in test mode
+async fn metrics_handler(State(state): State<MetricsState>) -> impl IntoResponse {
+    let encoder = TextEncoder::new();
+    let metric_families = state.registry.gather();
+    let mut buffer = vec![];
+    encoder.encode(&metric_families, &mut buffer).unwrap();
+
+    Response::builder()
+        .status(StatusCode::OK)
+        // .header(header::CONTENT_TYPE, "application/openmetrics-text;version=1.0.0;charset=utf-8") // TODO: switch to it if we need OpenMetrics format support
+        .header(
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )
+        .body(axum::body::Body::from(buffer))
+        .unwrap()
+}
+
+async fn health_handler() -> impl IntoResponse {
+    (StatusCode::OK, "ok")
+}
+
+async fn readiness_handler(State(state): State<MetricsState>) -> impl IntoResponse {
+    let uptime = state.start_time.elapsed().unwrap_or_default();
+    if uptime > Duration::from_secs(10) {
+        (StatusCode::OK, "ready")
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, "warming up")
+    }
+}
+
+async fn liveness_handler() -> impl IntoResponse {
+    (StatusCode::OK, "alive")
+}
+
+pub fn init_metrics(settings: &TelemetryConfig) -> SdkMeterProvider {
     if matches!(*ENVIRONMENT, ExecutionEnvironment::Integration) {
-        println!("Skipping metrics initialization in test mode");
-        // Return a completely empty meter provider that does nothing
-        let (tx, _) = tokio::sync::oneshot::channel();
-        return (SdkMeterProvider::default(), tx);
+        return SdkMeterProvider::default();
     }
 
     let registry = PrometheusRegistry::new();
-    let exporter = opentelemetry_prometheus::exporter()
-        .with_registry(registry.clone())
-        .build()
-        .expect("Failed to create Prometheus exporter.");
-
-    println!("Creating meter provider...");
-    // Create and install the meter provider first
     let provider = SdkMeterProvider::builder()
-        .with_reader(exporter)
-        .with_resource(Resource::new(vec![KeyValue::new(
-            opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
-            settings.service_name().to_string(),
-        )]))
+        .with_resource(Resource::new(vec![
+            KeyValue::new(
+                opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
+                settings
+                    .tracing_service_name()
+                    .unwrap_or("unknown-service")
+                    .to_string(),
+            ),
+            KeyValue::new(
+                "service.version".to_string(),
+                env!("CARGO_PKG_VERSION").to_string(),
+            ),
+            KeyValue::new(
+                "deployment.environment".to_string(),
+                ENVIRONMENT.to_string(),
+            ),
+        ]))
         .build();
 
-    // Set the global meter provider
     opentelemetry::global::set_meter_provider(provider.clone());
 
-    // Start metrics HTTP server
-    let port = settings.metrics_port();
-    let addr = format!("0.0.0.0:{}", port)
+    // Start metrics server if configured
+    let metrics_addr = settings
+        .metrics_bind_address()
+        .unwrap_or("0.0.0.0:9464")
         .parse::<SocketAddr>()
-        .expect("Failed to parse metrics address");
+        .expect("Failed to parse metrics bind address");
 
-    println!("Creating Tokio runtime for metrics server...");
-    // Create a new Tokio runtime for the metrics server
-    let rt = Runtime::new().expect("Failed to create Tokio runtime");
+    let state = MetricsState::new(registry);
 
-    // Create shutdown channel
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+    // Get the current runtime handle
+    let rt = tokio::runtime::Handle::current();
 
-    // Create a channel to signal when the server is ready
-    let (tx, rx) = mpsc::channel();
+    rt.spawn(async move {
+        let app = Router::new()
+            .route("/metrics", get(metrics_handler))
+            .route("/health", get(health_handler))
+            .route("/ready", get(readiness_handler))
+            .route("/live", get(liveness_handler))
+            .with_state(state);
 
-    println!("Starting metrics server thread...");
-    std::thread::spawn(move || {
-        rt.block_on(async move {
-            let app = Router::new()
-                .route(
-                    "/metrics",
-                    get(move || {
-                        let registry = registry.clone();
-                        async move {
-                            let encoder = TextEncoder::new();
-                            let metric_families = registry.gather();
-                            let mut buffer = vec![];
-                            encoder.encode(&metric_families, &mut buffer).unwrap();
+        let listener = tokio::net::TcpListener::bind(metrics_addr)
+            .await
+            .expect("Failed to bind metrics server");
 
-                            (
-                                StatusCode::OK,
-                                [(CONTENT_TYPE, "text/plain; version=0.0.4")],
-                                buffer,
-                            )
-                                .into_response()
-                        }
-                    }),
-                )
-                .route(
-                    "/health",
-                    get(|| async { (StatusCode::OK, [(CONTENT_TYPE, "text/plain")], "ok") }),
-                );
+        info!("Metrics server listening on {}", metrics_addr);
 
-            println!("Binding metrics server to {}", addr);
-            let server = axum::serve(
-                tokio::net::TcpListener::bind(&addr)
-                    .await
-                    .expect("Failed to bind metrics server"),
-                app,
-            )
-            .with_graceful_shutdown(async {
-                shutdown_rx.await.ok();
-            });
-
-            // Signal that we're ready to accept connections
-            tx.send(()).expect("Failed to send ready signal");
-
-            println!("Starting metrics server...");
-            // Start serving
-            server.await.expect("Metrics server error");
-        });
+        axum::serve(listener, app.into_make_service())
+            .await
+            .expect("Metrics server error");
     });
 
-    // Wait for server to be ready
-    rx.recv().expect("Failed to receive ready signal");
-
-    println!("Metrics server listening on {}", addr);
-
-    (provider, shutdown_tx)
+    provider
 }
 
-fn stdout_pipeline(service_name: &str) -> Tracer {
-    let exporter = opentelemetry_stdout::SpanExporter::default();
-    let config = Config::default().with_resource(Resource::new(vec![KeyValue::new(
-        opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
-        service_name.to_string(),
-    )]));
-    TracerProvider::builder()
-        .with_simple_exporter(exporter)
-        .with_config(config)
-        .build()
-        .tracer(service_name.to_string())
+pub fn init_tracing(settings: &TelemetryConfig) -> Result<(), anyhow::Error> {
+    let service_name = settings
+        .tracing_service_name()
+        .unwrap_or("unknown-service")
+        .to_string();
+
+    // If no endpoint is configured, set up only console logging
+    let provider = if let Some(endpoint) = settings.tracing_endpoint() {
+        println!(
+            "Configuring OTLP Tracing exporter with endpoint: {} and tracing_otlp_timeout={}ms",
+            endpoint,
+            settings.tracing_otlp_timeout().as_millis()
+        );
+
+        let exporter = opentelemetry_otlp::SpanExporter::builder()
+            .with_tonic()
+            .with_endpoint(endpoint)
+            .with_timeout(settings.tracing_otlp_timeout())
+            .build()?;
+
+        let batch_config = if let Some(batch_conf) = settings.batch() {
+            println!(
+                "Configuring batch processing with: max_queue_size={}, scheduled_delay={}ms, max_export_batch_size={}, max_concurrent_exports={}, export_timeout={}ms",
+                batch_conf.max_queue_size(),
+                batch_conf.scheduled_delay().as_millis(),
+                batch_conf.max_export_batch_size(),
+                batch_conf.max_concurrent_exports(),
+                batch_conf.export_timeout().as_millis(),
+            );
+
+            opentelemetry_sdk::trace::BatchConfigBuilder::default()
+                .with_max_queue_size(batch_conf.max_queue_size())
+                .with_scheduled_delay(batch_conf.scheduled_delay())
+                .with_max_export_batch_size(batch_conf.max_export_batch_size())
+                .with_max_concurrent_exports(batch_conf.max_concurrent_exports())
+                .with_max_export_timeout(batch_conf.export_timeout())
+                .build()
+        } else {
+            println!("Using default batch processing configuration");
+            opentelemetry_sdk::trace::BatchConfigBuilder::default().build()
+        };
+
+        let batch = opentelemetry_sdk::trace::BatchSpanProcessor::builder(exporter, Tokio)
+            .with_batch_config(batch_config)
+            .build();
+
+        opentelemetry_sdk::trace::TracerProvider::builder()
+            .with_span_processor(batch)
+            .with_resource(Resource::new(vec![KeyValue::new(
+                opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
+                service_name,
+            )]))
+            .build()
+    } else {
+        // Set up console-only logging when no endpoint is configured
+        println!("No tracing_endpoint is provided");
+        opentelemetry_sdk::trace::TracerProvider::builder()
+            .with_simple_exporter(opentelemetry_stdout::SpanExporter::default())
+            .build()
+    };
+
+    // Set up the tracer
+    let tracer = provider.tracer("kms-core");
+
+    let env_filter = match *ENVIRONMENT {
+        // For integration and local development, optionally use a more verbose filter
+        ExecutionEnvironment::Integration | ExecutionEnvironment::Local => {
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                EnvFilter::new("info")
+                    .add_directive("tonic=info".parse().unwrap())
+                    .add_directive("h2=info".parse().unwrap())
+                    .add_directive("tower=warn".parse().unwrap())
+                    .add_directive("hyper=warn".parse().unwrap())
+                    .add_directive("opentelemetry_sdk=warn".parse().unwrap())
+            })
+        }
+        _ => EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+    };
+
+    let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+    let fmt_layer = fmt_layer();
+
+    tracing_subscriber::registry()
+        .with(telemetry)
+        .with(fmt_layer)
+        .with(env_filter)
+        .try_init()
+        .context("Failed to initialize tracing")?;
+
+    Ok(())
+}
+
+pub fn init_telemetry(settings: &TelemetryConfig) -> anyhow::Result<SdkMeterProvider> {
+    println!("Starting telemetry initialization...");
+
+    // First initialize tracing as it's more critical
+    println!("Initializing tracing subsystem...");
+    init_tracing(settings)?;
+
+    // Now that tracing is initialized, we can use info! tracing macros
+    info!("Tracing initialization completed successfully");
+
+    println!("Initializing metrics subsystem...");
+    let provider = init_metrics(settings);
+    info!("Metrics initialization completed successfully");
+
+    info!("Telemetry stack initialization completed");
+    Ok(provider)
 }
 
 fn fmt_layer<S>() -> Layer<S> {
     match *ENVIRONMENT {
         ExecutionEnvironment::Production
         | ExecutionEnvironment::Development
-        | ExecutionEnvironment::Stage => layer().with_span_events(FmtSpan::CLOSE),
+        | ExecutionEnvironment::Stage => layer()
+            .with_target(true)
+            .with_thread_ids(true)
+            .with_thread_names(true)
+            .with_file(true)
+            .with_line_number(true)
+            .with_span_events(FmtSpan::CLOSE),
         _ => layer(),
     }
 }
 
-pub async fn init_tracing(settings: Tracing) -> Result<(), anyhow::Error> {
-    println!(
-        "Starting tracing initialization with settings: {:?}",
-        settings
-    );
-    let init_span = info_span!("init_tracing").entered();
-
-    // Initialize components with timeout
-    let init_result = tokio::time::timeout(DEFAULT_INIT_TIMEOUT, async {
-        // Initialize tracer first
-        println!("Initializing tracer...");
-        let tracer: Tracer = settings.clone().into();
-
-        // Set up propagator and error handler
-        println!("Setting up propagator and error handler...");
-        global::set_text_map_propagator(TraceContextPropagator::new());
-        global::set_error_handler(|error| tracing::error!("OpenTelemetry error: {:?}", error))
-            .unwrap();
-
-        // Configure tracing layers
-        println!("Configuring tracing layers...");
-        let fmt_layer = fmt_layer();
-        let env_filter = EnvFilter::try_from_default_env()
-            .or_else(|_| EnvFilter::try_new("info"))
-            .unwrap();
-
-        // Layer to add our configured tracer
-        let tracing_layer = tracing_opentelemetry::layer().with_tracer(tracer);
-        let subscriber = Registry::default().with(tracing_layer).with(env_filter);
-
-        // Set up subscriber based on json_logs setting
-        println!(
-            "Setting up subscriber with json_logs={}",
-            settings.json_logs().unwrap_or(false)
-        );
-        if settings.json_logs().unwrap_or(false) {
-            tracing::subscriber::set_global_default(subscriber.with(Layer::default().json()))
-                .map_err(|e| anyhow::anyhow!("{e:?}"))?;
-        } else {
-            tracing::subscriber::set_global_default(subscriber.with(fmt_layer))
-                .map_err(|e| anyhow::anyhow!("{e:?}"))?;
-        }
-
-        println!("Tracing setup completed, initializing metrics...");
-
-        // Now that tracing is set up, we can use tracing macros
-        tracing::debug!("Initializing metrics...");
-        let metrics = init_metrics(settings.clone()).0;
-
-        tracing::debug!("Setting up meter provider...");
-        global::set_meter_provider(metrics);
-
-        // Initialize the global metrics instance
-        tracing::debug!("Initializing global metrics instance...");
-        let _ = crate::metrics::METRICS.clone();
-        tracing::info!("Successfully completed tracing and metrics initialization");
-
-        Ok::<(), anyhow::Error>(())
-    })
-    .await
-    .context("Initialization timed out")?;
-
-    init_span.exit();
-    init_result
-}
-
-pub fn make_span(request: &Request<Body>) -> Span {
+pub fn make_span(request: &tonic::codegen::http::Request<Body>) -> Span {
     let endpoint = request.uri().path();
 
     // Create span without blocking
@@ -296,6 +276,14 @@ pub fn make_span(request: &Request<Body>) -> Span {
     }
 
     let headers = request.headers();
+    let mut headers_map = http::HeaderMap::new();
+    for (k, v) in headers.iter() {
+        if let Ok(name) = http::header::HeaderName::from_bytes(k.as_str().as_bytes()) {
+            if let Ok(value) = http::header::HeaderValue::from_bytes(v.as_bytes()) {
+                headers_map.insert(name, value);
+            }
+        }
+    }
 
     let request_id = headers
         .get(TRACER_REQUEST_ID)
@@ -308,8 +296,9 @@ pub fn make_span(request: &Request<Body>) -> Span {
         info_span!("grpc_request", ?endpoint)
     };
 
-    let parent_context =
-        global::get_text_map_propagator(|propagator| propagator.extract(&HeaderExtractor(headers)));
+    let parent_context = global::get_text_map_propagator(|propagator| {
+        propagator.extract(&HeaderExtractor(&headers_map))
+    });
     span.set_parent(parent_context);
     span
 }
@@ -318,39 +307,27 @@ pub fn make_span(request: &Request<Body>) -> Span {
 #[derive(Clone)]
 pub struct ContextPropagator;
 
-/// Implement the `Interceptor` trait to propagate the current span context to the outgoing request.
 impl Interceptor for ContextPropagator {
     fn call(&mut self, mut request: tonic::Request<()>) -> Result<tonic::Request<()>, Status> {
+        let context = Span::current().context();
+        let mut injector = MetadataInjector(request.metadata_mut());
         global::get_text_map_propagator(|propagator| {
-            let context = Span::current().context();
-            propagator.inject_context(&context, &mut MetadataInjector(request.metadata_mut()))
+            propagator.inject_context(&context, &mut injector)
         });
-
         Ok(request)
     }
 }
 
 /// `MetadataInjector` is a helper struct to inject metadata into a request.
 /// It is used to propagate the current span context to the outgoing request. See `ContextPropagator`.
-///
-/// This used to be in pairs with the `ContextPropagator` struct. `ContextPropagator` is used for
-/// the client side, in this case the party that is sending protocol messages to other parties.
-/// `MetadataInjector` is used for the server side, in this case the party that is receiving protocol
 struct MetadataInjector<'a>(&'a mut MetadataMap);
 
-/// Implement the `Injector` trait to propagate the current span context to the outgoing request.
 impl Injector for MetadataInjector<'_> {
     fn set(&mut self, key: &str, value: String) {
-        match MetadataKey::from_bytes(key.as_bytes()) {
-            Ok(key) => match MetadataValue::try_from(&value) {
-                Ok(value) => {
-                    self.0.insert(key, value);
-                }
-
-                Err(error) => warn!(value, error = format!("{error:#}"), "parse metadata value"),
-            },
-
-            Err(error) => warn!(key, error = format!("{error:#}"), "parse metadata key"),
+        if let Ok(key) = MetadataKey::from_bytes(key.as_bytes()) {
+            if let Ok(val) = MetadataValue::try_from(&value) {
+                self.0.insert(key, val);
+            }
         }
     }
 }

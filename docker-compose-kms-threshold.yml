@@ -8,7 +8,7 @@ services:
   dev-kms-core-certs:
     image: ghcr.io/zama-ai/kms-service:latest
     environment:
-      - RUST_LOG=info
+      - RUST_LOG=info,tonic=info,h2=info
     entrypoint: >
       /bin/sh -c "
       echo \"Starting TLS certificates generation\" &&
@@ -32,7 +32,7 @@ services:
       dev-kms-core-4:
         condition: service_healthy
     environment:
-      - RUST_LOG=info
+      - RUST_LOG=info,tonic=info,h2=info
       - RUN_MODE=dev
     entrypoint: >
       /bin/sh -c "
@@ -69,7 +69,7 @@ services:
       dev-kms-core-certs:
         condition: service_completed_successfully
     environment:
-      - RUST_LOG=info
+      - RUST_LOG=info,tonic=info,h2=info
     # We do a key-gen first because otherwise the service won't start
     # NOTE: currently debugging the upload to s3
     # Credentials are set with both credentials file and env-var
@@ -101,7 +101,7 @@ services:
       - "--conf-file"
       - "config/compose_1.toml"
     environment:
-      - RUST_LOG=info
+      - RUST_LOG=info,tonic=info,h2=info
       - DOCKER_BUILDKIT=1
       - ASC_CONN__BLOCKCHAIN__ADDRESSES=http://dev-kms-blockchain-validator:9090
       - ASC_CONN__CORE__ADDRESSES=http://dev-kms-core-1:50100
@@ -137,7 +137,7 @@ services:
       dev-kms-core-certs:
         condition: service_completed_successfully
     environment:
-      - RUST_LOG=info
+      - RUST_LOG=info,tonic=info,h2=info
     entrypoint: >
       /bin/sh -c "
       export AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
@@ -157,7 +157,7 @@ services:
       - "--conf-file"
       - "config/compose_2.toml"
     environment:
-      - RUST_LOG=info
+      - RUST_LOG=info,tonic=info,h2=info
       - ASC_CONN__BLOCKCHAIN__ADDRESSES=http://dev-kms-blockchain-validator:9090
       - ASC_CONN__CORE__ADDRESSES=http://dev-kms-core-2:50200
       - ASC_CONN__STORE__URL=http://dev-kv-store:8088
@@ -192,7 +192,7 @@ services:
       dev-kms-core-certs:
         condition: service_completed_successfully
     environment:
-      - RUST_LOG=info
+      - RUST_LOG=info,tonic=info,h2=info
     entrypoint: >
       /bin/sh -c "
       export AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
@@ -214,7 +214,7 @@ services:
       - "--catch-up-num-blocks"
       - "100000" # Each block takes about a second so this is around 27 hours. Should be adjusted in a real deployment
     environment:
-      - RUST_LOG=info
+      - RUST_LOG=info,tonic=info,h2=info
       - ASC_CONN__BLOCKCHAIN__ADDRESSES=http://dev-kms-blockchain-validator:9090
       - ASC_CONN__CORE__ADDRESSES=http://dev-kms-core-3:50300
       - ASC_CONN__STORE__URL=http://dev-kv-store:8088
@@ -249,7 +249,7 @@ services:
       dev-kms-core-certs:
         condition: service_completed_successfully
     environment:
-      - RUST_LOG=info
+      - RUST_LOG=info,tonic=info,h2=info
     entrypoint: >
       /bin/sh -c "
       export AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
@@ -269,7 +269,7 @@ services:
       - "--conf-file"
       - "config/compose_4.toml"
     environment:
-      - RUST_LOG=info
+      - RUST_LOG=info,tonic=info,h2=info
       - ASC_CONN__BLOCKCHAIN__ADDRESSES=http://dev-kms-blockchain-validator:9090
       - ASC_CONN__CORE__ADDRESSES=http://dev-kms-core-4:50400
       - ASC_CONN__STORE__URL=http://dev-kv-store:8088

@@ -144,7 +144,6 @@ pub fn extract_parent_span_id<T>(request: &Request<T>) -> Option<u64> {
         .and_then(|s| s.parse().ok())
 }
 
-#[cfg(feature = "metrics_test")]
 #[cfg(test)]
 mod tests {
     use super::*;

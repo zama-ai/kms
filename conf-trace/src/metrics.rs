@@ -1,4 +1,4 @@
-use opentelemetry::metrics::{Counter, Gauge, Histogram, Unit};
+use opentelemetry::metrics::{Counter, Gauge, Histogram};
 use opentelemetry::{global, KeyValue};
 use std::borrow::Cow;
 use std::time::{Duration, Instant};
@@ -95,47 +95,42 @@ impl CoreMetrics {
         let size_metric: Cow<'static, str> = format!("{}_payload_size_bytes", config.prefix).into();
         let gauge: Cow<'static, str> = format!("{}_gauge", config.prefix).into();
 
+        let request_counter = meter
+            .u64_counter(operations_total)
+            .with_description("Total number of operations processed")
+            .with_unit("operations")
+            .build();
+
+        let error_counter = meter
+            .u64_counter(operation_errors)
+            .with_description("Total number of operation errors")
+            .with_unit("errors")
+            .build();
+
+        let duration_histogram = meter
+            .f64_histogram(duration_metric)
+            .with_description("Duration of KMS operations")
+            .with_unit("milliseconds")
+            .build();
+
+        let size_histogram = meter
+            .f64_histogram(size_metric)
+            .with_description("Size of KMS operation payloads")
+            .with_unit("bytes")
+            .build();
+
+        let gauge = meter
+            .i64_gauge(gauge)
+            .with_description("An instrument that records independent values")
+            .with_unit("value")
+            .build();
+
         Ok(Self {
-            request_counter: TaggedMetric::new(
-                meter
-                    .u64_counter(operations_total)
-                    .with_description("Total number of operations processed")
-                    .with_unit(Unit::new("operations"))
-                    .init(),
-                "operations",
-            )?,
-            error_counter: TaggedMetric::new(
-                meter
-                    .u64_counter(operation_errors)
-                    .with_description("Total number of operation errors")
-                    .with_unit(Unit::new("errors"))
-                    .init(),
-                "errors",
-            )?,
-            duration_histogram: TaggedMetric::new(
-                meter
-                    .f64_histogram(duration_metric)
-                    .with_description("Duration of KMS operations")
-                    .with_unit(Unit::new("milliseconds"))
-                    .init(),
-                "duration",
-            )?,
-            size_histogram: TaggedMetric::new(
-                meter
-                    .f64_histogram(size_metric)
-                    .with_description("Size of KMS operation payloads")
-                    .with_unit(Unit::new("bytes"))
-                    .init(),
-                "size",
-            )?,
-            gauge: TaggedMetric::new(
-                meter
-                    .i64_gauge(gauge)
-                    .with_description("An instrument that records independent values")
-                    .with_unit(Unit::new("value"))
-                    .init(),
-                "active_operations",
-            )?,
+            request_counter: TaggedMetric::new(request_counter, "operations")?,
+            error_counter: TaggedMetric::new(error_counter, "errors")?,
+            duration_histogram: TaggedMetric::new(duration_histogram, "duration")?,
+            size_histogram: TaggedMetric::new(size_histogram, "size")?,
+            gauge: TaggedMetric::new(gauge, "active_operations")?,
         })
     }
 
@@ -320,7 +315,7 @@ lazy_static::lazy_static! {
 #[derive(Debug, Clone)]
 pub struct MetricsConfig {
     pub prefix: String,
-    pub default_unit: Option<Unit>,
+    pub default_unit: Option<String>,
 }
 
 impl Default for MetricsConfig {

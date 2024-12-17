@@ -58,11 +58,16 @@ pub struct SubscriptionEventBuilder<'a> {
     filter_events_mode: Option<EventsMode>,
 }
 
-pub struct SubscriptionEventChannel<B, S, M> {
-    blockchain: B,
-    storage: S,
-    metrics: M,
-    tick_time_in_sec: u64,
+pub struct SubscriptionEventChannel<B, S, M>
+where
+    B: BlockchainService + Clone + 'static,
+    S: StorageService + 'static,
+    M: Metrics + 'static,
+{
+    pub(crate) tick_time_in_sec: u64,
+    pub(crate) blockchain: B,
+    pub(crate) storage: S,
+    pub(crate) metrics: M,
 }
 
 impl<'a> SubscriptionEventBuilder<'a> {
@@ -72,7 +77,7 @@ impl<'a> SubscriptionEventBuilder<'a> {
         SubscriptionEventChannel<
             Arc<GrpcBlockchainService>,
             Arc<TomlStorageServiceImpl>,
-            Arc<OpenTelemetryMetrics>,
+            OpenTelemetryMetrics,
         >,
         SubscriptionError,
     > {
@@ -87,7 +92,7 @@ impl<'a> SubscriptionEventBuilder<'a> {
             tick_time_in_sec: self.tick_time_in_sec,
             blockchain: Arc::new(blockchain),
             storage: Arc::new(storage),
-            metrics: Arc::new(metrics),
+            metrics,
         })
     }
 }
@@ -199,7 +204,7 @@ where
         &self,
         height: u64,
         catchup_until_height: u64,
-        handler: Arc<U>,
+        handler: U,
     ) -> Result<(Vec<TxResponse>, Option<(Vec<T>, Vec<TransactionEvent>)>), SubscriptionError>
     where
         U: SubscriptionHandler<T> + Clone + Send + Sync + 'static,
@@ -278,11 +283,11 @@ where
         );
         let _guard = enter.enter();
         let height = self.storage.get_last_height().await?;
-        let handler = Arc::new(handler);
+        let handler = handler.clone();
 
         // Query the blockchain
         let (results, mut past_txs_and_responses) = if height < catchup_until_height {
-            self.query_bc_during_catchup(height, catchup_until_height, Arc::clone(&handler))
+            self.query_bc_during_catchup(height, catchup_until_height, handler.clone())
                 .await?
         } else {
             // Query for all events emitted by the KMS BC with block height > height
@@ -398,7 +403,7 @@ where
         blockchain: B,
         from_height: u64,
         to_height: u64,
-        handler: Arc<U>,
+        handler: U,
     ) -> Result<Vec<T>, SubscriptionError>
     where
         T: 'static + Send + Sync,
@@ -456,7 +461,6 @@ mod tests {
     use crate::subscription::blockchain::*;
     use crate::subscription::storage::MockStorageService;
     use cosmwasm_std::{Attribute, Event};
-    use std::sync::Arc;
     use test_context::{test_context, AsyncTestContext};
     use tokio::sync::oneshot;
 
@@ -599,6 +603,14 @@ mod tests {
     async fn test_on_error_message(
         server: &mut SubscriptionContext,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut on_message_mock = MockNeverCalledSubscriptionHandler::new();
+        on_message_mock.expect_clone().returning(|| {
+            let mut mock = MockNeverCalledSubscriptionHandler::new();
+            mock.expect_on_message().never();
+            mock
+        });
+        on_message_mock.expect_on_message().never();
+
         server
             .subscription
             .blockchain
@@ -636,13 +648,8 @@ mod tests {
             .times(1)
             .returning(|_| Ok(()));
 
-        let mut on_message_mock = MockNeverCalledSubscriptionHandler::new();
-        on_message_mock.expect_on_message().never();
-
-        server
-            .subscription
-            .handle_events(on_message_mock, 0)
-            .await?;
+        let result = server.subscription.handle_events(on_message_mock, 0).await;
+        assert!(result.is_ok());
         Ok(())
     }
 
@@ -714,13 +721,9 @@ mod tests {
             .withf(|_, _| true)
             .returning(|_, _| ());
 
-        let result = server
-            .subscription
-            .handle_events(on_message.clone(), 0)
-            .await;
+        let result = server.subscription.handle_events(on_message, 0).await;
         assert!(result.is_ok());
-
-        let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = std::sync::atomic::AtomicUsize::new(0);
         let mut interval = tokio::time::interval(Duration::from_secs(1));
         let (timeout_tx, timeout_rx) = oneshot::channel();
         let timeout_task = async {

@@ -7,8 +7,8 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
-actix-cors = "=0.7.0"
-actix-web = "=4.9.0"
+actix-cors.workspace = true
+actix-web.workspace = true
 aes-prng.workspace = true
 alloy-primitives.workspace = true
 alloy-signer.workspace = true

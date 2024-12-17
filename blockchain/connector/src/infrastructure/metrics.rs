@@ -1,5 +1,5 @@
 use dashmap::DashMap;
-use opentelemetry::metrics::ObservableCounter;
+use opentelemetry::metrics::Counter;
 use opentelemetry::{global, KeyValue};
 
 pub trait Metrics {
@@ -22,62 +22,62 @@ pub enum MetricType {
 
 #[derive(Clone, Default)]
 pub struct OpenTelemetryMetrics {
-    counters: DashMap<MetricType, ObservableCounter<u64>>,
+    counters: DashMap<MetricType, Counter<u64>>,
 }
 
 impl OpenTelemetryMetrics {
     pub fn new() -> Self {
         let meter = global::meter("kms_connector");
         let connector_txs_processed = meter
-            .u64_observable_counter("txs_processed")
+            .u64_counter("txs_processed")
             .with_description(
                 "Count the number of transactions processed successfully by the connector",
             )
-            .init();
+            .build();
         let connector_txs_error = meter
-            .u64_observable_counter("txs_error")
+            .u64_counter("txs_error")
             .with_description(
                 "Count the number of transactions not processed or with errors by the connector",
             )
-            .init();
+            .build();
         let blockchain_submit_response_error = meter
-            .u64_observable_counter("blockchain_submit_response_error")
+            .u64_counter("blockchain_submit_response_error")
             .with_description(
                 "Count the number of transactions responses submitted to blockchain that failed",
             )
-            .init();
+            .build();
         let blockchain_submit_response_success = meter
-            .u64_observable_counter("blockchain_submit_response_success")
+            .u64_counter("blockchain_submit_response_success")
             .with_description(
                 "Count the number of transactions responses submitted to blockchain that succeeded",
             )
-            .init();
+            .build();
         let core_success = meter
-            .u64_observable_counter("core_success")
+            .u64_counter("core_success")
             .with_description("Count the number of successful core requests")
-            .init();
+            .build();
         let core_error = meter
-            .u64_observable_counter("core_error")
+            .u64_counter("core_error")
             .with_description("Count the number of failed core requests")
-            .init();
+            .build();
         let core_response_success = meter
-            .u64_observable_counter("core_response_success")
+            .u64_counter("core_response_success")
             .with_description(
                 "Count the number of successful core responses (not including polling)",
             )
-            .init();
+            .build();
         let core_response_error = meter
-            .u64_observable_counter("core_error")
+            .u64_counter("core_response_error")
             .with_description("Count the number of failed core responses (not including polling)")
-            .init();
+            .build();
         let oracle_success = meter
-            .u64_observable_counter("oracle_success")
+            .u64_counter("oracle_success")
             .with_description("Count the number of successful oracle requests")
-            .init();
+            .build();
         let oracle_error = meter
-            .u64_observable_counter("oracle_error")
+            .u64_counter("oracle_error")
             .with_description("Count the number of failed oracle requests")
-            .init();
+            .build();
         let counters = vec![
             (MetricType::TxProcessed, connector_txs_processed),
             (MetricType::TxError, connector_txs_error),
@@ -97,7 +97,7 @@ impl OpenTelemetryMetrics {
             (MetricType::OracleError, oracle_error),
         ]
         .into_iter()
-        .collect::<DashMap<MetricType, ObservableCounter<u64>>>();
+        .collect::<DashMap<MetricType, Counter<u64>>>();
         OpenTelemetryMetrics { counters }
     }
 }
@@ -105,7 +105,7 @@ impl OpenTelemetryMetrics {
 impl Metrics for OpenTelemetryMetrics {
     fn increment(&self, counter: MetricType, amount: u64, tags: &[(&str, &str)]) {
         if let Some(count) = self.counters.get_mut(&counter) {
-            count.observe(
+            count.add(
                 amount,
                 tags.iter()
                     .map(|(k, v)| KeyValue::new(k.to_string(), v.to_string()))

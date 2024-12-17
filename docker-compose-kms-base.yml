@@ -37,6 +37,7 @@ services:
       dev-kms-blockchain-validator:
         condition: service_healthy
     environment:
+      RUST_LOG: info
       VALIDATOR_NODE_ENDPOINT: http://dev-kms-blockchain-validator:26657
       DOCKER_BUILDKIT: 1
     build:
@@ -68,6 +69,7 @@ services:
     image: ghcr.io/zama-ai/kms-blockchain-gateway:latest
     environment:
       DOCKER_BUILDKIT: 1
+      RUST_LOG: debug
     build:
       context: .
       dockerfile: blockchain/gateway/operations/docker/ci.dockerfile

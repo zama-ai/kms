@@ -7,7 +7,7 @@ use kms_lib::kms::{RequestId, TypedCiphertext};
 use kms_lib::rpc::rpc_types::protobuf_to_alloy_domain;
 use kms_lib::util::key_setup::ensure_client_keys_exist;
 use kms_lib::{
-    conf::init_trace,
+    conf::init_kms_core_telemetry,
     consts::{DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM, DEFAULT_THRESHOLD_KEY_ID_4P},
     kms::InitRequest,
     storage::{file::FileStorage, StorageType},
@@ -481,7 +481,7 @@ async fn threshold_requests(addresses: Vec<String>, init: bool) -> anyhow::Resul
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use kms_lib::consts::SIGNING_KEY_ID;
 
-    init_trace().await?;
+    init_kms_core_telemetry()?;
 
     ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
 

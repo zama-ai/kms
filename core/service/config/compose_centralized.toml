@@ -6,6 +6,20 @@ listen_port = 50051
 timeout_secs = 360
 grpc_max_message_size = 20971520 # 20 MiB
 
+[telemetry]
+tracing_service_name = "kms-centralized"
+tracing_endpoint = "http://localhost:4317"
+tracing_otlp_timeout_ms = 10000
+metrics_bind_address = "0.0.0.0:9646"
+
+[telemetry.batch]
+max_queue_size = 8192
+max_export_batch_size = 2048
+max_concurrent_exports = 4
+scheduled_delay_ms = 500
+export_timeout_ms = 5000
+
+# TODO: deprecate in future release
 [tracing]
 service_name = "kms-centralized"
 endpoint = "http://localhost:4317"

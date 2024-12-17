@@ -3,7 +3,7 @@
 //!
 use crate::choreography::choreographer::NetworkTopology;
 use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
-use conf_trace::conf::Tracing;
+use conf_trace::conf::TelemetryConfig;
 use serde::{Deserialize, Serialize};
 use tonic::transport::Uri;
 
@@ -98,7 +98,7 @@ impl ThresholdTopology {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct ChoreoConf {
     pub threshold_topology: ThresholdTopology,
-    pub tracing: Option<Tracing>,
+    pub telemetry: Option<TelemetryConfig>,
 
     pub cert_file: Option<String>,
     pub key_file: Option<String>,

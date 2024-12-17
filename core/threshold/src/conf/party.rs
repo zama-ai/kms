@@ -5,7 +5,7 @@ use super::Party;
 use crate::{
     execution::online::preprocessing::redis::RedisConf, networking::grpc::CoreToCoreNetworkConfig,
 };
-use conf_trace::conf::Tracing;
+use conf_trace::conf::TelemetryConfig;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
@@ -32,7 +32,7 @@ impl Protocol {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct PartyConf {
     protocol: Protocol,
-    pub tracing: Option<Tracing>,
+    pub telemetry: Option<TelemetryConfig>,
     pub redis: Option<RedisConf>,
     /// If [certpaths] is Some(_), then TLS will be enabled
     /// for the core-to-core communication
@@ -144,7 +144,7 @@ impl CertificatePaths {
 /// id = 1
 /// choreoport = 60000
 ///
-/// [tracing]
+/// [telemetry]
 /// service_name = "moby"
 /// endpoint = "http://localhost:4317"
 ///
@@ -180,7 +180,7 @@ impl CertificatePaths {
 /// not using the `peers` field, but it is there for future use.
 /// If it is present, the `peers` field will be `Some(Vec<Party>)`.
 /// The `peers` field is a list of `Party` struct.
-/// The tracing, redis and certpaths fields are also optional.
+/// The telemetry, redis and certpaths fields are also optional.
 /// Core-to-core TLS will be enabled if certpaths is not empty.
 impl PartyConf {
     /// Returns the protocol configuration.
@@ -306,8 +306,8 @@ mod tests {
         env::set_var("DDEC__CERTPATHS__CERT", "/path/to/cert");
         env::set_var("DDEC__CERTPATHS__KEY", "/path/to/key");
         env::set_var("DDEC__CERTPATHS__CALIST", "/path/one,/path/two");
-        env::set_var("DDEC__TRACING__SERVICE_NAME", "moby-p3");
-        env::set_var("DDEC__TRACING__ENDPOINT", "moby-p3-endpoint");
+        env::set_var("DDEC__TELEMETRY__TRACING_SERVICE_NAME", "moby-p3");
+        env::set_var("DDEC__TELEMETRY__TRACING_ENDPOINT", "moby-p3-endpoint");
 
         env::set_var("DDEC__NET_CONF__MESSAGE_LIMIT", "60");
         env::set_var("DDEC__NET_CONF__MULTIPLIER", "2.2");
@@ -339,7 +339,10 @@ mod tests {
         assert_eq!(bundle.cert, "/path/to/cert");
         assert_eq!(bundle.key, "/path/to/key");
         assert_eq!(bundle.calist, "/path/one,/path/two");
-        assert_eq!(party_conf.tracing.unwrap().service_name(), "moby-p3");
+        assert_eq!(
+            party_conf.telemetry.unwrap().tracing_service_name(),
+            Some("moby-p3")
+        );
 
         env::remove_var("DDEC__PROTOCOL__HOST__ADDRESS");
         env::remove_var("DDEC__PROTOCOL__HOST__PORT");
@@ -348,8 +351,8 @@ mod tests {
         env::remove_var("DDEC__CERTPATHS__CERT");
         env::remove_var("DDEC__CERTPATHS__KEY");
         env::remove_var("DDEC__CERTPATHS__CALIST");
-        env::remove_var("DDEC__TRACING__SERVICE_NAME");
-        env::remove_var("DDEC__TRACING__ENDPOINT");
+        env::remove_var("DDEC__TELEMETRY__TRACING_SERVICE_NAME");
+        env::remove_var("DDEC__TELEMETRY__TRACING_ENDPOINT");
 
         env::remove_var("DDEC__NET_CONF__MESSAGE_LIMIT");
         env::remove_var("DDEC__NET_CONF__MULTIPLIER");

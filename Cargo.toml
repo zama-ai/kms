@@ -42,6 +42,8 @@ license = "BSD-3-Clause-Clear"
 version = "0.10.0-rc1"
 
 [workspace.dependencies]
+actix-cors = "=0.7.0"
+actix-web = { version = "=4.9.0", features = ["macros"] }
 aes = "=0.8.4"
 aes-prng = "=0.2.1"
 aipsc = { path = "./blockchain/contracts/aipsc" }
@@ -65,6 +67,7 @@ distributed-decryption = { path = "./core/threshold/", default-features = false 
 events = { path = "./blockchain/events" }
 futures = "=0.3.31"
 hex = "=0.4.3"
+http = "1.2.0"
 itertools = "=0.13.0"
 k256 = "=0.13.4"
 csc = { path = "./blockchain/contracts/csc" }
@@ -75,7 +78,7 @@ kms-blockchain-connector = { path = "./blockchain/connector" }
 kms-common = { path = "./common" }
 lazy_static = "=1.5.0"
 mockall = "=0.13.0"
-opentelemetry = "=0.23.0"
+opentelemetry = "=0.27.1"
 paste = "=1.0"
 prost = "=0.12.6"
 prost-build = "=0.12.6"
@@ -96,21 +99,21 @@ sylvia-derive = "=1.1.0"
 tendermint = { version = "=0.37.0", features = ["secp256k1"] }
 tendermint-proto = "=0.37.0"
 tendermint-rpc = { version = "=0.37.0", features = ["websocket-client"] }
-thiserror = "=1.0.68"
+thiserror = "=2.0.7"
 tonic-health = "=0.11.0"
-tower = "=0.5.1"
+tower = "=0.5.2"
 tower-http = "=0.4.4"
 tfhe = "=0.9.1"
 tfhe-versionable = "=0.3.2"
 tfhe-zk-pok = "=0.3.2"
-tokio = { version = "=1.41.0", features = ["full"] }
+tokio = { version = "=1.42.0", features = ["full"] }
 tonic = "=0.11.0"
 tonic-build = "=0.11.0"
-tracing = { version = "=0.1.40", features = ["log"] }
+tracing = { version = "=0.1.41", features = ["log"] }
 tracing-appender = "=0.2.3"
-tracing-opentelemetry = "=0.24.0"
-tracing-subscriber = { version = "=0.3.18", features = ["fmt", "std"] }
-typed-builder = "=0.18.2"
+tracing-opentelemetry = "=0.28.0"
+tracing-subscriber = { version = "=0.3.19", features = ["fmt", "std"] }
+typed-builder = "=0.20.0"
 
 alloy-dyn-abi = "=0.8.11"
 alloy-primitives = "=0.8.11"

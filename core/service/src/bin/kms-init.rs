@@ -1,5 +1,5 @@
 use clap::Parser;
-use kms_lib::conf::init_trace;
+use kms_lib::conf::init_kms_core_telemetry;
 use kms_lib::kms::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_lib::kms::{Config, InitRequest};
 
@@ -23,7 +23,7 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    init_trace().await?;
+    init_kms_core_telemetry()?;
     let args = Args::parse();
 
     let mut handles = Vec::new();

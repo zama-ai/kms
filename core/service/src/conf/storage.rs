@@ -1,5 +1,5 @@
 use crate::{
-    conf::{ConfigTracing, Tracing},
+    conf::{ConfigTracing, ConfigTracing},
     util::rate_limiter::RateLimiterConfig,
 };
 use serde::{Deserialize, Serialize};
@@ -16,7 +16,7 @@ pub struct StorageConfigWith<MoreConfig> {
     pub aws_kms_proxy: Option<String>,
     #[serde(flatten)]
     pub rest: MoreConfig,
-    pub tracing: Option<Tracing>,
+    pub telemetry: Option<TelemetryConfig>,
     pub rate_limiter_conf: Option<RateLimiterConfig>,
 }
 
@@ -46,7 +46,7 @@ where
 }
 
 impl<MoreConfig> ConfigTracing for StorageConfigWith<MoreConfig> {
-    fn tracing(&self) -> Option<Tracing> {
-        self.tracing.clone()
+    fn telemetry(&self) -> Option<TelemetryConfig> {
+        self.telemetry.clone()
     }
 }

@@ -1,5 +1,5 @@
-use conf_trace::conf::{Settings, Tracing};
-use conf_trace::telemetry::init_tracing;
+use conf_trace::conf::{Settings, TelemetryConfig};
+use conf_trace::telemetry::init_telemetry;
 use serde::{Deserialize, Serialize};
 use typed_builder::TypedBuilder;
 
@@ -154,7 +154,7 @@ impl Default for ShardingConfig {
 pub struct ConnectorConfig {
     pub tick_interval_secs: u64,
     pub storage_path: String,
-    pub tracing: Option<Tracing>,
+    pub tracing: Option<TelemetryConfig>,
     pub blockchain: BlockchainConfig,
     pub core: CoreConfig,
     pub oracle: OracleConfig,
@@ -192,11 +192,12 @@ pub fn init_conf(config_file: &str) -> anyhow::Result<ConnectorConfig> {
 
 pub async fn init_conf_with_trace(config_file: &str) -> anyhow::Result<ConnectorConfig> {
     let conf = init_conf(config_file)?;
-    let tracing = conf
-        .tracing
-        .clone()
-        .unwrap_or_else(|| Tracing::builder().service_name("asc_connector").build());
-    init_tracing(tracing).await?;
+    let tracing = conf.tracing.clone().unwrap_or_else(|| {
+        TelemetryConfig::builder()
+            .tracing_service_name("asc_connector".to_string())
+            .build()
+    });
+    init_telemetry(&tracing)?;
     Ok(conf)
 }
 

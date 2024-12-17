@@ -71,6 +71,19 @@ max_en_decode_message_size = 2147483648
 # [threshold.preproc_redis]
 # host = "redis://127.0.0.1"
 
+
+[telemetry]
+tracing_service_name = "kms-threshold-2"
+tracing_endpoint = "http://localhost:4317"
+metrics_bind_address = "0.0.0.0:9646"
+
+[telemetry.batch]
+max_queue_size = 8192
+max_export_batch_size = 2048
+max_concurrent_exports = 4
+scheduled_delay_ms = 500
+export_timeout_ms = 5000
+
 [rate_limiter_conf]
 bucket_size = 50000
 dec = 1
