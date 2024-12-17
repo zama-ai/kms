@@ -276,7 +276,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &mut pub_storages,
                 &mut priv_storages,
                 args.deterministic,
-                args.deterministic,
+                args.overwrite,
                 args.show_existing,
                 // the `signing_party_id` is only used when the cmd is signing-keys
                 match args.cmd {
@@ -297,6 +297,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+    tracing::info!("Keygen finished successfully.");
     Ok(())
 }
 
