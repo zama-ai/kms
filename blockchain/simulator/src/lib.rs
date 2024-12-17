@@ -25,7 +25,7 @@ use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractReques
 use kms_blockchain_client::query_client::{
     AscQuery, CscQuery, EventQuery, QueryClient, QueryClientBuilder,
 };
-use kms_common::loop_fn;
+use kms_common::retry_loop;
 use kms_lib::client::{assemble_metadata_alloy, ParsedReencryptionRequest};
 use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
 use kms_lib::cryptography::central_kms::gen_sig_keys;
@@ -557,12 +557,12 @@ pub fn to_event(event: &cosmos_proto::messages::tendermint::abci::Event) -> Even
     result
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, clippy::assign_op_pattern)]
 async fn wait_for_transaction(
     responders: Arc<DashMap<TransactionId, oneshot::Sender<KmsEvent>>>,
     txn_id: &TransactionId,
 ) -> Result<KmsEvent, anyhow::Error> {
-    loop_fn!(
+    retry_loop!(
         || async {
             let (tx, rx) = oneshot::channel();
             tracing::info!("🤠🤠🤠 Waiting for transaction: {:?}", txn_id);
@@ -768,7 +768,7 @@ async fn execute_contract(
         .build();
 
     let response = client.execute_contract(request).await?;
-    let resp: Result<_, anyhow::Error> = loop_fn!(
+    let resp: Result<_, anyhow::Error> = retry_loop!(
         || async {
             tracing::info!("Querying client for tx hash: {:?}...", response.txhash);
             let query_response = query_client.query_tx(response.txhash.clone()).await?;

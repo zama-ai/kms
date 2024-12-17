@@ -1,3 +1,5 @@
+pub mod retry;
+
 #[cfg(feature = "testing")]
 use {
     backward_compatibility::load::{load_versioned_auxiliary, DataFormat, TestFailure},
@@ -5,86 +7,6 @@ use {
     std::path::Path,
     tfhe_versionable::Unversionize,
 };
-
-/// The maximum number of iterations before terminating a loop that is expected to only iterate a couple of times.
-pub const MAX_ITER: u64 = 30;
-/// The number of milliseconds to sleep between iterations of a loop.
-pub const SLEEP_MS: u64 = 1000;
-
-/// Helper macro to try a piece of code until it succeeds but not more than [`MAX_ITER`] times with a constant sleep time after each iteration.
-/// The [`func`] argument is a function that should return a `Result<T>`.
-/// If the function returns `Ok(T)`, then the loop will stop and return `Ok(T)`.
-/// If the function returns `Err(e)`, then the loop will continue.
-/// The [`max_iter`] argument is specifies the maximum number of iterations.
-#[macro_export]
-macro_rules! loop_fn {
-    ($func:expr,$ms_sleep:expr,$max_iter:expr) => {{
-        let mut ctr = 0;
-        let mut last_error = "".to_string();
-        loop {
-            if ctr > $max_iter {
-                break Err(anyhow::anyhow!(
-                    "Loop failed to get result after {} tries. The last error was: {}.",
-                    $max_iter,
-                    last_error
-                )
-                .into());
-            }
-            match $func().await {
-                Ok(inner_res) => {
-                    break Ok(inner_res);
-                }
-                Err(e) => {
-                    // An error happened so we try again
-                    tracing::info!("Loop failed with the error: {e}");
-                    tokio::time::sleep(tokio::time::Duration::from_millis($ms_sleep)).await;
-                    ctr += 1;
-                    last_error = e.to_string();
-                }
-            }
-        }
-    }};
-    ($func:expr) => {{
-        use kms_common::{MAX_ITER, SLEEP_MS};
-        loop_fn!($func, SLEEP_MS, MAX_ITER)
-    }};
-}
-
-#[macro_export]
-macro_rules! exp_loop_fn {
-    ($func:expr,$ms_sleep:expr,$max_iter:expr) => {{
-        let mut ctr = 0;
-        let mut sleep_time = $ms_sleep;
-        let mut last_error = "".to_string();
-        loop {
-            if ctr > $max_iter {
-                break Err(anyhow::anyhow!(
-                    "Exponential loop failed to get result after {} tries. The last error was: {}.",
-                    $max_iter,
-                    last_error
-                )
-                .into());
-            }
-            match $func().await {
-                Ok(inner_res) => {
-                    break Ok(inner_res);
-                }
-                Err(e) => {
-                    // An error happened so we try again
-                    tracing::info!("Exponential loop failed with the error: {e}");
-                    tokio::time::sleep(tokio::time::Duration::from_millis(sleep_time)).await;
-                    sleep_time *= 2;
-                    ctr += 1;
-                    last_error = e.to_string();
-                }
-            }
-        }
-    }};
-    ($func:expr) => {{
-        use kms_common::{MAX_ITER, SLEEP_MS};
-        exp_loop_fn!($func, SLEEP_MS, MAX_ITER)
-    }};
-}
 
 #[macro_export]
 macro_rules! impl_generic_versionize {

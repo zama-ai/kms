@@ -11,21 +11,20 @@ use crate::config::{EthereumConfig, ListenerType, VerifyProvenCtResponseToClient
 use crate::events::manager::ApiVerifyProvenCtValues;
 use anyhow::Context;
 use async_trait::async_trait;
+use coprocessor::fhevm_coprocessor_client::FhevmCoprocessorClient;
+use coprocessor::{GetCiphertextBatch, InputToUpload, InputUploadBatch, InputUploadResponse};
 use ethers::prelude::*;
 use ethers::types::transaction::eip2718::TypedTransaction;
 use ethers::types::{BlockId, Bytes as EthersBytes, TransactionRequest};
 use events::kms::FheType;
 use events::HexVectorList;
 use hex;
-use kms_common::exp_loop_fn;
+use kms_common::{retry::LoopErr, retry_fatal_loop};
 use serde::Deserialize;
 use serde::Serialize;
-use std::sync::Arc;
-
-use coprocessor::fhevm_coprocessor_client::FhevmCoprocessorClient;
-use coprocessor::{GetCiphertextBatch, InputToUpload, InputUploadBatch, InputUploadResponse};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use tonic::metadata::MetadataValue;
 
 // Trait to define the interface for getting ciphertext
@@ -166,6 +165,7 @@ struct CoprocessorCiphertextProvider {
 
 #[async_trait]
 impl CiphertextProvider for CoprocessorCiphertextProvider {
+    #[allow(clippy::assign_op_pattern)]
     async fn get_ciphertext(
         &self,
         _client: Arc<Box<dyn InternalMiddleware>>,
@@ -180,7 +180,7 @@ impl CiphertextProvider for CoprocessorCiphertextProvider {
         let api_key = &self.config.coprocessor_api_key;
         let api_key_header = format!("bearer {}", api_key);
 
-        exp_loop_fn!(
+        retry_fatal_loop!(
             || async {
                 let current_attempt = attempt.fetch_add(1, Ordering::SeqCst) + 1;
                 tracing::info!(
@@ -191,7 +191,9 @@ impl CiphertextProvider for CoprocessorCiphertextProvider {
 
                 // Set up the gRPC client
                 let mut client =
-                    FhevmCoprocessorClient::connect(self.config.coprocessor_url.clone()).await?;
+                    FhevmCoprocessorClient::connect(self.config.coprocessor_url.clone())
+                        .await
+                        .map_err(|e| LoopErr::transient(e.into()))?;
 
                 // Prepare the request with the ciphertext handle
                 let mut request = tonic::Request::new(GetCiphertextBatch {
@@ -206,19 +208,25 @@ impl CiphertextProvider for CoprocessorCiphertextProvider {
                 );
 
                 // Make the gRPC call and process the response
-                let response = client.get_ciphertexts(request).await?;
+                let response = client
+                    .get_ciphertexts(request)
+                    .await
+                    .map_err(|e| LoopErr::transient(e.into()))?;
 
                 // Check if the response contains data
                 let output = response.get_ref();
                 if output.responses.is_empty() {
-                    tracing::error!("No responses found in the gRPC response.");
-                    return Err(anyhow::anyhow!("No responses found in the gRPC response."));
+                    return Err(LoopErr::fatal(anyhow::anyhow!(
+                        "No responses found in the gRPC response."
+                    )));
                 }
 
                 let first_response = &output.responses[0];
                 if let Some(ciphertext) = &first_response.ciphertext {
                     let ciphertext_bytes = ciphertext.ciphertext_bytes.clone();
-                    let c_type: u8 = ciphertext.ciphertext_type.try_into()?;
+                    let c_type: u8 = ciphertext.ciphertext_type.try_into().map_err(|_| {
+                        LoopErr::fatal(anyhow::anyhow!("Could not convert ciphertext type to u8"))
+                    })?;
 
                     tracing::info!(
                         "Ciphertext bytes (first 5): {:?}",
@@ -228,13 +236,20 @@ impl CiphertextProvider for CoprocessorCiphertextProvider {
 
                     Ok((ciphertext_bytes, FheType::from(c_type)))
                 } else {
-                    tracing::error!("Ciphertext is missing in the response.");
-                    Err(anyhow::anyhow!("No responses found in the gRPC response."))
+                    Err(LoopErr::fatal(anyhow::anyhow!(
+                        "No responses found in the gRPC response."
+                    )))
                 }
             },
             self.config.get_ciphertext_retry.factor,
-            self.config.get_ciphertext_retry.max_retries
+            self.config.get_ciphertext_retry.max_retries,
+            TimeoutStrategy::Exponential
         )
+        .map_err(|error| match error {
+            LoopErr::Termination(inner_error) => inner_error,
+            LoopErr::Fatal(inner_error) => inner_error,
+            LoopErr::Transient(inner_error) => inner_error,
+        })
     }
 
     /// In the Coprocessor case, we need

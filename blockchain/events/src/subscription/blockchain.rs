@@ -155,7 +155,7 @@ impl BlockchainService for GrpcBlockchainService {
                 total_pages,
                 request.page
             );
-            if request.page == total_pages {
+            if request.page >= total_pages {
                 break;
             }
             request.page += 1;

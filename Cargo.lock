@@ -5576,6 +5576,7 @@ dependencies = [
  "hex",
  "hmac",
  "k256",
+ "kms-common",
  "prost 0.12.6",
  "prost-types 0.12.6",
  "secp256k1 0.30.0",
@@ -5639,8 +5640,11 @@ dependencies = [
 name = "kms-common"
 version = "0.10.0-rc1"
 dependencies = [
+ "anyhow",
  "backward-compatibility",
  "tfhe-versionable",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

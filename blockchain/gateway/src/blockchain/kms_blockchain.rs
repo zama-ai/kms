@@ -24,15 +24,18 @@ use events::{
     },
     HexVector, HexVectorList,
 };
-use kms_blockchain_client::{
-    client::{Client, ClientBuilder, ExecuteContractRequest, ProtoCoin},
-    errors::Error,
-    query_client::{
-        AscQuery, CscQuery, EventQuery, GenCrsIdQuery, GenKeyIdQuery, QueryClient,
-        QueryClientBuilder,
-    },
-};
-use kms_common::loop_fn;
+use kms_blockchain_client::client::Client;
+use kms_blockchain_client::client::ClientBuilder;
+use kms_blockchain_client::client::ExecuteContractRequest;
+use kms_blockchain_client::client::ProtoCoin;
+use kms_blockchain_client::errors::Error;
+use kms_blockchain_client::query_client::EventQuery;
+use kms_blockchain_client::query_client::GenCrsIdQuery;
+use kms_blockchain_client::query_client::GenKeyIdQuery;
+use kms_blockchain_client::query_client::QueryClient;
+use kms_blockchain_client::query_client::QueryClientBuilder;
+use kms_blockchain_client::query_client::{AscQuery, CscQuery};
+use kms_common::retry_loop;
 use kms_lib::{
     consts::SIGNING_KEY_ID,
     cryptography::signcryption::hash_element,
@@ -156,7 +159,7 @@ impl<'a> KmsBlockchainImpl {
         &self,
         txn_id: &TransactionId,
     ) -> anyhow::Result<KmsEvent> {
-        loop_fn!(
+        retry_loop!(
             || async {
                 let (tx, rx) = oneshot::channel();
                 tracing::info!("🤠🤠🤠 Waiting for transaction: {:?}", txn_id);
@@ -176,6 +179,7 @@ impl<'a> KmsBlockchainImpl {
         client.execute_contract(request.clone()).await
     }
 
+    #[allow(clippy::assign_op_pattern)]
     async fn make_req_to_kms_blockchain(
         &self,
         data_size: u32,
@@ -195,7 +199,7 @@ impl<'a> KmsBlockchainImpl {
         let response = self.call_execute_contract(&mut client, &request).await?;
 
         // Loop until we get a query response
-        let resp: anyhow::Result<TxResponse> = loop_fn!(|| async {
+        let resp: anyhow::Result<TxResponse> = retry_loop!(|| async {
             // Keep querying using the txhash to make sure it appeared on the blockchain
             let query_response = self
                 .query_client

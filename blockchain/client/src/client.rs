@@ -259,7 +259,7 @@ impl Client {
                 )));
             }
             tracing::info!("Transaction broadcasted successfully");
-            Ok(tx.clone())
+            Ok(tx.to_owned())
         } else {
             return Err(Error::ExecutionContractError(
                 "No transaction response received".to_string(),

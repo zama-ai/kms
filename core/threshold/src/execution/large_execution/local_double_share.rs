@@ -15,7 +15,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use itertools::Itertools;
-use kms_common::MAX_ITER;
+use kms_common::retry::MAX_ITER;
 use num_integer::div_ceil;
 use rand::{CryptoRng, Rng};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -365,7 +365,7 @@ pub(crate) mod tests {
     use aes_prng::AesRng;
     use async_trait::async_trait;
     use itertools::Itertools;
-    use kms_common::MAX_ITER;
+    use kms_common::retry::MAX_ITER;
     use rand::SeedableRng;
     use rand::{CryptoRng, Rng};
     use rstest::rstest;

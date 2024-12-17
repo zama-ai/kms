@@ -18,6 +18,7 @@ events.workspace = true
 hex.workspace = true
 hmac = "=0.12.1"
 k256.workspace = true
+kms-common.workspace = true
 prost.workspace = true
 prost-types.workspace = true
 secp256k1.workspace = true

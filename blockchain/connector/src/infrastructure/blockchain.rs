@@ -5,10 +5,11 @@ use crate::infrastructure::metrics::{MetricType, Metrics};
 use async_trait::async_trait;
 use events::kms::{FheParameter, KmsEvent, KmsMessage, OperationValue};
 use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractRequest};
+use kms_blockchain_client::errors::Error;
 use kms_blockchain_client::query_client::{
     AscQuery, CscQuery, EventQuery, QueryClient, QueryClientBuilder,
 };
-use kms_common::loop_fn;
+use kms_common::retry_fatal_loop;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use typed_builder::TypedBuilder;
@@ -56,11 +57,33 @@ impl KmsBlockchain {
         client: &mut Client,
         request: &ExecuteContractRequest,
     ) -> anyhow::Result<()> {
-        loop_fn!(
-            || async { client.execute_contract(request.clone()).await.map(|_| ()) },
+        // Try to post to the contract with a retry loop executing at most 4 times with 2 seconds sleep between each try
+        retry_fatal_loop!(
+            || async {
+                match client.execute_contract(request.clone()).await {
+                    Ok(resp) => {
+                        tracing::info!("KMS contract execution returned the message: {:?}", resp);
+                        Ok(())
+                    }
+                    Err(error) => {
+                        if let Error::ExecutionContractError(inner_err) = &error {
+                            let no_transaction = "No transaction response received";
+                            // In case of no transaction response, we can retry
+                            if inner_err.contains(no_transaction) {
+                                return Err(LoopErr::Transient(anyhow::anyhow!(no_transaction)));
+                            }
+                        }
+                        // In all other cases we break the loop and log the error
+                        let fatal_msg =
+                            format!("Fatal error while sending to contract: {:?}", &error);
+                        Err(LoopErr::Fatal(anyhow::anyhow!(fatal_msg)))
+                    }
+                }
+            },
             2000,
             4
         )
+        .map_err(|e| anyhow::anyhow!("Error while sending to contract: {e}"))
     }
 }
 

@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use cosmos_proto::messages::cosmos::{base::abci::v1beta1::TxResponse, tx::v1beta1::Tx};
 
 use cosmwasm_std::Event;
-use kms_common::loop_fn;
+use kms_common::{retry::LoopErr, retry_fatal_loop};
 use koit_toml::KoitError;
 #[cfg(test)]
 use mockall::{automock, mock, predicate::*};
@@ -383,8 +383,35 @@ where
         blockchain: B,
         height: u64,
     ) -> Result<Vec<TxResponse>, SubscriptionError> {
-        // Retry at most 4 times, waiting 10 seconds between each retry
-        loop_fn!(|| async { blockchain.get_events(height).await }, 10000, 4)
+        // Retry at most 4 times, waiting 10 seconds between each retry, but terminate in case of a non-transient error
+        retry_fatal_loop!(
+            || async {
+                match blockchain.get_events(height).await {
+                    Ok(resp) => Ok(resp),
+                    Err(error) => match error {
+                        SubscriptionError::ConnectionError(_) => Err(LoopErr::Transient(error)),
+                        SubscriptionError::ResponseTxsEventError(_) => {
+                            Err(LoopErr::Transient(error))
+                        }
+                        SubscriptionError::StorageError(_) => Err(LoopErr::Transient(error)),
+                        SubscriptionError::UnknownError(_) => Err(LoopErr::Fatal(error)),
+                        SubscriptionError::DeserializationError(_) => Err(LoopErr::Fatal(error)),
+                    },
+                }
+            },
+            10000,
+            4
+        )
+        // Return the inner error from `get_events_responses`
+        .map_err(|error| match error {
+            LoopErr::Termination(inner_error) => {
+                // In case of termination, we instead return an unknown error
+
+                SubscriptionError::UnknownError(inner_error)
+            }
+            LoopErr::Fatal(inner_error) => inner_error,
+            LoopErr::Transient(inner_error) => inner_error,
+        })
     }
 
     async fn get_txs_events_responses(
@@ -392,11 +419,37 @@ where
         height: u64,
     ) -> Result<Vec<TxResponse>, SubscriptionError> {
         // Retry at most 4 times, waiting 10 seconds between each retry
-        loop_fn!(
-            || async { blockchain.get_events_responses(height).await },
+        retry_fatal_loop!(
+            || async {
+                match blockchain.get_events_responses(height).await {
+                    Ok(resp) => Ok(resp),
+                    Err(error) => match error {
+                        SubscriptionError::ConnectionError(_) => Err(LoopErr::Transient(error)),
+                        SubscriptionError::ResponseTxsEventError(_) => {
+                            Err(LoopErr::Transient(error))
+                        }
+                        SubscriptionError::StorageError(_) => Err(LoopErr::Transient(error)),
+                        SubscriptionError::UnknownError(_) => Err(LoopErr::Fatal(error)),
+                        SubscriptionError::DeserializationError(_) => Err(LoopErr::Fatal(error)),
+                    },
+                }
+            },
             10000,
             4
         )
+        // Return the inner error from `get_events_responses`
+        .map_err(|e| match e {
+            LoopErr::Termination(error) => {
+                // In case of termination, we instead return an unknown error
+                tracing::error!(
+                    "Loop iterations complete, but still receiving a transient error: {}",
+                    error
+                );
+                SubscriptionError::UnknownError(error)
+            }
+            LoopErr::Fatal(error) => error,
+            LoopErr::Transient(error) => error,
+        })
     }
 
     async fn get_all_tx_from_to_height_filter_map<U, T>(
@@ -409,19 +462,44 @@ where
         T: 'static + Send + Sync,
         U: SubscriptionHandler<T> + Clone + Send + Sync + 'static,
     {
-        // Retry at most 4 times, waiting 10 seconds between each retry
-        loop_fn!(
+        // Retry at most 4 times, waiting 10 seconds between each retry, but terminate in case of a non-transient error
+        retry_fatal_loop!(
             || async {
                 let handler = handler.clone();
-                blockchain
+                match blockchain
                     .get_all_tx_from_to_height_filter_map(from_height, to_height, move |tx| {
                         handler.filter_for_catchup(tx)
                     })
                     .await
+                {
+                    Ok(resp) => Ok(resp),
+                    Err(error) => match error {
+                        SubscriptionError::ConnectionError(_) => Err(LoopErr::Transient(error)),
+                        SubscriptionError::ResponseTxsEventError(_) => {
+                            Err(LoopErr::Transient(error))
+                        }
+                        SubscriptionError::StorageError(_) => Err(LoopErr::Transient(error)),
+                        SubscriptionError::UnknownError(_) => Err(LoopErr::Fatal(error)),
+                        SubscriptionError::DeserializationError(_) => Err(LoopErr::Fatal(error)),
+                    },
+                }
             },
             10000,
             4
         )
+        // Return the inner error from `get_all_tx_from_to_height_filter_map`
+        .map_err(|error| match error {
+            LoopErr::Termination(inner_error) => {
+                // In case of termination, we instead return an unknown error
+                tracing::error!(
+                    "Loop iterations complete, but still receiving a transient error: {}",
+                    inner_error
+                );
+                SubscriptionError::UnknownError(inner_error)
+            }
+            LoopErr::Fatal(inner_error) => inner_error,
+            LoopErr::Transient(inner_error) => inner_error,
+        })
     }
 
     async fn update_last_seen_height(&self, last_height: u64) -> Result<(), SubscriptionError> {

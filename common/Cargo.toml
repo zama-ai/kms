@@ -7,11 +7,19 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
-tfhe-versionable.workspace = true
+anyhow.workspace = true
 backward-compatibility = { workspace = true, features = [
     "load",
     "tests",
 ], optional = true }
+tfhe-versionable.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = [
+    "macros",
+    "rt-multi-thread",
+] }
+tracing = { workspace = true, features = ["log"] }
 
 [features]
 testing = ["dep:backward-compatibility"]

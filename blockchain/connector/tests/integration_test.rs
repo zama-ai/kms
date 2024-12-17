@@ -32,7 +32,7 @@ use kms_blockchain_connector::domain::storage::Storage;
 use kms_blockchain_connector::infrastructure::blockchain::KmsBlockchain;
 use kms_blockchain_connector::infrastructure::core::{KmsCore, KmsEventHandler};
 use kms_blockchain_connector::infrastructure::metrics::OpenTelemetryMetrics;
-use kms_common::loop_fn;
+use kms_common::retry_loop;
 use kms_lib::client::assemble_metadata_alloy;
 use kms_lib::consts::SAFE_SER_SIZE_LIMIT;
 use kms_lib::consts::TEST_PARAM;
@@ -283,7 +283,7 @@ async fn wait_for_tx_processed(
     query_client: Arc<QueryClient>,
     txhash: String,
 ) -> anyhow::Result<TxResponse> {
-    loop_fn!(
+    retry_loop!(
         || async {
             let r = query_client
                 .query_tx(txhash.clone())
@@ -332,7 +332,7 @@ async fn check_event(
 ///
 /// Code ID are defined by the order of contract upload in `deploy_contracts.sh`, starting from 1.
 async fn get_contract_address(client: &QueryClient, code_id: u64) -> anyhow::Result<String> {
-    loop_fn!(
+    retry_loop!(
         || async {
             tracing::info!("Getting contract address....");
             let result = client.list_contracts(code_id).await.unwrap();
