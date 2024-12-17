@@ -17,7 +17,6 @@ use crate::events::manager::k256::ecdsa::SigningKey;
 use crate::util::height::AtomicBlockHeight;
 use actix_cors::Cors;
 use actix_web::http::Method;
-use actix_web::middleware::Logger;
 use actix_web::App;
 use actix_web::HttpServer;
 use actix_web::Responder;
@@ -42,6 +41,7 @@ use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info};
+use tracing_actix_web::TracingLogger;
 
 pub const HTTP_PAYLOAD_LIMIT: usize = 10 * 1024 * 1024; // 10 MB
 pub const HTTP_WORKERS: usize = 20;
@@ -73,7 +73,7 @@ pub async fn start_http_server(api_url: String, sender: mpsc::Sender<GatewayEven
         let verify_proven_ct_publisher = VerifyProvenCtEventPublisher::new(sender.clone());
         let keyurl_publisher = KeyUrlEventPublisher::new(sender.clone());
         App::new()
-            .wrap(Logger::default())
+            .wrap(TracingLogger::default())
             .wrap(get_cors())
             .route("/health", web::get().to(health_check)) // Add health endpoint
             .app_data(web::PayloadConfig::new(HTTP_PAYLOAD_LIMIT))

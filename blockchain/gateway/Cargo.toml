@@ -48,6 +48,7 @@ tendermint-rpc = { workspace = true, features = ["websocket-client"] }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["log"] }
+tracing-actix-web.workspace = true
 typed-builder.workspace = true
 tonic.workspace = true
 primitive-types = { version = "=0.12.2", default-features = false }
