@@ -30,7 +30,7 @@
 ### What is KMS
 The Zama KMS is a fully decentralized key management solution for TFHE, more specifically [TFHE-rs](https://github.com/zama-ai/tfhe-rs), based on a maliciously secure and robust [MPC protocol](https://eprint.iacr.org/2023/815).
 
-The system facilitates this through a the use of blockchain which provides a means of fulfilling payments to the MPC parties, along with providing an immutable audit log.
+The system facilitates this through the use of a blockchain which provides a means of fulfilling payments to the MPC parties, along with providing an immutable audit log.
 
 Interaction with the same KMS will happen either through an external Ethereum blockchain, providing an API via a smart contract, or through a gateway service.
 
