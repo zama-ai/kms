@@ -116,7 +116,7 @@ impl<T> MetaStore<T> {
     }
 
     /// Update the status of an already existing element. Returns an error if something goes wrong, like
-    /// the element does not exist or the status is already Done or Error
+    /// the element does not exist or the status is already Started.
     pub(crate) fn update(
         &mut self,
         request_id: &RequestId,
@@ -230,6 +230,33 @@ mod tests {
         assert!(meta_store
             .update(&request_id, HandlerStatus::Started)
             .is_err());
+    }
+
+    #[test]
+    fn test_kickout_of_errors() {
+        let mut meta_store: MetaStore<String> = MetaStore::new(2, 1);
+        let request_id_1: RequestId = RequestId::derive("1").unwrap();
+        let request_id_2: RequestId = RequestId::derive("2").unwrap();
+        let request_id_3: RequestId = RequestId::derive("3").unwrap();
+        meta_store.insert(&request_id_1).unwrap();
+        assert!(meta_store
+            .update(&request_id_1, HandlerStatus::Error("Err1".to_string()))
+            .is_ok());
+        meta_store.insert(&request_id_2).unwrap();
+        assert!(meta_store
+            .update(&request_id_2, HandlerStatus::Done("OK2".to_string()))
+            .is_ok());
+        // The storage is full so we should kick the oldest element out
+        meta_store.insert(&request_id_3).unwrap();
+        assert!(meta_store
+            .update(&request_id_3, HandlerStatus::Error("Err3".to_string()))
+            .is_ok());
+
+        // Validate the oldest element is removed
+        assert!(!meta_store.exists(&request_id_1));
+        // Validate the two newer elements are still there
+        assert!(meta_store.exists(&request_id_2));
+        assert!(meta_store.exists(&request_id_3));
     }
 
     #[test]
