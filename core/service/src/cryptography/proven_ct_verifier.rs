@@ -26,7 +26,7 @@ use crate::{
         rpc_types::{compute_external_verify_proven_ct_signature, BaseKms, WrappedPublicKeyOwned},
     },
     storage::{crypto_material::CryptoMaterialStorage, Storage},
-    util::meta_store::{handle_res_mapping, HandlerStatus, MetaStore},
+    util::meta_store::{handle_res_mapping, MetaStore},
 };
 
 pub(crate) async fn non_blocking_verify_proven_ct<
@@ -58,7 +58,7 @@ pub(crate) async fn non_blocking_verify_proven_ct<
                         "storing verify proven ct result for request_id {}",
                         request_id
                     );
-                    let _ = guarded_meta_store.update(&request_id, HandlerStatus::Done(inner_res));
+                    let _ = guarded_meta_store.update(&request_id, Ok(inner_res));
                     let duration = verify_proven_ct_start_instant.elapsed();
                     METRICS
                         .observe_duration_with_tags(
@@ -76,7 +76,7 @@ pub(crate) async fn non_blocking_verify_proven_ct<
                 Err(e) => {
                     let _ = guarded_meta_store.update(
                         &request_id,
-                        HandlerStatus::Error(format!(
+                        Err(format!(
                             "Proven ciphertext verification failed for ID {} with error {e}",
                             request_id
                         )),
@@ -105,10 +105,11 @@ where
 
     let status = {
         let guarded_meta_store = meta_store.read().await;
-        guarded_meta_store.retrieve(&request_id).cloned()
+        guarded_meta_store.retrieve(&request_id)
     };
 
-    let payload: VerifyProvenCtResponsePayload = { handle_res_mapping(status, &request_id, "ZK")? };
+    let payload: VerifyProvenCtResponsePayload =
+        { handle_res_mapping(status, &request_id, "ZK").await? };
 
     let sig_payload_vec = tonic_handle_potential_err(
         bincode::serialize(&payload),

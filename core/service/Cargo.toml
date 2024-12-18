@@ -108,6 +108,7 @@ console_error_panic_hook = { version = "=0.1.7" }
 serde-wasm-bindgen = { version = "=0.6.5" }
 wasm-bindgen = { version = "=0.2.95", features = ["serde-serialize"] }
 tfhe-versionable.workspace = true
+async_cell = "0.2.2"
 
 [target.'cfg(unix)'.dependencies]
 tfhe = { workspace = true, features = ["seeder_unix"] }

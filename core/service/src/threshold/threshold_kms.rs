@@ -40,7 +40,7 @@ use crate::threshold::generic::{
     CrsGenerator, Decryptor, GenericKms, Initiator, KeyGenPreprocessor, KeyGenerator,
     ProvenCtVerifier, Reencryptor,
 };
-use crate::util::meta_store::{handle_res_mapping, HandlerStatus, MetaStore};
+use crate::util::meta_store::{handle_res_mapping, MetaStore};
 use crate::util::rate_limiter::{RateLimiter, RateLimiterConfig};
 use crate::{anyhow_error_and_log, get_exactly_one};
 use aes_prng::AesRng;
@@ -197,7 +197,7 @@ impl Named for ThresholdFheKeys {
     const NAME: &'static str = "ThresholdFheKeys";
 }
 
-type BucketMetaStore = Box<dyn DKGPreprocessing<ResiduePoly128>>;
+type BucketMetaStore = Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePoly128>>>>;
 
 /// Compute all the info of a [FhePubKeySet] and return the result as as [KeyGenCallValues]
 pub fn compute_all_info(
@@ -307,10 +307,10 @@ where
     // load keys from storage
     let key_info_versioned: HashMap<RequestId, ThresholdFheKeys> =
         read_all_data_versioned(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
-    let mut key_info_w_status = HashMap::new();
+    let mut public_key_info = HashMap::new();
     let mut pk_map = HashMap::new();
     for (id, info) in key_info_versioned.clone().into_iter() {
-        key_info_w_status.insert(id.clone(), HandlerStatus::Done(info.pk_meta_data.clone()));
+        public_key_info.insert(id.clone(), info.pk_meta_data.clone());
 
         let pk = read_pk_at_request_id(&public_storage, &id).await?;
         pk_map.insert(id, pk);
@@ -319,11 +319,6 @@ where
     // load crs_info (roughly hashes of CRS) from storage
     let crs_info: HashMap<RequestId, SignedPubDataHandleInternal> =
         read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
-    let mut crs_info_w_status: HashMap<RequestId, HandlerStatus<SignedPubDataHandleInternal>> =
-        HashMap::new();
-    for (id, crs) in crs_info {
-        crs_info_w_status.insert(id.to_owned(), HandlerStatus::Done(crs));
-    }
 
     // load crs from storage
     let crs_map: HashMap<RequestId, CompactPkePublicParams> =
@@ -467,8 +462,8 @@ where
     let prss_setup = Arc::new(RwLock::new(None));
     let preproc_buckets = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     let preproc_factory = Arc::new(Mutex::new(preproc_factory));
-    let crs_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(crs_info_w_status)));
-    let dkg_pubinfo_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(key_info_w_status)));
+    let crs_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(crs_info)));
+    let dkg_pubinfo_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(public_key_info)));
     let dec_meta_store = Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache)));
     let reenc_meta_store = Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache)));
     let ct_verifier_payload_meta_store =
@@ -981,15 +976,13 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 match tmp {
                     Ok(partial_dec) => {
                         // We cannot do much if updating the storage fails at this point...
-                        let _ = guarded_meta_store
-                            .update(&req_id, HandlerStatus::Done((fhe_type, link, partial_dec)));
+                        let _ =
+                            guarded_meta_store.update(&req_id, Ok((fhe_type, link, partial_dec)));
                     }
                     Result::Err(e) => {
                         // We cannot do much if updating the storage fails at this point...
-                        let _ = guarded_meta_store.update(
-                            &req_id,
-                            HandlerStatus::Error(format!("Failed decryption: {e}")),
-                        );
+                        let _ = guarded_meta_store
+                            .update(&req_id, Err(format!("Failed decryption: {e}")));
                     }
                 }
             }
@@ -1017,10 +1010,10 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         // Retrieve the ReencMetaStore object
         let status = {
             let guarded_meta_store = self.reenc_meta_store.read().await;
-            guarded_meta_store.retrieve(&request_id).cloned()
+            guarded_meta_store.retrieve(&request_id)
         };
         let (fhe_type, link, signcrypted_ciphertext) =
-            handle_res_mapping(status, &request_id, "Reencryption")?;
+            handle_res_mapping(status, &request_id, "Reencryption").await?;
         let server_verf_key = self.base_kms.get_serialized_verf_key();
         let payload = ReencryptionResponsePayload {
             version: CURRENT_FORMAT_VERSION,
@@ -1327,10 +1320,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                     }
                     _ => {
                         let mut guarded_meta_store = meta_store.write().await;
-                        let _ = guarded_meta_store.update(
-                            &req_id,
-                            HandlerStatus::Error("Failed decryption.".to_string()),
-                        );
+                        let _ = guarded_meta_store
+                            .update(&req_id, Err("Failed decryption.".to_string()));
                         // exit mgmt task early in case of error
                         return;
                     }
@@ -1356,10 +1347,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             };
 
             let mut guarded_meta_store = meta_store.write().await;
-            let _ = guarded_meta_store.update(
-                &req_id,
-                HandlerStatus::Done((req_digest.clone(), pts, external_sig)),
-            );
+            let _ = guarded_meta_store.update(&req_id, Ok((req_digest.clone(), pts, external_sig)));
         };
         let _handle = tokio::spawn(my_future(permit).instrument(tracing::Span::current()));
 
@@ -1374,10 +1362,10 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         validate_request_id(&request_id)?;
         let status = {
             let guarded_meta_store = self.dec_meta_store.read().await;
-            guarded_meta_store.retrieve(&request_id).cloned()
+            guarded_meta_store.retrieve(&request_id)
         };
         let (req_digest, plaintexts, external_signature) =
-            handle_res_mapping(status, &request_id, "Decryption")?;
+            handle_res_mapping(status, &request_id, "Decryption").await?;
 
         let pt_payload = tonic_handle_potential_err(
             plaintexts
@@ -1479,7 +1467,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 // more clear to label the variants as `Secure`
 // and `Insecure`.
 enum PreprocHandleWithMode {
-    Secure(Box<dyn DKGPreprocessing<ResiduePoly128>>),
+    Secure(Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePoly128>>>>),
     Insecure,
 }
 
@@ -1520,7 +1508,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 PreprocHandleWithMode::Insecure => {
                     initialize_key_material(&mut base_session, dkg_params).await
                 }
-                PreprocHandleWithMode::Secure(mut preproc_handle) => {
+                PreprocHandleWithMode::Secure(preproc_handle) => {
+                    let mut preproc_handle = preproc_handle.lock().await;
                     distributed_keygen_z128(&mut base_session, preproc_handle.as_mut(), dkg_params)
                         .await
                 }
@@ -1533,8 +1522,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                     //If dkg errored out, update status
                     let mut guarded_meta_storage = meta_store.write().await;
                     // We cannot do much if updating the storage fails at this point...
-                    let _ =
-                        guarded_meta_storage.update(&req_id, HandlerStatus::Error(e.to_string()));
+                    let _ = guarded_meta_storage.update(&req_id, Err(e.to_string()));
                     return;
                 }
             };
@@ -1546,8 +1534,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                     //If sns key is missing, update status
                     let mut guarded_meta_storage = meta_store.write().await;
                     // We cannot do much if updating the storage fails at this point...
-                    let _ = guarded_meta_storage
-                        .update(&req_id, HandlerStatus::Error("Missing SNS key".to_string()));
+                    let _ =
+                        guarded_meta_storage.update(&req_id, Err("Missing SNS key".to_string()));
                     return;
                 }
             };
@@ -1558,10 +1546,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 Err(_) => {
                     let mut guarded_meta_storage = meta_store.write().await;
                     // We cannot do much if updating the storage fails at this point...
-                    let _ = guarded_meta_storage.update(
-                        &req_id,
-                        HandlerStatus::Error("Failed to compute key info".to_string()),
-                    );
+                    let _ = guarded_meta_storage
+                        .update(&req_id, Err("Failed to compute key info".to_string()));
                     return;
                 }
             };
@@ -1659,11 +1645,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 let mut map = self.preproc_buckets.write().await;
                 map.delete(&preproc_id)
             };
-            PreprocHandleWithMode::Secure(handle_res_mapping(
-                preproc,
-                &preproc_id,
-                "Preprocessing",
-            )?)
+            PreprocHandleWithMode::Secure(
+                handle_res_mapping(preproc, &preproc_id, "Preprocessing").await?,
+            )
         };
 
         let eip712_domain = protobuf_to_alloy_domain_option(req.domain.as_ref());
@@ -1692,9 +1676,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         validate_request_id(&request_id)?;
         let status = {
             let guarded_meta_store = self.dkg_pubinfo_meta_store.read().await;
-            guarded_meta_store.retrieve(&request_id).cloned()
+            guarded_meta_store.retrieve(&request_id)
         };
-        let res = handle_res_mapping(status, &request_id, "DKG")?;
+        let res = handle_res_mapping(status, &request_id, "DKG").await?;
         Ok(Response::new(KeyGenResult {
             request_id: Some(request_id),
             key_results: convert_key_response(res),
@@ -1793,8 +1777,8 @@ impl RealPreprocessor {
                     .await;
                 //write the preproc handle to the bucket store
                 let handle_update = match preproc_result {
-                    Ok((_, preproc_handle)) => HandlerStatus::Done(preproc_handle),
-                    Err(error) => HandlerStatus::Error(error.to_string()),
+                    Ok((_, preproc_handle)) => Ok(Arc::new(Mutex::new(preproc_handle))),
+                    Err(error) => Err(error.to_string()),
                 };
                 let mut guarded_meta_store = bucket_store.write().await;
                 // We cannot do much if updating the storage fails at this point...
@@ -1867,6 +1851,9 @@ impl KeyGenPreprocessor for RealPreprocessor {
         let request_id = request.into_inner();
         let response = {
             let map = self.preproc_buckets.read().await;
+            //TODO(#1792): For now we do not wait here as we do for other get_result
+            //In any case, we may want to refactor this bit as it is the sole one
+            //using a custom enum for status instead of the tonic ones
             match map.retrieve(&request_id) {
                 None => {
                     tracing::warn!(
@@ -1874,19 +1861,21 @@ impl KeyGenPreprocessor for RealPreprocessor {
                     );
                     KeyGenPreprocStatusEnum::Missing
                 }
-                Some(HandlerStatus::Error(e)) => {
-                    tracing::warn!(
+                Some(cell) => {
+                    if cell.is_set() {
+                        let result = cell.get().await;
+                        if let Err(e) = result {
+                            tracing::warn!(
                         "Error while generating keygen preproc for request id {request_id} : {e}"
                     );
-                    KeyGenPreprocStatusEnum::Error
-                }
-                Some(HandlerStatus::Started) => {
-                    tracing::info!("Preproc for request id {request_id} is in progress.");
-                    KeyGenPreprocStatusEnum::InProgress
-                }
-                Some(HandlerStatus::Done(_)) => {
-                    tracing::info!("Preproc for request id {request_id} is finished.");
-                    KeyGenPreprocStatusEnum::Finished
+                            KeyGenPreprocStatusEnum::Error
+                        } else {
+                            KeyGenPreprocStatusEnum::Finished
+                        }
+                    } else {
+                        tracing::info!("Preproc for request id {request_id} is in progress.");
+                        KeyGenPreprocStatusEnum::InProgress
+                    }
                 }
             }
         };
@@ -2028,8 +2017,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                             Ok((crs, _)) => crs,
                             Err(e) => {
                                 let mut guarded_meta_store = meta_store.write().await;
-                                let _ = guarded_meta_store
-                                    .update(&owned_req_id, HandlerStatus::Error(e.to_string()));
+                                let _ =
+                                    guarded_meta_store.update(&owned_req_id, Err(e.to_string()));
                                 return;
                             }
                         };
@@ -2054,8 +2043,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                     Err(e) => {
                         let mut guarded_meta_store = meta_store.write().await;
                         // We cannot do much if updating the storage fails at this point...
-                        let _ = guarded_meta_store
-                            .update(&owned_req_id, HandlerStatus::Error(e.to_string()));
+                        let _ = guarded_meta_store.update(&owned_req_id, Err(e.to_string()));
                         return;
                     }
                 };
@@ -2089,9 +2077,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         let request_id = request.into_inner();
         let status = {
             let guarded_meta_store = self.crs_meta_store.read().await;
-            guarded_meta_store.retrieve(&request_id).cloned()
+            guarded_meta_store.retrieve(&request_id)
         };
-        let crs_data = handle_res_mapping(status, &request_id, "CRS generation")?;
+        let crs_data = handle_res_mapping(status, &request_id, "CRS generation").await?;
         Ok(Response::new(CrsGenResult {
             request_id: Some(request_id),
             crs_results: Some(crs_data.into()),

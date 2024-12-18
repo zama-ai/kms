@@ -3448,9 +3448,8 @@ pub(crate) mod tests {
             .crs_gen_request(crs_req_id, max_num_bits, params)
             .unwrap();
 
-        // response is currently empty
         tracing::debug!("making crs request, insecure? {insecure}");
-        let mut response = match insecure {
+        match insecure {
             true => {
                 #[cfg(feature = "insecure")]
                 {
@@ -3459,9 +3458,6 @@ pub(crate) mod tests {
                         .await
                         .unwrap();
                     assert_eq!(gen_response.into_inner(), Empty {});
-                    kms_client
-                        .get_insecure_crs_gen_result(crs_req_id.clone())
-                        .await
                 }
                 #[cfg(not(feature = "insecure"))]
                 {
@@ -3474,7 +3470,6 @@ pub(crate) mod tests {
                     .await
                     .unwrap();
                 assert_eq!(gen_response.into_inner(), Empty {});
-                kms_client.get_crs_gen_result(crs_req_id.clone()).await
             }
         };
 
@@ -3489,10 +3484,9 @@ pub(crate) mod tests {
             assert_eq!(e.code(), tonic::Code::ResourceExhausted);
         }
 
+        let mut response = Err(tonic::Status::not_found(""));
         let mut ctr = 0;
-        while response.is_err() && ctr < 200 {
-            // Sleep to give the server some time to complete CRS generation
-            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        while response.is_err() && ctr < 5 {
             response = kms_client
                 .get_crs_gen_result(tonic::Request::new(crs_req_id.clone()))
                 .await;

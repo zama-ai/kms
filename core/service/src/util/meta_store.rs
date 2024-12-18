@@ -1,24 +1,12 @@
-use crate::{anyhow_error_and_log, kms::RequestId, some_or_err};
-use std::collections::{HashMap, VecDeque};
+use crate::{
+    anyhow_error_and_log, consts::DURATION_WAITING_ON_RESULT_SECONDS, kms::RequestId, some_or_err,
+};
+use async_cell::sync::AsyncCell;
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+};
 use tonic::Status;
-
-// Meta store helper enum, that is used to keep the status of a request in a meta store
-#[derive(Clone, PartialEq, Eq)]
-pub(crate) enum HandlerStatus<T> {
-    Started,
-    Error(String),
-    Done(T),
-}
-
-impl<T> std::fmt::Debug for HandlerStatus<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Started => write!(f, "Started"),
-            Self::Error(arg0) => f.debug_tuple("Error").field(arg0).finish(),
-            Self::Done(_) => write!(f, "Done()"),
-        }
-    }
-}
 
 /// Data structure that stores elements that are being processed and their status (Started, Done, Error).
 /// It holds elements up to a given capacity, and once it is full, it will remove old elements that have status [Done]/[Error], if there are sufficiently many.
@@ -28,12 +16,12 @@ pub(crate) struct MetaStore<T> {
     // The minimum amount of entries that should be kept in the cache after completion and before old ones are evicted
     min_cache: usize,
     // Storage of all elements in the system
-    storage: HashMap<RequestId, HandlerStatus<T>>,
+    storage: HashMap<RequestId, Arc<AsyncCell<Result<T, String>>>>,
     // Queue of all elements that have been completed
     complete_queue: VecDeque<RequestId>,
 }
 
-impl<T> MetaStore<T> {
+impl<T: Clone> MetaStore<T> {
     /// Creates a new MetaStore with a given capacity and minimal cache size.
     /// In more detail, this means that the MetaStore will be able to hold [capacity] of total elements,
     /// of which we can be sure that at least [min_cache] elements are kept in the cache after completion
@@ -59,17 +47,20 @@ impl<T> MetaStore<T> {
     }
 
     // Creates a MetaStore with unlimited storage capacity and minimum cache size and populates it with the given map
-    pub(crate) fn new_from_map(map: HashMap<RequestId, HandlerStatus<T>>) -> Self {
+    pub(crate) fn new_from_map(map: HashMap<RequestId, T>) -> Self {
         let mut completed_queue = VecDeque::new();
-        for (request_id, handle) in map.iter() {
-            if let HandlerStatus::Done(_) = handle {
-                completed_queue.push_back(request_id.clone());
-            }
-        }
+        let storage = map
+            .into_iter()
+            .map(|(key, value)| {
+                completed_queue.push_back(key.clone());
+                (key, Arc::new(AsyncCell::new_with(Ok(value))))
+            })
+            .collect();
+
         Self {
             capacity: usize::MAX,
             min_cache: usize::MAX,
-            storage: map,
+            storage,
             complete_queue: completed_queue,
         }
     }
@@ -81,17 +72,16 @@ impl<T> MetaStore<T> {
     /// Insert a new element, throwing an exception if the element already exists or if the system is fully loaded.
     ///
     /// Elements can trivially be inserted until the store reaches its [capacity].
-    /// Once the store is full, we will remove old elements that have status [Done] or [Error], but only once we have at least [min_cache] elements of them.
+    /// Once the store is full, we will remove old elements that have completed, but only once we have at least [min_cache] elements of them.
     /// This is to ensure that:
-    /// 1. there are never more than [capacity] - [min_cache] elements currently being processed (status [Started]) and
+    /// 1. there are never more than [capacity] - [min_cache] elements currently being processed (id not in `complete_queue`) and
     /// 2. there is enough time to retrieve an element before it is removed. This timespan is the time it takes to process [min_cache] elements.
     ///
     /// If the store is at max capacity and not enough elements have been completed, we will not accept new elements to be inserted.
     pub(crate) fn insert(&mut self, request_id: &RequestId) -> anyhow::Result<()> {
         if self.exists(request_id) {
             return Err(anyhow::anyhow!(
-                "The element with ID {request_id} is already stored and contains {:#?}",
-                self.retrieve(request_id)
+                "The element with ID {request_id} already stored exists. Can not insert it more than once.",
             ));
         }
         if self.storage.len() >= self.capacity {
@@ -109,57 +99,67 @@ impl<T> MetaStore<T> {
             }
         }
         // Ignore the result since we have already checked that the element does not exist
-        let _ = self
-            .storage
-            .insert(request_id.to_owned(), HandlerStatus::Started);
+        let cell = AsyncCell::shared();
+        let _ = self.storage.insert(request_id.to_owned(), cell);
         Ok(())
     }
 
-    /// Update the status of an already existing element. Returns an error if something goes wrong, like
-    /// the element does not exist or the status is already Started.
+    /// Sets the value of an already existing element. Returns an error if something goes wrong, like
+    /// the element does not exist or the value was already set.
     pub(crate) fn update(
         &mut self,
         request_id: &RequestId,
-        status: HandlerStatus<T>,
+        update: Result<T, String>,
     ) -> anyhow::Result<()> {
-        if !self.exists(request_id) {
+        let cell = if let Some(cell) = self.storage.get(request_id) {
+            cell
+        } else {
             return Err(anyhow_error_and_log(format!(
                 "The element with ID {request_id} does not exist, update is not allowed"
             )));
+        };
+
+        // We only allow setting the result once
+        if cell.is_set() {
+            return Err(anyhow_error_and_log(format!(
+                "The element with ID {request_id} is already done, update is not allowed"
+            )));
         }
-        if let HandlerStatus::Started = status {
-            return Err(anyhow_error_and_log(format!("Cannot update the status of a request with ID {request_id} to Started since it is already in progress")));
-        }
-        // Ignore the old status since we already checked if the element is there
-        let _ = self.storage.insert(request_id.to_owned(), status);
+
+        cell.set(update);
         self.complete_queue.push_back(request_id.clone());
+
         Ok(())
     }
 
-    /// Retrieve the status of an element and return None if it does not exist
-    pub(crate) fn retrieve(&self, request_id: &RequestId) -> Option<&HandlerStatus<T>> {
-        self.storage.get(request_id)
+    /// Retrieve the cell of an element and return None if it does not exist
+    pub(crate) fn retrieve(
+        &self,
+        request_id: &RequestId,
+    ) -> Option<Arc<AsyncCell<Result<T, String>>>> {
+        self.storage.get(request_id).cloned()
     }
 
     /// Deletes an element from the meta store and returns the value.
     /// Warning: This is a slow operation if the request_id has been completed
     /// and should be avoided if possible, since values are automatically removed when running out of space
     #[allow(dead_code)]
-    pub(crate) fn delete(&mut self, request_id: &RequestId) -> Option<HandlerStatus<T>> {
+    pub(crate) fn delete(
+        &mut self,
+        request_id: &RequestId,
+    ) -> Option<Arc<AsyncCell<Result<T, String>>>> {
         match self.storage.remove(request_id) {
             Some(handle) => {
-                match handle {
-                    // remove element from complete_queue only if its status is Done or Error
-                    HandlerStatus::Done(_) | HandlerStatus::Error(_) => {
-                        for i in 0..self.complete_queue.len() {
-                            if request_id == &self.complete_queue[i] {
-                                let _ = self.complete_queue.remove(i);
-                                break;
-                            }
+                // If the cell is set, it means the task has been processed
+                // and thus added to the complete queue
+                if handle.is_set() {
+                    for i in 0..self.complete_queue.len() {
+                        if request_id == &self.complete_queue[i] {
+                            let _ = self.complete_queue.remove(i);
+                            break;
                         }
                     }
-                    _ => (),
-                };
+                }
                 Some(handle)
             }
             None => None,
@@ -170,8 +170,8 @@ impl<T> MetaStore<T> {
 /// Helper method for retrieving the result of a request from an appropriate meta store
 /// [req_id] is the request ID to retrieve
 /// [request_type] is a free-form string used only for error logging the origin of the failure
-pub(crate) fn handle_res_mapping<T>(
-    handle: Option<HandlerStatus<T>>,
+pub(crate) async fn handle_res_mapping<T: Clone>(
+    handle: Option<Arc<AsyncCell<Result<T, String>>>>,
     req_id: &RequestId,
     request_type_info: &str,
 ) -> Result<T, Status> {
@@ -184,24 +184,35 @@ pub(crate) fn handle_res_mapping<T>(
             tracing::warn!(msg);
             Err(tonic::Status::new(tonic::Code::NotFound, msg))
         }
-        Some(HandlerStatus::Started) => {
-            let msg = format!(
-                    "Could not retrieve {request_type_info} with request ID {} since it is not completed yet",
+        Some(cell) => {
+            let result = tokio::time::timeout(
+                tokio::time::Duration::from_secs(DURATION_WAITING_ON_RESULT_SECONDS),
+                cell.get(),
+            )
+            .await;
+            // Peel off the potential errors
+            if let Ok(result) = result {
+                match result {
+                    Ok(result) => Ok(result),
+                    Err(e) => {
+                        let msg = format!(
+                                "Could not retrieve {request_type_info} with request ID {} since it finished with an error: {}",
+                                req_id, e
+                            );
+                        tracing::warn!(msg);
+                        Err(tonic::Status::new(tonic::Code::Internal, msg))
+                    }
+                }
+            } else {
+                let msg = format!(
+                    "Could not retrieve {request_type_info} with request ID {} since it is not completed yet after waiting for {DURATION_WAITING_ON_RESULT_SECONDS} seconds",
                     req_id
                 );
+                tracing::info!(msg);
+                Err(tonic::Status::new(tonic::Code::Unavailable, msg))
+            }
             // Note that this is not logged as an error as we expect calls to take some time to be completed
-            tracing::info!(msg);
-            Err(tonic::Status::new(tonic::Code::Unavailable, msg))
         }
-        Some(HandlerStatus::Error(e)) => {
-            let msg = format!(
-                    "Could not retrieve {request_type_info} with request ID {} since it finished with an error: {}",
-                    req_id, e
-                );
-            tracing::warn!(msg);
-            Err(tonic::Status::new(tonic::Code::Internal, msg))
-        }
-        Some(HandlerStatus::Done(res)) => Ok(res),
     }
 }
 
@@ -209,6 +220,7 @@ pub(crate) fn handle_res_mapping<T>(
 mod tests {
     use super::*;
     use crate::kms::RequestId;
+    use tokio::sync::RwLock;
 
     #[test]
     fn sunshine() {
@@ -217,18 +229,17 @@ mod tests {
         // Data does not exist
         assert!(!meta_store.exists(&request_id));
         assert!(meta_store
-            .update(&request_id, HandlerStatus::Done("OK".to_string()))
+            .update(&request_id, Ok("OK".to_string()))
             .is_err());
 
         meta_store.insert(&request_id).unwrap();
         // Data exits
         assert!(meta_store.exists(&request_id));
+        assert!(meta_store.update(&request_id, Ok("OK".to_string())).is_ok());
+
+        // Re-update not allowed
         assert!(meta_store
-            .update(&request_id, HandlerStatus::Done("OK".to_string()))
-            .is_ok());
-        // Downgrade not allowed
-        assert!(meta_store
-            .update(&request_id, HandlerStatus::Started)
+            .update(&request_id, Ok("NOK".to_string()))
             .is_err());
     }
 
@@ -240,16 +251,16 @@ mod tests {
         let request_id_3: RequestId = RequestId::derive("3").unwrap();
         meta_store.insert(&request_id_1).unwrap();
         assert!(meta_store
-            .update(&request_id_1, HandlerStatus::Error("Err1".to_string()))
+            .update(&request_id_1, Err("Err1".to_string()))
             .is_ok());
         meta_store.insert(&request_id_2).unwrap();
         assert!(meta_store
-            .update(&request_id_2, HandlerStatus::Done("OK2".to_string()))
+            .update(&request_id_2, Ok("OK2".to_string()))
             .is_ok());
         // The storage is full so we should kick the oldest element out
         meta_store.insert(&request_id_3).unwrap();
         assert!(meta_store
-            .update(&request_id_3, HandlerStatus::Error("Err3".to_string()))
+            .update(&request_id_3, Err("Err3".to_string()))
             .is_ok());
 
         // Validate the oldest element is removed
@@ -287,14 +298,10 @@ mod tests {
         let req_2: RequestId = RequestId::derive("2").unwrap();
         let req_3: RequestId = RequestId::derive("3").unwrap();
         meta_store.insert(&req_1).unwrap();
-        assert!(meta_store
-            .update(&req_1, HandlerStatus::Done("OK".to_string()))
-            .is_ok());
+        assert!(meta_store.update(&req_1, Ok("OK".to_string())).is_ok());
         assert!(meta_store.retrieve(&req_1).is_some());
         meta_store.insert(&req_2).unwrap();
-        assert!(meta_store
-            .update(&req_2, HandlerStatus::Done("OK".to_string()))
-            .is_ok());
+        assert!(meta_store.update(&req_2, Ok("OK".to_string())).is_ok());
         assert!(meta_store.retrieve(&req_1).is_some());
         assert!(meta_store.retrieve(&req_2).is_some());
         meta_store.insert(&req_3).unwrap();
@@ -304,6 +311,31 @@ mod tests {
         // The oldest element is removed
         assert!(meta_store.retrieve(&req_1).is_none());
         // But the other two elements are
+    }
+
+    #[tokio::test]
+    async fn test_subscription() {
+        let mut meta_store: MetaStore<String> = MetaStore::new(2, 1);
+        let req_1: RequestId = RequestId::derive("1").unwrap();
+        meta_store.insert(&req_1).unwrap();
+        let meta_store = Arc::new(RwLock::new(meta_store));
+
+        let cloned_meta_store = Arc::clone(&meta_store);
+        let cloned_req_1 = req_1.clone();
+        let handle = tokio::spawn(async move {
+            let meta_store = Arc::clone(&cloned_meta_store);
+            let handle = meta_store.read().await.retrieve(&cloned_req_1);
+            handle_res_mapping(handle, &cloned_req_1, "test").await
+        });
+        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        meta_store
+            .write()
+            .await
+            .update(&req_1, Ok("OK".to_string()))
+            .unwrap();
+
+        let result = handle.await.unwrap().unwrap();
+        assert_eq!(result, "OK".to_string());
     }
 
     #[test]
@@ -322,12 +354,8 @@ mod tests {
         assert_eq!(meta_store.complete_queue.len(), 0);
 
         // set req1 to Done and req2 to Error
-        assert!(meta_store
-            .update(&req_1, HandlerStatus::Done("OK".to_string()))
-            .is_ok());
-        assert!(meta_store
-            .update(&req_2, HandlerStatus::Error("Err".to_string()))
-            .is_ok());
+        assert!(meta_store.update(&req_1, Ok("OK".to_string())).is_ok());
+        assert!(meta_store.update(&req_2, Err("Err".to_string())).is_ok());
         assert_eq!(meta_store.complete_queue.len(), 2);
 
         // check that we can delete req_1 (Done)

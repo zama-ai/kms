@@ -41,6 +41,9 @@ pub const DEFAULT_THRESHOLD: usize = 1;
 
 pub const SAFE_SER_SIZE_LIMIT: u64 = 1024 * 1024 * 1024 * 2;
 
+//TODO: Do we want to load this from configuration ?
+pub const DURATION_WAITING_ON_RESULT_SECONDS: u64 = 60;
+
 lazy_static! {
     // The static ID we will use for the signing key for each of the MPC parties.
     // We do so, since there is ever only one conceptual signing key per party (at least for now).

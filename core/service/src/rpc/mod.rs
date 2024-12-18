@@ -86,6 +86,8 @@ pub async fn run_server<
     health_service: HealthServer<impl Health>,
     shutdown_signal: F,
 ) -> anyhow::Result<()> {
+    use crate::consts::DURATION_WAITING_ON_RESULT_SECONDS;
+
     let socket_addr_str = format!("{}:{}", config.listen_address, config.listen_port);
     let socket_addr = socket_addr_str
         .to_socket_addrs()?
@@ -127,7 +129,11 @@ pub async fn run_server<
 
     let server = Server::builder()
         .layer(trace_request)
-        .timeout(tokio::time::Duration::from_secs(config.timeout_secs))
+        // Make sure we never abort because we spent too much time on the blocking part of the get result
+        // as we mean to do it.
+        .timeout(tokio::time::Duration::from_secs(
+            config.timeout_secs + DURATION_WAITING_ON_RESULT_SECONDS,
+        ))
         .add_service(health_service)
         .add_service(
             CoreServiceEndpointServer::new(kms_service)

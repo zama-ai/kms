@@ -20,7 +20,7 @@ use crate::kms::{
 };
 use crate::rpc::rpc_types::{protobuf_to_alloy_domain_option, PubDataType};
 use crate::storage::Storage;
-use crate::util::meta_store::{handle_res_mapping, HandlerStatus};
+use crate::util::meta_store::handle_res_mapping;
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
 use alloy_primitives::Address;
 use alloy_sol_types::Eip712Domain;
@@ -159,7 +159,7 @@ impl<
                             }
                             let _ = guarded_meta_store.update(
                                 &req_id,
-                                HandlerStatus::Error(format!(
+                                Err(format!(
                                     "Failed key generation: Key with ID {req_id} already exists!"
                                 )),
                             );
@@ -175,9 +175,7 @@ impl<
                                 let mut guarded_meta_store = meta_store.write().await;
                                 let _ = guarded_meta_store.update(
                                     &req_id,
-                                    HandlerStatus::Error(format!(
-                                        "Failed key generation: Key with ID {req_id}!"
-                                    )),
+                                    Err(format!("Failed key generation: Key with ID {req_id}!")),
                                 );
                                 return;
                             }
@@ -218,9 +216,9 @@ impl<
 
         let status = {
             let guarded_meta_store = self.key_meta_map.read().await;
-            guarded_meta_store.retrieve(&request_id).cloned()
+            guarded_meta_store.retrieve(&request_id)
         };
-        let pub_key_handles = handle_res_mapping(status, &request_id, "Key generation")?;
+        let pub_key_handles = handle_res_mapping(status, &request_id, "Key generation").await?;
 
         Ok(Response::new(KeyGenResult {
             request_id: Some(request_id),
@@ -289,9 +287,7 @@ impl<
                         }
                         let _ = guarded_meta_store.update(
                             &request_id,
-                            HandlerStatus::Error(format!(
-                                "Failed to get key ID {key_id} with error {e:?}"
-                            )),
+                            Err(format!("Failed to get key ID {key_id} with error {e:?}")),
                         );
                         return;
                     }
@@ -315,17 +311,13 @@ impl<
                 {
                     Ok(raw_decryption) => {
                         let mut guarded_meta_store = meta_store.write().await;
-                        let _ = guarded_meta_store.update(
-                            &request_id,
-                            HandlerStatus::Done((fhe_type, link, raw_decryption)),
-                        );
+                        let _ = guarded_meta_store
+                            .update(&request_id, Ok((fhe_type, link, raw_decryption)));
                     }
                     Result::Err(e) => {
                         let mut guarded_meta_store = meta_store.write().await;
-                        let _ = guarded_meta_store.update(
-                            &request_id,
-                            HandlerStatus::Error(format!("Failed reencryption: {e}")),
-                        );
+                        let _ = guarded_meta_store
+                            .update(&request_id, Err(format!("Failed reencryption: {e}")));
                         METRICS
                             .increment_error_counter(OP_REENCRYPT, ERR_REENCRYPTION_FAILED)
                             .ok();
@@ -348,10 +340,10 @@ impl<
 
         let status = {
             let guarded_meta_store = self.reenc_meta_map.read().await;
-            guarded_meta_store.retrieve(&request_id).cloned()
+            guarded_meta_store.retrieve(&request_id)
         };
         let (fhe_type, req_digest, partial_dec) =
-            handle_res_mapping(status, &request_id, "Reencryption")?;
+            handle_res_mapping(status, &request_id, "Reencryption").await?;
 
         let server_verf_key = self.get_serialized_verf_key();
 
@@ -449,7 +441,7 @@ impl<
                         }
                         let _ = guarded_meta_store.update(
                             &request_id,
-                            HandlerStatus::Error(format!(
+                            Err(format!(
                                 "Failed to get key ID {key_id} with error {e:?}"
                             )),
                         );
@@ -496,7 +488,7 @@ impl<
                         let mut guarded_meta_store = meta_store.write().await;
                         let _ = guarded_meta_store.update(
                             &request_id,
-                            HandlerStatus::Done((req_digest.clone(), pts, external_sig)),
+                            Ok((req_digest.clone(), pts, external_sig)),
                         );
                         tracing::info!(
                             "⏱️ Core Event Time for decryption computation: {:?}",
@@ -507,7 +499,7 @@ impl<
                         let mut guarded_meta_store = meta_store.write().await;
                         let _ = guarded_meta_store.update(
                             &request_id,
-                            HandlerStatus::Error(format!("Error collecting decrypt result: {:?}", e)),
+                            Err(format!("Error collecting decrypt result: {:?}", e)),
                         );
                     }
                     Ok(Err(e)) => {
@@ -517,7 +509,7 @@ impl<
                         }
                         let _ = guarded_meta_store.update(
                             &request_id,
-                            HandlerStatus::Error(format!("Error during decryption computation: {}", e)),
+                            Err(format!("Error during decryption computation: {}", e)),
                         );
                     }
                 }
@@ -538,10 +530,10 @@ impl<
 
         let status = {
             let guarded_meta_store = self.dec_meta_store.read().await;
-            guarded_meta_store.retrieve(&request_id).cloned()
+            guarded_meta_store.retrieve(&request_id)
         };
         let (req_digest, plaintexts, external_signature) =
-            handle_res_mapping(status, &request_id, "Decryption")?;
+            handle_res_mapping(status, &request_id, "Decryption").await?;
 
         tracing::debug!(
             "Returning plaintext(s) for request ID {}: {:?}. External signature: {:x?}",
@@ -649,9 +641,7 @@ impl<
                         let mut guarded_meta_store = meta_store.write().await;
                         let _ = guarded_meta_store.update(
                             &req_id,
-                            HandlerStatus::Error(format!(
-                                "Failed CRS generation for CRS with ID {req_id}!"
-                            )),
+                            Err(format!("Failed CRS generation for CRS with ID {req_id}!")),
                         );
                         METRICS
                             .increment_error_counter(OP_CRS_GEN, ERR_CRS_GEN_FAILED)
@@ -689,9 +679,9 @@ impl<
 
         let status = {
             let guarded_meta_store = self.crs_meta_map.read().await;
-            guarded_meta_store.retrieve(&request_id).cloned()
+            guarded_meta_store.retrieve(&request_id)
         };
-        let crs_info = handle_res_mapping(status, &request_id, "CRS")?;
+        let crs_info = handle_res_mapping(status, &request_id, "CRS").await?;
 
         Ok(Response::new(CrsGenResult {
             request_id: Some(request_id),

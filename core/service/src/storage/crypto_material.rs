@@ -17,7 +17,7 @@ use crate::{
     },
     storage::{delete_at_request_id, delete_pk_at_request_id},
     threshold::threshold_kms::ThresholdFheKeys,
-    util::meta_store::{HandlerStatus, MetaStore},
+    util::meta_store::MetaStore,
 };
 
 use super::{
@@ -210,7 +210,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             && r3
             && r4
             && guarded_meta_storage
-                .update(req_id, HandlerStatus::Done(info))
+                .update(req_id, Ok(info))
                 .inspect_err(|e| {
                     tracing::error!(
                         "Error ({e}) while updating KeyGen meta store for {}",
@@ -277,10 +277,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             };
             let (_r1, _r2, _r3, _r4) = tokio::join!(f1, f2, f3, f4);
 
-            let _ = guarded_meta_storage.update(
-                req_id,
-                HandlerStatus::Error("DKG failed during storage".to_string()),
-            );
+            let _ =
+                guarded_meta_storage.update(req_id, Err("DKG failed during storage".to_string()));
 
             Err(anyhow_error_and_log(format!(
                 "Could not store all the threshold KeyGen data for request ID {req_id}, deleted all dangling data."
@@ -438,10 +436,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             && r2
             && r3
             && guarded_meta_store
-                .update(
-                    req_id,
-                    HandlerStatus::Done(key_info.public_key_info.to_owned()),
-                )
+                .update(req_id, Ok(key_info.public_key_info.to_owned()))
                 .inspect_err(|e| {
                     tracing::error!("Error ({e}) while updating PK meta store for {}", req_id)
                 })
@@ -502,7 +497,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 
             let _ = guarded_meta_store.update(
                         req_id,
-                        HandlerStatus::Error(format!(
+                        Err(format!(
                             "Failed key generation: Key with ID {req_id}, could not insert result persistent storage!"
                         )),
                     );
@@ -649,7 +644,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         if r1
             && r2
             && guarded_meta_store
-                .update(req_id, HandlerStatus::Done(crs_info))
+                .update(req_id, Ok(crs_info))
                 .inspect_err(|e| {
                     tracing::error!("Error ({e}) while updating CRS meta store for {}", req_id)
                 })
@@ -692,7 +687,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             let _ = guarded_meta_store
                 .update(
                     req_id,
-                    HandlerStatus::Error(format!(
+                    Err(format!(
                         "Failed to store CRS data to public storage for ID {}",
                         req_id
                     )),
@@ -988,11 +983,12 @@ mod tests {
             .await
             .unwrap();
 
-        // writing the same thing shold be ok
+        // writing the same thing should fail because the
+        // meta store disallow updating a cell that is set
         crypto_storage
             .write_crs_with_meta_store(&req_id, pp.clone(), crs_info.clone(), meta_store.clone())
             .await
-            .unwrap();
+            .unwrap_err();
 
         // writing on a failed storage device should fail
         {
@@ -1119,7 +1115,8 @@ mod tests {
             .await
             .unwrap();
 
-        // writing the same thing should be ok
+        // writing the same thing should fail because the
+        // meta store disallow updating a cell that is set
         crypto_storage
             .write_centralized_keys_with_meta_store(
                 &req_id,
@@ -1128,7 +1125,7 @@ mod tests {
                 meta_store.clone(),
             )
             .await
-            .unwrap();
+            .unwrap_err();
 
         // write on a failed storage device should fail
         {
@@ -1225,7 +1222,8 @@ mod tests {
             .await
             .unwrap();
 
-        // writing the same thing should be ok
+        // writing the same thing should fail because the
+        // meta store disallow updating a cell that is set
         crypto_storage
             .write_threshold_keys_with_meta_store(
                 &req_id,
@@ -1235,7 +1233,7 @@ mod tests {
                 meta_store.clone(),
             )
             .await
-            .unwrap();
+            .unwrap_err();
 
         // write on a failed storage device should fail
         {

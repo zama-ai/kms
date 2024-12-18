@@ -25,7 +25,7 @@ use crate::storage::Storage;
 use crate::storage::{read_all_data_versioned, read_pk_at_request_id};
 #[cfg(feature = "non-wasm")]
 use crate::util::key_setup::{FhePrivateKey, FhePublicKey};
-use crate::util::meta_store::{HandlerStatus, MetaStore};
+use crate::util::meta_store::MetaStore;
 use crate::util::rate_limiter::{RateLimiter, RateLimiterConfig};
 use crate::{anyhow_error_and_log, get_exactly_one};
 use crate::{consts::ID_LENGTH, cryptography::signcryption::check_normalized};
@@ -726,22 +726,12 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 .map(|rid| &rid.request_id)
                 .collect::<Vec<_>>()
         );
-        let key_info_w_status = key_info
+        let public_key_info = key_info
             .iter()
-            .map(|(id, info)| {
-                (
-                    id.to_owned(),
-                    HandlerStatus::Done(info.public_key_info.to_owned()),
-                )
-            })
+            .map(|(id, info)| (id.to_owned(), info.public_key_info.to_owned()))
             .collect();
         let crs_info: HashMap<RequestId, SignedPubDataHandleInternal> =
             read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
-        let mut crs_info_w_status: HashMap<RequestId, HandlerStatus<SignedPubDataHandleInternal>> =
-            HashMap::new();
-        for (id, crs_handle) in crs_info {
-            crs_info_w_status.insert(id.to_owned(), HandlerStatus::Done(crs_handle));
-        }
 
         // read the CRS
         let crs: HashMap<RequestId, CompactPkePublicParams> =
@@ -758,10 +748,10 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         Ok(SoftwareKms {
             base_kms: BaseKmsStruct::new(sk)?,
             crypto_storage,
-            key_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(key_info_w_status))),
+            key_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(public_key_info))),
             dec_meta_store: Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE))),
             reenc_meta_map: Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE))),
-            crs_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(crs_info_w_status))),
+            crs_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(crs_info))),
             proven_ct_payload_meta_map: Arc::new(RwLock::new(MetaStore::new(
                 DEC_CAPACITY,
                 MIN_DEC_CACHE,
