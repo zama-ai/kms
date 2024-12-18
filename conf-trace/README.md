@@ -47,11 +47,11 @@ let config = Tracing::builder()
 ### Making gRPC Requests
 
 ```rust
-use conf_trace::grpc::{make_request, RequestConfig};
+use conf_trace::grpc::{build_request, RequestConfig};
 use tracing::{info_span, Instrument};
 
 // Basic request with automatic request ID
-let request = make_request(
+let request = build_request(
     payload,
     None,
     Some(RequestConfig {
@@ -64,8 +64,8 @@ let request = make_request(
 // Advanced request with custom span and timing
 async fn process_request() -> Result<(), Error> {
     let span = info_span!("process_request", request_id = field::Empty);
-    
-    let request = make_request(
+
+    let request = build_request(
         payload,
         Some("custom-request-id"),
         Some(RequestConfig {
@@ -183,7 +183,7 @@ if let Err(e) = telemetry::init_tracing(config).await {
 }
 
 // Handle request errors with context
-let result = make_request(payload, request_id, config)
+let result = build_request(payload, request_id, config)
     .context("Failed to create request")?;
 ```
 

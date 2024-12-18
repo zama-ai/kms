@@ -9,7 +9,7 @@ use crate::domain::storage::Storage;
 use crate::infrastructure::metrics::{MetricType, Metrics};
 use anyhow::anyhow;
 use async_trait::async_trait;
-use conf_trace::grpc::make_request;
+use conf_trace::grpc::build_request;
 use conf_trace::telemetry::ContextPropagator;
 use enum_dispatch::enum_dispatch;
 use events::kms::{
@@ -149,10 +149,42 @@ trait Poller<T: Send + 'static> {
                     Ok(PollerStatus::Done(Self::map_response(input)?))
                 }
                 Err(e) => {
-                    //TODO(#1693): We probably want to react differently to different kinds of errors
-                    //i.e. continue polling for Unavailable, stop else
-                    tracing::warn!("{description} Response Poller error {:?}", e);
-                    Ok(PollerStatus::Poll)
+                    match e.code() {
+                        tonic::Code::Unavailable => {
+                            // Continue polling, since the result is not ready yet. This is not an actual error, but expected for longer tasks.
+                            tracing::info!("{description} Response Poller Unavailable error {:?}. Will continue polling.", e);
+                            Ok(PollerStatus::Poll)
+                        }
+                        tonic::Code::Cancelled => {
+                            // TODO(#1529): We currently see grpc timeouts (tonic::Code::Cancelled) from the core from time to time.
+                            // In this case we want to retry. We log a warning, as this indicates that we have an issue.
+                            // This match arm should be removed and Cancelled should be treated as error once #1529 is closed.
+                            let msg = format!(
+                                "{description} Response Poller Cancelled error {:?}. Will continue polling.",
+                                e
+                            );
+                            tracing::warn!(msg);
+                            Ok(PollerStatus::Poll)
+                        }
+                        tonic::Code::Internal => {
+                            // This indicates an explicit error. We abort polling and log the error.
+                            let msg = format!(
+                                "{description} Response Poller error {:?}. Will abort polling!",
+                                e
+                            );
+                            tracing::error!(msg);
+                            Err(anyhow!(msg))
+                        }
+                        _ => {
+                            // This indicates an unknown/unexpected code, which we treat as error. We abort polling.
+                            let msg = format!(
+                                "{description} Response Poller error {:?}. Will abort polling!",
+                                e
+                            );
+                            tracing::error!(msg);
+                            Err(anyhow!(msg))
+                        }
+                    }
                 }
             }
         }
@@ -647,14 +679,14 @@ impl<S> Poller<DecryptionResponse> for DecryptVal<S> {
         let (sender, receiver) = tokio::sync::oneshot::channel();
         // A bit of a hack, make sure we can actually do the request
         // so we can unwrap in the macro right after
-        let _ = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
+        let _ = build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
         // loop to get response
         tokio::spawn(
             async move {
                 let res = poller!(
                     setup.client.get_decrypt_result(
                         //This unwrap is safe cause we just made sure this doesn't error out
-                        make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None).unwrap()
+                        build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None).unwrap()
                     ),
                     Self::res_map_poller("Decrypt",input.clone()),
                     setup.timeout_triple,
@@ -748,7 +780,7 @@ where
 
         let metrics = setup.metrics.clone();
 
-        let request = make_request(req.clone(), Some(setup.request_id.clone()), None)?;
+        let request = build_request(req.clone(), Some(setup.request_id.clone()), None)?;
         // the response should be empty
         let _resp = setup.client.decrypt(request).await.inspect_err(|e| {
             let err_msg = e.to_string();
@@ -775,7 +807,7 @@ where
         _param_choice: Option<FheParameter>,
     ) -> anyhow::Result<CatchupResult> {
         let mut setup = self.get_setup()?;
-        let req = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
+        let req = build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
 
         let response = setup.client.get_decrypt_result(req).await;
 
@@ -820,14 +852,14 @@ impl<S> Poller<ReencryptionResponse> for ReencryptVal<S> {
         let (sender, receiver) = tokio::sync::oneshot::channel();
         // A bit of a hack, make sure we can actually do the request
         // so we can unwrap in the macro right after
-        let _ = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
+        let _ = build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
         // loop to get response
         tokio::spawn(
             async move {
                 let res = poller!(
                     setup.client.get_reencrypt_result(
                         //This unwrap is safe cause we just made sure this doesn't error out
-                        make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None).unwrap()
+                        build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None).unwrap()
                     ),
                     Self::res_map_poller("Reencryption", input.clone()),
                     setup.timeout_triple,
@@ -897,7 +929,7 @@ where
 
         let metrics = setup.metrics.clone();
 
-        let request = make_request(req.clone(), Some(setup.request_id.clone()), None)?;
+        let request = build_request(req.clone(), Some(setup.request_id.clone()), None)?;
 
         // the response should be empty
         let _resp = setup.client.reencrypt(request).await.inspect_err(|e| {
@@ -926,7 +958,7 @@ where
     ) -> anyhow::Result<CatchupResult> {
         let mut setup = self.get_setup()?;
 
-        let request = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
+        let request = build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
         let response = setup.client.get_reencrypt_result(request).await;
 
         let generic_poller_input = GenericPollerInput {
@@ -970,14 +1002,14 @@ impl<S> Poller<VerifyProvenCtResponse> for VerifyProvenCtVal<S> {
         let (sender, receiver) = tokio::sync::oneshot::channel();
         // A bit of a hack, make sure we can actually do the request
         // so we can unwrap in the macro right after
-        let _ = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
+        let _ = build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
         // loop to get response
         tokio::spawn(
             async move {
                 let res = poller!(
                     setup.client.get_verify_proven_ct_result(
                         //This unwrap is safe cause we just made sure this doesn't error out
-                        make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None).unwrap()
+                        build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None).unwrap()
                     ),
                     Self::res_map_poller("VerifyCt", input.clone()),
                     setup.timeout_triple,
@@ -1040,7 +1072,7 @@ where
 
         let metrics = setup.metrics.clone();
 
-        let request = make_request(req.clone(), Some(setup.request_id.clone()), None)?;
+        let request = build_request(req.clone(), Some(setup.request_id.clone()), None)?;
         // Response is just empty
         let _resp = setup
             .client
@@ -1067,7 +1099,7 @@ where
         _param_choice: Option<FheParameter>,
     ) -> anyhow::Result<CatchupResult> {
         let mut setup = self.get_setup()?;
-        let req = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
+        let req = build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
 
         let response = setup.client.get_verify_proven_ct_result(req).await;
 
@@ -1103,14 +1135,14 @@ impl<S> Poller<KeyGenPreprocStatus> for KeyGenPreprocVal<S> {
         let (sender, receiver) = tokio::sync::oneshot::channel();
         // A bit of a hack, make sure we can actually do the request
         // so we can unwrap in the macro right after
-        let _ = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
+        let _ = build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
         // loop to get response
         tokio::spawn(
             async move {
                 let res = poller!(
                     setup.client.get_preproc_status(
                         //This unwrap is safe cause we just made sure this doesn't error out
-                        make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None).unwrap()
+                        build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None).unwrap()
                     ),
                     Self::res_map_poller("KeyGenPreproc", input.clone()),
                     setup.timeout_triple,
@@ -1252,7 +1284,7 @@ where
             request_id: Some(setup.req_id.clone()),
         };
 
-        let request = make_request(req.clone(), Some(setup.request_id.clone()), None)?;
+        let request = build_request(req.clone(), Some(setup.request_id.clone()), None)?;
 
         // the response should be empty
         let _resp = setup
@@ -1288,7 +1320,7 @@ where
         _param_choice: Option<FheParameter>,
     ) -> anyhow::Result<CatchupResult> {
         let mut setup = self.get_setup()?;
-        let req = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
+        let req = build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
 
         let response = setup.client.get_preproc_status(req).await;
 
@@ -1347,14 +1379,14 @@ impl<S> Poller<KeyGenResult> for KeyGenVal<S> {
         let (sender, receiver) = tokio::sync::oneshot::channel();
         // A bit of a hack, make sure we can actually do the request
         // so we can unwrap in the macro right after
-        let _ = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
+        let _ = build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
         // loop to get response
         tokio::spawn(
             async move {
                 let res = poller!(
                     setup.client.get_key_gen_result(
                         //This unwrap is safe cause we just made sure this doesn't error out
-                        make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None).unwrap()
+                        build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None).unwrap()
                     ),
                     Self::res_map_poller("KeyGen", input.clone()),
                     setup.timeout_triple,
@@ -1399,7 +1431,7 @@ where
             }),
         };
 
-        let request = make_request(req.clone(), Some(setup.request_id.clone()), None)?;
+        let request = build_request(req.clone(), Some(setup.request_id.clone()), None)?;
 
         // the response should be empty
         let _resp = setup.client.key_gen(request).await.inspect_err(|e| {
@@ -1432,7 +1464,7 @@ where
     ) -> anyhow::Result<CatchupResult> {
         let mut setup = self.get_setup()?;
         let param_choice = param_choice.ok_or_else(|| anyhow!("Param choice is missing"))?;
-        let req = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
+        let req = build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
 
         let response = setup.client.get_key_gen_result(req).await;
 
@@ -1490,14 +1522,14 @@ impl<S> Poller<KeyGenResult> for InsecureKeyGenVal<S> {
         let (sender, receiver) = tokio::sync::oneshot::channel();
         // A bit of a hack, make sure we can actually do the request
         // so we can unwrap in the macro right after
-        let _ = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
+        let _ = build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
         // loop to get response
         tokio::spawn(
             async move {
                 let res = poller!(
                     setup.client.get_key_gen_result(
                         //This unwrap is safe cause we just made sure this doesn't error out
-                        make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None).unwrap()
+                        build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None).unwrap()
                     ),
                     Self::res_map_poller("InsecureKeyGen", input.clone()),
                     setup.timeout_triple,
@@ -1542,7 +1574,7 @@ where
             }),
         };
 
-        let request = make_request(req.clone(), Some(setup.request_id.clone()), None)?;
+        let request = build_request(req.clone(), Some(setup.request_id.clone()), None)?;
 
         // the response should be empty
         let _resp = setup
@@ -1579,7 +1611,7 @@ where
     ) -> anyhow::Result<CatchupResult> {
         let mut setup = self.get_setup()?;
         let param_choice = param_choice.ok_or_else(|| anyhow!("Param choice is missing"))?;
-        let req = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
+        let req = build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
 
         let response = setup.client.get_key_gen_result(req).await;
 
@@ -1631,14 +1663,14 @@ impl<S> Poller<CrsGenResult> for CrsGenVal<S> {
         let (sender, receiver) = tokio::sync::oneshot::channel();
         // A bit of a hack, make sure we can actually do the request
         // so we can unwrap in the macro right after
-        let _ = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
+        let _ = build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
         // loop to get response
         tokio::spawn(
                 async move {
                     let res = poller!(
                         setup.client.get_crs_gen_result(
                             //This unwrap is safe cause we just made sure this doesn't error out
-                            make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None).unwrap()
+                            build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None).unwrap()
                         ),
                         Self::res_map_poller("CrsGen", input.clone()),
                         setup.timeout_triple,
@@ -1683,7 +1715,7 @@ where
             }),
         };
 
-        let request = make_request(req.clone(), Some(setup.request_id.clone()), None)?;
+        let request = build_request(req.clone(), Some(setup.request_id.clone()), None)?;
 
         // the response should be empty
         let _resp = setup.client.crs_gen(request).await.inspect_err(|e| {
@@ -1718,7 +1750,7 @@ where
         let mut setup = self.get_setup()?;
         let param_choice = param_choice.ok_or_else(|| anyhow!("Param choice is missing"))?;
         let max_num_bits = self.crsgen.max_num_bits();
-        let req = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
+        let req = build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
 
         let response = setup.client.get_crs_gen_result(req).await;
 
@@ -1770,14 +1802,14 @@ impl<S> Poller<CrsGenResult> for InsecureCrsGenVal<S> {
         let (sender, receiver) = tokio::sync::oneshot::channel();
         // A bit of a hack, make sure we can actually do the request
         // so we can unwrap in the macro right after
-        let _ = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
+        let _ = build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
         // loop to get response
         tokio::spawn(
                 async move {
                     let res = poller!(
                         setup.client.get_crs_gen_result(
                             //This unwrap is safe cause we just made sure this doesn't error out
-                            make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None).unwrap()
+                            build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None).unwrap()
                         ),
                         Self::res_map_poller("InsecureCrsGen", input.clone()),
                         setup.timeout_triple,
@@ -1825,7 +1857,7 @@ where
             }),
         };
 
-        let request = make_request(req.clone(), Some(setup.request_id.clone()), None)?;
+        let request = build_request(req.clone(), Some(setup.request_id.clone()), None)?;
 
         // the response should be empty
         let _resp = setup.client.insecure_crs_gen(request).await.inspect_err(|e| {
@@ -1857,7 +1889,7 @@ where
         let mut setup = self.get_setup()?;
         let param_choice = param_choice.ok_or_else(|| anyhow!("Param choice is missing"))?;
         let max_num_bits = self.insecure_crs_gen.max_num_bits();
-        let request = make_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
+        let request = build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
 
         let response = setup.client.get_crs_gen_result(request).await;
 

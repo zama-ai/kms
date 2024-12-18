@@ -38,7 +38,7 @@ impl Default for RequestConfig {
     }
 }
 
-/// Make GRPC request with configuration
+/// Builds a GRPC request with a given configuration
 ///
 /// This function is used to create a gRPC request that propagates a request ID through headers.
 /// It will also try to get the current span ID and propagate it.
@@ -50,7 +50,7 @@ impl Default for RequestConfig {
 ///
 /// # Returns
 /// Returns the created request with proper tracing context
-pub fn make_request<T: std::fmt::Debug>(
+pub fn build_request<T: std::fmt::Debug>(
     request: T,
     request_id: Option<String>,
     config: Option<RequestConfig>,
@@ -151,10 +151,10 @@ mod tests {
 
     #[test]
     #[traced_test]
-    fn test_make_request_with_id() {
+    fn test_build_request_with_id() {
         let payload = "test_payload";
         let request_id = "test_id".to_string();
-        let result = make_request(payload, Some(request_id.clone()), None);
+        let result = build_request(payload, Some(request_id.clone()), None);
         assert!(result.is_ok());
         let request = result.unwrap();
         assert_eq!(extract_request_id(&request), Some(request_id));
@@ -162,9 +162,9 @@ mod tests {
 
     #[test]
     #[traced_test]
-    fn test_make_request_auto_generate_id() {
+    fn test_build_request_auto_generate_id() {
         let payload = "test_payload";
-        let result = make_request(payload, None, None);
+        let result = build_request(payload, None, None);
         assert!(result.is_ok());
         let request = result.unwrap();
         assert!(extract_request_id(&request).is_some());
@@ -172,13 +172,13 @@ mod tests {
 
     #[test]
     #[traced_test]
-    fn test_make_request_no_id_no_generate() {
+    fn test_build_request_no_id_no_generate() {
         let payload = "test_payload";
         let config = RequestConfig {
             generate_request_id: false,
             ..Default::default()
         };
-        let result = make_request(payload, None, Some(config));
+        let result = build_request(payload, None, Some(config));
         assert!(result.is_err());
     }
 }
