@@ -2545,14 +2545,13 @@ version = "0.10.0-rc1"
 dependencies = [
  "anyhow",
  "axum 0.7.9",
- "clap",
  "config",
- "futures",
  "http 1.2.0",
  "lazy_static",
  "opentelemetry",
  "opentelemetry-http",
  "opentelemetry-otlp",
+ "opentelemetry-prometheus",
  "opentelemetry-semantic-conventions",
  "opentelemetry-stdout",
  "opentelemetry_sdk",
@@ -2560,7 +2559,6 @@ dependencies = [
  "prometheus",
  "reqwest 0.12.9",
  "serde",
- "serde_json",
  "strum",
  "strum_macros",
  "test-log",
@@ -2568,13 +2566,11 @@ dependencies = [
  "tokio",
  "tokio-test",
  "tonic 0.11.0",
- "tower 0.5.2",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
  "tracing-test",
  "typed-builder",
- "url",
  "uuid 1.11.0",
 ]
 
@@ -6352,6 +6348,20 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tonic 0.12.3",
+ "tracing",
+]
+
+[[package]]
+name = "opentelemetry-prometheus"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b834e966ea5e2d03dfe5f2253f03d22cce21403ee940265070eeee96cee0bcc"
+dependencies = [
+ "once_cell",
+ "opentelemetry",
+ "opentelemetry_sdk",
+ "prometheus",
+ "protobuf",
  "tracing",
 ]
 

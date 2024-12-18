@@ -86,17 +86,16 @@ impl CoreMetrics {
         let meter = global::meter("kms");
 
         // Store metric names as static strings
-        let operations_total: Cow<'static, str> =
-            format!("{}_operations_total", config.prefix).into();
+        let operations: Cow<'static, str> = format!("{}_operations", config.prefix).into();
         let operation_errors: Cow<'static, str> =
-            format!("{}_operation_errors_total", config.prefix).into();
+            format!("{}_operation_errors", config.prefix).into();
         let duration_metric: Cow<'static, str> =
             format!("{}_operation_duration_ms", config.prefix).into();
         let size_metric: Cow<'static, str> = format!("{}_payload_size_bytes", config.prefix).into();
         let gauge: Cow<'static, str> = format!("{}_gauge", config.prefix).into();
 
         let request_counter = meter
-            .u64_counter(operations_total)
+            .u64_counter(operations)
             .with_description("Total number of operations processed")
             .with_unit("operations")
             .build();

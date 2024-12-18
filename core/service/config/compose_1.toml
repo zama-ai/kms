@@ -76,7 +76,7 @@ max_en_decode_message_size = 2147483648
 
 [telemetry]
 tracing_service_name = "kms-threshold-1"
-tracing_endpoint = "http://otelcol:4317"
+# tracing_endpoint = "http://otelcol:4317"
 tracing_otlp_timeout_ms = 10000
 metrics_bind_address = "0.0.0.0:9646"
 

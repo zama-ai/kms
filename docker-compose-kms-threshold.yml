@@ -53,6 +53,7 @@ services:
     ports:
       - "50051:50051"
       - "50100:50100"
+      - "9646:9646"
     healthcheck:
       test: "grpc-health-probe --addr=localhost:50100"
       interval: 1s

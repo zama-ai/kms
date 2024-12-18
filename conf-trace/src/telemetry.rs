@@ -1,4 +1,5 @@
 use crate::conf::{ExecutionEnvironment, TelemetryConfig, ENVIRONMENT};
+use crate::metrics::METRICS;
 use anyhow::Context;
 use axum::{
     extract::State,
@@ -7,14 +8,14 @@ use axum::{
     routing::get,
     Router,
 };
-use opentelemetry::propagation::Injector;
-use opentelemetry::trace::TracerProvider as _;
-use opentelemetry::{global, KeyValue};
+use opentelemetry::{global, propagation::Injector, trace::TracerProvider as _, KeyValue};
 use opentelemetry_http::HeaderExtractor;
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::Resource;
-use opentelemetry_sdk::{metrics::SdkMeterProvider, runtime::Tokio};
-use prometheus::{Encoder, Registry as PrometheusRegistry, TextEncoder};
+use opentelemetry_prometheus::exporter;
+use opentelemetry_sdk::{metrics::SdkMeterProvider, runtime::Tokio, Resource};
+use prometheus::{
+    process_collector::ProcessCollector, Encoder, Registry as PrometheusRegistry, TextEncoder,
+};
 use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 use tonic::metadata::{MetadataKey, MetadataMap, MetadataValue};
 use tonic::service::Interceptor;
@@ -80,13 +81,24 @@ async fn liveness_handler() -> impl IntoResponse {
     (StatusCode::OK, "alive")
 }
 
-pub fn init_metrics(settings: &TelemetryConfig) -> SdkMeterProvider {
+pub fn init_metrics(settings: &TelemetryConfig) -> Result<SdkMeterProvider, anyhow::Error> {
     if matches!(*ENVIRONMENT, ExecutionEnvironment::Integration) {
-        return SdkMeterProvider::default();
+        return Ok(SdkMeterProvider::default());
     }
 
     let registry = PrometheusRegistry::new();
+
+    // Add process collector for system metrics
+    registry.register(Box::new(ProcessCollector::for_self()))?;
+
+    // Create a Prometheus exporter
+    let exporter = exporter()
+        .with_registry(registry.clone())
+        .build()
+        .context("Failed to create Prometheus exporter")?;
+
     let provider = SdkMeterProvider::builder()
+        .with_reader(exporter)
         .with_resource(Resource::new(vec![
             KeyValue::new(
                 opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
@@ -113,9 +125,14 @@ pub fn init_metrics(settings: &TelemetryConfig) -> SdkMeterProvider {
         .metrics_bind_address()
         .unwrap_or("0.0.0.0:9464")
         .parse::<SocketAddr>()
-        .expect("Failed to parse metrics bind address");
+        .context("Failed to parse metrics bind address")?;
 
     let state = MetricsState::new(registry);
+
+    // Use the global METRICS instance also as a sanity check that metrics are working
+    METRICS
+        .increment_request_counter("system_startup")
+        .context("Failed to increment system startup counter")?;
 
     // Get the current runtime handle
     let rt = tokio::runtime::Handle::current();
@@ -139,7 +156,7 @@ pub fn init_metrics(settings: &TelemetryConfig) -> SdkMeterProvider {
             .expect("Metrics server error");
     });
 
-    provider
+    Ok(provider)
 }
 
 pub fn init_tracing(settings: &TelemetryConfig) -> Result<(), anyhow::Error> {
@@ -198,9 +215,18 @@ pub fn init_tracing(settings: &TelemetryConfig) -> Result<(), anyhow::Error> {
     } else {
         // Set up console-only logging when no endpoint is configured
         println!("No tracing_endpoint is provided");
-        opentelemetry_sdk::trace::TracerProvider::builder()
-            .with_simple_exporter(opentelemetry_stdout::SpanExporter::default())
-            .build()
+        if std::env::var("RUST_LOG")
+            .map(|v| v == "trace")
+            .unwrap_or(false)
+        {
+            println!("Traces are being printed into stdout");
+            opentelemetry_sdk::trace::TracerProvider::builder()
+                .with_simple_exporter(opentelemetry_stdout::SpanExporter::default())
+                .build()
+        } else {
+            println!("Traces are disabled completely");
+            return Ok(());
+        }
     };
 
     // Set up the tracer
@@ -245,7 +271,7 @@ pub fn init_telemetry(settings: &TelemetryConfig) -> anyhow::Result<SdkMeterProv
     info!("Tracing initialization completed successfully");
 
     println!("Initializing metrics subsystem...");
-    let provider = init_metrics(settings);
+    let provider = init_metrics(settings)?;
     info!("Metrics initialization completed successfully");
 
     info!("Telemetry stack initialization completed");
@@ -253,18 +279,13 @@ pub fn init_telemetry(settings: &TelemetryConfig) -> anyhow::Result<SdkMeterProv
 }
 
 fn fmt_layer<S>() -> Layer<S> {
-    match *ENVIRONMENT {
-        ExecutionEnvironment::Production
-        | ExecutionEnvironment::Development
-        | ExecutionEnvironment::Stage => layer()
-            .with_target(true)
-            .with_thread_ids(true)
-            .with_thread_names(true)
-            .with_file(true)
-            .with_line_number(true)
-            .with_span_events(FmtSpan::CLOSE),
-        _ => layer(),
-    }
+    layer()
+        .with_target(true)
+        .with_thread_ids(true)
+        .with_thread_names(true)
+        .with_file(true)
+        .with_line_number(true)
+        .with_span_events(FmtSpan::NONE)
 }
 
 pub fn make_span(request: &tonic::codegen::http::Request<Body>) -> Span {
