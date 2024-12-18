@@ -98,9 +98,9 @@ pub enum CscQuery {
     GetParties {},
     #[serde(rename = "get_response_count_for_majority_vote")]
     GetResponseCountForMajorityVote {},
-    #[serde(rename = "response_count_for_reconstruction")]
+    #[serde(rename = "get_response_count_for_reconstruction")]
     GetResponseCountForReconstruction {},
-    #[serde(rename = "degree_for_reconstruction")]
+    #[serde(rename = "get_degree_for_reconstruction")]
     GetDegreeForReconstruction {},
 }
 
