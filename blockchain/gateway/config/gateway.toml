@@ -132,14 +132,6 @@ key_id = "?"
 # CRS ID used within the KMS.
 crs_id = "?"
 
-# List of prefixed of URL endpoints for the public storage of the KMS.  The key
-# in the map is the MPC ID of the party. I.e. [1; amount of parties]
-[kms.public_storage]
-1 = "http://localhost:9000/kms/PUB-p1"
-2 = "http://localhost:9000/kms/PUB-p2"
-3 = "http://localhost:9000/kms/PUB-p3"
-4 = "http://localhost:9000/kms/PUB-p4"
-
 # The URL of a key-value storage service used for transferring ciphertexts that
 # are too large to be stored on the blockchain between the connector and the
 # gateway. The configuration must be the same as what's on the connector.

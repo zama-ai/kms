@@ -178,10 +178,12 @@ async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
 
     // The CSC is the first contract uploaded (see `deploy_contracts.sh`). We therefore
     // get the address for code_id = 1.
+    tracing::info!("Fetch CSC address");
     let csc_address = get_contract_address(&query_client, 1).await.unwrap();
 
     // The ASC is the second contract uploaded (see `deploy_contracts.sh`). We therefore
     // get the address for code_id = 2.
+    tracing::info!("Fetch ASC address");
     let asc_address = get_contract_address(&query_client, 2).await.unwrap();
 
     let client: RwLock<Client> = RwLock::new(
@@ -334,7 +336,7 @@ async fn check_event(
 async fn get_contract_address(client: &QueryClient, code_id: u64) -> anyhow::Result<String> {
     retry_loop!(
         || async {
-            tracing::info!("Getting contract address....");
+            tracing::info!("Getting contract address...");
             let result = client.list_contracts(code_id).await.unwrap();
             if !result.contracts.is_empty() {
                 tracing::info!("Found {} contracts", result.contracts.len());

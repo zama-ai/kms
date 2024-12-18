@@ -67,11 +67,6 @@ impl FheParameter {
     }
 }
 
-#[derive(VersionsDispatch)]
-pub enum KmsCorePartyVersioned {
-    V0(KmsCoreParty),
-}
-
 pub trait Eip712Values {
     fn eip712_name(&self) -> &str;
 
@@ -84,14 +79,19 @@ pub trait Eip712Values {
     fn eip712_salt(&self) -> Option<&HexVector>;
 }
 
+#[derive(VersionsDispatch)]
+pub enum KmsCorePartyVersioned {
+    V0(KmsCoreParty),
+}
+
+/// This struct contains all the metadata information needed about a KMS core party:
+/// - public_storage_label: the label of the public storage to append to the base URL when fetching
+///   public keys
 #[cw_serde]
-#[derive(Default, Versionize)]
+#[derive(Default, Versionize, TypedBuilder)]
 #[versionize(KmsCorePartyVersioned)]
 pub struct KmsCoreParty {
-    pub party_id: HexVector,
-    pub public_key: Option<RedactedHexVector>,
-    pub address: String,
-    pub tls_pub_key: Option<HexVector>,
+    pub public_storage_label: String,
 }
 
 #[derive(Serialize, Deserialize, VersionsDispatch)]

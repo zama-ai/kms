@@ -17,8 +17,8 @@ use ethers::abi::Token;
 use ethers::types::{Address, U256};
 use events::kms::{
     CrsGenValues, DecryptValues, Eip712Values, FheParameter, FheType, InsecureCrsGenValues,
-    InsecureKeyGenValues, KeyGenPreprocValues, KeyGenValues, KmsCoreParty, KmsEvent, KmsMessage,
-    KmsOperation, OperationValue, ReencryptValues, TransactionId, VerifyProvenCtValues,
+    InsecureKeyGenValues, KeyGenPreprocValues, KeyGenValues, KmsEvent, KmsMessage, KmsOperation,
+    OperationValue, ReencryptValues, TransactionId, VerifyProvenCtValues,
 };
 use events::HexVector;
 use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractRequest, ProtoCoin};
@@ -1907,18 +1907,16 @@ pub async fn main_from_config(
         _ => {}
     }
 
-    // Get the current list of parties from the CSC
-    let parties: Vec<KmsCoreParty> =
-        query_csc(&query_client, &sim_conf, CscQuery::GetParties {}).await?;
+    // Get the number of parties from the CSC
+    let num_parties: usize =
+        query_csc(&query_client, &sim_conf, CscQuery::GetNumParties {}).await?;
 
-    // Get the number of parties and check if the KMS is centralized (ie, there is only one party)
-    let num_parties = parties.len();
+    // Check if the KMS is centralized (ie, there is only one party)
     let is_centralized = num_parties == 1;
 
     tracing::info!(
-        "Retrieved {} parties: {:?} (centralized: {})",
+        "Retrieved {} parties: (centralized: {})",
         num_parties,
-        parties,
         is_centralized
     );
 

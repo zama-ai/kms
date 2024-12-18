@@ -78,7 +78,7 @@ RUN --mount=type=cache,target=/app/target,sharing=locked \
 # Optimize CSC and report final size, check size limit
 RUN wasm-opt -Oz "/app/optimized-input/csc.wasm" -o "/app/optimized/csc.wasm" && \
     size=$(wc -c < /app/optimized/csc.wasm) && \
-    echo "Config Post-optimization size: $size bytes" && \
+    echo "CSC Post-optimization size: $size bytes" && \
     if [ "$size" -ge 819200 ]; then \
         echo "Error: CSC wasm size ($size bytes) exceeds limit of 819,200 bytes" && \
         exit 1; \

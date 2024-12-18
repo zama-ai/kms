@@ -29,7 +29,19 @@ export VALIDATOR_NODE_ENDPOINT="${VALIDATOR_NODE_ENDPOINT:-tcp://localhost:26657
 export NODE="$VALIDATOR_NODE_ENDPOINT"
 export WASMD_NODE="$VALIDATOR_NODE_ENDPOINT"
 export MODE="${MODE:-centralized}"
-export STORAGE_BASE_URL="http://localhost:dummy"
+export STORAGE_BASE_URL="http://localhost:9000"
+
+# Export the signing keys for each KMS core party
+export SIGNING_KEY_1="01"
+export SIGNING_KEY_2="02"
+export SIGNING_KEY_3="03"
+export SIGNING_KEY_4="04"
+
+# Export the public storage labels for each KMS core party
+export PARTY_1_PUBLIC_STORAGE_LABEL="PUB-p1"
+export PARTY_2_PUBLIC_STORAGE_LABEL="PUB-p2"
+export PARTY_3_PUBLIC_STORAGE_LABEL="PUB-p3"
+export PARTY_4_PUBLIC_STORAGE_LABEL="PUB-p4"
 
 # Get addresses
 # NOTE: here we use the connector address because it's the one we allow to do key-gen
@@ -174,10 +186,10 @@ echo "Ethereum IPSC code ID: ${TM_IPSC_ETHEREUM_CODE_ID}"
 echo "Instantiating CSC"
 if [ "$MODE" = "threshold" ]; then
   echo "(for threshold mode)"
-  CSC_INST_TX_HASH=$(echo $KEYRING_PASSWORD | wasmd tx wasm instantiate "${CSC_CODE_ID}" '{ "parties":[{"party_id": "01", "address": ""}, {"party_id": "02", "address": ""}, {"party_id": "03", "address": ""}, {"party_id": "04", "address": ""}], "response_count_for_majority_vote": 3, "response_count_for_reconstruction": 3, "degree_for_reconstruction": 1, "param_choice": "default", "storage_base_urls": ["'"${STORAGE_BASE_URL}"'"], "allowlists":{"admin": ["'"${CONNECTOR_ADDRESS_1}"'"], "configure": ["'"${CONNECTOR_ADDRESS_1}"'"]} }' --label "csc-threshold" --from validator --output json --node "$NODE" --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 | jq -r '.txhash')
+  CSC_INST_TX_HASH=$(echo $KEYRING_PASSWORD | wasmd tx wasm instantiate "${CSC_CODE_ID}" '{ "parties": {"'"${SIGNING_KEY_1}"'": {"public_storage_label": "'"${PARTY_1_PUBLIC_STORAGE_LABEL}"'"}, "'"${SIGNING_KEY_2}"'": {"public_storage_label": "'"${PARTY_2_PUBLIC_STORAGE_LABEL}"'"}, "'"${SIGNING_KEY_3}"'": {"public_storage_label": "'"${PARTY_3_PUBLIC_STORAGE_LABEL}"'"}, "'"${SIGNING_KEY_4}"'": {"public_storage_label": "'"${PARTY_4_PUBLIC_STORAGE_LABEL}"'"}}, "response_count_for_majority_vote": 3, "response_count_for_reconstruction": 3, "degree_for_reconstruction": 1, "param_choice": "default", "storage_base_url": "'"${STORAGE_BASE_URL}"'", "allowlists":{"admin": ["'"${CONNECTOR_ADDRESS_1}"'"], "configure": ["'"${CONNECTOR_ADDRESS_1}"'"]} }' --label "csc-threshold" --from validator --output json --node "$NODE" --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 | jq -r '.txhash')
 elif [ "$MODE" = "centralized" ]; then
   echo "(for centralized mode)"
-  CSC_INST_TX_HASH=$(echo $KEYRING_PASSWORD | wasmd tx wasm instantiate "${CSC_CODE_ID}" '{ "parties":[{"party_id": "01", "address": ""}], "response_count_for_majority_vote": 1, "response_count_for_reconstruction": 1, "degree_for_reconstruction": 0, "param_choice": "default", "storage_base_urls": ["'"${STORAGE_BASE_URL}"'"], "allowlists":{"admin": ["'"${CONNECTOR_ADDRESS_1}"'"], "configure": ["'"${CONNECTOR_ADDRESS_1}"'"]} }' --label "csc-centralized" --from validator --output json --node "$NODE" --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 | jq -r '.txhash')
+  CSC_INST_TX_HASH=$(echo $KEYRING_PASSWORD | wasmd tx wasm instantiate "${CSC_CODE_ID}" '{ "parties": {"'"${SIGNING_KEY_1}"'": {"public_storage_label": "'"${PARTY_1_PUBLIC_STORAGE_LABEL}"'"}}, "response_count_for_majority_vote": 1, "response_count_for_reconstruction": 1, "degree_for_reconstruction": 0, "param_choice": "default", "storage_base_url": "'"${STORAGE_BASE_URL}"'", "allowlists":{"admin": ["'"${CONNECTOR_ADDRESS_1}"'"], "configure": ["'"${CONNECTOR_ADDRESS_1}"'"]} }' --label "csc-centralized" --from validator --output json --node "$NODE" --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 | jq -r '.txhash')
 else
     echo "MODE is ${MODE} which is neither 'threshold' nor 'centralized', can't instantiate smart contract"
     exit 1

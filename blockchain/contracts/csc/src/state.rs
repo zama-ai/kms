@@ -1,8 +1,12 @@
 use crate::allowlists::AllowlistsCsc;
-use contracts_common::{allowlists::AllowlistsStateManager, versioned_states::VersionedItem};
+use contracts_common::{
+    allowlists::AllowlistsStateManager,
+    versioned_states::{VersionedItem, VersionedMap},
+};
 use events::kms::{FheParameter, KmsCoreParty};
+use std::collections::HashMap;
 
-use cosmwasm_std::{StdError, StdResult, Storage};
+use cosmwasm_std::{Order, StdError, StdResult, Storage};
 
 /// Struct containing the parameters that will need to conform with the number of parties
 struct ParametersToConform {
@@ -50,19 +54,19 @@ impl ParametersToConform {
 ///   who can trigger some operations (mostly about updating the configuration or allowlists).
 ///   Providing None will default to use the sender's address for all operation types.
 pub struct ConfigStorage {
-    parties: VersionedItem<Vec<KmsCoreParty>>,
+    parties: VersionedMap<String, KmsCoreParty>,
     response_count_for_majority_vote: VersionedItem<usize>,
     response_count_for_reconstruction: VersionedItem<usize>,
     degree_for_reconstruction: VersionedItem<usize>,
     param_choice: VersionedItem<FheParameter>,
-    storage_base_urls: VersionedItem<Vec<String>>,
+    storage_base_url: VersionedItem<String>,
     allowlists: VersionedItem<AllowlistsCsc>,
 }
 
 impl Default for ConfigStorage {
     fn default() -> Self {
         Self {
-            parties: VersionedItem::new("parties"),
+            parties: VersionedMap::new("parties"),
             response_count_for_majority_vote: VersionedItem::new(
                 "response_count_for_majority_vote",
             ),
@@ -71,7 +75,7 @@ impl Default for ConfigStorage {
             ),
             degree_for_reconstruction: VersionedItem::new("degree_for_reconstruction"),
             param_choice: VersionedItem::new("param_choice"),
-            storage_base_urls: VersionedItem::new("storage_base_urls"),
+            storage_base_url: VersionedItem::new("storage_base_url"),
             allowlists: VersionedItem::new("allowlists"),
         }
     }
@@ -86,22 +90,15 @@ impl AllowlistsStateManager for ConfigStorage {
 }
 
 impl ConfigStorage {
-    /// We use the number of parties as a proxy to know whether we are in centralized case or threshold
-    pub fn is_centralized(&self, storage: &dyn Storage) -> bool {
-        self.parties.load(storage).unwrap().len() == 1
-    }
-
     /// Check whether the given configuration parameters are conformant, and return an error if not
     ///
     /// This is a static method and thus does not load anything from the contract state
     pub(crate) fn check_config_is_conformant(
-        parties: Vec<KmsCoreParty>,
+        num_parties: usize,
         response_count_for_majority_vote: usize,
         response_count_for_reconstruction: usize,
         degree_for_reconstruction: usize,
     ) -> Result<(), StdError> {
-        let num_parties = parties.len();
-
         // Centralized case (i.e. there is only one party)
         if num_parties == 1 {
             if response_count_for_majority_vote != 1
@@ -114,7 +111,7 @@ impl ConfigStorage {
                     responses for majority vote: {} (expected 1), \
                     responses for reconstruction: {} (expected 1), \
                     degree for reconstruction: {} (expected 0)",
-                    parties.len(),
+                    num_parties,
                     response_count_for_majority_vote,
                     response_count_for_reconstruction,
                     degree_for_reconstruction
@@ -158,7 +155,7 @@ impl ConfigStorage {
                 responses for majority vote: {} (expected between {} and {}, both included), \
                 responses for reconstruction: {} (expected between {} and {}, both included), \
                 degree for reconstruction: {} (expected {})",
-                parties.len(),
+                num_parties,
                 response_count_for_majority_vote,
                 majority,
                 num_parties,
@@ -183,10 +180,7 @@ impl ConfigStorage {
         storage: &dyn Storage,
         parameters_to_conform: ParametersToConform,
     ) -> Result<(), StdError> {
-        let parties = self
-            .parties
-            .load(storage)
-            .map_err(|e| StdError::generic_err(format!("Failed to load parties: {}", e)))?;
+        let num_parties = self.get_num_parties(storage);
 
         let degree_for_reconstruction = parameters_to_conform
             .degree_for_reconstruction
@@ -203,7 +197,7 @@ impl ConfigStorage {
             });
 
         Self::check_config_is_conformant(
-            parties,
+            num_parties,
             response_count_for_majority_vote,
             response_count_for_reconstruction,
             degree_for_reconstruction,
@@ -211,36 +205,37 @@ impl ConfigStorage {
     }
 
     /// Get the parties
-    pub fn get_parties(&self, storage: &dyn Storage) -> StdResult<Vec<KmsCoreParty>> {
-        self.parties.load(storage)
+    pub fn get_parties(&self, storage: &dyn Storage) -> StdResult<HashMap<String, KmsCoreParty>> {
+        self.parties
+            .range(storage, None, None, Order::Ascending)
+            .collect()
     }
 
     /// Set the parties
     pub(crate) fn set_parties(
         &self,
         storage: &mut dyn Storage,
-        value: Vec<KmsCoreParty>,
+        value: HashMap<String, KmsCoreParty>,
     ) -> StdResult<()> {
-        self.parties.save(storage, &value)
+        for (key, value) in value {
+            self.parties.save(storage, key, &value)?;
+        }
+        Ok(())
     }
 
-    // Update the parties list
-    pub fn update_parties(
-        &self,
-        storage: &mut dyn Storage,
-        value: Vec<KmsCoreParty>,
-    ) -> StdResult<Vec<KmsCoreParty>> {
+    /// Get the number of parties
+    pub fn get_num_parties(&self, storage: &dyn Storage) -> usize {
         self.parties
-            .update(storage, |current_parties| -> StdResult<Vec<KmsCoreParty>> {
-                if current_parties.len() != value.len() {
-                    return Err(StdError::generic_err(
-                        "Updating the core parties failed: \
-                        It is currently not allowed to \
-                        change the number of parties participating",
-                    ));
-                }
-                Ok(value)
-            })
+            .keys_raw(storage, None, None, Order::Ascending)
+            .collect::<Vec<_>>()
+            .len()
+    }
+
+    // Note that we currently do not allow updating the parties
+
+    // Get a party using its associated key
+    pub fn get_party(&self, storage: &dyn Storage, key: String) -> StdResult<KmsCoreParty> {
+        self.parties.load(storage, key)
     }
 
     /// Get the response count for majority vote
@@ -357,28 +352,28 @@ impl ConfigStorage {
             .update(storage, |_| -> StdResult<FheParameter> { Ok(value) })
     }
 
-    /// Get the storage base URLs
-    pub fn get_storage_base_urls(&self, storage: &dyn Storage) -> StdResult<Vec<String>> {
-        self.storage_base_urls.load(storage)
+    /// Get the storage base URL
+    pub fn get_storage_base_url(&self, storage: &dyn Storage) -> StdResult<String> {
+        self.storage_base_url.load(storage)
     }
 
-    /// Set the storage base URLs
-    pub(crate) fn set_storage_base_urls(
+    /// Set the storage base URL
+    pub(crate) fn set_storage_base_url(
         &self,
         storage: &mut dyn Storage,
-        value: Vec<String>,
+        value: String,
     ) -> StdResult<()> {
-        self.storage_base_urls.save(storage, &value)
+        self.storage_base_url.save(storage, &value)
     }
 
-    // Update the storage base URLs
-    pub fn update_storage_base_urls(
+    // Update the storage base URL
+    pub fn update_storage_base_url(
         &self,
         storage: &mut dyn Storage,
-        value: Vec<String>,
-    ) -> StdResult<Vec<String>> {
-        self.storage_base_urls
-            .update(storage, |_| -> StdResult<Vec<String>> { Ok(value) })
+        value: String,
+    ) -> StdResult<String> {
+        self.storage_base_url
+            .update(storage, |_| -> StdResult<String> { Ok(value) })
     }
 }
 
@@ -392,11 +387,17 @@ mod tests {
     fn set_all_config_parameters(
         storage: &mut ConfigStorage,
         dyn_store: &mut dyn Storage,
-        parties: Vec<KmsCoreParty>,
+        num_parties: usize,
         response_count_for_majority_vote: usize,
         response_count_for_reconstruction: usize,
         degree_for_reconstruction: usize,
     ) -> StdResult<()> {
+        // Set a hashmap of parties using the given number of parties
+        // Note that in practice, a party's key will be a signing key handle
+        let parties = (1..=num_parties)
+            .map(|i| (format!("party_{}", i), KmsCoreParty::default()))
+            .collect::<HashMap<String, KmsCoreParty>>();
+
         storage.set_parties(dyn_store, parties)?;
         storage
             .set_response_count_for_majority_vote(dyn_store, response_count_for_majority_vote)?;
@@ -413,10 +414,10 @@ mod tests {
         let degree_for_reconstruction = 1;
 
         // Test conformance fails with (n_parties - 1) not divisible by 3
-        let wrong_parties = vec![KmsCoreParty::default(); 5];
+        let wrong_num_parties = 5;
 
         assert!(ConfigStorage::check_config_is_conformant(
-            wrong_parties.clone(),
+            wrong_num_parties,
             response_count_for_majority_vote,
             response_count_for_reconstruction,
             degree_for_reconstruction + 1,
@@ -425,11 +426,11 @@ mod tests {
         .to_string()
         .contains("Number of parties is incorrect"));
 
-        let parties = vec![KmsCoreParty::default(); 4];
+        let num_parties = 4;
 
         // Test conformance fails with non-conformant parameters (for 4 parties)
         assert!(ConfigStorage::check_config_is_conformant(
-            parties.clone(),
+            num_parties,
             response_count_for_majority_vote,
             response_count_for_reconstruction,
             degree_for_reconstruction + 1,
@@ -440,7 +441,7 @@ mod tests {
 
         // Test conformance succeeds with conformant parameters (for 4 parties)
         ConfigStorage::check_config_is_conformant(
-            parties.clone(),
+            num_parties,
             response_count_for_majority_vote,
             response_count_for_reconstruction,
             degree_for_reconstruction,
@@ -454,7 +455,6 @@ mod tests {
         let mut storage = ConfigStorage::default();
 
         let num_parties = 1;
-        let parties = vec![KmsCoreParty::default(); num_parties];
         let response_count_for_majority_vote = 1;
         let response_count_for_reconstruction = 1;
         let degree_for_reconstruction = 0;
@@ -463,7 +463,7 @@ mod tests {
         set_all_config_parameters(
             &mut storage,
             dyn_store,
-            parties.clone(),
+            num_parties,
             response_count_for_majority_vote,
             response_count_for_reconstruction,
             degree_for_reconstruction,
@@ -509,7 +509,6 @@ mod tests {
         let mut storage = ConfigStorage::default();
 
         let num_parties = 4;
-        let parties = vec![KmsCoreParty::default(); num_parties];
         let response_count_for_majority_vote = 3;
         let response_count_for_reconstruction = 4;
         let degree_for_reconstruction = 1;
@@ -518,7 +517,7 @@ mod tests {
         set_all_config_parameters(
             &mut storage,
             dyn_store,
-            parties.clone(),
+            num_parties,
             response_count_for_majority_vote,
             response_count_for_reconstruction,
             degree_for_reconstruction,
@@ -589,48 +588,28 @@ mod tests {
     }
 
     #[test]
-    fn test_is_centralized() {
-        let dyn_store = &mut MockStorage::new();
-        let storage = ConfigStorage::default();
-
-        // Test centralized case with single party
-        let single_party = vec![KmsCoreParty::default()];
-        storage.set_parties(dyn_store, single_party).unwrap();
-        assert!(storage.is_centralized(dyn_store));
-
-        // Test threshold case with multiple parties
-        let multiple_parties = vec![KmsCoreParty::default(); 4];
-        storage.set_parties(dyn_store, multiple_parties).unwrap();
-        assert!(!storage.is_centralized(dyn_store));
-    }
-
-    #[test]
     fn test_parties() {
         let dyn_store = &mut MockStorage::new();
         let storage = ConfigStorage::default();
 
-        let parties = vec![KmsCoreParty::default(); 2];
+        let party_1_key = "party_1".to_string();
+        let party_1_value = KmsCoreParty::default();
+
+        let parties = HashMap::from([(party_1_key.clone(), party_1_value.clone())]);
 
         // Test set
         storage.set_parties(dyn_store, parties.clone()).unwrap();
 
-        // Test get
+        // Test get parties
         assert_eq!(storage.get_parties(dyn_store).unwrap(), parties);
 
-        // Test update with same number of parties succeeds
-        let new_parties = vec![KmsCoreParty::default(); 2];
-        let updated_parties = storage
-            .update_parties(dyn_store, new_parties.clone())
-            .unwrap();
-        assert_eq!(updated_parties, new_parties);
+        // We currently do not support updating the parties so no `update_parties` test is needed
 
-        // Test that updating with a different number of parties properly fails
-        let different_size_parties = vec![KmsCoreParty::default(); 3];
-        assert!(storage
-            .update_parties(dyn_store, different_size_parties)
-            .unwrap_err()
-            .to_string()
-            .contains("Updating the core parties failed:"));
+        // Test get party
+        assert_eq!(
+            storage.get_party(dyn_store, party_1_key).unwrap(),
+            party_1_value
+        );
     }
 
     #[test]
@@ -638,7 +617,7 @@ mod tests {
         let dyn_store = &mut MockStorage::new();
         let mut storage = ConfigStorage::default();
 
-        let parties = vec![KmsCoreParty::default(); 4];
+        let num_parties = 4;
         let response_count_for_majority_vote = 3;
         let response_count_for_reconstruction = 4;
         let degree_for_reconstruction = 1;
@@ -647,7 +626,7 @@ mod tests {
         set_all_config_parameters(
             &mut storage,
             dyn_store,
-            parties.clone(),
+            num_parties,
             response_count_for_majority_vote,
             response_count_for_reconstruction,
             degree_for_reconstruction,
@@ -675,7 +654,7 @@ mod tests {
         let dyn_store = &mut MockStorage::new();
         let mut storage = ConfigStorage::default();
 
-        let parties = vec![KmsCoreParty::default(); 4];
+        let num_parties = 4;
         let response_count_for_majority_vote = 3;
         let response_count_for_reconstruction = 4;
         let degree_for_reconstruction = 1;
@@ -684,7 +663,7 @@ mod tests {
         set_all_config_parameters(
             &mut storage,
             dyn_store,
-            parties.clone(),
+            num_parties,
             response_count_for_majority_vote,
             response_count_for_reconstruction,
             degree_for_reconstruction,
@@ -720,7 +699,7 @@ mod tests {
         let dyn_store = &mut MockStorage::new();
         let mut storage = ConfigStorage::default();
 
-        let parties = vec![KmsCoreParty::default(); 4];
+        let num_parties = 4;
         let response_count_for_majority_vote = 3;
         let response_count_for_reconstruction = 4;
         let degree_for_reconstruction = 1;
@@ -729,7 +708,7 @@ mod tests {
         set_all_config_parameters(
             &mut storage,
             dyn_store,
-            parties.clone(),
+            num_parties,
             response_count_for_majority_vote,
             response_count_for_reconstruction,
             degree_for_reconstruction,
@@ -782,21 +761,21 @@ mod tests {
         let dyn_store = &mut MockStorage::new();
         let storage = ConfigStorage::default();
 
-        let urls = vec!["url1".to_string(), "url2".to_string()];
+        let url = "storage_base_url".to_string();
 
         // Test set
         storage
-            .set_storage_base_urls(dyn_store, urls.clone())
+            .set_storage_base_url(dyn_store, url.clone())
             .unwrap();
 
         // Test get
-        assert_eq!(storage.get_storage_base_urls(dyn_store).unwrap(), urls);
+        assert_eq!(storage.get_storage_base_url(dyn_store).unwrap(), url);
 
         // Test update
-        let new_urls = vec!["url3".to_string(), "url4".to_string()];
-        let updated_urls = storage
-            .update_storage_base_urls(dyn_store, new_urls.clone())
+        let new_url = "new_storage_base_url".to_string();
+        let updated_url = storage
+            .update_storage_base_url(dyn_store, new_url.clone())
             .unwrap();
-        assert_eq!(updated_urls, new_urls);
+        assert_eq!(updated_url, new_url);
     }
 }

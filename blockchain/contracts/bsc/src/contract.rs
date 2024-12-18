@@ -786,6 +786,7 @@ mod tests {
         },
         HexVector,
     };
+    use std::collections::HashMap;
     use sylvia::multitest::{App, Proxy};
 
     const UCOSM: &str = "ucosm";
@@ -809,19 +810,25 @@ mod tests {
             App::new(mt_app)
         };
 
-        let storage_base_urls = vec!["https://dummy-storage-base-url.example.com".to_string()];
+        let parties = HashMap::from([
+            ("party_1".to_string(), KmsCoreParty::default()),
+            ("party_2".to_string(), KmsCoreParty::default()),
+            ("party_3".to_string(), KmsCoreParty::default()),
+            ("party_4".to_string(), KmsCoreParty::default()),
+        ]);
+        let storage_base_url = "https://new_storage_base_url.com".to_string();
         let allowlists_config = AllowlistsCsc::default_all_to(owner.as_str());
 
         // Store and instantiate CSC
         let config_code_id = CSCCodeId::store_code(&app);
         let csc_address = config_code_id
             .instantiate(
-                vec![KmsCoreParty::default(); 4],
+                parties.clone(),
                 2,
                 3,
                 1,
                 FheParameter::Test,
-                storage_base_urls,
+                storage_base_url,
                 Some(allowlists_config),
             )
             .call(&owner)

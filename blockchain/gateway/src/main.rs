@@ -71,12 +71,6 @@ fn print_intro(config: &GatewayConfig) {
         width = width
     );
     tracing::info!(
-        "{:<width$}{:?}",
-        "🤝 KMS storage base URLs:",
-        config.kms.public_storage,
-        width = width
-    );
-    tracing::info!(
         "{:<width$}{}",
         "🔐 FHE library address:",
         to_checksum(&config.ethereum.fhe_lib_address, None),

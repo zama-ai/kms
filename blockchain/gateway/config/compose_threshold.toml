@@ -62,12 +62,6 @@ address = "http://localhost:9090"
 key_id = "408d8cbaa51dece7f782fe04ba0b1c1d017b1088"
 crs_id = "?"
 
-[kms.public_storage]
-1 = "http://dev-s3-mock:9000/kms/"
-2 = "http://dev-s3-mock:9000/kms/"
-3 = "http://dev-s3-mock:9000/kms/"
-4 = "http://dev-s3-mock:9000/kms/"
-
 [storage]
 url = "http://dev-kv-store:8088"
 

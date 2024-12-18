@@ -94,14 +94,18 @@ pub enum AscQuery {
 pub enum CscQuery {
     #[serde(rename = "get_param_choice")]
     GetParamChoice {},
-    #[serde(rename = "get_parties")]
-    GetParties {},
+    #[serde(rename = "get_num_parties")]
+    GetNumParties {},
     #[serde(rename = "get_response_count_for_majority_vote")]
     GetResponseCountForMajorityVote {},
     #[serde(rename = "get_response_count_for_reconstruction")]
     GetResponseCountForReconstruction {},
     #[serde(rename = "get_degree_for_reconstruction")]
     GetDegreeForReconstruction {},
+    #[serde(rename = "get_storage_base_url")]
+    GetStorageBaseUrl {},
+    #[serde(rename = "get_parties")]
+    GetParties {},
 }
 
 impl QueryClient {

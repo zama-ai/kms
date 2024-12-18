@@ -62,12 +62,6 @@ address = "http://localhost:9090"
 key_id = "408d8cbaa51dece7f782fe04ba0b1c1d017b1088"
 crs_id = "?"
 
-[kms.public_storage]
-1 = "http://localhost:8088/public-storage/"
-2 = "http://localhost:8088/public-storage/"
-3 = "http://localhost:8088/public-storage/"
-4 = "http://localhost:8088/public-storage/"
-
 [storage]
 url = "http://localhost:8088"
 

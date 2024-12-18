@@ -18,9 +18,9 @@ use ethereum_inclusion_proofs::{
 use ethers::{abi::Token, prelude::*};
 use events::{
     kms::{
-        CrsGenResponseValues, DecryptValues, FheParameter, FheType, KeyGenResponseValues, KmsEvent,
-        KmsMessage, KmsOperation, OperationValue, ReencryptResponseValues, ReencryptValues,
-        TransactionId, VerifyProvenCtResponseValues, VerifyProvenCtValues,
+        CrsGenResponseValues, DecryptValues, FheParameter, FheType, KeyGenResponseValues,
+        KmsCoreParty, KmsEvent, KmsMessage, KmsOperation, OperationValue, ReencryptResponseValues,
+        ReencryptValues, TransactionId, VerifyProvenCtResponseValues, VerifyProvenCtValues,
     },
     HexVector, HexVectorList,
 };
@@ -298,6 +298,18 @@ impl<'a> KmsBlockchainImpl {
         self.query_csc(csc_query).await
     }
 
+    /// Helper function to get the storage base URL.
+    async fn get_storage_base_url(&self) -> Result<String, Error> {
+        let csc_query = CscQuery::GetStorageBaseUrl {};
+        self.query_csc(csc_query).await
+    }
+
+    /// Helper function to get the parties.
+    async fn get_parties(&self) -> Result<HashMap<String, KmsCoreParty>, Error> {
+        let csc_query = CscQuery::GetParties {};
+        self.query_csc(csc_query).await
+    }
+
     /// Helper function to query the ASC.
     async fn query_asc<T: DeserializeOwned>(&self, contract_query: AscQuery) -> Result<T, Error> {
         let query_client = Arc::clone(&self.query_client);
@@ -439,8 +451,10 @@ impl<'a> KmsBlockchainImpl {
 
     /// Construct a `KeyUrlResponseValues` object from the given parameters.
     /// This is used for different types of public key material such as both PublicKey and ServerKey.
+    #[allow(clippy::too_many_arguments)]
     fn prepare_fhe_key_urls(
-        storage_urls: &HashMap<u32, String>,
+        storage_base_url: &str,
+        parties: &HashMap<String, KmsCoreParty>,
         key_id: &str,
         param: &FheParameter,
         pk_sig: HexVectorList,
@@ -450,7 +464,8 @@ impl<'a> KmsBlockchainImpl {
     ) -> anyhow::Result<FheKeyUrlInfo> {
         let fhe_public_key = Self::get_fhe_key_info(
             PubDataType::PublicKey,
-            storage_urls,
+            storage_base_url,
+            parties,
             key_id,
             param,
             pk_sig,
@@ -458,7 +473,8 @@ impl<'a> KmsBlockchainImpl {
         )?;
         let fhe_server_key = Self::get_fhe_key_info(
             PubDataType::ServerKey,
-            storage_urls,
+            storage_base_url,
+            parties,
             key_id,
             param,
             server_sig,
@@ -473,18 +489,20 @@ impl<'a> KmsBlockchainImpl {
     /// Construct a `KeyUrlInfo` object from the given parameters.
     fn get_fhe_key_info(
         key_type: PubDataType,
-        storage_urls: &HashMap<u32, String>,
+        storage_base_url: &str,
+        parties: &HashMap<String, KmsCoreParty>,
         key_id: &str,
         param: &FheParameter,
         sigs: HexVectorList,
         ext_sigs: HexVectorList,
     ) -> anyhow::Result<KeyUrlInfo> {
+        let key_type_string = key_type.to_string();
+
         let mut urls = Vec::new();
-        for base_url in storage_urls.values() {
-            let type_string = key_type.to_string();
-            let parsed_base_url = base_url.trim().trim_end_matches(MAIN_SEPARATOR_STR);
+        for party in parties.values() {
+            let party_url_label = party.public_storage_label.clone();
             let url = format!(
-                "{parsed_base_url}{MAIN_SEPARATOR_STR}{type_string}{MAIN_SEPARATOR_STR}{key_id}"
+                "{storage_base_url}{MAIN_SEPARATOR_STR}{party_url_label}{MAIN_SEPARATOR_STR}{key_type_string}{MAIN_SEPARATOR_STR}{key_id}"
             );
             urls.push(url);
         }
@@ -500,24 +518,26 @@ impl<'a> KmsBlockchainImpl {
     /// Construct a `VerfKeyUrlInfo` object from the given parameters.
     /// This consists of all the URL information about the public verification keys of each of the MPC servers.
     fn get_verf_key_info(
-        storage_urls: &HashMap<u32, String>,
+        storage_base_url: &str,
+        parties: &HashMap<String, KmsCoreParty>,
         key_id: &str,
     ) -> anyhow::Result<Vec<VerfKeyUrlInfo>> {
+        let verf_key = PubDataType::VerfKey.to_string();
+        let verf_addr = PubDataType::VerfAddress.to_string();
+
         let mut res = Vec::new();
-        for (i, base_url) in storage_urls {
-            let parsed_base_url = base_url.trim().trim_end_matches(MAIN_SEPARATOR_STR);
-            let verf_key = PubDataType::VerfKey.to_string();
-            let verf_addr = PubDataType::VerfAddress.to_string();
+        for (signing_key, party) in parties {
+            let party_url_label = party.public_storage_label.clone();
             let key_url = format!(
-                "{parsed_base_url}{MAIN_SEPARATOR_STR}{verf_key}{MAIN_SEPARATOR_STR}{key_id}"
+                "{storage_base_url}{MAIN_SEPARATOR_STR}{party_url_label}{MAIN_SEPARATOR_STR}{verf_key}{MAIN_SEPARATOR_STR}{key_id}"
             );
             let addr_url = format!(
-                "{parsed_base_url}{MAIN_SEPARATOR_STR}{verf_addr}{MAIN_SEPARATOR_STR}{key_id}"
+                "{storage_base_url}{MAIN_SEPARATOR_STR}{party_url_label}{MAIN_SEPARATOR_STR}{verf_addr}{MAIN_SEPARATOR_STR}{key_id}"
             );
             res.push(
                 VerfKeyUrlInfo::builder()
                     .key_id(HexVector::from_hex(key_id)?)
-                    .server_id(*i)
+                    .server_signing_key(signing_key.clone())
                     .verf_public_key_url(key_url)
                     .verf_public_key_address(addr_url)
                     .build(),
@@ -529,17 +549,19 @@ impl<'a> KmsBlockchainImpl {
     /// Construct a `CrsUrlInfo` map from the given parameters.
     /// The key in the resultant map is the maximum number of bits of the CRS and the value is the CRS information including the URL and signature.
     fn get_crs_info(
-        storage_urls: &HashMap<u32, String>,
+        storage_base_url: &str,
+        parties: &HashMap<String, KmsCoreParty>,
         crs_data: &HashMap<String, (u32, FheParameter, HexVectorList, HexVectorList)>,
     ) -> anyhow::Result<HashMap<u32, KeyUrlInfo>> {
+        let crs_type = PubDataType::CRS.to_string();
+
         let mut res = HashMap::new();
         for (crs_id, (max_bits, param, sigs, ext_sigs)) in crs_data.iter() {
             let mut urls = Vec::new();
-            for base_url in storage_urls.values() {
-                let crs_type = PubDataType::CRS.to_string();
-                let parsed_base_url = base_url.trim().trim_end_matches(MAIN_SEPARATOR_STR);
+            for party in parties.values() {
+                let party_url_label = party.public_storage_label.clone();
                 let crs_url = format!(
-                    "{parsed_base_url}{MAIN_SEPARATOR_STR}{crs_type}{MAIN_SEPARATOR_STR}{crs_id}"
+                    "{storage_base_url}{MAIN_SEPARATOR_STR}{party_url_label}{MAIN_SEPARATOR_STR}{crs_type}{MAIN_SEPARATOR_STR}{crs_id}"
                 );
                 urls.push(crs_url);
             }
@@ -1183,12 +1205,23 @@ impl Blockchain for KmsBlockchainImpl {
                 self.config.kms.key_id
             );
         }
+
+        // Get the storage base url and remove the trailing slash if it exists
+        let storage_base_url = self.get_storage_base_url().await?;
+        let storage_base_url = storage_base_url.trim().trim_end_matches(MAIN_SEPARATOR_STR);
+        tracing::info!("🔗 Storage base URL: {:?}", storage_base_url);
+
+        // Get the parties
+        let parties = self.get_parties().await?;
+        tracing::info!("🎉 Parties: {:?}", parties);
+
         let key_data = KmsBlockchainImpl::parse_signed_key_data(key_values)?;
         let mut fhe_url_info = Vec::new();
         for (key_id, (param, pk_sigs, pk_ext_sigs, server_sigs, server_ext_sigs)) in key_data.iter()
         {
             fhe_url_info.push(KmsBlockchainImpl::prepare_fhe_key_urls(
-                &self.config.kms.public_storage,
+                storage_base_url,
+                &parties,
                 key_id,
                 param,
                 pk_sigs.to_owned(),
@@ -1207,10 +1240,11 @@ impl Blockchain for KmsBlockchainImpl {
             tracing::info!("Got {} crs response values", crs_values.len());
         }
         let crs_data = KmsBlockchainImpl::parse_signed_crs_data(crs_values)?;
-        let crs = KmsBlockchainImpl::get_crs_info(&self.config.kms.public_storage, &crs_data)?;
+        let crs = KmsBlockchainImpl::get_crs_info(storage_base_url, &parties, &crs_data)?;
 
         let verf_key_info = KmsBlockchainImpl::get_verf_key_info(
-            &self.config.kms.public_storage,
+            storage_base_url,
+            &parties,
             &SIGNING_KEY_ID.to_string(),
         )?;
         Ok(KeyUrlResponseValues::builder()
@@ -1270,7 +1304,7 @@ fn most_common_element<T: Eq + std::hash::Hash + Clone>(vec: &[T]) -> Option<(T,
 mod tests {
     use crate::blockchain::kms_blockchain::{most_common_element, KmsBlockchainImpl};
     use events::{
-        kms::{CrsGenResponseValues, FheParameter, KeyGenResponseValues},
+        kms::{CrsGenResponseValues, FheParameter, KeyGenResponseValues, KmsCoreParty},
         HexVector, HexVectorList,
     };
     use kms_lib::{
@@ -1439,23 +1473,34 @@ mod tests {
         );
     }
 
+    fn build_parties(num_parties: usize) -> HashMap<String, KmsCoreParty> {
+        let mut parties = HashMap::new();
+        for i in 1..=num_parties {
+            let party_id = hex::encode(rand::random::<[u8; 20]>());
+            parties.insert(
+                party_id,
+                KmsCoreParty::builder()
+                    .public_storage_label(format!("PUB-p{}", i))
+                    .build(),
+            );
+        }
+        parties
+    }
     #[test]
     fn sunshine_fhe_key_info() {
         let key_id = "00112233445566778899aabbccddeeff0011223344";
-        let base_sig = HexVector::from_hex("00112233445566778899aabbccddeeff0011223344").unwrap();
+        let base_sig = HexVector::from_hex(key_id).unwrap();
         let base_ext_sig =
             HexVector::from_hex("ffee2233445566778899aabbccddeeff001122DDEF").unwrap();
         let sigs = HexVectorList(vec![base_sig.clone(); 4]);
         let ext_sigs = HexVectorList(vec![base_ext_sig.clone(); 4]);
-        let storages_urls: HashMap<u32, String> = HashMap::from([
-            (1, "http://127.0.0.1:8081/PUB-p1/".to_string()),
-            (2, "http://127.0.0.1:8082/PUB-p2".to_string()),
-            (3, "http://127.0.0.1:8083/PUB-p3/".to_string()),
-            (4, "http://127.0.0.1:8084/PUB-p4".to_string()), // Ensure that suffix / is not needed
-        ]);
+        let storage_base_url = "http://127.0.0.1:8081/";
+        let parties = build_parties(4);
+
         let fhe_server_key = KmsBlockchainImpl::get_fhe_key_info(
             PubDataType::ServerKey,
-            &storages_urls,
+            storage_base_url,
+            &parties,
             key_id,
             &FheParameter::Test,
             sigs,
@@ -1468,59 +1513,56 @@ mod tests {
             <FheParameter as Into<i32>>::into(FheParameter::Test),
         );
         assert_eq!(fhe_server_key.urls().len(), 4);
-        assert!(fhe_server_key.urls().contains(
-            &"http://127.0.0.1:8081/PUB-p1/ServerKey/00112233445566778899aabbccddeeff0011223344"
-                .to_string()
-        ));
-        assert!(fhe_server_key.urls().contains(
-            &"http://127.0.0.1:8082/PUB-p2/ServerKey/00112233445566778899aabbccddeeff0011223344"
-                .to_string()
-        ));
-        assert!(fhe_server_key.urls().contains(
-            &"http://127.0.0.1:8083/PUB-p3/ServerKey/00112233445566778899aabbccddeeff0011223344"
-                .to_string()
-        ));
-        assert!(fhe_server_key.urls().contains(
-            &"http://127.0.0.1:8084/PUB-p4/ServerKey/00112233445566778899aabbccddeeff0011223344"
-                .to_string()
-        ));
+        assert!(fhe_server_key.urls().contains(&format!(
+            "{}/{}/{}",
+            storage_base_url, "PUB-p1/ServerKey", key_id
+        )));
+        assert!(fhe_server_key.urls().contains(&format!(
+            "{}/{}/{}",
+            storage_base_url, "PUB-p2/ServerKey", key_id
+        )));
+        assert!(fhe_server_key.urls().contains(&format!(
+            "{}/{}/{}",
+            storage_base_url, "PUB-p3/ServerKey", key_id
+        )));
+        assert!(fhe_server_key.urls().contains(&format!(
+            "{}/{}/{}",
+            storage_base_url, "PUB-p4/ServerKey", key_id
+        )));
     }
 
     #[test]
     fn sunshine_verf_key_info() {
         let key_id = "00112233445566778899aabbccddeeff0011223344";
-        let storages_urls: HashMap<u32, String> = HashMap::from([
-            (1, "http://127.0.0.1:8081/PUB-p1/".to_string()),
-            (2, "http://127.0.0.1:8082/PUB-p2".to_string()),
-            (3, "http://127.0.0.1:8083/PUB-p3/".to_string()),
-            (4, "http://127.0.0.1:8084/PUB-p4".to_string()), // Ensure that suffix / is not needed
-        ]);
-        let verf_key_info = KmsBlockchainImpl::get_verf_key_info(&storages_urls, key_id).unwrap();
-        assert_eq!(verf_key_info.len(), storages_urls.len());
+        let storage_base_url = "http://127.0.0.1:8081/";
+        let parties = build_parties(4);
+
+        let verf_key_info =
+            KmsBlockchainImpl::get_verf_key_info(storage_base_url, &parties, key_id).unwrap();
+
+        assert_eq!(verf_key_info.len(), parties.len());
+
         for cur_info in verf_key_info {
             assert_eq!(cur_info.key_id().to_hex(), key_id);
-            assert!(cur_info.server_id() >= 1);
-            assert!(cur_info.server_id() <= storages_urls.len() as u32);
-            assert_eq!(cur_info.verf_public_key_address(),
-                &format!("http://127.0.0.1:808{}/PUB-p{}/VerfAddress/00112233445566778899aabbccddeeff0011223344", cur_info.server_id(), cur_info.server_id())
-                    .to_string()
-            );
-            assert_eq!(cur_info.verf_public_key_url(),
-                &format!("http://127.0.0.1:808{}/PUB-p{}/VerfKey/00112233445566778899aabbccddeeff0011223344", cur_info.server_id(), cur_info.server_id())
-                    .to_string()
-            );
+
+            // Check that the URLs follow the expected structure
+            let verf_address_url = cur_info.verf_public_key_address();
+            assert!(verf_address_url.starts_with(&format!("{}/PUB-p", storage_base_url)));
+            assert!(verf_address_url.ends_with(&format!("/VerfAddress/{}", key_id)));
+
+            let verf_key_url = cur_info.verf_public_key_url();
+            assert!(verf_key_url.starts_with(&format!("{}/PUB-p", storage_base_url)));
+            assert!(verf_key_url.ends_with(&format!("/VerfKey/{}", key_id)));
         }
     }
 
     #[test]
     fn sunshine_crs_info() {
-        let storages_urls: HashMap<u32, String> = HashMap::from([
-            (1, "http://127.0.0.1:8081/PUB-p1/".to_string()),
-            (2, "http://127.0.0.1:8082/PUB-p2".to_string()),
-            (3, "http://127.0.0.1:8083/PUB-p3/".to_string()),
-            (4, "http://127.0.0.1:8084/PUB-p4".to_string()), // Ensure that suffix / is not needed
-        ]);
-        let base_sig = HexVector::from_hex("00112233445566778899aabbccddeeff0011223344").unwrap();
+        let crs_id_1 = "00112233445566778899aabbccddeeff0011223344";
+        let crs_id_2 = "9988776655443322110099887766554433221100aa";
+        let storage_base_url = "http://127.0.0.1:8081/";
+        let parties = build_parties(4);
+        let base_sig = HexVector::from_hex(crs_id_1).unwrap();
         let sigs = HexVectorList(vec![base_sig.clone(); 4]);
 
         let base_ext_sig =
@@ -1529,18 +1571,19 @@ mod tests {
         let crs_ids: HashMap<String, (u32, FheParameter, HexVectorList, HexVectorList)> =
             HashMap::from([
                 (
-                    "00112233445566778899aabbccddeeff0011223344".to_string(),
+                    crs_id_1.to_string(),
                     (128, FheParameter::Test, sigs.clone(), ext_sigs.clone()),
                 ),
                 (
-                    "9988776655443322110099887766554433221100aa".to_string(),
+                    crs_id_2.to_string(),
                     (256, FheParameter::Default, sigs.clone(), ext_sigs.clone()),
                 ),
             ]);
-        let crs_info = KmsBlockchainImpl::get_crs_info(&storages_urls, &crs_ids).unwrap();
+        let crs_info =
+            KmsBlockchainImpl::get_crs_info(storage_base_url, &parties, &crs_ids).unwrap();
         assert_eq!(crs_info.len(), crs_ids.len());
         for (max_bits, cur_info) in &crs_info {
-            assert_eq!(storages_urls.len(), cur_info.signatures().len());
+            assert_eq!(parties.len(), cur_info.signatures().len());
             if *max_bits == 128 {
                 assert_eq!(
                     <ParamChoice as Into<i32>>::into(ParamChoice::Test),
@@ -1554,18 +1597,20 @@ mod tests {
             }
             assert!(cur_info.signatures().contains(&base_sig.clone()));
         }
-        for cur_server_id in storages_urls.keys() {
+
+        // Check that the URLs follow the expected structure
+        for party in parties.values() {
             assert!(crs_info[&128].urls().contains(
                 &format!(
-                    "http://127.0.0.1:808{}/PUB-p{}/CRS/00112233445566778899aabbccddeeff0011223344",
-                    cur_server_id, cur_server_id
+                    "{}/{}/CRS/{}",
+                    storage_base_url, party.public_storage_label, crs_id_1
                 )
                 .to_string()
             ));
             assert!(crs_info[&256].urls().contains(
                 &format!(
-                    "http://127.0.0.1:808{}/PUB-p{}/CRS/9988776655443322110099887766554433221100aa",
-                    cur_server_id, cur_server_id
+                    "{}/{}/CRS/{}",
+                    storage_base_url, party.public_storage_label, crs_id_2
                 )
                 .to_string()
             ));

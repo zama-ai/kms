@@ -113,8 +113,8 @@ impl FheKeyUrlInfo {
 pub struct VerfKeyUrlInfo {
     // The ID of the verification key.
     key_id: HexVector,
-    // The integer ID of the server who owns the key.
-    server_id: u32,
+    // The signing key (identity) of the server who owns the key.
+    server_signing_key: String,
     // The URL where the verification key can be found.
     verf_public_key_url: String,
     // The URL where the Ethereum associated address can be found.
@@ -126,8 +126,8 @@ impl VerfKeyUrlInfo {
         &self.key_id
     }
 
-    pub fn server_id(&self) -> u32 {
-        self.server_id
+    pub fn server_signing_key(&self) -> &str {
+        &self.server_signing_key
     }
 
     pub fn verf_public_key_url(&self) -> &str {
@@ -229,7 +229,6 @@ pub struct KmsBlockchainConfig {
     pub address: String,
     pub key_id: String, //TODO: remove this field as part of https://github.com/zama-ai/fhevm/issues/548
     pub crs_id: String, //TODO: remove this field as part of https://github.com/zama-ai/fhevm/issues/548
-    pub public_storage: HashMap<u32, String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder)]

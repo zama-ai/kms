@@ -10,7 +10,7 @@ use contracts_common::{
 
 use cosmwasm_std::{Response, StdResult, Storage};
 use cw2::set_contract_version;
-
+use std::collections::HashMap;
 use sylvia::{
     contract, entry_points,
     types::{ExecCtx, InstantiateCtx, MigrateCtx, QueryCtx},
@@ -68,7 +68,7 @@ impl ConfigurationContract {
     /// * `degree_for_reconstruction` - the degree of the polynomial for reconstruction
     /// (used for checking majority and conformance)
     /// * `param_choice` - the FHE parameter choice (either default or test)
-    /// * `storage_base_urls` - the list of storage base URLs
+    /// * `storage_base_url` - the storage base URL
     /// * `allowlists` - an optional struct containing several lists of addresses that define
     /// who can trigger some operations (mostly about updating the configuration or allowlists).
     /// Providing None will default to use the sender's address for all operation types.
@@ -76,17 +76,17 @@ impl ConfigurationContract {
     pub fn instantiate(
         &self,
         ctx: InstantiateCtx,
-        parties: Vec<KmsCoreParty>,
+        parties: HashMap<String, KmsCoreParty>,
         response_count_for_majority_vote: usize,
         response_count_for_reconstruction: usize,
         degree_for_reconstruction: usize,
         param_choice: FheParameter,
-        storage_base_urls: Vec<String>,
+        storage_base_url: String,
         allowlists: Option<Allowlists>,
     ) -> StdResult<Response> {
         // Check that the configuration parameters are conformant
         ConfigStorage::check_config_is_conformant(
-            parties.clone(),
+            parties.len(),
             response_count_for_majority_vote,
             response_count_for_reconstruction,
             degree_for_reconstruction,
@@ -109,9 +109,9 @@ impl ConfigurationContract {
         self.storage
             .set_param_choice(ctx.deps.storage, param_choice)?;
 
-        // Set the storage base URLs
+        // Set the storage base URL
         self.storage
-            .set_storage_base_urls(ctx.deps.storage, storage_base_urls)?;
+            .set_storage_base_url(ctx.deps.storage, storage_base_url)?;
 
         // Configure allowlists for some operations
         let allowlists = match allowlists {
@@ -131,12 +131,6 @@ impl ConfigurationContract {
         set_contract_version(ctx.deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
 
         Ok(Response::default())
-    }
-
-    /// Get the list of core parties participating in the KMS
-    #[sv::msg(query)]
-    pub fn get_parties(&self, ctx: QueryCtx) -> StdResult<Vec<KmsCoreParty>> {
-        self.storage.get_parties(ctx.deps.storage)
     }
 
     /// Update the configuration value for the given operation
@@ -171,22 +165,25 @@ impl ConfigurationContract {
         Ok(response)
     }
 
-    /// Update the list of core parties
+    /// Get the list of core parties participating in the KMS
+    #[sv::msg(query)]
+    pub fn get_parties(&self, ctx: QueryCtx) -> StdResult<HashMap<String, KmsCoreParty>> {
+        self.storage.get_parties(ctx.deps.storage)
+    }
+
+    /// Get the number of parties
     ///
-    /// This call is restricted to specific addresses defined at instantiation (`Allowlists`).
-    #[sv::msg(exec)]
-    pub fn update_parties(
-        &self,
-        mut ctx: ExecCtx,
-        value: Vec<KmsCoreParty>,
-    ) -> StdResult<Response> {
-        self.update_config(
-            &mut ctx,
-            "update_parties",
-            value,
-            |storage| self.storage.get_parties(storage),
-            |storage, value| self.storage.update_parties(storage, value),
-        )
+    /// This can be used to know whether we are in centralized case or threshold case, without
+    /// loading the parties and deserializing the keys.
+    #[sv::msg(query)]
+    pub fn get_num_parties(&self, ctx: QueryCtx) -> StdResult<usize> {
+        Ok(self.storage.get_num_parties(ctx.deps.storage))
+    }
+
+    /// Get a party using its associated key
+    #[sv::msg(query)]
+    pub fn get_party(&self, ctx: QueryCtx, key: String) -> StdResult<KmsCoreParty> {
+        self.storage.get_party(ctx.deps.storage, key)
     }
 
     /// Get the number of responses needed for majority voting
@@ -296,27 +293,23 @@ impl ConfigurationContract {
         )
     }
 
-    /// Get the list of storage base URLs
+    /// Get the storage base URL
     #[sv::msg(query)]
-    pub fn get_storage_base_urls(&self, ctx: QueryCtx) -> StdResult<Vec<String>> {
-        self.storage.get_storage_base_urls(ctx.deps.storage)
+    pub fn get_storage_base_url(&self, ctx: QueryCtx) -> StdResult<String> {
+        self.storage.get_storage_base_url(ctx.deps.storage)
     }
 
-    /// Update the list of storage base URLs
+    /// Update the storage base URL
     ///
     /// This call is restricted to specific addresses defined at instantiation (`Allowlists`).
     #[sv::msg(exec)]
-    pub fn update_storage_base_urls(
-        &self,
-        mut ctx: ExecCtx,
-        value: Vec<String>,
-    ) -> StdResult<Response> {
+    pub fn update_storage_base_url(&self, mut ctx: ExecCtx, value: String) -> StdResult<Response> {
         self.update_config(
             &mut ctx,
-            "update_storage_base_urls",
+            "update_storage_base_url",
             value,
-            |storage| self.storage.get_storage_base_urls(storage),
-            |storage, value| self.storage.update_storage_base_urls(storage, value),
+            |storage| self.storage.get_storage_base_url(storage),
+            |storage, value| self.storage.update_storage_base_url(storage, value),
         )
     }
 
@@ -378,6 +371,7 @@ mod tests {
     use cosmwasm_std::Addr;
     use cw_multi_test::{App as MtApp, IntoAddr as _};
     use events::kms::{FheParameter, KmsCoreParty};
+    use std::collections::HashMap;
     use sylvia::multitest::App;
     const DUMMY_STORAGE_BASE_URL: &str = "https://dummy-storage-base-url.example.com";
 
@@ -388,6 +382,12 @@ mod tests {
         (app, owner)
     }
 
+    fn get_parties_map(num_parties: usize) -> HashMap<String, KmsCoreParty> {
+        (1..=num_parties)
+            .map(|i| (format!("party_{}", i), KmsCoreParty::default()))
+            .collect::<HashMap<String, KmsCoreParty>>()
+    }
+
     /// Test the contract instantiation
     #[test]
     fn test_instantiate() {
@@ -395,15 +395,17 @@ mod tests {
 
         let code_id = CodeId::store_code(&app);
 
+        let parties = get_parties_map(4);
+
         // Instantiation should fail because `degree_for_reconstruction` is too high
         assert!(code_id
             .instantiate(
-                vec![KmsCoreParty::default(); 4],
+                parties.clone(),
                 3,
                 3,
                 2,
                 FheParameter::Test,
-                vec![DUMMY_STORAGE_BASE_URL.to_string()],
+                DUMMY_STORAGE_BASE_URL.to_string(),
                 Some(AllowlistsCsc::default_all_to(owner.as_str())),
             )
             .call(&owner)
@@ -413,12 +415,12 @@ mod tests {
         // number of parties
         assert!(code_id
             .instantiate(
-                vec![KmsCoreParty::default(); 4],
+                parties.clone(),
                 5,
                 3,
                 1,
                 FheParameter::Test,
-                vec![DUMMY_STORAGE_BASE_URL.to_string()],
+                DUMMY_STORAGE_BASE_URL.to_string(),
                 Some(AllowlistsCsc::default_all_to(owner.as_str())),
             )
             .call(&owner)
@@ -428,12 +430,12 @@ mod tests {
         // number of parties
         assert!(code_id
             .instantiate(
-                vec![KmsCoreParty::default(); 4],
+                parties.clone(),
                 3,
                 5,
                 1,
                 FheParameter::Test,
-                vec![DUMMY_STORAGE_BASE_URL.to_string()],
+                DUMMY_STORAGE_BASE_URL.to_string(),
                 Some(AllowlistsCsc::default_all_to(owner.as_str())),
             )
             .call(&owner)
@@ -442,51 +444,46 @@ mod tests {
         // Instantiation should succeed
         code_id
             .instantiate(
-                vec![KmsCoreParty::default(); 4],
+                parties.clone(),
                 3,
                 3,
                 1,
                 FheParameter::Test,
-                vec![DUMMY_STORAGE_BASE_URL.to_string()],
+                DUMMY_STORAGE_BASE_URL.to_string(),
                 Some(AllowlistsCsc::default_all_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
     }
 
-    /// Test the storage base URLs
+    /// Test the storage base URL
     #[test]
-    fn test_storage_base_urls() {
+    fn test_storage_base_url() {
         let (app, owner) = setup_test_env();
 
         let code_id = CodeId::store_code(&app);
 
-        let old_base_urls = vec![
-            "https://old_storage1.example.com".to_string(),
-            "https://old_storage2.example.com".to_string(),
-        ];
+        let parties = get_parties_map(4);
+        let old_base_url = "https://old_storage_base_url.com".to_string();
 
         let contract = code_id
             .instantiate(
-                vec![KmsCoreParty::default(); 4],
+                parties.clone(),
                 3,
                 3,
                 1,
                 FheParameter::Test,
-                old_base_urls.clone(),
+                old_base_url.clone(),
                 Some(AllowlistsCsc::default_all_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
 
-        let new_base_urls = vec![
-            "https://new_storage1.example.com".to_string(),
-            "https://new_storage2.example.com".to_string(),
-        ];
+        let new_base_url = "https://new_storage_base_url.com".to_string();
 
         // Test update method
         let response = contract
-            .update_storage_base_urls(new_base_urls.clone())
+            .update_storage_base_url(new_base_url.clone())
             .call(&owner)
             .unwrap();
 
@@ -497,8 +494,8 @@ mod tests {
         assert_eq!(response.events.len(), 3);
 
         // Test getter method
-        let result = contract.get_storage_base_urls().unwrap();
-        assert_eq!(result, new_base_urls);
+        let result = contract.get_storage_base_url().unwrap();
+        assert_eq!(result, new_base_url);
     }
 
     /// Test updating parties
@@ -508,42 +505,36 @@ mod tests {
 
         let code_id = CodeId::store_code(&app);
 
-        let old_parties = vec![KmsCoreParty::default(); 4];
+        let num_parties = 4;
+        let parties = get_parties_map(num_parties);
 
         let contract = code_id
             .instantiate(
-                old_parties.clone(),
+                parties.clone(),
                 3,
                 3,
                 1,
                 FheParameter::Test,
-                vec![DUMMY_STORAGE_BASE_URL.to_string()],
+                DUMMY_STORAGE_BASE_URL.to_string(),
                 Some(AllowlistsCsc::default_all_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
 
-        let new_parties = vec![KmsCoreParty::default(); 4];
-
-        // Test update method
-        let response = contract
-            .update_parties(new_parties.clone())
-            .call(&owner)
-            .unwrap();
-
-        assert_eq!(response.events.len(), 3);
-
         // Test getter method
-        let result = contract.get_parties().unwrap();
-        assert_eq!(result, new_parties);
+        let retrieved_parties = contract.get_parties().unwrap();
+        assert_eq!(retrieved_parties, parties);
 
-        // Test that modifying the number of parties is not allowed
-        assert!(contract
-            .update_parties(vec![KmsCoreParty::default(); 5])
-            .call(&owner)
-            .unwrap_err()
-            .to_string()
-            .contains("Updating the core parties failed:"));
+        // We currently do not support updating the parties so no `update_parties` test is needed
+
+        // Test get number of parties
+        let retrieved_num_parties = contract.get_num_parties().unwrap();
+        assert_eq!(retrieved_num_parties, num_parties);
+
+        // Test get party (in these tests, party keys are strings generated as 'party_1', 'party_2', ...)
+        let party_key = "party_1".to_string();
+        let retrieved_party = contract.get_party(party_key.clone()).unwrap();
+        assert_eq!(retrieved_party, parties[&party_key]);
     }
 
     /// Test updating response count for majority vote
@@ -553,14 +544,16 @@ mod tests {
 
         let code_id = CodeId::store_code(&app);
 
+        let parties = get_parties_map(4);
+
         let contract = code_id
             .instantiate(
-                vec![KmsCoreParty::default(); 4],
+                parties.clone(),
                 3,
                 3,
                 1,
                 FheParameter::Test,
-                vec![DUMMY_STORAGE_BASE_URL.to_string()],
+                DUMMY_STORAGE_BASE_URL.to_string(),
                 Some(AllowlistsCsc::default_all_to(owner.as_str())),
             )
             .call(&owner)
@@ -588,14 +581,16 @@ mod tests {
 
         let code_id = CodeId::store_code(&app);
 
+        let parties = get_parties_map(4);
+
         let contract = code_id
             .instantiate(
-                vec![KmsCoreParty::default(); 4],
+                parties.clone(),
                 3,
                 3,
                 1,
                 FheParameter::Test,
-                vec![DUMMY_STORAGE_BASE_URL.to_string()],
+                DUMMY_STORAGE_BASE_URL.to_string(),
                 Some(AllowlistsCsc::default_all_to(owner.as_str())),
             )
             .call(&owner)
@@ -623,14 +618,16 @@ mod tests {
 
         let code_id = CodeId::store_code(&app);
 
+        let parties = get_parties_map(4);
+
         let contract = code_id
             .instantiate(
-                vec![KmsCoreParty::default(); 4],
+                parties.clone(),
                 3,
                 3,
                 1,
                 FheParameter::Test,
-                vec![DUMMY_STORAGE_BASE_URL.to_string()],
+                DUMMY_STORAGE_BASE_URL.to_string(),
                 Some(AllowlistsCsc::default_all_to(owner.as_str())),
             )
             .call(&owner)
@@ -658,14 +655,16 @@ mod tests {
 
         let code_id = CodeId::store_code(&app);
 
+        let parties = get_parties_map(4);
+
         let contract = code_id
             .instantiate(
-                vec![KmsCoreParty::default(); 4],
+                parties.clone(),
                 3,
                 3,
                 1,
                 FheParameter::Test,
-                vec![DUMMY_STORAGE_BASE_URL.to_string()],
+                DUMMY_STORAGE_BASE_URL.to_string(),
                 Some(AllowlistsCsc::default_all_to(owner.as_str())),
             )
             .call(&owner)

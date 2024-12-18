@@ -62,12 +62,6 @@ address = "http://localhost:9090"
 key_id = "beb70cb9fdbabf785242de498d6ec0ed282921d7"
 crs_id = "?"
 
-[kms.public_storage]
-1 = "https://kms-dev-v1.s3.eu-west-3.amazonaws.com/threshold/PUB-p1"
-2 = "https://kms-dev-v1.s3.eu-west-3.amazonaws.com/threshold/PUB-p2"
-3 = "https://kms-dev-v1.s3.eu-west-3.amazonaws.com/threshold/PUB-p3"
-4 = "https://kms-dev-v1.s3.eu-west-3.amazonaws.com/threshold/PUB-p4"
-
 [storage]
 url = "http://localhost:8088"
 
