@@ -9,7 +9,7 @@ license.workspace = true
 [dependencies]
 axum = { version = "0.7", features = ["tokio"] }
 anyhow.workspace = true
-config = "=0.14.1"
+config = "=0.15.0"
 http.workspace = true
 lazy_static.workspace = true
 opentelemetry = { workspace = true, features = ["metrics"] }

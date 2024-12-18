@@ -69,7 +69,7 @@ services:
     image: ghcr.io/zama-ai/kms-blockchain-gateway:latest
     environment:
       DOCKER_BUILDKIT: 1
-      RUST_LOG: debug
+      RUST_LOG: info
     build:
       context: .
       dockerfile: blockchain/gateway/operations/docker/ci.dockerfile

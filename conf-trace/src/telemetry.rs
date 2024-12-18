@@ -215,20 +215,26 @@ pub fn init_tracing(settings: &TelemetryConfig) -> Result<(), anyhow::Error> {
             )]))
             .build()
     } else {
-        // Set up console-only logging when no endpoint is configured
         println!("No tracing_endpoint is provided");
-        if std::env::var("RUST_LOG")
-            .map(|v| v == "trace")
-            .unwrap_or(false)
-        {
-            println!("Traces are being printed into stdout");
-            opentelemetry_sdk::trace::TracerProvider::builder()
-                .with_simple_exporter(opentelemetry_stdout::SpanExporter::default())
-                .build()
-        } else {
-            println!("Traces are disabled completely");
-            return Ok(());
-        }
+        opentelemetry_sdk::trace::TracerProvider::builder()
+            .with_sampler(
+                // When RUST_LOG=trace, sample everything
+                // Otherwise, sample nothing for OpenTelemetry
+                if std::env::var("RUST_LOG")
+                    .map(|v| v == "trace")
+                    .unwrap_or(false)
+                {
+                    opentelemetry_sdk::trace::Sampler::AlwaysOn
+                } else {
+                    opentelemetry_sdk::trace::Sampler::AlwaysOff
+                },
+            )
+            .with_simple_exporter(opentelemetry_stdout::SpanExporter::default())
+            .with_resource(Resource::new(vec![KeyValue::new(
+                opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
+                service_name,
+            )]))
+            .build()
     };
 
     // Set up the tracer
