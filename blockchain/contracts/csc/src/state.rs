@@ -104,16 +104,16 @@ impl ConfigStorage {
 
         // Centralized case (i.e. there is only one party)
         if num_parties == 1 {
-            if degree_for_reconstruction != 0
-                || response_count_for_majority_vote != 1
+            if response_count_for_majority_vote != 1
                 || response_count_for_reconstruction != 1
+                || degree_for_reconstruction != 0
             {
                 return Err(StdError::generic_err(format!(
                     "KMS configuration is not conformant for centralized case. Got \
                     parties (len): {}, \
-                    responses for majority vote: {}, \
-                    responses for reconstruction: {}, \
-                    degree for reconstruction: {}",
+                    responses for majority vote: {} (expected 1), \
+                    responses for reconstruction: {} (expected 1), \
+                    degree for reconstruction: {} (expected 0)",
                     parties.len(),
                     response_count_for_majority_vote,
                     response_count_for_reconstruction,
@@ -124,30 +124,49 @@ impl ConfigStorage {
         }
 
         // Threshold case
+
+        // Check that (num_parties - 1) is divisible by 3
+        if (num_parties - 1) % 3 != 0 {
+            return Err(StdError::generic_err(format!(
+                "Number of parties is incorrect. (num_parties - 1) must be divisible by 3. Got: {}",
+                num_parties
+            )));
+        }
+
         let majority = num_parties.div_ceil(2);
+        let reconstruction_min = degree_for_reconstruction + 2;
+
+        // We assume we are always looking for highest possible threshold
+        // Note that here we already check that (num_parties - 1) is divisible by 3
+        let expected_degree = (num_parties - 1) / 3;
 
         // Check all conditions for threshold case
-        // We assume we are always looking for highest possible threshold
-        if 3 * degree_for_reconstruction + 1 != num_parties
-            // We require at least degree + 2 responses for error detection
-            || response_count_for_reconstruction < degree_for_reconstruction + 2
-            // Cannot expect more responses than parties
-            || response_count_for_reconstruction > num_parties
-            // Majority vote must be at least majority
-            || response_count_for_majority_vote < majority
-            // Majority vote cannot be more than parties
+        // Majority vote requires at least a majority
+        if response_count_for_majority_vote < majority
+            // Majority vote cannot be more than the number of parties
             || response_count_for_majority_vote > num_parties
+            // Reconstruction requires at least degree + 2 responses
+            || response_count_for_reconstruction < reconstruction_min
+            // Reconstruction cannot be more than the number of parties
+            || response_count_for_reconstruction > num_parties
+            // Degree for reconstruction must be the expected degree
+            || degree_for_reconstruction != expected_degree
         {
             return Err(StdError::generic_err(format!(
                 "KMS configuration is not conformant for threshold case. Got \
                 parties (len): {}, \
-                responses for majority vote: {}, \
-                responses for reconstruction: {}, \
-                degree for reconstruction: {}",
+                responses for majority vote: {} (expected between {} and {}, both included), \
+                responses for reconstruction: {} (expected between {} and {}, both included), \
+                degree for reconstruction: {} (expected {})",
                 parties.len(),
                 response_count_for_majority_vote,
+                majority,
+                num_parties,
                 response_count_for_reconstruction,
-                degree_for_reconstruction
+                reconstruction_min,
+                num_parties,
+                degree_for_reconstruction,
+                expected_degree
             )));
         }
 
@@ -389,12 +408,26 @@ mod tests {
 
     #[test]
     fn test_check_config_is_conformant() {
-        let parties = vec![KmsCoreParty::default(); 4];
         let response_count_for_majority_vote = 3;
         let response_count_for_reconstruction = 4;
         let degree_for_reconstruction = 1;
 
-        // Test conformance fails with non-conformant parameters
+        // Test conformance fails with (n_parties - 1) not divisible by 3
+        let wrong_parties = vec![KmsCoreParty::default(); 5];
+
+        assert!(ConfigStorage::check_config_is_conformant(
+            wrong_parties.clone(),
+            response_count_for_majority_vote,
+            response_count_for_reconstruction,
+            degree_for_reconstruction + 1,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("Number of parties is incorrect"));
+
+        let parties = vec![KmsCoreParty::default(); 4];
+
+        // Test conformance fails with non-conformant parameters (for 4 parties)
         assert!(ConfigStorage::check_config_is_conformant(
             parties.clone(),
             response_count_for_majority_vote,
@@ -405,7 +438,7 @@ mod tests {
         .to_string()
         .contains("KMS configuration is not conformant"));
 
-        // Test conformance succeeds with conformant parameters
+        // Test conformance succeeds with conformant parameters (for 4 parties)
         ConfigStorage::check_config_is_conformant(
             parties.clone(),
             response_count_for_majority_vote,
