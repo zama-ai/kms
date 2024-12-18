@@ -13,9 +13,7 @@ use opentelemetry_http::HeaderExtractor;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_prometheus::exporter;
 use opentelemetry_sdk::{metrics::SdkMeterProvider, runtime::Tokio, Resource};
-use prometheus::{
-    process_collector::ProcessCollector, Encoder, Registry as PrometheusRegistry, TextEncoder,
-};
+use prometheus::{Encoder, Registry as PrometheusRegistry, TextEncoder};
 use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 use tonic::metadata::{MetadataKey, MetadataMap, MetadataValue};
 use tonic::service::Interceptor;
@@ -27,6 +25,9 @@ use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::fmt::{layer, Layer};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{util::SubscriberInitExt, EnvFilter};
+
+#[cfg(target_os = "linux")]
+use prometheus::process_collector::ProcessCollector;
 
 /// This is the HEADER key that will be used to store the request ID in the tracing context.
 pub const TRACER_REQUEST_ID: &str = "x-zama-kms-request-id";
@@ -89,6 +90,7 @@ pub fn init_metrics(settings: &TelemetryConfig) -> Result<SdkMeterProvider, anyh
     let registry = PrometheusRegistry::new();
 
     // Add process collector for system metrics
+    #[cfg(target_os = "linux")]
     registry.register(Box::new(ProcessCollector::for_self()))?;
 
     // Create a Prometheus exporter
