@@ -4,6 +4,7 @@ use actix_web::{web, HttpResponse, Responder};
 use byteorder::{BigEndian, ByteOrder};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::cmp::min;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::fs as tokio_fs;
@@ -20,7 +21,10 @@ pub async fn home() -> impl Responder {
 
 #[post("/store")]
 pub async fn put(req_body: String, storage: web::Data<Storage>) -> impl Responder {
-    tracing::debug!("📦 Received ciphertext: {}", req_body);
+    tracing::debug!(
+        "📦 Received ciphertext to store: {}...",
+        &req_body[..min(128, req_body.len())] // only show the first 128 characters of the body
+    );
     let data = hex::decode(req_body).expect("Hex decoding received ct");
     let combined_identifier = store(data, storage).await;
     HttpResponse::Ok().body(combined_identifier)

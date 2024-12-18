@@ -171,7 +171,7 @@ impl QueryClient {
             .await
             .map(|response| response.into_inner().data)?;
 
-        tracing::info!("Query executed successfully {:?}", result.len());
+        tracing::info!("Query executed successfully. Length: {:?}", result.len());
 
         let result_type = serde_json::from_slice(&result).map_err(|e| {
             Error::QueryError(format!("Error deserializing query response {:?}", e))

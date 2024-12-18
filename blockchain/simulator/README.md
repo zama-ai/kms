@@ -10,10 +10,8 @@ It provides a command-line interface (CLI) for interacting with a blockchain net
   - Either use [this link](https://github.com/settings/tokens) or go to your GitHub, click you profil picture, select "Settings". Then nagivate to "Developer Settings" > "Personal Access Tokens" > "Tokens (classic)" > "Generate new token (classic)". The token should have the "read:packages" permission. Afterwards, do docker login ghcr.io and use your github ID and the token to login. Note that this token is saved by docker locally in the clear, so it's best to only give it the permissions you need and set the expiration time to 7 days.
 - A running KMS-blockchain, KMS connector and KMS core. There are two options:
     - Either starts a centralized or threshold instance with the docker-compose files at the root of this repository,
-        - `docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-centralized.yml build` for the centralized case and `docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml build` for the threshold case,  at the root of the repository.
-          - By default the command uses the pre-built docker images from `ghrc.io`.
-          - If you want to build the docker images locally, set the environment variable `DOCKER_BUILD_TEST_SIMULATOR=1`. Building all images takes around 20 minutes.
-        - Followed by `docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-centralized.yml up`  for the centralized case and `docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml up` for the threshold case,  at the root of the repository.
+        - If you want to build the docker images locally, run the root of the repository `docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-centralized.yml build` for the centralized case and `docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml build` for the threshold case. Building all images takes around 20 minutes. If you want to use the latest images from ghcr.io you can skip this step.
+        - Then, run `docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-centralized.yml up` for the centralized case and `docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml up` for the threshold case, at the root of the repository to start the components.
         Side note: Ensure that the following is present in an `.env` file at the root of the repository:
         ```
         MINIO_ROOT_USER=admin
