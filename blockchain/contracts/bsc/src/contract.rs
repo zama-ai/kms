@@ -811,10 +811,10 @@ mod tests {
         };
 
         let parties = HashMap::from([
-            ("party_1".to_string(), KmsCoreParty::default()),
-            ("party_2".to_string(), KmsCoreParty::default()),
-            ("party_3".to_string(), KmsCoreParty::default()),
-            ("party_4".to_string(), KmsCoreParty::default()),
+            ("signing_key_handle_1".to_string(), KmsCoreParty::default()),
+            ("signing_key_handle_2".to_string(), KmsCoreParty::default()),
+            ("signing_key_handle_3".to_string(), KmsCoreParty::default()),
+            ("signing_key_handle_4".to_string(), KmsCoreParty::default()),
         ]);
         let storage_base_url = "https://new_storage_base_url.com".to_string();
         let allowlists_config = AllowlistsCsc::default_all_to(owner.as_str());

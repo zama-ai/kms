@@ -60,7 +60,8 @@ impl ConfigurationContract {
     /// It can be used to represent both the centralized and threshold case.
     ///
     /// # Arguments
-    /// * `parties` - the list of core parties and their associated information (id, public key, address, TLS public key)
+    /// * `parties` - the KMS core parties' metadata (public storage label), indexed by their unique
+    /// signing key handle
     /// * `response_count_for_majority_vote` - the number of responses needed for majority voting
     /// (used for sending responses to the client with all operations except reencryption)
     /// * `response_count_for_reconstruction` - the number of responses needed for reconstruction
@@ -384,7 +385,7 @@ mod tests {
 
     fn get_parties_map(num_parties: usize) -> HashMap<String, KmsCoreParty> {
         (1..=num_parties)
-            .map(|i| (format!("party_{}", i), KmsCoreParty::default()))
+            .map(|i| (format!("signing_key_handle_{}", i), KmsCoreParty::default()))
             .collect::<HashMap<String, KmsCoreParty>>()
     }
 
@@ -531,10 +532,13 @@ mod tests {
         let retrieved_num_parties = contract.get_num_parties().unwrap();
         assert_eq!(retrieved_num_parties, num_parties);
 
-        // Test get party (in these tests, party keys are strings generated as 'party_1', 'party_2', ...)
-        let party_key = "party_1".to_string();
-        let retrieved_party = contract.get_party(party_key.clone()).unwrap();
-        assert_eq!(retrieved_party, parties[&party_key]);
+        // Test get party (in these tests, party keys are strings generated as
+        // 'signing_key_handle_1', 'signing_key_handle_2', ...)
+        let party_signing_key_handle = "signing_key_handle_1".to_string();
+        let retrieved_party = contract
+            .get_party(party_signing_key_handle.clone())
+            .unwrap();
+        assert_eq!(retrieved_party, parties[&party_signing_key_handle]);
     }
 
     /// Test updating response count for majority vote

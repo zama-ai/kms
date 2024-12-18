@@ -208,25 +208,25 @@ impl Blockchain for MockchainImpl {
          "verf_public_key": [
              {
                  "key_id": "408d8cbaa51dece7f782fe04ba0b1c1d017b1088",
-                 "server_signing_key": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
+                 "server_signing_key_handle": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
                  "verf_public_key_address": "https://s3.amazonaws.com/bucket-name-1/PUB-p1/VerfAddress/408d8cbaa51dece7f782fe04ba0b1c1d017b1088",
                  "verf_public_key_url": "https://s3.amazonaws.com/bucket-name-1/PUB-p1/VerfKey/408d8cbaa51dece7f782fe04ba0b1c1d017b1088"
              },
              {
                  "key_id": "408d8cbaa51dece7f782fe04ba0b1c1d017b1088",
-                 "server_signing_key": "b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7",
+                 "server_signing_key_handle": "b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7",
                  "verf_public_key_address": "https://s3.amazonaws.com/bucket-name-4/PUB-p4/VerfAddress/408d8cbaa51dece7f782fe04ba0b1c1d017b1088",
                  "verf_public_key_url": "https://s3.amazonaws.com/bucket-name-4//PUB-p4/VerfKey/408d8cbaa51dece7f782fe04ba0b1c1d017b1088"
              },
              {
                  "key_id": "408d8cbaa51dece7f782fe04ba0b1c1d017b1088",
-                 "server_signing_key": "c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8",
+                 "server_signing_key_handle": "c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8",
                  "verf_public_key_address": "https://s3.amazonaws.com/bucket-name-2/PUB-p2/VerfAddress/408d8cbaa51dece7f782fe04ba0b1c1d017b1088",
                  "verf_public_key_url": "https://s3.amazonaws.com/bucket-name-2/PUB-p2/VerfKey/408d8cbaa51dece7f782fe04ba0b1c1d017b1088"
              },
              {
                  "key_id": "408d8cbaa51dece7f782fe04ba0b1c1d017b1088",
-                 "server_signing_key": "d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9",
+                 "server_signing_key_handle": "d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9",
                  "verf_public_key_address": "https://s3.amazonaws.com/bucket-name-3/PUB-p3/VerfAddress/408d8cbaa51dece7f782fe04ba0b1c1d017b1088",
                  "verf_public_key_url": "https://s3.amazonaws.com/bucket-name-3/PUB-p3/VerfKey/408d8cbaa51dece7f782fe04ba0b1c1d017b1088"
              }

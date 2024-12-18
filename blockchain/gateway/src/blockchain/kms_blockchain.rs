@@ -526,7 +526,7 @@ impl<'a> KmsBlockchainImpl {
         let verf_addr = PubDataType::VerfAddress.to_string();
 
         let mut res = Vec::new();
-        for (signing_key, party) in parties {
+        for (signing_key_handle, party) in parties {
             let party_url_label = party.public_storage_label.clone();
             let key_url = format!(
                 "{storage_base_url}{MAIN_SEPARATOR_STR}{party_url_label}{MAIN_SEPARATOR_STR}{verf_key}{MAIN_SEPARATOR_STR}{key_id}"
@@ -537,7 +537,7 @@ impl<'a> KmsBlockchainImpl {
             res.push(
                 VerfKeyUrlInfo::builder()
                     .key_id(HexVector::from_hex(key_id)?)
-                    .server_signing_key(signing_key.clone())
+                    .server_signing_key_handle(signing_key_handle.clone())
                     .verf_public_key_url(key_url)
                     .verf_public_key_address(addr_url)
                     .build(),
@@ -1476,9 +1476,9 @@ mod tests {
     fn build_parties(num_parties: usize) -> HashMap<String, KmsCoreParty> {
         let mut parties = HashMap::new();
         for i in 1..=num_parties {
-            let party_id = hex::encode(rand::random::<[u8; 20]>());
+            let signing_key_handle = hex::encode(rand::random::<[u8; 20]>());
             parties.insert(
-                party_id,
+                signing_key_handle,
                 KmsCoreParty::builder()
                     .public_storage_label(format!("PUB-p{}", i))
                     .build(),

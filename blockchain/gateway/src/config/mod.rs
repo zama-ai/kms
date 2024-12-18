@@ -114,7 +114,7 @@ pub struct VerfKeyUrlInfo {
     // The ID of the verification key.
     key_id: HexVector,
     // The signing key (identity) of the server who owns the key.
-    server_signing_key: String,
+    server_signing_key_handle: String,
     // The URL where the verification key can be found.
     verf_public_key_url: String,
     // The URL where the Ethereum associated address can be found.
@@ -126,8 +126,8 @@ impl VerfKeyUrlInfo {
         &self.key_id
     }
 
-    pub fn server_signing_key(&self) -> &str {
-        &self.server_signing_key
+    pub fn server_signing_key_handle(&self) -> &str {
+        &self.server_signing_key_handle
     }
 
     pub fn verf_public_key_url(&self) -> &str {

@@ -41,7 +41,7 @@ impl ParametersToConform {
 }
 
 /// Storage for the CSC
-/// - `parties` - the list of core parties and their associated information (id, public key, address, TLS public key)
+/// - `parties` - the KMS core parties' metadata (public storage label), indexed by their unique signing key handle
 /// - `response_count_for_majority_vote` - the number of responses needed for majority voting
 ///   (used for sending responses to the client with all operations except reencryption)
 /// - `response_count_for_reconstruction` - the number of responses needed for reconstruction
@@ -395,7 +395,7 @@ mod tests {
         // Set a hashmap of parties using the given number of parties
         // Note that in practice, a party's key will be a signing key handle
         let parties = (1..=num_parties)
-            .map(|i| (format!("party_{}", i), KmsCoreParty::default()))
+            .map(|i| (format!("signing_key_handle_{}", i), KmsCoreParty::default()))
             .collect::<HashMap<String, KmsCoreParty>>();
 
         storage.set_parties(dyn_store, parties)?;
@@ -592,10 +592,10 @@ mod tests {
         let dyn_store = &mut MockStorage::new();
         let storage = ConfigStorage::default();
 
-        let party_1_key = "party_1".to_string();
-        let party_1_value = KmsCoreParty::default();
+        let signing_key_handle = "signing_key_handle".to_string();
+        let party_value = KmsCoreParty::default();
 
-        let parties = HashMap::from([(party_1_key.clone(), party_1_value.clone())]);
+        let parties = HashMap::from([(signing_key_handle.clone(), party_value.clone())]);
 
         // Test set
         storage.set_parties(dyn_store, parties.clone()).unwrap();
@@ -607,8 +607,8 @@ mod tests {
 
         // Test get party
         assert_eq!(
-            storage.get_party(dyn_store, party_1_key).unwrap(),
-            party_1_value
+            storage.get_party(dyn_store, signing_key_handle).unwrap(),
+            party_value
         );
     }
 
