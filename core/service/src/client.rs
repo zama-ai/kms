@@ -2910,7 +2910,7 @@ pub(crate) mod tests {
     use crate::util::key_setup::max_threshold;
     use crate::util::key_setup::test_tools::{
         compute_cipher_from_stored_key, compute_compressed_cipher_from_stored_key,
-        load_pk_from_storage, purge, TypedPlaintext,
+        compute_proven_ct_from_stored_key, load_pk_from_storage, purge, TypedPlaintext,
     };
     use crate::util::rate_limiter::RateLimiterConfig;
     use crate::vault::storage::StorageReader;
@@ -3487,11 +3487,17 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
+    #[rstest::rstest]
+    #[case(vec![TypedPlaintext::Bool(true)])]
+    #[case(vec![TypedPlaintext::U4(12)])]
+    #[case(vec![TypedPlaintext::U8(u8::MAX)])]
+    #[case(vec![TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))])]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    async fn default_verify_proven_ct_centralized() {
+    async fn default_verify_proven_ct_centralized(#[case] msgs: Vec<TypedPlaintext>) {
         let proven_ct_id = RequestId::derive("default_verify_proven_ct_centralized").unwrap();
         verify_proven_ct_centralized(
+            msgs,
             &crate::consts::DEFAULT_PARAM,
             &proven_ct_id,
             &crate::consts::DEFAULT_CENTRAL_CRS_ID,
@@ -3500,11 +3506,16 @@ pub(crate) mod tests {
         .await;
     }
 
+    #[rstest::rstest]
+    #[case(vec![TypedPlaintext::Bool(true)])]
+    #[case(vec![TypedPlaintext::U4(12)])]
+    #[case(vec![TypedPlaintext::U8(u8::MAX)])]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    async fn test_verify_proven_ct_centralized() {
+    async fn test_verify_proven_ct_centralized(#[case] msgs: Vec<TypedPlaintext>) {
         let proven_ct_id = RequestId::derive("test_verify_proven_ct_centralized").unwrap();
         verify_proven_ct_centralized(
+            msgs,
             &TEST_PARAM,
             &proven_ct_id,
             &crate::consts::TEST_CENTRAL_CRS_ID,
@@ -3515,12 +3526,12 @@ pub(crate) mod tests {
 
     /// test centralized ZK probing via client interface
     async fn verify_proven_ct_centralized(
+        msgs: Vec<TypedPlaintext>,
         dkg_params: &DKGParams,
         proven_ct_id: &RequestId,
         crs_req_id: &RequestId,
         key_handle: &str,
     ) {
-        let message = 32;
         let (kms_server, mut kms_client, internal_client) =
             super::test_tools::centralized_handles(StorageVersion::Dev, dkg_params, None).await;
 
@@ -3531,10 +3542,6 @@ pub(crate) mod tests {
             request_id: key_handle.to_owned(),
         };
         let pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
-        let pp = internal_client
-            .get_crs(crs_req_id, &pub_storage)
-            .await
-            .unwrap();
 
         // try to make a proof and check that it works
         let dummy_contract_address =
@@ -3550,9 +3557,20 @@ pub(crate) mod tests {
             &dummy_domain().chain_id.unwrap(),
         );
 
-        let proven_ct = encrypt_and_prove(message, &pp, key_handle, &metadata).await;
+        let proven_ct = compute_proven_ct_from_stored_key(
+            None,
+            msgs,
+            key_handle,
+            &crs_req_id.request_id,
+            &metadata,
+        )
+        .await;
         // Sanity check that the proof is valid
         let pk = load_pk_from_storage(None, key_handle).await;
+        let pp = internal_client
+            .get_crs(crs_req_id, &pub_storage)
+            .await
+            .unwrap();
         assert!(tfhe::zk::ZkVerificationOutCome::Valid == proven_ct.verify(&pp, &pk, &metadata));
 
         let verify_proven_ct_req = internal_client
@@ -3630,21 +3648,6 @@ pub(crate) mod tests {
             .build_with_proof_packed(pp, &metadata, tfhe::zk::ZkComputeLoad::Proof)
             .unwrap();
         assert!(proven_ct.verify(pp, &pk, &metadata).is_valid());
-    }
-
-    async fn encrypt_and_prove(
-        msg: u8,
-        pp: &CompactPkePublicParams,
-        key_id: &str,
-        metadata: &[u8],
-    ) -> ProvenCompactCiphertextList {
-        let pk = load_pk_from_storage(None, key_id).await;
-
-        let mut compact_list_builder = ProvenCompactCiphertextList::builder(&pk);
-        compact_list_builder.push_with_num_bits(msg, 8).unwrap();
-        compact_list_builder
-            .build_with_proof_packed(pp, metadata, tfhe::zk::ZkComputeLoad::Proof)
-            .unwrap()
     }
 
     #[cfg(feature = "slow_tests")]
@@ -4051,33 +4054,39 @@ pub(crate) mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     #[rstest::rstest]
-    #[case(7, &TEST_THRESHOLD_KEY_ID_7P, &TEST_THRESHOLD_CRS_ID_7P)]
-    #[case(4, &TEST_THRESHOLD_KEY_ID_4P, &TEST_THRESHOLD_CRS_ID_4P)]
+    #[case(vec![TypedPlaintext::U8(u8::MAX)], 7, &TEST_THRESHOLD_KEY_ID_7P, &TEST_THRESHOLD_CRS_ID_7P)]
+    #[case(vec![TypedPlaintext::U8(u8::MAX)], 4, &TEST_THRESHOLD_KEY_ID_4P, &TEST_THRESHOLD_CRS_ID_4P)]
+    #[case(vec![TypedPlaintext::Bool(true)], 4, &TEST_THRESHOLD_KEY_ID_4P, &TEST_THRESHOLD_CRS_ID_4P)]
     #[serial]
     #[tracing_test::traced_test]
     async fn test_verify_proven_ct_threshold(
+        #[case] msgs: Vec<TypedPlaintext>,
         #[case] amount_parties: usize,
         #[case] key_id: &RequestId,
         #[case] crs_id: &RequestId,
     ) {
-        verify_proven_ct_threshold(1, crs_id, key_id, TEST_PARAM, amount_parties, None).await
+        verify_proven_ct_threshold(msgs, 1, crs_id, key_id, TEST_PARAM, amount_parties, None).await
     }
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(1, 7, &DEFAULT_THRESHOLD_KEY_ID_7P, &DEFAULT_THRESHOLD_CRS_ID_7P)]
-    #[case(1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
-    #[case(4, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
+    #[case(vec![TypedPlaintext::U8(u8::MAX)], 1, 7, &DEFAULT_THRESHOLD_KEY_ID_7P, &DEFAULT_THRESHOLD_CRS_ID_7P)]
+    #[case(vec![TypedPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
+    #[case(vec![TypedPlaintext::Bool(true)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
+    #[case(vec![TypedPlaintext::U8(u8::MAX)], 4, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
+    #[case(vec![TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     #[tracing_test::traced_test]
     async fn default_verify_proven_ct_threshold(
+        #[case] msgs: Vec<TypedPlaintext>,
         #[case] parallelism: usize,
         #[case] amount_parties: usize,
         #[case] key_id: &RequestId,
         #[case] crs_id: &RequestId,
     ) {
         verify_proven_ct_threshold(
+            msgs,
             parallelism,
             crs_id,
             key_id,
@@ -4090,12 +4099,15 @@ pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(1, 7,Some(vec![3,6]), &DEFAULT_THRESHOLD_KEY_ID_7P, &DEFAULT_THRESHOLD_CRS_ID_7P)]
-    #[case(1, 4, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
-    #[case(4, 4,Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
+    #[case(vec![TypedPlaintext::U8(u8::MAX)], 1, 7,Some(vec![3,6]), &DEFAULT_THRESHOLD_KEY_ID_7P, &DEFAULT_THRESHOLD_CRS_ID_7P)]
+    #[case(vec![TypedPlaintext::U8(u8::MAX)],1, 4, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
+    #[case(vec![TypedPlaintext::Bool(true)],1, 4, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
+    #[case(vec![TypedPlaintext::U8(u8::MAX)],4, 4,Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
+    #[case(vec![TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))],1, 4, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn default_verify_proven_ct_threshold_with_crash(
+        #[case] msgs: Vec<TypedPlaintext>,
         #[case] parallelism: usize,
         #[case] amount_parties: usize,
         #[case] party_ids_to_crash: Option<Vec<usize>>,
@@ -4103,6 +4115,7 @@ pub(crate) mod tests {
         #[case] crs_id: &RequestId,
     ) {
         verify_proven_ct_threshold(
+            msgs,
             parallelism,
             crs_id,
             key_id,
@@ -4114,6 +4127,7 @@ pub(crate) mod tests {
     }
 
     async fn verify_proven_ct_threshold(
+        msgs: Vec<TypedPlaintext>,
         parallelism: usize,
         crs_handle: &RequestId,
         key_handle: &RequestId,
@@ -4137,7 +4151,6 @@ pub(crate) mod tests {
         // Sanity check the pp
         verify_pp(&dkg_params, &pp).await;
 
-        let message = 42;
         let dummy_contract_address =
             alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
 
@@ -4151,7 +4164,14 @@ pub(crate) mod tests {
             &dummy_domain().chain_id.unwrap(),
         );
 
-        let proven_ct = encrypt_and_prove(message, &pp, &key_handle.to_string(), &metadata).await;
+        let proven_ct = compute_proven_ct_from_stored_key(
+            None,
+            msgs,
+            &key_handle.to_string(),
+            &crs_handle.request_id,
+            &metadata,
+        )
+        .await;
         // Sanity check that the proof is valid
         let pk = load_pk_from_storage(None, &key_handle.to_string()).await;
         assert!(tfhe::zk::ZkVerificationOutCome::Valid == proven_ct.verify(&pp, &pk, &metadata));
@@ -4261,7 +4281,7 @@ pub(crate) mod tests {
                 TypedPlaintext::U8(42),
                 TypedPlaintext::U32(9876),
                 TypedPlaintext::U16(420),
-                TypedPlaintext::U8(1),
+                TypedPlaintext::Bool(true),
             ],
             3, // 3 parallel requests
             true,
@@ -4279,7 +4299,7 @@ pub(crate) mod tests {
                 TypedPlaintext::U8(42),
                 TypedPlaintext::U32(9876),
                 TypedPlaintext::U16(420),
-                TypedPlaintext::U8(1),
+                TypedPlaintext::Bool(true),
             ],
             3, // 3 parallel requests
             false,

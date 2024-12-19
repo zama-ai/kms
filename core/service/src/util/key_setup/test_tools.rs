@@ -456,43 +456,22 @@ pub async fn compute_proven_ct_from_stored_key(
     let mut compact_list_builder = ProvenCompactCiphertextList::builder(&pk);
     for msg in msgs {
         let msg_as_ptx: Plaintext = msg.into();
-        match msg.into() {
-            FheType::Ebool => compact_list_builder
-                .push_with_num_bits(msg_as_ptx.as_u8(), msg.bits())
-                .unwrap(),
+        match msg_as_ptx.fhe_type {
+            FheType::Ebool => compact_list_builder.push(msg_as_ptx.as_bool()),
+            // there's no specific type for u4, so we need to use `push_with_num_bits`
             FheType::Euint4 => compact_list_builder
                 .push_with_num_bits(msg_as_ptx.as_u4(), msg.bits())
                 .unwrap(),
-            FheType::Euint8 => compact_list_builder
-                .push_with_num_bits(msg_as_ptx.as_u8(), msg.bits())
-                .unwrap(),
-            FheType::Euint16 => compact_list_builder
-                .push_with_num_bits(msg_as_ptx.as_u16(), msg.bits())
-                .unwrap(),
-            FheType::Euint32 => compact_list_builder
-                .push_with_num_bits(msg_as_ptx.as_u32(), msg.bits())
-                .unwrap(),
-            FheType::Euint64 => compact_list_builder
-                .push_with_num_bits(msg_as_ptx.as_u64(), msg.bits())
-                .unwrap(),
-            FheType::Euint128 => compact_list_builder
-                .push_with_num_bits(msg_as_ptx.as_u128(), msg.bits())
-                .unwrap(),
-            FheType::Euint160 => compact_list_builder
-                .push_with_num_bits(msg_as_ptx.as_u160(), msg.bits())
-                .unwrap(),
-            FheType::Euint256 => compact_list_builder
-                .push_with_num_bits(msg_as_ptx.as_u256(), msg.bits())
-                .unwrap(),
-            FheType::Euint512 => compact_list_builder
-                .push_with_num_bits(msg_as_ptx.as_u512(), msg.bits())
-                .unwrap(),
-            FheType::Euint1024 => compact_list_builder
-                .push_with_num_bits(msg_as_ptx.as_u1024(), msg.bits())
-                .unwrap(),
-            FheType::Euint2048 => compact_list_builder
-                .push_with_num_bits(msg_as_ptx.as_u2048(), msg.bits())
-                .unwrap(),
+            FheType::Euint8 => compact_list_builder.push(msg_as_ptx.as_u8()),
+            FheType::Euint16 => compact_list_builder.push(msg_as_ptx.as_u16()),
+            FheType::Euint32 => compact_list_builder.push(msg_as_ptx.as_u32()),
+            FheType::Euint64 => compact_list_builder.push(msg_as_ptx.as_u64()),
+            FheType::Euint128 => compact_list_builder.push(msg_as_ptx.as_u128()),
+            FheType::Euint160 => compact_list_builder.push(msg_as_ptx.as_u160()),
+            FheType::Euint256 => compact_list_builder.push(msg_as_ptx.as_u256()),
+            FheType::Euint512 => compact_list_builder.push(msg_as_ptx.as_u512()),
+            FheType::Euint1024 => compact_list_builder.push(msg_as_ptx.as_u1024()),
+            FheType::Euint2048 => compact_list_builder.push(msg_as_ptx.as_u2048()),
         };
     }
     compact_list_builder
