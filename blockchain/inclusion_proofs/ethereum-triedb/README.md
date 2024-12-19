@@ -6,7 +6,7 @@ be used for verifying Ethereum style merkle patricia proofs. as specified in thi
 `#[allow(clippy::needless_doctest_main)]
 
 ```rust
-use ethereum_triedb::{
+use ethereum_triedb_local::{
     keccak::{keccak_256, KeccakHasher},
     EIP1186Layout, StorageProof,
 };

@@ -307,11 +307,12 @@ pub(crate) mod tests {
             .load(dyn_store)
             .expect_err("Loading the broken storage should fail due to different namespace");
 
-        // Do the same test for `may_load`
-        broken_versioned_storage
+        // Do the same test for `may_load`, which should return None
+        let none_item = broken_versioned_storage
             .my_versioned_item
-            .may_load(dyn_store)
-            .expect_err("Loading the broken storage should fail due to different namespace");
+            .may_load(dyn_store);
+        assert!(none_item.is_ok());
+        assert!(none_item.unwrap().is_none());
     }
 
     #[test]
@@ -471,11 +472,12 @@ pub(crate) mod tests {
             .load(dyn_store, test_key.clone())
             .expect_err("Loading the broken storage should fail due to different namespace");
 
-        // Do the same test for `may_load`
-        broken_versioned_storage
+        // Do the same test for `may_load`, which should return None
+        let none_item = broken_versioned_storage
             .my_versioned_map
-            .may_load(dyn_store, test_key)
-            .expect_err("Loading the broken storage should fail due to different namespace");
+            .may_load(dyn_store, test_key);
+        assert!(none_item.is_ok());
+        assert!(none_item.unwrap().is_none());
     }
 
     #[test]

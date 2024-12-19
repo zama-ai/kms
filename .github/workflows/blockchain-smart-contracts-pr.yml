@@ -5,6 +5,7 @@ on:
     paths:
       - 'blockchain/contracts/**'
       - 'blockchain/events/**'
+      - 'blockchain/inclusion_proofs/**'
       - '.github/workflows/blockchain-smart-contracts-pr.yml'
 
 concurrency:
@@ -12,6 +13,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  build-common:
+    uses: ./.github/workflows/common-build.yml
+    with:
+      working-directory: './blockchain/contracts/common'
+      args-tests-fhe: ''
+      package-name: 'contracts-common'
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+
   build-csc:
     uses: ./.github/workflows/common-build.yml
     with:
@@ -72,6 +85,29 @@ jobs:
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
+  build-inclusion-proofs-ethereum:
+    uses: ./.github/workflows/common-build.yml
+    with:
+      working-directory: './blockchain/inclusion_proofs/ethereum'
+      args-tests-fhe: ''
+      package-name: 'ethereum-inclusion-proofs'
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+
+  build-inclusion-proofs-ethereum-triedb:
+    uses: ./.github/workflows/common-build.yml
+    with:
+      working-directory: './blockchain/inclusion_proofs/ethereum-triedb'
+      args-tests-fhe: ''
+      package-name: 'ethereum-triedb-local'
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
   optimize-csc:
     uses: ./.github/workflows/common-build-wasm.yml
@@ -145,11 +181,14 @@ jobs:
       - name: Success
         run: echo Pipeline Done
     needs:
+      - build-common
       - build-csc
       - build-asc
       - build-bsc
       - build-tendermint-ipsc
       - build-ethereum-ipsc
+      - build-inclusion-proofs-ethereum
+      - build-inclusion-proofs-ethereum-triedb
       - optimize-csc
       - optimize-asc
       - optimize-bsc
