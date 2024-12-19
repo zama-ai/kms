@@ -4,6 +4,14 @@ use tokio::net::{TcpListener, UdpSocket};
 
 #[cfg(any(test, feature = "testing"))]
 #[cfg(feature = "non-wasm")]
+fn seq_id() -> u16 {
+    use std::sync::atomic::{AtomicU16, Ordering};
+    static ID: AtomicU16 = AtomicU16::new(0);
+    ID.fetch_add(1, Ordering::SeqCst)
+}
+
+#[cfg(any(test, feature = "testing"))]
+#[cfg(feature = "non-wasm")]
 /// Find [`n`] free ports in the range [from, to). Returns a vector of random ports.
 pub(crate) async fn random_free_ports(
     from: u16,
@@ -12,7 +20,6 @@ pub(crate) async fn random_free_ports(
     n: usize,
 ) -> anyhow::Result<Vec<u16>> {
     use itertools::Itertools;
-    use rand::{thread_rng, Rng};
     use std::collections::HashSet;
 
     if from >= to {
@@ -23,13 +30,12 @@ pub(crate) async fn random_free_ports(
         return Err(anyhow::anyhow!("port range is too low"));
     }
 
-    let mut rng = thread_rng();
     let tries = 3 * (to - from);
     let mut ports = HashSet::new();
     for _ in 0..n {
         let mut pushed = false;
         for _ in 0..tries {
-            let port = rng.gen_range(from..to);
+            let port = seq_id() % (to - from) + from;
             if !ports.contains(&port) && is_free(port, host).await {
                 ports.insert(port);
                 pushed = true;
