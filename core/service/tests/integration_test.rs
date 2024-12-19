@@ -1,6 +1,6 @@
 use assert_cmd::{assert::OutputAssertExt, Command};
 use kms_lib::consts::KEY_PATH_PREFIX;
-use kms_lib::storage::{file::FileStorage, StorageType};
+use kms_lib::vault::storage::{file::FileStorage, StorageType};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::{fs, thread, time::Duration};
@@ -342,7 +342,7 @@ mod kms_gen_keys_binary_test {
     #[serial_test::serial]
     #[integration_test]
     fn central_s3() {
-        use kms_lib::storage::s3::{AWS_REGION, AWS_S3_ENDPOINT, BUCKET_NAME};
+        use kms_lib::vault::storage::s3::{AWS_REGION, AWS_S3_ENDPOINT, BUCKET_NAME};
 
         let s3_url = format!("s3://{}/central_s3/", BUCKET_NAME);
         let file_url = "file://temp/keys/";

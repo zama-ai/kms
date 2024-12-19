@@ -2,10 +2,12 @@ use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::kms::{FheType, RequestId};
 use crate::rpc::rpc_types::Plaintext;
 use crate::rpc::rpc_types::{PubDataType, WrappedPublicKeyOwned};
-use crate::storage::file::FileStorage;
-use crate::storage::{delete_all_at_request_id, read_versioned_at_request_id, StorageReader};
-use crate::storage::{read_pk_at_request_id, StorageType};
 use crate::util::key_setup::FhePublicKey;
+use crate::vault::storage::file::FileStorage;
+use crate::vault::storage::{
+    delete_all_at_request_id, read_versioned_at_request_id, StorageReader,
+};
+use crate::vault::storage::{read_pk_at_request_id, StorageType};
 use distributed_decryption::expanded_encrypt;
 use std::path::Path;
 use tfhe::safe_serialization::safe_serialize;
@@ -588,11 +590,11 @@ pub(crate) mod setup {
         util::key_setup::ensure_central_server_signing_keys_exist,
     };
     use crate::{
-        storage::{file::FileStorage, StorageType},
         util::key_setup::{
             ensure_threshold_crs_exists, ensure_threshold_keys_exist,
             ensure_threshold_server_signing_keys_exist,
         },
+        vault::storage::{file::FileStorage, StorageType},
     };
     use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 

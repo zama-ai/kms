@@ -19,14 +19,16 @@ use crate::rpc::rpc_types::SignedPubDataHandleInternal;
 use crate::rpc::rpc_types::{
     BaseKms, Kms, Plaintext, PrivDataType, PubDataType, SigncryptionPayload,
 };
-use crate::storage::crypto_material::CentralizedCryptoMaterialStorage;
-#[cfg(feature = "non-wasm")]
-use crate::storage::Storage;
-use crate::storage::{read_all_data_versioned, read_pk_at_request_id};
 #[cfg(feature = "non-wasm")]
 use crate::util::key_setup::{FhePrivateKey, FhePublicKey};
 use crate::util::meta_store::MetaStore;
 use crate::util::rate_limiter::{RateLimiter, RateLimiterConfig};
+#[cfg(feature = "non-wasm")]
+use crate::vault::storage::Storage;
+use crate::vault::storage::{
+    crypto_material::CentralizedCryptoMaterialStorage, read_all_data_versioned,
+    read_pk_at_request_id,
+};
 use crate::{anyhow_error_and_log, get_exactly_one};
 use crate::{consts::ID_LENGTH, cryptography::signcryption::check_normalized};
 use crate::{
@@ -477,9 +479,10 @@ pub type ReencCallValues = (FheType, Vec<u8>, Vec<u8>);
 pub struct SoftwareKms<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
+    BackS: Storage + Send + Sync + 'static,
 > {
     pub(crate) base_kms: BaseKmsStruct,
-    pub(crate) crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
+    pub(crate) crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS, BackS>,
     // Map storing ongoing key generation requests.
     pub(crate) key_meta_map: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
     // Map storing ongoing decryption requests.
@@ -499,6 +502,7 @@ pub struct SoftwareKms<
 pub fn central_decrypt<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
+    BackS: Storage + Sync + Send + 'static,
 >(
     keys: &KmsFheKeyHandles,
     cts: &Vec<TypedCiphertext>,
@@ -509,7 +513,7 @@ pub fn central_decrypt<
     // run the decryption of each ct in the batch in parallel
     cts.par_iter()
         .map(|ct| {
-            SoftwareKms::<PubS, PrivS>::decrypt(
+            SoftwareKms::<PubS, PrivS, BackS>::decrypt(
                 keys,
                 &ct.ciphertext,
                 FheType::try_from(ct.fhe_type)?,
@@ -524,6 +528,7 @@ pub fn central_decrypt<
 pub async fn async_reencrypt<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
+    BackS: Storage + Sync + Send + 'static,
 >(
     keys: &KmsFheKeyHandles,
     sig_key: &PrivateSigKey,
@@ -534,7 +539,7 @@ pub async fn async_reencrypt<
     client_enc_key: &PublicEncKey,
     client_address: &alloy_primitives::Address,
 ) -> anyhow::Result<Vec<u8>> {
-    SoftwareKms::<PubS, PrivS>::reencrypt(
+    SoftwareKms::<PubS, PrivS, BackS>::reencrypt(
         keys,
         sig_key,
         rng,
@@ -548,8 +553,11 @@ pub async fn async_reencrypt<
 
 // impl fmt::Debug for SoftwareKms, we don't want to include the decryption key in the debug output
 #[cfg(feature = "non-wasm")]
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> fmt::Debug
-    for SoftwareKms<PubS, PrivS>
+impl<
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
+        BackS: Storage + Sync + Send + 'static,
+    > fmt::Debug for SoftwareKms<PubS, PrivS, BackS>
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SoftwareKms")
@@ -559,8 +567,11 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 }
 
 #[cfg(feature = "non-wasm")]
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> BaseKms
-    for SoftwareKms<PubS, PrivS>
+impl<
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
+        BackS: Storage + Sync + Send + 'static,
+    > BaseKms for SoftwareKms<PubS, PrivS, BackS>
 {
     fn verify_sig<T: Serialize + AsRef<[u8]>>(
         payload: &T,
@@ -644,8 +655,11 @@ fn unsafe_decrypt(
 }
 
 #[cfg(feature = "non-wasm")]
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> Kms
-    for SoftwareKms<PubS, PrivS>
+impl<
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
+        BackS: Storage + Sync + Send + 'static,
+    > Kms for SoftwareKms<PubS, PrivS, BackS>
 {
     fn decrypt(
         keys: &KmsFheKeyHandles,
@@ -689,12 +703,16 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 }
 
 #[cfg(feature = "non-wasm")]
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
-    SoftwareKms<PubS, PrivS>
+impl<
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
+        BackS: Storage + Sync + Send + 'static,
+    > SoftwareKms<PubS, PrivS, BackS>
 {
     pub async fn new(
         public_storage: PubS,
         private_storage: PrivS,
+        backup_storage: Option<BackS>,
         rate_limiter_conf: Option<RateLimiterConfig>,
     ) -> anyhow::Result<Self> {
         let sks: HashMap<RequestId, PrivateSigKey> =
@@ -740,6 +758,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         let crypto_storage = CentralizedCryptoMaterialStorage::new(
             public_storage,
             private_storage,
+            backup_storage,
             pk_map,
             crs,
             key_info,
@@ -821,9 +840,9 @@ pub(crate) mod tests {
     };
     use crate::kms::{FheType, RequestId};
     use crate::rpc::rpc_types::{Kms, CURRENT_FORMAT_VERSION};
-    use crate::storage::{file::FileStorage, ram::RamStorage};
     use crate::util::file_handling::read_element;
     use crate::util::key_setup::test_tools::compute_cipher;
+    use crate::vault::storage::{file::FileStorage, ram::RamStorage};
     use crate::{cryptography::central_kms::generate_fhe_keys, util::file_handling::write_element};
     use aes_prng::AesRng;
     use alloy_signer::SignerSync;
@@ -1023,6 +1042,7 @@ pub(crate) mod tests {
                 RamStorage::from_existing_keys_for_private_storage(&keys.software_kms_keys)
                     .await
                     .unwrap(),
+                None as Option<RamStorage>,
                 None,
             )
             .await
@@ -1037,8 +1057,11 @@ pub(crate) mod tests {
             .read_cloned_centralized_fhe_keys_from_cache(key_id)
             .await
             .unwrap();
-        let raw_plaintext =
-            SoftwareKms::<FileStorage, FileStorage>::decrypt(&key_handle, &ct, fhe_type);
+        let raw_plaintext = SoftwareKms::<FileStorage, FileStorage, FileStorage>::decrypt(
+            &key_handle,
+            &ct,
+            fhe_type,
+        );
         // if bad FHE key is used, then it *might* panic
         let plaintext = if sim_type == SimulationType::BadFheKey {
             match raw_plaintext {
@@ -1120,8 +1143,9 @@ pub(crate) mod tests {
     async fn set_wrong_client_key<
         PubS: Storage + Sync + Send + 'static,
         PrivS: Storage + Sync + Send + 'static,
+        BackS: Storage + Sync + Send + 'static,
     >(
-        inner: &SoftwareKms<PubS, PrivS>,
+        inner: &SoftwareKms<PubS, PrivS, BackS>,
         key_handle: &RequestId,
         params: DKGParams,
     ) {
@@ -1140,8 +1164,9 @@ pub(crate) mod tests {
     fn set_wrong_sig_key<
         PubS: Storage + Sync + Send + 'static,
         PrivS: Storage + Sync + Send + 'static,
+        BackS: Storage + Sync + Send + 'static,
     >(
-        inner: &mut SoftwareKms<PubS, PrivS>,
+        inner: &mut SoftwareKms<PubS, PrivS, BackS>,
         rng: &mut AesRng,
     ) {
         // move to the next state so ensure we're generating a different ecdsa key
@@ -1172,6 +1197,7 @@ pub(crate) mod tests {
                 RamStorage::from_existing_keys_for_private_storage(&keys.software_kms_keys)
                     .await
                     .unwrap(),
+                None as Option<RamStorage>,
                 None,
             )
             .await
@@ -1195,7 +1221,7 @@ pub(crate) mod tests {
             keys
         };
         let mut rng = kms.base_kms.new_rng().await;
-        let raw_cipher = SoftwareKms::<FileStorage, FileStorage>::reencrypt(
+        let raw_cipher = SoftwareKms::<FileStorage, FileStorage, FileStorage>::reencrypt(
             &kms.crypto_storage
                 .read_cloned_centralized_fhe_keys_from_cache(key_handle)
                 .await
@@ -1276,6 +1302,7 @@ pub(crate) mod tests {
                 RamStorage::from_existing_keys_for_private_storage(&keys.software_kms_keys)
                     .await
                     .unwrap(),
+                None as Option<RamStorage>,
                 None,
             )
             .await

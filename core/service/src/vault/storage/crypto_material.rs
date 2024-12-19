@@ -15,9 +15,9 @@ use crate::{
         PrivDataType, PubDataType, SignedPubDataHandleInternal, WrappedPublicKey,
         WrappedPublicKeyOwned,
     },
-    storage::{delete_at_request_id, delete_pk_at_request_id},
     threshold::threshold_kms::ThresholdFheKeys,
     util::meta_store::MetaStore,
+    vault::storage::{delete_at_request_id, delete_pk_at_request_id},
 };
 
 use super::{
@@ -88,18 +88,23 @@ impl CryptoMaterialReader for CompactPkePublicParams {
 pub(crate) struct ThresholdCryptoMaterialStorage<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
+    BackS: Storage + Send + Sync + 'static,
 > {
-    inner: CryptoMaterialStorage<PubS, PrivS>,
+    inner: CryptoMaterialStorage<PubS, PrivS, BackS>,
     fhe_keys: Arc<RwLock<HashMap<RequestId, ThresholdFheKeys>>>,
 }
 
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
-    ThresholdCryptoMaterialStorage<PubS, PrivS>
+impl<
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: Storage + Send + Sync + 'static,
+        BackS: Storage + Send + Sync + 'static,
+    > ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>
 {
     /// Create a new cached storage device for threshold KMS.
     pub(crate) fn new(
         public_storage: PubS,
         private_storage: PrivS,
+        backup_storage: Option<BackS>,
         pk_cache: HashMap<RequestId, WrappedPublicKeyOwned>,
         crs_cache: HashMap<RequestId, CompactPkePublicParams>,
         fhe_keys: HashMap<RequestId, ThresholdFheKeys>,
@@ -108,6 +113,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             inner: CryptoMaterialStorage {
                 public_storage: Arc::new(Mutex::new(public_storage)),
                 private_storage: Arc::new(Mutex::new(private_storage)),
+                backup_storage: backup_storage.map(|x| Arc::new(Mutex::new(x))),
                 pk_cache: Arc::new(RwLock::new(pk_cache)),
                 crs_cache: Arc::new(RwLock::new(crs_cache)),
             },
@@ -158,15 +164,34 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 
         let f1 = async {
             let mut priv_storage = self.inner.private_storage.lock().await;
-
-            store_versioned_at_request_id(
+            // can't map() because async closures aren't stable in Rust
+            let mut back_storage = match self.inner.backup_storage {
+                Some(ref x) => Some(x.lock().await),
+                None => None,
+            };
+            let store_is_ok = store_versioned_at_request_id(
                 &mut (*priv_storage),
                 req_id,
                 &threshold_fhe_keys,
                 &PrivDataType::FheKeyInfo.to_string(),
             )
             .await
-            .is_ok()
+            .is_ok();
+            let backup_is_ok = match back_storage {
+                Some(ref mut x) => Some(
+                    store_versioned_at_request_id(
+                        &mut (**x),
+                        req_id,
+                        &threshold_fhe_keys,
+                        &PrivDataType::FheKeyInfo.to_string(),
+                    )
+                    .await
+                    .is_ok(),
+                ),
+                None => None,
+            }
+            .unwrap_or(true);
+            store_is_ok && backup_is_ok
         };
         let f2 = async {
             let mut pub_storage = self.inner.public_storage.lock().await;
@@ -268,12 +293,28 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             };
             let f4 = async {
                 let mut priv_storage = self.inner.private_storage.lock().await;
+                // can't map() because async closures aren't stable in Rust
+                let back_storage = match self.inner.backup_storage {
+                    Some(ref x) => Some(x.lock().await),
+                    None => None,
+                };
                 let _ = delete_at_request_id(
                     &mut (*priv_storage),
                     req_id,
                     &PrivDataType::FheKeyInfo.to_string(),
                 )
                 .await;
+                let _ = match back_storage {
+                    Some(mut x) => Some(
+                        delete_at_request_id(
+                            &mut (*x),
+                            req_id,
+                            &PrivDataType::FheKeyInfo.to_string(),
+                        )
+                        .await,
+                    ),
+                    None => None,
+                };
             };
             let (_r1, _r2, _r3, _r4) = tokio::join!(f1, f2, f3, f4);
 
@@ -296,7 +337,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         req_id: &RequestId,
     ) -> anyhow::Result<OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>>
     {
-        CryptoMaterialStorage::<PubS, PrivS>::read_guarded_crypto_material_from_cache(
+        CryptoMaterialStorage::<PubS, PrivS, BackS>::read_guarded_crypto_material_from_cache(
             req_id,
             self.fhe_keys.clone(),
         )
@@ -317,7 +358,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         &self,
         req_id: &RequestId,
     ) -> anyhow::Result<()> {
-        CryptoMaterialStorage::<PubS, PrivS>::refresh_crypto_material::<ThresholdFheKeys, _>(
+        CryptoMaterialStorage::<PubS, PrivS, BackS>::refresh_crypto_material::<ThresholdFheKeys, _>(
             self.fhe_keys.clone(),
             req_id,
             self.inner.private_storage.clone(),
@@ -331,18 +372,23 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 pub(crate) struct CentralizedCryptoMaterialStorage<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
+    BackS: Storage + Send + Sync + 'static,
 > {
-    inner: CryptoMaterialStorage<PubS, PrivS>,
+    inner: CryptoMaterialStorage<PubS, PrivS, BackS>,
     fhe_keys: Arc<RwLock<HashMap<RequestId, KmsFheKeyHandles>>>,
 }
 
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
-    CentralizedCryptoMaterialStorage<PubS, PrivS>
+impl<
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: Storage + Send + Sync + 'static,
+        BackS: Storage + Send + Sync + 'static,
+    > CentralizedCryptoMaterialStorage<PubS, PrivS, BackS>
 {
     /// Create a new cached storage device for threshold KMS.
     pub(crate) fn new(
         public_storage: PubS,
         private_storage: PrivS,
+        backup_storage: Option<BackS>,
         pk_cache: HashMap<RequestId, WrappedPublicKeyOwned>,
         crs_cache: HashMap<RequestId, CompactPkePublicParams>,
         fhe_keys: HashMap<RequestId, KmsFheKeyHandles>,
@@ -351,6 +397,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             inner: CryptoMaterialStorage {
                 public_storage: Arc::new(Mutex::new(public_storage)),
                 private_storage: Arc::new(Mutex::new(private_storage)),
+                backup_storage: backup_storage.map(|x| Arc::new(Mutex::new(x))),
                 pk_cache: Arc::new(RwLock::new(pk_cache)),
                 crs_cache: Arc::new(RwLock::new(crs_cache)),
             },
@@ -401,14 +448,34 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 
         let f1 = async {
             let mut priv_storage = self.inner.private_storage.lock().await;
-            store_versioned_at_request_id(
+            // can't map() because async closures aren't stable in Rust
+            let mut back_storage = match self.inner.backup_storage {
+                Some(ref x) => Some(x.lock().await),
+                None => None,
+            };
+            let store_is_ok = store_versioned_at_request_id(
                 &mut (*priv_storage),
                 req_id,
                 &key_info,
                 &PrivDataType::FheKeyInfo.to_string(),
             )
             .await
-            .is_ok()
+            .is_ok();
+            let backup_is_ok = match back_storage {
+                Some(ref mut x) => Some(
+                    store_versioned_at_request_id(
+                        &mut (**x),
+                        req_id,
+                        &key_info,
+                        &PrivDataType::FheKeyInfo.to_string(),
+                    )
+                    .await
+                    .is_ok(),
+                ),
+                None => None,
+            }
+            .unwrap_or(true);
+            store_is_ok && backup_is_ok
         };
         let f2 = async {
             let mut pub_storage = self.inner.public_storage.lock().await;
@@ -476,12 +543,28 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             };
             let f2 = async {
                 let mut priv_storage = self.inner.private_storage.lock().await;
+                // can't map() because async closures aren't stable in Rust
+                let back_storage = match self.inner.backup_storage {
+                    Some(ref x) => Some(x.lock().await),
+                    None => None,
+                };
                 let _ = delete_at_request_id(
                     &mut (*priv_storage),
                     req_id,
                     &PrivDataType::FheKeyInfo.to_string(),
                 )
                 .await;
+                let _ = match back_storage {
+                    Some(mut x) => Some(
+                        delete_at_request_id(
+                            &mut (*x),
+                            req_id,
+                            &PrivDataType::FheKeyInfo.to_string(),
+                        )
+                        .await,
+                    ),
+                    None => None,
+                };
             };
             let f3 = async {
                 let mut pub_storage = self.inner.public_storage.lock().await;
@@ -512,7 +595,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         &self,
         req_id: &RequestId,
     ) -> anyhow::Result<KmsFheKeyHandles> {
-        CryptoMaterialStorage::<PubS, PrivS>::read_cloned_crypto_material_from_cache(
+        CryptoMaterialStorage::<PubS, PrivS, BackS>::read_cloned_crypto_material_from_cache(
             self.fhe_keys.clone(),
             req_id,
         )
@@ -531,7 +614,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         &self,
         req_id: &RequestId,
     ) -> anyhow::Result<()> {
-        CryptoMaterialStorage::<PubS, PrivS>::refresh_crypto_material::<KmsFheKeyHandles, _>(
+        CryptoMaterialStorage::<PubS, PrivS, BackS>::refresh_crypto_material::<KmsFheKeyHandles, _>(
             self.fhe_keys.clone(),
             req_id,
             self.inner.private_storage.clone(),
@@ -563,6 +646,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 pub(crate) struct CryptoMaterialStorage<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
+    BackS: Storage + Send + Sync + 'static,
 > {
     // Storage for data that is supposed to be readable by anyone on the internet,
     // but _may_ be suseptible to malicious modifications.
@@ -570,14 +654,19 @@ pub(crate) struct CryptoMaterialStorage<
     // Storage for data that is supposed to only be readable, writable and modifiable by the entity
     // owner and where any modification will be detected.
     private_storage: Arc<Mutex<PrivS>>,
+    // Optional second private storage for backup and recovery
+    backup_storage: Option<Arc<Mutex<BackS>>>,
     // Map storing the already generated public keys.
     pk_cache: Arc<RwLock<HashMap<RequestId, WrappedPublicKeyOwned>>>,
     // Map storing the already generated CRS.
     crs_cache: Arc<RwLock<HashMap<RequestId, CompactPkePublicParams>>>,
 }
 
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
-    CryptoMaterialStorage<PubS, PrivS>
+impl<
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: Storage + Send + Sync + 'static,
+        BackS: Storage + Send + Sync + 'static,
+    > CryptoMaterialStorage<PubS, PrivS, BackS>
 {
     /// Read the CRS from cache. If it does not exist,
     /// attempt to read it from the storage backend and update the cache.
@@ -812,13 +901,17 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 }
 
 // we need to manually implement clone, see  https://github.com/rust-lang/rust/issues/26925
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static> Clone
-    for CryptoMaterialStorage<PubS, PrivS>
+impl<
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: Storage + Send + Sync + 'static,
+        BackS: Storage + Send + Sync + 'static,
+    > Clone for CryptoMaterialStorage<PubS, PrivS, BackS>
 {
     fn clone(&self) -> Self {
         Self {
             public_storage: Arc::clone(&self.public_storage),
             private_storage: Arc::clone(&self.private_storage),
+            backup_storage: self.backup_storage.as_ref().map(Arc::clone),
             pk_cache: Arc::clone(&self.pk_cache),
             crs_cache: Arc::clone(&self.crs_cache),
         }
@@ -826,8 +919,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 }
 
 // we need to manually implement clone, see  https://github.com/rust-lang/rust/issues/26925
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static> Clone
-    for CentralizedCryptoMaterialStorage<PubS, PrivS>
+impl<
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: Storage + Send + Sync + 'static,
+        BackS: Storage + Send + Sync + 'static,
+    > Clone for CentralizedCryptoMaterialStorage<PubS, PrivS, BackS>
 {
     fn clone(&self) -> Self {
         Self {
@@ -838,8 +934,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 }
 
 // we need to manually implement clone, see  https://github.com/rust-lang/rust/issues/26925
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static> Clone
-    for ThresholdCryptoMaterialStorage<PubS, PrivS>
+impl<
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: Storage + Send + Sync + 'static,
+        BackS: Storage + Send + Sync + 'static,
+    > Clone for ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>
 {
     fn clone(&self) -> Self {
         Self {
@@ -849,18 +948,26 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
     }
 }
 
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
-    From<&CentralizedCryptoMaterialStorage<PubS, PrivS>> for CryptoMaterialStorage<PubS, PrivS>
+impl<
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: Storage + Send + Sync + 'static,
+        BackS: Storage + Send + Sync + 'static,
+    > From<&CentralizedCryptoMaterialStorage<PubS, PrivS, BackS>>
+    for CryptoMaterialStorage<PubS, PrivS, BackS>
 {
-    fn from(value: &CentralizedCryptoMaterialStorage<PubS, PrivS>) -> Self {
+    fn from(value: &CentralizedCryptoMaterialStorage<PubS, PrivS, BackS>) -> Self {
         value.inner.clone()
     }
 }
 
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
-    From<&ThresholdCryptoMaterialStorage<PubS, PrivS>> for CryptoMaterialStorage<PubS, PrivS>
+impl<
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: Storage + Send + Sync + 'static,
+        BackS: Storage + Send + Sync + 'static,
+    > From<&ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>>
+    for CryptoMaterialStorage<PubS, PrivS, BackS>
 {
-    fn from(value: &ThresholdCryptoMaterialStorage<PubS, PrivS>) -> Self {
+    fn from(value: &ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>) -> Self {
         value.inner.clone()
     }
 }
@@ -883,7 +990,9 @@ mod tests {
         cryptography::central_kms::{async_generate_crs, gen_sig_keys, KmsFheKeyHandles},
         kms::RequestId,
         rpc::rpc_types::PubDataType,
-        storage::{
+        threshold::threshold_kms::ThresholdFheKeys,
+        util::meta_store::MetaStore,
+        vault::storage::{
             crypto_material::{
                 CentralizedCryptoMaterialStorage, CryptoMaterialStorage,
                 ThresholdCryptoMaterialStorage,
@@ -891,8 +1000,6 @@ mod tests {
             ram::{FailingRamStorage, RamStorage},
             store_pk_at_request_id, store_versioned_at_request_id, StorageType,
         },
-        threshold::threshold_kms::ThresholdFheKeys,
-        util::meta_store::MetaStore,
     };
 
     #[tokio::test]
@@ -920,6 +1027,7 @@ mod tests {
         let crypto_storage = CryptoMaterialStorage {
             public_storage: Arc::new(Mutex::new(pub_storage)),
             private_storage: Arc::new(Mutex::new(RamStorage::new(StorageType::PRIV))),
+            backup_storage: None as Option<Arc<Mutex<RamStorage>>>,
             pk_cache: Arc::new(RwLock::new(HashMap::new())),
             crs_cache: crs_cache.clone(),
         };
@@ -953,6 +1061,7 @@ mod tests {
         let crypto_storage = CryptoMaterialStorage {
             public_storage: pub_storage.clone(),
             private_storage: Arc::new(Mutex::new(RamStorage::new(StorageType::PRIV))),
+            backup_storage: None as Option<Arc<Mutex<RamStorage>>>,
             pk_cache: Arc::new(RwLock::new(HashMap::new())),
             crs_cache: crs_cache.clone(),
         };
@@ -1019,6 +1128,7 @@ mod tests {
         let crypto_storage = CentralizedCryptoMaterialStorage::new(
             FailingRamStorage::new(StorageType::PUB, 100),
             RamStorage::new(StorageType::PUB),
+            None as Option<RamStorage>,
             HashMap::new(),
             HashMap::new(),
             HashMap::new(),
@@ -1060,6 +1170,7 @@ mod tests {
         let crypto_storage = CentralizedCryptoMaterialStorage::new(
             FailingRamStorage::new(StorageType::PUB, 100),
             RamStorage::new(StorageType::PUB),
+            None as Option<RamStorage>,
             HashMap::new(),
             HashMap::new(),
             HashMap::new(),
@@ -1159,6 +1270,7 @@ mod tests {
         let crypto_storage = ThresholdCryptoMaterialStorage::new(
             FailingRamStorage::new(StorageType::PUB, 100),
             RamStorage::new(StorageType::PUB),
+            None as Option<RamStorage>,
             HashMap::new(),
             HashMap::new(),
             HashMap::new(),

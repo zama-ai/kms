@@ -16,6 +16,7 @@ pub struct CoreConfig {
     pub aws: Option<AWSConfig>,
     pub public_vault: Option<Vault>,
     pub private_vault: Option<Vault>,
+    pub backup_vault: Option<Vault>,
     pub rate_limiter_conf: Option<RateLimiterConfig>,
     pub threshold: Option<ThresholdParty>,
 }

@@ -1,28 +1,28 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use core::fmt;
-use kms_lib::consts::{DEFAULT_PARAM, TEST_PARAM};
-use kms_lib::storage::StorageForText;
-use kms_lib::util::key_setup::ThresholdSigningKeyConfig;
 use kms_lib::{
-    conf::{init_kms_core_telemetry, AWSConfig},
-    consts::SIGNING_KEY_ID,
-    kms::RequestId,
-    util::key_setup::ensure_central_crs_exists,
-};
-use kms_lib::{
+    conf::init_kms_core_telemetry,
     consts::{
-        DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_CRS_ID_4P,
-        DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_DEFAULT_ID,
+        DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM, DEFAULT_THRESHOLD_CRS_ID_4P,
+        DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_DEFAULT_ID, SIGNING_KEY_ID, TEST_PARAM,
     },
-    storage::{make_storage, Storage, StorageType},
-    util::key_setup::{ensure_central_keys_exist, ensure_central_server_signing_keys_exist},
-};
-use kms_lib::{
+    cryptography::attestation::make_security_module,
+    kms::RequestId,
     rpc::rpc_types::{PrivDataType, PubDataType},
-    storage::delete_at_request_id,
     util::key_setup::{
-        ensure_threshold_crs_exists, ensure_threshold_keys_exist,
-        ensure_threshold_server_signing_keys_exist,
+        ensure_central_crs_exists, ensure_central_keys_exist,
+        ensure_central_server_signing_keys_exist, ensure_threshold_crs_exists,
+        ensure_threshold_keys_exist, ensure_threshold_server_signing_keys_exist,
+        ThresholdSigningKeyConfig,
+    },
+    vault::{
+        aws::build_aws_sdk_config,
+        keychain::{awskms::build_aws_kms_client, make_keychain},
+        storage::{
+            delete_at_request_id, make_storage, s3::build_s3_client, Storage, StorageForText,
+            StorageType,
+        },
+        Vault,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -124,18 +124,18 @@ enum Mode {
     },
 }
 
-struct CentralCmdArgs<'a, S: Storage> {
-    pub_storage: &'a mut S,
-    priv_storage: &'a mut S,
+struct CentralCmdArgs<'a, PubS: Storage, PrivS: Storage> {
+    pub_storage: &'a mut PubS,
+    priv_storage: &'a mut PrivS,
     deterministic: bool,
     overwrite: bool,
     write_privkey: bool,
     show_existing: bool,
 }
 
-struct ThresholdCmdArgs<'a, S: Storage> {
-    pub_storages: &'a mut [S],
-    priv_storages: &'a mut [S],
+struct ThresholdCmdArgs<'a, PubS: Storage, PrivS: Storage> {
+    pub_storages: &'a mut [PubS],
+    priv_storages: &'a mut [PrivS],
     deterministic: bool,
     overwrite: bool,
     show_existing: bool,
@@ -143,10 +143,10 @@ struct ThresholdCmdArgs<'a, S: Storage> {
     num_parties: usize,
 }
 
-impl<'a, S: Storage> ThresholdCmdArgs<'a, S> {
+impl<'a, PubS: Storage, PrivS: Storage> ThresholdCmdArgs<'a, PubS, PrivS> {
     fn new(
-        pub_storages: &'a mut [S],
-        priv_storages: &'a mut [S],
+        pub_storages: &'a mut [PubS],
+        priv_storages: &'a mut [PrivS],
         deterministic: bool,
         overwrite: bool,
         show_existing: bool,
@@ -198,13 +198,44 @@ impl<'a, S: Storage> ThresholdCmdArgs<'a, S> {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_kms_core_telemetry()?;
     let args = Args::parse();
-    let aws_config = AWSConfig {
-        region: args.aws_region,
-        imds_endpoint: args.aws_imds_endpoint,
-        s3_endpoint: args.aws_s3_endpoint,
-        awskms_endpoint: args.aws_kms_endpoint,
+    // common AWS configuration
+    let aws_sdk_config = build_aws_sdk_config(args.aws_region, args.aws_imds_endpoint).await;
+    // AWS S3 client
+    let need_s3_client = args
+        .pub_url
+        .as_ref()
+        .map(|url| url.scheme() == "s3")
+        .unwrap_or(false)
+        || args
+            .priv_url
+            .as_ref()
+            .map(|url| url.scheme() == "s3")
+            .unwrap_or(false);
+    let s3_client = if need_s3_client {
+        Some(build_s3_client(&aws_sdk_config, args.aws_s3_endpoint).await?)
+    } else {
+        None
     };
-    // create storage
+    // AWS KMS client
+    let need_awskms_client = args.root_key_id.is_some();
+    let awskms_client = if need_awskms_client {
+        Some(build_aws_kms_client(&aws_sdk_config, args.aws_kms_endpoint).await)
+    } else {
+        None
+    };
+    // security module (used for remote attestation with AWS KMS only so far)
+    let security_module = if need_awskms_client {
+        Some(make_security_module()?)
+    } else {
+        None
+    };
+
+    // create keychain
+    let root_key_id = args
+        .root_key_id
+        .as_ref()
+        .map(|k| Url::parse(format!("awskms://{}", k).as_str()).unwrap());
+    // create storages
     let amount_storages = match args.mode {
         Mode::Centralized { write_privkey: _ } => 1,
         Mode::Threshold {
@@ -213,7 +244,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => n,
     };
     let mut pub_storages = Vec::with_capacity(amount_storages);
-    let mut priv_storages = Vec::with_capacity(amount_storages);
+    let mut priv_vaults = Vec::with_capacity(amount_storages);
     for i in 1..=amount_storages {
         let party_id = match args.mode {
             Mode::Centralized { write_privkey: _ } => None,
@@ -224,35 +255,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         pub_storages.push(
             make_storage(
-                Some(aws_config.clone()),
                 args.pub_url.clone(),
-                None,
                 StorageType::PUB,
                 party_id,
                 None,
+                s3_client.clone(),
             )
-            .await
             .unwrap(),
         );
-        priv_storages.push(
-            make_storage(
-                Some(aws_config.clone()),
+        let private_keychain = root_key_id
+            .as_ref()
+            .map(|k| make_keychain(k.clone(), awskms_client.clone(), security_module.clone()))
+            .transpose()?;
+        priv_vaults.push(Vault {
+            storage: make_storage(
                 args.priv_url.clone(),
-                args.root_key_id.clone(),
                 StorageType::PRIV,
                 party_id,
                 None,
+                s3_client.clone(),
             )
-            .await
             .unwrap(),
-        );
+            keychain: private_keychain,
+        });
     }
     // generate keys
     match args.mode {
         Mode::Centralized { write_privkey } => {
             let mut cmdargs = CentralCmdArgs {
                 pub_storage: &mut pub_storages[0],
-                priv_storage: &mut priv_storages[0],
+                priv_storage: &mut priv_vaults[0],
                 deterministic: args.deterministic,
                 overwrite: args.overwrite,
                 write_privkey,
@@ -274,7 +306,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             let mut cmdargs = ThresholdCmdArgs::new(
                 &mut pub_storages,
-                &mut priv_storages,
+                &mut priv_vaults,
                 args.deterministic,
                 args.overwrite,
                 args.show_existing,
@@ -301,9 +333,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn handle_central_cmd<'a, S: StorageForText>(
+async fn handle_central_cmd<'a, PubS: StorageForText, PrivS: StorageForText>(
     param_test: bool,
-    args: &mut CentralCmdArgs<'a, S>,
+    args: &mut CentralCmdArgs<'a, PubS, PrivS>,
     cmd: ConstructCommand,
 ) {
     let params = if param_test {
@@ -389,9 +421,9 @@ async fn handle_central_cmd<'a, S: StorageForText>(
     }
 }
 
-async fn handle_threshold_cmd<'a, S: StorageForText>(
+async fn handle_threshold_cmd<'a, PubS: StorageForText, PrivS: StorageForText>(
     param_test: bool,
-    args: &mut ThresholdCmdArgs<'a, S>,
+    args: &mut ThresholdCmdArgs<'a, PubS, PrivS>,
     cmd: ConstructCommand,
 ) {
     let params = if param_test {
@@ -497,9 +529,9 @@ async fn handle_threshold_cmd<'a, S: StorageForText>(
         }
     }
 }
-async fn process_crs_cmds<S: Storage>(
-    pub_storage: &mut S,
-    priv_storage: &mut S,
+async fn process_crs_cmds<PubS: Storage, PrivS: Storage>(
+    pub_storage: &mut PubS,
+    priv_storage: &mut PrivS,
     req_id: &RequestId,
     show_existing: bool,
     overwrite: bool,
@@ -522,9 +554,9 @@ async fn process_crs_cmds<S: Storage>(
     .await;
 }
 
-async fn process_fhe_cmds<S: Storage>(
-    pub_storage: &mut S,
-    priv_storage: &mut S,
+async fn process_fhe_cmds<PubS: Storage, PrivS: Storage>(
+    pub_storage: &mut PubS,
+    priv_storage: &mut PrivS,
     req_id: &RequestId,
     show_existing: bool,
     overwrite: bool,
@@ -551,9 +583,9 @@ async fn process_fhe_cmds<S: Storage>(
     .await;
 }
 
-async fn process_signing_key_cmds<S: Storage>(
-    pub_storage: &mut S,
-    priv_storage: &mut S,
+async fn process_signing_key_cmds<PubS: Storage, PrivS: Storage>(
+    pub_storage: &mut PubS,
+    priv_storage: &mut PrivS,
     req_id: &RequestId,
     show_existing: bool,
     overwrite: bool,

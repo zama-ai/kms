@@ -250,7 +250,7 @@ impl Storage for RamStorage {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::storage::tests::*;
+    use crate::vault::storage::tests::*;
 
     #[tokio::test]
     async fn storage_helper_methods() {

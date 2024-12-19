@@ -19,8 +19,8 @@ use crate::kms::{
     VerifyProvenCtRequest, VerifyProvenCtResponse,
 };
 use crate::rpc::rpc_types::{protobuf_to_alloy_domain_option, PubDataType};
-use crate::storage::Storage;
 use crate::util::meta_store::handle_res_mapping;
+use crate::vault::storage::Storage;
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
 use alloy_primitives::Address;
 use alloy_sol_types::Eip712Domain;
@@ -41,7 +41,8 @@ use tracing::Instrument;
 impl<
         PubS: Storage + std::marker::Sync + std::marker::Send + 'static,
         PrivS: Storage + std::marker::Sync + std::marker::Send + 'static,
-    > CoreServiceEndpoint for SoftwareKms<PubS, PrivS>
+        BackS: Storage + std::marker::Sync + std::marker::Send + 'static,
+    > CoreServiceEndpoint for SoftwareKms<PubS, PrivS, BackS>
 {
     async fn init(&self, _request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
         tonic_some_or_err(
@@ -297,7 +298,7 @@ impl<
                     &key_id,
                     &request_id
                 );
-                match async_reencrypt::<PubS, PrivS>(
+                match async_reencrypt::<PubS, PrivS, BackS>(
                     &keys,
                     &sig_key,
                     &mut rng,
@@ -462,7 +463,7 @@ impl<
                 // run the computation in a separate rayon thread to avoid blocking the tokio runtime
                 let (send, recv) = tokio::sync::oneshot::channel();
                 rayon::spawn(move || {
-                    let decryptions = central_decrypt::<PubS, PrivS>(&keys, &ciphertexts);
+                    let decryptions = central_decrypt::<PubS, PrivS, BackS>(&keys, &ciphertexts);
                     let _ = send.send(decryptions);
                 });
                 let decryptions = recv.await;

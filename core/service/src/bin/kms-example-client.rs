@@ -10,8 +10,8 @@ use kms_lib::{
     conf::init_kms_core_telemetry,
     consts::{DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM, DEFAULT_THRESHOLD_KEY_ID_4P},
     kms::InitRequest,
-    storage::{file::FileStorage, StorageType},
     util::key_setup::test_tools::compute_compressed_cipher_from_stored_key,
+    vault::storage::{file::FileStorage, StorageType},
 };
 use rand::{Rng, SeedableRng};
 use tokio::task::JoinSet;

@@ -16,7 +16,6 @@ pub mod client;
 pub mod consts;
 #[cfg(feature = "non-wasm")]
 pub mod util {
-    pub mod aws;
     pub mod file_handling;
     pub mod key_setup;
     pub mod meta_store;
@@ -25,10 +24,11 @@ pub mod util {
 }
 pub mod cryptography {
     #[cfg(feature = "non-wasm")]
+    pub mod attestation;
+    #[cfg(feature = "non-wasm")]
     pub mod central_kms;
     pub mod decompression;
     pub mod internal_crypto_types;
-    pub mod nitro_enclave;
     #[cfg(feature = "non-wasm")]
     pub mod proven_ct_verifier;
     pub mod signcryption;
@@ -44,7 +44,7 @@ pub mod threshold {
 pub mod conf;
 pub mod rpc;
 #[cfg(feature = "non-wasm")]
-pub mod storage;
+pub mod vault;
 
 /// Check that the hashmap has exactly one element and return it.
 #[cfg(feature = "non-wasm")]

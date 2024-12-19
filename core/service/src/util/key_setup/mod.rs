@@ -9,11 +9,11 @@ use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::kms::RequestId;
 use crate::rpc::rpc_types::PubDataType;
 use crate::rpc::rpc_types::{PrivDataType, WrappedPublicKey};
-use crate::storage::{file::FileStorage, store_versioned_at_request_id, StorageType};
-use crate::storage::{read_all_data_versioned, store_text_at_request_id};
-use crate::storage::{store_pk_at_request_id, Storage};
-use crate::storage::{StorageForText, StorageReader};
 use crate::threshold::threshold_kms::{compute_all_info, ThresholdFheKeys};
+use crate::vault::storage::{
+    file::FileStorage, read_all_data_versioned, store_pk_at_request_id, store_text_at_request_id,
+    store_versioned_at_request_id, Storage, StorageForText, StorageReader, StorageType,
+};
 use aes_prng::AesRng;
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 use distributed_decryption::execution::{
@@ -108,14 +108,15 @@ pub async fn ensure_client_keys_exist(
 /// Ensure that the central server signing and verification keys exist.
 ///
 /// Returns true if the keys were generated and false if they already existed and hence were not generated.
-pub async fn ensure_central_server_signing_keys_exist<S>(
-    pub_storage: &mut S,
-    priv_storage: &mut S,
+pub async fn ensure_central_server_signing_keys_exist<PubS, PrivS>(
+    pub_storage: &mut PubS,
+    priv_storage: &mut PrivS,
     req_id: &RequestId,
     deterministic: bool,
 ) -> bool
 where
-    S: StorageForText,
+    PubS: StorageForText,
+    PrivS: StorageForText,
 {
     let temp: HashMap<RequestId, PrivateSigKey> =
         read_all_data_versioned(priv_storage, &PrivDataType::SigningKey.to_string())
@@ -181,15 +182,16 @@ where
 /// This involves both generating the public CRS and storing the private CRS.
 ///
 /// Returns true if the keys were generated and false if they already existed and hence were not generated.
-pub async fn ensure_central_crs_exists<S>(
-    pub_storage: &mut S,
-    priv_storage: &mut S,
+pub async fn ensure_central_crs_exists<PubS, PrivS>(
+    pub_storage: &mut PubS,
+    priv_storage: &mut PrivS,
     dkg_params: DKGParams,
     crs_handle: &RequestId,
     deterministic: bool,
 ) -> bool
 where
-    S: Storage,
+    PubS: Storage,
+    PrivS: Storage,
 {
     if pub_storage
         .data_exists(
@@ -247,9 +249,9 @@ where
 /// More specifically this method does so for two distinct sets of keys under [key_id] and [other_key_id].
 ///
 /// Returns true if the keys were generated and false if they already existed and hence were not generated.
-pub async fn ensure_central_keys_exist<S>(
-    pub_storage: &mut S,
-    priv_storage: &mut S,
+pub async fn ensure_central_keys_exist<PubS, PrivS>(
+    pub_storage: &mut PubS,
+    priv_storage: &mut PrivS,
     dkg_params: DKGParams,
     key_id: &RequestId,
     other_key_id: &RequestId,
@@ -257,7 +259,8 @@ pub async fn ensure_central_keys_exist<S>(
     write_privkey: bool,
 ) -> bool
 where
-    S: Storage,
+    PubS: Storage,
+    PrivS: Storage,
 {
     if pub_storage
         .data_exists(
@@ -369,15 +372,16 @@ pub enum ThresholdSigningKeyConfig {
 /// and stores them in the storages if they don't already exist under [request_id].
 ///
 /// Returns true if the keys were generated and false if they already existed and hence were not generated.
-pub async fn ensure_threshold_server_signing_keys_exist<S>(
-    pub_storages: &mut [S],
-    priv_storages: &mut [S],
+pub async fn ensure_threshold_server_signing_keys_exist<PubS, PrivS>(
+    pub_storages: &mut [PubS],
+    priv_storages: &mut [PrivS],
     request_id: &RequestId,
     deterministic: bool,
     config: ThresholdSigningKeyConfig,
 ) -> bool
 where
-    S: StorageForText,
+    PubS: StorageForText,
+    PrivS: StorageForText,
 {
     let parties = match config {
         ThresholdSigningKeyConfig::AllParties(amount) => (1..=amount).collect_vec(),
@@ -453,15 +457,16 @@ where
 /// and stores them in the storages if they don't already exist under [key_id].
 ///
 /// Returns true if the keys were generated and false if they already existed and hence were not generated.
-pub async fn ensure_threshold_keys_exist<S>(
-    pub_storages: &mut [S],
-    priv_storages: &mut [S],
+pub async fn ensure_threshold_keys_exist<PubS, PrivS>(
+    pub_storages: &mut [PubS],
+    priv_storages: &mut [PrivS],
     dkg_params: DKGParams,
     key_id: &RequestId,
     deterministic: bool,
 ) -> bool
 where
-    S: Storage,
+    PubS: Storage,
+    PrivS: Storage,
 {
     assert_eq!(
         pub_storages.len(),
@@ -584,15 +589,16 @@ where
 /// and stores the information in the storage if CRS does not already exist for [crs_handle].
 ///
 /// Returns true if the keys were generated and false if they already existed and hence were not generated.
-pub async fn ensure_threshold_crs_exists<S>(
-    pub_storages: &mut [S],
-    priv_storages: &mut [S],
+pub async fn ensure_threshold_crs_exists<PubS, PrivS>(
+    pub_storages: &mut [PubS],
+    priv_storages: &mut [PrivS],
     dkg_params: DKGParams,
     crs_handle: &RequestId,
     deterministic: bool,
 ) -> bool
 where
-    S: Storage,
+    PubS: Storage,
+    PrivS: Storage,
 {
     if pub_storages.len() != priv_storages.len() {
         panic!("Number of public storages and private storages must be equal");

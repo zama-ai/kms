@@ -54,9 +54,7 @@ cfg_if::cfg_if! {
         use crate::rpc::rpc_types::{
             PublicKeyType, WrappedPublicKeyOwned,
         };
-        use crate::storage::read_all_data_versioned;
-        use crate::storage::Storage;
-        use crate::{storage::StorageReader};
+        use crate::vault::storage::{read_all_data_versioned, Storage, StorageReader};
         use std::collections::HashMap;
         use std::fmt;
         use tfhe::ProvenCompactCiphertextList;
@@ -1335,7 +1333,7 @@ impl Client {
             storage.info(),
             &request_id
         );
-        let pk_type: PublicKeyType = crate::storage::read_versioned_at_request_id(
+        let pk_type: PublicKeyType = crate::vault::storage::read_versioned_at_request_id(
             storage,
             &request_id,
             &PubDataType::PublicKeyMetadata.to_string(),
@@ -2480,12 +2478,12 @@ pub mod test_tools {
     use crate::cryptography::central_kms::SoftwareKms;
     use crate::kms::core_service_endpoint_client::CoreServiceEndpointClient;
     use crate::rpc::{run_server, INFLIGHT_REQUEST_WAITING_TIME};
-    use crate::storage::{
-        file::FileStorage, ram::RamStorage, Storage, StorageType, StorageVersion,
-    };
     use crate::threshold::threshold_kms::threshold_server_init;
     use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
     use crate::util::rate_limiter::RateLimiterConfig;
+    use crate::vault::storage::{
+        file::FileStorage, ram::RamStorage, Storage, StorageType, StorageVersion,
+    };
     use crate::{
         conf::{
             threshold::{PeerConf, ThresholdParty},
@@ -2588,6 +2586,7 @@ pub mod test_tools {
                     threshold_config,
                     cur_pub_storage,
                     cur_priv_storage,
+                    None as Option<PrivS>,
                     run_prss,
                     rl_conf,
                     thread_health_reporter.clone(),
@@ -2815,13 +2814,18 @@ pub mod test_tools {
             thread_health_reporter
                 .write()
                 .await
-                .set_serving::<CoreServiceEndpointServer<SoftwareKms<PubS, PrivS>>>()
+                .set_serving::<CoreServiceEndpointServer<SoftwareKms<PubS, PrivS, PrivS>>>()
                 .await;
             run_server(
                 config,
-                SoftwareKms::new(pub_storage, priv_storage, rate_limiter_conf)
-                    .await
-                    .expect("Could not create KMS"),
+                SoftwareKms::new(
+                    pub_storage,
+                    priv_storage,
+                    None as Option<PrivS>,
+                    rate_limiter_conf,
+                )
+                .await
+                .expect("Could not create KMS"),
                 thread_health_reporter,
                 health_service,
                 rx.map(drop),
@@ -2923,8 +2927,6 @@ pub(crate) mod tests {
     use crate::rpc::rpc_types::Plaintext;
     use crate::rpc::rpc_types::RequestIdGetter;
     use crate::rpc::rpc_types::{protobuf_to_alloy_domain, BaseKms, PubDataType};
-    use crate::storage::StorageReader;
-    use crate::storage::{file::FileStorage, ram::RamStorage, StorageType, StorageVersion};
     use crate::threshold::threshold_kms::RealThresholdKms;
     use crate::util::file_handling::safe_read_element_versioned;
     #[cfg(feature = "wasm_tests")]
@@ -2935,6 +2937,8 @@ pub(crate) mod tests {
         load_pk_from_storage, purge, TypedPlaintext,
     };
     use crate::util::rate_limiter::RateLimiterConfig;
+    use crate::vault::storage::StorageReader;
+    use crate::vault::storage::{file::FileStorage, ram::RamStorage, StorageType, StorageVersion};
     use crate::{
         client::num_blocks,
         kms::{Empty, RequestId},
@@ -3076,7 +3080,9 @@ pub(crate) mod tests {
         let channel_builder = Channel::from_shared(server_address).unwrap();
         let channel = channel_builder.connect().await.unwrap();
         let mut client = HealthClient::new(channel);
-        let service_name = <CoreServiceEndpointServer<SoftwareKms<FileStorage, FileStorage>> as NamedService>::NAME;
+        let service_name = <CoreServiceEndpointServer<
+            SoftwareKms<FileStorage, FileStorage, FileStorage>,
+        > as NamedService>::NAME;
         let request = tonic::Request::new(HealthCheckRequest {
             service: service_name.to_string(),
         });
@@ -3128,7 +3134,9 @@ pub(crate) mod tests {
         let channel_builder = Channel::from_shared(server_address.to_string()).unwrap();
         let channel = channel_builder.connect().await.unwrap();
         let mut health_client = HealthClient::new(channel);
-        let service_name = <CoreServiceEndpointServer<RealThresholdKms<FileStorage, FileStorage>> as NamedService>::NAME;
+        let service_name = <CoreServiceEndpointServer<
+            RealThresholdKms<FileStorage, FileStorage, FileStorage>,
+        > as NamedService>::NAME;
         let request = tonic::Request::new(HealthCheckRequest {
             service: service_name.to_string(),
         });

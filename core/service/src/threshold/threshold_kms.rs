@@ -29,11 +29,6 @@ use crate::rpc::rpc_types::{
     CURRENT_FORMAT_VERSION,
 };
 use crate::rpc::{prepare_shutdown_signals, INFLIGHT_REQUEST_WAITING_TIME};
-use crate::storage::crypto_material::ThresholdCryptoMaterialStorage;
-use crate::storage::{
-    read_all_data_versioned, read_pk_at_request_id, read_versioned_at_request_id,
-    store_versioned_at_request_id, Storage,
-};
 #[cfg(feature = "insecure")]
 use crate::threshold::generic::InsecureKeyGenerator;
 use crate::threshold::generic::{
@@ -42,6 +37,10 @@ use crate::threshold::generic::{
 };
 use crate::util::meta_store::{handle_res_mapping, MetaStore};
 use crate::util::rate_limiter::{RateLimiter, RateLimiterConfig};
+use crate::vault::storage::{
+    crypto_material::ThresholdCryptoMaterialStorage, read_all_data_versioned,
+    read_pk_at_request_id, read_versioned_at_request_id, store_versioned_at_request_id, Storage,
+};
 use crate::{anyhow_error_and_log, get_exactly_one};
 use aes_prng::AesRng;
 use anyhow::anyhow;
@@ -118,19 +117,22 @@ const DECRYPTION_MODE: DecryptionMode = DecryptionMode::PRSSDecrypt;
 /// * `run_prss` - If this is true, we execute a PRSS setup regardless of whether it already exists in the storage.
 ///   Otherwise, the setup must be done out of band by calling the init
 ///   GRPC endpoint, or using the kms-init binary.
+#[allow(clippy::too_many_arguments)]
 pub async fn threshold_server_init<
-    PubS: Storage + Send + Sync + 'static,
-    PrivS: Storage + Send + Sync + 'static,
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
+    BackS: Storage + Sync + Send + 'static,
     F: std::future::Future<Output = ()> + Send + 'static,
 >(
     config: ThresholdParty,
     public_storage: PubS,
     private_storage: PrivS,
+    backup_storage: Option<BackS>,
     run_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     health_reporter: Arc<RwLock<HealthReporter>>,
     shutdown_signal: F,
-) -> anyhow::Result<RealThresholdKms<PubS, PrivS>> {
+) -> anyhow::Result<RealThresholdKms<PubS, PrivS, BackS>> {
     let cert_paths = config.get_tls_cert_paths();
 
     //If no RedisConf is provided, we just use in-memory storage for the preprocessing buckets.
@@ -161,6 +163,7 @@ pub async fn threshold_server_init<
         config.peers,
         public_storage,
         private_storage,
+        backup_storage,
         cert_paths,
         config.core_to_core_net,
         run_prss,
@@ -226,27 +229,27 @@ pub fn compute_all_info(
 }
 
 #[cfg(not(feature = "insecure"))]
-pub type RealThresholdKms<PubS, PrivS> = GenericKms<
+pub type RealThresholdKms<PubS, PrivS, BackS> = GenericKms<
     RealInitiator<PrivS>,
-    RealReencryptor<PubS, PrivS>,
-    RealDecryptor<PubS, PrivS>,
-    RealKeyGenerator<PubS, PrivS>,
+    RealReencryptor<PubS, PrivS, BackS>,
+    RealDecryptor<PubS, PrivS, BackS>,
+    RealKeyGenerator<PubS, PrivS, BackS>,
     RealPreprocessor,
-    RealCrsGenerator<PubS, PrivS>,
-    RealProvenCtVerifier<PubS, PrivS>,
+    RealCrsGenerator<PubS, PrivS, BackS>,
+    RealProvenCtVerifier<PubS, PrivS, BackS>,
 >;
 
 #[cfg(feature = "insecure")]
-pub type RealThresholdKms<PubS, PrivS> = GenericKms<
+pub type RealThresholdKms<PubS, PrivS, BackS> = GenericKms<
     RealInitiator<PrivS>,
-    RealReencryptor<PubS, PrivS>,
-    RealDecryptor<PubS, PrivS>,
-    RealKeyGenerator<PubS, PrivS>,
-    RealInsecureKeyGenerator<PubS, PrivS>,
+    RealReencryptor<PubS, PrivS, BackS>,
+    RealDecryptor<PubS, PrivS, BackS>,
+    RealKeyGenerator<PubS, PrivS, BackS>,
+    RealInsecureKeyGenerator<PubS, PrivS, BackS>,
     RealPreprocessor,
-    RealCrsGenerator<PubS, PrivS>,
-    RealInsecureCrsGenerator<PubS, PrivS>,
-    RealProvenCtVerifier<PubS, PrivS>,
+    RealCrsGenerator<PubS, PrivS, BackS>,
+    RealInsecureCrsGenerator<PubS, PrivS, BackS>,
+    RealProvenCtVerifier<PubS, PrivS, BackS>,
 >;
 
 #[derive(Debug)]
@@ -263,7 +266,7 @@ impl std::fmt::Display for FileNotFoundError {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn new_real_threshold_kms<PubS, PrivS, F>(
+async fn new_real_threshold_kms<PubS, PrivS, BackS, F>(
     threshold: u8,
     dec_capacity: usize,
     min_dec_cache: usize,
@@ -275,16 +278,18 @@ async fn new_real_threshold_kms<PubS, PrivS, F>(
     peer_configs: Vec<PeerConf>,
     public_storage: PubS,
     private_storage: PrivS,
+    backup_storage: Option<BackS>,
     cert_paths: Option<CertificatePaths>,
     core_to_core_net_conf: Option<CoreToCoreNetworkConfig>,
     run_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     core_service_health_reporter: Arc<RwLock<HealthReporter>>,
     shutdown_signal: F,
-) -> anyhow::Result<RealThresholdKms<PubS, PrivS>>
+) -> anyhow::Result<RealThresholdKms<PubS, PrivS, BackS>>
 where
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
+    BackS: Storage + Send + Sync + 'static,
     F: std::future::Future<Output = ()> + Send + 'static,
 {
     tracing::info!(
@@ -471,6 +476,7 @@ where
     let crypto_storage = ThresholdCryptoMaterialStorage::new(
         public_storage,
         private_storage,
+        backup_storage,
         pk_map,
         crs_map,
         key_info_versioned,
@@ -490,7 +496,7 @@ where
         core_service_health_reporter
             .write()
             .await
-            .set_not_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS>>>()
+            .set_not_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS, BackS>>>()
             .await;
     }
     let initiator = RealInitiator {
@@ -732,7 +738,7 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
             self.health_reporter
                 .write()
                 .await
-                .set_serving::<CoreServiceEndpointServer<RealThresholdKms<PrivS, PrivS>>>()
+                .set_serving::<CoreServiceEndpointServer<RealThresholdKms<PrivS, PrivS, PrivS>>>()
                 .await;
         }
         Ok(())
@@ -779,7 +785,7 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
             self.health_reporter
                 .write()
                 .await
-                .set_serving::<CoreServiceEndpointServer<RealThresholdKms<PrivS, PrivS>>>()
+                .set_serving::<CoreServiceEndpointServer<RealThresholdKms<PrivS, PrivS, PrivS>>>()
                 .await;
         }
         tracing::info!("PRSS completed successfully for identity {}.", own_identity);
@@ -803,16 +809,20 @@ impl<PrivS: Storage + Send + Sync + 'static> Initiator for RealInitiator<PrivS> 
 pub struct RealReencryptor<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
+    BackS: Storage + Send + Sync + 'static,
 > {
     base_kms: BaseKmsStruct,
-    crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
+    crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
     reenc_meta_store: Arc<RwLock<MetaStore<ReencCallValues>>>,
     session_preparer: SessionPreparer,
     rate_limiter: RateLimiter,
 }
 
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
-    RealReencryptor<PubS, PrivS>
+impl<
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: Storage + Send + Sync + 'static,
+        BackS: Storage + Send + Sync + 'static,
+    > RealReencryptor<PubS, PrivS, BackS>
 {
     /// Helper method for reencryptin which carries out the actual threshold decryption using noise
     /// flooding.
@@ -881,8 +891,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 }
 
 #[tonic::async_trait]
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static> Reencryptor
-    for RealReencryptor<PubS, PrivS>
+impl<
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: Storage + Send + Sync + 'static,
+        BackS: Storage + Send + Sync + 'static,
+    > Reencryptor for RealReencryptor<PubS, PrivS, BackS>
 {
     async fn reencrypt(
         &self,
@@ -1044,16 +1057,20 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 pub struct RealDecryptor<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
+    BackS: Storage + Send + Sync + 'static,
 > {
     base_kms: BaseKmsStruct,
-    crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
+    crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
     dec_meta_store: Arc<RwLock<MetaStore<DecCallValues>>>,
     session_preparer: SessionPreparer,
     rate_limiter: RateLimiter,
 }
 
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
-    RealDecryptor<PubS, PrivS>
+impl<
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: Storage + Send + Sync + 'static,
+        BackS: Storage + Send + Sync + 'static,
+    > RealDecryptor<PubS, PrivS, BackS>
 {
     /// Helper method for decryption which carries out the actual threshold decryption using noise
     /// flooding.
@@ -1106,8 +1123,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 }
 
 #[tonic::async_trait]
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static> Decryptor
-    for RealDecryptor<PubS, PrivS>
+impl<
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: Storage + Send + Sync + 'static,
+        BackS: Storage + Send + Sync + 'static,
+    > Decryptor for RealDecryptor<PubS, PrivS, BackS>
 {
     #[tracing::instrument(skip(self, request), fields(
         party_id = ?self.session_preparer.my_id,
@@ -1401,11 +1421,12 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 }
 
 pub struct RealKeyGenerator<
-    PubS: Storage + Send + Sync + 'static,
-    PrivS: Storage + Send + Sync + 'static,
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
+    BackS: Storage + Sync + Send + 'static,
 > {
     base_kms: BaseKmsStruct,
-    crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
+    crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
     // TODO eventually add mode to allow for nlarge as well.
     preproc_buckets: Arc<RwLock<MetaStore<BucketMetaStore>>>,
     dkg_pubinfo_meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
@@ -1415,17 +1436,21 @@ pub struct RealKeyGenerator<
 
 #[cfg(feature = "insecure")]
 pub struct RealInsecureKeyGenerator<
-    PubS: Storage + Send + Sync + 'static,
-    PrivS: Storage + Send + Sync + 'static,
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
+    BackS: Storage + Sync + Send + 'static,
 > {
-    real_key_generator: RealKeyGenerator<PubS, PrivS>,
+    real_key_generator: RealKeyGenerator<PubS, PrivS, BackS>,
 }
 
 #[cfg(feature = "insecure")]
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
-    RealInsecureKeyGenerator<PubS, PrivS>
+impl<
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
+        BackS: Storage + Sync + Send + 'static,
+    > RealInsecureKeyGenerator<PubS, PrivS, BackS>
 {
-    async fn from_real_keygen(value: &RealKeyGenerator<PubS, PrivS>) -> Self {
+    async fn from_real_keygen(value: &RealKeyGenerator<PubS, PrivS, BackS>) -> Self {
         Self {
             real_key_generator: RealKeyGenerator {
                 base_kms: value.base_kms.new_instance().await,
@@ -1441,8 +1466,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 
 #[cfg(feature = "insecure")]
 #[tonic::async_trait]
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
-    InsecureKeyGenerator for RealInsecureKeyGenerator<PubS, PrivS>
+impl<
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
+        BackS: Storage + Sync + Send + 'static,
+    > InsecureKeyGenerator for RealInsecureKeyGenerator<PubS, PrivS, BackS>
 {
     async fn insecure_key_gen(
         &self,
@@ -1471,8 +1499,11 @@ enum PreprocHandleWithMode {
     Insecure,
 }
 
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
-    RealKeyGenerator<PubS, PrivS>
+impl<
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
+        BackS: Storage + Sync + Send + 'static,
+    > RealKeyGenerator<PubS, PrivS, BackS>
 {
     async fn launch_dkg(
         &self,
@@ -1687,8 +1718,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 }
 
 #[tonic::async_trait]
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static> KeyGenerator
-    for RealKeyGenerator<PubS, PrivS>
+impl<
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
+        BackS: Storage + Sync + Send + 'static,
+    > KeyGenerator for RealKeyGenerator<PubS, PrivS, BackS>
 {
     async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
         self.inner_key_gen(request, false).await
@@ -1888,16 +1922,20 @@ impl KeyGenPreprocessor for RealPreprocessor {
 pub struct RealCrsGenerator<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
+    BackS: Storage + Send + Sync + 'static,
 > {
     base_kms: BaseKmsStruct,
-    crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
+    crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
     crs_meta_store: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
     session_preparer: SessionPreparer,
     rate_limiter: RateLimiter,
 }
 
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
-    RealCrsGenerator<PubS, PrivS>
+impl<
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: Storage + Send + Sync + 'static,
+        BackS: Storage + Send + Sync + 'static,
+    > RealCrsGenerator<PubS, PrivS, BackS>
 {
     async fn inner_crs_gen_from_request(
         &self,
@@ -2088,8 +2126,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 }
 
 #[tonic::async_trait]
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static> CrsGenerator
-    for RealCrsGenerator<PubS, PrivS>
+impl<
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: Storage + Send + Sync + 'static,
+        BackS: Storage + Send + Sync + 'static,
+    > CrsGenerator for RealCrsGenerator<PubS, PrivS, BackS>
 {
     async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
         self.inner_crs_gen_from_request(request, false).await
@@ -2107,15 +2148,19 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 pub struct RealInsecureCrsGenerator<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
+    BackS: Storage + Send + Sync + 'static,
 > {
-    real_crs_generator: RealCrsGenerator<PubS, PrivS>,
+    real_crs_generator: RealCrsGenerator<PubS, PrivS, BackS>,
 }
 
 #[cfg(feature = "insecure")]
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
-    RealInsecureCrsGenerator<PubS, PrivS>
+impl<
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: Storage + Send + Sync + 'static,
+        BackS: Storage + Send + Sync + 'static,
+    > RealInsecureCrsGenerator<PubS, PrivS, BackS>
 {
-    async fn from_real_crsgen(value: &RealCrsGenerator<PubS, PrivS>) -> Self {
+    async fn from_real_crsgen(value: &RealCrsGenerator<PubS, PrivS, BackS>) -> Self {
         Self {
             real_crs_generator: RealCrsGenerator {
                 base_kms: value.base_kms.new_instance().await,
@@ -2130,8 +2175,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 
 #[cfg(feature = "insecure")]
 #[tonic::async_trait]
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
-    InsecureCrsGenerator for RealInsecureCrsGenerator<PubS, PrivS>
+impl<
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: Storage + Send + Sync + 'static,
+        BackS: Storage + Send + Sync + 'static,
+    > InsecureCrsGenerator for RealInsecureCrsGenerator<PubS, PrivS, BackS>
 {
     async fn insecure_crs_gen(
         &self,
@@ -2154,16 +2202,20 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 pub struct RealProvenCtVerifier<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
+    BackS: Storage + Send + Sync + 'static,
 > {
     base_kms: BaseKmsStruct,
-    crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
+    crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
     ct_verifier_payload_meta_store: Arc<RwLock<MetaStore<VerifyProvenCtResponsePayload>>>,
     rate_limiter: RateLimiter,
 }
 
 #[tonic::async_trait]
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static> ProvenCtVerifier
-    for RealProvenCtVerifier<PubS, PrivS>
+impl<
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: Storage + Send + Sync + 'static,
+        BackS: Storage + Send + Sync + 'static,
+    > ProvenCtVerifier for RealProvenCtVerifier<PubS, PrivS, BackS>
 {
     async fn verify(
         &self,
@@ -2226,10 +2278,10 @@ mod tests {
     use crate::{
         client::test_tools,
         consts::{DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD, PRSS_EPOCH_ID},
-        storage::file::FileStorage,
-        storage::StorageType,
         threshold::threshold_kms::RequestId,
         util::key_setup::test_tools::purge,
+        vault::storage::file::FileStorage,
+        vault::storage::StorageType,
     };
 
     #[tokio::test]

@@ -25,15 +25,16 @@ use crate::{
         central_rpc::{tonic_handle_potential_err, tonic_some_or_err_ref, validate_request_id},
         rpc_types::{compute_external_verify_proven_ct_signature, BaseKms, WrappedPublicKeyOwned},
     },
-    storage::{crypto_material::CryptoMaterialStorage, Storage},
     util::meta_store::{handle_res_mapping, MetaStore},
+    vault::storage::{crypto_material::CryptoMaterialStorage, Storage},
 };
 
 pub(crate) async fn non_blocking_verify_proven_ct<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
+    BackS: Storage + Send + Sync + 'static,
 >(
-    crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
+    crypto_storage: CryptoMaterialStorage<PubS, PrivS, BackS>,
     meta_store: Arc<RwLock<MetaStore<VerifyProvenCtResponsePayload>>>,
     request_id: RequestId,
     request: VerifyProvenCtRequest,
@@ -131,8 +132,9 @@ where
 async fn verify_proven_ct_and_sign<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
+    BackS: Storage + Send + Sync + 'static,
 >(
-    crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
+    crypto_storage: CryptoMaterialStorage<PubS, PrivS, BackS>,
     req: VerifyProvenCtRequest,
     client_sk: &PrivateSigKey,
 ) -> anyhow::Result<VerifyProvenCtResponsePayload> {

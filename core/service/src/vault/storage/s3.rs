@@ -1,18 +1,20 @@
 use super::{Storage, StorageCache, StorageForText, StorageReader, StorageType};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
-use crate::cryptography::nitro_enclave::ENCLAVE_SK_SIZE;
-use crate::util::aws::{
-    build_aws_kms_client, build_aws_sdk_config, build_s3_client, nitro_enclave_decrypt_app_key,
-    nitro_enclave_encrypt_app_key, s3_get_blob, s3_put_blob,
-};
 use crate::{anyhow_error_and_log, some_or_err};
 use anyhow::ensure;
 use aws_config::SdkConfig;
-use aws_sdk_kms::Client as AmazonKMSClient;
-use aws_sdk_s3::Client as S3Client;
-#[cfg(feature = "non-wasm")]
-use rand::rngs::OsRng;
-use rsa::{RsaPrivateKey, RsaPublicKey};
+use aws_sdk_s3::{error::ProvideErrorMetadata, primitives::ByteStream, Client as S3Client};
+use aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder;
+use aws_smithy_runtime_api::{
+    box_error::BoxError,
+    client::{
+        interceptors::{context::BeforeTransmitInterceptorContextMut, Intercept},
+        runtime_components::RuntimeComponents,
+    },
+};
+use aws_smithy_types::config_bag::ConfigBag;
+use http::{header::HOST, HeaderValue};
+use hyper_rustls::HttpsConnectorBuilder;
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -21,11 +23,13 @@ use tfhe::{
     safe_serialization::{safe_deserialize, safe_serialize},
     Unversionize, Versionize,
 };
+use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 use url::Url;
 
+const PREALLOCATED_BLOB_SIZE: usize = 32768;
+
 pub struct S3Storage {
-    pub aws_sdk_config: SdkConfig,
     pub s3_client: S3Client,
     pub blob_bucket: String,
     pub blob_path: String,
@@ -33,11 +37,8 @@ pub struct S3Storage {
 }
 
 impl S3Storage {
-    #[allow(clippy::too_many_arguments)]
-    pub async fn new(
-        aws_region: String,
-        aws_imds_endpoint: Option<Url>,
-        aws_s3_endpoint: Option<Url>,
+    pub fn new(
+        s3_client: S3Client,
         blob_bucket: String,
         path: Option<String>,
         storage_type: StorageType,
@@ -55,10 +56,7 @@ impl S3Storage {
             ),
             None => extra_prefix,
         };
-        let aws_sdk_config = build_aws_sdk_config(aws_region, aws_imds_endpoint).await;
-        let s3_client = build_s3_client(&aws_sdk_config, aws_s3_endpoint).await?;
         Ok(S3Storage {
-            aws_sdk_config,
             s3_client,
             blob_bucket,
             blob_path,
@@ -230,100 +228,120 @@ impl StorageForText for S3Storage {
     }
 }
 
-/// Keeps together everything needed for running a chain of trust for working
-/// with application secret keys (such as FHE private keys). The root key
-/// encrypt data keys which encrypt application keys. The root key is stored in
-/// AWS KMS and never leaves it. Encrypted application keys (together with the
-/// corresponding data keys) are stored on S3. The enclave keypair permits
-/// secure decryption of data keys by AWS KMS.
-pub struct EnclaveS3Storage {
-    s3_storage: S3Storage,
-    aws_kms_client: AmazonKMSClient,
-    root_key_id: String,
-    enclave_sk: RsaPrivateKey,
-    enclave_pk: RsaPublicKey,
+/// Accessing AWS S3 endpoints through a proxy might require rewriting the Host
+/// HTTP header. We use the AWS SDK interceptor mechanism to do that.
+#[derive(Debug)]
+struct HostHeaderInterceptor {
+    host: String,
 }
 
-impl EnclaveS3Storage {
-    pub async fn new(
-        s3_storage: S3Storage,
-        aws_kms_endpoint: Url,
-        root_key_id: String,
-    ) -> anyhow::Result<Self> {
-        let aws_kms_client =
-            build_aws_kms_client(&s3_storage.aws_sdk_config, aws_kms_endpoint).await;
-        let enclave_sk = RsaPrivateKey::new(&mut OsRng, ENCLAVE_SK_SIZE)?;
-        let enclave_pk = RsaPublicKey::from(&enclave_sk);
-        Ok(EnclaveS3Storage {
-            s3_storage,
-            aws_kms_client,
-            root_key_id,
-            enclave_sk,
-            enclave_pk,
-        })
-    }
-}
-
-#[tonic::async_trait]
-impl StorageReader for EnclaveS3Storage {
-    fn compute_url(&self, data_id: &str, data_type: &str) -> anyhow::Result<Url> {
-        self.s3_storage.compute_url(data_id, data_type)
+impl Intercept for HostHeaderInterceptor {
+    fn name(&self) -> &'static str {
+        "HostHeaderInterceptor"
     }
 
-    async fn data_exists(&self, url: &Url) -> anyhow::Result<bool> {
-        self.s3_storage.data_exists(url).await
-    }
-
-    async fn read_data<T: DeserializeOwned + Unversionize + Named + Send>(
+    fn modify_before_signing(
         &self,
-        url: &Url,
-    ) -> anyhow::Result<T> {
-        let mut encrypted_data = self.s3_storage.read_data(url).await?;
-        nitro_enclave_decrypt_app_key(
-            &self.aws_kms_client,
-            &self.enclave_sk,
-            &self.enclave_pk,
-            &mut encrypted_data,
-        )
-        .await
-    }
-
-    async fn all_urls(&self, data_type: &str) -> anyhow::Result<HashMap<String, Url>> {
-        self.s3_storage.all_urls(data_type).await
-    }
-
-    fn info(&self) -> String {
-        format!(
-            "Nitro enclave storage with bucket {}",
-            self.s3_storage.blob_bucket
-        )
+        context: &mut BeforeTransmitInterceptorContextMut<'_>,
+        _runtime_components: &RuntimeComponents,
+        _cfg: &mut ConfigBag,
+    ) -> Result<(), BoxError> {
+        context
+            .request_mut()
+            .headers_mut()
+            .insert(HOST, HeaderValue::from_str(self.host.as_str())?);
+        Ok(())
     }
 }
 
-#[tonic::async_trait]
-impl Storage for EnclaveS3Storage {
-    /// If one reads "public" not as in "public key" but as in "not a secret", it makes sense to
-    /// implement storage of encrypted private keys in the `PublicStorage` trait. Encrypted secrets
-    /// can be published, if the root key stays secret.
-    async fn store_data<T: Serialize + Versionize + Named + Send + Sync>(
-        &mut self,
-        data: &T,
-        url: &Url,
-    ) -> anyhow::Result<()> {
-        let encrypted_data = nitro_enclave_encrypt_app_key(
-            &self.aws_kms_client,
-            &self.enclave_sk,
-            &self.enclave_pk,
-            &self.root_key_id,
-            data,
-        )
+/// Given the address of a vsock-to-TCP proxy, constructs an S3 client for use inside of a Nitro
+/// enclave.
+pub async fn build_s3_client(
+    aws_sdk_config: &SdkConfig,
+    aws_s3_endpoint: Option<Url>,
+) -> anyhow::Result<S3Client> {
+    let region = aws_sdk_config.region().expect("AWS region must be set");
+    let s3_config = match aws_s3_endpoint {
+        Some(p) => {
+            // Overrides the hostname checked by the AWS API endpoint
+            let host_header_interceptor = HostHeaderInterceptor {
+                host: format!("s3.{}.amazonaws.com", region),
+            };
+            match p.scheme() {
+                "https" => {
+                    let https_connector = HttpsConnectorBuilder::new()
+                        .with_native_roots()
+                        .https_only()
+                        // Overrides the hostname checked during the TLS handshake
+                        .with_server_name(format!("s3.{}.amazonaws.com", region))
+                        .enable_http1()
+                        .build();
+                    let http_client = HyperClientBuilder::new().build(https_connector);
+                    aws_sdk_s3::config::Builder::from(aws_sdk_config)
+                        // Overrides the hostname used for the TCP connection
+                        .endpoint_url(p)
+                        .interceptor(host_header_interceptor)
+                        .http_client(http_client)
+                        // Virtual-hosting style S3 URLs don't work well with endpoint overrides
+                        .force_path_style(true)
+                        .build()
+                }
+                "http" => {
+                    aws_sdk_s3::config::Builder::from(aws_sdk_config)
+                        // Overrides the hostname used for the TCP connection
+                        .endpoint_url(p)
+                        .interceptor(host_header_interceptor)
+                        // Virtual-hosting style S3 URLs don't work well with endpoint overrides
+                        .force_path_style(true)
+                        .build()
+                }
+                _ => {
+                    anyhow::bail!("Only HTTP and HTTPS URL schemes are supported for S3 endpoints")
+                }
+            }
+        }
+        None => aws_sdk_s3::config::Builder::from(aws_sdk_config).build(),
+    };
+    Ok(S3Client::from_conf(s3_config))
+}
+
+pub(crate) async fn s3_get_blob(
+    s3_client: &S3Client,
+    bucket: &str,
+    path: &str,
+) -> anyhow::Result<Vec<u8>> {
+    let blob_response = s3_client
+        .get_object()
+        .bucket(bucket)
+        .key(path)
+        .send()
         .await?;
+    let mut blob_bytes: Vec<u8> = Vec::with_capacity(PREALLOCATED_BLOB_SIZE);
+    let mut blob_bytestream = blob_response.body.into_async_read();
+    blob_bytestream.read_to_end(&mut blob_bytes).await?;
+    Ok(blob_bytes)
+}
 
-        self.s3_storage.store_data(&encrypted_data, url).await
-    }
+pub(crate) async fn s3_put_blob(
+    s3_client: &S3Client,
+    bucket: &str,
+    path: &str,
+    blob_bytes: Vec<u8>,
+) -> anyhow::Result<()> {
+    let result = s3_client
+        .put_object()
+        .bucket(bucket)
+        .key(path)
+        .body(ByteStream::from(blob_bytes))
+        .send()
+        .await;
 
-    async fn delete_data(&mut self, url: &Url) -> anyhow::Result<()> {
-        self.s3_storage.delete_data(url).await
+    match result {
+        Ok(_) => Ok(()),
+        Err(err) => {
+            tracing::error!("{:?} {:?}", err.meta(), err.code());
+            Err(anyhow::anyhow!("AWS error, please refer to other logs."))
+        }
     }
 }
 
@@ -363,21 +381,20 @@ pub mod tests {
     use url::Url;
 
     #[cfg(feature = "s3_tests")]
-    use crate::storage::tests::*;
+    use crate::vault::storage::tests::*;
 
     #[tokio::test]
     async fn aws_storage_url() {
+        let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+        let s3_client = S3Client::new(&config);
         let storage = S3Storage::new(
-            "aws_region".to_string(),
-            Some(Url::parse("http://aws_imds_proxy").unwrap()),
-            Some(Url::parse("https://aws_s3_proxy").unwrap()),
+            s3_client,
             "blob_bucket".to_string(),
             Some("blob_key_prefix".to_string()),
             StorageType::PUB,
             None,
             None,
         )
-        .await
         .unwrap();
 
         let url = storage.compute_url("id", "type").unwrap();
@@ -393,18 +410,17 @@ pub mod tests {
     #[cfg(feature = "s3_tests")]
     #[tokio::test]
     async fn s3_storage_helper_methods() {
+        let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+        let s3_client = S3Client::new(&config);
         let temp_dir = tempfile::tempdir().unwrap();
         let mut pub_storage = S3Storage::new(
-            AWS_REGION.to_string(),
-            None,
-            None,
+            s3_client,
             BUCKET_NAME.to_string(),
             Some(temp_dir.path().to_str().unwrap().to_string()),
             StorageType::PUB,
             None,
             None,
         )
-        .await
         .unwrap();
         test_storage_read_store_methods(&mut pub_storage).await;
         test_batch_helper_methods(&mut pub_storage).await;

@@ -40,12 +40,12 @@ use kms_lib::rpc::rpc_types::{
     compute_external_pubdata_message_hash, compute_pt_message_hash, protobuf_to_alloy_domain,
     Plaintext, PubDataType,
 };
-use kms_lib::storage::{file::FileStorage, StorageReader, StorageType};
 use kms_lib::util::key_setup::test_tools::{
     compute_cipher_from_stored_key, compute_compressed_cipher_from_stored_key,
     compute_proven_ct_from_stored_key_and_serialize, load_crs_from_storage, load_pk_from_storage,
     load_server_key_from_storage, TypedPlaintext,
 };
+use kms_lib::vault::storage::{file::FileStorage, StorageReader, StorageType};
 use rand::SeedableRng;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -2328,8 +2328,8 @@ mod tests {
         rpc::rpc_types::{
             alloy_to_protobuf_domain, compute_external_pubdata_signature, PrivDataType,
         },
-        storage::{ram::RamStorage, read_versioned_at_request_id},
         util::key_setup::{ensure_central_crs_exists, ensure_central_server_signing_keys_exist},
+        vault::storage::{ram::RamStorage, read_versioned_at_request_id},
     };
     use tfhe::zk::CompactPkePublicParams;
 

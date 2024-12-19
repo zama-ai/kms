@@ -236,7 +236,7 @@ pub fn url_to_pathbuf(url: &Url) -> PathBuf {
 pub mod tests {
     use super::*;
     use crate::rpc::rpc_types::PubDataType;
-    use crate::storage::tests::*;
+    use crate::vault::storage::tests::*;
     use strum::IntoEnumIterator;
 
     #[ignore]

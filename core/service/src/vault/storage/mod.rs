@@ -1,10 +1,13 @@
-use crate::conf::AWSConfig;
-use crate::kms::RequestId;
-use crate::rpc::rpc_types::{
-    PrivDataType, PubDataType, PublicKeyType, WrappedPublicKey, WrappedPublicKeyOwned,
+use crate::{
+    anyhow_error_and_log,
+    kms::RequestId,
+    rpc::rpc_types::{
+        PrivDataType, PubDataType, PublicKeyType, WrappedPublicKey, WrappedPublicKeyOwned,
+    },
+    some_or_err,
 };
-use crate::{anyhow_error_and_log, some_or_err};
 use anyhow::anyhow;
+use aws_sdk_s3::Client as S3Client;
 use ordermap::OrderMap;
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::HashMap;
@@ -255,6 +258,7 @@ pub enum StorageType {
     PUB,
     PRIV,
     CLIENT,
+    BACKUP,
 }
 impl fmt::Display for StorageType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -276,7 +280,6 @@ pub enum StorageVersion {
 /// storage backends, as one would have to create both public and private
 /// storage object at the same time as passing them to the server startup
 /// function.
-#[allow(clippy::large_enum_variant)]
 #[cfg(feature = "non-wasm")]
 #[allow(clippy::large_enum_variant)]
 pub enum StorageProxy {
@@ -284,9 +287,11 @@ pub enum StorageProxy {
     #[allow(dead_code)]
     Ram(ram::RamStorage),
     S3(s3::S3Storage),
-    EnclaveS3(s3::EnclaveS3Storage),
 }
 
+/// Neither `delegate` nor `ambassador` crates can work with
+/// `tonic::async_trait` because Rust doesn't support eager macro instantiation,
+/// or something. So, more monstrosity.
 #[cfg(feature = "non-wasm")]
 #[tonic::async_trait]
 impl StorageReader for StorageProxy {
@@ -295,7 +300,6 @@ impl StorageReader for StorageProxy {
             StorageProxy::File(s) => s.data_exists(url).await,
             StorageProxy::Ram(s) => s.data_exists(url).await,
             StorageProxy::S3(s) => s.data_exists(url).await,
-            StorageProxy::EnclaveS3(s) => s.data_exists(url).await,
         }
     }
 
@@ -307,7 +311,6 @@ impl StorageReader for StorageProxy {
             StorageProxy::File(s) => s.read_data(url).await,
             StorageProxy::Ram(s) => s.read_data(url).await,
             StorageProxy::S3(s) => s.read_data(url).await,
-            StorageProxy::EnclaveS3(s) => s.read_data(url).await,
         }
     }
 
@@ -316,7 +319,6 @@ impl StorageReader for StorageProxy {
             StorageProxy::File(s) => s.compute_url(data_id, data_type),
             StorageProxy::Ram(s) => s.compute_url(data_id, data_type),
             StorageProxy::S3(s) => s.compute_url(data_id, data_type),
-            StorageProxy::EnclaveS3(s) => s.compute_url(data_id, data_type),
         }
     }
 
@@ -325,7 +327,6 @@ impl StorageReader for StorageProxy {
             StorageProxy::File(s) => s.all_urls(data_type).await,
             StorageProxy::Ram(s) => s.all_urls(data_type).await,
             StorageProxy::S3(s) => s.all_urls(data_type).await,
-            StorageProxy::EnclaveS3(s) => s.all_urls(data_type).await,
         }
     }
 
@@ -334,7 +335,6 @@ impl StorageReader for StorageProxy {
             StorageProxy::File(s) => s.info(),
             StorageProxy::Ram(s) => s.info(),
             StorageProxy::S3(s) => s.info(),
-            StorageProxy::EnclaveS3(s) => s.info(),
         }
     }
 }
@@ -351,7 +351,6 @@ impl Storage for StorageProxy {
             StorageProxy::File(s) => s.store_data(data, url).await,
             StorageProxy::Ram(s) => s.store_data(data, url).await,
             StorageProxy::S3(s) => s.store_data(data, url).await,
-            StorageProxy::EnclaveS3(s) => s.store_data(data, url).await,
         }
     }
 
@@ -360,7 +359,6 @@ impl Storage for StorageProxy {
             StorageProxy::File(s) => s.delete_data(url).await,
             StorageProxy::Ram(s) => s.delete_data(url).await,
             StorageProxy::S3(s) => s.delete_data(url).await,
-            StorageProxy::EnclaveS3(s) => s.delete_data(url).await,
         }
     }
 }
@@ -373,60 +371,30 @@ impl StorageForText for StorageProxy {
             StorageProxy::File(s) => s.store_text(text, url).await,
             StorageProxy::Ram(s) => s.store_text(text, url).await,
             StorageProxy::S3(s) => s.store_text(text, url).await,
-            StorageProxy::EnclaveS3(_s) => {
-                Err(anyhow::anyhow!("store_text is not supported for EnclaveS3"))
-            }
         }
     }
 }
 
-pub async fn make_storage(
-    aws_config: Option<AWSConfig>,
+pub fn make_storage(
     storage: Option<Url>,
-    keychain: Option<Url>,
     storage_type: StorageType,
     party_id: Option<usize>,
     storage_cache: Option<StorageCache>,
+    s3_client: Option<S3Client>,
 ) -> anyhow::Result<StorageProxy> {
     let storage = match storage {
         Some(storage_url) => match storage_url.scheme() {
             "s3" => {
-                let aws_config =
-                    aws_config.expect("AWS configuration must be present (at least the region)");
-                let s3_storage = s3::S3Storage::new(
-                    aws_config.region,
-                    aws_config.imds_endpoint,
-                    aws_config.s3_endpoint,
+                let s3_client = s3_client.expect("AWS S3 client must be configured");
+                StorageProxy::S3(s3::S3Storage::new(
+                    s3_client,
                     some_or_err(storage_url.host_str(), "No host in url {url}".to_string())?
                         .to_string(),
                     Some(storage_url.path().to_string()),
                     storage_type,
                     party_id,
                     storage_cache,
-                )
-                .await?;
-                match storage_type {
-                    StorageType::PRIV => {
-                        let root_key_id = some_or_err(
-                            keychain.as_ref().and_then(|k| k.host_str()),
-                            "Root key ID must be provided".to_string(),
-                        )?
-                        .to_string();
-                        StorageProxy::EnclaveS3(
-                        s3::EnclaveS3Storage::new(
-			    // TODO: this S3 storage isn't guaranteed to use
-			    // custom endpoints which will might lead to failure
-			    // in the enclave, it'll be handled more gracefully
-			    // after the shift to vaults is complete
-                            s3_storage,
-                            aws_config.awskms_endpoint.expect("AWS KMS endpoint must be set (you are running a Nitro enclave, are you not?)"),
-                            root_key_id
-                        )
-                        .await?
-                    )
-                    }
-                    _ => StorageProxy::S3(s3_storage),
-                }
+                )?)
             }
             "file" => StorageProxy::File(file::FileStorage::new(
                 Some(file::url_to_pathbuf(&storage_url).as_path()),

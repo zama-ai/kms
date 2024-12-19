@@ -52,7 +52,6 @@ use kms_lib::{
         DecryptionResponsePayload, ReencryptionResponse, ReencryptionResponsePayload, RequestId,
     },
     rpc::rpc_types::{protobuf_to_alloy_domain, Plaintext, CURRENT_FORMAT_VERSION},
-    storage::{file::FileStorage, StorageType},
     threshold::mock_threshold_kms::setup_mock_kms,
     util::key_setup::{
         ensure_central_keys_exist, ensure_central_server_signing_keys_exist,
@@ -60,6 +59,7 @@ use kms_lib::{
         ensure_threshold_server_signing_keys_exist,
         test_tools::{compute_cipher_from_stored_key, purge},
     },
+    vault::storage::{file::FileStorage, StorageType},
 };
 use rand::RngCore;
 use std::collections::HashMap;
