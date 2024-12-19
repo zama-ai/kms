@@ -57,7 +57,7 @@ impl TimeoutTriple {
     }
 }
 
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
 pub struct TimeoutConfig {
     pub channel_timeout: u64,
     pub crs: TimeoutTriple,
@@ -74,22 +74,14 @@ impl Default for TimeoutConfig {
     fn default() -> Self {
         Self {
             channel_timeout: 60,
-            // CRS: 2 hours total, check each minute
-            crs: TimeoutTriple::new(60, 60, 120),
-            // Insecure CRS: 2 minutes
-            insecure_crs: TimeoutTriple::new(10, 5, 24),
-            // Key-Gen: 20 hours, wait 5 hours first, then poll for the next 15 hours
+            crs: TimeoutTriple::new(10, 10, 200),
+            insecure_crs: TimeoutTriple::new(9, 3, 36),
             keygen: TimeoutTriple::new(18000, 15000, 150),
-            // Insecure Key-Gen: 2 minutes
-            insecure_key_gen: TimeoutTriple::new(10, 5, 24),
-            // Pre-Processing: 20 hours, wait 5 hours first, then poll for the next 15 hours
+            insecure_key_gen: TimeoutTriple::new(9, 3, 60),
             preproc: TimeoutTriple::new(18000, 15000, 150),
-            // Decryption: 2 minutes 10s total
-            decryption: TimeoutTriple::new(10, 5, 24),
-            // Re-Encryption: 2 minutes 10s total
-            reencryption: TimeoutTriple::new(10, 5, 24),
-            // Verify proven ct: 2 minutes 10s total
-            verify_proven_ct: TimeoutTriple::new(10, 5, 24),
+            decryption: TimeoutTriple::new(0, 3, 100),
+            reencryption: TimeoutTriple::new(0, 3, 100),
+            verify_proven_ct: TimeoutTriple::new(1, 1, 24),
         }
     }
 }
@@ -220,15 +212,7 @@ mod tests {
 
             // coordinator configs
             assert_eq!(conf.core.addresses, vec!["http://localhost:50051"]);
-            assert_eq!(conf.core.timeout_config.channel_timeout, 60);
-            assert_eq!(
-                conf.core.timeout_config.decryption,
-                TimeoutTriple {
-                    initial_wait_time: 1,
-                    retry_interval: 1,
-                    max_poll_count: 100,
-                }
-            );
+            assert_eq!(conf.core.timeout_config, TimeoutConfig::default());
 
             // blockchain configs
             assert_eq!(conf.blockchain.addresses, vec!["http://localhost:9090"]);

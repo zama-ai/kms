@@ -330,9 +330,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::residue_poly::{ResiduePoly, TryFromWrapper};
+    use crate::algebra::residue_poly::{pack_residue_poly, ResiduePoly, TryFromWrapper};
     use aes_prng::AesRng;
+    use num_traits::FromPrimitive;
     use paste::paste;
+    use proptest::prelude::*;
     use rand::SeedableRng;
     use std::num::Wrapping;
 
@@ -477,5 +479,104 @@ mod tests {
             .unwrap();
 
         assert_eq!(opened, secret);
+    }
+
+    proptest! {
+        #[test]
+        fn test_packed_sharing_reconstruct_sunshine_128(s1: u128, s2: u128) {
+            test_packed_sharing_reconstruct(
+                Z128::from_u128(s1).unwrap(), Z128::from_u128(s2).unwrap(), false
+            );
+        }
+
+        #[test]
+        fn test_packed_sharing_reconstruct_with_error_128(s1: u128, s2: u128) {
+            test_packed_sharing_reconstruct(
+                Z128::from_u128(s1).unwrap(), Z128::from_u128(s2).unwrap(), true
+            );
+        }
+
+        #[test]
+        fn test_packed_sharing_reconstruct_sunshine_64(s1: u64, s2: u64) {
+            test_packed_sharing_reconstruct(
+                Z64::from_u64(s1).unwrap(), Z64::from_u64(s2).unwrap(), false
+            );
+        }
+
+        #[test]
+        fn test_packed_sharing_reconstruct_with_error_64(s1: u64, s2: u64) {
+            test_packed_sharing_reconstruct(
+                Z64::from_u64(s1).unwrap(), Z64::from_u64(s2).unwrap(), true
+            );
+        }
+    }
+
+    fn test_packed_sharing_reconstruct<Z: crate::algebra::structure_traits::BaseRing>(
+        s1: Z,
+        s2: Z,
+        add_error: bool,
+    ) where
+        ResiduePoly<Z>: crate::algebra::error_correction::MemoizedExceptionals,
+        ResiduePoly<Z>: crate::algebra::residue_poly::Monomials,
+    {
+        let mut rng = AesRng::seed_from_u64(0);
+        let num_parties = 4;
+        let threshold = 1;
+
+        // only secret share const polynomial
+        let secret1 = ResiduePoly::<Z>::from_scalar(s1);
+        let secret2 = ResiduePoly::<Z>::from_scalar(s2);
+
+        let block1_shares =
+            ShamirSharings::<ResiduePoly<Z>>::share(&mut rng, secret1, num_parties, threshold)
+                .unwrap()
+                .shares
+                .into_iter()
+                .map(|x| x.value())
+                .collect::<Vec<_>>();
+
+        let block2_shares =
+            ShamirSharings::<ResiduePoly<Z>>::share(&mut rng, secret2, num_parties, threshold)
+                .unwrap()
+                .shares
+                .into_iter()
+                .map(|x| x.value())
+                .collect::<Vec<_>>();
+
+        // shares of party i
+        let collected_shares = (0..num_parties)
+            .map(|i| vec![block1_shares[i], block2_shares[i]])
+            .collect::<Vec<_>>();
+
+        // packed shares of party i
+        let packed_shares = (0..num_parties)
+            .map(|i| pack_residue_poly(&collected_shares[i]))
+            .collect::<Vec<_>>();
+        for s in packed_shares.iter() {
+            // two polynomials should be packed into 1
+            // note that we can pack up to F_DEG polynomials into one
+            assert_eq!(s.len(), 1);
+        }
+
+        // we need to convert everything back into sharmir shares to do the reconstruction
+        let mut packed_sharmir_shares = ShamirSharings::new();
+        for (i, share) in packed_shares.into_iter().enumerate() {
+            if add_error && i < threshold {
+                packed_sharmir_shares
+                    .add_share(Share::new(Role::indexed_by_zero(i), share[0] + Z::ONE))
+                    .unwrap();
+            } else {
+                packed_sharmir_shares
+                    .add_share(Share::new(Role::indexed_by_zero(i), share[0]))
+                    .unwrap();
+            }
+        }
+
+        let opened =
+            reconstruct_w_errors_sync(num_parties, threshold, threshold, 0, &packed_sharmir_shares)
+                .unwrap()
+                .unwrap();
+        assert_eq!(opened.at(0), secret1.at(0));
+        assert_eq!(opened.at(1), secret2.at(0));
     }
 }

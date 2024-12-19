@@ -270,7 +270,11 @@ where
         shared_masked_ptxts.push(res);
     }
 
-    tracing::info!("Result in session {:?} is ready", session.session_id());
+    tracing::info!(
+        "Result in session {:?} is ready, got {} blocks",
+        session.session_id(),
+        len
+    );
     results.insert(format!("{}", session.session_id()), shared_masked_ptxts);
 
     let execution_stop_timer = Instant::now();

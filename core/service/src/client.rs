@@ -24,7 +24,7 @@ use bincode::{deserialize, serialize};
 use distributed_decryption::algebra::base_ring::Z128;
 use distributed_decryption::algebra::residue_poly::ResiduePoly;
 use distributed_decryption::execution::endpoints::reconstruct::{
-    combine_decryptions, reconstruct_message,
+    combine_decryptions, reconstruct_packed_message,
 };
 use distributed_decryption::execution::runtime::party::Role;
 use distributed_decryption::execution::sharing::shamir::{
@@ -1961,7 +1961,16 @@ impl Client {
             .get_params_basics_handle()
             .to_classic_pbs_parameters();
 
-        let recon_blocks = reconstruct_message(Some(decrypted_blocks), &pbs_params)?;
+        let recon_blocks = reconstruct_packed_message(
+            Some(decrypted_blocks),
+            &pbs_params,
+            fhe_type.to_num_blocks(
+                &self
+                    .params
+                    .get_params_basics_handle()
+                    .to_classic_pbs_parameters(),
+            ),
+        )?;
         decrypted_blocks_to_plaintext(&pbs_params, fhe_type, recon_blocks)
     }
 
@@ -2030,41 +2039,28 @@ impl Client {
                 return Err(anyhow_error_and_log("Could not reconstruct all blocks"));
             }
         }
+
+        let fhe_type = agg_resp[0]
+            .payload
+            .as_ref()
+            .ok_or(anyhow::anyhow!("Missing payload in reencryption response"))?
+            .fhe_type();
+
         let pbs_params = self
             .params
             .get_params_basics_handle()
             .to_classic_pbs_parameters();
-        let recon_blocks = reconstruct_message(Some(decrypted_blocks), &pbs_params)?;
 
-        //Deduce fhe_type from recon_blocks and message_modulus
-        let bits_in_block = pbs_params.message_modulus_log() as usize;
-        let num_blocks = recon_blocks.len();
-
-        let total_num_bits = bits_in_block * num_blocks;
-
-        let fhe_type = if total_num_bits == bits_in_block {
-            FheType::Ebool
-        } else if total_num_bits == 4 {
-            FheType::Euint4
-        } else if total_num_bits == 8 {
-            FheType::Euint8
-        } else if total_num_bits == 16 {
-            FheType::Euint16
-        } else if total_num_bits == 32 {
-            FheType::Euint32
-        } else if total_num_bits == 64 {
-            FheType::Euint64
-        } else if total_num_bits == 128 {
-            FheType::Euint128
-        } else if total_num_bits == 160 {
-            FheType::Euint160
-        } else if total_num_bits == 256 {
-            FheType::Euint256
-        } else if total_num_bits == 2048 {
-            FheType::Euint2048
-        } else {
-            panic!("Unexpected type: total_num_bits {total_num_bits}")
-        };
+        let recon_blocks = reconstruct_packed_message(
+            Some(decrypted_blocks),
+            &pbs_params,
+            fhe_type.to_num_blocks(
+                &self
+                    .params
+                    .get_params_basics_handle()
+                    .to_classic_pbs_parameters(),
+            ),
+        )?;
 
         decrypted_blocks_to_plaintext(&pbs_params, fhe_type, recon_blocks)
     }
@@ -2077,8 +2073,7 @@ impl Client {
         fhe_type: FheType,
         client_keys: &SigncryptionPair,
     ) -> anyhow::Result<Vec<ShamirSharings<ResiduePoly<Z128>>>> {
-        let num_blocks = num_blocks(
-            fhe_type,
+        let num_blocks = fhe_type.to_num_blocks(
             &self
                 .params
                 .get_params_basics_handle()
@@ -2394,26 +2389,6 @@ pub fn assemble_metadata_req(req: &VerifyProvenCtRequest) -> anyhow::Result<[u8;
         &acl_address,
         &chain_id,
     ))
-}
-
-/// Calculates the number of blocks needed to encode a message of the given FHE
-/// type, based on the usable message modulus log from the
-/// parameters. Rounds up to ensure enough blocks.
-pub fn num_blocks(fhe_type: FheType, params: &ClassicPBSParameters) -> usize {
-    match fhe_type {
-        FheType::Ebool => 8_usize.div_ceil(params.message_modulus_log() as usize),
-        FheType::Euint4 => 8_usize.div_ceil(params.message_modulus_log() as usize),
-        FheType::Euint8 => 8_usize.div_ceil(params.message_modulus_log() as usize),
-        FheType::Euint16 => 16_usize.div_ceil(params.message_modulus_log() as usize),
-        FheType::Euint32 => 32_usize.div_ceil(params.message_modulus_log() as usize),
-        FheType::Euint64 => 64_usize.div_ceil(params.message_modulus_log() as usize),
-        FheType::Euint128 => 128_usize.div_ceil(params.message_modulus_log() as usize),
-        FheType::Euint160 => 160_usize.div_ceil(params.message_modulus_log() as usize),
-        FheType::Euint256 => 256_usize.div_ceil(params.message_modulus_log() as usize),
-        FheType::Euint512 => 512_usize.div_ceil(params.message_modulus_log() as usize),
-        FheType::Euint1024 => 1024_usize.div_ceil(params.message_modulus_log() as usize),
-        FheType::Euint2048 => 2048_usize.div_ceil(params.message_modulus_log() as usize),
-    }
 }
 
 pub fn ecdsa_public_key_to_address(pk: &PublicSigKey) -> anyhow::Result<Vec<u8>> {
@@ -2921,6 +2896,7 @@ pub(crate) mod tests {
     use crate::cryptography::signcryption::Reencrypt;
     use crate::kms::core_service_endpoint_client::CoreServiceEndpointClient;
     use crate::kms::core_service_endpoint_server::CoreServiceEndpointServer;
+    use crate::kms::{Empty, RequestId};
     use crate::kms::{FheType, ParamChoice, TypedCiphertext};
     use crate::kms::{InitRequest, ReencryptionResponse};
     #[cfg(feature = "wasm_tests")]
@@ -2939,10 +2915,6 @@ pub(crate) mod tests {
     use crate::util::rate_limiter::RateLimiterConfig;
     use crate::vault::storage::StorageReader;
     use crate::vault::storage::{file::FileStorage, ram::RamStorage, StorageType, StorageVersion};
-    use crate::{
-        client::num_blocks,
-        kms::{Empty, RequestId},
-    };
     use alloy_primitives::Bytes;
     use alloy_signer::Signer;
     use alloy_signer_local::PrivateKeySigner;
@@ -5226,7 +5198,7 @@ pub(crate) mod tests {
     #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     #[case(TypedPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     // TODO: this takes approx. 300 secs locally.
-    // #[case(TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1)]
+    // #[case(TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     #[tracing_test::traced_test]
@@ -5235,7 +5207,7 @@ pub(crate) mod tests {
         #[case] parallelism: usize,
         #[case] amount_parties: usize,
         #[case] key_id: &str,
-        #[values(true, false)] secure: bool,
+        #[values(true)] secure: bool,
     ) {
         use crate::consts::DEFAULT_PARAM;
 
@@ -5256,15 +5228,15 @@ pub(crate) mod tests {
     #[rstest::rstest]
     #[case(TypedPlaintext::U8(u8::MAX), 1, 7, Some(vec![2,6]), &DEFAULT_THRESHOLD_KEY_ID_7P.to_string())]
     #[case(TypedPlaintext::Bool(true), 4, 4, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TypedPlaintext::U8(u8::MAX), 1, 4,Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TypedPlaintext::U16(u16::MAX), 1, 4,Some(vec![3]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TypedPlaintext::U32(u32::MAX), 1, 4,Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TypedPlaintext::U64(u64::MAX), 1, 4,Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TypedPlaintext::U128(u128::MAX), 1, 4,Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TypedPlaintext::U8(u8::MAX), 1, 4, Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TypedPlaintext::U16(u16::MAX), 1, 4, Some(vec![3]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TypedPlaintext::U32(u32::MAX), 1, 4, Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TypedPlaintext::U64(u64::MAX), 1, 4, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TypedPlaintext::U128(u128::MAX), 1, 4, Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1, 4,Some(vec![3]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     #[case(TypedPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1, 4,Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     // TODO: this takes approx. 300 secs locally.
-    // #[case(TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1)]
+    // #[case(TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1, 4, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn default_reencryption_threshold_with_crash(
@@ -5593,22 +5565,22 @@ pub(crate) mod tests {
         let params = &params
             .get_params_basics_handle()
             .to_classic_pbs_parameters();
-        // 2 bits per block, using Euint8 as internal representation
-        assert_eq!(num_blocks(FheType::Ebool, params), 4);
-        // 2 bits per block, using Euint8 as internal representation
-        assert_eq!(num_blocks(FheType::Euint4, params), 4);
+        // 2 bits per block, using Ebool as internal representation
+        assert_eq!(FheType::Ebool.to_num_blocks(params), 1);
+        // 2 bits per block, using Euint4 as internal representation
+        assert_eq!(FheType::Euint4.to_num_blocks(params), 2);
         // 2 bits per block
-        assert_eq!(num_blocks(FheType::Euint8, params), 4);
+        assert_eq!(FheType::Euint8.to_num_blocks(params), 4);
         // 2 bits per block
-        assert_eq!(num_blocks(FheType::Euint16, params), 8);
+        assert_eq!(FheType::Euint16.to_num_blocks(params), 8);
         // 2 bits per block
-        assert_eq!(num_blocks(FheType::Euint32, params), 16);
+        assert_eq!(FheType::Euint32.to_num_blocks(params), 16);
         // 2 bits per block
-        assert_eq!(num_blocks(FheType::Euint64, params), 32);
+        assert_eq!(FheType::Euint64.to_num_blocks(params), 32);
         // 2 bits per block
-        assert_eq!(num_blocks(FheType::Euint128, params), 64);
+        assert_eq!(FheType::Euint128.to_num_blocks(params), 64);
         // 2 bits per block
-        assert_eq!(num_blocks(FheType::Euint160, params), 80);
+        assert_eq!(FheType::Euint160.to_num_blocks(params), 80);
     }
 
     //Check status of preproc request

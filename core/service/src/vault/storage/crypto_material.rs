@@ -31,16 +31,15 @@ use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock};
 
 #[tonic::async_trait]
 trait CryptoMaterialReader {
-    type Out;
-    async fn read_from_storage<S>(storage: &S, request_id: &RequestId) -> anyhow::Result<Self::Out>
+    async fn read_from_storage<S>(storage: &S, request_id: &RequestId) -> anyhow::Result<Self>
     where
-        S: Storage + Send + Sync + 'static;
+        S: Storage + Send + Sync + 'static,
+        Self: Sized;
 }
 
 #[tonic::async_trait]
 impl CryptoMaterialReader for ThresholdFheKeys {
-    type Out = ThresholdFheKeys;
-    async fn read_from_storage<S>(storage: &S, request_id: &RequestId) -> anyhow::Result<Self::Out>
+    async fn read_from_storage<S>(storage: &S, request_id: &RequestId) -> anyhow::Result<Self>
     where
         S: Storage + Send + Sync + 'static,
     {
@@ -51,8 +50,7 @@ impl CryptoMaterialReader for ThresholdFheKeys {
 
 #[tonic::async_trait]
 impl CryptoMaterialReader for WrappedPublicKeyOwned {
-    type Out = WrappedPublicKeyOwned;
-    async fn read_from_storage<S>(storage: &S, request_id: &RequestId) -> anyhow::Result<Self::Out>
+    async fn read_from_storage<S>(storage: &S, request_id: &RequestId) -> anyhow::Result<Self>
     where
         S: Storage + Send + Sync + 'static,
     {
@@ -62,8 +60,7 @@ impl CryptoMaterialReader for WrappedPublicKeyOwned {
 
 #[tonic::async_trait]
 impl CryptoMaterialReader for KmsFheKeyHandles {
-    type Out = KmsFheKeyHandles;
-    async fn read_from_storage<S>(storage: &S, request_id: &RequestId) -> anyhow::Result<Self::Out>
+    async fn read_from_storage<S>(storage: &S, request_id: &RequestId) -> anyhow::Result<Self>
     where
         S: Storage + Send + Sync + 'static,
     {
@@ -74,8 +71,7 @@ impl CryptoMaterialReader for KmsFheKeyHandles {
 
 #[tonic::async_trait]
 impl CryptoMaterialReader for CompactPkePublicParams {
-    type Out = CompactPkePublicParams;
-    async fn read_from_storage<S>(storage: &S, request_id: &RequestId) -> anyhow::Result<Self::Out>
+    async fn read_from_storage<S>(storage: &S, request_id: &RequestId) -> anyhow::Result<Self>
     where
         S: Storage + Send + Sync + 'static,
     {
@@ -815,13 +811,12 @@ impl<
     }
 
     async fn read_cloned_crypto_material<T, S>(
-        cache: Arc<RwLock<HashMap<RequestId, T::Out>>>,
+        cache: Arc<RwLock<HashMap<RequestId, T>>>,
         req_id: &RequestId,
         storage: Arc<Mutex<S>>,
-    ) -> anyhow::Result<T::Out>
+    ) -> anyhow::Result<T>
     where
-        T: CryptoMaterialReader,
-        <T as CryptoMaterialReader>::Out: Clone,
+        T: CryptoMaterialReader + Clone,
         S: Storage + Send + Sync + 'static,
     {
         let out = {
@@ -873,7 +868,7 @@ impl<
     }
 
     async fn refresh_crypto_material<T, S>(
-        cache: Arc<RwLock<HashMap<RequestId, T::Out>>>,
+        cache: Arc<RwLock<HashMap<RequestId, T>>>,
         req_id: &RequestId,
         storage: Arc<Mutex<S>>,
     ) -> anyhow::Result<()>

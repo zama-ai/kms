@@ -48,7 +48,7 @@ use conf_trace::metrics;
 use conf_trace::metrics_names::{
     ERR_DECRYPTION_FAILED, ERR_RATE_LIMIT_EXCEEDED, OP_DECRYPT, OP_REENCRYPT, TAG_PARTY_ID,
 };
-use distributed_decryption::algebra::residue_poly::ResiduePoly128;
+use distributed_decryption::algebra::residue_poly::{pack_residue_poly, ResiduePoly128};
 use distributed_decryption::conf::party::CertificatePaths;
 use distributed_decryption::execution::endpoints::decryption::{
     decrypt_using_noiseflooding, partial_decrypt_using_noiseflooding, Small,
@@ -857,6 +857,7 @@ impl<
                 let partial_signcryption =
                     match partial_dec_map.get(&session.session_id().to_string()) {
                         Some(partial_dec) => {
+                            let partial_dec = pack_residue_poly(partial_dec);
                             let partial_dec_serialized = bincode::serialize(&partial_dec)?;
                             let signcryption_msg = SigncryptionPayload {
                                 plaintext: Plaintext::from_bytes(partial_dec_serialized, fhe_type),
@@ -879,7 +880,8 @@ impl<
                         }
                     };
                 tracing::info!(
-                    "Reencryption completed. Inner thread took {:?} ms",
+                    "Reencryption completed for type {}. Inner thread took {:?} ms",
+                    fhe_type.as_str_name(),
                     time.as_millis()
                 );
                 partial_signcryption

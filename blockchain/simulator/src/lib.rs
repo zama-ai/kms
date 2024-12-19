@@ -378,7 +378,7 @@ pub struct Config {
     // TODO: expose a log-level instead
     #[clap(long, short = 'l')]
     pub logs: bool,
-    #[clap(long, default_value = "60")]
+    #[clap(long, default_value = "200")]
     pub max_iter: u64,
     #[clap(long, short = 'a', default_value_t = false)]
     pub expect_all_responses: bool,
@@ -1841,7 +1841,7 @@ pub async fn main_from_config(
     path_to_config: &str,
     command: &SimulatorCommand,
     destination_prefix: &Path,
-    max_iter: Option<u64>,
+    max_iter: u64,
     expect_all_responses: bool,
 ) -> Result<Option<Vec<OperationValue>>, Box<dyn std::error::Error + 'static>> {
     tracing::info!("Path to config: {:?}", path_to_config);
@@ -1936,8 +1936,6 @@ pub async fn main_from_config(
 
     // TODO: stop here if insufficient gas and/or query faucet if setup
     // TODO: add optional faucet configuration in CSC
-
-    let max_iter = max_iter.unwrap_or(80);
 
     // Execute the proper command
     match command {

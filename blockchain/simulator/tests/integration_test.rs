@@ -113,7 +113,7 @@ async fn key_and_crs_gen<T: DockerComposeContext>(
         &config.file_conf.unwrap(),
         &config.command,
         keys_folder,
-        Some(config.max_iter),
+        config.max_iter,
         config.expect_all_responses,
     )
     .await
@@ -150,7 +150,7 @@ async fn key_and_crs_gen<T: DockerComposeContext>(
         &config.file_conf.unwrap(),
         &config.command,
         keys_folder,
-        Some(config.max_iter),
+        config.max_iter,
         config.expect_all_responses,
     )
     .await
@@ -187,7 +187,7 @@ async fn test_template<T: DockerComposeContext>(ctx: &mut T, commands: Vec<Simul
             file_conf: Some(String::from(path_to_config.to_str().unwrap())),
             command,
             logs: true,
-            max_iter: 50,
+            max_iter: 500,
             expect_all_responses: true,
         };
 
@@ -195,7 +195,7 @@ async fn test_template<T: DockerComposeContext>(ctx: &mut T, commands: Vec<Simul
             &config.file_conf.unwrap(),
             &config.command,
             keys_folder,
-            Some(config.max_iter),
+            config.max_iter,
             config.expect_all_responses,
         )
         .await
@@ -252,14 +252,21 @@ async fn integration_test_commands<T: DockerComposeContext>(
     // some commands are tested twice to see the cache in action
     let commands = vec![
         SimulatorCommand::Decrypt(CipherParameters {
-            to_encrypt: "0x6F4F".to_string(),
-            data_type: FheType::Euint32,
+            to_encrypt: "0x1".to_string(),
+            data_type: FheType::Ebool,
+            compressed: true,
+            crs_id: crs_id.clone(),
+            key_id: key_id.clone(),
+        }),
+        SimulatorCommand::Decrypt(CipherParameters {
+            to_encrypt: "0x6F".to_string(),
+            data_type: FheType::Euint8,
             compressed: false,
             crs_id: crs_id.clone(),
             key_id: key_id.clone(),
         }),
         SimulatorCommand::Decrypt(CipherParameters {
-            to_encrypt: "0x1617".to_string(),
+            to_encrypt: "0xFFFF".to_string(),
             data_type: FheType::Euint16,
             compressed: true,
             crs_id: crs_id.clone(),
@@ -267,7 +274,7 @@ async fn integration_test_commands<T: DockerComposeContext>(
         }),
         SimulatorCommand::Decrypt(CipherParameters {
             to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF03956822D0D186F78D196BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC45921".to_string(),
-            data_type: FheType::Euint512,
+            data_type: FheType::Euint1024,
             compressed: true,
             crs_id: crs_id.clone(),
             key_id: key_id.clone(),
@@ -275,20 +282,40 @@ async fn integration_test_commands<T: DockerComposeContext>(
         SimulatorCommand::ReEncrypt(CipherParameters {
             to_encrypt: "0x1".to_string(),
             data_type: FheType::Ebool,
+            compressed: true,
+            crs_id: crs_id.clone(),
+            key_id: key_id.clone(),
+        }),
+        SimulatorCommand::ReEncrypt(CipherParameters {
+            to_encrypt: "0x78".to_string(),
+            data_type: FheType::Euint8,
             compressed: false,
             crs_id: crs_id.clone(),
             key_id: key_id.clone(),
         }),
         SimulatorCommand::ReEncrypt(CipherParameters {
-            to_encrypt: "0x12addaddadd".to_string(),
-            data_type: FheType::Euint160,
+            to_encrypt: "0xFFFF".to_string(),
+            data_type: FheType::Euint16,
+            compressed: true,
+            crs_id: crs_id.clone(),
+            key_id: key_id.clone(),
+        }),
+        SimulatorCommand::ReEncrypt(CipherParameters {
+            to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF03956822D0D186F78D196BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC45921".to_string(),
+            data_type: FheType::Euint1024,
             compressed: true,
             crs_id: crs_id.clone(),
             key_id: key_id.clone(),
         }),
         SimulatorCommand::VerifyProvenCt(VerifyProvenCtParameters {
-            to_encrypt: "0x1112".to_string(),
-            data_type: FheType::Euint2048,
+            to_encrypt: "0x11".to_string(),
+            data_type: FheType::Euint8,
+            crs_id: crs_id.clone(),
+            key_id: key_id.clone(),
+        }),
+        SimulatorCommand::VerifyProvenCt(VerifyProvenCtParameters {
+            to_encrypt: "0xFFFF".to_string(),
+            data_type: FheType::Euint16,
             crs_id: crs_id.clone(),
             key_id: key_id.clone(),
         }),

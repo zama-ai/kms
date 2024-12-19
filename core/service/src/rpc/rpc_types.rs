@@ -5,12 +5,14 @@ use crate::kms::{ReencryptionResponsePayload, SignedPubDataHandle};
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::Eip712Domain;
 use anyhow::anyhow;
+use distributed_decryption::execution::tfhe_internals::parameters::AugmentedCiphertextParameters;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;
 use strum_macros::EnumIter;
 use tfhe::integer::bigint::StaticUnsignedBigInt;
 use tfhe::named::Named;
+use tfhe::shortint::ClassicPBSParameters;
 use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
 
@@ -290,6 +292,31 @@ impl TryFrom<String> for FheType {
             _ => Err(anyhow::anyhow!(
                 "Trying to import FheType from unsupported value"
             )),
+        }
+    }
+}
+
+impl FheType {
+    /// Calculates the number of blocks needed to encode a message of the given FHE
+    /// type, based on the usable message modulus log from the
+    /// parameters. Rounds up to ensure enough blocks.
+    ///
+    /// The values might need to be adjusted if we use more than what's available
+    /// in the message modulus.
+    pub fn to_num_blocks(&self, params: &ClassicPBSParameters) -> usize {
+        match self {
+            FheType::Ebool => 1_usize.div_ceil(params.message_modulus_log() as usize),
+            FheType::Euint4 => 4_usize.div_ceil(params.message_modulus_log() as usize),
+            FheType::Euint8 => 8_usize.div_ceil(params.message_modulus_log() as usize),
+            FheType::Euint16 => 16_usize.div_ceil(params.message_modulus_log() as usize),
+            FheType::Euint32 => 32_usize.div_ceil(params.message_modulus_log() as usize),
+            FheType::Euint64 => 64_usize.div_ceil(params.message_modulus_log() as usize),
+            FheType::Euint128 => 128_usize.div_ceil(params.message_modulus_log() as usize),
+            FheType::Euint160 => 160_usize.div_ceil(params.message_modulus_log() as usize),
+            FheType::Euint256 => 256_usize.div_ceil(params.message_modulus_log() as usize),
+            FheType::Euint512 => 512_usize.div_ceil(params.message_modulus_log() as usize),
+            FheType::Euint1024 => 1024_usize.div_ceil(params.message_modulus_log() as usize),
+            FheType::Euint2048 => 2048_usize.div_ceil(params.message_modulus_log() as usize),
         }
     }
 }

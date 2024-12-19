@@ -8,8 +8,9 @@ use crate::{
     },
 };
 
-/// Reconstructs a vector of plaintexts from raw, opened ciphertexts, by using the contant term of the `openeds`
-/// and mapping it down to the message space of a ciphertext block.
+/// Reconstructs a vector of plaintexts from raw, opened ciphertexts,
+/// by using the contant term of the `openeds` and mapping it down
+/// to the message space of a ciphertext block.
 pub fn reconstruct_message(
     openeds: Option<Vec<ResiduePoly<Z128>>>,
     params: &ClassicPBSParameters,
@@ -30,6 +31,42 @@ pub fn reconstruct_message(
             ))
         }
     };
+    Ok(out)
+}
+
+/// Reconstructs a vector of plaintexts from raw, opened ciphertexts
+/// and mapping it down to the message space of a ciphertext block.
+/// Unlike the function [reconstruct_message], every term in `openeds`
+/// is used for the reconstruction and at most `num_blocks` terms will
+/// be used.
+pub fn reconstruct_packed_message(
+    openeds: Option<Vec<ResiduePoly<Z128>>>,
+    params: &ClassicPBSParameters,
+    num_blocks: usize,
+) -> anyhow::Result<Vec<Z128>> {
+    let total_mod_bits = params.total_block_bits() as usize;
+    let mut processed_blocks = 0;
+    let mut out = Vec::new();
+    match openeds {
+        Some(openeds) => {
+            for opened in openeds {
+                for coef in opened.coefs {
+                    out.push(from_expanded_msg(coef.0, total_mod_bits));
+                    processed_blocks += 1;
+                    if processed_blocks >= num_blocks {
+                        break;
+                    }
+                }
+            }
+        }
+        _ => return Err(anyhow_error_and_log("No opened value".to_string())),
+    };
+
+    if processed_blocks < num_blocks {
+        return Err(anyhow_error_and_log(format!(
+            "expected to process {num_blocks} but only processed {processed_blocks}"
+        )));
+    }
     Ok(out)
 }
 

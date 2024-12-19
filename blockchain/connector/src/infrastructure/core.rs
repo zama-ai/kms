@@ -595,6 +595,11 @@ enum PollerStatus<T> {
 /// currently support async closures.
 macro_rules! poller {
     ($f_to_poll:expr,$res_map:expr,$timeout_triple:expr,$info:expr,$metrics:expr) => {{
+        tracing::info!(
+            "polling for results using the timeout triple: {:?}",
+            $timeout_triple
+        );
+
         // first wait a bit because some requests are slow.
         tokio::time::sleep(tokio::time::Duration::from_secs(
             $timeout_triple.initial_wait_time,

@@ -20,7 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
             .unwrap_or_else(|| "config/local_centralized.toml".to_string()),
         &config.command,
         keys_folder,
-        Some(config.max_iter),
+        config.max_iter,
         config.expect_all_responses,
     )
     .await;

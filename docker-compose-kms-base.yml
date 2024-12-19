@@ -28,6 +28,9 @@ services:
       - ./blockchain/scripts:/app/scripts
       - validator_secrets:/app/secrets
     entrypoint: [ "/app/scripts/bootstrap_validator.sh" ]
+    build:
+      context: .
+      dockerfile: blockchain/contracts/operations/docker/ci.dockerfile
 
   # Smart contract deployment
   dev-kms-blockchain-asc-deploy:
@@ -40,9 +43,6 @@ services:
       RUST_LOG: info
       VALIDATOR_NODE_ENDPOINT: http://dev-kms-blockchain-validator:26657
       DOCKER_BUILDKIT: 1
-    build:
-      context: .
-      dockerfile: blockchain/contracts/operations/docker/ci.dockerfile
     volumes:
       - ./blockchain/scripts:/app/scripts
       - validator_secrets:/app/secrets
@@ -141,6 +141,16 @@ services:
     build:
       context: .
       dockerfile: core/service/operations/docker/ci.dockerfile
+    deploy:
+      replicas: 0 # it's a build dependency, not a real service
+
+  kms-connector-base-build:
+    image: ghcr.io/zama-ai/kms-blockchain-connector:latest
+    environment:
+      DOCKER_BUILDKIT: 1
+    build:
+      context: .
+      dockerfile: blockchain/connector/operations/docker/ci.dockerfile
     deploy:
       replicas: 0 # it's a build dependency, not a real service
 

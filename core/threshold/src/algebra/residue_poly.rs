@@ -1119,6 +1119,70 @@ impl PRSSConversions for ResiduePoly64 {
     }
 }
 
+lazy_static::lazy_static! {
+    static ref MONOMIALS_Z64: Vec<ResiduePoly<Z64>> = (0..F_DEG)
+        .map(|i| {
+            let mut coefs_i = [Z64::ZERO; F_DEG];
+            coefs_i[i] = Z64::ONE;
+            ResiduePoly::from_slice(coefs_i)
+        })
+        .collect();
+
+    static ref MONOMIALS_Z128: Vec<ResiduePoly<Z128>> = (0..F_DEG)
+        .map(|i| {
+            let mut coefs_i = [Z128::ZERO; F_DEG];
+            coefs_i[i] = Z128::ONE;
+            ResiduePoly::from_slice(coefs_i)
+        })
+        .collect();
+}
+
+pub trait Monomials
+where
+    Self: Clone,
+{
+    fn monomials() -> Vec<Self>;
+}
+
+impl Monomials for ResiduePoly<Z64> {
+    fn monomials() -> Vec<Self> {
+        MONOMIALS_Z64.to_vec()
+    }
+}
+
+impl Monomials for ResiduePoly<Z128> {
+    fn monomials() -> Vec<Self> {
+        MONOMIALS_Z128.to_vec()
+    }
+}
+
+/// Given an array of residue polys p_0, p_1, ..., p_{n-1},
+/// convert them into chunks of size [F_DEG]
+/// (p_0, ..., p_{F_DEG-1}), (p_{F_DEG}, ..., p_{2F_DEG - 1}), ...
+/// then pack every [F_DEG] polynomial into one polynomial
+/// by multiplying every one by a different monomial.
+/// For example:
+/// q_0 = p_0 + p_1 * X + p_2 * X^2 + ... + p_{F_DEG-1} * X^{F_DEG-1},
+/// q_1 = p_{F_DEG} + p_{F_DEG + 1} * X + ... + p_{2 * F_DEG-1} * X^{F_DEG-1},
+/// q_2 = ...
+pub fn pack_residue_poly<Z: BaseRing>(polys: &[ResiduePoly<Z>]) -> Vec<ResiduePoly<Z>>
+where
+    ResiduePoly<Z>: Monomials,
+{
+    let monomials = ResiduePoly::<Z>::monomials();
+
+    polys
+        .chunks(F_DEG)
+        .map(|chunk| {
+            let mut out = ResiduePoly::from_slice([Z::ZERO; F_DEG]);
+            for (p, monomial) in chunk.iter().zip(&monomials) {
+                out += p * monomial;
+            }
+            out
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1764,5 +1828,24 @@ mod tests {
         //Make sure we have all 256 elements
         assert_eq!(hashset.len(), 256);
         assert_eq!(GF256_FROM_GENERATOR[255], GF256::from(0));
+    }
+
+    #[test]
+    fn test_packed_polys() {
+        const LEN: usize = 10;
+        let mut rng = AesRng::seed_from_u64(0);
+        let const_rpolys: Vec<_> = (0..10)
+            .map(|_| {
+                let z = Z64::sample(&mut rng);
+                ResiduePoly64::from_scalar(z)
+            })
+            .collect();
+
+        let packed_rpoly = pack_residue_poly(&const_rpolys);
+
+        assert_eq!(packed_rpoly.len(), LEN.div_ceil(F_DEG));
+        for i in 0..LEN {
+            assert_eq!(packed_rpoly[i / F_DEG].at(i % F_DEG), const_rpolys[i].at(0));
+        }
     }
 }

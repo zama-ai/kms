@@ -96,31 +96,33 @@ max_poll_count = 36
 [core.timeout_config.keygen]
 initial_wait_time = 18000
 retry_interval = 15000
-max_poll_count = 1150
-
-# Polling configuration for a Preproc response.
-[core.timeout_config.preproc]
-initial_wait_time = 18000
-retry_interval = 15000
-max_poll_count = 1150
-
-# Polling configuration for a Decryption response.
-[core.timeout_config.decryption]
-initial_wait_time = 1
-retry_interval = 1
-max_poll_count = 100
+max_poll_count = 150
 
 # Polling configuration for an insecure KeyGen response.
 [core.timeout_config.insecure_key_gen]
 initial_wait_time = 9
 retry_interval = 3
-max_poll_count = 36
+max_poll_count = 60
 
-# Polling configuration for a Reencryption response.
+# Polling configuration for a Preproc response.
+[core.timeout_config.preproc]
+initial_wait_time = 18000
+retry_interval = 15000
+max_poll_count = 150
+
+# Polling configuration for a Decryption response.  Be aware that decryption
+# delay can vary greatly depending on the message size.
+[core.timeout_config.decryption]
+initial_wait_time = 0
+retry_interval = 3
+max_poll_count = 100
+
+# Polling configuration for a Reencryption response.  Be aware that
+# reencryption delay can vary greatly depending on the message size.
 [core.timeout_config.reencryption]
-initial_wait_time = 1
-retry_interval = 1
-max_poll_count = 24
+initial_wait_time = 0
+retry_interval = 3
+max_poll_count = 100
 
 # Polling configuration for a VerifyProvenCt response.
 [core.timeout_config.verify_proven_ct]
