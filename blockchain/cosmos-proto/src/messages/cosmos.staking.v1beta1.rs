@@ -2,7 +2,6 @@
 /// StakeAuthorization defines authorization for delegate/undelegate/redelegate.
 ///
 /// Since: cosmos-sdk 0.43
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StakeAuthorization {
     /// max_tokens specifies the maximum amount of tokens can be delegate to a validator. If it is
@@ -19,7 +18,6 @@ pub struct StakeAuthorization {
 /// Nested message and enum types in `StakeAuthorization`.
 pub mod stake_authorization {
     /// Validators defines list of validator addresses.
-    #[allow(clippy::derive_partial_eq_without_eq)]
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct Validators {
         #[prost(string, repeated, tag = "1")]
@@ -36,7 +34,6 @@ pub mod stake_authorization {
         }
     }
     /// validators is the oneof that represents either allow_list or deny_list
-    #[allow(clippy::derive_partial_eq_without_eq)]
     #[derive(Clone, PartialEq, ::prost::Oneof)]
     pub enum Validatorsstake {
         /// allow_list specifies list of validator addresses to whom grantee can delegate tokens on behalf of granter's
@@ -82,11 +79,11 @@ impl AuthorizationType {
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            AuthorizationType::Unspecified => "AUTHORIZATION_TYPE_UNSPECIFIED",
-            AuthorizationType::Delegate => "AUTHORIZATION_TYPE_DELEGATE",
-            AuthorizationType::Undelegate => "AUTHORIZATION_TYPE_UNDELEGATE",
-            AuthorizationType::Redelegate => "AUTHORIZATION_TYPE_REDELEGATE",
-            AuthorizationType::CancelUnbondingDelegation => {
+            Self::Unspecified => "AUTHORIZATION_TYPE_UNSPECIFIED",
+            Self::Delegate => "AUTHORIZATION_TYPE_DELEGATE",
+            Self::Undelegate => "AUTHORIZATION_TYPE_UNDELEGATE",
+            Self::Redelegate => "AUTHORIZATION_TYPE_REDELEGATE",
+            Self::CancelUnbondingDelegation => {
                 "AUTHORIZATION_TYPE_CANCEL_UNBONDING_DELEGATION"
             }
         }
@@ -109,7 +106,6 @@ impl AuthorizationType {
 /// It is stored as part of staking module's state, which persists the `n` most
 /// recent HistoricalInfo
 /// (`n` is set by the staking module's `historical_entries` parameter).
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct HistoricalInfo {
     #[prost(message, optional, tag = "1")]
@@ -129,7 +125,6 @@ impl ::prost::Name for HistoricalInfo {
 }
 /// CommissionRates defines the initial commission rates to be used for creating
 /// a validator.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CommissionRates {
     /// rate is the commission rate charged to delegators, as a fraction.
@@ -153,7 +148,6 @@ impl ::prost::Name for CommissionRates {
     }
 }
 /// Commission defines commission parameters for a given validator.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Commission {
     /// commission_rates defines the initial commission rates to be used for creating a validator.
@@ -174,7 +168,6 @@ impl ::prost::Name for Commission {
     }
 }
 /// Description defines a validator description.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Description {
     /// moniker defines a human-readable name for the validator.
@@ -211,7 +204,6 @@ impl ::prost::Name for Description {
 /// bond shares is based on the amount of coins delegated divided by the current
 /// exchange rate. Voting power can be calculated as total bonded shares
 /// multiplied by exchange rate.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Validator {
     /// operator_address defines the address of the validator's operator; bech encoded in JSON.
@@ -267,7 +259,6 @@ impl ::prost::Name for Validator {
     }
 }
 /// ValAddresses defines a repeated set of validator addresses.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ValAddresses {
     #[prost(string, repeated, tag = "1")]
@@ -286,7 +277,6 @@ impl ::prost::Name for ValAddresses {
 /// DVPair is struct that just has a delegator-validator pair with no other data.
 /// It is intended to be used as a marshalable pointer. For example, a DVPair can
 /// be used to construct the key to getting an UnbondingDelegation from state.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DvPair {
     #[prost(string, tag = "1")]
@@ -305,7 +295,6 @@ impl ::prost::Name for DvPair {
     }
 }
 /// DVPairs defines an array of DVPair objects.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DvPairs {
     #[prost(message, repeated, tag = "1")]
@@ -325,7 +314,6 @@ impl ::prost::Name for DvPairs {
 /// with no other data. It is intended to be used as a marshalable pointer. For
 /// example, a DVVTriplet can be used to construct the key to getting a
 /// Redelegation from state.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DvvTriplet {
     #[prost(string, tag = "1")]
@@ -346,7 +334,6 @@ impl ::prost::Name for DvvTriplet {
     }
 }
 /// DVVTriplets defines an array of DVVTriplet objects.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DvvTriplets {
     #[prost(message, repeated, tag = "1")]
@@ -365,7 +352,6 @@ impl ::prost::Name for DvvTriplets {
 /// Delegation represents the bond with tokens held by an account. It is
 /// owned by one delegator, and is associated with the voting power of one
 /// validator.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Delegation {
     /// delegator_address is the encoded address of the delegator.
@@ -390,7 +376,6 @@ impl ::prost::Name for Delegation {
 }
 /// UnbondingDelegation stores all of a single delegator's unbonding bonds
 /// for a single validator in an time-ordered list.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct UnbondingDelegation {
     /// delegator_address is the encoded address of the delegator.
@@ -416,7 +401,6 @@ impl ::prost::Name for UnbondingDelegation {
     }
 }
 /// UnbondingDelegationEntry defines an unbonding object with relevant metadata.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct UnbondingDelegationEntry {
     /// creation_height is the height which the unbonding took place.
@@ -449,7 +433,6 @@ impl ::prost::Name for UnbondingDelegationEntry {
     }
 }
 /// RedelegationEntry defines a redelegation object with relevant metadata.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RedelegationEntry {
     /// creation_height  defines the height which the redelegation took place.
@@ -483,7 +466,6 @@ impl ::prost::Name for RedelegationEntry {
 }
 /// Redelegation contains the list of a particular delegator's redelegating bonds
 /// from a particular source validator to a particular destination validator.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Redelegation {
     /// delegator_address is the bech32-encoded address of the delegator.
@@ -512,7 +494,6 @@ impl ::prost::Name for Redelegation {
     }
 }
 /// Params defines the parameters for the x/staking module.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Params {
     /// unbonding_time is the time duration of unbonding.
@@ -546,7 +527,6 @@ impl ::prost::Name for Params {
 }
 /// DelegationResponse is equivalent to Delegation except that it contains a
 /// balance in addition to shares which is more suitable for client responses.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DelegationResponse {
     #[prost(message, optional, tag = "1")]
@@ -567,7 +547,6 @@ impl ::prost::Name for DelegationResponse {
 /// RedelegationEntryResponse is equivalent to a RedelegationEntry except that it
 /// contains a balance in addition to shares which is more suitable for client
 /// responses.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RedelegationEntryResponse {
     #[prost(message, optional, tag = "1")]
@@ -588,7 +567,6 @@ impl ::prost::Name for RedelegationEntryResponse {
 /// RedelegationResponse is equivalent to a Redelegation except that its entries
 /// contain a balance in addition to shares which is more suitable for client
 /// responses.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RedelegationResponse {
     #[prost(message, optional, tag = "1")]
@@ -608,7 +586,6 @@ impl ::prost::Name for RedelegationResponse {
 }
 /// Pool is used for tracking bonded and not-bonded token supply of the bond
 /// denomination.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Pool {
     #[prost(string, tag = "1")]
@@ -628,7 +605,6 @@ impl ::prost::Name for Pool {
 }
 /// ValidatorUpdates defines an array of abci.ValidatorUpdate objects.
 /// TODO: explore moving this to proto/cosmos/base to separate modules from tendermint dependence
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ValidatorUpdates {
     #[prost(message, repeated, tag = "1")]
@@ -666,10 +642,10 @@ impl BondStatus {
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            BondStatus::Unspecified => "BOND_STATUS_UNSPECIFIED",
-            BondStatus::Unbonded => "BOND_STATUS_UNBONDED",
-            BondStatus::Unbonding => "BOND_STATUS_UNBONDING",
-            BondStatus::Bonded => "BOND_STATUS_BONDED",
+            Self::Unspecified => "BOND_STATUS_UNSPECIFIED",
+            Self::Unbonded => "BOND_STATUS_UNBONDED",
+            Self::Unbonding => "BOND_STATUS_UNBONDING",
+            Self::Bonded => "BOND_STATUS_BONDED",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -701,9 +677,9 @@ impl Infraction {
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            Infraction::Unspecified => "INFRACTION_UNSPECIFIED",
-            Infraction::DoubleSign => "INFRACTION_DOUBLE_SIGN",
-            Infraction::Downtime => "INFRACTION_DOWNTIME",
+            Self::Unspecified => "INFRACTION_UNSPECIFIED",
+            Self::DoubleSign => "INFRACTION_DOUBLE_SIGN",
+            Self::Downtime => "INFRACTION_DOWNTIME",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -717,7 +693,6 @@ impl Infraction {
     }
 }
 /// GenesisState defines the staking module's genesis state.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GenesisState {
     /// params defines all the parameters of related to deposit.
@@ -758,7 +733,6 @@ impl ::prost::Name for GenesisState {
     }
 }
 /// LastValidatorPower required for validator set update logic.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LastValidatorPower {
     /// address is the address of the validator.
@@ -779,7 +753,6 @@ impl ::prost::Name for LastValidatorPower {
     }
 }
 /// QueryValidatorsRequest is request type for Query/Validators RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryValidatorsRequest {
     /// status enables to query for validators matching a given status.
@@ -802,7 +775,6 @@ impl ::prost::Name for QueryValidatorsRequest {
     }
 }
 /// QueryValidatorsResponse is response type for the Query/Validators RPC method
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryValidatorsResponse {
     /// validators contains all the queried validators.
@@ -825,7 +797,6 @@ impl ::prost::Name for QueryValidatorsResponse {
     }
 }
 /// QueryValidatorRequest is response type for the Query/Validator RPC method
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryValidatorRequest {
     /// validator_addr defines the validator address to query for.
@@ -843,7 +814,6 @@ impl ::prost::Name for QueryValidatorRequest {
     }
 }
 /// QueryValidatorResponse is response type for the Query/Validator RPC method
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryValidatorResponse {
     /// validator defines the validator info.
@@ -862,7 +832,6 @@ impl ::prost::Name for QueryValidatorResponse {
 }
 /// QueryValidatorDelegationsRequest is request type for the
 /// Query/ValidatorDelegations RPC method
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryValidatorDelegationsRequest {
     /// validator_addr defines the validator address to query for.
@@ -886,7 +855,6 @@ impl ::prost::Name for QueryValidatorDelegationsRequest {
 }
 /// QueryValidatorDelegationsResponse is response type for the
 /// Query/ValidatorDelegations RPC method
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryValidatorDelegationsResponse {
     #[prost(message, repeated, tag = "1")]
@@ -909,7 +877,6 @@ impl ::prost::Name for QueryValidatorDelegationsResponse {
 }
 /// QueryValidatorUnbondingDelegationsRequest is required type for the
 /// Query/ValidatorUnbondingDelegations RPC method
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryValidatorUnbondingDelegationsRequest {
     /// validator_addr defines the validator address to query for.
@@ -933,7 +900,6 @@ impl ::prost::Name for QueryValidatorUnbondingDelegationsRequest {
 }
 /// QueryValidatorUnbondingDelegationsResponse is response type for the
 /// Query/ValidatorUnbondingDelegations RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryValidatorUnbondingDelegationsResponse {
     #[prost(message, repeated, tag = "1")]
@@ -955,7 +921,6 @@ impl ::prost::Name for QueryValidatorUnbondingDelegationsResponse {
     }
 }
 /// QueryDelegationRequest is request type for the Query/Delegation RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryDelegationRequest {
     /// delegator_addr defines the delegator address to query for.
@@ -976,7 +941,6 @@ impl ::prost::Name for QueryDelegationRequest {
     }
 }
 /// QueryDelegationResponse is response type for the Query/Delegation RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryDelegationResponse {
     /// delegation_responses defines the delegation info of a delegation.
@@ -995,7 +959,6 @@ impl ::prost::Name for QueryDelegationResponse {
 }
 /// QueryUnbondingDelegationRequest is request type for the
 /// Query/UnbondingDelegation RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryUnbondingDelegationRequest {
     /// delegator_addr defines the delegator address to query for.
@@ -1017,7 +980,6 @@ impl ::prost::Name for QueryUnbondingDelegationRequest {
 }
 /// QueryDelegationResponse is response type for the Query/UnbondingDelegation
 /// RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryUnbondingDelegationResponse {
     /// unbond defines the unbonding information of a delegation.
@@ -1036,7 +998,6 @@ impl ::prost::Name for QueryUnbondingDelegationResponse {
 }
 /// QueryDelegatorDelegationsRequest is request type for the
 /// Query/DelegatorDelegations RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryDelegatorDelegationsRequest {
     /// delegator_addr defines the delegator address to query for.
@@ -1060,7 +1021,6 @@ impl ::prost::Name for QueryDelegatorDelegationsRequest {
 }
 /// QueryDelegatorDelegationsResponse is response type for the
 /// Query/DelegatorDelegations RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryDelegatorDelegationsResponse {
     /// delegation_responses defines all the delegations' info of a delegator.
@@ -1084,7 +1044,6 @@ impl ::prost::Name for QueryDelegatorDelegationsResponse {
 }
 /// QueryDelegatorUnbondingDelegationsRequest is request type for the
 /// Query/DelegatorUnbondingDelegations RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryDelegatorUnbondingDelegationsRequest {
     /// delegator_addr defines the delegator address to query for.
@@ -1108,7 +1067,6 @@ impl ::prost::Name for QueryDelegatorUnbondingDelegationsRequest {
 }
 /// QueryUnbondingDelegatorDelegationsResponse is response type for the
 /// Query/UnbondingDelegatorDelegations RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryDelegatorUnbondingDelegationsResponse {
     #[prost(message, repeated, tag = "1")]
@@ -1131,7 +1089,6 @@ impl ::prost::Name for QueryDelegatorUnbondingDelegationsResponse {
 }
 /// QueryRedelegationsRequest is request type for the Query/Redelegations RPC
 /// method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryRedelegationsRequest {
     /// delegator_addr defines the delegator address to query for.
@@ -1161,7 +1118,6 @@ impl ::prost::Name for QueryRedelegationsRequest {
 }
 /// QueryRedelegationsResponse is response type for the Query/Redelegations RPC
 /// method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryRedelegationsResponse {
     #[prost(message, repeated, tag = "1")]
@@ -1184,7 +1140,6 @@ impl ::prost::Name for QueryRedelegationsResponse {
 }
 /// QueryDelegatorValidatorsRequest is request type for the
 /// Query/DelegatorValidators RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryDelegatorValidatorsRequest {
     /// delegator_addr defines the delegator address to query for.
@@ -1208,7 +1163,6 @@ impl ::prost::Name for QueryDelegatorValidatorsRequest {
 }
 /// QueryDelegatorValidatorsResponse is response type for the
 /// Query/DelegatorValidators RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryDelegatorValidatorsResponse {
     /// validators defines the validators' info of a delegator.
@@ -1232,7 +1186,6 @@ impl ::prost::Name for QueryDelegatorValidatorsResponse {
 }
 /// QueryDelegatorValidatorRequest is request type for the
 /// Query/DelegatorValidator RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryDelegatorValidatorRequest {
     /// delegator_addr defines the delegator address to query for.
@@ -1254,7 +1207,6 @@ impl ::prost::Name for QueryDelegatorValidatorRequest {
 }
 /// QueryDelegatorValidatorResponse response type for the
 /// Query/DelegatorValidator RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryDelegatorValidatorResponse {
     /// validator defines the validator info.
@@ -1273,8 +1225,7 @@ impl ::prost::Name for QueryDelegatorValidatorResponse {
 }
 /// QueryHistoricalInfoRequest is request type for the Query/HistoricalInfo RPC
 /// method.
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct QueryHistoricalInfoRequest {
     /// height defines at which height to query the historical info.
     #[prost(int64, tag = "1")]
@@ -1292,7 +1243,6 @@ impl ::prost::Name for QueryHistoricalInfoRequest {
 }
 /// QueryHistoricalInfoResponse is response type for the Query/HistoricalInfo RPC
 /// method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryHistoricalInfoResponse {
     /// hist defines the historical info at the given height.
@@ -1310,8 +1260,7 @@ impl ::prost::Name for QueryHistoricalInfoResponse {
     }
 }
 /// QueryPoolRequest is request type for the Query/Pool RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct QueryPoolRequest {}
 impl ::prost::Name for QueryPoolRequest {
     const NAME: &'static str = "QueryPoolRequest";
@@ -1324,7 +1273,6 @@ impl ::prost::Name for QueryPoolRequest {
     }
 }
 /// QueryPoolResponse is response type for the Query/Pool RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryPoolResponse {
     /// pool defines the pool info.
@@ -1342,8 +1290,7 @@ impl ::prost::Name for QueryPoolResponse {
     }
 }
 /// QueryParamsRequest is request type for the Query/Params RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct QueryParamsRequest {}
 impl ::prost::Name for QueryParamsRequest {
     const NAME: &'static str = "QueryParamsRequest";
@@ -1356,7 +1303,6 @@ impl ::prost::Name for QueryParamsRequest {
     }
 }
 /// QueryParamsResponse is response type for the Query/Params RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryParamsResponse {
     /// params holds all the parameters of this module.
@@ -1375,7 +1321,13 @@ impl ::prost::Name for QueryParamsResponse {
 }
 /// Generated client implementations.
 pub mod query_client {
-    #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
     use tonic::codegen::*;
     use tonic::codegen::http::Uri;
     /// Query defines the gRPC querier service.
@@ -1398,8 +1350,8 @@ pub mod query_client {
     where
         T: tonic::client::GrpcService<tonic::body::BoxBody>,
         T::Error: Into<StdError>,
-        T::ResponseBody: Body<Data = Bytes> + Send + 'static,
-        <T::ResponseBody as Body>::Error: Into<StdError> + Send,
+        T::ResponseBody: Body<Data = Bytes> + std::marker::Send + 'static,
+        <T::ResponseBody as Body>::Error: Into<StdError> + std::marker::Send,
     {
         pub fn new(inner: T) -> Self {
             let inner = tonic::client::Grpc::new(inner);
@@ -1424,7 +1376,7 @@ pub mod query_client {
             >,
             <T as tonic::codegen::Service<
                 http::Request<tonic::body::BoxBody>,
-            >>::Error: Into<StdError> + Send + Sync,
+            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
         {
             QueryClient::new(InterceptedService::new(inner, interceptor))
         }
@@ -1474,8 +1426,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1500,8 +1451,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1529,8 +1479,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1565,8 +1514,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1596,8 +1544,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1623,8 +1570,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1657,8 +1603,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1694,8 +1639,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1728,8 +1672,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1760,8 +1703,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1792,8 +1734,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1820,8 +1761,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1848,8 +1788,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1874,8 +1813,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1891,7 +1829,6 @@ pub mod query_client {
     }
 }
 /// MsgCreateValidator defines a SDK message for creating a new validator.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgCreateValidator {
     #[prost(message, optional, tag = "1")]
@@ -1924,8 +1861,7 @@ impl ::prost::Name for MsgCreateValidator {
     }
 }
 /// MsgCreateValidatorResponse defines the Msg/CreateValidator response type.
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct MsgCreateValidatorResponse {}
 impl ::prost::Name for MsgCreateValidatorResponse {
     const NAME: &'static str = "MsgCreateValidatorResponse";
@@ -1938,7 +1874,6 @@ impl ::prost::Name for MsgCreateValidatorResponse {
     }
 }
 /// MsgEditValidator defines a SDK message for editing an existing validator.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgEditValidator {
     #[prost(message, optional, tag = "1")]
@@ -1965,8 +1900,7 @@ impl ::prost::Name for MsgEditValidator {
     }
 }
 /// MsgEditValidatorResponse defines the Msg/EditValidator response type.
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct MsgEditValidatorResponse {}
 impl ::prost::Name for MsgEditValidatorResponse {
     const NAME: &'static str = "MsgEditValidatorResponse";
@@ -1980,7 +1914,6 @@ impl ::prost::Name for MsgEditValidatorResponse {
 }
 /// MsgDelegate defines a SDK message for performing a delegation of coins
 /// from a delegator to a validator.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgDelegate {
     #[prost(string, tag = "1")]
@@ -2001,8 +1934,7 @@ impl ::prost::Name for MsgDelegate {
     }
 }
 /// MsgDelegateResponse defines the Msg/Delegate response type.
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct MsgDelegateResponse {}
 impl ::prost::Name for MsgDelegateResponse {
     const NAME: &'static str = "MsgDelegateResponse";
@@ -2016,7 +1948,6 @@ impl ::prost::Name for MsgDelegateResponse {
 }
 /// MsgBeginRedelegate defines a SDK message for performing a redelegation
 /// of coins from a delegator and source validator to a destination validator.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgBeginRedelegate {
     #[prost(string, tag = "1")]
@@ -2039,8 +1970,7 @@ impl ::prost::Name for MsgBeginRedelegate {
     }
 }
 /// MsgBeginRedelegateResponse defines the Msg/BeginRedelegate response type.
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct MsgBeginRedelegateResponse {
     #[prost(message, optional, tag = "1")]
     pub completion_time: ::core::option::Option<::prost_types::Timestamp>,
@@ -2057,7 +1987,6 @@ impl ::prost::Name for MsgBeginRedelegateResponse {
 }
 /// MsgUndelegate defines a SDK message for performing an undelegation from a
 /// delegate and a validator.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgUndelegate {
     #[prost(string, tag = "1")]
@@ -2078,7 +2007,6 @@ impl ::prost::Name for MsgUndelegate {
     }
 }
 /// MsgUndelegateResponse defines the Msg/Undelegate response type.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgUndelegateResponse {
     #[prost(message, optional, tag = "1")]
@@ -2102,7 +2030,6 @@ impl ::prost::Name for MsgUndelegateResponse {
 /// MsgCancelUnbondingDelegation defines the SDK message for performing a cancel unbonding delegation for delegator
 ///
 /// Since: cosmos-sdk 0.46
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgCancelUnbondingDelegation {
     #[prost(string, tag = "1")]
@@ -2129,8 +2056,7 @@ impl ::prost::Name for MsgCancelUnbondingDelegation {
 /// MsgCancelUnbondingDelegationResponse
 ///
 /// Since: cosmos-sdk 0.46
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct MsgCancelUnbondingDelegationResponse {}
 impl ::prost::Name for MsgCancelUnbondingDelegationResponse {
     const NAME: &'static str = "MsgCancelUnbondingDelegationResponse";
@@ -2145,7 +2071,6 @@ impl ::prost::Name for MsgCancelUnbondingDelegationResponse {
 /// MsgUpdateParams is the Msg/UpdateParams request type.
 ///
 /// Since: cosmos-sdk 0.47
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgUpdateParams {
     /// authority is the address that controls the module (defaults to x/gov unless overwritten).
@@ -2171,8 +2096,7 @@ impl ::prost::Name for MsgUpdateParams {
 /// MsgUpdateParams message.
 ///
 /// Since: cosmos-sdk 0.47
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct MsgUpdateParamsResponse {}
 impl ::prost::Name for MsgUpdateParamsResponse {
     const NAME: &'static str = "MsgUpdateParamsResponse";
@@ -2186,7 +2110,13 @@ impl ::prost::Name for MsgUpdateParamsResponse {
 }
 /// Generated client implementations.
 pub mod msg_client {
-    #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
     use tonic::codegen::*;
     use tonic::codegen::http::Uri;
     /// Msg defines the staking Msg service.
@@ -2209,8 +2139,8 @@ pub mod msg_client {
     where
         T: tonic::client::GrpcService<tonic::body::BoxBody>,
         T::Error: Into<StdError>,
-        T::ResponseBody: Body<Data = Bytes> + Send + 'static,
-        <T::ResponseBody as Body>::Error: Into<StdError> + Send,
+        T::ResponseBody: Body<Data = Bytes> + std::marker::Send + 'static,
+        <T::ResponseBody as Body>::Error: Into<StdError> + std::marker::Send,
     {
         pub fn new(inner: T) -> Self {
             let inner = tonic::client::Grpc::new(inner);
@@ -2235,7 +2165,7 @@ pub mod msg_client {
             >,
             <T as tonic::codegen::Service<
                 http::Request<tonic::body::BoxBody>,
-            >>::Error: Into<StdError> + Send + Sync,
+            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
         {
             MsgClient::new(InterceptedService::new(inner, interceptor))
         }
@@ -2282,8 +2212,7 @@ pub mod msg_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -2310,8 +2239,7 @@ pub mod msg_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -2337,8 +2265,7 @@ pub mod msg_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -2364,8 +2291,7 @@ pub mod msg_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -2393,8 +2319,7 @@ pub mod msg_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -2422,8 +2347,7 @@ pub mod msg_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -2455,8 +2379,7 @@ pub mod msg_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;

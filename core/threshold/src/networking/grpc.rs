@@ -314,7 +314,15 @@ fn extract_valid_sender_sans<T>(request: &tonic::Request<T>) -> Result<Option<St
     match request.peer_certs() {
         None => Ok(None),
         Some(certs) => {
-            let san_strings = extract_san_from_certs(&certs, false)?;
+            // Convert CertificateDer to tonic Certificate - since Certificate is just a wrapper
+            // around Vec<u8>, we can create it directly from the DER bytes
+            let cert_slice: Vec<Certificate> = certs
+                .iter()
+                .map(|c| Certificate::from_pem(c.as_ref()))
+                .collect();
+
+            // Extract SAN from the converted certificates
+            let san_strings = extract_san_from_certs(&cert_slice, false)?;
             Ok(Some(san_strings))
         }
     }

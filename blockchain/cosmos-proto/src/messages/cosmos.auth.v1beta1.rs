@@ -2,7 +2,6 @@
 /// BaseAccount defines a base account type. It contains all the necessary fields
 /// for basic account functionality. Any custom account type should extend this
 /// type for additional functionality (e.g. vesting).
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BaseAccount {
     #[prost(string, tag = "1")]
@@ -25,7 +24,6 @@ impl ::prost::Name for BaseAccount {
     }
 }
 /// ModuleAccount defines an account for modules that holds coins on a pool.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ModuleAccount {
     #[prost(message, optional, tag = "1")]
@@ -48,7 +46,6 @@ impl ::prost::Name for ModuleAccount {
 /// ModuleCredential represents a unclaimable pubkey for base accounts controlled by modules.
 ///
 /// Since: cosmos-sdk 0.47
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ModuleCredential {
     /// module_name is the name of the module used for address derivation (passed into address.Module).
@@ -70,8 +67,7 @@ impl ::prost::Name for ModuleCredential {
     }
 }
 /// Params defines the parameters for the auth module.
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct Params {
     #[prost(uint64, tag = "1")]
     pub max_memo_characters: u64,
@@ -95,7 +91,6 @@ impl ::prost::Name for Params {
     }
 }
 /// GenesisState defines the auth module's genesis state.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GenesisState {
     /// params defines all the parameters of the module.
@@ -118,7 +113,6 @@ impl ::prost::Name for GenesisState {
 /// QueryAccountsRequest is the request type for the Query/Accounts RPC method.
 ///
 /// Since: cosmos-sdk 0.43
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryAccountsRequest {
     /// pagination defines an optional pagination for the request.
@@ -140,7 +134,6 @@ impl ::prost::Name for QueryAccountsRequest {
 /// QueryAccountsResponse is the response type for the Query/Accounts RPC method.
 ///
 /// Since: cosmos-sdk 0.43
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryAccountsResponse {
     /// accounts are the existing accounts
@@ -163,7 +156,6 @@ impl ::prost::Name for QueryAccountsResponse {
     }
 }
 /// QueryAccountRequest is the request type for the Query/Account RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryAccountRequest {
     /// address defines the address to query for.
@@ -181,7 +173,6 @@ impl ::prost::Name for QueryAccountRequest {
     }
 }
 /// QueryAccountResponse is the response type for the Query/Account RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryAccountResponse {
     /// account defines the account of the corresponding address.
@@ -199,8 +190,7 @@ impl ::prost::Name for QueryAccountResponse {
     }
 }
 /// QueryParamsRequest is the request type for the Query/Params RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct QueryParamsRequest {}
 impl ::prost::Name for QueryParamsRequest {
     const NAME: &'static str = "QueryParamsRequest";
@@ -213,8 +203,7 @@ impl ::prost::Name for QueryParamsRequest {
     }
 }
 /// QueryParamsResponse is the response type for the Query/Params RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct QueryParamsResponse {
     /// params defines the parameters of the module.
     #[prost(message, optional, tag = "1")]
@@ -233,8 +222,7 @@ impl ::prost::Name for QueryParamsResponse {
 /// QueryModuleAccountsRequest is the request type for the Query/ModuleAccounts RPC method.
 ///
 /// Since: cosmos-sdk 0.46
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct QueryModuleAccountsRequest {}
 impl ::prost::Name for QueryModuleAccountsRequest {
     const NAME: &'static str = "QueryModuleAccountsRequest";
@@ -249,7 +237,6 @@ impl ::prost::Name for QueryModuleAccountsRequest {
 /// QueryModuleAccountsResponse is the response type for the Query/ModuleAccounts RPC method.
 ///
 /// Since: cosmos-sdk 0.46
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryModuleAccountsResponse {
     #[prost(message, repeated, tag = "1")]
@@ -266,7 +253,6 @@ impl ::prost::Name for QueryModuleAccountsResponse {
     }
 }
 /// QueryModuleAccountByNameRequest is the request type for the Query/ModuleAccountByName RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryModuleAccountByNameRequest {
     #[prost(string, tag = "1")]
@@ -283,7 +269,6 @@ impl ::prost::Name for QueryModuleAccountByNameRequest {
     }
 }
 /// QueryModuleAccountByNameResponse is the response type for the Query/ModuleAccountByName RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryModuleAccountByNameResponse {
     #[prost(message, optional, tag = "1")]
@@ -302,8 +287,7 @@ impl ::prost::Name for QueryModuleAccountByNameResponse {
 /// Bech32PrefixRequest is the request type for Bech32Prefix rpc method.
 ///
 /// Since: cosmos-sdk 0.46
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct Bech32PrefixRequest {}
 impl ::prost::Name for Bech32PrefixRequest {
     const NAME: &'static str = "Bech32PrefixRequest";
@@ -318,7 +302,6 @@ impl ::prost::Name for Bech32PrefixRequest {
 /// Bech32PrefixResponse is the response type for Bech32Prefix rpc method.
 ///
 /// Since: cosmos-sdk 0.46
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Bech32PrefixResponse {
     #[prost(string, tag = "1")]
@@ -337,7 +320,6 @@ impl ::prost::Name for Bech32PrefixResponse {
 /// AddressBytesToStringRequest is the request type for AddressString rpc method.
 ///
 /// Since: cosmos-sdk 0.46
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AddressBytesToStringRequest {
     #[prost(bytes = "vec", tag = "1")]
@@ -356,7 +338,6 @@ impl ::prost::Name for AddressBytesToStringRequest {
 /// AddressBytesToStringResponse is the response type for AddressString rpc method.
 ///
 /// Since: cosmos-sdk 0.46
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AddressBytesToStringResponse {
     #[prost(string, tag = "1")]
@@ -375,7 +356,6 @@ impl ::prost::Name for AddressBytesToStringResponse {
 /// AddressStringToBytesRequest is the request type for AccountBytes rpc method.
 ///
 /// Since: cosmos-sdk 0.46
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AddressStringToBytesRequest {
     #[prost(string, tag = "1")]
@@ -394,7 +374,6 @@ impl ::prost::Name for AddressStringToBytesRequest {
 /// AddressStringToBytesResponse is the response type for AddressBytes rpc method.
 ///
 /// Since: cosmos-sdk 0.46
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AddressStringToBytesResponse {
     #[prost(bytes = "vec", tag = "1")]
@@ -413,8 +392,7 @@ impl ::prost::Name for AddressStringToBytesResponse {
 /// QueryAccountAddressByIDRequest is the request type for AccountAddressByID rpc method
 ///
 /// Since: cosmos-sdk 0.46.2
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct QueryAccountAddressByIdRequest {
     /// Deprecated, use account_id instead
     ///
@@ -443,7 +421,6 @@ impl ::prost::Name for QueryAccountAddressByIdRequest {
 /// QueryAccountAddressByIDResponse is the response type for AccountAddressByID rpc method
 ///
 /// Since: cosmos-sdk 0.46.2
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryAccountAddressByIdResponse {
     #[prost(string, tag = "1")]
@@ -462,7 +439,6 @@ impl ::prost::Name for QueryAccountAddressByIdResponse {
 /// QueryAccountInfoRequest is the Query/AccountInfo request type.
 ///
 /// Since: cosmos-sdk 0.47
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryAccountInfoRequest {
     /// address is the account address string.
@@ -482,7 +458,6 @@ impl ::prost::Name for QueryAccountInfoRequest {
 /// QueryAccountInfoResponse is the Query/AccountInfo response type.
 ///
 /// Since: cosmos-sdk 0.47
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryAccountInfoResponse {
     /// info is the account info which is represented by BaseAccount.
@@ -501,7 +476,13 @@ impl ::prost::Name for QueryAccountInfoResponse {
 }
 /// Generated client implementations.
 pub mod query_client {
-    #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
     use tonic::codegen::*;
     use tonic::codegen::http::Uri;
     /// Query defines the gRPC querier service.
@@ -524,8 +505,8 @@ pub mod query_client {
     where
         T: tonic::client::GrpcService<tonic::body::BoxBody>,
         T::Error: Into<StdError>,
-        T::ResponseBody: Body<Data = Bytes> + Send + 'static,
-        <T::ResponseBody as Body>::Error: Into<StdError> + Send,
+        T::ResponseBody: Body<Data = Bytes> + std::marker::Send + 'static,
+        <T::ResponseBody as Body>::Error: Into<StdError> + std::marker::Send,
     {
         pub fn new(inner: T) -> Self {
             let inner = tonic::client::Grpc::new(inner);
@@ -550,7 +531,7 @@ pub mod query_client {
             >,
             <T as tonic::codegen::Service<
                 http::Request<tonic::body::BoxBody>,
-            >>::Error: Into<StdError> + Send + Sync,
+            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
         {
             QueryClient::new(InterceptedService::new(inner, interceptor))
         }
@@ -602,8 +583,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -628,8 +608,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -656,8 +635,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -684,8 +662,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -712,8 +689,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -738,8 +714,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -768,8 +743,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -796,8 +770,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -826,8 +799,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -856,8 +828,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -875,7 +846,6 @@ pub mod query_client {
 /// MsgUpdateParams is the Msg/UpdateParams request type.
 ///
 /// Since: cosmos-sdk 0.47
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgUpdateParams {
     /// authority is the address that controls the module (defaults to x/gov unless overwritten).
@@ -901,8 +871,7 @@ impl ::prost::Name for MsgUpdateParams {
 /// MsgUpdateParams message.
 ///
 /// Since: cosmos-sdk 0.47
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct MsgUpdateParamsResponse {}
 impl ::prost::Name for MsgUpdateParamsResponse {
     const NAME: &'static str = "MsgUpdateParamsResponse";
@@ -916,7 +885,13 @@ impl ::prost::Name for MsgUpdateParamsResponse {
 }
 /// Generated client implementations.
 pub mod msg_client {
-    #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
     use tonic::codegen::*;
     use tonic::codegen::http::Uri;
     /// Msg defines the x/auth Msg service.
@@ -939,8 +914,8 @@ pub mod msg_client {
     where
         T: tonic::client::GrpcService<tonic::body::BoxBody>,
         T::Error: Into<StdError>,
-        T::ResponseBody: Body<Data = Bytes> + Send + 'static,
-        <T::ResponseBody as Body>::Error: Into<StdError> + Send,
+        T::ResponseBody: Body<Data = Bytes> + std::marker::Send + 'static,
+        <T::ResponseBody as Body>::Error: Into<StdError> + std::marker::Send,
     {
         pub fn new(inner: T) -> Self {
             let inner = tonic::client::Grpc::new(inner);
@@ -965,7 +940,7 @@ pub mod msg_client {
             >,
             <T as tonic::codegen::Service<
                 http::Request<tonic::body::BoxBody>,
-            >>::Error: Into<StdError> + Send + Sync,
+            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
         {
             MsgClient::new(InterceptedService::new(inner, interceptor))
         }
@@ -1015,8 +990,7 @@ pub mod msg_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;

@@ -9,6 +9,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_client(true)
         .out_dir("src/messages")
         .include_file("mod.rs")
-        .compile_with_config(config, files.as_slice(), &["protos"])?;
+        .compile_protos_with_config(config, files.as_slice(), &["protos"])?;
     Ok(())
 }

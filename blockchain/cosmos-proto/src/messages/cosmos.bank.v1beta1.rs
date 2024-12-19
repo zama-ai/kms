@@ -3,7 +3,6 @@
 /// the granter's account.
 ///
 /// Since: cosmos-sdk 0.43
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SendAuthorization {
     #[prost(message, repeated, tag = "1")]
@@ -26,7 +25,6 @@ impl ::prost::Name for SendAuthorization {
     }
 }
 /// Params defines the parameters for the bank module.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Params {
     /// Deprecated: Use of SendEnabled in params is deprecated.
@@ -52,7 +50,6 @@ impl ::prost::Name for Params {
 }
 /// SendEnabled maps coin denom to a send_enabled status (whether a denom is
 /// sendable).
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SendEnabled {
     #[prost(string, tag = "1")]
@@ -71,7 +68,6 @@ impl ::prost::Name for SendEnabled {
     }
 }
 /// Input models transaction input.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Input {
     #[prost(string, tag = "1")]
@@ -90,7 +86,6 @@ impl ::prost::Name for Input {
     }
 }
 /// Output models transaction outputs.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Output {
     #[prost(string, tag = "1")]
@@ -111,7 +106,6 @@ impl ::prost::Name for Output {
 /// Supply represents a struct that passively keeps track of the total supply
 /// amounts in the network.
 /// This message is deprecated now that supply is indexed by denom.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Supply {
     #[prost(message, repeated, tag = "1")]
@@ -129,7 +123,6 @@ impl ::prost::Name for Supply {
 }
 /// DenomUnit represents a struct that describes a given
 /// denomination unit of the basic token.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DenomUnit {
     /// denom represents the string name of the given denom unit (e.g uatom).
@@ -158,7 +151,6 @@ impl ::prost::Name for DenomUnit {
 }
 /// Metadata represents a struct that describes
 /// a basic token.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Metadata {
     #[prost(string, tag = "1")]
@@ -207,7 +199,6 @@ impl ::prost::Name for Metadata {
     }
 }
 /// GenesisState defines the bank module's genesis state.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GenesisState {
     /// params defines all the parameters of the module.
@@ -241,7 +232,6 @@ impl ::prost::Name for GenesisState {
 }
 /// Balance defines an account address and balance pair used in the bank module's
 /// genesis state.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Balance {
     /// address is the address of the balance holder.
@@ -262,7 +252,6 @@ impl ::prost::Name for Balance {
     }
 }
 /// QueryBalanceRequest is the request type for the Query/Balance RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryBalanceRequest {
     /// address is the address to query balances for.
@@ -283,7 +272,6 @@ impl ::prost::Name for QueryBalanceRequest {
     }
 }
 /// QueryBalanceResponse is the response type for the Query/Balance RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryBalanceResponse {
     /// balance is the balance of the coin.
@@ -301,7 +289,6 @@ impl ::prost::Name for QueryBalanceResponse {
     }
 }
 /// QueryBalanceRequest is the request type for the Query/AllBalances RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryAllBalancesRequest {
     /// address is the address to query balances for.
@@ -330,7 +317,6 @@ impl ::prost::Name for QueryAllBalancesRequest {
 }
 /// QueryAllBalancesResponse is the response type for the Query/AllBalances RPC
 /// method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryAllBalancesResponse {
     /// balances is the balances of all the coins.
@@ -356,7 +342,6 @@ impl ::prost::Name for QueryAllBalancesResponse {
 /// an account's spendable balances.
 ///
 /// Since: cosmos-sdk 0.46
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QuerySpendableBalancesRequest {
     /// address is the address to query spendable balances for.
@@ -382,7 +367,6 @@ impl ::prost::Name for QuerySpendableBalancesRequest {
 /// an account's spendable balances.
 ///
 /// Since: cosmos-sdk 0.46
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QuerySpendableBalancesResponse {
     /// balances is the spendable balances of all the coins.
@@ -408,7 +392,6 @@ impl ::prost::Name for QuerySpendableBalancesResponse {
 /// querying an account's spendable balance for a specific denom.
 ///
 /// Since: cosmos-sdk 0.47
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QuerySpendableBalanceByDenomRequest {
     /// address is the address to query balances for.
@@ -432,7 +415,6 @@ impl ::prost::Name for QuerySpendableBalanceByDenomRequest {
 /// querying an account's spendable balance for a specific denom.
 ///
 /// Since: cosmos-sdk 0.47
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QuerySpendableBalanceByDenomResponse {
     /// balance is the balance of the coin.
@@ -451,7 +433,6 @@ impl ::prost::Name for QuerySpendableBalanceByDenomResponse {
 }
 /// QueryTotalSupplyRequest is the request type for the Query/TotalSupply RPC
 /// method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryTotalSupplyRequest {
     /// pagination defines an optional pagination for the request.
@@ -474,7 +455,6 @@ impl ::prost::Name for QueryTotalSupplyRequest {
 }
 /// QueryTotalSupplyResponse is the response type for the Query/TotalSupply RPC
 /// method
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryTotalSupplyResponse {
     /// supply is the supply of the coins
@@ -499,7 +479,6 @@ impl ::prost::Name for QueryTotalSupplyResponse {
     }
 }
 /// QuerySupplyOfRequest is the request type for the Query/SupplyOf RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QuerySupplyOfRequest {
     /// denom is the coin denom to query balances for.
@@ -517,7 +496,6 @@ impl ::prost::Name for QuerySupplyOfRequest {
     }
 }
 /// QuerySupplyOfResponse is the response type for the Query/SupplyOf RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QuerySupplyOfResponse {
     /// amount is the supply of the coin.
@@ -535,8 +513,7 @@ impl ::prost::Name for QuerySupplyOfResponse {
     }
 }
 /// QueryParamsRequest defines the request type for querying x/bank parameters.
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct QueryParamsRequest {}
 impl ::prost::Name for QueryParamsRequest {
     const NAME: &'static str = "QueryParamsRequest";
@@ -549,7 +526,6 @@ impl ::prost::Name for QueryParamsRequest {
     }
 }
 /// QueryParamsResponse defines the response type for querying x/bank parameters.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryParamsResponse {
     /// params provides the parameters of the bank module.
@@ -567,7 +543,6 @@ impl ::prost::Name for QueryParamsResponse {
     }
 }
 /// QueryDenomsMetadataRequest is the request type for the Query/DenomsMetadata RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryDenomsMetadataRequest {
     /// pagination defines an optional pagination for the request.
@@ -588,7 +563,6 @@ impl ::prost::Name for QueryDenomsMetadataRequest {
 }
 /// QueryDenomsMetadataResponse is the response type for the Query/DenomsMetadata RPC
 /// method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryDenomsMetadataResponse {
     /// metadata provides the client information for all the registered tokens.
@@ -611,7 +585,6 @@ impl ::prost::Name for QueryDenomsMetadataResponse {
     }
 }
 /// QueryDenomMetadataRequest is the request type for the Query/DenomMetadata RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryDenomMetadataRequest {
     /// denom is the coin denom to query the metadata for.
@@ -630,7 +603,6 @@ impl ::prost::Name for QueryDenomMetadataRequest {
 }
 /// QueryDenomMetadataResponse is the response type for the Query/DenomMetadata RPC
 /// method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryDenomMetadataResponse {
     /// metadata describes and provides all the client information for the requested token.
@@ -649,7 +621,6 @@ impl ::prost::Name for QueryDenomMetadataResponse {
 }
 /// QueryDenomMetadataByQueryStringRequest is the request type for the Query/DenomMetadata RPC method.
 /// Identical with QueryDenomMetadataRequest but receives denom as query string.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryDenomMetadataByQueryStringRequest {
     /// denom is the coin denom to query the metadata for.
@@ -668,7 +639,6 @@ impl ::prost::Name for QueryDenomMetadataByQueryStringRequest {
 }
 /// QueryDenomMetadataByQueryStringResponse is the response type for the Query/DenomMetadata RPC
 /// method. Identical with QueryDenomMetadataResponse but receives denom as query string in request.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryDenomMetadataByQueryStringResponse {
     /// metadata describes and provides all the client information for the requested token.
@@ -688,7 +658,6 @@ impl ::prost::Name for QueryDenomMetadataByQueryStringResponse {
 /// QueryDenomOwnersRequest defines the request type for the DenomOwners RPC query,
 /// which queries for a paginated set of all account holders of a particular
 /// denomination.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryDenomOwnersRequest {
     /// denom defines the coin denomination to query all account holders for.
@@ -715,7 +684,6 @@ impl ::prost::Name for QueryDenomOwnersRequest {
 /// balance of the denominated token.
 ///
 /// Since: cosmos-sdk 0.46
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DenomOwner {
     /// address defines the address that owns a particular denomination.
@@ -738,7 +706,6 @@ impl ::prost::Name for DenomOwner {
 /// QueryDenomOwnersResponse defines the RPC response of a DenomOwners RPC query.
 ///
 /// Since: cosmos-sdk 0.46
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryDenomOwnersResponse {
     #[prost(message, repeated, tag = "1")]
@@ -764,7 +731,6 @@ impl ::prost::Name for QueryDenomOwnersResponse {
 /// denomination.
 ///
 /// Since: cosmos-sdk 0.50.3
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryDenomOwnersByQueryRequest {
     /// denom defines the coin denomination to query all account holders for.
@@ -789,7 +755,6 @@ impl ::prost::Name for QueryDenomOwnersByQueryRequest {
 /// QueryDenomOwnersByQueryResponse defines the RPC response of a DenomOwnersByQuery RPC query.
 ///
 /// Since: cosmos-sdk 0.50.3
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryDenomOwnersByQueryResponse {
     #[prost(message, repeated, tag = "1")]
@@ -813,7 +778,6 @@ impl ::prost::Name for QueryDenomOwnersByQueryResponse {
 /// QuerySendEnabledRequest defines the RPC request for looking up SendEnabled entries.
 ///
 /// Since: cosmos-sdk 0.47
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QuerySendEnabledRequest {
     /// denoms is the specific denoms you want look up. Leave empty to get all entries.
@@ -839,7 +803,6 @@ impl ::prost::Name for QuerySendEnabledRequest {
 /// QuerySendEnabledResponse defines the RPC response of a SendEnable query.
 ///
 /// Since: cosmos-sdk 0.47
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QuerySendEnabledResponse {
     #[prost(message, repeated, tag = "1")]
@@ -863,7 +826,13 @@ impl ::prost::Name for QuerySendEnabledResponse {
 }
 /// Generated client implementations.
 pub mod query_client {
-    #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
     use tonic::codegen::*;
     use tonic::codegen::http::Uri;
     /// Query defines the gRPC querier service.
@@ -886,8 +855,8 @@ pub mod query_client {
     where
         T: tonic::client::GrpcService<tonic::body::BoxBody>,
         T::Error: Into<StdError>,
-        T::ResponseBody: Body<Data = Bytes> + Send + 'static,
-        <T::ResponseBody as Body>::Error: Into<StdError> + Send,
+        T::ResponseBody: Body<Data = Bytes> + std::marker::Send + 'static,
+        <T::ResponseBody as Body>::Error: Into<StdError> + std::marker::Send,
     {
         pub fn new(inner: T) -> Self {
             let inner = tonic::client::Grpc::new(inner);
@@ -912,7 +881,7 @@ pub mod query_client {
             >,
             <T as tonic::codegen::Service<
                 http::Request<tonic::body::BoxBody>,
-            >>::Error: Into<StdError> + Send + Sync,
+            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
         {
             QueryClient::new(InterceptedService::new(inner, interceptor))
         }
@@ -959,8 +928,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -988,8 +956,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1020,8 +987,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1054,8 +1020,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1088,8 +1053,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1117,8 +1081,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1143,8 +1106,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1169,8 +1131,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1197,8 +1158,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1229,8 +1189,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1261,8 +1220,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1290,8 +1248,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1324,8 +1281,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1341,7 +1297,6 @@ pub mod query_client {
     }
 }
 /// MsgSend represents a message to send coins from one account to another.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgSend {
     #[prost(string, tag = "1")]
@@ -1362,8 +1317,7 @@ impl ::prost::Name for MsgSend {
     }
 }
 /// MsgSendResponse defines the Msg/Send response type.
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct MsgSendResponse {}
 impl ::prost::Name for MsgSendResponse {
     const NAME: &'static str = "MsgSendResponse";
@@ -1376,7 +1330,6 @@ impl ::prost::Name for MsgSendResponse {
     }
 }
 /// MsgMultiSend represents an arbitrary multi-in, multi-out send message.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgMultiSend {
     /// Inputs, despite being `repeated`, only allows one sender input. This is
@@ -1397,8 +1350,7 @@ impl ::prost::Name for MsgMultiSend {
     }
 }
 /// MsgMultiSendResponse defines the Msg/MultiSend response type.
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct MsgMultiSendResponse {}
 impl ::prost::Name for MsgMultiSendResponse {
     const NAME: &'static str = "MsgMultiSendResponse";
@@ -1413,7 +1365,6 @@ impl ::prost::Name for MsgMultiSendResponse {
 /// MsgUpdateParams is the Msg/UpdateParams request type.
 ///
 /// Since: cosmos-sdk 0.47
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgUpdateParams {
     /// authority is the address that controls the module (defaults to x/gov unless overwritten).
@@ -1439,8 +1390,7 @@ impl ::prost::Name for MsgUpdateParams {
 /// MsgUpdateParams message.
 ///
 /// Since: cosmos-sdk 0.47
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct MsgUpdateParamsResponse {}
 impl ::prost::Name for MsgUpdateParamsResponse {
     const NAME: &'static str = "MsgUpdateParamsResponse";
@@ -1459,7 +1409,6 @@ impl ::prost::Name for MsgUpdateParamsResponse {
 /// message are left unchanged.
 ///
 /// Since: cosmos-sdk 0.47
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgSetSendEnabled {
     /// authority is the address that controls the module.
@@ -1488,8 +1437,7 @@ impl ::prost::Name for MsgSetSendEnabled {
 /// MsgSetSendEnabledResponse defines the Msg/SetSendEnabled response type.
 ///
 /// Since: cosmos-sdk 0.47
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct MsgSetSendEnabledResponse {}
 impl ::prost::Name for MsgSetSendEnabledResponse {
     const NAME: &'static str = "MsgSetSendEnabledResponse";
@@ -1503,7 +1451,13 @@ impl ::prost::Name for MsgSetSendEnabledResponse {
 }
 /// Generated client implementations.
 pub mod msg_client {
-    #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
     use tonic::codegen::*;
     use tonic::codegen::http::Uri;
     /// Msg defines the bank Msg service.
@@ -1526,8 +1480,8 @@ pub mod msg_client {
     where
         T: tonic::client::GrpcService<tonic::body::BoxBody>,
         T::Error: Into<StdError>,
-        T::ResponseBody: Body<Data = Bytes> + Send + 'static,
-        <T::ResponseBody as Body>::Error: Into<StdError> + Send,
+        T::ResponseBody: Body<Data = Bytes> + std::marker::Send + 'static,
+        <T::ResponseBody as Body>::Error: Into<StdError> + std::marker::Send,
     {
         pub fn new(inner: T) -> Self {
             let inner = tonic::client::Grpc::new(inner);
@@ -1552,7 +1506,7 @@ pub mod msg_client {
             >,
             <T as tonic::codegen::Service<
                 http::Request<tonic::body::BoxBody>,
-            >>::Error: Into<StdError> + Send + Sync,
+            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
         {
             MsgClient::new(InterceptedService::new(inner, interceptor))
         }
@@ -1599,8 +1553,7 @@ pub mod msg_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1625,8 +1578,7 @@ pub mod msg_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1654,8 +1606,7 @@ pub mod msg_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1685,8 +1636,7 @@ pub mod msg_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;

@@ -4,7 +4,6 @@
 /// Deletes
 ///
 /// Since: cosmos-sdk 0.43
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StoreKvPair {
     /// the store key for the KVStore this pair originates from
@@ -30,7 +29,6 @@ impl ::prost::Name for StoreKvPair {
 }
 /// BlockMetadata contains all the abci event data of a block
 /// the file streamer dump them into files together with the state changes.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BlockMetadata {
     #[prost(message, optional, tag = "6")]
@@ -59,7 +57,6 @@ impl ::prost::Name for BlockMetadata {
 }
 /// CommitInfo defines commit information used by the multi-store when committing
 /// a version/height.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CommitInfo {
     #[prost(int64, tag = "1")]
@@ -81,7 +78,6 @@ impl ::prost::Name for CommitInfo {
 }
 /// StoreInfo defines store-specific commit information. It contains a reference
 /// between a store name and the commit ID.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StoreInfo {
     #[prost(string, tag = "1")]
@@ -101,7 +97,6 @@ impl ::prost::Name for StoreInfo {
 }
 /// CommitID defines the commitment information when a specific store is
 /// committed.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CommitId {
     #[prost(int64, tag = "1")]

@@ -15,10 +15,11 @@ use opentelemetry_prometheus::exporter;
 use opentelemetry_sdk::{metrics::SdkMeterProvider, runtime::Tokio, Resource};
 use prometheus::{Encoder, Registry as PrometheusRegistry, TextEncoder};
 use std::{env, net::SocketAddr, sync::Arc, time::Duration};
-use tonic::metadata::{MetadataKey, MetadataMap, MetadataValue};
-use tonic::service::Interceptor;
-use tonic::transport::Body;
-use tonic::Status;
+use tonic::{
+    metadata::{MetadataKey, MetadataMap, MetadataValue},
+    service::Interceptor,
+    Status,
+};
 use tracing::{info, info_span, trace_span, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -296,7 +297,7 @@ fn fmt_layer<S>() -> Layer<S> {
         .with_span_events(FmtSpan::NONE)
 }
 
-pub fn make_span(request: &tonic::codegen::http::Request<Body>) -> Span {
+pub fn make_span<B>(request: &tonic::codegen::http::Request<B>) -> Span {
     let endpoint = request.uri().path();
 
     // Create span without blocking

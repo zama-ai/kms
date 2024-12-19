@@ -2,7 +2,6 @@
 /// WeightedVoteOption defines a unit of vote for vote split.
 ///
 /// Since: cosmos-sdk 0.43
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct WeightedVoteOption {
     /// option defines the valid vote options, it must not contain duplicate vote options.
@@ -24,7 +23,6 @@ impl ::prost::Name for WeightedVoteOption {
 }
 /// TextProposal defines a standard text proposal whose changes need to be
 /// manually updated in case of approval.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TextProposal {
     /// title of the proposal.
@@ -46,7 +44,6 @@ impl ::prost::Name for TextProposal {
 }
 /// Deposit defines an amount deposited by an account address to an active
 /// proposal.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Deposit {
     /// proposal_id defines the unique id of the proposal.
@@ -70,7 +67,6 @@ impl ::prost::Name for Deposit {
     }
 }
 /// Proposal defines the core field members of a governance proposal.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Proposal {
     /// proposal_id defines the unique id of the proposal.
@@ -114,7 +110,6 @@ impl ::prost::Name for Proposal {
     }
 }
 /// TallyResult defines a standard tally for a governance proposal.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TallyResult {
     /// yes is the number of yes votes on a proposal.
@@ -142,7 +137,6 @@ impl ::prost::Name for TallyResult {
 }
 /// Vote defines a vote on a governance proposal.
 /// A Vote consists of a proposal ID, the voter, and the vote option.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Vote {
     /// proposal_id defines the unique id of the proposal.
@@ -174,7 +168,6 @@ impl ::prost::Name for Vote {
     }
 }
 /// DepositParams defines the params for deposits on governance proposals.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DepositParams {
     /// Minimum deposit for a proposal to enter voting period.
@@ -196,8 +189,7 @@ impl ::prost::Name for DepositParams {
     }
 }
 /// VotingParams defines the params for voting on governance proposals.
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct VotingParams {
     /// Duration of the voting period.
     #[prost(message, optional, tag = "1")]
@@ -214,7 +206,6 @@ impl ::prost::Name for VotingParams {
     }
 }
 /// TallyParams defines the params for tallying votes on governance proposals.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TallyParams {
     /// Minimum percentage of total stake needed to vote for a result to be
@@ -261,11 +252,11 @@ impl VoteOption {
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            VoteOption::Unspecified => "VOTE_OPTION_UNSPECIFIED",
-            VoteOption::Yes => "VOTE_OPTION_YES",
-            VoteOption::Abstain => "VOTE_OPTION_ABSTAIN",
-            VoteOption::No => "VOTE_OPTION_NO",
-            VoteOption::NoWithVeto => "VOTE_OPTION_NO_WITH_VETO",
+            Self::Unspecified => "VOTE_OPTION_UNSPECIFIED",
+            Self::Yes => "VOTE_OPTION_YES",
+            Self::Abstain => "VOTE_OPTION_ABSTAIN",
+            Self::No => "VOTE_OPTION_NO",
+            Self::NoWithVeto => "VOTE_OPTION_NO_WITH_VETO",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -309,12 +300,12 @@ impl ProposalStatus {
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            ProposalStatus::Unspecified => "PROPOSAL_STATUS_UNSPECIFIED",
-            ProposalStatus::DepositPeriod => "PROPOSAL_STATUS_DEPOSIT_PERIOD",
-            ProposalStatus::VotingPeriod => "PROPOSAL_STATUS_VOTING_PERIOD",
-            ProposalStatus::Passed => "PROPOSAL_STATUS_PASSED",
-            ProposalStatus::Rejected => "PROPOSAL_STATUS_REJECTED",
-            ProposalStatus::Failed => "PROPOSAL_STATUS_FAILED",
+            Self::Unspecified => "PROPOSAL_STATUS_UNSPECIFIED",
+            Self::DepositPeriod => "PROPOSAL_STATUS_DEPOSIT_PERIOD",
+            Self::VotingPeriod => "PROPOSAL_STATUS_VOTING_PERIOD",
+            Self::Passed => "PROPOSAL_STATUS_PASSED",
+            Self::Rejected => "PROPOSAL_STATUS_REJECTED",
+            Self::Failed => "PROPOSAL_STATUS_FAILED",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -331,7 +322,6 @@ impl ProposalStatus {
     }
 }
 /// GenesisState defines the gov module's genesis state.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GenesisState {
     /// starting_proposal_id is the ID of the starting proposal.
@@ -367,8 +357,7 @@ impl ::prost::Name for GenesisState {
     }
 }
 /// QueryProposalRequest is the request type for the Query/Proposal RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct QueryProposalRequest {
     /// proposal_id defines the unique id of the proposal.
     #[prost(uint64, tag = "1")]
@@ -385,7 +374,6 @@ impl ::prost::Name for QueryProposalRequest {
     }
 }
 /// QueryProposalResponse is the response type for the Query/Proposal RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryProposalResponse {
     #[prost(message, optional, tag = "1")]
@@ -402,7 +390,6 @@ impl ::prost::Name for QueryProposalResponse {
     }
 }
 /// QueryProposalsRequest is the request type for the Query/Proposals RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryProposalsRequest {
     /// proposal_status defines the status of the proposals.
@@ -432,7 +419,6 @@ impl ::prost::Name for QueryProposalsRequest {
 }
 /// QueryProposalsResponse is the response type for the Query/Proposals RPC
 /// method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryProposalsResponse {
     /// proposals defines all the requested governance proposals.
@@ -455,7 +441,6 @@ impl ::prost::Name for QueryProposalsResponse {
     }
 }
 /// QueryVoteRequest is the request type for the Query/Vote RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryVoteRequest {
     /// proposal_id defines the unique id of the proposal.
@@ -476,7 +461,6 @@ impl ::prost::Name for QueryVoteRequest {
     }
 }
 /// QueryVoteResponse is the response type for the Query/Vote RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryVoteResponse {
     /// vote defines the queried vote.
@@ -494,7 +478,6 @@ impl ::prost::Name for QueryVoteResponse {
     }
 }
 /// QueryVotesRequest is the request type for the Query/Votes RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryVotesRequest {
     /// proposal_id defines the unique id of the proposal.
@@ -517,7 +500,6 @@ impl ::prost::Name for QueryVotesRequest {
     }
 }
 /// QueryVotesResponse is the response type for the Query/Votes RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryVotesResponse {
     /// votes defines the queried votes.
@@ -540,7 +522,6 @@ impl ::prost::Name for QueryVotesResponse {
     }
 }
 /// QueryParamsRequest is the request type for the Query/Params RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryParamsRequest {
     /// params_type defines which parameters to query for, can be one of "voting",
@@ -559,7 +540,6 @@ impl ::prost::Name for QueryParamsRequest {
     }
 }
 /// QueryParamsResponse is the response type for the Query/Params RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryParamsResponse {
     /// voting_params defines the parameters related to voting.
@@ -583,7 +563,6 @@ impl ::prost::Name for QueryParamsResponse {
     }
 }
 /// QueryDepositRequest is the request type for the Query/Deposit RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryDepositRequest {
     /// proposal_id defines the unique id of the proposal.
@@ -604,7 +583,6 @@ impl ::prost::Name for QueryDepositRequest {
     }
 }
 /// QueryDepositResponse is the response type for the Query/Deposit RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryDepositResponse {
     /// deposit defines the requested deposit.
@@ -622,7 +600,6 @@ impl ::prost::Name for QueryDepositResponse {
     }
 }
 /// QueryDepositsRequest is the request type for the Query/Deposits RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryDepositsRequest {
     /// proposal_id defines the unique id of the proposal.
@@ -645,7 +622,6 @@ impl ::prost::Name for QueryDepositsRequest {
     }
 }
 /// QueryDepositsResponse is the response type for the Query/Deposits RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryDepositsResponse {
     /// deposits defines the requested deposits.
@@ -668,8 +644,7 @@ impl ::prost::Name for QueryDepositsResponse {
     }
 }
 /// QueryTallyResultRequest is the request type for the Query/Tally RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct QueryTallyResultRequest {
     /// proposal_id defines the unique id of the proposal.
     #[prost(uint64, tag = "1")]
@@ -686,7 +661,6 @@ impl ::prost::Name for QueryTallyResultRequest {
     }
 }
 /// QueryTallyResultResponse is the response type for the Query/Tally RPC method.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryTallyResultResponse {
     /// tally defines the requested tally.
@@ -705,7 +679,13 @@ impl ::prost::Name for QueryTallyResultResponse {
 }
 /// Generated client implementations.
 pub mod query_client {
-    #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
     use tonic::codegen::*;
     use tonic::codegen::http::Uri;
     /// Query defines the gRPC querier service for gov module
@@ -728,8 +708,8 @@ pub mod query_client {
     where
         T: tonic::client::GrpcService<tonic::body::BoxBody>,
         T::Error: Into<StdError>,
-        T::ResponseBody: Body<Data = Bytes> + Send + 'static,
-        <T::ResponseBody as Body>::Error: Into<StdError> + Send,
+        T::ResponseBody: Body<Data = Bytes> + std::marker::Send + 'static,
+        <T::ResponseBody as Body>::Error: Into<StdError> + std::marker::Send,
     {
         pub fn new(inner: T) -> Self {
             let inner = tonic::client::Grpc::new(inner);
@@ -754,7 +734,7 @@ pub mod query_client {
             >,
             <T as tonic::codegen::Service<
                 http::Request<tonic::body::BoxBody>,
-            >>::Error: Into<StdError> + Send + Sync,
+            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
         {
             QueryClient::new(InterceptedService::new(inner, interceptor))
         }
@@ -801,8 +781,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -827,8 +806,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -853,8 +831,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -879,8 +856,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -905,8 +881,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -931,8 +906,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -957,8 +931,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -983,8 +956,7 @@ pub mod query_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1001,7 +973,6 @@ pub mod query_client {
 }
 /// MsgSubmitProposal defines an sdk.Msg type that supports submitting arbitrary
 /// proposal Content.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgSubmitProposal {
     /// content is the proposal's content.
@@ -1025,8 +996,7 @@ impl ::prost::Name for MsgSubmitProposal {
     }
 }
 /// MsgSubmitProposalResponse defines the Msg/SubmitProposal response type.
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct MsgSubmitProposalResponse {
     /// proposal_id defines the unique id of the proposal.
     #[prost(uint64, tag = "1")]
@@ -1043,7 +1013,6 @@ impl ::prost::Name for MsgSubmitProposalResponse {
     }
 }
 /// MsgVote defines a message to cast a vote.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgVote {
     /// proposal_id defines the unique id of the proposal.
@@ -1067,8 +1036,7 @@ impl ::prost::Name for MsgVote {
     }
 }
 /// MsgVoteResponse defines the Msg/Vote response type.
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct MsgVoteResponse {}
 impl ::prost::Name for MsgVoteResponse {
     const NAME: &'static str = "MsgVoteResponse";
@@ -1083,7 +1051,6 @@ impl ::prost::Name for MsgVoteResponse {
 /// MsgVoteWeighted defines a message to cast a vote.
 ///
 /// Since: cosmos-sdk 0.43
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgVoteWeighted {
     /// proposal_id defines the unique id of the proposal.
@@ -1109,8 +1076,7 @@ impl ::prost::Name for MsgVoteWeighted {
 /// MsgVoteWeightedResponse defines the Msg/VoteWeighted response type.
 ///
 /// Since: cosmos-sdk 0.43
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct MsgVoteWeightedResponse {}
 impl ::prost::Name for MsgVoteWeightedResponse {
     const NAME: &'static str = "MsgVoteWeightedResponse";
@@ -1123,7 +1089,6 @@ impl ::prost::Name for MsgVoteWeightedResponse {
     }
 }
 /// MsgDeposit defines a message to submit a deposit to an existing proposal.
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgDeposit {
     /// proposal_id defines the unique id of the proposal.
@@ -1147,8 +1112,7 @@ impl ::prost::Name for MsgDeposit {
     }
 }
 /// MsgDepositResponse defines the Msg/Deposit response type.
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct MsgDepositResponse {}
 impl ::prost::Name for MsgDepositResponse {
     const NAME: &'static str = "MsgDepositResponse";
@@ -1162,7 +1126,13 @@ impl ::prost::Name for MsgDepositResponse {
 }
 /// Generated client implementations.
 pub mod msg_client {
-    #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
     use tonic::codegen::*;
     use tonic::codegen::http::Uri;
     /// Msg defines the gov Msg service.
@@ -1185,8 +1155,8 @@ pub mod msg_client {
     where
         T: tonic::client::GrpcService<tonic::body::BoxBody>,
         T::Error: Into<StdError>,
-        T::ResponseBody: Body<Data = Bytes> + Send + 'static,
-        <T::ResponseBody as Body>::Error: Into<StdError> + Send,
+        T::ResponseBody: Body<Data = Bytes> + std::marker::Send + 'static,
+        <T::ResponseBody as Body>::Error: Into<StdError> + std::marker::Send,
     {
         pub fn new(inner: T) -> Self {
             let inner = tonic::client::Grpc::new(inner);
@@ -1211,7 +1181,7 @@ pub mod msg_client {
             >,
             <T as tonic::codegen::Service<
                 http::Request<tonic::body::BoxBody>,
-            >>::Error: Into<StdError> + Send + Sync,
+            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
         {
             MsgClient::new(InterceptedService::new(inner, interceptor))
         }
@@ -1258,8 +1228,7 @@ pub mod msg_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1284,8 +1253,7 @@ pub mod msg_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1312,8 +1280,7 @@ pub mod msg_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
@@ -1338,8 +1305,7 @@ pub mod msg_client {
                 .ready()
                 .await
                 .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
+                    tonic::Status::unknown(
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;

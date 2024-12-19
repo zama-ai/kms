@@ -24,7 +24,7 @@ cosmwasm-schema.workspace = true
 cosmwasm-std.workspace = true
 cw2.workspace = true
 hex = { workspace = true, features = ["serde"] }
-ics23 = "=0.11.3"
+ics23 = "=0.12.0"
 percent-encoding = "=2.3.1"
 prost.workspace = true
 schemars.workspace = true
