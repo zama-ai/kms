@@ -146,3 +146,7 @@ debug = true
 [profile.release]
 opt-level = 3
 lto = "fat"
+
+[profile.release-test]
+# inherits from test for lto-thin
+inherits = "test"

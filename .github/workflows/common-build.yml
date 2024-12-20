@@ -89,6 +89,10 @@ jobs:
           sudo apt update && sudo apt -y install git-lfs
           git lfs pull
 
+      - name: Setup Home
+        if: ${{ inputs.runs-on != 'ubuntu-latest' }}
+        run: echo "HOME=/home/ubuntu" >> "${GITHUB_ENV}"        
+          
       # Needed to be able to pull some docker images for the simulator test
       - name: Login to GitHub Container Registry
         uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
@@ -116,10 +120,6 @@ jobs:
         with:
           platforms: linux/amd64,linux/arm64
           buildkitd-flags: --debug
-
-      - name: Setup Home
-        if: ${{ inputs.runs-on != 'ubuntu-latest' }}
-        run: echo "HOME=/home/ubuntu" >> "${GITHUB_ENV}"
 
       # Rust toolchain setup
       - name: Set up Rust

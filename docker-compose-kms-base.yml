@@ -141,6 +141,8 @@ services:
     build:
       context: .
       dockerfile: core/service/operations/docker/ci.dockerfile
+      args:
+        LTO_RELEASE: "release-test"
     deploy:
       replicas: 0 # it's a build dependency, not a real service
 

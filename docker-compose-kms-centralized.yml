@@ -16,6 +16,8 @@ services:
     build:
       context: .
       dockerfile: core/service/operations/docker/ci.dockerfile
+      args:
+        LTO_RELEASE: "release-test"      
     ports:
       - "50051:50051"
     healthcheck:

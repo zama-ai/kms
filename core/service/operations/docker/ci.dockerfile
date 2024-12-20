@@ -31,6 +31,10 @@ RUN --mount=type=secret,id=BLOCKCHAIN_ACTIONS_TOKEN,env=BLOCKCHAIN_ACTIONS_TOKEN
 ## Second stage builds the kms-core binaries
 FROM --platform=$BUILDPLATFORM base AS kms-core
 
+# By default, cargo build --release.
+# But you can provide --build-arg LTO_RELEASE="--profile release-lto-off" locally to build locally
+ARG LTO_RELEASE="release"
+
 # Fetch dependencies and build binaries
 WORKDIR /app/kms
 COPY . .
@@ -40,12 +44,12 @@ ENV CARGO_HOME=/var/cache/buildkit/cargo \
 RUN --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
     cargo fetch --locked
 RUN --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
-    cargo build --locked --release -p kms --bin kms-server --bin kms-gen-tls-certs --bin kms-init -F insecure && \
-    cargo build --locked --release -p kms --bin kms-gen-keys -F testing -F insecure && \
-    cp /var/cache/buildkit/target/release/kms-server \
-       /var/cache/buildkit/target/release/kms-gen-tls-certs \
-       /var/cache/buildkit/target/release/kms-init \
-       /var/cache/buildkit/target/release/kms-gen-keys \
+    cargo build --locked --profile=${LTO_RELEASE} -p kms --bin kms-server --bin kms-gen-tls-certs --bin kms-init -F insecure && \
+    cargo build --locked --profile=${LTO_RELEASE} -p kms --bin kms-gen-keys -F testing -F insecure && \
+    cp /var/cache/buildkit/target/${LTO_RELEASE}/kms-server \
+       /var/cache/buildkit/target/${LTO_RELEASE}/kms-gen-tls-certs \
+       /var/cache/buildkit/target/${LTO_RELEASE}/kms-init \
+       /var/cache/buildkit/target/${LTO_RELEASE}/kms-gen-keys \
     ./core/service/bin
 
 ## Third stage builds Go dependencies
