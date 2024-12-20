@@ -276,8 +276,8 @@ pub trait ToBaseSession<R: Rng + CryptoRng + SeedableRng, B: BaseSessionHandles<
 }
 
 pub type SmallSession<Z> = SmallSessionStruct<Z, AesRng, SessionParameters>;
-pub type SmallSession64 = SmallSession<crate::algebra::residue_poly::ResiduePoly64>;
-pub type SmallSession128 = SmallSession<crate::algebra::residue_poly::ResiduePoly128>;
+pub type SmallSession64 = SmallSession<crate::algebra::galois_rings::degree_8::ResiduePolyF8Z64>;
+pub type SmallSession128 = SmallSession<crate::algebra::galois_rings::degree_8::ResiduePolyF8Z128>;
 
 pub trait SmallSessionHandles<Z: Ring, R: Rng + CryptoRng>: BaseSessionHandles<R> {
     fn prss_as_mut(&mut self) -> &mut PRSSState<Z>;

@@ -17,7 +17,7 @@ use tfhe_versionable::VersionsDispatch;
 
 use crate::{
     algebra::{
-        residue_poly::ResiduePoly,
+        galois_rings::degree_8::ResiduePolyF8,
         structure_traits::{BaseRing, ErrorCorrect},
     },
     error::error_handler::anyhow_error_and_log,
@@ -43,7 +43,7 @@ pub enum LweSecretKeyShareVersioned<Z: Clone> {
 #[derive(Clone, Debug, Serialize, Deserialize, Versionize, PartialEq)]
 #[versionize(LweSecretKeyShareVersioned)]
 pub struct LweSecretKeyShare<Z: Clone> {
-    pub data: Vec<Share<ResiduePoly<Z>>>,
+    pub data: Vec<Share<ResiduePolyF8<Z>>>,
 }
 
 #[derive(Clone)]
@@ -63,14 +63,14 @@ impl<Z: BaseRing> LweCompactPublicKeyShare<Z> {
         }
     }
 
-    pub fn get_mut_mask_and_body(&mut self) -> (&mut Vec<Z>, &mut Vec<ResiduePoly<Z>>) {
+    pub fn get_mut_mask_and_body(&mut self) -> (&mut Vec<Z>, &mut Vec<ResiduePolyF8<Z>>) {
         self.glwe_ciphertext_share.get_mut_mask_and_body()
     }
 }
 
 impl<Z: BaseRing> LweCompactPublicKeyShare<Z>
 where
-    ResiduePoly<Z>: ErrorCorrect,
+    ResiduePolyF8<Z>: ErrorCorrect,
 {
     pub async fn open_to_tfhers_type<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         self,
@@ -136,7 +136,7 @@ pub(crate) fn to_tfhe_hl_api_compact_public_key(
 }
 
 impl<Z: BaseRing> LweSecretKeyShare<Z> {
-    pub fn new_from_preprocessing<P: BitPreprocessing<ResiduePoly<Z>> + ?Sized>(
+    pub fn new_from_preprocessing<P: BitPreprocessing<ResiduePolyF8<Z>> + ?Sized>(
         dimension: LweDimension,
         preprocessing: &mut P,
     ) -> anyhow::Result<Self> {
@@ -149,7 +149,7 @@ impl<Z: BaseRing> LweSecretKeyShare<Z> {
         LweDimension(self.data.len())
     }
 
-    pub fn data_as_raw_vec(&self) -> Vec<ResiduePoly<Z>> {
+    pub fn data_as_raw_vec(&self) -> Vec<ResiduePolyF8<Z>> {
         self.data.iter().map(|share| share.value()).collect_vec()
     }
 }
@@ -220,7 +220,7 @@ mod tests {
     #[cfg(feature = "slow_tests")]
     use crate::execution::tfhe_internals::lwe_key::to_tfhe_hl_api_compact_public_key;
     use crate::{
-        algebra::{base_ring::Z64, residue_poly::ResiduePoly64},
+        algebra::{base_ring::Z64, galois_rings::degree_8::ResiduePolyF8Z64},
         execution::{
             online::{
                 gen_bits::{BitGenEven, RealBitGenEven},
@@ -307,7 +307,7 @@ mod tests {
         //This is Async because triples are generated from dummy preprocessing
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let results = execute_protocol_large::<ResiduePoly64, _, _>(
+        let results = execute_protocol_large::<ResiduePolyF8Z64, _, _>(
             parties,
             threshold,
             None,

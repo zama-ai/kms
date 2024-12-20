@@ -35,8 +35,8 @@ use crate::session_id::SessionId;
 use crate::{
     algebra::{
         base_ring::{Z128, Z64},
-        residue_poly::ResiduePoly128,
-        residue_poly::ResiduePoly64,
+        galois_rings::degree_8::ResiduePolyF8Z128,
+        galois_rings::degree_8::ResiduePolyF8Z64,
         structure_traits::Zero,
     },
     error::error_handler::anyhow_error_and_log,
@@ -69,11 +69,11 @@ use super::keygen::PrivateKeySet;
 use super::reconstruct::{combine_decryptions, reconstruct_message};
 
 pub struct Small {
-    session: RefCell<SmallSession<ResiduePoly128>>,
+    session: RefCell<SmallSession<ResiduePolyF8Z128>>,
 }
 
 impl Small {
-    pub fn new(session: SmallSession<ResiduePoly128>) -> Self {
+    pub fn new(session: SmallSession<ResiduePolyF8Z128>) -> Self {
         Small {
             session: RefCell::new(session),
         }
@@ -250,7 +250,7 @@ pub async fn partial_decrypt_using_noiseflooding<S, P, R>(
     ct: Ciphertext64,
     secret_key_share: &PrivateKeySet,
     _mode: DecryptionMode,
-) -> anyhow::Result<(HashMap<String, Vec<ResiduePoly128>>, Duration)>
+) -> anyhow::Result<(HashMap<String, Vec<ResiduePolyF8Z128>>, Duration)>
 where
     R: Rng + CryptoRng + Send,
     S: BaseSessionHandles<R>,
@@ -339,7 +339,8 @@ pub async fn init_prep_bitdec_small(
     };
 
     let mut small_preprocessing =
-        SmallPreprocessing::<ResiduePoly64, RealAgreeRandom>::init(session, bitdec_batch).await?;
+        SmallPreprocessing::<ResiduePolyF8Z64, RealAgreeRandom>::init(session, bitdec_batch)
+            .await?;
 
     bitdec_preprocessing
         .fill_from_base_preproc(
@@ -364,9 +365,9 @@ pub async fn init_prep_bitdec_large(
     };
 
     let mut large_preprocessing = LargePreprocessing::<
-        ResiduePoly64,
-        TrueSingleSharing<ResiduePoly64>,
-        TrueDoubleSharing<ResiduePoly64>,
+        ResiduePolyF8Z64,
+        TrueSingleSharing<ResiduePolyF8Z64>,
+        TrueDoubleSharing<ResiduePolyF8Z64>,
     >::init(
         session,
         bitdec_batch,
@@ -444,7 +445,7 @@ pub fn threshold_decrypt64<Z: Ring>(
             DecryptionMode::PRSSDecrypt => {
                 let large_ct = large_ct.unwrap();
                 set.spawn(async move {
-                    let mut session = setup_small_session::<ResiduePoly128>(base_session).await;
+                    let mut session = setup_small_session::<ResiduePolyF8Z128>(base_session).await;
 
                     let mut noiseflood_preprocessing = Small::new(session.clone())
                         .init_prep_noiseflooding(ct.blocks().len())
@@ -505,7 +506,7 @@ pub fn threshold_decrypt64<Z: Ring>(
             DecryptionMode::BitDecSmallDecrypt => {
                 let ks_key = runtime.get_ks_key();
                 set.spawn(async move {
-                    let mut session = setup_small_session::<ResiduePoly64>(base_session).await;
+                    let mut session = setup_small_session::<ResiduePolyF8Z64>(base_session).await;
                     let mut prep = init_prep_bitdec_small(&mut session, ct.blocks().len())
                         .await
                         .unwrap();
@@ -537,7 +538,7 @@ pub fn threshold_decrypt64<Z: Ring>(
 
 async fn open_masked_ptxts<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     session: &S,
-    res: Vec<ResiduePoly128>,
+    res: Vec<ResiduePolyF8Z128>,
     keyshares: &PrivateKeySet,
 ) -> anyhow::Result<Vec<Z128>> {
     let openeds = robust_opens_to_all(session, &res, session.threshold() as usize).await?;
@@ -546,7 +547,7 @@ async fn open_masked_ptxts<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
 
 async fn open_bit_composed_ptxts<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     session: &S,
-    res: Vec<ResiduePoly64>,
+    res: Vec<ResiduePolyF8Z64>,
 ) -> anyhow::Result<Vec<Z64>> {
     let openeds = robust_opens_to_all(session, &res, session.threshold() as usize).await?;
 
@@ -689,7 +690,7 @@ where
 pub fn partial_decrypt128(
     sk_share: &PrivateKeySet,
     ct: &Ciphertext128Block,
-) -> anyhow::Result<ResiduePoly128> {
+) -> anyhow::Result<ResiduePolyF8Z128> {
     let sns_secret_key = match &sk_share.glwe_secret_key_share_sns_as_lwe {
         Some(key) => key.data_as_raw_vec(),
         None => {
@@ -699,11 +700,12 @@ pub fn partial_decrypt128(
         }
     };
     let (mask, body) = ct.get_mask_and_body();
-    let a_time_s = (0..sns_secret_key.len()).fold(ResiduePoly128::ZERO, |acc, column| {
-        acc + sns_secret_key[column] * ResiduePoly128::from_scalar(Wrapping(mask.as_ref()[column]))
+    let a_time_s = (0..sns_secret_key.len()).fold(ResiduePolyF8Z128::ZERO, |acc, column| {
+        acc + sns_secret_key[column]
+            * ResiduePolyF8Z128::from_scalar(Wrapping(mask.as_ref()[column]))
     });
     // b-<a, s>
-    let res = ResiduePoly128::from_scalar(Wrapping(*body.data)) - a_time_s;
+    let res = ResiduePolyF8Z128::from_scalar(Wrapping(*body.data)) - a_time_s;
     Ok(res)
 }
 
@@ -712,7 +714,7 @@ pub fn partial_decrypt64(
     sk_share: &PrivateKeySet,
     ksk: &LweKeyswitchKey<Vec<u64>>,
     ct_block: &Ciphertext64Block,
-) -> anyhow::Result<ResiduePoly64> {
+) -> anyhow::Result<ResiduePolyF8Z64> {
     let ciphertext_modulus = 64;
     let mut output_ctxt;
 
@@ -729,15 +731,15 @@ pub fn partial_decrypt64(
         .lwe_compute_secret_key_share
         .data_as_raw_vec()
         .clone();
-    let a_time_s = (0..key_share64.len()).fold(ResiduePoly64::ZERO, |acc, column| {
-        acc + key_share64[column] * ResiduePoly64::from_scalar(Wrapping(mask.as_ref()[column]))
+    let a_time_s = (0..key_share64.len()).fold(ResiduePolyF8Z64::ZERO, |acc, column| {
+        acc + key_share64[column] * ResiduePolyF8Z64::from_scalar(Wrapping(mask.as_ref()[column]))
     });
     // b-<a, s>
     // Compute Delta, taking into account that total_block_bits omits the additional padding bit
     let delta_pad_bits = ciphertext_modulus - (sk_share.parameters.total_block_bits() + 1);
     let delta_pad_half = 1_u64 << (delta_pad_bits - 1);
-    let scalar_delta_half = ResiduePoly64::from_scalar(Wrapping(delta_pad_half));
-    let res = ResiduePoly64::from_scalar(Wrapping(*body.data)) - a_time_s + scalar_delta_half;
+    let scalar_delta_half = ResiduePolyF8Z64::from_scalar(Wrapping(delta_pad_half));
+    let res = ResiduePolyF8Z64::from_scalar(Wrapping(*body.data)) - a_time_s + scalar_delta_half;
     Ok(res)
 }
 
@@ -747,7 +749,7 @@ mod tests {
     use crate::execution::tfhe_internals::test_feature::KeySet;
     use crate::networking::NetworkMode;
     use crate::{
-        algebra::residue_poly::{ResiduePoly128, ResiduePoly64},
+        algebra::galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
         execution::tfhe_internals::test_feature::keygen_all_party_shares,
         execution::{
             constants::SMALL_TEST_KEY_PATH,
@@ -831,7 +833,7 @@ mod tests {
 
         let identities = generate_fixed_identities(num_parties);
         //Assumes Sync because preprocessing is part of the task
-        let mut runtime = DistributedTestRuntime::<ResiduePoly128>::new(
+        let mut runtime = DistributedTestRuntime::<ResiduePolyF8Z128>::new(
             identities,
             threshold as u8,
             NetworkMode::Sync,
@@ -876,7 +878,7 @@ mod tests {
 
         let identities = generate_fixed_identities(num_parties);
         //Assumes Sync because preprocessing is part of the task
-        let mut runtime = DistributedTestRuntime::<ResiduePoly128>::new(
+        let mut runtime = DistributedTestRuntime::<ResiduePolyF8Z128>::new(
             identities,
             threshold as u8,
             NetworkMode::Sync,
@@ -921,7 +923,7 @@ mod tests {
 
         let identities = generate_fixed_identities(num_parties);
         //Assumes Sync because preprocessing is part of the task
-        let mut runtime = DistributedTestRuntime::<ResiduePoly64>::new(
+        let mut runtime = DistributedTestRuntime::<ResiduePolyF8Z64>::new(
             identities,
             threshold as u8,
             NetworkMode::Sync,
@@ -975,7 +977,7 @@ mod tests {
 
         let identities = generate_fixed_identities(num_parties);
         //Assumes Sync because preprocessing is part of the task
-        let mut runtime = DistributedTestRuntime::<ResiduePoly64>::new(
+        let mut runtime = DistributedTestRuntime::<ResiduePolyF8Z64>::new(
             identities,
             threshold as u8,
             NetworkMode::Sync,

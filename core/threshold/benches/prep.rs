@@ -1,8 +1,8 @@
 use aes_prng::AesRng;
 use criterion::Throughput;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use distributed_decryption::algebra::residue_poly::ResiduePoly128;
-use distributed_decryption::algebra::residue_poly::ResiduePoly64;
+use distributed_decryption::algebra::galois_rings::degree_8::ResiduePolyF8Z128;
+use distributed_decryption::algebra::galois_rings::degree_8::ResiduePolyF8Z64;
 use distributed_decryption::execution::config::BatchParams;
 use distributed_decryption::execution::large_execution::double_sharing::DoubleSharing;
 use distributed_decryption::execution::large_execution::offline::LargePreprocessing;
@@ -73,7 +73,7 @@ fn triple_nsmall128(c: &mut Criterion) {
                         .unwrap();
                     };
                     //Executing offline, so require Sync network
-                    let _result = execute_protocol_small::<ResiduePoly128, _, _>(
+                    let _result = execute_protocol_small::<ResiduePolyF8Z128, _, _>(
                         config.n,
                         config.t as u8,
                         None,
@@ -117,9 +117,9 @@ fn triple_z128(c: &mut Criterion) {
                 b.iter(|| {
                     let mut computation = |mut session: LargeSession| async move {
                         let _ = LargePreprocessing::<
-                            ResiduePoly128,
-                            TrueSingleSharing<ResiduePoly128>,
-                            TrueDoubleSharing<ResiduePoly128>,
+                            ResiduePolyF8Z128,
+                            TrueSingleSharing<ResiduePolyF8Z128>,
+                            TrueDoubleSharing<ResiduePolyF8Z128>,
                         >::init(
                             &mut session,
                             BatchParams {
@@ -133,7 +133,7 @@ fn triple_z128(c: &mut Criterion) {
                         .unwrap();
                     };
                     //Executing offline, so require Sync network
-                    let _result = execute_protocol_large::<ResiduePoly128, _, _>(
+                    let _result = execute_protocol_large::<ResiduePolyF8Z128, _, _>(
                         config.n,
                         config.t,
                         None,
@@ -177,9 +177,9 @@ fn triple_z64(c: &mut Criterion) {
                 b.iter(|| {
                     let mut computation = |mut session: LargeSession| async move {
                         let _ = LargePreprocessing::<
-                            ResiduePoly64,
-                            TrueSingleSharing<ResiduePoly64>,
-                            TrueDoubleSharing<ResiduePoly64>,
+                            ResiduePolyF8Z64,
+                            TrueSingleSharing<ResiduePolyF8Z64>,
+                            TrueDoubleSharing<ResiduePolyF8Z64>,
                         >::init(
                             &mut session,
                             BatchParams {
@@ -193,7 +193,7 @@ fn triple_z64(c: &mut Criterion) {
                         .unwrap();
                     };
                     //Executing offline, so require Sync network
-                    let _result = execute_protocol_large::<ResiduePoly64, _, _>(
+                    let _result = execute_protocol_large::<ResiduePolyF8Z64, _, _>(
                         config.n,
                         config.t,
                         None,
@@ -237,9 +237,9 @@ fn random_sharing(c: &mut Criterion) {
                 b.iter(|| {
                     let mut computation = |mut session: LargeSession| async move {
                         let _ = LargePreprocessing::<
-                            ResiduePoly128,
-                            TrueSingleSharing<ResiduePoly128>,
-                            TrueDoubleSharing<ResiduePoly128>,
+                            ResiduePolyF8Z128,
+                            TrueSingleSharing<ResiduePolyF8Z128>,
+                            TrueDoubleSharing<ResiduePolyF8Z128>,
                         >::init(
                             &mut session,
                             BatchParams {
@@ -253,7 +253,7 @@ fn random_sharing(c: &mut Criterion) {
                         .unwrap();
                     };
                     //Executing offline, so require Sync network
-                    let _result = execute_protocol_large::<ResiduePoly128, _, _>(
+                    let _result = execute_protocol_large::<ResiduePolyF8Z128, _, _>(
                         config.n,
                         config.t,
                         None,
@@ -295,11 +295,11 @@ fn double_sharing(c: &mut Criterion) {
             |b, &config| {
                 b.iter(|| {
                     let mut computation = |mut session: LargeSession| async move {
-                        let mut dsh = TrueDoubleSharing::<ResiduePoly128>::default();
+                        let mut dsh = TrueDoubleSharing::<ResiduePolyF8Z128>::default();
                         dsh.init(&mut session, config.batch_size).await.unwrap();
                     };
                     //Executing offline, so require Sync network
-                    let _result = execute_protocol_large::<ResiduePoly128, _, _>(
+                    let _result = execute_protocol_large::<ResiduePolyF8Z128, _, _>(
                         config.n,
                         config.t,
                         None,
@@ -342,9 +342,9 @@ fn bitgen_nlarge(c: &mut Criterion) {
                 b.iter(|| {
                     let mut computation = |mut session: LargeSession| async move {
                         let mut large_preprocessing = LargePreprocessing::<
-                            ResiduePoly128,
-                            TrueSingleSharing<ResiduePoly128>,
-                            TrueDoubleSharing<ResiduePoly128>,
+                            ResiduePolyF8Z128,
+                            TrueSingleSharing<ResiduePolyF8Z128>,
+                            TrueDoubleSharing<ResiduePolyF8Z128>,
                         >::init(
                             &mut session,
                             BatchParams {
@@ -365,7 +365,7 @@ fn bitgen_nlarge(c: &mut Criterion) {
                         .unwrap();
                     };
                     //Executing offline, so require Sync network
-                    let _result = execute_protocol_large::<ResiduePoly128, _, _>(
+                    let _result = execute_protocol_large::<ResiduePolyF8Z128, _, _>(
                         config.n,
                         config.t,
                         None,
@@ -411,7 +411,7 @@ fn batch_decode2t(c: &mut Criterion) {
             .map(|idx| {
                 ShamirSharings::share(
                     &mut rng,
-                    ResiduePoly128::from_scalar(Wrapping(idx as u128)),
+                    ResiduePolyF8Z128::from_scalar(Wrapping(idx as u128)),
                     config.n,
                     degree,
                 )

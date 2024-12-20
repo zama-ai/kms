@@ -101,7 +101,7 @@ impl SecretDistributions for RealSecretDistributions {
 mod tests {
 
     use crate::{
-        algebra::residue_poly::{ResiduePoly128, ResiduePoly64},
+        algebra::galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
         execution::{
             online::{preprocessing::dummy::DummyPreprocessing, triple::open_list},
             runtime::session::{LargeSession, ParameterHandles, SmallSession},
@@ -119,8 +119,8 @@ mod tests {
         let bound = 10; //NewHope(B) gives range [-10,10] with mean 0 and std deviation sqrt(5)
         let batch = 100;
 
-        let mut task = |session: SmallSession<ResiduePoly64>| async move {
-            let mut preproc = DummyPreprocessing::<ResiduePoly64, _, _>::new(0, session.clone());
+        let mut task = |session: SmallSession<ResiduePolyF8Z64>| async move {
+            let mut preproc = DummyPreprocessing::<ResiduePolyF8Z64, _, _>::new(0, session.clone());
 
             let res_vec = RealSecretDistributions::newhope(batch, bound, &mut preproc).unwrap();
 
@@ -163,7 +163,7 @@ mod tests {
 
         let mut task = |session: LargeSession| async move {
             let mut large_preproc =
-                DummyPreprocessing::<ResiduePoly128, _, _>::new(0, session.clone());
+                DummyPreprocessing::<ResiduePolyF8Z128, _, _>::new(0, session.clone());
 
             let res_vec =
                 RealSecretDistributions::t_uniform(batch, bound, &mut large_preproc).unwrap();
@@ -191,7 +191,7 @@ mod tests {
         // Online phase so Async because offline is dummy
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let results = execute_protocol_large::<ResiduePoly128, _, _>(
+        let results = execute_protocol_large::<ResiduePolyF8Z128, _, _>(
             parties,
             threshold,
             Some(1),
@@ -227,7 +227,7 @@ mod tests {
         let batch = 100_usize;
 
         let mut task = |session: LargeSession| async move {
-            //let mut large_preproc = RealLargePreprocessing::<ResiduePoly64>::init(
+            //let mut large_preproc = RealLargePreprocessing::<ResiduePolyF8Z64>::init(
             //    &mut session,
             //    batch_sizes,
             //    TrueSingleSharing::default(),
@@ -237,7 +237,7 @@ mod tests {
             //.unwrap();
 
             let mut large_preproc =
-                DummyPreprocessing::<ResiduePoly64, _, _>::new(0, session.clone());
+                DummyPreprocessing::<ResiduePolyF8Z64, _, _>::new(0, session.clone());
 
             let res_vec =
                 RealSecretDistributions::t_uniform(batch, bound, &mut large_preproc).unwrap();
@@ -265,7 +265,7 @@ mod tests {
         // Online phase so Async because offline is dummy
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let results = execute_protocol_large::<ResiduePoly64, _, _>(
+        let results = execute_protocol_large::<ResiduePolyF8Z64, _, _>(
             parties,
             threshold,
             Some(1),

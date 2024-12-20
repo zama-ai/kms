@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use aes_prng::AesRng;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use distributed_decryption::{
-    algebra::residue_poly::ResiduePoly128,
+    algebra::galois_rings::degree_8::ResiduePolyF8Z128,
     execution::{
         runtime::{
             party::{Identity, Role},
@@ -37,8 +37,10 @@ fn bench_prss(c: &mut Criterion) {
     let _guard = rt.enter();
     let prss = rt
         .block_on(async {
-            PRSSSetup::<ResiduePoly128>::init_with_abort::<DummyAgreeRandom, AesRng, _>(&mut sess)
-                .await
+            PRSSSetup::<ResiduePolyF8Z128>::init_with_abort::<DummyAgreeRandom, AesRng, _>(
+                &mut sess,
+            )
+            .await
         })
         .unwrap();
 

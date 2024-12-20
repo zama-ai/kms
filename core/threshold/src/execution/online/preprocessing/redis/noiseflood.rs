@@ -1,7 +1,7 @@
 use itertools::Itertools;
 
 use crate::{
-    algebra::residue_poly::ResiduePoly128,
+    algebra::galois_rings::degree_8::ResiduePolyF8Z128,
     error::error_handler::anyhow_error_and_log,
     execution::{
         constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, STATSEC},
@@ -24,8 +24,8 @@ use crate::execution::online::preprocessing::NoiseFloodPreprocessing;
 use async_trait::async_trait;
 
 #[async_trait]
-impl NoiseFloodPreprocessing for RedisPreprocessing<ResiduePoly128> {
-    fn append_masks(&mut self, masks: Vec<ResiduePoly128>) {
+impl NoiseFloodPreprocessing for RedisPreprocessing<ResiduePolyF8Z128> {
+    fn append_masks(&mut self, masks: Vec<ResiduePolyF8Z128>) {
         store_correlated_randomness(
             self.get_client(),
             &masks,
@@ -34,7 +34,7 @@ impl NoiseFloodPreprocessing for RedisPreprocessing<ResiduePoly128> {
         )
         .unwrap()
     }
-    fn next_mask(&mut self) -> anyhow::Result<ResiduePoly128> {
+    fn next_mask(&mut self) -> anyhow::Result<ResiduePolyF8Z128> {
         fetch_correlated_randomness(
             self.get_client(),
             1,
@@ -48,7 +48,7 @@ impl NoiseFloodPreprocessing for RedisPreprocessing<ResiduePoly128> {
         })
     }
 
-    fn next_mask_vec(&mut self, amount: usize) -> anyhow::Result<Vec<ResiduePoly128>> {
+    fn next_mask_vec(&mut self, amount: usize) -> anyhow::Result<Vec<ResiduePolyF8Z128>> {
         fetch_correlated_randomness(
             self.get_client(),
             amount,
@@ -62,7 +62,7 @@ impl NoiseFloodPreprocessing for RedisPreprocessing<ResiduePoly128> {
     /// [`crate::execution::small_execution::prss::PRSSSetup`]
     fn fill_from_small_session(
         &mut self,
-        session: &mut SmallSession<ResiduePoly128>,
+        session: &mut SmallSession<ResiduePolyF8Z128>,
         amount: usize,
     ) -> anyhow::Result<()> {
         let own_role = session.my_role()?;
@@ -81,7 +81,7 @@ impl NoiseFloodPreprocessing for RedisPreprocessing<ResiduePoly128> {
     /// Requires interaction to create the bits out of the [BasePreprocessing] material
     async fn fill_from_base_preproc(
         &mut self,
-        preprocessing: &mut dyn BasePreprocessing<ResiduePoly128>,
+        preprocessing: &mut dyn BasePreprocessing<ResiduePolyF8Z128>,
         session: &mut BaseSession,
         num_ctxts: usize,
     ) -> anyhow::Result<()> {
@@ -99,7 +99,7 @@ impl NoiseFloodPreprocessing for RedisPreprocessing<ResiduePoly128> {
     /// using [`crate::execution::online::secret_distributions::SecretDistributions`]
     fn fill_from_bits_preproc(
         &mut self,
-        bit_preproc: &mut dyn BitPreprocessing<ResiduePoly128>,
+        bit_preproc: &mut dyn BitPreprocessing<ResiduePolyF8Z128>,
         num_ctxts: usize,
     ) -> anyhow::Result<()> {
         let bound_d = (STATSEC + LOG_B_SWITCH_SQUASH) as usize;

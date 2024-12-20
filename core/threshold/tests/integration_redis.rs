@@ -1,6 +1,6 @@
 use ctor::ctor;
 use distributed_decryption::algebra::base_ring::{Z128, Z64};
-use distributed_decryption::algebra::residue_poly::ResiduePoly;
+use distributed_decryption::algebra::galois_rings::degree_8::ResiduePolyF8;
 use distributed_decryption::execution::online::preprocessing::create_redis_factory;
 use distributed_decryption::execution::online::preprocessing::redis::RedisConf;
 use distributed_decryption::execution::online::triple::Triple;
@@ -12,7 +12,7 @@ use std::num::Wrapping;
 
 #[cfg(feature = "testing")]
 use distributed_decryption::{
-    algebra::residue_poly::ResiduePoly64,
+    algebra::galois_rings::degree_8::ResiduePolyF8Z64,
     execution::{
         endpoints::keygen::distributed_keygen_z64,
         online::preprocessing::orchestrator::PreprocessingOrchestrator,
@@ -53,23 +53,23 @@ macro_rules! test_triples {
                 let mut redis_factory = create_redis_factory(test_key_prefix.clone(), &redis_conf);
                 let share_one = Share::new(
                     Role::indexed_by_one(1),
-                    ResiduePoly::<$z>::from_scalar(Wrapping(42)),
+                    ResiduePolyF8::<$z>::from_scalar(Wrapping(42)),
                 );
 
                 let share_two = Share::new(
                     Role::indexed_by_one(2),
-                    ResiduePoly::<$z>::from_scalar(Wrapping(43)),
+                    ResiduePolyF8::<$z>::from_scalar(Wrapping(43)),
                 );
 
                 let share_three = Share::new(
                     Role::indexed_by_one(3),
-                    ResiduePoly::<$z>::from_scalar(Wrapping(42)),
+                    ResiduePolyF8::<$z>::from_scalar(Wrapping(42)),
                 );
 
                 let triple = Triple::new(share_one, share_two, share_three);
                 let random = Share::new(
                     Role::indexed_by_one(4),
-                    ResiduePoly::<$z>::from_scalar(Wrapping(7)),
+                    ResiduePolyF8::<$z>::from_scalar(Wrapping(7)),
                 );
                 let mut base_preprocessing = redis_factory.$l();
                 base_preprocessing.append_triples(vec![triple.clone()]);
@@ -99,19 +99,19 @@ fn test_store_fetch_100_triples() {
     for _i in 0..fetch_count {
         let share_one = Share::new(
             Role::indexed_by_one(1),
-            ResiduePoly::<Z64>::from_scalar(Wrapping(cnt)),
+            ResiduePolyF8::<Z64>::from_scalar(Wrapping(cnt)),
         );
         cnt += 1;
 
         let share_two = Share::new(
             Role::indexed_by_one(2),
-            ResiduePoly::<Z64>::from_scalar(Wrapping(cnt)),
+            ResiduePolyF8::<Z64>::from_scalar(Wrapping(cnt)),
         );
         cnt += 1;
 
         let share_three = Share::new(
             Role::indexed_by_one(3),
-            ResiduePoly::<Z64>::from_scalar(Wrapping(cnt)),
+            ResiduePolyF8::<Z64>::from_scalar(Wrapping(cnt)),
         );
         cnt += 1;
         let triple = Triple::new(share_one, share_two, share_three);
@@ -135,7 +135,7 @@ fn test_store_fetch_100_randoms() {
     for i in 0..fetch_count {
         let random = Share::new(
             Role::indexed_by_one(1),
-            ResiduePoly::<Z64>::from_scalar(Wrapping(i)),
+            ResiduePolyF8::<Z64>::from_scalar(Wrapping(i)),
         );
         randoms.push(random);
     }
@@ -158,7 +158,7 @@ fn test_store_fetch_100_bits() {
     for i in 0..fetch_count {
         let bit = Share::new(
             Role::indexed_by_one(1),
-            ResiduePoly::<Z64>::from_scalar(Wrapping(i)),
+            ResiduePolyF8::<Z64>::from_scalar(Wrapping(i)),
         );
         bits.push(bit);
     }
@@ -194,7 +194,7 @@ fn test_dkg_orchestrator_large(
     //Executing offline, so require Sync network
     let runtimes = (0..num_sessions)
         .map(|_| {
-            DistributedTestRuntime::<ResiduePoly64>::new(
+            DistributedTestRuntime::<ResiduePolyF8Z64>::new(
                 identities.clone(),
                 threshold,
                 NetworkMode::Sync,
@@ -227,7 +227,7 @@ fn test_dkg_orchestrator_large(
             let mut redis_factory =
                 create_redis_factory(format!("LargeOrchestrator_{}", identity), &redis_conf);
             let orchestrator =
-                PreprocessingOrchestrator::<ResiduePoly64>::new(redis_factory.as_mut(), params)
+                PreprocessingOrchestrator::<ResiduePolyF8Z64>::new(redis_factory.as_mut(), params)
                     .unwrap();
 
             let (mut sessions, mut preproc) = rt_handle.block_on(async {

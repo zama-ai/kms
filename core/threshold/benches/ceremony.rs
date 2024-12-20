@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use distributed_decryption::{
-    algebra::residue_poly::ResiduePoly64,
+    algebra::galois_rings::degree_8::ResiduePolyF8Z64,
     execution::{
         runtime::{
             session::ParameterHandles,
@@ -33,7 +33,7 @@ fn bench_ceremony(c: &mut Criterion) {
             |b, dim| {
                 let identities = generate_fixed_identities(num_parties);
                 //CRS generation requires sync network
-                let runtime: DistributedTestRuntime<ResiduePoly64> = DistributedTestRuntime::new(
+                let runtime: DistributedTestRuntime<ResiduePolyF8Z64> = DistributedTestRuntime::new(
                     identities,
                     threshold as u8,
                     NetworkMode::Sync,
@@ -54,7 +54,7 @@ fn bench_ceremony(c: &mut Criterion) {
                         set.spawn(async move {
                             let real_ceremony = RealCeremony::default();
                             let out = real_ceremony
-                                .execute::<ResiduePoly64, _, _>(&mut session, dim, None)
+                                .execute::<ResiduePolyF8Z64, _, _>(&mut session, dim, None)
                                 .await
                                 .unwrap();
                             (session.my_role().unwrap(), out)

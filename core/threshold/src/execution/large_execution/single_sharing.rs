@@ -170,7 +170,7 @@ pub(crate) mod tests {
     use crate::networking::NetworkMode;
     use crate::{
         algebra::{
-            residue_poly::ResiduePoly,
+            galois_rings::degree_8::ResiduePolyF8,
             structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingEmbed, Sample},
         },
         execution::{
@@ -191,8 +191,8 @@ pub(crate) mod tests {
     use rstest::rstest;
     use std::num::Wrapping;
 
-    use crate::algebra::residue_poly::ResiduePoly128;
-    use crate::algebra::residue_poly::ResiduePoly64;
+    use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z128;
+    use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z64;
     type TrueLocalSingleShare = RealLocalSingleShare<RealCoinflip<RealVss>, RealShareDispute>;
 
     pub(crate) fn create_real_single_sharing<Z: Ring, L: LocalSingleShare>(
@@ -266,14 +266,14 @@ pub(crate) mod tests {
     #[case(4, 1)]
     #[case(7, 2)]
     fn test_singlesharing_z128(#[case] num_parties: usize, #[case] threshold: usize) {
-        test_singlesharing::<ResiduePoly128>(num_parties, threshold);
+        test_singlesharing::<ResiduePolyF8Z128>(num_parties, threshold);
     }
 
     #[rstest]
     #[case(4, 1)]
     #[case(7, 2)]
     fn test_singlesharing_z64(#[case] num_parties: usize, #[case] threshold: usize) {
-        test_singlesharing::<ResiduePoly64>(num_parties, threshold);
+        test_singlesharing::<ResiduePolyF8Z64>(num_parties, threshold);
     }
     //P2 dropout, but gives random value for reconstruction.
     // expect to see it as corrupt but able to reconstruct
@@ -282,14 +282,14 @@ pub(crate) mod tests {
         let parties = 4;
         let threshold = 1;
 
-        async fn task(mut session: LargeSession) -> (Role, Vec<ResiduePoly128>) {
+        async fn task(mut session: LargeSession) -> (Role, Vec<ResiduePolyF8Z128>) {
             let lsl_batch_size = 10_usize;
             let extracted_size = session.num_parties() - session.threshold() as usize;
             let num_output = lsl_batch_size * extracted_size + 1;
-            let mut res = Vec::<ResiduePoly128>::new();
+            let mut res = Vec::<ResiduePolyF8Z128>::new();
             if session.my_role().unwrap().one_based() != 2 {
                 let mut single_sharing =
-                    RealSingleSharing::<ResiduePoly128, TrueLocalSingleShare>::default();
+                    RealSingleSharing::<ResiduePolyF8Z128, TrueLocalSingleShare>::default();
                 single_sharing
                     .init(&mut session, lsl_batch_size)
                     .await
@@ -300,14 +300,14 @@ pub(crate) mod tests {
                 assert!(session.corrupt_roles().contains(&Role::indexed_by_one(2)));
             } else {
                 for _ in 0..num_output {
-                    res.push(ResiduePoly128::sample(session.rng()));
+                    res.push(ResiduePolyF8Z128::sample(session.rng()));
                 }
             }
             (session.my_role().unwrap(), res)
         }
 
         // SingleSharing assumes Sync network
-        let result = execute_protocol_large::<ResiduePoly128, _, _>(
+        let result = execute_protocol_large::<ResiduePolyF8Z128, _, _>(
             parties,
             threshold,
             None,
@@ -337,7 +337,7 @@ pub(crate) mod tests {
     fn test_vdm() {
         let vdm = init_vdm(4, 4).unwrap();
         let coefs = vec![
-            ResiduePoly {
+            ResiduePolyF8 {
                 coefs: [
                     Wrapping(1_u128),
                     Wrapping(0_u128),
@@ -349,7 +349,7 @@ pub(crate) mod tests {
                     Wrapping(0_u128),
                 ],
             }, //1
-            ResiduePoly {
+            ResiduePolyF8 {
                 coefs: [
                     Wrapping(1_u128),
                     Wrapping(0_u128),
@@ -361,7 +361,7 @@ pub(crate) mod tests {
                     Wrapping(0_u128),
                 ],
             }, //1
-            ResiduePoly {
+            ResiduePolyF8 {
                 coefs: [
                     Wrapping(1_u128),
                     Wrapping(0_u128),
@@ -373,7 +373,7 @@ pub(crate) mod tests {
                     Wrapping(0_u128),
                 ],
             }, //1
-            ResiduePoly {
+            ResiduePolyF8 {
                 coefs: [
                     Wrapping(1_u128),
                     Wrapping(0_u128),
@@ -385,7 +385,7 @@ pub(crate) mod tests {
                     Wrapping(0_u128),
                 ],
             }, //1
-            ResiduePoly {
+            ResiduePolyF8 {
                 coefs: [
                     Wrapping(1_u128),
                     Wrapping(0_u128),
@@ -397,7 +397,7 @@ pub(crate) mod tests {
                     Wrapping(0_u128),
                 ],
             }, //1
-            ResiduePoly {
+            ResiduePolyF8 {
                 coefs: [
                     Wrapping(0_u128),
                     Wrapping(1_u128),
@@ -409,7 +409,7 @@ pub(crate) mod tests {
                     Wrapping(0_u128),
                 ],
             }, //X
-            ResiduePoly {
+            ResiduePolyF8 {
                 coefs: [
                     Wrapping(0_u128),
                     Wrapping(0_u128),
@@ -421,7 +421,7 @@ pub(crate) mod tests {
                     Wrapping(0_u128),
                 ],
             }, //X^2
-            ResiduePoly {
+            ResiduePolyF8 {
                 coefs: [
                     Wrapping(0_u128),
                     Wrapping(0_u128),
@@ -433,7 +433,7 @@ pub(crate) mod tests {
                     Wrapping(0_u128),
                 ],
             }, //X^3
-            ResiduePoly {
+            ResiduePolyF8 {
                 coefs: [
                     Wrapping(1_u128),
                     Wrapping(0_u128),
@@ -445,7 +445,7 @@ pub(crate) mod tests {
                     Wrapping(0_u128),
                 ],
             }, //1
-            ResiduePoly {
+            ResiduePolyF8 {
                 coefs: [
                     Wrapping(1_u128),
                     Wrapping(1_u128),
@@ -457,7 +457,7 @@ pub(crate) mod tests {
                     Wrapping(0_u128),
                 ],
             }, //X + 1
-            ResiduePoly {
+            ResiduePolyF8 {
                 coefs: [
                     Wrapping(1_u128),
                     Wrapping(2_u128),
@@ -469,7 +469,7 @@ pub(crate) mod tests {
                     Wrapping(0_u128),
                 ],
             }, //X^2 + 2Y + 1
-            ResiduePoly {
+            ResiduePolyF8 {
                 coefs: [
                     Wrapping(1_u128),
                     Wrapping(3_u128),
@@ -481,7 +481,7 @@ pub(crate) mod tests {
                     Wrapping(0_u128),
                 ],
             }, //X^3 + 3*Y^2 + 3*Y + 1
-            ResiduePoly {
+            ResiduePolyF8 {
                 coefs: [
                     Wrapping(1_u128),
                     Wrapping(0_u128),
@@ -493,7 +493,7 @@ pub(crate) mod tests {
                     Wrapping(0_u128),
                 ],
             }, //1
-            ResiduePoly {
+            ResiduePolyF8 {
                 coefs: [
                     Wrapping(0_u128),
                     Wrapping(0_u128),
@@ -505,7 +505,7 @@ pub(crate) mod tests {
                     Wrapping(0_u128),
                 ],
             }, //X^2
-            ResiduePoly {
+            ResiduePolyF8 {
                 coefs: [
                     Wrapping(0_u128),
                     Wrapping(0_u128),
@@ -517,7 +517,7 @@ pub(crate) mod tests {
                     Wrapping(0_u128),
                 ],
             }, //X^4
-            ResiduePoly {
+            ResiduePolyF8 {
                 coefs: [
                     Wrapping(0_u128),
                     Wrapping(0_u128),

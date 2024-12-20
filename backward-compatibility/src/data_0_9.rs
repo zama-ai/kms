@@ -7,7 +7,7 @@ use std::{borrow::Cow, fs::create_dir_all, path::PathBuf};
 use aes_prng::AesRng;
 use distributed_decryption_0_9::execution::endpoints::keygen::FhePubKeySet;
 use distributed_decryption_0_9::{
-    algebra::residue_poly::{ResiduePoly128, ResiduePoly64},
+    algebra::residue_poly::{ResiduePolyF8Z128, ResiduePolyF8Z64},
     execution::{
         runtime::party::Role,
         tfhe_internals::{
@@ -685,7 +685,7 @@ impl DistributedDecryptionV0_9 {
             PRSS_SETUP_RPOLY_64_TEST.threshold,
             role,
         );
-        let prss_setup = get_dummy_prss_setup::<ResiduePoly64>(base_session);
+        let prss_setup = get_dummy_prss_setup::<ResiduePolyF8Z64>(base_session);
 
         store_versioned_test!(&prss_setup, dir, &PRSS_SETUP_RPOLY_64_TEST.test_filename);
 
@@ -699,7 +699,7 @@ impl DistributedDecryptionV0_9 {
             PRSS_SETUP_RPOLY_128_TEST.threshold,
             role,
         );
-        let prss_setup = get_dummy_prss_setup::<ResiduePoly128>(base_session);
+        let prss_setup = get_dummy_prss_setup::<ResiduePolyF8Z128>(base_session);
 
         store_versioned_test!(&prss_setup, dir, &PRSS_SETUP_RPOLY_128_TEST.test_filename);
 

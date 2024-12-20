@@ -77,7 +77,7 @@ mod tests {
     use crate::{
         algebra::{
             base_ring::{Z128, Z64},
-            residue_poly::ResiduePoly,
+            galois_rings::degree_8::ResiduePolyF8,
             structure_traits::{One, Sample, Zero},
         },
         execution::{
@@ -109,8 +109,8 @@ mod tests {
                     let parties = 4;
                     let threshold = 1;
                     const AMOUNT: usize = 10;
-                    async fn task(mut session: SmallSession<ResiduePoly<$z>>) -> Vec<ResiduePoly<$z>> {
-                        let mut preprocessing = DummyPreprocessing::<ResiduePoly<$z>, AesRng, SmallSession<ResiduePoly<$z>>>::new(42, session.clone());
+                    async fn task(mut session: SmallSession<ResiduePolyF8<$z>>) -> Vec<ResiduePolyF8<$z>> {
+                        let mut preprocessing = DummyPreprocessing::<ResiduePolyF8<$z>, AesRng, SmallSession<ResiduePolyF8<$z>>>::new(42, session.clone());
                         let bits = RealBitGenEven::gen_bits_even(AMOUNT, &mut preprocessing, &mut session)
                             .await
                             .unwrap();
@@ -131,12 +131,12 @@ mod tests {
                     let threshold = 1;
                     let bad_party: Role = Role::indexed_by_one(2);
                     const AMOUNT: usize = 10;
-                    let mut task = |mut session: SmallSession<ResiduePoly<$z>>| async move {
-                        let mut preprocessing = DummyPreprocessing::<ResiduePoly<$z>, AesRng, SmallSession<ResiduePoly<$z>>>::new(42, session.clone());
+                    let mut task = |mut session: SmallSession<ResiduePolyF8<$z>>| async move {
+                        let mut preprocessing = DummyPreprocessing::<ResiduePolyF8<$z>, AesRng, SmallSession<ResiduePolyF8<$z>>>::new(42, session.clone());
                         // Execute with dummy prepreocessing for honest parties and a mock for the bad one
                         let bits = if session.my_role().unwrap() == bad_party {
                             let mut mock =
-                                MockBasePreprocessing::<ResiduePoly<$z>>::new();
+                                MockBasePreprocessing::<ResiduePolyF8<$z>>::new();
                             // Mock the bad party's preprocessing by returning incorrect shares on calls to next_random_vec
                             mock.expect_next_random_vec()
                                 .returning(move |amount| {
@@ -144,7 +144,7 @@ mod tests {
                                         .map(|i| {
                                             Share::new(
                                                 bad_party,
-                                                ResiduePoly::<$z>::from_scalar(Wrapping(i as $u)),
+                                                ResiduePolyF8::<$z>::from_scalar(Wrapping(i as $u)),
                                             )
                                         })
                                         .collect_vec())
@@ -169,7 +169,7 @@ mod tests {
                     [<validate_res_ $z:lower>](results, AMOUNT, parties);
                 }
 
-                fn [<validate_res_ $z:lower>](results: Vec<Vec<ResiduePoly<$z>>>, amount: usize, parties: usize) {
+                fn [<validate_res_ $z:lower>](results: Vec<Vec<ResiduePolyF8<$z>>>, amount: usize, parties: usize) {
                     assert_eq!(results.len(), parties);
                     let mut one_count = 0;
                     for cur_party_res in results.clone() {
@@ -177,8 +177,8 @@ mod tests {
                         // Check that all parties agree on the result
                         assert_eq!(*results.first().unwrap(), cur_party_res);
                         for cur_bit in cur_party_res {
-                            assert!(cur_bit == ResiduePoly::ZERO || cur_bit == ResiduePoly::ONE);
-                            if cur_bit == ResiduePoly::ONE {
+                            assert!(cur_bit == ResiduePolyF8::ZERO || cur_bit == ResiduePolyF8::ONE);
+                            if cur_bit == ResiduePolyF8::ONE {
                                 one_count += 1;
                             }
                         }
@@ -193,9 +193,9 @@ mod tests {
                 #[test]
                 fn [<test_sunshine_sample_ $z:lower>]() {
                     let mut rng = AesRng::seed_from_u64(0);
-                    let a = ResiduePoly::<$z>::sample(&mut rng);
+                    let a = ResiduePolyF8::<$z>::sample(&mut rng);
                     let t = a + a * a;
-                    let x = match ResiduePoly::<$z>::solve(&t) {
+                    let x = match ResiduePolyF8::<$z>::solve(&t) {
                         Ok(x) => x,
                         Err(error) => panic!("Failed with error: {}", error),
                     };
@@ -205,10 +205,10 @@ mod tests {
                 #[test]
                 fn [<negative_sample_ $z:lower>]() {
                     let mut rng = AesRng::seed_from_u64(1);
-                    let a = ResiduePoly::<$z>::sample(&mut rng);
+                    let a = ResiduePolyF8::<$z>::sample(&mut rng);
                     // The input not of the form a+a*a
-                    let t = a + a * a - ResiduePoly::<$z>::ONE;
-                    let x = ResiduePoly::<$z>::solve(&t).unwrap();
+                    let t = a + a * a - ResiduePolyF8::<$z>::ONE;
+                    let x = ResiduePolyF8::<$z>::solve(&t).unwrap();
                     assert_ne!(a + a * a, x + x * x);
                 }
 
@@ -216,12 +216,12 @@ mod tests {
                 fn [<soak_sample_ $z:lower>]() {
                     let iterations = 1000;
                     let mut rng = rand::thread_rng();
-                    let mut a: ResiduePoly<$z>;
+                    let mut a: ResiduePolyF8<$z>;
                     let mut base_solutions = 0;
                     for _i in 1..iterations {
-                        a = ResiduePoly::<$z>::sample(&mut rng);
+                        a = ResiduePolyF8::<$z>::sample(&mut rng);
                         let t = a + a * a;
-                        let x = match ResiduePoly::<$z>::solve(&t) {
+                        let x = match ResiduePolyF8::<$z>::solve(&t) {
                             Ok(x) => x,
                             Err(error) => panic!("Failed with error: {}", error),
                         };

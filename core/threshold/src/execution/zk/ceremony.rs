@@ -612,7 +612,7 @@ impl Ceremony for RealCeremony {
 mod tests {
     use super::*;
     use crate::{
-        algebra::residue_poly::ResiduePoly64,
+        algebra::galois_rings::degree_8::ResiduePolyF8Z64,
         execution::runtime::{
             session::{LargeSession, ParameterHandles},
             test_runtime::{generate_fixed_identities, DistributedTestRuntime},
@@ -673,7 +673,7 @@ mod tests {
         let witness_dim = 10usize;
         let identities = generate_fixed_identities(num_parties);
         //CRS generation is round robin, so Sync by nature
-        let runtime: DistributedTestRuntime<ResiduePoly64> =
+        let runtime: DistributedTestRuntime<ResiduePolyF8Z64> =
             DistributedTestRuntime::new(identities, threshold as u8, NetworkMode::Sync, None);
 
         let session_id = SessionId(2);
@@ -687,7 +687,7 @@ mod tests {
             let ceremony = ceremony_f();
             set.spawn(async move {
                 let out = ceremony
-                    .execute::<ResiduePoly64, _, _>(&mut session, witness_dim, Some(1))
+                    .execute::<ResiduePolyF8Z64, _, _>(&mut session, witness_dim, Some(1))
                     .await
                     .unwrap();
                 (session.my_role().unwrap(), out)
@@ -911,7 +911,7 @@ mod tests {
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
     fn test_dropping_ceremony(#[case] params: TestingParameters, #[case] witness_dim: usize) {
         let malicious_party = DroppingCeremony::default();
-        test_ceremony_strategies_large::<ResiduePoly64, _>(
+        test_ceremony_strategies_large::<ResiduePolyF8Z64, _>(
             params.clone(),
             witness_dim,
             malicious_party.clone(),
@@ -923,7 +923,7 @@ mod tests {
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
     fn test_bad_proof_ceremony(#[case] params: TestingParameters, #[case] witness_dim: usize) {
         let malicious_party = BadProofCeremony::default();
-        test_ceremony_strategies_large::<ResiduePoly64, _>(
+        test_ceremony_strategies_large::<ResiduePolyF8Z64, _>(
             params.clone(),
             witness_dim,
             malicious_party.clone(),
@@ -935,7 +935,7 @@ mod tests {
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
     fn test_rushing_ceremony(#[case] params: TestingParameters, #[case] witness_dim: usize) {
         let malicious_party = RushingCeremony::default();
-        test_ceremony_strategies_large::<ResiduePoly64, _>(
+        test_ceremony_strategies_large::<ResiduePolyF8Z64, _>(
             params.clone(),
             witness_dim,
             malicious_party.clone(),

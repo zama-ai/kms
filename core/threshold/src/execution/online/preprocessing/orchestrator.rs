@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     algebra::{
-        residue_poly::{ResiduePoly128, ResiduePoly64},
+        galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
         structure_traits::{Derive, ErrorCorrect, Invert, RingEmbed, Solve},
     },
     error::error_handler::anyhow_error_and_log,
@@ -55,7 +55,7 @@ pub struct TUniformProduction {
     pub amount: usize,
 }
 
-impl PreprocessingOrchestrator<ResiduePoly64> {
+impl PreprocessingOrchestrator<ResiduePolyF8Z64> {
     ///Create a new [`PreprocessingOrchestrator`] to generate
     ///offline data required by [`crate::execution::endpoints::keygen::distributed_keygen`]
     ///for [`DKGParams::WithoutSnS`]
@@ -67,7 +67,7 @@ impl PreprocessingOrchestrator<ResiduePoly64> {
         params: DKGParams,
     ) -> anyhow::Result<Self> {
         if let DKGParams::WithSnS(_) = params {
-            return Err(anyhow_error_and_log("Cant have SnS with ResiduePoly64"));
+            return Err(anyhow_error_and_log("Cant have SnS with ResiduePolyF8Z64"));
         }
 
         Ok(Self {
@@ -77,7 +77,7 @@ impl PreprocessingOrchestrator<ResiduePoly64> {
     }
 }
 
-impl PreprocessingOrchestrator<ResiduePoly128> {
+impl PreprocessingOrchestrator<ResiduePolyF8Z128> {
     ///Create a new [`PreprocessingOrchestrator`] to generate
     ///offline data required by [`crate::execution::endpoints::keygen::distributed_keygen`]
     ///for [`DKGParams::WithSnS`]
@@ -90,7 +90,7 @@ impl PreprocessingOrchestrator<ResiduePoly128> {
     ) -> anyhow::Result<Self> {
         if let DKGParams::WithoutSnS(_) = params {
             return Err(anyhow_error_and_log(
-                "Should not have no SNS with ResiduePoly128",
+                "Should not have no SNS with ResiduePolyF8Z128",
             ));
         }
 
@@ -924,7 +924,7 @@ mod tests {
     use crate::{
         algebra::{
             base_ring::Z64,
-            residue_poly::ResiduePoly64,
+            galois_rings::degree_8::ResiduePolyF8Z64,
             structure_traits::{One, Zero},
         },
         execution::{
@@ -1004,7 +1004,7 @@ mod tests {
         Bits,
     }
     fn check_triples_reconstruction(
-        all_parties_channels: Vec<ReceiverChannelCollection<ResiduePoly64>>,
+        all_parties_channels: Vec<ReceiverChannelCollection<ResiduePolyF8Z64>>,
         identities: &[Identity],
         num_triples: usize,
         threshold: usize,
@@ -1065,7 +1065,7 @@ mod tests {
     }
 
     fn check_bits_reconstruction(
-        all_parties_channels: Vec<ReceiverChannelCollection<ResiduePoly64>>,
+        all_parties_channels: Vec<ReceiverChannelCollection<ResiduePolyF8Z64>>,
         identities: &[Identity],
         num_bits: usize,
         threshold: usize,
@@ -1114,7 +1114,7 @@ mod tests {
     }
 
     fn check_randomness_reconstruction(
-        all_parties_channels: Vec<ReceiverChannelCollection<ResiduePoly64>>,
+        all_parties_channels: Vec<ReceiverChannelCollection<ResiduePolyF8Z64>>,
         identities: &[Identity],
         num_randomness: usize,
         threshold: usize,
@@ -1171,13 +1171,16 @@ mod tests {
         num_parties: usize,
         threshold: u8,
         type_orchestration: TypeOrchestration,
-    ) -> (Vec<Identity>, Vec<ReceiverChannelCollection<ResiduePoly64>>) {
+    ) -> (
+        Vec<Identity>,
+        Vec<ReceiverChannelCollection<ResiduePolyF8Z64>>,
+    ) {
         //Create identities and runtime
         let identities = generate_fixed_identities(num_parties);
         // Preprocessing assumes Sync network
         let runtimes = (0..num_sessions)
             .map(|_| {
-                DistributedTestRuntime::<ResiduePoly64>::new(
+                DistributedTestRuntime::<ResiduePolyF8Z64>::new(
                     identities.clone(),
                     threshold,
                     NetworkMode::Sync,
@@ -1210,10 +1213,10 @@ mod tests {
 
                 let mut inmemory_factory = create_memory_factory();
 
-                //DKGParams just for being able to call new (no SNS for ResiduePoly64)
+                //DKGParams just for being able to call new (no SNS for ResiduePolyF8Z64)
                 let params = NIST_PARAMS_P8_NO_SNS_FGLWE;
 
-                let orchestrator = PreprocessingOrchestrator::<ResiduePoly64>::new(
+                let orchestrator = PreprocessingOrchestrator::<ResiduePolyF8Z64>::new(
                     inmemory_factory.as_mut(),
                     params,
                 )
@@ -1361,13 +1364,16 @@ mod tests {
         num_parties: usize,
         threshold: u8,
         type_orchestration: TypeOrchestration,
-    ) -> (Vec<Identity>, Vec<ReceiverChannelCollection<ResiduePoly64>>) {
+    ) -> (
+        Vec<Identity>,
+        Vec<ReceiverChannelCollection<ResiduePolyF8Z64>>,
+    ) {
         //Create identities and runtime
         let identities = generate_fixed_identities(num_parties);
         // Preprocessing assumes Sync network
         let runtimes = (0..num_sessions)
             .map(|_| {
-                DistributedTestRuntime::<ResiduePoly64>::new(
+                DistributedTestRuntime::<ResiduePolyF8Z64>::new(
                     identities.clone(),
                     threshold,
                     NetworkMode::Sync,
@@ -1397,10 +1403,10 @@ mod tests {
 
                 let mut inmemory_factory = create_memory_factory();
 
-                //DKGParams just for being able to call new (no SNS for ResiduePoly64)
+                //DKGParams just for being able to call new (no SNS for ResiduePolyF8Z64)
                 let params = NIST_PARAMS_P8_NO_SNS_FGLWE;
 
-                let orchestrator = PreprocessingOrchestrator::<ResiduePoly64>::new(
+                let orchestrator = PreprocessingOrchestrator::<ResiduePolyF8Z64>::new(
                     inmemory_factory.as_mut(),
                     params,
                 )

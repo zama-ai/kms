@@ -1,10 +1,8 @@
 use super::{
-    gf256::GF256,
-    residue_poly::F_DEG,
+    galois_fields::gf256::GF256,
+    galois_rings::common::{LutMulReduction, ResiduePoly},
     structure_traits::{Field, Invert, One, Ring, RingEmbed, Sample, Zero},
 };
-use crate::algebra::residue_poly::LutMulReduction;
-use crate::algebra::residue_poly::ResiduePoly;
 use crate::error::error_handler::anyhow_error_and_log;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
@@ -31,47 +29,12 @@ impl From<Poly<GF256>> for BitwisePoly {
     }
 }
 
-impl BitwisePoly {
-    /// Lazy evaluation using precomputed powers.
-    ///
-    /// We compute F(x) = a_0+...+a_t*x^t where a_0,..,a_t \in {0, 1}^8
-    /// by taking auxiliary inputs x^0, ..., x^t
-    /// and do a dot product using just additions.
-    /// Note that a_0 = (a_{0,0}, ..., a_{0,7}) where each a_{0,i} is a bit
-    /// while x^i = (x^i_0, ..., x^i_7) has full Z128/Z64 entries.
-    /// The dot products <a=(a_0,..a_t),x=(1,.., x^t)>
-    /// are performed by looking at each bit of a_i = (a_{i,0}, ..., a_{i,7}), i \in [0,t]
-    /// where each bit in a_{i, j} dictates where each entry of x will land from the multiplication
-    /// in the final reduction: res_coefs = [Z; 16]
-    /// (a_{i,0}, ..., a_{i,7}) * (x^i_0,...,x^i_7),
-    ///
-    /// eg:
-    ///
-    /// a_{i,0} = 1 => add [x^i_0, ..., x^i_7, 0, 0,...0] to res_coefs
-    ///
-    /// a_{i,1} = 1 => add [0, x^i_0, ...x^i_6, x^i_7, 0, ...0] to res_coefs
-    ///
-    /// a_{i,2} = 1 => add [0, 0, x^i_0, ..., x^i_7, ... 0] to res_coefs
-    ///
-    /// and so on...
-    pub fn lazy_eval<Z>(&self, powers: &Vec<ResiduePoly<Z>>) -> ResiduePoly<Z>
-    where
-        Z: Zero + for<'a> AddAssign<&'a Z> + Copy + Clone,
-        ResiduePoly<Z>: LutMulReduction<Z>,
-    {
-        let mut res_coefs = [Z::ZERO; 2 * (F_DEG - 1) + 1];
-        // now we go through each
-        for (coef_2, coef_r) in self.coefs.iter().zip(powers) {
-            for bit_idx in 0..F_DEG {
-                if ((coef_2 >> bit_idx) & 1) == 1 {
-                    for (j, cr) in coef_r.coefs.iter().enumerate() {
-                        res_coefs[j + bit_idx] += cr;
-                    }
-                }
-            }
-        }
-        ResiduePoly::reduce_mul(res_coefs)
-    }
+pub trait BitWiseEval<Z, const DEGREE: usize>
+where
+    Z: Zero + for<'a> AddAssign<&'a Z> + Copy + Clone,
+    ResiduePoly<Z, DEGREE>: LutMulReduction<Z>,
+{
+    fn lazy_eval(&self, powers: &[ResiduePoly<Z, DEGREE>]) -> ResiduePoly<Z, DEGREE>;
 }
 
 impl<Z> Poly<Z>
@@ -606,8 +569,8 @@ pub fn gao_decoding<F: Field>(
 mod tests {
     use super::*;
     use crate::algebra::error_correction::MemoizedExceptionals;
-    use crate::algebra::gf256::GF256;
-    use crate::algebra::residue_poly::ResiduePoly128;
+    use crate::algebra::galois_fields::gf256::GF256;
+    use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z128;
     use proptest::prelude::*;
     use rstest::rstest;
 
@@ -773,13 +736,13 @@ mod tests {
         let degree = f.coefs.len();
 
         let shifted_pos = 10;
-        let lifted_f = ResiduePoly128::shamir_bit_lift(&f, shifted_pos).unwrap();
+        let lifted_f = ResiduePolyF8Z128::shamir_bit_lift(&f, shifted_pos).unwrap();
 
         let party_ids = [0, 1, 2, 3, 4, 5];
-        let ring_evals: Vec<ResiduePoly128> = party_ids
+        let ring_evals: Vec<ResiduePolyF8Z128> = party_ids
             .iter()
             .map(|id| {
-                let embedded_xi = ResiduePoly128::embed_exceptional_set(*id)?;
+                let embedded_xi = ResiduePolyF8Z128::embed_exceptional_set(*id)?;
                 Ok(lifted_f.eval(&embedded_xi))
             })
             .collect::<anyhow::Result<Vec<_>>>()
@@ -790,7 +753,7 @@ mod tests {
         for party_id in party_ids {
             assert_eq!(
                 ring_evals[party_id],
-                bitwise.lazy_eval(&ResiduePoly128::exceptional_set(party_id, degree).unwrap())
+                bitwise.lazy_eval(&ResiduePolyF8Z128::exceptional_set(party_id, degree).unwrap())
                     << 10,
                 "party with index {party_id} failed with wrong evaluation"
             );

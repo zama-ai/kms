@@ -33,8 +33,8 @@ use tokio::{task::JoinSet, time::timeout_at};
 use crate::{
     algebra::{
         base_ring::Z128,
+        galois_rings::degree_8::{ResiduePolyF8, ResiduePolyF8Z128, ResiduePolyF8Z64},
         poly::Poly,
-        residue_poly::{ResiduePoly, ResiduePoly128, ResiduePoly64},
         structure_traits::RingEmbed,
     },
     error::error_handler::anyhow_error_and_log,
@@ -267,7 +267,7 @@ pub async fn initialize_key_material<R: Rng + CryptoRng, S: BaseSessionHandles<R
     tracing::debug!("Sharing key64 to be sent: len {}", lwe_sk_container64.len());
     for cur in lwe_sk_container64 {
         let secret = match own_role.one_based() {
-            1 => Some(ResiduePoly::from_scalar(Wrapping::<u64>(cur))),
+            1 => Some(ResiduePolyF8::from_scalar(Wrapping::<u64>(cur))),
             _ => None,
         };
         let share = robust_input(session, &secret, &own_role, INPUT_PARTY_ID).await?; //TODO(Daniel) batch this for all big_ell
@@ -284,7 +284,7 @@ pub async fn initialize_key_material<R: Rng + CryptoRng, S: BaseSessionHandles<R
         );
         for cur in sns_sk_container128 {
             let secret = match own_role.one_based() {
-                1 => Some(ResiduePoly::from_scalar(Wrapping::<u128>(cur))),
+                1 => Some(ResiduePolyF8::from_scalar(Wrapping::<u128>(cur))),
                 _ => None,
             };
             let share = robust_input(session, &secret, &own_role, INPUT_PARTY_ID).await?; //TODO(Daniel) batch this for all big_ell
@@ -568,12 +568,12 @@ pub fn keygen_all_party_shares<R: Rng + CryptoRng>(
 ) -> anyhow::Result<Vec<PrivateKeySet>> {
     let s_vector = glwe_secret_key_sns_as_lwe.into_container();
     let s_length = s_vector.len();
-    let mut vv128: Vec<Vec<Share<ResiduePoly128>>> =
+    let mut vv128: Vec<Vec<Share<ResiduePolyF8Z128>>> =
         vec![Vec::with_capacity(s_length); num_parties];
 
     // for each bit in the secret key generate all parties shares
     for (i, bit) in s_vector.iter().enumerate() {
-        let embedded_secret = ResiduePoly128::from_scalar(Wrapping(*bit));
+        let embedded_secret = ResiduePolyF8Z128::from_scalar(Wrapping(*bit));
         let poly = Poly::sample_random_with_fixed_constant(rng, embedded_secret, threshold);
 
         for (party_id, v) in vv128.iter_mut().enumerate().take(num_parties) {
@@ -581,7 +581,7 @@ pub fn keygen_all_party_shares<R: Rng + CryptoRng>(
                 i,
                 Share::new(
                     Role::indexed_by_zero(party_id),
-                    poly.eval(&ResiduePoly::embed_exceptional_set(party_id + 1)?),
+                    poly.eval(&ResiduePolyF8::embed_exceptional_set(party_id + 1)?),
                 ),
             );
         }
@@ -590,11 +590,11 @@ pub fn keygen_all_party_shares<R: Rng + CryptoRng>(
     // do the same for 64 bit lwe key
     let s_vector64 = lwe_secret_key.into_container();
     let s_length64 = s_vector64.len();
-    let mut vv64_lwe_key: Vec<Vec<Share<ResiduePoly64>>> =
+    let mut vv64_lwe_key: Vec<Vec<Share<ResiduePolyF8Z64>>> =
         vec![Vec::with_capacity(s_length64); num_parties];
     // for each bit in the secret key generate all parties shares
     for (i, bit) in s_vector64.iter().enumerate() {
-        let embedded_secret = ResiduePoly64::from_scalar(Wrapping(*bit));
+        let embedded_secret = ResiduePolyF8Z64::from_scalar(Wrapping(*bit));
         let poly = Poly::sample_random_with_fixed_constant(rng, embedded_secret, threshold);
 
         for (party_id, v) in vv64_lwe_key.iter_mut().enumerate().take(num_parties) {
@@ -602,7 +602,7 @@ pub fn keygen_all_party_shares<R: Rng + CryptoRng>(
                 i,
                 Share::new(
                     Role::indexed_by_zero(party_id),
-                    poly.eval(&ResiduePoly::embed_exceptional_set(party_id + 1)?),
+                    poly.eval(&ResiduePolyF8::embed_exceptional_set(party_id + 1)?),
                 ),
             );
         }
@@ -612,11 +612,11 @@ pub fn keygen_all_party_shares<R: Rng + CryptoRng>(
     let glwe_poly_size = glwe_secret_key.polynomial_size();
     let s_vector64 = glwe_secret_key.into_container();
     let s_length64 = s_vector64.len();
-    let mut vv64_glwe_key: Vec<Vec<Share<ResiduePoly64>>> =
+    let mut vv64_glwe_key: Vec<Vec<Share<ResiduePolyF8Z64>>> =
         vec![Vec::with_capacity(s_length64); num_parties];
     // for each bit in the secret key generate all parties shares
     for (i, bit) in s_vector64.iter().enumerate() {
-        let embedded_secret = ResiduePoly64::from_scalar(Wrapping(*bit));
+        let embedded_secret = ResiduePolyF8Z64::from_scalar(Wrapping(*bit));
         let poly = Poly::sample_random_with_fixed_constant(rng, embedded_secret, threshold);
 
         for (party_id, v) in vv64_glwe_key.iter_mut().enumerate().take(num_parties) {
@@ -624,7 +624,7 @@ pub fn keygen_all_party_shares<R: Rng + CryptoRng>(
                 i,
                 Share::new(
                     Role::indexed_by_zero(party_id),
-                    poly.eval(&ResiduePoly::embed_exceptional_set(party_id + 1)?),
+                    poly.eval(&ResiduePolyF8::embed_exceptional_set(party_id + 1)?),
                 ),
             );
         }

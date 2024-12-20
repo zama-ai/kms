@@ -18,7 +18,7 @@ use tfhe::{
 
 use crate::{
     algebra::{
-        residue_poly::ResiduePoly,
+        galois_rings::degree_8::ResiduePolyF8,
         structure_traits::{BaseRing, ErrorCorrect},
     },
     error::error_handler::anyhow_error_and_log,
@@ -87,7 +87,7 @@ impl<Z: BaseRing> LweBootstrapKeyShare<Z> {
 
 impl<Z: BaseRing> LweBootstrapKeyShare<Z>
 where
-    ResiduePoly<Z>: ErrorCorrect,
+    ResiduePolyF8<Z>: ErrorCorrect,
 {
     pub async fn open_to_tfhers_type<
         Scalar: UnsignedInteger,
@@ -123,7 +123,7 @@ where
             * self.decomposition_level_count().0
             * self.polynomial_size().0;
 
-        let (mut masks, mut shared_bodies): (Vec<Z>, Vec<Share<ResiduePoly<Z>>>) = (
+        let (mut masks, mut shared_bodies): (Vec<Z>, Vec<Share<ResiduePolyF8<Z>>>) = (
             Vec::with_capacity(num_masks),
             Vec::with_capacity(num_bodies),
         );

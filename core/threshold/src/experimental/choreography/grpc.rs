@@ -202,7 +202,7 @@ impl Choreography for ExperimentalGrpcChoreography {
                         SupportedRing::LevelOne,
                         SupportedPRSSSetup::LevelOne(prss_setup),
                     );
-                    tracing::info!("PRSS Setup for ResiduePoly128 Done.");
+                    tracing::info!("PRSS Setup for LevelOne Done.");
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -219,7 +219,7 @@ impl Choreography for ExperimentalGrpcChoreography {
                         SupportedRing::LevelKsw,
                         SupportedPRSSSetup::LevelKsw(prss_setup),
                     );
-                    tracing::info!("PRSS Setup for ResiduePoly64 Done.");
+                    tracing::info!("PRSS Setup for LevelKsw Done.");
                 };
                 self.data.status_store.insert(
                     session_id,

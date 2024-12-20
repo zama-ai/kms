@@ -20,7 +20,7 @@ use crate::{
 };
 
 use super::lwe_ciphertext::LweCiphertextShare;
-use crate::algebra::residue_poly::ResiduePoly;
+use crate::algebra::galois_rings::degree_8::ResiduePolyF8;
 
 #[derive(Clone)]
 pub struct LweKeySwitchKeyShare<Z: BaseRing> {
@@ -67,7 +67,7 @@ impl<Z: BaseRing> LweKeySwitchKeyShare<Z> {
 }
 impl<Z: BaseRing> LweKeySwitchKeyShare<Z>
 where
-    ResiduePoly<Z>: ErrorCorrect,
+    ResiduePolyF8<Z>: ErrorCorrect,
 {
     pub async fn open_to_tfhers_type<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         self,

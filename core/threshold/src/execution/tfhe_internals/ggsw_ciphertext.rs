@@ -14,7 +14,7 @@ use std::ops::Neg;
 
 use crate::{
     algebra::{
-        residue_poly::ResiduePoly,
+        galois_rings::degree_8::ResiduePolyF8,
         structure_traits::{BaseRing, ErrorCorrect, Zero},
     },
     error::error_handler::anyhow_error_and_log,
@@ -72,7 +72,7 @@ impl<Z: BaseRing> GgswLevelMatrixShare<Z> {
             data: (0..glwe_size.0)
                 .map(|_| {
                     GlweCiphertextShare::<Z>::new_from_encoded_message(
-                        vec![ResiduePoly::ZERO; polynomial_size.0],
+                        vec![ResiduePolyF8::ZERO; polynomial_size.0],
                         polynomial_size,
                         glwe_size.to_glwe_dimension().0,
                         encryption_type,
@@ -143,15 +143,15 @@ pub async fn ggsw_encode_messages<
     Rnd: Rng + CryptoRng,
     Z: BaseRing,
     S: BaseSessionHandles<Rnd>,
-    P: TriplePreprocessing<ResiduePoly<Z>> + ?Sized,
+    P: TriplePreprocessing<ResiduePolyF8<Z>> + ?Sized,
 >(
-    messages: &[Share<ResiduePoly<Z>>],
+    messages: &[Share<ResiduePolyF8<Z>>],
     key_bits: &GlweSecretKeyShare<Z>,
     session: &mut S,
     preproc: &mut P,
-) -> anyhow::Result<Vec<Vec<Vec<ResiduePoly<Z>>>>>
+) -> anyhow::Result<Vec<Vec<Vec<ResiduePolyF8<Z>>>>>
 where
-    ResiduePoly<Z>: ErrorCorrect,
+    ResiduePolyF8<Z>: ErrorCorrect,
 {
     let num_messages = messages.len();
     let size_mult = num_messages * key_bits.data.len();
@@ -181,10 +181,10 @@ where
 }
 
 fn repack_single_message<Z>(
-    prods: &[Share<ResiduePoly<Z>>],
+    prods: &[Share<ResiduePolyF8<Z>>],
     polynomial_size: usize,
-    message: &Share<ResiduePoly<Z>>,
-) -> Vec<Vec<ResiduePoly<Z>>>
+    message: &Share<ResiduePolyF8<Z>>,
+) -> Vec<Vec<ResiduePolyF8<Z>>>
 where
     Z: BaseRing,
 {
@@ -207,15 +207,15 @@ pub async fn ggsw_encode_message<
     Rnd: Rng + CryptoRng,
     Z: BaseRing,
     S: BaseSessionHandles<Rnd>,
-    P: TriplePreprocessing<ResiduePoly<Z>>,
+    P: TriplePreprocessing<ResiduePolyF8<Z>>,
 >(
-    message: &Share<ResiduePoly<Z>>,
+    message: &Share<ResiduePolyF8<Z>>,
     key_bits: &GlweSecretKeyShare<Z>,
     session: &mut S,
     preproc: &mut P,
-) -> anyhow::Result<Vec<Vec<ResiduePoly<Z>>>>
+) -> anyhow::Result<Vec<Vec<ResiduePolyF8<Z>>>>
 where
-    ResiduePoly<Z>: ErrorCorrect,
+    ResiduePolyF8<Z>: ErrorCorrect,
 {
     Ok(
         ggsw_encode_messages(&[*message], key_bits, session, preproc)
@@ -235,7 +235,7 @@ where
 pub fn encrypt_constant_ggsw_ciphertext<Z, Gen>(
     glwe_secret_key_share: &GlweSecretKeyShare<Z>,
     output: &mut GgswCiphertextShare<Z>,
-    encoded: Vec<Vec<ResiduePoly<Z>>>,
+    encoded: Vec<Vec<ResiduePolyF8<Z>>>,
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen>,
     encryption_type: EncryptionType,
 ) -> anyhow::Result<()>
@@ -317,7 +317,7 @@ fn ecnrypt_constant_ggsw_level_matrix_row<Z, Gen>(
     (row_index, last_row_index): (usize, usize),
     factor: Z,
     row_as_glwe: &mut GlweCiphertextShare<Z>,
-    encoded_row: Vec<ResiduePoly<Z>>,
+    encoded_row: Vec<ResiduePolyF8<Z>>,
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen>,
 ) -> anyhow::Result<()>
 where
@@ -333,7 +333,7 @@ where
         slice_wrapping_scalar_mul_assign(body, factor);
     } else {
         let body = row_as_glwe.get_mut_body();
-        body.iter_mut().for_each(|e| *e = ResiduePoly::ZERO);
+        body.iter_mut().for_each(|e| *e = ResiduePolyF8::ZERO);
         body[0] = encoded_row[0] * factor;
     }
 
@@ -377,7 +377,7 @@ mod tests {
     };
 
     use crate::{
-        algebra::residue_poly::ResiduePoly64,
+        algebra::galois_rings::degree_8::ResiduePolyF8Z64,
         execution::{
             online::{
                 gen_bits::{BitGenEven, RealBitGenEven},
@@ -429,7 +429,7 @@ mod tests {
             let my_role = session.my_role().unwrap();
             let shared_message = ShamirSharings::share(
                 &mut AesRng::seed_from_u64(0),
-                ResiduePoly64::from_scalar(Wrapping(msg)),
+                ResiduePolyF8Z64::from_scalar(Wrapping(msg)),
                 session.num_parties(),
                 session.threshold() as usize,
             )
@@ -500,7 +500,7 @@ mod tests {
         //This is Async because triples are generated from dummy preprocessing
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let results = execute_protocol_large::<ResiduePoly64, _, _>(
+        let results = execute_protocol_large::<ResiduePolyF8Z64, _, _>(
             parties,
             threshold,
             None,

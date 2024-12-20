@@ -9,8 +9,8 @@ use tfhe::{
 
 use crate::{
     algebra::{
+        galois_rings::degree_8::ResiduePolyF8,
         poly::Poly,
-        residue_poly::ResiduePoly,
         structure_traits::{BaseRing, Ring, Zero},
     },
     error::error_handler::anyhow_error_and_log,
@@ -19,9 +19,9 @@ use crate::{
 use super::glwe_key::GlweSecretKeyShare;
 
 pub fn slice_semi_reverse_negacyclic_convolution<Z: BaseRing>(
-    output: &mut Vec<ResiduePoly<Z>>,
+    output: &mut Vec<ResiduePolyF8<Z>>,
     lhs: &[Z],
-    rhs: &[ResiduePoly<Z>],
+    rhs: &[ResiduePolyF8<Z>],
 ) -> anyhow::Result<()> {
     debug_assert!(
         lhs.len() == rhs.len(),
@@ -35,7 +35,7 @@ pub fn slice_semi_reverse_negacyclic_convolution<Z: BaseRing>(
         output.len(),
         lhs.len()
     );
-    output.fill(ResiduePoly::ZERO);
+    output.fill(ResiduePolyF8::ZERO);
     let mut rev_rhs = rhs.to_vec();
     rev_rhs.reverse();
     let lhs_pol = Poly::from_coefs(lhs.to_vec());
@@ -57,11 +57,11 @@ pub fn slice_to_polynomials<Z: Ring>(slice: &[Z], pol_size: usize) -> Vec<Poly<Z
 
 pub fn pol_mul_reduce<Z: BaseRing>(
     poly_1: &Poly<Z>,
-    poly_2: &Poly<ResiduePoly<Z>>,
+    poly_2: &Poly<ResiduePolyF8<Z>>,
     output_size: usize,
-) -> anyhow::Result<Poly<ResiduePoly<Z>>> {
+) -> anyhow::Result<Poly<ResiduePolyF8<Z>>> {
     let mut coefs = (0..output_size)
-        .map(|_| ResiduePoly::default())
+        .map(|_| ResiduePolyF8::default())
         .collect_vec();
 
     debug_assert!(
@@ -105,11 +105,11 @@ pub fn pol_mul_reduce<Z: BaseRing>(
 
 pub fn slice_wrapping_dot_product<Z: BaseRing>(
     lhs: &[Z],
-    rhs: &[ResiduePoly<Z>],
-) -> anyhow::Result<ResiduePoly<Z>> {
+    rhs: &[ResiduePolyF8<Z>],
+) -> anyhow::Result<ResiduePolyF8<Z>> {
     lhs.iter()
         .zip_longest(rhs.iter())
-        .try_fold(ResiduePoly::ZERO, |acc, left_right| {
+        .try_fold(ResiduePolyF8::ZERO, |acc, left_right| {
             if let EitherOrBoth::Both(&left, &right) = left_right {
                 Ok(acc + right * left)
             } else {
@@ -119,7 +119,7 @@ pub fn slice_wrapping_dot_product<Z: BaseRing>(
 }
 
 pub fn polynomial_wrapping_add_multisum_assign<Z: BaseRing>(
-    output_body: &mut [ResiduePoly<Z>],
+    output_body: &mut [ResiduePolyF8<Z>],
     output_mask: &[Z],
     glwe_secret_key_share: &GlweSecretKeyShare<Z>,
 ) -> anyhow::Result<()> {
@@ -153,7 +153,7 @@ pub fn polynomial_wrapping_add_multisum_assign<Z: BaseRing>(
     Ok(())
 }
 
-pub fn slice_wrapping_scalar_mul_assign<Z: BaseRing>(lhs: &mut [ResiduePoly<Z>], rhs: Z) {
+pub fn slice_wrapping_scalar_mul_assign<Z: BaseRing>(lhs: &mut [ResiduePolyF8<Z>], rhs: Z) {
     lhs.iter_mut().for_each(|lhs| *lhs = *lhs * rhs);
 }
 
@@ -198,7 +198,7 @@ pub mod tests {
     use crate::execution::tfhe_internals::parameters::{DKGParams, DKGParamsBasics};
     use crate::{
         algebra::{
-            residue_poly::ResiduePoly,
+            galois_rings::degree_8::ResiduePolyF8,
             structure_traits::{BaseRing, ErrorCorrect},
         },
         execution::{
@@ -209,13 +209,13 @@ pub mod tests {
     };
 
     pub fn reconstruct_glwe_body_vec<Z: BaseRing>(
-        input: HashMap<Role, Vec<Share<ResiduePoly<Z>>>>,
+        input: HashMap<Role, Vec<Share<ResiduePolyF8<Z>>>>,
         expected_num_glwe_ctxt: usize,
         polynomial_size: usize,
         threshold: usize,
     ) -> Vec<Vec<Z>>
     where
-        ResiduePoly<Z>: ErrorCorrect,
+        ResiduePolyF8<Z>: ErrorCorrect,
     {
         let mut output_body_vec = Vec::new();
         for glwe_ctxt_idx in 0..expected_num_glwe_ctxt {
@@ -242,12 +242,12 @@ pub mod tests {
     }
 
     pub fn reconstruct_bit_vec<Z: BaseRing>(
-        input: HashMap<Role, Vec<Share<ResiduePoly<Z>>>>,
+        input: HashMap<Role, Vec<Share<ResiduePolyF8<Z>>>>,
         expected_num_bits: usize,
         threshold: usize,
     ) -> Vec<u64>
     where
-        ResiduePoly<Z>: ErrorCorrect,
+        ResiduePolyF8<Z>: ErrorCorrect,
     {
         let mut output_bit_vec = Vec::new();
         for idx in 0..expected_num_bits {
@@ -308,8 +308,8 @@ pub mod tests {
         params: DKGParams,
         prefix_path: String,
     ) -> (
-        HashMap<Role, Vec<Share<ResiduePoly<Wrapping<u64>>>>>,
-        HashMap<Role, Vec<Share<ResiduePoly<Wrapping<u128>>>>>,
+        HashMap<Role, Vec<Share<ResiduePolyF8<Wrapping<u64>>>>>,
+        HashMap<Role, Vec<Share<ResiduePolyF8<Wrapping<u128>>>>>,
     ) {
         let mut sk_shares = HashMap::new();
         for party in 0..parties {

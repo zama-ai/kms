@@ -1,5 +1,5 @@
 use crate::{
-    algebra::residue_poly::ResiduePoly64, error::error_handler::anyhow_error_and_log,
+    algebra::galois_rings::degree_8::ResiduePolyF8Z64, error::error_handler::anyhow_error_and_log,
     execution::sharing::share::Share,
 };
 
@@ -14,12 +14,12 @@ use async_trait::async_trait;
 
 #[derive(Default)]
 pub struct InMemoryBitDecPreprocessing {
-    available_triples: Vec<Triple<ResiduePoly64>>,
-    available_bits: Vec<Share<ResiduePoly64>>,
+    available_triples: Vec<Triple<ResiduePolyF8Z64>>,
+    available_bits: Vec<Share<ResiduePolyF8Z64>>,
 }
 
-impl TriplePreprocessing<ResiduePoly64> for InMemoryBitDecPreprocessing {
-    fn next_triple_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Triple<ResiduePoly64>>> {
+impl TriplePreprocessing<ResiduePolyF8Z64> for InMemoryBitDecPreprocessing {
+    fn next_triple_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Triple<ResiduePolyF8Z64>>> {
         //Code is duplicate of BasePreprocessing
         if self.available_triples.len() >= amount {
             Ok(self.available_triples.drain(0..amount).collect())
@@ -31,7 +31,7 @@ impl TriplePreprocessing<ResiduePoly64> for InMemoryBitDecPreprocessing {
         }
     }
 
-    fn append_triples(&mut self, triples: Vec<Triple<ResiduePoly64>>) {
+    fn append_triples(&mut self, triples: Vec<Triple<ResiduePolyF8Z64>>) {
         self.available_triples.extend(triples);
     }
 
@@ -40,18 +40,18 @@ impl TriplePreprocessing<ResiduePoly64> for InMemoryBitDecPreprocessing {
     }
 }
 
-impl BitPreprocessing<ResiduePoly64> for InMemoryBitDecPreprocessing {
-    fn append_bits(&mut self, bits: Vec<Share<ResiduePoly64>>) {
+impl BitPreprocessing<ResiduePolyF8Z64> for InMemoryBitDecPreprocessing {
+    fn append_bits(&mut self, bits: Vec<Share<ResiduePolyF8Z64>>) {
         self.available_bits.extend(bits);
     }
 
-    fn next_bit(&mut self) -> anyhow::Result<Share<ResiduePoly64>> {
+    fn next_bit(&mut self) -> anyhow::Result<Share<ResiduePolyF8Z64>> {
         self.available_bits
             .pop()
             .ok_or_else(|| anyhow_error_and_log("available_bits is empty".to_string()))
     }
 
-    fn next_bit_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<ResiduePoly64>>> {
+    fn next_bit_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<ResiduePolyF8Z64>>> {
         if self.available_bits.len() >= amount {
             let mut res = Vec::with_capacity(amount);
             for _ in 0..amount {
@@ -76,7 +76,7 @@ impl BitDecPreprocessing for InMemoryBitDecPreprocessing {
     ///assuming **preprocessing** is filled with enough randomness and triples
     async fn fill_from_base_preproc(
         &mut self,
-        preprocessing: &mut dyn BasePreprocessing<ResiduePoly64>,
+        preprocessing: &mut dyn BasePreprocessing<ResiduePolyF8Z64>,
         session: &mut BaseSession,
         num_ctxts: usize,
     ) -> anyhow::Result<()> {

@@ -179,8 +179,8 @@ fn compute_next_batch<Z: Ring>(
 pub(crate) mod tests {
     use rstest::rstest;
 
-    use crate::algebra::residue_poly::ResiduePoly128;
-    use crate::algebra::residue_poly::ResiduePoly64;
+    use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z128;
+    use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z64;
     use crate::algebra::structure_traits::Derive;
     use crate::algebra::structure_traits::ErrorCorrect;
     use crate::algebra::structure_traits::Invert;
@@ -285,14 +285,14 @@ pub(crate) mod tests {
     #[case(4, 1)]
     #[case(7, 2)]
     fn test_doublesharing_z128(#[case] num_parties: usize, #[case] threshold: usize) {
-        test_doublesharing::<ResiduePoly128>(num_parties, threshold);
+        test_doublesharing::<ResiduePolyF8Z128>(num_parties, threshold);
     }
 
     #[rstest]
     #[case(4, 1)]
     #[case(7, 2)]
     fn test_doublesharing_z64(#[case] num_parties: usize, #[case] threshold: usize) {
-        test_doublesharing::<ResiduePoly64>(num_parties, threshold);
+        test_doublesharing::<ResiduePolyF8Z64>(num_parties, threshold);
     }
 
     #[test]
@@ -300,14 +300,14 @@ pub(crate) mod tests {
         let parties = 4;
         let threshold = 1;
 
-        async fn task(mut session: LargeSession) -> (Role, Vec<DoubleShare<ResiduePoly128>>) {
+        async fn task(mut session: LargeSession) -> (Role, Vec<DoubleShare<ResiduePolyF8Z128>>) {
             let ldl_batch_size = 10_usize;
             let extracted_size = session.num_parties() - session.threshold() as usize;
             let num_output = ldl_batch_size * extracted_size + 1;
             let mut res = Vec::new();
             if session.my_role().unwrap().zero_based() != 1 {
                 let mut double_sharing =
-                    RealDoubleSharing::<ResiduePoly128, TrueLocalDoubleShare>::default();
+                    RealDoubleSharing::<ResiduePolyF8Z128, TrueLocalDoubleShare>::default();
                 double_sharing
                     .init(&mut session, ldl_batch_size)
                     .await
@@ -319,8 +319,8 @@ pub(crate) mod tests {
             } else {
                 for _ in 0..num_output {
                     res.push(DoubleShare {
-                        degree_t: ResiduePoly128::sample(session.rng()),
-                        degree_2t: ResiduePoly128::sample(session.rng()),
+                        degree_t: ResiduePolyF8Z128::sample(session.rng()),
+                        degree_2t: ResiduePolyF8Z128::sample(session.rng()),
                     })
                 }
             }
@@ -328,7 +328,7 @@ pub(crate) mod tests {
         }
 
         //DoubleSharing assumes Sync network
-        let result = execute_protocol_large::<ResiduePoly128, _, _>(
+        let result = execute_protocol_large::<ResiduePolyF8Z128, _, _>(
             parties,
             threshold,
             None,

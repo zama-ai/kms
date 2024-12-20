@@ -1,6 +1,6 @@
 use crate::{
     algebra::{
-        residue_poly::ResiduePoly,
+        galois_rings::degree_8::ResiduePolyF8,
         structure_traits::{BaseRing, Zero},
     },
     error::error_handler::anyhow_error_and_log,
@@ -31,7 +31,7 @@ where
     let decomp_base_log = lwe_keyswitch_key.decomposition_base_log();
     let decomp_level_count = lwe_keyswitch_key.decomposition_level_count();
 
-    let mut decomposition_plaintexts_buffer = vec![ResiduePoly::<Z>::ZERO; decomp_level_count.0];
+    let mut decomposition_plaintexts_buffer = vec![ResiduePolyF8::<Z>::ZERO; decomp_level_count.0];
 
     for input_key_element_key_switch_key_block in input_lwe_sk
         .data_as_raw_vec()
@@ -135,7 +135,7 @@ mod tests {
     };
 
     use crate::{
-        algebra::{base_ring::Z64, residue_poly::ResiduePoly64},
+        algebra::{base_ring::Z64, galois_rings::degree_8::ResiduePolyF8Z64},
         execution::{
             online::{
                 gen_bits::{BitGenEven, RealBitGenEven},
@@ -255,7 +255,7 @@ mod tests {
         //This is Async because triples are generated from dummy preprocessing
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let results = execute_protocol_large::<ResiduePoly64, _, _>(
+        let results = execute_protocol_large::<ResiduePolyF8Z64, _, _>(
             parties,
             threshold,
             None,

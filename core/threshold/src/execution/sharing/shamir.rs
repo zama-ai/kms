@@ -330,7 +330,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::residue_poly::{pack_residue_poly, ResiduePoly, TryFromWrapper};
+    use crate::algebra::galois_rings::{
+        common::{pack_residue_poly, TryFromWrapper},
+        degree_8::ResiduePolyF8,
+    };
     use aes_prng::AesRng;
     use num_traits::FromPrimitive;
     use paste::paste;
@@ -344,10 +347,10 @@ mod tests {
             #[test]
             fn [<test_arith_const_add2_ $z:lower>]() {
                 let mut rng = AesRng::seed_from_u64(0);
-                let secret : ResiduePoly<$z> = ResiduePoly::<$z>::from_scalar(Wrapping(23));
-                let sharings = ShamirSharings::<ResiduePoly<$z>>::share(&mut rng, secret, 9, 5).unwrap();
+                let secret : ResiduePolyF8<$z> = ResiduePolyF8::<$z>::from_scalar(Wrapping(23));
+                let sharings = ShamirSharings::<ResiduePolyF8<$z>>::share(&mut rng, secret, 9, 5).unwrap();
 
-                let sumsharing = &sharings + ResiduePoly::<$z>::from_scalar(Wrapping(2 as $u));
+                let sumsharing = &sharings + ResiduePolyF8::<$z>::from_scalar(Wrapping(2 as $u));
 
                 let recon : TryFromWrapper<$z> = TryFromWrapper::<$z>::try_from(sumsharing.reconstruct(5).unwrap()).unwrap();
 
@@ -359,10 +362,10 @@ mod tests {
             fn [<test_arith_const_mul2_ $z:lower>]() {
                 let mut rng = AesRng::seed_from_u64(0);
 
-                let secret : ResiduePoly<$z> = ResiduePoly::<$z>::from_scalar(Wrapping(23));
-                let sharings = ShamirSharings::<ResiduePoly<$z>>::share(&mut rng, secret, 9, 5).unwrap();
+                let secret : ResiduePolyF8<$z> = ResiduePolyF8::<$z>::from_scalar(Wrapping(23));
+                let sharings = ShamirSharings::<ResiduePolyF8<$z>>::share(&mut rng, secret, 9, 5).unwrap();
 
-                let sumsharing = &sharings * ResiduePoly::<$z>::from_scalar(Wrapping(2 as $u));
+                let sumsharing = &sharings * ResiduePolyF8::<$z>::from_scalar(Wrapping(2 as $u));
 
                 //let recon = $z::try_from(sumsharing.reconstruct(5).unwrap()).unwrap();
                 let recon : TryFromWrapper<$z> = TryFromWrapper::<$z>::try_from(sumsharing.reconstruct(5).unwrap()).unwrap();
@@ -373,16 +376,16 @@ mod tests {
             fn [<test_shamir_arithmetic_2_ $z:lower>]() {
                 let mut rng = AesRng::seed_from_u64(0);
 
-                let secret_a = ResiduePoly::<$z>::from_scalar(Wrapping(23));
-                let secret_b = ResiduePoly::<$z>::from_scalar(Wrapping(42));
-                let secret_c = ResiduePoly::<$z>::from_scalar(Wrapping(29));
+                let secret_a = ResiduePolyF8::<$z>::from_scalar(Wrapping(23));
+                let secret_b = ResiduePolyF8::<$z>::from_scalar(Wrapping(42));
+                let secret_c = ResiduePolyF8::<$z>::from_scalar(Wrapping(29));
 
-                let mut sharings_a = ShamirSharings::<ResiduePoly<$z>>::share(&mut rng, secret_a, 9, 5).unwrap();
-                let mut sharings_b = ShamirSharings::<ResiduePoly<$z>>::share(&mut rng, secret_b, 9, 5).unwrap();
-                let sharings_c = ShamirSharings::<ResiduePoly<$z>>::share(&mut rng, secret_c, 9, 5).unwrap();
+                let mut sharings_a = ShamirSharings::<ResiduePolyF8<$z>>::share(&mut rng, secret_a, 9, 5).unwrap();
+                let mut sharings_b = ShamirSharings::<ResiduePolyF8<$z>>::share(&mut rng, secret_b, 9, 5).unwrap();
+                let sharings_c = ShamirSharings::<ResiduePolyF8<$z>>::share(&mut rng, secret_c, 9, 5).unwrap();
 
-                sharings_a = &sharings_a + ResiduePoly::<$z>::from_scalar(Wrapping(3 as $u));
-                sharings_b = &sharings_b * ResiduePoly::<$z>::from_scalar(Wrapping(3 as $u));
+                sharings_a = &sharings_a + ResiduePolyF8::<$z>::from_scalar(Wrapping(3 as $u));
+                sharings_b = &sharings_b * ResiduePolyF8::<$z>::from_scalar(Wrapping(3 as $u));
 
                 // add the shares before reconstructing
                 let mut sumsharing = sharings_a + sharings_b;
@@ -397,11 +400,11 @@ mod tests {
             fn [<test_shamir_g_arithmetic_add_ $z:lower>]() {
                 let mut rng = AesRng::seed_from_u64(0);
 
-                let secret_a = ResiduePoly::<$z>::from_scalar(Wrapping(23));
-                let secret_b = ResiduePoly::<$z>::from_scalar(Wrapping(42));
+                let secret_a = ResiduePolyF8::<$z>::from_scalar(Wrapping(23));
+                let secret_b = ResiduePolyF8::<$z>::from_scalar(Wrapping(42));
 
-                let sharings_a = ShamirSharings::<ResiduePoly<$z>>::share(&mut rng, secret_a, 9, 5).unwrap();
-                let sharings_b = ShamirSharings::<ResiduePoly<$z>>::share(&mut rng, secret_b, 9, 5).unwrap();
+                let sharings_a = ShamirSharings::<ResiduePolyF8<$z>>::share(&mut rng, secret_a, 9, 5).unwrap();
+                let sharings_b = ShamirSharings::<ResiduePolyF8<$z>>::share(&mut rng, secret_b, 9, 5).unwrap();
 
                 let sumsharing = &sharings_a + &sharings_b;
 
@@ -421,10 +424,10 @@ mod tests {
         let num_parties = 10;
         let threshold = 3;
 
-        let secret = ResiduePoly::<Z128>::from_scalar(Wrapping(23));
+        let secret = ResiduePolyF8::<Z128>::from_scalar(Wrapping(23));
 
         let sharings =
-            ShamirSharings::<ResiduePoly<Z128>>::share(&mut rng, secret, num_parties, threshold)
+            ShamirSharings::<ResiduePolyF8<Z128>>::share(&mut rng, secret, num_parties, threshold)
                 .unwrap();
 
         let opened = reconstruct_w_errors_async(num_parties, threshold, threshold, 0, &sharings)
@@ -440,14 +443,14 @@ mod tests {
         let num_parties = 10;
         let threshold = 3;
 
-        let secret = ResiduePoly::<Z128>::from_scalar(Wrapping(23));
+        let secret = ResiduePolyF8::<Z128>::from_scalar(Wrapping(23));
 
         let sharings =
-            ShamirSharings::<ResiduePoly<Z128>>::share(&mut rng, secret, num_parties, threshold)
+            ShamirSharings::<ResiduePolyF8<Z128>>::share(&mut rng, secret, num_parties, threshold)
                 .unwrap();
 
-        let adv_target = ResiduePoly::<Z128>::from_scalar(Wrapping(32));
-        let adv_sharings = ShamirSharings::<ResiduePoly<Z128>>::share(
+        let adv_target = ResiduePolyF8::<Z128>::from_scalar(Wrapping(32));
+        let adv_sharings = ShamirSharings::<ResiduePolyF8<Z128>>::share(
             &mut rng,
             adv_target,
             num_parties,
@@ -516,19 +519,19 @@ mod tests {
         s2: Z,
         add_error: bool,
     ) where
-        ResiduePoly<Z>: crate::algebra::error_correction::MemoizedExceptionals,
-        ResiduePoly<Z>: crate::algebra::residue_poly::Monomials,
+        ResiduePolyF8<Z>: crate::algebra::error_correction::MemoizedExceptionals,
+        ResiduePolyF8<Z>: crate::algebra::galois_rings::common::Monomials,
     {
         let mut rng = AesRng::seed_from_u64(0);
         let num_parties = 4;
         let threshold = 1;
 
         // only secret share const polynomial
-        let secret1 = ResiduePoly::<Z>::from_scalar(s1);
-        let secret2 = ResiduePoly::<Z>::from_scalar(s2);
+        let secret1 = ResiduePolyF8::<Z>::from_scalar(s1);
+        let secret2 = ResiduePolyF8::<Z>::from_scalar(s2);
 
         let block1_shares =
-            ShamirSharings::<ResiduePoly<Z>>::share(&mut rng, secret1, num_parties, threshold)
+            ShamirSharings::<ResiduePolyF8<Z>>::share(&mut rng, secret1, num_parties, threshold)
                 .unwrap()
                 .shares
                 .into_iter()
@@ -536,7 +539,7 @@ mod tests {
                 .collect::<Vec<_>>();
 
         let block2_shares =
-            ShamirSharings::<ResiduePoly<Z>>::share(&mut rng, secret2, num_parties, threshold)
+            ShamirSharings::<ResiduePolyF8<Z>>::share(&mut rng, secret2, num_parties, threshold)
                 .unwrap()
                 .shares
                 .into_iter()

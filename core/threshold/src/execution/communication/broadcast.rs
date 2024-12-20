@@ -676,7 +676,7 @@ async fn broadcast_w_corruption_helper<Z: Ring, R: Rng + CryptoRng, Ses: BaseSes
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::residue_poly::ResiduePoly128;
+    use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z128;
     use crate::execution::runtime::session::ParameterHandles;
     use crate::execution::runtime::test_runtime::{
         generate_fixed_identities, DistributedTestRuntime,
@@ -759,7 +759,7 @@ mod tests {
     fn test_broadcast_all() {
         let sender_parties: Vec<Role> = (0..4).map(Role::indexed_by_zero).collect();
         let (identities, input_values, results) =
-            legitimate_broadcast::<ResiduePoly128>(&sender_parties);
+            legitimate_broadcast::<ResiduePolyF8Z128>(&sender_parties);
 
         // check that we have exactly n bcast outputs, for each party
         assert_eq!(results.len(), identities.len());
@@ -780,7 +780,7 @@ mod tests {
     fn test_broadcast_p3() {
         let sender_parties = vec![Role::indexed_by_zero(3)];
         let (identities, input_values, results) =
-            legitimate_broadcast::<ResiduePoly128>(&sender_parties);
+            legitimate_broadcast::<ResiduePolyF8Z128>(&sender_parties);
 
         // check that we have exactly n bcast outputs, for each party
         assert_eq!(results.len(), identities.len());
@@ -802,7 +802,7 @@ mod tests {
     fn test_broadcast_p0_p2() {
         let sender_parties = vec![Role::indexed_by_one(1), Role::indexed_by_one(3)];
         let (identities, input_values, results) =
-            legitimate_broadcast::<ResiduePoly128>(&sender_parties);
+            legitimate_broadcast::<ResiduePolyF8Z128>(&sender_parties);
         // check that we have exactly n bcast outputs, for each party
         assert_eq!(results.len(), identities.len());
 
@@ -827,16 +827,16 @@ mod tests {
         let identities = generate_fixed_identities(4);
 
         let input_values = vec![
-            BroadcastValue::from(ResiduePoly128::from_scalar(Wrapping(1))),
-            BroadcastValue::from(ResiduePoly128::from_scalar(Wrapping(2))),
-            BroadcastValue::from(ResiduePoly128::from_scalar(Wrapping(3))),
-            BroadcastValue::from(ResiduePoly128::from_scalar(Wrapping(4))),
+            BroadcastValue::from(ResiduePolyF8Z128::from_scalar(Wrapping(1))),
+            BroadcastValue::from(ResiduePolyF8Z128::from_scalar(Wrapping(2))),
+            BroadcastValue::from(ResiduePolyF8Z128::from_scalar(Wrapping(3))),
+            BroadcastValue::from(ResiduePolyF8Z128::from_scalar(Wrapping(4))),
         ];
 
         // code for session setup
         let threshold = 1;
         //Broadcast assumes Sync network
-        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(
+        let runtime = DistributedTestRuntime::<ResiduePolyF8Z128>::new(
             identities,
             threshold,
             NetworkMode::Sync,
@@ -888,14 +888,14 @@ mod tests {
     #[test]
     fn test_broadcast_w_corruption() {
         let num_parties = 4;
-        let msg = BroadcastValue::from(ResiduePoly128::from_scalar(Wrapping(42)));
+        let msg = BroadcastValue::from(ResiduePolyF8Z128::from_scalar(Wrapping(42)));
         let identities = generate_fixed_identities(num_parties);
         let parties = identities.len();
 
         // code for session setup
         let threshold = 1;
         //Broadcast assumes Sync network
-        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(
+        let runtime = DistributedTestRuntime::<ResiduePolyF8Z128>::new(
             identities.clone(),
             threshold,
             NetworkMode::Sync,
@@ -1094,9 +1094,9 @@ mod tests {
     //Test bcast with one actively malicious party
     #[test]
     fn broadcast_w_malicious_1() {
-        let msg = BroadcastValue::from(ResiduePoly128::from_scalar(Wrapping(42)));
+        let msg = BroadcastValue::from(ResiduePolyF8Z128::from_scalar(Wrapping(42)));
         let corrupt_msg = (0..5)
-            .map(|i| BroadcastValue::from(ResiduePoly128::from_scalar(Wrapping(43 + i))))
+            .map(|i| BroadcastValue::from(ResiduePolyF8Z128::from_scalar(Wrapping(43 + i))))
             .collect_vec();
         let identities = generate_fixed_identities(5);
         let parties = identities.len();
@@ -1104,7 +1104,7 @@ mod tests {
         // code for session setup
         let threshold = 1;
         //Broadcast assumes Sync network
-        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(
+        let runtime = DistributedTestRuntime::<ResiduePolyF8Z128>::new(
             identities.clone(),
             threshold,
             NetworkMode::Sync,
@@ -1273,9 +1273,9 @@ mod tests {
     #[test]
     #[cfg(feature = "slow_tests")]
     fn broadcast_w_malicious_2() {
-        let msg = BroadcastValue::from(ResiduePoly128::from_scalar(Wrapping(42)));
+        let msg = BroadcastValue::from(ResiduePolyF8Z128::from_scalar(Wrapping(42)));
         let corrupt_msg = (0..5)
-            .map(|i| BroadcastValue::from(ResiduePoly128::from_scalar(Wrapping(43 + i))))
+            .map(|i| BroadcastValue::from(ResiduePolyF8Z128::from_scalar(Wrapping(43 + i))))
             .collect_vec();
         let identities = generate_fixed_identities(4);
         let parties = identities.len();
@@ -1283,7 +1283,7 @@ mod tests {
         // code for session setup
         let threshold = 1;
         //Broadcast assumes Sync network
-        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(
+        let runtime = DistributedTestRuntime::<ResiduePolyF8Z128>::new(
             identities.clone(),
             threshold,
             NetworkMode::Sync,

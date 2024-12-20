@@ -3,8 +3,8 @@ use super::BitPreprocessing;
 use super::DKGPreprocessing;
 use super::NoiseBounds;
 use super::NoiseFloodPreprocessing;
-use crate::algebra::residue_poly::ResiduePoly128;
-use crate::algebra::residue_poly::ResiduePoly64;
+use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z128;
+use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z64;
 use crate::algebra::structure_traits::ErrorCorrect;
 use crate::algebra::structure_traits::RingEmbed;
 use crate::execution::constants::LOG_B_SWITCH_SQUASH;
@@ -244,11 +244,11 @@ where
 
 #[async_trait]
 impl<Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>> BitDecPreprocessing
-    for DummyPreprocessing<ResiduePoly64, Rnd, Ses>
+    for DummyPreprocessing<ResiduePolyF8Z64, Rnd, Ses>
 {
     async fn fill_from_base_preproc(
         &mut self,
-        _preprocessing: &mut dyn BasePreprocessing<ResiduePoly64>,
+        _preprocessing: &mut dyn BasePreprocessing<ResiduePolyF8Z64>,
         _session: &mut BaseSession,
         _num_ctxts: usize,
     ) -> anyhow::Result<()> {
@@ -258,16 +258,16 @@ impl<Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>> BitDecPre
 
 #[async_trait]
 impl<Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>> NoiseFloodPreprocessing
-    for DummyPreprocessing<ResiduePoly128, Rnd, Ses>
+    for DummyPreprocessing<ResiduePolyF8Z128, Rnd, Ses>
 {
-    fn append_masks(&mut self, _masks: Vec<ResiduePoly128>) {
+    fn append_masks(&mut self, _masks: Vec<ResiduePolyF8Z128>) {
         unimplemented!("We do not implement filling for DummyPreprocessing")
     }
-    fn next_mask(&mut self) -> anyhow::Result<ResiduePoly128> {
+    fn next_mask(&mut self) -> anyhow::Result<ResiduePolyF8Z128> {
         Ok(self.next_mask_vec(1)?.pop().unwrap())
     }
 
-    fn next_mask_vec(&mut self, amount: usize) -> anyhow::Result<Vec<ResiduePoly128>> {
+    fn next_mask_vec(&mut self, amount: usize) -> anyhow::Result<Vec<ResiduePolyF8Z128>> {
         let bound_d = (STATSEC + LOG_B_SWITCH_SQUASH) as usize;
         let mut u_randoms: Vec<_> =
             RealSecretDistributions::t_uniform(2 * amount, TUniformBound(bound_d), self)?
@@ -291,7 +291,7 @@ impl<Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>> NoiseFloo
     /// Fill the masks directly from the [`crate::execution::small_execution::prss::PRSSState`] available from [`SmallSession`]
     fn fill_from_small_session(
         &mut self,
-        _session: &mut SmallSession<ResiduePoly128>,
+        _session: &mut SmallSession<ResiduePolyF8Z128>,
         _amount: usize,
     ) -> anyhow::Result<()> {
         unimplemented!("We do not implement filling for DummyPreprocessing")
@@ -300,7 +300,7 @@ impl<Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>> NoiseFloo
     /// Fill the masks by first generating bits via triples and randomness provided by [`BasePreprocessing`]
     async fn fill_from_base_preproc(
         &mut self,
-        _preprocessing: &mut dyn BasePreprocessing<ResiduePoly128>,
+        _preprocessing: &mut dyn BasePreprocessing<ResiduePolyF8Z128>,
         _session: &mut BaseSession,
         _num_ctxts: usize,
     ) -> anyhow::Result<()> {
@@ -311,7 +311,7 @@ impl<Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>> NoiseFloo
     /// using [`crate::execution::online::secret_distributions::SecretDistributions`]
     fn fill_from_bits_preproc(
         &mut self,
-        _bit_preproc: &mut dyn BitPreprocessing<ResiduePoly128>,
+        _bit_preproc: &mut dyn BitPreprocessing<ResiduePolyF8Z128>,
         _num_ctxts: usize,
     ) -> anyhow::Result<()> {
         unimplemented!("We do not implement filling for DummyPreprocessing")
@@ -483,7 +483,7 @@ mod tests {
     use crate::{
         algebra::{
             base_ring::{Z128, Z64},
-            residue_poly::{ResiduePoly, ResiduePoly128},
+            galois_rings::degree_8::{ResiduePolyF8, ResiduePolyF8Z128},
             structure_traits::Zero,
         },
         networking::NetworkMode,
@@ -514,7 +514,7 @@ mod tests {
         //Dummy do not care about network assumption, default to Sync
         let session = get_base_session(NetworkMode::Sync);
         let mut preprocessing =
-            DummyDebugPreprocessing::<ResiduePoly128, _, _>::new(42, session.clone());
+            DummyDebugPreprocessing::<ResiduePolyF8Z128, _, _>::new(42, session.clone());
         let rand = preprocessing.next_random_vec(2).unwrap();
         // Check that the values are different
         assert_ne!(rand[0], rand[1]);
@@ -530,8 +530,8 @@ mod tests {
         //Dummy do not care about network assumption, default to Sync
         let session = get_base_session(NetworkMode::Sync);
         let mut preprocessing =
-            DummyDebugPreprocessing::<ResiduePoly128, _, _>::new(42, session.clone());
-        let trips: Vec<Triple<ResiduePoly128>> = preprocessing.next_triple_vec(2).unwrap();
+            DummyDebugPreprocessing::<ResiduePolyF8Z128, _, _>::new(42, session.clone());
+        let trips: Vec<Triple<ResiduePolyF8Z128>> = preprocessing.next_triple_vec(2).unwrap();
         assert_ne!(trips[0], trips[1]);
         let recon_one_a = reconstruct(&session, vec![trips[0].a]).unwrap();
         let recon_two_a = reconstruct(&session, vec![trips[1].a]).unwrap();
@@ -549,11 +549,11 @@ mod tests {
         //Dummy do not care about network assumption, default to Sync
         let session = get_base_session(NetworkMode::Sync);
         let mut preprocessing =
-            DummyDebugPreprocessing::<ResiduePoly128, _, _>::new(42, session.clone());
-        let rand_a: Share<ResiduePoly128> = preprocessing.next_random().unwrap();
-        let trip_a: Triple<ResiduePoly128> = preprocessing.next_triple().unwrap();
-        let rand_b: Share<ResiduePoly128> = preprocessing.next_random().unwrap();
-        let trip_b: Triple<ResiduePoly128> = preprocessing.next_triple().unwrap();
+            DummyDebugPreprocessing::<ResiduePolyF8Z128, _, _>::new(42, session.clone());
+        let rand_a: Share<ResiduePolyF8Z128> = preprocessing.next_random().unwrap();
+        let trip_a: Triple<ResiduePolyF8Z128> = preprocessing.next_triple().unwrap();
+        let rand_b: Share<ResiduePolyF8Z128> = preprocessing.next_random().unwrap();
+        let trip_b: Triple<ResiduePolyF8Z128> = preprocessing.next_triple().unwrap();
         assert_ne!(trip_a, trip_b);
         assert_ne!(rand_a, rand_b);
         assert_ne!(trip_a.a, rand_a);
@@ -575,9 +575,9 @@ mod tests {
 
                 #[test]
                 fn [<test_threshold_dummy_share $z:lower>]() {
-                    let msg = ResiduePoly::<$z>::from_scalar(Wrapping(42));
+                    let msg = ResiduePolyF8::<$z>::from_scalar(Wrapping(42));
                     let mut session = get_networkless_base_session_for_parties(10, 3, Role::indexed_by_one(1));
-                    let shares = DummyPreprocessing::<ResiduePoly<$z>, AesRng, SmallSession<ResiduePoly<$z>>>::share(
+                    let shares = DummyPreprocessing::<ResiduePolyF8<$z>, AesRng, SmallSession<ResiduePolyF8<$z>>>::share(
                         session.num_parties(),
                         session.threshold(),
                         msg,
@@ -595,24 +595,24 @@ mod tests {
                     let mut preps = Vec::new();
                     for i in 1..=parties {
                         let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_by_one(i));
-                        preps.push(DummyPreprocessing::<ResiduePoly<$z>, AesRng, _>::new(42, session));
+                        preps.push(DummyPreprocessing::<ResiduePolyF8<$z>, AesRng, _>::new(42, session));
                     }
                     let recon = [<get_rand_ $z:lower>](parties, threshold, 2, &mut preps);
                     // Check that the values are different
                     assert_ne!(recon[0], recon[1]);
                     // Sanity check the result (results are extremely unlikely to be zero)
-                    assert_ne!(recon[0], ResiduePoly::<$z>::ZERO);
-                    assert_ne!(recon[1], ResiduePoly::<$z>::ZERO);
+                    assert_ne!(recon[0], ResiduePolyF8::<$z>::ZERO);
+                    assert_ne!(recon[1], ResiduePolyF8::<$z>::ZERO);
                 }
                 fn [<get_rand_ $z:lower>](
                     parties: usize,
                     threshold: u8,
                     amount: usize,
-                    preps: &mut [DummyPreprocessing::<ResiduePoly<$z>, AesRng, BaseSessionStruct<AesRng, SessionParameters>>],
-                ) -> Vec<ResiduePoly<$z>> {
+                    preps: &mut [DummyPreprocessing::<ResiduePolyF8<$z>, AesRng, BaseSessionStruct<AesRng, SessionParameters>>],
+                ) -> Vec<ResiduePolyF8<$z>> {
                     let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_by_one(1));
                     let mut res = Vec::new();
-                    let mut temp: Vec<Vec<Share<ResiduePoly<$z>>>> = Vec::new();
+                    let mut temp: Vec<Vec<Share<ResiduePolyF8<$z>>>> = Vec::new();
                     for i in 1..=parties {
                         let preprocessing = preps.get_mut(i - 1).unwrap();
                         let cur_rand = preprocessing.next_random_vec(amount).unwrap();
@@ -636,7 +636,7 @@ mod tests {
                     let mut preps = Vec::new();
                     for i in 1..=parties {
                         let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_by_one(i));
-                        preps.push(DummyPreprocessing::<ResiduePoly<$z>, AesRng, BaseSessionStruct<AesRng, SessionParameters>>::new(42, session));
+                        preps.push(DummyPreprocessing::<ResiduePolyF8<$z>, AesRng, BaseSessionStruct<AesRng, SessionParameters>>::new(42, session));
                     }
                     let trips = [<get_trip_ $z:lower>](parties, threshold, 2, &mut preps);
                     assert_ne!(trips[0], trips[1]);
@@ -646,8 +646,8 @@ mod tests {
                     parties: usize,
                     threshold: u8,
                     amount: usize,
-                    preps: &mut [DummyPreprocessing::<ResiduePoly<$z>, AesRng, BaseSessionStruct<AesRng, SessionParameters>>],
-                ) -> Vec<(ResiduePoly<$z>, ResiduePoly<$z>, ResiduePoly<$z>)> {
+                    preps: &mut [DummyPreprocessing::<ResiduePolyF8<$z>, AesRng, BaseSessionStruct<AesRng, SessionParameters>>],
+                ) -> Vec<(ResiduePolyF8<$z>, ResiduePolyF8<$z>, ResiduePolyF8<$z>)> {
                     let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_by_one(1));
                     let mut res = Vec::new();
                     let mut a_shares = Vec::new();
@@ -655,7 +655,7 @@ mod tests {
                     let mut c_shares = Vec::new();
                     for i in 1..=parties {
                         let preprocessing = preps.get_mut(i - 1).unwrap();
-                        let cur_trip: Vec<Triple<ResiduePoly<$z>>> =
+                        let cur_trip: Vec<Triple<ResiduePolyF8<$z>>> =
                             preprocessing.next_triple_vec(amount,).unwrap();
                         a_shares.push(cur_trip.iter().map(|trip| trip.a).collect_vec());
                         b_shares.push(cur_trip.iter().map(|trip| trip.b).collect_vec());
@@ -686,7 +686,7 @@ mod tests {
                     let mut preps = Vec::new();
                     for i in 1..=parties {
                         let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_by_one(i));
-                        preps.push(DummyPreprocessing::<ResiduePoly<$z>, AesRng, BaseSessionStruct<AesRng, SessionParameters>>::new(42, session));
+                        preps.push(DummyPreprocessing::<ResiduePolyF8<$z>, AesRng, BaseSessionStruct<AesRng, SessionParameters>>::new(42, session));
                     }
                     let rand_a = [<get_rand_ $z:lower>](parties, threshold, 1, &mut preps)[0];
                     let trip_a = [<get_trip_ $z:lower>](parties, threshold, 1, &mut preps)[0];

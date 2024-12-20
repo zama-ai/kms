@@ -1,5 +1,5 @@
-use crate::algebra::residue_poly::ResiduePoly128;
-use crate::algebra::residue_poly::ResiduePoly64;
+use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z128;
+use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z64;
 use crate::algebra::structure_traits::Ring;
 use crate::execution::online::preprocessing::BasePreprocessing;
 use crate::execution::online::preprocessing::BitPreprocessing;
@@ -207,12 +207,12 @@ fn get_counter_and_update(
 impl PreprocessorFactory for RedisPreprocessorFactory {
     fn create_base_preprocessing_residue_64(
         &mut self,
-    ) -> Box<dyn BasePreprocessing<ResiduePoly64>> {
+    ) -> Box<dyn BasePreprocessing<ResiduePolyF8Z64>> {
         let counter_value = get_counter_and_update(
             &mut self.counter_instances_created,
             PreprocessingTypes::Base64,
         );
-        Box::new(RedisPreprocessing::<ResiduePoly64>::new(
+        Box::new(RedisPreprocessing::<ResiduePolyF8Z64>::new(
             format!("{}_Base64_{}", self.key_prefix(), counter_value),
             self.get_redis_client(),
         ))
@@ -220,23 +220,25 @@ impl PreprocessorFactory for RedisPreprocessorFactory {
 
     fn create_base_preprocessing_residue_128(
         &mut self,
-    ) -> Box<dyn BasePreprocessing<ResiduePoly128>> {
+    ) -> Box<dyn BasePreprocessing<ResiduePolyF8Z128>> {
         let counter_value = get_counter_and_update(
             &mut self.counter_instances_created,
             PreprocessingTypes::Base128,
         );
-        Box::new(RedisPreprocessing::<ResiduePoly128>::new(
+        Box::new(RedisPreprocessing::<ResiduePolyF8Z128>::new(
             format!("{}_Base128_{}", self.key_prefix(), counter_value),
             self.get_redis_client(),
         ))
     }
 
-    fn create_bit_preprocessing_residue_64(&mut self) -> Box<dyn BitPreprocessing<ResiduePoly64>> {
+    fn create_bit_preprocessing_residue_64(
+        &mut self,
+    ) -> Box<dyn BitPreprocessing<ResiduePolyF8Z64>> {
         let counter_value = get_counter_and_update(
             &mut self.counter_instances_created,
             PreprocessingTypes::Bits64,
         );
-        Box::new(RedisPreprocessing::<ResiduePoly64>::new(
+        Box::new(RedisPreprocessing::<ResiduePolyF8Z64>::new(
             format!("{}_Bits64_{}", self.key_prefix(), counter_value),
             self.get_redis_client(),
         ))
@@ -244,12 +246,12 @@ impl PreprocessorFactory for RedisPreprocessorFactory {
 
     fn create_bit_preprocessing_residue_128(
         &mut self,
-    ) -> Box<dyn BitPreprocessing<ResiduePoly128>> {
+    ) -> Box<dyn BitPreprocessing<ResiduePolyF8Z128>> {
         let counter_value = get_counter_and_update(
             &mut self.counter_instances_created,
             PreprocessingTypes::Bits128,
         );
-        Box::new(RedisPreprocessing::<ResiduePoly128>::new(
+        Box::new(RedisPreprocessing::<ResiduePolyF8Z128>::new(
             format!("{}_Bits128_{}", self.key_prefix(), counter_value),
             self.get_redis_client(),
         ))
@@ -260,7 +262,7 @@ impl PreprocessorFactory for RedisPreprocessorFactory {
             &mut self.counter_instances_created,
             PreprocessingTypes::BitDecryption,
         );
-        Box::new(RedisPreprocessing::<ResiduePoly64>::new(
+        Box::new(RedisPreprocessing::<ResiduePolyF8Z64>::new(
             format!("{}_BitDecryption_{}", self.key_prefix(), counter_value),
             self.get_redis_client(),
         ))
@@ -271,7 +273,7 @@ impl PreprocessorFactory for RedisPreprocessorFactory {
             &mut self.counter_instances_created,
             PreprocessingTypes::NoiseFlood,
         );
-        Box::new(RedisPreprocessing::<ResiduePoly128>::new(
+        Box::new(RedisPreprocessing::<ResiduePolyF8Z128>::new(
             format!("{}_NoiseFlood_{}", self.key_prefix(), counter_value),
             self.get_redis_client(),
         ))
@@ -279,12 +281,12 @@ impl PreprocessorFactory for RedisPreprocessorFactory {
 
     fn create_dkg_preprocessing_no_sns(
         &mut self,
-    ) -> Box<dyn super::DKGPreprocessing<ResiduePoly64>> {
+    ) -> Box<dyn super::DKGPreprocessing<ResiduePolyF8Z64>> {
         let counter_value = get_counter_and_update(
             &mut self.counter_instances_created,
             PreprocessingTypes::DkgNoSns,
         );
-        Box::new(RedisPreprocessing::<ResiduePoly64>::new(
+        Box::new(RedisPreprocessing::<ResiduePolyF8Z64>::new(
             format!("{}_DkgNoSnS_{}", self.key_prefix(), counter_value),
             self.get_redis_client(),
         ))
@@ -292,12 +294,12 @@ impl PreprocessorFactory for RedisPreprocessorFactory {
 
     fn create_dkg_preprocessing_with_sns(
         &mut self,
-    ) -> Box<dyn super::DKGPreprocessing<ResiduePoly128>> {
+    ) -> Box<dyn super::DKGPreprocessing<ResiduePolyF8Z128>> {
         let counter_value = get_counter_and_update(
             &mut self.counter_instances_created,
             PreprocessingTypes::DkgWithSns,
         );
-        Box::new(RedisPreprocessing::<ResiduePoly128>::new(
+        Box::new(RedisPreprocessing::<ResiduePolyF8Z128>::new(
             format!("{}_DkgWithSnS_{}", self.key_prefix(), counter_value),
             self.get_redis_client(),
         ))
@@ -459,8 +461,8 @@ pub mod tests {
     use std::num::Wrapping;
 
     use crate::algebra::base_ring::{Z128, Z64};
-    use crate::algebra::gf256::GF256;
-    use crate::algebra::residue_poly::ResiduePoly;
+    use crate::algebra::galois_fields::gf256::GF256;
+    use crate::algebra::galois_rings::degree_8::ResiduePolyF8;
     use crate::execution::online::triple::Triple;
     use crate::execution::runtime::party::Role;
     use crate::execution::sharing::share::Share;
@@ -473,7 +475,7 @@ pub mod tests {
                 fn [<test_share_serialization_deserialization $z:lower>]() {
                     let share = Share::new(
                         Role::indexed_by_one(1),
-                        ResiduePoly::<$z>::from_scalar(Wrapping(42)),
+                        ResiduePolyF8::<$z>::from_scalar(Wrapping(42)),
                     );
 
                     let serialized = bincode::serialize(&share).unwrap();
@@ -485,22 +487,22 @@ pub mod tests {
                 fn [<test_triple_serialization_deserialization $z:lower>]() {
                     let share_one = Share::new(
                         Role::indexed_by_one(1),
-                        ResiduePoly::<$z>::from_scalar(Wrapping(42)),
+                        ResiduePolyF8::<$z>::from_scalar(Wrapping(42)),
                     );
 
                     let share_two = Share::new(
                         Role::indexed_by_one(2),
-                        ResiduePoly::<$z>::from_scalar(Wrapping(43)),
+                        ResiduePolyF8::<$z>::from_scalar(Wrapping(43)),
                     );
 
                     let share_three = Share::new(
                         Role::indexed_by_one(3),
-                        ResiduePoly::<$z>::from_scalar(Wrapping(42)),
+                        ResiduePolyF8::<$z>::from_scalar(Wrapping(42)),
                     );
 
-                    let triple = Triple::<ResiduePoly<$z>>::new(share_one, share_two, share_three);
+                    let triple = Triple::<ResiduePolyF8<$z>>::new(share_one, share_two, share_three);
                     let serialized = bincode::serialize(&triple).unwrap();
-                    let deserialized: Triple<ResiduePoly<$z>> = bincode::deserialize(&serialized).unwrap();
+                    let deserialized: Triple<ResiduePolyF8<$z>> = bincode::deserialize(&serialized).unwrap();
 
                     assert_eq!(triple, deserialized);
                 }

@@ -7,7 +7,7 @@ use tfhe::{
 use tfhe_versionable::VersionsDispatch;
 
 use crate::{
-    algebra::{residue_poly::ResiduePoly, structure_traits::BaseRing},
+    algebra::{galois_rings::degree_8::ResiduePolyF8, structure_traits::BaseRing},
     execution::{online::preprocessing::BitPreprocessing, sharing::share::Share},
 };
 
@@ -26,12 +26,12 @@ pub enum GlweSecretKeyShareVersioned<Z: Clone> {
 #[derive(Clone, Debug, Serialize, Deserialize, Versionize, PartialEq)]
 #[versionize(GlweSecretKeyShareVersioned)]
 pub struct GlweSecretKeyShare<Z: Clone> {
-    pub data: Vec<Share<ResiduePoly<Z>>>,
+    pub data: Vec<Share<ResiduePolyF8<Z>>>,
     pub polynomial_size: PolynomialSize,
 }
 
 impl<Z: BaseRing> GlweSecretKeyShare<Z> {
-    pub fn new_from_preprocessing<P: BitPreprocessing<ResiduePoly<Z>> + ?Sized>(
+    pub fn new_from_preprocessing<P: BitPreprocessing<ResiduePolyF8<Z>> + ?Sized>(
         total_size: usize,
         polynomial_size: PolynomialSize,
         preprocessing: &mut P,
@@ -42,7 +42,7 @@ impl<Z: BaseRing> GlweSecretKeyShare<Z> {
         })
     }
 
-    pub fn data_as_raw_vec(&self) -> Vec<ResiduePoly<Z>> {
+    pub fn data_as_raw_vec(&self) -> Vec<ResiduePolyF8<Z>> {
         self.data.iter().map(|share| share.value()).collect_vec()
     }
 

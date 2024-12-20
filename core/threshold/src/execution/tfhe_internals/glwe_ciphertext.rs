@@ -3,7 +3,7 @@ use tfhe::{
 };
 
 use crate::algebra::{
-    residue_poly::ResiduePoly,
+    galois_rings::degree_8::ResiduePolyF8,
     structure_traits::{BaseRing, Zero},
 };
 
@@ -24,7 +24,7 @@ pub struct GlweCiphertextShare<Z: BaseRing> {
     //we can probably have both the mask and body of the same type
     //Just then need to be carefull how we handle mask sampling
     pub mask: Vec<Z>,
-    pub body: Vec<ResiduePoly<Z>>,
+    pub body: Vec<ResiduePolyF8<Z>>,
     pub polynomial_size: PolynomialSize,
     pub encryption_type: EncryptionType,
 }
@@ -37,7 +37,7 @@ impl<Z: BaseRing> GlweCiphertextShare<Z> {
     ) -> Self {
         Self {
             mask: vec![Z::default(); polynomial_size.0 * glwe_dimension],
-            body: vec![ResiduePoly::ZERO; polynomial_size.0],
+            body: vec![ResiduePolyF8::ZERO; polynomial_size.0],
             polynomial_size,
             encryption_type,
         }
@@ -47,7 +47,7 @@ impl<Z: BaseRing> GlweCiphertextShare<Z> {
     ///
     /// encoded_message means the message should already be scaled with the desired scaling factor
     pub fn new_from_encoded_message(
-        encoded_message: Vec<ResiduePoly<Z>>,
+        encoded_message: Vec<ResiduePolyF8<Z>>,
         polynomial_size: PolynomialSize,
         glwe_dimension: usize,
         encryption_type: EncryptionType,
@@ -60,11 +60,11 @@ impl<Z: BaseRing> GlweCiphertextShare<Z> {
         }
     }
     //Get mutable handles over the mask and body of a share of a glwe ctxt
-    pub fn get_mut_mask_and_body(&mut self) -> (&mut Vec<Z>, &mut Vec<ResiduePoly<Z>>) {
+    pub fn get_mut_mask_and_body(&mut self) -> (&mut Vec<Z>, &mut Vec<ResiduePolyF8<Z>>) {
         (&mut self.mask, &mut self.body)
     }
 
-    pub fn get_mut_body(&mut self) -> &mut Vec<ResiduePoly<Z>> {
+    pub fn get_mut_body(&mut self) -> &mut Vec<ResiduePolyF8<Z>> {
         &mut self.body
     }
 }
@@ -95,7 +95,7 @@ where
 pub fn encrypt_glwe_ciphertext<Gen, Z>(
     glwe_secret_key_share: &GlweSecretKeyShare<Z>,
     output: &mut GlweCiphertextShare<Z>,
-    input_plaintext_list: &[ResiduePoly<Z>],
+    input_plaintext_list: &[ResiduePolyF8<Z>],
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen>,
     encryption_type: EncryptionType,
 ) -> anyhow::Result<()>
@@ -119,7 +119,7 @@ where
 pub fn encrypt_glwe_ciphertext_list<Gen, Z>(
     glwe_secret_key: &GlweSecretKeyShare<Z>,
     output_glwe_ciphertext_list: &mut [GlweCiphertextShare<Z>],
-    input_plaintext_list: &[ResiduePoly<Z>],
+    input_plaintext_list: &[ResiduePolyF8<Z>],
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen>,
     encryption_type: EncryptionType,
 ) -> anyhow::Result<()>
@@ -146,7 +146,7 @@ where
 fn fill_glwe_mask_and_body_for_encryption_assign<Z, Gen>(
     glwe_secret_key_share: &GlweSecretKeyShare<Z>,
     output_mask: &mut [Z],
-    output_body: &mut [ResiduePoly<Z>],
+    output_body: &mut [ResiduePolyF8<Z>],
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen>,
     encryption_type: EncryptionType,
 ) -> anyhow::Result<()>
@@ -202,7 +202,7 @@ mod tests {
     };
 
     use crate::{
-        algebra::residue_poly::ResiduePoly64,
+        algebra::galois_rings::degree_8::ResiduePolyF8Z64,
         execution::{
             online::{
                 gen_bits::{BitGenEven, RealBitGenEven},
@@ -253,7 +253,7 @@ mod tests {
                 .map(|idx| {
                     ShamirSharings::share(
                         &mut AesRng::seed_from_u64(idx as u64),
-                        ResiduePoly64::from_scalar(Wrapping(msg << scaling)),
+                        ResiduePolyF8Z64::from_scalar(Wrapping(msg << scaling)),
                         session.num_parties(),
                         session.threshold() as usize,
                     )
@@ -312,7 +312,7 @@ mod tests {
         //This is Async because triples are generated from dummy preprocessing
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let results = execute_protocol_large::<ResiduePoly64, _, _>(
+        let results = execute_protocol_large::<ResiduePolyF8Z64, _, _>(
             parties,
             threshold,
             None,

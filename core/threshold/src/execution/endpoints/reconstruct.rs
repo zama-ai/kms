@@ -1,7 +1,7 @@
 use tfhe::{integer::block_decomposition::BlockRecomposer, shortint::ClassicPBSParameters};
 
 use crate::{
-    algebra::{base_ring::Z128, residue_poly::ResiduePoly},
+    algebra::{base_ring::Z128, galois_rings::degree_8::ResiduePolyF8},
     error::error_handler::anyhow_error_and_log,
     execution::tfhe_internals::{
         parameters::AugmentedCiphertextParameters, switch_and_squash::from_expanded_msg,
@@ -12,7 +12,7 @@ use crate::{
 /// by using the contant term of the `openeds` and mapping it down
 /// to the message space of a ciphertext block.
 pub fn reconstruct_message(
-    openeds: Option<Vec<ResiduePoly<Z128>>>,
+    openeds: Option<Vec<ResiduePolyF8<Z128>>>,
     params: &ClassicPBSParameters,
 ) -> anyhow::Result<Vec<Z128>> {
     let total_mod_bits = params.total_block_bits() as usize;
@@ -40,7 +40,7 @@ pub fn reconstruct_message(
 /// is used for the reconstruction and at most `num_blocks` terms will
 /// be used.
 pub fn reconstruct_packed_message(
-    openeds: Option<Vec<ResiduePoly<Z128>>>,
+    openeds: Option<Vec<ResiduePolyF8<Z128>>>,
     params: &ClassicPBSParameters,
     num_blocks: usize,
 ) -> anyhow::Result<Vec<Z128>> {

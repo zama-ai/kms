@@ -8,7 +8,7 @@ use tfhe::{
 
 use crate::{
     algebra::{
-        residue_poly::ResiduePoly,
+        galois_rings::degree_8::ResiduePolyF8,
         structure_traits::{BaseRing, ErrorCorrect},
     },
     error::error_handler::anyhow_error_and_log,
@@ -37,8 +37,8 @@ where
     Gen: ByteRandomGenerator,
     Rnd: Rng + CryptoRng,
     S: BaseSessionHandles<Rnd>,
-    P: TriplePreprocessing<ResiduePoly<Z>> + ?Sized,
-    ResiduePoly<Z>: ErrorCorrect,
+    P: TriplePreprocessing<ResiduePolyF8<Z>> + ?Sized,
+    ResiduePolyF8<Z>: ErrorCorrect,
 {
     let encryption_type = output.encryption_type();
     let gen_iter = generator.fork_bsk_to_ggsw(
@@ -95,8 +95,8 @@ where
     Gen: ByteRandomGenerator,
     Rnd: Rng + CryptoRng,
     S: BaseSessionHandles<Rnd>,
-    P: TriplePreprocessing<ResiduePoly<Z>> + ?Sized,
-    ResiduePoly<Z>: ErrorCorrect,
+    P: TriplePreprocessing<ResiduePolyF8<Z>> + ?Sized,
+    ResiduePolyF8<Z>: ErrorCorrect,
 {
     let mut bsk = LweBootstrapKeyShare::new(
         output_glwe_secret_key.glwe_dimension().to_glwe_size(),
@@ -150,7 +150,7 @@ mod tests {
     };
 
     use crate::{
-        algebra::{base_ring::Z128, residue_poly::ResiduePoly128},
+        algebra::{base_ring::Z128, galois_rings::degree_8::ResiduePolyF8Z128},
         execution::{
             online::{
                 gen_bits::{BitGenEven, RealBitGenEven},
@@ -270,7 +270,7 @@ mod tests {
         //This is Async because triples are generated from dummy preprocessing
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let results = execute_protocol_large::<ResiduePoly128, _, _>(
+        let results = execute_protocol_large::<ResiduePolyF8Z128, _, _>(
             parties,
             threshold,
             None,

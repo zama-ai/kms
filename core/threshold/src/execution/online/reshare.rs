@@ -1,7 +1,7 @@
 use crate::{
     algebra::{
+        galois_rings::degree_8::{ResiduePolyF8, ResiduePolyF8Z128, ResiduePolyF8Z64},
         poly::Poly,
-        residue_poly::{ResiduePoly, ResiduePoly128, ResiduePoly64},
         structure_traits::{BaseRing, ErrorCorrect, Invert, RingEmbed, Syndrome},
         syndrome::lagrange_numerators,
     },
@@ -32,11 +32,11 @@ use zeroize::Zeroize;
 // this is the L_i in the spec
 fn make_lagrange_numerators<Z: BaseRing>(
     sorted_roles: &[Role],
-) -> anyhow::Result<Vec<Poly<ResiduePoly<Z>>>> {
+) -> anyhow::Result<Vec<Poly<ResiduePolyF8<Z>>>> {
     // embed party IDs into the ring
     let parties: Vec<_> = sorted_roles
         .iter()
-        .map(|role| ResiduePoly::<Z>::embed_exceptional_set(role.one_based()))
+        .map(|role| ResiduePolyF8::<Z>::embed_exceptional_set(role.one_based()))
         .collect::<Result<Vec<_>, _>>()?;
 
     // lagrange numerators from Eq.15
@@ -48,11 +48,11 @@ fn make_lagrange_numerators<Z: BaseRing>(
 // where L_i(Z) = \Pi_{i \ne j} (Z - \alpha_i)
 // This function evaluates delta_i(0)
 fn delta0i<Z: BaseRing>(
-    lagrange_numerators: &[Poly<ResiduePoly<Z>>],
+    lagrange_numerators: &[Poly<ResiduePolyF8<Z>>],
     one_based: usize,
-) -> anyhow::Result<ResiduePoly<Z>> {
-    let zero = ResiduePoly::<Z>::embed_exceptional_set(0)?;
-    let alphai = ResiduePoly::<Z>::embed_exceptional_set(one_based)?;
+) -> anyhow::Result<ResiduePolyF8<Z>> {
+    let zero = ResiduePolyF8::<Z>::embed_exceptional_set(0)?;
+    let alphai = ResiduePolyF8::<Z>::embed_exceptional_set(one_based)?;
     let denom = lagrange_numerators[one_based - 1].eval(&alphai);
     let inv_denom = denom.invert()?;
     Ok(inv_denom * lagrange_numerators[one_based - 1].eval(&zero))
@@ -65,8 +65,8 @@ fn delta0i<Z: BaseRing>(
 pub async fn reshare_sk_same_sets<
     Rnd: Rng + CryptoRng,
     Ses: BaseSessionHandles<Rnd>,
-    P128: BasePreprocessing<ResiduePoly128> + Send,
-    P64: BasePreprocessing<ResiduePoly64> + Send,
+    P128: BasePreprocessing<ResiduePolyF8Z128> + Send,
+    P64: BasePreprocessing<ResiduePolyF8Z64> + Send,
 >(
     preproc128: &mut P128,
     preproc64: &mut P64,
@@ -146,15 +146,15 @@ pub async fn reshare_sk_same_sets<
 pub async fn reshare_same_sets<
     Rnd: Rng + CryptoRng,
     Ses: BaseSessionHandles<Rnd>,
-    P: BasePreprocessing<ResiduePoly<Z>> + Send,
+    P: BasePreprocessing<ResiduePolyF8<Z>> + Send,
     Z: BaseRing + Zeroize,
 >(
     preproc: &mut P,
     session: &mut Ses,
-    input_share: &mut Vec<Share<ResiduePoly<Z>>>,
-) -> anyhow::Result<Vec<Share<ResiduePoly<Z>>>>
+    input_share: &mut Vec<Share<ResiduePolyF8<Z>>>,
+) -> anyhow::Result<Vec<Share<ResiduePolyF8<Z>>>>
 where
-    ResiduePoly<Z>: ErrorCorrect,
+    ResiduePolyF8<Z>: ErrorCorrect,
 {
     // we need share_count shares for every party in the initial set of size n1
     let n1 = session.num_parties();
@@ -262,7 +262,7 @@ where
     for shares in s_share_vec {
         let shamir_sharing = ShamirSharings::create(shares);
         let mut syndrome_share =
-            ResiduePoly::<Z>::syndrome_compute(&shamir_sharing, session.threshold() as usize)?;
+            ResiduePolyF8::<Z>::syndrome_compute(&shamir_sharing, session.threshold() as usize)?;
         all_shamir_shares.push(shamir_sharing);
         all_syndrome_poly_shares.append(&mut syndrome_share.coefs);
     }
@@ -287,13 +287,13 @@ where
     let chunks = all_syndrome_polys.chunks_exact(syndrome_length);
     for (s, shamir_sharing) in chunks.zip(all_shamir_shares) {
         let syndrome_poly = Poly::from_coefs(s.iter().copied().collect_vec());
-        let opened_syndrome = ResiduePoly::<Z>::syndrome_decode(
+        let opened_syndrome = ResiduePolyF8::<Z>::syndrome_decode(
             syndrome_poly,
             &all_roles_sorted,
             session.threshold() as usize,
         )?;
 
-        let res: ResiduePoly<Z> = izip!(shamir_sharing.shares, &deltas, opened_syndrome)
+        let res: ResiduePolyF8<Z> = izip!(shamir_sharing.shares, &deltas, opened_syndrome)
             .map(|(s, d, e)| d * &(s.value() - e))
             .sum();
         new_sk_share.push(Share::new(my_role, res));
@@ -310,7 +310,7 @@ mod tests {
     use crate::networking::NetworkMode;
     use crate::{
         algebra::{
-            residue_poly::ResiduePoly128,
+            galois_rings::degree_8::ResiduePolyF8Z128,
             structure_traits::{Sample, Zero},
         },
         error::error_handler::anyhow_error_and_log,
@@ -338,12 +338,12 @@ mod tests {
     use tokio::task::JoinSet;
 
     fn reconstruct_shares_to_scalar<Z: BaseRing + Display>(
-        shares: Vec<Vec<ResiduePoly<Z>>>,
+        shares: Vec<Vec<ResiduePolyF8<Z>>>,
         threshold: usize,
     ) -> Vec<Z>
     where
-        ShamirSharings<ResiduePoly<Z>>: RevealOp<ResiduePoly<Z>>,
-        ShamirSharings<ResiduePoly<Z>>: InputOp<ResiduePoly<Z>>,
+        ShamirSharings<ResiduePolyF8<Z>>: RevealOp<ResiduePolyF8<Z>>,
+        ShamirSharings<ResiduePolyF8<Z>>: InputOp<ResiduePolyF8<Z>>,
     {
         let parties = shares.len();
         let mut out = Vec::with_capacity(shares[0].len());
@@ -445,25 +445,34 @@ mod tests {
 
         let identities = generate_fixed_identities(num_parties);
         //Reshare assumes Sync network
-        let mut runtime: DistributedTestRuntime<ResiduePoly128> =
+        let mut runtime: DistributedTestRuntime<ResiduePolyF8Z128> =
             DistributedTestRuntime::new(identities, threshold as u8, NetworkMode::Sync, None);
         if add_error {
             key_shares[0] = PrivateKeySet {
                 lwe_compute_secret_key_share: LweSecretKeyShare {
                     data: vec![
-                        Share::new(Role::indexed_by_zero(0), ResiduePoly64::sample(&mut rng));
+                        Share::new(
+                            Role::indexed_by_zero(0),
+                            ResiduePolyF8Z64::sample(&mut rng)
+                        );
                         key_shares[1].lwe_compute_secret_key_share.data.len()
                     ],
                 },
                 lwe_encryption_secret_key_share: LweSecretKeyShare {
                     data: vec![
-                        Share::new(Role::indexed_by_zero(0), ResiduePoly64::sample(&mut rng));
+                        Share::new(
+                            Role::indexed_by_zero(0),
+                            ResiduePolyF8Z64::sample(&mut rng)
+                        );
                         key_shares[1].lwe_encryption_secret_key_share.data.len()
                     ],
                 },
                 glwe_secret_key_share: GlweSecretKeyShare {
                     data: vec![
-                        Share::new(Role::indexed_by_zero(0), ResiduePoly64::sample(&mut rng));
+                        Share::new(
+                            Role::indexed_by_zero(0),
+                            ResiduePolyF8Z64::sample(&mut rng)
+                        );
                         key_shares[1].glwe_secret_key_share.data.len()
                     ],
                     polynomial_size: key_shares[1].glwe_secret_key_share.polynomial_size,
@@ -472,7 +481,7 @@ mod tests {
                     data: vec![
                         Share::new(
                             Role::indexed_by_zero(0),
-                            ResiduePoly128::sample(&mut rng)
+                            ResiduePolyF8Z128::sample(&mut rng)
                         );
                         key_shares[1]
                             .glwe_secret_key_share_sns_as_lwe
@@ -514,14 +523,15 @@ mod tests {
             let mut session = runtime.large_session_for_party(session_id, index_id);
             set.spawn(async move {
                 let mut preproc128 =
-                    DummyPreprocessing::<ResiduePoly128, AesRng, LargeSession>::new(
+                    DummyPreprocessing::<ResiduePolyF8Z128, AesRng, LargeSession>::new(
                         42,
                         session.clone(),
                     );
-                let mut preproc64 = DummyPreprocessing::<ResiduePoly64, AesRng, LargeSession>::new(
-                    42,
-                    session.clone(),
-                );
+                let mut preproc64 =
+                    DummyPreprocessing::<ResiduePolyF8Z64, AesRng, LargeSession>::new(
+                        42,
+                        session.clone(),
+                    );
                 let out = reshare_sk_same_sets(
                     &mut preproc128,
                     &mut preproc64,
@@ -562,7 +572,7 @@ mod tests {
         assert_eq!(actual_sk, expected_sk);
 
         // check old shares are zero
-        let zero_share = vec![ResiduePoly128::ZERO; old_shares[0].data.len()];
+        let zero_share = vec![ResiduePolyF8Z128::ZERO; old_shares[0].data.len()];
         for old_share in old_shares {
             assert_eq!(old_share.data_as_raw_vec(), zero_share);
         }

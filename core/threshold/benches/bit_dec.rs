@@ -1,7 +1,7 @@
 use aes_prng::AesRng;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use distributed_decryption::algebra::base_ring::Z64;
-use distributed_decryption::algebra::residue_poly::ResiduePoly64;
+use distributed_decryption::algebra::galois_rings::degree_8::ResiduePolyF8Z64;
 use distributed_decryption::execution::endpoints::decryption::{
     init_prep_bitdec_large, init_prep_bitdec_small,
 };
@@ -43,9 +43,9 @@ impl std::fmt::Display for OneShotConfig {
 /// TODO(Dragos) Add pub types for different prep modes.
 ///
 /// Helper method to get a sharing of a simple u64 value
-fn get_my_share(val: u64, n: usize, threshold: usize, my_id: usize) -> Share<ResiduePoly64> {
+fn get_my_share(val: u64, n: usize, threshold: usize, my_id: usize) -> Share<ResiduePolyF8Z64> {
     let mut rng = AesRng::seed_from_u64(val);
-    let secret = ResiduePoly64::from_scalar(Wrapping(val));
+    let secret = ResiduePolyF8Z64::from_scalar(Wrapping(val));
     let shares = ShamirSharings::share(&mut rng, secret, n, threshold)
         .unwrap()
         .shares;
@@ -69,7 +69,7 @@ fn bit_dec_online(c: &mut Criterion) {
                 b.iter(|| {
                     let mut computation = |mut session: LargeSession| async move {
                         let mut prep =
-                            DummyPreprocessing::<ResiduePoly64, AesRng, LargeSession>::new(
+                            DummyPreprocessing::<ResiduePolyF8Z64, AesRng, LargeSession>::new(
                                 42,
                                 session.clone(),
                             );
@@ -90,7 +90,7 @@ fn bit_dec_online(c: &mut Criterion) {
                     };
 
                     //Async is fine because we use Dummy preprocessing
-                    let _result = execute_protocol_large::<ResiduePoly64, _, _>(
+                    let _result = execute_protocol_large::<ResiduePolyF8Z64, _, _>(
                         config.n,
                         config.t,
                         None,
@@ -122,7 +122,7 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
             &config,
             |b, &config| {
                 b.iter(|| {
-                    let mut computation = |mut session: SmallSession<ResiduePoly64>| async move {
+                    let mut computation = |mut session: SmallSession<ResiduePolyF8Z64>| async move {
                         let mut bitdec_prep =
                             init_prep_bitdec_small(&mut session, config.batch_size)
                                 .await
@@ -149,7 +149,7 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
                     };
 
                     //Need Sync network because we execute preprocessing
-                    let _result = execute_protocol_small::<ResiduePoly64, _, _>(
+                    let _result = execute_protocol_small::<ResiduePolyF8Z64, _, _>(
                         config.n,
                         config.t as u8,
                         None,
@@ -207,7 +207,7 @@ fn bit_dec_large_e2e(c: &mut Criterion) {
                     };
 
                     //Need Sync network because we execute preprocessing
-                    let _result = execute_protocol_large::<ResiduePoly64, _, _>(
+                    let _result = execute_protocol_large::<ResiduePolyF8Z64, _, _>(
                         config.n,
                         config.t,
                         None,

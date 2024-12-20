@@ -5,7 +5,7 @@ use tfhe::core_crypto::commons::{
 };
 
 use crate::{
-    algebra::{residue_poly::ResiduePoly, structure_traits::BaseRing},
+    algebra::{galois_rings::degree_8::ResiduePolyF8, structure_traits::BaseRing},
     error::error_handler::anyhow_error_and_log,
 };
 
@@ -20,17 +20,17 @@ use super::{
 /// - body is the b part, in it's shared domain so a [`ResiduePoly`]
 pub struct LweCiphertextShare<Z: BaseRing> {
     pub mask: Vec<Z>,
-    pub body: ResiduePoly<Z>,
+    pub body: ResiduePolyF8<Z>,
 }
 
 impl<Z: BaseRing> LweCiphertextShare<Z> {
     pub fn new(lwe_size: LweSize) -> Self {
         Self {
             mask: vec![Z::default(); lwe_size.to_lwe_dimension().0],
-            body: ResiduePoly::default(),
+            body: ResiduePolyF8::default(),
         }
     }
-    pub fn get_mut_mask_and_body(&mut self) -> (&mut Vec<Z>, &mut ResiduePoly<Z>) {
+    pub fn get_mut_mask_and_body(&mut self) -> (&mut Vec<Z>, &mut ResiduePolyF8<Z>) {
         (&mut self.mask, &mut self.body)
     }
 
@@ -42,7 +42,7 @@ impl<Z: BaseRing> LweCiphertextShare<Z> {
 pub fn encrypt_lwe_ciphertext<Gen, Z>(
     lwe_secret_key_share: &LweSecretKeyShare<Z>,
     output: &mut LweCiphertextShare<Z>,
-    encoded: ResiduePoly<Z>,
+    encoded: ResiduePolyF8<Z>,
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen>,
 ) -> anyhow::Result<()>
 where
@@ -57,7 +57,7 @@ where
 pub fn encrypt_lwe_ciphertext_list<Gen, Z>(
     lwe_secret_key_share: &LweSecretKeyShare<Z>,
     output: &mut [LweCiphertextShare<Z>],
-    encoded: &[ResiduePoly<Z>],
+    encoded: &[ResiduePolyF8<Z>],
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen>,
 ) -> anyhow::Result<()>
 where
@@ -93,8 +93,8 @@ where
 fn fill_lwe_mask_and_body_for_encryption<Z, Gen>(
     lwe_secret_key_share: &LweSecretKeyShare<Z>,
     output_mask: &mut [Z],
-    output_body: &mut ResiduePoly<Z>,
-    encoded: ResiduePoly<Z>,
+    output_body: &mut ResiduePolyF8<Z>,
+    encoded: ResiduePolyF8<Z>,
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen>,
 ) -> anyhow::Result<()>
 where
@@ -145,7 +145,7 @@ mod tests {
     };
 
     use crate::{
-        algebra::residue_poly::ResiduePoly64,
+        algebra::galois_rings::degree_8::ResiduePolyF8Z64,
         execution::{
             online::{
                 gen_bits::{BitGenEven, RealBitGenEven},
@@ -189,7 +189,7 @@ mod tests {
             let my_role = session.my_role().unwrap();
             let encoded_message = ShamirSharings::share(
                 &mut AesRng::seed_from_u64(0),
-                ResiduePoly64::from_scalar(Wrapping(msg << scaling)),
+                ResiduePolyF8Z64::from_scalar(Wrapping(msg << scaling)),
                 session.num_parties(),
                 session.threshold() as usize,
             )
@@ -239,7 +239,7 @@ mod tests {
         //This is Async because triples are generated from dummy preprocessing
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let results = execute_protocol_large::<ResiduePoly64, _, _>(
+        let results = execute_protocol_large::<ResiduePolyF8Z64, _, _>(
             parties,
             threshold,
             None,

@@ -7,7 +7,7 @@ use tfhe::{
 use tfhe_versionable::VersionsDispatch;
 
 use crate::{
-    algebra::{residue_poly::ResiduePoly, structure_traits::BaseRing},
+    algebra::{galois_rings::degree_8::ResiduePolyF8, structure_traits::BaseRing},
     execution::online::preprocessing::BitPreprocessing,
 };
 
@@ -28,7 +28,7 @@ pub struct CompressionPrivateKeyShares<Z: Clone> {
 }
 
 impl<Z: BaseRing> CompressionPrivateKeyShares<Z> {
-    pub fn new_from_preprocessing<P: BitPreprocessing<ResiduePoly<Z>> + ?Sized>(
+    pub fn new_from_preprocessing<P: BitPreprocessing<ResiduePolyF8<Z>> + ?Sized>(
         params: CompressionParameters,
         preprocessing: &mut P,
     ) -> anyhow::Result<Self> {
@@ -44,7 +44,7 @@ impl<Z: BaseRing> CompressionPrivateKeyShares<Z> {
         })
     }
 
-    pub fn data_as_raw_vec(&self) -> Vec<ResiduePoly<Z>> {
+    pub fn data_as_raw_vec(&self) -> Vec<ResiduePolyF8<Z>> {
         self.post_packing_ks_key.data_as_raw_vec()
     }
 

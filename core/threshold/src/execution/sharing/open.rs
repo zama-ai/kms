@@ -306,7 +306,9 @@ mod test {
     use crate::execution::sharing::shamir::InputOp;
     use crate::networking::NetworkMode;
     use crate::{
-        algebra::{residue_poly::ResiduePoly, residue_poly::ResiduePoly128},
+        algebra::{
+            galois_rings::degree_8::ResiduePolyF8, galois_rings::degree_8::ResiduePolyF8Z128,
+        },
         execution::{
             runtime::session::{LargeSession, ParameterHandles},
             sharing::{open::robust_opens_to_all, shamir::ShamirSharings},
@@ -314,7 +316,7 @@ mod test {
         tests::helper::tests_and_benches::execute_protocol_large,
     };
 
-    async fn open_task(session: LargeSession) -> Vec<ResiduePoly128> {
+    async fn open_task(session: LargeSession) -> Vec<ResiduePolyF8Z128> {
         let parties = 4;
         let threshold = 1;
         let num_secrets = 10;
@@ -323,7 +325,7 @@ mod test {
             .map(|idx| {
                 ShamirSharings::share(
                     &mut rng,
-                    ResiduePoly::from_scalar(Wrapping(idx)),
+                    ResiduePolyF8::from_scalar(Wrapping(idx)),
                     parties,
                     threshold,
                 )
@@ -350,7 +352,7 @@ mod test {
         let threshold = 1;
         // expect a single round for opening
 
-        let _ = execute_protocol_large::<ResiduePoly128, _, _>(
+        let _ = execute_protocol_large::<ResiduePolyF8Z128, _, _>(
             parties,
             threshold,
             Some(1),
@@ -368,7 +370,7 @@ mod test {
 
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let _ = execute_protocol_large::<ResiduePoly128, _, _>(
+        let _ = execute_protocol_large::<ResiduePolyF8Z128, _, _>(
             parties,
             threshold,
             Some(1),

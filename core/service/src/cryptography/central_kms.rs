@@ -684,7 +684,7 @@ impl<
     ) -> anyhow::Result<Vec<u8>> {
         let plaintext = Self::decrypt(keys, ct, fhe_type)?;
         // Observe that we encrypt the plaintext itself, this is different from the threshold case
-        // where it is first mapped to a Vec<Residuepoly<Z128>> element
+        // where it is first mapped to a Vec<ResiduePolyF8<Z128>> element
         let signcryption_msg = SigncryptionPayload {
             plaintext,
             link: link.to_vec(),

@@ -90,6 +90,19 @@ where
     fn invert(&self) -> Self;
 }
 
+pub trait QuotientMaximalIdeal: Ring {
+    type QuotientOutput: Field + From<u8> + Into<u8>;
+    const QUOTIENT_OUTPUT_SIZE: usize;
+
+    fn bit_compose(&self, idx_bit: usize) -> Self::QuotientOutput;
+
+    fn bit_lift(x: Self::QuotientOutput, pos: usize) -> anyhow::Result<Self>;
+
+    fn bit_lift_from_idx(idx: usize, pos: usize) -> anyhow::Result<Self>;
+
+    fn embed_quotient_exceptional_set(x: Self::QuotientOutput) -> anyhow::Result<Self>;
+}
+
 ///Trait required to be able to reconstruct a shamir sharing
 pub trait Syndrome: Ring {
     fn syndrome_decode(
@@ -125,6 +138,11 @@ pub trait ErrorCorrect: Ring + RingEmbed {
 }
 
 pub trait Derive: Sized {
+    /// Domain separator for the function `derive_challenges_from_coinflip`.
+    ///
+    /// "LDS" stands for local double sharing
+    /// but this is also used for local single sharing in the NIST spec.
+    const DSEP_LDS: &[u8] = b"LDS";
     const SIZE_EXCEPTIONAL_SET: usize;
     /// This is known as H_{LDS} from the NIST spec.
     fn derive_challenges_from_coinflip(
@@ -137,4 +155,8 @@ pub trait Derive: Sized {
 
 pub trait Solve: Sized + ZConsts {
     fn solve(v: &Self) -> anyhow::Result<Self>;
+}
+
+pub trait Solve1: Sized {
+    fn solve_1(v: &Self) -> anyhow::Result<Self>;
 }

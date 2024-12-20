@@ -15,8 +15,8 @@ use self::gen::{
 };
 
 use crate::algebra::base_ring::Z64;
-use crate::algebra::residue_poly::ResiduePoly128;
-use crate::algebra::residue_poly::ResiduePoly64;
+use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z128;
+use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z64;
 use crate::algebra::structure_traits::{ErrorCorrect, Invert, RingEmbed};
 use crate::choreography::requests::{
     CrsGenParams, PreprocDecryptParams, PreprocKeyGenParams, PrssInitParams, SessionType, Status,
@@ -62,21 +62,21 @@ use tracing::{instrument, Instrument};
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug, ValueEnum, Serialize, Deserialize)]
 pub enum SupportedRing {
-    ResiduePoly64,
-    ResiduePoly128,
+    ResiduePolyF8Z64,
+    ResiduePolyF8Z128,
 }
 
 #[derive(Clone)]
 enum SupportedPRSSSetup {
-    //NOTE: For now we never deal with ResiduePoly64 option
-    ResiduePoly64(PRSSSetup<ResiduePoly64>),
-    ResiduePoly128(PRSSSetup<ResiduePoly128>),
+    //NOTE: For now we never deal with ResiduePolyF8Z64 option
+    ResiduePolyF8Z64(PRSSSetup<ResiduePolyF8Z64>),
+    ResiduePolyF8Z128(PRSSSetup<ResiduePolyF8Z128>),
 }
 
 impl SupportedPRSSSetup {
-    fn get_poly64(&self) -> Result<PRSSSetup<ResiduePoly64>, tonic::Status> {
+    fn get_poly64(&self) -> Result<PRSSSetup<ResiduePolyF8Z64>, tonic::Status> {
         match self {
-            SupportedPRSSSetup::ResiduePoly64(res) => Ok(res.clone()),
+            SupportedPRSSSetup::ResiduePolyF8Z64(res) => Ok(res.clone()),
             _ => Err(tonic::Status::new(
                 tonic::Code::Aborted,
                 "Can not retrieve PRSS init for poly64, make sure you init it first",
@@ -84,9 +84,9 @@ impl SupportedPRSSSetup {
         }
     }
 
-    fn get_poly128(&self) -> Result<PRSSSetup<ResiduePoly128>, tonic::Status> {
+    fn get_poly128(&self) -> Result<PRSSSetup<ResiduePolyF8Z128>, tonic::Status> {
         match self {
-            SupportedPRSSSetup::ResiduePoly128(res) => Ok(res.clone()),
+            SupportedPRSSSetup::ResiduePolyF8Z128(res) => Ok(res.clone()),
             _ => Err(tonic::Status::new(
                 tonic::Code::Aborted,
                 "Can not retrieve PRSS init for poly128, make sure you init it first",
@@ -96,9 +96,9 @@ impl SupportedPRSSSetup {
 }
 
 type DKGPreprocRegularStore =
-    DashMap<SessionId, (DKGParams, Box<dyn DKGPreprocessing<ResiduePoly64>>)>;
+    DashMap<SessionId, (DKGParams, Box<dyn DKGPreprocessing<ResiduePolyF8Z64>>)>;
 type DKGPreprocSnsStore =
-    DashMap<SessionId, (DKGParams, Box<dyn DKGPreprocessing<ResiduePoly128>>)>;
+    DashMap<SessionId, (DKGParams, Box<dyn DKGPreprocessing<ResiduePolyF8Z128>>)>;
 type KeyStore = DashMap<SessionId, Arc<(FhePubKeySet, PrivateKeySet)>>;
 type DDecPreprocNFStore = DashMap<SessionId, Box<dyn NoiseFloodPreprocessing>>;
 type DDecPreprocBitDecStore = DashMap<SessionId, Box<dyn BitDecPreprocessing>>;
@@ -210,38 +210,38 @@ impl Choreography for GrpcChoreography {
 
         let store = self.data.prss_setup.clone();
         match ring {
-            SupportedRing::ResiduePoly128 => {
+            SupportedRing::ResiduePolyF8Z128 => {
                 let my_future = || async move {
-                    let prss_setup = PRSSSetup::<ResiduePoly128>::robust_init(
+                    let prss_setup = PRSSSetup::<ResiduePolyF8Z128>::robust_init(
                         &mut base_session,
                         &RealVss::default(),
                     )
                     .await
                     .unwrap();
                     store.insert(
-                        SupportedRing::ResiduePoly128,
-                        SupportedPRSSSetup::ResiduePoly128(prss_setup),
+                        SupportedRing::ResiduePolyF8Z128,
+                        SupportedPRSSSetup::ResiduePolyF8Z128(prss_setup),
                     );
-                    tracing::info!("PRSS Setup for ResiduePoly128 Done.");
+                    tracing::info!("PRSS Setup for ResiduePolyF8Z128 Done.");
                 };
                 self.data.status_store.insert(
                     session_id,
                     tokio::spawn(my_future().instrument(tracing::Span::current())),
                 );
             }
-            SupportedRing::ResiduePoly64 => {
+            SupportedRing::ResiduePolyF8Z64 => {
                 let my_future = || async move {
-                    let prss_setup = PRSSSetup::<ResiduePoly64>::robust_init(
+                    let prss_setup = PRSSSetup::<ResiduePolyF8Z64>::robust_init(
                         &mut base_session,
                         &RealVss::default(),
                     )
                     .await
                     .unwrap();
                     store.insert(
-                        SupportedRing::ResiduePoly64,
-                        SupportedPRSSSetup::ResiduePoly64(prss_setup),
+                        SupportedRing::ResiduePolyF8Z64,
+                        SupportedPRSSSetup::ResiduePolyF8Z64(prss_setup),
                     );
-                    tracing::info!("PRSS Setup for ResiduePoly64 Done.");
+                    tracing::info!("PRSS Setup for ResiduePolyF8Z64 Done.");
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -341,7 +341,7 @@ impl Choreography for GrpcChoreography {
                 let prss_setup = self
                     .data
                     .prss_setup
-                    .get(&SupportedRing::ResiduePoly64)
+                    .get(&SupportedRing::ResiduePolyF8Z64)
                     .ok_or_else(|| {
                         tonic::Status::new(
                             tonic::Code::Aborted,
@@ -356,7 +356,7 @@ impl Choreography for GrpcChoreography {
                     let orchestrator = {
                         let mut factory_guard = factory.try_lock().unwrap();
                         let factory = factory_guard.as_mut();
-                        PreprocessingOrchestrator::<ResiduePoly64>::new(factory, dkg_params)
+                        PreprocessingOrchestrator::<ResiduePolyF8Z64>::new(factory, dkg_params)
                             .unwrap()
                     };
                     let (_sessions, preproc) = {
@@ -382,7 +382,7 @@ impl Choreography for GrpcChoreography {
                     let orchestrator = {
                         let mut factory_guard = factory.try_lock().unwrap();
                         let factory = factory_guard.as_mut();
-                        PreprocessingOrchestrator::<ResiduePoly64>::new(factory, dkg_params)
+                        PreprocessingOrchestrator::<ResiduePolyF8Z64>::new(factory, dkg_params)
                             .unwrap()
                     };
                     let (_sessions, preproc) = {
@@ -404,7 +404,7 @@ impl Choreography for GrpcChoreography {
                 let prss_setup = self
                     .data
                     .prss_setup
-                    .get(&SupportedRing::ResiduePoly128)
+                    .get(&SupportedRing::ResiduePolyF8Z128)
                     .ok_or_else(|| {
                         tonic::Status::new(
                             tonic::Code::Aborted,
@@ -418,7 +418,7 @@ impl Choreography for GrpcChoreography {
                     let orchestrator = {
                         let mut factory_guard = factory.try_lock().unwrap();
                         let factory = factory_guard.as_mut();
-                        PreprocessingOrchestrator::<ResiduePoly128>::new(factory, dkg_params)
+                        PreprocessingOrchestrator::<ResiduePolyF8Z128>::new(factory, dkg_params)
                             .unwrap()
                     };
                     let (_sessions, preproc) = {
@@ -441,7 +441,7 @@ impl Choreography for GrpcChoreography {
                     let orchestrator = {
                         let mut factory_guard = factory.try_lock().unwrap();
                         let factory = factory_guard.as_mut();
-                        PreprocessingOrchestrator::<ResiduePoly128>::new(factory, dkg_params)
+                        PreprocessingOrchestrator::<ResiduePolyF8Z128>::new(factory, dkg_params)
                             .unwrap()
                     };
                     let (_sessions, preproc) = {
@@ -802,7 +802,7 @@ impl Choreography for GrpcChoreography {
                 let prss_state = self
                     .data
                     .prss_setup
-                    .get(&SupportedRing::ResiduePoly64)
+                    .get(&SupportedRing::ResiduePolyF8Z64)
                     .ok_or_else(|| {
                         tonic::Status::new(
                             tonic::Code::Aborted,
@@ -835,7 +835,7 @@ impl Choreography for GrpcChoreography {
                 let prss_state = self
                     .data
                     .prss_setup
-                    .get(&SupportedRing::ResiduePoly128)
+                    .get(&SupportedRing::ResiduePolyF8Z128)
                     .ok_or_else(|| {
                         tonic::Status::new(
                             tonic::Code::Aborted,

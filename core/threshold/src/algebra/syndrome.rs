@@ -175,7 +175,7 @@ pub fn decode_syndrome<F: Field>(syndrome: &Poly<F>, x_alpha: &[F], r: usize) ->
 mod tests {
     use super::*;
     use crate::algebra::{
-        gf256::GF256,
+        galois_fields::gf256::GF256,
         poly::{gao_decoding, lagrange_interpolation},
         structure_traits::Zero,
     };

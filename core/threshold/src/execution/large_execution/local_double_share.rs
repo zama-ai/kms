@@ -341,7 +341,7 @@ pub(crate) mod tests {
     use crate::algebra::structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingEmbed};
     use crate::execution::sharing::shamir::RevealOp;
     use crate::{
-        algebra::residue_poly::{ResiduePoly128, ResiduePoly64},
+        algebra::galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
         networking::NetworkMode,
     };
     use crate::{
@@ -675,8 +675,8 @@ pub(crate) mod tests {
     fn test_ldl_z128(#[case] params: TestingParameters) {
         let malicious_ldl = RealLocalDoubleShare::<TrueCoinFlip, RealShareDispute>::default();
 
-        test_ldl_strategies::<ResiduePoly64, _>(params.clone(), malicious_ldl.clone());
-        test_ldl_strategies::<ResiduePoly128, _>(params.clone(), malicious_ldl.clone());
+        test_ldl_strategies::<ResiduePolyF8Z64, _>(params.clone(), malicious_ldl.clone());
+        test_ldl_strategies::<ResiduePolyF8Z128, _>(params.clone(), malicious_ldl.clone());
     }
 
     #[cfg(feature = "slow_tests")]
@@ -714,8 +714,8 @@ pub(crate) mod tests {
             coinflip: coinflip_strategy,
             share_dispute: share_dispute_strategy,
         };
-        test_ldl_strategies::<ResiduePoly64, _>(params.clone(), malicious_ldl.clone());
-        test_ldl_strategies::<ResiduePoly128, _>(params.clone(), malicious_ldl.clone());
+        test_ldl_strategies::<ResiduePolyF8Z64, _>(params.clone(), malicious_ldl.clone());
+        test_ldl_strategies::<ResiduePolyF8Z128, _>(params.clone(), malicious_ldl.clone());
     }
 
     #[cfg(feature = "slow_tests")]
@@ -747,8 +747,8 @@ pub(crate) mod tests {
             coinflip: coinflip_strategy,
             share_dispute: share_dispute_strategy,
         };
-        test_ldl_strategies::<ResiduePoly64, _>(params.clone(), malicious_ldl.clone());
-        test_ldl_strategies::<ResiduePoly128, _>(params.clone(), malicious_ldl.clone());
+        test_ldl_strategies::<ResiduePolyF8Z64, _>(params.clone(), malicious_ldl.clone());
+        test_ldl_strategies::<ResiduePolyF8Z128, _>(params.clone(), malicious_ldl.clone());
     }
 
     #[cfg(feature = "slow_tests")]
@@ -767,8 +767,8 @@ pub(crate) mod tests {
             coinflip: coinflip_strategy,
             share_dispute: share_dispute_strategy,
         };
-        test_ldl_strategies::<ResiduePoly64, _>(params.clone(), malicious_ldl.clone());
-        test_ldl_strategies::<ResiduePoly128, _>(params.clone(), malicious_ldl.clone());
+        test_ldl_strategies::<ResiduePolyF8Z64, _>(params.clone(), malicious_ldl.clone());
+        test_ldl_strategies::<ResiduePolyF8Z128, _>(params.clone(), malicious_ldl.clone());
     }
 
     //Tests for when some parties lie about shares they received
@@ -806,8 +806,8 @@ pub(crate) mod tests {
             share_dispute: share_dispute_strategy,
             roles_to_lie_to: roles_from_idxs(&params.roles_to_lie_to),
         };
-        test_ldl_strategies::<ResiduePoly64, _>(params.clone(), malicious_ldl.clone());
-        test_ldl_strategies::<ResiduePoly128, _>(params.clone(), malicious_ldl.clone());
+        test_ldl_strategies::<ResiduePolyF8Z64, _>(params.clone(), malicious_ldl.clone());
+        test_ldl_strategies::<ResiduePolyF8Z128, _>(params.clone(), malicious_ldl.clone());
     }
 
     //Tests for when some parties lie about shares they sent
@@ -844,7 +844,7 @@ pub(crate) mod tests {
             share_dispute: share_dispute_strategy,
             roles_to_lie_to: roles_from_idxs(&params.roles_to_lie_to),
         };
-        test_ldl_strategies::<ResiduePoly64, _>(params.clone(), malicious_ldl.clone());
-        test_ldl_strategies::<ResiduePoly128, _>(params.clone(), malicious_ldl.clone());
+        test_ldl_strategies::<ResiduePolyF8Z64, _>(params.clone(), malicious_ldl.clone());
+        test_ldl_strategies::<ResiduePolyF8Z128, _>(params.clone(), malicious_ldl.clone());
     }
 }

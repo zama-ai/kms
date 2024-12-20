@@ -11,7 +11,7 @@ use tfhe::{
 
 use crate::{
     algebra::{
-        residue_poly::ResiduePoly,
+        galois_rings::degree_8::ResiduePolyF8,
         structure_traits::{BaseRing, ErrorCorrect},
     },
     error::error_handler::anyhow_error_and_log,
@@ -80,7 +80,7 @@ impl<Z: BaseRing> LwePackingKeyswitchKeyShares<Z> {
 
 impl<Z: BaseRing> LwePackingKeyswitchKeyShares<Z>
 where
-    ResiduePoly<Z>: ErrorCorrect,
+    ResiduePolyF8<Z>: ErrorCorrect,
 {
     pub async fn open_to_tfhers_type<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         self,

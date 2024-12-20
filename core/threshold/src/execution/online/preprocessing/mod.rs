@@ -1,6 +1,6 @@
 use self::redis::{redis_factory, CorrelatedRandomnessType, RedisConf};
 use super::triple::Triple;
-use crate::algebra::residue_poly::{ResiduePoly128, ResiduePoly64};
+use crate::algebra::galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64};
 use crate::execution::online::preprocessing::memory::memory_factory;
 use crate::execution::runtime::session::{BaseSession, SmallSession};
 use crate::execution::tfhe_internals::parameters::{DKGParams, NoiseBounds, TUniformBound};
@@ -87,7 +87,7 @@ pub trait BitPreprocessing<Z: Ring>: Send + Sync {
 ///
 /// Used in [`crate::execution::endpoints::decryption::run_decryption_bitdec`]
 pub trait BitDecPreprocessing:
-    BitPreprocessing<ResiduePoly64> + TriplePreprocessing<ResiduePoly64>
+    BitPreprocessing<ResiduePolyF8Z64> + TriplePreprocessing<ResiduePolyF8Z64>
 {
     //For ctxt space Z_2^k need k + 3k log2(k) + 1 (raw) triples
     fn num_required_triples(&self, num_ctxts: usize) -> usize {
@@ -101,7 +101,7 @@ pub trait BitDecPreprocessing:
 
     async fn fill_from_base_preproc(
         &mut self,
-        preprocessing: &mut dyn BasePreprocessing<ResiduePoly64>,
+        preprocessing: &mut dyn BasePreprocessing<ResiduePolyF8Z64>,
         session: &mut BaseSession,
         num_ctxts: usize,
     ) -> anyhow::Result<()>;
@@ -113,21 +113,21 @@ pub trait BitDecPreprocessing:
 /// Used in [`crate::execution::endpoints::decryption::run_decryption_noiseflood`]
 #[async_trait]
 pub trait NoiseFloodPreprocessing: Send + Sync {
-    fn append_masks(&mut self, masks: Vec<ResiduePoly128>);
-    fn next_mask(&mut self) -> anyhow::Result<ResiduePoly128>;
-    fn next_mask_vec(&mut self, amount: usize) -> anyhow::Result<Vec<ResiduePoly128>>;
+    fn append_masks(&mut self, masks: Vec<ResiduePolyF8Z128>);
+    fn next_mask(&mut self) -> anyhow::Result<ResiduePolyF8Z128>;
+    fn next_mask_vec(&mut self, amount: usize) -> anyhow::Result<Vec<ResiduePolyF8Z128>>;
 
     /// Fill the masks directly from the [`crate::execution::small_execution::prss::PRSSState`] available from [`SmallSession`]
     fn fill_from_small_session(
         &mut self,
-        session: &mut SmallSession<ResiduePoly128>,
+        session: &mut SmallSession<ResiduePolyF8Z128>,
         amount: usize,
     ) -> anyhow::Result<()>;
 
     /// Fill the masks by first generating bits via triples and randomness provided by [`BasePreprocessing`]
     async fn fill_from_base_preproc(
         &mut self,
-        preprocessing: &mut dyn BasePreprocessing<ResiduePoly128>,
+        preprocessing: &mut dyn BasePreprocessing<ResiduePolyF8Z128>,
         session: &mut BaseSession,
         num_ctxts: usize,
     ) -> anyhow::Result<()>;
@@ -136,7 +136,7 @@ pub trait NoiseFloodPreprocessing: Send + Sync {
     /// using [`crate::execution::online::secret_distributions::SecretDistributions`]
     fn fill_from_bits_preproc(
         &mut self,
-        bit_preproc: &mut dyn BitPreprocessing<ResiduePoly128>,
+        bit_preproc: &mut dyn BitPreprocessing<ResiduePolyF8Z128>,
         num_ctxts: usize,
     ) -> anyhow::Result<()>;
 }
@@ -228,18 +228,23 @@ pub trait DKGPreprocessing<Z: Ring>: BasePreprocessing<Z> + BitPreprocessing<Z> 
 }
 
 pub trait PreprocessorFactory: Sync + Send {
-    fn create_bit_preprocessing_residue_64(&mut self) -> Box<dyn BitPreprocessing<ResiduePoly64>>;
-    fn create_bit_preprocessing_residue_128(&mut self)
-        -> Box<dyn BitPreprocessing<ResiduePoly128>>;
-    fn create_base_preprocessing_residue_64(&mut self)
-        -> Box<dyn BasePreprocessing<ResiduePoly64>>;
+    fn create_bit_preprocessing_residue_64(
+        &mut self,
+    ) -> Box<dyn BitPreprocessing<ResiduePolyF8Z64>>;
+    fn create_bit_preprocessing_residue_128(
+        &mut self,
+    ) -> Box<dyn BitPreprocessing<ResiduePolyF8Z128>>;
+    fn create_base_preprocessing_residue_64(
+        &mut self,
+    ) -> Box<dyn BasePreprocessing<ResiduePolyF8Z64>>;
     fn create_base_preprocessing_residue_128(
         &mut self,
-    ) -> Box<dyn BasePreprocessing<ResiduePoly128>>;
+    ) -> Box<dyn BasePreprocessing<ResiduePolyF8Z128>>;
     fn create_bit_decryption_preprocessing(&mut self) -> Box<dyn BitDecPreprocessing>;
     fn create_noise_flood_preprocessing(&mut self) -> Box<dyn NoiseFloodPreprocessing>;
-    fn create_dkg_preprocessing_no_sns(&mut self) -> Box<dyn DKGPreprocessing<ResiduePoly64>>;
-    fn create_dkg_preprocessing_with_sns(&mut self) -> Box<dyn DKGPreprocessing<ResiduePoly128>>;
+    fn create_dkg_preprocessing_no_sns(&mut self) -> Box<dyn DKGPreprocessing<ResiduePolyF8Z64>>;
+    fn create_dkg_preprocessing_with_sns(&mut self)
+        -> Box<dyn DKGPreprocessing<ResiduePolyF8Z128>>;
 }
 
 /// Returns a default factory for the global preprocessor

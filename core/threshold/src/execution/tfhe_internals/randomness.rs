@@ -1,5 +1,5 @@
 use crate::{
-    algebra::{residue_poly::ResiduePoly, structure_traits::BaseRing},
+    algebra::{galois_rings::degree_8::ResiduePolyF8, structure_traits::BaseRing},
     error::error_handler::anyhow_error_and_log,
 };
 
@@ -34,7 +34,7 @@ pub struct MPCEncryptionRandomGenerator<Z: BaseRing, Gen: ByteRandomGenerator> {
 
 #[derive(Default)]
 pub struct MPCNoiseRandomGenerator<Z: BaseRing> {
-    pub vec: Vec<ResiduePoly<Z>>,
+    pub vec: Vec<ResiduePolyF8<Z>>,
 }
 
 pub struct MPCMaskRandomGenerator<Gen: ByteRandomGenerator> {
@@ -42,7 +42,7 @@ pub struct MPCMaskRandomGenerator<Gen: ByteRandomGenerator> {
 }
 
 impl<Z: BaseRing> MPCNoiseRandomGenerator<Z> {
-    pub(crate) fn random_noise_custom_mod(&mut self) -> ResiduePoly<Z> {
+    pub(crate) fn random_noise_custom_mod(&mut self) -> ResiduePolyF8<Z> {
         self.vec.pop().expect("Not enough noise in the RNG")
     }
 
@@ -186,11 +186,11 @@ impl<Z: BaseRing, Gen: ByteRandomGenerator> MPCEncryptionRandomGenerator<Z, Gen>
         }
     }
 
-    pub(crate) fn fill_noise(&mut self, fill_with: Vec<ResiduePoly<Z>>) {
+    pub(crate) fn fill_noise(&mut self, fill_with: Vec<ResiduePolyF8<Z>>) {
         self.noise = MPCNoiseRandomGenerator { vec: fill_with };
     }
 
-    pub(crate) fn random_noise_custom_mod(&mut self) -> ResiduePoly<Z> {
+    pub(crate) fn random_noise_custom_mod(&mut self) -> ResiduePolyF8<Z> {
         self.noise.random_noise_custom_mod()
     }
 
@@ -207,7 +207,7 @@ impl<Z: BaseRing, Gen: ByteRandomGenerator> MPCEncryptionRandomGenerator<Z, Gen>
     ///Pop the noise to fill the noise part
     pub fn unsigned_torus_slice_wrapping_add_random_noise_custom_mod_assign(
         &mut self,
-        output_body: &mut [ResiduePoly<Z>],
+        output_body: &mut [ResiduePolyF8<Z>],
     ) -> anyhow::Result<()> {
         for elem in output_body.iter_mut() {
             *elem += self

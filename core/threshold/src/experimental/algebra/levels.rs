@@ -1,4 +1,4 @@
-use crate::algebra::gf256::error_correction;
+use crate::algebra::error_correction::error_correction;
 use crate::algebra::poly::lagrange_polynomials;
 use crate::algebra::poly::Poly;
 use crate::algebra::structure_traits::ErrorCorrect;

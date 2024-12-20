@@ -1,16 +1,11 @@
 use std::collections::HashMap;
 
-use crate::{
-    algebra::poly::lagrange_polynomials, error::error_handler::anyhow_error_and_log,
-    execution::sharing::shamir::ShamirFieldPoly,
-};
+use crate::{algebra::poly::lagrange_polynomials, error::error_handler::anyhow_error_and_log};
 
-use super::{
-    poly::{gao_decoding, Poly},
+use crate::algebra::{
+    poly::Poly,
     structure_traits::{Field, FromU128, One, Ring, Sample, Zero},
-    syndrome::decode_syndrome,
 };
-use crate::execution::sharing::shamir::ShamirSharing;
 use g2p::{g2p, GaloisField};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
@@ -135,59 +130,56 @@ impl Field for GF256 {
     }
 }
 
-pub fn error_correction<F: Field>(
-    shares: &[ShamirSharing<F>],
-    degree: usize,
-    max_errs: usize,
-) -> anyhow::Result<ShamirFieldPoly<F>> {
-    let xs: Vec<F> = shares
-        .iter()
-        .map(|s| F::from_u128(s.party_id.into()))
-        .collect();
-    let ys: Vec<F> = shares.iter().map(|s| s.share).collect();
-
-    // call Gao decoding with the shares as points/values, set Gao parameter k = v = degree+1
-    gao_decoding(&xs, &ys, degree + 1, max_errs)
-}
-
-pub fn syndrome_decoding_z2(
-    parties: &[usize],
-    syndrome: &ShamirFieldPoly<GF256>,
-    threshold: usize,
-) -> Vec<GF256> {
-    let xs: Vec<GF256> = parties.iter().map(|s| GF256::from(*s as u8)).collect();
-    let r = parties.len() - (threshold + 1);
-    decode_syndrome(syndrome, &xs, r)
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::execution::sharing::shamir::ShamirFieldPoly;
-
-    use super::*;
-
-    #[test]
-    fn test_error_correction() {
-        let f = ShamirFieldPoly::<GF256> {
-            coefs: vec![GF256::from(25), GF256::from(2), GF256::from(233)],
-        };
-
-        let num_parties = 7;
-        let threshold = f.coefs.len() - 1; // = 2 here
-        let max_err = (num_parties as usize - threshold) / 2; // = 2 here
-
-        let mut shares: Vec<_> = (1..=num_parties)
-            .map(|x| ShamirSharing::<GF256> {
-                share: f.eval(&GF256::from(x)),
-                party_id: x,
-            })
-            .collect();
-
-        // modify shares of parties 1 and 2
-        shares[1].share += GF256::from(9);
-        shares[2].share += GF256::from(254);
-
-        let secret_poly = error_correction(&shares, threshold, max_err).unwrap();
-        assert_eq!(secret_poly, f);
+/// Computes the vector which is input ^ (2^i) for i=0..max_power.
+/// I.e. input, input^2, input^4, input^8, ...
+pub fn two_powers(input: GF256, max_power: usize) -> Vec<GF256> {
+    let mut res = Vec::with_capacity(max_power);
+    let mut temp = input;
+    res.push(temp);
+    for _i in 1..max_power {
+        temp = temp * temp;
+        res.push(temp);
     }
+    res
+}
+
+// Expansion of inner loop needed for computing the initial value of x for Newton-Raphson.
+// Computed using the following code:
+// const TRACE_ONE: GF256 = GF256(42); // ... which is an element with trace 1
+// fn compute_inner_loop() -> [GF256; 7] {
+//     let delta_powers = two_powers(TRACE_ONE, D);
+//     let mut inner_loop: [GF256; (D - 1) as usize] = [GF256(0); (D - 1) as usize];
+//     for i in 0..(D - 1) {
+//         let mut inner_temp = GF256::from(0);
+//         for j in i + 1..D {
+//             inner_temp += delta_powers[j as usize];
+//         }
+//         inner_loop[i as usize] = inner_temp;
+//     }
+//     inner_loop
+// }
+pub static GF256_NEWTON_INNER_LOOP: [GF256; 7] = [
+    GF256(43),
+    GF256(3),
+    GF256(47),
+    GF256(19),
+    GF256(52),
+    GF256(77),
+    GF256(208),
+];
+
+lazy_static::lazy_static! {
+    //Pre-compute the set S defined in Fig.58 (i.e. GF256 from generator X+1)
+    pub static ref GF256_FROM_GENERATOR : Vec<GF256> =
+    {
+
+        let generator = GF256::from(3);
+         (0..256)
+            .scan(GF256::from(1), |state, idx| {
+                let res = if idx == 255 { GF256::from(0) } else { *state };
+                *state = res * generator;
+                Some(res)
+            })
+            .collect()
+    };
 }

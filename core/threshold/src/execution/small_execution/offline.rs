@@ -441,7 +441,7 @@ mod test {
     use crate::networking::NetworkMode;
     use crate::{
         algebra::{
-            residue_poly::{ResiduePoly, ResiduePoly128, ResiduePoly64},
+            galois_rings::degree_8::{ResiduePolyF8, ResiduePolyF8Z128, ResiduePolyF8Z64},
             structure_traits::{One, Zero},
         },
         execution::{
@@ -527,12 +527,12 @@ mod test {
 
     #[test]
     fn test_rand_generation_z128() {
-        test_rand_generation::<ResiduePoly128>();
+        test_rand_generation::<ResiduePolyF8Z128>();
     }
 
     #[test]
     fn test_rand_generation_z64() {
-        test_rand_generation::<ResiduePoly64>();
+        test_rand_generation::<ResiduePolyF8Z64>();
     }
 
     fn test_triple_generation<Z: Ring + RingEmbed + PRSSConversions + ErrorCorrect + Invert>() {
@@ -590,12 +590,12 @@ mod test {
 
     #[test]
     fn test_triple_generation_z128() {
-        test_triple_generation::<ResiduePoly128>();
+        test_triple_generation::<ResiduePolyF8Z128>();
     }
 
     #[test]
     fn test_triple_generation_z64() {
-        test_triple_generation::<ResiduePoly64>();
+        test_triple_generation::<ResiduePolyF8Z64>();
     }
 
     #[test]
@@ -603,7 +603,7 @@ mod test {
         let parties = 5;
         let threshold = 1;
 
-        async fn task(mut session: SmallSession<ResiduePoly128>) {
+        async fn task(mut session: SmallSession<ResiduePolyF8Z128>) {
             let batch_size = BatchParams {
                 triples: 3,
                 randoms: 2,
@@ -644,15 +644,17 @@ mod test {
         let d_recons = HashMap::from([
             (
                 Role::indexed_by_one(1),
-                BroadcastValue::RingVector(Vec::from([ResiduePoly128::from_scalar(Wrapping(42))])),
+                BroadcastValue::RingVector(Vec::from([ResiduePolyF8Z128::from_scalar(Wrapping(
+                    42,
+                ))])),
             ),
             (
                 Role::indexed_by_one(2),
-                BroadcastValue::RingValue(ResiduePoly128::from_scalar(Wrapping(13))),
+                BroadcastValue::RingValue(ResiduePolyF8Z128::from_scalar(Wrapping(13))),
             ),
         ]);
         assert!(session.corrupt_roles().is_empty());
-        let res = SmallPreprocessing::<ResiduePoly128, DummyAgreeRandom>::reconstruct_d_values(
+        let res = SmallPreprocessing::<ResiduePolyF8Z128, DummyAgreeRandom>::reconstruct_d_values(
             &mut session,
             1,
             d_recons,
@@ -674,11 +676,11 @@ mod test {
         let threshold = 1;
         const BAD_ID: usize = 3;
         async fn task(
-            mut session: SmallSession<ResiduePoly128>,
+            mut session: SmallSession<ResiduePolyF8Z128>,
         ) -> (
-            SmallSession<ResiduePoly128>,
-            Vec<Triple<ResiduePoly128>>,
-            Vec<Share<ResiduePoly128>>,
+            SmallSession<ResiduePolyF8Z128>,
+            Vec<Triple<ResiduePolyF8Z128>>,
+            Vec<Share<ResiduePolyF8Z128>>,
         ) {
             let mut triple_res = Vec::new();
             let mut rand_res = Vec::new();
@@ -735,8 +737,8 @@ mod test {
             assert_eq!(recon_a * recon_b, recon_c);
             let recon_rand = reconstruct(test_session, to_recon_rand).unwrap();
             // Sanity check the random reconstruction
-            assert_ne!(recon_rand, ResiduePoly::ZERO);
-            assert_ne!(recon_rand, ResiduePoly::ONE);
+            assert_ne!(recon_rand, ResiduePolyF8::ZERO);
+            assert_ne!(recon_rand, ResiduePolyF8::ONE);
         }
     }
 
@@ -748,11 +750,11 @@ mod test {
         const BAD_ID: usize = 3;
 
         async fn task(
-            mut session: SmallSession<ResiduePoly128>,
+            mut session: SmallSession<ResiduePolyF8Z128>,
         ) -> (
-            SmallSession<ResiduePoly128>,
-            Vec<Triple<ResiduePoly128>>,
-            Vec<Share<ResiduePoly128>>,
+            SmallSession<ResiduePolyF8Z128>,
+            Vec<Triple<ResiduePolyF8Z128>>,
+            Vec<Share<ResiduePolyF8Z128>>,
         ) {
             let mut triple_res = Vec::new();
             let mut rand_res = Vec::new();
@@ -827,8 +829,8 @@ mod test {
             assert_eq!(recon_a * recon_b, recon_c);
             let recon_rand = reconstruct(test_session, to_recon_rand).unwrap();
             // Sanity check the random reconstruction
-            assert_ne!(recon_rand, ResiduePoly::ZERO);
-            assert_ne!(recon_rand, ResiduePoly::ONE);
+            assert_ne!(recon_rand, ResiduePolyF8::ZERO);
+            assert_ne!(recon_rand, ResiduePolyF8::ONE);
         }
     }
 
@@ -840,7 +842,9 @@ mod test {
         let threshold = 1;
         const BAD_ID: usize = 2;
 
-        async fn task(mut session: SmallSession<ResiduePoly128>) -> SmallSession<ResiduePoly128> {
+        async fn task(
+            mut session: SmallSession<ResiduePolyF8Z128>,
+        ) -> SmallSession<ResiduePolyF8Z128> {
             if session.my_role().unwrap() == Role::indexed_by_one(BAD_ID) {
                 // Change the counter offset to make the party use wrong values
                 let prss_state = session.prss_as_mut();

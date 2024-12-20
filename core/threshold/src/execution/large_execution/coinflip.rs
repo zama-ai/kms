@@ -91,7 +91,7 @@ pub(crate) mod tests {
         DroppingVssAfterR1, DroppingVssAfterR2, DroppingVssFromStart, MaliciousVssR1,
     };
     use crate::{
-        algebra::residue_poly::{ResiduePoly128, ResiduePoly64},
+        algebra::galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
         execution::{
             large_execution::vss::{RealVss, Vss},
             runtime::{
@@ -131,7 +131,7 @@ pub(crate) mod tests {
         ];
         let threshold = 1;
         //Coinflip assumes Sync network
-        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(
+        let runtime = DistributedTestRuntime::<ResiduePolyF8Z128>::new(
             identities.clone(),
             threshold,
             NetworkMode::Sync,
@@ -153,7 +153,7 @@ pub(crate) mod tests {
                 (
                     party_nb,
                     dummy_coinflip
-                        .execute::<ResiduePoly128, _, _>(&mut session)
+                        .execute::<ResiduePolyF8Z128, _, _>(&mut session)
                         .await
                         .unwrap(),
                 )
@@ -332,8 +332,11 @@ pub(crate) mod tests {
     #[case(TestingParameters::init_honest(10, 3, Some(8)))]
     fn test_coinflip_honest_z128(#[case] params: TestingParameters) {
         let malicious_coinflip = RealCoinflip::<RealVss>::default();
-        test_coinflip_strategies::<ResiduePoly64, _>(params.clone(), malicious_coinflip.clone());
-        test_coinflip_strategies::<ResiduePoly128, _>(params.clone(), malicious_coinflip.clone());
+        test_coinflip_strategies::<ResiduePolyF8Z64, _>(params.clone(), malicious_coinflip.clone());
+        test_coinflip_strategies::<ResiduePolyF8Z128, _>(
+            params.clone(),
+            malicious_coinflip.clone(),
+        );
     }
 
     //Test when coinflip aborts after the VSS for all kinds of VSS
@@ -355,8 +358,8 @@ pub(crate) mod tests {
         let dropping_coinflip = DroppingCoinflipAfterVss {
             vss: malicious_vss.clone(),
         };
-        test_coinflip_strategies::<ResiduePoly64, _>(params.clone(), dropping_coinflip.clone());
-        test_coinflip_strategies::<ResiduePoly128, _>(params.clone(), dropping_coinflip.clone());
+        test_coinflip_strategies::<ResiduePolyF8Z64, _>(params.clone(), dropping_coinflip.clone());
+        test_coinflip_strategies::<ResiduePolyF8Z128, _>(params.clone(), dropping_coinflip.clone());
     }
 
     //Test honest coinflip with all kinds of malicious strategies for VSS
@@ -379,11 +382,11 @@ pub(crate) mod tests {
             vss: malicious_vss.clone(),
         };
 
-        test_coinflip_strategies::<ResiduePoly64, _>(
+        test_coinflip_strategies::<ResiduePolyF8Z64, _>(
             params.clone(),
             real_coinflip_with_malicious_vss.clone(),
         );
-        test_coinflip_strategies::<ResiduePoly128, _>(
+        test_coinflip_strategies::<ResiduePolyF8Z128, _>(
             params.clone(),
             real_coinflip_with_malicious_vss.clone(),
         );
@@ -408,11 +411,11 @@ pub(crate) mod tests {
             vss: malicious_vss.clone(),
         };
 
-        test_coinflip_strategies::<ResiduePoly64, _>(
+        test_coinflip_strategies::<ResiduePolyF8Z64, _>(
             params.clone(),
             malicious_coinflip_recons.clone(),
         );
-        test_coinflip_strategies::<ResiduePoly128, _>(
+        test_coinflip_strategies::<ResiduePolyF8Z128, _>(
             params.clone(),
             malicious_coinflip_recons.clone(),
         );

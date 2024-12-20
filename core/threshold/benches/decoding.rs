@@ -6,8 +6,9 @@ use distributed_decryption::execution::sharing::shamir::{InputOp, RevealOp, Sham
 use distributed_decryption::experimental::algebra::levels::LevelOne;
 use distributed_decryption::{
     algebra::{
-        gf256::{error_correction, GF256},
-        residue_poly::{ResiduePoly128, ResiduePoly64},
+        error_correction::error_correction,
+        galois_fields::gf256::GF256,
+        galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
     },
     execution::sharing::shamir::ShamirSharings,
 };
@@ -65,7 +66,7 @@ fn bench_decode_z128(c: &mut Criterion) {
 
         group.bench_function(BenchmarkId::new("decode", p_str), |b| {
             let mut rng = AesRng::seed_from_u64(0);
-            let secret = ResiduePoly128::from_scalar(Wrapping(23425));
+            let secret = ResiduePolyF8Z128::from_scalar(Wrapping(23425));
             let sharing = ShamirSharings::share(&mut rng, secret, num_parties, threshold).unwrap();
 
             b.iter(|| {
@@ -88,7 +89,7 @@ fn bench_decode_z64(c: &mut Criterion) {
 
         group.bench_function(BenchmarkId::new("decode", p_str), |b| {
             let mut rng = AesRng::seed_from_u64(0);
-            let secret = ResiduePoly64::from_scalar(Wrapping(23425));
+            let secret = ResiduePolyF8Z64::from_scalar(Wrapping(23425));
             let sharing = ShamirSharings::share(&mut rng, secret, num_parties, threshold).unwrap();
 
             b.iter(|| {
@@ -126,7 +127,7 @@ fn bench_decode_par_z64(c: &mut Criterion) {
                 let num_rec = 10000;
                 let mut rng = AesRng::seed_from_u64(0);
                 let secrets = (0..num_rec)
-                    .map(|_| ResiduePoly64::sample(&mut rng))
+                    .map(|_| ResiduePolyF8Z64::sample(&mut rng))
                     .collect_vec();
                 let sharings = secrets
                     .into_iter()

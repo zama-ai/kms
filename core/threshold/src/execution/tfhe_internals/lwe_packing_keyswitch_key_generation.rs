@@ -1,6 +1,6 @@
 use crate::{
     algebra::{
-        residue_poly::ResiduePoly,
+        galois_rings::degree_8::ResiduePolyF8,
         structure_traits::{BaseRing, Zero},
     },
     error::error_handler::anyhow_error_and_log,
@@ -36,7 +36,7 @@ where
     let polynomial_size = lwe_packing_keyswitch_key.output_polynomial_size();
 
     let mut decomposition_plaintexts_buffer =
-        vec![ResiduePoly::<Z>::ZERO; decomp_level_count.0 * polynomial_size.0];
+        vec![ResiduePolyF8::<Z>::ZERO; decomp_level_count.0 * polynomial_size.0];
 
     // Iterate over the input key elements and the destination lwe_packing_keyswitch_key memory
     for (input_key_element, packing_keyswitch_key_block) in input_lwe_sk

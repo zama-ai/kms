@@ -1,5 +1,5 @@
 use crate::algebra::base_ring::{Z128, Z64};
-use crate::algebra::residue_poly::ResiduePoly64;
+use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z64;
 use crate::execution::online::preprocessing::{DKGPreprocessing, RandomPreprocessing};
 use crate::execution::sharing::share::Share;
 use crate::execution::tfhe_internals::compression_decompression_key::CompressionPrivateKeyShares;
@@ -11,7 +11,7 @@ use crate::execution::tfhe_internals::parameters::{
 use crate::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
 use crate::{
     algebra::{
-        residue_poly::{ResiduePoly, ResiduePoly128},
+        galois_rings::degree_8::{ResiduePolyF8, ResiduePolyF8Z128},
         structure_traits::{BaseRing, ErrorCorrect, Ring},
     },
     error::error_handler::anyhow_error_and_log,
@@ -384,7 +384,7 @@ async fn sample_seed<
 ///Generates the lwe private key share and associated public key
 fn generate_lwe_key_shares<
     Z: BaseRing,
-    P: DKGPreprocessing<ResiduePoly<Z>> + ?Sized,
+    P: DKGPreprocessing<ResiduePolyF8<Z>> + ?Sized,
     R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
     Gen: ByteRandomGenerator,
@@ -395,7 +395,7 @@ fn generate_lwe_key_shares<
     preprocessing: &mut P,
 ) -> anyhow::Result<(LweSecretKeyShare<Z>, LweCompactPublicKeyShare<Z>)>
 where
-    ResiduePoly<Z>: ErrorCorrect,
+    ResiduePolyF8<Z>: ErrorCorrect,
 {
     let params = params.get_params_basics_handle();
     let my_role = session.my_role()?;
@@ -429,7 +429,7 @@ where
 #[instrument(skip( mpc_encryption_rng, session, preprocessing), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity()))]
 async fn generate_lwe_private_public_key_pair<
     Z: BaseRing,
-    P: DKGPreprocessing<ResiduePoly<Z>> + ?Sized,
+    P: DKGPreprocessing<ResiduePolyF8<Z>> + ?Sized,
     R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
     Gen: ByteRandomGenerator,
@@ -440,7 +440,7 @@ async fn generate_lwe_private_public_key_pair<
     preprocessing: &mut P,
 ) -> anyhow::Result<(LweSecretKeyShare<Z>, LweCompactPublicKey<Vec<u64>>)>
 where
-    ResiduePoly<Z>: ErrorCorrect,
+    ResiduePolyF8<Z>: ErrorCorrect,
 {
     let (lwe_secret_key_share, lwe_public_key_shared) =
         generate_lwe_key_shares(params, mpc_encryption_rng, session, preprocessing)?;
@@ -457,7 +457,7 @@ where
 #[instrument(skip(input_lwe_sk, output_lwe_sk, mpc_encryption_rng, session, preprocessing), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity()))]
 async fn generate_key_switch_key<
     Z: BaseRing,
-    P: DKGPreprocessing<ResiduePoly<Z>> + ?Sized,
+    P: DKGPreprocessing<ResiduePolyF8<Z>> + ?Sized,
     R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
     Gen: ByteRandomGenerator,
@@ -470,7 +470,7 @@ async fn generate_key_switch_key<
     preprocessing: &mut P,
 ) -> anyhow::Result<LweKeyswitchKey<Vec<u64>>>
 where
-    ResiduePoly<Z>: ErrorCorrect,
+    ResiduePolyF8<Z>: ErrorCorrect,
 {
     let my_role = session.my_role()?;
     tracing::info!("(Party {my_role}) Generating KSK...Start");
@@ -500,7 +500,7 @@ where
 #[instrument(skip(glwe_secret_key_share, lwe_secret_key_share, mpc_encryption_rng, session, preprocessing), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity()))]
 async fn generate_bootstrap_key<
     Z: BaseRing,
-    P: DKGPreprocessing<ResiduePoly<Z>> + ?Sized,
+    P: DKGPreprocessing<ResiduePolyF8<Z>> + ?Sized,
     R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
     Gen: ByteRandomGenerator,
@@ -514,7 +514,7 @@ async fn generate_bootstrap_key<
     preprocessing: &mut P,
 ) -> anyhow::Result<LweBootstrapKey<Vec<Scalar>>>
 where
-    ResiduePoly<Z>: ErrorCorrect,
+    ResiduePolyF8<Z>: ErrorCorrect,
 {
     let my_role = session.my_role()?;
     //First sample the noise
@@ -552,7 +552,7 @@ where
 
 async fn generate_compression_decompression_keys<
     Z: BaseRing,
-    P: DKGPreprocessing<ResiduePoly<Z>> + ?Sized,
+    P: DKGPreprocessing<ResiduePolyF8<Z>> + ?Sized,
     R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
     Gen: ByteRandomGenerator,
@@ -566,7 +566,7 @@ async fn generate_compression_decompression_keys<
     preprocessing: &mut P,
 ) -> anyhow::Result<(CompressionKey, DecompressionKey)>
 where
-    ResiduePoly<Z>: ErrorCorrect,
+    ResiduePolyF8<Z>: ErrorCorrect,
 {
     let noise_vec = preprocessing
         .next_noise_vec(params.ksk_num_noise, params.ksk_noisebound)?
@@ -632,7 +632,7 @@ where
 /// is the PRF seed/key and it is randomly sampled and discarded.
 pub async fn distributed_homprf_bsk_gen<
     Z: BaseRing,
-    P: DKGPreprocessing<ResiduePoly<Z>> + ?Sized,
+    P: DKGPreprocessing<ResiduePolyF8<Z>> + ?Sized,
     R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
     Scalar: UnsignedInteger,
@@ -643,7 +643,7 @@ pub async fn distributed_homprf_bsk_gen<
     session: &mut S,
 ) -> anyhow::Result<LweBootstrapKey<Vec<Scalar>>>
 where
-    ResiduePoly<Z>: ErrorCorrect,
+    ResiduePolyF8<Z>: ErrorCorrect,
 {
     let params_basics_handle = params.get_params_basics_handle();
     let seed = sample_seed(params_basics_handle.get_sec(), session, preprocessing).await?;
@@ -684,7 +684,7 @@ where
 /// - A [`RawPubKeySet`] composed of the public key, the KSK, the BK and the BK_sns if required
 /// - a [`PrivateKeySet`] composed of shares of the lwe and glwe private keys
 ///
-///If the [`DKGParams::o_flag`] is set in the params, then the sharing domain must be [`ResiduePoly128`] but the domain of
+///If the [`DKGParams::o_flag`] is set in the params, then the sharing domain must be [`ResiduePolyF8Z128`] but the domain of
 ///all non-overlined key material is still [`u64`].
 /// Note that there is some redundancy of information because we also explicitly ask the [`BaseRing`] as trait parameter
 #[instrument(name="TFHE.Threshold-KeyGen", skip(session, preprocessing), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity()))]
@@ -692,14 +692,14 @@ async fn distributed_keygen<
     Z: BaseRing,
     R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
-    P: DKGPreprocessing<ResiduePoly<Z>> + Send + ?Sized,
+    P: DKGPreprocessing<ResiduePolyF8<Z>> + Send + ?Sized,
 >(
     session: &mut S,
     preprocessing: &mut P,
     params: DKGParams,
 ) -> anyhow::Result<(RawPubKeySet, GenericPrivateKeySet<Z>)>
 where
-    ResiduePoly<Z>: ErrorCorrect,
+    ResiduePolyF8<Z>: ErrorCorrect,
 {
     let params_basics_handle = params.get_params_basics_handle();
     let my_role = session.my_role()?;
@@ -888,7 +888,7 @@ where
 pub async fn distributed_keygen_z64<
     R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
-    P: DKGPreprocessing<ResiduePoly64> + Send + ?Sized,
+    P: DKGPreprocessing<ResiduePolyF8Z64> + Send + ?Sized,
 >(
     session: &mut S,
     preprocessing: &mut P,
@@ -896,7 +896,7 @@ pub async fn distributed_keygen_z64<
 ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet)> {
     if let DKGParams::WithSnS(_) = params {
         return Err(anyhow_error_and_log(
-            "Can not generate Switch and Squash key with ResiduePoly64".to_string(),
+            "Can not generate Switch and Squash key with ResiduePolyF8Z64".to_string(),
         ));
     }
     let (pub_key_set, priv_key_set) = distributed_keygen(session, preprocessing, params).await?;
@@ -913,7 +913,7 @@ pub async fn distributed_keygen_z64<
 pub async fn distributed_keygen_z128<
     R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
-    P: DKGPreprocessing<ResiduePoly128> + Send + ?Sized,
+    P: DKGPreprocessing<ResiduePolyF8Z128> + Send + ?Sized,
 >(
     session: &mut S,
     preprocessing: &mut P,
@@ -968,7 +968,7 @@ pub mod tests {
     use crate::{
         algebra::{
             base_ring::Z128,
-            residue_poly::{ResiduePoly, ResiduePoly128},
+            galois_rings::degree_8::{ResiduePolyF8, ResiduePolyF8Z128},
             structure_traits::{BaseRing, ErrorCorrect},
         },
         execution::{
@@ -1371,7 +1371,7 @@ pub mod tests {
             .write_to_file(format!("{}/params.json", prefix_path))
             .unwrap();
 
-        let mut task = |mut session: SmallSession<ResiduePoly128>| async move {
+        let mut task = |mut session: SmallSession<ResiduePolyF8Z128>| async move {
             session
                 .network()
                 .set_timeout_for_next_round(Duration::from_secs(120))
@@ -1416,7 +1416,7 @@ pub mod tests {
         };
 
         // Sync network because we also init the PRSS in the task
-        let results = execute_protocol_small::<ResiduePoly128, _, _>(
+        let results = execute_protocol_small::<ResiduePolyF8Z128, _, _>(
             num_parties,
             threshold as u8,
             None,
@@ -1474,7 +1474,7 @@ pub mod tests {
         //Async because the preprocessing is Dummy
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let results = execute_protocol_large::<ResiduePoly128, _, _>(
+        let results = execute_protocol_large::<ResiduePolyF8Z128, _, _>(
             num_parties,
             threshold,
             None,
@@ -1531,7 +1531,7 @@ pub mod tests {
         //Async because the preprocessing is Dummy
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let results = execute_protocol_large::<ResiduePoly128, _, _>(
+        let results = execute_protocol_large::<ResiduePolyF8Z128, _, _>(
             num_parties,
             threshold,
             None,
@@ -1657,7 +1657,7 @@ pub mod tests {
         threshold: usize,
         with_compact: bool,
     ) where
-        ResiduePoly<Z>: ErrorCorrect,
+        ResiduePolyF8<Z>: ErrorCorrect,
     {
         let params = Params::read_from_file(prefix_path.clone() + "/params.json")
             .unwrap()
@@ -1695,7 +1695,7 @@ pub mod tests {
         threshold: usize,
         do_compression_test: bool,
     ) where
-        ResiduePoly<Z>: ErrorCorrect,
+        ResiduePolyF8<Z>: ErrorCorrect,
     {
         let params = Params::read_from_file(prefix_path.clone() + "/params.json")
             .unwrap()
@@ -1730,7 +1730,7 @@ pub mod tests {
         prefix_path: String,
     ) -> (tfhe::shortint::ClientKey, RawPubKeySet)
     where
-        ResiduePoly<Z>: ErrorCorrect,
+        ResiduePolyF8<Z>: ErrorCorrect,
     {
         let params_tfhe_rs = params
             .get_params_basics_handle()

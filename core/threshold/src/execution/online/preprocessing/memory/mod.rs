@@ -1,5 +1,5 @@
-use crate::algebra::residue_poly::ResiduePoly128;
-use crate::algebra::residue_poly::ResiduePoly64;
+use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z128;
+use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z64;
 use crate::algebra::structure_traits::Ring;
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::online::preprocessing::memory::bitdec::InMemoryBitDecPreprocessing;
@@ -21,26 +21,28 @@ use super::BitDecPreprocessing;
 struct InMemoryPreprocessorFactory;
 
 impl PreprocessorFactory for InMemoryPreprocessorFactory {
-    fn create_bit_preprocessing_residue_64(&mut self) -> Box<dyn BitPreprocessing<ResiduePoly64>> {
-        Box::<InMemoryBitPreprocessing<ResiduePoly64>>::default()
+    fn create_bit_preprocessing_residue_64(
+        &mut self,
+    ) -> Box<dyn BitPreprocessing<ResiduePolyF8Z64>> {
+        Box::<InMemoryBitPreprocessing<ResiduePolyF8Z64>>::default()
     }
 
     fn create_bit_preprocessing_residue_128(
         &mut self,
-    ) -> Box<dyn BitPreprocessing<ResiduePoly128>> {
-        Box::<InMemoryBitPreprocessing<ResiduePoly128>>::default()
+    ) -> Box<dyn BitPreprocessing<ResiduePolyF8Z128>> {
+        Box::<InMemoryBitPreprocessing<ResiduePolyF8Z128>>::default()
     }
 
     fn create_base_preprocessing_residue_64(
         &mut self,
-    ) -> Box<dyn BasePreprocessing<ResiduePoly64>> {
-        Box::<InMemoryBasePreprocessing<ResiduePoly64>>::default()
+    ) -> Box<dyn BasePreprocessing<ResiduePolyF8Z64>> {
+        Box::<InMemoryBasePreprocessing<ResiduePolyF8Z64>>::default()
     }
 
     fn create_base_preprocessing_residue_128(
         &mut self,
-    ) -> Box<dyn BasePreprocessing<ResiduePoly128>> {
-        Box::<InMemoryBasePreprocessing<ResiduePoly128>>::default()
+    ) -> Box<dyn BasePreprocessing<ResiduePolyF8Z128>> {
+        Box::<InMemoryBasePreprocessing<ResiduePolyF8Z128>>::default()
     }
 
     fn create_bit_decryption_preprocessing(&mut self) -> Box<dyn BitDecPreprocessing> {
@@ -53,14 +55,14 @@ impl PreprocessorFactory for InMemoryPreprocessorFactory {
 
     fn create_dkg_preprocessing_no_sns(
         &mut self,
-    ) -> Box<dyn super::DKGPreprocessing<ResiduePoly64>> {
-        Box::<InMemoryDKGPreprocessing<ResiduePoly64>>::default()
+    ) -> Box<dyn super::DKGPreprocessing<ResiduePolyF8Z64>> {
+        Box::<InMemoryDKGPreprocessing<ResiduePolyF8Z64>>::default()
     }
 
     fn create_dkg_preprocessing_with_sns(
         &mut self,
-    ) -> Box<dyn super::DKGPreprocessing<ResiduePoly128>> {
-        Box::<InMemoryDKGPreprocessing<ResiduePoly128>>::default()
+    ) -> Box<dyn super::DKGPreprocessing<ResiduePolyF8Z128>> {
+        Box::<InMemoryDKGPreprocessing<ResiduePolyF8Z128>>::default()
     }
 }
 
@@ -158,7 +160,7 @@ mod tests {
 
     use crate::algebra::base_ring::Z128;
     use crate::algebra::base_ring::Z64;
-    use crate::algebra::residue_poly::ResiduePoly;
+    use crate::algebra::galois_rings::degree_8::ResiduePolyF8;
     use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
     use crate::execution::online::preprocessing::RandomPreprocessing;
     use crate::execution::online::preprocessing::TriplePreprocessing;
@@ -175,11 +177,11 @@ mod tests {
                 // Test what happens when no more triples are preset
                 #[test]
                 fn [<test_no_more_elements_ $z:lower>]() {
-                    let share = Share::new(Role::indexed_by_one(1), ResiduePoly::<$z>::from_scalar(Wrapping(1)));
+                    let share = Share::new(Role::indexed_by_one(1), ResiduePolyF8::<$z>::from_scalar(Wrapping(1)));
                     let triple = Triple::new(share.clone(), share.clone(), share.clone());
                     const TRIPLE_BATCH_SIZE: usize = 10; // Replace 10 with the desired value
 
-                    let mut preproc = InMemoryBasePreprocessing::<ResiduePoly<$z>> {
+                    let mut preproc = InMemoryBasePreprocessing::<ResiduePolyF8<$z>> {
                         available_triples: (0..TRIPLE_BATCH_SIZE).map(|_i| triple.clone()).collect_vec(),
                         available_randoms: (0..TRIPLE_BATCH_SIZE).map(|_i| share.clone()).collect_vec(),
                     };

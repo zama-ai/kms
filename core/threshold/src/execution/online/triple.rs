@@ -171,7 +171,7 @@ mod tests {
     use crate::{
         algebra::{
             base_ring::{Z128, Z64},
-            residue_poly::ResiduePoly,
+            galois_rings::degree_8::ResiduePolyF8,
         },
         execution::{
             online::{
@@ -198,8 +198,8 @@ mod tests {
                 fn [<mult_sunshine_ $z:lower>]() {
                     let parties = 4;
                     let threshold = 1;
-                    async fn task(session: SmallSession<ResiduePoly<$z>>) -> Vec<ResiduePoly<$z>> {
-                        let mut preprocessing = DummyPreprocessing::<ResiduePoly<$z>, AesRng, SmallSession<ResiduePoly<$z>>>::new(42, session.clone());
+                    async fn task(session: SmallSession<ResiduePolyF8<$z>>) -> Vec<ResiduePolyF8<$z>> {
+                        let mut preprocessing = DummyPreprocessing::<ResiduePolyF8<$z>, AesRng, SmallSession<ResiduePolyF8<$z>>>::new(42, session.clone());
                         let cur_a = preprocessing.next_random().unwrap();
                         let cur_b = preprocessing.next_random().unwrap();
                         let trip = preprocessing.next_triple().unwrap();
@@ -229,13 +229,13 @@ mod tests {
                     let threshold = 1;
                     const AMOUNT: usize = 3;
                     async fn task(
-                        session: SmallSession<ResiduePoly<$z>>,
+                        session: SmallSession<ResiduePolyF8<$z>>,
                     ) -> (
-                        Vec<ResiduePoly<$z>>,
-                        Vec<ResiduePoly<$z>>,
-                        Vec<ResiduePoly<$z>>,
+                        Vec<ResiduePolyF8<$z>>,
+                        Vec<ResiduePolyF8<$z>>,
+                        Vec<ResiduePolyF8<$z>>,
                     ) {
-                        let mut preprocessing = DummyPreprocessing::<ResiduePoly<$z>, AesRng, SmallSession<ResiduePoly<$z>>>::new(42, session.clone());
+                        let mut preprocessing = DummyPreprocessing::<ResiduePolyF8<$z>, AesRng, SmallSession<ResiduePolyF8<$z>>>::new(42, session.clone());
                         let mut a_vec = Vec::with_capacity(AMOUNT);
                         let mut b_vec = Vec::with_capacity(AMOUNT);
                         let mut trip_vec = Vec::with_capacity(AMOUNT);
@@ -273,9 +273,9 @@ mod tests {
                     let parties = 4;
                     let threshold = 1;
                     let bad_role: Role = Role::indexed_by_one(4);
-                    let mut task = |session: SmallSession<ResiduePoly<$z>>| async move {
+                    let mut task = |session: SmallSession<ResiduePolyF8<$z>>| async move {
                         if session.my_role().unwrap() != bad_role {
-                            let mut preprocessing = DummyPreprocessing::<ResiduePoly<$z>, AesRng, SmallSession<ResiduePoly<$z>>>::new(42, session.clone());
+                            let mut preprocessing = DummyPreprocessing::<ResiduePolyF8<$z>, AesRng, SmallSession<ResiduePolyF8<$z>>>::new(42, session.clone());
                             let cur_a = preprocessing.next_random().unwrap();
                             let cur_b = preprocessing.next_random().unwrap();
                             let trip = preprocessing.next_triple().unwrap();
@@ -302,7 +302,7 @@ mod tests {
                             let recon_c = cur_res[2];
                             assert_eq!(recon_c, recon_a * recon_b);
                         } else {
-                            assert_eq!(Vec::<ResiduePoly<$z>>::new(), *cur_res);
+                            assert_eq!(Vec::<ResiduePolyF8<$z>>::new(), *cur_res);
                         }
                     }
                 }
@@ -313,11 +313,11 @@ mod tests {
                     let parties = 4;
                     let threshold = 1;
                     let bad_role: Role = Role::indexed_by_one(4);
-                    let mut task = |session: SmallSession<ResiduePoly<$z>>| async move {
-                        let mut preprocessing = DummyPreprocessing::<ResiduePoly<$z>, AesRng, SmallSession<ResiduePoly<$z>>>::new(42, session.clone());
+                    let mut task = |session: SmallSession<ResiduePolyF8<$z>>| async move {
+                        let mut preprocessing = DummyPreprocessing::<ResiduePolyF8<$z>, AesRng, SmallSession<ResiduePolyF8<$z>>>::new(42, session.clone());
                         let cur_a = preprocessing.next_random().unwrap();
                         let cur_b = match session.my_role().unwrap() {
-                            role if role == bad_role  => Share::new(bad_role, ResiduePoly::<$z>::from_scalar(Wrapping(42))),
+                            role if role == bad_role  => Share::new(bad_role, ResiduePolyF8::<$z>::from_scalar(Wrapping(42))),
                             _ => preprocessing.next_random().unwrap(),
                         };
                         let trip = preprocessing.next_triple().unwrap();
