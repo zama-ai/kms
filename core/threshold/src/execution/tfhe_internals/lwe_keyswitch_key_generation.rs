@@ -42,6 +42,7 @@ where
             input_key_element_key_switch_key_block
         {
             for level_message in (1..=decomp_level_count.0)
+                .rev()
                 .map(DecompositionLevel)
                 .zip_longest(decomposition_plaintexts_buffer.iter_mut())
             {

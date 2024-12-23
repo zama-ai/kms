@@ -243,12 +243,9 @@ where
     Z: BaseRing,
     Gen: ByteRandomGenerator,
 {
+    let max_level = output.decomposition_level_count();
     let gen_iter = generator
-        .fork_ggsw_to_ggsw_levels(
-            output.decomposition_level_count(),
-            output.glwe_size(),
-            output.polynomial_size(),
-        )
+        .fork_ggsw_to_ggsw_levels(max_level, output.glwe_size(), output.polynomial_size())
         .expect("Failed to split generator into ggsw levels");
 
     let output_glwe_size = output.glwe_size();
@@ -259,7 +256,7 @@ where
         output.data.iter_mut().zip_longest(gen_iter).enumerate()
     {
         if let EitherOrBoth::Both(level_matrix, mut generator) = level_matrix_generator {
-            let decomp_level = DecompositionLevel(level_index + 1);
+            let decomp_level = DecompositionLevel(max_level.0 - level_index);
 
             //Note that here tfhe-rs still only works on the msg and
             // lets [`encrypt_constant_ggsw_level_matrix_row`] deal with with mult the proper key component)

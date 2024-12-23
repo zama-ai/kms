@@ -103,7 +103,7 @@ thiserror = "=2.0.7"
 tonic-health = "=0.12.3"
 tower = "=0.5.2"
 tower-http = "=0.6.2"
-tfhe = "=0.9.1"
+tfhe = "=0.10.0"
 tfhe-versionable = "=0.3.2"
 tfhe-zk-pok = "=0.3.2"
 tokio = { version = "=1.42.0", features = ["full"] }
