@@ -30,13 +30,15 @@ use sha3::{
     Shake256,
 };
 
+use std::marker::PhantomData;
+#[cfg(feature = "non-wasm")]
+use std::num::Wrapping;
 use std::{
     collections::HashMap,
     fmt::Display,
     iter::Sum,
     ops::{Add, AddAssign, Mul, Neg, Shl, Sub, SubAssign},
 };
-use std::{marker::PhantomData, num::Wrapping};
 use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
 use zeroize::Zeroize;
