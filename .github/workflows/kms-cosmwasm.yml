@@ -50,9 +50,9 @@ jobs:
           annotations: |
             org.opencontainers.image.description="KMS Blockchain Validator with CosmWasm support"
           labels: |
-            zama.kms.version=${{ inputs.tag }}
+            zama.kms.version=${{ inputs.tag }}-${{ matrix.platform-tag }}
             zama.kms.description="${{ inputs.image-name }}"
-          images: ghcr.io/zama-ai/${{ inputs.image-name }}:${{ inputs.tag }}
+          images: ghcr.io/zama-ai/${{ inputs.image-name }}:${{ inputs.tag }}-${{ matrix.platform-tag }}
         env:
           DOCKER_METADATA_ANNOTATIONS_LEVELS: index
 
