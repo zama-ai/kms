@@ -11,15 +11,19 @@ on:
         description: 'Github Tag of wasmd repo'
         required: true
         type: string
-      graviton-build-host:
-        description: 'Defining a build host for graviton instance'
-        type: string
-        required: false
-        default: 'ec2-15-188-101-126.eu-west-3.compute.amazonaws.com'
 
 jobs:
   build-and-push-docker:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            runs-on: ubuntu-latest
+            platform-tag: amd64
+          - platform: linux/arm64
+            runs-on: large_ubuntu_16_arm
+            platform-tag: arm64
+    runs-on: ${{ matrix.runs-on }}            
     steps:
       - name: Checkout Project
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -27,20 +31,10 @@ jobs:
           repository: CosmWasm/wasmd
           ref: ${{ inputs.tag }}
 
-      - name: Set up SSH
-        uses: MrSquaare/ssh-setup-action@2d028b70b5e397cf8314c6eaea229a6c3e34977a # v3.1.0
-        with:
-          host: ${{ inputs.graviton-build-host }}
-          private-key: ${{ secrets.GRAVITON_BUILDER_SSH_PRIVATE_KEY }}
-          private-key-name: docker_builder_arm
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@d70bba72b1f3fd22344832f00baa16ece964efeb # v3.3.0
         with:
-          platforms: linux/amd64,linux/arm64
-          append: |
-            - endpoint: "ssh://ec2-user@${{ inputs.graviton-build-host }}"
-              platforms: linux/arm64
+          platforms: ${{ matrix.platform }}
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
@@ -66,12 +60,40 @@ jobs:
         uses: docker/build-push-action@5cd11c3a4ced054e52742c5fd54dca954e0edd85 # v6.7.0
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platform }}
           push: true
           pull: false
-          tags: ghcr.io/zama-ai/${{ inputs.image-name }}:${{ inputs.tag }},ghcr.io/zama-ai/${{ inputs.image-name }}:latest
+          tags: ghcr.io/zama-ai/${{ inputs.image-name }}:${{ inputs.tag }}-${{ matrix.platform-tag }}
           labels: ${{ steps.meta.outputs.labels }}
           annotations: ${{ steps.meta.outputs.annotations }}
+
+  create-manifest:
+    needs: [build-and-push-docker]
+    runs-on: ubuntu-latest
+    outputs:
+      image_name: ${{ steps.export-image.outputs.image }}
+    steps:
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and Push Multiarch Manifest
+        run: |
+          docker manifest create \
+            ghcr.io/zama-ai/${{ inputs.image-name }}:${{ inputs.tag }} \
+            --amend ghcr.io/zama-ai/${{ inputs.image-name }}:${{ inputs.tag }}-amd64 \
+            --amend ghcr.io/zama-ai/${{ inputs.image-name }}:${{ inputs.tag }}-arm64
+          
+          docker manifest create \
+            ghcr.io/zama-ai/${{ inputs.image-name }}:latest \
+            --amend ghcr.io/zama-ai/${{ inputs.image-name }}:${{ inputs.tag }}-amd64 \
+            --amend ghcr.io/zama-ai/${{ inputs.image-name }}:${{ inputs.tag }}-arm64
+          
+          docker manifest push ghcr.io/zama-ai/${{ inputs.image-name }}:${{ inputs.tag }}
+          docker manifest push ghcr.io/zama-ai/${{ inputs.image-name }}:latest     
 
       - name: Export image name
         id: export-image
