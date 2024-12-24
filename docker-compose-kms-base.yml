@@ -13,6 +13,9 @@ services:
   # KMS Blockchain
   dev-kms-blockchain-validator:
     image: ghcr.io/zama-ai/kms-blockchain-asc:latest
+    build:
+      context: .
+      dockerfile: blockchain/contracts/operations/docker/ci.dockerfile      
     healthcheck:
       test: "wget -Sq --spider http://localhost:26657/status"
       interval: 1s
@@ -28,17 +31,14 @@ services:
       - ./blockchain/scripts:/app/scripts
       - validator_secrets:/app/secrets
     entrypoint: [ "/app/scripts/bootstrap_validator.sh" ]
-    build:
-      context: .
-      dockerfile: blockchain/contracts/operations/docker/ci.dockerfile
 
   # Smart contract deployment
   dev-kms-blockchain-asc-deploy:
     image: ghcr.io/zama-ai/kms-blockchain-asc:latest
+    build:
+      context: .
+      dockerfile: blockchain/contracts/operations/docker/ci.dockerfile    
     restart: "no"
-    depends_on:
-      dev-kms-blockchain-validator:
-        condition: service_healthy
     environment:
       RUST_LOG: info
       VALIDATOR_NODE_ENDPOINT: http://dev-kms-blockchain-validator:26657
@@ -63,6 +63,9 @@ services:
       timeout: 1s
       retries: 300
       start_period: 20s
+    depends_on:
+      dev-kms-blockchain-validator:
+        condition: service_healthy      
 
   # KV-Store
   dev-kv-store:
@@ -132,29 +135,6 @@ services:
     depends_on:
       dev-s3-mock:
         condition: service_healthy
-
-  # kms-core base image from the kms-core dev image is derived
-  kms-core-base-build:
-    image: ghcr.io/zama-ai/kms-service:latest
-    environment:
-      DOCKER_BUILDKIT: 1
-    build:
-      context: .
-      dockerfile: core/service/operations/docker/ci.dockerfile
-      args:
-        LTO_RELEASE: "release-test"
-    deploy:
-      replicas: 0 # it's a build dependency, not a real service
-
-  kms-connector-base-build:
-    image: ghcr.io/zama-ai/kms-blockchain-connector:latest
-    environment:
-      DOCKER_BUILDKIT: 1
-    build:
-      context: .
-      dockerfile: blockchain/connector/operations/docker/ci.dockerfile
-    deploy:
-      replicas: 0 # it's a build dependency, not a real service
 
 volumes:
   minio_secrets:

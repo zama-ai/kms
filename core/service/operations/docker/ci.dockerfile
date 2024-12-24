@@ -33,7 +33,7 @@ FROM --platform=$BUILDPLATFORM base AS kms-core
 
 # By default, cargo build --release.
 # But you can provide --build-arg LTO_RELEASE="--profile release-lto-off" locally to build locally
-ARG LTO_RELEASE="release"
+ARG LTO_RELEASE=release
 
 # Fetch dependencies and build binaries
 WORKDIR /app/kms

@@ -3,10 +3,20 @@ name: zama-kms-threshold
 # add keygen, tls, and pushing keys to s3 mock
 
 services:
+  # 4. Deploy smart contracts
+  dev-kms-blockchain-asc-deploy:
+    environment:
+      - MODE=threshold
+      
   # 1. Generate TLS certificates
   # NOTE: for now we do the key-generation here because kms-server requires one to start
   dev-kms-core-certs:
     image: ghcr.io/zama-ai/kms-service:latest
+    build:
+      context: .
+      dockerfile: core/service/operations/docker/ci.dockerfile  
+      args:
+        LTO_RELEASE: release-test    
     environment:
       - RUST_LOG=info,tonic=info,h2=info
     entrypoint: >
@@ -19,37 +29,14 @@ services:
     volumes:
       - certs:/app/kms/core/service/certs
 
-  # 3. Initialize the different cores
-  dev-kms-core-init:
-    image: ghcr.io/zama-ai/kms-service:latest
-    depends_on:
-      dev-kms-core-1:
-        condition: service_healthy
-      dev-kms-core-2:
-        condition: service_healthy
-      dev-kms-core-3:
-        condition: service_healthy
-      dev-kms-core-4:
-        condition: service_healthy
-    environment:
-      - RUST_LOG=info,tonic=info,h2=info
-      - RUN_MODE=dev
-    entrypoint: >
-      /bin/sh -c "
-      echo \"Starting initialization procedure\" &&
-      kms-init -a http://dev-kms-core-1:50100 http://dev-kms-core-2:50200 http://dev-kms-core-3:50300 http://dev-kms-core-4:50400 &&
-      echo \"Core services initialization done\" &&
-      exit 0
-      "
-
-  # 4. Deploy smart contracts
-  dev-kms-blockchain-asc-deploy:
-    environment:
-      - MODE=threshold
-
   # 2. We start all cores
   dev-kms-core-1:
     image: ghcr.io/zama-ai/kms-service:latest
+    build:
+      context: .
+      dockerfile: core/service/operations/docker/ci.dockerfile
+      args:
+        LTO_RELEASE: release-test         
     ports:
       - "50051:50051"
       - "50100:50100"
@@ -70,6 +57,7 @@ services:
       dev-kms-core-certs:
         condition: service_completed_successfully
     environment:
+      - DOCKER_BUILDKIT=1    
       - RUST_LOG=info,tonic=info,h2=info
     # We do a key-gen first because otherwise the service won't start
     # NOTE: currently debugging the upload to s3
@@ -95,6 +83,9 @@ services:
 
   dev-kms-connector-1:
     image: ghcr.io/zama-ai/kms-blockchain-connector:latest
+    build:
+      context: .
+      dockerfile: blockchain/connector/operations/docker/ci.dockerfile    
     volumes:
       - ./blockchain/connector/config/:/app/kms-connector/config
     command:
@@ -119,6 +110,11 @@ services:
 
   dev-kms-core-2:
     image: ghcr.io/zama-ai/kms-service:latest
+    build:
+      context: .
+      dockerfile: core/service/operations/docker/ci.dockerfile  
+      args:
+        LTO_RELEASE: release-test      
     ports:
       - "50052:50052"
       - "50200:50200"
@@ -132,12 +128,8 @@ services:
       - ./core/service/config/:/app/kms/core/service/config
       - certs:/app/kms/core/service/certs
       - minio_secrets:/minio_secrets
-    depends_on:
-      dev-s3-mock-setup:
-        condition: service_completed_successfully
-      dev-kms-core-certs:
-        condition: service_completed_successfully
     environment:
+      - DOCKER_BUILDKIT=1    
       - RUST_LOG=info,tonic=info,h2=info
     entrypoint: >
       /bin/sh -c "
@@ -148,9 +140,17 @@ services:
       echo 'Starting kms service' &&
       kms-server --config-file config/compose_2.toml
       "
+    depends_on:
+      dev-s3-mock-setup:
+        condition: service_completed_successfully
+      dev-kms-core-certs:
+        condition: service_completed_successfully      
 
   dev-kms-connector-2:
     image: ghcr.io/zama-ai/kms-blockchain-connector:latest
+    build:
+      context: .
+      dockerfile: blockchain/connector/operations/docker/ci.dockerfile    
     volumes:
       - ./blockchain/connector/config/:/app/kms-connector/config
     command:
@@ -158,6 +158,7 @@ services:
       - "--conf-file"
       - "config/compose_2.toml"
     environment:
+      - DOCKER_BUILDKIT=1    
       - RUST_LOG=info,tonic=info,h2=info
       - ASC_CONN__BLOCKCHAIN__ADDRESSES=http://dev-kms-blockchain-validator:9090
       - ASC_CONN__CORE__ADDRESSES=http://dev-kms-core-2:50200
@@ -174,6 +175,11 @@ services:
 
   dev-kms-core-3:
     image: ghcr.io/zama-ai/kms-service:latest
+    build:
+      context: .
+      dockerfile: core/service/operations/docker/ci.dockerfile
+      args:
+        LTO_RELEASE: release-test            
     ports:
       - "50053:50053"
       - "50300:50300"
@@ -187,12 +193,8 @@ services:
       - certs:/app/kms/core/service/certs
       - minio_secrets:/minio_secrets
       - ./core/service/config/:/app/kms/core/service/config
-    depends_on:
-      dev-s3-mock-setup:
-        condition: service_completed_successfully
-      dev-kms-core-certs:
-        condition: service_completed_successfully
     environment:
+      - DOCKER_BUILDKIT=1    
       - RUST_LOG=info,tonic=info,h2=info
     entrypoint: >
       /bin/sh -c "
@@ -203,9 +205,18 @@ services:
       echo 'Starting kms service' &&
       kms-server --config-file config/compose_3.toml
       "
+    depends_on:
+      dev-s3-mock-setup:
+        condition: service_completed_successfully
+      dev-kms-core-certs:
+        condition: service_completed_successfully
+
 
   dev-kms-connector-3:
     image: ghcr.io/zama-ai/kms-blockchain-connector:latest
+    build:
+      context: .
+      dockerfile: blockchain/connector/operations/docker/ci.dockerfile    
     volumes:
       - ./blockchain/connector/config/:/app/kms-connector/config
     command:
@@ -215,6 +226,7 @@ services:
       - "--catch-up-num-blocks"
       - "100000" # Each block takes about a second so this is around 27 hours. Should be adjusted in a real deployment
     environment:
+      - DOCKER_BUILDKIT=1        
       - RUST_LOG=info,tonic=info,h2=info
       - ASC_CONN__BLOCKCHAIN__ADDRESSES=http://dev-kms-blockchain-validator:9090
       - ASC_CONN__CORE__ADDRESSES=http://dev-kms-core-3:50300
@@ -231,6 +243,11 @@ services:
 
   dev-kms-core-4:
     image: ghcr.io/zama-ai/kms-service:latest
+    build:
+      context: .
+      dockerfile: core/service/operations/docker/ci.dockerfile
+      args:
+        LTO_RELEASE: release-test
     ports:
       - "50054:50054"
       - "50400:50400"
@@ -244,12 +261,8 @@ services:
       - ./core/service/config/:/app/kms/core/service/config
       - certs:/app/kms/core/service/certs
       - minio_secrets:/minio_secrets
-    depends_on:
-      dev-s3-mock-setup:
-        condition: service_completed_successfully
-      dev-kms-core-certs:
-        condition: service_completed_successfully
     environment:
+      - DOCKER_BUILDKIT=1    
       - RUST_LOG=info,tonic=info,h2=info
     entrypoint: >
       /bin/sh -c "
@@ -260,9 +273,17 @@ services:
       echo 'Starting kms service' &&
       kms-server --config-file config/compose_4.toml
       "
+    depends_on:
+      dev-s3-mock-setup:
+        condition: service_completed_successfully
+      dev-kms-core-certs:
+        condition: service_completed_successfully      
 
   dev-kms-connector-4:
     image: ghcr.io/zama-ai/kms-blockchain-connector:latest
+    build:
+      context: .
+      dockerfile: blockchain/connector/operations/docker/ci.dockerfile    
     volumes:
       - ./blockchain/connector/config/:/app/kms-connector/config
     command:
@@ -270,6 +291,7 @@ services:
       - "--conf-file"
       - "config/compose_4.toml"
     environment:
+      - DOCKER_BUILDKIT=1        
       - RUST_LOG=info,tonic=info,h2=info
       - ASC_CONN__BLOCKCHAIN__ADDRESSES=http://dev-kms-blockchain-validator:9090
       - ASC_CONN__CORE__ADDRESSES=http://dev-kms-core-4:50400
@@ -283,6 +305,34 @@ services:
         condition: service_healthy
       dev-kms-core-init:
         condition: service_completed_successfully
+
+  # 3. Initialize the different cores
+  dev-kms-core-init:
+    image: ghcr.io/zama-ai/kms-service:latest
+    build:
+      context: .
+      dockerfile: core/service/operations/docker/ci.dockerfile
+      args:
+        LTO_RELEASE: release-test          
+    depends_on:
+      dev-kms-core-1:
+        condition: service_healthy
+      dev-kms-core-2:
+        condition: service_healthy
+      dev-kms-core-3:
+        condition: service_healthy
+      dev-kms-core-4:
+        condition: service_healthy
+    environment:
+      - RUST_LOG=info,tonic=info,h2=info
+      - RUN_MODE=dev
+    entrypoint: >
+      /bin/sh -c "
+      echo \"Starting initialization procedure\" &&
+      kms-init -a http://dev-kms-core-1:50100 http://dev-kms-core-2:50200 http://dev-kms-core-3:50300 http://dev-kms-core-4:50400 &&
+      echo \"Core services initialization done\" &&
+      exit 0
+      "
 
   debug:
     image: ubuntu:22.04
