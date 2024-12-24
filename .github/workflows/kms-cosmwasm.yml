@@ -67,7 +67,6 @@ jobs:
           sbom: false
           tags: ghcr.io/zama-ai/${{ inputs.image-name }}:${{ inputs.tag }}-${{ matrix.platform-tag }}
           labels: ${{ steps.meta.outputs.labels }}
-          annotations: ${{ steps.meta.outputs.annotations }}
 
   create-manifest:
     needs: [build-and-push-docker]
