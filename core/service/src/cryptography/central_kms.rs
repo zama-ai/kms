@@ -13,9 +13,9 @@ use crate::kms::ReencryptionRequest;
 #[cfg(feature = "non-wasm")]
 use crate::kms::RequestId;
 use crate::kms::{TypedCiphertext, VerifyProvenCtResponsePayload};
-use crate::rpc::rpc_types::compute_external_pubdata_signature;
 #[cfg(feature = "non-wasm")]
 use crate::rpc::rpc_types::SignedPubDataHandleInternal;
+use crate::rpc::rpc_types::{compute_external_pubdata_signature, Shutdown};
 use crate::rpc::rpc_types::{
     BaseKms, Kms, Plaintext, PrivDataType, PubDataType, SigncryptionPayload,
 };
@@ -67,6 +67,8 @@ use tfhe::{
     FheUint256, FheUint32, FheUint4, FheUint512, FheUint64, FheUint8, Versionize,
 };
 use tokio::sync::{Mutex, RwLock};
+#[cfg(feature = "non-wasm")]
+use tokio_util::task::TaskTracker;
 
 // TODO: we should organize our code so that we can unit test our error messages
 const ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR: &str =
@@ -495,6 +497,8 @@ pub struct SoftwareKms<
     pub(crate) proven_ct_payload_meta_map: Arc<RwLock<MetaStore<VerifyProvenCtResponsePayload>>>,
     // Rate limiting
     pub(crate) rate_limiter: RateLimiter,
+    // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
+    pub(crate) tracker: Arc<TaskTracker>,
 }
 
 /// Perform asynchronous decryption and serialize the result
@@ -776,7 +780,23 @@ impl<
                 MIN_DEC_CACHE,
             ))),
             rate_limiter: RateLimiter::new(rate_limiter_conf.unwrap_or_default()),
+            tracker: Arc::new(TaskTracker::new()),
         })
+    }
+}
+
+#[tonic::async_trait]
+impl<
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
+        BackS: Storage + Sync + Send + 'static,
+    > Shutdown for SoftwareKms<PubS, PrivS, BackS>
+{
+    async fn shutdown(&self) -> anyhow::Result<()> {
+        self.tracker.close();
+        self.tracker.wait().await;
+        // TODO add health end points to this
+        Ok(())
     }
 }
 
@@ -824,9 +844,11 @@ pub(crate) mod tests {
     use super::{verify_reencryption_eip712, Storage};
     #[cfg(feature = "slow_tests")]
     use crate::consts::{
-        DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM, OTHER_CENTRAL_DEFAULT_ID,
+        DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_KEY_ID, OTHER_CENTRAL_DEFAULT_ID,
     };
-    use crate::consts::{DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID};
+    use crate::consts::{
+        DEFAULT_PARAM, DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID,
+    };
     use crate::consts::{TEST_CENTRAL_KEYS_PATH, TEST_PARAM};
     use crate::cryptography::central_kms::SoftwareKmsKeys;
     use crate::cryptography::central_kms::{gen_sig_keys, SoftwareKms};
@@ -952,6 +974,14 @@ pub(crate) mod tests {
             .await
             .is_ok());
         centralized_test_keys
+    }
+
+    #[tokio::test]
+    #[serial(default_keys)]
+    async fn test_gen_keys() {
+        let mut rng = AesRng::seed_from_u64(100);
+        let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
+        assert!(generate_fhe_keys(&sig_sk, DEFAULT_PARAM, None, None).is_ok());
     }
 
     #[tokio::test]

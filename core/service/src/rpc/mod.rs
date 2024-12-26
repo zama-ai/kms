@@ -18,6 +18,7 @@ cfg_if::cfg_if! {
         use tonic_health::server::HealthReporter;
         use std::sync::Arc;
         use tokio::sync::RwLock;
+        use rpc_types::Shutdown;
     }
 }
 pub mod rpc_types;
@@ -77,7 +78,7 @@ pub async fn prepare_shutdown_signals<F: std::future::Future<Output = ()> + Send
 ///   be the pending future.
 #[cfg(feature = "non-wasm")]
 pub async fn run_server<
-    S: CoreServiceEndpoint,
+    S: CoreServiceEndpoint + Shutdown,
     F: std::future::Future<Output = ()> + Send + 'static,
 >(
     config: ServiceEndpoint,
@@ -126,7 +127,7 @@ pub async fn run_server<
                 },
             ),
     );
-
+    let arc_kms_service = Arc::new(kms_service);
     let server = Server::builder()
         .layer(trace_request)
         // Make sure we never abort because we spent too much time on the blocking part of the get result
@@ -136,7 +137,7 @@ pub async fn run_server<
         ))
         .add_service(health_service)
         .add_service(
-            CoreServiceEndpointServer::new(kms_service)
+            CoreServiceEndpointServer::from_arc(Arc::clone(&arc_kms_service))
                 .max_decoding_message_size(config.grpc_max_message_size)
                 .max_encoding_message_size(config.grpc_max_message_size),
         );
@@ -160,11 +161,16 @@ pub async fn run_server<
                 .set_not_serving::<CoreServiceEndpointServer<S>>()
                 .await;
         }
-        // Allow time for in-flight requests to complete
-        tokio::time::sleep(tokio::time::Duration::from_secs(
-            INFLIGHT_REQUEST_WAITING_TIME,
-        ))
-        .await;
+        let res = arc_kms_service.shutdown().await;
+        if res.is_err() {
+            tracing::error!(
+                "Failed to shutdown core/service at {}: {}",
+                socket_addr,
+                res.err().unwrap()
+            );
+        } else {
+            tracing::info!("Successfully shutdown core/service at {}", socket_addr);
+        }
     });
 
     // Run the server with graceful shutdown

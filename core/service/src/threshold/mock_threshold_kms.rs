@@ -1,8 +1,10 @@
+use bincode::serialize;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::str::FromStr;
-
-use bincode::serialize;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tokio_util::task::TaskTracker;
 use tonic::{transport, Request, Response, Status};
 
 use super::generic::*;
@@ -83,6 +85,8 @@ fn new_dummy_threshold_kms() -> DummyThresholdKms {
         #[cfg(feature = "insecure")]
         DummyCrsGenerator {},
         DummyProvenCtVerifier {},
+        Arc::new(TaskTracker::new()), // todo should this be captured in a dummy as well ?
+        Arc::new(Mutex::new(HashMap::new())),
         handle.abort_handle(),
     )
 }

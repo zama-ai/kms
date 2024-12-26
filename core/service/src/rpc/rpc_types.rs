@@ -691,6 +691,12 @@ pub trait Kms: BaseKms {
         client_address: &alloy_primitives::Address,
     ) -> anyhow::Result<Vec<u8>>;
 }
+/// Trait for shutting down the KMS gracefully.
+#[cfg(feature = "non-wasm")]
+#[tonic::async_trait]
+pub trait Shutdown {
+    async fn shutdown(&self) -> anyhow::Result<()>;
+}
 
 /// Representation of the data stored in a signcryption,
 /// needed to facilitate FHE decryption and request linking.

@@ -5503,6 +5503,7 @@ dependencies = [
  "tfhe-versionable",
  "tfhe-zk-pok",
  "tokio",
+ "tokio-util",
  "tonic",
  "tonic-build",
  "tonic-health",
@@ -9603,6 +9604,8 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
+ "hashbrown 0.14.5",
  "pin-project-lite",
  "tokio",
 ]

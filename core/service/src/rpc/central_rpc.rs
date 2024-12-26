@@ -1,12 +1,12 @@
 use super::rpc_types::{
     compute_external_pt_signature, BaseKms, SignedPubDataHandleInternal, CURRENT_FORMAT_VERSION,
 };
-use crate::cryptography::central_kms::verify_reencryption_eip712;
 use crate::cryptography::central_kms::{
     async_generate_crs, async_generate_fhe_keys, async_reencrypt, central_decrypt, BaseKmsStruct,
     SoftwareKms,
 };
-use crate::cryptography::internal_crypto_types::PublicEncKey;
+use crate::cryptography::central_kms::{verify_reencryption_eip712, KeyGenCallValues};
+use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey};
 use crate::cryptography::proven_ct_verifier::{
     get_verify_proven_ct_result, non_blocking_verify_proven_ct,
 };
@@ -19,9 +19,11 @@ use crate::kms::{
     VerifyProvenCtRequest, VerifyProvenCtResponse,
 };
 use crate::rpc::rpc_types::{protobuf_to_alloy_domain_option, PubDataType};
-use crate::util::meta_store::handle_res_mapping;
+use crate::util::meta_store::{handle_res_mapping, MetaStore};
+use crate::vault::storage::crypto_material::CentralizedCryptoMaterialStorage;
 use crate::vault::storage::Storage;
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
+use aes_prng::AesRng;
 use ahash::RandomState;
 use alloy_primitives::Address;
 use alloy_sol_types::Eip712Domain;
@@ -37,6 +39,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::hash::{BuildHasher, Hasher};
 use std::sync::Arc;
+use tokio::sync::{OwnedSemaphorePermit, RwLock};
 use tonic::{Request, Response, Status};
 use tracing::Instrument;
 
@@ -139,71 +142,22 @@ impl<
         let sk = Arc::clone(&self.base_kms.sig_key);
 
         let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref());
-
-        let _handle =
-            tokio::spawn(
-                async move {
-                    let _permit = permit;
-                    let start = tokio::time::Instant::now();
-                    {
-                        // Check if the key already exists
-                        if crypto_storage
-                            .read_cloned_centralized_fhe_keys_from_cache(&req_id)
-                            .await
-                            .is_ok()
-                        {
-                            let mut guarded_meta_store = meta_store.write().await;
-                            if let Err(e) = METRICS
-                                .increment_error_counter(OP_KEYGEN, ERR_KEY_EXISTS)
-                                .map_err(|e| {
-                                    tracing::warn!("Failed to increment error counter: {:?}", e)
-                                })
-                            {
-                                tracing::warn!("Failed to increment error counter: {:?}", e);
-                            }
-                            let _ = guarded_meta_store.update(
-                                &req_id,
-                                Err(format!(
-                                    "Failed key generation: Key with ID {req_id} already exists!"
-                                )),
-                            );
-                            return;
-                        }
-                    }
-                    let (fhe_key_set, key_info) =
-                        match async_generate_fhe_keys(&sk, params, None, eip712_domain.as_ref())
-                            .await
-                        {
-                            Ok((fhe_key_set, key_info)) => (fhe_key_set, key_info),
-                            Err(_e) => {
-                                let mut guarded_meta_store = meta_store.write().await;
-                                let _ = guarded_meta_store.update(
-                                    &req_id,
-                                    Err(format!("Failed key generation: Key with ID {req_id}!")),
-                                );
-                                return;
-                            }
-                        };
-
-                    if let Err(e) = crypto_storage
-                        .write_centralized_keys_with_meta_store(
-                            &req_id,
-                            key_info,
-                            fhe_key_set,
-                            meta_store,
-                        )
-                        .await
-                    {
-                        tracing::error!(
-                            "Error \"{e:?}\" occured to store KeyGen result for request {req_id}",
-                        );
-                        return;
-                    };
-
-                    tracing::info!("⏱️ Core Event Time for Keygen: {:?}", start.elapsed());
-                }
-                .instrument(tracing::Span::current()),
-            );
+        self.tracker.spawn(
+            async move {
+                key_gen_background(
+                    &req_id,
+                    meta_store,
+                    crypto_storage,
+                    sk,
+                    params,
+                    eip712_domain,
+                    permit,
+                )
+                .await;
+                tracing::info!("Key generation of request {} exiting normally.", req_id);
+            }
+            .instrument(tracing::Span::current()),
+        );
 
         Ok(Response::new(Empty {}))
     }
@@ -651,47 +605,21 @@ impl<
         let rng = self.base_kms.new_rng().await;
 
         let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref());
-
-        let _handle = tokio::spawn(
+        self.tracker.spawn(
             async move {
-                let _permit = permit;
-                let start = tokio::time::Instant::now();
-
-                let (pp, crs_info) = match async_generate_crs(
-                    &sk,
+                crs_gen_background(
+                    &req_id,
                     rng,
+                    meta_store,
+                    crypto_storage,
+                    sk,
                     params,
+                    eip712_domain,
                     inner.max_num_bits,
-                    eip712_domain.as_ref(),
+                    permit,
                 )
-                .await
-                {
-                    Ok((pp, crs_info)) => (pp, crs_info),
-                    Err(e) => {
-                        tracing::error!("Error in inner CRS generation: {}", e);
-                        let mut guarded_meta_store = meta_store.write().await;
-                        let _ = guarded_meta_store.update(
-                            &req_id,
-                            Err(format!("Failed CRS generation for CRS with ID {req_id}!")),
-                        );
-                        METRICS
-                            .increment_error_counter(OP_CRS_GEN, ERR_CRS_GEN_FAILED)
-                            .ok();
-                        return;
-                    }
-                };
-
-                if let Err(e) = crypto_storage
-                    .write_crs_with_meta_store(&req_id, pp, crs_info, meta_store)
-                    .await
-                {
-                    tracing::error!(
-                        "Error \"{e:?}\" occured to store CrsGen result for request {req_id}"
-                    );
-                    return;
-                }
-
-                tracing::info!("⏱️ Core Event Time for CRS-gen: {:?}", start.elapsed());
+                .await;
+                tracing::info!("CRS generation of request {} exiting normally.", req_id);
             }
             .instrument(tracing::Span::current()),
         );
@@ -773,7 +701,6 @@ impl<
             })?
             .clone();
         validate_request_id(&request_id)?;
-
         non_blocking_verify_proven_ct(
             (&self.crypto_storage).into(),
             meta_store,
@@ -800,6 +727,107 @@ impl<
         let meta_store = Arc::clone(&self.proven_ct_payload_meta_map);
         get_verify_proven_ct_result(self, meta_store, request).await
     }
+}
+
+async fn key_gen_background<
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: Storage + Send + Sync + 'static,
+    BackS: Storage + Sync + Send + 'static,
+>(
+    req_id: &RequestId,
+    meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
+    crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS, BackS>,
+    sk: Arc<PrivateSigKey>,
+    params: DKGParams,
+    eip712_domain: Option<Eip712Domain>,
+    permit: OwnedSemaphorePermit,
+) {
+    let _permit = permit;
+    let start = tokio::time::Instant::now();
+    {
+        // Check if the key already exists
+        if crypto_storage
+            .read_cloned_centralized_fhe_keys_from_cache(req_id)
+            .await
+            .is_ok()
+        {
+            let mut guarded_meta_store = meta_store.write().await;
+            if let Err(e) = METRICS
+                .increment_error_counter(OP_KEYGEN, ERR_KEY_EXISTS)
+                .map_err(|e| tracing::warn!("Failed to increment error counter: {:?}", e))
+            {
+                tracing::warn!("Failed to increment error counter: {:?}", e);
+            }
+            let _ = guarded_meta_store.update(
+                req_id,
+                Err(format!(
+                    "Failed key generation: Key with ID {req_id} already exists!"
+                )),
+            );
+            return;
+        }
+    }
+    let (fhe_key_set, key_info) =
+        match async_generate_fhe_keys(&sk, params, None, eip712_domain.as_ref()).await {
+            Ok((fhe_key_set, key_info)) => (fhe_key_set, key_info),
+            Err(_e) => {
+                let mut guarded_meta_store = meta_store.write().await;
+                let _ = guarded_meta_store.update(
+                    req_id,
+                    Err(format!("Failed key generation: Key with ID {req_id}!")),
+                );
+                return;
+            }
+        };
+
+    crypto_storage
+        .write_centralized_keys_with_meta_store(req_id, key_info, fhe_key_set, meta_store)
+        .await;
+
+    tracing::info!("⏱️ Core Event Time for Keygen: {:?}", start.elapsed());
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn crs_gen_background<
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: Storage + Send + Sync + 'static,
+    BackS: Storage + Sync + Send + 'static,
+>(
+    req_id: &RequestId,
+    rng: AesRng,
+    meta_store: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
+    crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS, BackS>,
+    sk: Arc<PrivateSigKey>,
+    params: DKGParams,
+    eip712_domain: Option<Eip712Domain>,
+    max_number_bits: Option<u32>,
+    permit: OwnedSemaphorePermit,
+) {
+    let _permit = permit;
+    let start = tokio::time::Instant::now();
+
+    let (pp, crs_info) =
+        match async_generate_crs(&sk, rng, params, max_number_bits, eip712_domain.as_ref()).await {
+            Ok((pp, crs_info)) => (pp, crs_info),
+            Err(e) => {
+                tracing::error!("Error in inner CRS generation: {}", e);
+                let mut guarded_meta_store = meta_store.write().await;
+                let _ = guarded_meta_store.update(
+                    req_id,
+                    Err(format!("Failed CRS generation for CRS with ID {req_id}!")),
+                );
+                METRICS
+                    .increment_error_counter(OP_CRS_GEN, ERR_CRS_GEN_FAILED)
+                    .ok();
+                return;
+            }
+        };
+
+    crypto_storage
+        .write_crs_with_meta_store(req_id, pp, crs_info, meta_store)
+        .await;
+
+    tracing::info!("⏱️ Core Event Time for CRS-gen: {:?}", start.elapsed());
 }
 
 /// Validates a request ID and returns an appropriate tonic error if it is invalid.

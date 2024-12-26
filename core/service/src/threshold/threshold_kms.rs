@@ -67,6 +67,7 @@ use distributed_decryption::execution::online::preprocessing::{
 use distributed_decryption::execution::runtime::party::{Identity, Role, RoleAssignment};
 use distributed_decryption::execution::runtime::session::{
     BaseSessionStruct, DecryptionMode, ParameterHandles, SessionParameters, SmallSession,
+    ToBaseSession,
 };
 use distributed_decryption::execution::small_execution::prss::PRSSSetup;
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
@@ -98,8 +99,9 @@ use tfhe::zk::CompactPkePublicParams;
 use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, OwnedSemaphorePermit, RwLock};
-use tokio::task::JoinSet;
 use tokio::time::Instant;
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 use tonic::transport::{Server, ServerTlsConfig};
 use tonic::{Request, Response, Status};
 use tonic_health::server::HealthReporter;
@@ -418,7 +420,7 @@ where
             "socket address {socket_addr} is not free for core/threshold"
         ));
     }
-    let ddec_handle = tokio::spawn(async move {
+    let abort_handle = tokio::spawn(async move {
         let (tx, rx) = tokio::sync::oneshot::channel();
         tokio::spawn(prepare_shutdown_signals(shutdown_signal, tx));
 
@@ -529,6 +531,8 @@ where
         }
     }
 
+    let tracker = Arc::new(TaskTracker::new());
+    let slow_events = Arc::new(Mutex::new(HashMap::new()));
     let rate_limiter = RateLimiter::new(rate_limiter_conf.unwrap_or_default());
 
     let reencryptor = RealReencryptor {
@@ -536,6 +540,7 @@ where
         crypto_storage: crypto_storage.clone(),
         reenc_meta_store,
         session_preparer: session_preparer.new_instance().await,
+        tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
     };
 
@@ -544,6 +549,7 @@ where
         crypto_storage: crypto_storage.clone(),
         dec_meta_store,
         session_preparer: session_preparer.new_instance().await,
+        tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
     };
 
@@ -553,6 +559,8 @@ where
         preproc_buckets: Arc::clone(&preproc_buckets),
         dkg_pubinfo_meta_store,
         session_preparer: session_preparer.new_instance().await,
+        tracker: Arc::clone(&tracker),
+        ongoing: Arc::clone(&slow_events),
         rate_limiter: rate_limiter.clone(),
     };
 
@@ -565,6 +573,8 @@ where
         preproc_factory,
         num_sessions_preproc,
         session_preparer: session_preparer.new_instance().await,
+        tracker: Arc::clone(&tracker),
+        ongoing: Arc::clone(&slow_events),
         rate_limiter: rate_limiter.clone(),
     };
 
@@ -573,6 +583,8 @@ where
         crypto_storage: crypto_storage.clone(),
         crs_meta_store,
         session_preparer,
+        tracker: Arc::clone(&tracker),
+        ongoing: Arc::clone(&slow_events),
         rate_limiter: rate_limiter.clone(),
     };
 
@@ -598,7 +610,9 @@ where
         #[cfg(feature = "insecure")]
         insecure_crs_generator,
         proven_ct_verifier,
-        ddec_handle.abort_handle(),
+        Arc::clone(&tracker),
+        Arc::clone(&slow_events),
+        abort_handle.abort_handle(),
     );
 
     Ok(kms)
@@ -819,6 +833,7 @@ pub struct RealReencryptor<
     crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
     reenc_meta_store: Arc<RwLock<MetaStore<ReencCallValues>>>,
     session_preparer: SessionPreparer,
+    tracker: Arc<TaskTracker>,
     rate_limiter: RateLimiter,
 }
 
@@ -985,9 +1000,8 @@ impl<
             "Cannot find threshold keys".to_string(),
         )?;
 
-        // we do not need to hold the handle,
         // the result of the computation is tracked the crs_meta_store
-        let _handle = tokio::spawn(
+        self.tracker.spawn(
             async move {
                 // explicitly move the rate limiter context
                 let _permit = permit;
@@ -1090,6 +1104,7 @@ pub struct RealDecryptor<
     crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
     dec_meta_store: Arc<RwLock<MetaStore<DecCallValues>>>,
     session_preparer: SessionPreparer,
+    tracker: Arc<TaskTracker>,
     rate_limiter: RateLimiter,
 }
 
@@ -1252,7 +1267,7 @@ impl<
             .map(|c| c.external_handle.to_owned())
             .collect::<Vec<_>>();
 
-        let mut dec_tasks = JoinSet::new();
+        let mut dec_tasks = Vec::new();
 
         // iterate over ciphertexts in this batch and decrypt each in their own session (so that it happens in parallel)
         for (idx, ct) in ciphertexts.into_iter().enumerate() {
@@ -1271,7 +1286,7 @@ impl<
 
             // we do not need to hold the handle,
             // the result of the computation is tracked by the dec_meta_store
-            let my_future = || async move {
+            let decrypt_future = || async move {
                 let fhe_type = if let Ok(f) = FheType::try_from(ct.fhe_type) {
                     f
                 } else {
@@ -1364,17 +1379,20 @@ impl<
                     ))),
                 }
             };
-            dec_tasks.spawn(my_future().instrument(tracing::Span::current()));
+            dec_tasks.push(
+                self.tracker
+                    .spawn(decrypt_future().instrument(tracing::Span::current())),
+            );
         }
 
         // collect decryption results in async mgmt task so we can return from this call without waiting for the decryption(s) to finish
         let meta_store = Arc::clone(&self.dec_meta_store);
         let sigkey = Arc::clone(&self.base_kms.sig_key);
-        let my_future = |_permit| async move {
+        let dec_sig_future = |_permit| async move {
             // NOTE: _permit should be dropped at the end of this function
             let mut decs = HashMap::new();
-            while let Some(resp) = dec_tasks.join_next().await {
-                match resp {
+            while let Some(resp) = dec_tasks.pop() {
+                match resp.await {
                     Ok(Ok((idx, plaintext))) => {
                         decs.insert(idx, plaintext);
                     }
@@ -1409,7 +1427,8 @@ impl<
             let mut guarded_meta_store = meta_store.write().await;
             let _ = guarded_meta_store.update(&req_id, Ok((req_digest.clone(), pts, external_sig)));
         };
-        let _handle = tokio::spawn(my_future(permit).instrument(tracing::Span::current()));
+        self.tracker
+            .spawn(dec_sig_future(permit).instrument(tracing::Span::current()));
 
         Ok(Response::new(Empty {}))
     }
@@ -1471,6 +1490,10 @@ pub struct RealKeyGenerator<
     preproc_buckets: Arc<RwLock<MetaStore<BucketMetaStore>>>,
     dkg_pubinfo_meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
     session_preparer: SessionPreparer,
+    // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
+    tracker: Arc<TaskTracker>,
+    // Map of ongoing key generation tasks
+    ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     rate_limiter: RateLimiter,
 }
 
@@ -1498,6 +1521,8 @@ impl<
                 preproc_buckets: Arc::clone(&value.preproc_buckets),
                 dkg_pubinfo_meta_store: Arc::clone(&value.dkg_pubinfo_meta_store),
                 session_preparer: value.session_preparer.new_instance().await,
+                tracker: Arc::clone(&value.tracker),
+                ongoing: Arc::clone(&value.ongoing),
                 rate_limiter: value.rate_limiter.clone(),
             },
         }
@@ -1560,7 +1585,7 @@ impl<
         }
 
         // Create the base session necessary to run the DKG
-        let mut base_session = {
+        let base_session = {
             let session_id = SessionId(req_id.clone().try_into()?);
             self.session_preparer
                 .make_base_session(session_id, NetworkMode::Async)
@@ -1569,106 +1594,37 @@ impl<
 
         // Clone all the Arcs to give them to the tokio thread
         let meta_store = Arc::clone(&self.dkg_pubinfo_meta_store);
-        let sig_key = Arc::clone(&self.base_kms.sig_key);
+        let meta_store_cancelled = Arc::clone(&self.dkg_pubinfo_meta_store);
+        let sk = Arc::clone(&self.base_kms.sig_key);
         let crypto_storage = self.crypto_storage.clone();
+        let crypto_storage_cancelled = self.crypto_storage.clone();
         let eip712_domain_copy = eip712_domain.cloned();
 
-        let my_future = |_permit| async move {
-            let start = Instant::now();
-            let dkg_res = match preproc_handle_w_mode {
-                PreprocHandleWithMode::Insecure => {
-                    initialize_key_material(&mut base_session, dkg_params).await
-                }
-                PreprocHandleWithMode::Secure(preproc_handle) => {
-                    let mut preproc_handle = preproc_handle.lock().await;
-                    distributed_keygen_z128(&mut base_session, preproc_handle.as_mut(), dkg_params)
-                        .await
-                }
-            };
-
-            //Make sure the dkg ended nicely
-            let (mut pub_key_set, private_keys) = match dkg_res {
-                Ok((pk, sk)) => (pk, sk),
-                Err(e) => {
-                    //If dkg errored out, update status
-                    let mut guarded_meta_storage = meta_store.write().await;
-                    // We cannot do much if updating the storage fails at this point...
-                    let _ = guarded_meta_storage.update(&req_id, Err(e.to_string()));
-                    return;
-                }
-            };
-
-            //Make sure we do have a SnS key
-            let sns_key = match pub_key_set.sns_key.clone() {
-                Some(sns_key) => sns_key,
-                None => {
-                    //If sns key is missing, update status
-                    let mut guarded_meta_storage = meta_store.write().await;
-                    // We cannot do much if updating the storage fails at this point...
-                    let _ =
-                        guarded_meta_storage.update(&req_id, Err("Missing SNS key".to_string()));
-                    return;
-                }
-            };
-
-            //Compute all the info required for storing
-            let info = match compute_all_info(&sig_key, &pub_key_set, eip712_domain_copy.as_ref()) {
-                Ok(info) => info,
-                Err(_) => {
-                    let mut guarded_meta_storage = meta_store.write().await;
-                    // We cannot do much if updating the storage fails at this point...
-                    let _ = guarded_meta_storage
-                        .update(&req_id, Err("Failed to compute key info".to_string()));
-                    return;
-                }
-            };
-
-            //Retrieve decompression key if there's one
-            let (
-                raw_server_key,
-                raw_ksk_material,
-                raw_compression_key,
-                raw_decompression_key,
-                raw_tag,
-            ) = pub_key_set.server_key.into_raw_parts();
-            let decompression_key = raw_decompression_key.clone();
-
-            pub_key_set.server_key = tfhe::ServerKey::from_raw_parts(
-                raw_server_key,
-                raw_ksk_material,
-                raw_compression_key,
-                raw_decompression_key,
-                raw_tag,
-            );
-
-            let threshold_fhe_keys = ThresholdFheKeys {
-                private_keys,
-                sns_key,
-                decompression_key,
-                pk_meta_data: info.clone(),
-            };
-            if let Err(e) = crypto_storage
-                .write_threshold_keys_with_meta_store(
-                    &req_id,
-                    threshold_fhe_keys,
-                    pub_key_set,
-                    info,
-                    meta_store,
-                )
+        let token = CancellationToken::new();
+        {
+            self.ongoing
+                .lock()
                 .await
-            {
-                tracing::error!(
-                    "Error \"{e:?}\" occured to store KeyGen result for request {req_id}",
-                );
-                return;
-            }
-
-            tracing::info!(
-                "DKG protocol took {} ms to complete for request {req_id}",
-                start.elapsed().as_millis()
-            );
-        };
-        let _handle = tokio::spawn(my_future(permit).instrument(tracing::Span::current()));
+                .insert(req_id.clone(), token.clone());
+        }
+        let ongoing = Arc::clone(&self.ongoing);
+        self.tracker
+            .spawn(async move {
+                tokio::select! {
+                    () = Self::key_gen_background(&req_id, base_session, meta_store, crypto_storage, preproc_handle_w_mode, sk, dkg_params, eip712_domain_copy, permit) => {
+                        // Remove cancellation token since generation is now done.
+                        ongoing.lock().await.remove(&req_id);
+                        tracing::info!("Key generation of request {} exiting normally.", req_id);
+                    },
+                    () = token.cancelled() => {
+                        tracing::error!("Key generation of request {} exiting before completion because of a cancellation event.", req_id);
+                        // Delete any persistant data. Since we only cancel during shutdown we can ignore cleaning up the meta store since it is only in RAM
+                        let guarded_meta_store = meta_store_cancelled.write().await;
+                        crypto_storage_cancelled.purge_key_material(&req_id, guarded_meta_store).await;
+                        tracing::info!("Trying to clean up any already written material.")
+                    },
+                }
+            }.instrument(tracing::Span::current()));
         Ok(())
     }
 
@@ -1755,6 +1711,101 @@ impl<
             key_results: convert_key_response(res),
         }))
     }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn key_gen_background(
+        req_id: &RequestId,
+        mut base_session: BaseSessionStruct<AesRng, SessionParameters>,
+        meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
+        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
+        preproc_handle_w_mode: PreprocHandleWithMode,
+        sk: Arc<PrivateSigKey>,
+        params: DKGParams,
+        eip712_domain: Option<alloy_sol_types::Eip712Domain>,
+        permit: OwnedSemaphorePermit,
+    ) {
+        let _permit = permit;
+        let start = Instant::now();
+        let dkg_res = match preproc_handle_w_mode {
+            PreprocHandleWithMode::Insecure => {
+                initialize_key_material(&mut base_session, params).await
+            }
+            PreprocHandleWithMode::Secure(preproc_handle) => {
+                let mut preproc_handle = preproc_handle.lock().await;
+                distributed_keygen_z128(&mut base_session, preproc_handle.as_mut(), params).await
+            }
+        };
+
+        //Make sure the dkg ended nicely
+        let (mut pub_key_set, private_keys) = match dkg_res {
+            Ok((pk, sk)) => (pk, sk),
+            Err(e) => {
+                //If dkg errored out, update status
+                let mut guarded_meta_storage = meta_store.write().await;
+                // We cannot do much if updating the storage fails at this point...
+                let _ = guarded_meta_storage.update(req_id, Err(e.to_string()));
+                return;
+            }
+        };
+
+        //Make sure we do have a SnS key
+        let sns_key = match pub_key_set.sns_key.clone() {
+            Some(sns_key) => sns_key,
+            None => {
+                //If sns key is missing, update status
+                let mut guarded_meta_storage = meta_store.write().await;
+                // We cannot do much if updating the storage fails at this point...
+                let _ = guarded_meta_storage.update(req_id, Err("Missing SNS key".to_string()));
+                return;
+            }
+        };
+
+        //Compute all the info required for storing
+        let info = match compute_all_info(&sk, &pub_key_set, eip712_domain.as_ref()) {
+            Ok(info) => info,
+            Err(_) => {
+                let mut guarded_meta_storage = meta_store.write().await;
+                // We cannot do much if updating the storage fails at this point...
+                let _ = guarded_meta_storage
+                    .update(req_id, Err("Failed to compute key info".to_string()));
+                return;
+            }
+        };
+
+        //Retrieve decompression key if there's one
+        let (raw_server_key, raw_ksk_material, raw_compression_key, raw_decompression_key, raw_tag) =
+            pub_key_set.server_key.into_raw_parts();
+        let decompression_key = raw_decompression_key.clone();
+
+        pub_key_set.server_key = tfhe::ServerKey::from_raw_parts(
+            raw_server_key,
+            raw_ksk_material,
+            raw_compression_key,
+            raw_decompression_key,
+            raw_tag,
+        );
+
+        let threshold_fhe_keys = ThresholdFheKeys {
+            private_keys,
+            sns_key,
+            decompression_key,
+            pk_meta_data: info.clone(),
+        };
+        crypto_storage
+            .write_threshold_keys_with_meta_store(
+                req_id,
+                threshold_fhe_keys,
+                pub_key_set,
+                info,
+                meta_store,
+            )
+            .await;
+
+        tracing::info!(
+            "DKG protocol took {} ms to complete for request {req_id}",
+            start.elapsed().as_millis()
+        );
+    }
 }
 
 #[tonic::async_trait]
@@ -1783,6 +1834,8 @@ pub struct RealPreprocessor {
     preproc_factory: Arc<Mutex<Box<dyn PreprocessorFactory>>>,
     num_sessions_preproc: u16,
     session_preparer: SessionPreparer,
+    tracker: Arc<TaskTracker>,
+    ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     rate_limiter: RateLimiter,
 }
 
@@ -1796,19 +1849,6 @@ impl RealPreprocessor {
         {
             let mut guarded_meta_store = self.preproc_buckets.write().await;
             guarded_meta_store.insert(&request_id)?;
-        }
-
-        fn create_sessions(
-            base_sessions: Vec<BaseSessionStruct<AesRng, SessionParameters>>,
-            prss_setup: PRSSSetup<ResiduePolyF8Z128>,
-        ) -> Vec<SmallSession<ResiduePolyF8Z128>> {
-            base_sessions
-                .into_iter()
-                .map(|base_session| {
-                    let prss_state = prss_setup.new_prss_session_state(base_session.session_id());
-                    SmallSession::new_from_prss_state(base_session, prss_state).unwrap()
-                })
-                .collect_vec()
         }
         // Derive a sequence of sessionId from request_id
         let session_id: u128 = request_id.clone().try_into()?;
@@ -1829,41 +1869,85 @@ impl RealPreprocessor {
 
         let factory = Arc::clone(&self.preproc_factory);
         let bucket_store = Arc::clone(&self.preproc_buckets);
+        let bucket_store_cancellation = Arc::clone(&self.preproc_buckets);
 
         let prss_setup = tonic_some_or_err(
             (*self.prss_setup.read().await).clone(),
             "No PRSS setup exists".to_string(),
         )?;
-        //NOTE: For now we just discard the handle, we can check status with get_preproc_status
-        // endpoint
-        let _handle = tokio::spawn(
+        let token = CancellationToken::new();
+        {
+            self.ongoing
+                .lock()
+                .await
+                .insert(request_id.clone(), token.clone());
+        }
+        let ongoing = Arc::clone(&self.ongoing);
+        self.tracker.spawn(
             async move {
-                let _permit = permit; // dropped at the end of the function
-                let sessions = create_sessions(base_sessions, prss_setup);
-                let orchestrator = {
-                    let mut factory_guard = factory.lock().await;
-                    let factory = factory_guard.as_mut();
-                    PreprocessingOrchestrator::<ResiduePolyF8Z128>::new(factory, dkg_params)
-                        .unwrap()
-                };
-                tracing::info!("Starting Preproc Orchestration on P[{:?}]", own_identity);
-                let preproc_result = orchestrator
-                    .orchestrate_small_session_dkg_processing(sessions)
-                    .await;
-                //write the preproc handle to the bucket store
-                let handle_update = match preproc_result {
-                    Ok((_, preproc_handle)) => Ok(Arc::new(Mutex::new(preproc_handle))),
-                    Err(error) => Err(error.to_string()),
-                };
-                let mut guarded_meta_store = bucket_store.write().await;
-                // We cannot do much if updating the storage fails at this point...
-                let _ = guarded_meta_store.update(&request_id, handle_update);
-                tracing::info!("Preproc Finished P[{:?}]", own_identity);
+                 tokio::select! {
+                    () = Self::preprocessing_background(&request_id, base_sessions, bucket_store, prss_setup, own_identity, dkg_params, factory, permit) => {
+                        // Remove cancellation token since generation is now done.
+                        ongoing.lock().await.remove(&request_id);
+                        tracing::info!("Preprocessing of request {} exiting normally.", &request_id);
+                    },
+                    () = token.cancelled() => {
+                        tracing::error!("Preprocessing of request {} exiting before completion because of a cancellation event.", &request_id);
+                        // Delete any stored data. Since we only cancel during shutdown we can ignore cleaning up the meta store since it is only in RAM
+                        let mut guarded_bucket_store = bucket_store_cancellation.write().await;
+                        let _ = guarded_bucket_store.delete(&request_id);
+                        tracing::info!("Trying to clean up any already written material.")
+                    },
+                }
             }
             .instrument(tracing::Span::current()),
         );
-
         Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn preprocessing_background(
+        req_id: &RequestId,
+        base_sessions: Vec<BaseSessionStruct<AesRng, SessionParameters>>,
+        bucket_store: Arc<RwLock<MetaStore<BucketMetaStore>>>,
+        prss_setup: PRSSSetup<ResiduePolyF8Z128>,
+        own_identity: Identity,
+        params: DKGParams,
+        factory: Arc<Mutex<Box<dyn PreprocessorFactory>>>,
+        permit: OwnedSemaphorePermit,
+    ) {
+        let _permit = permit; // dropped at the end of the function
+        fn create_sessions(
+            base_sessions: Vec<BaseSessionStruct<AesRng, SessionParameters>>,
+            prss_setup: PRSSSetup<ResiduePolyF8Z128>,
+        ) -> Vec<SmallSession<ResiduePolyF8Z128>> {
+            base_sessions
+                .into_iter()
+                .map(|base_session| {
+                    let prss_state = prss_setup.new_prss_session_state(base_session.session_id());
+                    SmallSession::new_from_prss_state(base_session, prss_state).unwrap()
+                })
+                .collect_vec()
+        }
+        let sessions = create_sessions(base_sessions, prss_setup);
+        let orchestrator = {
+            let mut factory_guard = factory.lock().await;
+            let factory = factory_guard.as_mut();
+            PreprocessingOrchestrator::<ResiduePolyF8Z128>::new(factory, params).unwrap()
+        };
+        tracing::info!("Starting Preproc Orchestration on P[{:?}]", own_identity);
+        let preproc_result = orchestrator
+            .orchestrate_small_session_dkg_processing(sessions)
+            .await;
+        //write the preproc handle to the bucket store
+        let handle_update = match preproc_result {
+            Ok((_, preproc_handle)) => Ok(Arc::new(Mutex::new(preproc_handle))),
+            Err(error) => Err(error.to_string()),
+        };
+        let mut guarded_meta_store = bucket_store.write().await;
+        // We cannot do much if updating the storage fails at this point...
+        let _ = guarded_meta_store.update(req_id, handle_update);
+        tracing::info!("Preproc Finished P[{:?}]", own_identity);
     }
 }
 
@@ -1969,6 +2053,10 @@ pub struct RealCrsGenerator<
     crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
     crs_meta_store: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
     session_preparer: SessionPreparer,
+    // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
+    tracker: Arc<TaskTracker>,
+    // Map of ongoing crs generation tasks
+    ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     rate_limiter: RateLimiter,
 }
 
@@ -2019,10 +2107,10 @@ impl<
         let eip712_domain = protobuf_to_alloy_domain_option(req.domain.as_ref());
 
         self.inner_crs_gen(
-            &req_id,
+            req_id,
             witness_dim,
             req.max_num_bits,
-            &dkg_params,
+            dkg_params,
             eip712_domain.as_ref(),
             permit,
             insecure,
@@ -2035,17 +2123,17 @@ impl<
     #[allow(clippy::too_many_arguments)]
     async fn inner_crs_gen(
         &self,
-        req_id: &RequestId,
+        req_id: RequestId,
         witness_dim: usize,
         max_num_bits: Option<u32>,
-        dkg_params: &DKGParams,
+        dkg_params: DKGParams,
         eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
         permit: OwnedSemaphorePermit,
         insecure: bool,
     ) -> anyhow::Result<()> {
         {
             let mut guarded_meta_store = self.crs_meta_store.write().await;
-            guarded_meta_store.insert(req_id).map_err(|e| {
+            guarded_meta_store.insert(&req_id).map_err(|e| {
                 anyhow_error_and_log(format!(
                     "failed to insert to meta store in inner_crs_gen with error: {e}"
                 ))
@@ -2053,99 +2141,51 @@ impl<
         }
 
         let session_id = SessionId(req_id.clone().try_into()?);
-        let mut session = self
+        let session = self
             .session_preparer
             .prepare_ddec_data_from_sessionid(session_id)
-            .await?;
+            .await?
+            .to_base_session()?;
 
         let meta_store = Arc::clone(&self.crs_meta_store);
+        let meta_store_cancelled = Arc::clone(&self.crs_meta_store);
         let crypto_storage = self.crypto_storage.clone();
-        let owned_req_id = req_id.to_owned();
+        let crypto_storage_cancelled = self.crypto_storage.clone();
         let eip712_domain_copy = eip712_domain.cloned();
 
         // we need to clone the signature key because it needs to be given
         // the thread that spawns the CRS ceremony
-        let sig_key = self.base_kms.sig_key.clone();
+        let sk = self.base_kms.sig_key.clone();
 
         // we do not need to hold the handle,
         // the result of the computation is tracked the crs_meta_store
         let rng = self.base_kms.new_rng().await.to_owned();
-        let my_role = session.my_role()?;
 
-        let pke_params = dkg_params
-            .get_params_basics_handle()
-            .get_compact_pk_enc_params();
-        let dkg_params_copy = *dkg_params;
-        let _handle = tokio::spawn(
-            async move {
-                let _permit = permit;
-                let crs_start_timer = Instant::now();
-                let pp = if insecure {
-                    // We let the first party sample the seed (we are using 1-based party IDs)
-                    let input_party_id = 1;
-                    if my_role.one_based() == input_party_id {
-                        let crs_res = async_generate_crs(
-                            &sig_key,
-                            rng,
-                            dkg_params_copy,
-                            max_num_bits,
-                            eip712_domain_copy.as_ref(),
-                        )
-                        .await;
-                        let crs = match crs_res {
-                            Ok((crs, _)) => crs,
-                            Err(e) => {
-                                let mut guarded_meta_store = meta_store.write().await;
-                                let _ =
-                                    guarded_meta_store.update(&owned_req_id, Err(e.to_string()));
-                                return;
-                            }
-                        };
-                        transfer_crs(&session, Some(crs), input_party_id).await
-                    } else {
-                        transfer_crs(&session, None, input_party_id).await
-                    }
-                } else {
-                    // real, secure ceremony (insecure = false)
-                    let real_ceremony = RealCeremony::default();
-                    let internal_pp = real_ceremony
-                        .execute::<Z64, _, _>(&mut session, witness_dim, max_num_bits)
-                        .await;
-                    internal_pp.and_then(|internal| internal.try_into_tfhe_zk_pok_pp(&pke_params))
-                };
-                let res_info_pp = pp.and_then(|pp| {
-                    compute_info(&sig_key, &pp, eip712_domain_copy.as_ref()).map(|info| (pp, info))
-                });
-
-                let (pp_id, meta_data) = match res_info_pp {
-                    Ok((meta, pp_id)) => (meta, pp_id),
-                    Err(e) => {
-                        let mut guarded_meta_store = meta_store.write().await;
-                        // We cannot do much if updating the storage fails at this point...
-                        let _ = guarded_meta_store.update(&owned_req_id, Err(e.to_string()));
-                        return;
-                    }
-                };
-
-                if let Err(e) = crypto_storage
-                    .write_crs_with_meta_store(&owned_req_id, pp_id, meta_data, meta_store)
-                    .await
-                {
-                    tracing::error!(
-                        "Error \"{e:?}\" occured to store CrsGen result for request {owned_req_id}"
-                    );
-                    return;
+        let token = CancellationToken::new();
+        {
+            self.ongoing
+                .lock()
+                .await
+                .insert(req_id.clone(), token.clone());
+        }
+        let ongoing = Arc::clone(&self.ongoing);
+        self.tracker
+            .spawn(async move {
+                tokio::select! {
+                    () = Self::crs_gen_background(&req_id, witness_dim, max_num_bits, session, rng, meta_store, crypto_storage, sk, dkg_params.to_owned(), eip712_domain_copy, permit, insecure) => {
+                        // Remove cancellation token since generation is now done.
+                        ongoing.lock().await.remove(&req_id);
+                        tracing::info!("CRS generation of request {} exiting normally.", req_id);
+                    },
+                    () = token.cancelled() => {
+                        tracing::error!("CRS generation of request {} exiting before completion because of a cancellation event.", req_id);
+                        // Delete any persistant data. Since we only cancel during shutdown we can ignore cleaning up the meta store since it is only in RAM
+                        let guarded_meta_store= meta_store_cancelled.write().await;
+                        crypto_storage_cancelled.purge_crs_material(&req_id, guarded_meta_store).await;
+                        tracing::info!("Trying to clean up any already written material.")
+                    },
                 }
-
-                let crs_stop_timer = Instant::now();
-                let elapsed_time = crs_stop_timer.duration_since(crs_start_timer);
-                tracing::info!(
-                    "CRS stored. CRS ceremony time was {:?} ms",
-                    (elapsed_time).as_millis()
-                );
-            }
-            .instrument(tracing::Span::current()),
-        );
+            }.instrument(tracing::Span::current()));
         Ok(())
     }
 
@@ -2163,6 +2203,82 @@ impl<
             request_id: Some(request_id),
             crs_results: Some(crs_data.into()),
         }))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn crs_gen_background(
+        req_id: &RequestId,
+        witness_dim: usize,
+        max_num_bits: Option<u32>,
+        mut base_session: BaseSessionStruct<AesRng, SessionParameters>,
+        rng: AesRng,
+        meta_store: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
+        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
+        sk: Arc<PrivateSigKey>,
+        params: DKGParams,
+        eip712_domain: Option<alloy_sol_types::Eip712Domain>,
+        permit: OwnedSemaphorePermit,
+        insecure: bool,
+    ) {
+        let _permit = permit;
+        let crs_start_timer = Instant::now();
+        let my_role = base_session
+            .my_role()
+            .map_err(|e| tracing::error!("Error getting role: {e}"))
+            .expect("No role found in the session");
+        let pke_params = params
+            .get_params_basics_handle()
+            .get_compact_pk_enc_params();
+        let pp = if insecure {
+            // We let the first party sample the seed (we are using 1-based party IDs)
+            let input_party_id = 1;
+            if my_role.one_based() == input_party_id {
+                let crs_res =
+                    async_generate_crs(&sk, rng, params, max_num_bits, eip712_domain.as_ref())
+                        .await;
+                let crs = match crs_res {
+                    Ok((crs, _)) => crs,
+                    Err(e) => {
+                        let mut guarded_meta_store = meta_store.write().await;
+                        let _ = guarded_meta_store.update(req_id, Err(e.to_string()));
+                        return;
+                    }
+                };
+                transfer_crs(&base_session, Some(crs), input_party_id).await
+            } else {
+                transfer_crs(&base_session, None, input_party_id).await
+            }
+        } else {
+            // real, secure ceremony (insecure = false)
+            let real_ceremony = RealCeremony::default();
+            let internal_pp = real_ceremony
+                .execute::<Z64, _, _>(&mut base_session, witness_dim, max_num_bits)
+                .await;
+            internal_pp.and_then(|internal| internal.try_into_tfhe_zk_pok_pp(&pke_params))
+        };
+        let res_info_pp =
+            pp.and_then(|pp| compute_info(&sk, &pp, eip712_domain.as_ref()).map(|info| (pp, info)));
+
+        let (pp_id, meta_data) = match res_info_pp {
+            Ok((meta, pp_id)) => (meta, pp_id),
+            Err(e) => {
+                let mut guarded_meta_store = meta_store.write().await;
+                // We cannot do much if updating the storage fails at this point...
+                let _ = guarded_meta_store.update(req_id, Err(e.to_string()));
+                return;
+            }
+        };
+
+        crypto_storage
+            .write_crs_with_meta_store(req_id, pp_id, meta_data, meta_store)
+            .await;
+
+        let crs_stop_timer = Instant::now();
+        let elapsed_time = crs_stop_timer.duration_since(crs_start_timer);
+        tracing::info!(
+            "CRS stored. CRS ceremony time was {:?} ms",
+            (elapsed_time).as_millis()
+        );
     }
 }
 
@@ -2208,6 +2324,8 @@ impl<
                 crypto_storage: value.crypto_storage.clone(),
                 crs_meta_store: Arc::clone(&value.crs_meta_store),
                 session_preparer: value.session_preparer.new_instance().await,
+                tracker: Arc::clone(&value.tracker),
+                ongoing: Arc::clone(&value.ongoing),
                 rate_limiter: value.rate_limiter.clone(),
             },
         }

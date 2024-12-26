@@ -1,8 +1,10 @@
-use tokio::task::AbortHandle;
-use tonic::{Request, Response, Status};
-
 use crate::kms::core_service_endpoint_server::CoreServiceEndpoint;
 use crate::kms::*;
+use crate::rpc::rpc_types::Shutdown;
+use std::{collections::HashMap, sync::Arc};
+use tokio::{sync::Mutex, task::AbortHandle};
+use tokio_util::{sync::CancellationToken, task::TaskTracker};
+use tonic::{Request, Response, Status};
 
 #[tonic::async_trait]
 pub trait Initiator {
@@ -122,7 +124,11 @@ pub struct GenericKms<
     #[cfg(feature = "insecure")]
     insecure_crs_generator: ICG,
     proven_ct_verifier: ZV,
-    abort_handle: AbortHandle,
+    // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
+    tracker: Arc<TaskTracker>,
+    // List of slow events to be cancelled when requesting a shut down.
+    slow_events: Arc<Mutex<HashMap<RequestId, CancellationToken>>>, // todo remove tokens when the operation is done
+    ddec_abort_handle: AbortHandle,
 }
 
 #[cfg(feature = "insecure")]
@@ -138,7 +144,9 @@ impl<IN, RE, DE, KG, IKG, PP, CG, ICG, ZV> GenericKms<IN, RE, DE, KG, IKG, PP, C
         crs_generator: CG,
         insecure_crs_generator: ICG,
         proven_ct_verifier: ZV,
-        abort_handle: AbortHandle,
+        tracker: Arc<TaskTracker>,
+        slow_events: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
+        ddec_abort_handle: AbortHandle,
     ) -> Self {
         Self {
             initiator,
@@ -150,12 +158,37 @@ impl<IN, RE, DE, KG, IKG, PP, CG, ICG, ZV> GenericKms<IN, RE, DE, KG, IKG, PP, C
             crs_generator,
             insecure_crs_generator,
             proven_ct_verifier,
-            abort_handle,
+            tracker,
+            slow_events,
+            ddec_abort_handle,
         }
     }
+}
 
-    pub fn abort(&self) {
-        self.abort_handle.abort()
+#[cfg(feature = "insecure")]
+#[tonic::async_trait]
+impl<
+        IN: Sync,
+        RE: Sync,
+        DE: Sync,
+        KG: Sync,
+        IKG: Sync,
+        PP: Sync,
+        CG: Sync,
+        ICG: Sync,
+        ZV: Sync,
+    > Shutdown for GenericKms<IN, RE, DE, KG, IKG, PP, CG, ICG, ZV>
+{
+    async fn shutdown(&self) -> anyhow::Result<()> {
+        let slow_events = self.slow_events.lock().await;
+        self.ddec_abort_handle.abort();
+        for event in slow_events.values() {
+            event.cancel();
+        }
+        self.tracker.close();
+        self.tracker.wait().await;
+        // TODO add health end points to this
+        Ok(())
     }
 }
 
@@ -170,7 +203,9 @@ impl<IN, RE, DE, KG, PP, CG, ZV> GenericKms<IN, RE, DE, KG, PP, CG, ZV> {
         keygen_preprocessor: PP,
         crs_generator: CG,
         proven_ct_verifier: ZV,
-        abort_handle: AbortHandle,
+        tracker: Arc<TaskTracker>,
+        slow_events: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
+        ddec_abort_handle: AbortHandle,
     ) -> Self {
         Self {
             initiator,
@@ -180,12 +215,28 @@ impl<IN, RE, DE, KG, PP, CG, ZV> GenericKms<IN, RE, DE, KG, PP, CG, ZV> {
             keygen_preprocessor,
             crs_generator,
             proven_ct_verifier,
-            abort_handle,
+            tracker,
+            slow_events,
+            ddec_abort_handle,
         }
     }
+}
 
-    pub fn abort(&self) {
-        self.abort_handle.abort()
+#[tonic::async_trait]
+#[cfg(not(feature = "insecure"))]
+impl<IN: Sync, RE: Sync, DE: Sync, KG: Sync, PP: Sync, CG: Sync, ZV: Sync> Shutdown
+    for GenericKms<IN, RE, DE, KG, PP, CG, ZV>
+{
+    async fn shutdown(&self) -> anyhow::Result<()> {
+        let slow_events = self.slow_events.lock().await;
+        self.ddec_abort_handle.abort();
+        for event in slow_events.values() {
+            event.cancel();
+        }
+        self.tracker.close();
+        self.tracker.wait().await;
+        // TODO add health end points to this
+        Ok(())
     }
 }
 

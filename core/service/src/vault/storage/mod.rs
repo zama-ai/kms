@@ -130,18 +130,29 @@ pub async fn delete_all_at_request_id<S: Storage>(storage: &mut S, request_id: &
 }
 
 // Helper method to remove data based on a data type and request ID.
+// An error will be returned if the data could not be deleted.
+// In case the data does not exist, a warning is logged but no error returned.
 pub async fn delete_at_request_id<S: Storage>(
     storage: &mut S,
     request_id: &RequestId,
     data_type: &str,
 ) -> anyhow::Result<()> {
     let url = storage.compute_url(&request_id.to_string(), data_type)?;
-    storage.delete_data(&url).await.map_err(|e| {
-        anyhow::anyhow!(format!(
-            "Could not delete data with ID {} and type {}: {}",
-            request_id, data_type, e
-        ))
-    })
+    if storage.data_exists(&url).await? {
+        storage.delete_data(&url).await.map_err(|e| {
+            anyhow::anyhow!(format!(
+                "Could not delete data with ID {} and type {}: {}",
+                request_id, data_type, e
+            ))
+        })
+    } else {
+        tracing::warn!(
+            "Data with ID {} and type {} does not exist",
+            request_id,
+            data_type
+        );
+        Ok(())
+    }
 }
 
 // Helper method to remove data based on a data type and request ID.
