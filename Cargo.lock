@@ -5442,6 +5442,7 @@ dependencies = [
  "aes",
  "aes-gcm-siv",
  "aes-prng",
+ "ahash 0.8.11",
  "alloy-dyn-abi",
  "alloy-primitives",
  "alloy-signer",

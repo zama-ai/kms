@@ -22,17 +22,20 @@ use crate::rpc::rpc_types::{protobuf_to_alloy_domain_option, PubDataType};
 use crate::util::meta_store::handle_res_mapping;
 use crate::vault::storage::Storage;
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
+use ahash::RandomState;
 use alloy_primitives::Address;
 use alloy_sol_types::Eip712Domain;
 use conf_trace::metrics::METRICS;
 use conf_trace::metrics_names::{
     ERR_CRS_GEN_FAILED, ERR_DECRYPTION_FAILED, ERR_KEY_EXISTS, ERR_KEY_NOT_FOUND,
-    ERR_RATE_LIMIT_EXCEEDED, ERR_REENCRYPTION_FAILED, OP_CRS_GEN, OP_DECRYPT, OP_KEYGEN,
-    OP_REENCRYPT, OP_VERIFY_PROVEN_CT,
+    ERR_RATE_LIMIT_EXCEEDED, ERR_REENCRYPTION_FAILED, HASH_CIPHERTEXT_SEEDS, OP_CRS_GEN,
+    OP_DECRYPT, OP_KEYGEN, OP_REENCRYPT, OP_VERIFY_PROVEN_CT, TAG_CIPHERTEXT_ID, TAG_PARTY_ID,
+    TAG_REQUEST_ID,
 };
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 use std::collections::HashMap;
 use std::fmt;
+use std::hash::{BuildHasher, Hasher};
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 use tracing::Instrument;
@@ -231,13 +234,19 @@ impl<
         &self,
         request: Request<ReencryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
-        let _timer = METRICS
+        // Start timing and counting before any operations
+        let timer = METRICS
             .time_operation(OP_REENCRYPT)
-            .map_err(|e| Status::internal(format!("Failed to start metrics: {}", e)))?
-            .start();
-        METRICS
+            .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
+            .and_then(|b| {
+                // Use a constant party ID since this is the central KMS
+                b.tag(TAG_PARTY_ID, "central")
+                    .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
+            });
+
+        let _request_counter = METRICS
             .increment_request_counter(OP_REENCRYPT)
-            .map_err(|e| Status::internal(format!("Failed to increment counter: {}", e)))?;
+            .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
 
         let permit = self.rate_limiter.start_reenc().await.map_err(|e| {
             if let Err(e) = METRICS.increment_error_counter(OP_REENCRYPT, ERR_RATE_LIMIT_EXCEEDED) {
@@ -245,12 +254,33 @@ impl<
             }
             Status::resource_exhausted(e.to_string())
         })?;
+
         let inner = request.into_inner();
+
         let (ciphertext, fhe_type, link, client_enc_key, client_address, key_id, request_id) =
             tonic_handle_potential_err(
                 validate_reencrypt_req(&inner).await,
                 format!("Invalid key in request {:?}", inner),
             )?;
+
+        // Add ciphertext ID tag after validation and start timing
+        let _timer = if let Ok(timer) = timer {
+            // Calculate hash for the ciphertext
+            let (seed1, seed2, seed3, seed4) = HASH_CIPHERTEXT_SEEDS;
+            let mut hasher = RandomState::with_seeds(seed1, seed2, seed3, seed4).build_hasher();
+            hasher.write(&ciphertext);
+            let ciphertext_id = format!("{:06x}", hasher.finish() & 0xFFFFFF); // mask to use only 6 last hex chars
+
+            timer
+                .tag(TAG_REQUEST_ID, request_id.to_string())
+                .and_then(|b| b.tag(TAG_CIPHERTEXT_ID, ciphertext_id))
+                .map(|b| b.start())
+                .map_err(|e| tracing::warn!("Failed to add tags: {}", e))
+        } else {
+            timer.map(|b| b.start())
+        }
+        .ok();
+
         {
             let mut guarded_meta_store = self.reenc_meta_map.write().await;
             tonic_handle_potential_err(

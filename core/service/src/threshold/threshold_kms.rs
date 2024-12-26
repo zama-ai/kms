@@ -43,10 +43,12 @@ use crate::vault::storage::{
 };
 use crate::{anyhow_error_and_log, get_exactly_one};
 use aes_prng::AesRng;
+use ahash::RandomState;
 use anyhow::anyhow;
 use conf_trace::metrics;
 use conf_trace::metrics_names::{
-    ERR_DECRYPTION_FAILED, ERR_RATE_LIMIT_EXCEEDED, OP_DECRYPT, OP_REENCRYPT, TAG_PARTY_ID,
+    ERR_DECRYPTION_FAILED, ERR_RATE_LIMIT_EXCEEDED, HASH_CIPHERTEXT_SEEDS, OP_DECRYPT,
+    OP_REENCRYPT, TAG_CIPHERTEXT_ID, TAG_PARTY_ID, TAG_REQUEST_ID,
 };
 use distributed_decryption::algebra::galois_rings::common::pack_residue_poly;
 use distributed_decryption::algebra::galois_rings::degree_8::ResiduePolyF8Z128;
@@ -87,6 +89,7 @@ use k256::ecdsa::SigningKey;
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::hash::{BuildHasher, Hasher};
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use tfhe::integer::compression_keys::DecompressionKey;
@@ -904,14 +907,16 @@ impl<
         &self,
         request: Request<ReencryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
-        let _timer = metrics::METRICS
+        // Start timing and counting before any operations
+        let timer = metrics::METRICS
             .time_operation(OP_REENCRYPT)
-            .map_err(|e| Status::internal(format!("Failed to start metrics: {}", e)))?
-            .tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
-            .map_err(|e| Status::internal(format!("Failed to add tag: {}", e)))?
-            .start();
+            .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
+            .and_then(|b| {
+                b.tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
+                    .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
+            });
 
-        let _ = metrics::METRICS
+        let _request_counter = metrics::METRICS
             .increment_request_counter(OP_REENCRYPT)
             .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
 
@@ -919,6 +924,7 @@ impl<
             let _ = metrics::METRICS.increment_error_counter(OP_REENCRYPT, ERR_RATE_LIMIT_EXCEEDED);
             Status::resource_exhausted(e.to_string())
         })?;
+
         let inner = request.into_inner();
         tracing::info!(
             "Party {:?} received a new reencryption request with request_id {:?}",
@@ -930,6 +936,24 @@ impl<
                 validate_reencrypt_req(&inner).await,
                 format!("Invalid reencryption request {:?}", inner),
             )?;
+
+        // Add ciphertext ID tag after validation and start timing
+        let _timer = if let Ok(timer) = timer {
+            // Calculate hash for the ciphertextt
+            let (seed1, seed2, seed3, seed4) = HASH_CIPHERTEXT_SEEDS;
+            let mut hasher = RandomState::with_seeds(seed1, seed2, seed3, seed4).build_hasher();
+            hasher.write(&ciphertext);
+            let ciphertext_id = format!("{:06x}", hasher.finish() & 0xFFFFFF); // mask to use only 6 last hex chars
+
+            timer
+                .tag(TAG_REQUEST_ID, req_id.to_string())
+                .and_then(|b| b.tag(TAG_CIPHERTEXT_ID, ciphertext_id))
+                .map(|b| b.start())
+                .map_err(|e| tracing::warn!("Failed to add tags: {}", e))
+        } else {
+            timer.map(|b| b.start())
+        }
+        .ok();
 
         let mut session = tonic_handle_potential_err(
             self.session_preparer
@@ -1140,14 +1164,16 @@ impl<
         &self,
         request: Request<DecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
-        let _timer = metrics::METRICS
+        // Start timing and counting before any operations
+        let timer = metrics::METRICS
             .time_operation(OP_DECRYPT)
-            .map_err(|e| Status::internal(format!("Failed to start metrics: {}", e)))?
-            .tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
-            .map_err(|e| Status::internal(format!("Failed to add tag: {}", e)))?
-            .start();
+            .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
+            .and_then(|b| {
+                b.tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
+                    .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
+            });
 
-        let _ = metrics::METRICS
+        let _request_counter = metrics::METRICS
             .increment_request_counter(OP_DECRYPT)
             .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
 
@@ -1177,6 +1203,17 @@ impl<
                 let _ = metrics::METRICS.increment_error_counter(OP_DECRYPT, ERR_DECRYPTION_FAILED);
                 e
             })?;
+
+        // Add ciphertext ID tag after validation and start timing
+        let _timer = if let Ok(timer) = timer {
+            timer
+                .tag(TAG_REQUEST_ID, req_id.to_string())
+                .map(|b| b.start())
+                .map_err(|e| tracing::warn!("Failed to add tag request id: {}", e))
+        } else {
+            timer.map(|b| b.start())
+        }
+        .ok();
 
         tracing::debug!(
             request_id = ?req_id,

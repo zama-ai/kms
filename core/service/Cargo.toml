@@ -53,6 +53,7 @@ aws-smithy-types = { version = "=1.2.9", optional = true }
 kms-common.workspace = true
 backoff = { workspace = true, features = ["tokio"], optional = true }
 bincode.workspace = true
+ahash = "=0.8.11"
 cbc = { version = "=0.1.2", features = ["alloc"] }
 cfg-if.workspace = true
 clap = { workspace = true, features = ["derive"] }
