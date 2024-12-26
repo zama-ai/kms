@@ -24,9 +24,9 @@ fn default_builder() -> Builder {
         .type_attribute("CrsGenResult", DERIVES)
         .type_attribute("VerifyProvenCtResponse", DERIVES)
         .type_attribute("VerifyProvenCtResponsePayload", DERIVES)
+        .type_attribute("TypedPlaintext", EXTENDED_DERIVES)
 }
 
-// Adding doc
 #[cfg(all(not(feature = "non-wasm"), not(feature = "grpc-client")))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     default_builder()

@@ -45,7 +45,7 @@ enum FheType {
 }
 
 message KeyGenPreprocRequest {
-  ParamChoice params = 1;
+  FheParameter params = 1;
   RequestId request_id = 2;
 }
 
@@ -54,7 +54,7 @@ message KeyGenPreprocStatus { KeyGenPreprocStatusEnum result = 1; }
 // Request for generating new keys under a certain handle and return a URI where
 // they can be accessed.
 message KeyGenRequest {
-  ParamChoice params = 1;
+  FheParameter params = 1;
   RequestId preproc_id = 2;
   RequestId request_id = 3;
   Eip712DomainMsg domain = 4;
@@ -80,13 +80,13 @@ message SignedPubDataHandle {
 // Keeping the fields in lowercase is important because
 // it needs to match what the config reads out of the toml config files,
 // e.g., in default_centralized.toml.
-enum ParamChoice {
+enum FheParameter {
   test = 0;
   default = 1;
 }
 
 message CrsGenRequest {
-  ParamChoice params = 1;
+  FheParameter params = 1;
   // This is the maximum number of bits that can be proven,
   // e.g. 64 for a single FheUint64 or 8 x FheUint8 values.
   // If this is not provided, then it defaults to ZK_DEFAULT_MAX_NUM_CLEARTEXT.
@@ -126,6 +126,14 @@ message DecryptionRequest {
   RequestId request_id = 6;
 }
 
+// The typed plaintext type, which is the result of decryption.
+message TypedPlaintext {
+  // The actual plaintext in bytes.
+  bytes bytes = 1;
+  // The type of plaintext encrypted.
+  FheType fhe_type = 2;
+}
+
 // KMS-internal Decryption Response Payload, containing meta data, plaintexts
 // and external results
 message DecryptionResponsePayload {
@@ -143,7 +151,7 @@ message DecryptionResponsePayload {
   bytes digest = 3;
   // A list of plaintexts, as little endian byte arrays. One for each
   // ciphertext.
-  repeated bytes plaintexts = 4;
+  repeated TypedPlaintext plaintexts = 4;
   // the signature on external_decryption_result for the external recipient
   // (e.g. the fhevm)
   optional bytes external_signature = 5;

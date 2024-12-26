@@ -21,7 +21,7 @@ pub enum FheParameterVersioned {
     V0(FheParameter),
 }
 
-/// This type needs to match the protobuf type called [ParamChoice].
+/// This type needs to match the protobuf type called [FheParameter].
 #[cw_serde]
 #[derive(Copy, Default, EnumString, Eq, Display, EnumIter, Versionize)]
 #[versionize(FheParameterVersioned)]
@@ -55,11 +55,11 @@ impl TryFrom<i32> for FheParameter {
 }
 
 impl FheParameter {
-    pub fn to_param_choice_string(&self) -> String {
+    pub fn to_fhe_parameter_string(&self) -> String {
         // Our string representation is defined by the serialized json,
         // but the json encoding surrounds the string with double quotes,
         // so we need to extract the inner string so this result can be
-        // processed by other functions, e.g., turned into a [ParamChoice].
+        // processed by other functions, e.g., turned into a [FheParameter].
         serde_json::json!(self)
             .to_string()
             .trim_matches('\"')
@@ -2705,15 +2705,15 @@ mod tests {
     }
 
     #[test]
-    fn param_choice_serialization() {
-        // make sure these strings match what's in the protobuf [ParamChoice]
-        for param_choice in FheParameter::iter() {
-            match param_choice {
+    fn fhe_parameter_serialization() {
+        // make sure these strings match what's in the protobuf [FheParameter]
+        for fhe_parameter in FheParameter::iter() {
+            match fhe_parameter {
                 FheParameter::Default => {
-                    assert_eq!(param_choice.to_param_choice_string(), "default");
+                    assert_eq!(fhe_parameter.to_fhe_parameter_string(), "default");
                 }
                 FheParameter::Test => {
-                    assert_eq!(param_choice.to_param_choice_string(), "test");
+                    assert_eq!(fhe_parameter.to_fhe_parameter_string(), "test");
                 }
             }
         }

@@ -132,12 +132,12 @@ export ADMIN_ADDRESS=$(wasmd keys show connector -a)
 
    - For threshold mode:
    ```bash
-   CSC_INST_TX_HASH=$(wasmd tx wasm instantiate $CSC_CODE_ID '{ "parties":[{"party_id": "01", "address": ""}, {"party_id": "02", "address": ""}, {"party_id": "03", "address": ""}, {"party_id": "04", "address": ""}], "response_count_for_majority_vote": 3, "response_count_for_reconstruction": 3, "degree_for_reconstruction": 1, "param_choice": "default", "storage_base_urls": ["'$STORAGE_BASE_URL'"], "allowlists":{"admin": ["'$ADMIN_ADDRESS'"], "configure": ["'$ADMIN_ADDRESS'"]} }' --label "csc-threshold" --from validator --output json --node $NODE_URL --chain-id local-dev-chain -y --admin $ADMIN_ADDRESS --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 | jq -r '.txhash')
+   CSC_INST_TX_HASH=$(wasmd tx wasm instantiate $CSC_CODE_ID '{ "parties":[{"party_id": "01", "address": ""}, {"party_id": "02", "address": ""}, {"party_id": "03", "address": ""}, {"party_id": "04", "address": ""}], "response_count_for_majority_vote": 3, "response_count_for_reconstruction": 3, "degree_for_reconstruction": 1, "fhe_parameter": "default", "storage_base_urls": ["'$STORAGE_BASE_URL'"], "allowlists":{"admin": ["'$ADMIN_ADDRESS'"], "configure": ["'$ADMIN_ADDRESS'"]} }' --label "csc-threshold" --from validator --output json --node $NODE_URL --chain-id local-dev-chain -y --admin $ADMIN_ADDRESS --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 | jq -r '.txhash')
    ```
 
    - For centralized mode:
    ```bash
-   CSC_INST_TX_HASH=$(wasmd tx wasm instantiate $CSC_CODE_ID '{ "parties":[{"party_id": "01", "address": ""}], "response_count_for_majority_vote": 1, "response_count_for_reconstruction": 1, "degree_for_reconstruction": 0, "param_choice": "default", "storage_base_urls": ["'$STORAGE_BASE_URL'"], "allowlists":{"admin": ["'$ADMIN_ADDRESS'"], "configure": ["'$ADMIN_ADDRESS'"]} }' --label "csc-centralized" --from validator --output json --node $NODE_URL --chain-id local-dev-chain -y --admin $ADMIN_ADDRESS --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 | jq -r '.txhash')
+   CSC_INST_TX_HASH=$(wasmd tx wasm instantiate $CSC_CODE_ID '{ "parties":[{"party_id": "01", "address": ""}], "response_count_for_majority_vote": 1, "response_count_for_reconstruction": 1, "degree_for_reconstruction": 0, "fhe_parameter": "default", "storage_base_urls": ["'$STORAGE_BASE_URL'"], "allowlists":{"admin": ["'$ADMIN_ADDRESS'"], "configure": ["'$ADMIN_ADDRESS'"]} }' --label "csc-centralized" --from validator --output json --node $NODE_URL --chain-id local-dev-chain -y --admin $ADMIN_ADDRESS --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 | jq -r '.txhash')
    ```
 
 Then fetch the CSC address:

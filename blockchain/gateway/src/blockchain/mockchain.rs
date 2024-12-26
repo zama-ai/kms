@@ -136,7 +136,7 @@ impl Blockchain for MockchainImpl {
         "crs": {
              "256": {
                  "data_id": "d8d94eb3a23d22d3eb6b5e7b694e8afcd571d906",
-                 "param_choice": 1,
+                 "fhe_parameter": 1,
                  "signatures": [
                      "0011223344556677889900112233445566778899",
                      "0011223344556677889900112233445566778899",
@@ -161,7 +161,7 @@ impl Blockchain for MockchainImpl {
              {
                  "fhe_public_key": {
                      "data_id": "408d8cbaa51dece7f782fe04ba0b1c1d017b1088",
-                     "param_choice": 1,
+                     "fhe_parameter": 1,
                      "signatures": [
                          "0011223344556677889900112233445566778899",
                          "0011223344556677889900112233445566778899",
@@ -183,7 +183,7 @@ impl Blockchain for MockchainImpl {
                  },
                  "fhe_server_key": {
                      "data_id": "408d8cbaa51dece7f782fe04ba0b1c1d017b1088",
-                     "param_choice": 1,
+                     "fhe_parameter": 1,
                      "signatures": [
                          "0011223344556677889900112233445566778899",
                          "0011223344556677889900112233445566778899",

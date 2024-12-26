@@ -60,8 +60,8 @@ pub struct VerifyProvenCtResponseToClient {
 pub struct KeyUrlInfo {
     // The ID/handle of the key or CRS.
     data_id: HexVector,
-    // The enum choice of parameters used for the key or CRS. TODO should maybe import ParamChoice
-    param_choice: i32,
+    // The enum choice of parameters used for the key or CRS. TODO should maybe import FheParameter
+    fhe_parameter: i32,
     // List of URLs to fetch the data element from.
     urls: Vec<String>,
     // List of signatures for the data element.
@@ -75,8 +75,8 @@ impl KeyUrlInfo {
         &self.data_id
     }
 
-    pub fn param_choice(&self) -> i32 {
-        self.param_choice
+    pub fn fhe_parameter(&self) -> i32 {
+        self.fhe_parameter
     }
 
     pub fn urls(&self) -> &Vec<String> {

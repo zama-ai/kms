@@ -119,7 +119,7 @@ pub trait Blockchain {
     /// Note that this method may be called automatically by the
     /// [SubscriptionHandler], which is an extra round-trip,
     /// since some KMS operations needs this information.
-    async fn get_param_choice(&self) -> anyhow::Result<FheParameter>;
+    async fn get_fhe_parameter(&self) -> anyhow::Result<FheParameter>;
 
     /// Get the public key of the wallet used to interact with the KMS BC
     async fn get_public_key(&self) -> kms_blockchain_client::crypto::pubkey::PublicKey;

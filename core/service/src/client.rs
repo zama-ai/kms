@@ -9,10 +9,10 @@ use crate::cryptography::signcryption::{
 use crate::cryptography::{internal_crypto_types::Signature, signcryption::check_normalized};
 use crate::kms::{
     FheType, ReencryptionRequest, ReencryptionRequestPayload, ReencryptionResponse,
-    ReencryptionResponsePayload, RequestId,
+    ReencryptionResponsePayload, RequestId, TypedPlaintext,
 };
 use crate::rpc::rpc_types::{
-    alloy_to_protobuf_domain, FheTypeResponse, MetaResponse, Plaintext, CURRENT_FORMAT_VERSION,
+    alloy_to_protobuf_domain, FheTypeResponse, MetaResponse, CURRENT_FORMAT_VERSION,
 };
 use crate::{anyhow_error_and_log, some_or_err};
 use aes_prng::AesRng;
@@ -44,7 +44,7 @@ cfg_if::cfg_if! {
         use crate::cryptography::central_kms::{compute_handle, BaseKmsStruct};
         use crate::get_exactly_one;
         use crate::kms::DecryptionResponse;
-        use crate::kms::ParamChoice;
+        use crate::kms::FheParameter;
         use crate::kms::{
             CrsGenRequest, CrsGenResult, TypedCiphertext, DecryptionRequest, DecryptionResponsePayload,
             KeyGenPreprocRequest, KeyGenRequest, KeyGenResult, VerifyProvenCtRequest, VerifyProvenCtResponse,
@@ -68,38 +68,38 @@ fn decrypted_blocks_to_plaintext(
     params: &ClassicPBSParameters,
     fhe_type: FheType,
     recon_blocks: Vec<Z128>,
-) -> anyhow::Result<Plaintext> {
+) -> anyhow::Result<TypedPlaintext> {
     let bits_in_block = params.message_modulus_log();
     let res_pt = match fhe_type {
         FheType::Euint2048 => {
             combine_decryptions::<tfhe::integer::bigint::U2048>(bits_in_block, recon_blocks)
-                .map(Plaintext::from_u2048)
+                .map(TypedPlaintext::from_u2048)
         }
         FheType::Euint1024 => {
             combine_decryptions::<tfhe::integer::bigint::U1024>(bits_in_block, recon_blocks)
-                .map(Plaintext::from_u1024)
+                .map(TypedPlaintext::from_u1024)
         }
         FheType::Euint512 => {
             combine_decryptions::<tfhe::integer::bigint::U512>(bits_in_block, recon_blocks)
-                .map(Plaintext::from_u512)
+                .map(TypedPlaintext::from_u512)
         }
         FheType::Euint256 => {
             combine_decryptions::<tfhe::integer::U256>(bits_in_block, recon_blocks)
-                .map(Plaintext::from_u256)
+                .map(TypedPlaintext::from_u256)
         }
         FheType::Euint160 => {
             combine_decryptions::<tfhe::integer::U256>(bits_in_block, recon_blocks)
-                .map(Plaintext::from_u160)
+                .map(TypedPlaintext::from_u160)
         }
         FheType::Euint128 => combine_decryptions::<u128>(bits_in_block, recon_blocks)
-            .map(|x| Plaintext::new(x, fhe_type)),
+            .map(|x| TypedPlaintext::new(x, fhe_type)),
         FheType::Ebool
         | FheType::Euint4
         | FheType::Euint8
         | FheType::Euint16
         | FheType::Euint32
         | FheType::Euint64 => combine_decryptions::<u64>(bits_in_block, recon_blocks)
-            .map(|x| Plaintext::new(x as u128, fhe_type)),
+            .map(|x| TypedPlaintext::new(x as u128, fhe_type)),
     };
     res_pt.map_err(|error| anyhow_error_and_log(format!("Panicked in combining {error}")))
 }
@@ -234,7 +234,7 @@ pub struct TestingReencryptionTranscript {
 #[cfg(all(not(feature = "non-wasm"), not(feature = "grpc-client")))]
 pub mod js_api {
     use crate::kms::Eip712DomainMsg;
-    use crate::kms::ParamChoice;
+    use crate::kms::FheParameter;
     use crate::rpc::rpc_types::protobuf_to_alloy_domain;
     use crypto_box::aead::{Aead, AeadCore};
     use crypto_box::{Nonce, SalsaBox};
@@ -273,17 +273,17 @@ pub mod js_api {
     /// * `client_address_hex` - the client (wallet) address in hex,
     /// must be prefixed with "0x".
     ///
-    /// * `param_choice` - the parameter choice, which can be either `"test"` or `"default"`.
+    /// * `fhe_parameter` - the parameter choice, which can be either `"test"` or `"default"`.
     /// The "default" parameter choice is selected if no matching string is found.
     #[wasm_bindgen]
     pub fn new_client(
         server_addrs: Vec<String>,
         client_address_hex: &str,
-        param_choice: &str,
+        fhe_parameter: &str,
     ) -> Result<Client, JsError> {
         console_error_panic_hook::set_once();
 
-        let params = match ParamChoice::from_str_name(param_choice) {
+        let params = match FheParameter::from_str_name(fhe_parameter) {
             Some(choice) => choice.into(),
             None => BC_PARAMS_SAM_SNS,
         };
@@ -988,12 +988,12 @@ impl Client {
         &self,
         request_id: &RequestId,
         preproc_id: Option<RequestId>,
-        param: Option<ParamChoice>,
+        param: Option<FheParameter>,
         eip712_domain: Option<Eip712Domain>,
     ) -> anyhow::Result<KeyGenRequest> {
         let parsed_param: i32 = match param {
             Some(parsed_param) => parsed_param.into(),
-            None => ParamChoice::Default.into(),
+            None => FheParameter::Default.into(),
         };
         if !request_id.is_valid() {
             return Err(anyhow_error_and_log(format!(
@@ -1019,11 +1019,11 @@ impl Client {
         &self,
         request_id: &RequestId,
         max_num_bits: Option<u32>,
-        param: Option<ParamChoice>,
+        param: Option<FheParameter>,
     ) -> anyhow::Result<CrsGenRequest> {
         let parsed_param: i32 = match param {
             Some(parsed_param) => parsed_param.into(),
-            None => ParamChoice::Default.into(),
+            None => FheParameter::Default.into(),
         };
         if !request_id.is_valid() {
             return Err(anyhow_error_and_log(format!(
@@ -1042,11 +1042,11 @@ impl Client {
     pub fn preproc_request(
         &self,
         request_id: &RequestId,
-        param: Option<ParamChoice>,
+        param: Option<FheParameter>,
     ) -> anyhow::Result<KeyGenPreprocRequest> {
         let parsed_param: i32 = match param {
             Some(parsed_param) => parsed_param.into(),
-            None => ParamChoice::Default.into(),
+            None => FheParameter::Default.into(),
         };
 
         if !request_id.is_valid() {
@@ -1480,7 +1480,7 @@ impl Client {
         request: Option<DecryptionRequest>,
         agg_resp: &[DecryptionResponse],
         min_agree_count: u32,
-    ) -> anyhow::Result<Vec<Plaintext>> {
+    ) -> anyhow::Result<Vec<TypedPlaintext>> {
         self.validate_decryption_req_resp(request, agg_resp, min_agree_count)?;
 
         // TODO pivot should actually be picked as the most common response instead of just an
@@ -1519,16 +1519,11 @@ impl Client {
                     tracing::warn!("Signature on received response is not valid! {}", e);
                 })?;
         }
-        let serialized_plaintexts = some_or_err(
+        let pts = some_or_err(
             pivot.payload.to_owned(),
             "No payload in pivot response for decryption".to_owned(),
         )?
         .plaintexts;
-
-        let pts = serialized_plaintexts
-            .into_iter()
-            .map(|pt| deserialize(&pt))
-            .collect::<Result<Vec<Plaintext>, _>>()?;
 
         Ok(pts)
     }
@@ -1547,7 +1542,7 @@ impl Client {
         agg_resp: &[ReencryptionResponse],
         enc_pk: &PublicEncKey,
         enc_sk: &PrivateEncKey,
-    ) -> anyhow::Result<Plaintext> {
+    ) -> anyhow::Result<TypedPlaintext> {
         let client_keys = SigncryptionPair {
             sk: SigncryptionPrivKey {
                 signing_key: self.client_sk.clone(),
@@ -1592,7 +1587,7 @@ impl Client {
         agg_resp: &[ReencryptionResponse],
         enc_pk: &PublicEncKey,
         enc_sk: &PrivateEncKey,
-    ) -> anyhow::Result<Plaintext> {
+    ) -> anyhow::Result<TypedPlaintext> {
         let client_keys = SigncryptionPair {
             sk: SigncryptionPrivKey {
                 signing_key: self.client_sk.clone(),
@@ -1849,7 +1844,7 @@ impl Client {
         eip712_domain: &Eip712Domain,
         agg_resp: &[ReencryptionResponse],
         client_keys: &SigncryptionPair,
-    ) -> anyhow::Result<Plaintext> {
+    ) -> anyhow::Result<TypedPlaintext> {
         let resp = some_or_err(agg_resp.last(), "Response does not exist".to_owned())?;
         let payload = some_or_err(resp.payload.clone(), "Payload does not exist".to_owned())?;
 
@@ -1910,7 +1905,7 @@ impl Client {
         &self,
         agg_resp: &[ReencryptionResponse],
         client_keys: &SigncryptionPair,
-    ) -> anyhow::Result<Plaintext> {
+    ) -> anyhow::Result<TypedPlaintext> {
         let resp = some_or_err(agg_resp.last(), "Response does not exist".to_owned())?;
         let payload = some_or_err(resp.payload.clone(), "Payload does not exist".to_owned())?;
 
@@ -1927,7 +1922,7 @@ impl Client {
         eip712_domain: &Eip712Domain,
         agg_resp: &[ReencryptionResponse],
         client_keys: &SigncryptionPair,
-    ) -> anyhow::Result<Plaintext> {
+    ) -> anyhow::Result<TypedPlaintext> {
         let (fhe_type, validated_resps) = some_or_err(
             self.validate_reenc_req_resp(client_request, eip712_domain, agg_resp)?,
             "Could not validate request".to_owned(),
@@ -1981,7 +1976,7 @@ impl Client {
         &self,
         agg_resp: &[ReencryptionResponse],
         client_keys: &SigncryptionPair,
-    ) -> anyhow::Result<Plaintext> {
+    ) -> anyhow::Result<TypedPlaintext> {
         // Recover sharings
         let mut opt_sharings = None;
         let degree = some_or_err(
@@ -2896,11 +2891,11 @@ pub(crate) mod tests {
     use crate::cryptography::signcryption::Reencrypt;
     use crate::kms::core_service_endpoint_client::CoreServiceEndpointClient;
     use crate::kms::core_service_endpoint_server::CoreServiceEndpointServer;
-    use crate::kms::{Empty, RequestId};
-    use crate::kms::{FheType, ParamChoice, TypedCiphertext};
-    use crate::kms::{InitRequest, ReencryptionResponse};
     #[cfg(feature = "wasm_tests")]
-    use crate::rpc::rpc_types::Plaintext;
+    use crate::kms::TypedPlaintext;
+    use crate::kms::{
+        Empty, FheParameter, FheType, InitRequest, ReencryptionResponse, RequestId, TypedCiphertext,
+    };
     use crate::rpc::rpc_types::RequestIdGetter;
     use crate::rpc::rpc_types::{protobuf_to_alloy_domain, BaseKms, PubDataType};
     use crate::threshold::threshold_kms::RealThresholdKms;
@@ -2910,7 +2905,7 @@ pub(crate) mod tests {
     use crate::util::key_setup::max_threshold;
     use crate::util::key_setup::test_tools::{
         compute_cipher_from_stored_key, compute_compressed_cipher_from_stored_key,
-        compute_proven_ct_from_stored_key, load_pk_from_storage, purge, TypedPlaintext,
+        compute_proven_ct_from_stored_key, load_pk_from_storage, purge, TestingPlaintext,
     };
     use crate::util::rate_limiter::RateLimiterConfig;
     use crate::vault::storage::StorageReader;
@@ -3163,7 +3158,7 @@ pub(crate) mod tests {
         let request_id = RequestId::derive("test_key_gen_centralized").unwrap();
         // Delete potentially old data
         purge(None, None, &request_id.to_string(), 1).await;
-        key_gen_centralized(TEST_PARAM, &request_id, Some(ParamChoice::Test)).await;
+        key_gen_centralized(TEST_PARAM, &request_id, Some(FheParameter::Test)).await;
     }
 
     #[cfg(feature = "slow_tests")]
@@ -3175,7 +3170,7 @@ pub(crate) mod tests {
         let request_id = RequestId::derive("default_key_gen_centralized").unwrap();
         // Delete potentially old data
         purge(None, None, &request_id.to_string(), 1).await;
-        key_gen_centralized(DEFAULT_PARAM, &request_id, Some(ParamChoice::Default)).await;
+        key_gen_centralized(DEFAULT_PARAM, &request_id, Some(FheParameter::Default)).await;
     }
 
     #[tokio::test]
@@ -3193,7 +3188,7 @@ pub(crate) mod tests {
     async fn key_gen_centralized(
         dkg_params: DKGParams,
         request_id: &RequestId,
-        params: Option<ParamChoice>,
+        params: Option<FheParameter>,
     ) {
         let rate_limiter_conf = RateLimiterConfig {
             bucket_size: 100,
@@ -3226,7 +3221,7 @@ pub(crate) mod tests {
         {
             let req_id = RequestId::derive("test rate limiter").unwrap();
             let req = internal_client
-                .crs_gen_request(&req_id, Some(1), Some(ParamChoice::Test))
+                .crs_gen_request(&req_id, Some(1), Some(FheParameter::Test))
                 .unwrap();
             let e = kms_client.crs_gen(req).await.unwrap_err();
             assert_eq!(e.code(), tonic::Code::ResourceExhausted);
@@ -3264,19 +3259,19 @@ pub(crate) mod tests {
         let crs_req_id = RequestId::derive("test_crs_gen_manual").unwrap();
         // Delete potentially old data
         purge(None, None, &crs_req_id.to_string(), 1).await;
-        crs_gen_centralized_manual(&TEST_PARAM, &crs_req_id, Some(ParamChoice::Test)).await;
+        crs_gen_centralized_manual(&TEST_PARAM, &crs_req_id, Some(FheParameter::Test)).await;
     }
 
     /// test centralized crs generation and do all the reading, processing and verification manually
     async fn crs_gen_centralized_manual(
         dkg_params: &DKGParams,
         request_id: &RequestId,
-        params: Option<ParamChoice>,
+        params: Option<FheParameter>,
     ) {
         let (kms_server, mut kms_client, internal_client) =
             super::test_tools::centralized_handles(StorageVersion::Dev, dkg_params, None).await;
 
-        let max_num_bits = if params.unwrap() == ParamChoice::Test {
+        let max_num_bits = if params.unwrap() == FheParameter::Test {
             Some(1)
         } else {
             // The default is 2048 which is too slow for tests, so we switch to 256
@@ -3354,7 +3349,7 @@ pub(crate) mod tests {
         crs_gen_centralized(
             &crate::consts::DEFAULT_PARAM,
             &crs_req_id,
-            Some(ParamChoice::Default),
+            Some(FheParameter::Default),
             false,
         )
         .await;
@@ -3366,7 +3361,7 @@ pub(crate) mod tests {
         let crs_req_id = RequestId::derive("test_crs_gen_centralized").unwrap();
         // Delete potentially old data
         purge(None, None, &crs_req_id.to_string(), 1).await;
-        crs_gen_centralized(&TEST_PARAM, &crs_req_id, Some(ParamChoice::Test), false).await;
+        crs_gen_centralized(&TEST_PARAM, &crs_req_id, Some(FheParameter::Test), false).await;
     }
 
     #[cfg(feature = "insecure")]
@@ -3376,7 +3371,7 @@ pub(crate) mod tests {
         let crs_req_id = RequestId::derive("test_insecure_crs_gen_centralized").unwrap();
         // Delete potentially old data
         purge(None, None, &crs_req_id.to_string(), 1).await;
-        crs_gen_centralized(&TEST_PARAM, &crs_req_id, Some(ParamChoice::Test), true).await;
+        crs_gen_centralized(&TEST_PARAM, &crs_req_id, Some(FheParameter::Test), true).await;
     }
 
     #[cfg(feature = "insecure")]
@@ -3389,7 +3384,7 @@ pub(crate) mod tests {
         crs_gen_centralized(
             &crate::consts::DEFAULT_PARAM,
             &crs_req_id,
-            Some(ParamChoice::Default),
+            Some(FheParameter::Default),
             true,
         )
         .await;
@@ -3399,7 +3394,7 @@ pub(crate) mod tests {
     async fn crs_gen_centralized(
         dkg_params: &DKGParams,
         crs_req_id: &RequestId,
-        params: Option<ParamChoice>,
+        params: Option<FheParameter>,
         insecure: bool,
     ) {
         let rate_limiter_conf = RateLimiterConfig {
@@ -3418,7 +3413,7 @@ pub(crate) mod tests {
         )
         .await;
 
-        let max_num_bits = if params.unwrap() == ParamChoice::Test {
+        let max_num_bits = if params.unwrap() == FheParameter::Test {
             Some(1)
         } else {
             // The default is 2048 which is too slow for tests, so we switch to 256
@@ -3458,7 +3453,7 @@ pub(crate) mod tests {
         {
             let req_id = RequestId::derive("test rate limiter").unwrap();
             let req = internal_client
-                .crs_gen_request(&req_id, Some(1), Some(ParamChoice::Test))
+                .crs_gen_request(&req_id, Some(1), Some(FheParameter::Test))
                 .unwrap();
             let e = kms_client.crs_gen(req).await.unwrap_err();
             assert_eq!(e.code(), tonic::Code::ResourceExhausted);
@@ -3488,13 +3483,13 @@ pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(vec![TypedPlaintext::Bool(true)])]
-    #[case(vec![TypedPlaintext::U4(12)])]
-    #[case(vec![TypedPlaintext::U8(u8::MAX)])]
-    #[case(vec![TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))])]
+    #[case(vec![TestingPlaintext::Bool(true)])]
+    #[case(vec![TestingPlaintext::U4(12)])]
+    #[case(vec![TestingPlaintext::U8(u8::MAX)])]
+    #[case(vec![TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))])]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    async fn default_verify_proven_ct_centralized(#[case] msgs: Vec<TypedPlaintext>) {
+    async fn default_verify_proven_ct_centralized(#[case] msgs: Vec<TestingPlaintext>) {
         let proven_ct_id = RequestId::derive("default_verify_proven_ct_centralized").unwrap();
         verify_proven_ct_centralized(
             msgs,
@@ -3507,12 +3502,12 @@ pub(crate) mod tests {
     }
 
     #[rstest::rstest]
-    #[case(vec![TypedPlaintext::Bool(true)])]
-    #[case(vec![TypedPlaintext::U4(12)])]
-    #[case(vec![TypedPlaintext::U8(u8::MAX)])]
+    #[case(vec![TestingPlaintext::Bool(true)])]
+    #[case(vec![TestingPlaintext::U4(12)])]
+    #[case(vec![TestingPlaintext::U8(u8::MAX)])]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    async fn test_verify_proven_ct_centralized(#[case] msgs: Vec<TypedPlaintext>) {
+    async fn test_verify_proven_ct_centralized(#[case] msgs: Vec<TestingPlaintext>) {
         let proven_ct_id = RequestId::derive("test_verify_proven_ct_centralized").unwrap();
         verify_proven_ct_centralized(
             msgs,
@@ -3526,7 +3521,7 @@ pub(crate) mod tests {
 
     /// test centralized ZK probing via client interface
     async fn verify_proven_ct_centralized(
-        msgs: Vec<TypedPlaintext>,
+        msgs: Vec<TestingPlaintext>,
         dkg_params: &DKGParams,
         proven_ct_id: &RequestId,
         crs_req_id: &RequestId,
@@ -3664,7 +3659,7 @@ pub(crate) mod tests {
         crs_gen_threshold(
             parallelism,
             &TEST_PARAM,
-            ParamChoice::Test,
+            FheParameter::Test,
             amount_parties,
             false,
         )
@@ -3679,7 +3674,7 @@ pub(crate) mod tests {
     #[serial]
     #[tracing_test::traced_test]
     async fn test_insecure_crs_gen_threshold(#[case] amount_parties: usize) {
-        crs_gen_threshold(1, &TEST_PARAM, ParamChoice::Test, amount_parties, true).await
+        crs_gen_threshold(1, &TEST_PARAM, FheParameter::Test, amount_parties, true).await
     }
 
     #[cfg(feature = "slow_tests")]
@@ -3696,7 +3691,7 @@ pub(crate) mod tests {
         crs_gen_threshold(
             1,
             &DEFAULT_PARAM,
-            ParamChoice::Default,
+            FheParameter::Default,
             amount_parties,
             true,
         )
@@ -3793,7 +3788,7 @@ pub(crate) mod tests {
     async fn crs_gen_threshold(
         parallelism: usize,
         param: &DKGParams,
-        param_choice: ParamChoice,
+        fhe_parameter: FheParameter,
         amount_parties: usize,
         insecure: bool,
     ) {
@@ -3802,7 +3797,7 @@ pub(crate) mod tests {
             .map(|j| {
                 RequestId::derive(&format!(
                     "crs_gen_threshold_{amount_parties}_{j}_{insecure}_{:?}",
-                    param_choice
+                    fhe_parameter
                 ))
                 .unwrap()
             })
@@ -3839,12 +3834,12 @@ pub(crate) mod tests {
             .map(|j| {
                 let request_id = RequestId::derive(&format!(
                     "crs_gen_threshold_{amount_parties}_{j}_{insecure}_{:?}",
-                    param_choice
+                    fhe_parameter
                 ))
                 .unwrap();
                 println!("request_id: {request_id}");
                 internal_client
-                    .crs_gen_request(&request_id, max_num_bits, Some(param_choice))
+                    .crs_gen_request(&request_id, max_num_bits, Some(fhe_parameter))
                     .unwrap()
             })
             .collect();
@@ -3884,7 +3879,7 @@ pub(crate) mod tests {
         {
             let req_id = RequestId::derive("test rate limiter").unwrap();
             let req = internal_client
-                .crs_gen_request(&req_id, Some(1), Some(ParamChoice::Test))
+                .crs_gen_request(&req_id, Some(1), Some(FheParameter::Test))
                 .unwrap();
             let mut cur_client = kms_clients.get(&1).unwrap().clone();
             let e = cur_client.crs_gen(req).await.unwrap_err();
@@ -4054,13 +4049,13 @@ pub(crate) mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     #[rstest::rstest]
-    #[case(vec![TypedPlaintext::U8(u8::MAX)], 7, &TEST_THRESHOLD_KEY_ID_7P, &TEST_THRESHOLD_CRS_ID_7P)]
-    #[case(vec![TypedPlaintext::U8(u8::MAX)], 4, &TEST_THRESHOLD_KEY_ID_4P, &TEST_THRESHOLD_CRS_ID_4P)]
-    #[case(vec![TypedPlaintext::Bool(true)], 4, &TEST_THRESHOLD_KEY_ID_4P, &TEST_THRESHOLD_CRS_ID_4P)]
+    #[case(vec![TestingPlaintext::U8(u8::MAX)], 7, &TEST_THRESHOLD_KEY_ID_7P, &TEST_THRESHOLD_CRS_ID_7P)]
+    #[case(vec![TestingPlaintext::U8(u8::MAX)], 4, &TEST_THRESHOLD_KEY_ID_4P, &TEST_THRESHOLD_CRS_ID_4P)]
+    #[case(vec![TestingPlaintext::Bool(true)], 4, &TEST_THRESHOLD_KEY_ID_4P, &TEST_THRESHOLD_CRS_ID_4P)]
     #[serial]
     #[tracing_test::traced_test]
     async fn test_verify_proven_ct_threshold(
-        #[case] msgs: Vec<TypedPlaintext>,
+        #[case] msgs: Vec<TestingPlaintext>,
         #[case] amount_parties: usize,
         #[case] key_id: &RequestId,
         #[case] crs_id: &RequestId,
@@ -4070,16 +4065,16 @@ pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(vec![TypedPlaintext::U8(u8::MAX)], 1, 7, &DEFAULT_THRESHOLD_KEY_ID_7P, &DEFAULT_THRESHOLD_CRS_ID_7P)]
-    #[case(vec![TypedPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
-    #[case(vec![TypedPlaintext::Bool(true)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
-    #[case(vec![TypedPlaintext::U8(u8::MAX)], 4, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
-    #[case(vec![TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
+    #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 7, &DEFAULT_THRESHOLD_KEY_ID_7P, &DEFAULT_THRESHOLD_CRS_ID_7P)]
+    #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
+    #[case(vec![TestingPlaintext::Bool(true)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
+    #[case(vec![TestingPlaintext::U8(u8::MAX)], 4, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
+    #[case(vec![TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     #[tracing_test::traced_test]
     async fn default_verify_proven_ct_threshold(
-        #[case] msgs: Vec<TypedPlaintext>,
+        #[case] msgs: Vec<TestingPlaintext>,
         #[case] parallelism: usize,
         #[case] amount_parties: usize,
         #[case] key_id: &RequestId,
@@ -4099,15 +4094,15 @@ pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(vec![TypedPlaintext::U8(u8::MAX)], 1, 7,Some(vec![3,6]), &DEFAULT_THRESHOLD_KEY_ID_7P, &DEFAULT_THRESHOLD_CRS_ID_7P)]
-    #[case(vec![TypedPlaintext::U8(u8::MAX)],1, 4, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
-    #[case(vec![TypedPlaintext::Bool(true)],1, 4, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
-    #[case(vec![TypedPlaintext::U8(u8::MAX)],4, 4,Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
-    #[case(vec![TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))],1, 4, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
+    #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 7,Some(vec![3,6]), &DEFAULT_THRESHOLD_KEY_ID_7P, &DEFAULT_THRESHOLD_CRS_ID_7P)]
+    #[case(vec![TestingPlaintext::U8(u8::MAX)],1, 4, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
+    #[case(vec![TestingPlaintext::Bool(true)],1, 4, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
+    #[case(vec![TestingPlaintext::U8(u8::MAX)],4, 4,Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
+    #[case(vec![TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))],1, 4, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn default_verify_proven_ct_threshold_with_crash(
-        #[case] msgs: Vec<TypedPlaintext>,
+        #[case] msgs: Vec<TestingPlaintext>,
         #[case] parallelism: usize,
         #[case] amount_parties: usize,
         #[case] party_ids_to_crash: Option<Vec<usize>>,
@@ -4127,7 +4122,7 @@ pub(crate) mod tests {
     }
 
     async fn verify_proven_ct_threshold(
-        msgs: Vec<TypedPlaintext>,
+        msgs: Vec<TestingPlaintext>,
         parallelism: usize,
         crs_handle: &RequestId,
         key_handle: &RequestId,
@@ -4278,10 +4273,10 @@ pub(crate) mod tests {
             &TEST_PARAM,
             &crate::consts::TEST_CENTRAL_KEY_ID.to_string(),
             vec![
-                TypedPlaintext::U8(42),
-                TypedPlaintext::U32(9876),
-                TypedPlaintext::U16(420),
-                TypedPlaintext::Bool(true),
+                TestingPlaintext::U8(42),
+                TestingPlaintext::U32(9876),
+                TestingPlaintext::U16(420),
+                TestingPlaintext::Bool(true),
             ],
             3, // 3 parallel requests
             true,
@@ -4296,10 +4291,10 @@ pub(crate) mod tests {
             &TEST_PARAM,
             &crate::consts::TEST_CENTRAL_KEY_ID.to_string(),
             vec![
-                TypedPlaintext::U8(42),
-                TypedPlaintext::U32(9876),
-                TypedPlaintext::U16(420),
-                TypedPlaintext::Bool(true),
+                TestingPlaintext::U8(42),
+                TestingPlaintext::U32(9876),
+                TestingPlaintext::U16(420),
+                TestingPlaintext::Bool(true),
             ],
             3, // 3 parallel requests
             false,
@@ -4309,27 +4304,27 @@ pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(vec![TypedPlaintext::Bool(true)], 5)]
-    #[case(vec![TypedPlaintext::U8(u8::MAX)], 4)]
-    #[case(vec![TypedPlaintext::U8(0)], 4)]
-    #[case(vec![TypedPlaintext::U16(u16::MAX)], 2)]
-    #[case(vec![TypedPlaintext::U16(0)], 1)]
-    #[case(vec![TypedPlaintext::U32(u32::MAX)], 1)]
-    #[case(vec![TypedPlaintext::U32(1234567)], 1)]
-    #[case(vec![TypedPlaintext::U64(u64::MAX)], 1)]
-    #[case(vec![TypedPlaintext::U128(u128::MAX)], 1)]
-    #[case(vec![TypedPlaintext::U128(0)], 1)]
-    #[case(vec![TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128)))], 1)]
-    #[case(vec![TypedPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX)))], 1)]
-    #[case(vec![TypedPlaintext::U512(tfhe::integer::bigint::U512::from([512_u64; 8]))], 1)]
-    #[case(vec![TypedPlaintext::U1024(tfhe::integer::bigint::U1024::from([1024_u64; 16]))], 1)]
-    #[case(vec![TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1)]
-    #[case(vec![TypedPlaintext::U8(0), TypedPlaintext::U64(999), TypedPlaintext::U32(32),TypedPlaintext::U128(99887766)], 1)] // test mixed types in batch
-    #[case(vec![TypedPlaintext::U8(0), TypedPlaintext::U64(999), TypedPlaintext::U32(32)], 3)] // test mixed types in batch and in parallel
+    #[case(vec![TestingPlaintext::Bool(true)], 5)]
+    #[case(vec![TestingPlaintext::U8(u8::MAX)], 4)]
+    #[case(vec![TestingPlaintext::U8(0)], 4)]
+    #[case(vec![TestingPlaintext::U16(u16::MAX)], 2)]
+    #[case(vec![TestingPlaintext::U16(0)], 1)]
+    #[case(vec![TestingPlaintext::U32(u32::MAX)], 1)]
+    #[case(vec![TestingPlaintext::U32(1234567)], 1)]
+    #[case(vec![TestingPlaintext::U64(u64::MAX)], 1)]
+    #[case(vec![TestingPlaintext::U128(u128::MAX)], 1)]
+    #[case(vec![TestingPlaintext::U128(0)], 1)]
+    #[case(vec![TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128)))], 1)]
+    #[case(vec![TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX)))], 1)]
+    #[case(vec![TestingPlaintext::U512(tfhe::integer::bigint::U512::from([512_u64; 8]))], 1)]
+    #[case(vec![TestingPlaintext::U1024(tfhe::integer::bigint::U1024::from([1024_u64; 16]))], 1)]
+    #[case(vec![TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1)]
+    #[case(vec![TestingPlaintext::U8(0), TestingPlaintext::U64(999), TestingPlaintext::U32(32),TestingPlaintext::U128(99887766)], 1)] // test mixed types in batch
+    #[case(vec![TestingPlaintext::U8(0), TestingPlaintext::U64(999), TestingPlaintext::U32(32)], 3)] // test mixed types in batch and in parallel
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn default_decryption_centralized(
-        #[case] msgs: Vec<TypedPlaintext>,
+        #[case] msgs: Vec<TestingPlaintext>,
         #[case] parallelism: usize,
     ) {
         use crate::consts::DEFAULT_PARAM;
@@ -4347,7 +4342,7 @@ pub(crate) mod tests {
     async fn decryption_centralized(
         dkg_params: &DKGParams,
         key_id: &str,
-        msgs: Vec<TypedPlaintext>,
+        msgs: Vec<TestingPlaintext>,
         parallelism: usize,
         compression: bool,
     ) {
@@ -4484,18 +4479,18 @@ pub(crate) mod tests {
                 assert_eq!(FheType::from(msgs[i]), plaintext.fhe_type());
 
                 match msgs[i] {
-                    TypedPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
-                    TypedPlaintext::U4(x) => assert_eq!(x, plaintext.as_u4()),
-                    TypedPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
-                    TypedPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
-                    TypedPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
-                    TypedPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
-                    TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
-                    TypedPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
-                    TypedPlaintext::U256(x) => assert_eq!(x, plaintext.as_u256()),
-                    TypedPlaintext::U512(x) => assert_eq!(x, plaintext.as_u512()),
-                    TypedPlaintext::U1024(x) => assert_eq!(x, plaintext.as_u1024()),
-                    TypedPlaintext::U2048(x) => assert_eq!(x, plaintext.as_u2048()),
+                    TestingPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
+                    TestingPlaintext::U4(x) => assert_eq!(x, plaintext.as_u4()),
+                    TestingPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
+                    TestingPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
+                    TestingPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
+                    TestingPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
+                    TestingPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
+                    TestingPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
+                    TestingPlaintext::U256(x) => assert_eq!(x, plaintext.as_u256()),
+                    TestingPlaintext::U512(x) => assert_eq!(x, plaintext.as_u512()),
+                    TestingPlaintext::U1024(x) => assert_eq!(x, plaintext.as_u1024()),
+                    TestingPlaintext::U2048(x) => assert_eq!(x, plaintext.as_u2048()),
                 }
             }
         }
@@ -4511,7 +4506,7 @@ pub(crate) mod tests {
             &TEST_PARAM,
             &crate::consts::TEST_CENTRAL_KEY_ID.to_string(),
             false,
-            TypedPlaintext::U8(48),
+            TestingPlaintext::U8(48),
             4,
             secure,
         )
@@ -4529,7 +4524,7 @@ pub(crate) mod tests {
             &TEST_PARAM,
             &TEST_CENTRAL_KEY_ID.to_string(),
             true,
-            TypedPlaintext::U8(48),
+            TestingPlaintext::U8(48),
             1, // wasm tests are single-threaded
             secure,
         )
@@ -4538,19 +4533,19 @@ pub(crate) mod tests {
 
     #[cfg(all(feature = "wasm_tests", feature = "slow_tests"))]
     #[rstest::rstest]
-    #[case(TypedPlaintext::Bool(true))]
-    #[case(TypedPlaintext::U8(u8::MAX))]
-    #[case(TypedPlaintext::U16(u16::MAX))]
-    #[case(TypedPlaintext::U32(u32::MAX))]
-    #[case(TypedPlaintext::U64(u64::MAX))]
-    // #[case(TypedPlaintext::U128(u128::MAX))]
-    // #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))))]
-    // #[case(TypedPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))))]
-    // #[case(TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])))]
+    #[case(TestingPlaintext::Bool(true))]
+    #[case(TestingPlaintext::U8(u8::MAX))]
+    #[case(TestingPlaintext::U16(u16::MAX))]
+    #[case(TestingPlaintext::U32(u32::MAX))]
+    #[case(TestingPlaintext::U64(u64::MAX))]
+    // #[case(TestingPlaintext::U128(u128::MAX))]
+    // #[case(TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))))]
+    // #[case(TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))))]
+    // #[case(TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])))]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn default_reencryption_centralized_and_write_transcript(
-        #[case] msg: TypedPlaintext,
+        #[case] msg: TestingPlaintext,
         #[values(true, false)] secure: bool,
     ) {
         use crate::consts::DEFAULT_PARAM;
@@ -4568,23 +4563,23 @@ pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(TypedPlaintext::Bool(true), 2)]
-    #[case(TypedPlaintext::U8(u8::MAX), 1)]
-    #[case(TypedPlaintext::U8(0), 1)]
-    #[case(TypedPlaintext::U16(u16::MAX), 1)]
-    #[case(TypedPlaintext::U16(0), 1)]
-    #[case(TypedPlaintext::U32(u32::MAX), 1)]
-    #[case(TypedPlaintext::U32(1234567), 1)]
-    #[case(TypedPlaintext::U64(u64::MAX), 1)]
-    #[case(TypedPlaintext::U128(u128::MAX), 1)]
-    #[case(TypedPlaintext::U128(0), 1)]
-    #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1)]
-    #[case(TypedPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1)]
-    #[case(TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1)]
+    #[case(TestingPlaintext::Bool(true), 2)]
+    #[case(TestingPlaintext::U8(u8::MAX), 1)]
+    #[case(TestingPlaintext::U8(0), 1)]
+    #[case(TestingPlaintext::U16(u16::MAX), 1)]
+    #[case(TestingPlaintext::U16(0), 1)]
+    #[case(TestingPlaintext::U32(u32::MAX), 1)]
+    #[case(TestingPlaintext::U32(1234567), 1)]
+    #[case(TestingPlaintext::U64(u64::MAX), 1)]
+    #[case(TestingPlaintext::U128(u128::MAX), 1)]
+    #[case(TestingPlaintext::U128(0), 1)]
+    #[case(TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1)]
+    #[case(TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1)]
+    #[case(TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1)]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn default_reencryption_centralized(
-        #[case] msg: TypedPlaintext,
+        #[case] msg: TestingPlaintext,
         #[case] parallelism: usize,
         #[values(true, false)] secure: bool,
     ) {
@@ -4605,7 +4600,7 @@ pub(crate) mod tests {
         dkg_params: &DKGParams,
         key_id: &str,
         _write_transcript: bool,
-        msg: TypedPlaintext,
+        msg: TestingPlaintext,
         parallelism: usize,
         secure: bool,
     ) {
@@ -4721,7 +4716,7 @@ pub(crate) mod tests {
                     degree: 0,
                     params: internal_client.params,
                     fhe_type: msg.into(),
-                    pt: Plaintext::from(msg).bytes.clone(),
+                    pt: TypedPlaintext::from(msg).bytes.clone(),
                     ct: reqs[0].0.payload.as_ref().unwrap().ciphertext().to_vec(),
                     request: Some(reqs[0].clone().0),
                     eph_sk: reqs[0].clone().2,
@@ -4786,18 +4781,18 @@ pub(crate) mod tests {
             assert_eq!(FheType::from(msg), plaintext.fhe_type());
 
             match msg {
-                TypedPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
-                TypedPlaintext::U4(x) => assert_eq!(x, plaintext.as_u4()),
-                TypedPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
-                TypedPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
-                TypedPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
-                TypedPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
-                TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
-                TypedPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
-                TypedPlaintext::U256(x) => assert_eq!(x, plaintext.as_u256()),
-                TypedPlaintext::U512(x) => assert_eq!(x, plaintext.as_u512()),
-                TypedPlaintext::U1024(x) => assert_eq!(x, plaintext.as_u1024()),
-                TypedPlaintext::U2048(x) => assert_eq!(x, plaintext.as_u2048()),
+                TestingPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
+                TestingPlaintext::U4(x) => assert_eq!(x, plaintext.as_u4()),
+                TestingPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
+                TestingPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
+                TestingPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
+                TestingPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
+                TestingPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
+                TestingPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
+                TestingPlaintext::U256(x) => assert_eq!(x, plaintext.as_u256()),
+                TestingPlaintext::U512(x) => assert_eq!(x, plaintext.as_u512()),
+                TestingPlaintext::U1024(x) => assert_eq!(x, plaintext.as_u1024()),
+                TestingPlaintext::U2048(x) => assert_eq!(x, plaintext.as_u2048()),
             }
         }
 
@@ -4818,9 +4813,9 @@ pub(crate) mod tests {
             TEST_PARAM,
             key_id,
             vec![
-                TypedPlaintext::U8(u8::MAX),
-                TypedPlaintext::U8(2),
-                TypedPlaintext::U16(444),
+                TestingPlaintext::U8(u8::MAX),
+                TestingPlaintext::U8(2),
+                TestingPlaintext::U16(444),
             ],
             2,
             false,
@@ -4844,9 +4839,9 @@ pub(crate) mod tests {
             TEST_PARAM,
             key_id,
             vec![
-                TypedPlaintext::U8(u8::MAX),
-                TypedPlaintext::U8(2),
-                TypedPlaintext::U16(444),
+                TestingPlaintext::U8(u8::MAX),
+                TestingPlaintext::U8(2),
+                TestingPlaintext::U16(444),
             ],
             2,
             true,
@@ -4858,22 +4853,22 @@ pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(vec![TypedPlaintext::U8(u8::MAX)], 1, 7, &DEFAULT_THRESHOLD_KEY_ID_7P.to_string())]
-    #[case(vec![TypedPlaintext::Bool(true)], 2, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(vec![TypedPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(vec![TypedPlaintext::U16(u16::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(vec![TypedPlaintext::U32(u32::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(vec![TypedPlaintext::U64(u64::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(vec![TypedPlaintext::U128(u128::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(vec![TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128)))], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(vec![TypedPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX)))], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 7, &DEFAULT_THRESHOLD_KEY_ID_7P.to_string())]
+    #[case(vec![TestingPlaintext::Bool(true)], 2, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(vec![TestingPlaintext::U16(u16::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(vec![TestingPlaintext::U32(u32::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(vec![TestingPlaintext::U64(u64::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(vec![TestingPlaintext::U128(u128::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(vec![TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128)))], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(vec![TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX)))], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     // TODO: this takes approx. 138 secs locally.
-    // #[case(vec![TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1)]
+    // #[case(vec![TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1)]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     #[tracing_test::traced_test]
     async fn default_decryption_threshold(
-        #[case] msg: Vec<TypedPlaintext>,
+        #[case] msg: Vec<TestingPlaintext>,
         #[case] parallelism: usize,
         #[case] amount_parties: usize,
         #[case] key_id: &str,
@@ -4894,21 +4889,21 @@ pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(vec![TypedPlaintext::U8(u8::MAX)], 1, 7, Some(vec![7,4]), &DEFAULT_THRESHOLD_KEY_ID_7P.to_string())]
-    #[case(vec![TypedPlaintext::Bool(true)], 4, 4, Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(vec![TypedPlaintext::U8(u8::MAX)], 1, 4,Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(vec![TypedPlaintext::U16(u16::MAX)], 1, 4,Some(vec![3]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(vec![TypedPlaintext::U32(u32::MAX)], 1, 4,Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(vec![TypedPlaintext::U64(u64::MAX)], 1, 4,Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(vec![TypedPlaintext::U128(u128::MAX)], 1, 4,Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(vec![TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128)))], 1, 4,Some(vec![3]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(vec![TypedPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX)))], 1, 4,Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 7, Some(vec![7,4]), &DEFAULT_THRESHOLD_KEY_ID_7P.to_string())]
+    #[case(vec![TestingPlaintext::Bool(true)], 4, 4, Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4,Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(vec![TestingPlaintext::U16(u16::MAX)], 1, 4,Some(vec![3]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(vec![TestingPlaintext::U32(u32::MAX)], 1, 4,Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(vec![TestingPlaintext::U64(u64::MAX)], 1, 4,Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(vec![TestingPlaintext::U128(u128::MAX)], 1, 4,Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(vec![TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128)))], 1, 4,Some(vec![3]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(vec![TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX)))], 1, 4,Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     // TODO: this takes approx. 138 secs locally.
-    // #[case(vec![TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1)]
+    // #[case(vec![TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn default_decryption_threshold_with_crash(
-        #[case] msg: Vec<TypedPlaintext>,
+        #[case] msg: Vec<TestingPlaintext>,
         #[case] parallelism: usize,
         #[case] amount_parties: usize,
         #[case] party_ids_to_crash: Option<Vec<usize>>,
@@ -4931,7 +4926,7 @@ pub(crate) mod tests {
     async fn decryption_threshold(
         dkg_params: DKGParams,
         key_id: &str,
-        msgs: Vec<TypedPlaintext>,
+        msgs: Vec<TestingPlaintext>,
         parallelism: usize,
         compression: bool,
         amount_parties: usize,
@@ -5102,18 +5097,18 @@ pub(crate) mod tests {
                 assert_eq!(FheType::from(msgs[i]), FheType::from(plaintext.clone()));
 
                 match msgs[i] {
-                    TypedPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
-                    TypedPlaintext::U4(x) => assert_eq!(x, plaintext.as_u4()),
-                    TypedPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
-                    TypedPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
-                    TypedPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
-                    TypedPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
-                    TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
-                    TypedPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
-                    TypedPlaintext::U256(x) => assert_eq!(x, plaintext.as_u256()),
-                    TypedPlaintext::U512(x) => assert_eq!(x, plaintext.as_u512()),
-                    TypedPlaintext::U1024(x) => assert_eq!(x, plaintext.as_u1024()),
-                    TypedPlaintext::U2048(x) => assert_eq!(x, plaintext.as_u2048()),
+                    TestingPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
+                    TestingPlaintext::U4(x) => assert_eq!(x, plaintext.as_u4()),
+                    TestingPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
+                    TestingPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
+                    TestingPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
+                    TestingPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
+                    TestingPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
+                    TestingPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
+                    TestingPlaintext::U256(x) => assert_eq!(x, plaintext.as_u256()),
+                    TestingPlaintext::U512(x) => assert_eq!(x, plaintext.as_u512()),
+                    TestingPlaintext::U1024(x) => assert_eq!(x, plaintext.as_u1024()),
+                    TestingPlaintext::U2048(x) => assert_eq!(x, plaintext.as_u2048()),
                 }
             }
         }
@@ -5135,7 +5130,7 @@ pub(crate) mod tests {
             TEST_PARAM,
             key_id,
             false,
-            TypedPlaintext::U8(42),
+            TestingPlaintext::U8(42),
             4,
             secure,
             amount_parties,
@@ -5161,7 +5156,7 @@ pub(crate) mod tests {
             TEST_PARAM,
             key_id,
             true,
-            TypedPlaintext::U8(42),
+            TestingPlaintext::U8(42),
             1,
             secure,
             amount_parties,
@@ -5172,21 +5167,21 @@ pub(crate) mod tests {
 
     #[cfg(all(feature = "wasm_tests", feature = "slow_tests"))]
     #[rstest::rstest]
-    #[case(TypedPlaintext::U8(u8::MAX), 7, &DEFAULT_THRESHOLD_KEY_ID_7P.to_string())]
-    #[case(TypedPlaintext::Bool(true), 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TypedPlaintext::U8(u8::MAX), 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TypedPlaintext::U16(u16::MAX), 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TypedPlaintext::U32(u32::MAX), 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TypedPlaintext::U64(u64::MAX), 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    // #[case(TypedPlaintext::U128(u128::MAX))]
-    // #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))))]
-    // #[case(TypedPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))))]
-    // #[case(TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])))]
+    #[case(TestingPlaintext::U8(u8::MAX), 7, &DEFAULT_THRESHOLD_KEY_ID_7P.to_string())]
+    #[case(TestingPlaintext::Bool(true), 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TestingPlaintext::U8(u8::MAX), 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TestingPlaintext::U16(u16::MAX), 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TestingPlaintext::U32(u32::MAX), 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TestingPlaintext::U64(u64::MAX), 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    // #[case(TestingPlaintext::U128(u128::MAX))]
+    // #[case(TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))))]
+    // #[case(TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))))]
+    // #[case(TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])))]
     #[ignore]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn default_reencryption_threshold_and_write_transcript(
-        #[case] msg: TypedPlaintext,
+        #[case] msg: TestingPlaintext,
         #[case] amount_parties: usize,
         #[case] key_id: &str,
         #[values(true, false)] secure: bool,
@@ -5208,22 +5203,22 @@ pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(TypedPlaintext::U8(u8::MAX), 1, 7, &DEFAULT_THRESHOLD_KEY_ID_7P.to_string())]
-    #[case(TypedPlaintext::Bool(true), 2, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TypedPlaintext::U8(u8::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TypedPlaintext::U16(u16::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TypedPlaintext::U32(u32::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TypedPlaintext::U64(u64::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TypedPlaintext::U128(u128::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TypedPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TestingPlaintext::U8(u8::MAX), 1, 7, &DEFAULT_THRESHOLD_KEY_ID_7P.to_string())]
+    #[case(TestingPlaintext::Bool(true), 2, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TestingPlaintext::U8(u8::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TestingPlaintext::U16(u16::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TestingPlaintext::U32(u32::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TestingPlaintext::U64(u64::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TestingPlaintext::U128(u128::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     // TODO: this takes approx. 300 secs locally.
-    // #[case(TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    // #[case(TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     #[tracing_test::traced_test]
     async fn default_reencryption_threshold(
-        #[case] msg: TypedPlaintext,
+        #[case] msg: TestingPlaintext,
         #[case] parallelism: usize,
         #[case] amount_parties: usize,
         #[case] key_id: &str,
@@ -5246,21 +5241,21 @@ pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(TypedPlaintext::U8(u8::MAX), 1, 7, Some(vec![2,6]), &DEFAULT_THRESHOLD_KEY_ID_7P.to_string())]
-    #[case(TypedPlaintext::Bool(true), 4, 4, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TypedPlaintext::U8(u8::MAX), 1, 4, Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TypedPlaintext::U16(u16::MAX), 1, 4, Some(vec![3]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TypedPlaintext::U32(u32::MAX), 1, 4, Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TypedPlaintext::U64(u64::MAX), 1, 4, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TypedPlaintext::U128(u128::MAX), 1, 4, Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1, 4,Some(vec![3]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TypedPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1, 4,Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TestingPlaintext::U8(u8::MAX), 1, 7, Some(vec![2,6]), &DEFAULT_THRESHOLD_KEY_ID_7P.to_string())]
+    #[case(TestingPlaintext::Bool(true), 4, 4, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TestingPlaintext::U8(u8::MAX), 1, 4,Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TestingPlaintext::U16(u16::MAX), 1, 4,Some(vec![3]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TestingPlaintext::U32(u32::MAX), 1, 4,Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TestingPlaintext::U64(u64::MAX), 1, 4,Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TestingPlaintext::U128(u128::MAX), 1, 4,Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1, 4,Some(vec![3]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1, 4,Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     // TODO: this takes approx. 300 secs locally.
-    // #[case(TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1, 4, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    // #[case(TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1, 4, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn default_reencryption_threshold_with_crash(
-        #[case] msg: TypedPlaintext,
+        #[case] msg: TestingPlaintext,
         #[case] parallelism: usize,
         #[case] amount_parties: usize,
         #[case] party_ids_to_crash: Option<Vec<usize>>,
@@ -5287,7 +5282,7 @@ pub(crate) mod tests {
         dkg_params: DKGParams,
         key_id: &str,
         write_transcript: bool,
-        msg: TypedPlaintext,
+        msg: TestingPlaintext,
         parallelism: usize,
         secure: bool,
         amount_parties: usize,
@@ -5435,7 +5430,7 @@ pub(crate) mod tests {
                     degree: threshold as u32,
                     params: internal_client.params,
                     fhe_type: FheType::from(msg),
-                    pt: Plaintext::from(msg).bytes.clone(),
+                    pt: TypedPlaintext::from(msg).bytes.clone(),
                     ct: reqs[0].0.payload.as_ref().unwrap().ciphertext().to_vec(),
                     request: Some(reqs[0].clone().0),
                     eph_sk: reqs[0].clone().2,
@@ -5491,18 +5486,18 @@ pub(crate) mod tests {
             };
             assert_eq!(FheType::from(msg), FheType::from(plaintext.clone()));
             match msg {
-                TypedPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
-                TypedPlaintext::U4(x) => assert_eq!(x, plaintext.as_u4()),
-                TypedPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
-                TypedPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
-                TypedPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
-                TypedPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
-                TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
-                TypedPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
-                TypedPlaintext::U256(x) => assert_eq!(x, plaintext.as_u256()),
-                TypedPlaintext::U512(x) => assert_eq!(x, plaintext.as_u512()),
-                TypedPlaintext::U1024(x) => assert_eq!(x, plaintext.as_u1024()),
-                TypedPlaintext::U2048(x) => assert_eq!(x, plaintext.as_u2048()),
+                TestingPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
+                TestingPlaintext::U4(x) => assert_eq!(x, plaintext.as_u4()),
+                TestingPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
+                TestingPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
+                TestingPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
+                TestingPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
+                TestingPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
+                TestingPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
+                TestingPlaintext::U256(x) => assert_eq!(x, plaintext.as_u256()),
+                TestingPlaintext::U512(x) => assert_eq!(x, plaintext.as_u512()),
+                TestingPlaintext::U1024(x) => assert_eq!(x, plaintext.as_u1024()),
+                TestingPlaintext::U2048(x) => assert_eq!(x, plaintext.as_u2048()),
             }
         }
     }
@@ -5657,7 +5652,7 @@ pub(crate) mod tests {
             .iter()
             .map(|req_id| {
                 internal_client
-                    .preproc_request(req_id, Some(ParamChoice::Test))
+                    .preproc_request(req_id, Some(FheParameter::Test))
                     .unwrap()
             })
             .collect();
@@ -5698,7 +5693,7 @@ pub(crate) mod tests {
         // This request should give us the correct status
         for request_id in &request_ids {
             let req_status_ok = internal_client
-                .preproc_request(request_id, Some(ParamChoice::Test))
+                .preproc_request(request_id, Some(FheParameter::Test))
                 .unwrap();
             test_preproc_status(
                 req_status_ok.clone(),
@@ -5710,7 +5705,7 @@ pub(crate) mod tests {
 
         //This request is not ok because no preproc was ever started for this session id
         let req_status_nok_sid = internal_client
-            .preproc_request(&request_id_nok, Some(ParamChoice::Test))
+            .preproc_request(&request_id_nok, Some(FheParameter::Test))
             .unwrap();
         test_preproc_status(
             req_status_nok_sid,
@@ -5807,7 +5802,7 @@ pub(crate) mod tests {
             .key_gen_request(
                 &req_key,
                 Some(req_preproc.clone()),
-                Some(ParamChoice::Test),
+                Some(FheParameter::Test),
                 None,
             )
             .unwrap();
@@ -5857,7 +5852,7 @@ pub(crate) mod tests {
             .key_gen_request(
                 &req_key,
                 Some(req_preproc.clone()),
-                Some(ParamChoice::Test),
+                Some(FheParameter::Test),
                 None,
             )
             .unwrap();
@@ -5920,7 +5915,7 @@ pub(crate) mod tests {
         .await;
 
         let preprocessing_req_data = internal_client
-            .preproc_request(&req_preproc, Some(ParamChoice::Test))
+            .preproc_request(&req_preproc, Some(FheParameter::Test))
             .unwrap();
 
         let mut tasks_gen = JoinSet::new();
@@ -5947,7 +5942,7 @@ pub(crate) mod tests {
         {
             let req_id = RequestId::derive("test rate limiter").unwrap();
             let req = internal_client
-                .crs_gen_request(&req_id, Some(1), Some(ParamChoice::Test))
+                .crs_gen_request(&req_id, Some(1), Some(FheParameter::Test))
                 .unwrap();
             let mut cur_client = kms_clients.get(&1).unwrap().clone();
             let e = cur_client.crs_gen(req).await.unwrap_err();
@@ -5978,7 +5973,7 @@ pub(crate) mod tests {
             .key_gen_request(
                 &req_key,
                 Some(req_preproc.clone()),
-                Some(ParamChoice::Test),
+                Some(FheParameter::Test),
                 None,
             )
             .unwrap();
@@ -6109,7 +6104,7 @@ pub(crate) mod tests {
                 .key_gen_request(
                     &other_key_gen_id,
                     Some(req_preproc),
-                    Some(ParamChoice::Test),
+                    Some(FheParameter::Test),
                     None,
                 )
                 .unwrap();

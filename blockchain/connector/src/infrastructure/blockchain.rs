@@ -132,17 +132,17 @@ impl Blockchain for KmsBlockchain {
 
     /// Get the param choice from the CSC
     #[tracing::instrument(skip(self))]
-    async fn get_param_choice(&self) -> anyhow::Result<FheParameter> {
-        let param_choice = {
+    async fn get_fhe_parameter(&self) -> anyhow::Result<FheParameter> {
+        let fhe_parameter = {
             let query_client = self.query_client.lock().await;
             query_client
                 .query_csc(
                     self.config.csc_address.to_owned(),
-                    CscQuery::GetParamChoice {},
+                    CscQuery::GetFheParameter {},
                 )
                 .await?
         };
-        Ok(param_choice)
+        Ok(fhe_parameter)
     }
 
     async fn get_public_key(&self) -> kms_blockchain_client::crypto::pubkey::PublicKey {

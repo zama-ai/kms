@@ -13,8 +13,8 @@ use crate::cryptography::proven_ct_verifier::{
 use crate::kms::core_service_endpoint_server::CoreServiceEndpoint;
 use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
-    Empty, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenRequest,
-    KeyGenResult, ParamChoice, ReencryptionRequest, ReencryptionResponse,
+    Empty, FheParameter, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus,
+    KeyGenRequest, KeyGenResult, ReencryptionRequest, ReencryptionResponse,
     ReencryptionResponsePayload, RequestId, SignedPubDataHandle, TypedCiphertext,
     VerifyProvenCtRequest, VerifyProvenCtResponse,
 };
@@ -527,21 +527,12 @@ impl<
             external_signature
         );
 
-        // serialize plaintexts to return as payload
-        let pt_payload = tonic_handle_potential_err(
-            plaintexts
-                .iter()
-                .map(bincode::serialize)
-                .collect::<Result<Vec<Vec<u8>>, _>>(),
-            "Error serializing plaintexts in get_result()".to_string(),
-        )?;
-
         let server_verf_key = self.get_serialized_verf_key();
 
         // the payload to be signed for verification inside the KMS
         let kms_sig_payload = DecryptionResponsePayload {
             version: CURRENT_FORMAT_VERSION,
-            plaintexts: pt_payload,
+            plaintexts,
             verification_key: server_verf_key,
             digest: req_digest,
             external_signature: Some(external_signature),
@@ -860,9 +851,9 @@ pub(crate) fn convert_key_response(
         .collect()
 }
 
-pub(crate) fn retrieve_parameters(param_choice: i32) -> anyhow::Result<DKGParams> {
-    let param_choice = ParamChoice::try_from(param_choice)?;
-    Ok(param_choice.into())
+pub(crate) fn retrieve_parameters(fhe_parameter: i32) -> anyhow::Result<DKGParams> {
+    let fhe_parameter = FheParameter::try_from(fhe_parameter)?;
+    Ok(fhe_parameter.into())
 }
 
 /// Validates a reencryption request and returns ciphertext, FheType, request digest, client

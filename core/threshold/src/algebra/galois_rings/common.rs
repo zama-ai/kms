@@ -23,6 +23,8 @@ use crate::{
         sharing::{shamir::ShamirSharings, share::Share},
     },
 };
+#[cfg(feature = "non-wasm")]
+use ::std::num::Wrapping;
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use serde::{ser::SerializeTuple, Deserialize, Serialize};
@@ -30,10 +32,7 @@ use sha3::{
     digest::{ExtendableOutput, Update, XofReader},
     Shake256,
 };
-
 use std::marker::PhantomData;
-#[cfg(feature = "non-wasm")]
-use std::num::Wrapping;
 use std::{
     collections::HashMap,
     fmt::Display,

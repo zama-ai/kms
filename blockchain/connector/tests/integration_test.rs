@@ -51,7 +51,7 @@ use kms_lib::{
     kms::{
         DecryptionResponsePayload, ReencryptionResponse, ReencryptionResponsePayload, RequestId,
     },
-    rpc::rpc_types::{protobuf_to_alloy_domain, Plaintext, CURRENT_FORMAT_VERSION},
+    rpc::rpc_types::{protobuf_to_alloy_domain, CURRENT_FORMAT_VERSION},
     threshold::mock_threshold_kms::setup_mock_kms,
     util::key_setup::{
         ensure_central_keys_exist, ensure_central_server_signing_keys_exist,
@@ -103,7 +103,7 @@ impl Kms for KmsMock {
         &self,
         event: KmsEvent,
         _operation_value: OperationValue,
-        _param_choice: Option<FheParameter>,
+        _fhe_parameter: Option<FheParameter>,
     ) -> anyhow::Result<tokio::sync::oneshot::Receiver<anyhow::Result<KmsOperationResponse>>> {
         self.channel.send(event.clone()).await?;
 
@@ -127,7 +127,7 @@ impl Kms for KmsMock {
         &self,
         event: KmsEvent,
         _operation_value: OperationValue,
-        _param_choice: Option<FheParameter>,
+        _fhe_parameter: Option<FheParameter>,
     ) -> anyhow::Result<CatchupResult> {
         self.channel.send(event.clone()).await?;
         Ok(CatchupResult::Now(Ok(
@@ -667,12 +667,12 @@ async fn generic_centralized_sunshine_test(
         .txn_id(txn_id.clone())
         .build();
 
-    let param_choice = FheParameter::Test;
+    let fhe_parameter = FheParameter::Test;
 
     let result = client
         .create_kms_operation(event, op.clone())
         .unwrap()
-        .run_operation(Some(param_choice))
+        .run_operation(Some(fhe_parameter))
         .await
         .unwrap()
         .await
@@ -725,18 +725,8 @@ async fn ddec_centralized_sunshine() {
             )
             .unwrap();
 
-            assert_eq!(
-                bincode::deserialize::<Plaintext>(&payload.plaintexts[0])
-                    .unwrap()
-                    .as_u8(),
-                msg1,
-            );
-            assert_eq!(
-                bincode::deserialize::<Plaintext>(&payload.plaintexts[1])
-                    .unwrap()
-                    .as_u16(),
-                msg2,
-            );
+            assert_eq!(payload.plaintexts[0].as_u8(), msg1,);
+            assert_eq!(payload.plaintexts[1].as_u16(), msg2,);
             assert_eq!(payload.version, CURRENT_FORMAT_VERSION);
             assert_eq!(resp.operation_val.tx_id, txn_id);
         }
@@ -888,9 +878,9 @@ async fn generic_sunshine_test(
     assert_eq!(events.len(), clients.len());
     let mut tasks = JoinSet::new();
     for (i, (event, client)) in events.into_iter().zip(clients).enumerate() {
-        let param_choice = FheParameter::Test;
+        let fhe_parameter = FheParameter::Test;
         let op = client.create_kms_operation(event, op.clone()).unwrap();
-        tasks.spawn(async move { (i as u32 + 1, op.run_operation(Some(param_choice)).await) });
+        tasks.spawn(async move { (i as u32 + 1, op.run_operation(Some(fhe_parameter)).await) });
     }
     let mut results = vec![];
     let mut ids = vec![];
@@ -951,18 +941,8 @@ async fn ddec_sunshine(key_id: &RequestId, amount_parties: usize, slow: bool) {
                 )
                 .unwrap();
                 if slow {
-                    assert_eq!(
-                        bincode::deserialize::<Plaintext>(&payload.plaintexts[0])
-                            .unwrap()
-                            .as_u8(),
-                        msg1,
-                    );
-                    assert_eq!(
-                        bincode::deserialize::<Plaintext>(&payload.plaintexts[1])
-                            .unwrap()
-                            .as_u16(),
-                        msg2,
-                    );
+                    assert_eq!(payload.plaintexts[0].as_u8(), msg1,);
+                    assert_eq!(payload.plaintexts[1].as_u16(), msg2,);
                 }
                 assert_eq!(payload.version, CURRENT_FORMAT_VERSION);
                 assert_eq!(resp.operation_val.tx_id, txn_id);

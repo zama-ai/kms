@@ -35,15 +35,16 @@ use kms_lib::cryptography::signcryption::{
 };
 use kms_lib::kms::{
     DecryptionResponsePayload, Eip712DomainMsg, ReencryptionResponse, ReencryptionResponsePayload,
+    TypedPlaintext,
 };
 use kms_lib::rpc::rpc_types::{
     compute_external_pubdata_message_hash, compute_pt_message_hash, protobuf_to_alloy_domain,
-    Plaintext, PubDataType,
+    PubDataType,
 };
 use kms_lib::util::key_setup::test_tools::{
     compute_cipher_from_stored_key, compute_compressed_cipher_from_stored_key,
     compute_proven_ct_from_stored_key_and_serialize, load_crs_from_storage, load_pk_from_storage,
-    load_server_key_from_storage, TypedPlaintext,
+    load_server_key_from_storage, TestingPlaintext,
 };
 use kms_lib::vault::storage::{file::FileStorage, StorageReader, StorageType};
 use rand::SeedableRng;
@@ -394,10 +395,10 @@ pub enum KmsMode {
     Threshold,
 }
 // Plaintext being in another crate we wrap it here to implement dereferencing
-struct PlaintextWrapper(Plaintext);
+struct PlaintextWrapper(TypedPlaintext);
 
 impl Deref for PlaintextWrapper {
-    type Target = Plaintext;
+    type Target = TypedPlaintext;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -414,7 +415,7 @@ impl TryFrom<PlaintextWrapper> for Token {
     type Error = String;
 
     fn try_from(ptxt: PlaintextWrapper) -> Result<Self, Self::Error> {
-        let fhe_type: FheType = FheType::from(ptxt.fhe_type);
+        let fhe_type: FheType = FheType::from(ptxt.fhe_type());
         let res = match fhe_type {
             FheType::Ebool => ptxt.as_bool().to_token(),
             FheType::Euint4 => ptxt.as_u4().to_token(),
@@ -598,9 +599,9 @@ pub async fn encrypt_and_prove(
         keys_folder
     );
 
-    let msgs = vec![TypedPlaintext::from(Plaintext {
+    let msgs = vec![TestingPlaintext::from(TypedPlaintext {
         bytes: to_encrypt,
-        fhe_type: data_type.try_into()?,
+        fhe_type: data_type as i32,
     })];
 
     Ok(compute_proven_ct_from_stored_key_and_serialize(
@@ -619,17 +620,17 @@ pub async fn encrypt(
     key_id: &str,
     keys_folder: &Path,
     compressed: Option<bool>,
-) -> Result<(Vec<u8>, Plaintext), Box<dyn std::error::Error + 'static>> {
+) -> Result<(Vec<u8>, TypedPlaintext), Box<dyn std::error::Error + 'static>> {
     if to_encrypt.len() != fhe_type.bits().div_ceil(8) {
         tracing::warn!("Byte length of value to encrypt ({}) does not match FHE type ({}) and will be padded/truncated.", to_encrypt.len(), fhe_type);
     }
 
-    let ptxt = Plaintext {
+    let ptxt = TypedPlaintext {
         bytes: to_encrypt,
-        fhe_type: fhe_type.try_into()?,
+        fhe_type: fhe_type as i32,
     };
 
-    let typed_to_encrypt = TypedPlaintext::from(ptxt.clone());
+    let typed_to_encrypt = TestingPlaintext::from(ptxt.clone());
 
     tracing::info!("FheType: {:#?}", fhe_type);
 
@@ -977,7 +978,7 @@ pub async fn execute_decryption_contract(
     key_id: &str,
     keys_folder: &Path,
     compressed: Option<bool>,
-) -> Result<(KmsEvent, Plaintext, DecryptValues), Box<dyn std::error::Error + 'static>> {
+) -> Result<(KmsEvent, TypedPlaintext, DecryptValues), Box<dyn std::error::Error + 'static>> {
     let (cipher, ptxt) = encrypt(to_encrypt, data_type, key_id, keys_folder, compressed).await?;
     let kv_store_address = client
         .kv_store_address
@@ -1027,12 +1028,12 @@ pub async fn execute_reencryption_contract(
     query_client: &QueryClient,
     key_id: &str,
     keys_folder: &Path,
-    param_choice: FheParameter,
+    fhe_parameter: FheParameter,
     num_parties: usize,
 ) -> Result<
     (
         KmsEvent,
-        Plaintext,
+        TypedPlaintext,
         ParsedReencryptionRequest,
         kms_lib::client::Client,
         Eip712Domain,
@@ -1043,7 +1044,7 @@ pub async fn execute_reencryption_contract(
 > {
     //NOTE: I(Titouan) believe we don't really even care
     //given how we'll use the client
-    let params = match param_choice {
+    let params = match fhe_parameter {
         events::kms::FheParameter::Default => DEFAULT_PARAM,
         events::kms::FheParameter::Test => TEST_PARAM,
     };
@@ -1614,7 +1615,7 @@ fn check_ext_pubdata_signature<D: Serialize + Versionize + Named>(
 /// check that the external signature on the decryption result(s) is valid, i.e. was made by one of the supplied addresses
 fn check_ext_pt_signature(
     external_sig: &[u8],
-    pts: Vec<Vec<u8>>,
+    plaintexts: Vec<TypedPlaintext>,
     decrypt_vals: &DecryptValues,
     kms_addrs: &[alloy_primitives::Address],
 ) -> anyhow::Result<()> {
@@ -1639,10 +1640,6 @@ fn check_ext_pt_signature(
 
     let acl_address =
         alloy_primitives::Address::parse_checksummed(decrypt_vals.acl_address(), None)?;
-    let plaintexts: Vec<Plaintext> = pts
-        .iter()
-        .map(|pt| bincode::deserialize::<Plaintext>(pt))
-        .collect::<Result<Vec<_>, _>>()?;
 
     // unpack the HexVectorList
     let external_handles = match decrypt_vals.external_handles() {
@@ -1676,7 +1673,7 @@ fn check_ext_pt_signature(
 
 fn process_decrypt_responses(
     responses: Vec<OperationValue>, // one response per party
-    expected_answer: Plaintext,
+    expected_answer: TypedPlaintext,
     request: DecryptValues,
     kms_addrs: &[alloy_primitives::Address],
 ) -> anyhow::Result<()> {
@@ -1695,13 +1692,9 @@ fn process_decrypt_responses(
                     kms_addrs,
                 )?;
 
-                for (idx, pt) in payload.plaintexts.iter().enumerate() {
-                    let actual_pt: Plaintext = bincode::deserialize(pt)?;
-                    results.push(actual_pt.clone());
-                    tracing::info!(
-                        "Decrypt Result #{idx}: Plaintext Decrypted = {:?}.",
-                        actual_pt
-                    );
+                for (idx, pt) in payload.plaintexts.into_iter().enumerate() {
+                    tracing::info!("Decrypt Result #{idx}: Plaintext Decrypted = {pt:?}.");
+                    results.push(pt);
                 }
             }
             _ => {
@@ -1710,9 +1703,9 @@ fn process_decrypt_responses(
         }
     }
 
-    let tp_expected = TypedPlaintext::from(expected_answer);
+    let tp_expected = TestingPlaintext::from(expected_answer);
     for result in results {
-        assert_eq!(tp_expected, TypedPlaintext::from(result));
+        assert_eq!(tp_expected, TestingPlaintext::from(result));
     }
 
     tracing::info!("Decryption response successfully processed.");
@@ -1721,7 +1714,7 @@ fn process_decrypt_responses(
 
 fn process_reencrypt_responses(
     responses: Vec<OperationValue>,
-    expected_answer: Plaintext,
+    expected_answer: TypedPlaintext,
     request: ParsedReencryptionRequest,
     kms_client: kms_lib::client::Client,
     domain: Eip712Domain,
@@ -1755,8 +1748,8 @@ fn process_reencrypt_responses(
     tracing::info!("Reconstructed {:?}", result);
 
     assert_eq!(
-        TypedPlaintext::from(expected_answer),
-        TypedPlaintext::from(result)
+        TestingPlaintext::from(expected_answer),
+        TestingPlaintext::from(result)
     );
 
     tracing::info!("Reencryption response processed successfully.");
@@ -1985,8 +1978,8 @@ pub async fn main_from_config(
         }
         SimulatorCommand::ReEncrypt(cipher_params) => {
             // Get the parameter choice from the CSC
-            let param_choice: FheParameter =
-                query_csc(&query_client, &sim_conf, CscQuery::GetParamChoice {}).await?;
+            let fhe_parameter: FheParameter =
+                query_csc(&query_client, &sim_conf, CscQuery::GetFheParameter {}).await?;
 
             let (event, ptxt, request, kms_client, domain, enc_pk, enc_sk) =
                 execute_reencryption_contract(
@@ -1999,7 +1992,7 @@ pub async fn main_from_config(
                     &query_client,
                     &cipher_params.key_id,
                     destination_prefix,
-                    param_choice,
+                    fhe_parameter,
                     num_parties,
                 )
                 .await?;

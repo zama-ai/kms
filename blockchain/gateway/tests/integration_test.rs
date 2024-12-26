@@ -69,7 +69,7 @@ mod tests {
                 // Sanity check the response is sensible
                 assert!(body.len() > 200);
                 assert!(body.contains("urls"));
-                assert!(body.contains("param_choice"));
+                assert!(body.contains("fhe_parameter"));
                 assert!(body.contains("PublicKey"));
                 assert!(body.contains("ServerKey"));
                 tx.send(true).await.unwrap();

@@ -20,9 +20,10 @@ use events::kms::{
 };
 use events::HexVector;
 use kms_lib::kms::core_service_endpoint_client::CoreServiceEndpointClient;
+use kms_lib::kms::FheParameter as RPCFheParameter;
 use kms_lib::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
-    Eip712DomainMsg, KeyGenPreprocStatus, KeyGenPreprocStatusEnum, KeyGenResult, ParamChoice,
+    Eip712DomainMsg, KeyGenPreprocStatus, KeyGenPreprocStatusEnum, KeyGenResult,
     ReencryptionRequest, ReencryptionRequestPayload, ReencryptionResponse,
     ReencryptionResponsePayload, TypedCiphertext, VerifyProvenCtRequest, VerifyProvenCtResponse,
     VerifyProvenCtResponsePayload,
@@ -392,50 +393,50 @@ where
 {
     async fn run_operation(
         &self,
-        param_choice: Option<FheParameter>,
+        fhe_parameter: Option<FheParameter>,
     ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
         match self {
-            KmsOperationRequest::Decrypt(decrypt) => decrypt.run_operation(param_choice).await,
+            KmsOperationRequest::Decrypt(decrypt) => decrypt.run_operation(fhe_parameter).await,
             KmsOperationRequest::Reencrypt(reencrypt) => {
-                reencrypt.run_operation(param_choice).await
+                reencrypt.run_operation(fhe_parameter).await
             }
             KmsOperationRequest::VerifyProvenCt(verify_proven_ct) => {
-                verify_proven_ct.run_operation(param_choice).await
+                verify_proven_ct.run_operation(fhe_parameter).await
             }
             KmsOperationRequest::KeyGenPreproc(keygen_preproc) => {
-                keygen_preproc.run_operation(param_choice).await
+                keygen_preproc.run_operation(fhe_parameter).await
             }
-            KmsOperationRequest::KeyGen(keygen) => keygen.run_operation(param_choice).await,
+            KmsOperationRequest::KeyGen(keygen) => keygen.run_operation(fhe_parameter).await,
             KmsOperationRequest::InsecureKeyGen(insecure_key_gen) => {
-                insecure_key_gen.run_operation(param_choice).await
+                insecure_key_gen.run_operation(fhe_parameter).await
             }
-            KmsOperationRequest::CrsGen(crsgen) => crsgen.run_operation(param_choice).await,
+            KmsOperationRequest::CrsGen(crsgen) => crsgen.run_operation(fhe_parameter).await,
             KmsOperationRequest::InsecureCrsGen(insecure_crs_gen) => {
-                insecure_crs_gen.run_operation(param_choice).await
+                insecure_crs_gen.run_operation(fhe_parameter).await
             }
         }
     }
 
     async fn run_catchup(
         &self,
-        param_choice: Option<FheParameter>,
+        fhe_parameter: Option<FheParameter>,
     ) -> anyhow::Result<CatchupResult> {
         match self {
-            KmsOperationRequest::Decrypt(decrypt) => decrypt.run_catchup(param_choice).await,
-            KmsOperationRequest::Reencrypt(reencrypt) => reencrypt.run_catchup(param_choice).await,
+            KmsOperationRequest::Decrypt(decrypt) => decrypt.run_catchup(fhe_parameter).await,
+            KmsOperationRequest::Reencrypt(reencrypt) => reencrypt.run_catchup(fhe_parameter).await,
             KmsOperationRequest::VerifyProvenCt(verify_proven_ct) => {
-                verify_proven_ct.run_catchup(param_choice).await
+                verify_proven_ct.run_catchup(fhe_parameter).await
             }
             KmsOperationRequest::KeyGenPreproc(keygen_preproc) => {
-                keygen_preproc.run_catchup(param_choice).await
+                keygen_preproc.run_catchup(fhe_parameter).await
             }
-            KmsOperationRequest::KeyGen(keygen) => keygen.run_catchup(param_choice).await,
+            KmsOperationRequest::KeyGen(keygen) => keygen.run_catchup(fhe_parameter).await,
             KmsOperationRequest::InsecureKeyGen(insecure_key_gen) => {
-                insecure_key_gen.run_catchup(param_choice).await
+                insecure_key_gen.run_catchup(fhe_parameter).await
             }
-            KmsOperationRequest::CrsGen(crsgen) => crsgen.run_catchup(param_choice).await,
+            KmsOperationRequest::CrsGen(crsgen) => crsgen.run_catchup(fhe_parameter).await,
             KmsOperationRequest::InsecureCrsGen(insecure_crs_gen) => {
-                insecure_crs_gen.run_catchup(param_choice).await
+                insecure_crs_gen.run_catchup(fhe_parameter).await
             }
         }
     }
@@ -450,31 +451,31 @@ where
         &self,
         event: KmsEvent,
         operation_value: OperationValue,
-        param_choice: Option<FheParameter>,
+        fhe_parameter: Option<FheParameter>,
     ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
         let operation = self.create_kms_operation(event, operation_value)?;
-        operation.run_operation(param_choice).await
+        operation.run_operation(fhe_parameter).await
     }
 
     async fn run_catchup(
         &self,
         event: KmsEvent,
         operation_value: OperationValue,
-        param_choice: Option<FheParameter>,
+        fhe_parameter: Option<FheParameter>,
     ) -> anyhow::Result<CatchupResult> {
         let operation = self.create_kms_operation(event, operation_value)?;
-        operation.run_catchup(param_choice).await
+        operation.run_catchup(fhe_parameter).await
     }
 }
 
 // Gen operations (key/crs generation) need to know which parameters to use
-// For other operations, `param_choice` should be None and will not be used
+// For other operations, `fhe_parameter` should be None and will not be used
 #[async_trait]
 #[enum_dispatch(KmsOperationRequest)]
 pub trait KmsEventHandler {
     async fn run_operation(
         &self,
-        param_choice: Option<FheParameter>,
+        fhe_parameter: Option<FheParameter>,
     ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>>;
 
     /// Poll the KMS Core for a potentially existing request.
@@ -483,7 +484,7 @@ pub trait KmsEventHandler {
     /// has been no request for the given [`RequestId`]
     async fn run_catchup(
         &self,
-        param_choice: Option<FheParameter>,
+        fhe_parameter: Option<FheParameter>,
     ) -> anyhow::Result<CatchupResult>;
 }
 
@@ -716,7 +717,7 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
-        _param_choice: Option<FheParameter>,
+        _fhe_parameter: Option<FheParameter>,
     ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
         let mut setup = self.get_setup()?;
 
@@ -809,7 +810,7 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_catchup(
         &self,
-        _param_choice: Option<FheParameter>,
+        _fhe_parameter: Option<FheParameter>,
     ) -> anyhow::Result<CatchupResult> {
         let mut setup = self.get_setup()?;
         let req = build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
@@ -889,7 +890,7 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
-        _param_choice: Option<FheParameter>,
+        _fhe_parameter: Option<FheParameter>,
     ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
         let mut setup = self.get_setup()?;
 
@@ -959,7 +960,7 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_catchup(
         &self,
-        _param_choice: Option<FheParameter>,
+        _fhe_parameter: Option<FheParameter>,
     ) -> anyhow::Result<CatchupResult> {
         let mut setup = self.get_setup()?;
 
@@ -1039,7 +1040,7 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
-        _param_choice: Option<FheParameter>,
+        _fhe_parameter: Option<FheParameter>,
     ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
         let mut setup = self.get_setup()?;
 
@@ -1101,7 +1102,7 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_catchup(
         &self,
-        _param_choice: Option<FheParameter>,
+        _fhe_parameter: Option<FheParameter>,
     ) -> anyhow::Result<CatchupResult> {
         let mut setup = self.get_setup()?;
         let req = build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
@@ -1271,21 +1272,22 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
-        param_choice: Option<FheParameter>,
+        fhe_parameter: Option<FheParameter>,
     ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
         let mut setup = self.get_setup()?;
-        let param_choice_str = param_choice
+        let fhe_parameter_str = fhe_parameter
             .ok_or_else(|| anyhow!("Param choice is missing"))?
-            .to_param_choice_string();
-        let param_choice = ParamChoice::from_str_name(&param_choice_str).ok_or_else(|| {
-            anyhow!(
-                "invalid parameter choice string in prep: {}",
-                param_choice_str
-            )
-        })?;
+            .to_fhe_parameter_string();
+        let fhe_parameter =
+            RPCFheParameter::from_str_name(&fhe_parameter_str).ok_or_else(|| {
+                anyhow!(
+                    "invalid parameter choice string in prep: {}",
+                    fhe_parameter_str
+                )
+            })?;
 
         let req = KeyGenPreprocRequest {
-            params: param_choice.into(),
+            params: fhe_parameter.into(),
             request_id: Some(setup.req_id.clone()),
         };
 
@@ -1322,7 +1324,7 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_catchup(
         &self,
-        _param_choice: Option<FheParameter>,
+        _fhe_parameter: Option<FheParameter>,
     ) -> anyhow::Result<CatchupResult> {
         let mut setup = self.get_setup()?;
         let req = build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
@@ -1343,7 +1345,7 @@ impl<S> Poller<KeyGenResult> for KeyGenVal<S> {
     fn map_response(
         input: GenericMapResponseInput<KeyGenResult>,
     ) -> anyhow::Result<KmsOperationResponse> {
-        let (response, tx_id, param_choice) = input.get_response_id_and_fhe_params()?;
+        let (response, tx_id, fhe_parameter) = input.get_response_id_and_fhe_params()?;
         let inner = response.into_inner();
         let request_id = inner
             .request_id
@@ -1366,7 +1368,7 @@ impl<S> Poller<KeyGenResult> for KeyGenVal<S> {
                     ek_info.key_handle.clone(),
                     ek_info.signature.clone(),
                     ek_info.external_signature.clone(),
-                    param_choice,
+                    fhe_parameter,
                 ),
                 operation_val: crate::domain::blockchain::BlockchainOperationVal {
                     tx_id: tx_id.clone(),
@@ -1416,15 +1418,15 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
-        param_choice: Option<FheParameter>,
+        fhe_parameter: Option<FheParameter>,
     ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
         let mut setup = self.get_setup()?;
-        let param_choice = param_choice.ok_or_else(|| anyhow!("Param choice is missing"))?;
+        let fhe_parameter = fhe_parameter.ok_or_else(|| anyhow!("Param choice is missing"))?;
         let keygen = &self.keygen;
         let preproc_id = keygen.preproc_id().to_hex().try_into()?;
 
         let req = KeyGenRequest {
-            params: param_choice.into(),
+            params: fhe_parameter.into(),
             preproc_id: Some(preproc_id),
             request_id: Some(setup.req_id.clone()),
             domain: Some(Eip712DomainMsg {
@@ -1456,7 +1458,7 @@ where
 
         let generic_poller_input = GenericPollerInput {
             tx_id: setup.tx_id,
-            fhe_params: Some(param_choice),
+            fhe_params: Some(fhe_parameter),
             max_num_bits: None,
         };
         self.poll_for_result(generic_poller_input)
@@ -1465,17 +1467,17 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_catchup(
         &self,
-        param_choice: Option<FheParameter>,
+        fhe_parameter: Option<FheParameter>,
     ) -> anyhow::Result<CatchupResult> {
         let mut setup = self.get_setup()?;
-        let param_choice = param_choice.ok_or_else(|| anyhow!("Param choice is missing"))?;
+        let fhe_parameter = fhe_parameter.ok_or_else(|| anyhow!("Param choice is missing"))?;
         let req = build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
 
         let response = setup.client.get_key_gen_result(req).await;
 
         let generic_poller_input = GenericPollerInput {
             tx_id: setup.tx_id.clone(),
-            fhe_params: Some(param_choice),
+            fhe_params: Some(fhe_parameter),
             max_num_bits: None,
         };
         self.dispatch_catchup_response(response, setup, generic_poller_input, "KeyGenVal")
@@ -1486,7 +1488,7 @@ impl<S> Poller<KeyGenResult> for InsecureKeyGenVal<S> {
     fn map_response(
         input: GenericMapResponseInput<KeyGenResult>,
     ) -> anyhow::Result<KmsOperationResponse> {
-        let (response, tx_id, param_choice) = input.get_response_id_and_fhe_params()?;
+        let (response, tx_id, fhe_parameter) = input.get_response_id_and_fhe_params()?;
         let inner = response.into_inner();
         let request_id = inner
             .request_id
@@ -1509,7 +1511,7 @@ impl<S> Poller<KeyGenResult> for InsecureKeyGenVal<S> {
                     ek_info.key_handle.clone(),
                     ek_info.signature.clone(),
                     ek_info.external_signature.clone(),
-                    param_choice,
+                    fhe_parameter,
                 ),
                 operation_val: crate::domain::blockchain::BlockchainOperationVal {
                     tx_id: tx_id.clone(),
@@ -1559,15 +1561,15 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
-        param_choice: Option<FheParameter>,
+        fhe_parameter: Option<FheParameter>,
     ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
         let mut setup = self.get_setup()?;
-        let param_choice = param_choice.ok_or_else(|| anyhow!("Param choice is missing"))?;
+        let fhe_parameter = fhe_parameter.ok_or_else(|| anyhow!("Param choice is missing"))?;
         let keygen = &self.insecure_key_gen;
 
         tracing::debug!("Insecure Keygen with request ID: {:?}", setup.req_id);
         let req = KeyGenRequest {
-            params: param_choice.into(),
+            params: fhe_parameter.into(),
             request_id: Some(setup.req_id.clone()),
             preproc_id: None,
             domain: Some(Eip712DomainMsg {
@@ -1603,7 +1605,7 @@ where
 
         let generic_poller_input = GenericPollerInput {
             tx_id: setup.tx_id,
-            fhe_params: Some(param_choice),
+            fhe_params: Some(fhe_parameter),
             max_num_bits: None,
         };
         self.poll_for_result(generic_poller_input)
@@ -1612,17 +1614,17 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_catchup(
         &self,
-        param_choice: Option<FheParameter>,
+        fhe_parameter: Option<FheParameter>,
     ) -> anyhow::Result<CatchupResult> {
         let mut setup = self.get_setup()?;
-        let param_choice = param_choice.ok_or_else(|| anyhow!("Param choice is missing"))?;
+        let fhe_parameter = fhe_parameter.ok_or_else(|| anyhow!("Param choice is missing"))?;
         let req = build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
 
         let response = setup.client.get_key_gen_result(req).await;
 
         let generic_poller_input = GenericPollerInput {
             tx_id: setup.tx_id.clone(),
-            fhe_params: Some(param_choice),
+            fhe_params: Some(fhe_parameter),
             max_num_bits: None,
         };
         self.dispatch_catchup_response(response, setup, generic_poller_input, "InsecureKeyGenVal")
@@ -1633,7 +1635,7 @@ impl<S> Poller<CrsGenResult> for CrsGenVal<S> {
     fn map_response(
         input: GenericMapResponseInput<CrsGenResult>,
     ) -> anyhow::Result<KmsOperationResponse> {
-        let (response, tx_id, param_choice, max_num_bits) =
+        let (response, tx_id, fhe_parameter, max_num_bits) =
             input.get_response_id_fhe_params_and_max_num_bits()?;
         let inner = response.into_inner();
         let request_id = inner
@@ -1650,7 +1652,7 @@ impl<S> Poller<CrsGenResult> for CrsGenVal<S> {
                     crs_results.signature,
                     crs_results.external_signature,
                     max_num_bits,
-                    param_choice,
+                    fhe_parameter,
                 ),
                 operation_val: crate::domain::blockchain::BlockchainOperationVal {
                     tx_id: tx_id.clone(),
@@ -1700,15 +1702,15 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
-        param_choice: Option<FheParameter>,
+        fhe_parameter: Option<FheParameter>,
     ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
         let mut setup = self.get_setup()?;
-        let param_choice = param_choice.ok_or_else(|| anyhow!("Param choice is missing"))?;
+        let fhe_parameter = fhe_parameter.ok_or_else(|| anyhow!("Param choice is missing"))?;
 
         let crsgen = &self.crsgen;
 
         let req = CrsGenRequest {
-            params: param_choice.into(),
+            params: fhe_parameter.into(),
             request_id: Some(setup.req_id.clone()),
             max_num_bits: Some(self.crsgen.max_num_bits()),
             domain: Some(Eip712DomainMsg {
@@ -1740,7 +1742,7 @@ where
 
         let generic_poller_input = GenericPollerInput {
             tx_id: setup.tx_id,
-            fhe_params: Some(param_choice),
+            fhe_params: Some(fhe_parameter),
             max_num_bits: Some(self.crsgen.max_num_bits()),
         };
 
@@ -1750,10 +1752,10 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_catchup(
         &self,
-        param_choice: Option<FheParameter>,
+        fhe_parameter: Option<FheParameter>,
     ) -> anyhow::Result<CatchupResult> {
         let mut setup = self.get_setup()?;
-        let param_choice = param_choice.ok_or_else(|| anyhow!("Param choice is missing"))?;
+        let fhe_parameter = fhe_parameter.ok_or_else(|| anyhow!("Param choice is missing"))?;
         let max_num_bits = self.crsgen.max_num_bits();
         let req = build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
 
@@ -1761,7 +1763,7 @@ where
 
         let generic_poller_input = GenericPollerInput {
             tx_id: setup.tx_id.clone(),
-            fhe_params: Some(param_choice),
+            fhe_params: Some(fhe_parameter),
             max_num_bits: Some(max_num_bits),
         };
         self.dispatch_catchup_response(response, setup, generic_poller_input, "CrsGenVal")
@@ -1772,7 +1774,7 @@ impl<S> Poller<CrsGenResult> for InsecureCrsGenVal<S> {
     fn map_response(
         input: GenericMapResponseInput<CrsGenResult>,
     ) -> anyhow::Result<KmsOperationResponse> {
-        let (response, tx_id, param_choice, max_num_bits) =
+        let (response, tx_id, fhe_parameter, max_num_bits) =
             input.get_response_id_fhe_params_and_max_num_bits()?;
         let inner = response.into_inner();
         let request_id = inner
@@ -1789,7 +1791,7 @@ impl<S> Poller<CrsGenResult> for InsecureCrsGenVal<S> {
                     crs_results.signature,
                     crs_results.external_signature,
                     max_num_bits,
-                    param_choice,
+                    fhe_parameter,
                 ),
                 operation_val: crate::domain::blockchain::BlockchainOperationVal {
                     tx_id: tx_id.clone(),
@@ -1839,15 +1841,15 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
-        param_choice: Option<FheParameter>,
+        fhe_parameter: Option<FheParameter>,
     ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
         let mut setup = self.get_setup()?;
-        let param_choice = param_choice.ok_or_else(|| anyhow!("Param choice is missing"))?;
+        let fhe_parameter = fhe_parameter.ok_or_else(|| anyhow!("Param choice is missing"))?;
 
         let insecure_crs_gen = &self.insecure_crs_gen;
 
         let req = CrsGenRequest {
-            params: param_choice.into(),
+            params: fhe_parameter.into(),
             request_id: Some(setup.req_id.clone()),
             max_num_bits: Some(self.insecure_crs_gen.max_num_bits()),
             domain: Some(Eip712DomainMsg {
@@ -1880,7 +1882,7 @@ where
 
         let generic_poller_input = GenericPollerInput {
             tx_id: setup.tx_id,
-            fhe_params: Some(param_choice),
+            fhe_params: Some(fhe_parameter),
             max_num_bits: Some(self.insecure_crs_gen.max_num_bits()),
         };
         self.poll_for_result(generic_poller_input)
@@ -1889,10 +1891,10 @@ where
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_catchup(
         &self,
-        param_choice: Option<FheParameter>,
+        fhe_parameter: Option<FheParameter>,
     ) -> anyhow::Result<CatchupResult> {
         let mut setup = self.get_setup()?;
-        let param_choice = param_choice.ok_or_else(|| anyhow!("Param choice is missing"))?;
+        let fhe_parameter = fhe_parameter.ok_or_else(|| anyhow!("Param choice is missing"))?;
         let max_num_bits = self.insecure_crs_gen.max_num_bits();
         let request = build_request(setup.req_id.clone(), Some(setup.request_id.clone()), None)?;
 
@@ -1900,7 +1902,7 @@ where
 
         let generic_poller_input = GenericPollerInput {
             tx_id: setup.tx_id.clone(),
-            fhe_params: Some(param_choice),
+            fhe_params: Some(fhe_parameter),
             max_num_bits: Some(max_num_bits),
         };
         self.dispatch_catchup_response(response, setup, generic_poller_input, "InsecureCrsGenVal")

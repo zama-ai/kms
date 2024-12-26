@@ -40,7 +40,7 @@ use kms_lib::{
     consts::SIGNING_KEY_ID,
     cryptography::signcryption::hash_element,
     kms::{DecryptionResponsePayload, Eip712DomainMsg, VerifyProvenCtResponsePayload},
-    rpc::rpc_types::{Plaintext, PubDataType, CURRENT_FORMAT_VERSION},
+    rpc::rpc_types::{PubDataType, CURRENT_FORMAT_VERSION},
 };
 use prost::Message;
 use serde::de::DeserializeOwned;
@@ -508,7 +508,7 @@ impl<'a> KmsBlockchainImpl {
         }
         Ok(KeyUrlInfo::builder()
             .data_id(HexVector::from_hex(key_id)?)
-            .param_choice(param.to_owned().into())
+            .fhe_parameter(param.to_owned().into())
             .urls(urls)
             .signatures(sigs)
             .external_signatures(ext_sigs)
@@ -569,7 +569,7 @@ impl<'a> KmsBlockchainImpl {
                 *max_bits,
                 KeyUrlInfo::builder()
                     .data_id(HexVector::from_hex(crs_id)?)
-                    .param_choice(param.to_owned().into())
+                    .fhe_parameter(param.to_owned().into())
                     .urls(urls)
                     .signatures(sigs.to_owned())
                     .external_signatures(ext_sigs.to_owned())
@@ -738,15 +738,8 @@ impl Blockchain for KmsBlockchainImpl {
                         payload.plaintexts.len()
                     );
 
-                    // deserialize the individual plaintexts in this batch
-                    let ptxts = payload
-                        .plaintexts
-                        .iter()
-                        .map(|pt| deserialize::<Plaintext>(pt))
-                        .collect::<Result<Vec<_>, _>>()?;
-
                     // 1 batch of plaintexts and a single signature for the batch from the centralized KMS
-                    (ptxts, vec![external_sig])
+                    (payload.plaintexts, vec![external_sig])
                 }
                 _ => return Err(anyhow::anyhow!("Invalid operation for request {:?}", event)),
             },
@@ -809,13 +802,8 @@ impl Blockchain for KmsBlockchainImpl {
                 // We need at least t + 1 identical batch responses as majority, so we can return the majority plaintext (at most t others were corrupted)
                 let required_majority = degree_for_reconstruction + 1;
                 if majority_count >= required_majority {
-                    // deserialize the individual plaintexts in this batch
-                    let ptxts = majority_pts
-                        .iter()
-                        .map(|pt| deserialize::<Plaintext>(pt))
-                        .collect::<Result<Vec<_>, _>>()?;
                     // return the majority plaintext batch and all signatures by the threshold KMS parties
-                    (ptxts, sigs)
+                    (majority_pts, sigs)
                 } else {
                     return Err(anyhow::anyhow!(
                         "Have not received a large enough majority of decryptions: majority size is {}, needed at least {}",
@@ -1307,10 +1295,8 @@ mod tests {
         kms::{CrsGenResponseValues, FheParameter, KeyGenResponseValues, KmsCoreParty},
         HexVector, HexVectorList,
     };
-    use kms_lib::{
-        kms::{ParamChoice, RequestId},
-        rpc::rpc_types::PubDataType,
-    };
+    use kms_lib::kms::FheParameter as RPCFheParameter;
+    use kms_lib::{kms::RequestId, rpc::rpc_types::PubDataType};
     use std::collections::HashMap;
 
     #[test]
@@ -1509,7 +1495,7 @@ mod tests {
         .unwrap();
         assert_eq!(fhe_server_key.data_id().to_hex(), key_id);
         assert_eq!(
-            fhe_server_key.param_choice(),
+            fhe_server_key.fhe_parameter(),
             <FheParameter as Into<i32>>::into(FheParameter::Test),
         );
         assert_eq!(fhe_server_key.urls().len(), 4);
@@ -1586,13 +1572,13 @@ mod tests {
             assert_eq!(parties.len(), cur_info.signatures().len());
             if *max_bits == 128 {
                 assert_eq!(
-                    <ParamChoice as Into<i32>>::into(ParamChoice::Test),
-                    cur_info.param_choice()
+                    <RPCFheParameter as Into<i32>>::into(RPCFheParameter::Test),
+                    cur_info.fhe_parameter()
                 );
             } else {
                 assert_eq!(
-                    <ParamChoice as Into<i32>>::into(ParamChoice::Default),
-                    cur_info.param_choice()
+                    <RPCFheParameter as Into<i32>>::into(RPCFheParameter::Default),
+                    cur_info.fhe_parameter()
                 );
             }
             assert!(cur_info.signatures().contains(&base_sig.clone()));

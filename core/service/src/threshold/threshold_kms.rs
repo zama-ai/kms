@@ -16,17 +16,16 @@ use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus,
     KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult, ReencryptionRequest,
-    ReencryptionResponse, ReencryptionResponsePayload, RequestId, VerifyProvenCtRequest,
-    VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
+    ReencryptionResponse, ReencryptionResponsePayload, RequestId, TypedPlaintext,
+    VerifyProvenCtRequest, VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
 };
 use crate::rpc::central_rpc::{
     convert_key_response, retrieve_parameters, tonic_handle_potential_err, tonic_some_or_err,
     validate_decrypt_req, validate_reencrypt_req, validate_request_id,
 };
 use crate::rpc::rpc_types::{
-    compute_external_pt_signature, protobuf_to_alloy_domain_option, BaseKms, Plaintext,
-    PrivDataType, PubDataType, SigncryptionPayload, SignedPubDataHandleInternal,
-    CURRENT_FORMAT_VERSION,
+    compute_external_pt_signature, protobuf_to_alloy_domain_option, BaseKms, PrivDataType,
+    PubDataType, SigncryptionPayload, SignedPubDataHandleInternal, CURRENT_FORMAT_VERSION,
 };
 use crate::rpc::{prepare_shutdown_signals, INFLIGHT_REQUEST_WAITING_TIME};
 #[cfg(feature = "insecure")]
@@ -873,31 +872,32 @@ impl<
         .await
         {
             Ok((partial_dec_map, time)) => {
-                let partial_signcryption =
-                    match partial_dec_map.get(&session.session_id().to_string()) {
-                        Some(partial_dec) => {
-                            let partial_dec = pack_residue_poly(partial_dec);
-                            let partial_dec_serialized = bincode::serialize(&partial_dec)?;
-                            let signcryption_msg = SigncryptionPayload {
-                                plaintext: Plaintext::from_bytes(partial_dec_serialized, fhe_type),
-                                link,
-                            };
-                            let enc_res = signcrypt(
-                                rng,
-                                &bincode::serialize(&signcryption_msg)?,
-                                client_enc_key,
-                                client_address,
-                                &sig_key,
-                            )?;
-                            bincode::serialize(&enc_res)?
-                        }
-                        None => {
-                            return Err(anyhow!(
-                                "Reencryption with session ID {} could not be retrived",
-                                session.session_id().to_string()
-                            ))
-                        }
-                    };
+                let partial_signcryption = match partial_dec_map
+                    .get(&session.session_id().to_string())
+                {
+                    Some(partial_dec) => {
+                        let partial_dec = pack_residue_poly(partial_dec);
+                        let partial_dec_serialized = bincode::serialize(&partial_dec)?;
+                        let signcryption_msg = SigncryptionPayload {
+                            plaintext: TypedPlaintext::from_bytes(partial_dec_serialized, fhe_type),
+                            link,
+                        };
+                        let enc_res = signcrypt(
+                            rng,
+                            &bincode::serialize(&signcryption_msg)?,
+                            client_enc_key,
+                            client_address,
+                            &sig_key,
+                        )?;
+                        bincode::serialize(&enc_res)?
+                    }
+                    None => {
+                        return Err(anyhow!(
+                            "Reencryption with session ID {} could not be retrived",
+                            session.session_id().to_string()
+                        ))
+                    }
+                };
                 tracing::info!(
                     "Reencryption completed for type {}. Inner thread took {:?} ms",
                     fhe_type.as_str_name(),
@@ -1310,7 +1310,7 @@ impl<
                         fhe_keys_rlock,
                     )
                     .await
-                    .map(Plaintext::from_u2048),
+                    .map(TypedPlaintext::from_u2048),
                     FheType::Euint1024 => Self::inner_decrypt::<tfhe::integer::bigint::U1024>(
                         &mut session,
                         &mut protocol,
@@ -1319,7 +1319,7 @@ impl<
                         fhe_keys_rlock,
                     )
                     .await
-                    .map(Plaintext::from_u1024),
+                    .map(TypedPlaintext::from_u1024),
                     FheType::Euint512 => Self::inner_decrypt::<tfhe::integer::bigint::U512>(
                         &mut session,
                         &mut protocol,
@@ -1328,7 +1328,7 @@ impl<
                         fhe_keys_rlock,
                     )
                     .await
-                    .map(Plaintext::from_u512),
+                    .map(TypedPlaintext::from_u512),
                     FheType::Euint256 => Self::inner_decrypt::<tfhe::integer::U256>(
                         &mut session,
                         &mut protocol,
@@ -1337,7 +1337,7 @@ impl<
                         fhe_keys_rlock,
                     )
                     .await
-                    .map(Plaintext::from_u256),
+                    .map(TypedPlaintext::from_u256),
                     FheType::Euint160 => Self::inner_decrypt::<tfhe::integer::U256>(
                         &mut session,
                         &mut protocol,
@@ -1346,7 +1346,7 @@ impl<
                         fhe_keys_rlock,
                     )
                     .await
-                    .map(Plaintext::from_u160),
+                    .map(TypedPlaintext::from_u160),
                     FheType::Euint128 => Self::inner_decrypt::<u128>(
                         &mut session,
                         &mut protocol,
@@ -1355,7 +1355,7 @@ impl<
                         fhe_keys_rlock,
                     )
                     .await
-                    .map(|x| Plaintext::new(x, fhe_type)),
+                    .map(|x| TypedPlaintext::new(x, fhe_type)),
                     FheType::Ebool
                     | FheType::Euint4
                     | FheType::Euint8
@@ -1369,7 +1369,7 @@ impl<
                         fhe_keys_rlock,
                     )
                     .await
-                    .map(|x| Plaintext::new(x as u128, fhe_type)),
+                    .map(|x| TypedPlaintext::new(x as u128, fhe_type)),
                 };
                 match res_plaintext {
                     Ok(plaintext) => Ok((idx, plaintext)),
@@ -1446,18 +1446,10 @@ impl<
         let (req_digest, plaintexts, external_signature) =
             handle_res_mapping(status, &request_id, "Decryption").await?;
 
-        let pt_payload = tonic_handle_potential_err(
-            plaintexts
-                .iter()
-                .map(bincode::serialize)
-                .collect::<Result<Vec<Vec<u8>>, _>>(),
-            "Error serializing plaintexts in get_result()".to_string(),
-        )?;
-
         let server_verf_key = self.base_kms.get_serialized_verf_key();
         let sig_payload = DecryptionResponsePayload {
             version: CURRENT_FORMAT_VERSION,
-            plaintexts: pt_payload,
+            plaintexts,
             verification_key: server_verf_key,
             digest: req_digest,
             external_signature: Some(external_signature),

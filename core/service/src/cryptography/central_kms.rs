@@ -12,13 +12,12 @@ use crate::kms::FheType;
 use crate::kms::ReencryptionRequest;
 #[cfg(feature = "non-wasm")]
 use crate::kms::RequestId;
+use crate::kms::TypedPlaintext;
 use crate::kms::{TypedCiphertext, VerifyProvenCtResponsePayload};
 #[cfg(feature = "non-wasm")]
 use crate::rpc::rpc_types::SignedPubDataHandleInternal;
 use crate::rpc::rpc_types::{compute_external_pubdata_signature, Shutdown};
-use crate::rpc::rpc_types::{
-    BaseKms, Kms, Plaintext, PrivDataType, PubDataType, SigncryptionPayload,
-};
+use crate::rpc::rpc_types::{BaseKms, Kms, PrivDataType, PubDataType, SigncryptionPayload};
 #[cfg(feature = "non-wasm")]
 use crate::util::key_setup::{FhePrivateKey, FhePublicKey};
 use crate::util::meta_store::MetaStore;
@@ -467,7 +466,7 @@ pub type KeyGenCallValues = HashMap<PubDataType, SignedPubDataHandleInternal>;
 // Represents the digest of the request and the result of the decryption (a batch of plaintests),
 // as well as an external signature on the batch.
 #[cfg(feature = "non-wasm")]
-pub type DecCallValues = (Vec<u8>, Vec<Plaintext>, Vec<u8>);
+pub type DecCallValues = (Vec<u8>, Vec<TypedPlaintext>, Vec<u8>);
 
 // Values that need to be stored temporarily as part of an async reencryption call.
 // Represents the FHE type, the digest of the request and the partial decryption.
@@ -510,7 +509,7 @@ pub fn central_decrypt<
 >(
     keys: &KmsFheKeyHandles,
     cts: &Vec<TypedCiphertext>,
-) -> anyhow::Result<Vec<Plaintext>> {
+) -> anyhow::Result<Vec<TypedPlaintext>> {
     use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
     tracing::info!("Decrypting list of cipher-texts");
@@ -605,53 +604,53 @@ fn unsafe_decrypt(
     keys: &KmsFheKeyHandles,
     bytes_ct: &[u8],
     fhe_type: FheType,
-) -> anyhow::Result<Plaintext> {
+) -> anyhow::Result<TypedPlaintext> {
     Ok(match fhe_type {
-        FheType::Ebool => Plaintext::from_bool(
+        FheType::Ebool => TypedPlaintext::from_bool(
             decompression::from_bytes::<FheBool>(&keys.decompression_key, bytes_ct)?
                 .decrypt(&keys.client_key),
         ),
-        FheType::Euint4 => Plaintext::from_u4(
+        FheType::Euint4 => TypedPlaintext::from_u4(
             decompression::from_bytes::<FheUint4>(&keys.decompression_key, bytes_ct)?
                 .decrypt(&keys.client_key),
         ),
-        FheType::Euint8 => Plaintext::from_u8(
+        FheType::Euint8 => TypedPlaintext::from_u8(
             decompression::from_bytes::<FheUint8>(&keys.decompression_key, bytes_ct)?
                 .decrypt(&keys.client_key),
         ),
-        FheType::Euint16 => Plaintext::from_u16(
+        FheType::Euint16 => TypedPlaintext::from_u16(
             decompression::from_bytes::<FheUint16>(&keys.decompression_key, bytes_ct)?
                 .decrypt(&keys.client_key),
         ),
-        FheType::Euint32 => Plaintext::from_u32(
+        FheType::Euint32 => TypedPlaintext::from_u32(
             decompression::from_bytes::<FheUint32>(&keys.decompression_key, bytes_ct)?
                 .decrypt(&keys.client_key),
         ),
-        FheType::Euint64 => Plaintext::from_u64(
+        FheType::Euint64 => TypedPlaintext::from_u64(
             decompression::from_bytes::<FheUint64>(&keys.decompression_key, bytes_ct)?
                 .decrypt(&keys.client_key),
         ),
-        FheType::Euint128 => Plaintext::from_u128(
+        FheType::Euint128 => TypedPlaintext::from_u128(
             decompression::from_bytes::<FheUint128>(&keys.decompression_key, bytes_ct)?
                 .decrypt(&keys.client_key),
         ),
-        FheType::Euint160 => Plaintext::from_u160(
+        FheType::Euint160 => TypedPlaintext::from_u160(
             decompression::from_bytes::<FheUint160>(&keys.decompression_key, bytes_ct)?
                 .decrypt(&keys.client_key),
         ),
-        FheType::Euint256 => Plaintext::from_u256(
+        FheType::Euint256 => TypedPlaintext::from_u256(
             decompression::from_bytes::<FheUint256>(&keys.decompression_key, bytes_ct)?
                 .decrypt(&keys.client_key),
         ),
-        FheType::Euint512 => Plaintext::from_u512(
+        FheType::Euint512 => TypedPlaintext::from_u512(
             decompression::from_bytes::<FheUint512>(&keys.decompression_key, bytes_ct)?
                 .decrypt(&keys.client_key),
         ),
-        FheType::Euint1024 => Plaintext::from_u1024(
+        FheType::Euint1024 => TypedPlaintext::from_u1024(
             decompression::from_bytes::<FheUint1024>(&keys.decompression_key, bytes_ct)?
                 .decrypt(&keys.client_key),
         ),
-        FheType::Euint2048 => Plaintext::from_u2048(
+        FheType::Euint2048 => TypedPlaintext::from_u2048(
             decompression::from_bytes::<FheUint2048>(&keys.decompression_key, bytes_ct)?
                 .decrypt(&keys.client_key),
         ),
@@ -669,7 +668,7 @@ impl<
         keys: &KmsFheKeyHandles,
         high_level_ct: &[u8],
         fhe_type: FheType,
-    ) -> anyhow::Result<Plaintext> {
+    ) -> anyhow::Result<TypedPlaintext> {
         match panic::catch_unwind(|| unsafe_decrypt(keys, high_level_ct, fhe_type)) {
             Ok(x) => x,
             Err(_) => Err(anyhow_error_and_log("decryption panicked".to_string())),

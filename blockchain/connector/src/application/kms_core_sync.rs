@@ -44,7 +44,7 @@ where
     O: Metrics + Send + Sync + 'static,
 {
     /// Query the KMS BC for the operation that corresponds to the given event
-    async fn get_op_and_param_choice(
+    async fn get_op_and_fhe_parameter(
         &self,
         event: &KmsEvent,
     ) -> Result<
@@ -66,14 +66,14 @@ where
         tracing::info!("Running KMS operation with value: {:?}", operation_value);
 
         // If this is a gen operation (key/crs generation), we need to get the param choice from the CSC
-        let param_choice = if operation_value.is_gen() {
-            let param_choice = self.blockchain.get_param_choice().await?;
+        let fhe_parameter = if operation_value.is_gen() {
+            let fhe_parameter = self.blockchain.get_fhe_parameter().await?;
             tracing::info!(
                 "Successfully retrieved param choice `{:?}` for operation `{:?}`",
-                param_choice,
+                fhe_parameter,
                 operation_value
             );
-            Some(param_choice)
+            Some(fhe_parameter)
         } else {
             tracing::info!(
                 "No param choice needed for operation `{:?}`",
@@ -82,7 +82,7 @@ where
             None
         };
 
-        Ok((operation_value, param_choice))
+        Ok((operation_value, fhe_parameter))
     }
 
     /// Answer back to the KMS BC by making a transaction containing the [`KmsOperationResponse`]
@@ -219,13 +219,13 @@ where
         if target_shard != self.sharding.index {
             tracing::info!("Message is for another shard ({target_shard}). I am in shard {} and will ignore it.", self.sharding.index);
         } else {
-            let (operation_value, param_choice) =
-                self.get_op_and_param_choice(&message.event).await?;
+            let (operation_value, fhe_parameter) =
+                self.get_op_and_fhe_parameter(&message.event).await?;
 
             // Interact with the KMS to resolve the query
             let result_receiver = self
                 .kms
-                .run(message.event, operation_value, param_choice)
+                .run(message.event, operation_value, fhe_parameter)
                 .await
                 .inspect_err(|e| {
                     tracing::error!("KMS connector error running kms operation: {:?}", e);
@@ -312,12 +312,16 @@ where
                 return Ok(());
             }
 
-            let (operation_value, param_choice) =
-                self.get_op_and_param_choice(&message.event).await?;
+            let (operation_value, fhe_parameter) =
+                self.get_op_and_fhe_parameter(&message.event).await?;
             // Then first try polling the KMS for existing requests
             let catchup_result = self
                 .kms
-                .run_catchup(message.event.clone(), operation_value.clone(), param_choice)
+                .run_catchup(
+                    message.event.clone(),
+                    operation_value.clone(),
+                    fhe_parameter,
+                )
                 .await
                 .inspect_err(|e| {
                     tracing::error!("KMS connector error running kms operation: {:?}", e);

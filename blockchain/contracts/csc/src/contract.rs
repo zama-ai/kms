@@ -68,7 +68,7 @@ impl ConfigurationContract {
     /// (used for sending responses to the client with reencryption operations)
     /// * `degree_for_reconstruction` - the degree of the polynomial for reconstruction
     /// (used for checking majority and conformance)
-    /// * `param_choice` - the FHE parameter choice (either default or test)
+    /// * `fhe_parameter` - the FHE parameter choice (either default or test)
     /// * `storage_base_url` - the storage base URL
     /// * `allowlists` - an optional struct containing several lists of addresses that define
     /// who can trigger some operations (mostly about updating the configuration or allowlists).
@@ -81,7 +81,7 @@ impl ConfigurationContract {
         response_count_for_majority_vote: usize,
         response_count_for_reconstruction: usize,
         degree_for_reconstruction: usize,
-        param_choice: FheParameter,
+        fhe_parameter: FheParameter,
         storage_base_url: String,
         allowlists: Option<Allowlists>,
     ) -> StdResult<Response> {
@@ -108,7 +108,7 @@ impl ConfigurationContract {
 
         // Set the FHE parameter choice
         self.storage
-            .set_param_choice(ctx.deps.storage, param_choice)?;
+            .set_fhe_parameter(ctx.deps.storage, fhe_parameter)?;
 
         // Set the storage base URL
         self.storage
@@ -272,25 +272,25 @@ impl ConfigurationContract {
 
     /// Get the FHE parameter choice
     #[sv::msg(query)]
-    pub fn get_param_choice(&self, ctx: QueryCtx) -> StdResult<FheParameter> {
-        self.storage.get_param_choice(ctx.deps.storage)
+    pub fn get_fhe_parameter(&self, ctx: QueryCtx) -> StdResult<FheParameter> {
+        self.storage.get_fhe_parameter(ctx.deps.storage)
     }
 
     /// Update the FHE parameter choice
     ///
     /// This call is restricted to specific addresses defined at instantiation (`Allowlists`).
     #[sv::msg(exec)]
-    pub fn update_param_choice(
+    pub fn update_fhe_parameter(
         &self,
         mut ctx: ExecCtx,
         value: FheParameter,
     ) -> StdResult<Response> {
         self.update_config(
             &mut ctx,
-            "update_param_choice",
+            "update_fhe_parameter",
             value,
-            |storage| self.storage.get_param_choice(storage),
-            |storage, value| self.storage.update_param_choice(storage, value),
+            |storage| self.storage.get_fhe_parameter(storage),
+            |storage, value| self.storage.update_fhe_parameter(storage, value),
         )
     }
 
@@ -654,7 +654,7 @@ mod tests {
 
     /// Test updating FHE parameters
     #[test]
-    fn test_param_choice() {
+    fn test_fhe_parameter() {
         let (app, owner) = setup_test_env();
 
         let code_id = CodeId::store_code(&app);
@@ -678,14 +678,14 @@ mod tests {
 
         // Test update method
         let response = contract
-            .update_param_choice(new_param)
+            .update_fhe_parameter(new_param)
             .call(&owner)
             .unwrap();
 
         assert_eq!(response.events.len(), 3);
 
         // Test getter method
-        let result = contract.get_param_choice().unwrap();
+        let result = contract.get_fhe_parameter().unwrap();
         assert_eq!(result, new_param);
     }
 }

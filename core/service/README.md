@@ -110,11 +110,11 @@ This enum is used as metadata that accompanies a ciphertext to specify its under
 </details>
 
 <details>
-    <summary>ParamChoice</summary>
+    <summary>FheParameter</summary>
 
 #### Definition
 ```proto
-enum ParamChoice {
+enum FheParameter {
   test = 0;
   default = 1;
 }
@@ -182,7 +182,7 @@ __NOTE__: `signature` and `external_signature` look quite redundant.
 
 ```proto
 message KeyGenPreprocRequest {
-  ParamChoice params = 1;
+  FheParameter params = 1;
   RequestId request_id = 2;
 }
 ```
@@ -196,7 +196,7 @@ message Empty {}
 #### Description
 This RPC only makes sense in the __threshold__ case.
 
-It triggers the __asynchronous__ correlated randomness generation that is necessary to perform the Distributed Key Generation on the specified `ParamChoice`.
+It triggers the __asynchronous__ correlated randomness generation that is necessary to perform the Distributed Key Generation on the specified `FheParameter`.
 
 This correlated randomness will then be consumed when calling `KeyGen` with the `preproc_id` set to the current `request_id`.
 
@@ -246,7 +246,7 @@ The meaning of the enum is as follows:
 #### Input
 ```proto
 message KeyGenRequest {
-  ParamChoice params = 1;
+  FheParameter params = 1;
   RequestId preproc_id = 2;
   RequestId request_id = 3;
   Eip712DomainMsg domain = 4;
@@ -311,7 +311,7 @@ ___NOTE_: This is a temporary workaround and will only be available in testing/d
 
 ```proto
 message KeyGenRequest {
-  ParamChoice params = 1;
+  FheParameter params = 1;
   RequestId preproc_id = 2;
   RequestId request_id = 3;
   Eip712DomainMsg domain = 4;
@@ -371,7 +371,7 @@ If the call is successful, the `KeyGenResult` will contain the `request_id` used
 
 ```proto
 message CrsGenRequest {
-  ParamChoice params = 1;
+  FheParameter params = 1;
   optional uint32 max_num_bits = 2;
   RequestId request_id = 3;
   Eip712DomainMsg domain = 4;

@@ -19,12 +19,12 @@ pub trait Kms {
     /// Process a KMS Event from the connector to the core
     /// - _event_ is the event emitted by the KMS BC
     /// - _operation_ is the operation fetched from the KMS BC based on the event
-    /// - _param_choice_ is the parameter choice fetched from the CSC
+    /// - _fhe_parameter_ is the parameter choice fetched from the CSC
     async fn run(
         &self,
         event: KmsEvent,
         operation: OperationValue,
-        param_choice: Option<FheParameter>,
+        fhe_parameter: Option<FheParameter>,
     ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>>;
 
     /// Poll the KMS for an event that may have already been queried
@@ -32,7 +32,7 @@ pub trait Kms {
     ///
     /// - _event_ is the event emited by the KMS BC
     /// - _operation_ is the operation fetched from the KMS BC based on the event
-    /// - _param_choice_ is the parameter choice fetched from the CSC
+    /// - _fhe_parameter_ is the parameter choice fetched from the CSC
     ///
     /// Returns a [`CatchupResult`] variant that correctly deals
     /// with (a)synchronicity of the task.
@@ -47,6 +47,6 @@ pub trait Kms {
         &self,
         event: KmsEvent,
         operation: OperationValue,
-        param_choice: Option<FheParameter>,
+        fhe_parameter: Option<FheParameter>,
     ) -> anyhow::Result<CatchupResult>;
 }

@@ -1,4 +1,4 @@
-use crate::kms::ParamChoice;
+use crate::kms::FheParameter;
 use crate::kms::RequestId;
 use distributed_decryption::execution::tfhe_internals::parameters::{
     DKGParams, BC_PARAMS_SAM_SNS, PARAMS_TEST_BK_SNS,
@@ -11,11 +11,11 @@ pub const KEY_PATH_PREFIX: &str = "keys";
 pub const DEFAULT_PARAM: DKGParams = BC_PARAMS_SAM_SNS;
 pub const TEST_PARAM: DKGParams = PARAMS_TEST_BK_SNS;
 
-impl From<ParamChoice> for DKGParams {
-    fn from(value: ParamChoice) -> Self {
+impl From<FheParameter> for DKGParams {
+    fn from(value: FheParameter) -> Self {
         match value {
-            ParamChoice::Test => TEST_PARAM,
-            ParamChoice::Default => DEFAULT_PARAM,
+            FheParameter::Test => TEST_PARAM,
+            FheParameter::Default => DEFAULT_PARAM,
         }
     }
 }

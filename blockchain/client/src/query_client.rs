@@ -92,8 +92,8 @@ pub enum AscQuery {
 /// Important: serde's rename must exactly match the CSC's associated method name
 #[derive(EnumString, Serialize, Debug)]
 pub enum CscQuery {
-    #[serde(rename = "get_param_choice")]
-    GetParamChoice {},
+    #[serde(rename = "get_fhe_parameter")]
+    GetFheParameter {},
     #[serde(rename = "get_num_parties")]
     GetNumParties {},
     #[serde(rename = "get_response_count_for_majority_vote")]
@@ -298,8 +298,8 @@ impl QueryClient {
 }
 
 #[test]
-fn test_get_param_choice_serialization() {
-    let obj = CscQuery::GetParamChoice {};
+fn test_get_fhe_parameter_serialization() {
+    let obj = CscQuery::GetFheParameter {};
     let ser = serde_json::json!(obj).to_string();
-    assert_eq!(ser, "{\"get_param_choice\":{}}");
+    assert_eq!(ser, "{\"get_fhe_parameter\":{}}");
 }

@@ -601,16 +601,16 @@ impl TestType for KeyUrlValuesTest {
 pub struct KeyUrlResponseValuesTest {
     pub test_filename: Cow<'static, str>,
     pub fhe_key_info_fhe_public_key_data_id: [u8; 3],
-    pub fhe_key_info_fhe_public_key_param_choice: i32,
+    pub fhe_key_info_fhe_public_key_fhe_parameter: i32,
     pub fhe_key_info_fhe_public_key_urls: [Cow<'static, str>; 1],
     pub fhe_key_info_fhe_public_key_signatures: [[u8; 3]; 1],
     pub fhe_key_info_fhe_server_key_data_id: [u8; 3],
-    pub fhe_key_info_fhe_server_key_param_choice: i32,
+    pub fhe_key_info_fhe_server_key_fhe_parameter: i32,
     pub fhe_key_info_fhe_server_key_urls: [Cow<'static, str>; 1],
     pub fhe_key_info_fhe_server_key_signatures: [[u8; 3]; 1],
     pub crs_ids: [u8; 1],
     pub crs_data_ids: [[u8; 3]; 3],
-    pub crs_param_choices: [u32; 1],
+    pub crs_fhe_parameters: [u32; 1],
     pub crs_urls: [Cow<'static, str>; 1],
     pub crs_signatures: [[[u8; 3]; 1]; 1],
     pub verf_public_key_key_id: [u8; 3],
@@ -674,7 +674,7 @@ pub struct KmsCoreConfTest {
     pub response_count_for_majority_vote: usize,
     pub response_count_for_reconstruction: usize,
     pub degree_for_reconstruction: usize,
-    pub param_choice: Cow<'static, str>,
+    pub fhe_parameter: Cow<'static, str>,
 }
 
 impl TestType for KmsCoreConfTest {

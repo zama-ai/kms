@@ -1,4 +1,3 @@
-use bincode::serialize;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -15,10 +14,10 @@ use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenPreprocStatusEnum,
     KeyGenRequest, KeyGenResult, ReencryptionRequest, ReencryptionResponse,
-    ReencryptionResponsePayload, RequestId, SignedPubDataHandle, VerifyProvenCtRequest,
-    VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
+    ReencryptionResponsePayload, RequestId, SignedPubDataHandle, TypedPlaintext,
+    VerifyProvenCtRequest, VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
 };
-use crate::rpc::rpc_types::{Plaintext, PubDataType, CURRENT_FORMAT_VERSION};
+use crate::rpc::rpc_types::{PubDataType, CURRENT_FORMAT_VERSION};
 use crate::util::random_free_port::random_free_ports;
 use futures_util::FutureExt;
 
@@ -154,9 +153,7 @@ impl Decryptor for DummyDecryptor {
                 version: CURRENT_FORMAT_VERSION,
                 verification_key: vec![],
                 digest: "dummy digest".as_bytes().to_vec(),
-                plaintexts: vec![
-                    serialize(&Plaintext::new(42, crate::kms::FheType::Euint8)).unwrap()
-                ],
+                plaintexts: vec![TypedPlaintext::new(42, crate::kms::FheType::Euint8)],
                 external_signature: Some(vec![23_u8; 65]),
             }),
         }))

@@ -343,16 +343,16 @@ const KEY_URL_VALUES_TEST: KeyUrlValuesTest = KeyUrlValuesTest {
 const KEY_URL_RESPONSE_VALUES_TEST: KeyUrlResponseValuesTest = KeyUrlResponseValuesTest {
     test_filename: Cow::Borrowed("key_url_response_values"),
     fhe_key_info_fhe_public_key_data_id: [1, 2, 3],
-    fhe_key_info_fhe_public_key_param_choice: 4,
+    fhe_key_info_fhe_public_key_fhe_parameter: 4,
     fhe_key_info_fhe_public_key_urls: [Cow::Borrowed("fhe_key_info_fhe_public_key_url_1")],
     fhe_key_info_fhe_public_key_signatures: [[5, 6, 7]],
     fhe_key_info_fhe_server_key_data_id: [8, 9, 10],
-    fhe_key_info_fhe_server_key_param_choice: 11,
+    fhe_key_info_fhe_server_key_fhe_parameter: 11,
     fhe_key_info_fhe_server_key_urls: [Cow::Borrowed("fhe_key_info_fhe_server_key_url_1")],
     fhe_key_info_fhe_server_key_signatures: [[12, 13, 14]],
     crs_ids: [15],
     crs_data_ids: [[16, 17, 18]],
-    crs_param_choices: [19],
+    crs_fhe_parameters: [19],
     crs_urls: [[Cow::Borrowed("crs_url_1")]],
     crs_signatures: [[[20, 21, 22]]],
     verf_public_key_key_id: [23, 24, 25],
@@ -479,7 +479,7 @@ const KMS_CORE_CONF_TEST: KmsCoreConfTest = KmsCoreConfTest {
     response_count_for_majority_vote: 10,
     response_count_for_reconstruction: 11,
     degree_for_reconstruction: 12,
-    param_choice: Cow::Borrowed("test"),
+    fhe_parameter: Cow::Borrowed("test"),
 };
 
 pub struct V0_9;
@@ -902,7 +902,7 @@ impl EventsV0_9 {
                     .to_vec()
                     .into(),
             )
-            .param_choice(KEY_URL_RESPONSE_VALUES_TEST.fhe_key_info_fhe_public_key_param_choice)
+            .fhe_parameter(KEY_URL_RESPONSE_VALUES_TEST.fhe_key_info_fhe_public_key_fhe_parameter)
             .urls(array_str_to_vec_string(
                 KEY_URL_RESPONSE_VALUES_TEST.fhe_key_info_fhe_public_key_urls,
             ))
@@ -921,7 +921,7 @@ impl EventsV0_9 {
                     .to_vec()
                     .into(),
             )
-            .param_choice(KEY_URL_RESPONSE_VALUES_TEST.fhe_key_info_fhe_server_key_param_choice)
+            .fhe_parameter(KEY_URL_RESPONSE_VALUES_TEST.fhe_key_info_fhe_server_key_fhe_parameter)
             .urls(array_str_to_vec_string(
                 KEY_URL_RESPONSE_VALUES_TEST.fhe_key_info_fhe_server_key_urls,
             ))
@@ -942,15 +942,15 @@ impl EventsV0_9 {
             .crs_ids
             .iter()
             .zip(KEY_URL_RESPONSE_VALUES_TEST.crs_data_ids.iter())
-            .zip(KEY_URL_RESPONSE_VALUES_TEST.crs_param_choices.iter())
+            .zip(KEY_URL_RESPONSE_VALUES_TEST.crs_fhe_parameters.iter())
             .zip(KEY_URL_RESPONSE_VALUES_TEST.crs_urls.iter())
             .zip(KEY_URL_RESPONSE_VALUES_TEST.crs_signatures.iter())
-            .map(|((((id, data_id), param_choice), urls), signatures)| {
+            .map(|((((id, data_id), fhe_parameter), urls), signatures)| {
                 (
                     *id,
                     KeyUrlInfo::builder()
                         .data_id(data_id.to_vec().into())
-                        .param_choice(*param_choice)
+                        .fhe_parameter(*fhe_parameter)
                         .urls(array_str_to_vec_string(urls.clone()))
                         .signatures(array_array_to_vec_vec(*signatures).into())
                         .build(),
@@ -1217,7 +1217,7 @@ impl EventsV0_9 {
             tls_pub_key: Some(KMS_CORE_CONF_TEST.parties_tls_pub_key.to_vec().into()),
         }];
 
-        let param_choice = match KMS_CORE_CONF_TEST.param_choice.as_ref() {
+        let fhe_parameter = match KMS_CORE_CONF_TEST.fhe_parameter.as_ref() {
             "test" => FheParameter::Test,
             "default" => FheParameter::Default,
             _ => panic!("Invalid parameter choice"),
@@ -1228,7 +1228,7 @@ impl EventsV0_9 {
             response_count_for_majority_vote: KMS_CORE_CONF_TEST.response_count_for_majority_vote,
             response_count_for_reconstruction: KMS_CORE_CONF_TEST.response_count_for_reconstruction,
             degree_for_reconstruction: KMS_CORE_CONF_TEST.degree_for_reconstruction,
-            param_choice,
+            fhe_parameter,
         };
 
         let kms_core_conf: KmsCoreConf = KmsCoreConf::Threshold(kms_core_conf_threshold);

@@ -14,10 +14,7 @@ use super::internal_crypto_types::{
     SigncryptionPubKey,
 };
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log};
-use crate::{
-    consts::SIG_SIZE,
-    rpc::rpc_types::{Plaintext, SigncryptionPayload},
-};
+use crate::{consts::SIG_SIZE, kms::TypedPlaintext, rpc::rpc_types::SigncryptionPayload};
 use ::signature::{Signer, Verifier};
 use bincode::{deserialize, serialize};
 use crypto_box::aead::{Aead, AeadCore};
@@ -375,7 +372,7 @@ pub(crate) fn decrypt_signcryption(
     link: &[u8],
     client_keys: &SigncryptionPair,
     server_verf_key: &PublicSigKey,
-) -> anyhow::Result<Plaintext> {
+) -> anyhow::Result<TypedPlaintext> {
     let cipher: Cipher = deserialize(cipher)?;
     let decrypted_signcryption = validate_and_decrypt(&cipher, client_keys, server_verf_key)?;
 
@@ -396,7 +393,7 @@ pub(crate) fn decrypt_signcryption(
 pub(crate) fn insecure_decrypt_ignoring_signature(
     cipher: &[u8],
     client_keys: &SigncryptionPair,
-) -> anyhow::Result<Plaintext> {
+) -> anyhow::Result<TypedPlaintext> {
     let cipher: Cipher = deserialize(cipher)?;
 
     let nonce = Nonce::from_slice(cipher.nonce.as_bytes());

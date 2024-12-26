@@ -48,7 +48,7 @@ impl ParametersToConform {
 ///   (used for sending responses to the client with reencryption operations)
 /// - `degree_for_reconstruction` - the degree of the polynomial for reconstruction
 ///   (used for checking majority and conformance)
-/// - `param_choice` - the FHE parameter choice (either default or test)
+/// - `fhe_parameter` - the FHE parameter choice (either default or test)
 /// - `storage_base_urls` - the list of storage base URLs
 /// - `allowlists` - an optional struct containing several lists of addresses that define
 ///   who can trigger some operations (mostly about updating the configuration or allowlists).
@@ -58,7 +58,7 @@ pub struct ConfigStorage {
     response_count_for_majority_vote: VersionedItem<usize>,
     response_count_for_reconstruction: VersionedItem<usize>,
     degree_for_reconstruction: VersionedItem<usize>,
-    param_choice: VersionedItem<FheParameter>,
+    fhe_parameter: VersionedItem<FheParameter>,
     storage_base_url: VersionedItem<String>,
     allowlists: VersionedItem<AllowlistsCsc>,
 }
@@ -74,7 +74,7 @@ impl Default for ConfigStorage {
                 "response_count_for_reconstruction",
             ),
             degree_for_reconstruction: VersionedItem::new("degree_for_reconstruction"),
-            param_choice: VersionedItem::new("param_choice"),
+            fhe_parameter: VersionedItem::new("fhe_parameter"),
             storage_base_url: VersionedItem::new("storage_base_url"),
             allowlists: VersionedItem::new("allowlists"),
         }
@@ -329,26 +329,26 @@ impl ConfigStorage {
     }
 
     /// Get the parameter choice
-    pub fn get_param_choice(&self, storage: &dyn Storage) -> StdResult<FheParameter> {
-        self.param_choice.load(storage)
+    pub fn get_fhe_parameter(&self, storage: &dyn Storage) -> StdResult<FheParameter> {
+        self.fhe_parameter.load(storage)
     }
 
     /// Set the parameter choice
-    pub(crate) fn set_param_choice(
+    pub(crate) fn set_fhe_parameter(
         &self,
         storage: &mut dyn Storage,
         value: FheParameter,
     ) -> StdResult<()> {
-        self.param_choice.save(storage, &value)
+        self.fhe_parameter.save(storage, &value)
     }
 
     // Update the parameter choice
-    pub fn update_param_choice(
+    pub fn update_fhe_parameter(
         &self,
         storage: &mut dyn Storage,
         value: FheParameter,
     ) -> StdResult<FheParameter> {
-        self.param_choice
+        self.fhe_parameter
             .update(storage, |_| -> StdResult<FheParameter> { Ok(value) })
     }
 
@@ -738,21 +738,21 @@ mod tests {
     }
 
     #[test]
-    fn test_param_choice() {
+    fn test_fhe_parameter() {
         let dyn_store = &mut MockStorage::new();
         let storage = ConfigStorage::default();
 
         let param = FheParameter::Test;
 
         // Test set
-        storage.set_param_choice(dyn_store, param).unwrap();
+        storage.set_fhe_parameter(dyn_store, param).unwrap();
 
         // Test get
-        assert_eq!(storage.get_param_choice(dyn_store).unwrap(), param);
+        assert_eq!(storage.get_fhe_parameter(dyn_store).unwrap(), param);
 
         // Test update
         let new_param = FheParameter::Default;
-        let updated_param = storage.update_param_choice(dyn_store, new_param).unwrap();
+        let updated_param = storage.update_fhe_parameter(dyn_store, new_param).unwrap();
         assert_eq!(updated_param, new_param);
     }
 
