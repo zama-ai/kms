@@ -262,7 +262,7 @@ fn receive_from_all_votes<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>
     )
 }
 
-///Update the vote counts for each (sender, value) by processing the echos or votes from all the other parties  
+///Update the vote counts for each (sender, value) by processing the echos or votes from all the other parties
 async fn internal_process_echos_or_votes<T>(
     receiver: &Role,
     rcv_tasks: &mut GenericEchoVoteJob<T>,
@@ -368,7 +368,7 @@ async fn cast_threshold_vote<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<
 }
 
 /// For threshold rounds, look at the votes we have received, and cast a vote if needed
-///  
+///
 /// If enough votes >=(T+R) and sender hasn't voted then vote
 async fn gather_votes<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
     session: &B,
@@ -566,7 +566,9 @@ pub async fn reliable_broadcast<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandl
         if hits >= min_honest_nodes {
             //Retrieve the actual data from the hash
             let value = map_hash_to_value.remove(&(role, value)).ok_or_else(|| {
-                anyhow_error_and_log("Can't retrieve the value from the hash in broadcast")
+                anyhow_error_and_log(format!(
+                    "Can't retrieve the value from the hash in broadcast. Role {role}.",
+                ))
             })?;
 
             bcast_data.insert(role, value);

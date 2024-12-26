@@ -60,7 +60,7 @@ pub trait ShareDispute: Send + Sync + Clone + Default {
 pub struct RealShareDispute {}
 
 /// Returns the ids (one based) of the roles I am in dispute with but that are not corrupt
-fn compute_idx_dispute_not_corrupt<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+fn _compute_idx_dispute_not_corrupt<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
     session: &L,
 ) -> anyhow::Result<Vec<usize>> {
     Ok(session
@@ -74,6 +74,18 @@ fn compute_idx_dispute_not_corrupt<R: Rng + CryptoRng, L: LargeSessionHandles<R>
                 Some(id.one_based())
             }
         })
+        .collect())
+}
+
+/// Returns the ids (one based) of the roles I am in dispute with
+fn compute_idx_dispute<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    session: &L,
+) -> anyhow::Result<Vec<usize>> {
+    Ok(session
+        .disputed_roles()
+        .get(&session.my_role()?)?
+        .iter()
+        .map(|id| id.one_based())
         .collect())
 }
 
@@ -128,7 +140,8 @@ impl ShareDispute for RealShareDispute {
         let degree_t = session.threshold() as usize;
         let degree_2t = 2 * degree_t;
 
-        let dispute_ids = compute_idx_dispute_not_corrupt(session)?;
+        //Get the IDs of all parties I'm in dispute with (ignoring the fact that some might or might not be in the Corrupt set)
+        let dispute_ids = compute_idx_dispute(session)?;
 
         //Sample one random polynomial of correct degree per secret
         //and evaluate it at the parties' points
@@ -181,9 +194,8 @@ impl ShareDispute for RealShareDispute {
     ) -> anyhow::Result<ShareDisputeOutput<Z>> {
         let num_parties = session.num_parties();
         let degree = session.threshold() as usize;
-        //If some party is corrupt I shouldn't sample a specific point for it
-        //Even if it is in dispute with me
-        let dispute_ids = compute_idx_dispute_not_corrupt(session)?;
+        //Get the IDs of all parties I'm in dispute with (ignoring the fact that some might or might not be in the Corrupt set)
+        let dispute_ids = compute_idx_dispute(session)?;
 
         //Sample one random polynomial of correct degree per secret
         //and evaluate it at the parties' points
@@ -424,9 +436,8 @@ where
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{
-        compute_idx_dispute_not_corrupt, evaluate_w_new_roots,
-        send_and_receive_share_dispute_double, send_and_receive_share_dispute_single,
-        share_secrets,
+        compute_idx_dispute, evaluate_w_new_roots, send_and_receive_share_dispute_double,
+        send_and_receive_share_dispute_single, share_secrets,
     };
     use crate::execution::sharing::shamir::RevealOp;
     use crate::networking::NetworkMode;
@@ -603,7 +614,8 @@ pub(crate) mod tests {
             let degree_t = session.threshold() as usize;
             let degree_2t = 2 * degree_t;
 
-            let dispute_ids = compute_idx_dispute_not_corrupt(session)?;
+            //Get the IDs of all parties I'm in dispute with (ignoring the fact that some might or might not be in the Corrupt set)
+            let dispute_ids = compute_idx_dispute(session)?;
 
             //Sample one random polynomial of correct degree per secret
             //and evaluate it at the parties' points
@@ -659,9 +671,8 @@ pub(crate) mod tests {
         ) -> anyhow::Result<ShareDisputeOutput<Z>> {
             let num_parties = session.num_parties();
             let degree = session.threshold() as usize;
-            //If some party is corrupt I shouldn't sample a specific point for it
-            //Even if it is in dispute with me
-            let dispute_ids: Vec<usize> = compute_idx_dispute_not_corrupt(session)?;
+            //Get the IDs of all parties I'm in dispute with (ignoring the fact that some might or might not be in the Corrupt set)
+            let dispute_ids: Vec<usize> = compute_idx_dispute(session)?;
 
             //Sample one random polynomial of correct degree per secret
             //and evaluate it at the parties' points

@@ -81,16 +81,35 @@ impl<C: Coinflip, S: ShareDispute> LocalSingleShare for RealLocalSingleShare<C, 
                 "Passed an empty secrets vector to LocalSingleShare".to_string(),
             ));
         }
-        // Keeps executing til verification passes, excluding malicious players every time it does not
+
+        // Keeps executing until verification passes, excluding malicious players every time it does not
         for _ in 0..MAX_ITER {
-            // ShareDispute will fill shares from corrupted parties with 0s
-            let mut shared_secrets = self.share_dispute.execute(session, secrets).await?;
+            let mut shared_secrets;
+            let mut x;
+            let mut shared_pads;
 
-            // note that we could merge the share_pads round into the first one.
-            // This is currently discussed in the NIST doc
-            let shared_pads = send_receive_pads(session, &self.share_dispute).await?;
+            // The following loop is guaranteed to terminate.
+            // We we will leave it once the corrupt set does not change.
+            // This happens right away on the happy path or worst case after all parties are in there and no new parties can be added.
+            loop {
+                let corrupt_start = session.corrupt_roles().clone();
 
-            let x = self.coinflip.execute(session).await?;
+                // ShareDispute will fill shares from disputed parties with 0s
+                // <s>
+                shared_secrets = self.share_dispute.execute(session, secrets).await?;
+
+                // note that we could merge the share_pads round into the first one.
+                // This is currently discussed in the NIST doc
+                // <r>
+                shared_pads = send_receive_pads(session, &self.share_dispute).await?;
+
+                x = self.coinflip.execute(session).await?;
+
+                // if the corrupt roles have not changed, we can exit the loop and move on, otherwise start from the top
+                if *session.corrupt_roles() == corrupt_start {
+                    break;
+                }
+            }
 
             if verify_sharing(
                 session,
@@ -147,6 +166,7 @@ async fn verify_sharing<
         let map_challenges = Z::derive_challenges_from_coinflip(x, g.try_into()?, l, &roles);
 
         //Compute my share of check values for every local single share happening in parallel
+        //<y>
         let map_share_check_values = compute_check_values(
             pads_shares_all,
             &map_challenges,
@@ -156,6 +176,7 @@ async fn verify_sharing<
         )?;
 
         //Compute the share of the check value for MY local single share
+        //<y^*>_j
         let map_share_my_check_values = compute_check_values(
             my_shared_pads,
             &map_challenges,
@@ -164,8 +185,11 @@ async fn verify_sharing<
             Some(&my_role.clone()),
         )?;
 
+        let corrupt_before_bc = session.corrupt_roles().clone();
+
         //Broadcast both my share of check values on all lsl as well as all the shares of check values for lsl where I am sender
         //All roles will be mapped to an output, but it may be Bot if they are malicious
+        // Step (d)
         let bcast_data = broadcast_from_all_w_corruption(
             session,
             BroadcastValue::LocalSingleShare(MapsSharesChallenges {
@@ -174,6 +198,11 @@ async fn verify_sharing<
             }),
         )
         .await?;
+
+        // If the corrupt roles have not changed, we can continue, otherwise start from beginning
+        if *session.corrupt_roles() != corrupt_before_bc {
+            return Ok(false);
+        }
 
         //Map broadcast data back to MapSharesChallenges
         let mut bcast_output = HashMap::new();
@@ -210,9 +239,9 @@ async fn verify_sharing<
 }
 
 // Inputs:
-// pads_shares maps a role to a vector of size m ( { r_g }_g in the protocol description)
+// map_pads_shares maps a role to a vector of size m ( { r_g }_g in the protocol description)
 // map_challenges maps a role to a vector of size l ( { x_{jg} }_j in the protocol description)
-// secret_shares maps a role to a vector of size l ( { s_j }_j in the protocol description)
+// map_secret_shares maps a role to a vector of size l ( { s_j }_j in the protocol description)
 // Output:
 // the share of the checking value for every role
 pub(crate) fn compute_check_values<Z: Ring>(
@@ -260,60 +289,63 @@ pub(crate) fn verify_sender_challenge<
 ) -> anyhow::Result<HashSet<Role>> {
     let mut newly_corrupt = HashSet::<Role>::new();
 
-    for (role_pi, bcast_value) in bcast_data {
-        let sharing_from_sender = &bcast_value.checks_for_mine;
-        //Make sure the current sender has sent a value to check against for all parties
-        if sharing_from_sender.keys().collect::<HashSet<&Role>>()
-            != session
-                .role_assignments()
-                .keys()
-                .collect::<HashSet<&Role>>()
-        {
-            newly_corrupt.insert(*role_pi);
-            tracing::warn!("Party {role_pi} did not send a check value for all parties, adding it to the corrupt set");
-            continue;
-        }
+    let my_role = session.my_role().unwrap();
 
-        //Check parties in dispute with pi have shares = 0
-        //This should never fail, if there is no dispute the set is empty but exists
-        let parties_dispute_pi = session.disputed_roles().get(role_pi)?;
-        for pj_dispute_pi in parties_dispute_pi {
-            //Only add pi to corrupt if pj isn't corrupt AND if sharing from pi to pj is not zero
-            if !session.corrupt_roles().contains(pj_dispute_pi)
-                && sharing_from_sender
+    for (role_pi, bcast_value) in bcast_data {
+        if role_pi != &my_role {
+            let sharing_from_sender = &bcast_value.checks_for_mine;
+            //Make sure the current sender has sent a value to check against for all parties
+            if sharing_from_sender.keys().collect::<HashSet<&Role>>()
+                != session
+                    .role_assignments()
+                    .keys()
+                    .collect::<HashSet<&Role>>()
+            {
+                newly_corrupt.insert(*role_pi);
+                tracing::warn!("[{my_role}] Party {role_pi} did not send a check value for all parties, adding it to the corrupt set");
+                continue;
+            }
+
+            //Check parties in dispute with pi have shares = 0  - Step (g)
+            //This should never fail, if there is no dispute the set is empty but exists
+            let parties_dispute_pi = session.disputed_roles().get(role_pi)?;
+            for pj_dispute_pi in parties_dispute_pi {
+                //Add pi to corrupt if sharing from pi to pj is not zero
+                if sharing_from_sender
                     .get(pj_dispute_pi)
                     //This should never fail due to the above check
                     .ok_or_else(|| {
-                        anyhow_error_and_log(
-                            "Can not find the share for {pj_dispute_pi}".to_string(),
-                        )
+                        anyhow_error_and_log(format!(
+                            "[{my_role}] Can not find the share for {pj_dispute_pi}"
+                        ))
                     })?
                     != &Z::ZERO
-            {
-                newly_corrupt.insert(*role_pi);
-                tracing::warn!("Expected to find a 0 share for {pj_dispute_pi} from {role_pi} due to dispute. Adding it to corrupt");
-                break;
-            }
-        }
-        if !newly_corrupt.contains(role_pi) {
-            //Check correct degree
-            let sharing = sharing_from_sender
-                .iter()
-                .map(|(role, share)| Share::new(*role, *share))
-                .collect_vec();
-            let sharing = ShamirSharings::create(sharing);
-            let try_reconstruct = sharing.err_reconstruct(threshold, 0);
-
-            if let Ok(value) = try_reconstruct {
-                if let Some(result_map) = result_map {
-                    result_map.insert(*role_pi, value);
+                {
+                    newly_corrupt.insert(*role_pi);
+                    tracing::warn!("[{my_role}] Expected to find a 0 share for {pj_dispute_pi} from {role_pi} due to dispute, but did not. Adding {role_pi} it to corrupt");
+                    break;
                 }
-            } else {
-                tracing::warn!(
-                    "Reconstruction from {role_pi} failed, adding it to corrupt. {:?}",
-                    try_reconstruct
-                );
-                newly_corrupt.insert(*role_pi);
+            }
+            if !newly_corrupt.contains(role_pi) {
+                //Check correct degree
+                let sharing = sharing_from_sender
+                    .iter()
+                    .map(|(role, share)| Share::new(*role, *share))
+                    .collect_vec();
+                let sharing = ShamirSharings::create(sharing);
+                let try_reconstruct = sharing.err_reconstruct(threshold, 0);
+
+                if let Ok(value) = try_reconstruct {
+                    if let Some(result_map) = result_map {
+                        result_map.insert(*role_pi, value);
+                    }
+                } else {
+                    tracing::warn!(
+                        "[{my_role}] Reconstruction from {role_pi} failed, adding it to corrupt. {:?}",
+                        try_reconstruct
+                    );
+                    newly_corrupt.insert(*role_pi);
+                }
             }
         }
     }
@@ -486,13 +518,28 @@ pub(crate) mod tests {
         ) -> anyhow::Result<HashMap<Role, Vec<Z>>> {
             //Keeps executing til verification passes
             for _ in 0..MAX_ITER {
-                //ShareDispute will fill shares from corrupted parties with 0s
-                let mut shared_secrets = self.share_dispute.execute(session, secrets).await?;
+                let mut shared_secrets;
+                let mut x;
+                let mut shared_pads;
 
-                let shared_pads =
-                    send_receive_pads::<Z, R, L, S>(session, &self.share_dispute).await?;
+                // The following loop is guaranteed to terminate.
+                // We we will leave it once the corrupt set does not change.
+                // This happens right away on the happy path or worst case after all parties are in there and no new parties can be added.
+                loop {
+                    let corrupt_start = session.corrupt_roles().clone();
+                    //ShareDispute will fill shares from disputed parties with 0s
+                    shared_secrets = self.share_dispute.execute(session, secrets).await?;
 
-                let x = self.coinflip.execute(session).await?;
+                    shared_pads =
+                        send_receive_pads::<Z, R, L, S>(session, &self.share_dispute).await?;
+
+                    x = self.coinflip.execute(session).await?;
+
+                    // if the corrupt roles have not changed, we can exit the loop and move on, otherwise start from the top
+                    if *session.corrupt_roles() == corrupt_start {
+                        break;
+                    }
+                }
 
                 //Pretend I sent other shares to party in roles_to_lie_to
                 for (sent_role, sent_shares) in shared_secrets.shares_own_secret.iter_mut() {
@@ -534,13 +581,29 @@ pub(crate) mod tests {
             secrets: &[Z],
         ) -> anyhow::Result<HashMap<Role, Vec<Z>>> {
             for _ in 0..MAX_ITER {
-                //ShareDispute will fill shares from corrupted parties with 0s
-                let mut shared_secrets = self.share_dispute.execute(session, secrets).await?;
+                let mut shared_secrets;
+                let mut x;
+                let mut shared_pads;
 
-                let shared_pads =
-                    send_receive_pads::<Z, R, L, S>(session, &self.share_dispute).await?;
+                // The following loop is guaranteed to terminate.
+                // We we will leave it once the corrupt set does not change.
+                // This happens right away on the happy path or worst case after all parties are in there and no new parties can be added.
+                loop {
+                    let corrupt_start = session.corrupt_roles().clone();
 
-                let x = self.coinflip.execute(session).await?;
+                    //ShareDispute will fill shares from disputed parties with 0s
+                    shared_secrets = self.share_dispute.execute(session, secrets).await?;
+
+                    shared_pads =
+                        send_receive_pads::<Z, R, L, S>(session, &self.share_dispute).await?;
+
+                    x = self.coinflip.execute(session).await?;
+
+                    // if the corrupt roles have not changed, we can exit the loop and move on, otherwise start from the top
+                    if *session.corrupt_roles() == corrupt_start {
+                        break;
+                    }
+                }
 
                 //Pretend I received other shares from party in roles_to_lie_to
                 for (rcv_role, rcv_shares) in shared_secrets.all_shares.iter_mut() {

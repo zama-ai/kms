@@ -71,13 +71,25 @@ impl<C: Coinflip, S: ShareDispute> LocalDoubleShare for RealLocalDoubleShare<C, 
         }
         //Keeps executing til verification passes
         for _ in 0..MAX_ITER {
-            //ShareDispute will fill shares from corrupted parties with 0s
-            let mut shared_secrets_double =
-                self.share_dispute.execute_double(session, secrets).await?;
+            let mut shared_secrets_double;
+            let mut x;
+            let mut shared_pads_double;
 
-            let shared_pads_double = send_receive_pads_double(session, &self.share_dispute).await?;
+            loop {
+                let corrupt_start = session.corrupt_roles().clone();
 
-            let x = self.coinflip.execute(session).await?;
+                //ShareDispute will fill shares from disputed parties with 0s
+                shared_secrets_double = self.share_dispute.execute_double(session, secrets).await?;
+
+                shared_pads_double = send_receive_pads_double(session, &self.share_dispute).await?;
+
+                x = self.coinflip.execute(session).await?;
+
+                // if the corrupt roles have not changed, we can exit the loop and move on, otherwise start from the top
+                if *session.corrupt_roles() == corrupt_start {
+                    break;
+                }
+            }
 
             if verify_sharing(
                 session,
@@ -217,6 +229,8 @@ async fn verify_sharing<
             Some(&my_role),
         )?;
 
+        let corrupt_before_bc = session.corrupt_roles().clone();
+
         //Broadcast:
         // - my share of check values on all sharing of degree t and 2t
         // - the shares of all the parties on sharing of degree t and 2t wher I am sender
@@ -230,6 +244,11 @@ async fn verify_sharing<
             )),
         )
         .await?;
+
+        // If the corrupt roles have not changed, we can continue, otherwise start from beginning
+        if *session.corrupt_roles() != corrupt_before_bc {
+            return Ok(false);
+        }
 
         //Split Broadcast data into degree t and 2t, allowing to mimic behaviour of local single sharing
         let mut bcast_data_t = HashMap::<Role, MapsSharesChallenges<Z>>::new();
@@ -438,14 +457,31 @@ pub(crate) mod tests {
         ) -> anyhow::Result<HashMap<Role, DoubleShares<Z>>> {
             //Keeps executing til verification passes
             for _ in 0..MAX_ITER {
-                //ShareDispute will fill shares from corrupted parties with 0s
-                let mut shared_secrets_double =
-                    self.share_dispute.execute_double(session, secrets).await?;
+                let mut shared_secrets_double;
+                let mut x;
+                let mut shared_pads;
 
-                let shared_pads =
-                    send_receive_pads_double::<Z, R, L, S>(session, &self.share_dispute).await?;
+                // The following loop is guaranteed to terminate.
+                // We we will leave it once the corrupt set does not change.
+                // This happens right away on the happy path or worst case after all parties are in there and no new parties can be added.
+                loop {
+                    let corrupt_start = session.corrupt_roles().clone();
 
-                let x = self.coinflip.execute(session).await?;
+                    //ShareDispute will fill shares from disputed parties with 0s
+                    shared_secrets_double =
+                        self.share_dispute.execute_double(session, secrets).await?;
+
+                    shared_pads =
+                        send_receive_pads_double::<Z, R, L, S>(session, &self.share_dispute)
+                            .await?;
+
+                    x = self.coinflip.execute(session).await?;
+
+                    // if the corrupt roles have not changed, we can exit the loop and move on, otherwise start from the top
+                    if *session.corrupt_roles() == corrupt_start {
+                        break;
+                    }
+                }
 
                 //Pretend I sent other shares to party in roles_to_lie_to
                 //Same deviation fro both degree t and 2t
@@ -499,17 +535,30 @@ pub(crate) mod tests {
             session: &mut L,
             secrets: &[Z],
         ) -> anyhow::Result<HashMap<Role, DoubleShares<Z>>> {
+            let mut shared_secrets_double;
+            let mut x;
+            let mut shared_pads;
+
             //Keeps executing til verification passes
             for _ in 0..MAX_ITER {
-                //ShareDispute will fill shares from corrupted parties with 0s
-                let mut shared_secrets_double =
-                    self.share_dispute.execute_double(session, secrets).await?;
+                loop {
+                    let corrupt_start = session.corrupt_roles().clone();
 
-                let shared_pads =
-                    send_receive_pads_double::<Z, R, L, S>(session, &self.share_dispute).await?;
+                    //ShareDispute will fill shares from disputed parties with 0s
+                    shared_secrets_double =
+                        self.share_dispute.execute_double(session, secrets).await?;
 
-                let x = self.coinflip.execute(session).await?;
+                    shared_pads =
+                        send_receive_pads_double::<Z, R, L, S>(session, &self.share_dispute)
+                            .await?;
 
+                    x = self.coinflip.execute(session).await?;
+
+                    // if the corrupt roles have not changed, we can exit the loop and move on, otherwise start from the top
+                    if *session.corrupt_roles() == corrupt_start {
+                        break;
+                    }
+                }
                 //Pretend I received other shares from party in roles_to_lie_to
                 //Same deviation fro both degree t and 2t
                 for role in self.roles_to_lie_to.iter() {

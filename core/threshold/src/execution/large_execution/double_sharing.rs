@@ -297,7 +297,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_doublesharing_dropout() {
-        let parties = 4;
+        let parties = 5;
         let threshold = 1;
 
         async fn task(mut session: LargeSession) -> (Role, Vec<DoubleShare<ResiduePolyF8Z128>>) {

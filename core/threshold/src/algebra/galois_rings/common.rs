@@ -1,3 +1,4 @@
+use super::utils::ArrayVisitor;
 use crate::algebra::{
     base_ring::ToZ64,
     bivariate::compute_powers_list,
@@ -42,8 +43,6 @@ use std::{
 use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
 use zeroize::Zeroize;
-
-use super::utils::ArrayVisitor;
 
 /// Represents an element Z_{2^bitlen}[X]/F[X]
 /// for F[X] of given DEGREE.
