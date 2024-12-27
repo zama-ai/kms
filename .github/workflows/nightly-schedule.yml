@@ -1,0 +1,20 @@
+name: "[KMS Nightly build] Nightly Schedule"
+
+on:
+  schedule:
+    - cron: '30 10 * * 1-5' # This runs the workflow every day at midnight
+
+jobs:
+  test_and_build:
+    strategy:
+      matrix:
+        app: 
+          - blockchain-connector
+          - blockchain-events
+          - blockchain-gateway
+          - blockchain-simulator
+          - blockchain-smart-contracts
+          - service
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/workflows/${{ matrix.app }}-main.yml

@@ -1,6 +1,7 @@
 name: "[Blockchain-Events Merge Main] Pipeline Run"
 
 on:
+  workflow_call:
   push:
     branches: ['main']
     paths:

@@ -1,6 +1,8 @@
 name: "[Core-Service-Merge Main] Pipeline Run"
 
 on:
+  workflow_call:
+  workflow_dispatch:
   push:
     branches: ['main']
     paths:

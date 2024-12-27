@@ -1,6 +1,7 @@
 name: '[Blockchain-Smart-Contracts-Merge Main] Pipeline Run'
 
 on:
+  workflow_call:
   push:
     branches: ['main']
     paths:

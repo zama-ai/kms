@@ -69,6 +69,8 @@ jobs:
         run: |
           if [[ "${{ github.event_name }}" == "release" ]]; then
             echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.event_name }}" == "schedule" ]]; then
+            echo "tag=nightly-$(git rev-parse --short "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
           else
             echo "tag=$(git rev-parse --short "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
           fi
