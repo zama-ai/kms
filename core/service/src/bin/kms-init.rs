@@ -1,7 +1,7 @@
 use clap::Parser;
+use kms_grpc::kms::core_service_endpoint_client::CoreServiceEndpointClient;
+use kms_grpc::kms::{Config, InitRequest};
 use kms_lib::conf::init_kms_core_telemetry;
-use kms_lib::kms::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_lib::kms::{Config, InitRequest};
 
 /// This CLI initializes the threshold KMS core nodes.
 /// After the KMS servers are up and running (using the kms-server)

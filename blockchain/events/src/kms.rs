@@ -14,7 +14,7 @@ use tfhe_versionable::{Versionize, VersionsDispatch};
 use typed_builder::TypedBuilder;
 
 #[cfg(feature = "non-wasm")]
-use kms_lib::kms::FheType as RPCFheType;
+use kms_grpc::kms::FheType as RPCFheType;
 
 #[derive(VersionsDispatch)]
 pub enum FheParameterVersioned {

@@ -16,6 +16,7 @@ members = [
     "blockchain/simulator",
     "blockchain/contracts/common",
     "conf-trace",
+    "core/grpc",
     "core/service",
     "core/threshold",
     "blockchain/inclusion_proofs/ethereum",
@@ -73,6 +74,7 @@ k256 = "=0.13.4"
 csc = { path = "./blockchain/contracts/csc" }
 contracts-common = { path = "./blockchain/contracts/common" }
 kms = { path = "./core/service", default-features = false }
+kms-grpc = { path = "./core/grpc", default-features = false }
 kms-blockchain-client = { path = "./blockchain/client" }
 kms-blockchain-connector = { path = "./blockchain/connector" }
 kms-common = { path = "./common" }

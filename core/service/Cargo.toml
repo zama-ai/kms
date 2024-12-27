@@ -60,6 +60,7 @@ clap = { workspace = true, features = ["derive"] }
 conf-trace = { workspace = true, optional = true }
 crypto_box = { version = "=0.9.1", features = ["salsa20"] }
 distributed-decryption = { workspace = true, default-features = false }
+kms-grpc = { workspace = true, default-features = false }
 hex.workspace = true
 http = "=0.2.12"
 hyper-rustls = { version = "=0.24.2", optional = true }
@@ -67,7 +68,6 @@ itertools.workspace = true
 k256.workspace = true
 lazy_static.workspace = true
 nom = "=7.1.3"
-prost.workspace = true
 rand = { workspace = true, features = ["std", "std_rng"] }
 rasn = "=0.20.2"
 rasn-cms = "=0.20.2"
@@ -140,12 +140,13 @@ test-utils = { path = "../../test-utils" }
 tonic-build.workspace = true
 
 [features]
-default = ["non-wasm", "grpc-client"]
+default = ["non-wasm"]
 testing = []
 non-wasm = [
     "distributed-decryption/non-wasm",
     # TODO we need a way to move "distributed-decryption/testing" to dev-dependencies
     "distributed-decryption/testing",
+    "kms-grpc/non-wasm",
     "dep:alloy-dyn-abi",
     "dep:aws-config",
     "dep:aws-nitro-enclaves-nsm-api",
@@ -168,6 +169,5 @@ non-wasm = [
 slow_tests = ["testing"]
 sequential_sns = ["distributed-decryption/sequential_sns"]
 wasm_tests = ["testing"]
-grpc-client = ["dep:tonic", "dep:tonic-health", "dep:tokio"]
 s3_tests = ["testing"]
-insecure = []
+insecure = ["kms-grpc/insecure"]

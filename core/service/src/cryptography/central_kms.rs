@@ -1,23 +1,9 @@
-use super::signcryption::{
-    internal_verify_sig, safe_serialize_hash_element_versioned, sign, signcrypt,
-};
-use super::{
-    internal_crypto_types::{PrivateSigKey, PublicEncKey, PublicSigKey},
-    signcryption::hash_element,
-};
+use super::internal_crypto_types::{PrivateSigKey, PublicEncKey, PublicSigKey};
+use super::signcryption::{internal_verify_sig, sign, signcrypt};
+
 use crate::consts::RND_SIZE;
 use crate::cryptography::decompression;
-use crate::cryptography::signcryption::Reencrypt;
-use crate::kms::FheType;
-use crate::kms::ReencryptionRequest;
-#[cfg(feature = "non-wasm")]
-use crate::kms::RequestId;
-use crate::kms::TypedPlaintext;
-use crate::kms::{TypedCiphertext, VerifyProvenCtResponsePayload};
-#[cfg(feature = "non-wasm")]
-use crate::rpc::rpc_types::SignedPubDataHandleInternal;
-use crate::rpc::rpc_types::{compute_external_pubdata_signature, Shutdown};
-use crate::rpc::rpc_types::{BaseKms, Kms, PrivDataType, PubDataType, SigncryptionPayload};
+use crate::rpc::base::{compute_external_pubdata_signature, BaseKms, Kms, Shutdown};
 #[cfg(feature = "non-wasm")]
 use crate::util::key_setup::{FhePrivateKey, FhePublicKey};
 use crate::util::meta_store::MetaStore;
@@ -45,6 +31,18 @@ use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 #[cfg(feature = "non-wasm")]
 use distributed_decryption::execution::zk::ceremony::make_centralized_public_parameters;
 use k256::ecdsa::SigningKey;
+use kms_grpc::kms::FheType;
+use kms_grpc::kms::ReencryptionRequest;
+#[cfg(feature = "non-wasm")]
+use kms_grpc::kms::RequestId;
+use kms_grpc::kms::TypedPlaintext;
+use kms_grpc::kms::{TypedCiphertext, VerifyProvenCtResponsePayload};
+#[cfg(feature = "non-wasm")]
+use kms_grpc::rpc_types::SignedPubDataHandleInternal;
+use kms_grpc::rpc_types::{
+    hash_element, safe_serialize_hash_element_versioned, PrivDataType, PubDataType, Reencrypt,
+    SigncryptionPayload,
+};
 use rand::{CryptoRng, Rng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -857,10 +855,9 @@ pub(crate) mod tests {
     use crate::cryptography::internal_crypto_types::PrivateSigKey;
     use crate::cryptography::signcryption::{
         decrypt_signcryption, ephemeral_encryption_key_generation,
-        ephemeral_signcryption_key_generation, hash_element,
+        ephemeral_signcryption_key_generation,
     };
-    use crate::kms::{FheType, RequestId};
-    use crate::rpc::rpc_types::{Kms, CURRENT_FORMAT_VERSION};
+    use crate::rpc::base::Kms;
     use crate::util::file_handling::read_element;
     use crate::util::key_setup::test_tools::compute_cipher;
     use crate::vault::storage::{file::FileStorage, ram::RamStorage};
@@ -869,6 +866,10 @@ pub(crate) mod tests {
     use alloy_signer::SignerSync;
     use alloy_sol_types::SolStruct;
     use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
+    use kms_grpc::kms::{FheType, RequestId};
+    use kms_grpc::rpc_types::{
+        alloy_to_protobuf_domain, hash_element, Reencrypt, CURRENT_FORMAT_VERSION,
+    };
     use rand::{RngCore, SeedableRng};
     use serde::{Deserialize, Serialize};
     use serial_test::serial;
@@ -1355,7 +1356,7 @@ pub(crate) mod tests {
         let (enc_pk, _) = ephemeral_encryption_key_generation(&mut rng);
         let key_id = DEFAULT_THRESHOLD_KEY_ID_4P.clone();
 
-        let payload = crate::kms::ReencryptionRequestPayload {
+        let payload = kms_grpc::kms::ReencryptionRequestPayload {
             version: CURRENT_FORMAT_VERSION,
             enc_key: bincode::serialize(&enc_pk).unwrap(),
             client_address: client_address.to_checksum(None),
@@ -1364,7 +1365,7 @@ pub(crate) mod tests {
             ciphertext: Some(ciphertext),
             ciphertext_digest,
         };
-        let message = crate::cryptography::signcryption::Reencrypt {
+        let message = Reencrypt {
             publicKey: alloy_primitives::Bytes::copy_from_slice(&payload.enc_key),
         };
         let domain = alloy_sol_types::eip712_domain!(
@@ -1376,9 +1377,9 @@ pub(crate) mod tests {
 
         let message_hash = message.eip712_signing_hash(&domain);
         let signature = signer.sign_hash_sync(&message_hash).unwrap();
-        let domain_msg = crate::rpc::rpc_types::alloy_to_protobuf_domain(&domain).unwrap();
+        let domain_msg = alloy_to_protobuf_domain(&domain).unwrap();
 
-        let req = crate::kms::ReencryptionRequest {
+        let req = kms_grpc::kms::ReencryptionRequest {
             signature: signature.into(),
             payload: Some(payload),
             domain: Some(domain_msg),

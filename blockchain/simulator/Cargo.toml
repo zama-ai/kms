@@ -44,13 +44,13 @@ cosmos-proto.workspace = true
 events = { workspace = true, features = ["non-wasm"] }
 hex.workspace = true
 kms = { workspace = true, default-features = false, features = [
-    "grpc-client",
     "non-wasm",
     "testing",
     "insecure",
-]}
+] }
 kms-common = { workspace = true }
 kms-blockchain-client.workspace = true
+kms-grpc.workspace = true
 rand = { workspace = true, features = ["std", "std_rng"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

@@ -17,12 +17,12 @@ use distributed_decryption::execution::{
     tfhe_internals::switch_and_squash::SwitchAndSquashKey,
 };
 use kms_common::{load_and_unversionize, load_and_unversionize_auxiliary};
+use kms_grpc::rpc_types::{PubDataType, SignedPubDataHandleInternal};
 use kms_lib::{
     cryptography::{
         central_kms::{gen_sig_keys, KmsFheKeyHandles},
         internal_crypto_types::{PrivateSigKey, PublicSigKey},
     },
-    rpc::rpc_types::{PubDataType, SignedPubDataHandleInternal},
     threshold::threshold_kms::ThresholdFheKeys,
     util::key_setup::FhePublicKey,
 };

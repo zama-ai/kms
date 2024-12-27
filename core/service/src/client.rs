@@ -3,17 +3,10 @@ use crate::cryptography::internal_crypto_types::{
     SigncryptionPrivKey, SigncryptionPubKey,
 };
 use crate::cryptography::signcryption::{
-    decrypt_signcryption, ephemeral_encryption_key_generation, hash_element,
-    insecure_decrypt_ignoring_signature, internal_verify_sig, Reencrypt,
+    decrypt_signcryption, ephemeral_encryption_key_generation, insecure_decrypt_ignoring_signature,
+    internal_verify_sig,
 };
 use crate::cryptography::{internal_crypto_types::Signature, signcryption::check_normalized};
-use crate::kms::{
-    FheType, ReencryptionRequest, ReencryptionRequestPayload, ReencryptionResponse,
-    ReencryptionResponsePayload, RequestId, TypedPlaintext,
-};
-use crate::rpc::rpc_types::{
-    alloy_to_protobuf_domain, FheTypeResponse, MetaResponse, CURRENT_FORMAT_VERSION,
-};
 use crate::{anyhow_error_and_log, some_or_err};
 use aes_prng::AesRng;
 use alloy_primitives::Bytes;
@@ -33,6 +26,14 @@ use distributed_decryption::execution::sharing::shamir::{
 use distributed_decryption::execution::tfhe_internals::parameters::{
     AugmentedCiphertextParameters, DKGParams,
 };
+use kms_grpc::kms::{
+    FheType, ReencryptionRequest, ReencryptionRequestPayload, ReencryptionResponse,
+    ReencryptionResponsePayload, RequestId, TypedPlaintext,
+};
+use kms_grpc::rpc_types::{
+    alloy_to_protobuf_domain, hash_element, FheTypeResponse, MetaResponse, Reencrypt,
+    CURRENT_FORMAT_VERSION,
+};
 use rand::SeedableRng;
 use std::collections::HashSet;
 use tfhe::shortint::ClassicPBSParameters;
@@ -40,26 +41,24 @@ use wasm_bindgen::prelude::*;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
-        use tfhe::zk::CompactPkePublicParams;
         use crate::cryptography::central_kms::{compute_handle, BaseKmsStruct};
         use crate::get_exactly_one;
-        use crate::kms::DecryptionResponse;
-        use crate::kms::FheParameter;
-        use crate::kms::{
-            CrsGenRequest, CrsGenResult, TypedCiphertext, DecryptionRequest, DecryptionResponsePayload,
-            KeyGenPreprocRequest, KeyGenRequest, KeyGenResult, VerifyProvenCtRequest, VerifyProvenCtResponse,
-        };
-        use crate::rpc::rpc_types::BaseKms;
-        use crate::rpc::rpc_types::PubDataType;
-        use crate::rpc::rpc_types::{
-            PublicKeyType, WrappedPublicKeyOwned,
-        };
+        use crate::rpc::base::BaseKms;
         use crate::vault::storage::{read_all_data_versioned, Storage, StorageReader};
+        use kms_grpc::kms::DecryptionResponse;
+        use kms_grpc::kms::FheParameter;
+        use kms_grpc::kms::{
+            CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponsePayload,
+            KeyGenPreprocRequest, KeyGenRequest, KeyGenResult, TypedCiphertext, VerifyProvenCtRequest,
+            VerifyProvenCtResponse,
+        };
+        use kms_grpc::rpc_types::{PubDataType, PublicKeyType, WrappedPublicKeyOwned};
         use std::collections::HashMap;
         use std::fmt;
+        use tfhe::zk::CompactPkePublicParams;
         use tfhe::ProvenCompactCiphertextList;
         use tfhe::ServerKey;
-        use tfhe_versionable::{Versionize, Unversionize};
+        use tfhe_versionable::{Unversionize, Versionize};
     }
 }
 
@@ -231,14 +230,14 @@ pub struct TestingReencryptionTranscript {
 /// node --test tests/js
 /// ```
 // Rather complicated cfg so that we do not compile this module for grpc-client.
-#[cfg(all(not(feature = "non-wasm"), not(feature = "grpc-client")))]
+#[cfg(not(feature = "non-wasm"))]
 pub mod js_api {
-    use crate::kms::Eip712DomainMsg;
-    use crate::kms::FheParameter;
-    use crate::rpc::rpc_types::protobuf_to_alloy_domain;
     use crypto_box::aead::{Aead, AeadCore};
     use crypto_box::{Nonce, SalsaBox};
     use distributed_decryption::execution::tfhe_internals::parameters::BC_PARAMS_SAM_SNS;
+    use kms_grpc::kms::Eip712DomainMsg;
+    use kms_grpc::kms::FheParameter;
+    use kms_grpc::rpc_types::protobuf_to_alloy_domain;
 
     use super::*;
 
@@ -284,7 +283,10 @@ pub mod js_api {
         console_error_panic_hook::set_once();
 
         let params = match FheParameter::from_str_name(fhe_parameter) {
-            Some(choice) => choice.into(),
+            Some(choice) => {
+                let p: crate::cryptography::internal_crypto_types::WrappedDKGParams = choice.into();
+                *p
+            }
             None => BC_PARAMS_SAM_SNS,
         };
 
@@ -2444,10 +2446,11 @@ pub fn recover_ecdsa_public_key_from_signature(
 #[cfg(feature = "non-wasm")]
 pub mod test_tools {
     use super::*;
-    use crate::consts::{DEC_CAPACITY, DEFAULT_PROT, DEFAULT_URL, MIN_DEC_CACHE};
+    use crate::consts::{
+        DEC_CAPACITY, DEFAULT_PROT, DEFAULT_URL, INFLIGHT_REQUEST_WAITING_TIME, MIN_DEC_CACHE,
+    };
     use crate::cryptography::central_kms::SoftwareKms;
-    use crate::kms::core_service_endpoint_client::CoreServiceEndpointClient;
-    use crate::rpc::{run_server, INFLIGHT_REQUEST_WAITING_TIME};
+    use crate::rpc::run_server;
     use crate::threshold::threshold_kms::threshold_server_init;
     use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
     use crate::util::rate_limiter::RateLimiterConfig;
@@ -2459,12 +2462,13 @@ pub mod test_tools {
             threshold::{PeerConf, ThresholdParty},
             ServiceEndpoint,
         },
-        kms::core_service_endpoint_server::CoreServiceEndpointServer,
         util::random_free_port::random_free_ports,
     };
     use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
     use futures_util::FutureExt;
     use itertools::Itertools;
+    use kms_grpc::kms::core_service_endpoint_client::CoreServiceEndpointClient;
+    use kms_grpc::kms::core_service_endpoint_server::CoreServiceEndpointServer;
     use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::RwLock;
@@ -2888,16 +2892,8 @@ pub(crate) mod tests {
         compute_handle, gen_sig_keys, BaseKmsStruct, SoftwareKms,
     };
     use crate::cryptography::internal_crypto_types::Signature;
-    use crate::cryptography::signcryption::Reencrypt;
-    use crate::kms::core_service_endpoint_client::CoreServiceEndpointClient;
-    use crate::kms::core_service_endpoint_server::CoreServiceEndpointServer;
-    #[cfg(feature = "wasm_tests")]
-    use crate::kms::TypedPlaintext;
-    use crate::kms::{
-        Empty, FheParameter, FheType, InitRequest, ReencryptionResponse, RequestId, TypedCiphertext,
-    };
-    use crate::rpc::rpc_types::RequestIdGetter;
-    use crate::rpc::rpc_types::{protobuf_to_alloy_domain, BaseKms, PubDataType};
+    use crate::rpc::base::BaseKms;
+    use crate::rpc::base::RequestIdGetter;
     use crate::threshold::threshold_kms::RealThresholdKms;
     use crate::util::file_handling::safe_read_element_versioned;
     #[cfg(feature = "wasm_tests")]
@@ -2917,6 +2913,14 @@ pub(crate) mod tests {
     use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
     #[cfg(feature = "wasm_tests")]
     use distributed_decryption::execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
+    use kms_grpc::kms::core_service_endpoint_client::CoreServiceEndpointClient;
+    use kms_grpc::kms::core_service_endpoint_server::CoreServiceEndpointServer;
+    #[cfg(feature = "wasm_tests")]
+    use kms_grpc::kms::TypedPlaintext;
+    use kms_grpc::kms::{
+        Empty, FheParameter, FheType, InitRequest, ReencryptionResponse, RequestId, TypedCiphertext,
+    };
+    use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType, Reencrypt};
     use rand::SeedableRng;
     use serial_test::serial;
     use std::collections::{hash_map::Entry, HashMap};
@@ -5601,9 +5605,9 @@ pub(crate) mod tests {
     //Check status of preproc request
     #[cfg(feature = "slow_tests")]
     async fn get_preproc_status(
-        request: crate::kms::KeyGenPreprocRequest,
+        request: kms_grpc::kms::KeyGenPreprocRequest,
         kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    ) -> Vec<crate::kms::KeyGenPreprocStatus> {
+    ) -> Vec<kms_grpc::kms::KeyGenPreprocStatus> {
         let mut tasks = JoinSet::new();
         for i in 1..=kms_clients.len() as u32 {
             let req_id = request.request_id.clone().unwrap();
@@ -5637,7 +5641,7 @@ pub(crate) mod tests {
     #[serial]
     async fn test_preproc(#[case] parallelism: usize, #[case] amount_parties: usize) {
         assert!(parallelism > 0);
-        use crate::kms::{KeyGenPreprocRequest, KeyGenPreprocStatusEnum};
+        use kms_grpc::kms::{KeyGenPreprocRequest, KeyGenPreprocStatusEnum};
 
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (kms_servers, kms_clients, internal_client) =
@@ -5749,7 +5753,7 @@ pub(crate) mod tests {
     //Helper function to launch dkg
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     async fn launch_dkg(
-        req_keygen: crate::kms::KeyGenRequest,
+        req_keygen: kms_grpc::kms::KeyGenRequest,
         kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
         insecure: bool,
     ) -> Vec<Result<tonic::Response<Empty>, tonic::Status>> {
@@ -5884,8 +5888,8 @@ pub(crate) mod tests {
     #[serial]
     #[tracing_test::traced_test]
     async fn test_dkg(#[case] amount_parties: usize) {
-        use crate::kms::KeyGenPreprocStatusEnum;
         use itertools::Itertools;
+        use kms_grpc::kms::KeyGenPreprocStatusEnum;
 
         let req_preproc = RequestId::derive("test_dkg-preproc_{amount_parties}").unwrap();
         let req_key = RequestId::derive("test_dkg-key_{amount_parties}").unwrap();

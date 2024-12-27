@@ -13,17 +13,18 @@ use super::internal_crypto_types::{
     Cipher, PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, Signature, SigncryptionPair,
     SigncryptionPubKey,
 };
+use crate::consts::SIG_SIZE;
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log};
-use crate::{consts::SIG_SIZE, kms::TypedPlaintext, rpc::rpc_types::SigncryptionPayload};
 use ::signature::{Signer, Verifier};
 use bincode::{deserialize, serialize};
 use crypto_box::aead::{Aead, AeadCore};
 use crypto_box::{Nonce, SalsaBox, SecretKey};
 use k256::ecdsa::SigningKey;
+use kms_grpc::kms::TypedPlaintext;
+use kms_grpc::rpc_types::{hash_element, serialize_hash_element, SigncryptionPayload};
 use nom::AsBytes;
 use rand::{CryptoRng, RngCore};
 use serde::Serialize;
-use sha3::{Digest, Sha3_256};
 
 const DIGEST_BYTES: usize = 256 / 8; // SHA3-256 digest
 
@@ -49,54 +50,6 @@ where
     // Normalize s value to ensure a consistent signature and protect against malleability
     let sig = sig.normalize_s().unwrap_or(sig);
     Ok(Signature { sig })
-}
-
-// This type (and its fields) should not be renamed
-// since it needs to match what is in fhevmjs!
-alloy_sol_types::sol! {
-    struct Reencrypt {
-        bytes publicKey;
-    }
-}
-
-// Solidity struct for decryption result signature
-alloy_sol_types::sol! {
-    struct DecryptionResult {
-        address aclAddress;
-        uint256[] handlesList;
-        bytes decryptedResult;
-    }
-}
-
-// Solidity struct for signing the FHE public key
-alloy_sol_types::sol! {
-    struct FhePubKey {
-        bytes pubkey;
-    }
-}
-
-// Solidity struct for signing the FHE server key
-alloy_sol_types::sol! {
-    struct FheServerKey {
-        bytes server_key;
-    }
-}
-
-// Solidity struct for signing the CRS
-alloy_sol_types::sol! {
-    struct CRS {
-        bytes crs;
-    }
-}
-
-// Solidity struct for ZK proof verification result signature
-alloy_sol_types::sol! {
-    struct CiphertextVerificationForKMS {
-        address aclAddress;
-        bytes32 hashOfCiphertext;
-        address userAddress;
-        address contractAddress;
-    }
 }
 
 /// Compute the signature on message based on the server's signing key for a given EIP712 domain.
@@ -315,54 +268,6 @@ pub(crate) fn check_normalized(sig: &Signature) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Compute the SHA3-256 has of an element. Returns the hash as a vector of bytes.
-pub fn hash_element<T>(element: &T) -> Vec<u8>
-where
-    T: ?Sized + AsRef<[u8]>,
-{
-    // Use of SHA3 to stay as much as possible with current NIST standards
-    let mut hasher = Sha3_256::new();
-    hasher.update(element.as_ref());
-    let digest = hasher.finalize();
-    digest.to_vec()
-}
-
-/// Serialize an element and hash it using SHA3-256. Returns the hash as a vector of bytes.
-pub(crate) fn serialize_hash_element<T>(msg: &T) -> anyhow::Result<Vec<u8>>
-where
-    T: Serialize,
-{
-    let to_hash = match serialize(msg) {
-        Ok(to_hash) => to_hash,
-        Err(e) => {
-            return Err(anyhow_error_and_warn_log(format!(
-                "Could not encode message due to error: {:?}",
-                e
-            )));
-        }
-    };
-    Ok(hash_element(&to_hash))
-}
-
-#[cfg(feature = "non-wasm")]
-pub(crate) fn safe_serialize_hash_element_versioned<T>(msg: &T) -> anyhow::Result<Vec<u8>>
-where
-    T: Serialize + tfhe::Versionize + tfhe::named::Named,
-{
-    let mut buf = Vec::new();
-    match tfhe::safe_serialization::safe_serialize(
-        msg,
-        &mut buf,
-        crate::consts::SAFE_SER_SIZE_LIMIT,
-    ) {
-        Ok(()) => Ok(hash_element(&buf)),
-        Err(e) => Err(anyhow_error_and_warn_log(format!(
-            "Could not encode message due to error: {:?}",
-            e
-        ))),
-    }
-}
-
 /// Decrypt a signcrypted message and verify the signature.
 ///
 /// This fn also checks that the provided link parameter corresponds to the link in the signcryption
@@ -446,11 +351,11 @@ mod tests {
     use crate::cryptography::internal_crypto_types::Signature;
     use crate::cryptography::signcryption::{
         check_signature_and_log, ephemeral_encryption_key_generation, internal_verify_sig,
-        parse_msg, serialize_hash_element, sign, signcrypt, validate_and_decrypt, DIGEST_BYTES,
-        SIG_SIZE,
+        parse_msg, sign, signcrypt, validate_and_decrypt, DIGEST_BYTES, SIG_SIZE,
     };
     use aes_prng::AesRng;
     use k256::ecdsa::SigningKey;
+    use kms_grpc::rpc_types::serialize_hash_element;
     use rand::{CryptoRng, RngCore, SeedableRng};
     use signature::Signer;
     use tracing_test::traced_test;

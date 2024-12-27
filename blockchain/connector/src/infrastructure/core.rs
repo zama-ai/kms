@@ -19,17 +19,17 @@ use events::kms::{
     VerifyProvenCtResponseValues, VerifyProvenCtValues,
 };
 use events::HexVector;
-use kms_lib::kms::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_lib::kms::FheParameter as RPCFheParameter;
-use kms_lib::kms::{
+use kms_grpc::kms::core_service_endpoint_client::CoreServiceEndpointClient;
+use kms_grpc::kms::FheParameter as RPCFheParameter;
+use kms_grpc::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Eip712DomainMsg, KeyGenPreprocStatus, KeyGenPreprocStatusEnum, KeyGenResult,
     ReencryptionRequest, ReencryptionRequestPayload, ReencryptionResponse,
     ReencryptionResponsePayload, TypedCiphertext, VerifyProvenCtRequest, VerifyProvenCtResponse,
     VerifyProvenCtResponsePayload,
 };
-use kms_lib::kms::{KeyGenPreprocRequest, KeyGenRequest, RequestId};
-use kms_lib::rpc::rpc_types::{PubDataType, CURRENT_FORMAT_VERSION};
+use kms_grpc::kms::{KeyGenPreprocRequest, KeyGenRequest, RequestId};
+use kms_grpc::rpc_types::{PubDataType, CURRENT_FORMAT_VERSION};
 use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;

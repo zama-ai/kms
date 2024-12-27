@@ -1,6 +1,4 @@
-use super::rpc_types::{
-    compute_external_pt_signature, BaseKms, SignedPubDataHandleInternal, CURRENT_FORMAT_VERSION,
-};
+use super::base::{compute_external_pt_signature, BaseKms};
 use crate::cryptography::central_kms::{
     async_generate_crs, async_generate_fhe_keys, async_reencrypt, central_decrypt, BaseKmsStruct,
     SoftwareKms,
@@ -10,15 +8,7 @@ use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey};
 use crate::cryptography::proven_ct_verifier::{
     get_verify_proven_ct_result, non_blocking_verify_proven_ct,
 };
-use crate::kms::core_service_endpoint_server::CoreServiceEndpoint;
-use crate::kms::{
-    CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
-    Empty, FheParameter, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus,
-    KeyGenRequest, KeyGenResult, ReencryptionRequest, ReencryptionResponse,
-    ReencryptionResponsePayload, RequestId, SignedPubDataHandle, TypedCiphertext,
-    VerifyProvenCtRequest, VerifyProvenCtResponse,
-};
-use crate::rpc::rpc_types::{protobuf_to_alloy_domain_option, PubDataType};
+use crate::rpc::base::retrieve_parameters;
 use crate::util::meta_store::{handle_res_mapping, MetaStore};
 use crate::vault::storage::crypto_material::CentralizedCryptoMaterialStorage;
 use crate::vault::storage::Storage;
@@ -35,6 +25,17 @@ use conf_trace::metrics_names::{
     TAG_REQUEST_ID,
 };
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
+use kms_grpc::kms::core_service_endpoint_server::CoreServiceEndpoint;
+use kms_grpc::kms::{
+    CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
+    Empty, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenRequest,
+    KeyGenResult, ReencryptionRequest, ReencryptionResponse, ReencryptionResponsePayload,
+    RequestId, SignedPubDataHandle, TypedCiphertext, VerifyProvenCtRequest, VerifyProvenCtResponse,
+};
+use kms_grpc::rpc_types::{
+    protobuf_to_alloy_domain_option, PubDataType, SignedPubDataHandleInternal,
+    CURRENT_FORMAT_VERSION,
+};
 use std::collections::HashMap;
 use std::fmt;
 use std::hash::{BuildHasher, Hasher};
@@ -849,11 +850,6 @@ pub(crate) fn convert_key_response(
             (key_type, key_info.into())
         })
         .collect()
-}
-
-pub(crate) fn retrieve_parameters(fhe_parameter: i32) -> anyhow::Result<DKGParams> {
-    let fhe_parameter = FheParameter::try_from(fhe_parameter)?;
-    Ok(fhe_parameter.into())
 }
 
 /// Validates a reencryption request and returns ciphertext, FheType, request digest, client

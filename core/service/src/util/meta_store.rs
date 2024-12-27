@@ -1,7 +1,6 @@
-use crate::{
-    anyhow_error_and_log, consts::DURATION_WAITING_ON_RESULT_SECONDS, kms::RequestId, some_or_err,
-};
+use crate::{anyhow_error_and_log, consts::DURATION_WAITING_ON_RESULT_SECONDS, some_or_err};
 use async_cell::sync::AsyncCell;
+use kms_grpc::kms::RequestId;
 use std::{
     collections::{HashMap, VecDeque},
     sync::Arc,
@@ -219,7 +218,7 @@ pub(crate) async fn handle_res_mapping<T: Clone>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kms::RequestId;
+    use kms_grpc::kms::RequestId;
     use tokio::sync::RwLock;
 
     #[test]

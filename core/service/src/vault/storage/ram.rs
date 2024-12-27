@@ -2,8 +2,8 @@ use super::{store_versioned_at_request_id, Storage, StorageForText, StorageReade
 use crate::anyhow_error_and_log;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::central_kms::{compute_handle, SoftwareKmsKeys};
-use crate::rpc::rpc_types::{PrivDataType, WrappedPublicKey};
 use anyhow::anyhow;
+use kms_grpc::rpc_types::{PrivDataType, WrappedPublicKey};
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::HashMap;
 use tfhe::{
@@ -135,7 +135,7 @@ impl RamStorage {
 
     pub async fn from_existing_keys_for_public_storage(
         keys: &HashMap<
-            crate::kms::RequestId,
+            kms_grpc::kms::RequestId,
             distributed_decryption::execution::endpoints::keygen::FhePubKeySet,
         >,
     ) -> anyhow::Result<Self> {

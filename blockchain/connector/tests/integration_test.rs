@@ -33,10 +33,14 @@ use kms_blockchain_connector::infrastructure::blockchain::KmsBlockchain;
 use kms_blockchain_connector::infrastructure::core::{KmsCore, KmsEventHandler};
 use kms_blockchain_connector::infrastructure::metrics::OpenTelemetryMetrics;
 use kms_common::retry_loop;
+use kms_grpc::kms::{
+    DecryptionResponsePayload, ReencryptionResponse, ReencryptionResponsePayload, RequestId,
+    VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
+};
+use kms_grpc::rpc_types::{protobuf_to_alloy_domain, CURRENT_FORMAT_VERSION, SIGNING_KEY_ID};
 use kms_lib::client::assemble_metadata_alloy;
 use kms_lib::consts::SAFE_SER_SIZE_LIMIT;
 use kms_lib::consts::TEST_PARAM;
-use kms_lib::kms::{VerifyProvenCtResponse, VerifyProvenCtResponsePayload};
 use kms_lib::util::key_setup::test_tools::compute_proven_ct_from_stored_key;
 use kms_lib::util::key_setup::{
     ensure_central_crs_exists, ensure_threshold_crs_exists, max_threshold,
@@ -44,14 +48,10 @@ use kms_lib::util::key_setup::{
 use kms_lib::{
     client::{test_tools, ParsedReencryptionRequest},
     consts::{
-        DEFAULT_PROT, DEFAULT_URL, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID,
-        TEST_CENTRAL_KEY_ID, TEST_THRESHOLD_CRS_ID_4P, TEST_THRESHOLD_CRS_ID_7P,
-        TEST_THRESHOLD_KEY_ID_4P, TEST_THRESHOLD_KEY_ID_7P,
+        DEFAULT_PROT, DEFAULT_URL, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_CRS_ID, TEST_CENTRAL_KEY_ID,
+        TEST_THRESHOLD_CRS_ID_4P, TEST_THRESHOLD_CRS_ID_7P, TEST_THRESHOLD_KEY_ID_4P,
+        TEST_THRESHOLD_KEY_ID_7P,
     },
-    kms::{
-        DecryptionResponsePayload, ReencryptionResponse, ReencryptionResponsePayload, RequestId,
-    },
-    rpc::rpc_types::{protobuf_to_alloy_domain, CURRENT_FORMAT_VERSION},
     threshold::mock_threshold_kms::setup_mock_kms,
     util::key_setup::{
         ensure_central_keys_exist, ensure_central_server_signing_keys_exist,
@@ -690,9 +690,9 @@ async fn ddec_centralized_sunshine() {
     let msg1 = 110u8;
     let msg2 = 222u16;
     setup_central_keys(&TEST_CENTRAL_KEY_ID, &OTHER_CENTRAL_TEST_ID).await;
-    let (ct1, fhe_type1): (Vec<u8>, kms_lib::kms::FheType) =
+    let (ct1, fhe_type1): (Vec<u8>, kms_grpc::kms::FheType) =
         compute_cipher_from_stored_key(None, msg1.into(), &TEST_CENTRAL_KEY_ID.to_string()).await;
-    let (ct2, fhe_type2): (Vec<u8>, kms_lib::kms::FheType) =
+    let (ct2, fhe_type2): (Vec<u8>, kms_grpc::kms::FheType) =
         compute_cipher_from_stored_key(None, msg2.into(), &TEST_CENTRAL_KEY_ID.to_string()).await;
     let op = OperationValue::Decrypt(
         DecryptValues::new(
@@ -902,9 +902,9 @@ async fn ddec_sunshine(key_id: &RequestId, amount_parties: usize, slow: bool) {
     setup_threshold_keys(key_id, amount_parties).await;
     let msg1 = 121u8;
     let msg2 = 321u16;
-    let (ct1, fhe_type1): (Vec<u8>, kms_lib::kms::FheType) =
+    let (ct1, fhe_type1): (Vec<u8>, kms_grpc::kms::FheType) =
         compute_cipher_from_stored_key(None, msg1.into(), &key_id.to_string()).await;
-    let (ct2, fhe_type2): (Vec<u8>, kms_lib::kms::FheType) =
+    let (ct2, fhe_type2): (Vec<u8>, kms_grpc::kms::FheType) =
         compute_cipher_from_stored_key(None, msg2.into(), &key_id.to_string()).await;
     let op = OperationValue::Decrypt(
         DecryptValues::new(
@@ -968,7 +968,7 @@ fn dummy_domain() -> alloy_sol_types::Eip712Domain {
 async fn reenc_sunshine(key_id: &RequestId, amount_parties: usize, slow: bool) {
     setup_threshold_keys(key_id, amount_parties).await;
     let msg = 111u8;
-    let (ct, fhe_type): (Vec<u8>, kms_lib::kms::FheType) =
+    let (ct, fhe_type): (Vec<u8>, kms_grpc::kms::FheType) =
         compute_cipher_from_stored_key(None, msg.into(), &key_id.to_string()).await;
 
     let mut pub_storage = Vec::with_capacity(amount_parties);

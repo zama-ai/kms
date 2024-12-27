@@ -1,13 +1,10 @@
-use crate::{
-    anyhow_error_and_log,
-    kms::RequestId,
-    rpc::rpc_types::{
-        PrivDataType, PubDataType, PublicKeyType, WrappedPublicKey, WrappedPublicKeyOwned,
-    },
-    some_or_err,
-};
+use crate::{anyhow_error_and_log, some_or_err};
 use anyhow::anyhow;
 use aws_sdk_s3::Client as S3Client;
+use kms_grpc::kms::RequestId;
+use kms_grpc::rpc_types::{
+    PrivDataType, PubDataType, PublicKeyType, WrappedPublicKey, WrappedPublicKeyOwned,
+};
 use ordermap::OrderMap;
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::HashMap;
@@ -457,7 +454,7 @@ impl StorageCache {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::rpc::rpc_types::PubDataType;
+    use kms_grpc::rpc_types::PubDataType;
     use serde::{Deserialize, Serialize};
     use tfhe_versionable::VersionsDispatch;
 

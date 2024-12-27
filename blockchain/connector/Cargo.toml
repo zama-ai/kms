@@ -18,7 +18,7 @@ dashmap = "=6.1.0"
 enum_dispatch = "=0.3.13"
 events = { workspace = true, features = ["subscription"] }
 hex.workspace = true
-kms = { workspace = true, default-features = false, features = ["grpc-client", "insecure"] }
+kms-grpc = { workspace = true, features = ["insecure", "non-wasm"] }
 kms-common.workspace = true
 kms-blockchain-client.workspace = true
 opentelemetry = { workspace = true, features = ["metrics"] }
@@ -37,7 +37,7 @@ tfhe.workspace = true
 [dev-dependencies]
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
-kms = { path = "../../core/service", features = ["testing"] , version = "0.10.0-rc1" }
+kms = { workspace = true, features = ["testing", "insecure", "non-wasm"] }
 rand.workspace = true
 rstest = "=0.23.0"
 serial_test = "=3.1.1"

@@ -1,7 +1,9 @@
-use crate::consts::SIG_SIZE;
+use crate::consts::{DEFAULT_PARAM, SIG_SIZE, TEST_PARAM};
 use crypto_box::SecretKey;
+use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 use k256::ecdsa::{SigningKey, VerifyingKey};
 use kms_common::impl_generic_versionize;
+use kms_grpc::kms::FheParameter;
 use nom::AsBytes;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -330,5 +332,25 @@ impl Visitor<'_> for SignatureVisitor {
             Err(e) => Err(E::custom(format!("Could not decode signature: {:?}", e)))?,
         };
         Ok(Signature { sig })
+    }
+}
+
+/// This is a wrapper around [DKGParams] so that we can
+/// implement [From<FheParameter>]. It has a [std::ops::Deref] implementation
+/// which can be usefor for converting from [FheParameter] to [DKGParams]
+pub(crate) struct WrappedDKGParams(DKGParams);
+impl From<FheParameter> for WrappedDKGParams {
+    fn from(value: FheParameter) -> WrappedDKGParams {
+        match value {
+            FheParameter::Test => WrappedDKGParams(TEST_PARAM),
+            FheParameter::Default => WrappedDKGParams(DEFAULT_PARAM),
+        }
+    }
+}
+
+impl std::ops::Deref for WrappedDKGParams {
+    type Target = DKGParams;
+    fn deref(&self) -> &DKGParams {
+        &self.0
     }
 }

@@ -6,9 +6,6 @@ use crate::cryptography::central_kms::{
     compute_handle, gen_centralized_crs, gen_sig_keys, generate_fhe_keys,
 };
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
-use crate::kms::RequestId;
-use crate::rpc::rpc_types::PubDataType;
-use crate::rpc::rpc_types::{PrivDataType, WrappedPublicKey};
 use crate::threshold::threshold_kms::{compute_all_info, ThresholdFheKeys};
 use crate::vault::storage::{
     file::FileStorage, read_all_data_versioned, store_pk_at_request_id, store_text_at_request_id,
@@ -21,6 +18,8 @@ use distributed_decryption::execution::{
     zk::ceremony::make_centralized_public_parameters,
 };
 use itertools::Itertools;
+use kms_grpc::kms::RequestId;
+use kms_grpc::rpc_types::{PrivDataType, PubDataType, WrappedPublicKey};
 use rand::SeedableRng;
 use std::collections::HashMap;
 use std::path::Path;

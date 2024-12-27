@@ -1,24 +1,12 @@
-use crate::kms::FheParameter;
-use crate::kms::RequestId;
 use distributed_decryption::execution::tfhe_internals::parameters::{
     DKGParams, BC_PARAMS_SAM_SNS, PARAMS_TEST_BK_SNS,
 };
-use lazy_static::lazy_static;
 
 // The amount of bytes in an ID (key handle, request ID etc.)
-pub const ID_LENGTH: usize = 20;
+pub const ID_LENGTH: usize = kms_grpc::rpc_types::ID_LENGTH;
 pub const KEY_PATH_PREFIX: &str = "keys";
 pub const DEFAULT_PARAM: DKGParams = BC_PARAMS_SAM_SNS;
 pub const TEST_PARAM: DKGParams = PARAMS_TEST_BK_SNS;
-
-impl From<FheParameter> for DKGParams {
-    fn from(value: FheParameter) -> Self {
-        match value {
-            FheParameter::Test => TEST_PARAM,
-            FheParameter::Default => DEFAULT_PARAM,
-        }
-    }
-}
 
 pub const SIG_SIZE: usize = 64; // a 32 byte r value and a 32 byte s value
 pub const RND_SIZE: usize = 128 / 8; // the amount of bytes used for sampling random values to stop brute-forcing or statistical attacks
@@ -39,26 +27,23 @@ pub const PRSS_EPOCH_ID: u128 = 1;
 pub const DEFAULT_AMOUNT_PARTIES: usize = 4;
 pub const DEFAULT_THRESHOLD: usize = 1;
 
-pub const SAFE_SER_SIZE_LIMIT: u64 = 1024 * 1024 * 1024 * 2;
+pub const SAFE_SER_SIZE_LIMIT: u64 = kms_grpc::rpc_types::SAFE_SER_SIZE_LIMIT;
 
 //TODO: Do we want to load this from configuration ?
 pub const DURATION_WAITING_ON_RESULT_SECONDS: u64 = 60;
 
-lazy_static! {
-    // The static ID we will use for the signing key for each of the MPC parties.
-    // We do so, since there is ever only one conceptual signing key per party (at least for now).
-    // This is a bit hackish, but it works for now.
-    pub static ref SIGNING_KEY_ID: RequestId = RequestId::derive("SIGNING_KEY_ID").unwrap();
-}
+pub const INFLIGHT_REQUEST_WAITING_TIME: u64 = 1;
 
 cfg_if::cfg_if! {
     if #[cfg(any(test, feature = "testing"))] {
+        use kms_grpc::kms::RequestId;
+
         pub const DEFAULT_URL: &str = "127.0.0.1";
         pub const DEFAULT_PROT: &str = "http";
         pub const TMP_PATH_PREFIX: &str = "temp";
         pub const DEFAULT_CENTRAL_KEYS_PATH: &str = "temp/default-central-keys.bin";
 
-        lazy_static! {
+        lazy_static::lazy_static! {
             pub static ref TEST_CENTRAL_KEY_ID: RequestId =
                 RequestId::derive("TEST_CENTRAL_KEY_ID").unwrap();
             pub static ref TEST_THRESHOLD_KEY_ID_4P: RequestId =

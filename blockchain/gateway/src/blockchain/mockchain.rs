@@ -10,7 +10,7 @@ use events::kms::FheType;
 use events::kms::KmsEvent;
 use events::kms::ReencryptResponseValues;
 use events::HexVectorList;
-use kms_lib::kms::Eip712DomainMsg;
+use kms_grpc::kms::Eip712DomainMsg;
 
 pub(crate) struct MockchainImpl;
 

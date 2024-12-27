@@ -1,0 +1,49 @@
+[package]
+name = "kms-grpc"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib] # GRPC client and server for KMS
+name = "kms_grpc"
+path = "src/lib.rs"
+crate-type = ["lib", "cdylib"]
+
+[dependencies]
+alloy-primitives = { workspace = true, features = ["k256"] }
+alloy-sol-types = { workspace = true, features = ["eip712-serde"] }
+anyhow.workspace = true
+bincode.workspace = true
+cfg-if.workspace = true
+hex.workspace = true
+lazy_static.workspace = true
+prost.workspace = true
+serde = { workspace = true, features = ["derive", "rc"] }
+sha3.workspace = true
+strum.workspace = true
+strum_macros.workspace = true
+tokio = { workspace = true, features = [
+    "macros",
+    "rt-multi-thread",
+], optional = true }
+tonic = { workspace = true, optional = true }
+tfhe = { workspace = true, features = [
+    "boolean",
+    "shortint",
+    "integer",
+    "zk-pok",
+    "experimental-force_fft_algo_dif4",
+] }
+tfhe-versionable.workspace = true
+tracing = { workspace = true, features = ["log"] }
+wasm-bindgen = { version = "=0.2.95", features = ["serde-serialize"] }
+
+[build-dependencies]
+tonic-build.workspace = true
+
+[features]
+default = ["non-wasm"]
+non-wasm = ["dep:tokio", "dep:tonic"]
+insecure = []

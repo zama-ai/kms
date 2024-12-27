@@ -1,7 +1,7 @@
 #[cfg(feature = "insecure")]
 use super::generic::InsecureCrsGenerator;
 use crate::conf::threshold::{PeerConf, ThresholdParty};
-use crate::consts::{MINIMUM_SESSIONS_PREPROC, PRSS_EPOCH_ID};
+use crate::consts::{INFLIGHT_REQUEST_WAITING_TIME, MINIMUM_SESSIONS_PREPROC, PRSS_EPOCH_ID};
 use crate::cryptography::central_kms::{
     async_generate_crs, compute_info, BaseKmsStruct, DecCallValues, KeyGenCallValues,
     ReencCallValues,
@@ -11,23 +11,14 @@ use crate::cryptography::proven_ct_verifier::{
     get_verify_proven_ct_result, non_blocking_verify_proven_ct,
 };
 use crate::cryptography::signcryption::signcrypt;
-use crate::kms::core_service_endpoint_server::CoreServiceEndpointServer;
-use crate::kms::{
-    CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
-    Empty, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus,
-    KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult, ReencryptionRequest,
-    ReencryptionResponse, ReencryptionResponsePayload, RequestId, TypedPlaintext,
-    VerifyProvenCtRequest, VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
+use crate::rpc::base::{
+    compute_external_pt_signature, deserialize_to_low_level, retrieve_parameters, BaseKms,
 };
 use crate::rpc::central_rpc::{
-    convert_key_response, retrieve_parameters, tonic_handle_potential_err, tonic_some_or_err,
-    validate_decrypt_req, validate_reencrypt_req, validate_request_id,
+    convert_key_response, tonic_handle_potential_err, tonic_some_or_err, validate_decrypt_req,
+    validate_reencrypt_req, validate_request_id,
 };
-use crate::rpc::rpc_types::{
-    compute_external_pt_signature, protobuf_to_alloy_domain_option, BaseKms, PrivDataType,
-    PubDataType, SigncryptionPayload, SignedPubDataHandleInternal, CURRENT_FORMAT_VERSION,
-};
-use crate::rpc::{prepare_shutdown_signals, INFLIGHT_REQUEST_WAITING_TIME};
+use crate::rpc::prepare_shutdown_signals;
 #[cfg(feature = "insecure")]
 use crate::threshold::generic::InsecureKeyGenerator;
 use crate::threshold::generic::{
@@ -86,6 +77,18 @@ use distributed_decryption::session_id::SessionId;
 use distributed_decryption::{algebra::base_ring::Z64, execution::endpoints::keygen::FhePubKeySet};
 use itertools::Itertools;
 use k256::ecdsa::SigningKey;
+use kms_grpc::kms::core_service_endpoint_server::CoreServiceEndpointServer;
+use kms_grpc::kms::{
+    CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
+    Empty, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus,
+    KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult, ReencryptionRequest,
+    ReencryptionResponse, ReencryptionResponsePayload, RequestId, TypedPlaintext,
+    VerifyProvenCtRequest, VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
+};
+use kms_grpc::rpc_types::{
+    protobuf_to_alloy_domain_option, PrivDataType, PubDataType, SigncryptionPayload,
+    SignedPubDataHandleInternal, CURRENT_FORMAT_VERSION,
+};
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -860,7 +863,7 @@ impl<
         fhe_keys: OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>,
     ) -> anyhow::Result<Vec<u8>> {
         let keys = fhe_keys;
-        let low_level_ct = fhe_type.deserialize_to_low_level(ct, &keys.decompression_key)?;
+        let low_level_ct = deserialize_to_low_level(&fhe_type, ct, &keys.decompression_key)?;
         let partial_signcryption = match partial_decrypt_using_noiseflooding(
             session,
             protocol,
@@ -1129,7 +1132,7 @@ impl<
     {
         tracing::info!("{:?} started inner_decrypt", session.own_identity());
         let keys = fhe_keys;
-        let low_level_ct = fhe_type.deserialize_to_low_level(ct, &keys.decompression_key)?;
+        let low_level_ct = deserialize_to_low_level(&fhe_type, ct, &keys.decompression_key)?;
         let raw_decryption = match decrypt_using_noiseflooding(
             session,
             protocol,
@@ -2075,7 +2078,7 @@ impl<
             req.request_id
         );
 
-        let dkg_params = crate::rpc::central_rpc::retrieve_parameters(req.params).map_err(|e| {
+        let dkg_params = retrieve_parameters(req.params).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::NotFound,
                 format!("Can not retrieve fhe parameters with error {e}"),

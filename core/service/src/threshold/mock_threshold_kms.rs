@@ -1,3 +1,5 @@
+use futures_util::FutureExt;
+use kms_grpc::rpc_types::{PubDataType, CURRENT_FORMAT_VERSION};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -9,17 +11,15 @@ use tonic::{transport, Request, Response, Status};
 use super::generic::*;
 use crate::client::test_tools::ServerHandle;
 use crate::consts::DEFAULT_URL;
-use crate::kms::core_service_endpoint_server::CoreServiceEndpointServer;
-use crate::kms::{
+use crate::util::random_free_port::random_free_ports;
+use kms_grpc::kms::core_service_endpoint_server::CoreServiceEndpointServer;
+use kms_grpc::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenPreprocStatusEnum,
     KeyGenRequest, KeyGenResult, ReencryptionRequest, ReencryptionResponse,
     ReencryptionResponsePayload, RequestId, SignedPubDataHandle, TypedPlaintext,
     VerifyProvenCtRequest, VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
 };
-use crate::rpc::rpc_types::{PubDataType, CURRENT_FORMAT_VERSION};
-use crate::util::random_free_port::random_free_ports;
-use futures_util::FutureExt;
 
 pub async fn setup_mock_kms(n: usize) -> HashMap<u32, ServerHandle> {
     let mut out = HashMap::new();
@@ -120,7 +120,7 @@ impl Reencryptor for DummyReencryptor {
             version: CURRENT_FORMAT_VERSION,
             verification_key: vec![],
             digest: "dummy digest".as_bytes().to_vec(),
-            fhe_type: crate::kms::FheType::Euint8.into(),
+            fhe_type: kms_grpc::kms::FheType::Euint8.into(),
             signcrypted_ciphertext: "signcrypted_ciphertext".as_bytes().to_vec(),
             party_id: self.degree + 1,
             degree: self.degree,
@@ -153,7 +153,7 @@ impl Decryptor for DummyDecryptor {
                 version: CURRENT_FORMAT_VERSION,
                 verification_key: vec![],
                 digest: "dummy digest".as_bytes().to_vec(),
-                plaintexts: vec![TypedPlaintext::new(42, crate::kms::FheType::Euint8)],
+                plaintexts: vec![TypedPlaintext::new(42, kms_grpc::kms::FheType::Euint8)],
                 external_signature: Some(vec![23_u8; 65]),
             }),
         }))

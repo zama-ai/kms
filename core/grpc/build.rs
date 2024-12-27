@@ -27,7 +27,9 @@ fn default_builder() -> Builder {
         .type_attribute("TypedPlaintext", EXTENDED_DERIVES)
 }
 
-#[cfg(all(not(feature = "non-wasm"), not(feature = "grpc-client")))]
+// This is the `main` for wasm builds, which does not include
+// client, server or transport.
+#[cfg(not(feature = "non-wasm"))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     default_builder()
         .build_client(false)
@@ -62,10 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[cfg(all(
-    any(feature = "non-wasm", feature = "grpc-client"),
-    not(feature = "insecure")
-))]
+#[cfg(all(feature = "non-wasm", not(feature = "insecure")))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     default_builder().compile_protos(&["proto/kms.proto"], &["proto"])?;
     Ok(())

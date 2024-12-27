@@ -1,15 +1,14 @@
 use aes_prng::AesRng;
 use clap::{Parser, Subcommand};
+use kms_grpc::kms::core_service_endpoint_client::CoreServiceEndpointClient;
+use kms_grpc::kms::{InitRequest, RequestId, TypedCiphertext};
+use kms_grpc::rpc_types::protobuf_to_alloy_domain;
 use kms_lib::client::{Client, ParsedReencryptionRequest};
 use kms_lib::consts::DEFAULT_THRESHOLD;
-use kms_lib::kms::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_lib::kms::{RequestId, TypedCiphertext};
-use kms_lib::rpc::rpc_types::protobuf_to_alloy_domain;
 use kms_lib::util::key_setup::ensure_client_keys_exist;
 use kms_lib::{
     conf::init_kms_core_telemetry,
     consts::{DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM, DEFAULT_THRESHOLD_KEY_ID_4P},
-    kms::InitRequest,
     util::key_setup::test_tools::compute_compressed_cipher_from_stored_key,
     vault::storage::{file::FileStorage, StorageType},
 };
@@ -462,7 +461,7 @@ async fn threshold_requests(addresses: Vec<String>, init: bool) -> anyhow::Resul
 
             handles.spawn(tokio::spawn(async move {
                 let init_request = InitRequest {
-                    config: Some(kms_lib::kms::Config {}),
+                    config: Some(kms_grpc::kms::Config {}),
                 };
                 let _ = ce.init(init_request).await.unwrap();
             }));
@@ -479,11 +478,9 @@ async fn threshold_requests(addresses: Vec<String>, init: bool) -> anyhow::Resul
 #[cfg(feature = "non-wasm")]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    use kms_lib::consts::SIGNING_KEY_ID;
-
     init_kms_core_telemetry()?;
 
-    ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
+    ensure_client_keys_exist(None, &kms_grpc::rpc_types::SIGNING_KEY_ID, true).await;
 
     let args = KmsArgs::parse();
     match args.mode {

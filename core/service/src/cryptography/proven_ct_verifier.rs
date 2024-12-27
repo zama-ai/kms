@@ -6,6 +6,10 @@ use conf_trace::{
         OP_TYPE_TOTAL, OP_VERIFY_PROVEN_CT, TAG_OPERATION_TYPE,
     },
 };
+use kms_grpc::kms::{
+    RequestId, VerifyProvenCtRequest, VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
+};
+use kms_grpc::rpc_types::WrappedPublicKeyOwned;
 use std::sync::Arc;
 use tfhe::{
     safe_serialization::safe_deserialize, zk::CompactPkePublicParams, ProvenCompactCiphertextList,
@@ -18,12 +22,9 @@ use crate::{
     anyhow_error_and_log,
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::internal_crypto_types::PrivateSigKey,
-    kms::{
-        RequestId, VerifyProvenCtRequest, VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
-    },
     rpc::{
+        base::{compute_external_verify_proven_ct_signature, BaseKms},
         central_rpc::{tonic_handle_potential_err, tonic_some_or_err_ref, validate_request_id},
-        rpc_types::{compute_external_verify_proven_ct_signature, BaseKms, WrappedPublicKeyOwned},
     },
     util::meta_store::{handle_res_mapping, MetaStore},
     vault::storage::{crypto_material::CryptoMaterialStorage, Storage},

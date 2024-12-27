@@ -1,14 +1,14 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use core::fmt;
+use kms_grpc::kms::RequestId;
+use kms_grpc::rpc_types::{PrivDataType, PubDataType, SIGNING_KEY_ID};
 use kms_lib::{
     conf::init_kms_core_telemetry,
     consts::{
         DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM, DEFAULT_THRESHOLD_CRS_ID_4P,
-        DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_DEFAULT_ID, SIGNING_KEY_ID, TEST_PARAM,
+        DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_DEFAULT_ID, TEST_PARAM,
     },
     cryptography::attestation::make_security_module,
-    kms::RequestId,
-    rpc::rpc_types::{PrivDataType, PubDataType},
     util::key_setup::{
         ensure_central_crs_exists, ensure_central_keys_exist,
         ensure_central_server_signing_keys_exist, ensure_threshold_crs_exists,

@@ -1,6 +1,4 @@
 use crate::consts::SAFE_SER_SIZE_LIMIT;
-use crate::kms::{FheType, RequestId, TypedPlaintext};
-use crate::rpc::rpc_types::{PubDataType, WrappedPublicKeyOwned};
 use crate::util::key_setup::FhePublicKey;
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{
@@ -8,6 +6,8 @@ use crate::vault::storage::{
 };
 use crate::vault::storage::{read_pk_at_request_id, StorageType};
 use distributed_decryption::expanded_encrypt;
+use kms_grpc::kms::{FheType, RequestId, TypedPlaintext};
+use kms_grpc::rpc_types::{PubDataType, WrappedPublicKeyOwned};
 use std::path::Path;
 use tfhe::safe_serialization::safe_serialize;
 use tfhe::zk::CompactPkePublicParams;
@@ -252,28 +252,6 @@ impl From<TypedPlaintext> for TestingPlaintext {
             FheType::Euint512 => TestingPlaintext::U512(value.as_u512()),
             FheType::Euint1024 => TestingPlaintext::U1024(value.as_u1024()),
             FheType::Euint2048 => TestingPlaintext::U2048(value.as_u2048()),
-        }
-    }
-}
-
-impl TryFrom<(String, String)> for TypedPlaintext {
-    type Error = anyhow::Error;
-    fn try_from(value: (String, String)) -> Result<Self, Self::Error> {
-        let ptx = TypedPlaintext {
-            bytes: value.0.into(),
-            fhe_type: FheType::from_str_name(&value.1)
-                .ok_or(anyhow::anyhow!("Conversion failed for {}", &value.1))?
-                as i32,
-        };
-        Ok(ptx)
-    }
-}
-
-impl From<(String, FheType)> for TypedPlaintext {
-    fn from(value: (String, FheType)) -> Self {
-        TypedPlaintext {
-            bytes: value.0.into(),
-            fhe_type: value.1 as i32,
         }
     }
 }
@@ -562,15 +540,14 @@ pub async fn purge(
 #[cfg(any(test, feature = "testing"))]
 pub(crate) mod setup {
     use crate::consts::TEST_THRESHOLD_KEY_ID_7P;
-    use crate::kms::RequestId;
     use crate::util::key_setup::{
         ensure_central_crs_exists, ensure_central_keys_exist, ensure_client_keys_exist,
         ThresholdSigningKeyConfig,
     };
     use crate::{
         consts::{
-            KEY_PATH_PREFIX, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID,
-            TEST_CENTRAL_KEY_ID, TEST_PARAM, TEST_THRESHOLD_CRS_ID_4P, TEST_THRESHOLD_CRS_ID_7P,
+            KEY_PATH_PREFIX, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_CRS_ID, TEST_CENTRAL_KEY_ID,
+            TEST_PARAM, TEST_THRESHOLD_CRS_ID_4P, TEST_THRESHOLD_CRS_ID_7P,
             TEST_THRESHOLD_KEY_ID_4P, TMP_PATH_PREFIX,
         },
         util::key_setup::ensure_central_server_signing_keys_exist,
@@ -583,6 +560,8 @@ pub(crate) mod setup {
         vault::storage::{file::FileStorage, StorageType},
     };
     use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
+    use kms_grpc::kms::RequestId;
+    use kms_grpc::rpc_types::SIGNING_KEY_ID;
 
     pub async fn ensure_dir_exist() {
         tokio::fs::create_dir_all(TMP_PATH_PREFIX).await.unwrap();
@@ -740,8 +719,8 @@ pub(crate) mod setup {
 // because we don't want it to have the "testing" feature
 #[tokio::test]
 async fn test_purge() {
-    use crate::rpc::rpc_types::PrivDataType;
     use itertools::Itertools;
+    use kms_grpc::rpc_types::PrivDataType;
 
     let temp_dir = tempfile::tempdir().unwrap();
     let test_prefix = Some(temp_dir.path());
@@ -763,7 +742,7 @@ async fn test_purge() {
         crate::util::key_setup::ensure_central_server_signing_keys_exist(
             &mut central_pub_storage,
             &mut central_priv_storage,
-            &crate::consts::SIGNING_KEY_ID,
+            &kms_grpc::rpc_types::SIGNING_KEY_ID,
             true,
         )
         .await

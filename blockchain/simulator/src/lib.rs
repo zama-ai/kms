@@ -26,21 +26,19 @@ use kms_blockchain_client::query_client::{
     AscQuery, CscQuery, EventQuery, QueryClient, QueryClientBuilder,
 };
 use kms_common::retry_loop;
-use kms_lib::client::{assemble_metadata_alloy, ParsedReencryptionRequest};
-use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
-use kms_lib::cryptography::central_kms::gen_sig_keys;
-use kms_lib::cryptography::internal_crypto_types::{PrivateEncKey, PublicEncKey, PublicSigKey};
-use kms_lib::cryptography::signcryption::{
-    ephemeral_encryption_key_generation, hash_element, Reencrypt,
-};
-use kms_lib::kms::{
+use kms_grpc::kms::{
     DecryptionResponsePayload, Eip712DomainMsg, ReencryptionResponse, ReencryptionResponsePayload,
     TypedPlaintext,
 };
-use kms_lib::rpc::rpc_types::{
-    compute_external_pubdata_message_hash, compute_pt_message_hash, protobuf_to_alloy_domain,
-    PubDataType,
+use kms_grpc::rpc_types::{
+    hash_element, protobuf_to_alloy_domain, PubDataType, Reencrypt, SIGNING_KEY_ID,
 };
+use kms_lib::client::{assemble_metadata_alloy, ParsedReencryptionRequest};
+use kms_lib::consts::{DEFAULT_PARAM, TEST_PARAM};
+use kms_lib::cryptography::central_kms::gen_sig_keys;
+use kms_lib::cryptography::internal_crypto_types::{PrivateEncKey, PublicEncKey, PublicSigKey};
+use kms_lib::cryptography::signcryption::ephemeral_encryption_key_generation;
+use kms_lib::rpc::base::{compute_external_pubdata_message_hash, compute_pt_message_hash};
 use kms_lib::util::key_setup::test_tools::{
     compute_cipher_from_stored_key, compute_compressed_cipher_from_stored_key,
     compute_proven_ct_from_stored_key_and_serialize, load_crs_from_storage, load_pk_from_storage,
@@ -2312,13 +2310,12 @@ pub async fn main_from_config(
 #[cfg(test)]
 mod tests {
     use alloy_signer::k256::ecdsa::SigningKey;
+    use kms_grpc::kms::RequestId;
+    use kms_grpc::rpc_types::{alloy_to_protobuf_domain, PrivDataType};
     use kms_lib::{
         consts::TEST_CENTRAL_CRS_ID,
         cryptography::internal_crypto_types::PrivateSigKey,
-        kms::RequestId,
-        rpc::rpc_types::{
-            alloy_to_protobuf_domain, compute_external_pubdata_signature, PrivDataType,
-        },
+        rpc::base::compute_external_pubdata_signature,
         util::key_setup::{ensure_central_crs_exists, ensure_central_server_signing_keys_exist},
         vault::storage::{ram::RamStorage, read_versioned_at_request_id},
     };

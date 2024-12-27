@@ -10,14 +10,13 @@
 //! but not difficult to add.
 use crate::{
     cryptography::central_kms::KmsFheKeyHandles,
-    kms::RequestId,
-    rpc::rpc_types::{
-        PrivDataType, PubDataType, SignedPubDataHandleInternal, WrappedPublicKey,
-        WrappedPublicKeyOwned,
-    },
     threshold::threshold_kms::ThresholdFheKeys,
     util::meta_store::MetaStore,
     vault::storage::{delete_at_request_id, delete_pk_at_request_id},
+};
+use kms_grpc::kms::RequestId;
+use kms_grpc::rpc_types::{
+    PrivDataType, PubDataType, SignedPubDataHandleInternal, WrappedPublicKey, WrappedPublicKeyOwned,
 };
 
 use super::{
@@ -981,6 +980,8 @@ mod tests {
         endpoints::keygen::FhePubKeySet,
         tfhe_internals::test_feature::{gen_key_set, keygen_all_party_shares},
     };
+    use kms_grpc::kms::RequestId;
+    use kms_grpc::rpc_types::{PubDataType, WrappedPublicKey};
     use rand::SeedableRng;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -990,8 +991,6 @@ mod tests {
     use crate::{
         consts::TEST_PARAM,
         cryptography::central_kms::{async_generate_crs, gen_sig_keys, KmsFheKeyHandles},
-        kms::RequestId,
-        rpc::rpc_types::PubDataType,
         threshold::threshold_kms::ThresholdFheKeys,
         util::meta_store::MetaStore,
         vault::storage::{
@@ -1145,13 +1144,9 @@ mod tests {
         {
             let pub_storage = pub_storage.clone();
             let mut s = pub_storage.lock().await;
-            store_pk_at_request_id(
-                &mut (*s),
-                &req_id,
-                crate::rpc::rpc_types::WrappedPublicKey::Compact(&public_key),
-            )
-            .await
-            .unwrap();
+            store_pk_at_request_id(&mut (*s), &req_id, WrappedPublicKey::Compact(&public_key))
+                .await
+                .unwrap();
         }
 
         // reading the public key without cache should succeed

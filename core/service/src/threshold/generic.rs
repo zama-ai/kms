@@ -1,6 +1,6 @@
-use crate::kms::core_service_endpoint_server::CoreServiceEndpoint;
-use crate::kms::*;
-use crate::rpc::rpc_types::Shutdown;
+use crate::rpc::base::Shutdown;
+use kms_grpc::kms::core_service_endpoint_server::CoreServiceEndpoint;
+use kms_grpc::kms::*;
 use std::{collections::HashMap, sync::Arc};
 use tokio::{sync::Mutex, task::AbortHandle};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};

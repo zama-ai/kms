@@ -3,17 +3,9 @@ use anyhow::anyhow;
 use std::collections::HashMap;
 use std::{fmt, panic::Location};
 
-// copied from tonic since we're cannot pull in tonic for wasm
-macro_rules! my_include_proto {
-    ($package: tt) => {
-        include!(concat!(env!("OUT_DIR"), concat!("/", $package, ".rs")));
-    };
-}
-pub mod kms {
-    my_include_proto!("kms"); // The string specified here must match the proto package name
-}
 pub mod client;
 pub mod consts;
+
 #[cfg(feature = "non-wasm")]
 pub mod util {
     pub mod file_handling;
@@ -42,6 +34,7 @@ pub mod threshold {
 }
 #[cfg(feature = "non-wasm")]
 pub mod conf;
+#[cfg(feature = "non-wasm")]
 pub mod rpc;
 #[cfg(feature = "non-wasm")]
 pub mod vault;
