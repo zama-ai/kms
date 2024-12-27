@@ -2,7 +2,7 @@ name: '[Blockchain-Smart-Contracts-Merge Main] Pipeline Run'
 
 on:
   schedule:
-    - cron: '0 14 * * 1-5'
+    - cron: '0 0 * * 1-5' # 00:00 UTC is 01:00 CET every weekday
   workflow_call:
   push:
     branches: ['main']
