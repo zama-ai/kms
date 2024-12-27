@@ -1,6 +1,8 @@
 name: "[Core-Service-Merge Main] Pipeline Run"
 
 on:
+  schedule:
+    - cron: '0 14 * * 1-5'
   workflow_call:
   workflow_dispatch:
   push:
