@@ -1,5 +1,5 @@
 use super::metrics::OpenTelemetryMetrics;
-use crate::conf::{TimeoutConfig, TimeoutTriple};
+use crate::config::{TimeoutConfig, TimeoutTriple};
 use crate::domain::blockchain::{
     BlockchainOperationVal, DecryptResponseVal, KmsOperationResponse, ReencryptResponseVal,
     VerifyProvenCtResponseVal,
@@ -504,7 +504,7 @@ where
     S: Storage + Clone + Send + Sync + 'static,
 {
     pub fn new(
-        config: crate::conf::CoreConfig,
+        config: crate::config::CoreConfig,
         storage: S,
         metrics: OpenTelemetryMetrics,
     ) -> Result<Self, anyhow::Error> {

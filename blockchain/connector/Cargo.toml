@@ -6,6 +6,10 @@ publish.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "kms-blockchain-connector"
+path = "src/bin/main.rs"
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true

@@ -7,13 +7,6 @@ tick_interval_secs = 1
 # to catch up from there.
 storage_path = "./temp/events.toml"
 
-# Configuration related to how the gateway listens for events on the KMS
-# blockchain. We will eventually rename/refactor this section, see #1694.
-[oracle]
-
-# The endpoint for the KMS blockchain.
-addresses = ["http://localhost:26657"]
-
 # This section describes information for the KMS blockchain client so that it
 # can make transactions to the KMS blockchain.
 [blockchain]

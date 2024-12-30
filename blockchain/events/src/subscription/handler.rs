@@ -336,7 +336,7 @@ where
         // (NOTE: we leave it to the handler to decide whether it wants
         // to return async or sync as GW and Connector may have different behavior here)
         // Note: here the handler is either:
-        // - the OracleEventHandler if this is ran by the GW
+        // - the GatewayEventHandler if this is ran by the GW
         //  (which basically forwards stuff to KmsEventPublisher)
         // - the KmsCoreEventHandler if this is ran by the connector
         for (event, height_of_event) in events_with_height {

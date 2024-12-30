@@ -1,4 +1,4 @@
-use crate::conf::StoreConfig;
+use crate::config::StoreConfig;
 use crate::domain::storage::Storage;
 use byteorder::{BigEndian, ByteOrder};
 use reqwest::{Client, StatusCode};

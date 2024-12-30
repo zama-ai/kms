@@ -16,11 +16,11 @@ use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractReques
 use kms_blockchain_client::query_client::{
     AscQuery, QueryClient, QueryClientBuilder, TransactionQuery,
 };
-use kms_blockchain_connector::application::kms_core_sync::{
-    KmsCoreEventHandler, KmsCoreSyncHandler,
+use kms_blockchain_connector::application::kms_core_connector::{
+    KmsCoreConnector, KmsCoreEventHandler,
 };
-use kms_blockchain_connector::application::SyncHandler;
-use kms_blockchain_connector::conf::{
+use kms_blockchain_connector::application::Connector;
+use kms_blockchain_connector::config::{
     BlockchainConfig, ConnectorConfig, ContractFee, CoreConfig, ShardingConfig, SignKeyConfig,
     TimeoutConfig,
 };
@@ -245,7 +245,7 @@ async fn wait_for_event_response<T>(
     query_client: Arc<QueryClient>,
     rc: &mut Receiver<KmsEvent>,
 ) where
-    T: SyncHandler + Send + Sync + 'static,
+    T: Connector + Send + Sync + 'static,
 {
     let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut interval = tokio::time::interval(Duration::from_secs(1));
@@ -361,7 +361,7 @@ async fn start_sync_handler(
     csc_address: &str,
     mnemonic: Option<String>,
     tx: Sender<KmsEvent>,
-) -> KmsCoreSyncHandler<KmsBlockchain, KmsMock, OpenTelemetryMetrics> {
+) -> KmsCoreConnector<KmsBlockchain, KmsMock, OpenTelemetryMetrics> {
     let blockchain_config = BlockchainConfig {
         addresses: addresses
             .clone()
@@ -391,7 +391,7 @@ async fn start_sync_handler(
         ..Default::default()
     };
     let my_pk = blockchain.get_public_key().await;
-    KmsCoreSyncHandler::builder()
+    KmsCoreConnector::builder()
         .kms_connector_handler(
             KmsCoreEventHandler::builder()
                 .blockchain(Arc::new(blockchain))

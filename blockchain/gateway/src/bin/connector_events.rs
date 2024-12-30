@@ -1,7 +1,7 @@
 use events::kms::KmsEvent;
 use gateway::config::init_conf_with_trace_connector;
-use kms_blockchain_connector::application::oracle_sync::OracleSyncHandler;
-use kms_blockchain_connector::application::SyncHandler;
+use kms_blockchain_connector::application::gateway_connector::GatewayConnector;
+use kms_blockchain_connector::application::Connector;
 use kms_blockchain_connector::domain::oracle::Oracle;
 use tracing::info;
 
@@ -24,7 +24,7 @@ pub async fn listen() -> anyhow::Result<()> {
 
     let config = init_conf_with_trace_connector("config/default.toml")?;
 
-    OracleSyncHandler::new_with_config_and_listener(config, gateway)
+    GatewayConnector::new_with_config_and_listener(config, gateway)
         .await?
         .listen_for_events(None)
         .await

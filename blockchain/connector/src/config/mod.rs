@@ -119,11 +119,6 @@ impl TimeoutConfig {
 }
 
 #[derive(TypedBuilder, Deserialize, Serialize, Clone, Default, Debug)]
-pub struct OracleConfig {
-    pub addresses: Vec<String>,
-}
-
-#[derive(TypedBuilder, Deserialize, Serialize, Clone, Default, Debug)]
 pub struct StoreConfig {
     pub url: String,
 }
@@ -149,7 +144,6 @@ pub struct ConnectorConfig {
     pub tracing: Option<TelemetryConfig>,
     pub blockchain: BlockchainConfig,
     pub core: CoreConfig,
-    pub oracle: OracleConfig,
     pub store: StoreConfig,
     pub sharding: Option<ShardingConfig>,
 }

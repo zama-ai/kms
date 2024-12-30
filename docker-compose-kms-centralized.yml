@@ -51,7 +51,7 @@ services:
       - ./blockchain/connector/config/:/app/kms-connector/config
     command:
       - "kms-blockchain-connector"
-      - "--conf-file"
+      - "--config-file"
       - "config/default.toml"
     environment:
       - DOCKER_BUILDKIT=1

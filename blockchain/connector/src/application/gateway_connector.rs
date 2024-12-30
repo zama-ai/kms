@@ -1,22 +1,21 @@
-use crate::conf::ConnectorConfig;
+use crate::config::ConnectorConfig;
 use crate::domain::oracle::Oracle;
 use crate::infrastructure::metrics::{MetricType, Metrics, OpenTelemetryMetrics};
-use crate::infrastructure::oracle::OracleClient;
 use events::kms::TransactionEvent;
 use events::subscription::handler::{EventsMode, SubscriptionEventBuilder, SubscriptionHandler};
 use events::subscription::Tx;
 use typed_builder::TypedBuilder;
 
-use super::SyncHandler;
+use super::Connector;
 
 #[derive(Clone, TypedBuilder)]
-pub struct OracleEventHandler<R, O> {
+pub struct GatewayEventHandler<R, O> {
     oracle: R,
     observability: O,
 }
 
 #[async_trait::async_trait]
-impl<R, O> SubscriptionHandler<Tx> for OracleEventHandler<R, O>
+impl<R, O> SubscriptionHandler<Tx> for GatewayEventHandler<R, O>
 where
     R: Oracle + Send + Sync + Clone + 'static,
     O: Metrics + Send + Sync + Clone + 'static,
@@ -56,24 +55,22 @@ where
     }
 }
 
-//TODO(#1694): RENAME THIS GATEWAY-CONNECTOR
-
 /// This is the _connector_ used by the Gateway.
 ///
 /// (i.e. the component the Gateway uses to read from the KMS BC.)
 #[derive(Clone, TypedBuilder)]
-pub struct OracleSyncHandler<R, O> {
-    oracle_handler: OracleEventHandler<R, O>,
+pub struct GatewayConnector<R, O> {
+    oracle_handler: GatewayEventHandler<R, O>,
     config: ConnectorConfig,
 }
 
-impl<R, O> OracleSyncHandler<R, O>
+impl<R, O> GatewayConnector<R, O>
 where
     R: Oracle + Clone + 'static + Send + Sync,
     O: Metrics + Clone + 'static + Send + Sync,
 {
     pub async fn new(oracle: R, metrics: O) -> anyhow::Result<Self> {
-        let handler = OracleEventHandler {
+        let handler = GatewayEventHandler {
             oracle,
             observability: metrics,
         };
@@ -84,25 +81,7 @@ where
     }
 }
 
-// TODO(#1694): I think this should be removed when moving main.rs into a binary
-// (As this is only used when running main with mode::Oracle which makes no sense AFAICT)
-// Note that the OracleClient used here does simply nothing
-impl OracleSyncHandler<OracleClient, OpenTelemetryMetrics> {
-    pub async fn new_with_config(config: ConnectorConfig) -> anyhow::Result<Self> {
-        let metrics = OpenTelemetryMetrics::new();
-        let oracle = OracleClient::new(config.oracle.clone(), metrics.clone()).await?;
-        let handler = OracleEventHandler {
-            oracle,
-            observability: metrics,
-        };
-        Ok(Self {
-            oracle_handler: handler,
-            config,
-        })
-    }
-}
-
-impl<R> OracleSyncHandler<R, OpenTelemetryMetrics>
+impl<R> GatewayConnector<R, OpenTelemetryMetrics>
 where
     R: Oracle + Send + Sync + Clone + 'static,
 {
@@ -111,7 +90,7 @@ where
         oracle: R,
     ) -> anyhow::Result<Self> {
         let metrics = OpenTelemetryMetrics::new();
-        let handler = OracleEventHandler {
+        let handler = GatewayEventHandler {
             oracle,
             observability: metrics,
         };
@@ -123,7 +102,7 @@ where
 }
 
 #[async_trait::async_trait]
-impl<R, O> SyncHandler for OracleSyncHandler<R, O>
+impl<R, O> Connector for GatewayConnector<R, O>
 where
     R: Oracle + Send + Sync + Clone + 'static,
     O: Metrics + Send + Sync + Clone + 'static,

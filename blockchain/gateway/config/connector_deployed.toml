@@ -3,9 +3,6 @@
 tick_interval_secs = 1
 storage_path = "./temp/events.toml"
 
-[oracle]
-addresses = ["http://localhost:26657"]
-
 [blockchain]
 addresses = ["http://localhost:9090"]
 asc_address = "wasm18shslphc8j358hpeqmjlxz77u6hvq5ly8dzxnkhz4266z8qyj46qq9afqf" # Deployed ASC

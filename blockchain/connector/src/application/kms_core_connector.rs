@@ -1,5 +1,5 @@
-use super::SyncHandler;
-use crate::conf::{ConnectorConfig, ShardingConfig};
+use super::Connector;
+use crate::config::{ConnectorConfig, ShardingConfig};
 use crate::domain::blockchain::{Blockchain, KmsOperationResponse};
 use crate::domain::kms::{CatchupResult, Kms};
 use crate::infrastructure::blockchain::KmsBlockchain;
@@ -407,16 +407,15 @@ fn has_response_with_wanted_id(messages: &[KmsMessage], wanted_id: &TransactionI
     })
 }
 
-//TODO(#1694): RENAME THIS CORE-CONNECTOR
 /// The struct actually reflecting the Connector between the KMS Blockchain and the KMS Core.
 /// (i.e. the relay between KMS BC and Core)
 #[derive(Clone, TypedBuilder)]
-pub struct KmsCoreSyncHandler<B, K, O> {
+pub struct KmsCoreConnector<B, K, O> {
     kms_connector_handler: KmsCoreEventHandler<B, K, O>,
     config: ConnectorConfig,
 }
 
-impl<B, K, O> KmsCoreSyncHandler<B, K, O>
+impl<B, K, O> KmsCoreConnector<B, K, O>
 where
     B: Blockchain + Clone + 'static + Send + Sync,
     K: Kms + Clone + 'static + Send + Sync,
@@ -443,7 +442,7 @@ where
     }
 }
 
-impl KmsCoreSyncHandler<KmsBlockchain, KmsCore<KVStore>, OpenTelemetryMetrics> {
+impl KmsCoreConnector<KmsBlockchain, KmsCore<KVStore>, OpenTelemetryMetrics> {
     pub async fn new_with_config(config: ConnectorConfig) -> anyhow::Result<Self> {
         let metrics = OpenTelemetryMetrics::new();
         let blockchain = KmsBlockchain::new(config.blockchain.clone(), metrics.clone()).await?;
@@ -483,7 +482,7 @@ impl KmsCoreSyncHandler<KmsBlockchain, KmsCore<KVStore>, OpenTelemetryMetrics> {
 }
 
 #[async_trait::async_trait]
-impl<B, K, O> SyncHandler for KmsCoreSyncHandler<B, K, O>
+impl<B, K, O> Connector for KmsCoreConnector<B, K, O>
 where
     B: Blockchain + Send + Sync + Clone + 'static,
     K: Kms + Send + Sync + Clone + 'static,

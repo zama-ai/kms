@@ -1,5 +1,5 @@
 use super::metrics::OpenTelemetryMetrics;
-use crate::conf::BlockchainConfig;
+use crate::config::BlockchainConfig;
 use crate::domain::blockchain::{Blockchain, KmsOperationResponse};
 use crate::infrastructure::metrics::{MetricType, Metrics};
 use async_trait::async_trait;

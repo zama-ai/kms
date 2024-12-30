@@ -28,9 +28,9 @@ use ethers::providers::{Provider, Ws};
 use events::kms::KmsEvent;
 use events::kms::ReencryptResponseValues;
 use events::HexVector;
-use kms_blockchain_connector::application::oracle_sync::OracleSyncHandler;
-use kms_blockchain_connector::application::SyncHandler;
-use kms_blockchain_connector::conf::ConnectorConfig;
+use kms_blockchain_connector::application::gateway_connector::GatewayConnector;
+use kms_blockchain_connector::application::Connector;
+use kms_blockchain_connector::config::ConnectorConfig;
 use kms_blockchain_connector::domain::oracle::Oracle;
 use serde::Deserialize;
 use serde::Serialize;
@@ -354,7 +354,7 @@ impl RunnablePublisher<KmsEvent> for KmsEventPublisher {
                 .as_str(),
         )?;
 
-        let _ = OracleSyncHandler::new_with_config_and_listener(config, self.clone())
+        let _ = GatewayConnector::new_with_config_and_listener(config, self.clone())
             .await?
             .listen_for_events(None)
             .await;

@@ -2,7 +2,7 @@ use conf_trace::conf::{Settings, TelemetryConfig};
 use conf_trace::telemetry::init_telemetry;
 use ethers::types::H160;
 use events::{HexVector, HexVectorList};
-use kms_blockchain_connector::conf::ConnectorConfig;
+use kms_blockchain_connector::config::ConnectorConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use strum_macros::{Display, EnumString};
@@ -285,7 +285,7 @@ pub async fn init_conf_with_trace_gateway(config_file: &str) -> anyhow::Result<G
 }
 
 pub fn init_conf_with_trace_connector(config_file: &str) -> anyhow::Result<ConnectorConfig> {
-    kms_blockchain_connector::conf::init_conf(config_file)
+    kms_blockchain_connector::config::init_conf(config_file)
 }
 
 #[cfg(test)]

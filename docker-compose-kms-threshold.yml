@@ -90,7 +90,7 @@ services:
       - ./blockchain/connector/config/:/app/kms-connector/config
     command:
       - "kms-blockchain-connector"
-      - "--conf-file"
+      - "--config-file"
       - "config/compose_1.toml"
     environment:
       - RUST_LOG=info,tonic=info,h2=info
@@ -155,7 +155,7 @@ services:
       - ./blockchain/connector/config/:/app/kms-connector/config
     command:
       - "kms-blockchain-connector"
-      - "--conf-file"
+      - "--config-file"
       - "config/compose_2.toml"
     environment:
       - DOCKER_BUILDKIT=1    
@@ -221,7 +221,7 @@ services:
       - ./blockchain/connector/config/:/app/kms-connector/config
     command:
       - "kms-blockchain-connector"
-      - "--conf-file"
+      - "--config-file"
       - "config/compose_3.toml"
       - "--catch-up-num-blocks"
       - "100000" # Each block takes about a second so this is around 27 hours. Should be adjusted in a real deployment
@@ -288,7 +288,7 @@ services:
       - ./blockchain/connector/config/:/app/kms-connector/config
     command:
       - "kms-blockchain-connector"
-      - "--conf-file"
+      - "--config-file"
       - "config/compose_4.toml"
     environment:
       - DOCKER_BUILDKIT=1        
