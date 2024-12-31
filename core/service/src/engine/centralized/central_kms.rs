@@ -1,11 +1,13 @@
-use super::internal_crypto_types::{PrivateSigKey, PublicEncKey, PublicSigKey};
-use super::signcryption::{internal_verify_sig, sign, signcrypt};
-
-use crate::consts::RND_SIZE;
+use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
 use crate::cryptography::decompression;
-use crate::rpc::base::{compute_external_pubdata_signature, BaseKms, Kms, Shutdown};
+use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey, PublicSigKey};
+use crate::cryptography::signcryption::signcrypt;
+use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
+use crate::engine::base::{DecCallValues, KeyGenCallValues, ReencCallValues};
+use crate::engine::traits::{BaseKms, Kms};
+use crate::engine::Shutdown;
 #[cfg(feature = "non-wasm")]
-use crate::util::key_setup::{FhePrivateKey, FhePublicKey};
+use crate::util::key_setup::FhePublicKey;
 use crate::util::meta_store::MetaStore;
 use crate::util::rate_limiter::{RateLimiter, RateLimiterConfig};
 #[cfg(feature = "non-wasm")]
@@ -15,15 +17,7 @@ use crate::vault::storage::{
     read_pk_at_request_id,
 };
 use crate::{anyhow_error_and_log, get_exactly_one};
-use crate::{consts::ID_LENGTH, cryptography::signcryption::check_normalized};
-use crate::{
-    consts::{DEC_CAPACITY, MIN_DEC_CACHE},
-    cryptography::internal_crypto_types::Signature,
-};
 use aes_prng::AesRng;
-use alloy_primitives::B256;
-use alloy_sol_types::SolStruct;
-use anyhow::Context;
 use bincode::serialize;
 #[cfg(feature = "non-wasm")]
 use distributed_decryption::execution::endpoints::keygen::FhePubKeySet;
@@ -32,58 +26,33 @@ use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 use distributed_decryption::execution::zk::ceremony::make_centralized_public_parameters;
 use k256::ecdsa::SigningKey;
 use kms_grpc::kms::FheType;
-use kms_grpc::kms::ReencryptionRequest;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms::RequestId;
 use kms_grpc::kms::TypedPlaintext;
 use kms_grpc::kms::{TypedCiphertext, VerifyProvenCtResponsePayload};
 #[cfg(feature = "non-wasm")]
 use kms_grpc::rpc_types::SignedPubDataHandleInternal;
-use kms_grpc::rpc_types::{
-    hash_element, safe_serialize_hash_element_versioned, PrivDataType, PubDataType, Reencrypt,
-    SigncryptionPayload,
-};
-use rand::{CryptoRng, Rng, RngCore, SeedableRng};
-use serde::{Deserialize, Serialize};
+use kms_grpc::rpc_types::{PrivDataType, PubDataType, SigncryptionPayload};
+use rand::{CryptoRng, Rng, RngCore};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::{fmt, panic};
-use tfhe::integer::compression_keys::DecompressionKey;
-use tfhe::named::Named;
 use tfhe::prelude::FheDecrypt;
 #[cfg(feature = "non-wasm")]
 use tfhe::zk::CompactPkePublicParams;
 #[cfg(feature = "non-wasm")]
 use tfhe::Seed;
 use tfhe::ServerKey;
-use tfhe_versionable::VersionsDispatch;
 
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::{
     ClientKey, ConfigBuilder, FheBool, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048,
-    FheUint256, FheUint32, FheUint4, FheUint512, FheUint64, FheUint8, Versionize,
+    FheUint256, FheUint32, FheUint4, FheUint512, FheUint64, FheUint8,
 };
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 #[cfg(feature = "non-wasm")]
 use tokio_util::task::TaskTracker;
-
-// TODO: we should organize our code so that we can unit test our error messages
-const ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR: &str =
-    "client address is the same as verifying contract address";
-
-pub fn handle_potential_err<T, E>(resp: Result<T, E>, error: String) -> anyhow::Result<T> {
-    resp.map_err(|_| {
-        tracing::warn!(error);
-        anyhow::Error::msg(format!("Invalid request: \"{}\"", error))
-    })
-}
-
-#[cfg(feature = "non-wasm")]
-pub fn gen_sig_keys<R: CryptoRng + Rng>(rng: &mut R) -> (PublicSigKey, PrivateSigKey) {
-    let sk = SigningKey::random(rng);
-    let pk = SigningKey::verifying_key(&sk);
-    (PublicSigKey::new(*pk), PrivateSigKey::new(sk))
-}
 
 #[cfg(feature = "non-wasm")]
 pub async fn async_generate_fhe_keys(
@@ -201,6 +170,8 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     mut rng: R,
     eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
 ) -> anyhow::Result<(CompactPkePublicParams, SignedPubDataHandleInternal)> {
+    use crate::engine::base::compute_info;
+
     let internal_pp = make_centralized_public_parameters(
         &params
             .get_params_basics_handle()
@@ -216,266 +187,32 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     Ok((pp, crs_info))
 }
 
-pub struct BaseKmsStruct {
-    pub(crate) sig_key: Arc<PrivateSigKey>,
-    pub(crate) serialized_verf_key: Arc<Vec<u8>>,
-    pub(crate) rng: Arc<Mutex<AesRng>>,
-}
-
-impl BaseKmsStruct {
-    pub fn new(sig_key: PrivateSigKey) -> anyhow::Result<Self> {
-        let serialized_verf_key = Arc::new(serialize(&PublicSigKey::new(
-            SigningKey::verifying_key(sig_key.sk()).to_owned(),
-        ))?);
-        Ok(BaseKmsStruct {
-            sig_key: Arc::new(sig_key),
-            serialized_verf_key,
-            rng: Arc::new(Mutex::new(AesRng::from_entropy())),
-        })
-    }
-
-    /// Make a clone of this struct with a newly initialized RNG s.t. that both the new and old struct are safe to use.
-    pub async fn new_instance(&self) -> Self {
-        Self {
-            sig_key: self.sig_key.clone(),
-            serialized_verf_key: self.serialized_verf_key.clone(),
-            rng: Arc::new(Mutex::new(self.new_rng().await)),
-        }
-    }
-
-    pub async fn new_rng(&self) -> AesRng {
-        let mut seed = [0u8; RND_SIZE];
-        // Make a seperate scope for the rng so that it is dropped before the lock is released
-        {
-            let mut base_rng = self.rng.lock().await;
-            base_rng.fill_bytes(seed.as_mut());
-        }
-        AesRng::from_seed(seed)
-    }
-}
-
-impl BaseKms for BaseKmsStruct {
-    fn verify_sig<T>(
-        payload: &T,
-        signature: &super::internal_crypto_types::Signature,
-        key: &PublicSigKey,
-    ) -> anyhow::Result<()>
-    where
-        T: Serialize + AsRef<[u8]>,
-    {
-        internal_verify_sig(&payload, signature, key)
-    }
-
-    /// sign `msg` using the KMS' private signing key
-    fn sign<T>(&self, msg: &T) -> anyhow::Result<super::internal_crypto_types::Signature>
-    where
-        T: Serialize + AsRef<[u8]>,
-    {
-        sign(msg, &self.sig_key)
-    }
-
-    fn get_serialized_verf_key(&self) -> Vec<u8> {
-        self.serialized_verf_key.as_ref().clone()
-    }
-
-    fn digest<T>(msg: &T) -> anyhow::Result<Vec<u8>>
-    where
-        T: ?Sized + AsRef<[u8]>,
-    {
-        Ok(hash_element(msg))
-    }
-}
-
-/// Verify the EIP-712 encoded payload in the request.
-///
-/// Fist we need to extract the client public key from the signature.
-/// Then the public key is converted into an address and we check
-/// whether the address matches the address in the request.
-/// We assume the `domain` is trusted since tkms core does not run a light client.
-pub(crate) fn verify_reencryption_eip712(request: &ReencryptionRequest) -> anyhow::Result<()> {
-    let payload = request
-        .payload
-        .as_ref()
-        .context("Failed to get payload from ReencryptionRequest")?;
-    let signature_bytes = &request.signature;
-
-    // print out the req.signature in hex string
-    tracing::debug!("🔒 req.signature: {:?}", hex::encode(signature_bytes));
-
-    let client_address =
-        alloy_primitives::Address::parse_checksummed(&payload.client_address, None)?;
-
-    // print out the client address
-    // note that the alloy address should format to hex already
-    tracing::debug!("🔒 client address in payload: {:?}", client_address);
-
-    let enc_key_bytes = payload.enc_key.clone();
-    // print out the hex string of the enc_key_bytes
-    tracing::debug!("🔒 enc_key_bytes: {:?}", hex::encode(&enc_key_bytes));
-
-    let message = Reencrypt {
-        publicKey: alloy_primitives::Bytes::copy_from_slice(&payload.enc_key),
-    };
-
-    let wrapped_domain = request
-        .domain
-        .as_ref()
-        .context("Failed to get domain message from request")?;
-    tracing::debug!("🔒 wrapped_domain: {:?}", wrapped_domain);
-
-    let chain_id = alloy_primitives::U256::try_from_be_slice(&wrapped_domain.chain_id)
-        .context("invalid chain ID")?;
-    tracing::debug!("🔒 chain_id: {:?}", chain_id);
-    let verifying_contract_address = alloy_primitives::Address::parse_checksummed(
-        wrapped_domain.verifying_contract.as_str(),
-        None,
-    )
-    .context("Failed to convert wrappted domain message into address")?;
-
-    let domain = alloy_sol_types::Eip712Domain::new(
-        Some(wrapped_domain.name.clone().into()),
-        Some(wrapped_domain.version.clone().into()),
-        Some(chain_id),
-        Some(verifying_contract_address),
-        wrapped_domain
-            .salt
-            .as_ref()
-            .map(|inner_salt| B256::from_slice(inner_salt)),
-    );
-
-    // this is to prevent malicious dapp
-    if client_address == verifying_contract_address {
-        return Err(anyhow_error_and_log(ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR));
-    }
-
-    // Derive the EIP-712 signing hash.
-    let message_hash = message.eip712_signing_hash(&domain);
-
-    // We need to use the alloy signature type since
-    // it will let us call `recover_address_from_prehash` later
-    // but this signature cannot be wrapper into our own `Signature`
-    // type since our own type uses k256::ecdsa, which is not the same
-    // as the one in alloy.
-    let alloy_signature = alloy_primitives::Signature::try_from(signature_bytes.as_slice())
-        .inspect_err(|e| tracing::error!("Failed to parse alloy signature with error: {e}"))?;
-
-    check_normalized(&Signature {
-        sig: alloy_signature.to_k256()?,
-    })?;
-
-    let recovered_address = alloy_signature.recover_address_from_prehash(&message_hash)?;
-    tracing::debug!("🔒 Recovered address: {:?}", recovered_address);
-
-    // Note that `recover_from_prehash` also verifies the signature
-    let recovered_verifying_key = alloy_signature.recover_from_prehash(&message_hash)?;
-    tracing::debug!("🔒 Recovered verifying key: {:?}", recovered_verifying_key);
-    let client_address_from_key =
-        alloy_primitives::Address::from_public_key(&recovered_verifying_key);
-
-    let consistent_public_key = client_address_from_key == client_address;
-    if !consistent_public_key {
-        return Err(anyhow::anyhow!("address is not consistent"));
-    }
-    Ok(())
-}
-
 // We only need to derive (de)serialize for test, which is why they're under a cfg_attr.
 #[cfg(feature = "non-wasm")]
-#[cfg_attr(any(test, feature = "testing"), derive(Serialize, Deserialize))]
-pub struct SoftwareKmsKeys {
-    pub(crate) key_info: HashMap<RequestId, KmsFheKeyHandles>,
-    pub(crate) sig_sk: PrivateSigKey,
-    pub(crate) sig_pk: PublicSigKey,
+#[cfg_attr(test, derive(Serialize, serde::Deserialize))]
+pub struct CentralizedKmsKeys {
+    pub key_info: HashMap<RequestId, KmsFheKeyHandles>,
+    pub sig_sk: PrivateSigKey,
+    pub sig_pk: PublicSigKey,
 }
 
 // We only need to derive (de)serialize for test, which is why they're under a cfg_attr.
 #[cfg(test)]
-#[cfg_attr(any(test, feature = "testing"), derive(Serialize, Deserialize))]
-pub struct CentralizedTestingKeys {
-    pub params: DKGParams,
-    pub software_kms_keys: SoftwareKmsKeys,
-    pub pub_fhe_keys: HashMap<RequestId, FhePubKeySet>,
-    pub client_pk: PublicSigKey,
-    pub client_sk: PrivateSigKey,
-    pub server_keys: Vec<PublicSigKey>,
+#[cfg_attr(test, derive(Serialize, serde::Deserialize))]
+pub(crate) struct CentralizedTestingKeys {
+    pub(crate) params: DKGParams,
+    pub(crate) centralized_kms_keys: CentralizedKmsKeys,
+    pub(crate) pub_fhe_keys: HashMap<RequestId, FhePubKeySet>,
+    pub(crate) client_pk: PublicSigKey,
+    pub(crate) client_sk: PrivateSigKey,
+    pub(crate) server_keys: Vec<PublicSigKey>,
 }
 
-#[cfg(feature = "non-wasm")]
-#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum KmsFheKeyHandlesVersioned {
-    V0(KmsFheKeyHandles),
-}
-
-/// This is a data structure that holds the private key material
-/// of the centralized KMS.
-#[cfg(feature = "non-wasm")]
-#[derive(Clone, Serialize, Deserialize, Versionize, Debug)]
-#[versionize(KmsFheKeyHandlesVersioned)]
-pub struct KmsFheKeyHandles {
-    pub client_key: FhePrivateKey,
-    pub decompression_key: Option<DecompressionKey>,
-    /// Mapping key type to information
-    pub public_key_info: HashMap<PubDataType, SignedPubDataHandleInternal>,
-}
-
-impl Named for KmsFheKeyHandles {
-    const NAME: &'static str = "KmsFheKeyHandles";
-}
-
-#[cfg(feature = "non-wasm")]
-impl KmsFheKeyHandles {
-    /// Compute key handles for the public key materials.
-    /// Note that the handles include a signature on the versionized keys.
-    pub fn new(
-        sig_key: &PrivateSigKey,
-        client_key: FhePrivateKey,
-        public_keys: &FhePubKeySet,
-        decompression_key: Option<DecompressionKey>,
-        eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
-    ) -> anyhow::Result<Self> {
-        let mut public_key_info = HashMap::new();
-        public_key_info.insert(
-            PubDataType::PublicKey,
-            compute_info(sig_key, &public_keys.public_key, eip712_domain)?,
-        );
-        public_key_info.insert(
-            PubDataType::ServerKey,
-            compute_info(sig_key, &public_keys.server_key, eip712_domain)?,
-        );
-        if let Some(sns) = &public_keys.sns_key {
-            public_key_info.insert(
-                PubDataType::SnsKey,
-                compute_info(sig_key, sns, eip712_domain)?,
-            );
-        }
-        Ok(KmsFheKeyHandles {
-            client_key,
-            decompression_key,
-            public_key_info,
-        })
-    }
-}
-
-// Values that need to be stored temporarily as part of an async key generation call.
-#[cfg(feature = "non-wasm")]
-pub type KeyGenCallValues = HashMap<PubDataType, SignedPubDataHandleInternal>;
-
-// Values that need to be stored temporarily as part of an async decryption call.
-// Represents the digest of the request and the result of the decryption (a batch of plaintests),
-// as well as an external signature on the batch.
-#[cfg(feature = "non-wasm")]
-pub type DecCallValues = (Vec<u8>, Vec<TypedPlaintext>, Vec<u8>);
-
-// Values that need to be stored temporarily as part of an async reencryption call.
-// Represents the FHE type, the digest of the request and the partial decryption.
-#[cfg(feature = "non-wasm")]
-pub type ReencCallValues = (FheType, Vec<u8>, Vec<u8>);
-
-/// Software based KMS where keys are stored in a local file
+/// Centralized KMS where keys are stored in a local file
 /// Observe that the order of write access MUST be as follows to avoid dead locks:
 /// PublicStorage -> PrivateStorage -> FheKeys/XXX_meta_map
 #[cfg(feature = "non-wasm")]
-pub struct SoftwareKms<
+pub struct RealCentralizedKms<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
     BackS: Storage + Send + Sync + 'static,
@@ -514,7 +251,7 @@ pub fn central_decrypt<
     // run the decryption of each ct in the batch in parallel
     cts.par_iter()
         .map(|ct| {
-            SoftwareKms::<PubS, PrivS, BackS>::decrypt(
+            RealCentralizedKms::<PubS, PrivS, BackS>::decrypt(
                 keys,
                 &ct.ciphertext,
                 FheType::try_from(ct.fhe_type)?,
@@ -540,7 +277,7 @@ pub async fn async_reencrypt<
     client_enc_key: &PublicEncKey,
     client_address: &alloy_primitives::Address,
 ) -> anyhow::Result<Vec<u8>> {
-    SoftwareKms::<PubS, PrivS, BackS>::reencrypt(
+    RealCentralizedKms::<PubS, PrivS, BackS>::reencrypt(
         keys,
         sig_key,
         rng,
@@ -552,16 +289,16 @@ pub async fn async_reencrypt<
     )
 }
 
-// impl fmt::Debug for SoftwareKms, we don't want to include the decryption key in the debug output
+// impl fmt::Debug for CentralizedKms, we don't want to include the decryption key in the debug output
 #[cfg(feature = "non-wasm")]
 impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: Storage + Sync + Send + 'static,
         BackS: Storage + Sync + Send + 'static,
-    > fmt::Debug for SoftwareKms<PubS, PrivS, BackS>
+    > fmt::Debug for RealCentralizedKms<PubS, PrivS, BackS>
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SoftwareKms")
+        f.debug_struct("CentralizedKms")
             .field("sig_key", &self.base_kms.sig_key)
             .finish() // Don't include fhe_dec_key
     }
@@ -572,11 +309,11 @@ impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: Storage + Sync + Send + 'static,
         BackS: Storage + Sync + Send + 'static,
-    > BaseKms for SoftwareKms<PubS, PrivS, BackS>
+    > BaseKms for RealCentralizedKms<PubS, PrivS, BackS>
 {
     fn verify_sig<T: Serialize + AsRef<[u8]>>(
         payload: &T,
-        signature: &super::internal_crypto_types::Signature,
+        signature: &crate::cryptography::internal_crypto_types::Signature,
         verification_key: &PublicSigKey,
     ) -> anyhow::Result<()> {
         BaseKmsStruct::verify_sig(payload, signature, verification_key)
@@ -585,7 +322,7 @@ impl<
     fn sign<T: Serialize + AsRef<[u8]>>(
         &self,
         msg: &T,
-    ) -> anyhow::Result<super::internal_crypto_types::Signature> {
+    ) -> anyhow::Result<crate::cryptography::internal_crypto_types::Signature> {
         self.base_kms.sign(msg)
     }
 
@@ -660,7 +397,7 @@ impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: Storage + Sync + Send + 'static,
         BackS: Storage + Sync + Send + 'static,
-    > Kms for SoftwareKms<PubS, PrivS, BackS>
+    > Kms for RealCentralizedKms<PubS, PrivS, BackS>
 {
     fn decrypt(
         keys: &KmsFheKeyHandles,
@@ -708,7 +445,7 @@ impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: Storage + Sync + Send + 'static,
         BackS: Storage + Sync + Send + 'static,
-    > SoftwareKms<PubS, PrivS, BackS>
+    > RealCentralizedKms<PubS, PrivS, BackS>
 {
     pub async fn new(
         public_storage: PubS,
@@ -765,7 +502,7 @@ impl<
             key_info,
         );
 
-        Ok(SoftwareKms {
+        Ok(RealCentralizedKms {
             base_kms: BaseKmsStruct::new(sk)?,
             crypto_storage,
             key_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(public_key_info))),
@@ -787,7 +524,7 @@ impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: Storage + Sync + Send + 'static,
         BackS: Storage + Sync + Send + 'static,
-    > Shutdown for SoftwareKms<PubS, PrivS, BackS>
+    > Shutdown for RealCentralizedKms<PubS, PrivS, BackS>
 {
     async fn shutdown(&self) -> anyhow::Result<()> {
         self.tracker.close();
@@ -797,48 +534,11 @@ impl<
     }
 }
 
-/// Computes the public into on a serializable `element`.
-/// More specifically, computes the unique handle of the `element` and signs this handle using the
-/// `kms`.
-pub(crate) fn compute_info<S: Serialize + Versionize + Named>(
-    sk: &PrivateSigKey,
-    element: &S,
-    domain: Option<&alloy_sol_types::Eip712Domain>,
-) -> anyhow::Result<SignedPubDataHandleInternal> {
-    let handle = compute_handle(element)?;
-    let signature = sign(&handle, sk)?;
-
-    // if we get an EIP-712 domain, compute the external signature
-    let external_signature = match domain {
-        Some(domain) => compute_external_pubdata_signature(sk, element, domain)?,
-        None => {
-            tracing::warn!("Skipping external signature computation due to missing domain");
-            vec![]
-        }
-    };
-
-    Ok(SignedPubDataHandleInternal {
-        key_handle: handle,
-        signature: serialize(&signature)?,
-        external_signature,
-    })
-}
-
-/// Compute a handle of an element, based on its digest
-/// More specifically compute the hash digest, truncate it and convert it to a hex string
-pub fn compute_handle<S>(element: &S) -> anyhow::Result<String>
-where
-    S: Serialize + Versionize + Named,
-{
-    let mut digest = safe_serialize_hash_element_versioned(element)?;
-    // Truncate and convert to hex
-    digest.truncate(ID_LENGTH);
-    Ok(hex::encode(digest))
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::{verify_reencryption_eip712, Storage};
+    use super::{
+        generate_fhe_keys, CentralizedKmsKeys, CentralizedTestingKeys, RealCentralizedKms, Storage,
+    };
     #[cfg(feature = "slow_tests")]
     use crate::consts::{
         DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_KEY_ID, OTHER_CENTRAL_DEFAULT_ID,
@@ -847,28 +547,30 @@ pub(crate) mod tests {
         DEFAULT_PARAM, DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID,
     };
     use crate::consts::{TEST_CENTRAL_KEYS_PATH, TEST_PARAM};
-    use crate::cryptography::central_kms::SoftwareKmsKeys;
-    use crate::cryptography::central_kms::{gen_sig_keys, SoftwareKms};
-    use crate::cryptography::central_kms::{
-        CentralizedTestingKeys, ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR,
-    };
     use crate::cryptography::internal_crypto_types::PrivateSigKey;
     use crate::cryptography::signcryption::{
         decrypt_signcryption, ephemeral_encryption_key_generation,
         ephemeral_signcryption_key_generation,
     };
-    use crate::rpc::base::Kms;
+    use crate::engine::base::{compute_handle, compute_info, gen_sig_keys};
+    use crate::engine::traits::Kms;
+    use crate::engine::validation::verify_reencryption_eip712;
+    use crate::engine::validation::ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR;
     use crate::util::file_handling::read_element;
+    use crate::util::file_handling::write_element;
     use crate::util::key_setup::test_tools::compute_cipher;
     use crate::vault::storage::{file::FileStorage, ram::RamStorage};
-    use crate::{cryptography::central_kms::generate_fhe_keys, util::file_handling::write_element};
+    use crate::vault::storage::{
+        store_pk_at_request_id, store_versioned_at_request_id, StorageReader, StorageType,
+    };
     use aes_prng::AesRng;
     use alloy_signer::SignerSync;
     use alloy_sol_types::SolStruct;
     use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
     use kms_grpc::kms::{FheType, RequestId};
     use kms_grpc::rpc_types::{
-        alloy_to_protobuf_domain, hash_element, Reencrypt, CURRENT_FORMAT_VERSION,
+        alloy_to_protobuf_domain, hash_element, PrivDataType, Reencrypt, WrappedPublicKey,
+        CURRENT_FORMAT_VERSION,
     };
     use rand::{RngCore, SeedableRng};
     use serde::{Deserialize, Serialize};
@@ -896,6 +598,44 @@ pub(crate) mod tests {
         ONCE_DEFAULT_KEY
             .get_or_init(|| async { ensure_kms_default_keys().await })
             .await
+    }
+
+    // Construct a storage for private keys
+    pub(crate) async fn new_priv_ram_storage_from_existing_keys(
+        keys: &CentralizedKmsKeys,
+    ) -> anyhow::Result<RamStorage> {
+        let mut ram_storage = RamStorage::new(StorageType::PRIV);
+        for (cur_req_id, cur_keys) in &keys.key_info {
+            store_versioned_at_request_id(
+                &mut ram_storage,
+                cur_req_id,
+                cur_keys,
+                &PrivDataType::FheKeyInfo.to_string(),
+            )
+            .await?;
+        }
+        let sk_handle = compute_handle(&keys.sig_pk)?;
+        ram_storage
+            .store_data(
+                &keys.sig_sk,
+                &ram_storage.compute_url(&sk_handle, &PrivDataType::SigningKey.to_string())?,
+            )
+            .await?;
+        Ok(ram_storage)
+    }
+
+    pub(crate) async fn new_pub_ram_storage_from_existing_keys(
+        keys: &HashMap<
+            kms_grpc::kms::RequestId,
+            distributed_decryption::execution::endpoints::keygen::FhePubKeySet,
+        >,
+    ) -> anyhow::Result<RamStorage> {
+        let mut ram_storage = RamStorage::new(StorageType::PUB);
+        for (cur_req_id, cur_keys) in keys {
+            let wrapped_pk = WrappedPublicKey::Compact(&cur_keys.public_key);
+            store_pk_at_request_id(&mut ram_storage, cur_req_id, wrapped_pk).await?;
+        }
+        Ok(ram_storage)
     }
 
     #[derive(Clone, PartialEq, Eq)]
@@ -964,7 +704,7 @@ pub(crate) mod tests {
             client_sk,
             server_keys,
             pub_fhe_keys: pub_fhe_map,
-            software_kms_keys: SoftwareKmsKeys {
+            centralized_kms_keys: CentralizedKmsKeys {
                 key_info: key_info_map,
                 sig_sk,
                 sig_pk,
@@ -991,14 +731,14 @@ pub(crate) mod tests {
 
         // try to get keys with the default handle
         let default_key = central_keys
-            .software_kms_keys
+            .centralized_kms_keys
             .key_info
             .get(&TEST_CENTRAL_KEY_ID);
         assert!(default_key.is_some());
 
         // try to get keys with the some other handle
         let some_key = central_keys
-            .software_kms_keys
+            .centralized_kms_keys
             .key_info
             .get(&OTHER_CENTRAL_TEST_ID);
         assert!(some_key.is_some());
@@ -1006,7 +746,7 @@ pub(crate) mod tests {
         // try to get keys with a non-existent handle
         let wrong_key_handle = RequestId::derive("wrongKeyHandle").unwrap();
         let no_key = central_keys
-            .software_kms_keys
+            .centralized_kms_keys
             .key_info
             .get(&wrong_key_handle);
         assert!(no_key.is_none());
@@ -1065,11 +805,11 @@ pub(crate) mod tests {
             compute_cipher(msg.into(), &pub_keys.public_key, None, false)
         };
         let kms = {
-            let inner = SoftwareKms::new(
-                RamStorage::from_existing_keys_for_public_storage(&keys.pub_fhe_keys)
+            let inner = RealCentralizedKms::new(
+                new_pub_ram_storage_from_existing_keys(&keys.pub_fhe_keys)
                     .await
                     .unwrap(),
-                RamStorage::from_existing_keys_for_private_storage(&keys.software_kms_keys)
+                new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys)
                     .await
                     .unwrap(),
                 None as Option<RamStorage>,
@@ -1087,7 +827,7 @@ pub(crate) mod tests {
             .read_cloned_centralized_fhe_keys_from_cache(key_id)
             .await
             .unwrap();
-        let raw_plaintext = SoftwareKms::<FileStorage, FileStorage, FileStorage>::decrypt(
+        let raw_plaintext = RealCentralizedKms::<FileStorage, FileStorage, FileStorage>::decrypt(
             &key_handle,
             &ct,
             fhe_type,
@@ -1175,7 +915,7 @@ pub(crate) mod tests {
         PrivS: Storage + Sync + Send + 'static,
         BackS: Storage + Sync + Send + 'static,
     >(
-        inner: &SoftwareKms<PubS, PrivS, BackS>,
+        inner: &RealCentralizedKms<PubS, PrivS, BackS>,
         key_handle: &RequestId,
         params: DKGParams,
     ) {
@@ -1196,7 +936,7 @@ pub(crate) mod tests {
         PrivS: Storage + Sync + Send + 'static,
         BackS: Storage + Sync + Send + 'static,
     >(
-        inner: &mut SoftwareKms<PubS, PrivS, BackS>,
+        inner: &mut RealCentralizedKms<PubS, PrivS, BackS>,
         rng: &mut AesRng,
     ) {
         // move to the next state so ensure we're generating a different ecdsa key
@@ -1220,11 +960,11 @@ pub(crate) mod tests {
         };
 
         let kms = {
-            let mut inner = SoftwareKms::new(
-                RamStorage::from_existing_keys_for_public_storage(&keys.pub_fhe_keys)
+            let mut inner = RealCentralizedKms::new(
+                new_pub_ram_storage_from_existing_keys(&keys.pub_fhe_keys)
                     .await
                     .unwrap(),
-                RamStorage::from_existing_keys_for_private_storage(&keys.software_kms_keys)
+                new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys)
                     .await
                     .unwrap(),
                 None as Option<RamStorage>,
@@ -1251,7 +991,7 @@ pub(crate) mod tests {
             keys
         };
         let mut rng = kms.base_kms.new_rng().await;
-        let raw_cipher = SoftwareKms::<FileStorage, FileStorage, FileStorage>::reencrypt(
+        let raw_cipher = RealCentralizedKms::<FileStorage, FileStorage, FileStorage>::reencrypt(
             &kms.crypto_storage
                 .read_cloned_centralized_fhe_keys_from_cache(key_handle)
                 .await
@@ -1280,7 +1020,7 @@ pub(crate) mod tests {
             &raw_cipher,
             &link,
             &client_keys,
-            &keys.software_kms_keys.sig_pk,
+            &keys.centralized_kms_keys.sig_pk,
         );
         if sim_type == SimulationType::BadEphemeralKey {
             assert!(decrypted.is_err());
@@ -1325,11 +1065,11 @@ pub(crate) mod tests {
         // this test makes sure the output is consistent
         let keys = get_test_keys().await;
         let kms = {
-            SoftwareKms::new(
-                RamStorage::from_existing_keys_for_public_storage(&keys.pub_fhe_keys)
+            RealCentralizedKms::new(
+                new_pub_ram_storage_from_existing_keys(&keys.pub_fhe_keys)
                     .await
                     .unwrap(),
-                RamStorage::from_existing_keys_for_private_storage(&keys.software_kms_keys)
+                new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys)
                     .await
                     .unwrap(),
                 None as Option<RamStorage>,
@@ -1340,8 +1080,8 @@ pub(crate) mod tests {
         };
 
         let value = TestType { i: 32 };
-        let expected = super::compute_info(&kms.base_kms.sig_key, &value, None).unwrap();
-        let actual = super::compute_info(&kms.base_kms.sig_key, &value, None).unwrap();
+        let expected = compute_info(&kms.base_kms.sig_key, &value, None).unwrap();
+        let actual = compute_info(&kms.base_kms.sig_key, &value, None).unwrap();
         assert_eq!(expected, actual);
     }
 

@@ -17,8 +17,6 @@ pub mod util {
 pub mod cryptography {
     #[cfg(feature = "non-wasm")]
     pub mod attestation;
-    #[cfg(feature = "non-wasm")]
-    pub mod central_kms;
     pub mod decompression;
     pub mod internal_crypto_types;
     #[cfg(feature = "non-wasm")]
@@ -26,16 +24,9 @@ pub mod cryptography {
     pub mod signcryption;
 }
 #[cfg(feature = "non-wasm")]
-pub mod threshold {
-    pub mod generic;
-    #[cfg(any(test, feature = "testing"))]
-    pub mod mock_threshold_kms;
-    pub mod threshold_kms;
-}
-#[cfg(feature = "non-wasm")]
 pub mod conf;
 #[cfg(feature = "non-wasm")]
-pub mod rpc;
+pub mod engine;
 #[cfg(feature = "non-wasm")]
 pub mod vault;
 
@@ -92,4 +83,40 @@ pub(crate) fn anyhow_error_and_log<S: AsRef<str> + fmt::Display>(msg: S) -> anyh
 pub(crate) fn anyhow_error_and_warn_log<S: AsRef<str> + fmt::Display>(msg: S) -> anyhow::Error {
     tracing::warn!("Warning in {}: {}", Location::caller(), msg);
     anyhow!("Warning in {}: {}", Location::caller(), msg)
+}
+
+#[cfg(feature = "non-wasm")]
+pub fn tonic_some_or_err<T>(input: Option<T>, error: String) -> Result<T, tonic::Status> {
+    input.ok_or_else(|| {
+        tracing::warn!(error);
+        tonic::Status::new(tonic::Code::Aborted, top_n_chars(error))
+    })
+}
+
+#[cfg(feature = "non-wasm")]
+pub fn tonic_some_or_err_ref<T>(input: &Option<T>, error: String) -> Result<&T, tonic::Status> {
+    input.as_ref().ok_or_else(|| {
+        tracing::warn!(error);
+        tonic::Status::new(tonic::Code::Aborted, top_n_chars(error))
+    })
+}
+
+#[cfg(feature = "non-wasm")]
+pub fn tonic_some_ref_or_err<T>(input: Option<&T>, error: String) -> Result<&T, tonic::Status> {
+    input.ok_or_else(|| {
+        tracing::warn!(error);
+        tonic::Status::new(tonic::Code::Aborted, top_n_chars(error))
+    })
+}
+
+#[cfg(feature = "non-wasm")]
+pub fn tonic_handle_potential_err<T, E: ToString>(
+    resp: Result<T, E>,
+    error: String,
+) -> Result<T, tonic::Status> {
+    resp.map_err(|e| {
+        let msg = format!("{}: {}", error, e.to_string());
+        tracing::warn!(msg);
+        tonic::Status::new(tonic::Code::Aborted, top_n_chars(msg))
+    })
 }

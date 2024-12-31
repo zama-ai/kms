@@ -35,10 +35,11 @@ use kms_grpc::rpc_types::{
 };
 use kms_lib::client::{assemble_metadata_alloy, ParsedReencryptionRequest};
 use kms_lib::consts::{DEFAULT_PARAM, TEST_PARAM};
-use kms_lib::cryptography::central_kms::gen_sig_keys;
 use kms_lib::cryptography::internal_crypto_types::{PrivateEncKey, PublicEncKey, PublicSigKey};
 use kms_lib::cryptography::signcryption::ephemeral_encryption_key_generation;
-use kms_lib::rpc::base::{compute_external_pubdata_message_hash, compute_pt_message_hash};
+use kms_lib::engine::base::{
+    compute_external_pubdata_message_hash, compute_pt_message_hash, gen_sig_keys,
+};
 use kms_lib::util::key_setup::test_tools::{
     compute_cipher_from_stored_key, compute_compressed_cipher_from_stored_key,
     compute_proven_ct_from_stored_key_and_serialize, load_crs_from_storage, load_pk_from_storage,
@@ -2315,7 +2316,7 @@ mod tests {
     use kms_lib::{
         consts::TEST_CENTRAL_CRS_ID,
         cryptography::internal_crypto_types::PrivateSigKey,
-        rpc::base::compute_external_pubdata_signature,
+        engine::base::compute_external_pubdata_signature,
         util::key_setup::{ensure_central_crs_exists, ensure_central_server_signing_keys_exist},
         vault::storage::{ram::RamStorage, read_versioned_at_request_id},
     };

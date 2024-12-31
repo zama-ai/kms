@@ -19,11 +19,9 @@ use distributed_decryption::execution::{
 use kms_common::{load_and_unversionize, load_and_unversionize_auxiliary};
 use kms_grpc::rpc_types::{PubDataType, SignedPubDataHandleInternal};
 use kms_lib::{
-    cryptography::{
-        central_kms::{gen_sig_keys, KmsFheKeyHandles},
-        internal_crypto_types::{PrivateSigKey, PublicSigKey},
-    },
-    threshold::threshold_kms::ThresholdFheKeys,
+    cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey},
+    engine::base::{gen_sig_keys, KmsFheKeyHandles},
+    engine::threshold::service_real::ThresholdFheKeys,
     util::key_setup::FhePublicKey,
 };
 use rand::SeedableRng;

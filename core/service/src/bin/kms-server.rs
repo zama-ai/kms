@@ -2,9 +2,10 @@ use std::sync::Arc;
 
 use kms_lib::{
     conf::{init_conf_kms_core_telemetry, CoreConfig},
-    cryptography::{attestation::make_security_module, central_kms::SoftwareKms},
-    rpc::run_server,
-    threshold::threshold_kms::threshold_server_init,
+    cryptography::attestation::make_security_module,
+    engine::centralized::central_kms::RealCentralizedKms,
+    engine::run_server,
+    engine::threshold::service_real::threshold_server_init,
     vault::{
         aws::build_aws_sdk_config,
         keychain::{awskms::build_aws_kms_client, make_keychain},
@@ -221,7 +222,7 @@ async fn main() -> anyhow::Result<()> {
             .await?;
         }
         None => {
-            let kms = SoftwareKms::new(
+            let kms = RealCentralizedKms::new(
                 public_vault,
                 private_vault,
                 backup_vault,

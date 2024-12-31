@@ -1,9 +1,13 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use crate::anyhow_error_and_log;
-use crate::cryptography::central_kms::KmsFheKeyHandles;
+use crate::consts::ID_LENGTH;
 use crate::cryptography::decompression;
-use crate::cryptography::internal_crypto_types::{
-    PrivateSigKey, PublicEncKey, PublicSigKey, Signature,
-};
+use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
+use crate::cryptography::signcryption::internal_verify_sig;
+use crate::util::key_setup::FhePrivateKey;
+use aes_prng::AesRng;
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::Bytes;
 use alloy_primitives::{Address, B256, U256};
@@ -11,13 +15,18 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
+use distributed_decryption::execution::endpoints::keygen::FhePubKeySet;
 use distributed_decryption::execution::tfhe_internals::parameters::{Ciphertext64, DKGParams};
-use kms_grpc::kms::{FheParameter, FheType, TypedPlaintext, VerifyProvenCtRequest};
-use kms_grpc::rpc_types::{
-    CiphertextVerificationForKMS, DecryptionResult, FhePubKey, FheServerKey, CRS,
+use k256::ecdsa::SigningKey;
+use kms_grpc::kms::{
+    FheParameter, FheType, SignedPubDataHandle, TypedPlaintext, VerifyProvenCtRequest,
 };
-use rand::{CryptoRng, RngCore};
-use serde::Serialize;
+use kms_grpc::rpc_types::{
+    hash_element, safe_serialize_hash_element_versioned, CiphertextVerificationForKMS,
+    DecryptionResult, FhePubKey, FheServerKey, PubDataType, SignedPubDataHandleInternal, CRS,
+};
+use rand::{CryptoRng, RngCore, SeedableRng};
+use serde::{Deserialize, Serialize};
 use tfhe::integer::ciphertext::BaseRadixCiphertext;
 use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::integer::IntegerCiphertext;
@@ -27,6 +36,114 @@ use tfhe::{
     FheBool, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32,
     FheUint4, FheUint512, FheUint64, FheUint8,
 };
+use tfhe_versionable::VersionsDispatch;
+use tokio::sync::Mutex;
+
+use super::traits::BaseKms;
+
+#[cfg(feature = "non-wasm")]
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum KmsFheKeyHandlesVersioned {
+    V0(KmsFheKeyHandles),
+}
+
+/// This is a data structure that holds the private key material
+/// of the centralized KMS.
+#[cfg(feature = "non-wasm")]
+#[derive(Clone, Serialize, Deserialize, Versionize, Debug)]
+#[versionize(KmsFheKeyHandlesVersioned)]
+pub struct KmsFheKeyHandles {
+    pub client_key: FhePrivateKey,
+    pub decompression_key: Option<DecompressionKey>,
+    /// Mapping key type to information
+    pub public_key_info: HashMap<PubDataType, SignedPubDataHandleInternal>,
+}
+
+impl Named for KmsFheKeyHandles {
+    const NAME: &'static str = "KmsFheKeyHandles";
+}
+
+#[cfg(feature = "non-wasm")]
+impl KmsFheKeyHandles {
+    /// Compute key handles for the public key materials.
+    /// Note that the handles include a signature on the versionized keys.
+    pub fn new(
+        sig_key: &PrivateSigKey,
+        client_key: FhePrivateKey,
+        public_keys: &FhePubKeySet,
+        decompression_key: Option<DecompressionKey>,
+        eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
+    ) -> anyhow::Result<Self> {
+        let mut public_key_info = HashMap::new();
+        public_key_info.insert(
+            PubDataType::PublicKey,
+            compute_info(sig_key, &public_keys.public_key, eip712_domain)?,
+        );
+        public_key_info.insert(
+            PubDataType::ServerKey,
+            compute_info(sig_key, &public_keys.server_key, eip712_domain)?,
+        );
+        if let Some(sns) = &public_keys.sns_key {
+            public_key_info.insert(
+                PubDataType::SnsKey,
+                compute_info(sig_key, sns, eip712_domain)?,
+            );
+        }
+        Ok(KmsFheKeyHandles {
+            client_key,
+            decompression_key,
+            public_key_info,
+        })
+    }
+}
+
+/// Computes the public into on a serializable `element`.
+/// More specifically, computes the unique handle of the `element` and signs this handle using the
+/// `kms`.
+pub(crate) fn compute_info<S: Serialize + Versionize + Named>(
+    sk: &PrivateSigKey,
+    element: &S,
+    domain: Option<&alloy_sol_types::Eip712Domain>,
+) -> anyhow::Result<SignedPubDataHandleInternal> {
+    let handle = compute_handle(element)?;
+    let signature = crate::cryptography::signcryption::sign(&handle, sk)?;
+
+    // if we get an EIP-712 domain, compute the external signature
+    let external_signature = match domain {
+        Some(domain) => compute_external_pubdata_signature(sk, element, domain)?,
+        None => {
+            tracing::warn!("Skipping external signature computation due to missing domain");
+            vec![]
+        }
+    };
+
+    Ok(SignedPubDataHandleInternal {
+        key_handle: handle,
+        signature: bincode::serialize(&signature)?,
+        external_signature,
+    })
+}
+
+/// Compute a handle of an element, based on its digest
+/// More specifically compute the hash digest, truncate it and convert it to a hex string
+pub fn compute_handle<S>(element: &S) -> anyhow::Result<String>
+where
+    S: Serialize + Versionize + Named,
+{
+    let mut digest = safe_serialize_hash_element_versioned(element)?;
+    // Truncate and convert to hex
+    digest.truncate(ID_LENGTH);
+    Ok(hex::encode(digest))
+}
+
+#[cfg(feature = "non-wasm")]
+pub fn gen_sig_keys<R: CryptoRng + rand::Rng>(rng: &mut R) -> (PublicSigKey, PrivateSigKey) {
+    use k256::ecdsa::SigningKey;
+
+    let sk = SigningKey::random(rng);
+    let pk = SigningKey::verifying_key(&sk);
+    (PublicSigKey::new(*pk), PrivateSigKey::new(sk))
+}
 
 pub fn deserialize_to_low_level(
     fhe_type: &FheType,
@@ -242,39 +359,77 @@ pub fn compute_external_pubdata_signature<D: Serialize + Versionize + Named>(
     Ok(signature)
 }
 
-pub trait BaseKms {
-    fn verify_sig<T: Serialize + AsRef<[u8]>>(
+pub struct BaseKmsStruct {
+    pub(crate) sig_key: Arc<PrivateSigKey>,
+    pub(crate) serialized_verf_key: Arc<Vec<u8>>,
+    pub(crate) rng: Arc<Mutex<AesRng>>,
+}
+
+impl BaseKmsStruct {
+    pub fn new(sig_key: PrivateSigKey) -> anyhow::Result<Self> {
+        let serialized_verf_key = Arc::new(bincode::serialize(&PublicSigKey::new(
+            SigningKey::verifying_key(sig_key.sk()).to_owned(),
+        ))?);
+        Ok(BaseKmsStruct {
+            sig_key: Arc::new(sig_key),
+            serialized_verf_key,
+            rng: Arc::new(Mutex::new(AesRng::from_entropy())),
+        })
+    }
+
+    /// Make a clone of this struct with a newly initialized RNG s.t. that both the new and old struct are safe to use.
+    pub async fn new_instance(&self) -> Self {
+        Self {
+            sig_key: self.sig_key.clone(),
+            serialized_verf_key: self.serialized_verf_key.clone(),
+            rng: Arc::new(Mutex::new(self.new_rng().await)),
+        }
+    }
+
+    pub async fn new_rng(&self) -> AesRng {
+        let mut seed = [0u8; crate::consts::RND_SIZE];
+        // Make a seperate scope for the rng so that it is dropped before the lock is released
+        {
+            let mut base_rng = self.rng.lock().await;
+            base_rng.fill_bytes(seed.as_mut());
+        }
+        AesRng::from_seed(seed)
+    }
+}
+
+impl BaseKms for BaseKmsStruct {
+    fn verify_sig<T>(
         payload: &T,
-        signature: &Signature,
-        verification_key: &PublicSigKey,
-    ) -> anyhow::Result<()>;
-    fn sign<T: Serialize + AsRef<[u8]>>(&self, msg: &T) -> anyhow::Result<Signature>;
-    fn get_serialized_verf_key(&self) -> Vec<u8>;
-    fn digest<T: ?Sized + AsRef<[u8]>>(msg: &T) -> anyhow::Result<Vec<u8>>;
-}
-/// The [Kms] trait represents either a dummy KMS, an HSM, or an MPC network.
-pub trait Kms: BaseKms {
-    fn decrypt(
-        keys: &KmsFheKeyHandles,
-        ct: &[u8],
-        fhe_type: FheType,
-    ) -> anyhow::Result<TypedPlaintext>;
-    #[allow(clippy::too_many_arguments)]
-    fn reencrypt(
-        keys: &KmsFheKeyHandles,
-        sig_key: &PrivateSigKey,
-        rng: &mut (impl CryptoRng + RngCore),
-        ct: &[u8],
-        ct_type: FheType,
-        digest_link: &[u8],
-        enc_key: &PublicEncKey,
-        client_address: &alloy_primitives::Address,
-    ) -> anyhow::Result<Vec<u8>>;
-}
-/// Trait for shutting down the KMS gracefully.
-#[tonic::async_trait]
-pub trait Shutdown {
-    async fn shutdown(&self) -> anyhow::Result<()>;
+        signature: &crate::cryptography::internal_crypto_types::Signature,
+        key: &PublicSigKey,
+    ) -> anyhow::Result<()>
+    where
+        T: Serialize + AsRef<[u8]>,
+    {
+        internal_verify_sig(&payload, signature, key)
+    }
+
+    /// sign `msg` using the KMS' private signing key
+    fn sign<T>(
+        &self,
+        msg: &T,
+    ) -> anyhow::Result<crate::cryptography::internal_crypto_types::Signature>
+    where
+        T: Serialize + AsRef<[u8]>,
+    {
+        crate::cryptography::signcryption::sign(msg, &self.sig_key)
+    }
+
+    fn get_serialized_verf_key(&self) -> Vec<u8> {
+        self.serialized_verf_key.as_ref().clone()
+    }
+
+    fn digest<T>(msg: &T) -> anyhow::Result<Vec<u8>>
+    where
+        T: ?Sized + AsRef<[u8]>,
+    {
+        Ok(hash_element(msg))
+    }
 }
 
 // take an ordered list of plaintexts and ABI encode them into Solidity Bytes
@@ -396,6 +551,36 @@ impl RequestIdGetter for VerifyProvenCtRequest {
     fn request_id(&self) -> Option<kms_grpc::kms::RequestId> {
         self.request_id.clone()
     }
+}
+
+// Values that need to be stored temporarily as part of an async key generation call.
+#[cfg(feature = "non-wasm")]
+pub type KeyGenCallValues = HashMap<PubDataType, SignedPubDataHandleInternal>;
+
+// Values that need to be stored temporarily as part of an async decryption call.
+// Represents the digest of the request and the result of the decryption (a batch of plaintests),
+// as well as an external signature on the batch.
+#[cfg(feature = "non-wasm")]
+pub type DecCallValues = (Vec<u8>, Vec<TypedPlaintext>, Vec<u8>);
+
+// Values that need to be stored temporarily as part of an async reencryption call.
+// Represents the FHE type, the digest of the request and the partial decryption.
+#[cfg(feature = "non-wasm")]
+pub type ReencCallValues = (FheType, Vec<u8>, Vec<u8>);
+
+/// Helper method which takes a [HashMap<PubDataType, SignedPubDataHandle>] and returns
+/// [HashMap<String, SignedPubDataHandle>] by applying the [ToString] function on [PubDataType] for each element in the map.
+/// The function is needed since protobuf does not support enums in maps.
+pub(crate) fn convert_key_response(
+    key_info_map: HashMap<PubDataType, SignedPubDataHandleInternal>,
+) -> HashMap<String, SignedPubDataHandle> {
+    key_info_map
+        .into_iter()
+        .map(|(key_type, key_info)| {
+            let key_type = key_type.to_string();
+            (key_type, key_info.into())
+        })
+        .collect()
 }
 
 #[cfg(test)]

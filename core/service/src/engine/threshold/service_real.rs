@@ -1,37 +1,35 @@
-#[cfg(feature = "insecure")]
-use super::generic::InsecureCrsGenerator;
 use crate::conf::threshold::{PeerConf, ThresholdParty};
 use crate::consts::{INFLIGHT_REQUEST_WAITING_TIME, MINIMUM_SESSIONS_PREPROC, PRSS_EPOCH_ID};
-use crate::cryptography::central_kms::{
-    async_generate_crs, compute_info, BaseKmsStruct, DecCallValues, KeyGenCallValues,
-    ReencCallValues,
-};
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey};
 use crate::cryptography::proven_ct_verifier::{
     get_verify_proven_ct_result, non_blocking_verify_proven_ct,
 };
 use crate::cryptography::signcryption::signcrypt;
-use crate::rpc::base::{
-    compute_external_pt_signature, deserialize_to_low_level, retrieve_parameters, BaseKms,
+use crate::engine::base::compute_info;
+use crate::engine::base::BaseKmsStruct;
+use crate::engine::base::{
+    compute_external_pt_signature, deserialize_to_low_level, retrieve_parameters,
 };
-use crate::rpc::central_rpc::{
-    convert_key_response, tonic_handle_potential_err, tonic_some_or_err, validate_decrypt_req,
-    validate_reencrypt_req, validate_request_id,
+use crate::engine::base::{convert_key_response, DecCallValues, KeyGenCallValues, ReencCallValues};
+use crate::engine::centralized::central_kms::async_generate_crs;
+use crate::engine::threshold::generic::GenericKms;
+use crate::engine::threshold::traits::{
+    CrsGenerator, Decryptor, Initiator, KeyGenPreprocessor, KeyGenerator, ProvenCtVerifier,
+    Reencryptor,
 };
-use crate::rpc::prepare_shutdown_signals;
 #[cfg(feature = "insecure")]
-use crate::threshold::generic::InsecureKeyGenerator;
-use crate::threshold::generic::{
-    CrsGenerator, Decryptor, GenericKms, Initiator, KeyGenPreprocessor, KeyGenerator,
-    ProvenCtVerifier, Reencryptor,
+use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
+use crate::engine::validation::{
+    validate_decrypt_req, validate_reencrypt_req, validate_request_id,
 };
+use crate::engine::{prepare_shutdown_signals, traits::BaseKms};
 use crate::util::meta_store::{handle_res_mapping, MetaStore};
 use crate::util::rate_limiter::{RateLimiter, RateLimiterConfig};
 use crate::vault::storage::{
     crypto_material::ThresholdCryptoMaterialStorage, read_all_data_versioned,
     read_pk_at_request_id, read_versioned_at_request_id, store_versioned_at_request_id, Storage,
 };
-use crate::{anyhow_error_and_log, get_exactly_one};
+use crate::{anyhow_error_and_log, get_exactly_one, tonic_handle_potential_err, tonic_some_or_err};
 use aes_prng::AesRng;
 use ahash::RandomState;
 use anyhow::anyhow;
@@ -2429,10 +2427,11 @@ impl<
 
 #[cfg(test)]
 mod tests {
+    use kms_grpc::kms::RequestId;
+
     use crate::{
         client::test_tools,
         consts::{DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD, PRSS_EPOCH_ID},
-        threshold::threshold_kms::RequestId,
         util::key_setup::test_tools::purge,
         vault::storage::file::FileStorage,
         vault::storage::StorageType,

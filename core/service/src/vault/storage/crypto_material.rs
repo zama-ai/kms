@@ -9,8 +9,8 @@
 //! Not all functions are implemented for all operations, they're implemented as needed
 //! but not difficult to add.
 use crate::{
-    cryptography::central_kms::KmsFheKeyHandles,
-    threshold::threshold_kms::ThresholdFheKeys,
+    engine::base::KmsFheKeyHandles,
+    engine::threshold::service_real::ThresholdFheKeys,
     util::meta_store::MetaStore,
     vault::storage::{delete_at_request_id, delete_pk_at_request_id},
 };
@@ -990,8 +990,9 @@ mod tests {
 
     use crate::{
         consts::TEST_PARAM,
-        cryptography::central_kms::{async_generate_crs, gen_sig_keys, KmsFheKeyHandles},
-        threshold::threshold_kms::ThresholdFheKeys,
+        engine::base::{gen_sig_keys, KmsFheKeyHandles},
+        engine::centralized::central_kms::async_generate_crs,
+        engine::threshold::service_real::ThresholdFheKeys,
         util::meta_store::MetaStore,
         vault::storage::{
             crypto_material::{

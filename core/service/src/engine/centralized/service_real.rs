@@ -1,21 +1,24 @@
-use super::base::{compute_external_pt_signature, BaseKms};
-use crate::cryptography::central_kms::{
-    async_generate_crs, async_generate_fhe_keys, async_reencrypt, central_decrypt, BaseKmsStruct,
-    SoftwareKms,
-};
-use crate::cryptography::central_kms::{verify_reencryption_eip712, KeyGenCallValues};
-use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey};
+use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::cryptography::proven_ct_verifier::{
     get_verify_proven_ct_result, non_blocking_verify_proven_ct,
 };
-use crate::rpc::base::retrieve_parameters;
+use crate::engine::base::{
+    compute_external_pt_signature, convert_key_response, retrieve_parameters, KeyGenCallValues,
+};
+use crate::engine::centralized::central_kms::{
+    async_generate_crs, async_generate_fhe_keys, async_reencrypt, central_decrypt,
+    RealCentralizedKms,
+};
+use crate::engine::traits::BaseKms;
+use crate::engine::validation::{
+    validate_decrypt_req, validate_reencrypt_req, validate_request_id,
+};
 use crate::util::meta_store::{handle_res_mapping, MetaStore};
 use crate::vault::storage::crypto_material::CentralizedCryptoMaterialStorage;
 use crate::vault::storage::Storage;
-use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
+use crate::{tonic_handle_potential_err, tonic_some_or_err};
 use aes_prng::AesRng;
 use ahash::RandomState;
-use alloy_primitives::Address;
 use alloy_sol_types::Eip712Domain;
 use conf_trace::metrics::METRICS;
 use conf_trace::metrics_names::{
@@ -28,16 +31,13 @@ use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 use kms_grpc::kms::core_service_endpoint_server::CoreServiceEndpoint;
 use kms_grpc::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
-    Empty, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenRequest,
-    KeyGenResult, ReencryptionRequest, ReencryptionResponse, ReencryptionResponsePayload,
-    RequestId, SignedPubDataHandle, TypedCiphertext, VerifyProvenCtRequest, VerifyProvenCtResponse,
+    Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenRequest, KeyGenResult,
+    ReencryptionRequest, ReencryptionResponse, ReencryptionResponsePayload, RequestId,
+    VerifyProvenCtRequest, VerifyProvenCtResponse,
 };
 use kms_grpc::rpc_types::{
-    protobuf_to_alloy_domain_option, PubDataType, SignedPubDataHandleInternal,
-    CURRENT_FORMAT_VERSION,
+    protobuf_to_alloy_domain_option, SignedPubDataHandleInternal, CURRENT_FORMAT_VERSION,
 };
-use std::collections::HashMap;
-use std::fmt;
 use std::hash::{BuildHasher, Hasher};
 use std::sync::Arc;
 use tokio::sync::{OwnedSemaphorePermit, RwLock};
@@ -49,7 +49,7 @@ impl<
         PubS: Storage + std::marker::Sync + std::marker::Send + 'static,
         PrivS: Storage + std::marker::Sync + std::marker::Send + 'static,
         BackS: Storage + std::marker::Sync + std::marker::Send + 'static,
-    > CoreServiceEndpoint for SoftwareKms<PubS, PrivS, BackS>
+    > CoreServiceEndpoint for RealCentralizedKms<PubS, PrivS, BackS>
 {
     async fn init(&self, _request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
         tonic_some_or_err(
@@ -820,234 +820,4 @@ async fn crs_gen_background<
         .await;
 
     tracing::info!("⏱️ Core Event Time for CRS-gen: {:?}", start.elapsed());
-}
-
-/// Validates a request ID and returns an appropriate tonic error if it is invalid.
-pub(crate) fn validate_request_id(request_id: &RequestId) -> Result<(), Status> {
-    if !request_id.is_valid() {
-        tracing::warn!(
-            "The value {} is not a valid request ID!",
-            request_id.to_string()
-        );
-        return Err(tonic::Status::new(
-            tonic::Code::InvalidArgument,
-            format!("The value {} is not a valid request ID!", request_id),
-        ));
-    }
-    Ok(())
-}
-
-/// Helper method which takes a [HashMap<PubDataType, SignedPubDataHandle>] and returns
-/// [HashMap<String, SignedPubDataHandle>] by applying the [ToString] function on [PubDataType] for each element in the map.
-/// The function is needed since protobuf does not support enums in maps.
-pub(crate) fn convert_key_response(
-    key_info_map: HashMap<PubDataType, SignedPubDataHandleInternal>,
-) -> HashMap<String, SignedPubDataHandle> {
-    key_info_map
-        .into_iter()
-        .map(|(key_type, key_info)| {
-            let key_type = key_type.to_string();
-            (key_type, key_info.into())
-        })
-        .collect()
-}
-
-/// Validates a reencryption request and returns ciphertext, FheType, request digest, client
-/// encryption key, client verification key, key_id and request_id if valid.
-///
-/// Observe that the key handle is NOT checked for existence here.
-/// This is instead currently handled in `decrypt`` where the retrival of the secret decryption key
-/// is needed.
-pub async fn validate_reencrypt_req(
-    req: &ReencryptionRequest,
-) -> anyhow::Result<(
-    Vec<u8>,
-    FheType,
-    Vec<u8>,
-    PublicEncKey,
-    alloy_primitives::Address,
-    RequestId,
-    RequestId,
-)> {
-    let payload = tonic_some_ref_or_err(
-        req.payload.as_ref(),
-        format!("The request {:?} does not have a payload", req),
-    )?;
-    let request_id = tonic_some_or_err(
-        req.request_id.clone(),
-        "Request ID is not set (validate reencrypt req)".to_string(),
-    )?;
-    if !request_id.is_valid() {
-        return Err(anyhow_error_and_warn_log(format!(
-            "The value {} is not a valid request ID!",
-            request_id
-        )));
-    }
-    if payload.version != CURRENT_FORMAT_VERSION {
-        return Err(anyhow_error_and_warn_log(format!(
-            "Version number was {:?}, whereas current is {:?}",
-            payload.version, CURRENT_FORMAT_VERSION
-        )));
-    }
-
-    let client_verf_key =
-        alloy_primitives::Address::parse_checksummed(&payload.client_address, None)?;
-
-    match verify_reencryption_eip712(req) {
-        Ok(()) => {
-            tracing::debug!("🔒 Signature verified successfully");
-        }
-        Err(e) => {
-            return Err(anyhow_error_and_log(format!(
-                "Signature verification failed with error {e} for request: {req:?}"
-            )));
-        }
-    }
-
-    let ciphertext = payload
-        .ciphertext
-        .clone()
-        .ok_or_else(|| anyhow_error_and_log(format!("Missing ciphertext in request {:?}", req)))?;
-    let fhe_type = payload.fhe_type();
-    let link = req.compute_link_checked()?;
-    let client_enc_key: PublicEncKey = bincode::deserialize(&payload.enc_key)?;
-    let key_id = tonic_some_or_err(
-        payload.key_id.clone(),
-        format!("The request {:?} does not have a key_id", req),
-    )?;
-    Ok((
-        ciphertext,
-        fhe_type,
-        link,
-        client_enc_key,
-        client_verf_key,
-        key_id,
-        request_id,
-    ))
-}
-
-/// Validates a decryption request and unpacks and returns
-/// the ciphertext, FheType, digest, key_id and request_id if it is valid.
-///
-/// Observe that the key handle is NOT checked for existence here.
-/// This is instead currently handled in `decrypt`` where the retrival of the secret decryption key
-/// is needed.
-#[allow(clippy::type_complexity)]
-pub(crate) fn validate_decrypt_req(
-    req: &DecryptionRequest,
-) -> anyhow::Result<(
-    Vec<TypedCiphertext>,
-    Vec<u8>,
-    RequestId,
-    RequestId,
-    Option<Eip712Domain>,
-    Option<Address>,
-)> {
-    let key_id = tonic_some_or_err(
-        req.key_id.clone(),
-        format!("The request {:?} does not have a key_id", req),
-    )?;
-    if req.version != CURRENT_FORMAT_VERSION {
-        return Err(anyhow_error_and_warn_log(format!(
-            "Version number was {:?}, whereas current is {:?}",
-            req.version, CURRENT_FORMAT_VERSION
-        )));
-    }
-    let serialized_req = tonic_handle_potential_err(
-        bincode::serialize(&req),
-        format!("Could not serialize payload {:?}", req),
-    )?;
-    let req_digest = tonic_handle_potential_err(
-        BaseKmsStruct::digest(&serialized_req),
-        format!("Could not hash payload {:?}", req),
-    )?;
-    let request_id = tonic_some_or_err(
-        req.request_id.clone(),
-        "Request ID is not set (validate decrypt req)".to_string(),
-    )?;
-    if !request_id.is_valid() {
-        return Err(anyhow_error_and_warn_log(format!(
-            "The value {} is not a valid request ID!",
-            request_id
-        )));
-    }
-
-    let eip712_domain = protobuf_to_alloy_domain_option(req.domain.as_ref());
-
-    let acl_address = if let Some(address) = req.acl_address.as_ref() {
-        match Address::parse_checksummed(address, None) {
-            Ok(address) => Some(address),
-            Err(e) => {
-                tracing::warn!(
-                    "Could not parse ACL address: {:?}. Error: {:?}. Returning None.",
-                    address,
-                    e
-                );
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    Ok((
-        req.ciphertexts.clone(),
-        req_digest,
-        key_id,
-        request_id,
-        eip712_domain,
-        acl_address,
-    ))
-}
-
-pub fn process_response<T: fmt::Debug>(resp: anyhow::Result<Option<T>>) -> Result<T, Status> {
-    match resp {
-        Ok(None) => {
-            tracing::warn!("A request failed validation");
-            Err(tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("The request failed validation: {}", resp.unwrap_err()),
-            ))
-        }
-        Ok(Some(resp)) => Ok(resp),
-        Err(e) => {
-            tracing::error!("An internal error happened while handle a request: {}", e);
-            Err(tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("Internal server error: {}", e),
-            ))
-        }
-    }
-}
-
-pub fn tonic_some_or_err<T>(input: Option<T>, error: String) -> Result<T, tonic::Status> {
-    input.ok_or_else(|| {
-        tracing::warn!(error);
-        tonic::Status::new(tonic::Code::Aborted, top_n_chars(error))
-    })
-}
-
-pub fn tonic_some_or_err_ref<T>(input: &Option<T>, error: String) -> Result<&T, tonic::Status> {
-    input.as_ref().ok_or_else(|| {
-        tracing::warn!(error);
-        tonic::Status::new(tonic::Code::Aborted, top_n_chars(error))
-    })
-}
-
-pub fn tonic_some_ref_or_err<T>(input: Option<&T>, error: String) -> Result<&T, tonic::Status> {
-    input.ok_or_else(|| {
-        tracing::warn!(error);
-        tonic::Status::new(tonic::Code::Aborted, top_n_chars(error))
-    })
-}
-
-pub fn tonic_handle_potential_err<T, E: ToString>(
-    resp: Result<T, E>,
-    error: String,
-) -> Result<T, tonic::Status> {
-    resp.map_err(|e| {
-        let msg = format!("{}: {}", error, e.to_string());
-        tracing::warn!(msg);
-        tonic::Status::new(tonic::Code::Aborted, top_n_chars(msg))
-    })
 }

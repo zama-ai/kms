@@ -1,12 +1,10 @@
 #[cfg(any(test, feature = "testing"))]
 pub mod test_tools;
 use crate::client::ClientDataType;
-use crate::cryptography::central_kms::compute_info;
-use crate::cryptography::central_kms::{
-    compute_handle, gen_centralized_crs, gen_sig_keys, generate_fhe_keys,
-};
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
-use crate::threshold::threshold_kms::{compute_all_info, ThresholdFheKeys};
+use crate::engine::base::{compute_handle, compute_info, gen_sig_keys};
+use crate::engine::centralized::central_kms::{gen_centralized_crs, generate_fhe_keys};
+use crate::engine::threshold::service_real::{compute_all_info, ThresholdFheKeys};
 use crate::vault::storage::{
     file::FileStorage, read_all_data_versioned, store_pk_at_request_id, store_text_at_request_id,
     store_versioned_at_request_id, Storage, StorageForText, StorageReader, StorageType,

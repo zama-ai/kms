@@ -1,9 +1,7 @@
-use super::{store_versioned_at_request_id, Storage, StorageForText, StorageReader, StorageType};
+use super::{Storage, StorageForText, StorageReader, StorageType};
 use crate::anyhow_error_and_log;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
-use crate::cryptography::central_kms::{compute_handle, SoftwareKmsKeys};
 use anyhow::anyhow;
-use kms_grpc::rpc_types::{PrivDataType, WrappedPublicKey};
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::HashMap;
 use tfhe::{
@@ -107,44 +105,6 @@ impl RamStorage {
             extra_prefix: storage_type.to_string(),
             internal_storage: HashMap::new(),
         }
-    }
-
-    // Construct a storage for private keys
-    pub async fn from_existing_keys_for_private_storage(
-        keys: &SoftwareKmsKeys,
-    ) -> anyhow::Result<Self> {
-        let mut ram_storage = Self::new(StorageType::PRIV);
-        for (cur_req_id, cur_keys) in &keys.key_info {
-            store_versioned_at_request_id(
-                &mut ram_storage,
-                cur_req_id,
-                cur_keys,
-                &PrivDataType::FheKeyInfo.to_string(),
-            )
-            .await?;
-        }
-        let sk_handle = compute_handle(&keys.sig_pk)?;
-        ram_storage
-            .store_data(
-                &keys.sig_sk,
-                &ram_storage.compute_url(&sk_handle, &PrivDataType::SigningKey.to_string())?,
-            )
-            .await?;
-        Ok(ram_storage)
-    }
-
-    pub async fn from_existing_keys_for_public_storage(
-        keys: &HashMap<
-            kms_grpc::kms::RequestId,
-            distributed_decryption::execution::endpoints::keygen::FhePubKeySet,
-        >,
-    ) -> anyhow::Result<Self> {
-        let mut ram_storage = Self::new(StorageType::PUB);
-        for (cur_req_id, cur_keys) in keys {
-            let wrapped_pk = WrappedPublicKey::Compact(&cur_keys.public_key);
-            super::store_pk_at_request_id(&mut ram_storage, cur_req_id, wrapped_pk).await?;
-        }
-        Ok(ram_storage)
     }
 }
 

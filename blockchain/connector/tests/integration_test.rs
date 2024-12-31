@@ -52,7 +52,7 @@ use kms_lib::{
         TEST_THRESHOLD_CRS_ID_4P, TEST_THRESHOLD_CRS_ID_7P, TEST_THRESHOLD_KEY_ID_4P,
         TEST_THRESHOLD_KEY_ID_7P,
     },
-    threshold::mock_threshold_kms::setup_mock_kms,
+    engine::threshold::service_mock::setup_mock_kms,
     util::key_setup::{
         ensure_central_keys_exist, ensure_central_server_signing_keys_exist,
         ensure_client_keys_exist, ensure_threshold_keys_exist,

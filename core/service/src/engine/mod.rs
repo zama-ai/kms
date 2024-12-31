@@ -1,6 +1,6 @@
+use crate::cryptography::signcryption::check_normalized;
 use crate::{anyhow_error_and_log, conf::ServiceEndpoint};
 
-use base::Shutdown;
 use conf_trace::telemetry::make_span;
 use kms_grpc::kms::core_service_endpoint_server::{CoreServiceEndpoint, CoreServiceEndpointServer};
 use std::net::ToSocketAddrs;
@@ -15,7 +15,16 @@ use tower_http::trace::TraceLayer;
 use tracing::Span;
 
 pub mod base;
-pub mod central_rpc;
+pub mod centralized;
+pub mod threshold;
+pub mod traits;
+pub mod validation;
+
+/// Trait for shutting down the KMS gracefully.
+#[tonic::async_trait]
+pub trait Shutdown {
+    async fn shutdown(&self) -> anyhow::Result<()>;
+}
 
 pub async fn prepare_shutdown_signals<F: std::future::Future<Output = ()> + Send + 'static>(
     external_signal: F,

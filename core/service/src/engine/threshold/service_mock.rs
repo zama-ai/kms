@@ -8,9 +8,15 @@ use tokio::sync::Mutex;
 use tokio_util::task::TaskTracker;
 use tonic::{transport, Request, Response, Status};
 
-use super::generic::*;
 use crate::client::test_tools::ServerHandle;
 use crate::consts::DEFAULT_URL;
+use crate::engine::threshold::generic::GenericKms;
+use crate::engine::threshold::traits::{
+    CrsGenerator, Decryptor, Initiator, KeyGenPreprocessor, KeyGenerator, ProvenCtVerifier,
+    Reencryptor,
+};
+#[cfg(feature = "insecure")]
+use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
 use crate::util::random_free_port::random_free_ports;
 use kms_grpc::kms::core_service_endpoint_server::CoreServiceEndpointServer;
 use kms_grpc::kms::{
