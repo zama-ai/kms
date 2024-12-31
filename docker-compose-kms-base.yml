@@ -15,7 +15,7 @@ services:
     image: ghcr.io/zama-ai/kms-blockchain-asc:latest
     build:
       context: .
-      dockerfile: blockchain/contracts/operations/docker/ci.dockerfile      
+      dockerfile: blockchain/contracts/operations/docker/ci.dockerfile
     healthcheck:
       test: "wget -Sq --spider http://localhost:26657/status"
       interval: 1s
@@ -76,6 +76,8 @@ services:
     build:
       context: .
       dockerfile: blockchain/gateway/operations/docker/ci.dockerfile
+      args:
+        LTO_RELEASE: release-test
     ports:
       - "8088:8088"
     volumes:

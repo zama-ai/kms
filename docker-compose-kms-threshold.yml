@@ -16,7 +16,7 @@ services:
       context: .
       dockerfile: core/service/operations/docker/ci.dockerfile  
       args:
-        LTO_RELEASE: release-test    
+        LTO_RELEASE: release-test
     environment:
       - RUST_LOG=info,tonic=info,h2=info
     entrypoint: >
@@ -36,7 +36,7 @@ services:
       context: .
       dockerfile: core/service/operations/docker/ci.dockerfile
       args:
-        LTO_RELEASE: release-test         
+        LTO_RELEASE: release-test
     ports:
       - "50051:50051"
       - "50100:50100"
@@ -86,6 +86,8 @@ services:
     build:
       context: .
       dockerfile: blockchain/connector/operations/docker/ci.dockerfile    
+      args:
+        LTO_RELEASE: release-test
     volumes:
       - ./blockchain/connector/config/:/app/kms-connector/config
     command:
@@ -114,7 +116,7 @@ services:
       context: .
       dockerfile: core/service/operations/docker/ci.dockerfile  
       args:
-        LTO_RELEASE: release-test      
+        LTO_RELEASE: release-test
     ports:
       - "50052:50052"
       - "50200:50200"
@@ -151,6 +153,8 @@ services:
     build:
       context: .
       dockerfile: blockchain/connector/operations/docker/ci.dockerfile    
+      args:
+        LTO_RELEASE: release-test
     volumes:
       - ./blockchain/connector/config/:/app/kms-connector/config
     command:
@@ -179,7 +183,7 @@ services:
       context: .
       dockerfile: core/service/operations/docker/ci.dockerfile
       args:
-        LTO_RELEASE: release-test            
+        LTO_RELEASE: release-test
     ports:
       - "50053:50053"
       - "50300:50300"
@@ -217,6 +221,8 @@ services:
     build:
       context: .
       dockerfile: blockchain/connector/operations/docker/ci.dockerfile    
+      args:
+        LTO_RELEASE: release-test
     volumes:
       - ./blockchain/connector/config/:/app/kms-connector/config
     command:
@@ -284,6 +290,8 @@ services:
     build:
       context: .
       dockerfile: blockchain/connector/operations/docker/ci.dockerfile    
+      args:
+        LTO_RELEASE: release-test
     volumes:
       - ./blockchain/connector/config/:/app/kms-connector/config
     command:
@@ -313,7 +321,7 @@ services:
       context: .
       dockerfile: core/service/operations/docker/ci.dockerfile
       args:
-        LTO_RELEASE: release-test          
+        LTO_RELEASE: release-test
     depends_on:
       dev-kms-core-1:
         condition: service_healthy

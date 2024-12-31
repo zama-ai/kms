@@ -2,6 +2,8 @@
 # Multistage build to reduce image size
 FROM rust:1.82-slim-bookworm AS base
 
+ARG LTO_RELEASE=release
+
 # Install build dependencies
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && \
@@ -31,7 +33,7 @@ RUN --mount=type=secret,id=BLOCKCHAIN_ACTIONS_TOKEN,env=BLOCKCHAIN_ACTIONS_TOKEN
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,target=/app/kms-connector/target,sharing=locked \
-    cargo install --path blockchain/connector --root blockchain/connector --bins
+    cargo install --profile=${LTO_RELEASE} --path blockchain/connector --root blockchain/connector --bins
 
 # Dependencies stage
 FROM debian:stable-slim AS dependencies
