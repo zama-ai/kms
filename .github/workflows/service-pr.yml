@@ -17,7 +17,8 @@ jobs:
     uses: ./.github/workflows/common-build-big-instance.yml
     with:
       working-directory: './core/service'
-      args-tests: '-F slow_tests -F insecure'
+      args-tests: '--test integration_test -F slow_tests -F s3_tests -F insecure'
+      run-minio: true
       run-wasm: true
       package-name: 'kms'
     permissions:

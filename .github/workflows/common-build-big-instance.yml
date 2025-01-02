@@ -17,6 +17,10 @@ on:
         type: boolean
         required: false
         default: false
+      run-minio:
+        type: boolean
+        required: false
+        default: false
       run-redis:
         type: boolean
         required: false
@@ -89,6 +93,7 @@ jobs:
       working-directory: ${{ inputs.working-directory }}
       args-tests: ${{ inputs.args-tests }}
       args-tests-fhe: ${{ inputs.args-tests-fhe }}
+      run-minio: ${{ inputs.run-minio }}
       run-redis: ${{ inputs.run-redis }}
       run-wasm: ${{ inputs.run-wasm }}
       package-name: ${{ inputs.package-name }}

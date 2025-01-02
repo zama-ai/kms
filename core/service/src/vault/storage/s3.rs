@@ -347,10 +347,10 @@ pub(crate) async fn s3_put_blob(
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "s3_tests")]{
-        pub const BUCKET_NAME: &str = "jot2re-kms-key-test";
+        pub const BUCKET_NAME: &str = "ci-kms-key-test";
         pub const AWS_REGION: &str = "eu-north-1";
     // this points to a locally running Minio
-    pub const AWS_S3_ENDPOINT: &str = "http://localhost:9000";
+    pub const AWS_S3_ENDPOINT: &str = "http://127.0.0.1:9000";
     }
 }
 /// Observe that certain tests require an S3 instance setup.

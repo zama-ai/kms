@@ -23,6 +23,10 @@ on:
         type: string
         required: false
         default: "-F tfhe/seeder_unix -F tfhe/x86_64"
+      run-minio:
+        type: boolean
+        required: false
+        default: false
       run-redis:
         type: boolean
         required: false
@@ -79,7 +83,7 @@ jobs:
 
     steps:
       - name: Checkout Project
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2      
 
       # LFS files are needed for backward compatibility tests    
       # Install git LFS before checkout does not seem possible on our self-hosted runners, so we 
@@ -136,7 +140,38 @@ jobs:
       - name: Setup usage of private repo
         run: git config --global url."https://${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}@github.com".insteadOf ssh://git@github.com
 
-      # Code quality checks
+      - name: Setup minio
+        if: ${{ inputs.run-minio }}
+        env:
+          MINIO_ACCESS_KEY: minioadmin
+          MINIO_SECRET_KEY: minioadmin
+        run: |
+          docker run -d -p 9000:9000 --name minio \
+                     -e "MINIO_ACCESS_KEY=${{ env.MINIO_ACCESS_KEY }}" \
+                     -e "MINIO_SECRET_KEY=${{ env.MINIO_SECRET_KEY }}" \
+                     -v /tmp/data:/data \
+                     -v /tmp/config:/root/.minio \
+                     minio/minio server /data
+
+      - name: Setup Minio bucket
+        if: ${{ inputs.run-minio }}
+        env:
+          MINIO_ALIAS: testminio
+          MINIO_BUCKET: ci-kms-key-test
+          MINIO_ACCESS_KEY: minioadmin
+          MINIO_SECRET_KEY: minioadmin
+        run: |
+          curl https://dl.min.io/client/mc/release/linux-amd64/mc \
+            --create-dirs \
+            -o "${HOME}"/minio-binaries/mc
+
+          chmod +x "${HOME}"/minio-binaries/mc
+          export PATH="${PATH}:${HOME}/minio-binaries/"
+
+          mc alias set "${{ env.MINIO_ALIAS }}" http://127.0.0.1:9000 "${{ env.MINIO_ACCESS_KEY }}" "${{ env.MINIO_SECRET_KEY }}"
+          mc mb "${{ env.MINIO_ALIAS }}"/"${{ env.MINIO_BUCKET }}"
+          mc anonymous set public "${{ env.MINIO_ALIAS }}"/"${{ env.MINIO_BUCKET }}"
+
       - name: Formatting
         run: cargo fmt --all -- --check
 
@@ -150,8 +185,13 @@ jobs:
           # some integration tests run docker compose
           # which builds images which need git access
           # building images in every integration test run is bad
+          # We pass aws creds for minio
+          AWS_ACCESS_KEY_ID: "minioadmin"
+          AWS_SECRET_ACCESS_KEY: "minioadmin"
+          AWS_DEFAULT_REGION: "eu-north-1"
+          AWS_ENDPOINT: "http://127.0.0.1:9000"
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-        run: cargo test ${{ inputs.args-tests }} ${{ inputs.args-tests-fhe }}
+        run: RUST_BACKTRACE=full cargo test ${{ inputs.args-tests }} ${{ inputs.args-tests-fhe }}
 
       # Coverage reporting
       - name: Run Tests with Coverage

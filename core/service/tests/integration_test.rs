@@ -347,7 +347,7 @@ mod kms_gen_keys_binary_test {
         let s3_url = format!("s3://{}/central_s3/", BUCKET_NAME);
         let file_url = "file://temp/keys/";
         // Test the following command:
-        // cargo run --features testing  --bin kms-gen-keys -- --param-test --aws-region eu-north-1 --pub-url=s3://jot2re-kms-key-test/central_s3/ --priv-url=file://temp/keys/ --cmd=signing-keys --overwrite --deterministic
+        // cargo run --features testing  --bin kms-gen-keys -- --param-test --aws-region eu-north-1 --pub-url=s3://ci-kms-key-test/central_s3/ --priv-url=file://temp/keys/ --cmd=signing-keys --overwrite --deterministic
         let output = Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
             .arg("--param-test")
@@ -358,12 +358,16 @@ mod kms_gen_keys_binary_test {
             .arg("--cmd=signing-keys")
             .arg("--overwrite")
             .arg("--deterministic")
+            .arg("centralized")
             .output()
             .unwrap();
         let log = String::from_utf8_lossy(&output.stdout);
+        let err_log = String::from_utf8_lossy(&output.stderr);
+        println!("Command output: {}", log);
+        println!("Command error output: {}", err_log);
         assert!(output.status.success());
-        assert!(log.contains("Successfully stored public server signing key under the handle e164d9de0bec6656928726433cc56bef6ee8417a with storage \"S3 storage with bucket"));
-        assert!(log.contains("Successfully stored public server signing key under the handle e164d9de0bec6656928726433cc56bef6ee8417a with storage \"file storage with"));
+        assert!(log.contains("Successfully stored public server signing key under the handle e164d9de0bec6656928726433cc56bef6ee8417a in storage \"S3 storage with"));
+        assert!(log.contains("Successfully stored private central server signing key under the handle e164d9de0bec6656928726433cc56bef6ee8417a in storage \"file storage with"));
     }
 }
 
