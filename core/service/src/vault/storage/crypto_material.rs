@@ -14,7 +14,7 @@ use crate::{
     util::meta_store::MetaStore,
     vault::storage::{delete_at_request_id, delete_pk_at_request_id},
 };
-use kms_grpc::kms::RequestId;
+use kms_grpc::kms::v1::RequestId;
 use kms_grpc::rpc_types::{
     PrivDataType, PubDataType, SignedPubDataHandleInternal, WrappedPublicKey, WrappedPublicKeyOwned,
 };
@@ -980,7 +980,7 @@ mod tests {
         endpoints::keygen::FhePubKeySet,
         tfhe_internals::test_feature::{gen_key_set, keygen_all_party_shares},
     };
-    use kms_grpc::kms::RequestId;
+    use kms_grpc::kms::v1::RequestId;
     use kms_grpc::rpc_types::{PubDataType, WrappedPublicKey};
     use rand::SeedableRng;
     use std::collections::HashMap;

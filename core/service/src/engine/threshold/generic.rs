@@ -5,8 +5,8 @@ use crate::engine::threshold::traits::{
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
 use crate::engine::Shutdown;
-use kms_grpc::kms::core_service_endpoint_server::CoreServiceEndpoint;
-use kms_grpc::kms::*;
+use kms_grpc::kms::v1::*;
+use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use std::{collections::HashMap, sync::Arc};
 use tokio::{sync::Mutex, task::AbortHandle};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};

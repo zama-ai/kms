@@ -3,7 +3,7 @@ use crypto_box::SecretKey;
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 use k256::ecdsa::{SigningKey, VerifyingKey};
 use kms_common::impl_generic_versionize;
-use kms_grpc::kms::FheParameter;
+use kms_grpc::kms::v1::FheParameter;
 use nom::AsBytes;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};

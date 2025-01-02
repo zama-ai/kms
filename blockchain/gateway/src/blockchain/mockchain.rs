@@ -13,7 +13,7 @@ use ethers::prelude::*;
 use events::kms::FheType;
 use events::kms::ReencryptResponseValues;
 use events::HexVectorList;
-use kms_grpc::kms::Eip712DomainMsg;
+use kms_grpc::kms::v1::Eip712DomainMsg;
 
 pub(crate) struct MockchainImpl;
 

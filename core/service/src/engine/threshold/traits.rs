@@ -1,4 +1,4 @@
-use kms_grpc::kms::*;
+use kms_grpc::kms::v1::*;
 use tonic::{Request, Response, Status};
 
 #[tonic::async_trait]

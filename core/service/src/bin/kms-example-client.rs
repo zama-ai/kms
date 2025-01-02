@@ -1,7 +1,7 @@
 use aes_prng::AesRng;
 use clap::{Parser, Subcommand};
-use kms_grpc::kms::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::kms::{InitRequest, RequestId, TypedCiphertext};
+use kms_grpc::kms::v1::{InitRequest, RequestId, TypedCiphertext};
+use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::protobuf_to_alloy_domain;
 use kms_lib::client::{Client, ParsedReencryptionRequest};
 use kms_lib::consts::DEFAULT_THRESHOLD;
@@ -461,7 +461,7 @@ async fn threshold_requests(addresses: Vec<String>, init: bool) -> anyhow::Resul
 
             handles.spawn(tokio::spawn(async move {
                 let init_request = InitRequest {
-                    config: Some(kms_grpc::kms::Config {}),
+                    config: Some(kms_grpc::kms::v1::Config {}),
                 };
                 let _ = ce.init(init_request).await.unwrap();
             }));

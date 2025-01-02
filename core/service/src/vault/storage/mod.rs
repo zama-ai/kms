@@ -1,7 +1,7 @@
 use crate::{anyhow_error_and_log, some_or_err};
 use anyhow::anyhow;
 use aws_sdk_s3::Client as S3Client;
-use kms_grpc::kms::RequestId;
+use kms_grpc::kms::v1::RequestId;
 use kms_grpc::rpc_types::{
     PrivDataType, PubDataType, PublicKeyType, WrappedPublicKey, WrappedPublicKeyOwned,
 };

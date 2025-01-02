@@ -44,8 +44,8 @@ use kms_blockchain_client::query_client::QueryClientBuilder;
 use kms_blockchain_client::query_client::{AscQuery, CscQuery};
 use kms_common::retry_loop;
 use kms_grpc::{
-    kms::{DecryptionResponsePayload, Eip712DomainMsg, VerifyProvenCtResponsePayload},
-    rpc_types::{hash_element, PubDataType, CURRENT_FORMAT_VERSION},
+    kms::v1::{DecryptionResponsePayload, Eip712DomainMsg, VerifyProvenCtResponsePayload},
+    rpc_types::{hash_element, PubDataType},
 };
 use prost::Message;
 use serde::de::DeserializeOwned;
@@ -694,7 +694,6 @@ impl KmsBlockchainImpl {
             kv_ct_handles.clone(),
             fhe_types.clone(),
             Some(external_ct_handles),
-            CURRENT_FORMAT_VERSION,
             acl_address,
             proof,
             eip712_domain.name,
@@ -1079,7 +1078,6 @@ impl Blockchain for KmsBlockchainImpl {
         // NOTE: the ciphertext digest must be the real digest
         let reencrypt_values = ReencryptValues::new(
             signature,
-            CURRENT_FORMAT_VERSION,
             client_address.to_string(),
             enc_key,
             fhe_type,
@@ -1428,8 +1426,8 @@ mod tests {
         kms::{CrsGenResponseValues, FheParameter, KeyGenResponseValues, KmsCoreParty},
         HexVector, HexVectorList,
     };
-    use kms_grpc::kms::FheParameter as RPCFheParameter;
-    use kms_grpc::{kms::RequestId, rpc_types::PubDataType};
+    use kms_grpc::kms::v1::FheParameter as RPCFheParameter;
+    use kms_grpc::{kms::v1::RequestId, rpc_types::PubDataType};
     use std::collections::HashMap;
 
     #[test]

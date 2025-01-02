@@ -14,7 +14,7 @@ use tfhe_versionable::{Versionize, VersionsDispatch};
 use typed_builder::TypedBuilder;
 
 #[cfg(feature = "non-wasm")]
-use kms_grpc::kms::FheType as RPCFheType;
+use kms_grpc::kms::v1::FheType as RPCFheType;
 
 #[derive(VersionsDispatch)]
 pub enum FheParameterVersioned {
@@ -452,8 +452,6 @@ pub struct DecryptValues {
     fhe_types: Vec<FheType>,
     /// The list of external handles of the above ciphertexts (e.g. from fheVM)
     external_handles: Option<HexVectorList>,
-    /// The version number
-    version: u32,
     /// The address of the ACL contract
     acl_address: String,
     /// Proof of permission to decrypt included in ACL contract
@@ -481,7 +479,6 @@ impl DecryptValues {
         ciphertext_handles: impl Into<RedactedHexVectorList>,
         fhe_types: Vec<FheType>,
         external_handles: Option<impl Into<HexVectorList>>,
-        version: u32,
         acl_address: String,
         proof: String,
         eip712_name: String,
@@ -496,7 +493,6 @@ impl DecryptValues {
             ciphertext_handles: ciphertext_handles.into(),
             fhe_types,
             external_handles: external_handles.map(Into::into),
-            version,
             acl_address,
             proof,
             eip712_name,
@@ -505,10 +501,6 @@ impl DecryptValues {
             eip712_verifying_contract,
             eip712_salt: salt,
         })
-    }
-
-    pub fn version(&self) -> u32 {
-        self.version
     }
 
     pub fn key_id(&self) -> &HexVector {
@@ -575,8 +567,6 @@ pub struct ReencryptValues {
     signature: HexVector,
 
     // Payload
-    /// The version number
-    version: u32,
     /// The address of the client receiving the reencryption output
     client_address: String,
     /// The encyption key of the client
@@ -615,7 +605,6 @@ impl ReencryptValues {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         signature: impl Into<HexVector>,
-        version: u32,
         client_address: String,
         enc_key: impl Into<RedactedHexVector>,
         fhe_type: FheType,
@@ -634,7 +623,6 @@ impl ReencryptValues {
         let (chain_id, salt) = validate_eip712(eip712_chain_id, eip712_salt)?;
         Ok(Self {
             signature: signature.into(),
-            version,
             client_address,
             enc_key: enc_key.into(),
             fhe_type,
@@ -654,10 +642,6 @@ impl ReencryptValues {
 
     pub fn signature(&self) -> &HexVector {
         &self.signature
-    }
-
-    pub fn version(&self) -> u32 {
-        self.version
     }
 
     pub fn client_address(&self) -> &str {
@@ -2174,7 +2158,6 @@ mod tests {
     impl Arbitrary for DecryptValues {
         fn arbitrary(g: &mut Gen) -> DecryptValues {
             DecryptValues {
-                version: u32::arbitrary(g),
                 key_id: HexVector::arbitrary(g),
                 fhe_types: Vec::<FheType>::arbitrary(g),
                 ciphertext_handles: RedactedHexVectorList::arbitrary(g),
@@ -2194,7 +2177,6 @@ mod tests {
         fn arbitrary(g: &mut Gen) -> ReencryptValues {
             ReencryptValues {
                 signature: HexVector::arbitrary(g),
-                version: u32::arbitrary(g),
                 client_address: String::arbitrary(g),
                 enc_key: HexVector::arbitrary(g).into(),
                 fhe_type: FheType::arbitrary(g),
@@ -2347,7 +2329,6 @@ mod tests {
             vec![vec![1, 2, 3], vec![4, 4, 4]],
             vec![FheType::Euint8, FheType::Euint16],
             Some(vec![vec![9, 8, 7], vec![5, 4, 3]]),
-            1,
             "acl_address".to_string(),
             "some_proof".to_string(),
             "eip712name".to_string(),
@@ -2363,7 +2344,6 @@ mod tests {
         let json_str = serde_json::json!({
             "decrypt": {
                 "decrypt":{
-                    "version": 1,
                     "key_id": hex::encode("my_key_id".as_bytes()),
                     "fhe_types": ["euint8", "euint16"],
                     "external_handles": [hex::encode([9,8,7]), hex::encode([5, 4, 3])],
@@ -2411,7 +2391,6 @@ mod tests {
     fn test_reencrypt_event_to_json() {
         let reencrypt_values = ReencryptValues::new(
             vec![1],
-            1,
             "0x1234".to_string(),
             vec![4],
             FheType::Ebool,
@@ -2435,7 +2414,6 @@ mod tests {
             "reencrypt": {
                 "reencrypt": {
                     "signature": hex::encode([1]),
-                    "version": 1,
                     "client_address": "0x1234",
                     "enc_key": hex::encode(vec![4]),
                     "fhe_type": "ebool",

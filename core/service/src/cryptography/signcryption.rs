@@ -20,7 +20,7 @@ use bincode::{deserialize, serialize};
 use crypto_box::aead::{Aead, AeadCore};
 use crypto_box::{Nonce, SalsaBox, SecretKey};
 use k256::ecdsa::SigningKey;
-use kms_grpc::kms::TypedPlaintext;
+use kms_grpc::kms::v1::TypedPlaintext;
 use kms_grpc::rpc_types::{hash_element, serialize_hash_element, SigncryptionPayload};
 use nom::AsBytes;
 use rand::{CryptoRng, RngCore};

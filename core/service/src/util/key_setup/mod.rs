@@ -16,7 +16,7 @@ use distributed_decryption::execution::{
     zk::ceremony::make_centralized_public_parameters,
 };
 use itertools::Itertools;
-use kms_grpc::kms::RequestId;
+use kms_grpc::kms::v1::RequestId;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType, WrappedPublicKey};
 use rand::SeedableRng;
 use std::collections::HashMap;

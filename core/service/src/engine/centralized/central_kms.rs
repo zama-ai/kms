@@ -25,11 +25,11 @@ use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 #[cfg(feature = "non-wasm")]
 use distributed_decryption::execution::zk::ceremony::make_centralized_public_parameters;
 use k256::ecdsa::SigningKey;
-use kms_grpc::kms::FheType;
+use kms_grpc::kms::v1::FheType;
 #[cfg(feature = "non-wasm")]
-use kms_grpc::kms::RequestId;
-use kms_grpc::kms::TypedPlaintext;
-use kms_grpc::kms::{TypedCiphertext, VerifyProvenCtResponsePayload};
+use kms_grpc::kms::v1::RequestId;
+use kms_grpc::kms::v1::TypedPlaintext;
+use kms_grpc::kms::v1::{TypedCiphertext, VerifyProvenCtResponsePayload};
 #[cfg(feature = "non-wasm")]
 use kms_grpc::rpc_types::SignedPubDataHandleInternal;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType, SigncryptionPayload};
@@ -567,10 +567,9 @@ pub(crate) mod tests {
     use alloy_signer::SignerSync;
     use alloy_sol_types::SolStruct;
     use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
-    use kms_grpc::kms::{FheType, RequestId};
+    use kms_grpc::kms::v1::{FheType, RequestId};
     use kms_grpc::rpc_types::{
         alloy_to_protobuf_domain, hash_element, PrivDataType, Reencrypt, WrappedPublicKey,
-        CURRENT_FORMAT_VERSION,
     };
     use rand::{RngCore, SeedableRng};
     use serde::{Deserialize, Serialize};
@@ -626,7 +625,7 @@ pub(crate) mod tests {
 
     pub(crate) async fn new_pub_ram_storage_from_existing_keys(
         keys: &HashMap<
-            kms_grpc::kms::RequestId,
+            kms_grpc::kms::v1::RequestId,
             distributed_decryption::execution::endpoints::keygen::FhePubKeySet,
         >,
     ) -> anyhow::Result<RamStorage> {
@@ -1096,8 +1095,7 @@ pub(crate) mod tests {
         let (enc_pk, _) = ephemeral_encryption_key_generation(&mut rng);
         let key_id = DEFAULT_THRESHOLD_KEY_ID_4P.clone();
 
-        let payload = kms_grpc::kms::ReencryptionRequestPayload {
-            version: CURRENT_FORMAT_VERSION,
+        let payload = kms_grpc::kms::v1::ReencryptionRequestPayload {
             enc_key: bincode::serialize(&enc_pk).unwrap(),
             client_address: client_address.to_checksum(None),
             fhe_type: 1,
@@ -1119,7 +1117,7 @@ pub(crate) mod tests {
         let signature = signer.sign_hash_sync(&message_hash).unwrap();
         let domain_msg = alloy_to_protobuf_domain(&domain).unwrap();
 
-        let req = kms_grpc::kms::ReencryptionRequest {
+        let req = kms_grpc::kms::v1::ReencryptionRequest {
             signature: signature.into(),
             payload: Some(payload),
             domain: Some(domain_msg),

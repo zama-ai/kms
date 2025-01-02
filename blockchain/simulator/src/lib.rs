@@ -26,7 +26,7 @@ use kms_blockchain_client::query_client::{
     AscQuery, CscQuery, EventQuery, QueryClient, QueryClientBuilder,
 };
 use kms_common::retry_loop;
-use kms_grpc::kms::{
+use kms_grpc::kms::v1::{
     DecryptionResponsePayload, Eip712DomainMsg, ReencryptionResponse, ReencryptionResponsePayload,
     TypedPlaintext,
 };
@@ -992,7 +992,6 @@ pub async fn execute_decryption_contract(
         vec![handle_bytes.clone()],
         vec![data_type],
         Some(vec![vec![5_u8; 32]]),
-        1,
         "0xFFda6bf26964af9D7eed9e03e53415D37Aa960ee".to_string(),
         "some_proof".to_string(),
         EIP712_NAME.to_string(),
@@ -1104,7 +1103,6 @@ pub async fn execute_reencryption_contract(
 
     let value = OperationValue::Reencrypt(ReencryptValues::new(
         signature.as_bytes().to_vec(),
-        1,
         client_address.to_checksum(None),
         serialized_enc_key.clone(),
         ct_config.data_type,
@@ -2311,7 +2309,7 @@ pub async fn main_from_config(
 #[cfg(test)]
 mod tests {
     use alloy_signer::k256::ecdsa::SigningKey;
-    use kms_grpc::kms::RequestId;
+    use kms_grpc::kms::v1::RequestId;
     use kms_grpc::rpc_types::{alloy_to_protobuf_domain, PrivDataType};
     use kms_lib::{
         consts::TEST_CENTRAL_CRS_ID,

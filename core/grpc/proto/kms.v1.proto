@@ -1,5 +1,5 @@
 syntax = "proto3";
-package kms;
+package kms.v1;
 
 // Initialization request for bootstrapping the threshold KMS.
 message InitRequest {
@@ -112,18 +112,16 @@ message TypedCiphertext {
 }
 
 message DecryptionRequest {
-  // Version of the request format.
-  uint32 version = 1;
   // The one or many ciphertexts and corresponding types to decrypt
-  repeated TypedCiphertext ciphertexts = 2;
+  repeated TypedCiphertext ciphertexts = 1;
   // The key id to use for decryption, will be the request_id used for key
   // generation
-  RequestId key_id = 3;
-  Eip712DomainMsg domain = 4;
-  optional string acl_address = 5;
+  RequestId key_id = 2;
+  Eip712DomainMsg domain = 3;
+  optional string acl_address = 4;
   // The ID of the decryption request. Will be the hash digest the other fields
   // of this message object.
-  RequestId request_id = 6;
+  RequestId request_id = 5;
 }
 
 // The typed plaintext type, which is the result of decryption.
@@ -137,24 +135,22 @@ message TypedPlaintext {
 // KMS-internal Decryption Response Payload, containing meta data, plaintexts
 // and external results
 message DecryptionResponsePayload {
-  // Version of the response format.
-  uint32 version = 1;
   // The server's signature verification key.
   // Encoded using SEC1.
   // Needed to validate the response, but MUST also be linked to a list of
   // trusted keys.
   // TODO should be renamed to make it clear it is the server's key
-  bytes verification_key = 2;
+  bytes verification_key = 1;
 
   // Digest of the request validated.
   // Needed to ensure that the response is for the expected request.
-  bytes digest = 3;
+  bytes digest = 2;
   // A list of plaintexts, as little endian byte arrays. One for each
   // ciphertext.
-  repeated TypedPlaintext plaintexts = 4;
+  repeated TypedPlaintext plaintexts = 3;
   // the signature on external_decryption_result for the external recipient
   // (e.g. the fhevm)
-  optional bytes external_signature = 5;
+  optional bytes external_signature = 4;
 }
 
 // KMS-internal Decryption Response
@@ -166,27 +162,25 @@ message DecryptionResponse {
 }
 
 message ReencryptionRequestPayload {
-  // Version of the request format.
-  uint32 version = 1;
   // The client's (blockchain wallet) address,
   // encoded using EIP-55.
-  string client_address = 2;
+  string client_address = 1;
   // Encoding of the user's public encryption key for this request.
   // Encoding using the default encoding of libsodium, i.e. the 32 bytes of a
   // Montgomery point.
-  bytes enc_key = 3;
+  bytes enc_key = 2;
   // The type of plaintext encrypted.
-  FheType fhe_type = 4;
+  FheType fhe_type = 3;
   // The key id to use for decryption. Will be the request_id used during key
   // generation
-  RequestId key_id = 5;
+  RequestId key_id = 4;
   // The actual ciphertext to decrypt, taken directly from the fhevm.
   // When creating the payload, this field may be empty,
   // it is the responsibility of the gateway to fetch the
   // ciphertext for the given digest below.
-  optional bytes ciphertext = 6;
+  optional bytes ciphertext = 5;
   // The SHA3 digest of the ciphertext above.
-  bytes ciphertext_digest = 7;
+  bytes ciphertext_digest = 6;
 }
 
 // https://eips.ethereum.org/EIPS/eip-712#definition-of-domainseparator
@@ -217,27 +211,25 @@ message ReencryptionResponse {
 }
 
 message ReencryptionResponsePayload {
-  // Version of the response format.
-  uint32 version = 1;
   // The server's signature verification key.
   // Encoded using SEC1.
   // Needed to validate the response, but MUST also be linked to a list of
   // trusted keys.
-  bytes verification_key = 2;
+  bytes verification_key = 1;
   // The concatenation of two digests:
   // (eip712_signing_hash(pk, domain) || ciphertext digest).
   // This is needed to ensure the response corresponds to the request.
-  bytes digest = 3;
+  bytes digest = 2;
   // The type of plaintext encrypted.
-  FheType fhe_type = 4;
+  FheType fhe_type = 3;
   // The signcrypted payload, using a hybrid encryption approach in
   // sign-then-encrypt.
-  bytes signcrypted_ciphertext = 5;
+  bytes signcrypted_ciphertext = 4;
   // The ID of the MPC party doing the reencryption. Used for polynomial
   // reconstruction.
-  uint32 party_id = 6;
+  uint32 party_id = 5;
   // The degree of the sharing scheme used.
-  uint32 degree = 7;
+  uint32 degree = 6;
 }
 
 message VerifyProvenCtRequest {

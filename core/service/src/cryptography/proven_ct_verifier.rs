@@ -6,7 +6,7 @@ use conf_trace::{
         OP_TYPE_TOTAL, OP_VERIFY_PROVEN_CT, TAG_OPERATION_TYPE,
     },
 };
-use kms_grpc::kms::{
+use kms_grpc::kms::v1::{
     RequestId, VerifyProvenCtRequest, VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
 };
 use kms_grpc::rpc_types::WrappedPublicKeyOwned;

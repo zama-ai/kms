@@ -19,17 +19,17 @@ use events::kms::{
     VerifyProvenCtResponseValues, VerifyProvenCtValues,
 };
 use events::HexVector;
-use kms_grpc::kms::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::kms::FheParameter as RPCFheParameter;
-use kms_grpc::kms::{
+use kms_grpc::kms::v1::FheParameter as RPCFheParameter;
+use kms_grpc::kms::v1::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Eip712DomainMsg, KeyGenPreprocStatus, KeyGenPreprocStatusEnum, KeyGenResult,
     ReencryptionRequest, ReencryptionRequestPayload, ReencryptionResponse,
     ReencryptionResponsePayload, TypedCiphertext, VerifyProvenCtRequest, VerifyProvenCtResponse,
     VerifyProvenCtResponsePayload,
 };
-use kms_grpc::kms::{KeyGenPreprocRequest, KeyGenRequest, RequestId};
-use kms_grpc::rpc_types::{PubDataType, CURRENT_FORMAT_VERSION};
+use kms_grpc::kms::v1::{KeyGenPreprocRequest, KeyGenRequest, RequestId};
+use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
+use kms_grpc::rpc_types::PubDataType;
 use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
@@ -721,15 +721,6 @@ where
     ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
         let mut setup = self.get_setup()?;
 
-        if CURRENT_FORMAT_VERSION != self.decrypt.version() {
-            return Err(anyhow!(
-                "version not supported: supported={}, requested={}",
-                CURRENT_FORMAT_VERSION,
-                self.decrypt.version()
-            ));
-        }
-
-        let version = self.decrypt.version();
         let key_id = self.decrypt.key_id().to_hex();
         let kv_ct_handles = self.decrypt.ciphertext_handles();
         let fhe_types = self.decrypt.fhe_types();
@@ -770,7 +761,6 @@ where
 
         // Decryption request for the kms core
         let req = DecryptionRequest {
-            version,
             ciphertexts,
             key_id: Some(RequestId { request_id: key_id }),
             request_id: Some(setup.req_id.clone()),
@@ -894,14 +884,6 @@ where
     ) -> anyhow::Result<Receiver<anyhow::Result<KmsOperationResponse>>> {
         let mut setup = self.get_setup()?;
 
-        if CURRENT_FORMAT_VERSION != self.reencrypt.version() {
-            return Err(anyhow!(
-                "version not supported: supported={}, requested={}",
-                CURRENT_FORMAT_VERSION,
-                self.reencrypt.version()
-            ));
-        }
-
         let reencrypt = &self.reencrypt;
         let ciphertext_handle: Vec<u8> = reencrypt.ciphertext_handle().deref().into();
         let ciphertext = self
@@ -913,7 +895,6 @@ where
         let req = ReencryptionRequest {
             signature: self.reencrypt.signature().into(),
             payload: Some(ReencryptionRequestPayload {
-                version: reencrypt.version(),
                 client_address: reencrypt.client_address().to_string(),
                 enc_key: reencrypt.enc_key().deref().into(),
                 fhe_type: reencrypt.fhe_type() as i32,

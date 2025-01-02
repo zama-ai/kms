@@ -6,7 +6,7 @@ use crate::vault::storage::{
 };
 use crate::vault::storage::{read_pk_at_request_id, StorageType};
 use distributed_decryption::expanded_encrypt;
-use kms_grpc::kms::{FheType, RequestId, TypedPlaintext};
+use kms_grpc::kms::v1::{FheType, RequestId, TypedPlaintext};
 use kms_grpc::rpc_types::{PubDataType, WrappedPublicKeyOwned};
 use std::path::Path;
 use tfhe::safe_serialization::safe_serialize;
@@ -560,7 +560,7 @@ pub(crate) mod setup {
         vault::storage::{file::FileStorage, StorageType},
     };
     use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
-    use kms_grpc::kms::RequestId;
+    use kms_grpc::kms::v1::RequestId;
     use kms_grpc::rpc_types::SIGNING_KEY_ID;
 
     pub async fn ensure_dir_exist() {

@@ -18,7 +18,7 @@ use alloy_sol_types::SolStruct;
 use distributed_decryption::execution::endpoints::keygen::FhePubKeySet;
 use distributed_decryption::execution::tfhe_internals::parameters::{Ciphertext64, DKGParams};
 use k256::ecdsa::SigningKey;
-use kms_grpc::kms::{
+use kms_grpc::kms::v1::{
     FheParameter, FheType, SignedPubDataHandle, TypedPlaintext, VerifyProvenCtRequest,
 };
 use kms_grpc::rpc_types::{
@@ -536,19 +536,19 @@ pub(crate) fn retrieve_parameters(fhe_parameter: i32) -> anyhow::Result<DKGParam
 
 #[cfg(test)]
 pub(crate) trait RequestIdGetter {
-    fn request_id(&self) -> Option<kms_grpc::kms::RequestId>;
+    fn request_id(&self) -> Option<kms_grpc::kms::v1::RequestId>;
 }
 
 #[cfg(test)]
-impl RequestIdGetter for kms_grpc::kms::CrsGenRequest {
-    fn request_id(&self) -> Option<kms_grpc::kms::RequestId> {
+impl RequestIdGetter for kms_grpc::kms::v1::CrsGenRequest {
+    fn request_id(&self) -> Option<kms_grpc::kms::v1::RequestId> {
         self.request_id.clone()
     }
 }
 
 #[cfg(test)]
 impl RequestIdGetter for VerifyProvenCtRequest {
-    fn request_id(&self) -> Option<kms_grpc::kms::RequestId> {
+    fn request_id(&self) -> Option<kms_grpc::kms::v1::RequestId> {
         self.request_id.clone()
     }
 }
@@ -597,14 +597,14 @@ pub(crate) mod tests {
 
         let plaintext = TypedPlaintext {
             bytes: bytes.to_vec(),
-            fhe_type: kms_grpc::kms::FheType::Euint160 as i32,
+            fhe_type: kms_grpc::kms::v1::FheType::Euint160 as i32,
         };
         // Check the value is greater than 2^128
         assert!(plaintext.as_u160() > tfhe::integer::U256::from((0, 1)));
         assert!(plaintext.as_u256() > tfhe::integer::U256::from((0, 1)));
         // Sanity check the internal values - at least one byte must be different from zero
         assert!(bytes.iter().any(|&b| b != 0));
-        assert_eq!(plaintext.fhe_type(), kms_grpc::kms::FheType::Euint160);
+        assert_eq!(plaintext.fhe_type(), kms_grpc::kms::v1::FheType::Euint160);
         // Check consistent representations
         assert!(bytes[0] % 2 == plaintext.as_bool() as u8);
         assert_eq!(plaintext.as_u4(), bytes[0] % 16);

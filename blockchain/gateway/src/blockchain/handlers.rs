@@ -17,7 +17,7 @@ use ethers::abi::encode;
 use ethers::abi::Token;
 use ethers::prelude::*;
 use events::kms::ReencryptResponseValues;
-use kms_grpc::kms::Eip712DomainMsg;
+use kms_grpc::kms::v1::Eip712DomainMsg;
 use std::ops::Mul;
 use std::sync::Arc;
 use tracing::trace_span;

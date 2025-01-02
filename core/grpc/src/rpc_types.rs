@@ -1,5 +1,7 @@
-use crate::kms::{DecryptionResponsePayload, Eip712DomainMsg, FheType, RequestId, TypedPlaintext};
-use crate::kms::{ReencryptionResponsePayload, SignedPubDataHandle};
+use crate::kms::v1::{
+    DecryptionResponsePayload, Eip712DomainMsg, FheType, RequestId, TypedPlaintext,
+};
+use crate::kms::v1::{ReencryptionResponsePayload, SignedPubDataHandle};
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::Eip712Domain;
 use anyhow::anyhow;
@@ -32,7 +34,6 @@ cfg_if::cfg_if! {
 pub const ID_LENGTH: usize = 20;
 pub const SAFE_SER_SIZE_LIMIT: u64 = 1024 * 1024 * 1024 * 2;
 
-pub static CURRENT_FORMAT_VERSION: u32 = 1;
 pub static KEY_GEN_REQUEST_NAME: &str = "key_gen_request";
 pub static CRS_GEN_REQUEST_NAME: &str = "crs_gen_request";
 pub static DEC_REQUEST_NAME: &str = "dec_request";
@@ -406,7 +407,7 @@ pub struct SigncryptionPayload {
 }
 
 #[cfg(feature = "non-wasm")]
-impl crate::kms::ReencryptionRequest {
+impl crate::kms::v1::ReencryptionRequest {
     pub fn compute_link_checked(&self) -> anyhow::Result<Vec<u8>> {
         let payload = self
             .payload
@@ -846,7 +847,6 @@ impl Visitor<'_> for FheTypeVisitor {
     }
 }
 pub trait MetaResponse {
-    fn version(&self) -> u32;
     fn verification_key(&self) -> Vec<u8>;
     fn digest(&self) -> Vec<u8>;
 }
@@ -863,10 +863,6 @@ impl MetaResponse for ReencryptionResponsePayload {
     fn digest(&self) -> Vec<u8> {
         self.digest.to_owned()
     }
-
-    fn version(&self) -> u32 {
-        self.version
-    }
 }
 
 impl FheTypeResponse for ReencryptionResponsePayload {
@@ -882,10 +878,6 @@ impl MetaResponse for DecryptionResponsePayload {
 
     fn digest(&self) -> Vec<u8> {
         self.digest.to_owned()
-    }
-
-    fn version(&self) -> u32 {
-        self.version
     }
 }
 
@@ -1028,7 +1020,7 @@ impl From<(String, FheType)> for TypedPlaintext {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::TypedPlaintext;
-    use crate::kms::RequestId;
+    use crate::kms::v1::RequestId;
 
     #[test]
     fn idempotent_plaintext() {
@@ -1056,7 +1048,8 @@ pub(crate) mod tests {
             TypedPlaintext::from_u128(u128::MAX - 1).as_u128(),
             u128::MAX - 1
         );
-        let alt_u128_plaintext = TypedPlaintext::new(u128::MAX - 1, crate::kms::FheType::Euint128);
+        let alt_u128_plaintext =
+            TypedPlaintext::new(u128::MAX - 1, crate::kms::v1::FheType::Euint128);
         assert_eq!(TypedPlaintext::from_u128(u128::MAX - 1), alt_u128_plaintext);
 
         let u160_val = tfhe::integer::U256::from((23, 999));

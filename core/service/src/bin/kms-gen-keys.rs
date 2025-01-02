@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use core::fmt;
-use kms_grpc::kms::RequestId;
+use kms_grpc::kms::v1::RequestId;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType, SIGNING_KEY_ID};
 use kms_lib::{
     conf::init_kms_core_telemetry,

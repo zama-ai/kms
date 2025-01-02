@@ -2,7 +2,9 @@ use crate::cryptography::signcryption::check_normalized;
 use crate::{anyhow_error_and_log, conf::ServiceEndpoint};
 
 use conf_trace::telemetry::make_span;
-use kms_grpc::kms::core_service_endpoint_server::{CoreServiceEndpoint, CoreServiceEndpointServer};
+use kms_grpc::kms_service::v1::core_service_endpoint_server::{
+    CoreServiceEndpoint, CoreServiceEndpointServer,
+};
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::time::Duration;

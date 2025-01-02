@@ -5,7 +5,16 @@ macro_rules! my_include_proto {
     };
 }
 pub mod kms {
-    my_include_proto!("kms"); // The string specified here must match the proto package name
+    pub mod v1 {
+        my_include_proto!("kms.v1");
+    }
+}
+
+#[cfg(feature = "non-wasm")]
+pub mod kms_service {
+    pub mod v1 {
+        my_include_proto!("kms_service.v1");
+    }
 }
 
 pub mod rpc_types;

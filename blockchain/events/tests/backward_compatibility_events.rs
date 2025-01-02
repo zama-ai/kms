@@ -54,7 +54,6 @@ fn test_decrypt_values(
         .ciphertext_handles(ciphertext_handles.into())
         .fhe_types(fhe_types)
         .external_handles(Some(external_handles.into()))
-        .version(test.version)
         .acl_address(test.acl_address.to_string())
         .proof(test.proof.to_string())
         .eip712_name(test.eip712_name.to_string())
@@ -123,7 +122,6 @@ fn test_reencrypt_values(
 
     let reencrypt_values = ReencryptValues::builder()
         .signature(test.signature.to_vec().into())
-        .version(test.version)
         .client_address(test.client_address.to_string())
         .enc_key(test.enc_key.to_vec().into())
         .fhe_type(FheType::from_str_name(&test.fhe_type_name))

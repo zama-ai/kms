@@ -3,8 +3,8 @@ use alloy_primitives::{Address, B256};
 use alloy_sol_types::SolStruct;
 use anyhow::Context;
 use kms_grpc::{
-    kms::{DecryptionRequest, FheType, ReencryptionRequest, RequestId, TypedCiphertext},
-    rpc_types::{protobuf_to_alloy_domain_option, Reencrypt, CURRENT_FORMAT_VERSION},
+    kms::v1::{DecryptionRequest, FheType, ReencryptionRequest, RequestId, TypedCiphertext},
+    rpc_types::{protobuf_to_alloy_domain_option, Reencrypt},
 };
 use tonic::Status;
 
@@ -67,12 +67,6 @@ pub async fn validate_reencrypt_req(
             request_id
         )));
     }
-    if payload.version != CURRENT_FORMAT_VERSION {
-        return Err(anyhow_error_and_warn_log(format!(
-            "Version number was {:?}, whereas current is {:?}",
-            payload.version, CURRENT_FORMAT_VERSION
-        )));
-    }
 
     let client_verf_key =
         alloy_primitives::Address::parse_checksummed(&payload.client_address, None)?;
@@ -131,12 +125,6 @@ pub(crate) fn validate_decrypt_req(
         req.key_id.clone(),
         format!("The request {:?} does not have a key_id", req),
     )?;
-    if req.version != CURRENT_FORMAT_VERSION {
-        return Err(anyhow_error_and_warn_log(format!(
-            "Version number was {:?}, whereas current is {:?}",
-            req.version, CURRENT_FORMAT_VERSION
-        )));
-    }
     let serialized_req = tonic_handle_potential_err(
         bincode::serialize(&req),
         format!("Could not serialize payload {:?}", req),

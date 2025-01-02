@@ -75,17 +75,17 @@ use distributed_decryption::session_id::SessionId;
 use distributed_decryption::{algebra::base_ring::Z64, execution::endpoints::keygen::FhePubKeySet};
 use itertools::Itertools;
 use k256::ecdsa::SigningKey;
-use kms_grpc::kms::core_service_endpoint_server::CoreServiceEndpointServer;
-use kms_grpc::kms::{
+use kms_grpc::kms::v1::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus,
     KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult, ReencryptionRequest,
     ReencryptionResponse, ReencryptionResponsePayload, RequestId, TypedPlaintext,
     VerifyProvenCtRequest, VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
 };
+use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use kms_grpc::rpc_types::{
     protobuf_to_alloy_domain_option, PrivDataType, PubDataType, SigncryptionPayload,
-    SignedPubDataHandleInternal, CURRENT_FORMAT_VERSION,
+    SignedPubDataHandleInternal,
 };
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -1071,7 +1071,6 @@ impl<
             handle_res_mapping(status, &request_id, "Reencryption").await?;
         let server_verf_key = self.base_kms.get_serialized_verf_key();
         let payload = ReencryptionResponsePayload {
-            version: CURRENT_FORMAT_VERSION,
             signcrypted_ciphertext,
             fhe_type: fhe_type.into(),
             digest: link,
@@ -1449,7 +1448,6 @@ impl<
 
         let server_verf_key = self.base_kms.get_serialized_verf_key();
         let sig_payload = DecryptionResponsePayload {
-            version: CURRENT_FORMAT_VERSION,
             plaintexts,
             verification_key: server_verf_key,
             digest: req_digest,
@@ -2427,7 +2425,7 @@ impl<
 
 #[cfg(test)]
 mod tests {
-    use kms_grpc::kms::RequestId;
+    use kms_grpc::kms::v1::RequestId;
 
     use crate::{
         client::test_tools,

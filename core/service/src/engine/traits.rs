@@ -1,5 +1,5 @@
-use kms_grpc::kms::FheType;
-use kms_grpc::kms::TypedPlaintext;
+use kms_grpc::kms::v1::FheType;
+use kms_grpc::kms::v1::TypedPlaintext;
 use rand::CryptoRng;
 use rand::RngCore;
 use serde::Serialize;

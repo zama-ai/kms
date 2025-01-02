@@ -36,7 +36,7 @@ pub const INFLIGHT_REQUEST_WAITING_TIME: u64 = 1;
 
 cfg_if::cfg_if! {
     if #[cfg(any(test, feature = "testing"))] {
-        use kms_grpc::kms::RequestId;
+        use kms_grpc::kms::v1::RequestId;
 
         pub const DEFAULT_URL: &str = "127.0.0.1";
         pub const DEFAULT_PROT: &str = "http";

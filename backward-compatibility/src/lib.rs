@@ -233,7 +233,6 @@ pub struct DecryptValuesTest {
     pub ciphertext_handles: [[u8; 3]; 2],
     pub fhe_type_names: [Cow<'static, str>; 2],
     pub external_handles: [[u8; 3]; 2],
-    pub version: u32,
     pub acl_address: Cow<'static, str>,
     pub proof: Cow<'static, str>,
     pub eip712_name: Cow<'static, str>,
@@ -286,7 +285,6 @@ impl TestType for DecryptResponseValuesTest {
 pub struct ReencryptValuesTest {
     pub test_filename: Cow<'static, str>,
     pub signature: [u8; 3],
-    pub version: u32,
     pub client_address: Cow<'static, str>,
     pub enc_key: [u8; 3],
     pub fhe_type_name: Cow<'static, str>,

@@ -60,18 +60,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "Eip712DomainMsg",
             "#[wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)]",
         )
-        .compile_protos(&["proto/kms.proto"], &["proto"])?;
+        .compile_protos(&["proto/kms.v1.proto"], &["proto"])?;
     Ok(())
 }
 
 #[cfg(all(feature = "non-wasm", not(feature = "insecure")))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    default_builder().compile_protos(&["proto/kms.proto"], &["proto"])?;
+    default_builder().compile_protos(&["proto/kms-service.v1.proto"], &["proto"])?;
     Ok(())
 }
 
-#[cfg(feature = "insecure")]
+#[cfg(all(feature = "non-wasm", feature = "insecure"))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    default_builder().compile_protos(&["proto/kms-insecure.proto"], &["proto"])?;
+    default_builder().compile_protos(&["proto/kms-service-insecure.v1.proto"], &["proto"])?;
     Ok(())
 }

@@ -711,7 +711,6 @@ mod tests {
             vec![ciphertext_handle; batch_size],
             vec![FheType::Euint8; batch_size],
             Some(vec![vec![23_u8; 32]]),
-            1,
             "0xEEdA6bf26964aF9D7Eed9e03e53415D37aa960EE".to_string(),
             "some proof".to_string(),
             "eip712name".to_string(),
@@ -825,7 +824,6 @@ mod tests {
             vec![ciphertext_handle; batch_size],
             vec![FheType::Euint8; batch_size],
             Some(vec![vec![23_u8; 32]]),
-            1,
             "0xEEdA6bf26964aF9D7Eed9e03e53415D37aa960EE".to_string(),
             "some proof".to_string(),
             "eip712name".to_string(),
@@ -1232,7 +1230,6 @@ mod tests {
 
         let reencrypt = ReencryptValues::new(
             vec![1],
-            1,
             "0x1234".to_string(),
             vec![4],
             FheType::Euint8,

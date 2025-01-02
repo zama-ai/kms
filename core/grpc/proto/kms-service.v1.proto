@@ -1,54 +1,54 @@
 syntax = "proto3";
-package kms;
+package kms_service.v1;
 
-import "base.proto";
+import "kms.v1.proto";
 
 service CoreServiceEndpoint {
   // Perform the threshold KMS initialization.
   // This call returns an error on the centralized KMS.
-  rpc Init(InitRequest) returns (Empty);
+  rpc Init(kms.v1.InitRequest) returns (kms.v1.Empty);
 
   // Start generating preprocessing materials for key generation asynchronously.
   // This call returns an error on the centralized KMS.
-  rpc KeyGenPreproc(KeyGenPreprocRequest) returns (Empty);
+  rpc KeyGenPreproc(kms.v1.KeyGenPreprocRequest) returns (kms.v1.Empty);
 
   // This call returns an error on the centralized KMS.
-  rpc GetPreprocStatus(RequestId) returns (KeyGenPreprocStatus);
+  rpc GetPreprocStatus(kms.v1.RequestId) returns (kms.v1.KeyGenPreprocStatus);
 
   // Generate new keys asynchronously.
-  rpc KeyGen(KeyGenRequest) returns (Empty);
+  rpc KeyGen(kms.v1.KeyGenRequest) returns (kms.v1.Empty);
 
   // Return a URI where they can be accessed.
   // The keys at the URI contains signature and authentication information.
   // NOTE: Unprivileged and insecure call
-  rpc GetKeyGenResult(RequestId) returns (KeyGenResult);
+  rpc GetKeyGenResult(kms.v1.RequestId) returns (kms.v1.KeyGenResult);
 
   // Decrypt a ciphertext and return the signed plaintext.
-  rpc Decrypt(DecryptionRequest) returns (Empty);
+  rpc Decrypt(kms.v1.DecryptionRequest) returns (kms.v1.Empty);
 
   // Get the decryption result.
   // This query fails if the result is not available yet.
-  rpc GetDecryptResult(RequestId) returns (DecryptionResponse);
+  rpc GetDecryptResult(kms.v1.RequestId) returns (kms.v1.DecryptionResponse);
 
   // Reencrypt a ciphertext under a user-specified key and return a signcrypted
   // share of the dercrypted plaintext.
-  rpc Reencrypt(ReencryptionRequest) returns (Empty);
+  rpc Reencrypt(kms.v1.ReencryptionRequest) returns (kms.v1.Empty);
 
   // Get the reencryption result.
   // This query fails if the result is not available yet.
-  rpc GetReencryptResult(RequestId) returns (ReencryptionResponse);
+  rpc GetReencryptResult(kms.v1.RequestId) returns (kms.v1.ReencryptionResponse);
 
   // Start the CRS generatioin protocol asynchronously.
-  rpc CrsGen(CrsGenRequest) returns (Empty);
+  rpc CrsGen(kms.v1.CrsGenRequest) returns (kms.v1.Empty);
 
   // Get a reference to the CRS.
   // This query fails if the result is not available yet.
-  rpc GetCrsGenResult(RequestId) returns (CrsGenResult);
+  rpc GetCrsGenResult(kms.v1.RequestId) returns (kms.v1.CrsGenResult);
 
   // Start a zero-knowledge proof verification
   // on a ProvenCompactCiphertextList.
-  rpc VerifyProvenCt(VerifyProvenCtRequest) returns (Empty);
+  rpc VerifyProvenCt(kms.v1.VerifyProvenCtRequest) returns (kms.v1.Empty);
 
   // Get the zero-knowledge verification result.
-  rpc GetVerifyProvenCtResult(RequestId) returns (VerifyProvenCtResponse);
+  rpc GetVerifyProvenCtResult(kms.v1.RequestId) returns (kms.v1.VerifyProvenCtResponse);
 }

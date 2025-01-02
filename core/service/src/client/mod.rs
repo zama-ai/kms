@@ -26,13 +26,12 @@ use distributed_decryption::execution::sharing::shamir::{
 use distributed_decryption::execution::tfhe_internals::parameters::{
     AugmentedCiphertextParameters, DKGParams,
 };
-use kms_grpc::kms::{
+use kms_grpc::kms::v1::{
     FheType, ReencryptionRequest, ReencryptionRequestPayload, ReencryptionResponse,
     ReencryptionResponsePayload, RequestId, TypedPlaintext,
 };
 use kms_grpc::rpc_types::{
     alloy_to_protobuf_domain, hash_element, FheTypeResponse, MetaResponse, Reencrypt,
-    CURRENT_FORMAT_VERSION,
 };
 use rand::SeedableRng;
 use std::collections::HashSet;
@@ -46,9 +45,9 @@ cfg_if::cfg_if! {
         use crate::engine::traits::BaseKms;
         use crate::engine::base::BaseKmsStruct;
         use crate::vault::storage::{read_all_data_versioned, Storage, StorageReader};
-        use kms_grpc::kms::DecryptionResponse;
-        use kms_grpc::kms::FheParameter;
-        use kms_grpc::kms::{
+        use kms_grpc::kms::v1::DecryptionResponse;
+        use kms_grpc::kms::v1::FheParameter;
+        use kms_grpc::kms::v1::{
             CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponsePayload,
             KeyGenPreprocRequest, KeyGenRequest, KeyGenResult, TypedCiphertext, VerifyProvenCtRequest,
             VerifyProvenCtResponse,
@@ -680,7 +679,6 @@ impl Client {
         let domain_msg = alloy_to_protobuf_domain(domain)?;
 
         let req = DecryptionRequest {
-            version: CURRENT_FORMAT_VERSION,
             ciphertexts,
             key_id: Some(key_id.clone()),
             domain: Some(domain_msg),
@@ -717,7 +715,6 @@ impl Client {
         let ciphertext_digest = hash_element(&ciphertext);
         let (enc_pk, enc_sk) = ephemeral_encryption_key_generation(&mut self.rng);
         let sig_payload = ReencryptionRequestPayload {
-            version: CURRENT_FORMAT_VERSION,
             enc_key: serialize(&enc_pk)?,
             client_address: self.client_address.to_checksum(None),
             fhe_type: fhe_type as i32,
@@ -1122,11 +1119,6 @@ impl Client {
                     ));
                 }
                 let pivot_payload = resp_parsed_payloads[0].clone();
-                if req.version != pivot_payload.version() {
-                    return Err(anyhow_error_and_log(
-                        "Version in the decryption request is incorrect",
-                    ));
-                }
                 // if req.fhe_type() != pivot_payload.fhe_type()? {
                 //     tracing::warn!("Fhe type in the decryption response is incorrect");
                 //     return Ok(false);
@@ -1638,16 +1630,6 @@ impl Client {
         other_resp: &T,
         signature: &[u8],
     ) -> anyhow::Result<bool> {
-        if pivot_resp.version() != other_resp.version() {
-            tracing::warn!(
-                    "Response from server with verification key {:?} gave version {:?}, whereas the pivot server's version is {:?}, and its verification key is {:?}.",
-                    pivot_resp.verification_key(),
-                    pivot_resp.version(),
-                    other_resp.version(),
-                    other_resp.verification_key()
-                );
-            return Ok(false);
-        }
         if pivot_resp.digest() != other_resp.digest() {
             tracing::warn!(
                     "Response from server with verification key {:?} gave digest {:?}, whereas the pivot server gave digest {:?}, and its verification key is {:?}",
@@ -1683,16 +1665,6 @@ impl Client {
         other_resp: &T,
         signature: &[u8],
     ) -> anyhow::Result<bool> {
-        if pivot_resp.version() != other_resp.version() {
-            tracing::warn!(
-                    "Response from server with verification key {:?} gave version {:?}, whereas the pivot server's version is {:?}, and its verification key is {:?}.",
-                    pivot_resp.verification_key(),
-                    pivot_resp.version(),
-                    other_resp.version(),
-                    other_resp.verification_key()
-                );
-            return Ok(false);
-        }
         if pivot_resp.fhe_type()? != other_resp.fhe_type()? {
             tracing::warn!(
                     "Response from server with verification key {:?} gave fhe type {:?}, whereas the pivot server's fhe type is {:?} and its verification key is {:?}",
@@ -1954,8 +1926,8 @@ pub mod test_tools {
     use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
     use futures_util::FutureExt;
     use itertools::Itertools;
-    use kms_grpc::kms::core_service_endpoint_client::CoreServiceEndpointClient;
-    use kms_grpc::kms::core_service_endpoint_server::CoreServiceEndpointServer;
+    use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
+    use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
     use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::RwLock;
@@ -2398,13 +2370,13 @@ pub(crate) mod tests {
     use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
     #[cfg(feature = "wasm_tests")]
     use distributed_decryption::execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
-    use kms_grpc::kms::core_service_endpoint_client::CoreServiceEndpointClient;
-    use kms_grpc::kms::core_service_endpoint_server::CoreServiceEndpointServer;
     #[cfg(feature = "wasm_tests")]
-    use kms_grpc::kms::TypedPlaintext;
-    use kms_grpc::kms::{
+    use kms_grpc::kms::v1::TypedPlaintext;
+    use kms_grpc::kms::v1::{
         Empty, FheParameter, FheType, InitRequest, ReencryptionResponse, RequestId, TypedCiphertext,
     };
+    use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
+    use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
     use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType, Reencrypt};
     use rand::SeedableRng;
     use serial_test::serial;
@@ -5094,9 +5066,9 @@ pub(crate) mod tests {
     //Check status of preproc request
     #[cfg(feature = "slow_tests")]
     async fn get_preproc_status(
-        request: kms_grpc::kms::KeyGenPreprocRequest,
+        request: kms_grpc::kms::v1::KeyGenPreprocRequest,
         kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    ) -> Vec<kms_grpc::kms::KeyGenPreprocStatus> {
+    ) -> Vec<kms_grpc::kms::v1::KeyGenPreprocStatus> {
         let mut tasks = JoinSet::new();
         for i in 1..=kms_clients.len() as u32 {
             let req_id = request.request_id.clone().unwrap();
@@ -5130,7 +5102,7 @@ pub(crate) mod tests {
     #[serial]
     async fn test_preproc(#[case] parallelism: usize, #[case] amount_parties: usize) {
         assert!(parallelism > 0);
-        use kms_grpc::kms::{KeyGenPreprocRequest, KeyGenPreprocStatusEnum};
+        use kms_grpc::kms::v1::{KeyGenPreprocRequest, KeyGenPreprocStatusEnum};
 
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (kms_servers, kms_clients, internal_client) =
@@ -5242,7 +5214,7 @@ pub(crate) mod tests {
     //Helper function to launch dkg
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     async fn launch_dkg(
-        req_keygen: kms_grpc::kms::KeyGenRequest,
+        req_keygen: kms_grpc::kms::v1::KeyGenRequest,
         kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
         insecure: bool,
     ) -> Vec<Result<tonic::Response<Empty>, tonic::Status>> {
@@ -5378,7 +5350,7 @@ pub(crate) mod tests {
     #[tracing_test::traced_test]
     async fn test_dkg(#[case] amount_parties: usize) {
         use itertools::Itertools;
-        use kms_grpc::kms::KeyGenPreprocStatusEnum;
+        use kms_grpc::kms::v1::KeyGenPreprocStatusEnum;
 
         let req_preproc = RequestId::derive("test_dkg-preproc_{amount_parties}").unwrap();
         let req_key = RequestId::derive("test_dkg-key_{amount_parties}").unwrap();

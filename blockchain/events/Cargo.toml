@@ -30,7 +30,7 @@ tonic = { workspace = true, features = [
 tracing = { workspace = true, features = ["log"] }
 typed-builder.workspace = true
 tfhe-versionable.workspace = true
-kms-grpc = { workspace = true, optional = true }
+kms-grpc = { workspace = true, default-features = false, optional = true }
 
 [build-dependencies]
 tonic-build.workspace = true
@@ -46,7 +46,7 @@ kms-common = { workspace = true, features = ["testing"] }
 [features]
 default = []
 non-wasm = [
-    "dep:kms-grpc",
+    "dep:kms-grpc"
 ] # We don't want the kms to be included in the smart contract as it requires protoc
 subscription = [
     "dep:async-trait",

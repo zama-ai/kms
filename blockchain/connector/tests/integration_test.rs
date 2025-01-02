@@ -33,11 +33,11 @@ use kms_blockchain_connector::infrastructure::blockchain::KmsBlockchain;
 use kms_blockchain_connector::infrastructure::core::{KmsCore, KmsEventHandler};
 use kms_blockchain_connector::infrastructure::metrics::OpenTelemetryMetrics;
 use kms_common::retry_loop;
-use kms_grpc::kms::{
+use kms_grpc::kms::v1::{
     DecryptionResponsePayload, ReencryptionResponse, ReencryptionResponsePayload, RequestId,
     VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
 };
-use kms_grpc::rpc_types::{protobuf_to_alloy_domain, CURRENT_FORMAT_VERSION, SIGNING_KEY_ID};
+use kms_grpc::rpc_types::{protobuf_to_alloy_domain, SIGNING_KEY_ID};
 use kms_lib::client::assemble_metadata_alloy;
 use kms_lib::consts::SAFE_SER_SIZE_LIMIT;
 use kms_lib::consts::TEST_PARAM;
@@ -488,7 +488,6 @@ async fn send_decrypt_request(client: &RwLock<Client>, key_id: Vec<u8>) -> Strin
         vec![[0, 0, 0, 0, 0, 1, 1, 1, 1, 1].to_vec()],
         vec![FheType::Euint8],
         Some(vec![[1, 0, 0, 0, 0, 1, 1, 1, 1, 1].to_vec()]),
-        CURRENT_FORMAT_VERSION,
         "0xEEdA6bf26964aF9D7Eed9e03e53415D37aa960EE".to_string(),
         "some_proof".to_string(),
         "eip712name".to_string(),
@@ -690,9 +689,9 @@ async fn ddec_centralized_sunshine() {
     let msg1 = 110u8;
     let msg2 = 222u16;
     setup_central_keys(&TEST_CENTRAL_KEY_ID, &OTHER_CENTRAL_TEST_ID).await;
-    let (ct1, fhe_type1): (Vec<u8>, kms_grpc::kms::FheType) =
+    let (ct1, fhe_type1): (Vec<u8>, kms_grpc::kms::v1::FheType) =
         compute_cipher_from_stored_key(None, msg1.into(), &TEST_CENTRAL_KEY_ID.to_string()).await;
-    let (ct2, fhe_type2): (Vec<u8>, kms_grpc::kms::FheType) =
+    let (ct2, fhe_type2): (Vec<u8>, kms_grpc::kms::v1::FheType) =
         compute_cipher_from_stored_key(None, msg2.into(), &TEST_CENTRAL_KEY_ID.to_string()).await;
     let op = OperationValue::Decrypt(
         DecryptValues::new(
@@ -706,7 +705,6 @@ async fn ddec_centralized_sunshine() {
                 MOCK_EXTERNAL_HANDLES[0].to_vec(),
                 MOCK_EXTERNAL_HANDLES[1].to_vec(),
             ]),
-            CURRENT_FORMAT_VERSION,
             "0xEEdA6bf26964aF9D7Eed9e03e53415D37aa960EE".to_string(),
             "some_proof".to_string(),
             "eip712name".to_string(),
@@ -727,7 +725,6 @@ async fn ddec_centralized_sunshine() {
 
             assert_eq!(payload.plaintexts[0].as_u8(), msg1,);
             assert_eq!(payload.plaintexts[1].as_u16(), msg2,);
-            assert_eq!(payload.version, CURRENT_FORMAT_VERSION);
             assert_eq!(resp.operation_val.tx_id, txn_id);
         }
         _ => {
@@ -902,9 +899,9 @@ async fn ddec_sunshine(key_id: &RequestId, amount_parties: usize, slow: bool) {
     setup_threshold_keys(key_id, amount_parties).await;
     let msg1 = 121u8;
     let msg2 = 321u16;
-    let (ct1, fhe_type1): (Vec<u8>, kms_grpc::kms::FheType) =
+    let (ct1, fhe_type1): (Vec<u8>, kms_grpc::kms::v1::FheType) =
         compute_cipher_from_stored_key(None, msg1.into(), &key_id.to_string()).await;
-    let (ct2, fhe_type2): (Vec<u8>, kms_grpc::kms::FheType) =
+    let (ct2, fhe_type2): (Vec<u8>, kms_grpc::kms::v1::FheType) =
         compute_cipher_from_stored_key(None, msg2.into(), &key_id.to_string()).await;
     let op = OperationValue::Decrypt(
         DecryptValues::new(
@@ -918,7 +915,6 @@ async fn ddec_sunshine(key_id: &RequestId, amount_parties: usize, slow: bool) {
                 MOCK_EXTERNAL_HANDLES[0].to_vec(),
                 MOCK_EXTERNAL_HANDLES[1].to_vec(),
             ]),
-            CURRENT_FORMAT_VERSION,
             "0xEEdA6bf26964aF9D7Eed9e03e53415D37aa960EE".to_string(),
             "some_proof".to_string(),
             "eip712name".to_string(),
@@ -944,7 +940,6 @@ async fn ddec_sunshine(key_id: &RequestId, amount_parties: usize, slow: bool) {
                     assert_eq!(payload.plaintexts[0].as_u8(), msg1,);
                     assert_eq!(payload.plaintexts[1].as_u16(), msg2,);
                 }
-                assert_eq!(payload.version, CURRENT_FORMAT_VERSION);
                 assert_eq!(resp.operation_val.tx_id, txn_id);
             }
             _ => {
@@ -968,7 +963,7 @@ fn dummy_domain() -> alloy_sol_types::Eip712Domain {
 async fn reenc_sunshine(key_id: &RequestId, amount_parties: usize, slow: bool) {
     setup_threshold_keys(key_id, amount_parties).await;
     let msg = 111u8;
-    let (ct, fhe_type): (Vec<u8>, kms_grpc::kms::FheType) =
+    let (ct, fhe_type): (Vec<u8>, kms_grpc::kms::v1::FheType) =
         compute_cipher_from_stored_key(None, msg.into(), &key_id.to_string()).await;
 
     let mut pub_storage = Vec::with_capacity(amount_parties);
@@ -993,7 +988,6 @@ async fn reenc_sunshine(key_id: &RequestId, amount_parties: usize, slow: bool) {
     let op = OperationValue::Reencrypt(
         ReencryptValues::new(
             kms_req.signature.clone(),
-            payload.version,
             payload.client_address,
             payload.enc_key,
             events::kms::FheType::from(fhe_type as u8),
@@ -1053,7 +1047,6 @@ async fn reenc_sunshine(key_id: &RequestId, amount_parties: usize, slow: bool) {
                     assert_eq!(resp.operation_val.tx_id, txn_id);
                     let payload: ReencryptionResponsePayload =
                         bincode::deserialize(resp_value.payload().as_slice()).unwrap();
-                    assert_eq!(payload.version, CURRENT_FORMAT_VERSION);
                     assert_eq!(payload.digest, "dummy digest".as_bytes().to_vec());
                 }
                 _ => {

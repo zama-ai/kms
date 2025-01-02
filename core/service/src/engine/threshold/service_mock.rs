@@ -1,5 +1,5 @@
 use futures_util::FutureExt;
-use kms_grpc::rpc_types::{PubDataType, CURRENT_FORMAT_VERSION};
+use kms_grpc::rpc_types::PubDataType;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -18,14 +18,14 @@ use crate::engine::threshold::traits::{
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
 use crate::util::random_free_port::random_free_ports;
-use kms_grpc::kms::core_service_endpoint_server::CoreServiceEndpointServer;
-use kms_grpc::kms::{
+use kms_grpc::kms::v1::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenPreprocStatusEnum,
     KeyGenRequest, KeyGenResult, ReencryptionRequest, ReencryptionResponse,
     ReencryptionResponsePayload, RequestId, SignedPubDataHandle, TypedPlaintext,
     VerifyProvenCtRequest, VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
 };
+use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 
 pub async fn setup_mock_kms(n: usize) -> HashMap<u32, ServerHandle> {
     let mut out = HashMap::new();
@@ -123,10 +123,9 @@ impl Reencryptor for DummyReencryptor {
         _request: Request<RequestId>,
     ) -> Result<Response<ReencryptionResponse>, Status> {
         let payload = ReencryptionResponsePayload {
-            version: CURRENT_FORMAT_VERSION,
             verification_key: vec![],
             digest: "dummy digest".as_bytes().to_vec(),
-            fhe_type: kms_grpc::kms::FheType::Euint8.into(),
+            fhe_type: kms_grpc::kms::v1::FheType::Euint8.into(),
             signcrypted_ciphertext: "signcrypted_ciphertext".as_bytes().to_vec(),
             party_id: self.degree + 1,
             degree: self.degree,
@@ -156,10 +155,9 @@ impl Decryptor for DummyDecryptor {
         Ok(Response::new(DecryptionResponse {
             signature: vec![1, 2],
             payload: Some(DecryptionResponsePayload {
-                version: CURRENT_FORMAT_VERSION,
                 verification_key: vec![],
                 digest: "dummy digest".as_bytes().to_vec(),
-                plaintexts: vec![TypedPlaintext::new(42, kms_grpc::kms::FheType::Euint8)],
+                plaintexts: vec![TypedPlaintext::new(42, kms_grpc::kms::v1::FheType::Euint8)],
                 external_signature: Some(vec![23_u8; 65]),
             }),
         }))
