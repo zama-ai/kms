@@ -12,9 +12,12 @@ pub struct GatewayClient {
 
 #[async_trait::async_trait]
 impl Oracle for GatewayClient {
-    async fn respond(&self, event: KmsEvent) -> anyhow::Result<()> {
+    async fn respond(&self, event: KmsEvent, height_of_event: u64) -> anyhow::Result<()> {
         info!("tx_id: {:#?}", event.txn_id());
-        info!("🚀🚀🚀🚀🚀🚀 Gateway event: {:?}", event);
+        info!(
+            "🚀🚀🚀🚀🚀🚀 Gateway event: {:?} at height {:?}",
+            event, height_of_event
+        );
         Ok(())
     }
 }

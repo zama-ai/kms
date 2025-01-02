@@ -6,11 +6,14 @@ use crate::blockchain::kms_blockchain::KmsBlockchainImpl;
 use crate::blockchain::mockchain::MockchainImpl;
 use crate::config::GatewayConfig;
 use crate::config::KeyUrlResponseValues;
+use crate::events::manager::DecryptionEvent;
+use crate::events::manager::KmsEventWithHeight;
+use crate::state::file_state::GatewayState;
+use crate::state::GatewayEventState;
 use async_trait::async_trait;
 use ethers::abi::Token;
 use ethers::prelude::*;
 use events::kms::FheType;
-use events::kms::KmsEvent;
 use events::kms::ReencryptResponseValues;
 use events::HexVectorList;
 use kms_grpc::kms::Eip712DomainMsg;
@@ -19,22 +22,28 @@ use tokio::sync::OnceCell;
 
 static BLOCKCHAIN_INSTANCE: Lazy<OnceCell<Arc<dyn Blockchain>>> = Lazy::new(OnceCell::new);
 
-async fn setup_blockchain(config: &GatewayConfig) -> anyhow::Result<Arc<dyn Blockchain>> {
+async fn setup_blockchain(
+    config: &GatewayConfig,
+    state: GatewayState,
+) -> anyhow::Result<Arc<dyn Blockchain>> {
     let strategy: Arc<dyn Blockchain> = match config.debug {
         true => {
             tracing::info!("🐛 Running in debug mode with a mocked KMS backend 🐛");
             Arc::new(MockchainImpl)
         }
-        false => Arc::new(KmsBlockchainImpl::new_from_config(config.clone()).await?),
+        false => Arc::new(KmsBlockchainImpl::new_from_config(config.clone(), state).await?),
     };
 
     Ok(strategy)
 }
 
-pub(super) async fn blockchain_impl(config: &GatewayConfig) -> Arc<dyn Blockchain> {
+pub(super) async fn blockchain_impl(
+    config: &GatewayConfig,
+    state: GatewayState,
+) -> Arc<dyn Blockchain> {
     BLOCKCHAIN_INSTANCE
         .get_or_init(|| async {
-            setup_blockchain(config)
+            setup_blockchain(config, state)
                 .await
                 .expect("Failed to set up decryption strategy")
         })
@@ -44,7 +53,7 @@ pub(super) async fn blockchain_impl(config: &GatewayConfig) -> Arc<dyn Blockchai
 
 #[async_trait]
 pub(crate) trait KmsEventSubscriber: Send + Sync {
-    async fn receive(&self, event: KmsEvent) -> anyhow::Result<()>;
+    async fn receive(&self, event: KmsEventWithHeight) -> anyhow::Result<()>;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -52,9 +61,16 @@ pub(crate) trait KmsEventSubscriber: Send + Sync {
 pub(crate) trait Blockchain: KmsEventSubscriber {
     async fn decrypt(
         &self,
+        event: DecryptionEvent,
         typed_cts: Vec<(Vec<u8>, FheType, Vec<u8>)>,
         eip712_domain: Eip712DomainMsg,
         acl_address: String,
+    ) -> anyhow::Result<(Vec<Token>, Vec<Vec<u8>>)>;
+
+    async fn decrypt_catchup(
+        &self,
+        event: DecryptionEvent,
+        event_state: GatewayEventState,
     ) -> anyhow::Result<(Vec<Token>, Vec<Vec<u8>>)>;
 
     async fn reencrypt(

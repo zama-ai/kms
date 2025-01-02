@@ -1628,7 +1628,7 @@ fn validate_eip712(
 }
 
 #[cw_serde]
-#[derive(Eq, EnumString, Display, EnumIter, strum_macros::EnumProperty, EnumIs, Default)]
+#[derive(Eq, EnumString, Display, EnumIter, strum_macros::EnumProperty, EnumIs, Default, Hash)]
 pub enum KmsOperation {
     #[default]
     #[strum(serialize = "decrypt", props(request = "true"))]
@@ -1867,7 +1867,7 @@ impl Hash for TransactionId {
 }
 
 #[cw_serde]
-#[derive(Eq, TypedBuilder, Default)]
+#[derive(Eq, TypedBuilder, Default, Hash)]
 pub struct KmsEvent {
     #[builder(setter(into))]
     pub operation: KmsOperation,

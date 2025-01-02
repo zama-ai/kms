@@ -1,3 +1,10 @@
+use crate::events::manager::DecryptionEvent;
+use crate::events::manager::KmsEventWithHeight;
+use crate::state::file_state::GatewayState;
+use crate::state::DecryptKmsEventState;
+use crate::state::GatewayEventState;
+use crate::state::GatewayInnerEvent;
+use crate::state::KmsEventState;
 use crate::{
     blockchain::{Blockchain, KmsEventSubscriber},
     config::{
@@ -44,20 +51,29 @@ use prost::Message;
 use serde::de::DeserializeOwned;
 use std::{collections::HashMap, path::MAIN_SEPARATOR_STR, str::FromStr, sync::Arc};
 use strum::IntoEnumIterator;
-use tokio::sync::{mpsc, oneshot, RwLock};
+use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tracing::{info, Instrument};
 
 pub(crate) struct KmsBlockchainImpl {
     pub(crate) client: Arc<RwLock<Client>>,
     pub(crate) query_client: Arc<QueryClient>,
-    pub(crate) responders: Arc<DashMap<TransactionId, oneshot::Sender<KmsEvent>>>,
-    pub(crate) event_sender: Arc<mpsc::Sender<KmsEvent>>,
+    pub(crate) responders: Arc<DashMap<TransactionId, oneshot::Sender<KmsEventWithHeight>>>,
+    pub(crate) event_sender: Arc<mpsc::Sender<KmsEventWithHeight>>,
     pub(crate) config: GatewayConfig,
+    pub(crate) gw_state: GatewayState,
+    // NOTE: We use the Mutex here to ensure atomicity of
+    // the actions performed by the task spawned in new():
+    // - look watchlsit
+    // - insert uncaught
+    // AND the actions performed in wait_for_transaction
+    // - look uncaught
+    // - insert watchlist
+    pub(crate) uncaught_responses: Arc<Mutex<HashMap<TransactionId, KmsEventWithHeight>>>,
 }
 
 #[async_trait]
 impl KmsEventSubscriber for KmsBlockchainImpl {
-    async fn receive(&self, event: KmsEvent) -> anyhow::Result<()> {
+    async fn receive(&self, event: KmsEventWithHeight) -> anyhow::Result<()> {
         tracing::debug!("🤠 Received KmsEvent: {:?}", event);
         self.event_sender
             .send(event)
@@ -91,21 +107,33 @@ impl<'a> KmsBlockchainImpl {
         asc_address: &'a str,
         csc_address: &'a str,
         config: GatewayConfig,
+        state: GatewayState,
     ) -> Self {
-        let (tx, mut rx) = mpsc::channel::<KmsEvent>(100);
-        let responders: Arc<DashMap<TransactionId, oneshot::Sender<KmsEvent>>> =
+        let (tx, mut rx) = mpsc::channel::<KmsEventWithHeight>(100);
+        let responders: Arc<DashMap<TransactionId, oneshot::Sender<KmsEventWithHeight>>> =
             Arc::new(DashMap::new());
+        let uncaught_responses: Arc<Mutex<HashMap<TransactionId, KmsEventWithHeight>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
         tokio::spawn({
             let responders_clone = responders.clone();
+            let uncaught_responses_clone = uncaught_responses.clone();
             async move {
-                while let Some(event) = rx.recv().await {
-                    tracing::info!("🤠🤠🤠 Received KmsEvent: {:?}", event);
-                    let txn_id = event.txn_id.clone();
+                // This channel is fed by the listen loop of the GW itself
+                while let Some(event_with_height) = rx.recv().await {
+                    let mut uncaught_responses_guard = uncaught_responses_clone.lock().await;
+                    tracing::info!("🤠🤠🤠 Received KmsEvent: {:?}", event_with_height);
+                    let txn_id = event_with_height.event.txn_id.clone();
                     if let Some((_, sender)) = responders_clone.remove(&txn_id) {
                         tracing::info!("🤠🤠🤠 Notifying waiting task");
-                        let _ = sender.send(event); // Notify the waiting task
+                        let _ = sender.send(event_with_height); // Notify the waiting task
+                    } else if event_with_height.event.operation().is_response() {
+                        // We store all responses we weren't expecting
+                        // as it may be due to some race condition
+
+                        (*uncaught_responses_guard).insert(txn_id, event_with_height);
                     }
+                    drop(uncaught_responses_guard);
                     //Should we store the event in responders if it's a dec event and it wasn't in responders ? Might mean there was a reace condition (or current GW didn't initiate the decryption)
                 }
             }
@@ -133,10 +161,15 @@ impl<'a> KmsBlockchainImpl {
             responders,
             event_sender: tx.into(),
             config,
+            gw_state: state,
+            uncaught_responses,
         }
     }
 
-    pub(crate) async fn new_from_config(config: GatewayConfig) -> anyhow::Result<Self> {
+    pub(crate) async fn new_from_config(
+        config: GatewayConfig,
+        state: GatewayState,
+    ) -> anyhow::Result<Self> {
         let mnemonic = Some(config.kms.mnemonic.to_string());
         let binding = config.kms.address.to_string();
         let addresses = vec![binding.as_str()];
@@ -148,26 +181,31 @@ impl<'a> KmsBlockchainImpl {
             asc_address.to_string().as_str(),
             csc_address.to_string().as_str(),
             config,
+            state,
         );
 
         Ok(kms_bc_impl)
     }
 
+    // Search for the event we are looking for in the uncaught events,
+    // if it doesn't exist there, insert the event we are looking for in the responders map
+    // that is watched by a task spawned in Self::new
     #[tracing::instrument(skip(self))]
     pub(crate) async fn wait_for_transaction(
         &self,
         txn_id: &TransactionId,
-    ) -> anyhow::Result<KmsEvent> {
-        retry_loop!(
-            || async {
-                let (tx, rx) = oneshot::channel();
-                tracing::info!("🤠🤠🤠 Waiting for transaction: {:?}", txn_id);
-                self.responders.insert(txn_id.clone(), tx);
-                rx.await.map_err(|e| anyhow!(e.to_string()))
-            },
-            1000,
-            5
-        )
+    ) -> anyhow::Result<KmsEventWithHeight> {
+        let mut uncaught_responses_guard = self.uncaught_responses.lock().await;
+        if let Some(event) = (*uncaught_responses_guard).remove(txn_id) {
+            Ok(event)
+        } else {
+            let (tx, rx) = oneshot::channel();
+            tracing::info!("🤠🤠🤠 Waiting for transaction: {:?}", txn_id);
+            self.responders.insert(txn_id.clone(), tx);
+            //Drop the guard to allow for the task spawned in Self::new to make progress
+            drop(uncaught_responses_guard);
+            rx.await.map_err(|e| anyhow!(e.to_string()))
+        }
     }
 
     pub(crate) async fn call_execute_contract(
@@ -184,7 +222,7 @@ impl<'a> KmsBlockchainImpl {
         &self,
         data_size: u32,
         operation: OperationValue,
-    ) -> anyhow::Result<KmsEvent> {
+    ) -> anyhow::Result<KmsEventWithHeight> {
         let request = ExecuteContractRequest::builder()
             .message(KmsMessage::builder().value(operation.clone()).build())
             .gas_limit(10_000_000u64)
@@ -220,13 +258,20 @@ impl<'a> KmsBlockchainImpl {
         }
         .instrument(tracing::Span::current()));
 
-        let events = resp?
+        let resp = resp?;
+        let tx_height = resp.height as u64;
+        let events = resp
             .events
             .iter()
             .filter(|x| KmsOperation::iter().any(|attr| x.r#type == format!("wasm-{}", attr)))
             .map(to_event)
-            .map(<cosmwasm_std::Event as TryInto<KmsEvent>>::try_into)
-            .collect::<Result<Vec<KmsEvent>, _>>()?;
+            .map(|ev| {
+                anyhow::Ok(KmsEventWithHeight::new(
+                    <cosmwasm_std::Event as TryInto<KmsEvent>>::try_into(ev)?,
+                    tx_height,
+                ))
+            })
+            .collect::<Result<Vec<KmsEventWithHeight>, _>>()?;
 
         // At this point evs should contain a single event
         if events.len() != 1 {
@@ -239,7 +284,7 @@ impl<'a> KmsBlockchainImpl {
         let ev = events[0].clone();
         let expected_kms_op = <OperationValue as std::convert::Into<KmsOperation>>::into(operation);
         // Make sure this is indeed the expected event
-        if ev.operation != expected_kms_op {
+        if ev.event.operation != expected_kms_op {
             tracing::error!("Expected a {:?} , but received: {:?}", expected_kms_op, ev);
             return Err(anyhow::anyhow!(
                 "Expected a {:?} , but received: {:?}",
@@ -604,16 +649,13 @@ fn reencrypt_proof_params(
     })
 }
 
-#[async_trait]
-impl Blockchain for KmsBlockchainImpl {
-    // TODO: Properly choose which parameters should be kept in the trace or not
-    #[tracing::instrument(skip(self))]
-    async fn decrypt(
+impl KmsBlockchainImpl {
+    async fn prepare_decrypt_request(
         &self,
         typed_cts: Vec<(Vec<u8>, FheType, Vec<u8>)>,
         eip712_domain: Eip712DomainMsg,
         acl_address: String,
-    ) -> anyhow::Result<(Vec<Token>, Vec<Vec<u8>>)> {
+    ) -> anyhow::Result<(OperationValue, Vec<FheType>, u32)> {
         let num_cts = typed_cts.len();
         let mut kv_ct_handles = Vec::with_capacity(num_cts);
         let mut fhe_types = Vec::with_capacity(num_cts);
@@ -677,47 +719,21 @@ impl Blockchain for KmsBlockchainImpl {
 
         // send coins 1:1 with the ciphertext size
         tracing::info!("🍊 Decrypting ciphertexts of total size: {:?}", total_size);
+        Ok((operation, fhe_types, total_size))
+    }
 
-        // Execute the smart contract and wait for the Tx to appear in a block.
-        // Returns the corresponding KmsEvent of this transaction
-        let ev = self
-            .make_req_to_kms_blockchain(total_size, operation)
-            .await?;
-
-        tracing::info!("✉️ TxId: {:?}", ev.txn_id().to_hex(),);
-
-        tracing::info!(
-            "🍊 Waiting for callback from KMS, txn_id: {:?}",
-            ev.txn_id().to_hex()
-        );
-
-        // NOTE: Might be an (unlikely) race condition between calls:
-        // make_req_to_kms_blockchain and wait_for_transaction
-        //
-        // i.e. What if the response tx has already been emited
-        // before we were monitoring for it ?
-        // Why not decouple the way in from the way back ?
-        // Should Any GW be allowed/able to pick up a dec event from the ASC even if
-        // it didn't initiate this specific decryption ?
-        //
-        // (This isn't possible for e.g. reencryption as we need an open connection with the client though, but otoh, for reencryption client can always retry upon failure)
-
-        // We now wait for an event to be emitted by the ASC that contains the same ID
-        // our decryption event had.
-        // i.e. We expect the corresponding DecryptResponse event
-        let event = self.wait_for_transaction(ev.txn_id()).await?;
-        if event.operation != KmsOperation::DecryptResponse {
-            return Err(anyhow!(
-                "Expected to receive a DecryptResponse, but received {:?}",
-                event
-            ));
-        }
-        tracing::info!("🍊 Received callback from KMS: {:?}", event.txn_id());
+    async fn prepare_decrypt_answer(
+        &self,
+        event: KmsEventWithHeight,
+        fhe_types: Vec<FheType>,
+    ) -> anyhow::Result<(Vec<Token>, Vec<Vec<u8>>)> {
+        tracing::info!("🍊 Received callback from KMS: {:?}", event.event.txn_id());
         // Because we have seen the event, we now know that the result is ready to be queried
         // so we query the GetOperationsValuesFromEvent endpoint of the ASC
-        let results: Vec<OperationValue> =
-            self.get_operations_values_from_event(event.clone()).await?;
 
+        let results: Vec<OperationValue> = self
+            .get_operations_values_from_event(event.event.clone())
+            .await?;
         let (ptxts, sigs) = match self.config.mode {
             KmsMode::Centralized => match results.first().unwrap() {
                 OperationValue::DecryptResponse(decrypt_response) => {
@@ -875,6 +891,123 @@ impl Blockchain for KmsBlockchainImpl {
         info!("🍊 plaintexts: {:#?}", tokens);
         Ok((tokens, sigs))
     }
+}
+
+#[async_trait]
+impl Blockchain for KmsBlockchainImpl {
+    // TODO: Properly choose which parameters should be kept in the trace or not
+    #[tracing::instrument(skip(self))]
+    async fn decrypt(
+        &self,
+        decryption_event: DecryptionEvent,
+        typed_cts: Vec<(Vec<u8>, FheType, Vec<u8>)>,
+        eip712_domain: Eip712DomainMsg,
+        acl_address: String,
+    ) -> anyhow::Result<(Vec<Token>, Vec<Vec<u8>>)> {
+        let (operation, fhe_types, total_size) = self
+            .prepare_decrypt_request(typed_cts, eip712_domain, acl_address)
+            .await?;
+
+        // Execute the smart contract and wait for the Tx to appear in a block.
+        // Returns the corresponding KmsEvent of this transaction
+        let ev = self
+            .make_req_to_kms_blockchain(total_size, operation)
+            .await?;
+
+        //Update the GW state
+        let gateway_event = GatewayInnerEvent::Decryption(decryption_event);
+        let event_state = DecryptKmsEventState {
+            event: ev.clone(),
+            fhe_types: fhe_types.clone(),
+        };
+        self.gw_state
+            .update_event(
+                &gateway_event,
+                GatewayEventState::SentToKmsBc(KmsEventState::Decrypt(event_state)),
+            )
+            .await?;
+
+        tracing::info!("✉️ TxId: {:?}", ev.event.txn_id().to_hex(),);
+
+        tracing::info!(
+            "🍊 Waiting for callback from KMS, txn_id: {:?}",
+            ev.event.txn_id().to_hex()
+        );
+
+        let event = self.wait_for_transaction(ev.event.txn_id()).await?;
+        if event.event.operation != KmsOperation::DecryptResponse {
+            return Err(anyhow!(
+                "Expected to receive a DecryptResponse, but received {:?}",
+                event
+            ));
+        }
+
+        // Update the state
+        let event_state = DecryptKmsEventState {
+            event: event.clone(),
+            fhe_types: fhe_types.clone(),
+        };
+        self.gw_state
+            .update_event(
+                &gateway_event,
+                GatewayEventState::ResultFromKmsBc(KmsEventState::Decrypt(event_state)),
+            )
+            .await?;
+
+        self.prepare_decrypt_answer(event, fhe_types).await
+    }
+
+    async fn decrypt_catchup(
+        &self,
+        decryption_event: DecryptionEvent,
+        event_state: GatewayEventState,
+    ) -> anyhow::Result<(Vec<Token>, Vec<Vec<u8>>)> {
+        match event_state {
+            GatewayEventState::Received => Err(anyhow!(
+                "Tried to catchup on an event that hasn't been sent to KMS yet"
+            )),
+            GatewayEventState::SentToKmsBc(kms_event) => {
+                if let KmsEventState::Decrypt(decrypt_state) = kms_event {
+                    let (kms_event, fhe_types) = (decrypt_state.event, decrypt_state.fhe_types);
+                    // This work under the hypothesis that we started watching the KMS
+                    // BC from a block height anterior to that of which the response event
+                    // was emitted
+                    let event = self.wait_for_transaction(kms_event.event.txn_id()).await?;
+                    if event.event.operation != KmsOperation::DecryptResponse {
+                        return Err(anyhow!(
+                            "Expected to receive a DecryptResponse, but received {:?}",
+                            event
+                        ));
+                    }
+
+                    // Update the state
+                    let event_state = DecryptKmsEventState {
+                        event: event.clone(),
+                        fhe_types: fhe_types.clone(),
+                    };
+                    let gateway_event = GatewayInnerEvent::Decryption(decryption_event);
+                    self.gw_state
+                        .update_event(
+                            &gateway_event,
+                            GatewayEventState::ResultFromKmsBc(KmsEventState::Decrypt(event_state)),
+                        )
+                        .await?;
+
+                    self.prepare_decrypt_answer(event, fhe_types).await
+                } else {
+                    Err(anyhow!("Wrong type of State in catchup decrypt"))
+                }
+            }
+            GatewayEventState::ResultFromKmsBc(kms_event) => {
+                if let KmsEventState::Decrypt(decrypt_state) = kms_event {
+                    let (event, fhe_types) = (decrypt_state.event, decrypt_state.fhe_types);
+                    self.prepare_decrypt_answer(event, fhe_types).await
+                } else {
+                    Err(anyhow!("Wrong type of State in catchup decrypt"))
+                }
+            }
+        }
+    }
 
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip(self, signature, enc_key, ciphertext, eip712_salt))]
@@ -980,7 +1113,8 @@ impl Blockchain for KmsBlockchainImpl {
         tracing::info!("🍊 Reencrypting ciphertext of size: {:?}", data_size);
         let ev = self
             .make_req_to_kms_blockchain(data_size, operation)
-            .await?;
+            .await?
+            .event;
 
         tracing::info!("✉️ TxId: {:?}", ev.txn_id().to_hex(),);
 
@@ -988,7 +1122,7 @@ impl Blockchain for KmsBlockchainImpl {
             "🍊 Waiting for callback from KMS, txn_id: {:?}",
             ev.txn_id().to_hex()
         );
-        let event = self.wait_for_transaction(ev.txn_id()).await?;
+        let event = self.wait_for_transaction(ev.txn_id()).await?.event;
         if event.operation != KmsOperation::ReencryptResponse {
             return Err(anyhow!(
                 "Expected to receive a ReencryptResponse, but received {:?}",
@@ -1107,7 +1241,8 @@ impl Blockchain for KmsBlockchainImpl {
         // TODO how do we handle payment of verify proven ct validation?
         let ev = self
             .make_req_to_kms_blockchain(data_size, operation)
-            .await?;
+            .await?
+            .event;
 
         tracing::info!("✉️ TxId: {:?}", ev.txn_id().to_hex(),);
 
@@ -1115,7 +1250,7 @@ impl Blockchain for KmsBlockchainImpl {
             "🍊 Waiting for callback from KMS, txn_id: {:?}",
             ev.txn_id().to_hex()
         );
-        let event = self.wait_for_transaction(ev.txn_id()).await?;
+        let event = self.wait_for_transaction(ev.txn_id()).await?.event;
         if event.operation != KmsOperation::VerifyProvenCtResponse {
             tracing::error!(
                 "Expected to receive a VerifyProvenCtResponse, but received {:?}",

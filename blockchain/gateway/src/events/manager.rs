@@ -2,6 +2,7 @@ use crate::blockchain::blockchain_impl;
 use crate::blockchain::ciphertext_provider::CiphertextProvider;
 use crate::blockchain::ciphertext_provider::DummyCiphertextProvider;
 use crate::blockchain::ciphertext_provider::InternalMiddleware;
+use crate::blockchain::handlers::answer_event_decryption;
 use crate::blockchain::handlers::handle_event_decryption;
 use crate::blockchain::handlers::handle_keyurl_event;
 use crate::blockchain::handlers::handle_reencryption_event;
@@ -14,7 +15,9 @@ use crate::config::GatewayConfig;
 use crate::config::KeyUrlResponseValues;
 use crate::config::VerifyProvenCtResponseToClient;
 use crate::events::manager::k256::ecdsa::SigningKey;
-use crate::util::height::AtomicBlockHeight;
+use crate::state::file_state::GatewayState;
+use crate::state::GatewayEventState;
+use crate::state::GatewayInnerEvent;
 use actix_cors::Cors;
 use actix_web::http::Method;
 use actix_web::App;
@@ -35,11 +38,13 @@ use kms_blockchain_connector::domain::oracle::Oracle;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 use tokio::sync::{mpsc, Mutex};
+use tracing::warn;
 use tracing::{debug, error, info, trace_span, Instrument};
 use tracing_actix_web::TracingLogger;
 
@@ -104,7 +109,7 @@ async fn health_check() -> impl Responder {
     HttpResponse::Ok().body("Gateway is listening for reencryption requests")
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DecryptionEvent {
     pub(crate) filter: EventDecryptionFilter,
     pub(crate) block_number: u64,
@@ -120,8 +125,8 @@ pub struct DecryptionEvent {
 // }
 // Note that `client_address` and `eip712_verifying_contract`
 // are encoded using EIP-55.
-#[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq)]
-pub(crate) struct ApiReencryptValues {
+#[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+pub struct ApiReencryptValues {
     pub(crate) signature: HexVector,
     pub(crate) client_address: String,
     pub(crate) enc_key: HexVector,
@@ -135,8 +140,8 @@ pub struct ReencryptionEvent {
     pub(crate) sender: oneshot::Sender<Vec<ReencryptResponseValues>>,
 }
 
-#[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq)]
-pub(crate) struct ApiVerifyProvenCtValues {
+#[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+pub struct ApiVerifyProvenCtValues {
     pub(crate) contract_address: String,
     pub(crate) caller_address: String,
     pub(crate) key_id: String,
@@ -155,13 +160,26 @@ pub struct KeyUrlEvent {
     pub(crate) sender: oneshot::Sender<KeyUrlResponseValues>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct KmsEventWithHeight {
+    pub event: KmsEvent,
+    pub height: u64,
+}
+
+impl KmsEventWithHeight {
+    pub fn new(event: KmsEvent, height: u64) -> Self {
+        Self { event, height }
+    }
+}
+
 // Define different event types
 pub enum GatewayEvent {
     Decryption(DecryptionEvent),
     Reencryption(ReencryptionEvent),
     VerifyProvenCt(VerifyProvenCtEvent),
     KeyUrl(KeyUrlEvent),
-    KmsEvent(KmsEvent),
+    //KmsEvents come with their height
+    KmsEvent(KmsEventWithHeight),
 }
 
 // Define a trait for all publishers
@@ -185,22 +203,22 @@ pub trait HttpPublisher<Event>: Publisher<Event> {
 pub struct DecryptionEventPublisher {
     sender: mpsc::Sender<GatewayEvent>,
     provider: Arc<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>>,
-    atomic_height: Arc<AtomicBlockHeight>,
     config: GatewayConfig,
+    state: GatewayState,
 }
 
 impl DecryptionEventPublisher {
     pub async fn new(
         sender: mpsc::Sender<GatewayEvent>,
         provider: &Arc<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>>,
-        atomic_height: &Arc<AtomicBlockHeight>,
         config: GatewayConfig,
+        state: GatewayState,
     ) -> Self {
         Self {
             sender,
             provider: Arc::clone(provider),
-            atomic_height: Arc::clone(atomic_height),
             config,
+            state,
         }
     }
 }
@@ -216,33 +234,39 @@ impl Publisher<DecryptionEvent> for DecryptionEventPublisher {
 #[async_trait]
 impl RunnablePublisher<DecryptionEvent> for DecryptionEventPublisher {
     async fn run(&self) -> anyhow::Result<()> {
-        let mut last_block = self
-            .provider
-            .get_block(BlockNumber::Latest)
-            .await
-            .unwrap_or_else(|e| {
-                error!("Failed to get latest block: {:?}", e);
-                std::process::exit(1);
-            })
-            .unwrap()
-            .number
-            .unwrap();
-        info!("last_block: {last_block}");
+        // Run from the block height provided by the state or current height
+        let mut last_block = if let Some(height) = self.state.get_main_chain_height().await {
+            height
+        } else {
+            self.provider
+                .get_block(BlockNumber::Latest)
+                .await
+                .unwrap_or_else(|e| {
+                    error!("Failed to get latest block: {:?}", e);
+                    std::process::exit(1);
+                })
+                .unwrap()
+                .number
+                .unwrap()
+                .as_u64()
+        };
 
-        debug!("last_block: {last_block}");
         let mut last_request_id = None;
         let mut stream = self.provider.subscribe_blocks().await.unwrap();
+
+        // NOTE: It seems we use this stream only to wake up
+        // when new blocks are published, BUT we re-query
+        // inside of this loop to get the logs
         while let Some(block) = stream.next().await {
-            info!(
-                "(DecryptionEventPublisher) 🧱 block number: {}",
-                block.number.unwrap()
-            );
+            info!("(DecryptionEventPublisher) 🧱 block number: {}", last_block);
 
             // process any EventDecryption logs
             let events = self
                 .provider
                 .get_logs(
                     &Filter::new()
+                        // from_block includes the given block height but we don't care about the last block
+                        // seen as we already saw it
                         .from_block(last_block)
                         .address(self.config.ethereum.oracle_predeploy_address)
                         .event("EventDecryption(uint256,uint256[],address,bytes4,uint256,uint256,bool)"),
@@ -252,8 +276,8 @@ impl RunnablePublisher<DecryptionEvent> for DecryptionEventPublisher {
 
             for log in events {
                 let block_number = log.block_number.unwrap().as_u64();
-                debug!("Block: {:?}", block_number);
-                let _ = self.atomic_height.try_update(block_number);
+                last_block = std::cmp::max(last_block, block_number);
+                info!("Received event at Block: {:?}", block_number);
                 let event_decryption: EventDecryptionFilter =
                     EthLogDecode::decode_log(&log.clone().into()).unwrap();
 
@@ -268,48 +292,49 @@ impl RunnablePublisher<DecryptionEvent> for DecryptionEventPublisher {
                     info!("⭐ event_decryption: {:?}", event_decryption.request_id);
                     debug!("EventDecryptionFilter: {:?}", event_decryption);
 
-                    self.publish(DecryptionEvent {
+                    //Before publishing we add the event to the state
+                    let decryption_event = DecryptionEvent {
                         filter: event_decryption.clone(),
                         block_number: log.block_number.unwrap().as_u64(),
-                    });
+                    };
+                    if self
+                        .state
+                        .add_event(GatewayInnerEvent::Decryption(decryption_event.clone()))
+                        .await
+                    {
+                        self.publish(decryption_event);
 
-                    info!(
-                        "Handled event decryption: {:?}",
-                        event_decryption.request_id
-                    );
+                        info!(
+                            "Handled event decryption: {:?}",
+                            event_decryption.request_id
+                        );
+                    } else {
+                        warn!("Trying to add a Decryption event that's already in the state. Not handling it here.")
+                    }
                 }
             }
+            // This update also triggers a save of the state
+            let _ = self.state.update_main_chain_height(last_block).await;
 
-            last_block = block.number.unwrap();
+            last_block = block.number.unwrap().as_u64();
         }
         Ok(())
     }
 }
 
 /// Picks up decryption events from the L1 and publish them to our GW
-pub async fn start_decryption_publisher(sender: Sender<GatewayEvent>, config: GatewayConfig) {
+pub async fn start_decryption_publisher(
+    sender: Sender<GatewayEvent>,
+    config: GatewayConfig,
+    state: GatewayState,
+) {
     let provider = get_provider(&config.ethereum).await.unwrap_or_else(|e| {
         tracing::error!("Failed to set up provider: {:?}", e);
         std::process::exit(1);
     });
-    let atomic_height = Arc::new(
-        AtomicBlockHeight::new(
-            &Provider::<Ws>::connect(config.ethereum.wss_url.to_string())
-                .await
-                .unwrap_or_else(|e| {
-                    tracing::error!("Failed to connect to provider for atomic height: {:?}", e);
-                    std::process::exit(1);
-                }),
-        )
-        .await
-        .unwrap_or_else(|e| {
-            tracing::error!("Failed to initialize atomic height: {:?}", e);
-            std::process::exit(1);
-        }),
-    );
+
     let decryption_publisher =
-        DecryptionEventPublisher::new(sender.clone(), &provider, &atomic_height, config.clone())
-            .await;
+        DecryptionEventPublisher::new(sender.clone(), &provider, config.clone(), state).await;
     tokio::spawn(async move {
         if let Err(e) = decryption_publisher.run().await {
             tracing::error!("Failed to run DecryptionEventPublisher: {:?}", e);
@@ -322,31 +347,35 @@ pub async fn start_decryption_publisher(sender: Sender<GatewayEvent>, config: Ga
 #[derive(Clone)]
 pub struct KmsEventPublisher {
     sender: mpsc::Sender<GatewayEvent>,
+    starting_block: Option<usize>,
 }
 
 #[async_trait]
 impl Oracle for KmsEventPublisher {
-    async fn respond(&self, event: KmsEvent) -> anyhow::Result<()> {
+    async fn respond(&self, event: KmsEvent, height_of_event: u64) -> anyhow::Result<()> {
         debug!("🚀🚀🚀🚀🚀🚀 Oracle event: {:?}", event.txn_id());
-        self.publish(event);
+        self.publish(KmsEventWithHeight::new(event, height_of_event));
         Ok(())
     }
 }
 
 impl KmsEventPublisher {
-    pub async fn new(sender: mpsc::Sender<GatewayEvent>) -> Self {
-        Self { sender }
+    pub async fn new(sender: mpsc::Sender<GatewayEvent>, starting_block: Option<usize>) -> Self {
+        Self {
+            sender,
+            starting_block,
+        }
     }
 }
 
-impl Publisher<KmsEvent> for KmsEventPublisher {
-    fn publish(&self, event: KmsEvent) {
+impl Publisher<KmsEventWithHeight> for KmsEventPublisher {
+    fn publish(&self, event: KmsEventWithHeight) {
         self.sender.try_send(GatewayEvent::KmsEvent(event)).unwrap();
     }
 }
 
 #[async_trait]
-impl RunnablePublisher<KmsEvent> for KmsEventPublisher {
+impl RunnablePublisher<KmsEventWithHeight> for KmsEventPublisher {
     async fn run(&self) -> anyhow::Result<()> {
         let config: ConnectorConfig = init_conf_with_trace_connector(
             std::env::var("CONNECTOR_CONFIG")
@@ -356,7 +385,7 @@ impl RunnablePublisher<KmsEvent> for KmsEventPublisher {
 
         let _ = GatewayConnector::new_with_config_and_listener(config, self.clone())
             .await?
-            .listen_for_events(None)
+            .listen_for_events(self.starting_block)
             .await;
         Ok(())
     }
@@ -365,8 +394,11 @@ impl RunnablePublisher<KmsEvent> for KmsEventPublisher {
 /// Picks up events from the KMS BC and publish them to our GW
 ///
 /// Internally uses some form of the _connector_
-pub async fn start_kms_event_publisher(sender: Sender<GatewayEvent>) {
-    let kms_publisher = KmsEventPublisher::new(sender.clone()).await;
+pub async fn start_kms_event_publisher(
+    sender: Sender<GatewayEvent>,
+    starting_block: Option<usize>,
+) {
+    let kms_publisher = KmsEventPublisher::new(sender.clone(), starting_block).await;
     tokio::spawn(async move {
         if let Err(e) = kms_publisher.run().await {
             tracing::error!("Failed to run KmsEventPublisher: {:?}", e);
@@ -538,14 +570,16 @@ pub struct GatewaySubscriber {
     kms_blockchain: Arc<dyn Blockchain>,
     ct_provider: Arc<Box<dyn CiphertextProvider>>,
     middleware: Arc<Box<dyn InternalMiddleware>>,
+    state: GatewayState,
 }
 
 impl GatewaySubscriber {
-    pub async fn new(
+    pub(crate) async fn new(
         receiver: Arc<Mutex<mpsc::Receiver<GatewayEvent>>>,
         config: GatewayConfig,
+        state: GatewayState,
     ) -> anyhow::Result<(Self, Option<MockProvider>)> {
-        let blockchain_instance = blockchain_impl(&config).await;
+        let blockchain_instance = blockchain_impl(&config, state.clone()).await;
         let ct_provider = if config.debug {
             Box::new(DummyCiphertextProvider)
         } else {
@@ -580,6 +614,7 @@ impl GatewaySubscriber {
                 kms_blockchain: blockchain_instance,
                 ct_provider: ct_provider.into(),
                 middleware,
+                state,
             },
             mock,
         ))
@@ -591,23 +626,32 @@ impl GatewaySubscriber {
         let kms = Arc::clone(&self.kms_blockchain);
         let ct_provider = Arc::clone(&self.ct_provider);
         let middleware = Arc::clone(&self.middleware);
+        let state = self.state.clone();
+
         tokio::spawn(async move {
             loop {
-                let event = receiver.lock().await.recv().await.unwrap();
+                // This receiver has senders ends that listen on
+                // - The KMS BC (for Response events)
+                // - The L1 BC (for Decryption Request events)
+                // - The HTTP server (for Verifiy/Reenc Request events)
+                let gateway_event = receiver.lock().await.recv().await.unwrap();
                 let config = config.clone();
                 let kms_blockchain = Arc::clone(&kms);
                 let ct_provider = Arc::clone(&ct_provider);
                 let middleware = Arc::clone(&middleware);
+                let state = state.clone();
                 tokio::task::spawn(
                     async move {
                         let start = tokio::time::Instant::now();
-                        match event {
-                            GatewayEvent::Decryption(msg_event) => {
+                        match gateway_event {
+                            GatewayEvent::Decryption(decryption_event) => {
                                 let span = trace_span!("decrypt");
                                 let _guard = span.enter();
                                 debug!("🫐🫐🫐 Received Decryption Event");
+                                let gateway_inner_event =
+                                    GatewayInnerEvent::Decryption(decryption_event.clone());
                                 if let Err(e) = handle_event_decryption(
-                                    &Arc::new(msg_event.clone()),
+                                    decryption_event,
                                     &config,
                                     kms_blockchain,
                                     middleware,
@@ -615,8 +659,11 @@ impl GatewaySubscriber {
                                 .await
                                 {
                                     error!("Error handling event decryption: {:?}", e);
+                                } else if let Err(e) =
+                                    state.remove_event(&gateway_inner_event).await
+                                {
+                                    error!("Error removing event from state : {:?}", e);
                                 }
-                                debug!("Received Message: {:?}", msg_event);
                             }
                             GatewayEvent::Reencryption(reencrypt_event) => {
                                 let span = trace_span!("re-encrypt");
@@ -669,6 +716,9 @@ impl GatewaySubscriber {
                                     }
                                 }
                             }
+                            // If we receive a KmsEvent that is not a Request (i.e. that is a Respone)
+                            // We forward it to the kms_blockchain that will filter hit and try to hit one
+                            // of the event we are waiting for in wait_for_transaction
                             GatewayEvent::KmsEvent(kms_event) => {
                                 debug!("🫐🫐🫐 Received KmsEvent: {:?}", kms_event);
                                 if let Err(e) = kms_blockchain.receive(kms_event).await {
@@ -683,6 +733,90 @@ impl GatewaySubscriber {
                 );
             }
         });
+    }
+
+    // For now we only support catching up on Decryption request
+    // All other requests will be treated as if they had never been seen
+    pub(crate) fn catchup(&self, old_state: HashMap<GatewayInnerEvent, GatewayEventState>) {
+        let state = self.state.clone();
+        let kms = Arc::clone(&self.kms_blockchain);
+        let middleware = Arc::clone(&self.middleware);
+        tracing::info!("Catching up on {} values from old state", old_state.len());
+        for (event, event_state) in old_state {
+            match event {
+                GatewayInnerEvent::Decryption(decryption_event) => {
+                    let state = state.clone();
+                    let config = self.config.clone();
+                    let kms = kms.clone();
+                    let middleware = middleware.clone();
+
+                    tokio::spawn(async move {
+                        Self::handle_decryption_catchup(
+                            decryption_event,
+                            event_state,
+                            state.clone(),
+                            &config,
+                            kms.clone(),
+                            middleware.clone(),
+                        )
+                        .await;
+                    });
+                }
+                GatewayInnerEvent::Reencryption(_api_reencrypt_values) => todo!(),
+                GatewayInnerEvent::VerifyProvenCt(_api_verify_proven_ct_values) => todo!(),
+            }
+        }
+    }
+
+    async fn handle_decryption_catchup(
+        decryption_event: DecryptionEvent,
+        event_state: GatewayEventState,
+        state: GatewayState,
+        config: &GatewayConfig,
+        kms_blockchain: Arc<dyn Blockchain>,
+        middleware: Arc<Box<dyn InternalMiddleware>>,
+    ) {
+        let request_id = decryption_event.filter.request_id;
+        info!(
+            "Catching up on a request with id {} with state {:?}",
+            request_id, event_state
+        );
+        let gateway_inner_event = GatewayInnerEvent::Decryption(decryption_event.clone());
+        let res = if let GatewayEventState::Received = event_state {
+            // If we've just received the request and nothing else, treat it as a new request
+            if let Err(e) =
+                handle_event_decryption(decryption_event, config, kms_blockchain, middleware).await
+            {
+                error!("Error handling event decryption: {:?}", e);
+            }
+            None
+        } else {
+            // If we had already sent the request to KMS BC,
+            // get result from kms_blockchain
+            match kms_blockchain
+                .decrypt_catchup(decryption_event, event_state)
+                .await
+            {
+                Ok(res) => Some(res),
+                Err(e) => {
+                    error!("Error trying to catchup event decryption: {:?}", e);
+                    None
+                }
+            }
+        };
+
+        //If we have some res, need to compete the tx
+        if let Some((tokens, signatures)) = res {
+            if let Err(e) = answer_event_decryption(tokens, signatures, config, request_id).await {
+                error!("Error trying to fullfill transaction : {:?}", e);
+            }
+        }
+
+        //Finished catching up, remove the event from the state
+        if let Err(e) = state.remove_event(&gateway_inner_event).await {
+            error!("Error removing event from state : {:?}", e);
+        }
+        info!("Succesfully caught up on request with id {}", request_id);
     }
 }
 
@@ -700,13 +834,19 @@ impl GatewaySubscriber {
 pub async fn start_gateway(
     receiver: Receiver<GatewayEvent>,
     config: GatewayConfig,
-) -> Option<MockProvider> {
-    let (subscriber, mock) = GatewaySubscriber::new(Arc::new(Mutex::new(receiver)), config)
+    state: GatewayState,
+    old_state: Option<HashMap<GatewayInnerEvent, GatewayEventState>>,
+) -> anyhow::Result<Option<MockProvider>> {
+    //Load state from file
+    let (subscriber, mock) = GatewaySubscriber::new(Arc::new(Mutex::new(receiver)), config, state)
         .await
         .unwrap();
+    if let Some(old_state) = old_state {
+        subscriber.catchup(old_state);
+    }
     subscriber.listen();
     tracing::info!("GatewaySubscriber started");
-    mock
+    Ok(mock)
 }
 
 // write a test for serialization and deserialization of the ApiReencryptValues struct

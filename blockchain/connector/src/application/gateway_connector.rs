@@ -2,7 +2,9 @@ use crate::config::ConnectorConfig;
 use crate::domain::oracle::Oracle;
 use crate::infrastructure::metrics::{MetricType, Metrics, OpenTelemetryMetrics};
 use events::kms::TransactionEvent;
-use events::subscription::handler::{EventsMode, SubscriptionEventBuilder, SubscriptionHandler};
+use events::subscription::handler::{
+    CatchupFrom, EventsMode, SubscriptionEventBuilder, SubscriptionHandler,
+};
 use events::subscription::Tx;
 use typed_builder::TypedBuilder;
 
@@ -24,28 +26,37 @@ where
     async fn on_message(
         &self,
         message: TransactionEvent,
+        height_of_event: u64,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
         let oracle = self.oracle.clone();
         let observability = self.observability.clone();
         tokio::spawn(async move {
             tracing::debug!("Responding to Oracle with message: {:?}", message);
-            let _ = oracle.respond(message.event).await.inspect_err(|e| {
-                observability.increment(MetricType::OracleError, 1, &[("error", &e.to_string())]);
-                tracing::error!("{:?}", e);
-            });
+            let _ = oracle
+                .respond(message.event, height_of_event)
+                .await
+                .inspect_err(|e| {
+                    observability.increment(
+                        MetricType::OracleError,
+                        1,
+                        &[("error", &e.to_string())],
+                    );
+                    tracing::error!("{:?}", e);
+                });
         });
         Ok(())
     }
 
-    // The gateway acts exactly the same whether it's catching up or
+    // This part of the gateway acts exactly the same whether it's catching up or
     // processing current messages
     async fn on_catchup(
         &self,
         message: TransactionEvent,
+        height_of_event: u64,
         _past_txs: &mut Vec<Tx>,
         _past_events: &mut Vec<TransactionEvent>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
-        self.on_message(message).await
+        self.on_message(message, height_of_event).await
     }
 
     // The gateway does not need any past_txs, so rejects everything
@@ -124,8 +135,9 @@ where
             "Starting subscription to events from blockchain with {:?}",
             grpc_addresses
         );
+        let catch_up_from = catch_up_num_blocks.map(CatchupFrom::BlockNumber);
         subscription
-            .subscribe(self.oracle_handler.clone(), catch_up_num_blocks)
+            .subscribe(self.oracle_handler.clone(), catch_up_from)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to subscribe: {:?}", e))
     }

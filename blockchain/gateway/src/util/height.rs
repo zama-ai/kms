@@ -8,6 +8,8 @@ use ethers::prelude::*;
 
 const FILE_PATH: &str = ".last_height";
 
+/// Data structure that saves the latest FHEVM BC's block
+/// read by the Gateway's [`crate::events::manager::DecryptionEventPublisher`] in file [`FILE_PATH`]
 pub struct AtomicBlockHeight {
     atomic_max: Arc<AtomicU64>,
     file_mutex: Arc<Mutex<()>>,
@@ -15,6 +17,8 @@ pub struct AtomicBlockHeight {
 }
 
 impl AtomicBlockHeight {
+    /// Try to reads the latest bock height from [`FILE_PATH`]
+    /// else query the blockchain using the [`Provider`]
     pub async fn new(provider: &Provider<Ws>) -> Result<Self> {
         let atomic_max = Arc::new(AtomicU64::new(0));
         let file_mutex = Arc::new(Mutex::new(()));

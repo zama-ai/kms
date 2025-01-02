@@ -4,6 +4,7 @@ use gateway::config::{init_conf_with_trace_gateway, GatewayConfig};
 use gateway::events::manager::start_decryption_publisher;
 use gateway::events::manager::start_http_server;
 use gateway::events::manager::{start_gateway, start_kms_event_publisher};
+use gateway::state::file_state::GatewayState;
 use gateway::util::wallet::WalletManager;
 use tokio::signal;
 use tokio::sync::mpsc::{self};
@@ -23,16 +24,20 @@ async fn main() -> anyhow::Result<()> {
             .as_str(),
     )
     .await?;
+    // Loading the state
+    let (state, old_state, kms_bc_starting_block) =
+        GatewayState::restore_state(&config.state_path)?;
     // Some starting logs
     print_intro(&config);
     // Channel for communication
     let (sender, receiver) = mpsc::channel(100);
-    start_decryption_publisher(sender.clone(), config.clone()).await;
-    start_kms_event_publisher(sender.clone()).await;
+    start_decryption_publisher(sender.clone(), config.clone(), state.clone()).await;
+    start_kms_event_publisher(sender.clone(), kms_bc_starting_block).await;
     let url_server = config.api_url.clone();
     let http_handle =
         tokio::spawn(async move { start_http_server(url_server, sender.clone()).await });
-    let gateway_handle = tokio::spawn(async move { start_gateway(receiver, config).await });
+    let gateway_handle =
+        tokio::spawn(async move { start_gateway(receiver, config, state, old_state).await });
 
     // Handle SIGINT and SIGTERM signals for graceful shutdown
     let shutdown_signal = signal::ctrl_c();

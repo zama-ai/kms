@@ -22,7 +22,7 @@ clap.workspace = true
 conf-trace.workspace = true
 cosmos-proto.workspace = true
 cosmwasm-std.workspace = true
-dashmap = "=6.1.0"
+dashmap = {version = "=6.1.0", features = ["serde"]}
 deep_space = "=2.26.0"
 ethers = { version = "=2.0.14", features = ["abigen", "rustls", "ws", "ethers-solc", "legacy"] }
 events = { workspace = true, features = ["subscription"] }

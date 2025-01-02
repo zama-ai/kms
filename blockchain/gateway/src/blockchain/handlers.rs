@@ -22,30 +22,15 @@ use std::ops::Mul;
 use std::sync::Arc;
 use tracing::trace_span;
 
-#[tracing::instrument(skip(config, blockchain, middleware))]
-pub(crate) async fn handle_event_decryption(
-    event: &Arc<DecryptionEvent>,
+pub(crate) async fn answer_event_decryption(
+    tokens: Vec<Token>,
+    sigs: Vec<Vec<u8>>,
     config: &GatewayConfig,
-    blockchain: Arc<dyn Blockchain>,
-    middleware: Arc<Box<dyn InternalMiddleware>>,
+    request_id: U256,
 ) -> anyhow::Result<()> {
-    tracing::debug!("🍻 handle_event_decryption enter");
-    let start = tokio::time::Instant::now();
-    let block_number = event.block_number;
-    let ciphertexts = event.filter.cts.clone();
-
-    let (tokens, sigs) = decrypt(middleware, config, ciphertexts, block_number, blockchain)
-        .await
-        .unwrap();
-
-    tracing::info!(
-        "⏱️ KMS Response Time elapsed for decryption: {:?}",
-        start.elapsed()
-    );
-
     // Signatures into Bytes type
     let signatures = sigs.iter().map(|s| Bytes::from(s.clone())).collect();
-    tracing::info!("Fulfilling Ethereum request: {:?}", event.filter.request_id);
+    tracing::info!("Fulfilling Ethereum request: {:?}", request_id);
 
     // prepend a uint256 placeholder token to the tokens vec
     let mut tok = vec![Token::Uint(U256::from(42))];
@@ -108,17 +93,14 @@ pub(crate) async fn handle_event_decryption(
         let _guard = span.enter();
         let contract = GatewayContract::new(config.ethereum.oracle_predeploy_address, client);
         let fullfillment = contract
-            .fulfill_request(event.filter.request_id, encoded_bytes.into(), signatures)
+            .fulfill_request(request_id, encoded_bytes.into(), signatures)
             .gas_price(gas_price)
             .gas(config.ethereum.gas_limit.unwrap_or(1_000_000));
 
         match fullfillment.send().await {
             Ok(pending_tx) => match pending_tx.await {
                 Ok(receipt) => {
-                    tracing::info!(
-                        "✅ Fulfilled Ethereum request: {:?}",
-                        event.filter.request_id
-                    );
+                    tracing::info!("✅ Fulfilled Ethereum request: {:?}", request_id);
                     tracing::trace!("Transaction receipt: {:?}", receipt);
                 }
                 Err(e) => {
@@ -128,20 +110,47 @@ pub(crate) async fn handle_event_decryption(
             Err(e) => {
                 tracing::error!("Failed to send fulfill_request transaction: {:?}", e);
             }
-        };
-    };
-    tracing::debug!("🍻 handle_event_decryption exit");
-    Ok(())
+        }
+
+        tracing::debug!("🍻 handle_event_decryption exit");
+        Ok(())
+    }
+}
+
+#[tracing::instrument(skip(config, blockchain, middleware))]
+pub(crate) async fn handle_event_decryption(
+    event: DecryptionEvent,
+    config: &GatewayConfig,
+    blockchain: Arc<dyn Blockchain>,
+    middleware: Arc<Box<dyn InternalMiddleware>>,
+) -> anyhow::Result<()> {
+    tracing::debug!("🍻 handle_event_decryption enter");
+    let start = tokio::time::Instant::now();
+    //let block_number = event.block_number;
+    //let ciphertexts = event.filter.cts.clone();
+    let request_id = event.filter.request_id;
+
+    let (tokens, sigs) = decrypt(middleware, config, event, blockchain)
+        .await
+        .unwrap();
+
+    tracing::info!(
+        "⏱️ KMS Response Time elapsed for decryption: {:?}",
+        start.elapsed()
+    );
+
+    answer_event_decryption(tokens, sigs, config, request_id).await
 }
 
 #[tracing::instrument(skip(client, config, blockchain))]
 async fn decrypt(
     client: Arc<Box<dyn InternalMiddleware>>,
     config: &GatewayConfig,
-    external_ct_handles: Vec<U256>,
-    block_number: u64,
+    event: DecryptionEvent,
     blockchain: Arc<dyn Blockchain>,
 ) -> anyhow::Result<(Vec<Token>, Vec<Vec<u8>>)> {
+    let block_number = event.block_number;
+    let external_ct_handles = event.filter.cts.clone();
     let mut typed_cts = Vec::new();
 
     // get actual ct value from the external source (e.g. fhvem) for every external handle
@@ -181,7 +190,9 @@ async fn decrypt(
         salt: config.parse_eip712_salt(),
     };
 
-    blockchain.decrypt(typed_cts, domain, acl_address).await
+    blockchain
+        .decrypt(event, typed_cts, domain, acl_address)
+        .await
 }
 
 #[tracing::instrument(skip(config, ct_provider, middleware, blockchain))]

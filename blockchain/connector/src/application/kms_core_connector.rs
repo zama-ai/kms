@@ -11,7 +11,9 @@ use cosmos_proto::messages::cosmwasm::wasm::v1::MsgExecuteContract;
 use events::kms::{
     FheParameter, KmsEvent, KmsMessage, OperationValue, TransactionEvent, TransactionId,
 };
-use events::subscription::handler::{EventsMode, SubscriptionEventBuilder, SubscriptionHandler};
+use events::subscription::handler::{
+    CatchupFrom, EventsMode, SubscriptionEventBuilder, SubscriptionHandler,
+};
 use events::subscription::Tx;
 use kms_blockchain_client::crypto::pubkey::PublicKey;
 use kms_blockchain_client::errors::Error;
@@ -111,6 +113,7 @@ where
         wanted_tx_id: TransactionId,
         message: TransactionEvent,
         past_events_responses: &[TransactionEvent],
+        height_of_event: u64,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
         let blockchain = Arc::clone(&self.blockchain);
         let observability = Arc::clone(&self.observability);
@@ -190,7 +193,7 @@ where
                     .iter()
                     .any(|event| event.event.txn_id() == &wanted_tx_id);
                 if !response_event_exists {
-                    self.on_message(message).await?;
+                    self.on_message(message, height_of_event).await?;
                 }
             }
         };
@@ -211,6 +214,7 @@ where
     async fn on_message(
         &self,
         message: TransactionEvent,
+        _height_of_event: u64,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
         tracing::info!("Received message: {:?}", message);
 
@@ -282,6 +286,7 @@ where
     async fn on_catchup(
         &self,
         message: TransactionEvent,
+        height_of_event: u64,
         past_txs: &mut Vec<KmsMessage>,
         past_events_responses: &mut Vec<TransactionEvent>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
@@ -337,6 +342,7 @@ where
                 wanted_tx_id,
                 message,
                 past_events_responses,
+                height_of_event,
             )
             .await
         }
@@ -505,6 +511,7 @@ where
             "Starting subscription to events from blockchain with {:?}",
             grpc_addresses
         );
+        let catch_up_num_blocks = catch_up_num_blocks.map(CatchupFrom::NumBlocksInPast);
         subscription
             .subscribe(self.kms_connector_handler.clone(), catch_up_num_blocks)
             .await

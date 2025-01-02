@@ -245,6 +245,7 @@ pub struct GatewayConfig {
     pub kms: KmsBlockchainConfig,
     pub storage: StorageConfig,
     pub telemetry: Option<TelemetryConfig>,
+    pub state_path: String,
 }
 
 impl GatewayConfig {
@@ -385,7 +386,7 @@ mod tests {
             );
             assert_eq!(
                 gateway_config.kms.mnemonic,
-                "bachelor similar spirit copper rely carbon web hobby conduct wrap conduct wire shine parrot erosion divert crucial balance lock reason price ignore educate open"
+                "degree fringe genuine soon present soul jelly catch that million van idle ship always silly uphold private mandate great used donate armed shock uphold"
             );
             assert_eq!(
                 gateway_config.kms.csc_address,

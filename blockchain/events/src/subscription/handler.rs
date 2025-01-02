@@ -108,17 +108,27 @@ pub trait SubscriptionHandler<T: 'static + Send + Sync> {
     async fn on_message(
         &self,
         message: TransactionEvent,
+        height_of_event: u64,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>>;
 
     /// Dictates what the handler does to catch up on passed messages
     async fn on_catchup(
         &self,
         message: TransactionEvent,
+        height_of_event: u64,
         past_txs: &mut Vec<T>,
         past_events_responses: &mut Vec<TransactionEvent>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>>;
 
     fn filter_for_catchup(&self, tx: Tx) -> Option<T>;
+}
+
+/// Enum to sepcify from when do we catchup
+pub enum CatchupFrom {
+    /// From this many blocks in the past starting from current block
+    NumBlocksInPast(usize),
+    /// From this specific block number
+    BlockNumber(usize),
 }
 
 impl<B, S, M> SubscriptionEventChannel<B, S, M>
@@ -140,7 +150,7 @@ where
     pub async fn subscribe<U, T>(
         self,
         handler: U,
-        catchup_num_blocks: Option<usize>,
+        catchup_num_blocks: Option<CatchupFrom>,
     ) -> Result<(), SubscriptionError>
     where
         U: SubscriptionHandler<T> + Clone + Send + Sync + 'static,
@@ -148,11 +158,17 @@ where
     {
         // Init once the block height
         let bc_height = self.blockchain.get_last_height().await?;
-        let starting_height = if let Some(catchup_num_blocks) = catchup_num_blocks {
-            if (catchup_num_blocks as u64) < bc_height {
-                bc_height - (catchup_num_blocks as u64)
-            } else {
-                1
+        let starting_height = if let Some(catchup_info) = catchup_num_blocks {
+            match catchup_info {
+                CatchupFrom::NumBlocksInPast(num) => {
+                    if (num as u64) < bc_height {
+                        bc_height - (num as u64)
+                    } else {
+                        1
+                    }
+                }
+
+                CatchupFrom::BlockNumber(num) => num as u64,
             }
         } else {
             bc_height
@@ -348,7 +364,7 @@ where
                 );
                 if let Some((past_txs, past_events_responses)) = &mut past_txs_and_responses {
                     handler
-                        .on_catchup(event, past_txs, past_events_responses)
+                        .on_catchup(event, height_of_event, past_txs, past_events_responses)
                         .await
                 } else {
                     tracing::error!(
@@ -365,7 +381,7 @@ where
                     event,
                     height_of_event
                 );
-                handler.on_message(event).await
+                handler.on_message(event, height_of_event).await
             };
             if let Err(e) = &result {
                 tracing::error!("Error processing message: {:?}", e);
@@ -550,8 +566,8 @@ mod tests {
 
         #[async_trait::async_trait]
         impl SubscriptionHandler<Tx> for NeverCalledSubscriptionHandler {
-            async fn on_message(&self, _message: TransactionEvent) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>>;
-            async fn on_catchup(&self, _message: TransactionEvent, _past_tx: &mut Vec<Tx>, _past_events_responses: &mut Vec<TransactionEvent>) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>>;
+            async fn on_message(&self, _message: TransactionEvent, _height_of_event: u64) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>>;
+            async fn on_catchup(&self, _message: TransactionEvent, _height_of_event: u64, _past_tx: &mut Vec<Tx>, _past_events_responses: &mut Vec<TransactionEvent>) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>>;
             fn filter_for_catchup(&self, tx: Tx) -> Option<Tx>;
         }
 
@@ -640,6 +656,7 @@ mod tests {
         async fn on_message(
             &self,
             message: TransactionEvent,
+            _height_of_event: u64,
         ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
             tracing::info!("Received message: {:?}", message);
             self.sender.send(()).await?;
@@ -648,6 +665,7 @@ mod tests {
         async fn on_catchup(
             &self,
             message: TransactionEvent,
+            _height_of_event: u64,
             _past_tx: &mut Vec<Tx>,
             _past_events_responses: &mut Vec<TransactionEvent>,
         ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {

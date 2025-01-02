@@ -6,6 +6,8 @@ mode = "centralized"
 
 api_url = "0.0.0.0:7077"
 
+state_path = "./.GW_STATE"
+
 [ethereum]
 
 chain_id = 12345

@@ -9,6 +9,9 @@ mode = "threshold"
 # The URL that the gateway API service will listen on.
 api_url = "0.0.0.0:7077"
 
+# path to the file that store the state
+state_path = "./.GW_STATE"
+
 # The section consists of the configuration settings related to the Ethereum
 # network and smart contract event interactions.
 [ethereum]
@@ -114,7 +117,7 @@ csc_address = "wasm14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9s0phg4d"
 # Mnemonic phrase for accessing the KMS.  This is a human-readable string of
 # words used to derive cryptographic keys.  Ideally we should storage this in a
 # safer location.
-mnemonic = "bachelor similar spirit copper rely carbon web hobby conduct wrap conduct wire shine parrot erosion divert crucial balance lock reason price ignore educate open"
+mnemonic = "degree fringe genuine soon present soul jelly catch that million van idle ship always silly uphold private mandate great used donate armed shock uphold"
 
 # Base URL of the KMS service.  Used for making HTTP requests to the KMS
 # service.

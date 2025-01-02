@@ -1,13 +1,16 @@
 use crate::blockchain::Blockchain;
 use crate::blockchain::KmsEventSubscriber;
 use crate::config::KeyUrlResponseValues;
+use crate::events::manager::DecryptionEvent;
+use crate::events::manager::KmsEventWithHeight;
+use crate::state::GatewayEventState;
+use crate::state::KmsEventState;
 use crate::util::conversion::TokenizableFrom;
 use crate::util::conversion::U4;
 use async_trait::async_trait;
 use ethers::abi::Token;
 use ethers::prelude::*;
 use events::kms::FheType;
-use events::kms::KmsEvent;
 use events::kms::ReencryptResponseValues;
 use events::HexVectorList;
 use kms_grpc::kms::Eip712DomainMsg;
@@ -16,7 +19,7 @@ pub(crate) struct MockchainImpl;
 
 #[async_trait]
 impl KmsEventSubscriber for MockchainImpl {
-    async fn receive(&self, event: KmsEvent) -> anyhow::Result<()> {
+    async fn receive(&self, event: KmsEventWithHeight) -> anyhow::Result<()> {
         tracing::info!("🐛 Mockchain received event: {:#?}", event);
         Ok(())
     }
@@ -26,6 +29,7 @@ impl KmsEventSubscriber for MockchainImpl {
 impl Blockchain for MockchainImpl {
     async fn decrypt(
         &self,
+        _event: DecryptionEvent,
         typed_cts: Vec<(Vec<u8>, FheType, Vec<u8>)>,
         eip712_domain: Eip712DomainMsg,
         acl_address: String,
@@ -54,6 +58,53 @@ impl Blockchain for MockchainImpl {
 
         tracing::debug!("🍊 eip712_domain: {:?}", eip712_domain);
         tracing::debug!("🍊 acl_address: {:?}", acl_address);
+
+        let mock_sig = vec![0u8; 65];
+        Ok((ptxts, vec![mock_sig]))
+    }
+
+    async fn decrypt_catchup(
+        &self,
+        _event: DecryptionEvent,
+        event_state: GatewayEventState,
+    ) -> anyhow::Result<(Vec<Token>, Vec<Vec<u8>>)> {
+        let fhe_types = match event_state {
+            GatewayEventState::Received => panic!("Should not be sent to catchup at this stage"),
+            GatewayEventState::SentToKmsBc(kms_event_state) => {
+                if let KmsEventState::Decrypt(decrypt_state) = kms_event_state {
+                    decrypt_state.fhe_types
+                } else {
+                    panic!("Wrong kind of state for decrypt catchup")
+                }
+            }
+            GatewayEventState::ResultFromKmsBc(kms_event_state) => {
+                if let KmsEventState::Decrypt(decrypt_state) = kms_event_state {
+                    decrypt_state.fhe_types
+                } else {
+                    panic!("Wrong kind of state for decrypt catchup")
+                }
+            }
+        };
+        let mut ptxts = Vec::new();
+        for fhe_type in fhe_types {
+            let res = match fhe_type {
+                FheType::Ebool => true.to_token(),
+                FheType::Euint4 => U4::new(3_u8).unwrap().to_token(),
+                FheType::Euint8 => 42_u8.to_token(),
+                FheType::Euint16 => 42_u16.to_token(),
+                FheType::Euint32 => 42_u32.to_token(),
+                FheType::Euint64 => 42_u64.to_token(),
+                FheType::Euint128 => 42_u128.to_token(),
+                FheType::Euint160 => Address::zero().to_token(),
+                FheType::Euint256 => U256::zero().to_token(),
+                FheType::Euint512 => Token::Bytes(vec![0u8; 64]),
+                FheType::Euint1024 => Token::Bytes(vec![0u8; 128]),
+                FheType::Euint2048 => Token::Bytes(vec![0u8; 256]),
+                FheType::Unknown => anyhow::bail!("Invalid ciphertext type"),
+            };
+            tracing::info!("🍊 plaintext: {:#?}", res);
+            ptxts.push(res);
+        }
 
         let mock_sig = vec![0u8; 65];
         Ok((ptxts, vec![mock_sig]))

@@ -4,6 +4,7 @@ mod tests {
     use gateway::{
         config::{init_conf_gateway, GatewayConfig, VerifyProvenCtResponseToClient},
         events::manager::{start_gateway, start_http_server},
+        state::file_state::GatewayState,
     };
     use reqwest::Client;
     use serde::Deserialize;
@@ -16,6 +17,8 @@ mod tests {
         static ID: AtomicUsize = AtomicUsize::new(0);
         ID.fetch_add(1, Ordering::SeqCst)
     }
+
+    const GATEWAY_STATE_PATH: &str = ".GW_INTEGRATION_STATE";
 
     fn valid_config() -> GatewayConfig {
         let mut config: GatewayConfig = init_conf_gateway("config/gateway").unwrap();
@@ -38,9 +41,13 @@ mod tests {
         let (sender, receiver) = mpsc::channel(100);
         let url_server = config.api_url.clone();
         let url_client = config.api_url.clone();
+        let (state, _, _) = GatewayState::restore_state(GATEWAY_STATE_PATH).unwrap();
         let http_handle =
             tokio::spawn(async move { start_http_server(url_server, sender.clone()).await });
-        let gateway_handle = tokio::spawn(async move { start_gateway(receiver, config).await });
+        let gateway_handle =
+            tokio::spawn(
+                async move { start_gateway(receiver, config, state, None).await.unwrap() },
+            );
         tokio::time::sleep(Duration::from_millis(500)).await;
         (Client::new(), url_client, http_handle, gateway_handle)
     }
