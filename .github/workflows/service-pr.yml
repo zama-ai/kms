@@ -3,6 +3,7 @@ name: "[Core-Service-PR] Pipeline Run"
 on:
   pull_request:
     paths:
+      - 'core/grpc/**'
       - 'core/service/**'
       - 'core/threshold/**'
       - 'conf-trace/**'

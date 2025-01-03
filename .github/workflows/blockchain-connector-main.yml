@@ -11,7 +11,7 @@ on:
       - 'blockchain/connector/**'
       - 'blockchain/events/**'
       - 'conf-trace/**'
-      - 'core/service/proto/kms.proto'
+      - 'core/grpc/**'
       - '.github/workflows/blockchain-connector-main.yml'
 
 concurrency:
