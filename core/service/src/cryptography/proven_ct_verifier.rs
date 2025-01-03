@@ -16,7 +16,7 @@ use tfhe::{
 };
 use tokio::sync::{OwnedSemaphorePermit, RwLock};
 use tonic::{Request, Response, Status};
-use tracing::Instrument;
+use tracing::{trace_span, Instrument};
 
 use crate::{
     anyhow_error_and_log,
@@ -159,11 +159,15 @@ async fn verify_proven_ct_and_sign<
         req.domain
     );
     let mut cursor = std::io::Cursor::new(&req.ct_bytes);
-    let proven_ct: ProvenCompactCiphertextList = safe_deserialize(&mut cursor, SAFE_SER_SIZE_LIMIT)
-        .map_err(|e| anyhow::anyhow!(e))
-        .inspect_err(|e| {
-            tracing::error!("could not deserialize the ciphertext list ({e})");
-        })?;
+    let proven_ct: ProvenCompactCiphertextList = {
+        let span = trace_span!("ct-deserialize");
+        let _guard = span.enter();
+        safe_deserialize(&mut cursor, SAFE_SER_SIZE_LIMIT)
+            .map_err(|e| anyhow::anyhow!(e))
+            .inspect_err(|e| {
+                tracing::error!("could not deserialize the ciphertext list ({e})");
+            })?
+    };
 
     let load_crs_pk_start_instant = tokio::time::Instant::now();
     let wrapped_pk = crypto_storage.read_cloned_pk(key_handle).await?;

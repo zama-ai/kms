@@ -254,6 +254,7 @@ pub(crate) fn compute_external_pt_signature(
 }
 
 /// Take the ZK proof verification metadata, convert it to the required solidity types and sign them using EIP-712 for external verification (e.g. in the fhevm).
+#[tracing::instrument(level = "info", skip(client_sk, ct_digest))]
 pub fn compute_external_verify_proven_ct_signature(
     client_sk: &PrivateSigKey,
     ct_digest: &Vec<u8>,
