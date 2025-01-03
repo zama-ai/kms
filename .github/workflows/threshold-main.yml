@@ -1,4 +1,4 @@
-name: "[core/threshold-Merge Main] Pipeline Run"
+name: "[core/threshold Main] Pipeline Run"
 
 on:
   push:

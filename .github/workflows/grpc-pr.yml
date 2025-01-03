@@ -1,27 +1,22 @@
-name: "[core/service PR] Pipeline Run"
+name: "[core/grpc PR] Pipeline Run"
 
 on:
   pull_request:
     paths:
       - 'core/grpc/**'
-      - 'core/service/**'
-      - 'core/threshold/**'
-      - 'conf-trace/**'
-      - '.github/workflows/service-pr.yml'
+      - '.github/workflows/grpc-pr.yml'
 
 concurrency:
-  group: service-${{ github.ref }}
+  group: grpc-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
     uses: ./.github/workflows/common-build-big-instance.yml
     with:
-      working-directory: './core/service'
-      args-tests: '--test integration_test -F slow_tests -F s3_tests -F insecure'
-      run-minio: true
-      run-wasm: true
-      package-name: 'kms'
+      working-directory: './core/grpc'
+      args-tests: '--all-features'
+      package-name: 'kms-grpc'
     permissions:
       contents: 'read'
       id-token: 'write'

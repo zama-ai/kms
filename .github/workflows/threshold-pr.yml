@@ -1,4 +1,4 @@
-name: "[Threshold-PR] Pipeline Run"
+name: "[core/threshold PR] Pipeline Run"
 
 on:
   pull_request:
