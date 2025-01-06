@@ -140,7 +140,6 @@ impl Default for ShardingConfig {
 #[derive(TypedBuilder, Deserialize, Serialize, Clone, Default, Debug)]
 pub struct ConnectorConfig {
     pub tick_interval_secs: u64,
-    pub storage_path: String,
     pub tracing: Option<TelemetryConfig>,
     pub blockchain: BlockchainConfig,
     pub core: CoreConfig,
@@ -202,7 +201,6 @@ mod tests {
             let conf: ConnectorConfig = init_conf("config/default").unwrap();
 
             assert_eq!(conf.tick_interval_secs, 1);
-            assert_eq!(conf.storage_path, "./temp/events.toml");
 
             // coordinator configs
             assert_eq!(conf.core.addresses, vec!["http://localhost:50051"]);

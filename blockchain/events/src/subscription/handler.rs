@@ -1,20 +1,19 @@
 use super::metrics::{Metrics, OpenTelemetryMetrics};
-use super::{BlockchainService, GrpcBlockchainService, StorageService, TomlStorageServiceImpl};
+use super::{BlockchainService, GrpcBlockchainService};
 use crate::kms::{KmsEvent, KmsOperation, TransactionEvent};
 use async_trait::async_trait;
 use cosmos_proto::messages::cosmos::{base::abci::v1beta1::TxResponse, tx::v1beta1::Tx};
 
 use cosmwasm_std::Event;
 use kms_common::{retry::LoopErr, retry_fatal_loop};
-use koit_toml::KoitError;
 #[cfg(test)]
 use mockall::{automock, mock, predicate::*};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use std::sync::Arc;
 use strum::IntoEnumIterator as _;
 use strum_macros::EnumString;
 use thiserror::Error;
+use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 use typed_builder::TypedBuilder;
 
@@ -28,8 +27,6 @@ pub enum SubscriptionError {
     UnknownError(#[from] anyhow::Error),
     #[error("Error deserializing message from Event Server Subscription - {0}")]
     DeserializationError(String),
-    #[error("Error loading storage with sync point - {0}")]
-    StorageError(#[from] KoitError),
 }
 
 #[derive(Debug, Clone, Copy, EnumString, PartialEq, Eq, Deserialize, Serialize)]
@@ -47,10 +44,6 @@ pub enum EventsMode {
 #[derive(TypedBuilder)]
 pub struct SubscriptionEventBuilder<'a> {
     grpc_addresses: &'a [&'a str],
-    #[builder(setter(transform = |x: &str| PathBuf::from(x)))]
-    storage_path: PathBuf,
-    #[builder(setter(into), default)]
-    height: Option<u64>,
     contract_address: &'a str,
     #[builder(default = 5)]
     tick_time_in_sec: u64,
@@ -58,15 +51,14 @@ pub struct SubscriptionEventBuilder<'a> {
     filter_events_mode: Option<EventsMode>,
 }
 
-pub struct SubscriptionEventChannel<B, S, M>
+pub struct SubscriptionEventChannel<B, M>
 where
     B: BlockchainService + Clone + 'static,
-    S: StorageService + 'static,
     M: Metrics + 'static,
 {
     pub(crate) tick_time_in_sec: u64,
     pub(crate) blockchain: B,
-    pub(crate) storage: S,
+    pub(crate) latest_height: Arc<Mutex<u64>>,
     pub(crate) metrics: M,
 }
 
@@ -74,11 +66,7 @@ impl<'a> SubscriptionEventBuilder<'a> {
     pub async fn subscription(
         self,
     ) -> Result<
-        SubscriptionEventChannel<
-            Arc<GrpcBlockchainService>,
-            Arc<TomlStorageServiceImpl>,
-            OpenTelemetryMetrics,
-        >,
+        SubscriptionEventChannel<Arc<GrpcBlockchainService>, OpenTelemetryMetrics>,
         SubscriptionError,
     > {
         let blockchain = GrpcBlockchainService::new(
@@ -86,12 +74,11 @@ impl<'a> SubscriptionEventBuilder<'a> {
             self.contract_address,
             self.filter_events_mode,
         )?;
-        let storage = TomlStorageServiceImpl::new(&self.storage_path, self.height).await?;
         let metrics = OpenTelemetryMetrics::new();
         Ok(SubscriptionEventChannel {
             tick_time_in_sec: self.tick_time_in_sec,
             blockchain: Arc::new(blockchain),
-            storage: Arc::new(storage),
+            latest_height: Arc::new(Mutex::new(0)),
             metrics,
         })
     }
@@ -131,10 +118,9 @@ pub enum CatchupFrom {
     BlockNumber(usize),
 }
 
-impl<B, S, M> SubscriptionEventChannel<B, S, M>
+impl<B, M> SubscriptionEventChannel<B, M>
 where
     B: BlockchainService + Clone + 'static,
-    S: StorageService + 'static,
     M: Metrics + 'static,
 {
     /// Subscribe to the Event server
@@ -167,13 +153,12 @@ where
                         1
                     }
                 }
-
                 CatchupFrom::BlockNumber(num) => num as u64,
             }
         } else {
             bc_height
         };
-        self.update_last_seen_height(starting_height).await?;
+        self.update_last_seen_height(starting_height).await;
         tracing::info!("Starting polling Blockchain on block {starting_height}");
         let mut last_height = starting_height;
         let clonable_self = Arc::new(self);
@@ -241,9 +226,10 @@ where
         ));
 
         // Query for all events emitted by the KMS BC with block height > height
-        let results = tokio::spawn(Self::get_txs_events(self.blockchain.clone(), height));
+        let txs_events_handler =
+            tokio::spawn(Self::get_txs_events(self.blockchain.clone(), height));
 
-        let results = tokio::join!(results, past_tx, past_responses_events);
+        let results = tokio::join!(txs_events_handler, past_tx, past_responses_events);
 
         let tx_result = results
             .0
@@ -279,6 +265,11 @@ where
         Ok((tx_result, Some((past_tx, past_responses_events))))
     }
 
+    async fn get_last_height(&self) -> u64 {
+        let guarded_storage = self.latest_height.lock().await;
+        *guarded_storage
+    }
+
     /// Handle one round of events received from the Event Server.
     ///
     /// Uses the catchup mechanism of the `handler` until we reach the
@@ -298,7 +289,7 @@ where
             "Loop Getting Event from Blockchain"
         );
         let _guard = enter.enter();
-        let height = self.storage.get_last_height().await?;
+        let height = self.get_last_height().await;
         let handler = handler.clone();
 
         // Query the blockchain
@@ -391,7 +382,7 @@ where
         self.metrics
             .increment_tx_processed(results_size as u64, &[]);
         // We will now look for new tx not older than last_height
-        self.update_last_seen_height(last_height).await?;
+        self.update_last_seen_height(last_height).await;
         Ok(last_height)
     }
 
@@ -409,7 +400,6 @@ where
                         SubscriptionError::ResponseTxsEventError(_) => {
                             Err(LoopErr::Transient(error))
                         }
-                        SubscriptionError::StorageError(_) => Err(LoopErr::Transient(error)),
                         SubscriptionError::UnknownError(_) => Err(LoopErr::Fatal(error)),
                         SubscriptionError::DeserializationError(_) => Err(LoopErr::Fatal(error)),
                     },
@@ -444,7 +434,6 @@ where
                         SubscriptionError::ResponseTxsEventError(_) => {
                             Err(LoopErr::Transient(error))
                         }
-                        SubscriptionError::StorageError(_) => Err(LoopErr::Transient(error)),
                         SubscriptionError::UnknownError(_) => Err(LoopErr::Fatal(error)),
                         SubscriptionError::DeserializationError(_) => Err(LoopErr::Fatal(error)),
                     },
@@ -494,7 +483,6 @@ where
                         SubscriptionError::ResponseTxsEventError(_) => {
                             Err(LoopErr::Transient(error))
                         }
-                        SubscriptionError::StorageError(_) => Err(LoopErr::Transient(error)),
                         SubscriptionError::UnknownError(_) => Err(LoopErr::Fatal(error)),
                         SubscriptionError::DeserializationError(_) => Err(LoopErr::Fatal(error)),
                     },
@@ -518,8 +506,9 @@ where
         })
     }
 
-    async fn update_last_seen_height(&self, last_height: u64) -> Result<(), SubscriptionError> {
-        self.storage.save_last_height(last_height).await
+    async fn update_last_seen_height(&self, last_height: u64) {
+        let mut guarded_storage = self.latest_height.lock().await;
+        *guarded_storage = last_height;
     }
 
     fn to_event(event: &cosmos_proto::messages::tendermint::abci::Event) -> Event {
@@ -553,7 +542,6 @@ mod tests {
     use super::*;
     use crate::kms::{KmsEvent, KmsOperation};
     use crate::subscription::blockchain::*;
-    use crate::subscription::storage::MockStorageService;
     use cosmwasm_std::{Attribute, Event};
     use test_context::{test_context, AsyncTestContext};
     use tokio::sync::oneshot;
@@ -619,22 +607,18 @@ mod tests {
     }
 
     struct SubscriptionContext {
-        subscription: SubscriptionEventChannel<
-            MockGrpcBlockchainService,
-            MockStorageService,
-            MockMetricService,
-        >,
+        subscription: SubscriptionEventChannel<MockGrpcBlockchainService, MockMetricService>,
     }
 
     impl AsyncTestContext for SubscriptionContext {
         async fn setup() -> SubscriptionContext {
             async {
                 let blockchain = MockGrpcBlockchainService::new();
-                let storage = MockStorageService::new();
+                let storage = Arc::new(Mutex::new(0));
                 SubscriptionContext {
                     subscription: SubscriptionEventChannel {
                         blockchain,
-                        storage,
+                        latest_height: storage,
                         metrics: MockMetricService::new(),
                         tick_time_in_sec: 1,
                     },
@@ -729,21 +713,6 @@ mod tests {
             .times(1)
             .returning(|_, _| ());
 
-        server
-            .subscription
-            .storage
-            .expect_get_last_height()
-            .times(1)
-            .returning(|| Ok(0));
-
-        server
-            .subscription
-            .storage
-            .expect_save_last_height()
-            .withf(|_| true)
-            .times(1)
-            .returning(|_| Ok(()));
-
         let result = server.subscription.handle_events(on_message_mock, 0).await;
         assert!(result.is_ok());
         Ok(())
@@ -793,21 +762,6 @@ mod tests {
                     .returning(move |_| Ok(vec![tx_response.clone(); amount as usize]));
                 new_mock
             });
-
-        server
-            .subscription
-            .storage
-            .expect_get_last_height()
-            .times(1)
-            .returning(|| Ok(0));
-
-        server
-            .subscription
-            .storage
-            .expect_save_last_height()
-            .withf(|_| true)
-            .times(1)
-            .returning(|_| Ok(()));
 
         server
             .subscription

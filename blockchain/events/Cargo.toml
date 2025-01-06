@@ -14,7 +14,6 @@ cosmwasm-schema.workspace = true
 cosmos-proto = { workspace = true, optional = true }
 hex.workspace = true
 kms-common.workspace = true
-koit-toml = { version = "=0.2.1", optional = true }
 opentelemetry = { workspace = true, features = ["metrics" ], optional = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
@@ -51,7 +50,6 @@ non-wasm = [
 subscription = [
     "dep:async-trait",
     "dep:cosmos-proto",
-    "dep:koit-toml",
     "dep:opentelemetry",
     "dep:thiserror",
     "dep:tokio",

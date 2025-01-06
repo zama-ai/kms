@@ -125,7 +125,6 @@ where
             .contract_address(&self.config.blockchain.asc_address)
             .tick_time_in_sec(self.config.tick_interval_secs)
             .grpc_addresses(&grpc_addresses)
-            .storage_path(&self.config.storage_path)
             .filter_events_mode(EventsMode::Response)
             .build()
             .subscription()

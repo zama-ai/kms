@@ -2,11 +2,6 @@
 # attempt to query the KMS blockchain to handle new events.
 tick_interval_secs = 1
 
-# The path to a simple file-based database for storing processed events. In
-# case the connector restarts, it will read the last process event and attempt
-# to catch up from there.
-storage_path = "./temp/events.toml"
-
 # This section describes information for the KMS blockchain client so that it
 # can make transactions to the KMS blockchain.
 [blockchain]

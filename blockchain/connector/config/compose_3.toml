@@ -1,7 +1,6 @@
 # See default.toml for the documentation.
 
 tick_interval_secs = 1
-storage_path = "./temp/events.toml"
 
 [blockchain]
 addresses = ["http://localhost:9090"]

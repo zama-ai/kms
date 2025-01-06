@@ -386,7 +386,6 @@ async fn start_sync_handler(
         .unwrap();
     let connector_config = ConnectorConfig {
         tick_interval_secs: 1,
-        storage_path: "tests/data/events.toml".to_string(),
         blockchain: blockchain_config,
         ..Default::default()
     };
