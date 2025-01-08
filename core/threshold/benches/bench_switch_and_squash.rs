@@ -9,7 +9,7 @@ use distributed_decryption::{
     },
     expanded_encrypt,
 };
-use tfhe::{integer::IntegerCiphertext, FheUint16, FheUint8};
+use tfhe::{integer::IntegerCiphertext, set_server_key, FheUint16, FheUint8};
 
 fn bench_switch_and_squash(c: &mut Criterion) {
     let mut group = c.benchmark_group("switch_and_squash");
@@ -20,6 +20,8 @@ fn bench_switch_and_squash(c: &mut Criterion) {
 
     let msg8 = 5_u8;
     let msg16 = 5_u16;
+
+    set_server_key(keyset.public_keys.server_key.clone());
 
     let ct8: FheUint8 = expanded_encrypt!(&keyset.public_keys.public_key, msg8, 8);
     let ct16: FheUint16 = expanded_encrypt!(&keyset.public_keys.public_key, msg16, 16);

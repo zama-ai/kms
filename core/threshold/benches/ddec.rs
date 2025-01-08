@@ -18,7 +18,7 @@ use distributed_decryption::{
 use pprof::criterion::{Output, PProfProfiler};
 use rand::{Rng, SeedableRng};
 use std::sync::Arc;
-use tfhe::FheUint8;
+use tfhe::{set_server_key, FheUint8};
 
 #[derive(Debug, Clone, Copy)]
 struct OneShotConfig {
@@ -56,6 +56,9 @@ fn ddec_nsmall(c: &mut Criterion) {
     group.sample_size(10);
     group.sampling_mode(criterion::SamplingMode::Flat);
     let keyset: KeySet = read_element(REAL_KEY_PATH.to_string()).unwrap();
+
+    set_server_key(keyset.public_keys.server_key.clone());
+
     let mut rng = AesRng::from_entropy();
     for config in params {
         let message = rng.gen::<u64>();
