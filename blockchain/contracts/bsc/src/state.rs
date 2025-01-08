@@ -389,3 +389,54 @@ impl BackendStorage {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cosmwasm_std::testing::{MockApi, MockQuerier, MockStorage};
+    use cosmwasm_std::{
+        BlockInfo, ContractInfo, DepsMut, Empty, Env, MessageInfo, QuerierWrapper, TransactionInfo,
+    };
+    use cw_multi_test::IntoAddr;
+    use events::kms::{DecryptValues, TransactionId};
+    use sylvia::types::ExecCtx;
+
+    #[test]
+    fn test_transaction() {
+        let dyn_storage = &mut MockStorage::new();
+        let storage = BackendStorage::default();
+        let mock_queries = MockQuerier::<Empty>::new(&[]);
+        let ctx = ExecCtx {
+            env: Env {
+                block: BlockInfo {
+                    height: 1,
+                    time: Default::default(),
+                    chain_id: Default::default(),
+                },
+                transaction: Some(TransactionInfo { index: 1 }),
+                contract: ContractInfo {
+                    address: "contract".into_addr(),
+                },
+            },
+            deps: DepsMut {
+                storage: dyn_storage,
+                api: &mut MockApi::default(),
+                querier: QuerierWrapper::<Empty>::new(&mock_queries),
+            },
+            info: MessageInfo {
+                sender: "sender".into_addr(),
+                funds: vec![],
+            },
+        };
+        let txn_id = TransactionId::default();
+        let operation = OperationValue::Decrypt(DecryptValues::default());
+        storage
+            .save_request_on_transaction(ctx.deps.storage, &ctx.env, &txn_id, &operation)
+            .unwrap();
+        let tx = storage
+            .get_transaction_with_response_values(ctx.deps.storage, &txn_id)
+            .unwrap();
+        assert_eq!(tx.operations().len(), 1);
+        assert_eq!(tx.operations()[0], operation);
+    }
+}

@@ -181,16 +181,16 @@ async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
     tracing::info!("Fetch CSC address");
     let csc_address = get_contract_address(&query_client, 1).await.unwrap();
 
-    // The ASC is the second contract uploaded (see `deploy_contracts.sh`). We therefore
+    // The BSC is the second contract uploaded (see `deploy_contracts.sh`). We therefore
     // get the address for code_id = 2.
-    tracing::info!("Fetch ASC address");
-    let asc_address = get_contract_address(&query_client, 2).await.unwrap();
+    tracing::info!("Fetch BSC address");
+    let bsc_address = get_contract_address(&query_client, 2).await.unwrap();
 
     let client: RwLock<Client> = RwLock::new(
         ClientBuilder::builder()
             .mnemonic_wallet(mnemonic.as_deref())
             .grpc_addresses(addresses.clone())
-            .asc_address(&asc_address)
+            .asc_address(&bsc_address)
             .csc_address(&csc_address)
             .kv_store_address(None)
             .build()
@@ -201,13 +201,13 @@ async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
     let (tx, mut rc) = channel(1);
     // Start SyncHandler to listen events
     let handler =
-        start_sync_handler(addresses.clone(), &asc_address, &csc_address, mnemonic, tx).await;
+        start_sync_handler(addresses.clone(), &bsc_address, &csc_address, mnemonic, tx).await;
 
     // Wait for the event to be processed and send the response back to the blockchain
     let query_client = Arc::new(query_client);
     let cloned_query_client = Arc::clone(&query_client);
     let handle = tokio::spawn(async move {
-        wait_for_event_response(handler, &asc_address.clone(), cloned_query_client, &mut rc).await;
+        wait_for_event_response(handler, &bsc_address.clone(), cloned_query_client, &mut rc).await;
     });
 
     // Execute insecure key generation flow to enable the subsequent decryption request
@@ -241,7 +241,7 @@ async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
 
 async fn wait_for_event_response<T>(
     handler: T,
-    asc_address: &str,
+    bsc_address: &str,
     query_client: Arc<QueryClient>,
     rc: &mut Receiver<KmsEvent>,
 ) where
@@ -267,7 +267,7 @@ async fn wait_for_event_response<T>(
                     _ = interval.tick() => {
                     }
                     event = rc.recv() => {
-                        tokio::spawn(check_event(event.unwrap(), asc_address.to_string(), query_client.clone(), tx_response.clone()));
+                        tokio::spawn(check_event(event.unwrap(), bsc_address.to_string(), query_client.clone(), tx_response.clone()));
                     }
                     _ = rc_response.recv() => {
                         counter.fetch_add(1, std::sync::atomic::Ordering::Release);
@@ -292,7 +292,10 @@ async fn wait_for_tx_processed(
                 .await
                 .map_err(|e| anyhow::anyhow!("Transaction error {:?}", e))?;
             if r.is_none() {
-                Err(anyhow::anyhow!("Transaction not found"))
+                Err(anyhow::anyhow!(
+                    "Transaction with hash {} not found.",
+                    txhash
+                ))
             } else {
                 tracing::info!("Tx processed: {:?}", r);
                 Ok(r.unwrap())
@@ -307,14 +310,14 @@ async fn wait_for_tx_processed(
 /// the decryption response was sent back to the blockchain
 async fn check_event(
     event: KmsEvent,
-    asc_address: String,
+    bsc_address: String,
     query_client: Arc<QueryClient>,
     tx_sender: Sender<()>,
 ) {
     loop {
         let tx: Transaction = query_client
             .query_asc(
-                asc_address.clone(),
+                bsc_address.clone(),
                 AscQuery::GetTransaction(TransactionQuery {
                     txn_id: event.txn_id().clone(),
                 }),
@@ -347,7 +350,10 @@ async fn get_contract_address(client: &QueryClient, code_id: u64) -> anyhow::Res
                 tracing::info!("Contract metadata {:?}", contract_metadata);
                 Ok(contract_address)
             } else {
-                Err(anyhow::anyhow!("Contract not found"))
+                Err(anyhow::anyhow!(
+                    "Contract with code ID {} not found.",
+                    code_id
+                ))
             }
         },
         10000,
@@ -357,7 +363,7 @@ async fn get_contract_address(client: &QueryClient, code_id: u64) -> anyhow::Res
 
 async fn start_sync_handler(
     addresses: Vec<&str>,
-    asc_address: &str,
+    bsc_address: &str,
     csc_address: &str,
     mnemonic: Option<String>,
     tx: Sender<KmsEvent>,
@@ -368,7 +374,7 @@ async fn start_sync_handler(
             .into_iter()
             .map(|x| x.to_string())
             .collect(),
-        asc_address: asc_address.to_string(),
+        asc_address: bsc_address.to_string(),
         csc_address: csc_address.to_string(),
         fee: ContractFee {
             amount: 250_000u64,
@@ -510,7 +516,7 @@ async fn send_decrypt_request(client: &RwLock<Client>, key_id: Vec<u8>) -> Strin
 
     let resp = client.write().await.execute_contract(request).await;
 
-    tracing::info!("Transaction: {:?}", resp);
+    tracing::info!("Decryption request transaction: {:?}", resp);
 
     resp.unwrap().txhash
 }

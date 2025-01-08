@@ -201,14 +201,14 @@ impl BackendContract {
     pub fn decryption_response(
         &self,
         mut ctx: ExecCtx,
-        transaction_id: TransactionId,
+        txn_id: TransactionId,
         decrypt_response: DecryptResponseValues,
     ) -> Result<Response, BackendError> {
         let operation = "decryption_response";
         let sender_allowed_event =
             self.check_sender_is_allowed(&ctx, AllowlistType::Response, operation)?;
         let response = self
-            .process_response_transaction(&mut ctx, &transaction_id, decrypt_response.into())?
+            .process_response_transaction(&mut ctx, &txn_id, decrypt_response.into())?
             .add_event(sender_allowed_event);
         Ok(response)
     }
@@ -244,14 +244,14 @@ impl BackendContract {
     pub fn reencryption_response(
         &self,
         mut ctx: ExecCtx,
-        transaction_id: TransactionId,
+        txn_id: TransactionId,
         reencrypt_response: ReencryptResponseValues,
     ) -> Result<Response, BackendError> {
         let operation = "reencryption_response";
         let sender_allowed_event =
             self.check_sender_is_allowed(&ctx, AllowlistType::Response, operation)?;
         let response = self
-            .process_response_transaction(&mut ctx, &transaction_id, reencrypt_response.into())?
+            .process_response_transaction(&mut ctx, &txn_id, reencrypt_response.into())?
             .add_event(sender_allowed_event);
         Ok(response)
     }
@@ -279,7 +279,7 @@ impl BackendContract {
     pub fn key_gen_preproc_response(
         &self,
         mut ctx: ExecCtx,
-        transaction_id: TransactionId,
+        txn_id: TransactionId,
     ) -> Result<Response, BackendError> {
         let operation = "key_generation_preproc_response";
         let sender_allowed_event =
@@ -287,7 +287,7 @@ impl BackendContract {
         let response = self
             .process_response_transaction(
                 &mut ctx,
-                &transaction_id,
+                &txn_id,
                 KeyGenPreprocResponseValues::default().into(),
             )?
             .add_event(sender_allowed_event);
@@ -322,7 +322,7 @@ impl BackendContract {
     pub fn key_gen_response(
         &self,
         mut ctx: ExecCtx,
-        transaction_id: TransactionId,
+        txn_id: TransactionId,
         keygen_response: KeyGenResponseValues,
     ) -> Result<Response, BackendError> {
         let operation = "key_generation_response";
@@ -333,7 +333,7 @@ impl BackendContract {
 
         let transaction_sender = self
             .storage
-            .get_transaction_sender(ctx.deps.storage, &transaction_id)?;
+            .get_transaction_sender(ctx.deps.storage, &txn_id)?;
 
         self.storage
             .add_address_to_acl(ctx.deps.storage, &key_id, &transaction_sender)?;
@@ -342,7 +342,7 @@ impl BackendContract {
             ContractAclUpdatedEvent::new(key_id, ctx.info.sender.to_string());
 
         let response = self
-            .process_response_transaction(&mut ctx, &transaction_id, keygen_response.into())?
+            .process_response_transaction(&mut ctx, &txn_id, keygen_response.into())?
             .add_event(sender_allowed_event)
             .add_event(contract_acl_updated_event);
 
@@ -378,7 +378,7 @@ impl BackendContract {
     pub fn insecure_key_gen_response(
         &self,
         mut ctx: ExecCtx,
-        transaction_id: TransactionId,
+        txn_id: TransactionId,
         keygen_response: KeyGenResponseValues,
     ) -> Result<Response, BackendError> {
         let operation = "insecure_key_generation_response";
@@ -389,14 +389,14 @@ impl BackendContract {
 
         let transaction_sender = self
             .storage
-            .get_transaction_sender(ctx.deps.storage, &transaction_id)?;
+            .get_transaction_sender(ctx.deps.storage, &txn_id)?;
         self.storage
             .add_address_to_acl(ctx.deps.storage, &key_id, &transaction_sender)?;
         let contract_acl_updated_event =
             ContractAclUpdatedEvent::new(key_id, ctx.info.sender.to_string());
 
         let response =
-            self.process_response_transaction(&mut ctx, &transaction_id, keygen_response.into())?;
+            self.process_response_transaction(&mut ctx, &txn_id, keygen_response.into())?;
         Ok(response
             .add_event(sender_allowed_event)
             .add_event(contract_acl_updated_event))
@@ -429,14 +429,14 @@ impl BackendContract {
     pub fn crs_gen_response(
         &self,
         mut ctx: ExecCtx,
-        transaction_id: TransactionId,
+        txn_id: TransactionId,
         crs_gen_response: CrsGenResponseValues,
     ) -> Result<Response, BackendError> {
         let operation = "crs_generation_response";
         let sender_allowed_event =
             self.check_sender_is_allowed(&ctx, AllowlistType::Response, operation)?;
         let response = self
-            .process_response_transaction(&mut ctx, &transaction_id, crs_gen_response.into())?
+            .process_response_transaction(&mut ctx, &txn_id, crs_gen_response.into())?
             .add_event(sender_allowed_event);
         Ok(response)
     }
@@ -468,14 +468,14 @@ impl BackendContract {
     pub fn insecure_crs_gen_response(
         &self,
         mut ctx: ExecCtx,
-        transaction_id: TransactionId,
+        txn_id: TransactionId,
         crs_gen_response: CrsGenResponseValues,
     ) -> Result<Response, BackendError> {
         let operation = "insecure_crs_generation_response";
         let sender_allowed_event =
             self.check_sender_is_allowed(&ctx, AllowlistType::Response, operation)?;
         let response = self
-            .process_response_transaction(&mut ctx, &transaction_id, crs_gen_response.into())?
+            .process_response_transaction(&mut ctx, &txn_id, crs_gen_response.into())?
             .add_event(sender_allowed_event);
         Ok(response)
     }
@@ -498,18 +498,14 @@ impl BackendContract {
     pub fn verify_proven_ct_response(
         &self,
         mut ctx: ExecCtx,
-        transaction_id: TransactionId,
+        txn_id: TransactionId,
         verify_proven_ct_response: VerifyProvenCtResponseValues,
     ) -> Result<Response, BackendError> {
         let operation = "proven_ct_verification_response";
         let sender_allowed_event =
             self.check_sender_is_allowed(&ctx, AllowlistType::Response, operation)?;
         let response = self
-            .process_response_transaction(
-                &mut ctx,
-                &transaction_id,
-                verify_proven_ct_response.into(),
-            )?
+            .process_response_transaction(&mut ctx, &txn_id, verify_proven_ct_response.into())?
             .add_event(sender_allowed_event);
         Ok(response)
     }
@@ -625,7 +621,7 @@ impl BackendContract {
             .has_transaction(ctx.deps.storage, transaction_id)
         {
             return Err(BackendError::from(format!(
-                "transaction with id <{}> not found for response operation value <{}>",
+                "Transaction with id <{}> not found for response operation value <{}>",
                 transaction_id.to_hex(),
                 operation
             )));
@@ -643,7 +639,7 @@ impl BackendContract {
         // to two different request operations: the normal one and the insecure one.
         let associated_requests = operation.into_kms_operation().to_requests().map_err(|e| {
             BackendError::from(format!(
-                "unable to get request operations from response operation <{}>: {}",
+                "Unable to get request operations from response operation <{}>: {}",
                 operation, e,
             ))
         })?;
@@ -657,7 +653,7 @@ impl BackendContract {
         // `DecryptResponse` must be associated to `Decrypt`)
         if !has_matching_request {
             return Err(BackendError::from(format!(
-                "no matching request operation found for response operation <{}>. A response
+                "No matching request operation found for response operation <{}>. A response
                 operation must be associated with a request operation of relevant type.",
                 operation
             )));

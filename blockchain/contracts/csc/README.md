@@ -103,7 +103,7 @@ b. `STORAGE_BASE_URL`: URL for storing the public key materials
 export STORAGE_BASE_URL=https://dummy-storage-base-url.example.com
 ```
 
-b. `ADMIN_ADDRESS`: Will be allowed to make admin level calls to the contract:
+c. `ADMIN_ADDRESS`: Will be allowed to make admin level calls to the contract:
 add/remove members to allowed lists, migrate the contract from one version to
 another. Also, will be allowed to update the KMS configuration parameters.
 
@@ -113,7 +113,7 @@ For simplicity, we could use the connector's address for the address above.
 export ADMIN_ADDRESS=$(wasmd keys show connector -a)
 ```
 
-#### 3. Upload the BSC and fetch its Code ID:
+#### 3. Upload the CSC and fetch its Code ID:
 
    ```bash
    CSC_UPLOAD_TX=$(wasmd tx wasm store $CSC_WASMFILE --from validator --chain-id local-dev-chain --node $NODE_URL --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 -y --output json)
@@ -128,7 +128,7 @@ export ADMIN_ADDRESS=$(wasmd keys show connector -a)
    ```
 
 
-#### 5. Instantiate the BSC and fetch its address
+#### 5. Instantiate the CSC and fetch its address
 
    - For threshold mode:
    ```bash

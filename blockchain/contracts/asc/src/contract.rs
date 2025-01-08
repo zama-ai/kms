@@ -1,10 +1,10 @@
 use super::state::KmsContractStorage;
-use crate::backend_contract_staging::{AllowlistType, Allowlists, BackendContract};
+use crate::external_queries::{BscExecMsg, BscQueryMsg};
 use contracts_common::{
     allowlists::{AllowlistsContractManager, AllowlistsManager, AllowlistsStateManager},
     migrations::Migration,
 };
-use cosmwasm_std::{Response, StdResult};
+use cosmwasm_std::{wasm_execute, Response, StdResult};
 use cw2::set_contract_version;
 use events::kms::{
     CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues, InsecureCrsGenValues,
@@ -12,6 +12,7 @@ use events::kms::{
     ReencryptResponseValues, ReencryptValues, Transaction, TransactionId,
     VerifyProvenCtResponseValues, VerifyProvenCtValues,
 };
+use serde::de::DeserializeOwned;
 use sylvia::{
     contract, entry_points,
     types::{ExecCtx, InstantiateCtx, MigrateCtx, QueryCtx},
@@ -20,6 +21,11 @@ use sylvia::{
 // Info for migration
 const CONTRACT_NAME: &str = "kms-asc";
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+// Type aliases for the allowlists and operation types to use in the ASC
+// We recover them from the storage for better maintainability
+pub type Allowlists = <KmsContractStorage as AllowlistsStateManager>::Allowlists;
+pub type AllowlistType = <Allowlists as AllowlistsManager>::AllowlistType;
 
 #[derive(Default)]
 pub struct KmsContract {
@@ -68,6 +74,7 @@ impl KmsContract {
         debug_proof: Option<bool>,
         verify_proof_contract_addr: String,
         csc_address: String,
+        bsc_address: String,
         allowlists: Option<Allowlists>,
     ) -> StdResult<Response> {
         // Inclusion proof debug configuration
@@ -102,6 +109,9 @@ impl KmsContract {
         self.storage
             .set_csc_address(ctx.deps.storage, csc_address)?;
 
+        self.storage
+            .set_bsc_address(ctx.deps.storage, bsc_address)?;
+
         // Set contract name and version in the storage
         set_contract_version(ctx.deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
 
@@ -119,16 +129,6 @@ impl KmsContract {
         operation_type: AllowlistType,
     ) -> StdResult<Response> {
         self.impl_add_allowlist(ctx, address, operation_type)
-    }
-
-    #[sv::msg(exec)]
-    pub fn grant_key_access_to_address(
-        &self,
-        mut ctx: ExecCtx,
-        key_id: String,
-        new_address: String,
-    ) -> StdResult<Response> {
-        BackendContract::grant_key_access_to_address(&mut ctx, &self.storage, key_id, new_address)
     }
 
     /// Forbid an address from triggering the given operation type.
@@ -159,8 +159,8 @@ impl KmsContract {
 
     #[sv::msg(query)]
     pub fn get_transaction(&self, ctx: QueryCtx, txn_id: TransactionId) -> StdResult<Transaction> {
-        self.storage
-            .load_transaction_with_response_values(ctx.deps.storage, &txn_id)
+        let bsc_query_msg = BscQueryMsg::Transaction { txn_id };
+        self.process_bsc_query(ctx, bsc_query_msg)
     }
 
     /// Get the list of all operation values found in the storage and associated to the given
@@ -171,11 +171,8 @@ impl KmsContract {
         ctx: QueryCtx,
         event: KmsEvent,
     ) -> StdResult<Vec<OperationValue>> {
-        self.storage.get_values_from_transaction_and_operation(
-            ctx.deps.storage,
-            &event.txn_id,
-            &event.operation,
-        )
+        let bsc_query_msg = BscQueryMsg::OperationsValuesFromEvent { event };
+        self.process_bsc_query(ctx, bsc_query_msg)
     }
 
     /// Get the list of all key gen response values for a given key ID
@@ -185,8 +182,8 @@ impl KmsContract {
         ctx: QueryCtx,
         key_id: String,
     ) -> StdResult<Vec<KeyGenResponseValues>> {
-        self.storage
-            .get_key_gen_response_values(ctx.deps.storage, &key_id)
+        let bsc_query_msg = BscQueryMsg::KeyGenResponseValues { key_id };
+        self.process_bsc_query(ctx, bsc_query_msg)
     }
 
     /// Get the list of all CRS gen response values for a given CRS ID
@@ -196,67 +193,66 @@ impl KmsContract {
         ctx: QueryCtx,
         crs_id: String,
     ) -> StdResult<Vec<CrsGenResponseValues>> {
-        self.storage
-            .get_crs_gen_response_values(ctx.deps.storage, &crs_id)
+        let bsc_query_msg = BscQueryMsg::CrsGenResponseValues { crs_id };
+        self.process_bsc_query(ctx, bsc_query_msg)
     }
 
     #[sv::msg(exec)]
-    pub fn decrypt(&self, mut ctx: ExecCtx, decrypt: DecryptValues) -> StdResult<Response> {
-        BackendContract::process_decryption_request(&mut ctx, &self.storage, decrypt)
+    pub fn decryption_request(&self, ctx: ExecCtx, decrypt: DecryptValues) -> StdResult<Response> {
+        let bsc_exec_msg = BscExecMsg::DecryptionRequest { decrypt };
+        self.process_bsc_exec(ctx, bsc_exec_msg)
     }
 
     /// Decrypt response
     ///
     /// This call is restricted to specific addresses defined at instantiation (`Allowlists`).
     #[sv::msg(exec)]
-    pub fn decrypt_response(
+    pub fn decryption_response(
         &self,
-        mut ctx: ExecCtx,
+        ctx: ExecCtx,
         txn_id: TransactionId,
         decrypt_response: DecryptResponseValues,
     ) -> StdResult<Response> {
-        BackendContract::process_decryption_response(
-            &mut ctx,
-            &self.storage,
+        let bsc_exec_msg = BscExecMsg::DecryptionResponse {
             txn_id,
             decrypt_response,
-        )
+        };
+        self.process_bsc_exec(ctx, bsc_exec_msg)
     }
 
     /// Keygen preproc
     ///
     /// This call is restricted to specific addresses defined at instantiation (`Allowlists`).
     #[sv::msg(exec)]
-    pub fn keygen_preproc(&self, mut ctx: ExecCtx) -> StdResult<Response> {
-        BackendContract::process_key_generation_preproc_request(&mut ctx, &self.storage)
+    pub fn key_gen_preproc_request(&self, ctx: ExecCtx) -> StdResult<Response> {
+        let bsc_exec_msg = BscExecMsg::KeyGenPreprocRequest {};
+        self.process_bsc_exec(ctx, bsc_exec_msg)
     }
 
     /// Keygen preproc response
     ///
     /// This call is restricted to specific addresses defined at instantiation (`Allowlists`).
     #[sv::msg(exec)]
-    pub fn keygen_preproc_response(
+    pub fn key_gen_preproc_response(
         &self,
-        mut ctx: ExecCtx,
+        ctx: ExecCtx,
         txn_id: TransactionId,
     ) -> StdResult<Response> {
-        BackendContract::process_key_generation_preproc_response(&mut ctx, &self.storage, txn_id)
+        let bsc_exec_msg = BscExecMsg::KeyGenPreprocResponse { txn_id };
+        self.process_bsc_exec(ctx, bsc_exec_msg)
     }
 
     /// Insecure keygen
     ///
     /// This call is restricted to specific addresses defined at instantiation (`Allowlists`).
     #[sv::msg(exec)]
-    pub fn insecure_key_gen(
+    pub fn insecure_key_gen_request(
         &self,
-        mut ctx: ExecCtx,
+        ctx: ExecCtx,
         insecure_key_gen: InsecureKeyGenValues,
     ) -> StdResult<Response> {
-        BackendContract::process_insecure_key_generation_request(
-            &mut ctx,
-            &self.storage,
-            insecure_key_gen,
-        )
+        let bsc_exec_msg = BscExecMsg::InsecureKeyGenRequest { insecure_key_gen };
+        self.process_bsc_exec(ctx, bsc_exec_msg)
     }
 
     /// Insecure keygen response
@@ -265,78 +261,78 @@ impl KmsContract {
     #[sv::msg(exec)]
     pub fn insecure_key_gen_response(
         &self,
-        mut ctx: ExecCtx,
+        ctx: ExecCtx,
         txn_id: TransactionId,
         keygen_response: KeyGenResponseValues,
     ) -> StdResult<Response> {
-        BackendContract::process_insecure_key_generation_response(
-            &mut ctx,
-            &self.storage,
+        let bsc_exec_msg = BscExecMsg::InsecureKeyGenResponse {
             txn_id,
             keygen_response,
-        )
+        };
+        self.process_bsc_exec(ctx, bsc_exec_msg)
     }
 
     /// Keygen
     ///
     /// This call is restricted to specific addresses defined at instantiation (`Allowlists`).
     #[sv::msg(exec)]
-    pub fn keygen(&self, mut ctx: ExecCtx, keygen: KeyGenValues) -> StdResult<Response> {
-        BackendContract::process_key_generation_request(&mut ctx, &self.storage, keygen)
+    pub fn key_gen_request(&self, ctx: ExecCtx, keygen: KeyGenValues) -> StdResult<Response> {
+        let bsc_exec_msg = BscExecMsg::KeyGenRequest { keygen };
+        self.process_bsc_exec(ctx, bsc_exec_msg)
     }
 
     /// Keygen response
     ///
     /// This call is restricted to specific addresses defined at instantiation (`Allowlists`).
     #[sv::msg(exec)]
-    pub fn keygen_response(
+    pub fn key_gen_response(
         &self,
-        mut ctx: ExecCtx,
+        ctx: ExecCtx,
         txn_id: TransactionId,
         keygen_response: KeyGenResponseValues,
     ) -> StdResult<Response> {
-        BackendContract::process_key_generation_response(
-            &mut ctx,
-            &self.storage,
+        let bsc_exec_msg = BscExecMsg::KeyGenResponse {
             txn_id,
             keygen_response,
-        )
+        };
+        self.process_bsc_exec(ctx, bsc_exec_msg)
     }
 
     #[sv::msg(exec)]
-    pub fn reencrypt(&self, mut ctx: ExecCtx, reencrypt: ReencryptValues) -> StdResult<Response> {
-        BackendContract::process_reencryption_request(&mut ctx, &self.storage, reencrypt)
+    pub fn reencryption_request(
+        &self,
+        ctx: ExecCtx,
+        reencrypt: ReencryptValues,
+    ) -> StdResult<Response> {
+        let bsc_exec_msg = BscExecMsg::ReencryptionRequest { reencrypt };
+        self.process_bsc_exec(ctx, bsc_exec_msg)
     }
 
     /// Reencrypt response
     ///
     /// This call is restricted to specific addresses defined at instantiation (`Allowlists`).
     #[sv::msg(exec)]
-    pub fn reencrypt_response(
+    pub fn reencryption_response(
         &self,
-        mut ctx: ExecCtx,
+        ctx: ExecCtx,
         txn_id: TransactionId,
         reencrypt_response: ReencryptResponseValues,
     ) -> StdResult<Response> {
-        BackendContract::process_reencryption_response(
-            &mut ctx,
-            &self.storage,
+        let bsc_exec_msg = BscExecMsg::ReencryptionResponse {
             txn_id,
             reencrypt_response,
-        )
+        };
+        self.process_bsc_exec(ctx, bsc_exec_msg)
     }
 
     #[sv::msg(exec)]
-    pub fn verify_proven_ct(
+    pub fn verify_proven_ct_request(
         &self,
-        mut ctx: ExecCtx,
+        ctx: ExecCtx,
         verify_proven_ct: VerifyProvenCtValues,
     ) -> StdResult<Response> {
-        BackendContract::process_proven_ct_verification_request(
-            &mut ctx,
-            &self.storage,
-            verify_proven_ct,
-        )
+        let bsc_exec_msg = BscExecMsg::VerifyProvenCtRequest { verify_proven_ct };
+        self.process_bsc_exec(ctx, bsc_exec_msg)
     }
 
     /// Verify proven ct response
@@ -345,24 +341,24 @@ impl KmsContract {
     #[sv::msg(exec)]
     pub fn verify_proven_ct_response(
         &self,
-        mut ctx: ExecCtx,
+        ctx: ExecCtx,
         txn_id: TransactionId,
         verify_proven_ct_response: VerifyProvenCtResponseValues,
     ) -> StdResult<Response> {
-        BackendContract::process_proven_ct_verification_response(
-            &mut ctx,
-            &self.storage,
+        let bsc_exec_msg = BscExecMsg::VerifyProvenCtResponse {
             txn_id,
             verify_proven_ct_response,
-        )
+        };
+        self.process_bsc_exec(ctx, bsc_exec_msg)
     }
 
     /// CRS gen
     ///
     /// This call is restricted to specific addresses defined at instantiation (`Allowlists`).
     #[sv::msg(exec)]
-    pub fn crs_gen(&self, mut ctx: ExecCtx, crs_gen: CrsGenValues) -> StdResult<Response> {
-        BackendContract::process_crs_generation_request(&mut ctx, &self.storage, crs_gen)
+    pub fn crs_gen_request(&self, ctx: ExecCtx, crs_gen: CrsGenValues) -> StdResult<Response> {
+        let bsc_exec_msg = BscExecMsg::CrsGenRequest { crs_gen };
+        self.process_bsc_exec(ctx, bsc_exec_msg)
     }
 
     /// CRS gen response
@@ -371,32 +367,28 @@ impl KmsContract {
     #[sv::msg(exec)]
     pub fn crs_gen_response(
         &self,
-        mut ctx: ExecCtx,
+        ctx: ExecCtx,
         txn_id: TransactionId,
         crs_gen_response: CrsGenResponseValues,
     ) -> StdResult<Response> {
-        BackendContract::process_crs_generation_response(
-            &mut ctx,
-            &self.storage,
+        let bsc_exec_msg = BscExecMsg::CrsGenResponse {
             txn_id,
             crs_gen_response,
-        )
+        };
+        self.process_bsc_exec(ctx, bsc_exec_msg)
     }
 
     /// Insecure CRS gen
     ///
     /// This call might be restricted to specific addresses defined at instantiation (`Allowlists`).
     #[sv::msg(exec)]
-    pub fn insecure_crs_gen(
+    pub fn insecure_crs_gen_request(
         &self,
-        mut ctx: ExecCtx,
+        ctx: ExecCtx,
         insecure_crs_gen: InsecureCrsGenValues,
     ) -> StdResult<Response> {
-        BackendContract::process_insecure_crs_generation_request(
-            &mut ctx,
-            &self.storage,
-            insecure_crs_gen,
-        )
+        let bsc_exec_msg = BscExecMsg::InsecureCrsGenRequest { insecure_crs_gen };
+        self.process_bsc_exec(ctx, bsc_exec_msg)
     }
 
     /// Insecure CRS gen response
@@ -405,16 +397,36 @@ impl KmsContract {
     #[sv::msg(exec)]
     pub fn insecure_crs_gen_response(
         &self,
-        mut ctx: ExecCtx,
+        ctx: ExecCtx,
         txn_id: TransactionId,
         crs_gen_response: CrsGenResponseValues,
     ) -> StdResult<Response> {
-        BackendContract::process_insecure_crs_generation_response(
-            &mut ctx,
-            &self.storage,
+        let bsc_exec_msg = BscExecMsg::InsecureCrsGenResponse {
             txn_id,
             crs_gen_response,
-        )
+        };
+        self.process_bsc_exec(ctx, bsc_exec_msg)
+    }
+
+    /// Queries the BSC at the stored address during ASC instantiation
+    fn process_bsc_query<T: DeserializeOwned>(
+        &self,
+        ctx: QueryCtx,
+        bsc_query_msg: BscQueryMsg,
+    ) -> StdResult<T> {
+        let bsc_address = self.storage.get_bsc_address(ctx.deps.storage)?;
+        let query_result = ctx
+            .deps
+            .querier
+            .query_wasm_smart(bsc_address, &bsc_query_msg)?;
+        Ok(query_result)
+    }
+
+    /// Dispatches an execution call to the BSC at the stored address during ASC instantiation
+    fn process_bsc_exec(&self, ctx: ExecCtx, bsc_exec_msg: BscExecMsg) -> StdResult<Response> {
+        let bsc_address = self.storage.get_bsc_address(ctx.deps.storage)?;
+        let exec_msg = wasm_execute(bsc_address, &bsc_exec_msg, ctx.info.funds)?;
+        Ok(Response::default().add_message(exec_msg))
     }
 
     /// Function to migrate from old version to new version
@@ -431,26 +443,27 @@ impl KmsContract {
 #[cfg(test)]
 mod tests {
     use super::sv::mt::KmsContractProxy;
-    use super::KmsContract;
     use crate::{
         allowlists::{AllowlistTypeAsc, AllowlistsAsc},
-        backend_contract_staging::BackendContract,
         contract::sv::mt::CodeId,
     };
+    use bsc::{
+        allowlists::AllowlistTypeBsc,
+        contract::sv::mt::{BackendContractProxy, CodeId as BSCCodeId},
+        contract::BackendContract,
+    };
     use contracts_common::allowlists::AllowlistsManager;
-    use cosmwasm_std::{coin, coins, testing::mock_env, Addr, Env, Event, TransactionInfo};
+    use cosmwasm_std::{coin, coins, Addr, Event};
     use csc::{allowlists::AllowlistsCsc, contract::sv::mt::CodeId as CSCCodeId};
     use cw_multi_test::{App as MtApp, IntoAddr as _};
-    use events::{
-        kms::{
-            CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues, FheParameter,
-            FheType, InsecureKeyGenValues, KeyGenPreprocResponseValues, KeyGenPreprocValues,
-            KeyGenResponseValues, KeyGenValues, KmsCoreParty, KmsEvent, KmsOperation,
-            OperationValue, ReencryptResponseValues, ReencryptValues, TransactionId,
-            VerifyProvenCtResponseValues, VerifyProvenCtValues,
-        },
-        HexVector,
+    use events::kms::{
+        CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues, FheParameter,
+        FheType, InsecureKeyGenValues, KeyGenPreprocResponseValues, KeyGenPreprocValues,
+        KeyGenResponseValues, KeyGenValues, KmsCoreParty, KmsEvent, KmsOperation, OperationValue,
+        ReencryptResponseValues, ReencryptValues, TransactionId, VerifyProvenCtResponseValues,
+        VerifyProvenCtValues,
     };
+    use serde::Serialize;
     use std::collections::HashMap;
     use sylvia::multitest::{App, Proxy};
     use tendermint_ipsc::mock::sv::mt::CodeId as ProofCodeId;
@@ -463,22 +476,15 @@ mod tests {
     const MOCK_BLOCK_HEIGHT: u64 = 12_345;
     const MOCK_TRANSACTION_INDEX: u32 = 0;
 
-    // Helper function to get a mocked environment with the mock block height and transaction index
-    fn get_mock_env() -> Env {
-        let mut mocked_env = mock_env();
-        mocked_env.block.height = MOCK_BLOCK_HEIGHT;
-        mocked_env.transaction = Some(TransactionInfo {
-            index: MOCK_TRANSACTION_INDEX,
-        });
-        mocked_env
-    }
-
     /// Triggers the key generation process for a given key ID and sender address (implicit ACL inclusion).
-    fn add_address_to_contract_acl(
-        contract: &Proxy<'_, MtApp, KmsContract>,
+    fn add_address_to_bsc_acl(
+        app: &App<MtApp>,
+        bsc_address: &String,
         key_id: &[u8],
         address: &Addr,
     ) {
+        let bsc: Proxy<'_, MtApp, BackendContract> =
+            Proxy::from((Addr::unchecked(bsc_address), app));
         let keygen_val = KeyGenValues::new(
             "preproc_id".as_bytes().to_vec(),
             "eip712name".to_string(),
@@ -488,10 +494,11 @@ mod tests {
             Some(vec![42; 32]),
         )
         .unwrap();
-        contract.keygen(keygen_val.clone()).call(address).unwrap();
-
-        let mocked_env = get_mock_env();
-        let keygen_txn_id = BackendContract::compute_transaction_id(&mocked_env).unwrap();
+        let response = bsc
+            .key_gen_request(keygen_val.clone())
+            .call(address)
+            .unwrap();
+        let txn_id = find_transaction_id_from_events(&response.events);
         let keygen_response = KeyGenResponseValues::new(
             key_id.to_vec(),
             "digest1".to_string(),
@@ -506,14 +513,74 @@ mod tests {
         // Call the keygen response function using the owner address if provided
         // Else we use the address and consider that the address is already the owner (or is simply
         // allowed to response)
-        contract
-            .keygen_response(keygen_txn_id, keygen_response.clone())
+        bsc.key_gen_response(txn_id, keygen_response.clone())
             .call(address)
             .unwrap();
     }
 
+    /// Helper function to add an address to the BSC allowlist
+    fn add_address_to_bsc_allowlist(
+        app: &App<MtApp>,
+        bsc_address: &String,
+        sender: &Addr,
+        address: &Addr,
+    ) {
+        let bsc: Proxy<'_, MtApp, BackendContract> =
+            Proxy::from((Addr::unchecked(bsc_address), app));
+        bsc.add_allowlist(address.to_string(), AllowlistTypeBsc::Generate)
+            .call(sender)
+            .unwrap();
+        bsc.add_allowlist(address.to_string(), AllowlistTypeBsc::Response)
+            .call(sender)
+            .unwrap();
+    }
+
+    /// Helper function to find the transaction ID from given KMS blockchain events
+    fn find_transaction_id_from_events(events: &[Event]) -> TransactionId {
+        let keygen_event = events
+            .iter()
+            .find(|e| {
+                e.ty == "wasm-keygen"
+                    || e.ty == "wasm-decrypt"
+                    || e.ty == "wasm-reencrypt"
+                    || e.ty == "wasm-crs_gen"
+                    || e.ty == "wasm-keygen_preproc"
+                    || e.ty == "wasm-insecure_key_gen"
+                    || e.ty == "wasm-verify_proven_ct"
+            })
+            .unwrap();
+        hex::decode(
+            keygen_event
+                .attributes
+                .iter()
+                .find(|attr| attr.key == "txn_id")
+                .unwrap()
+                .value
+                .clone(),
+        )
+        .unwrap()
+        .into()
+    }
+
+    /// Helper function to assert that a given KMS event is present in the given list of events
+    fn assert_event(events: &[Event], kms_event: &KmsEvent) {
+        let mut kms_event: Event = kms_event.clone().into();
+        kms_event.ty = format!("wasm-{}", kms_event.ty);
+        let event = events.iter().find(|e| e.ty == kms_event.ty);
+        assert!(event.is_some());
+        let mut event = event.unwrap().clone();
+        let position = event
+            .attributes
+            .iter()
+            .position(|x| x.key == "_contract_address");
+        if let Some(idx) = position {
+            event.attributes.remove(idx);
+        }
+        assert_eq!(event, kms_event);
+    }
+
     // Helper function to set up test environment
-    fn setup_test_env(app_default: bool) -> (App<MtApp>, Addr, String) {
+    fn setup_test_env(app_default: bool) -> (App<MtApp>, Addr, String, String) {
         let owner = "owner".into_addr();
 
         let app: App<MtApp> = if app_default {
@@ -555,12 +622,20 @@ mod tests {
             .contract_addr
             .to_string();
 
-        (app, owner, csc_address)
+        // Store and instantiate BSC
+        let bsc_code_id = BSCCodeId::store_code(&app);
+        let bsc_address = bsc_code_id
+            .instantiate(csc_address.clone(), None)
+            .call(&owner)
+            .unwrap()
+            .contract_addr
+            .to_string();
+        (app, owner, csc_address, bsc_address)
     }
 
     #[test]
     fn test_instantiate() {
-        let (app, owner, csc_address) = setup_test_env(true);
+        let (app, owner, csc_address, bsc_address) = setup_test_env(true);
         let code_id = CodeId::store_code(&app);
 
         // finally we make a successful attempt
@@ -568,7 +643,8 @@ mod tests {
             .instantiate(
                 Some(true),
                 DUMMY_PROOF_CONTRACT_ADDR.to_string(),
-                csc_address.to_string(),
+                csc_address,
+                bsc_address,
                 Some(AllowlistsAsc::default_all_to(owner.as_str())),
             )
             .call(&owner)
@@ -587,20 +663,19 @@ mod tests {
 
     #[test]
     fn test_verify_proven_ct() {
-        let (app, owner, csc_address) = setup_test_env(false);
+        let (app, owner, csc_address, bsc_address) = setup_test_env(false);
         let code_id = CodeId::store_code(&app);
-
-        let fake_owner = "fake_owner".into_addr();
-
         let contract = code_id
             .instantiate(
                 Some(true),
                 DUMMY_PROOF_CONTRACT_ADDR.to_string(),
                 csc_address,
+                bsc_address.clone(),
                 Some(AllowlistsAsc::default_all_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
+        add_address_to_bsc_allowlist(&app, &bsc_address, &owner, &contract.contract_addr);
 
         let proven_val = VerifyProvenCtValues::new(
             vec![1, 2, 3],
@@ -618,18 +693,20 @@ mod tests {
         .unwrap();
 
         let response = contract
-            .verify_proven_ct(proven_val.clone())
+            .verify_proven_ct_request(proven_val.clone())
             .call(&owner)
             .unwrap();
+        // Three events:
+        // - ASC's execute event
+        // - BSC's execute event
+        // - Verify proven CT request event
+        assert_eq!(response.events.len(), 3);
 
-        let txn_id = BackendContract::compute_transaction_id(&get_mock_env()).unwrap();
-        assert_eq!(response.events.len(), 2);
-
+        let txn_id = find_transaction_id_from_events(&response.events);
         let expected_event = KmsEvent::builder()
             .operation(KmsOperation::VerifyProvenCt)
             .txn_id(txn_id.clone())
             .build();
-
         assert_event(&response.events, &expected_event);
 
         let proven_ct_response = VerifyProvenCtResponseValues::new(vec![4, 5, 6], vec![6, 7, 8]);
@@ -638,20 +715,22 @@ mod tests {
             .verify_proven_ct_response(txn_id.clone(), proven_ct_response.clone())
             .call(&owner)
             .unwrap();
-
-        // Two events because there's always an execute event
-        // + the check sender event
-        assert_eq!(response.events.len(), 2);
+        // Three events (threshold not reached yet):
+        // - ASC's execute event
+        // - BSC's execute event
+        // - Sender allowed event
+        assert_eq!(response.events.len(), 3);
 
         let response = contract
             .verify_proven_ct_response(txn_id.clone(), proven_ct_response.clone())
             .call(&owner)
             .unwrap();
-
-        // Three events because there's always an execute event
-        // + the verify ct request since it reached the threshold
-        // + the check sender event
-        assert_eq!(response.events.len(), 3);
+        // Four events (threshold reached):
+        // - ASC's execute event
+        // - BSC's execute event
+        // - Verify proven CT response event
+        // - Sender allowed event
+        assert_eq!(response.events.len(), 4);
 
         let expected_event = KmsEvent::builder()
             .operation(OperationValue::VerifyProvenCtResponse(
@@ -659,7 +738,6 @@ mod tests {
             ))
             .txn_id(txn_id.clone())
             .build();
-
         assert_event(&response.events, &expected_event);
 
         let response = contract.get_transaction(txn_id.clone()).unwrap();
@@ -667,22 +745,11 @@ mod tests {
         assert_eq!(response.transaction_index(), MOCK_TRANSACTION_INDEX);
         // three operations: one verify ct and two verify ct responses
         assert_eq!(response.operations().len(), 3);
-
-        contract
-            .verify_proven_ct_response(txn_id.clone(), proven_ct_response.clone())
-            .call(&fake_owner)
-            .expect_err(
-                format!(
-                    "Fake owner was allowed to call a verify proven ciphertext response with address {}",
-                    fake_owner
-                )
-                .as_str(),
-            );
     }
 
     #[test]
     fn test_decrypt() {
-        let (app, owner, csc_address) = setup_test_env(false);
+        let (app, owner, csc_address, bsc_address) = setup_test_env(false);
         let code_id = CodeId::store_code(&app);
 
         let key_id = vec![1, 2, 3];
@@ -692,10 +759,13 @@ mod tests {
                 Some(true),
                 DUMMY_PROOF_CONTRACT_ADDR.to_string(),
                 csc_address,
+                bsc_address.clone(),
                 Some(AllowlistsAsc::default_all_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
+        add_address_to_bsc_allowlist(&app, &bsc_address, &owner, &contract.contract_addr);
+        add_address_to_bsc_acl(&app, &bsc_address, &key_id, &contract.contract_addr);
 
         let ciphertext_handle =
             hex::decode("000a17c82f8cd9fe41c871f12b391a2afaf5b640ea4fdd0420a109aa14c674d3e385b955")
@@ -721,29 +791,19 @@ mod tests {
         )
         .unwrap();
 
-        contract
-            .decrypt(decrypt.clone())
-            .with_funds(&[coin(data_size.into(), UCOSM)])
-            .call(&owner)
-            .expect_err("An address not included into contract ACL was allowed to encrypt");
-
-        add_address_to_contract_acl(&contract, &key_id, &owner);
-
-        // test insufficient funds
-        contract
-            .decrypt(decrypt.clone())
-            .with_funds(&[coin(42_u128, UCOSM)])
-            .call(&owner)
-            .expect_err("Insufficient funds sent to cover the data size");
-
         let response = contract
-            .decrypt(decrypt.clone())
+            .decryption_request(decrypt.clone())
             .with_funds(&[coin(data_size.into(), UCOSM)])
             .call(&owner)
             .unwrap();
-        assert_eq!(response.events.len(), 3);
+        // Four events:
+        // - ASC's execute event
+        // - BSC's execute event
+        // - Decrypt request event
+        // - Key access allowed event
+        assert_eq!(response.events.len(), 4);
 
-        let txn_id = BackendContract::compute_transaction_id(&get_mock_env()).unwrap();
+        let txn_id = find_transaction_id_from_events(&response.events);
         let expected_event = KmsEvent::builder()
             .operation(KmsOperation::Decrypt)
             .txn_id(txn_id.clone())
@@ -754,23 +814,25 @@ mod tests {
         let decrypt_response = DecryptResponseValues::new(vec![4, 5, 6], vec![6, 7, 8]);
 
         let response = contract
-            .decrypt_response(txn_id.clone(), decrypt_response.clone())
+            .decryption_response(txn_id.clone(), decrypt_response.clone())
             .call(&owner)
             .unwrap();
-
-        // Two events because there's always an execute event
-        // + the check sender event
-        assert_eq!(response.events.len(), 2);
+        // Three events (threshold not reached yet):
+        // - ASC's execute event
+        // - BSC's execute event
+        // - Sender allowed event
+        assert_eq!(response.events.len(), 3);
 
         let response = contract
-            .decrypt_response(txn_id.clone(), decrypt_response)
+            .decryption_response(txn_id.clone(), decrypt_response)
             .call(&owner)
             .unwrap();
-
-        // Three events because there's always an execute event
-        // + the decryption request since it reached the threshold
-        // + the check sender event
-        assert_eq!(response.events.len(), 3);
+        // Four events (threshold reached):
+        // - ASC's execute event
+        // - BSC's execute event
+        // - Decrypt response event
+        // - Sender allowed event
+        assert_eq!(response.events.len(), 4);
 
         let expected_event = KmsEvent::builder()
             .operation(OperationValue::DecryptResponse(DecryptResponseValues::new(
@@ -791,7 +853,7 @@ mod tests {
 
     #[test]
     fn test_decrypt_with_proof() {
-        let (app, owner, csc_address) = setup_test_env(false);
+        let (app, owner, csc_address, bsc_address) = setup_test_env(false);
         let code_id = CodeId::store_code(&app);
         let proof_code_id = ProofCodeId::store_code(&app);
 
@@ -811,10 +873,13 @@ mod tests {
                 Some(false),
                 proof_addr.to_string(),
                 csc_address,
+                bsc_address.clone(),
                 Some(AllowlistsAsc::default_all_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
+        add_address_to_bsc_allowlist(&app, &bsc_address, &owner, &contract.contract_addr);
+        add_address_to_bsc_acl(&app, &bsc_address, &key_id, &contract.contract_addr);
 
         let data_size = extract_ciphertext_size(&ciphertext_handle) * batch_size as u32;
         assert_eq!(data_size, 661448 * batch_size as u32);
@@ -834,24 +899,19 @@ mod tests {
         )
         .unwrap();
 
-        add_address_to_contract_acl(&contract, &key_id, &owner);
-
-        // test insufficient funds
-        contract
-            .decrypt(decrypt.clone())
-            .with_funds(&[coin(42_u128, UCOSM)])
-            .call(&owner)
-            .expect_err("Insufficient funds sent to cover the data size");
-
         let response = contract
-            .decrypt(decrypt.clone())
+            .decryption_request(decrypt.clone())
             .with_funds(&[coin(data_size.into(), UCOSM)])
             .call(&owner)
             .unwrap();
-
-        let txn_id = BackendContract::compute_transaction_id(&get_mock_env()).unwrap();
+        // Four events:
+        // - ASC's execute event
+        // - BSC's execute event
+        // - Decrypt request event
+        // - Key access allowed event
         assert_eq!(response.events.len(), 4);
 
+        let txn_id = find_transaction_id_from_events(&response.events);
         let expected_event = KmsEvent::builder()
             .operation(KmsOperation::Decrypt)
             .txn_id(txn_id.clone())
@@ -862,23 +922,25 @@ mod tests {
         let decrypt_response = DecryptResponseValues::new(vec![4, 5, 6], vec![6, 7, 8]);
 
         let response = contract
-            .decrypt_response(txn_id.clone(), decrypt_response.clone())
+            .decryption_response(txn_id.clone(), decrypt_response.clone())
             .call(&owner)
             .unwrap();
-
-        // Two events because there's always an execute event
-        // + the check sender event
-        assert_eq!(response.events.len(), 2);
+        // Three events (threshold not reached yet):
+        // - ASC's execute event
+        // - BSC's execute event
+        // - Sender allowed event
+        assert_eq!(response.events.len(), 3);
 
         let response = contract
-            .decrypt_response(txn_id.clone(), decrypt_response)
+            .decryption_response(txn_id.clone(), decrypt_response)
             .call(&owner)
             .unwrap();
-
-        // Three events because there's always an execute event
-        // + the decryption request since it reached the threshold
-        // + the check sender event
-        assert_eq!(response.events.len(), 3);
+        // Four events (threshold reached):
+        // - ASC's execute event
+        // - BSC's execute event
+        // - Decrypt response event
+        // - Sender allowed event
+        assert_eq!(response.events.len(), 4);
 
         let expected_event = KmsEvent::builder()
             .operation(OperationValue::DecryptResponse(DecryptResponseValues::new(
@@ -899,25 +961,29 @@ mod tests {
 
     #[test]
     fn test_preproc() {
-        let (app, owner, csc_address) = setup_test_env(true);
+        let (app, owner, csc_address, bsc_address) = setup_test_env(true);
         let code_id = CodeId::store_code(&app);
-
-        let fake_owner = "fake_owner".into_addr();
-
         let contract = code_id
             .instantiate(
                 Some(true),
                 DUMMY_PROOF_CONTRACT_ADDR.to_string(),
                 csc_address,
+                bsc_address.clone(),
                 Some(AllowlistsAsc::default_all_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
+        add_address_to_bsc_allowlist(&app, &bsc_address, &owner, &contract.contract_addr);
 
-        let response = contract.keygen_preproc().call(&owner).unwrap();
-        let txn_id = BackendContract::compute_transaction_id(&get_mock_env()).unwrap();
-        assert_eq!(response.events.len(), 3);
+        let response = contract.key_gen_preproc_request().call(&owner).unwrap();
+        // Four events:
+        // - ASC's execute event
+        // - BSC's execute event
+        // - Key gen preproc request event
+        // - Sender allowed event
+        assert_eq!(response.events.len(), 4);
 
+        let txn_id = find_transaction_id_from_events(&response.events);
         let expected_event = KmsEvent::builder()
             .operation(OperationValue::KeyGenPreproc(KeyGenPreprocValues {}))
             .txn_id(txn_id.clone())
@@ -925,19 +991,16 @@ mod tests {
 
         assert_event(&response.events, &expected_event);
 
-        contract.keygen_preproc().call(&fake_owner).expect_err(
-            format!(
-                "Fake owner was allowed to init key generation with address {}",
-                fake_owner
-            )
-            .as_str(),
-        );
-
         let response = contract
-            .keygen_preproc_response(txn_id.clone())
+            .key_gen_preproc_response(txn_id.clone())
             .call(&owner)
             .unwrap();
-        assert_eq!(response.events.len(), 3);
+        // Four events:
+        // - ASC's execute event
+        // - BSC's execute event
+        // - Key gen preproc response event
+        // - Sender allowed event
+        assert_eq!(response.events.len(), 4);
 
         let expected_event = KmsEvent::builder()
             .operation(OperationValue::KeyGenPreprocResponse(
@@ -945,39 +1008,35 @@ mod tests {
             ))
             .txn_id(txn_id.clone())
             .build();
-
         assert_event(&response.events, &expected_event);
+    }
 
-        contract
-            .keygen_preproc_response(txn_id.clone())
-            .call(&fake_owner)
-            .expect_err(
-                format!(
-                    "Fake owner was allowed to call init key generation response with address {}",
-                    fake_owner
-                )
-                .as_str(),
-            );
+    use strum_macros::EnumString;
+
+    #[derive(EnumString, Serialize, Debug)]
+    #[allow(clippy::large_enum_variant)]
+    pub enum Exec {
+        #[serde(rename = "test_exec")]
+        AddAllowlist {},
     }
 
     #[test]
     fn test_keygen() {
-        let (app, owner, csc_address) = setup_test_env(true);
+        let (app, owner, csc_address, bsc_address) = setup_test_env(true);
         let code_id = CodeId::store_code(&app);
-
-        let fake_owner = "fake_owner".into_addr();
-        let fake_txn_id = vec![1, 2, 3];
 
         let contract = code_id
             .instantiate(
                 Some(true),
                 DUMMY_PROOF_CONTRACT_ADDR.to_string(),
                 csc_address,
+                bsc_address.clone(),
                 Some(AllowlistsAsc::default_all_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
 
+        add_address_to_bsc_allowlist(&app, &bsc_address, &owner, &contract.contract_addr);
         let keygen_val = KeyGenValues::new(
             "preproc_id".as_bytes().to_vec(),
             "eip712name".to_string(),
@@ -987,29 +1046,26 @@ mod tests {
             Some(vec![42; 32]),
         )
         .unwrap();
+        let response = contract
+            .key_gen_request(keygen_val.clone())
+            .call(&owner)
+            .unwrap();
+        // Four events:
+        // - ASC's execute event
+        // - BSC's execute event
+        // - Key gen request event
+        // - Sender allowed event
+        assert_eq!(response.events.len(), 4);
 
-        let response = contract.keygen(keygen_val.clone()).call(&owner).unwrap();
-        assert_eq!(response.events.len(), 3);
-
-        let txn_id = BackendContract::compute_transaction_id(&get_mock_env()).unwrap();
+        let txn_id = find_transaction_id_from_events(&response.events);
         let expected_event = KmsEvent::builder()
             .operation(KmsOperation::KeyGen)
             .txn_id(txn_id.clone())
             .build();
-
         assert_event(&response.events, &expected_event);
-
-        contract.keygen(keygen_val).call(&fake_owner).expect_err(
-            format!(
-                "Fake owner was allowed to call key generation with address {}",
-                fake_owner
-            )
-            .as_str(),
-        );
 
         // Key id should be a hex string
         let key_id = "a1b2c3d4e5f67890123456789abcdef0fedcba98";
-
         let keygen_response = KeyGenResponseValues::new(
             hex::decode(key_id).unwrap(),
             "digest1".to_string(),
@@ -1020,32 +1076,30 @@ mod tests {
             vec![9, 9, 9],
             FheParameter::Test,
         );
-
-        contract
-            .keygen_response(fake_txn_id.into(), keygen_response.clone())
-            .call(&owner)
-            .expect_err("A non-existent transaction sender was included into contract ACL");
-
         let response = contract
-            .keygen_response(txn_id.clone(), keygen_response.clone())
+            .key_gen_response(txn_id.clone(), keygen_response.clone())
             .call(&owner)
             .unwrap();
-
-        // Two events because there's always an execute event
-        // + the check sender event
-        // + ACL update event
-        assert_eq!(response.events.len(), 3);
+        // Five events (threshold not reached yet):
+        // - ASC execute event
+        // - BSC execute event
+        // - Gen response values saved event
+        // - Sender allowed event
+        // - BSC acl updated event
+        assert_eq!(response.events.len(), 5);
 
         let response = contract
-            .keygen_response(txn_id.clone(), keygen_response.clone())
+            .key_gen_response(txn_id.clone(), keygen_response.clone())
             .call(&owner)
             .unwrap();
-
-        // Three events because there's always an execute event
-        // + the keygen request since it reached the threshold
-        // + the check sender event
-        // + ACL update event
-        assert_eq!(response.events.len(), 4);
+        // Six events (threshold reached):
+        // - ASC execute event
+        // - BSC execute event
+        // - Key gen response event
+        // - Gen response values saved event
+        // - Sender allowed event
+        // - BSC acl updated event
+        assert_eq!(response.events.len(), 6);
 
         let expected_event = KmsEvent::builder()
             .operation(KmsOperation::KeyGenResponse)
@@ -1053,50 +1107,11 @@ mod tests {
             .build();
         assert_event(&response.events, &expected_event);
 
-        contract
-            .keygen_response(txn_id.clone(), keygen_response.clone())
-            .call(&fake_owner)
-            .expect_err(
-                format!(
-                    "Fake owner was allowed to call key generation response with address {}",
-                    fake_owner
-                )
-                .as_str(),
-            );
-
-        // Key id should be a hex string
-        let new_key_id = "a7f391e4d8c2b5f6e09d3c1a4b7852e9f0d6c3b9";
-
-        let new_keygen_response = KeyGenResponseValues::new(
-            hex::decode(new_key_id).unwrap(),
-            "digest1".to_string(),
-            vec![4, 5, 6],
-            vec![9, 9, 9],
-            "digest2".to_string(),
-            vec![7, 8, 9],
-            vec![9, 9, 9],
-            FheParameter::Test,
-        );
-
-        let response = contract
-            .keygen_response(txn_id.clone(), new_keygen_response.clone())
-            .call(&owner)
-            .unwrap();
-
-        // We now have one more response event
-        assert_eq!(response.events.len(), 4);
-
         // Test `get_key_gen_response_values` function
-        let keygen_response_values = contract.get_key_gen_response_values(key_id.to_string());
-        if let Err(err) = keygen_response_values {
-            panic!(
-                "Failed to get key gen response values for key id {}: {}",
-                key_id, err
-            );
-        }
-
+        let keygen_response_values = contract
+            .get_key_gen_response_values(key_id.to_string())
+            .unwrap();
         // We triggered two response events for `key_id` so we should get two KeyGenResponseValues
-        let keygen_response_values = keygen_response_values.unwrap();
         assert_eq!(
             keygen_response_values.len(),
             2,
@@ -1108,21 +1123,19 @@ mod tests {
 
     #[test]
     fn test_insecure_keygen() {
-        let (app, owner, csc_address) = setup_test_env(true);
+        let (app, owner, csc_address, bsc_address) = setup_test_env(true);
         let code_id = CodeId::store_code(&app);
-
-        let fake_owner = "fake_owner".into_addr();
-        let fake_txn_id = vec![1, 2, 3];
-
         let contract = code_id
             .instantiate(
                 Some(true),
                 DUMMY_PROOF_CONTRACT_ADDR.to_string(),
                 csc_address,
+                bsc_address.clone(),
                 Some(AllowlistsAsc::default_all_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
+        add_address_to_bsc_allowlist(&app, &bsc_address, &owner, &contract.contract_addr);
 
         let insecure_keygen_val = InsecureKeyGenValues::new(
             "eip712name".to_string(),
@@ -1134,29 +1147,22 @@ mod tests {
         .unwrap();
 
         let response = contract
-            .insecure_key_gen(insecure_keygen_val.clone())
+            .insecure_key_gen_request(insecure_keygen_val.clone())
             .call(&owner)
             .unwrap();
-        let txn_id = BackendContract::compute_transaction_id(&get_mock_env()).unwrap();
-        assert_eq!(response.events.len(), 3);
+        // Four events:
+        // - ASC's execute event
+        // - BSC's execute event
+        // - Insecure key gen request event
+        // - Sender allowed event
+        assert_eq!(response.events.len(), 4);
 
+        let txn_id = find_transaction_id_from_events(&response.events);
         let expected_event = KmsEvent::builder()
             .operation(KmsOperation::InsecureKeyGen)
             .txn_id(txn_id.clone())
             .build();
-
         assert_event(&response.events, &expected_event);
-
-        contract
-            .insecure_key_gen(insecure_keygen_val)
-            .call(&fake_owner)
-            .expect_err(
-                format!(
-                    "Fake owner was allowed to call insecure key generation with address {}",
-                    fake_owner
-                )
-                .as_str(),
-            );
 
         let keygen_response = KeyGenResponseValues::new(
             txn_id.to_vec(),
@@ -1169,46 +1175,42 @@ mod tests {
             FheParameter::Test,
         );
 
-        contract
-            .insecure_key_gen_response(fake_txn_id.into(), keygen_response.clone())
+        let response = contract
+            .insecure_key_gen_response(txn_id.clone(), keygen_response.clone())
             .call(&owner)
-            .expect_err("A non-existent transaction sender was included into contract ACL");
+            .unwrap();
+        // Five events (threshold not reached yet):
+        // - ASC's execute event
+        // - BSC's execute event
+        // - Gen response values saved event
+        // - Sender allowed event
+        // - BSC acl updated event
+        assert_eq!(response.events.len(), 5);
 
         let response = contract
             .insecure_key_gen_response(txn_id.clone(), keygen_response.clone())
             .call(&owner)
             .unwrap();
-        assert_eq!(response.events.len(), 3);
-
-        let response = contract
-            .insecure_key_gen_response(txn_id.clone(), keygen_response.clone())
-            .call(&owner)
-            .unwrap();
-        assert_eq!(response.events.len(), 4);
+        // Six events (threshold reached):
+        // - ASC execute event
+        // - BSC execute event
+        // - Key gen response event
+        // - Gen response values saved event
+        // - Sender allowed event
+        // - BSC acl updated event
+        assert_eq!(response.events.len(), 6);
 
         let expected_event = KmsEvent::builder()
             .operation(KmsOperation::KeyGenResponse)
             .txn_id(txn_id.clone())
             .build();
         assert_event(&response.events, &expected_event);
-
-        contract
-            .insecure_key_gen_response(txn_id.clone(), keygen_response.clone())
-            .call(&fake_owner)
-            .expect_err(
-                format!(
-                    "Fake owner was allowed to call insecure key generation response with address {}",
-                    fake_owner
-                )
-                .as_str(),
-            );
     }
 
     #[test]
     fn test_reencrypt() {
-        let (app, owner, csc_address) = setup_test_env(false);
+        let (app, owner, csc_address, bsc_address) = setup_test_env(false);
         let code_id = CodeId::store_code(&app);
-
         let key_id = vec![5];
 
         let contract = code_id
@@ -1216,10 +1218,13 @@ mod tests {
                 Some(true),
                 DUMMY_PROOF_CONTRACT_ADDR.to_string(),
                 csc_address,
+                bsc_address.clone(),
                 None,
             )
             .call(&owner)
             .unwrap();
+        add_address_to_bsc_allowlist(&app, &bsc_address, &owner, &contract.contract_addr);
+        add_address_to_bsc_acl(&app, &bsc_address, &key_id, &contract.contract_addr);
 
         let dummy_external_ciphertext_handle = hex::decode("0".repeat(64)).unwrap();
         let ciphertext_handle =
@@ -1247,85 +1252,80 @@ mod tests {
         )
         .unwrap();
 
-        contract
-            .reencrypt(reencrypt.clone())
-            .with_funds(&[coin(data_size.into(), UCOSM)])
-            .call(&owner)
-            .expect_err("An address not included into contract ACL was allowed to reencrypt");
-
-        add_address_to_contract_acl(&contract, &key_id, &owner);
-
-        contract
-            .reencrypt(reencrypt.clone())
-            .with_funds(&[coin(42_u128, UCOSM)])
-            .call(&owner)
-            .expect_err("Insufficient funds sent to cover the data size");
-
         let response = contract
-            .reencrypt(reencrypt.clone())
+            .reencryption_request(reencrypt.clone())
             .with_funds(&[coin(data_size.into(), UCOSM)])
             .call(&owner)
             .unwrap();
+        // Four events:
+        // - ASC's execute event
+        // - BSC's execute event
+        // - Reencrypt request event
+        // - Sender allowed event
+        assert_eq!(response.events.len(), 4);
 
-        assert_eq!(response.events.len(), 3);
-
-        let txn_id = BackendContract::compute_transaction_id(&get_mock_env()).unwrap();
-
+        let txn_id = find_transaction_id_from_events(&response.events);
         let expected_event = KmsEvent::builder()
             .operation(KmsOperation::Reencrypt)
             .txn_id(txn_id.clone())
             .build();
-
         assert_event(&response.events, &expected_event);
 
         let response_values = ReencryptResponseValues::new(vec![4, 5, 6], vec![6, 7, 8]);
 
         let response = contract
-            .reencrypt_response(txn_id.clone(), response_values.clone())
+            .reencryption_response(txn_id.clone(), response_values.clone())
             .call(&owner)
             .unwrap();
-        assert_eq!(response.events.len(), 2);
-
-        let response = contract
-            .reencrypt_response(txn_id.clone(), response_values.clone())
-            .call(&owner)
-            .unwrap();
-        assert_eq!(response.events.len(), 2);
-
-        let response = contract
-            .reencrypt_response(txn_id.clone(), response_values.clone())
-            .call(&owner)
-            .unwrap();
-
-        // Three events because there's always an execute event
-        // + the reencrypt request since it reached the threshold
-        // + the check sender event
+        // Three events (threshold not reached yet):
+        // - ASC's execute event
+        // - BSC's execute event
+        // - Sender allowed event
         assert_eq!(response.events.len(), 3);
+
+        let response = contract
+            .reencryption_response(txn_id.clone(), response_values.clone())
+            .call(&owner)
+            .unwrap();
+        // Three events (threshold not reached yet):
+        // - ASC's execute event
+        // - BSC's execute event
+        // - Sender allowed event
+        assert_eq!(response.events.len(), 3);
+
+        let response = contract
+            .reencryption_response(txn_id.clone(), response_values.clone())
+            .call(&owner)
+            .unwrap();
+        // Four events (threshold reached):
+        // - ASC's execute event
+        // - BSC's execute event
+        // - Reencrypt response event
+        // - Sender allowed even
+        assert_eq!(response.events.len(), 4);
 
         let expected_event = KmsEvent::builder()
             .operation(OperationValue::ReencryptResponse(response_values))
             .txn_id(txn_id.clone())
             .build();
-
         assert_event(&response.events, &expected_event);
     }
 
     #[test]
     fn test_crs_gen() {
-        let (app, owner, csc_address) = setup_test_env(true);
+        let (app, owner, csc_address, bsc_address) = setup_test_env(true);
         let code_id = CodeId::store_code(&app);
-
-        let fake_owner = "fake_owner".into_addr();
-
         let contract = code_id
             .instantiate(
                 Some(true),
                 DUMMY_PROOF_CONTRACT_ADDR.to_string(),
                 csc_address,
+                bsc_address.clone(),
                 Some(AllowlistsAsc::default_all_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
+        add_address_to_bsc_allowlist(&app, &bsc_address, &owner, &contract.contract_addr);
 
         let crsgen_val = CrsGenValues::new(
             192,
@@ -1337,25 +1337,25 @@ mod tests {
         )
         .unwrap();
 
-        let response = contract.crs_gen(crsgen_val.clone()).call(&owner).unwrap();
+        let response = contract
+            .crs_gen_request(crsgen_val.clone())
+            .call(&owner)
+            .unwrap();
+        // Four events:
+        // - ASC execute event
+        // - BSC execute event
+        // - CRS gen request event
+        // - Sender allowed event
+        assert_eq!(response.events.len(), 4);
 
-        contract
-            .crs_gen(crsgen_val)
-            .call(&fake_owner)
-            .expect_err("User wasn't allowed to call CRS gen but somehow succeeded.");
-
-        let txn_id = BackendContract::compute_transaction_id(&get_mock_env()).unwrap();
-        assert_eq!(response.events.len(), 3);
-
+        let txn_id = find_transaction_id_from_events(&response.events);
         let expected_event = KmsEvent::builder()
             .operation(KmsOperation::CrsGen)
             .txn_id(txn_id.clone())
             .build();
-
         assert_event(&response.events, &expected_event);
 
         let crs_id = "crs_id";
-
         let crs_gen_response = CrsGenResponseValues::new(
             crs_id.to_string(),
             "my digest".to_string(),
@@ -1369,51 +1369,30 @@ mod tests {
             .crs_gen_response(txn_id.clone(), crs_gen_response.clone())
             .call(&owner)
             .unwrap();
-
-        // Two events because there's always an execute event
-        // + the check sender event
-        assert_eq!(response.events.len(), 2);
+        // Four events (threshold not reached yet):
+        // - ASC execute event
+        // - BSC execute event
+        // - Gen response values saved event
+        // - Sender allowed event
+        assert_eq!(response.events.len(), 4);
 
         let response = contract
-            .crs_gen_response(txn_id.clone(), crs_gen_response.clone())
+            .crs_gen_response(txn_id.clone(), crs_gen_response)
             .call(&owner)
             .unwrap();
-
-        // Three events because there's always an execute event
-        // + the crs gen request since it reached the threshold
-        // + the check sender event
-        assert_eq!(response.events.len(), 3);
+        // Five events (threshold reached):
+        // - ASC execute event
+        // - BSC execute event
+        // - CRS gen response event
+        // - Gen response values saved event
+        // - Sender allowed event
+        assert_eq!(response.events.len(), 5);
 
         let expected_event = KmsEvent::builder()
             .operation(KmsOperation::CrsGenResponse)
             .txn_id(txn_id.clone())
             .build();
-
         assert_event(&response.events, &expected_event);
-
-        contract
-            .crs_gen_response(txn_id.clone(), crs_gen_response.clone())
-            .call(&fake_owner)
-            .expect_err("User wasn't allowed to call CRS gen response but somehow succeeded.");
-
-        let new_crs_id = "new_crs_id";
-
-        let new_crs_gen_response = CrsGenResponseValues::new(
-            new_crs_id.to_string(),
-            "my digest".to_string(),
-            vec![4, 5, 6],
-            vec![9, 8, 7],
-            256,
-            FheParameter::Test,
-        );
-
-        let response = contract
-            .crs_gen_response(txn_id.clone(), new_crs_gen_response.clone())
-            .call(&owner)
-            .unwrap();
-
-        // We now have one more response event
-        assert_eq!(response.events.len(), 3);
 
         // Test `get_crs_gen_response_values` function
         let crs_response_values = contract.get_crs_gen_response_values(crs_id.to_string());
@@ -1435,36 +1414,21 @@ mod tests {
         );
     }
 
-    fn assert_event(events: &[Event], kms_event: &KmsEvent) {
-        let mut kms_event: Event = kms_event.clone().into();
-        kms_event.ty = format!("wasm-{}", kms_event.ty);
-        let event = events.iter().find(|e| e.ty == kms_event.ty);
-        assert!(event.is_some());
-        let mut event = event.unwrap().clone();
-        let position = event
-            .attributes
-            .iter()
-            .position(|x| x.key == "_contract_address");
-        if let Some(idx) = position {
-            event.attributes.remove(idx);
-        }
-        assert_eq!(event, kms_event);
-    }
-
     #[test]
     fn test_get_operations_values_from_event() {
-        let (app, owner, csc_address) = setup_test_env(false);
+        let (app, owner, csc_address, bsc_address) = setup_test_env(false);
         let code_id = CodeId::store_code(&app);
-
         let contract = code_id
             .instantiate(
                 Some(true),
                 DUMMY_PROOF_CONTRACT_ADDR.to_string(),
                 csc_address,
+                bsc_address.clone(),
                 Some(AllowlistsAsc::default_all_to(owner.as_str())),
             )
             .call(&owner)
             .unwrap();
+        add_address_to_bsc_allowlist(&app, &bsc_address, &owner, &contract.contract_addr);
 
         // First, trigger a keygen operation
         let keygen = KeyGenValues::new(
@@ -1476,24 +1440,18 @@ mod tests {
             Some(vec![42; 32]),
         )
         .unwrap();
-        let response = contract.keygen(keygen.clone()).call(&owner).unwrap();
+        let response = contract
+            .key_gen_request(keygen.clone())
+            .call(&owner)
+            .unwrap();
+        // Four events:
+        // - ASC's execute event
+        // - BSC's execute event
+        // - Key gen request event
+        // - Sender allowed event
+        assert_eq!(response.events.len(), 4);
 
-        assert_eq!(response.events.len(), 3);
-
-        // Get the transaction id from the decrypt event, since response values can only be stored
-        // along an already-existing transaction ID
-        let txn_id: TransactionId = hex::decode(
-            response.events[1]
-                .attributes
-                .iter()
-                .find(|attr| attr.key == "txn_id")
-                .unwrap()
-                .value
-                .clone(),
-        )
-        .unwrap()
-        .into();
-
+        let txn_id = find_transaction_id_from_events(&response.events);
         let keygen_response = KeyGenResponseValues::new(
             txn_id.to_vec(),
             "digest1".to_string(),
@@ -1506,25 +1464,30 @@ mod tests {
         );
 
         let response = contract
-            .keygen_response(txn_id.clone(), keygen_response.clone())
+            .key_gen_response(txn_id.clone(), keygen_response.clone())
             .call(&owner)
             .unwrap();
-
-        // Two events because there's always an execute event
-        // + the check sender event
-        // + ACL update event
-        assert_eq!(response.events.len(), 3);
+        // Five events (threshold not reached yet):
+        // - ASC's execute event
+        // - BSC's execute event
+        // - Gen response values saved event
+        // - Sender allowed event
+        // - BSC acl updated event
+        assert_eq!(response.events.len(), 5);
 
         let response = contract
-            .keygen_response(txn_id.clone(), keygen_response.clone())
+            .key_gen_response(txn_id.clone(), keygen_response.clone())
             .call(&owner)
             .unwrap();
-
-        // Three events because there's always an execute event
-        // + the keygen response since it reached the threshold
-        // + the check sender event
-        // + ACL update event
-        assert_eq!(response.events.len(), 4);
+        // Six events (threshold reached):
+        // - ASC's execute event
+        // - BSC's execute event
+        // - Key gen response event
+        // - Gen response values saved event
+        // - Sender allowed event
+        // - BSC acl updated event
+        println!("{:?}", response.events);
+        assert_eq!(response.events.len(), 6);
 
         let expected_event = KmsEvent::builder()
             .operation(KmsOperation::KeyGenResponse)
@@ -1549,184 +1512,9 @@ mod tests {
         assert!(not_expected_data.unwrap().is_empty());
     }
 
-    /// Test the `generate` list's logic. In particular this test makes sure to consider all
-    /// kinds of possible inputs for this list.
-    #[test]
-    fn test_is_allowed_to_generate() {
-        let (app, owner, csc_address) = setup_test_env(true);
-
-        let user = "user".into_addr();
-        let another_user = "another_user".into_addr();
-        let connector = "connector".into_addr();
-
-        let allowed_to_response = vec![connector.to_string()];
-        let admins = vec![owner.to_string()];
-
-        let crsgen_val = CrsGenValues::new(
-            192,
-            "eip712name".to_string(),
-            "version".to_string(),
-            vec![1; 32],
-            "contract".to_string(),
-            Some(vec![42; 32]),
-        )
-        .unwrap();
-
-        for (allowed_to_generate, allowed, instantiation_ok) in [
-            (None, vec![true, false, false], true), // Defaults to owner only
-            (Some(vec![]), vec![false, false, false], true), // Empty -> no one can operate (not sure this is really useful)
-            (Some(vec!["".to_string()]), vec![false, false, false], false), // Instantiation error -> not a valid address
-            (
-                Some(vec![user.to_string(), owner.to_string()]),
-                vec![true, true, false],
-                true,
-            ), // Both user and owner can
-            (Some(vec![user.to_string()]), vec![false, true, false], true), // User only allowed
-            (
-                Some(vec![owner.to_string()]),
-                vec![true, false, false],
-                true,
-            ), // Owner only allowed
-        ] {
-            let code_id = CodeId::store_code(&app);
-
-            if instantiation_ok {
-                let contract = code_id
-                    .instantiate(
-                        Some(true),
-                        DUMMY_PROOF_CONTRACT_ADDR.to_string(),
-                        csc_address.clone(),
-                        allowed_to_generate
-                            .clone()
-                            .map(|allowed_to_generate| AllowlistsAsc {
-                                generate: allowed_to_generate,
-                                response: allowed_to_response.clone(),
-                                admin: admins.clone(),
-                            }),
-                    )
-                    .call(&owner)
-                    .unwrap();
-
-                for ((wallet, wallet_allowed), wallet_name) in std::iter::zip(
-                    std::iter::zip([owner.clone(), user.clone(), another_user.clone()], allowed),
-                    vec!["owner", "user", "another_user"],
-                ) {
-                    if wallet_allowed {
-                        // Success
-                        let response = contract.crs_gen(crsgen_val.clone()).call(&wallet).unwrap();
-                        assert_eq!(response.events.len(), 3);
-                    } else {
-                        // Failure
-                        contract.crs_gen(crsgen_val.clone()).call(&wallet).expect_err(
-                            format!(
-                                "{} ({}) wasn't allowed to call CRS gen but somehow succeeded with `generate` list: {:?}.",
-                                wallet_name,
-                                wallet,
-                                allowed_to_generate,
-                            )
-                            .as_str(),
-                        );
-                    }
-                }
-            } else {
-                code_id
-                    .instantiate(
-                        Some(true),
-                        DUMMY_PROOF_CONTRACT_ADDR.to_string(),
-                        csc_address.clone(),
-                        allowed_to_generate
-                            .clone()
-                            .map(|allowed_to_generate: Vec<String>| AllowlistsAsc {
-                                generate: allowed_to_generate,
-                                response: allowed_to_response.clone(),
-                                admin: admins.clone(),
-                            }),
-                    )
-                    .call(&owner)
-                    .expect_err(
-                        format!(
-                            "Instantiation didn't fail as expected with allow-list: {:?}.",
-                            allowed_to_generate
-                        )
-                        .as_str(),
-                    );
-            }
-        }
-    }
-
-    /// Test the `allowed_to_response` list's logic. Not all kinds of inputs (for this list) are
-    /// tested here since this has already been done in `test_is_allowed_to_gen` (which shares
-    /// the same logic).
-    #[test]
-    fn test_is_allowed_to_response() {
-        let (app, owner, csc_address) = setup_test_env(true);
-        let code_id = CodeId::store_code(&app);
-
-        let fake_owner = "fake_owner".into_addr();
-        let friend_owner = "friend_owner".into_addr();
-
-        let allowed_to_generate = vec![owner.to_string()];
-        let admins = vec![owner.to_string()];
-
-        // Only the `owner` and `friend_owner` are allowed to trigger a decrypt response
-        let allowed_to_response = vec![owner.to_string(), friend_owner.to_string()];
-
-        // Instantiate the contract
-        let contract = code_id
-            .instantiate(
-                Some(true),
-                DUMMY_PROOF_CONTRACT_ADDR.to_string(),
-                csc_address,
-                Some(AllowlistsAsc {
-                    generate: allowed_to_generate,
-                    response: allowed_to_response.clone(),
-                    admin: admins.clone(),
-                }),
-            )
-            .call(&owner)
-            .unwrap();
-
-        // Trigger a decrypt response
-        let decrypt_response = DecryptResponseValues::new(vec![4, 5, 6], vec![6, 7, 8]);
-
-        let txn_id = TransactionId::default();
-
-        // Owner has been allowed to call a decrypt response, but it should be able to because the
-        // given transaction ID does not exist (meaning no request transaction has been triggered
-        // using this ID yet)
-        let response_not_possible_error = contract
-            .decrypt_response(txn_id.clone(), decrypt_response.clone())
-            .call(&owner)
-            .unwrap_err()
-            .to_string();
-
-        assert!(
-            response_not_possible_error
-                .contains("not found while trying to save response operation value"),
-            "Owner was able to call a decrypt response for a transaction that does not exist: {}",
-            response_not_possible_error
-        );
-
-        // `fake_owner` is not allowed to call a decrypt response, so the first error should be about
-        // the address not being allowed
-        let response_not_allowed_error = contract
-            .decrypt_response(txn_id.clone(), decrypt_response.clone())
-            .call(&fake_owner)
-            .unwrap_err()
-            .to_string();
-
-        assert!(
-            response_not_allowed_error.contains("is not allowed"),
-            "Fake owner was allowed to call a decrypt response with address {}, allowlist {:?} and error: {}",
-            fake_owner,
-            allowed_to_response,
-            response_not_allowed_error
-        );
-    }
-
     #[test]
     fn test_is_allowed_to_admin() {
-        let (app, owner, csc_address) = setup_test_env(true);
+        let (app, owner, csc_address, bsc_address) = setup_test_env(true);
         let code_id = CodeId::store_code(&app);
 
         let friend_owner = "friend_owner".into_addr();
@@ -1743,6 +1531,7 @@ mod tests {
                 Some(true),
                 DUMMY_PROOF_CONTRACT_ADDR.to_string(),
                 csc_address,
+                bsc_address,
                 Some(AllowlistsAsc {
                     generate: allowed_to_generate,
                     response: allowed_to_response.clone(),
@@ -1794,40 +1583,5 @@ mod tests {
             .replace_allowlists(vec![], AllowlistTypeAsc::Admin)
             .call(&owner)
             .unwrap_err();
-    }
-
-    #[test]
-    fn test_grant_key_access_to_address() {
-        let (app, owner, csc_address) = setup_test_env(true);
-        let code_id = CodeId::store_code(&app);
-
-        let new_address = "new_address".into_addr();
-        let key_id = HexVector::from(vec![1, 2, 3]);
-
-        let contract = code_id
-            .instantiate(
-                Some(true),
-                DUMMY_PROOF_CONTRACT_ADDR.to_string(),
-                csc_address,
-                Some(AllowlistsAsc::default_all_to(owner.as_str())),
-            )
-            .call(&owner)
-            .unwrap();
-
-        contract
-            .grant_key_access_to_address(key_id.to_hex(), new_address.to_string())
-            .call(&owner)
-            .expect_err(
-                "An address without key access was allowed to grant access to other address",
-            );
-
-        add_address_to_contract_acl(&contract, &key_id, &owner);
-
-        let response = contract
-            .grant_key_access_to_address(key_id.to_hex(), new_address.to_string())
-            .call(&owner)
-            .unwrap();
-
-        assert_eq!(response.events.len(), 3);
     }
 }

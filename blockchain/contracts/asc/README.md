@@ -1,157 +1,185 @@
-# ASC
+# Application Smart Contract (ASC)
 
-The application smart contract which is the main entry-point of the KMS blockchain.
+The Application Smart Contract (ASC) processes several types of requests such as decryption, reencryption, key generation and CRS generation requests. It can interact with designated Inclusion Proof Smart Contracts (IPSC).
 
 # Deploying the ASC code
 
-An ASC needs to be bound to an IPSC specific to the blockchain. An example can be found in [`deploy_contracts.sh`](../../scripts/deploy_contracts.sh). In this document, we use ethereum-ips as an example.
+An ASC needs to be bound to an IPSC specific to the blockchain. An example can be found in [`deploy_contracts.sh`](../../scripts/deploy_contracts.sh). In this document, we use Ethereum-IPSC as an example.
 
 ## Prerequisites
 
-1. [Install rust](https://www.rust-lang.org/tools/install) and enable wasm target.
+1. Install [Rust](https://www.rust-lang.org/tools/install) and enable wasm target.
 
-   ```
+   ```bash
    rustup target add wasm32-unknown-unknown
    ```
 
 2. Install [binaryen](https://github.com/WebAssembly/binaryen). We would use
    `wasm-opt` included in it for optimizing the wasm binary.
 
-## Building the ethereum-ipsc smart contract
+## Building the Ethereum-IPSC
 
 These steps are similar to what is done in the [ci.dockerfile](../../operations/docker/ci.dockerfile).
 
 1. Clone kms-core repository and checkout the branch corresponding to the version to be deployed.
 
-2. Change directory to root of ethereum-ipsc crate.
-
-   ```
+2. Move to the `ethereum-ipsc` crate directory.
+   ```bash
    cd blockchain/contracts/ethereum-ipsc
    ```
 
-3. Set the environment variable to point to wasm
-
-   ```
-   ETHEREUM_IPSC_WASMFILE=../../../target/wasm32-unknown-unknown/release/ethereum_ipsc.wasm
+3. Set the environment variable that points to the final compiled and optimized wasm file after steps 4 and 5.
+   ```bash
+   ETHEREUM_IPSC_WASMFILE=../../../target/wasm32-unknown-unknown/wasm/ethereum_ipsc.wasm
    ```
 
 4. Compile the contract
-
-   ```
-   cargo build --release --target wasm32-unknown-unknown
+   ```bash
+   cargo build --target wasm32-unknown-unknown --profile wasm
    ```
 
 5. Optimize the contract binary
-
-   ```
+   ```bash
    wasm-opt $ETHEREUM_IPSC_WASMFILE -o $ETHEREUM_IPSC_WASMFILE --strip-debug -Oz
    ```
 
-## Building the asc smart contract
+## Building the ASC
 
-Steps are similar to that of ethereum-ipsc smart contract, with only differences
-in directory and environment variable names.
+Steps are similar to that of Ethereum-IPSC, with only differences in directory and environment variable names.
 
-```
-cd blockchain/contracts/asc
-ASC_WASMFILE=../../../target/wasm32-unknown-unknown/release/asc.wasm
-cargo build --release --target wasm32-unknown-unknown
-wasm-opt $ASC_WASMFILE -o $ASC_WASMFILE --strip-debug -Oz
-```
+1. Set the environment variable that points to compiled and optimized wasm
+   ```bash
+   ASC_WASMFILE=../../../target/wasm32-unknown-unknown/wasm/asc.wasm
+   ```
+
+2. Compile the contract
+   ```bash
+   cargo build --target wasm32-unknown-unknown --profile wasm
+   ```
+
+3. Optimize the contract binary
+   ```bash
+   wasm-opt $ASC_WASMFILE -o $ASC_WASMFILE --strip-debug -Oz
+   ```
 
 ## Upload and instantiate the contracts.
 
-1.  Set environment variables
+### Docker Setup
+This [docker compose file](../../../docker-compose-kms-base.yml) deploys the `dev-kms-blockchain-asc-deploy` service, which executes the [`setup_wallets`](../../scripts/setup_wallets.sh) and [`deploy_contracts`](../../scripts/deploy_contracts.sh) scripts.
 
-a. `NODE_URL`: URL for accessing the tendermint node.
+To deploy the service, follow these steps from the project root directory:
+
+1. Ensure Docker is installed and running on your system.
+2. Navigate to the project root directory.
+3. Run the following command to start the Docker Compose service:
+
+    ```bash
+    docker compose -f docker-compose-kms-base.yml run --build dev-kms-blockchain-asc-deploy
+    ```
+
+This will build and start the `dev-kms-blockchain-asc-deploy` service and execute the necessary scripts to set up wallets and deploy contracts.
+
+### Local Setup
+
+#### 1. Run the Wasmd node:
 
 ```
-export NODE_URL=http://localhost:26657
+wasmd init local-dev-node --chain-id local-dev-chain
+wasmd keys add connector
+wasmd keys add validator
+wasmd genesis add-genesis-account $(wasmd keys show validator -a) 1000000000stake,1000000000ucosm
+wasmd genesis gentx validator 1000000000stake --chain-id local-dev-chain
+wasmd genesis collect-gentxs
+wasmd genesis validate
+wasmd start
+```
+
+A clean-up from the previous Wasmd node setup can be done by completely removing the `~/.wasmd` directory:
+```bash
+rm -rf ~/.wasmd
+```
+
+#### 2. Set environment variables:
+
+a. `NODE_URL`: URL for accessing the Wasmd node.
+
+```bash
+export NODE_URL=http://localhost:26657 # Port by default
 ```
 
 b. `ADMIN_ADDRESS`: Will be allowed to make admin level calls to the contract:
-add/remove members to allowed lists, migrate the contract from one version to
-another.
+add/remove members to the allowlist, migrate the contract from one version to
+another, etc. Also, will be allowed to submit any kind of operations to the contract (such as
+decryption, CRS generation, etc.). Usually this will be the KMS connector.
 
-c. `CONFIGURATOR_ADDRESS`: Will be allowed to update the config in the contract.
+For simplicity, we could use the connector's address for the address above.
 
-d. `FHE_GENERATOR_ADDRESS`: Will be allowed to trigger generation of FHE
-paramters: key generation and crs generation.
-
-e. `RESPONDER_ADDRESS`: Will be allowed be submit result of operations (such as
-decrypt, crs gen) to the contract. Usually this will be the KMS connector.
-
-For simplicity, we could use address of connector for all of the above addresses.
-
-```
-export KMS_CONNECTOR_ADDRESS=$(wasmd keys show connector -a)
-export ADMIN_ADDRESS=$KMS_CONNECTOR_ADDRESS
-export CONFIGURATOR_ADDRESS=$KMS_CONNECTOR_ADDRESS
-export FHE_GENERATOR_ADDRESS=$KMS_CONNECTOR_ADDRESS
-export RESPONDER_ADDRESS=$KMS_CONNECTOR_ADDRESS
+```bash
+export ADMIN_ADDRESS=$(wasmd keys show connector -a)
 ```
 
-2. Upload ethereum smart contract and fetch code_id.
+#### 3. Upload the Ethereum-IPSC and fetch its Code ID:
 
-   ```
-   IPSC_ETHEREUM_UPLOAD_TX=$(echo $PASSWORD | wasmd tx wasm store $ETHEREUM_IPSC_WASMFILE --from validator --chain-id testing --node $NODE_URL --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 -y --output json)
+   ```bash
+   IPSC_ETHEREUM_UPLOAD_TX=$(wasmd tx wasm store $ETHEREUM_IPSC_WASMFILE --from validator --chain-id local-dev-chain --node $NODE_URL --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 -y --output json)
    ```
 
-   ```
+   ```bash
    IPSC_ETHEREUM_TX_HASH=$(echo "${IPSC_ETHEREUM_UPLOAD_TX}" | jq -r '.txhash')
    ```
 
-   ```
+   ```bash
    IPSC_ETHEREUM_CODE_ID=$(wasmd query tx --output json --node $NODE_URL "${IPSC_ETHEREUM_TX_HASH}" | jq -r '.events[] | select(.type=="store_code") | .attributes[] | select(.key=="code_id") | .value')
    ```
 
-3. Upload asc smart contract and fetch code_id.
+#### 4. Upload the ASC and fetch its Code ID:
 
-   ```
-   ASC_UPLOAD_TX=$(echo $PASSWORD | wasmd tx wasm store $ASC_WASMFILE --from validator --chain-id testing --node $NODE_URL --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 -y --output json)
+   ```bash
+   ASC_UPLOAD_TX=$(wasmd tx wasm store $ASC_WASMFILE --from validator --chain-id local-dev-chain --node $NODE_URL --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 -y --output json)
    ```
 
-   ```
+   ```bash
    ASC_TX_HASH=$(echo "${ASC_UPLOAD_TX}" | jq -r '.txhash')
    ```
 
-   ```
+   ```bash
    ASC_CODE_ID=$(wasmd query tx --output json --node $NODE_URL "${ASC_TX_HASH}" | jq -r '.events[] | select(.type=="store_code") | .attributes[] | select(.key=="code_id") | .value')
    ```
 
-4. Instantiate ethereum ipsc smart contract and fetch the address
+#### 5. Deploy the Configuration Smart Contract (CSC)
 
-   ```
-   IPSC_ETHEREUM_INST_TX_HASH=$(echo $PASSWORD | wasmd tx wasm instantiate "${IPSC_ETHEREUM_CODE_ID}" '{}' --label "ethereum-ipsc" --from validator --output json --chain-id testing --node $NODE_URL -y --admin $ADMIN_ADDRESS | jq -r '.txhash')
+Follow the [CSC readme](../csc/README.md) for more details. Steps are similar to the above, with the difference that it can be instantiated in either threshold or centralized mode. Retrieve the CSC's address: `CSC_ADDRESS`
+
+#### 6. Deploy the Backend Smart Contract (BSC)
+
+Follow the [BSC readme](../bsc/README.md) for more details. Retrieve the BSC's address: `BSC_ADDRESS`
+
+#### 7. Instantiate the Ethereum-IPSC and fetch its address
+
+   ```bash
+   IPSC_ETHEREUM_INST_TX_HASH=$(wasmd tx wasm instantiate "${IPSC_ETHEREUM_CODE_ID}" '{}' --label "ethereum-ipsc" --from validator --output json --chain-id local-dev-chain --node $NODE_URL -y --admin $ADMIN_ADDRESS | jq -r '.txhash')
    ```
 
-   ```
+   ```bash
    IPSC_ETHEREUM_INST_RESULT=$(wasmd query tx "${IPSC_ETHEREUM_INST_TX_HASH}" --output json --node $NODE_URL)
    ```
 
-   ```
+   ```bash
    IPSC_ETHEREUM_ADDRESS=$(echo "${IPSC_ETHEREUM_INST_RESULT}" | jq -r '.events[] | select(.type=="instantiate") | .attributes[] | select(.key=="_contract_address") | .value')
    ```
 
-5. Deploy the Configuration Smart Contract (CSC)
-Follow the [CSC readme](../csc/README.md) for more details. Steps are similar to the above, with the difference that it can be instantiated in either threshold or centralized mode. Retrieve the CSC's address: `CSC_ADDRESS`
+#### 9. Instantiate the ASC and fetch its address
 
-6. Instantiate asc
-  ```
-   ASC_INST_ETHEREUM_TX_HASH=$(echo $KEYRING_PASSWORD | NODE="$NODE" wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": false, "verify_proof_contract_addr": "'"${IPSC_ETHEREUM_ADDRESS}"'", "csc_address": "'"${CSC_ADDRESS}"'", "allowlists":{"generate": ["'"${CONNECTOR_ADDRESS}"'"], "response": ["'"${CONNECTOR_ADDRESS}"'"], "admin": ["'"${CONNECTOR_ADDRESS}"'"]} }' --label "ethereum-asc" --from validator --output json --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3  | jq -r '.txhash')
-  ```
-
-7. Get the asc address
-
-   ```
-   ASC_ETHERMINT_ADDRESS=$(echo "${ASC_ETHERMINT_INST_RESULT}" | jq -r '.events[] | select(.type=="instantiate") | .attributes[] | select(.key=="_contract_address") | .value')
+   ```bash
+   ASC_ETHEREUM_TX_HASH=$(NODE="$NODE" wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": false, "verify_proof_contract_addr": "'"${IPSC_ETHEREUM_ADDRESS}"'", "csc_address": "'"${CSC_ADDRESS}"'", "bsc_address": "'"${BSC_ADDRESS}"'", "allowlists":{"generate": ["'"${ADMIN_ADDRESS}"'"], "response": ["'"${ADMIN_ADDRESS}"'"], "admin": ["'"${ADMIN_ADDRESS}"'"]} }' --label "ethereum-asc" --from validator --output json --chain-id local-dev-chain -y --admin "${VALIDATOR_ADDRESS}" --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3  | jq -r '.txhash')
    ```
 
-8. Print the addresses
-
+   ```bash
+   ASC_ETHEREUM_INST_RESULT=$(wasmd query tx $ASC_ETHEREUM_TX_HASH --output json --node $NODE_URL)
    ```
-   echo "IPSC_ETHEREUM_ADDRESS : ${IPSC_ETHEREUM_ADDRESS}"
-   echo "ASC_ETHEREUM_ADDRESS : ${ASC_ETHEREUM_ADDRESS}"
+
+   ```bash
+   ASC_ETHEREUM_ADDRESS=$(echo $ASC_ETHEREUM_INST_RESULT | jq -r '.events[] | select(.type=="instantiate") | .attributes[] | select(.key=="_contract_address") | .value')
    ```
 
 # Migration: Upgrade the ASC code

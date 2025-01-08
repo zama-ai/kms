@@ -99,49 +99,50 @@ pub enum OperationValueVersioned {
     V0(OperationValue),
 }
 
+// Strum serialization must coincide with BSC entry-point names from the KMS Blockchain
 #[cw_serde]
 #[derive(Eq, EnumString, Display, EnumIter, strum_macros::EnumProperty, EnumIs, Versionize)]
 #[versionize(OperationValueVersioned)]
 pub enum OperationValue {
+    #[strum(serialize = "decryption_request")]
     #[serde(rename = "decrypt")]
-    #[strum(serialize = "decrypt")]
     Decrypt(DecryptValues),
-    #[strum(serialize = "decrypt_response")]
+    #[strum(serialize = "decryption_response")]
     #[serde(rename = "decrypt_response")]
     DecryptResponse(DecryptResponseValues),
-    #[strum(serialize = "reencrypt")]
+    #[strum(serialize = "reencryption_request")]
     #[serde(rename = "reencrypt")]
     Reencrypt(ReencryptValues),
-    #[strum(serialize = "reencrypt_response")]
+    #[strum(serialize = "reencryption_response")]
     #[serde(rename = "reencrypt_response")]
     ReencryptResponse(ReencryptResponseValues),
-    #[strum(serialize = "verify_proven_ct")]
+    #[strum(serialize = "verify_proven_ct_request")]
     #[serde(rename = "verify_proven_ct")]
     VerifyProvenCt(VerifyProvenCtValues),
     #[strum(serialize = "verify_proven_ct_response")]
     #[serde(rename = "verify_proven_ct_response")]
     VerifyProvenCtResponse(VerifyProvenCtResponseValues),
-    #[strum(serialize = "keygen")]
+    #[strum(serialize = "key_gen_request")]
     #[serde(rename = "keygen")]
     KeyGen(KeyGenValues),
-    #[strum(serialize = "keygen_response")]
+    #[strum(serialize = "key_gen_response")]
     #[serde(rename = "keygen_response")]
     KeyGenResponse(KeyGenResponseValues),
-    #[strum(serialize = "insecure_key_gen")]
+    #[strum(serialize = "insecure_key_gen_request")]
     #[serde(rename = "insecure_key_gen")]
     InsecureKeyGen(InsecureKeyGenValues),
-    #[strum(serialize = "keygen_preproc")]
+    #[strum(serialize = "key_gen_preproc_request")]
     #[serde(rename = "keygen_preproc")]
     // NOTE this is not supposed to have an inner value. If it ever gets one, correct method OperationValue::has_no_inner_value
     KeyGenPreproc(KeyGenPreprocValues),
-    #[strum(serialize = "keygen_preproc_response")]
+    #[strum(serialize = "key_gen_preproc_response")]
     #[serde(rename = "keygen_preproc_response")]
     // NOTE this is not supposed to have an inner value. If it ever gets one, correct method OperationValue::has_no_inner_value
     KeyGenPreprocResponse(KeyGenPreprocResponseValues),
-    #[strum(serialize = "crs_gen")]
+    #[strum(serialize = "crs_gen_request")]
     #[serde(rename = "crs_gen")]
     CrsGen(CrsGenValues),
-    #[strum(serialize = "insecure_crs_gen")]
+    #[strum(serialize = "insecure_crs_gen_request")]
     #[serde(rename = "insecure_crs_gen")]
     InsecureCrsGen(InsecureCrsGenValues),
     #[strum(serialize = "crs_gen_response")]
@@ -2342,7 +2343,7 @@ mod tests {
 
         let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
-            "decrypt": {
+            "decryption_request": {
                 "decrypt":{
                     "key_id": hex::encode("my_key_id".as_bytes()),
                     "fhe_types": ["euint8", "euint16"],
@@ -2373,7 +2374,7 @@ mod tests {
 
         let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
-            "decrypt_response": {
+            "decryption_response": {
                 "decrypt_response": {
                     "signature": hex::encode([4, 5, 6]),
                     "payload": hex::encode([1, 2, 3]),
@@ -2411,7 +2412,7 @@ mod tests {
 
         let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
-            "reencrypt": {
+            "reencryption_request": {
                 "reencrypt": {
                     "signature": hex::encode([1]),
                     "client_address": "0x1234",
@@ -2445,7 +2446,7 @@ mod tests {
             .build();
         let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
-            "reencrypt_response": {
+            "reencryption_response": {
                 "reencrypt_response": {
                     "ciphertext_digest": null,
                     "signature": hex::encode([1]),
@@ -2480,7 +2481,7 @@ mod tests {
 
         let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
-            "verify_proven_ct": {
+            "verify_proven_ct_request": {
                 "verify_proven_ct": {
                     "client_address": "0x1234",
                     "contract_address": "0x4321",
@@ -2540,7 +2541,7 @@ mod tests {
             .build();
         let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
-            "keygen": {
+            "key_gen_request": {
                 "keygen": {
                     "preproc_id": "",
                     "eip712_name": "eip712name",
@@ -2574,7 +2575,7 @@ mod tests {
             .build();
         let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
-            "keygen_response": {
+            "key_gen_response": {
                 "keygen_response": {
                     "request_id": hex::encode([2, 2, 2]),
                     "public_key_digest": "abc",
@@ -2611,7 +2612,7 @@ mod tests {
 
         let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
-            "crs_gen": {
+            "crs_gen_request": {
                 "crs_gen": {
                     "max_num_bits": 256,
 

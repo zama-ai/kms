@@ -60,18 +60,18 @@ export CSC_UPLOAD_TX
 echo "CSC_UPLOAD_TX: ${CSC_UPLOAD_TX}"
 sleep 6
 
-# Upload ASC
-echo "Uploading ASC"
-ASC_UPLOAD_TX=$(echo $KEYRING_PASSWORD | wasmd tx wasm store /app/asc.wasm --from validator --chain-id testing --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 -y --output json --node "$NODE")
-export ASC_UPLOAD_TX
-echo "ASC_UPLOAD_TX: ${ASC_UPLOAD_TX}"
-sleep 6
-
 # Upload BSC
 echo "Uploading BSC"
 BSC_UPLOAD_TX=$(echo $KEYRING_PASSWORD | wasmd tx wasm store /app/bsc.wasm --from validator --chain-id testing --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 -y --output json --node "$NODE")
 export BSC_UPLOAD_TX
 echo "BSC_UPLOAD_TX: ${BSC_UPLOAD_TX}"
+sleep 6
+
+# Upload ASC
+echo "Uploading ASC"
+ASC_UPLOAD_TX=$(echo $KEYRING_PASSWORD | wasmd tx wasm store /app/asc.wasm --from validator --chain-id testing --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 -y --output json --node "$NODE")
+export ASC_UPLOAD_TX
+echo "ASC_UPLOAD_TX: ${ASC_UPLOAD_TX}"
 sleep 6
 
 # Upload IPSC Ethermint (Tendermint?)
@@ -92,11 +92,11 @@ sleep 6
 CSC_TX_HASH=$(echo "${CSC_UPLOAD_TX}" | jq -r '.txhash')
 export CSC_TX_HASH
 
-ASC_TX_HASH=$(echo "${ASC_UPLOAD_TX}" | jq -r '.txhash')
-export ASC_TX_HASH
-
 BSC_TX_HASH=$(echo "${BSC_UPLOAD_TX}" | jq -r '.txhash')
 export BSC_TX_HASH
+
+ASC_TX_HASH=$(echo "${ASC_UPLOAD_TX}" | jq -r '.txhash')
+export ASC_TX_HASH
 
 TM_IPSC_ETHERMINT_TX_HASH=$(echo "${TM_IPSC_ETHERMINT_UPLOAD_TX}" | jq -r '.txhash')
 export TM_IPSC_ETHERMINT_TX_HASH
@@ -105,8 +105,8 @@ TM_IPSC_ETHEREUM_TX_HASH=$(echo "${TM_IPSC_ETHEREUM_UPLOAD_TX}" | jq -r '.txhash
 export TM_IPSC_ETHEREUM_TX_HASH
 
 echo "CSC_TX_HASH: ${CSC_TX_HASH}"
-echo "ASC_TX_HASH: ${ASC_TX_HASH}"
 echo "BSC_TX_HASH: ${BSC_TX_HASH}"
+echo "ASC_TX_HASH: ${ASC_TX_HASH}"
 echo "TM_IPSC_ETHERMINT_TX_HASH: ${TM_IPSC_ETHERMINT_TX_HASH}"
 echo "TM_IPSC_ETHEREUM_TX_HASH: ${TM_IPSC_ETHEREUM_TX_HASH}"
 
@@ -115,13 +115,13 @@ if [ -z "${CSC_TX_HASH}" ]; then
   exit 1
 fi
 
-if [ -z "${ASC_TX_HASH}" ]; then
-  echo "Failed to upload ASC"
+if [ -z "${BSC_TX_HASH}" ]; then
+  echo "Failed to upload BSC"
   exit 1
 fi
 
-if [ -z "${BSC_TX_HASH}" ]; then
-  echo "Failed to upload BSC"
+if [ -z "${ASC_TX_HASH}" ]; then
+  echo "Failed to upload ASC"
   exit 1
 fi
 
@@ -139,11 +139,11 @@ fi
 CSC_CODE_ID=$(wasmd query tx --output json --node "$NODE" "${CSC_TX_HASH}" | jq -r '.events[] | select(.type=="store_code") | .attributes[] | select(.key=="code_id") | .value')
 export CSC_CODE_ID
 
-ASC_CODE_ID=$(wasmd query tx --output json --node "$NODE" "${ASC_TX_HASH}" | jq -r '.events[] | select(.type=="store_code") | .attributes[] | select(.key=="code_id") | .value')
-export ASC_CODE_ID
-
 BSC_CODE_ID=$(wasmd query tx --output json --node "$NODE" "${BSC_TX_HASH}" | jq -r '.events[] | select(.type=="store_code") | .attributes[] | select(.key=="code_id") | .value')
 export BSC_CODE_ID
+
+ASC_CODE_ID=$(wasmd query tx --output json --node "$NODE" "${ASC_TX_HASH}" | jq -r '.events[] | select(.type=="store_code") | .attributes[] | select(.key=="code_id") | .value')
+export ASC_CODE_ID
 
 TM_IPSC_ETHERMINT_CODE_ID=$(wasmd query tx --output json --node "$NODE" "${TM_IPSC_ETHERMINT_TX_HASH}" | jq -r '.events[] | select(.type=="store_code") | .attributes[] | select(.key=="code_id") | .value')
 export TM_IPSC_ETHERMINT_CODE_ID
@@ -156,13 +156,13 @@ if [ -z "${CSC_CODE_ID}" ]; then
   exit 1
 fi
 
-if [ -z "${ASC_CODE_ID}" ]; then
-  echo "Failed to retrieve ASC code ID"
+if [ -z "${BSC_CODE_ID}" ]; then
+  echo "Failed to retrieve BSC code ID"
   exit 1
 fi
 
-if [ -z "${BSC_CODE_ID}" ]; then
-  echo "Failed to retrieve BSC code ID"
+if [ -z "${ASC_CODE_ID}" ]; then
+  echo "Failed to retrieve ASC code ID"
   exit 1
 fi
 
@@ -177,8 +177,8 @@ if [ -z "${TM_IPSC_ETHEREUM_CODE_ID}" ]; then
 fi
 
 echo "CSC code ID: ${CSC_CODE_ID}"
-echo "ASC code ID: ${ASC_CODE_ID}"
 echo "BSC code ID: ${BSC_CODE_ID}"
+echo "ASC code ID: ${ASC_CODE_ID}"
 echo "Ethermint IPSC code ID: ${TM_IPSC_ETHERMINT_CODE_ID}"
 echo "Ethereum IPSC code ID: ${TM_IPSC_ETHEREUM_CODE_ID}"
 
@@ -212,6 +212,30 @@ echo "CSC_ADDRESS : ${CSC_ADDRESS}"
 
 if [ -z "${CSC_ADDRESS}" ]; then
   echo "Failed to instantiate CSC"
+  exit 1
+fi
+
+# Instantiate the BSC using the CSC address
+echo "Instantiating BSC"
+BSC_INST_TX_HASH=$(echo $KEYRING_PASSWORD | wasmd tx wasm instantiate "${BSC_CODE_ID}" '{"csc_address": "'"${CSC_ADDRESS}"'", "allowlists":{"generate": ["'"${CONNECTOR_ADDRESS_1}"'"], "response": ["'"${CONNECTOR_ADDRESS_1}"'"], "admin": ["'"${VALIDATOR_ADDRESS}"'"]} }' --label "bsc" --from validator --output json --node "$NODE" --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3  | jq -r '.txhash')
+sleep 6
+
+export BSC_INST_TX_HASH
+echo "BSC_INST_TX_HASH: ${BSC_INST_TX_HASH}"
+
+# Wait for the transaction to be included in a block
+echo "Waiting for BSC instantiation to be mined..."
+sleep 10
+
+echo "BSC instantiation result"
+BSC_INST_RESULT=$(NODE="$NODE" wasmd query tx "${BSC_INST_TX_HASH}" --output json)
+export BSC_INST_RESULT
+echo "${BSC_INST_RESULT}"
+
+BSC_ADDRESS=$(echo "${BSC_INST_RESULT}" | jq -r '.events[] | select(.type=="instantiate") | .attributes[] | select(.key=="_contract_address") | .value')
+export BSC_ADDRESS
+if [ -z "${BSC_ADDRESS}" ]; then
+  echo "Failed to instantiate BSC"
   exit 1
 fi
 
@@ -259,19 +283,19 @@ if [ -z "${IPSC_ETHEREUM_ADDRESS}" ]; then
   exit 1
 fi
 
-# Instantiate the ASC smart contracts using addresses of the IPSC above
+# Instantiate the ASC smart contracts using addresses of the CSC and IPSC above
 # Always allow all connectors' addresses to answer even if we might be in centralized case
 echo "Instantiating ASCs"
 echo "Instantiating threshold ASC debug"
-ASC_INST_DEBUG_TX_HASH=$(echo $KEYRING_PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": true, "verify_proof_contract_addr": "dummy", "csc_address": "'"${CSC_ADDRESS}"'", "allowlists":{"generate": ["'"${CONNECTOR_ADDRESS_1}"'"], "response": ["'"${CONNECTOR_ADDRESS_1}"'","'"${CONNECTOR_ADDRESS_2}"'","'"${CONNECTOR_ADDRESS_3}"'","'"${CONNECTOR_ADDRESS_4}"'"], "admin": ["'"${CONNECTOR_ADDRESS_1}"'"]} }' --label "debug-asc" --from validator --output json --node "$NODE" --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3  | jq -r '.txhash')
+ASC_INST_DEBUG_TX_HASH=$(echo $KEYRING_PASSWORD | wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": true, "verify_proof_contract_addr": "dummy", "csc_address": "'"${CSC_ADDRESS}"'", "bsc_address": "'"${BSC_ADDRESS}"'", "allowlists":{"generate": ["'"${CONNECTOR_ADDRESS_1}"'"], "response": ["'"${CONNECTOR_ADDRESS_1}"'","'"${CONNECTOR_ADDRESS_2}"'","'"${CONNECTOR_ADDRESS_3}"'","'"${CONNECTOR_ADDRESS_4}"'"], "admin": ["'"${CONNECTOR_ADDRESS_1}"'"]} }' --label "debug-asc" --from validator --output json --node "$NODE" --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3  | jq -r '.txhash')
 sleep 6
 
 echo "Instantiating threshold ASC Ethermint"
-ASC_INST_ETHERMINT_TX_HASH=$(echo $KEYRING_PASSWORD | NODE="$NODE" wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": false, "verify_proof_contract_addr": "'"${IPSC_ETHERMINT_ADDRESS}"'", "csc_address": "'"${CSC_ADDRESS}"'", "allowlists":{"generate": ["'"${CONNECTOR_ADDRESS_1}"'"], "response": ["'"${CONNECTOR_ADDRESS_1}"'","'"${CONNECTOR_ADDRESS_2}"'","'"${CONNECTOR_ADDRESS_3}"'","'"${CONNECTOR_ADDRESS_4}"'"], "admin": ["'"${CONNECTOR_ADDRESS_1}"'"]} }' --label "tendermint-asc" --from validator --output json --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3  |  jq -r '.txhash')
+ASC_INST_ETHERMINT_TX_HASH=$(echo $KEYRING_PASSWORD | NODE="$NODE" wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": false, "verify_proof_contract_addr": "'"${IPSC_ETHERMINT_ADDRESS}"'", "csc_address": "'"${CSC_ADDRESS}"'", "bsc_address": "'"${BSC_ADDRESS}"'", "allowlists":{"generate": ["'"${CONNECTOR_ADDRESS_1}"'"], "response": ["'"${CONNECTOR_ADDRESS_1}"'","'"${CONNECTOR_ADDRESS_2}"'","'"${CONNECTOR_ADDRESS_3}"'","'"${CONNECTOR_ADDRESS_4}"'"], "admin": ["'"${CONNECTOR_ADDRESS_1}"'"]} }' --label "tendermint-asc" --from validator --output json --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3  |  jq -r '.txhash')
 sleep 6
 
 echo "Instantiating threshold ASC Ethereum"
-ASC_INST_ETHEREUM_TX_HASH=$(echo $KEYRING_PASSWORD | NODE="$NODE" wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": false, "verify_proof_contract_addr": "'"${IPSC_ETHEREUM_ADDRESS}"'", "csc_address": "'"${CSC_ADDRESS}"'", "allowlists":{"generate": ["'"${CONNECTOR_ADDRESS_1}"'"], "response": ["'"${CONNECTOR_ADDRESS_1}"'","'"${CONNECTOR_ADDRESS_2}"'","'"${CONNECTOR_ADDRESS_3}"'","'"${CONNECTOR_ADDRESS_4}"'"], "admin": ["'"${CONNECTOR_ADDRESS_1}"'"]} }' --label "ethereum-asc" --from validator --output json --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3  | jq -r '.txhash')
+ASC_INST_ETHEREUM_TX_HASH=$(echo $KEYRING_PASSWORD | NODE="$NODE" wasmd tx wasm instantiate "${ASC_CODE_ID}" '{"debug_proof": false, "verify_proof_contract_addr": "'"${IPSC_ETHEREUM_ADDRESS}"'", "csc_address": "'"${CSC_ADDRESS}"'", "bsc_address": "'"${BSC_ADDRESS}"'", "allowlists":{"generate": ["'"${CONNECTOR_ADDRESS_1}"'"], "response": ["'"${CONNECTOR_ADDRESS_1}"'","'"${CONNECTOR_ADDRESS_2}"'","'"${CONNECTOR_ADDRESS_3}"'","'"${CONNECTOR_ADDRESS_4}"'"], "admin": ["'"${CONNECTOR_ADDRESS_1}"'"]} }' --label "ethereum-asc" --from validator --output json --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3  | jq -r '.txhash')
 sleep 6
 
 export ASC_INST_DEBUG_TX_HASH
@@ -321,38 +345,19 @@ if [ -z "${ASC_ETHEREUM_ADDRESS}" ]; then
   exit 1
 fi
 
-# Instantiate the BSC smart contracts using addresses of the CSC and IPSC above
-echo "Instantiating BSC"
-BSC_INST_TX_HASH=$(echo $KEYRING_PASSWORD | wasmd tx wasm instantiate "${BSC_CODE_ID}" '{"csc_address": "'"${CSC_ADDRESS}"'", "allowlists":{"generate": ["'"${CONNECTOR_ADDRESS_1}"'"], "response": ["'"${CONNECTOR_ADDRESS_1}"'"], "admin": ["'"${CONNECTOR_ADDRESS_1}"'"]} }' --label "bsc" --from validator --output json --node "$NODE" --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3  | jq -r '.txhash')
-sleep 6
-
-export BSC_INST_TX_HASH
-echo "BSC_INST_TX_HASH: ${BSC_INST_TX_HASH}"
-
-# Wait for the transaction to be included in a block
-echo "Waiting for BSC instantiation to be mined..."
-sleep 10
-
-echo "BSC instantiation result"
-BSC_INST_RESULT=$(NODE="$NODE" wasmd query tx "${BSC_INST_TX_HASH}" --output json)
-export BSC_INST_RESULT
-echo "${BSC_INST_RESULT}"
-
-BSC_ADDRESS=$(echo "${BSC_INST_RESULT}" | jq -r '.events[] | select(.type=="instantiate") | .attributes[] | select(.key=="_contract_address") | .value')
-export BSC_ADDRESS
-if [ -z "${BSC_ADDRESS}" ]; then
-  echo "Failed to instantiate BSC"
-  exit 1
-fi
+echo "Adding ASC Debug to BSC allowlist"
+echo $KEYRING_PASSWORD | wasmd tx wasm execute $BSC_ADDRESS '{"add_allowlist": {"address": "'$ASC_DEBUG_ADDRESS'", "operation_type": "'generate'"}}' --from validator --node $NODE --chain-id testing --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 -y --output json
+sleep 1
+echo $KEYRING_PASSWORD | wasmd tx wasm execute $BSC_ADDRESS '{"add_allowlist": {"address": "'$ASC_DEBUG_ADDRESS'", "operation_type": "'response'"}}' --from validator --node $NODE --chain-id testing --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 -y --output json
 
 echo "Summary of all the addresses:"
 echo "CSC_ADDRESS : ${CSC_ADDRESS}"
+echo "BSC_ADDRESS : ${BSC_ADDRESS}"
 echo "IPSC_ETHERMINT_ADDRESS : ${IPSC_ETHERMINT_ADDRESS}"
 echo "IPSC_ETHEREUM_ADDRESS : ${IPSC_ETHEREUM_ADDRESS}"
 echo "ASC_DEBUG_ADDRESS : ${ASC_DEBUG_ADDRESS}"
 echo "ASC_ETHERMINT_ADDRESS : ${ASC_ETHERMINT_ADDRESS}"
 echo "ASC_ETHEREUM_ADDRESS : ${ASC_ETHEREUM_ADDRESS}"
-echo "BSC_ADDRESS : ${BSC_ADDRESS}"
 
 echo ""
 echo "+++++++++++++++++++++++++++"

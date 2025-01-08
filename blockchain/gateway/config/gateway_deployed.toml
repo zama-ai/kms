@@ -53,7 +53,7 @@ gas_escalator_increase = 20
 relayer_key = "7ec931411ad75a7c201469a385d6f18a325d4923f9f213bd882bbea87e160b67"
 
 [kms]
-asc_address = "wasm1aakfpghcanxtc45gpqlx8j3rq0zcpyf49qmhm9mdjrfx036h4z5se0hfnq" # Deployed ASC
+asc_address = "wasm1qwlgtx52gsdu7dtp0cekka5zehdl0uj3fhp9acg325fvgs8jdzksu3v4ff" # Deployed ASC
 
 csc_address = "wasm14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9s0phg4d"
 

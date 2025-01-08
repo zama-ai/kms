@@ -8,7 +8,7 @@ faucet_address = "http://localhost:8000"
 
 # TODO: update latest option to take latest asc contract and not just latest contract
 # contract = "latest"
-asc_address = "wasm1aakfpghcanxtc45gpqlx8j3rq0zcpyf49qmhm9mdjrfx036h4z5se0hfnq" # DEBUG ASC
+asc_address = "wasm1qwlgtx52gsdu7dtp0cekka5zehdl0uj3fhp9acg325fvgs8jdzksu3v4ff" # DEBUG ASC
 
 mnemonic = "whisper stereo great helmet during hollow nominee skate frown daughter donor pool ozone few find risk cigar practice essay sketch rhythm novel dumb host"
 

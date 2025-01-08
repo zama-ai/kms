@@ -49,7 +49,7 @@ If you are not sure about this, then consult the Docker logs when running the si
 For example:
 
 ```
-dev-kms-blockchain-asc-deploy-1  | ASC_DEBUG_ADDRESS : wasm1aakfpghcanxtc45gpqlx8j3rq0zcpyf49qmhm9mdjrfx036h4z5se0hfnq
+dev-kms-blockchain-asc-deploy-1  | ASC_DEBUG_ADDRESS : wasm1qwlgtx52gsdu7dtp0cekka5zehdl0uj3fhp9acg325fvgs8jdzksu3v4ff
 ```
 
 ## Usage

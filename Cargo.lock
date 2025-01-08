@@ -930,6 +930,7 @@ name = "asc"
 version = "0.10.0-rc1"
 dependencies = [
  "aipsc",
+ "bsc",
  "byteorder",
  "contracts-common",
  "cosmwasm-schema",

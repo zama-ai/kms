@@ -382,7 +382,7 @@ mod tests {
             assert_eq!(gateway_config.ethereum.gas_escalator_increase, 20);
             assert_eq!(
                 gateway_config.kms.asc_address,
-                "wasm1aakfpghcanxtc45gpqlx8j3rq0zcpyf49qmhm9mdjrfx036h4z5se0hfnq"
+                "wasm1qwlgtx52gsdu7dtp0cekka5zehdl0uj3fhp9acg325fvgs8jdzksu3v4ff"
             );
             assert_eq!(
                 gateway_config.kms.mnemonic,
