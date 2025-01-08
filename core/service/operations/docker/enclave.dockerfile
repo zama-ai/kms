@@ -17,6 +17,8 @@ RUN make nitro-cli-native
 
 FROM --platform=$BUILDPLATFORM ${IMAGE_NAME}:${IMAGE_TAG}
 
+USER root
+
 COPY --from=nitro-cli /build/aws-nitro-enclaves-cli/build/nitro_cli/release/nitro-cli /app/kms/core/service/bin
 
 RUN mkdir -p /var/log/nitro_enclaves
@@ -24,12 +26,6 @@ RUN mkdir -p /run/nitro_enclaves
 
 COPY --from=eif enclave.eif /app/kms/core/service/enclave.eif
 
-
-# Change user to limit root access
-RUN groupadd -g 10002 kms && \
-    useradd -m -u 10003 -g kms kms
-# pre-create mount points for rights
-RUN mkdir -p /app/kms/core/service/certs /app/kms/core/service/config
 RUN chown -R kms:kms /app/kms
 USER kms
 
