@@ -82,6 +82,12 @@ ENV PATH="/app/ddec/bin:$PATH"
 
 EXPOSE 50000
 
+# Change user to limit root access
+RUN groupadd -g 10002 kms && \
+    useradd -m -u 10004 -g kms kms
+RUN chown -R kms:kms /app/ddec
+USER kms
+
 # Add health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD ["grpc-health-probe", "-addr=:50000"]

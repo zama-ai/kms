@@ -80,6 +80,12 @@ COPY --from=go-builder /root/go/bin/grpc-health-probe /app/ddec/bin/grpc-health-
 
 EXPOSE 50000
 
+# Change user to limit root access
+RUN groupadd -g 10002 kms && \
+    useradd -m -u 10004 -g kms kms
+RUN chown -R kms:kms /app/ddec
+USER kms
+
 # Health check for the gRPC service
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD ["grpc-health-probe", "-addr=:50000"]

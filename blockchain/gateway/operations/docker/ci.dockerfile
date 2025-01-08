@@ -53,3 +53,9 @@ ENV PATH="$PATH:/app/gateway/bin"
 # Copy binaries and config
 COPY --from=base /app/gateway/blockchain/gateway/bin/ /app/gateway/bin/
 COPY ./blockchain/gateway/config/ /app/gateway/config/
+
+# Change user to limit root access
+RUN groupadd -g 10003 gateway && \
+    useradd -m -u 10005 -g gateway gateway
+RUN chown -R gateway:gateway /app/gateway
+USER gateway

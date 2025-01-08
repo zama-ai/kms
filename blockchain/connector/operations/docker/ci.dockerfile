@@ -58,3 +58,9 @@ ENV PATH="$PATH:/app/kms-connector/bin"
 # Copy binaries and config
 COPY --from=base /app/kms-connector/blockchain/connector/bin/ /app/kms-connector/bin/
 COPY ./blockchain/connector/config/ /app/kms-connector/config/
+
+# Change user to limit root access
+RUN groupadd -g 10002 kms && \
+    useradd -m -u 10003 -g kms kms
+RUN chown -R kms:kms /app/kms-connector
+USER kms

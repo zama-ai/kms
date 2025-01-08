@@ -92,6 +92,14 @@ COPY --from=go-runtime /root/go/bin/yq ./bin/
 COPY ./core/service/operations/docker/start_parent_proxies.sh ./bin/
 COPY ./core/service/operations/docker/init_enclave.sh ./bin/
 
+# Change user to limit root access
+RUN groupadd -g 10002 kms && \
+    useradd -m -u 10003 -g kms kms
+# pre-create mount points for rights
+RUN mkdir -p /app/kms/core/service/certs /app/kms/core/service/config
+RUN chown -R kms:kms /app/kms
+USER kms
+
 # This is only meaningful when the image is used to build the EIF that runs
 # inside of a Nitro enclave. During deployment on k8s, containers are started
 # with commands defined in Helm charts.

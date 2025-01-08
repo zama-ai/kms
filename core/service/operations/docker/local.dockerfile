@@ -52,4 +52,12 @@ ENV PATH="$PATH:/app/kms/bin"
 COPY --from=base /app/kms/bin/ /app/kms/bin/
 COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/kms/bin/
 
+# Change user to limit root access
+RUN groupadd -g 10002 kms && \
+    useradd -m -u 10003 -g kms kms
+# pre-create mount points for rights
+RUN mkdir -p /app/kms/core/service/certs /app/kms/core/service/config
+RUN chown -R kms:kms /app/kms
+USER kms
+
 CMD ["kms-server", "centralized"]
