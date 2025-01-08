@@ -24,7 +24,13 @@ use tfhe::zk::CompactPkePublicParams;
 pub(crate) const BCAST_HASH_BYTE_LEN: usize = 32;
 pub(crate) const DSEP_BRACH: &[u8; 5] = b"BRACH";
 pub(crate) type BcastHash = [u8; BCAST_HASH_BYTE_LEN];
-/// Captures network values which can (and sometimes should) be broadcast
+
+/// Captures network values which can (and sometimes should) be broadcast.
+///
+/// Developers:
+/// ensure the (de)serialization for the types here are not expensive
+/// since the same message might be deserialized multiple times
+/// from different parties.
 #[derive(Serialize, Deserialize, PartialEq, Clone, Hash, Eq, Debug)]
 pub enum BroadcastValue<Z: Eq + Zero> {
     Bot,

@@ -106,6 +106,16 @@ pub struct InternalPublicParameter {
     inner: WrappedG1G2s,
 }
 
+impl Default for InternalPublicParameter {
+    fn default() -> Self {
+        Self {
+            round: 0,
+            max_num_bits: 0,
+            inner: WrappedG1G2s::new(vec![], vec![]),
+        }
+    }
+}
+
 // NOTE: we need to ensure `curve::G1`, `curve::G2` is stable.
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
 struct WrappedG1G2s {
@@ -846,7 +856,7 @@ mod tests {
                 let tau = curve::Zp::rand(&mut session.rng());
                 let r = curve::Zp::rand(&mut session.rng());
                 let proof: PartialProof = make_partial_proof_deterministic(&pp, tau, round + 1, r);
-                let vi = BroadcastValue::PartialProof::<Z>(proof.clone());
+                let vi = BroadcastValue::PartialProof::<Z>(proof);
                 if role == &my_role {
                     let _ = broadcast_w_corruption(session, &[my_role], Some(vi)).await?;
                 } else {

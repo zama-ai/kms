@@ -29,13 +29,21 @@ pub async fn send_to_all<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
     sender: &Role,
     msg: NetworkValue<Z>,
 ) -> anyhow::Result<()> {
+    // `to_network` may take some time
+    // so we put it inside a rayon::spawn
+    let (send, recv) = tokio::sync::oneshot::channel();
+    rayon::spawn(move || {
+        let _ = send.send(msg.to_network());
+    });
+    let serialized_message = recv.await?;
+
     session.network().increase_round_counter()?;
     for (other_role, other_identity) in session.role_assignments().iter() {
         let networking = Arc::clone(session.network());
-        let msg = msg.clone();
+        let serialized_message = serialized_message.clone();
         let other_id = other_identity.clone();
         if sender != other_role {
-            networking.send(msg.to_network(), &other_id).await?;
+            networking.send(serialized_message, &other_id).await?;
         }
     }
     Ok(())
@@ -81,8 +89,17 @@ where
             let identity = session.own_identity();
             let task = async move {
                 let stripped_message = networking.receive(&sender_id).await;
-                let stripped_message = NetworkValue::<Z>::from_network(stripped_message)
-                    .map_or_else(|e| Err(e), |x| match_network_value_fn(x, &identity));
+                let (send, recv) = tokio::sync::oneshot::channel();
+                rayon::spawn(move || {
+                    let _ = send.send(NetworkValue::<Z>::from_network(stripped_message));
+                });
+                let stripped_message = match recv.await {
+                    Ok(x) => match x {
+                        Ok(x) => match_network_value_fn(x, &identity),
+                        Err(e) => Err(e),
+                    },
+                    Err(e) => Err(anyhow::anyhow!(e)),
+                };
                 (sender, stripped_message)
             }
             .instrument(tracing::Span::current());
