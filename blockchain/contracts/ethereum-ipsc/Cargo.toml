@@ -31,3 +31,7 @@ ethereum-inclusion-proofs = { path = "../../inclusion_proofs/ethereum", default-
     "cosmwasm",
 ] }
 contracts-common.workspace = true
+
+[[bin]]
+name = "ethereum-ipsc-schema"
+path = "src/bin/schema.rs"

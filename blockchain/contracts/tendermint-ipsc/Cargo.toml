@@ -42,3 +42,7 @@ cw-multi-test = "=2.1.1"
 rand.workspace = true
 sylvia = { workspace = true, features = ["mt"] }
 test-context = "=0.3.0"
+
+[[bin]]
+name = "tendermint-ipsc-schema"
+path = "src/bin/schema.rs"

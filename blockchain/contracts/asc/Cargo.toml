@@ -44,3 +44,7 @@ tendermint.workspace = true
 tendermint-ipsc = { path = "../tendermint-ipsc", features = ["mock"] }
 test-context = "=0.3.0"
 csc.workspace = true
+
+[[bin]]
+name = "asc-schema"
+path = "src/bin/schema.rs"
