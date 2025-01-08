@@ -46,6 +46,8 @@ services:
     build:
       context: .
       dockerfile: blockchain/connector/operations/docker/ci.dockerfile
+      args:
+        LTO_RELEASE: release-test       
     image: ghcr.io/zama-ai/kms-blockchain-connector:latest
     volumes:
       - ./blockchain/connector/config/:/app/kms-connector/config
