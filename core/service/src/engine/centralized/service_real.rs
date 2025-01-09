@@ -25,7 +25,6 @@ use conf_trace::metrics_names::{
     ERR_CRS_GEN_FAILED, ERR_DECRYPTION_FAILED, ERR_KEY_EXISTS, ERR_KEY_NOT_FOUND,
     ERR_RATE_LIMIT_EXCEEDED, ERR_REENCRYPTION_FAILED, HASH_CIPHERTEXT_SEEDS, OP_CRS_GEN,
     OP_DECRYPT, OP_KEYGEN, OP_REENCRYPT, OP_VERIFY_PROVEN_CT, TAG_CIPHERTEXT_ID, TAG_PARTY_ID,
-    TAG_REQUEST_ID,
 };
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 use kms_grpc::kms::v1::{
@@ -225,8 +224,7 @@ impl<
             let ciphertext_id = format!("{:06x}", hasher.finish() & 0xFFFFFF); // mask to use only 6 last hex chars
 
             timer
-                .tag(TAG_REQUEST_ID, request_id.to_string())
-                .and_then(|b| b.tag(TAG_CIPHERTEXT_ID, ciphertext_id))
+                .tag(TAG_CIPHERTEXT_ID, ciphertext_id)
                 .map(|b| b.start())
                 .map_err(|e| tracing::warn!("Failed to add tags: {}", e))
         } else {

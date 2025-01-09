@@ -36,7 +36,7 @@ use anyhow::anyhow;
 use conf_trace::metrics;
 use conf_trace::metrics_names::{
     ERR_DECRYPTION_FAILED, ERR_RATE_LIMIT_EXCEEDED, HASH_CIPHERTEXT_SEEDS, OP_DECRYPT,
-    OP_REENCRYPT, TAG_CIPHERTEXT_ID, TAG_PARTY_ID, TAG_REQUEST_ID,
+    OP_REENCRYPT, TAG_CIPHERTEXT_ID, TAG_PARTY_ID,
 };
 use distributed_decryption::algebra::galois_rings::common::pack_residue_poly;
 use distributed_decryption::algebra::galois_rings::degree_8::ResiduePolyF8Z128;
@@ -963,8 +963,7 @@ impl<
             let ciphertext_id = format!("{:06x}", hasher.finish() & 0xFFFFFF); // mask to use only 6 last hex chars
 
             timer
-                .tag(TAG_REQUEST_ID, req_id.to_string())
-                .and_then(|b| b.tag(TAG_CIPHERTEXT_ID, ciphertext_id))
+                .tag(TAG_CIPHERTEXT_ID, ciphertext_id)
                 .map(|b| b.start())
                 .map_err(|e| tracing::warn!("Failed to add tags: {}", e))
         } else {
@@ -1220,16 +1219,10 @@ impl<
                 e
             })?;
 
-        // Add ciphertext ID tag after validation and start timing
-        let _timer = if let Ok(timer) = timer {
-            timer
-                .tag(TAG_REQUEST_ID, req_id.to_string())
-                .map(|b| b.start())
-                .map_err(|e| tracing::warn!("Failed to add tag request id: {}", e))
-        } else {
-            timer.map(|b| b.start())
-        }
-        .ok();
+        let _timer = timer
+            .map(|b| b.start())
+            .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
+            .ok();
 
         tracing::debug!(
             request_id = ?req_id,
