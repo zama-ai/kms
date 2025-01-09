@@ -5,7 +5,10 @@ use tfhe::core_crypto::commons::{
 };
 
 use crate::{
-    algebra::{galois_rings::degree_8::ResiduePolyF8, structure_traits::BaseRing},
+    algebra::{
+        galois_rings::common::ResiduePoly,
+        structure_traits::{BaseRing, Ring},
+    },
     error::error_handler::anyhow_error_and_log,
 };
 
@@ -18,19 +21,21 @@ use super::{
 ///Structure that holds a share of a LWE ctxt
 /// - mask holds the mask composed of [`BaseRing`] elements
 /// - body is the b part, in it's shared domain so a [`ResiduePoly`]
-pub struct LweCiphertextShare<Z: BaseRing> {
+pub struct LweCiphertextShare<Z: BaseRing, const EXTENSION_DEGREE: usize> {
     pub mask: Vec<Z>,
-    pub body: ResiduePolyF8<Z>,
+    pub body: ResiduePoly<Z, EXTENSION_DEGREE>,
 }
 
-impl<Z: BaseRing> LweCiphertextShare<Z> {
+impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LweCiphertextShare<Z, EXTENSION_DEGREE> {
     pub fn new(lwe_size: LweSize) -> Self {
         Self {
             mask: vec![Z::default(); lwe_size.to_lwe_dimension().0],
-            body: ResiduePolyF8::default(),
+            body: ResiduePoly::default(),
         }
     }
-    pub fn get_mut_mask_and_body(&mut self) -> (&mut Vec<Z>, &mut ResiduePolyF8<Z>) {
+    pub fn get_mut_mask_and_body(
+        &mut self,
+    ) -> (&mut Vec<Z>, &mut ResiduePoly<Z, EXTENSION_DEGREE>) {
         (&mut self.mask, &mut self.body)
     }
 
@@ -39,30 +44,32 @@ impl<Z: BaseRing> LweCiphertextShare<Z> {
     }
 }
 
-pub fn encrypt_lwe_ciphertext<Gen, Z>(
-    lwe_secret_key_share: &LweSecretKeyShare<Z>,
-    output: &mut LweCiphertextShare<Z>,
-    encoded: ResiduePolyF8<Z>,
-    generator: &mut MPCEncryptionRandomGenerator<Z, Gen>,
+pub fn encrypt_lwe_ciphertext<Gen, Z, const EXTENSION_DEGREE: usize>(
+    lwe_secret_key_share: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    output: &mut LweCiphertextShare<Z, EXTENSION_DEGREE>,
+    encoded: ResiduePoly<Z, EXTENSION_DEGREE>,
+    generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
 ) -> anyhow::Result<()>
 where
     Gen: ByteRandomGenerator,
     Z: BaseRing,
+    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
 {
     let (mask, body) = output.get_mut_mask_and_body();
 
     fill_lwe_mask_and_body_for_encryption(lwe_secret_key_share, mask, body, encoded, generator)
 }
 
-pub fn encrypt_lwe_ciphertext_list<Gen, Z>(
-    lwe_secret_key_share: &LweSecretKeyShare<Z>,
-    output: &mut [LweCiphertextShare<Z>],
-    encoded: &[ResiduePolyF8<Z>],
-    generator: &mut MPCEncryptionRandomGenerator<Z, Gen>,
+pub fn encrypt_lwe_ciphertext_list<Gen, Z, const EXTENSION_DEGREE: usize>(
+    lwe_secret_key_share: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    output: &mut [LweCiphertextShare<Z, EXTENSION_DEGREE>],
+    encoded: &[ResiduePoly<Z, EXTENSION_DEGREE>],
+    generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
 ) -> anyhow::Result<()>
 where
     Gen: ByteRandomGenerator,
     Z: BaseRing,
+    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
 {
     let gen_iter =
         generator.fork_lwe_list_to_lwe(LweCiphertextCount(output.len()), output[0].lwe_size())?;
@@ -90,16 +97,17 @@ where
     Ok(())
 }
 
-fn fill_lwe_mask_and_body_for_encryption<Z, Gen>(
-    lwe_secret_key_share: &LweSecretKeyShare<Z>,
+fn fill_lwe_mask_and_body_for_encryption<Z, Gen, const EXTENSION_DEGREE: usize>(
+    lwe_secret_key_share: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
     output_mask: &mut [Z],
-    output_body: &mut ResiduePolyF8<Z>,
-    encoded: ResiduePolyF8<Z>,
-    generator: &mut MPCEncryptionRandomGenerator<Z, Gen>,
+    output_body: &mut ResiduePoly<Z, EXTENSION_DEGREE>,
+    encoded: ResiduePoly<Z, EXTENSION_DEGREE>,
+    generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
 ) -> anyhow::Result<()>
 where
     Gen: ByteRandomGenerator,
     Z: BaseRing,
+    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
 {
     //Sample the mask, the only LWE encryptions we need are in the small domain
     generator.fill_slice_with_random_mask_custom_mod(output_mask, EncryptionType::Bits64);
@@ -145,7 +153,7 @@ mod tests {
     };
 
     use crate::{
-        algebra::galois_rings::degree_8::ResiduePolyF8Z64,
+        algebra::{galois_rings::degree_8::ResiduePolyF8Z64, structure_traits::Ring},
         execution::{
             online::{
                 gen_bits::{BitGenEven, RealBitGenEven},
@@ -239,7 +247,12 @@ mod tests {
         //This is Async because triples are generated from dummy preprocessing
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let results = execute_protocol_large::<ResiduePolyF8Z64, _, _>(
+        let results = execute_protocol_large::<
+            _,
+            _,
+            ResiduePolyF8Z64,
+            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+        >(
             parties,
             threshold,
             None,

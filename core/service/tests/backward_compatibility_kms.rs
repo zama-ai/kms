@@ -13,8 +13,7 @@ use backward_compatibility::{
     TestMetadataKMS, TestType, Testcase, ThresholdFheKeysTest,
 };
 use distributed_decryption::execution::{
-    endpoints::keygen::{FhePubKeySet, PrivateKeySet},
-    tfhe_internals::switch_and_squash::SwitchAndSquashKey,
+    endpoints::keygen::FhePubKeySet, tfhe_internals::switch_and_squash::SwitchAndSquashKey,
 };
 use kms_common::{load_and_unversionize, load_and_unversionize_auxiliary};
 use kms_grpc::rpc_types::{PubDataType, SignedPubDataHandleInternal};
@@ -176,7 +175,7 @@ fn test_threshold_fhe_keys(
     test: &ThresholdFheKeysTest,
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
-    let private_key_set: PrivateKeySet =
+    let private_key_set =
         load_and_unversionize_auxiliary(dir, test, &test.private_key_set_filename, format)?;
 
     let sns_key: SwitchAndSquashKey =

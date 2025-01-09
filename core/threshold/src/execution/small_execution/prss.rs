@@ -982,11 +982,10 @@ mod tests {
         runtime.setup_prss(prss_setups);
 
         // test PRSS with decryption endpoint
-        let results_dec = threshold_decrypt64::<ResiduePolyF8Z128>(
-            &runtime,
-            &raw_ct,
-            DecryptionMode::PRSSDecrypt,
-        )
+        let results_dec = threshold_decrypt64::<
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >(&runtime, &raw_ct, DecryptionMode::PRSSDecrypt)
         .unwrap();
         let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
         let ref_res = std::num::Wrapping(msg as u64);
@@ -1001,11 +1000,10 @@ mod tests {
         runtime.setup_prss(prss_setups);
 
         // test PRSS with decryption endpoint
-        let results_dec = threshold_decrypt64::<ResiduePolyF8Z128>(
-            &runtime,
-            &raw_ct,
-            DecryptionMode::PRSSDecrypt,
-        )
+        let results_dec = threshold_decrypt64::<
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >(&runtime, &raw_ct, DecryptionMode::PRSSDecrypt)
         .unwrap();
         let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
         let ref_res = std::num::Wrapping(msg as u64);
@@ -1217,12 +1215,10 @@ mod tests {
         let identities = generate_fixed_identities(parties);
 
         //Could probably be run Async, but NIST doc says all offline is Sync
-        let runtime = DistributedTestRuntime::<ResiduePolyF8Z128>::new(
-            identities,
-            threshold,
-            NetworkMode::Sync,
-            None,
-        );
+        let runtime = DistributedTestRuntime::<
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >::new(identities, threshold, NetworkMode::Sync, None);
         let session_id = SessionId(23);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1292,12 +1288,10 @@ mod tests {
         let identities = generate_fixed_identities(parties);
 
         //Could probably be run Async, but NIST doc says all offline is Sync
-        let runtime = DistributedTestRuntime::<ResiduePolyF8Z128>::new(
-            identities,
-            threshold,
-            NetworkMode::Sync,
-            None,
-        );
+        let runtime = DistributedTestRuntime::<
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >::new(identities, threshold, NetworkMode::Sync, None);
         let session_id = SessionId(17);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1571,7 +1565,9 @@ mod tests {
     #[case(7, 2)]
     #[case(10, 3)]
     fn sunnshine_init_with_abort_res128(#[case] parties: usize, #[case] threshold: u8) {
-        sunshine_init_with_abort::<ResiduePolyF8Z128>(parties, threshold);
+        sunshine_init_with_abort::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }>(
+            parties, threshold,
+        );
     }
 
     #[cfg(feature = "experimental")]
@@ -1582,7 +1578,7 @@ mod tests {
     #[case(10, 3)]
     fn sunnshine_init_with_abort_levelone(#[case] parties: usize, #[case] threshold: u8) {
         use crate::experimental::algebra::levels::LevelOne;
-        sunshine_init_with_abort::<LevelOne>(parties, threshold);
+        sunshine_init_with_abort::<LevelOne, { LevelOne::EXTENSION_DEGREE }>(parties, threshold);
     }
 
     #[cfg(feature = "experimental")]
@@ -1593,10 +1589,13 @@ mod tests {
     #[case(10, 3)]
     fn sunnshine_init_with_abort_levelksw(#[case] parties: usize, #[case] threshold: u8) {
         use crate::experimental::algebra::levels::LevelKsw;
-        sunshine_init_with_abort::<LevelKsw>(parties, threshold);
+        sunshine_init_with_abort::<LevelKsw, { LevelKsw::EXTENSION_DEGREE }>(parties, threshold);
     }
 
-    fn sunshine_init_with_abort<Z: ErrorCorrect + Invert + RingEmbed + PRSSConversions>(
+    fn sunshine_init_with_abort<
+        Z: ErrorCorrect + Invert + RingEmbed + PRSSConversions,
+        const EXTENSION_DEGREE: usize,
+    >(
         parties: usize,
         threshold: u8,
     ) {
@@ -1614,7 +1613,7 @@ mod tests {
 
         // init with Dummy AR does not send anything = 0 expected rounds
         //Could probably be run Async, but NIST doc says all offline is Sync
-        let result = execute_protocol_small(
+        let result = execute_protocol_small::<_, _, Z, EXTENSION_DEGREE>(
             parties,
             threshold,
             Some(0),
@@ -1686,7 +1685,12 @@ mod tests {
         let rounds = c * (1 + 3 + threshold) + 1;
 
         // Sync because robust init relies on VSS which requires Sync
-        let result = execute_protocol_small::<ResiduePolyF8Z128, _, _>(
+        let result = execute_protocol_small::<
+            _,
+            _,
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >(
             parties,
             threshold,
             Some(rounds.into()),
@@ -1718,14 +1722,12 @@ mod tests {
         };
 
         // Sync because robust init relies on VSS which requires Sync
-        let result = execute_protocol_small::<ResiduePolyF8Z128, _, _>(
-            parties,
-            threshold,
-            None,
-            NetworkMode::Sync,
-            None,
-            &mut task,
-        );
+        let result = execute_protocol_small::<
+            _,
+            _,
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >(parties, threshold, None, NetworkMode::Sync, None, &mut task);
 
         let sharing = ShamirSharings::<ResiduePolyF8Z128>::create(result);
         assert!(sharing

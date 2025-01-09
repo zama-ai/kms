@@ -1,3 +1,6 @@
+use crate::algebra::base_ring::{Z128, Z64};
+use crate::algebra::galois_rings::common::ResiduePoly;
+use crate::algebra::structure_traits::{ErrorCorrect, Invert, Solve};
 #[cfg(not(feature = "experimental"))]
 use crate::choreography::grpc::GrpcChoreography;
 use crate::conf::party::PartyConf;
@@ -11,7 +14,13 @@ use conf_trace::telemetry::make_span;
 use tonic::transport::{Server, ServerTlsConfig};
 use tower_http::trace::TraceLayer;
 
-pub async fn run(settings: &PartyConf) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run<const EXTENSION_DEGREE: usize>(
+    settings: &PartyConf,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+{
     // TODO: This part is under discussion. We need to figure out how to handle the networking topology configuration
     // For the moment we are using a provided configuration on `threshold_decrypt` gRPC endpoint,
     // but it is not discarded to use a more dynamic approach.
@@ -35,8 +44,8 @@ pub async fn run(settings: &PartyConf) -> Result<(), Box<dyn std::error::Error>>
     let networking_server = networking.new_server();
 
     let factory = match &settings.redis {
-        None => create_memory_factory(),
-        Some(conf) => create_redis_factory(format!("{own_identity}"), conf),
+        None => create_memory_factory::<EXTENSION_DEGREE>(),
+        Some(conf) => create_redis_factory::<EXTENSION_DEGREE>(format!("{own_identity}"), conf),
     };
 
     #[cfg(not(feature = "experimental"))]

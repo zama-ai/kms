@@ -1,7 +1,7 @@
 use tfhe::{integer::block_decomposition::BlockRecomposer, shortint::ClassicPBSParameters};
 
 use crate::{
-    algebra::{base_ring::Z128, galois_rings::degree_8::ResiduePolyF8},
+    algebra::{base_ring::Z128, galois_rings::common::ResiduePoly},
     error::error_handler::anyhow_error_and_log,
     execution::tfhe_internals::{
         parameters::AugmentedCiphertextParameters, switch_and_squash::from_expanded_msg,
@@ -11,8 +11,8 @@ use crate::{
 /// Reconstructs a vector of plaintexts from raw, opened ciphertexts,
 /// by using the contant term of the `openeds` and mapping it down
 /// to the message space of a ciphertext block.
-pub fn reconstruct_message(
-    openeds: Option<Vec<ResiduePolyF8<Z128>>>,
+pub fn reconstruct_message<const EXTENSION_DEGREE: usize>(
+    openeds: Option<Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>>,
     params: &ClassicPBSParameters,
 ) -> anyhow::Result<Vec<Z128>> {
     let total_mod_bits = params.total_block_bits() as usize;
@@ -39,8 +39,8 @@ pub fn reconstruct_message(
 /// Unlike the function [reconstruct_message], every term in `openeds`
 /// is used for the reconstruction and at most `num_blocks` terms will
 /// be used.
-pub fn reconstruct_packed_message(
-    openeds: Option<Vec<ResiduePolyF8<Z128>>>,
+pub fn reconstruct_packed_message<const EXTENSION_DEGREE: usize>(
+    openeds: Option<Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>>,
     params: &ClassicPBSParameters,
     num_blocks: usize,
 ) -> anyhow::Result<Vec<Z128>> {

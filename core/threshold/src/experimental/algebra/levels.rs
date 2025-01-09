@@ -1224,8 +1224,14 @@ mod tests {
             )
         };
         //This is Sync because we are generating triples
-        let results =
-            execute_protocol_small(parties, threshold, None, NetworkMode::Sync, None, &mut task);
+        let results = execute_protocol_small::<_, _, _, { LevelKsw::EXTENSION_DEGREE }>(
+            parties,
+            threshold,
+            None,
+            NetworkMode::Sync,
+            None,
+            &mut task,
+        );
 
         //Reconstruct everything and check triples are triples
         for idx in 0..100 {

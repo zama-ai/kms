@@ -180,7 +180,7 @@ fn test_dkg_orchestrator_large(
     threshold: u8,
     params: DKGParams,
 ) {
-    use distributed_decryption::networking::NetworkMode;
+    use distributed_decryption::{algebra::structure_traits::Ring, networking::NetworkMode};
 
     let params_basics_handles = params.get_params_basics_handle();
     params_basics_handles
@@ -194,7 +194,7 @@ fn test_dkg_orchestrator_large(
     //Executing offline, so require Sync network
     let runtimes = (0..num_sessions)
         .map(|_| {
-            DistributedTestRuntime::<ResiduePolyF8Z64>::new(
+            DistributedTestRuntime::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }>::new(
                 identities.clone(),
                 threshold,
                 NetworkMode::Sync,

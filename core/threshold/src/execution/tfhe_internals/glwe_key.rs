@@ -7,15 +7,18 @@ use tfhe::{
 use tfhe_versionable::VersionsDispatch;
 
 use crate::{
-    algebra::{galois_rings::degree_8::ResiduePolyF8, structure_traits::BaseRing},
+    algebra::{
+        galois_rings::common::ResiduePoly,
+        structure_traits::{BaseRing, Ring},
+    },
     execution::{online::preprocessing::BitPreprocessing, sharing::share::Share},
 };
 
 use super::lwe_key::LweSecretKeyShare;
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum GlweSecretKeyShareVersioned<Z: Clone> {
-    V0(GlweSecretKeyShare<Z>),
+pub enum GlweSecretKeyShareVersioned<Z: Clone, const EXTENSION_DEGREE: usize> {
+    V0(GlweSecretKeyShare<Z, EXTENSION_DEGREE>),
 }
 
 /// Structure that holds a share of a GLWE secret key
@@ -25,13 +28,18 @@ pub enum GlweSecretKeyShareVersioned<Z: Clone> {
 /// - polynomial_size is the total number of coefficients in the above polynomials
 #[derive(Clone, Debug, Serialize, Deserialize, Versionize, PartialEq)]
 #[versionize(GlweSecretKeyShareVersioned)]
-pub struct GlweSecretKeyShare<Z: Clone> {
-    pub data: Vec<Share<ResiduePolyF8<Z>>>,
+pub struct GlweSecretKeyShare<Z: Clone, const EXTENSION_DEGREE: usize> {
+    pub data: Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>,
     pub polynomial_size: PolynomialSize,
 }
 
-impl<Z: BaseRing> GlweSecretKeyShare<Z> {
-    pub fn new_from_preprocessing<P: BitPreprocessing<ResiduePolyF8<Z>> + ?Sized>(
+impl<Z: BaseRing, const EXTENSION_DEGREE: usize> GlweSecretKeyShare<Z, EXTENSION_DEGREE>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+{
+    pub fn new_from_preprocessing<
+        P: BitPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+    >(
         total_size: usize,
         polynomial_size: PolynomialSize,
         preprocessing: &mut P,
@@ -42,11 +50,11 @@ impl<Z: BaseRing> GlweSecretKeyShare<Z> {
         })
     }
 
-    pub fn data_as_raw_vec(&self) -> Vec<ResiduePolyF8<Z>> {
+    pub fn data_as_raw_vec(&self) -> Vec<ResiduePoly<Z, EXTENSION_DEGREE>> {
         self.data.iter().map(|share| share.value()).collect_vec()
     }
 
-    pub fn into_lwe_secret_key(self) -> LweSecretKeyShare<Z> {
+    pub fn into_lwe_secret_key(self) -> LweSecretKeyShare<Z, EXTENSION_DEGREE> {
         LweSecretKeyShare { data: self.data }
     }
 

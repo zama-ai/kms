@@ -1,6 +1,7 @@
-use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z128;
-use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z64;
+use crate::algebra::base_ring::{Z128, Z64};
+use crate::algebra::galois_rings::common::ResiduePoly;
 use crate::algebra::structure_traits::Ring;
+use crate::algebra::structure_traits::{ErrorCorrect, Invert, Solve};
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::online::preprocessing::memory::bitdec::InMemoryBitDecPreprocessing;
 use crate::execution::online::preprocessing::memory::noiseflood::InMemoryNoiseFloodPreprocessing;
@@ -18,56 +19,70 @@ use self::dkg::InMemoryDKGPreprocessing;
 use super::BitDecPreprocessing;
 
 #[derive(Default)]
-struct InMemoryPreprocessorFactory;
+struct InMemoryPreprocessorFactory<const EXTENSION_DEGREE: usize>;
 
-impl PreprocessorFactory for InMemoryPreprocessorFactory {
+impl<const EXTENSION_DEGREE: usize> PreprocessorFactory<EXTENSION_DEGREE>
+    for InMemoryPreprocessorFactory<EXTENSION_DEGREE>
+where
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+{
     fn create_bit_preprocessing_residue_64(
         &mut self,
-    ) -> Box<dyn BitPreprocessing<ResiduePolyF8Z64>> {
-        Box::<InMemoryBitPreprocessing<ResiduePolyF8Z64>>::default()
+    ) -> Box<dyn BitPreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>> {
+        Box::<InMemoryBitPreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>>::default()
     }
 
     fn create_bit_preprocessing_residue_128(
         &mut self,
-    ) -> Box<dyn BitPreprocessing<ResiduePolyF8Z128>> {
-        Box::<InMemoryBitPreprocessing<ResiduePolyF8Z128>>::default()
+    ) -> Box<dyn BitPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>> {
+        Box::<InMemoryBitPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>>::default()
     }
 
     fn create_base_preprocessing_residue_64(
         &mut self,
-    ) -> Box<dyn BasePreprocessing<ResiduePolyF8Z64>> {
-        Box::<InMemoryBasePreprocessing<ResiduePolyF8Z64>>::default()
+    ) -> Box<dyn BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>> {
+        Box::<InMemoryBasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>>::default()
     }
 
     fn create_base_preprocessing_residue_128(
         &mut self,
-    ) -> Box<dyn BasePreprocessing<ResiduePolyF8Z128>> {
-        Box::<InMemoryBasePreprocessing<ResiduePolyF8Z128>>::default()
+    ) -> Box<dyn BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>> {
+        Box::<InMemoryBasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>>::default()
     }
 
-    fn create_bit_decryption_preprocessing(&mut self) -> Box<dyn BitDecPreprocessing> {
-        Box::<InMemoryBitDecPreprocessing>::default()
+    fn create_bit_decryption_preprocessing(
+        &mut self,
+    ) -> Box<dyn BitDecPreprocessing<EXTENSION_DEGREE>> {
+        Box::<InMemoryBitDecPreprocessing<EXTENSION_DEGREE>>::default()
     }
 
-    fn create_noise_flood_preprocessing(&mut self) -> Box<dyn NoiseFloodPreprocessing> {
-        Box::<InMemoryNoiseFloodPreprocessing>::default()
+    fn create_noise_flood_preprocessing(
+        &mut self,
+    ) -> Box<dyn NoiseFloodPreprocessing<EXTENSION_DEGREE>> {
+        Box::<InMemoryNoiseFloodPreprocessing<EXTENSION_DEGREE>>::default()
     }
 
     fn create_dkg_preprocessing_no_sns(
         &mut self,
-    ) -> Box<dyn super::DKGPreprocessing<ResiduePolyF8Z64>> {
-        Box::<InMemoryDKGPreprocessing<ResiduePolyF8Z64>>::default()
+    ) -> Box<dyn super::DKGPreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>> {
+        Box::<InMemoryDKGPreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>>::default()
     }
 
     fn create_dkg_preprocessing_with_sns(
         &mut self,
-    ) -> Box<dyn super::DKGPreprocessing<ResiduePolyF8Z128>> {
-        Box::<InMemoryDKGPreprocessing<ResiduePolyF8Z128>>::default()
+    ) -> Box<dyn super::DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>> {
+        Box::<InMemoryDKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>>::default()
     }
 }
 
-pub fn memory_factory() -> Box<dyn PreprocessorFactory> {
-    Box::<InMemoryPreprocessorFactory>::default()
+pub fn memory_factory<const EXTENSION_DEGREE: usize>(
+) -> Box<dyn PreprocessorFactory<EXTENSION_DEGREE>>
+where
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+{
+    Box::<InMemoryPreprocessorFactory<EXTENSION_DEGREE>>::default()
 }
 
 #[derive(Default, Clone)]

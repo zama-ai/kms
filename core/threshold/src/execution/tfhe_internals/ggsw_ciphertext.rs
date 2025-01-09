@@ -14,8 +14,8 @@ use std::ops::Neg;
 
 use crate::{
     algebra::{
-        galois_rings::degree_8::ResiduePolyF8,
-        structure_traits::{BaseRing, ErrorCorrect, Zero},
+        galois_rings::common::ResiduePoly,
+        structure_traits::{BaseRing, ErrorCorrect, Ring, Zero},
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
@@ -50,19 +50,19 @@ use tfhe::{
 };
 
 #[derive(Clone)]
-pub struct GgswLevelMatrixShare<Z: BaseRing> {
-    pub data: Vec<GlweCiphertextShare<Z>>,
+pub struct GgswLevelMatrixShare<Z: BaseRing, const EXTENSION_DEGREE: usize> {
+    pub data: Vec<GlweCiphertextShare<Z, EXTENSION_DEGREE>>,
     glwe_size: GlweSize,
     //polynomial_size: PolynomialSize,
 }
 
-impl<Z: BaseRing> GgswLevelMatrixShare<Z> {
+impl<Z: BaseRing, const EXTENSION_DEGREE: usize> GgswLevelMatrixShare<Z, EXTENSION_DEGREE> {
     pub fn glwe_size(&self) -> GlweSize {
         self.glwe_size
     }
 }
 
-impl<Z: BaseRing> GgswLevelMatrixShare<Z> {
+impl<Z: BaseRing, const EXTENSION_DEGREE: usize> GgswLevelMatrixShare<Z, EXTENSION_DEGREE> {
     pub fn new(
         polynomial_size: PolynomialSize,
         glwe_size: GlweSize,
@@ -71,8 +71,8 @@ impl<Z: BaseRing> GgswLevelMatrixShare<Z> {
         Self {
             data: (0..glwe_size.0)
                 .map(|_| {
-                    GlweCiphertextShare::<Z>::new_from_encoded_message(
-                        vec![ResiduePolyF8::ZERO; polynomial_size.0],
+                    GlweCiphertextShare::<Z, EXTENSION_DEGREE>::new_from_encoded_message(
+                        vec![ResiduePoly::ZERO; polynomial_size.0],
                         polynomial_size,
                         glwe_size.to_glwe_dimension().0,
                         encryption_type,
@@ -84,21 +84,21 @@ impl<Z: BaseRing> GgswLevelMatrixShare<Z> {
     }
 }
 
-impl<Z: BaseRing> GgswLevelMatrixShare<Z> {
-    pub fn as_mut_glwe_list(&mut self) -> &mut Vec<GlweCiphertextShare<Z>> {
+impl<Z: BaseRing, const EXTENSION_DEGREE: usize> GgswLevelMatrixShare<Z, EXTENSION_DEGREE> {
+    pub fn as_mut_glwe_list(&mut self) -> &mut Vec<GlweCiphertextShare<Z, EXTENSION_DEGREE>> {
         &mut self.data
     }
 }
 
 #[derive(Clone)]
-pub struct GgswCiphertextShare<Z: BaseRing> {
-    pub data: Vec<GgswLevelMatrixShare<Z>>,
+pub struct GgswCiphertextShare<Z: BaseRing, const EXTENSION_DEGREE: usize> {
+    pub data: Vec<GgswLevelMatrixShare<Z, EXTENSION_DEGREE>>,
     glwe_size: GlweSize,
     polynomial_size: PolynomialSize,
     decomp_base_log: DecompositionBaseLog,
 }
 
-impl<Z: BaseRing> GgswCiphertextShare<Z> {
+impl<Z: BaseRing, const EXTENSION_DEGREE: usize> GgswCiphertextShare<Z, EXTENSION_DEGREE> {
     //Allocate new empty GgswCiphertextShare
     pub fn new(
         glwe_size: GlweSize,
@@ -143,15 +143,17 @@ pub async fn ggsw_encode_messages<
     Rnd: Rng + CryptoRng,
     Z: BaseRing,
     S: BaseSessionHandles<Rnd>,
-    P: TriplePreprocessing<ResiduePolyF8<Z>> + ?Sized,
+    P,
+    const EXTENSION_DEGREE: usize,
 >(
-    messages: &[Share<ResiduePolyF8<Z>>],
-    key_bits: &GlweSecretKeyShare<Z>,
+    messages: &[Share<ResiduePoly<Z, EXTENSION_DEGREE>>],
+    key_bits: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
     session: &mut S,
     preproc: &mut P,
-) -> anyhow::Result<Vec<Vec<Vec<ResiduePolyF8<Z>>>>>
+) -> anyhow::Result<Vec<Vec<Vec<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
 where
-    ResiduePolyF8<Z>: ErrorCorrect,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+    P: TriplePreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
 {
     let num_messages = messages.len();
     let size_mult = num_messages * key_bits.data.len();
@@ -180,13 +182,14 @@ where
     Ok(res)
 }
 
-fn repack_single_message<Z>(
-    prods: &[Share<ResiduePolyF8<Z>>],
+fn repack_single_message<Z, const EXTENSION_DEGREE: usize>(
+    prods: &[Share<ResiduePoly<Z, EXTENSION_DEGREE>>],
     polynomial_size: usize,
-    message: &Share<ResiduePolyF8<Z>>,
-) -> Vec<Vec<ResiduePolyF8<Z>>>
+    message: &Share<ResiduePoly<Z, EXTENSION_DEGREE>>,
+) -> Vec<Vec<ResiduePoly<Z, EXTENSION_DEGREE>>>
 where
     Z: BaseRing,
+    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
 {
     let mut res = prods
         .iter()
@@ -207,15 +210,17 @@ pub async fn ggsw_encode_message<
     Rnd: Rng + CryptoRng,
     Z: BaseRing,
     S: BaseSessionHandles<Rnd>,
-    P: TriplePreprocessing<ResiduePolyF8<Z>>,
+    P,
+    const EXTENSION_DEGREE: usize,
 >(
-    message: &Share<ResiduePolyF8<Z>>,
-    key_bits: &GlweSecretKeyShare<Z>,
+    message: &Share<ResiduePoly<Z, EXTENSION_DEGREE>>,
+    key_bits: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
     session: &mut S,
     preproc: &mut P,
-) -> anyhow::Result<Vec<Vec<ResiduePolyF8<Z>>>>
+) -> anyhow::Result<Vec<Vec<ResiduePoly<Z, EXTENSION_DEGREE>>>>
 where
-    ResiduePolyF8<Z>: ErrorCorrect,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+    P: TriplePreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>>,
 {
     Ok(
         ggsw_encode_messages(&[*message], key_bits, session, preproc)
@@ -232,16 +237,17 @@ where
 ///i.e. here encoded is s.t.
 ///- encoded\[i\] returns sharing of the ith polynomial to be GLev encrypted (len polynomial_size)
 ///- encoded\[-1\] returns sharing of the actual bit message message (len 1)
-pub fn encrypt_constant_ggsw_ciphertext<Z, Gen>(
-    glwe_secret_key_share: &GlweSecretKeyShare<Z>,
-    output: &mut GgswCiphertextShare<Z>,
-    encoded: Vec<Vec<ResiduePolyF8<Z>>>,
-    generator: &mut MPCEncryptionRandomGenerator<Z, Gen>,
+pub fn encrypt_constant_ggsw_ciphertext<Z, Gen, const EXTENSION_DEGREE: usize>(
+    glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    output: &mut GgswCiphertextShare<Z, EXTENSION_DEGREE>,
+    encoded: Vec<Vec<ResiduePoly<Z, EXTENSION_DEGREE>>>,
+    generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     encryption_type: EncryptionType,
 ) -> anyhow::Result<()>
 where
     Z: BaseRing,
     Gen: ByteRandomGenerator,
+    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
 {
     let max_level = output.decomposition_level_count();
     let gen_iter = generator
@@ -282,7 +288,7 @@ where
                 if let EitherOrBoth::Both((row_index, row_as_glwe), mut generator) =
                     row_index_row_as_glwe_generator
                 {
-                    ecnrypt_constant_ggsw_level_matrix_row(
+                    encrypt_constant_ggsw_level_matrix_row(
                         glwe_secret_key_share,
                         (row_index, last_row_index),
                         factor,
@@ -309,17 +315,18 @@ where
     Ok(())
 }
 
-fn ecnrypt_constant_ggsw_level_matrix_row<Z, Gen>(
-    glwe_secret_key_share: &GlweSecretKeyShare<Z>,
+fn encrypt_constant_ggsw_level_matrix_row<Z, Gen, const EXTENSION_DEGREE: usize>(
+    glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
     (row_index, last_row_index): (usize, usize),
     factor: Z,
-    row_as_glwe: &mut GlweCiphertextShare<Z>,
-    encoded_row: Vec<ResiduePolyF8<Z>>,
-    generator: &mut MPCEncryptionRandomGenerator<Z, Gen>,
+    row_as_glwe: &mut GlweCiphertextShare<Z, EXTENSION_DEGREE>,
+    encoded_row: Vec<ResiduePoly<Z, EXTENSION_DEGREE>>,
+    generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
 ) -> anyhow::Result<()>
 where
     Z: BaseRing,
     Gen: ByteRandomGenerator,
+    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
 {
     //Do proper scaling using the provided list of secret shared plaintexts
     if row_index < last_row_index {
@@ -330,8 +337,11 @@ where
         slice_wrapping_scalar_mul_assign(body, factor);
     } else {
         let body = row_as_glwe.get_mut_body();
-        body.iter_mut().for_each(|e| *e = ResiduePolyF8::ZERO);
-        body[0] = encoded_row[0] * factor;
+        body.iter_mut().for_each(|e| *e = ResiduePoly::ZERO);
+        body[0] = encoded_row
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("Empty encoded row"))?
+            * factor;
     }
 
     encrypt_glwe_ciphertext_assign(glwe_secret_key_share, row_as_glwe, generator)
@@ -374,7 +384,7 @@ mod tests {
     };
 
     use crate::{
-        algebra::galois_rings::degree_8::ResiduePolyF8Z64,
+        algebra::{galois_rings::degree_8::ResiduePolyF8Z64, structure_traits::Ring},
         execution::{
             online::{
                 gen_bits::{BitGenEven, RealBitGenEven},
@@ -471,7 +481,7 @@ mod tests {
                 },
             };
 
-            let mut output: GgswCiphertextShare<_> = GgswCiphertextShare::new(
+            let mut output: GgswCiphertextShare<_, 8> = GgswCiphertextShare::new(
                 glwe_dimension.to_glwe_size(),
                 polynomial_size,
                 decomp_base_log,
@@ -497,7 +507,12 @@ mod tests {
         //This is Async because triples are generated from dummy preprocessing
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let results = execute_protocol_large::<ResiduePolyF8Z64, _, _>(
+        let results = execute_protocol_large::<
+            _,
+            _,
+            ResiduePolyF8Z64,
+            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+        >(
             parties,
             threshold,
             None,

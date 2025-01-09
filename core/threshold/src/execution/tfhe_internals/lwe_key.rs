@@ -17,8 +17,8 @@ use tfhe_versionable::VersionsDispatch;
 
 use crate::{
     algebra::{
-        galois_rings::degree_8::ResiduePolyF8,
-        structure_traits::{BaseRing, ErrorCorrect},
+        galois_rings::common::ResiduePoly,
+        structure_traits::{BaseRing, ErrorCorrect, Ring},
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
@@ -34,24 +34,24 @@ use super::{
 };
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum LweSecretKeyShareVersioned<Z: Clone> {
-    V0(LweSecretKeyShare<Z>),
+pub enum LweSecretKeyShareVersioned<Z: Clone, const EXTENSION_DEGREE: usize> {
+    V0(LweSecretKeyShare<Z, EXTENSION_DEGREE>),
 }
 
 ///Structure that holds a share of the LWE key
 /// - data contains shares of the key components
 #[derive(Clone, Debug, Serialize, Deserialize, Versionize, PartialEq)]
 #[versionize(LweSecretKeyShareVersioned)]
-pub struct LweSecretKeyShare<Z: Clone> {
-    pub data: Vec<Share<ResiduePolyF8<Z>>>,
+pub struct LweSecretKeyShare<Z: Clone, const EXTENSION_DEGREE: usize> {
+    pub data: Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>,
 }
 
 #[derive(Clone)]
-pub struct LweCompactPublicKeyShare<Z: BaseRing> {
-    pub glwe_ciphertext_share: GlweCiphertextShare<Z>,
+pub struct LweCompactPublicKeyShare<Z: BaseRing, const EXTENSION_DEGREE: usize> {
+    pub glwe_ciphertext_share: GlweCiphertextShare<Z, EXTENSION_DEGREE>,
 }
 
-impl<Z: BaseRing> LweCompactPublicKeyShare<Z> {
+impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LweCompactPublicKeyShare<Z, EXTENSION_DEGREE> {
     pub fn new(lwe_dimension: LweDimension) -> Self {
         Self {
             glwe_ciphertext_share: GlweCiphertextShare::new(
@@ -63,14 +63,16 @@ impl<Z: BaseRing> LweCompactPublicKeyShare<Z> {
         }
     }
 
-    pub fn get_mut_mask_and_body(&mut self) -> (&mut Vec<Z>, &mut Vec<ResiduePolyF8<Z>>) {
+    pub fn get_mut_mask_and_body(
+        &mut self,
+    ) -> (&mut Vec<Z>, &mut Vec<ResiduePoly<Z, EXTENSION_DEGREE>>) {
         self.glwe_ciphertext_share.get_mut_mask_and_body()
     }
 }
 
-impl<Z: BaseRing> LweCompactPublicKeyShare<Z>
+impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LweCompactPublicKeyShare<Z, EXTENSION_DEGREE>
 where
-    ResiduePolyF8<Z>: ErrorCorrect,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     pub async fn open_to_tfhers_type<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         self,
@@ -135,8 +137,13 @@ pub(crate) fn to_tfhe_hl_api_compact_public_key(
     tfhe::CompactPublicKey::from_raw_parts(cpk, tfhe::Tag::default())
 }
 
-impl<Z: BaseRing> LweSecretKeyShare<Z> {
-    pub fn new_from_preprocessing<P: BitPreprocessing<ResiduePolyF8<Z>> + ?Sized>(
+impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LweSecretKeyShare<Z, EXTENSION_DEGREE>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+{
+    pub fn new_from_preprocessing<
+        P: BitPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+    >(
         dimension: LweDimension,
         preprocessing: &mut P,
     ) -> anyhow::Result<Self> {
@@ -149,17 +156,18 @@ impl<Z: BaseRing> LweSecretKeyShare<Z> {
         LweDimension(self.data.len())
     }
 
-    pub fn data_as_raw_vec(&self) -> Vec<ResiduePolyF8<Z>> {
+    pub fn data_as_raw_vec(&self) -> Vec<ResiduePoly<Z, EXTENSION_DEGREE>> {
         self.data.iter().map(|share| share.value()).collect_vec()
     }
 }
 
-pub fn allocate_and_generate_new_lwe_compact_public_key<Z, Gen>(
-    lwe_secret_key: &LweSecretKeyShare<Z>,
-    generator: &mut MPCEncryptionRandomGenerator<Z, Gen>,
-) -> anyhow::Result<LweCompactPublicKeyShare<Z>>
+pub fn allocate_and_generate_new_lwe_compact_public_key<Z, Gen, const EXTENSION_DEGREE: usize>(
+    lwe_secret_key: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
+) -> anyhow::Result<LweCompactPublicKeyShare<Z, EXTENSION_DEGREE>>
 where
     Z: BaseRing,
+    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
     Gen: ByteRandomGenerator,
 {
     let mut pk = LweCompactPublicKeyShare::new(lwe_secret_key.lwe_dimension());
@@ -169,13 +177,14 @@ where
     Ok(pk)
 }
 
-pub fn generate_lwe_compact_public_key<Z, Gen>(
-    lwe_secret_key_share: &LweSecretKeyShare<Z>,
-    output: &mut LweCompactPublicKeyShare<Z>,
-    generator: &mut MPCEncryptionRandomGenerator<Z, Gen>,
+pub fn generate_lwe_compact_public_key<Z, Gen, const EXTENSION_DEGREE: usize>(
+    lwe_secret_key_share: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    output: &mut LweCompactPublicKeyShare<Z, EXTENSION_DEGREE>,
+    generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
 ) -> anyhow::Result<()>
 where
     Z: BaseRing,
+    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
     Gen: ByteRandomGenerator,
 {
     let encryption_type = output.glwe_ciphertext_share.encryption_type;
@@ -220,7 +229,9 @@ mod tests {
     #[cfg(feature = "slow_tests")]
     use crate::execution::tfhe_internals::lwe_key::to_tfhe_hl_api_compact_public_key;
     use crate::{
-        algebra::{base_ring::Z64, galois_rings::degree_8::ResiduePolyF8Z64},
+        algebra::{
+            base_ring::Z64, galois_rings::degree_8::ResiduePolyF8Z64, structure_traits::Ring,
+        },
         execution::{
             online::{
                 gen_bits::{BitGenEven, RealBitGenEven},
@@ -264,7 +275,7 @@ mod tests {
                     .unwrap();
 
             //Generate secret key
-            let lwe_secret_key_share: LweSecretKeyShare<Z64> = LweSecretKeyShare {
+            let lwe_secret_key_share: LweSecretKeyShare<Z64, 8> = LweSecretKeyShare {
                 data: vec_shared_bits,
             };
 
@@ -307,7 +318,12 @@ mod tests {
         //This is Async because triples are generated from dummy preprocessing
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let results = execute_protocol_large::<ResiduePolyF8Z64, _, _>(
+        let results = execute_protocol_large::<
+            _,
+            _,
+            ResiduePolyF8Z64,
+            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+        >(
             parties,
             threshold,
             None,

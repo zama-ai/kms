@@ -20,20 +20,22 @@ use crate::{
 };
 
 use super::lwe_ciphertext::LweCiphertextShare;
-use crate::algebra::galois_rings::degree_8::ResiduePolyF8;
+use crate::algebra::galois_rings::common::ResiduePoly;
 
 #[derive(Clone)]
-pub struct LweKeySwitchKeyShare<Z: BaseRing> {
+pub struct LweKeySwitchKeyShare<Z: BaseRing, const EXTENSION_DEGREE: usize> {
     //data is a matrix of LweCiphertextShare where each line
     //corresponds to an input_key element and columns are the levels
-    pub data: Vec<Vec<LweCiphertextShare<Z>>>,
+    pub data: Vec<Vec<LweCiphertextShare<Z, EXTENSION_DEGREE>>>,
     decomp_base_log: DecompositionBaseLog,
     decomp_level_count: DecompositionLevelCount,
     output_lwe_size: LweSize,
 }
 
-impl<Z: BaseRing> LweKeySwitchKeyShare<Z> {
-    pub fn iter_mut_levels(&mut self) -> impl Iterator<Item = &mut Vec<LweCiphertextShare<Z>>> {
+impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LweKeySwitchKeyShare<Z, EXTENSION_DEGREE> {
+    pub fn iter_mut_levels(
+        &mut self,
+    ) -> impl Iterator<Item = &mut Vec<LweCiphertextShare<Z, EXTENSION_DEGREE>>> {
         self.data.iter_mut()
     }
 
@@ -65,9 +67,9 @@ impl<Z: BaseRing> LweKeySwitchKeyShare<Z> {
         self.decomp_level_count
     }
 }
-impl<Z: BaseRing> LweKeySwitchKeyShare<Z>
+impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LweKeySwitchKeyShare<Z, EXTENSION_DEGREE>
 where
-    ResiduePolyF8<Z>: ErrorCorrect,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     pub async fn open_to_tfhers_type<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         self,

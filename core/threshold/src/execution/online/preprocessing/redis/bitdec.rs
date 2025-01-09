@@ -1,7 +1,8 @@
-use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z64;
-
 use super::RedisPreprocessing;
 use super::{BasePreprocessing, TriplePreprocessing};
+use crate::algebra::base_ring::Z64;
+use crate::algebra::galois_rings::common::ResiduePoly;
+use crate::algebra::structure_traits::{ErrorCorrect, Invert, Solve};
 use crate::execution::online::gen_bits::BitGenEven;
 use crate::execution::online::gen_bits::RealBitGenEven;
 use crate::execution::online::preprocessing::BitDecPreprocessing;
@@ -10,12 +11,16 @@ use crate::execution::runtime::session::BaseSession;
 use async_trait::async_trait;
 
 #[async_trait]
-impl BitDecPreprocessing for RedisPreprocessing<ResiduePolyF8Z64> {
+impl<const EXTENSION_DEGREE: usize> BitDecPreprocessing<EXTENSION_DEGREE>
+    for RedisPreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>
+where
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+{
     ///Creates enough material (bits and triples) to decrypt **num_ctxt** ciphertexts,
     ///assuming **preprocessing** is filled with enough randomness and triples
     async fn fill_from_base_preproc(
         &mut self,
-        preprocessing: &mut dyn BasePreprocessing<ResiduePolyF8Z64>,
+        preprocessing: &mut dyn BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>,
         session: &mut BaseSession,
         num_ctxts: usize,
     ) -> anyhow::Result<()> {

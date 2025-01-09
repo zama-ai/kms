@@ -1,5 +1,5 @@
 use super::{
-    galois_fields::gf256::GF256,
+    galois_fields::{gf16::GF16, gf256::GF256},
     galois_rings::common::{LutMulReduction, ResiduePoly},
     structure_traits::{Field, Invert, One, Ring, RingEmbed, Sample, Zero},
 };
@@ -29,12 +29,22 @@ impl From<Poly<GF256>> for BitwisePoly {
     }
 }
 
-pub trait BitWiseEval<Z, const DEGREE: usize>
+impl From<Poly<GF16>> for BitwisePoly {
+    fn from(poly: Poly<GF16>) -> BitwisePoly {
+        let coefs: Vec<u8> = poly.coefs.iter().map(|coef_2| coef_2.0).collect();
+        BitwisePoly { coefs }
+    }
+}
+
+pub trait BitWiseEval<Z, const EXTENSION_DEGREE: usize>
 where
     Z: Zero + for<'a> AddAssign<&'a Z> + Copy + Clone,
-    ResiduePoly<Z, DEGREE>: LutMulReduction<Z>,
+    ResiduePoly<Z, EXTENSION_DEGREE>: LutMulReduction<Z>,
 {
-    fn lazy_eval(&self, powers: &[ResiduePoly<Z, DEGREE>]) -> ResiduePoly<Z, DEGREE>;
+    fn lazy_eval(
+        &self,
+        powers: &[ResiduePoly<Z, EXTENSION_DEGREE>],
+    ) -> ResiduePoly<Z, EXTENSION_DEGREE>;
 }
 
 impl<Z> Poly<Z>

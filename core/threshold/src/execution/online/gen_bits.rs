@@ -38,7 +38,7 @@ impl BitGenEven for RealBitGenEven {
     /// The code only works when the modulo of the ring used is even.
     #[instrument(name="MPC.GenBits", skip(amount, preproc, session), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity(),batch_size=?amount))]
     async fn gen_bits_even<
-        Z: Ring + RingEmbed + Invert + Solve + ErrorCorrect,
+        Z: Invert + Solve + ErrorCorrect,
         Rnd: Rng + CryptoRng,
         Ses: BaseSessionHandles<Rnd>,
         P: BasePreprocessing<Z> + Send + ?Sized,
@@ -72,14 +72,15 @@ impl BitGenEven for RealBitGenEven {
 
 #[cfg(test)]
 mod tests {
+    use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
+    use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z64;
+    use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z128;
+    use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z64;
+    use crate::algebra::structure_traits::Ring;
     use crate::execution::online::gen_bits::BitGenEven;
     use crate::execution::online::gen_bits::RealBitGenEven;
     use crate::{
-        algebra::{
-            base_ring::{Z128, Z64},
-            galois_rings::degree_8::ResiduePolyF8,
-            structure_traits::{One, Sample, Zero},
-        },
+        algebra::structure_traits::{One, Sample, Zero},
         execution::{
             online::{
                 gen_bits::Solve,
@@ -109,8 +110,8 @@ mod tests {
                     let parties = 4;
                     let threshold = 1;
                     const AMOUNT: usize = 10;
-                    async fn task(mut session: SmallSession<ResiduePolyF8<$z>>) -> Vec<ResiduePolyF8<$z>> {
-                        let mut preprocessing = DummyPreprocessing::<ResiduePolyF8<$z>, AesRng, SmallSession<ResiduePolyF8<$z>>>::new(42, session.clone());
+                    async fn task(mut session: SmallSession<$z>) -> Vec<$z> {
+                        let mut preprocessing = DummyPreprocessing::<$z, AesRng, SmallSession<$z>>::new(42, session.clone());
                         let bits = RealBitGenEven::gen_bits_even(AMOUNT, &mut preprocessing, &mut session)
                             .await
                             .unwrap();
@@ -121,7 +122,7 @@ mod tests {
                     // Async because the triple gen is dummy
                     //Delay P1 by 1s every round
                     let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-                    let results = execute_protocol_small(parties, threshold, Some(3), NetworkMode::Async, Some(delay_vec), &mut task);
+                    let results = execute_protocol_small::<_,_,$z, {$z::EXTENSION_DEGREE}>(parties, threshold, Some(3), NetworkMode::Async, Some(delay_vec), &mut task);
                     [<validate_res_ $z:lower>](results, AMOUNT, parties);
                 }
 
@@ -131,12 +132,12 @@ mod tests {
                     let threshold = 1;
                     let bad_party: Role = Role::indexed_by_one(2);
                     const AMOUNT: usize = 10;
-                    let mut task = |mut session: SmallSession<ResiduePolyF8<$z>>| async move {
-                        let mut preprocessing = DummyPreprocessing::<ResiduePolyF8<$z>, AesRng, SmallSession<ResiduePolyF8<$z>>>::new(42, session.clone());
+                    let mut task = |mut session: SmallSession<$z>| async move {
+                        let mut preprocessing = DummyPreprocessing::<$z, AesRng, SmallSession<$z>>::new(42, session.clone());
                         // Execute with dummy prepreocessing for honest parties and a mock for the bad one
                         let bits = if session.my_role().unwrap() == bad_party {
                             let mut mock =
-                                MockBasePreprocessing::<ResiduePolyF8<$z>>::new();
+                                MockBasePreprocessing::<$z>::new();
                             // Mock the bad party's preprocessing by returning incorrect shares on calls to next_random_vec
                             mock.expect_next_random_vec()
                                 .returning(move |amount| {
@@ -144,7 +145,7 @@ mod tests {
                                         .map(|i| {
                                             Share::new(
                                                 bad_party,
-                                                ResiduePolyF8::<$z>::from_scalar(Wrapping(i as $u)),
+                                                $z::from_scalar(Wrapping(i as $u)),
                                             )
                                         })
                                         .collect_vec())
@@ -165,11 +166,11 @@ mod tests {
                     // Async because the triple gen is dummy
                     //Delay P1 by 1s every round
                     let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-                    let results = execute_protocol_small(parties, threshold, None, NetworkMode::Async, Some(delay_vec), &mut task);
+                    let results = execute_protocol_small::<_,_,$z, {$z::EXTENSION_DEGREE}>(parties, threshold, None, NetworkMode::Async, Some(delay_vec), &mut task);
                     [<validate_res_ $z:lower>](results, AMOUNT, parties);
                 }
 
-                fn [<validate_res_ $z:lower>](results: Vec<Vec<ResiduePolyF8<$z>>>, amount: usize, parties: usize) {
+                fn [<validate_res_ $z:lower>](results: Vec<Vec<$z>>, amount: usize, parties: usize) {
                     assert_eq!(results.len(), parties);
                     let mut one_count = 0;
                     for cur_party_res in results.clone() {
@@ -177,8 +178,8 @@ mod tests {
                         // Check that all parties agree on the result
                         assert_eq!(*results.first().unwrap(), cur_party_res);
                         for cur_bit in cur_party_res {
-                            assert!(cur_bit == ResiduePolyF8::ZERO || cur_bit == ResiduePolyF8::ONE);
-                            if cur_bit == ResiduePolyF8::ONE {
+                            assert!(cur_bit == $z::ZERO || cur_bit == $z::ONE);
+                            if cur_bit == $z::ONE {
                                 one_count += 1;
                             }
                         }
@@ -193,9 +194,9 @@ mod tests {
                 #[test]
                 fn [<test_sunshine_sample_ $z:lower>]() {
                     let mut rng = AesRng::seed_from_u64(0);
-                    let a = ResiduePolyF8::<$z>::sample(&mut rng);
+                    let a = $z::sample(&mut rng);
                     let t = a + a * a;
-                    let x = match ResiduePolyF8::<$z>::solve(&t) {
+                    let x = match $z::solve(&t) {
                         Ok(x) => x,
                         Err(error) => panic!("Failed with error: {}", error),
                     };
@@ -205,10 +206,10 @@ mod tests {
                 #[test]
                 fn [<negative_sample_ $z:lower>]() {
                     let mut rng = AesRng::seed_from_u64(1);
-                    let a = ResiduePolyF8::<$z>::sample(&mut rng);
+                    let a = $z::sample(&mut rng);
                     // The input not of the form a+a*a
-                    let t = a + a * a - ResiduePolyF8::<$z>::ONE;
-                    let x = ResiduePolyF8::<$z>::solve(&t).unwrap();
+                    let t = a + a * a - $z::ONE;
+                    let x = $z::solve(&t).unwrap();
                     assert_ne!(a + a * a, x + x * x);
                 }
 
@@ -216,12 +217,12 @@ mod tests {
                 fn [<soak_sample_ $z:lower>]() {
                     let iterations = 1000;
                     let mut rng = rand::thread_rng();
-                    let mut a: ResiduePolyF8<$z>;
+                    let mut a: $z;
                     let mut base_solutions = 0;
                     for _i in 1..iterations {
-                        a = ResiduePolyF8::<$z>::sample(&mut rng);
+                        a = $z::sample(&mut rng);
                         let t = a + a * a;
-                        let x = match ResiduePolyF8::<$z>::solve(&t) {
+                        let x = match $z::solve(&t) {
                             Ok(x) => x,
                             Err(error) => panic!("Failed with error: {}", error),
                         };
@@ -238,6 +239,8 @@ mod tests {
             }
         };
     }
-    test_bitgen![Z64, u64];
-    test_bitgen![Z128, u128];
+    test_bitgen![ResiduePolyF8Z64, u64];
+    test_bitgen![ResiduePolyF8Z128, u128];
+    test_bitgen![ResiduePolyF4Z64, u64];
+    test_bitgen![ResiduePolyF4Z128, u128];
 }

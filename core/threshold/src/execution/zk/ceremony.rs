@@ -683,8 +683,10 @@ mod tests {
         let witness_dim = 10usize;
         let identities = generate_fixed_identities(num_parties);
         //CRS generation is round robin, so Sync by nature
-        let runtime: DistributedTestRuntime<ResiduePolyF8Z64> =
-            DistributedTestRuntime::new(identities, threshold as u8, NetworkMode::Sync, None);
+        let runtime: DistributedTestRuntime<
+            ResiduePolyF8Z64,
+            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+        > = DistributedTestRuntime::new(identities, threshold as u8, NetworkMode::Sync, None);
 
         let session_id = SessionId(2);
 
@@ -869,7 +871,11 @@ mod tests {
         }
     }
 
-    fn test_ceremony_strategies_large<Z: Ring, C: Ceremony + 'static>(
+    fn test_ceremony_strategies_large<
+        C: Ceremony + 'static,
+        Z: Ring,
+        const EXTENSION_DEGREE: usize,
+    >(
         params: TestingParameters,
         witness_dim: usize,
         malicious_party: C,
@@ -894,16 +900,17 @@ mod tests {
         };
 
         //CRS generation is round robin, so Sync by nature
-        let (results_honest, _) = execute_protocol_large_w_disputes_and_malicious::<Z, _, _, _, _, _>(
-            &params,
-            &[],
-            &params.malicious_roles,
-            malicious_party,
-            NetworkMode::Sync,
-            None,
-            &mut task_honest,
-            &mut task_malicious,
-        );
+        let (results_honest, _) =
+            execute_protocol_large_w_disputes_and_malicious::<_, _, _, _, _, Z, EXTENSION_DEGREE>(
+                &params,
+                &[],
+                &params.malicious_roles,
+                malicious_party,
+                NetworkMode::Sync,
+                None,
+                &mut task_honest,
+                &mut task_malicious,
+            );
 
         // the honest results should be a valid crs and not the initial one
         let honest_pp = results_honest.iter().map(|(_, pp, _)| pp).collect_vec();
@@ -921,7 +928,7 @@ mod tests {
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
     fn test_dropping_ceremony(#[case] params: TestingParameters, #[case] witness_dim: usize) {
         let malicious_party = DroppingCeremony::default();
-        test_ceremony_strategies_large::<ResiduePolyF8Z64, _>(
+        test_ceremony_strategies_large::<_, ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }>(
             params.clone(),
             witness_dim,
             malicious_party.clone(),
@@ -933,7 +940,7 @@ mod tests {
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
     fn test_bad_proof_ceremony(#[case] params: TestingParameters, #[case] witness_dim: usize) {
         let malicious_party = BadProofCeremony::default();
-        test_ceremony_strategies_large::<ResiduePolyF8Z64, _>(
+        test_ceremony_strategies_large::<_, ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }>(
             params.clone(),
             witness_dim,
             malicious_party.clone(),
@@ -945,7 +952,7 @@ mod tests {
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
     fn test_rushing_ceremony(#[case] params: TestingParameters, #[case] witness_dim: usize) {
         let malicious_party = RushingCeremony::default();
-        test_ceremony_strategies_large::<ResiduePolyF8Z64, _>(
+        test_ceremony_strategies_large::<_, ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }>(
             params.clone(),
             witness_dim,
             malicious_party.clone(),

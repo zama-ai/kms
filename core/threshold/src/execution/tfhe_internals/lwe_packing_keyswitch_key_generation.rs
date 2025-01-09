@@ -1,7 +1,7 @@
 use crate::{
     algebra::{
-        galois_rings::degree_8::ResiduePolyF8,
-        structure_traits::{BaseRing, Zero},
+        galois_rings::common::ResiduePoly,
+        structure_traits::{BaseRing, Ring, Zero},
     },
     error::error_handler::anyhow_error_and_log,
 };
@@ -21,14 +21,15 @@ use super::{
 // we expect the generator to already be filled with
 // the correct noise from the caller
 // as the noise is sampled via the MPC protocol
-pub fn generate_lwe_packing_keyswitch_key<Z, Gen>(
-    input_lwe_sk: &LweSecretKeyShare<Z>,
-    output_glwe_sk: &GlweSecretKeyShare<Z>,
-    lwe_packing_keyswitch_key: &mut LwePackingKeyswitchKeyShares<Z>,
-    generator: &mut MPCEncryptionRandomGenerator<Z, Gen>,
+pub fn generate_lwe_packing_keyswitch_key<Z, Gen, const EXTENSION_DEGREE: usize>(
+    input_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    output_glwe_sk: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    lwe_packing_keyswitch_key: &mut LwePackingKeyswitchKeyShares<Z, EXTENSION_DEGREE>,
+    generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
 ) -> anyhow::Result<()>
 where
     Z: BaseRing,
+    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
     Gen: ByteRandomGenerator,
 {
     let decomp_base_log = lwe_packing_keyswitch_key.decomposition_base_log();
@@ -36,7 +37,7 @@ where
     let polynomial_size = lwe_packing_keyswitch_key.output_polynomial_size();
 
     let mut decomposition_plaintexts_buffer =
-        vec![ResiduePolyF8::<Z>::ZERO; decomp_level_count.0 * polynomial_size.0];
+        vec![ResiduePoly::<Z, EXTENSION_DEGREE>::ZERO; decomp_level_count.0 * polynomial_size.0];
 
     // Iterate over the input key elements and the destination lwe_packing_keyswitch_key memory
     for (input_key_element, packing_keyswitch_key_block) in input_lwe_sk
@@ -73,15 +74,16 @@ where
     Ok(())
 }
 
-pub fn allocate_and_generate_lwe_packing_keyswitch_key<Z, Gen>(
-    input_lwe_sk: &LweSecretKeyShare<Z>,
-    output_glwe_sk: &GlweSecretKeyShare<Z>,
+pub fn allocate_and_generate_lwe_packing_keyswitch_key<Z, Gen, const EXTENSION_DEGREE: usize>(
+    input_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    output_glwe_sk: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
     decomp_base_log: DecompositionBaseLog,
     decomp_level_count: DecompositionLevelCount,
-    generator: &mut MPCEncryptionRandomGenerator<Z, Gen>,
-) -> anyhow::Result<LwePackingKeyswitchKeyShares<Z>>
+    generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
+) -> anyhow::Result<LwePackingKeyswitchKeyShares<Z, EXTENSION_DEGREE>>
 where
     Z: BaseRing,
+    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
     Gen: ByteRandomGenerator,
 {
     let mut new_ksk = LwePackingKeyswitchKeyShares::new(

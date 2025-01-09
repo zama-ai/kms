@@ -1,5 +1,6 @@
 use super::party::{Identity, Role};
 use crate::{
+    algebra::base_ring::{Z128, Z64},
     algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed},
     error::error_handler::anyhow_error_and_log,
     execution::{
@@ -276,8 +277,10 @@ pub trait ToBaseSession<R: Rng + CryptoRng + SeedableRng, B: BaseSessionHandles<
 }
 
 pub type SmallSession<Z> = SmallSessionStruct<Z, AesRng, SessionParameters>;
-pub type SmallSession64 = SmallSession<crate::algebra::galois_rings::degree_8::ResiduePolyF8Z64>;
-pub type SmallSession128 = SmallSession<crate::algebra::galois_rings::degree_8::ResiduePolyF8Z128>;
+pub type SmallSession64<const EXTENSION_DEGREE: usize> =
+    SmallSession<crate::algebra::galois_rings::common::ResiduePoly<Z64, EXTENSION_DEGREE>>;
+pub type SmallSession128<const EXTENSION_DEGREE: usize> =
+    SmallSession<crate::algebra::galois_rings::common::ResiduePoly<Z128, EXTENSION_DEGREE>>;
 
 pub trait SmallSessionHandles<Z: Ring, R: Rng + CryptoRng>: BaseSessionHandles<R> {
     fn prss_as_mut(&mut self) -> &mut PRSSState<Z>;

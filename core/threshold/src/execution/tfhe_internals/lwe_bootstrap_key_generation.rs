@@ -1,5 +1,4 @@
-use itertools::EitherOrBoth;
-use itertools::Itertools;
+use itertools::{EitherOrBoth, Itertools};
 use rand::{CryptoRng, Rng};
 use tfhe::{
     core_crypto::prelude::ByteRandomGenerator,
@@ -8,7 +7,7 @@ use tfhe::{
 
 use crate::{
     algebra::{
-        galois_rings::degree_8::ResiduePolyF8,
+        galois_rings::common::ResiduePoly,
         structure_traits::{BaseRing, ErrorCorrect},
     },
     error::error_handler::anyhow_error_and_log,
@@ -24,11 +23,11 @@ use super::{
     randomness::MPCEncryptionRandomGenerator,
 };
 
-pub async fn generate_lwe_bootstrap_key<Z, Gen, Rnd, S, P>(
-    input_lwe_secret_key: &LweSecretKeyShare<Z>,
-    output_glwe_secret_key: &GlweSecretKeyShare<Z>,
-    output: &mut LweBootstrapKeyShare<Z>,
-    generator: &mut MPCEncryptionRandomGenerator<Z, Gen>,
+pub async fn generate_lwe_bootstrap_key<Z, Gen, Rnd, S, P, const EXTENSION_DEGREE: usize>(
+    input_lwe_secret_key: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    output_glwe_secret_key: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    output: &mut LweBootstrapKeyShare<Z, EXTENSION_DEGREE>,
+    generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     session: &mut S,
     preproc: &mut P,
 ) -> anyhow::Result<()>
@@ -37,8 +36,8 @@ where
     Gen: ByteRandomGenerator,
     Rnd: Rng + CryptoRng,
     S: BaseSessionHandles<Rnd>,
-    P: TriplePreprocessing<ResiduePolyF8<Z>> + ?Sized,
-    ResiduePolyF8<Z>: ErrorCorrect,
+    P: TriplePreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let encryption_type = output.encryption_type();
     let gen_iter = generator.fork_bsk_to_ggsw(
@@ -80,23 +79,30 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn allocate_and_generate_lwe_bootstrap_key<Z, Gen, Rnd, S, P>(
-    input_lwe_secret_key: &LweSecretKeyShare<Z>,
-    output_glwe_secret_key: &GlweSecretKeyShare<Z>,
+pub async fn allocate_and_generate_lwe_bootstrap_key<
+    Z,
+    Gen,
+    Rnd,
+    S,
+    P,
+    const EXTENSION_DEGREE: usize,
+>(
+    input_lwe_secret_key: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    output_glwe_secret_key: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
     decomp_base_log: DecompositionBaseLog,
     decomp_level_count: DecompositionLevelCount,
-    generator: &mut MPCEncryptionRandomGenerator<Z, Gen>,
+    generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     encryption_type: EncryptionType,
     session: &mut S,
     preproc: &mut P,
-) -> anyhow::Result<LweBootstrapKeyShare<Z>>
+) -> anyhow::Result<LweBootstrapKeyShare<Z, EXTENSION_DEGREE>>
 where
     Z: BaseRing,
     Gen: ByteRandomGenerator,
     Rnd: Rng + CryptoRng,
     S: BaseSessionHandles<Rnd>,
-    P: TriplePreprocessing<ResiduePolyF8<Z>> + ?Sized,
-    ResiduePolyF8<Z>: ErrorCorrect,
+    P: TriplePreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let mut bsk = LweBootstrapKeyShare::new(
         output_glwe_secret_key.glwe_dimension().to_glwe_size(),
@@ -150,7 +156,9 @@ mod tests {
     };
 
     use crate::{
-        algebra::{base_ring::Z128, galois_rings::degree_8::ResiduePolyF8Z128},
+        algebra::{
+            base_ring::Z128, galois_rings::degree_8::ResiduePolyF8Z128, structure_traits::Ring,
+        },
         execution::{
             online::{
                 gen_bits::{BitGenEven, RealBitGenEven},
@@ -162,8 +170,7 @@ mod tests {
             tfhe_internals::{
                 glwe_key::GlweSecretKeyShare,
                 lwe_key::LweSecretKeyShare,
-                parameters::EncryptionType,
-                parameters::TUniformBound,
+                parameters::{EncryptionType, TUniformBound},
                 randomness::{
                     MPCEncryptionRandomGenerator, MPCMaskRandomGenerator, MPCNoiseRandomGenerator,
                 },
@@ -195,7 +202,7 @@ mod tests {
             let mut large_preproc = DummyPreprocessing::new(seed as u64, session.clone());
 
             //Generate the Lwe key
-            let lwe_secret_key_share = LweSecretKeyShare::<Z128> {
+            let lwe_secret_key_share = LweSecretKeyShare::<Z128, 8> {
                 data: RealBitGenEven::gen_bits_even(
                     num_key_bits_lwe,
                     &mut large_preproc,
@@ -206,7 +213,7 @@ mod tests {
             };
 
             //Generate the Glwe key
-            let glwe_secret_key_share = GlweSecretKeyShare::<Z128> {
+            let glwe_secret_key_share = GlweSecretKeyShare::<Z128, 8> {
                 data: RealBitGenEven::gen_bits_even(
                     num_key_bits_glwe,
                     &mut large_preproc,
@@ -270,7 +277,12 @@ mod tests {
         //This is Async because triples are generated from dummy preprocessing
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let results = execute_protocol_large::<ResiduePolyF8Z128, _, _>(
+        let results = execute_protocol_large::<
+            _,
+            _,
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >(
             parties,
             threshold,
             None,

@@ -11,7 +11,7 @@ use tfhe::{
 
 use crate::{
     algebra::{
-        galois_rings::degree_8::ResiduePolyF8,
+        galois_rings::common::ResiduePoly,
         structure_traits::{BaseRing, ErrorCorrect},
     },
     error::error_handler::anyhow_error_and_log,
@@ -26,20 +26,22 @@ use super::{glwe_ciphertext::GlweCiphertextShare, parameters::EncryptionType};
 // used for compression.
 // The underlying data is a a vector of vectors of GlweCiphertextShare
 // where for each input key bit we GLev encrypt it
-pub struct LwePackingKeyswitchKeyShares<Z: BaseRing> {
-    data: Vec<Vec<GlweCiphertextShare<Z>>>,
+pub struct LwePackingKeyswitchKeyShares<Z: BaseRing, const EXTENSION_DEGREE: usize> {
+    data: Vec<Vec<GlweCiphertextShare<Z, EXTENSION_DEGREE>>>,
     decomp_base_log: DecompositionBaseLog,
     decomp_level_count: DecompositionLevelCount,
     output_glwe_size: GlweSize,
     output_polynomial_size: PolynomialSize,
 }
 
-impl<Z: BaseRing> LwePackingKeyswitchKeyShares<Z> {
+impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LwePackingKeyswitchKeyShares<Z, EXTENSION_DEGREE> {
     pub fn output_polynomial_size(&self) -> PolynomialSize {
         self.output_polynomial_size
     }
 
-    pub fn iter_mut_levels(&mut self) -> impl Iterator<Item = &mut Vec<GlweCiphertextShare<Z>>> {
+    pub fn iter_mut_levels(
+        &mut self,
+    ) -> impl Iterator<Item = &mut Vec<GlweCiphertextShare<Z, EXTENSION_DEGREE>>> {
         self.data.iter_mut()
     }
 
@@ -78,9 +80,9 @@ impl<Z: BaseRing> LwePackingKeyswitchKeyShares<Z> {
     }
 }
 
-impl<Z: BaseRing> LwePackingKeyswitchKeyShares<Z>
+impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LwePackingKeyswitchKeyShares<Z, EXTENSION_DEGREE>
 where
-    ResiduePolyF8<Z>: ErrorCorrect,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     pub async fn open_to_tfhers_type<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         self,

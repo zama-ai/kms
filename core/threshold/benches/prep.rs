@@ -3,6 +3,7 @@ use criterion::Throughput;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use distributed_decryption::algebra::galois_rings::degree_8::ResiduePolyF8Z128;
 use distributed_decryption::algebra::galois_rings::degree_8::ResiduePolyF8Z64;
+use distributed_decryption::algebra::structure_traits::Ring;
 use distributed_decryption::execution::config::BatchParams;
 use distributed_decryption::execution::large_execution::double_sharing::DoubleSharing;
 use distributed_decryption::execution::large_execution::offline::LargePreprocessing;
@@ -59,7 +60,9 @@ fn triple_nsmall128(c: &mut Criterion) {
             &config,
             |b, &config| {
                 b.iter(|| {
-                    let mut computation = |mut session: SmallSession128| async move {
+                    let mut computation = |mut session: SmallSession128<
+                        { ResiduePolyF8Z128::EXTENSION_DEGREE },
+                    >| async move {
                         let default_batch_size = BatchParams {
                             triples: config.batch_size,
                             randoms: 0,
@@ -73,7 +76,12 @@ fn triple_nsmall128(c: &mut Criterion) {
                         .unwrap();
                     };
                     //Executing offline, so require Sync network
-                    let _result = execute_protocol_small::<ResiduePolyF8Z128, _, _>(
+                    let _result = execute_protocol_small::<
+                        _,
+                        _,
+                        ResiduePolyF8Z128,
+                        { ResiduePolyF8Z128::EXTENSION_DEGREE },
+                    >(
                         config.n,
                         config.t as u8,
                         None,
@@ -133,7 +141,12 @@ fn triple_z128(c: &mut Criterion) {
                         .unwrap();
                     };
                     //Executing offline, so require Sync network
-                    let _result = execute_protocol_large::<ResiduePolyF8Z128, _, _>(
+                    let _result = execute_protocol_large::<
+                        _,
+                        _,
+                        ResiduePolyF8Z128,
+                        { ResiduePolyF8Z128::EXTENSION_DEGREE },
+                    >(
                         config.n,
                         config.t,
                         None,
@@ -193,7 +206,12 @@ fn triple_z64(c: &mut Criterion) {
                         .unwrap();
                     };
                     //Executing offline, so require Sync network
-                    let _result = execute_protocol_large::<ResiduePolyF8Z64, _, _>(
+                    let _result = execute_protocol_large::<
+                        _,
+                        _,
+                        ResiduePolyF8Z64,
+                        { ResiduePolyF8Z64::EXTENSION_DEGREE },
+                    >(
                         config.n,
                         config.t,
                         None,
@@ -253,7 +271,12 @@ fn random_sharing(c: &mut Criterion) {
                         .unwrap();
                     };
                     //Executing offline, so require Sync network
-                    let _result = execute_protocol_large::<ResiduePolyF8Z128, _, _>(
+                    let _result = execute_protocol_large::<
+                        _,
+                        _,
+                        ResiduePolyF8Z128,
+                        { ResiduePolyF8Z128::EXTENSION_DEGREE },
+                    >(
                         config.n,
                         config.t,
                         None,
@@ -299,7 +322,12 @@ fn double_sharing(c: &mut Criterion) {
                         dsh.init(&mut session, config.batch_size).await.unwrap();
                     };
                     //Executing offline, so require Sync network
-                    let _result = execute_protocol_large::<ResiduePolyF8Z128, _, _>(
+                    let _result = execute_protocol_large::<
+                        _,
+                        _,
+                        ResiduePolyF8Z128,
+                        { ResiduePolyF8Z128::EXTENSION_DEGREE },
+                    >(
                         config.n,
                         config.t,
                         None,
@@ -365,7 +393,12 @@ fn bitgen_nlarge(c: &mut Criterion) {
                         .unwrap();
                     };
                     //Executing offline, so require Sync network
-                    let _result = execute_protocol_large::<ResiduePolyF8Z128, _, _>(
+                    let _result = execute_protocol_large::<
+                        _,
+                        _,
+                        ResiduePolyF8Z128,
+                        { ResiduePolyF8Z128::EXTENSION_DEGREE },
+                    >(
                         config.n,
                         config.t,
                         None,

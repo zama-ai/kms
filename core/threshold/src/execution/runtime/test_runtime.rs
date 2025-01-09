@@ -22,11 +22,14 @@ use tfhe::core_crypto::prelude::LweKeyswitchKey;
 
 // TODO The name and use of unwrap hints that this is a struct only to be used for testing, but it is also used in production, e.g. in grpc.rs
 // Unsafe and test code should not be mixed with production code. See issue 173
-pub struct DistributedTestRuntime<Z: Ring> {
+//
+// NOTE: Unfortunately generic params can not be used in const expression,
+// so we need an explicit degree here although it is exactly Z::EXTENSION_DEGREE
+pub struct DistributedTestRuntime<Z: Ring, const EXTENSION_DEGREE: usize> {
     pub identities: Vec<Identity>,
     pub threshold: u8,
     pub prss_setups: Option<HashMap<usize, PRSSSetup<Z>>>,
-    pub keyshares: Option<Vec<PrivateKeySet>>,
+    pub keyshares: Option<Vec<PrivateKeySet<EXTENSION_DEGREE>>>,
     pub user_nets: Vec<Arc<LocalNetworking>>,
     pub role_assignments: RoleAssignment,
     pub conversion_keys: Option<Arc<SwitchAndSquashKey>>,
@@ -43,7 +46,7 @@ pub fn generate_fixed_identities(parties: usize) -> Vec<Identity> {
     res
 }
 
-impl<Z: Ring> DistributedTestRuntime<Z> {
+impl<Z: Ring, const EXTENSION_DEGREE: usize> DistributedTestRuntime<Z, EXTENSION_DEGREE> {
     pub fn new(
         identities: Vec<Identity>,
         threshold: u8,
@@ -94,7 +97,7 @@ impl<Z: Ring> DistributedTestRuntime<Z> {
     }
 
     /// store keyshares if you want to test sth related to them
-    pub fn setup_sks(&mut self, keyshares: Vec<PrivateKeySet>) {
+    pub fn setup_sks(&mut self, keyshares: Vec<PrivateKeySet<EXTENSION_DEGREE>>) {
         self.keyshares = Some(keyshares);
     }
 
@@ -136,7 +139,7 @@ impl<Z: Ring> DistributedTestRuntime<Z> {
     }
 }
 
-impl<Z> DistributedTestRuntime<Z>
+impl<Z, const EXTENSION_DEGREE: usize> DistributedTestRuntime<Z, EXTENSION_DEGREE>
 where
     Z: Ring,
     Z: RingEmbed,

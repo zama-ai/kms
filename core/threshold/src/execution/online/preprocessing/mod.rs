@@ -1,6 +1,8 @@
 use self::redis::{redis_factory, CorrelatedRandomnessType, RedisConf};
 use super::triple::Triple;
-use crate::algebra::galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64};
+use crate::algebra::base_ring::{Z128, Z64};
+use crate::algebra::galois_rings::common::ResiduePoly;
+use crate::algebra::structure_traits::{ErrorCorrect, Invert, Solve};
 use crate::execution::online::preprocessing::memory::memory_factory;
 use crate::execution::runtime::session::{BaseSession, SmallSession};
 use crate::execution::tfhe_internals::parameters::{DKGParams, NoiseBounds, TUniformBound};
@@ -14,7 +16,7 @@ use mockall::{automock, mock};
 
 #[automock]
 /// Trait that a __store__ for shares of multiplication triples ([`Triple`]) needs to implement.
-pub trait TriplePreprocessing<Z: Ring> {
+pub trait TriplePreprocessing<Z: Clone> {
     /// Outputs share of a random triple
     fn next_triple(&mut self) -> anyhow::Result<Triple<Z>> {
         self.next_triple_vec(1)?
@@ -32,7 +34,7 @@ pub trait TriplePreprocessing<Z: Ring> {
 
 #[automock]
 /// Trait that a __store__ for shares of uniform randomness needs to implement.
-pub trait RandomPreprocessing<Z: Ring> {
+pub trait RandomPreprocessing<Z: Clone> {
     /// Outputs share of a uniformly random element of the [`Ring`]
     fn next_random(&mut self) -> anyhow::Result<Share<Z>> {
         self.next_random_vec(1)?
@@ -49,14 +51,14 @@ pub trait RandomPreprocessing<Z: Ring> {
 }
 
 /// Trait for both [`RandomPreprocessing`] and [`TriplePreprocessing`]
-pub trait BasePreprocessing<R: Ring>:
-    TriplePreprocessing<R> + RandomPreprocessing<R> + Send + Sync
+pub trait BasePreprocessing<Z: Clone>:
+    TriplePreprocessing<Z> + RandomPreprocessing<Z> + Send + Sync
 {
 }
 
 //Can't automock the above
 mock! {
-    pub BasePreprocessing<Z:Ring> {}
+    pub BasePreprocessing<Z: Clone> {}
     impl<Z: Ring> TriplePreprocessing<Z> for BasePreprocessing<Z> {
         fn next_triple(&mut self) -> anyhow::Result<Triple<Z>>;
         fn next_triple_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Triple<Z>>>;
@@ -74,7 +76,7 @@ mock! {
     impl<Z: Ring> BasePreprocessing<Z> for BasePreprocessing<Z> {}
 }
 
-pub trait BitPreprocessing<Z: Ring>: Send + Sync {
+pub trait BitPreprocessing<Z: Clone>: Send + Sync {
     fn append_bits(&mut self, bits: Vec<Share<Z>>);
     fn next_bit(&mut self) -> anyhow::Result<Share<Z>>;
     fn next_bit_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>>;
@@ -86,8 +88,9 @@ pub trait BitPreprocessing<Z: Ring>: Send + Sync {
 /// decomposition distributed decryption needs to implement.
 ///
 /// Used in [`crate::execution::endpoints::decryption::run_decryption_bitdec`]
-pub trait BitDecPreprocessing:
-    BitPreprocessing<ResiduePolyF8Z64> + TriplePreprocessing<ResiduePolyF8Z64>
+pub trait BitDecPreprocessing<const EXTENSION_DEGREE: usize>:
+    BitPreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>
+    + TriplePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>
 {
     //For ctxt space Z_2^k need k + 3k log2(k) + 1 (raw) triples
     fn num_required_triples(&self, num_ctxts: usize) -> usize {
@@ -101,7 +104,7 @@ pub trait BitDecPreprocessing:
 
     async fn fill_from_base_preproc(
         &mut self,
-        preprocessing: &mut dyn BasePreprocessing<ResiduePolyF8Z64>,
+        preprocessing: &mut dyn BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>,
         session: &mut BaseSession,
         num_ctxts: usize,
     ) -> anyhow::Result<()>;
@@ -112,22 +115,28 @@ pub trait BitDecPreprocessing:
 ///
 /// Used in [`crate::execution::endpoints::decryption::run_decryption_noiseflood`]
 #[async_trait]
-pub trait NoiseFloodPreprocessing: Send + Sync {
-    fn append_masks(&mut self, masks: Vec<ResiduePolyF8Z128>);
-    fn next_mask(&mut self) -> anyhow::Result<ResiduePolyF8Z128>;
-    fn next_mask_vec(&mut self, amount: usize) -> anyhow::Result<Vec<ResiduePolyF8Z128>>;
+pub trait NoiseFloodPreprocessing<const EXTENSION_DEGREE: usize>: Send + Sync
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
+{
+    fn append_masks(&mut self, masks: Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>);
+    fn next_mask(&mut self) -> anyhow::Result<ResiduePoly<Z128, EXTENSION_DEGREE>>;
+    fn next_mask_vec(
+        &mut self,
+        amount: usize,
+    ) -> anyhow::Result<Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>>;
 
     /// Fill the masks directly from the [`crate::execution::small_execution::prss::PRSSState`] available from [`SmallSession`]
     fn fill_from_small_session(
         &mut self,
-        session: &mut SmallSession<ResiduePolyF8Z128>,
+        session: &mut SmallSession<ResiduePoly<Z128, EXTENSION_DEGREE>>,
         amount: usize,
     ) -> anyhow::Result<()>;
 
     /// Fill the masks by first generating bits via triples and randomness provided by [`BasePreprocessing`]
     async fn fill_from_base_preproc(
         &mut self,
-        preprocessing: &mut dyn BasePreprocessing<ResiduePolyF8Z128>,
+        preprocessing: &mut dyn BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>,
         session: &mut BaseSession,
         num_ctxts: usize,
     ) -> anyhow::Result<()>;
@@ -136,7 +145,7 @@ pub trait NoiseFloodPreprocessing: Send + Sync {
     /// using [`crate::execution::online::secret_distributions::SecretDistributions`]
     fn fill_from_bits_preproc(
         &mut self,
-        bit_preproc: &mut dyn BitPreprocessing<ResiduePolyF8Z128>,
+        bit_preproc: &mut dyn BitPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>,
         num_ctxts: usize,
     ) -> anyhow::Result<()>;
 }
@@ -227,36 +236,52 @@ pub trait DKGPreprocessing<Z: Ring>: BasePreprocessing<Z> + BitPreprocessing<Z> 
     ) -> anyhow::Result<()>;
 }
 
-pub trait PreprocessorFactory: Sync + Send {
+pub trait PreprocessorFactory<const EXTENSION_DEGREE: usize>: Sync + Send {
     fn create_bit_preprocessing_residue_64(
         &mut self,
-    ) -> Box<dyn BitPreprocessing<ResiduePolyF8Z64>>;
+    ) -> Box<dyn BitPreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>>;
     fn create_bit_preprocessing_residue_128(
         &mut self,
-    ) -> Box<dyn BitPreprocessing<ResiduePolyF8Z128>>;
+    ) -> Box<dyn BitPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>>;
     fn create_base_preprocessing_residue_64(
         &mut self,
-    ) -> Box<dyn BasePreprocessing<ResiduePolyF8Z64>>;
+    ) -> Box<dyn BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>>;
     fn create_base_preprocessing_residue_128(
         &mut self,
-    ) -> Box<dyn BasePreprocessing<ResiduePolyF8Z128>>;
-    fn create_bit_decryption_preprocessing(&mut self) -> Box<dyn BitDecPreprocessing>;
-    fn create_noise_flood_preprocessing(&mut self) -> Box<dyn NoiseFloodPreprocessing>;
-    fn create_dkg_preprocessing_no_sns(&mut self) -> Box<dyn DKGPreprocessing<ResiduePolyF8Z64>>;
-    fn create_dkg_preprocessing_with_sns(&mut self)
-        -> Box<dyn DKGPreprocessing<ResiduePolyF8Z128>>;
+    ) -> Box<dyn BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>>;
+    fn create_bit_decryption_preprocessing(
+        &mut self,
+    ) -> Box<dyn BitDecPreprocessing<EXTENSION_DEGREE>>;
+    fn create_noise_flood_preprocessing(
+        &mut self,
+    ) -> Box<dyn NoiseFloodPreprocessing<EXTENSION_DEGREE>>;
+    fn create_dkg_preprocessing_no_sns(
+        &mut self,
+    ) -> Box<dyn DKGPreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>>;
+    fn create_dkg_preprocessing_with_sns(
+        &mut self,
+    ) -> Box<dyn DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>>;
 }
 
 /// Returns a default factory for the global preprocessor
-pub fn create_memory_factory() -> Box<dyn PreprocessorFactory> {
-    memory_factory()
+pub fn create_memory_factory<const EXTENSION_DEGREE: usize>(
+) -> Box<dyn PreprocessorFactory<EXTENSION_DEGREE>>
+where
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+{
+    memory_factory::<EXTENSION_DEGREE>()
 }
 
-pub fn create_redis_factory(
+pub fn create_redis_factory<const EXTENSION_DEGREE: usize>(
     key_prefix: String,
     redis_conf: &RedisConf,
-) -> Box<dyn PreprocessorFactory> {
-    redis_factory(key_prefix, redis_conf)
+) -> Box<dyn PreprocessorFactory<EXTENSION_DEGREE>>
+where
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+{
+    redis_factory::<EXTENSION_DEGREE>(key_prefix, redis_conf)
 }
 
 pub(crate) mod constants;

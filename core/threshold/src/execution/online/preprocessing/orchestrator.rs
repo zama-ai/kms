@@ -5,7 +5,8 @@ use super::{
 };
 use crate::{
     algebra::{
-        galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
+        base_ring::{Z128, Z64},
+        galois_rings::common::ResiduePoly,
         structure_traits::{Derive, ErrorCorrect, Invert, RingEmbed, Solve},
     },
     error::error_handler::anyhow_error_and_log,
@@ -55,14 +56,14 @@ pub struct TUniformProduction {
     pub amount: usize,
 }
 
-impl PreprocessingOrchestrator<ResiduePolyF8Z64> {
+impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z64, EXTENSION_DEGREE>> {
     ///Create a new [`PreprocessingOrchestrator`] to generate
     ///offline data required by [`crate::execution::endpoints::keygen::distributed_keygen`]
     ///for [`DKGParams::WithoutSnS`]
     ///
     ///Relies on the provided [`PreprocessorFactory`] to create:
     ///- [`DKGPreprocessing`]
-    pub fn new<F: PreprocessorFactory + ?Sized>(
+    pub fn new<F: PreprocessorFactory<EXTENSION_DEGREE> + ?Sized>(
         factory: &mut F,
         params: DKGParams,
     ) -> anyhow::Result<Self> {
@@ -77,14 +78,14 @@ impl PreprocessingOrchestrator<ResiduePolyF8Z64> {
     }
 }
 
-impl PreprocessingOrchestrator<ResiduePolyF8Z128> {
+impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z128, EXTENSION_DEGREE>> {
     ///Create a new [`PreprocessingOrchestrator`] to generate
     ///offline data required by [`crate::execution::endpoints::keygen::distributed_keygen`]
     ///for [`DKGParams::WithSnS`]
     ///
     ///Relies on the provided [`PreprocessorFactory`] to create:
     ///- [`DKGPreprocessing`]
-    pub fn new<F: PreprocessorFactory + ?Sized>(
+    pub fn new<F: PreprocessorFactory<EXTENSION_DEGREE> + ?Sized>(
         factory: &mut F,
         params: DKGParams,
     ) -> anyhow::Result<Self> {
@@ -925,7 +926,7 @@ mod tests {
         algebra::{
             base_ring::Z64,
             galois_rings::degree_8::ResiduePolyF8Z64,
-            structure_traits::{One, Zero},
+            structure_traits::{One, Ring, Zero},
         },
         execution::{
             online::{
@@ -1180,7 +1181,7 @@ mod tests {
         // Preprocessing assumes Sync network
         let runtimes = (0..num_sessions)
             .map(|_| {
-                DistributedTestRuntime::<ResiduePolyF8Z64>::new(
+                DistributedTestRuntime::<ResiduePolyF8Z64, {ResiduePolyF8Z64::EXTENSION_DEGREE}>::new(
                     identities.clone(),
                     threshold,
                     NetworkMode::Sync,
@@ -1373,7 +1374,7 @@ mod tests {
         // Preprocessing assumes Sync network
         let runtimes = (0..num_sessions)
             .map(|_| {
-                DistributedTestRuntime::<ResiduePolyF8Z64>::new(
+                DistributedTestRuntime::<ResiduePolyF8Z64, {ResiduePolyF8Z64::EXTENSION_DEGREE}>::new(
                     identities.clone(),
                     threshold,
                     NetworkMode::Sync,

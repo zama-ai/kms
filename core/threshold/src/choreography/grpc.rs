@@ -14,10 +14,9 @@ use self::gen::{
     ThresholdKeyGenResponse, ThresholdKeyGenResultRequest, ThresholdKeyGenResultResponse,
 };
 
-use crate::algebra::base_ring::Z64;
-use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z128;
-use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z64;
-use crate::algebra::structure_traits::{ErrorCorrect, Invert, RingEmbed};
+use crate::algebra::base_ring::{Z128, Z64};
+use crate::algebra::galois_rings::common::ResiduePoly;
+use crate::algebra::structure_traits::{Derive, ErrorCorrect, Invert, RingEmbed, Solve};
 use crate::choreography::requests::{
     CrsGenParams, PreprocDecryptParams, PreprocKeyGenParams, PrssInitParams, SessionType, Status,
     ThresholdDecryptParams, ThresholdKeyGenParams, ThresholdKeyGenResultParams,
@@ -62,21 +61,21 @@ use tracing::{instrument, Instrument};
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug, ValueEnum, Serialize, Deserialize)]
 pub enum SupportedRing {
-    ResiduePolyF8Z64,
-    ResiduePolyF8Z128,
+    ResiduePolyZ64,
+    ResiduePolyZ128,
 }
 
 #[derive(Clone)]
-enum SupportedPRSSSetup {
+enum SupportedPRSSSetup<const EXTENSION_DEGREE: usize> {
     //NOTE: For now we never deal with ResiduePolyF8Z64 option
-    ResiduePolyF8Z64(PRSSSetup<ResiduePolyF8Z64>),
-    ResiduePolyF8Z128(PRSSSetup<ResiduePolyF8Z128>),
+    ResiduePolyZ64(PRSSSetup<ResiduePoly<Z64, EXTENSION_DEGREE>>),
+    ResiduePolyZ128(PRSSSetup<ResiduePoly<Z128, EXTENSION_DEGREE>>),
 }
 
-impl SupportedPRSSSetup {
-    fn get_poly64(&self) -> Result<PRSSSetup<ResiduePolyF8Z64>, tonic::Status> {
+impl<const EXTENSION_DEGREE: usize> SupportedPRSSSetup<EXTENSION_DEGREE> {
+    fn get_poly64(&self) -> Result<PRSSSetup<ResiduePoly<Z64, EXTENSION_DEGREE>>, tonic::Status> {
         match self {
-            SupportedPRSSSetup::ResiduePolyF8Z64(res) => Ok(res.clone()),
+            SupportedPRSSSetup::ResiduePolyZ64(res) => Ok(res.clone()),
             _ => Err(tonic::Status::new(
                 tonic::Code::Aborted,
                 "Can not retrieve PRSS init for poly64, make sure you init it first",
@@ -84,9 +83,9 @@ impl SupportedPRSSSetup {
         }
     }
 
-    fn get_poly128(&self) -> Result<PRSSSetup<ResiduePolyF8Z128>, tonic::Status> {
+    fn get_poly128(&self) -> Result<PRSSSetup<ResiduePoly<Z128, EXTENSION_DEGREE>>, tonic::Status> {
         match self {
-            SupportedPRSSSetup::ResiduePolyF8Z128(res) => Ok(res.clone()),
+            SupportedPRSSSetup::ResiduePolyZ128(res) => Ok(res.clone()),
             _ => Err(tonic::Status::new(
                 tonic::Code::Aborted,
                 "Can not retrieve PRSS init for poly128, make sure you init it first",
@@ -95,42 +94,59 @@ impl SupportedPRSSSetup {
     }
 }
 
-type DKGPreprocRegularStore =
-    DashMap<SessionId, (DKGParams, Box<dyn DKGPreprocessing<ResiduePolyF8Z64>>)>;
-type DKGPreprocSnsStore =
-    DashMap<SessionId, (DKGParams, Box<dyn DKGPreprocessing<ResiduePolyF8Z128>>)>;
-type KeyStore = DashMap<SessionId, Arc<(FhePubKeySet, PrivateKeySet)>>;
-type DDecPreprocNFStore = DashMap<SessionId, Box<dyn NoiseFloodPreprocessing>>;
-type DDecPreprocBitDecStore = DashMap<SessionId, Box<dyn BitDecPreprocessing>>;
+type DKGPreprocRegularStore<const EXTENSION_DEGREE: usize> = DashMap<
+    SessionId,
+    (
+        DKGParams,
+        Box<dyn DKGPreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>>,
+    ),
+>;
+type DKGPreprocSnsStore<const EXTENSION_DEGREE: usize> = DashMap<
+    SessionId,
+    (
+        DKGParams,
+        Box<dyn DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>>,
+    ),
+>;
+type KeyStore<const EXTENSION_DEGREE: usize> =
+    DashMap<SessionId, Arc<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>>;
+type DDecPreprocNFStore<const EXTENSION_DEGREE: usize> =
+    DashMap<SessionId, Box<dyn NoiseFloodPreprocessing<EXTENSION_DEGREE>>>;
+type DDecPreprocBitDecStore<const EXTENSION_DEGREE: usize> =
+    DashMap<SessionId, Box<dyn BitDecPreprocessing<EXTENSION_DEGREE>>>;
 type DDecResultStore = DashMap<SessionId, Vec<Z64>>;
 type CrsStore = DashMap<SessionId, InternalPublicParameter>;
 type StatusStore = DashMap<SessionId, JoinHandle<()>>;
 
 #[derive(Default)]
-struct GrpcDataStores {
-    prss_setup: Arc<DashMap<SupportedRing, SupportedPRSSSetup>>,
-    dkg_preproc_store_regular: Arc<DKGPreprocRegularStore>,
-    dkg_preproc_store_sns: Arc<DKGPreprocSnsStore>,
-    key_store: Arc<KeyStore>,
-    ddec_preproc_store_nf: Arc<DDecPreprocNFStore>,
-    ddec_preproc_store_bd: Arc<DDecPreprocBitDecStore>,
+struct GrpcDataStores<const EXTENSION_DEGREE: usize> {
+    prss_setup: Arc<DashMap<SupportedRing, SupportedPRSSSetup<EXTENSION_DEGREE>>>,
+    dkg_preproc_store_regular: Arc<DKGPreprocRegularStore<EXTENSION_DEGREE>>,
+    dkg_preproc_store_sns: Arc<DKGPreprocSnsStore<EXTENSION_DEGREE>>,
+    key_store: Arc<KeyStore<EXTENSION_DEGREE>>,
+    ddec_preproc_store_nf: Arc<DDecPreprocNFStore<EXTENSION_DEGREE>>,
+    ddec_preproc_store_bd: Arc<DDecPreprocBitDecStore<EXTENSION_DEGREE>>,
     ddec_result_store: Arc<DDecResultStore>,
     crs_store: Arc<CrsStore>,
     status_store: Arc<StatusStore>,
 }
 
-pub struct GrpcChoreography {
+pub struct GrpcChoreography<const EXTENSION_DEGREE: usize> {
     own_identity: Identity,
     networking_strategy: NetworkingStrategy,
-    factory: Arc<Mutex<Box<dyn PreprocessorFactory>>>,
-    data: GrpcDataStores,
+    factory: Arc<Mutex<Box<dyn PreprocessorFactory<EXTENSION_DEGREE>>>>,
+    data: GrpcDataStores<EXTENSION_DEGREE>,
 }
 
-impl GrpcChoreography {
+impl<const EXTENSION_DEGREE: usize> GrpcChoreography<EXTENSION_DEGREE>
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+{
     pub fn new(
         own_identity: Identity,
         networking_strategy: NetworkingStrategy,
-        factory: Box<dyn PreprocessorFactory>,
+        factory: Box<dyn PreprocessorFactory<EXTENSION_DEGREE>>,
     ) -> Self {
         tracing::debug!("Starting Party with identity: {own_identity}");
         GrpcChoreography {
@@ -149,7 +165,11 @@ impl GrpcChoreography {
 }
 
 #[async_trait]
-impl Choreography for GrpcChoreography {
+impl<const EXTENSION_DEGREE: usize> Choreography for GrpcChoreography<EXTENSION_DEGREE>
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+{
     #[instrument(name = "PRSS-INIT", skip_all)]
     async fn prss_init(
         &self,
@@ -210,17 +230,17 @@ impl Choreography for GrpcChoreography {
 
         let store = self.data.prss_setup.clone();
         match ring {
-            SupportedRing::ResiduePolyF8Z128 => {
+            SupportedRing::ResiduePolyZ128 => {
                 let my_future = || async move {
-                    let prss_setup = PRSSSetup::<ResiduePolyF8Z128>::robust_init(
+                    let prss_setup = PRSSSetup::<ResiduePoly<Z128, EXTENSION_DEGREE>>::robust_init(
                         &mut base_session,
                         &RealVss::default(),
                     )
                     .await
                     .unwrap();
                     store.insert(
-                        SupportedRing::ResiduePolyF8Z128,
-                        SupportedPRSSSetup::ResiduePolyF8Z128(prss_setup),
+                        SupportedRing::ResiduePolyZ128,
+                        SupportedPRSSSetup::ResiduePolyZ128(prss_setup),
                     );
                     tracing::info!("PRSS Setup for ResiduePolyF8Z128 Done.");
                 };
@@ -229,17 +249,17 @@ impl Choreography for GrpcChoreography {
                     tokio::spawn(my_future().instrument(tracing::Span::current())),
                 );
             }
-            SupportedRing::ResiduePolyF8Z64 => {
+            SupportedRing::ResiduePolyZ64 => {
                 let my_future = || async move {
-                    let prss_setup = PRSSSetup::<ResiduePolyF8Z64>::robust_init(
+                    let prss_setup = PRSSSetup::<ResiduePoly<Z64, EXTENSION_DEGREE>>::robust_init(
                         &mut base_session,
                         &RealVss::default(),
                     )
                     .await
                     .unwrap();
                     store.insert(
-                        SupportedRing::ResiduePolyF8Z64,
-                        SupportedPRSSSetup::ResiduePolyF8Z64(prss_setup),
+                        SupportedRing::ResiduePolyZ64,
+                        SupportedPRSSSetup::ResiduePolyZ64(prss_setup),
                     );
                     tracing::info!("PRSS Setup for ResiduePolyF8Z64 Done.");
                 };
@@ -341,7 +361,7 @@ impl Choreography for GrpcChoreography {
                 let prss_setup = self
                     .data
                     .prss_setup
-                    .get(&SupportedRing::ResiduePolyF8Z64)
+                    .get(&SupportedRing::ResiduePolyZ64)
                     .ok_or_else(|| {
                         tonic::Status::new(
                             tonic::Code::Aborted,
@@ -356,8 +376,10 @@ impl Choreography for GrpcChoreography {
                     let orchestrator = {
                         let mut factory_guard = factory.try_lock().unwrap();
                         let factory = factory_guard.as_mut();
-                        PreprocessingOrchestrator::<ResiduePolyF8Z64>::new(factory, dkg_params)
-                            .unwrap()
+                        PreprocessingOrchestrator::<ResiduePoly<Z64, EXTENSION_DEGREE>>::new(
+                            factory, dkg_params,
+                        )
+                        .unwrap()
                     };
                     let (_sessions, preproc) = {
                         //let _enter = tracing::info_span!("orchestrate").entered();
@@ -382,8 +404,10 @@ impl Choreography for GrpcChoreography {
                     let orchestrator = {
                         let mut factory_guard = factory.try_lock().unwrap();
                         let factory = factory_guard.as_mut();
-                        PreprocessingOrchestrator::<ResiduePolyF8Z64>::new(factory, dkg_params)
-                            .unwrap()
+                        PreprocessingOrchestrator::<ResiduePoly<Z64, EXTENSION_DEGREE>>::new(
+                            factory, dkg_params,
+                        )
+                        .unwrap()
                     };
                     let (_sessions, preproc) = {
                         //let _enter = tracing::info_span!("orchestrate").entered();
@@ -404,7 +428,7 @@ impl Choreography for GrpcChoreography {
                 let prss_setup = self
                     .data
                     .prss_setup
-                    .get(&SupportedRing::ResiduePolyF8Z128)
+                    .get(&SupportedRing::ResiduePolyZ128)
                     .ok_or_else(|| {
                         tonic::Status::new(
                             tonic::Code::Aborted,
@@ -418,8 +442,10 @@ impl Choreography for GrpcChoreography {
                     let orchestrator = {
                         let mut factory_guard = factory.try_lock().unwrap();
                         let factory = factory_guard.as_mut();
-                        PreprocessingOrchestrator::<ResiduePolyF8Z128>::new(factory, dkg_params)
-                            .unwrap()
+                        PreprocessingOrchestrator::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(
+                            factory, dkg_params,
+                        )
+                        .unwrap()
                     };
                     let (_sessions, preproc) = {
                         orchestrator
@@ -441,8 +467,10 @@ impl Choreography for GrpcChoreography {
                     let orchestrator = {
                         let mut factory_guard = factory.try_lock().unwrap();
                         let factory = factory_guard.as_mut();
-                        PreprocessingOrchestrator::<ResiduePolyF8Z128>::new(factory, dkg_params)
-                            .unwrap()
+                        PreprocessingOrchestrator::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(
+                            factory, dkg_params,
+                        )
+                        .unwrap()
                     };
                     let (_sessions, preproc) = {
                         orchestrator
@@ -802,7 +830,7 @@ impl Choreography for GrpcChoreography {
                 let prss_state = self
                     .data
                     .prss_setup
-                    .get(&SupportedRing::ResiduePolyF8Z64)
+                    .get(&SupportedRing::ResiduePolyZ64)
                     .ok_or_else(|| {
                         tonic::Status::new(
                             tonic::Code::Aborted,
@@ -835,7 +863,7 @@ impl Choreography for GrpcChoreography {
                 let prss_state = self
                     .data
                     .prss_setup
-                    .get(&SupportedRing::ResiduePolyF8Z128)
+                    .get(&SupportedRing::ResiduePolyZ128)
                     .ok_or_else(|| {
                         tonic::Status::new(
                             tonic::Code::Aborted,
@@ -1275,19 +1303,23 @@ impl Choreography for GrpcChoreography {
 }
 
 #[cfg(feature = "testing")]
-async fn local_initialize_key_material(
+async fn local_initialize_key_material<const EXTENSION_DEGREE: usize>(
     session: &mut BaseSession,
     params: DKGParams,
-) -> anyhow::Result<(FhePubKeySet, PrivateKeySet)> {
+) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
+where
+    ResiduePoly<Z64, EXTENSION_DEGREE>: crate::algebra::structure_traits::Ring,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: crate::algebra::structure_traits::Ring,
+{
     let _tracing_subscribe =
         tracing::subscriber::set_default(tracing::subscriber::NoSubscriber::new());
     crate::execution::tfhe_internals::test_feature::initialize_key_material(session, params).await
 }
 
 #[cfg(not(feature = "testing"))]
-async fn local_initialize_key_material(
+async fn local_initialize_key_material<const EXTENSION_DEGREE: usize>(
     _session: &mut BaseSession,
     _params: DKGParams,
-) -> anyhow::Result<(FhePubKeySet, PrivateKeySet)> {
+) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)> {
     panic!("Require the testing feature on the moby cluster to perform a local intialization of the keys")
 }

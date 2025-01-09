@@ -101,7 +101,10 @@ impl SecretDistributions for RealSecretDistributions {
 mod tests {
 
     use crate::{
-        algebra::galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
+        algebra::{
+            galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
+            structure_traits::Ring,
+        },
         execution::{
             online::{preprocessing::dummy::DummyPreprocessing, triple::open_list},
             runtime::session::{LargeSession, ParameterHandles, SmallSession},
@@ -130,7 +133,12 @@ mod tests {
         // Online phase so Async because offline is dummy
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let results = execute_protocol_small(
+        let results = execute_protocol_small::<
+            _,
+            _,
+            ResiduePolyF8Z64,
+            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+        >(
             parties,
             threshold,
             None,
@@ -191,7 +199,12 @@ mod tests {
         // Online phase so Async because offline is dummy
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let results = execute_protocol_large::<ResiduePolyF8Z128, _, _>(
+        let results = execute_protocol_large::<
+            _,
+            _,
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >(
             parties,
             threshold,
             Some(1),
@@ -265,7 +278,12 @@ mod tests {
         // Online phase so Async because offline is dummy
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let results = execute_protocol_large::<ResiduePolyF8Z64, _, _>(
+        let results = execute_protocol_large::<
+            _,
+            _,
+            ResiduePolyF8Z64,
+            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+        >(
             parties,
             threshold,
             Some(1),

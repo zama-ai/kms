@@ -30,7 +30,12 @@ pub mod tests_and_benches {
     /// The result of the computation is a vector of [OutputT] which contains the result of each of the parties
     /// interactive computation.
     /// `expected_rounds` can be used to test that the protocol needs the specified amount of comm rounds, or be set to None to allow any number of rounds
-    pub fn execute_protocol_small<Z: ErrorCorrect + RingEmbed + Invert, TaskOutputT, OutputT>(
+    pub fn execute_protocol_small<
+        TaskOutputT,
+        OutputT,
+        Z: ErrorCorrect + RingEmbed + Invert,
+        const EXTENSION_DEGREE: usize,
+    >(
         parties: usize,
         threshold: u8,
         expected_rounds: Option<usize>,
@@ -53,7 +58,7 @@ pub mod tests_and_benches {
                 })
                 .collect()
         });
-        let test_runtime =
+        let test_runtime: DistributedTestRuntime<Z, EXTENSION_DEGREE> =
             DistributedTestRuntime::new(identities.clone(), threshold, network_mode, delay_map);
         let session_id = SessionId(1);
 
@@ -105,7 +110,7 @@ pub mod tests_and_benches {
     /// The result of the computation is a vector of [OutputT] which contains the result of each of the parties
     /// interactive computation.
     /// `expected_rounds` can be used to test that the protocol needs the specified amount of comm rounds, or be set to None to allow any number of rounds
-    pub fn execute_protocol_large<Z: Ring, TaskOutputT, OutputT>(
+    pub fn execute_protocol_large<TaskOutputT, OutputT, Z: Ring, const EXTENSION_DEGREE: usize>(
         parties: usize,
         threshold: usize,
         expected_rounds: Option<usize>,
@@ -128,7 +133,7 @@ pub mod tests_and_benches {
                 })
                 .collect()
         });
-        let test_runtime = DistributedTestRuntime::<Z>::new(
+        let test_runtime = DistributedTestRuntime::<Z, EXTENSION_DEGREE>::new(
             identities.clone(),
             threshold as u8,
             network_mode,
@@ -470,12 +475,13 @@ pub mod tests {
     ///**NOTE: FOR ALL TESTS THE RNG SEED OF A PARTY IS ITS PARTY_ID, THIS IS ACTUALLY USED IN SOME TESTS TO CHECK CORRECTNESS.**
     #[allow(clippy::too_many_arguments)]
     pub fn execute_protocol_large_w_disputes_and_malicious<
-        Z: Ring,
         TaskOutputT,
         OutputT,
         TaskOutputM,
         OutputM,
         P: Clone,
+        Z: Ring,
+        const EXTENSION_DEGREE: usize,
     >(
         params: &TestingParameters,
         dispute_pairs: &[(Role, Role)],
@@ -507,7 +513,7 @@ pub mod tests {
                 })
                 .collect()
         });
-        let test_runtime = DistributedTestRuntime::<Z>::new(
+        let test_runtime = DistributedTestRuntime::<Z, EXTENSION_DEGREE>::new(
             identities.clone(),
             threshold,
             network_mode,

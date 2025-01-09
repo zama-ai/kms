@@ -54,19 +54,19 @@ pub trait MemoizedExceptionals: Sized + Clone + 'static {
 }
 
 /// Lifts binary polynomial p to the big ring and accumulates 2^amount * p into res
-fn accumulate_and_lift_bitwise_poly<Z: BaseRing, const DEGREE: usize>(
-    res: &mut Poly<ResiduePoly<Z, DEGREE>>,
-    p: &Poly<<ResiduePoly<Z, DEGREE> as QuotientMaximalIdeal>::QuotientOutput>,
+fn accumulate_and_lift_bitwise_poly<Z: BaseRing, const EXTENSION_DEGREE: usize>(
+    res: &mut Poly<ResiduePoly<Z, EXTENSION_DEGREE>>,
+    p: &Poly<<ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>,
     amount: usize,
 ) where
-    ResiduePoly<Z, DEGREE>: QuotientMaximalIdeal,
+    ResiduePoly<Z, EXTENSION_DEGREE>: QuotientMaximalIdeal,
 {
     while res.coefs.len() < p.coefs.len() {
-        res.coefs.push(ResiduePoly::<Z, DEGREE>::ZERO);
+        res.coefs.push(ResiduePoly::<Z, EXTENSION_DEGREE>::ZERO);
     }
     for (i, coef) in p.coefs.iter().enumerate() {
         let c8: u8 = (*coef).into();
-        for d in 0..DEGREE {
+        for d in 0..EXTENSION_DEGREE {
             if ((c8 >> d) & 1) != 0 {
                 res.coefs[i].coefs[d] += Z::ONE << amount;
             }
@@ -74,20 +74,21 @@ fn accumulate_and_lift_bitwise_poly<Z: BaseRing, const DEGREE: usize>(
     }
 }
 
-fn shamir_error_correct<Z: BaseRing, const DEGREE: usize>(
-    sharing: &ShamirSharings<ResiduePoly<Z, DEGREE>>,
+fn shamir_error_correct<Z: BaseRing, const EXTENSION_DEGREE: usize>(
+    sharing: &ShamirSharings<ResiduePoly<Z, EXTENSION_DEGREE>>,
     degree: usize,
     max_errs: usize,
     #[cfg(test)] err_indices: Option<&mut Vec<(usize, usize)>>,
-) -> anyhow::Result<Poly<ResiduePoly<Z, DEGREE>>>
+) -> anyhow::Result<Poly<ResiduePoly<Z, EXTENSION_DEGREE>>>
 where
-    ResiduePoly<Z, DEGREE>: MemoizedExceptionals,
-    ResiduePoly<Z, DEGREE>: RingEmbed,
-    ResiduePoly<Z, DEGREE>: Ring,
-    ResiduePoly<Z, DEGREE>: QuotientMaximalIdeal,
-    ResiduePoly<Z, DEGREE>: LutMulReduction<Z>,
-    BitwisePoly: From<Poly<<ResiduePoly<Z, DEGREE> as QuotientMaximalIdeal>::QuotientOutput>>,
-    BitwisePoly: BitWiseEval<Z, DEGREE>,
+    ResiduePoly<Z, EXTENSION_DEGREE>: MemoizedExceptionals,
+    ResiduePoly<Z, EXTENSION_DEGREE>: RingEmbed,
+    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z, EXTENSION_DEGREE>: QuotientMaximalIdeal,
+    ResiduePoly<Z, EXTENSION_DEGREE>: LutMulReduction<Z>,
+    BitwisePoly:
+        From<Poly<<ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>>,
+    BitwisePoly: BitWiseEval<Z, EXTENSION_DEGREE>,
 {
     // threshold is the degree of the shamir polynomial
     let ring_size: usize = Z::BIT_LENGTH;
@@ -107,24 +108,26 @@ where
         .map(|x| x.owner().one_based())
         .collect();
 
-    let ordered_powers: Vec<Vec<ResiduePoly<Z, DEGREE>>> = parties
+    let ordered_powers: Vec<Vec<ResiduePoly<Z, EXTENSION_DEGREE>>> = parties
         .iter()
-        .map(|party_id| ResiduePoly::<Z, DEGREE>::exceptional_set(*party_id, degree))
+        .map(|party_id| ResiduePoly::<Z, EXTENSION_DEGREE>::exceptional_set(*party_id, degree))
         .collect::<anyhow::Result<Vec<_>>>()?;
 
-    let mut res = Poly::<ResiduePoly<Z, DEGREE>>::zero();
+    let mut res = Poly::<ResiduePoly<Z, EXTENSION_DEGREE>>::zero();
 
     for bit_idx in 0..ring_size {
         //Compute z = pi(y/2^i), where Bots are filtered out
         let binary_shares: Vec<
-            ShamirSharing<<ResiduePoly<Z, DEGREE> as QuotientMaximalIdeal>::QuotientOutput>,
+            ShamirSharing<
+                <ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput,
+            >,
         > = parties
             .iter()
             .zip(y.iter())
             .filter_map(|(party_id, (sh, is_valid))| {
                 if *is_valid {
                     Some(ShamirSharing::<
-                        <ResiduePoly<Z, DEGREE> as QuotientMaximalIdeal>::QuotientOutput,
+                        <ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput,
                     > {
                         share: sh.bit_compose(bit_idx),
                         party_id: *party_id as u8,
@@ -168,15 +171,16 @@ where
     Ok(res)
 }
 
-impl<Z: BaseRing, const DEGREE: usize> ErrorCorrect for ResiduePoly<Z, DEGREE>
+impl<Z: BaseRing, const EXTENSION_DEGREE: usize> ErrorCorrect for ResiduePoly<Z, EXTENSION_DEGREE>
 where
-    ResiduePoly<Z, DEGREE>: MemoizedExceptionals,
-    ResiduePoly<Z, DEGREE>: RingEmbed,
-    ResiduePoly<Z, DEGREE>: Ring,
-    ResiduePoly<Z, DEGREE>: QuotientMaximalIdeal,
-    ResiduePoly<Z, DEGREE>: LutMulReduction<Z>,
-    BitwisePoly: From<Poly<<ResiduePoly<Z, DEGREE> as QuotientMaximalIdeal>::QuotientOutput>>,
-    BitwisePoly: BitWiseEval<Z, DEGREE>,
+    ResiduePoly<Z, EXTENSION_DEGREE>: MemoizedExceptionals,
+    ResiduePoly<Z, EXTENSION_DEGREE>: RingEmbed,
+    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z, EXTENSION_DEGREE>: QuotientMaximalIdeal,
+    ResiduePoly<Z, EXTENSION_DEGREE>: LutMulReduction<Z>,
+    BitwisePoly:
+        From<Poly<<ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>>,
+    BitwisePoly: BitWiseEval<Z, EXTENSION_DEGREE>,
 {
     //NIST: Level Zero Operation
     ///Perform error correction for the extension ring.
@@ -226,10 +230,14 @@ mod tests {
 
     use crate::{
         algebra::{
+            base_ring::Z64,
             error_correction::{error_correction, shamir_error_correct},
-            galois_fields::gf256::GF256,
-            galois_rings::degree_8::ResiduePolyF8Z64,
-            structure_traits::{FromU128, One, ZConsts, Zero},
+            galois_fields::{gf16::GF16, gf256::GF256},
+            galois_rings::common::{LutMulReduction, ResiduePoly},
+            poly::{BitWiseEval, BitwisePoly, Poly},
+            structure_traits::{
+                Field, FromU128, One, QuotientMaximalIdeal, Ring, RingEmbed, ZConsts, Zero,
+            },
         },
         execution::sharing::{
             shamir::{InputOp, ShamirFieldPoly, ShamirSharing, ShamirSharings},
@@ -237,37 +245,60 @@ mod tests {
         },
     };
 
+    use super::MemoizedExceptionals;
+
     #[test]
-    fn test_divisibility_fail() {
+    fn test_divisibility_fail_f8() {
+        test_divisibility_fail::<8>();
+    }
+
+    #[test]
+    fn test_divisibility_fail_f4() {
+        test_divisibility_fail::<4>();
+    }
+
+    fn test_divisibility_fail<const EXTENSION_DEGREE: usize>()
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: MemoizedExceptionals,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: RingEmbed,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: QuotientMaximalIdeal,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: LutMulReduction<Z64>,
+        BitwisePoly: From<
+            Poly<<ResiduePoly<Z64, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>,
+        >,
+        BitwisePoly: BitWiseEval<Z64, EXTENSION_DEGREE>,
+    {
         let num_parties = 4;
         let threshold = 1;
         let mut rng = AesRng::seed_from_u64(0);
-        let secret = ResiduePolyF8Z64::from_scalar(Wrapping(10));
+        let secret = ResiduePoly::<Z64, EXTENSION_DEGREE>::from_scalar(Wrapping(10));
         let mut sharing = ShamirSharings::share(&mut rng, secret, num_parties, threshold).unwrap();
 
         assert_eq!(
             secret,
             shamir_error_correct(&sharing, threshold, threshold, None)
                 .unwrap()
-                .eval(&ResiduePolyF8Z64::ZERO)
+                .eval(&ResiduePoly::<Z64, EXTENSION_DEGREE>::ZERO)
         );
 
         let true_share = sharing.shares[0];
-        let modified_value = true_share.value() + ResiduePolyF8Z64::ONE;
+        let modified_value = true_share.value() + ResiduePoly::<Z64, EXTENSION_DEGREE>::ONE;
         let modified_share = Share::new(true_share.owner(), modified_value);
         sharing.shares[0] = modified_share;
         let mut err_indices = Vec::new();
         let _ = shamir_error_correct(&sharing, threshold, threshold, Some(&mut err_indices));
         assert_eq!(err_indices[0], (0, 0));
 
-        let modified_value = true_share.value() + ResiduePolyF8Z64::TWO;
+        let modified_value = true_share.value() + ResiduePoly::<Z64, EXTENSION_DEGREE>::TWO;
         let modified_share = Share::new(true_share.owner(), modified_value);
         sharing.shares[0] = modified_share;
         let mut err_indices = Vec::new();
         let _ = shamir_error_correct(&sharing, threshold, threshold, Some(&mut err_indices));
         assert_eq!(err_indices[0], (0, 1));
 
-        let modified_value = true_share.value() + (ResiduePolyF8Z64::from_u128(4));
+        let modified_value =
+            true_share.value() + (ResiduePoly::<Z64, EXTENSION_DEGREE>::from_u128(4));
         let modified_share = Share::new(true_share.owner(), modified_value);
         sharing.shares[0] = modified_share;
         let mut err_indices = Vec::new();
@@ -276,9 +307,22 @@ mod tests {
     }
 
     #[test]
-    fn test_error_correction() {
-        let f = ShamirFieldPoly::<GF256> {
-            coefs: vec![GF256::from(25), GF256::from(2), GF256::from(233)],
+    fn test_error_correction_f8() {
+        test_error_correction::<GF256>();
+    }
+
+    #[test]
+    fn test_error_correction_f4() {
+        test_error_correction::<GF16>();
+    }
+
+    fn test_error_correction<BaseField: Field>() {
+        let f = ShamirFieldPoly::<BaseField> {
+            coefs: vec![
+                BaseField::from_u128(25),
+                BaseField::from_u128(2),
+                BaseField::from_u128(233),
+            ],
         };
 
         let num_parties = 7;
@@ -286,15 +330,15 @@ mod tests {
         let max_err = (num_parties as usize - threshold) / 2; // = 2 here
 
         let mut shares: Vec<_> = (1..=num_parties)
-            .map(|x| ShamirSharing::<GF256> {
-                share: f.eval(&GF256::from(x)),
+            .map(|x| ShamirSharing::<BaseField> {
+                share: f.eval(&BaseField::from_u128(x as u128)),
                 party_id: x,
             })
             .collect();
 
         // modify shares of parties 1 and 2
-        shares[1].share += GF256::from(9);
-        shares[2].share += GF256::from(254);
+        shares[1].share += BaseField::from_u128(9);
+        shares[2].share += BaseField::from_u128(254);
 
         let secret_poly = error_correction(&shares, threshold, max_err).unwrap();
         assert_eq!(secret_poly, f);

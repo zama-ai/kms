@@ -3,8 +3,8 @@ use tfhe::{
 };
 
 use crate::algebra::{
-    galois_rings::degree_8::ResiduePolyF8,
-    structure_traits::{BaseRing, Zero},
+    galois_rings::common::ResiduePoly,
+    structure_traits::{BaseRing, Ring, Zero},
 };
 
 use super::{
@@ -19,17 +19,17 @@ use super::{
 ///   Each mask is a polynomial, so the Vec holds
 ///   multiple polynomials, each as a list of coefs
 /// - body is the B part, also a polynomial held as a list of coefs
-pub struct GlweCiphertextShare<Z: BaseRing> {
+pub struct GlweCiphertextShare<Z: BaseRing, const EXTENSION_DEGREE: usize> {
     //Integration note: if it's easier,
     //we can probably have both the mask and body of the same type
     //Just then need to be carefull how we handle mask sampling
     pub mask: Vec<Z>,
-    pub body: Vec<ResiduePolyF8<Z>>,
+    pub body: Vec<ResiduePoly<Z, EXTENSION_DEGREE>>,
     pub polynomial_size: PolynomialSize,
     pub encryption_type: EncryptionType,
 }
 
-impl<Z: BaseRing> GlweCiphertextShare<Z> {
+impl<Z: BaseRing, const EXTENSION_DEGREE: usize> GlweCiphertextShare<Z, EXTENSION_DEGREE> {
     pub fn new(
         polynomial_size: PolynomialSize,
         glwe_dimension: usize,
@@ -37,7 +37,7 @@ impl<Z: BaseRing> GlweCiphertextShare<Z> {
     ) -> Self {
         Self {
             mask: vec![Z::default(); polynomial_size.0 * glwe_dimension],
-            body: vec![ResiduePolyF8::ZERO; polynomial_size.0],
+            body: vec![ResiduePoly::<Z, EXTENSION_DEGREE>::ZERO; polynomial_size.0],
             polynomial_size,
             encryption_type,
         }
@@ -47,7 +47,7 @@ impl<Z: BaseRing> GlweCiphertextShare<Z> {
     ///
     /// encoded_message means the message should already be scaled with the desired scaling factor
     pub fn new_from_encoded_message(
-        encoded_message: Vec<ResiduePolyF8<Z>>,
+        encoded_message: Vec<ResiduePoly<Z, EXTENSION_DEGREE>>,
         polynomial_size: PolynomialSize,
         glwe_dimension: usize,
         encryption_type: EncryptionType,
@@ -60,25 +60,28 @@ impl<Z: BaseRing> GlweCiphertextShare<Z> {
         }
     }
     //Get mutable handles over the mask and body of a share of a glwe ctxt
-    pub fn get_mut_mask_and_body(&mut self) -> (&mut Vec<Z>, &mut Vec<ResiduePolyF8<Z>>) {
+    pub fn get_mut_mask_and_body(
+        &mut self,
+    ) -> (&mut Vec<Z>, &mut Vec<ResiduePoly<Z, EXTENSION_DEGREE>>) {
         (&mut self.mask, &mut self.body)
     }
 
-    pub fn get_mut_body(&mut self) -> &mut Vec<ResiduePolyF8<Z>> {
+    pub fn get_mut_body(&mut self) -> &mut Vec<ResiduePoly<Z, EXTENSION_DEGREE>> {
         &mut self.body
     }
 }
 
 ///Encrypt a message contained in the output
 /// e.g. output should be the output of a [`GlweCiphertextShare::new_from_encoded_message`] call
-pub fn encrypt_glwe_ciphertext_assign<Gen, Z>(
-    glwe_secret_key_share: &GlweSecretKeyShare<Z>,
-    output: &mut GlweCiphertextShare<Z>,
-    generator: &mut MPCEncryptionRandomGenerator<Z, Gen>,
+pub fn encrypt_glwe_ciphertext_assign<Gen, Z, const EXTENSION_DEGREE: usize>(
+    glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    output: &mut GlweCiphertextShare<Z, EXTENSION_DEGREE>,
+    generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
 ) -> anyhow::Result<()>
 where
     Gen: ByteRandomGenerator,
     Z: BaseRing,
+    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
 {
     let encryption_type = output.encryption_type;
     let (mask, body) = output.get_mut_mask_and_body();
@@ -92,16 +95,17 @@ where
     )
 }
 
-pub fn encrypt_glwe_ciphertext<Gen, Z>(
-    glwe_secret_key_share: &GlweSecretKeyShare<Z>,
-    output: &mut GlweCiphertextShare<Z>,
-    input_plaintext_list: &[ResiduePolyF8<Z>],
-    generator: &mut MPCEncryptionRandomGenerator<Z, Gen>,
+pub fn encrypt_glwe_ciphertext<Gen, Z, const EXTENSION_DEGREE: usize>(
+    glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    output: &mut GlweCiphertextShare<Z, EXTENSION_DEGREE>,
+    input_plaintext_list: &[ResiduePoly<Z, EXTENSION_DEGREE>],
+    generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     encryption_type: EncryptionType,
 ) -> anyhow::Result<()>
 where
     Gen: ByteRandomGenerator,
     Z: BaseRing,
+    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
 {
     let (mask, body) = output.get_mut_mask_and_body();
     *body = input_plaintext_list.to_vec();
@@ -116,16 +120,17 @@ where
     Ok(())
 }
 
-pub fn encrypt_glwe_ciphertext_list<Gen, Z>(
-    glwe_secret_key: &GlweSecretKeyShare<Z>,
-    output_glwe_ciphertext_list: &mut [GlweCiphertextShare<Z>],
-    input_plaintext_list: &[ResiduePolyF8<Z>],
-    generator: &mut MPCEncryptionRandomGenerator<Z, Gen>,
+pub fn encrypt_glwe_ciphertext_list<Gen, Z, const EXTENSION_DEGREE: usize>(
+    glwe_secret_key: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    output_glwe_ciphertext_list: &mut [GlweCiphertextShare<Z, EXTENSION_DEGREE>],
+    input_plaintext_list: &[ResiduePoly<Z, EXTENSION_DEGREE>],
+    generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     encryption_type: EncryptionType,
 ) -> anyhow::Result<()>
 where
     Gen: ByteRandomGenerator,
     Z: BaseRing,
+    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
 {
     let polynomial_size = glwe_secret_key.polynomial_size();
     for (ciphertext, encoded) in output_glwe_ciphertext_list
@@ -143,16 +148,17 @@ where
     Ok(())
 }
 
-fn fill_glwe_mask_and_body_for_encryption_assign<Z, Gen>(
-    glwe_secret_key_share: &GlweSecretKeyShare<Z>,
+fn fill_glwe_mask_and_body_for_encryption_assign<Z, Gen, const EXTENSION_DEGREE: usize>(
+    glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
     output_mask: &mut [Z],
-    output_body: &mut [ResiduePolyF8<Z>],
-    generator: &mut MPCEncryptionRandomGenerator<Z, Gen>,
+    output_body: &mut [ResiduePoly<Z, EXTENSION_DEGREE>],
+    generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     encryption_type: EncryptionType,
 ) -> anyhow::Result<()>
 where
     Gen: ByteRandomGenerator,
     Z: BaseRing,
+    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
 {
     //Sample the mask
     generator.fill_slice_with_random_mask_custom_mod(output_mask, encryption_type);
@@ -202,7 +208,7 @@ mod tests {
     };
 
     use crate::{
-        algebra::galois_rings::degree_8::ResiduePolyF8Z64,
+        algebra::{galois_rings::degree_8::ResiduePolyF8Z64, structure_traits::Ring},
         execution::{
             online::{
                 gen_bits::{BitGenEven, RealBitGenEven},
@@ -312,7 +318,12 @@ mod tests {
         //This is Async because triples are generated from dummy preprocessing
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let results = execute_protocol_large::<ResiduePolyF8Z64, _, _>(
+        let results = execute_protocol_large::<
+            _,
+            _,
+            ResiduePolyF8Z64,
+            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+        >(
             parties,
             threshold,
             None,

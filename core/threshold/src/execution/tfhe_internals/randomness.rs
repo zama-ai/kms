@@ -1,5 +1,5 @@
 use crate::{
-    algebra::{galois_rings::degree_8::ResiduePolyF8, structure_traits::BaseRing},
+    algebra::{galois_rings::common::ResiduePoly, structure_traits::BaseRing},
     error::error_handler::anyhow_error_and_log,
 };
 
@@ -26,23 +26,27 @@ use super::parameters::EncryptionType;
 ///Structure to get randomness needed inside encryptions
 ///the mask is from seeded rng, seed is derived from MPC protocol
 ///for now the noise part is put into a vector in advance and poped when needed
-pub struct MPCEncryptionRandomGenerator<Z: BaseRing, Gen: ByteRandomGenerator> {
+pub struct MPCEncryptionRandomGenerator<
+    Z: BaseRing,
+    Gen: ByteRandomGenerator,
+    const EXTENSION_DEGREE: usize,
+> {
     //TODO: Once XOF available from TFHE-RS, need to use it here and use the correct DSEP !!
     pub mask: MPCMaskRandomGenerator<Gen>,
-    pub noise: MPCNoiseRandomGenerator<Z>,
+    pub noise: MPCNoiseRandomGenerator<Z, EXTENSION_DEGREE>,
 }
 
 #[derive(Default)]
-pub struct MPCNoiseRandomGenerator<Z: BaseRing> {
-    pub vec: Vec<ResiduePolyF8<Z>>,
+pub struct MPCNoiseRandomGenerator<Z: BaseRing, const EXTENSION_DEGREE: usize> {
+    pub vec: Vec<ResiduePoly<Z, EXTENSION_DEGREE>>,
 }
 
 pub struct MPCMaskRandomGenerator<Gen: ByteRandomGenerator> {
     pub gen: RandomGenerator<Gen>,
 }
 
-impl<Z: BaseRing> MPCNoiseRandomGenerator<Z> {
-    pub(crate) fn random_noise_custom_mod(&mut self) -> ResiduePolyF8<Z> {
+impl<Z: BaseRing, const EXTENSION_DEGREE: usize> MPCNoiseRandomGenerator<Z, EXTENSION_DEGREE> {
+    pub(crate) fn random_noise_custom_mod(&mut self) -> ResiduePoly<Z, EXTENSION_DEGREE> {
         self.vec.pop().expect("Not enough noise in the RNG")
     }
 
@@ -178,7 +182,9 @@ impl<Gen: ByteRandomGenerator> MPCMaskRandomGenerator<Gen> {
     }
 }
 
-impl<Z: BaseRing, Gen: ByteRandomGenerator> MPCEncryptionRandomGenerator<Z, Gen> {
+impl<Z: BaseRing, Gen: ByteRandomGenerator, const EXTENSION_DEGREE: usize>
+    MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>
+{
     pub(crate) fn new_from_seed(seed: u128) -> Self {
         Self {
             mask: MPCMaskRandomGenerator::<Gen>::new_from_seed(seed),
@@ -186,11 +192,11 @@ impl<Z: BaseRing, Gen: ByteRandomGenerator> MPCEncryptionRandomGenerator<Z, Gen>
         }
     }
 
-    pub(crate) fn fill_noise(&mut self, fill_with: Vec<ResiduePolyF8<Z>>) {
+    pub(crate) fn fill_noise(&mut self, fill_with: Vec<ResiduePoly<Z, EXTENSION_DEGREE>>) {
         self.noise = MPCNoiseRandomGenerator { vec: fill_with };
     }
 
-    pub(crate) fn random_noise_custom_mod(&mut self) -> ResiduePolyF8<Z> {
+    pub(crate) fn random_noise_custom_mod(&mut self) -> ResiduePoly<Z, EXTENSION_DEGREE> {
         self.noise.random_noise_custom_mod()
     }
 
@@ -207,7 +213,7 @@ impl<Z: BaseRing, Gen: ByteRandomGenerator> MPCEncryptionRandomGenerator<Z, Gen>
     ///Pop the noise to fill the noise part
     pub fn unsigned_torus_slice_wrapping_add_random_noise_custom_mod_assign(
         &mut self,
-        output_body: &mut [ResiduePolyF8<Z>],
+        output_body: &mut [ResiduePoly<Z, EXTENSION_DEGREE>],
     ) -> anyhow::Result<()> {
         for elem in output_body.iter_mut() {
             *elem += self
@@ -277,10 +283,14 @@ impl<Z: BaseRing, Gen: ByteRandomGenerator> MPCEncryptionRandomGenerator<Z, Gen>
 }
 
 /// Forks both generators into an iterator
-fn map_to_encryption_generator<Z: BaseRing, Gen: ByteRandomGenerator>(
+fn map_to_encryption_generator<
+    Z: BaseRing,
+    Gen: ByteRandomGenerator,
+    const EXTENSION_DEGREE: usize,
+>(
     mask_iter: impl Iterator<Item = MPCMaskRandomGenerator<Gen>>,
-    noise_iter: impl Iterator<Item = MPCNoiseRandomGenerator<Z>>,
-) -> impl Iterator<Item = MPCEncryptionRandomGenerator<Z, Gen>> {
+    noise_iter: impl Iterator<Item = MPCNoiseRandomGenerator<Z, EXTENSION_DEGREE>>,
+) -> impl Iterator<Item = MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>> {
     // We return a proper iterator.
     mask_iter
         .zip(noise_iter)

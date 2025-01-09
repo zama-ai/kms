@@ -3,8 +3,9 @@ use super::BitPreprocessing;
 use super::DKGPreprocessing;
 use super::NoiseBounds;
 use super::NoiseFloodPreprocessing;
-use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z128;
-use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z64;
+use crate::algebra::base_ring::Z128;
+use crate::algebra::base_ring::Z64;
+use crate::algebra::galois_rings::common::ResiduePoly;
 use crate::algebra::structure_traits::ErrorCorrect;
 use crate::algebra::structure_traits::RingEmbed;
 use crate::execution::constants::LOG_B_SWITCH_SQUASH;
@@ -243,12 +244,18 @@ where
 }
 
 #[async_trait]
-impl<Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>> BitDecPreprocessing
-    for DummyPreprocessing<ResiduePolyF8Z64, Rnd, Ses>
+impl<
+        const EXTENSION_DEGREE: usize,
+        Rnd: Rng + CryptoRng + Send + Sync,
+        Ses: BaseSessionHandles<Rnd>,
+    > BitDecPreprocessing<EXTENSION_DEGREE>
+    for DummyPreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>, Rnd, Ses>
+where
+    ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
 {
     async fn fill_from_base_preproc(
         &mut self,
-        _preprocessing: &mut dyn BasePreprocessing<ResiduePolyF8Z64>,
+        _preprocessing: &mut dyn BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>,
         _session: &mut BaseSession,
         _num_ctxts: usize,
     ) -> anyhow::Result<()> {
@@ -257,17 +264,26 @@ impl<Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>> BitDecPre
 }
 
 #[async_trait]
-impl<Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>> NoiseFloodPreprocessing
-    for DummyPreprocessing<ResiduePolyF8Z128, Rnd, Ses>
+impl<
+        const EXTENSION_DEGREE: usize,
+        Rnd: Rng + CryptoRng + Send + Sync,
+        Ses: BaseSessionHandles<Rnd>,
+    > NoiseFloodPreprocessing<EXTENSION_DEGREE>
+    for DummyPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>, Rnd, Ses>
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
 {
-    fn append_masks(&mut self, _masks: Vec<ResiduePolyF8Z128>) {
+    fn append_masks(&mut self, _masks: Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>) {
         unimplemented!("We do not implement filling for DummyPreprocessing")
     }
-    fn next_mask(&mut self) -> anyhow::Result<ResiduePolyF8Z128> {
+    fn next_mask(&mut self) -> anyhow::Result<ResiduePoly<Z128, EXTENSION_DEGREE>> {
         Ok(self.next_mask_vec(1)?.pop().unwrap())
     }
 
-    fn next_mask_vec(&mut self, amount: usize) -> anyhow::Result<Vec<ResiduePolyF8Z128>> {
+    fn next_mask_vec(
+        &mut self,
+        amount: usize,
+    ) -> anyhow::Result<Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>> {
         let bound_d = (STATSEC + LOG_B_SWITCH_SQUASH) as usize;
         let mut u_randoms: Vec<_> =
             RealSecretDistributions::t_uniform(2 * amount, TUniformBound(bound_d), self)?
@@ -291,7 +307,7 @@ impl<Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>> NoiseFloo
     /// Fill the masks directly from the [`crate::execution::small_execution::prss::PRSSState`] available from [`SmallSession`]
     fn fill_from_small_session(
         &mut self,
-        _session: &mut SmallSession<ResiduePolyF8Z128>,
+        _session: &mut SmallSession<ResiduePoly<Z128, EXTENSION_DEGREE>>,
         _amount: usize,
     ) -> anyhow::Result<()> {
         unimplemented!("We do not implement filling for DummyPreprocessing")
@@ -300,7 +316,7 @@ impl<Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>> NoiseFloo
     /// Fill the masks by first generating bits via triples and randomness provided by [`BasePreprocessing`]
     async fn fill_from_base_preproc(
         &mut self,
-        _preprocessing: &mut dyn BasePreprocessing<ResiduePolyF8Z128>,
+        _preprocessing: &mut dyn BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>,
         _session: &mut BaseSession,
         _num_ctxts: usize,
     ) -> anyhow::Result<()> {
@@ -311,7 +327,7 @@ impl<Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>> NoiseFloo
     /// using [`crate::execution::online::secret_distributions::SecretDistributions`]
     fn fill_from_bits_preproc(
         &mut self,
-        _bit_preproc: &mut dyn BitPreprocessing<ResiduePolyF8Z128>,
+        _bit_preproc: &mut dyn BitPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>,
         _num_ctxts: usize,
     ) -> anyhow::Result<()> {
         unimplemented!("We do not implement filling for DummyPreprocessing")

@@ -175,15 +175,23 @@ pub fn decode_syndrome<F: Field>(syndrome: &Poly<F>, x_alpha: &[F], r: usize) ->
 mod tests {
     use super::*;
     use crate::algebra::{
-        galois_fields::gf256::GF256,
+        galois_fields::{gf16::GF16, gf256::GF256},
         poly::{gao_decoding, lagrange_interpolation},
-        structure_traits::Zero,
     };
 
     #[test]
-    fn test_compute_syndrome_field() {
+    fn test_compute_syndrome_field_f8() {
+        test_compute_syndrome_field::<GF256>()
+    }
+
+    #[test]
+    fn test_compute_syndrome_field_f4() {
+        test_compute_syndrome_field::<GF16>()
+    }
+
+    fn test_compute_syndrome_field<BaseField: Field>() {
         let f = Poly {
-            coefs: vec![GF256::from(7), GF256::from(42)],
+            coefs: vec![BaseField::from_u128(7), BaseField::from_u128(42)],
         };
 
         let n = 10;
@@ -192,7 +200,7 @@ mod tests {
 
         tracing::debug!("n={n}, v={v}, r={r}, detect={r}, correct={}", r / 2);
 
-        let xs: Vec<_> = (1..=n).map(GF256::from).collect();
+        let xs: Vec<_> = (1..=n).map(BaseField::from_u128).collect();
         let mut ys: Vec<_> = xs.iter().map(|x| f.eval(x)).collect();
         tracing::info!("cis plain: {:?}", ys);
 
@@ -204,18 +212,21 @@ mod tests {
         // with no errors we can just do plain Lagrange interpolation
         let l_poly = lagrange_interpolation(&xs, &ys).unwrap();
         for i in 1..=n {
-            let l_i = l_poly.eval(&GF256::from(i));
+            let l_i = l_poly.eval(&BaseField::from_u128(i));
             tracing::info!("interpolated L({i}) = {l_i:?}",);
             assert_eq!(l_i, ys[i as usize - 1]);
         }
 
         // add an error to the points
-        ys[1] += GF256::from(7);
+        ys[1] += BaseField::from_u128(7);
         tracing::info!("cis ERROR: {:?}", ys);
 
         // check that we can correct with one error
         let polynomial = gao_decoding(&xs, &ys, v, 1).unwrap();
-        assert_eq!(polynomial.eval(&GF256::from(0)), GF256::from(7));
+        assert_eq!(
+            polynomial.eval(&BaseField::from_u128(0)),
+            BaseField::from_u128(7)
+        );
         assert_eq!(polynomial, f);
 
         // syndrome should not be zero with errors
@@ -225,9 +236,22 @@ mod tests {
     }
 
     #[test]
-    fn test_syndrome_decode_field() {
+    fn test_syndrome_decode_field_f8() {
+        test_syndrome_decode_field::<GF256>();
+    }
+
+    #[test]
+    fn test_syndrome_decode_field_f4() {
+        test_syndrome_decode_field::<GF16>();
+    }
+
+    fn test_syndrome_decode_field<BaseField: Field>() {
         let f = Poly {
-            coefs: vec![GF256::from(99), GF256::from(100), GF256::from(8)],
+            coefs: vec![
+                BaseField::from_u128(99),
+                BaseField::from_u128(100),
+                BaseField::from_u128(8),
+            ],
         };
 
         let n = 7;
@@ -236,14 +260,14 @@ mod tests {
 
         tracing::debug!("n={n}, v={v}, r=detect={r}, correct={}", r / 2);
 
-        let xs: Vec<_> = (1..=n).map(GF256::from).collect();
+        let xs: Vec<_> = (1..=n).map(BaseField::from_u128).collect();
         let mut ys: Vec<_> = xs.iter().map(|x| f.eval(x)).collect();
 
         // syndrome should be zero without error
         let syndrome = compute_syndrome(&xs, &ys, v);
         let e = decode_syndrome(&syndrome, &xs, r);
         tracing::info!("e (ok): {:?}", e);
-        assert_eq!(e, vec![GF256::ZERO; n as usize]); // test that e is all-zero
+        assert_eq!(e, vec![BaseField::ZERO; n as usize]); // test that e is all-zero
 
         // --- Errors added from here --
         let err_vals = [53, 54]; // must fit in a GF256 element
@@ -251,23 +275,23 @@ mod tests {
 
         // add one error to the points
         tracing::info!("Testing 1 Error...");
-        ys[err_idxs[0]] += GF256::from(err_vals[0]);
+        ys[err_idxs[0]] += BaseField::from_u128(err_vals[0]);
 
         let syndrome = compute_syndrome(&xs, &ys, v);
         let e = decode_syndrome(&syndrome, &xs, r);
         tracing::info!("e (1x): {:?}", e);
-        let mut reference = vec![GF256::ZERO; n as usize];
-        reference[err_idxs[0]] += GF256::from(err_vals[0]);
+        let mut reference = vec![BaseField::ZERO; n as usize];
+        reference[err_idxs[0]] += BaseField::from_u128(err_vals[0]);
         assert_eq!(e, reference);
 
         // -- add a second error now
         tracing::info!("Testing 2 Errors...");
-        ys[err_idxs[1]] += GF256::from(err_vals[1]);
+        ys[err_idxs[1]] += BaseField::from_u128(err_vals[1]);
 
         let syndrome = compute_syndrome(&xs, &ys, v);
         let e = decode_syndrome(&syndrome, &xs, r);
         tracing::info!("e (2x): {:?}", e);
-        reference[err_idxs[1]] += GF256::from(err_vals[1]);
+        reference[err_idxs[1]] += BaseField::from_u128(err_vals[1]);
         assert_eq!(e, reference);
     }
 }

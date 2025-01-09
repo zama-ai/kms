@@ -633,6 +633,7 @@ pub(crate) mod tests {
 
     fn test_lsl_strategies<
         Z: Ring + RingEmbed + Derive + Invert + ErrorCorrect,
+        const EXTENSION_DEGREE: usize,
         L: LocalSingleShare + 'static,
     >(
         params: TestingParameters,
@@ -666,20 +667,21 @@ pub(crate) mod tests {
         };
 
         // LocalSingleShare assumes Sync network
-        let (result_honest, _) = execute_protocol_large_w_disputes_and_malicious::<Z, _, _, _, _, _>(
-            &params,
-            &params.dispute_pairs,
-            &[
-                malicious_due_to_dispute.clone(),
-                params.malicious_roles.to_vec(),
-            ]
-            .concat(),
-            malicious_lsl,
-            NetworkMode::Sync,
-            None,
-            &mut task_honest,
-            &mut task_malicious,
-        );
+        let (result_honest, _) =
+            execute_protocol_large_w_disputes_and_malicious::<_, _, _, _, _, Z, EXTENSION_DEGREE>(
+                &params,
+                &params.dispute_pairs,
+                &[
+                    malicious_due_to_dispute.clone(),
+                    params.malicious_roles.to_vec(),
+                ]
+                .concat(),
+                malicious_lsl,
+                NetworkMode::Sync,
+                None,
+                &mut task_honest,
+                &mut task_malicious,
+            );
 
         //make sure the dispute and malicious set of all honest parties is in sync
         let ref_malicious_set = result_honest[0].2.clone();
@@ -744,8 +746,14 @@ pub(crate) mod tests {
     #[case(TestingParameters::init_honest(7, 2, Some(14)))]
     fn test_lsl_z128(#[case] params: TestingParameters) {
         let malicious_lsl = RealLocalSingleShare::<TrueCoinFlip, RealShareDispute>::default();
-        test_lsl_strategies::<ResiduePolyF8Z64, _>(params.clone(), malicious_lsl.clone());
-        test_lsl_strategies::<ResiduePolyF8Z128, _>(params.clone(), malicious_lsl.clone());
+        test_lsl_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
+            params.clone(),
+            malicious_lsl.clone(),
+        );
+        test_lsl_strategies::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }, _>(
+            params.clone(),
+            malicious_lsl.clone(),
+        );
     }
 
     #[cfg(feature = "slow_tests")]
@@ -783,8 +791,14 @@ pub(crate) mod tests {
             coinflip: coinflip_strategy,
             share_dispute: share_dispute_strategy,
         };
-        test_lsl_strategies::<ResiduePolyF8Z64, _>(params.clone(), malicious_lsl.clone());
-        test_lsl_strategies::<ResiduePolyF8Z128, _>(params.clone(), malicious_lsl.clone());
+        test_lsl_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
+            params.clone(),
+            malicious_lsl.clone(),
+        );
+        test_lsl_strategies::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }, _>(
+            params.clone(),
+            malicious_lsl.clone(),
+        );
     }
 
     #[cfg(feature = "slow_tests")]
@@ -817,8 +831,14 @@ pub(crate) mod tests {
             share_dispute: share_dispute_strategy,
         };
 
-        test_lsl_strategies::<ResiduePolyF8Z64, _>(params.clone(), malicious_lsl.clone());
-        test_lsl_strategies::<ResiduePolyF8Z128, _>(params.clone(), malicious_lsl.clone());
+        test_lsl_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
+            params.clone(),
+            malicious_lsl.clone(),
+        );
+        test_lsl_strategies::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }, _>(
+            params.clone(),
+            malicious_lsl.clone(),
+        );
     }
 
     #[cfg(feature = "slow_tests")]
@@ -837,8 +857,14 @@ pub(crate) mod tests {
             coinflip: coinflip_strategy,
             share_dispute: share_dispute_strategy,
         };
-        test_lsl_strategies::<ResiduePolyF8Z64, _>(params.clone(), malicious_lsl.clone());
-        test_lsl_strategies::<ResiduePolyF8Z128, _>(params.clone(), malicious_lsl.clone());
+        test_lsl_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
+            params.clone(),
+            malicious_lsl.clone(),
+        );
+        test_lsl_strategies::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }, _>(
+            params.clone(),
+            malicious_lsl.clone(),
+        );
     }
 
     //Tests for when some parties lie about shares they received
@@ -876,8 +902,14 @@ pub(crate) mod tests {
             share_dispute: share_dispute_strategy,
             roles_to_lie_to: roles_from_idxs(&params.roles_to_lie_to),
         };
-        test_lsl_strategies::<ResiduePolyF8Z64, _>(params.clone(), malicious_lsl.clone());
-        test_lsl_strategies::<ResiduePolyF8Z128, _>(params.clone(), malicious_lsl.clone());
+        test_lsl_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
+            params.clone(),
+            malicious_lsl.clone(),
+        );
+        test_lsl_strategies::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }, _>(
+            params.clone(),
+            malicious_lsl.clone(),
+        );
     }
 
     //Tests for when some parties lie about shares they sent
@@ -914,7 +946,13 @@ pub(crate) mod tests {
             share_dispute: share_dispute_strategy,
             roles_to_lie_to: roles_from_idxs(&params.roles_to_lie_to),
         };
-        test_lsl_strategies::<ResiduePolyF8Z64, _>(params.clone(), malicious_lsl.clone());
-        test_lsl_strategies::<ResiduePolyF8Z128, _>(params.clone(), malicious_lsl.clone());
+        test_lsl_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
+            params.clone(),
+            malicious_lsl.clone(),
+        );
+        test_lsl_strategies::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }, _>(
+            params.clone(),
+            malicious_lsl.clone(),
+        );
     }
 }

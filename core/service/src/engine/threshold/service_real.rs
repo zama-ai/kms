@@ -40,6 +40,7 @@ use conf_trace::metrics_names::{
 };
 use distributed_decryption::algebra::galois_rings::common::pack_residue_poly;
 use distributed_decryption::algebra::galois_rings::degree_8::ResiduePolyF8Z128;
+use distributed_decryption::algebra::structure_traits::Ring;
 use distributed_decryption::conf::party::CertificatePaths;
 use distributed_decryption::execution::endpoints::decryption::{
     decrypt_using_noiseflooding, partial_decrypt_using_noiseflooding, Small,
@@ -196,7 +197,7 @@ pub enum ThresholdFheKeysVersioned {
 #[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
 #[versionize(ThresholdFheKeysVersioned)]
 pub struct ThresholdFheKeys {
-    pub private_keys: PrivateKeySet,
+    pub private_keys: PrivateKeySet<{ ResiduePolyF8Z128::EXTENSION_DEGREE }>,
     pub sns_key: SwitchAndSquashKey,
     pub decompression_key: Option<DecompressionKey>,
     pub pk_meta_data: KeyGenCallValues,
@@ -279,7 +280,7 @@ async fn new_real_threshold_kms<PubS, PrivS, BackS, F>(
     listen_address: &str,
     listen_port: u16,
     my_id: usize,
-    preproc_factory: Box<dyn PreprocessorFactory>,
+    preproc_factory: Box<dyn PreprocessorFactory<{ ResiduePolyF8Z128::EXTENSION_DEGREE }>>,
     num_sessions_preproc: u16,
     peer_configs: Vec<PeerConf>,
     public_storage: PubS,
@@ -850,7 +851,7 @@ impl<
     #[allow(clippy::too_many_arguments)]
     async fn inner_reencrypt(
         session: &mut SmallSession<ResiduePolyF8Z128>,
-        protocol: &mut Small,
+        protocol: &mut Small<{ ResiduePolyF8Z128::EXTENSION_DEGREE }>,
         rng: &mut (impl CryptoRng + RngCore),
         ct: &[u8],
         fhe_type: FheType,
@@ -1118,7 +1119,7 @@ impl<
     /// flooding.
     async fn inner_decrypt<T>(
         session: &mut SmallSession<ResiduePolyF8Z128>,
-        protocol: &mut Small,
+        protocol: &mut Small<{ ResiduePolyF8Z128::EXTENSION_DEGREE }>,
         ct: &[u8],
         fhe_type: FheType,
         fhe_keys: OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>,
@@ -1822,7 +1823,8 @@ pub struct RealPreprocessor {
     // TODO eventually add mode to allow for nlarge as well.
     prss_setup: Arc<RwLock<Option<PRSSSetup<ResiduePolyF8Z128>>>>,
     preproc_buckets: Arc<RwLock<MetaStore<BucketMetaStore>>>,
-    preproc_factory: Arc<Mutex<Box<dyn PreprocessorFactory>>>,
+    preproc_factory:
+        Arc<Mutex<Box<dyn PreprocessorFactory<{ ResiduePolyF8Z128::EXTENSION_DEGREE }>>>>,
     num_sessions_preproc: u16,
     session_preparer: SessionPreparer,
     tracker: Arc<TaskTracker>,
@@ -1904,7 +1906,7 @@ impl RealPreprocessor {
         prss_setup: PRSSSetup<ResiduePolyF8Z128>,
         own_identity: Identity,
         params: DKGParams,
-        factory: Arc<Mutex<Box<dyn PreprocessorFactory>>>,
+        factory: Arc<Mutex<Box<dyn PreprocessorFactory<{ ResiduePolyF8Z128::EXTENSION_DEGREE }>>>>,
         permit: OwnedSemaphorePermit,
     ) {
         let _permit = permit; // dropped at the end of the function

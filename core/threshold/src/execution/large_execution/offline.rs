@@ -344,6 +344,7 @@ mod tests {
 
     fn test_offline_strategies<
         Z: Ring + RingEmbed + Derive + Invert + ErrorCorrect,
+        const EXTENSION_DEGREE: usize,
         S: SingleSharing<Z>,
         D: DoubleSharing<Z>,
         P: GenericMaliciousPreprocessing<Z, S, D> + 'static,
@@ -393,20 +394,21 @@ mod tests {
         };
 
         //Preprocessing assumes Sync network
-        let (result_honest, _) = execute_protocol_large_w_disputes_and_malicious::<Z, _, _, _, _, _>(
-            &params,
-            &params.dispute_pairs,
-            &[
-                malicious_due_to_dispute.clone(),
-                params.malicious_roles.to_vec(),
-            ]
-            .concat(),
-            malicious_offline,
-            NetworkMode::Sync,
-            None,
-            &mut task_honest,
-            &mut task_malicious,
-        );
+        let (result_honest, _) =
+            execute_protocol_large_w_disputes_and_malicious::<_, _, _, _, _, Z, EXTENSION_DEGREE>(
+                &params,
+                &params.dispute_pairs,
+                &[
+                    malicious_due_to_dispute.clone(),
+                    params.malicious_roles.to_vec(),
+                ]
+                .concat(),
+                malicious_offline,
+                NetworkMode::Sync,
+                None,
+                &mut task_honest,
+                &mut task_malicious,
+            );
 
         //make sure the dispute and malicious set of all honest parties is in sync
         let ref_malicious_set = result_honest[0].2.clone();
@@ -768,7 +770,13 @@ mod tests {
             TrueDoubleSharing<ResiduePolyF8Z128>,
         >::default();
 
-        test_offline_strategies(params, malicious_offline);
+        test_offline_strategies::<
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            _,
+            _,
+            _,
+        >(params, malicious_offline);
     }
 
     // Rounds: same as for z128, see above
@@ -782,7 +790,10 @@ mod tests {
             TrueDoubleSharing<ResiduePolyF8Z64>,
         >::default();
 
-        test_offline_strategies(params, malicious_offline);
+        test_offline_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _, _, _>(
+            params,
+            malicious_offline,
+        );
     }
 
     #[rstest]
@@ -838,7 +849,10 @@ mod tests {
             double_sharing_handle: dsh,
             large_preproc: LargePreprocessing::default(),
         };
-        test_offline_strategies(params.clone(), malicious_offline);
+        test_offline_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _, _, _>(
+            params.clone(),
+            malicious_offline,
+        );
 
         let ssh = create_real_single_sharing::<ResiduePolyF8Z128, _>(lsl_strategy.clone());
         let dsh = create_real_double_sharing(ldl_strategy.clone());
@@ -847,7 +861,13 @@ mod tests {
             double_sharing_handle: dsh,
             large_preproc: LargePreprocessing::default(),
         };
-        test_offline_strategies(params.clone(), malicious_offline);
+        test_offline_strategies::<
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            _,
+            _,
+            _,
+        >(params.clone(), malicious_offline);
     }
 
     #[rstest]
@@ -899,7 +919,10 @@ mod tests {
             double_sharing_handle: dsh,
             large_preproc: LargePreprocessing::default(),
         };
-        test_offline_strategies(params.clone(), malicious_offline);
+        test_offline_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _, _, _>(
+            params.clone(),
+            malicious_offline,
+        );
 
         let ssh = create_real_single_sharing::<ResiduePolyF8Z128, _>(lsl_strategy.clone());
         let dsh = create_real_double_sharing(ldl_strategy.clone());
@@ -908,7 +931,13 @@ mod tests {
             double_sharing_handle: dsh,
             large_preproc: LargePreprocessing::default(),
         };
-        test_offline_strategies(params.clone(), malicious_offline);
+        test_offline_strategies::<
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            _,
+            _,
+            _,
+        >(params.clone(), malicious_offline);
     }
 
     #[rstest]
@@ -967,7 +996,10 @@ mod tests {
             double_sharing_handle: dsh,
             ..Default::default()
         };
-        test_offline_strategies(params.clone(), malicious_offline);
+        test_offline_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _, _, _>(
+            params.clone(),
+            malicious_offline,
+        );
 
         let ssh = create_real_single_sharing::<ResiduePolyF8Z128, _>(lsl_strategy.clone());
         let dsh = create_real_double_sharing(ldl_strategy.clone());
@@ -976,7 +1008,13 @@ mod tests {
             double_sharing_handle: dsh,
             ..Default::default()
         };
-        test_offline_strategies(params.clone(), malicious_offline);
+        test_offline_strategies::<
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            _,
+            _,
+            _,
+        >(params.clone(), malicious_offline);
     }
 
     // Test what happens when no more triples are present
@@ -1024,14 +1062,12 @@ mod tests {
         }
 
         //Preprocessing assumes Sync network
-        let result = execute_protocol_large::<ResiduePolyF8Z128, _, _>(
-            parties,
-            threshold,
-            None,
-            NetworkMode::Sync,
-            None,
-            &mut task,
-        );
+        let result = execute_protocol_large::<
+            _,
+            _,
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >(parties, threshold, None, NetworkMode::Sync, None, &mut task);
 
         for (_session, res_trip, res_rand) in result.iter() {
             assert_eq!(res_trip.len(), TRIPLE_BATCH_SIZE);
@@ -1093,7 +1129,10 @@ mod tests {
             double_sharing_handle: dsh,
             large_preproc: LargePreprocessing::default(),
         };
-        test_offline_strategies(params.clone(), malicious_offline);
+        test_offline_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _, _, _>(
+            params.clone(),
+            malicious_offline,
+        );
 
         let ssh = create_real_single_sharing::<ResiduePolyF8Z128, _>(lsl_strategy.clone());
         let dsh = create_real_double_sharing(ldl_strategy.clone());
@@ -1102,7 +1141,13 @@ mod tests {
             double_sharing_handle: dsh,
             large_preproc: LargePreprocessing::default(),
         };
-        test_offline_strategies(params.clone(), malicious_offline);
+        test_offline_strategies::<
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            _,
+            _,
+            _,
+        >(params.clone(), malicious_offline);
     }
 
     #[cfg(feature = "slow_tests")]
@@ -1155,7 +1200,10 @@ mod tests {
             double_sharing_handle: dsh,
             large_preproc: LargePreprocessing::default(),
         };
-        test_offline_strategies(params.clone(), malicious_offline);
+        test_offline_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _, _, _>(
+            params.clone(),
+            malicious_offline,
+        );
 
         let ssh = create_real_single_sharing::<ResiduePolyF8Z128, _>(lsl_strategy.clone());
         let dsh = create_real_double_sharing(ldl_strategy.clone());
@@ -1164,7 +1212,13 @@ mod tests {
             double_sharing_handle: dsh,
             large_preproc: LargePreprocessing::default(),
         };
-        test_offline_strategies(params.clone(), malicious_offline);
+        test_offline_strategies::<
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            _,
+            _,
+            _,
+        >(params.clone(), malicious_offline);
     }
 
     #[cfg(feature = "slow_tests")]
@@ -1224,7 +1278,10 @@ mod tests {
             double_sharing_handle: dsh,
             ..Default::default()
         };
-        test_offline_strategies(params.clone(), malicious_offline);
+        test_offline_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _, _, _>(
+            params.clone(),
+            malicious_offline,
+        );
 
         let ssh = create_real_single_sharing::<ResiduePolyF8Z128, _>(lsl_strategy.clone());
         let dsh = create_real_double_sharing(ldl_strategy.clone());
@@ -1233,6 +1290,12 @@ mod tests {
             double_sharing_handle: dsh,
             ..Default::default()
         };
-        test_offline_strategies(params.clone(), malicious_offline);
+        test_offline_strategies::<
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            _,
+            _,
+            _,
+        >(params.clone(), malicious_offline);
     }
 }

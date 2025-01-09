@@ -13,6 +13,7 @@ pub struct Cli {
     conf_file: Option<String>,
 }
 
+const EXTENSION_DEGREE: usize = 8;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Cli::parse();
@@ -35,5 +36,5 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     init_telemetry(&telemetry_config)?;
-    grpc::server::run(&settings).await
+    grpc::server::run::<EXTENSION_DEGREE>(&settings).await
 }

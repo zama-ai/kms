@@ -218,7 +218,10 @@ pub(crate) mod tests {
         }
     }
     //#[test]
-    fn test_doublesharing<Z: Ring + RingEmbed + ErrorCorrect + Derive + Invert>(
+    fn test_doublesharing<
+        Z: Ring + RingEmbed + ErrorCorrect + Derive + Invert,
+        const EXTENSION_DEGREE: usize,
+    >(
         parties: usize,
         threshold: usize,
     ) {
@@ -250,7 +253,7 @@ pub(crate) mod tests {
         //      Thus we have one more call to init, and therefore we double the rounds from above
         let rounds = (1 + 1 + (1 + 3 + threshold) + 1 + (3 + threshold)) * 2;
         //DoubleSharing assumes Sync network
-        let result = execute_protocol_large::<Z, _, _>(
+        let result = execute_protocol_large::<_, _, Z, EXTENSION_DEGREE>(
             parties,
             threshold,
             Some(rounds),
@@ -285,14 +288,20 @@ pub(crate) mod tests {
     #[case(4, 1)]
     #[case(7, 2)]
     fn test_doublesharing_z128(#[case] num_parties: usize, #[case] threshold: usize) {
-        test_doublesharing::<ResiduePolyF8Z128>(num_parties, threshold);
+        test_doublesharing::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }>(
+            num_parties,
+            threshold,
+        );
     }
 
     #[rstest]
     #[case(4, 1)]
     #[case(7, 2)]
     fn test_doublesharing_z64(#[case] num_parties: usize, #[case] threshold: usize) {
-        test_doublesharing::<ResiduePolyF8Z64>(num_parties, threshold);
+        test_doublesharing::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }>(
+            num_parties,
+            threshold,
+        );
     }
 
     #[test]
@@ -328,14 +337,12 @@ pub(crate) mod tests {
         }
 
         //DoubleSharing assumes Sync network
-        let result = execute_protocol_large::<ResiduePolyF8Z128, _, _>(
-            parties,
-            threshold,
-            None,
-            NetworkMode::Sync,
-            None,
-            &mut task,
-        );
+        let result = execute_protocol_large::<
+            _,
+            _,
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >(parties, threshold, None, NetworkMode::Sync, None, &mut task);
 
         //Check we can reconstruct both degree t and 2t, and they are equal
         let ldl_batch_size = 10_usize;

@@ -108,12 +108,14 @@ pub struct ExperimentalGrpcChoreography {
 }
 
 impl ExperimentalGrpcChoreography {
-    pub fn new(
+    pub fn new<const EXTENSION_DEGREE: usize>(
         own_identity: Identity,
         networking_strategy: NetworkingStrategy,
         //NOTE: Might need the factory when/if we implemented orchestrator with redis for
         //dkg preproc (but we may also decide to always use InMemory preprocessing?)
-        _factory: Box<dyn PreprocessorFactory>,
+        //Also, have to put a dummy degree here that's implemented for trait bounds reasons
+        //even though it's not used in BGV/BFV implem
+        _factory: Box<dyn PreprocessorFactory<EXTENSION_DEGREE>>,
     ) -> Self {
         tracing::debug!("Starting Party with identity: {own_identity}");
         ExperimentalGrpcChoreography {

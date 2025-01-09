@@ -170,8 +170,9 @@ mod tests {
     use super::Share;
     use crate::{
         algebra::{
-            base_ring::{Z128, Z64},
-            galois_rings::degree_8::ResiduePolyF8,
+            galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+            galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
+            structure_traits::Ring,
         },
         execution::{
             online::{
@@ -198,8 +199,8 @@ mod tests {
                 fn [<mult_sunshine_ $z:lower>]() {
                     let parties = 4;
                     let threshold = 1;
-                    async fn task(session: SmallSession<ResiduePolyF8<$z>>) -> Vec<ResiduePolyF8<$z>> {
-                        let mut preprocessing = DummyPreprocessing::<ResiduePolyF8<$z>, AesRng, SmallSession<ResiduePolyF8<$z>>>::new(42, session.clone());
+                    async fn task(session: SmallSession<$z>) -> Vec<$z> {
+                        let mut preprocessing = DummyPreprocessing::<$z, AesRng, SmallSession<$z>>::new(42, session.clone());
                         let cur_a = preprocessing.next_random().unwrap();
                         let cur_b = preprocessing.next_random().unwrap();
                         let trip = preprocessing.next_triple().unwrap();
@@ -211,7 +212,7 @@ mod tests {
                     // Online phase so Async
                     //Delay P1 by 1s every round
                     let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-                    let results = execute_protocol_small(parties, threshold, Some(2), NetworkMode::Async, Some(delay_vec), &mut task);
+                    let results = execute_protocol_small::<_,_,$z,{$z::EXTENSION_DEGREE}>(parties, threshold, Some(2), NetworkMode::Async, Some(delay_vec), &mut task);
                     assert_eq!(results.len(), parties);
 
                     for cur_res in results {
@@ -229,13 +230,13 @@ mod tests {
                     let threshold = 1;
                     const AMOUNT: usize = 3;
                     async fn task(
-                        session: SmallSession<ResiduePolyF8<$z>>,
+                        session: SmallSession<$z>,
                     ) -> (
-                        Vec<ResiduePolyF8<$z>>,
-                        Vec<ResiduePolyF8<$z>>,
-                        Vec<ResiduePolyF8<$z>>,
+                        Vec<$z>,
+                        Vec<$z>,
+                        Vec<$z>,
                     ) {
-                        let mut preprocessing = DummyPreprocessing::<ResiduePolyF8<$z>, AesRng, SmallSession<ResiduePolyF8<$z>>>::new(42, session.clone());
+                        let mut preprocessing = DummyPreprocessing::<$z, AesRng, SmallSession<$z>>::new(42, session.clone());
                         let mut a_vec = Vec::with_capacity(AMOUNT);
                         let mut b_vec = Vec::with_capacity(AMOUNT);
                         let mut trip_vec = Vec::with_capacity(AMOUNT);
@@ -255,7 +256,7 @@ mod tests {
                     // Online phase so Async
                     //Delay P1 by 1s every round
                     let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-                    let results = execute_protocol_small(parties, threshold, Some(4), NetworkMode::Async,Some(delay_vec), &mut task);
+                    let results = execute_protocol_small::<_,_,$z,{$z::EXTENSION_DEGREE}>(parties, threshold, Some(4), NetworkMode::Async,Some(delay_vec), &mut task);
                     assert_eq!(results.len(), parties);
                     for (a_vec, b_vec, c_vec) in &results {
                         for i in 0..AMOUNT {
@@ -273,9 +274,9 @@ mod tests {
                     let parties = 4;
                     let threshold = 1;
                     let bad_role: Role = Role::indexed_by_one(4);
-                    let mut task = |session: SmallSession<ResiduePolyF8<$z>>| async move {
+                    let mut task = |session: SmallSession<$z>| async move {
                         if session.my_role().unwrap() != bad_role {
-                            let mut preprocessing = DummyPreprocessing::<ResiduePolyF8<$z>, AesRng, SmallSession<ResiduePolyF8<$z>>>::new(42, session.clone());
+                            let mut preprocessing = DummyPreprocessing::<$z, AesRng, SmallSession<$z>>::new(42, session.clone());
                             let cur_a = preprocessing.next_random().unwrap();
                             let cur_b = preprocessing.next_random().unwrap();
                             let trip = preprocessing.next_triple().unwrap();
@@ -292,7 +293,7 @@ mod tests {
                     // Online phase so Async
                     //Delay P1 by 1s every round
                     let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-                    let results = execute_protocol_small(parties, threshold, None, NetworkMode::Async, Some(delay_vec), &mut task);
+                    let results = execute_protocol_small::<_,_,$z,{$z::EXTENSION_DEGREE}>(parties, threshold, None, NetworkMode::Async, Some(delay_vec), &mut task);
                     assert_eq!(results.len(), parties);
 
                     for (cur_role, cur_res) in results {
@@ -302,7 +303,7 @@ mod tests {
                             let recon_c = cur_res[2];
                             assert_eq!(recon_c, recon_a * recon_b);
                         } else {
-                            assert_eq!(Vec::<ResiduePolyF8<$z>>::new(), *cur_res);
+                            assert_eq!(Vec::<$z>::new(), *cur_res);
                         }
                     }
                 }
@@ -313,11 +314,11 @@ mod tests {
                     let parties = 4;
                     let threshold = 1;
                     let bad_role: Role = Role::indexed_by_one(4);
-                    let mut task = |session: SmallSession<ResiduePolyF8<$z>>| async move {
-                        let mut preprocessing = DummyPreprocessing::<ResiduePolyF8<$z>, AesRng, SmallSession<ResiduePolyF8<$z>>>::new(42, session.clone());
+                    let mut task = |session: SmallSession<$z>| async move {
+                        let mut preprocessing = DummyPreprocessing::<$z, AesRng, SmallSession<$z>>::new(42, session.clone());
                         let cur_a = preprocessing.next_random().unwrap();
                         let cur_b = match session.my_role().unwrap() {
-                            role if role == bad_role  => Share::new(bad_role, ResiduePolyF8::<$z>::from_scalar(Wrapping(42))),
+                            role if role == bad_role  => Share::new(bad_role, $z::from_scalar(Wrapping(42))),
                             _ => preprocessing.next_random().unwrap(),
                         };
                         let trip = preprocessing.next_triple().unwrap();
@@ -328,7 +329,7 @@ mod tests {
                     // Online phase so Async
                     //Delay P1 by 1s every round
                     let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-                    let results = execute_protocol_small(parties, threshold, None, NetworkMode::Async, Some(delay_vec), &mut task);
+                    let results = execute_protocol_small::<_,_,$z,{$z::EXTENSION_DEGREE}>(parties, threshold, None, NetworkMode::Async, Some(delay_vec), &mut task);
                     assert_eq!(results.len(), parties);
 
                     for cur_res in results {
@@ -341,6 +342,8 @@ mod tests {
             }
         };
     }
-    test_triples![Z64, u64];
-    test_triples![Z128, u128];
+    test_triples![ResiduePolyF8Z64, u64];
+    test_triples![ResiduePolyF8Z128, u128];
+    test_triples![ResiduePolyF4Z64, u64];
+    test_triples![ResiduePolyF4Z128, u128];
 }

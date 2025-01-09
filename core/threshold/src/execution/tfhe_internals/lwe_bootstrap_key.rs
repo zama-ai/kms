@@ -18,7 +18,7 @@ use tfhe::{
 
 use crate::{
     algebra::{
-        galois_rings::degree_8::ResiduePolyF8,
+        galois_rings::common::ResiduePoly,
         structure_traits::{BaseRing, ErrorCorrect},
     },
     error::error_handler::anyhow_error_and_log,
@@ -31,11 +31,11 @@ use super::{ggsw_ciphertext::GgswCiphertextShare, parameters::EncryptionType};
 
 //Note: We assume all the ggsw ctxt in the list have same parameters
 #[derive(Clone)]
-pub struct LweBootstrapKeyShare<Z: BaseRing> {
-    pub ggsw_list: Vec<GgswCiphertextShare<Z>>,
+pub struct LweBootstrapKeyShare<Z: BaseRing, const EXTENSION_DEGREE: usize> {
+    pub ggsw_list: Vec<GgswCiphertextShare<Z, EXTENSION_DEGREE>>,
 }
 
-impl<Z: BaseRing> LweBootstrapKeyShare<Z> {
+impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LweBootstrapKeyShare<Z, EXTENSION_DEGREE> {
     pub fn new(
         glwe_size: GlweSize,
         polynomial_size: PolynomialSize,
@@ -85,9 +85,9 @@ impl<Z: BaseRing> LweBootstrapKeyShare<Z> {
     }
 }
 
-impl<Z: BaseRing> LweBootstrapKeyShare<Z>
+impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LweBootstrapKeyShare<Z, EXTENSION_DEGREE>
 where
-    ResiduePolyF8<Z>: ErrorCorrect,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     pub async fn open_to_tfhers_type<
         Scalar: UnsignedInteger,
@@ -123,7 +123,7 @@ where
             * self.decomposition_level_count().0
             * self.polynomial_size().0;
 
-        let (mut masks, mut shared_bodies): (Vec<Z>, Vec<Share<ResiduePolyF8<Z>>>) = (
+        let (mut masks, mut shared_bodies): (Vec<Z>, Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>) = (
             Vec::with_capacity(num_masks),
             Vec::with_capacity(num_bodies),
         );

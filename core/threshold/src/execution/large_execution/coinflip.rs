@@ -131,12 +131,10 @@ pub(crate) mod tests {
         ];
         let threshold = 1;
         //Coinflip assumes Sync network
-        let runtime = DistributedTestRuntime::<ResiduePolyF8Z128>::new(
-            identities.clone(),
-            threshold,
-            NetworkMode::Sync,
-            None,
-        );
+        let runtime = DistributedTestRuntime::<
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >::new(identities.clone(), threshold, NetworkMode::Sync, None);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
@@ -246,7 +244,11 @@ pub(crate) mod tests {
     }
 
     //Helper function to plug malicious coinflip strategies
-    fn test_coinflip_strategies<Z: Ring + RingEmbed + ErrorCorrect, C: Coinflip + 'static>(
+    fn test_coinflip_strategies<
+        Z: Ring + RingEmbed + ErrorCorrect,
+        const EXTENSION_DEGREE: usize,
+        C: Coinflip + 'static,
+    >(
         params: TestingParameters,
         malicious_coinflip: C,
     ) {
@@ -274,16 +276,17 @@ pub(crate) mod tests {
         };
 
         //Coinflip assumes Sync network
-        let (results_honest, _) = execute_protocol_large_w_disputes_and_malicious::<Z, _, _, _, _, _>(
-            &params,
-            &[],
-            &params.malicious_roles,
-            malicious_coinflip,
-            NetworkMode::Sync,
-            None,
-            &mut task_honest,
-            &mut task_malicious,
-        );
+        let (results_honest, _) =
+            execute_protocol_large_w_disputes_and_malicious::<_, _, _, _, _, Z, EXTENSION_DEGREE>(
+                &params,
+                &[],
+                &params.malicious_roles,
+                malicious_coinflip,
+                NetworkMode::Sync,
+                None,
+                &mut task_honest,
+                &mut task_malicious,
+            );
 
         //make sure the  malicious set of all honest parties is in sync
         let ref_malicious_set = results_honest[0].2.clone();
@@ -332,8 +335,11 @@ pub(crate) mod tests {
     #[case(TestingParameters::init_honest(10, 3, Some(8)))]
     fn test_coinflip_honest_z128(#[case] params: TestingParameters) {
         let malicious_coinflip = RealCoinflip::<RealVss>::default();
-        test_coinflip_strategies::<ResiduePolyF8Z64, _>(params.clone(), malicious_coinflip.clone());
-        test_coinflip_strategies::<ResiduePolyF8Z128, _>(
+        test_coinflip_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
+            params.clone(),
+            malicious_coinflip.clone(),
+        );
+        test_coinflip_strategies::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_coinflip.clone(),
         );
@@ -358,8 +364,14 @@ pub(crate) mod tests {
         let dropping_coinflip = DroppingCoinflipAfterVss {
             vss: malicious_vss.clone(),
         };
-        test_coinflip_strategies::<ResiduePolyF8Z64, _>(params.clone(), dropping_coinflip.clone());
-        test_coinflip_strategies::<ResiduePolyF8Z128, _>(params.clone(), dropping_coinflip.clone());
+        test_coinflip_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
+            params.clone(),
+            dropping_coinflip.clone(),
+        );
+        test_coinflip_strategies::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }, _>(
+            params.clone(),
+            dropping_coinflip.clone(),
+        );
     }
 
     //Test honest coinflip with all kinds of malicious strategies for VSS
@@ -382,11 +394,11 @@ pub(crate) mod tests {
             vss: malicious_vss.clone(),
         };
 
-        test_coinflip_strategies::<ResiduePolyF8Z64, _>(
+        test_coinflip_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             real_coinflip_with_malicious_vss.clone(),
         );
-        test_coinflip_strategies::<ResiduePolyF8Z128, _>(
+        test_coinflip_strategies::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             real_coinflip_with_malicious_vss.clone(),
         );
@@ -411,11 +423,11 @@ pub(crate) mod tests {
             vss: malicious_vss.clone(),
         };
 
-        test_coinflip_strategies::<ResiduePolyF8Z64, _>(
+        test_coinflip_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_coinflip_recons.clone(),
         );
-        test_coinflip_strategies::<ResiduePolyF8Z128, _>(
+        test_coinflip_strategies::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_coinflip_recons.clone(),
         );

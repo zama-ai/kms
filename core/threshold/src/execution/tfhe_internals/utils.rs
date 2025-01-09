@@ -9,7 +9,7 @@ use tfhe::{
 
 use crate::{
     algebra::{
-        galois_rings::degree_8::ResiduePolyF8,
+        galois_rings::common::ResiduePoly,
         poly::Poly,
         structure_traits::{BaseRing, Ring, Zero},
     },
@@ -18,10 +18,10 @@ use crate::{
 
 use super::glwe_key::GlweSecretKeyShare;
 
-pub fn slice_semi_reverse_negacyclic_convolution<Z: BaseRing>(
-    output: &mut Vec<ResiduePolyF8<Z>>,
+pub fn slice_semi_reverse_negacyclic_convolution<Z: BaseRing, const EXTENSION_DEGREE: usize>(
+    output: &mut Vec<ResiduePoly<Z, EXTENSION_DEGREE>>,
     lhs: &[Z],
-    rhs: &[ResiduePolyF8<Z>],
+    rhs: &[ResiduePoly<Z, EXTENSION_DEGREE>],
 ) -> anyhow::Result<()> {
     debug_assert!(
         lhs.len() == rhs.len(),
@@ -35,7 +35,7 @@ pub fn slice_semi_reverse_negacyclic_convolution<Z: BaseRing>(
         output.len(),
         lhs.len()
     );
-    output.fill(ResiduePolyF8::ZERO);
+    output.fill(ResiduePoly::ZERO);
     let mut rev_rhs = rhs.to_vec();
     rev_rhs.reverse();
     let lhs_pol = Poly::from_coefs(lhs.to_vec());
@@ -55,13 +55,13 @@ pub fn slice_to_polynomials<Z: Ring>(slice: &[Z], pol_size: usize) -> Vec<Poly<Z
     res
 }
 
-pub fn pol_mul_reduce<Z: BaseRing>(
+pub fn pol_mul_reduce<Z: BaseRing, const EXTENSION_DEGREE: usize>(
     poly_1: &Poly<Z>,
-    poly_2: &Poly<ResiduePolyF8<Z>>,
+    poly_2: &Poly<ResiduePoly<Z, EXTENSION_DEGREE>>,
     output_size: usize,
-) -> anyhow::Result<Poly<ResiduePolyF8<Z>>> {
+) -> anyhow::Result<Poly<ResiduePoly<Z, EXTENSION_DEGREE>>> {
     let mut coefs = (0..output_size)
-        .map(|_| ResiduePolyF8::default())
+        .map(|_| ResiduePoly::default())
         .collect_vec();
 
     debug_assert!(
@@ -103,13 +103,13 @@ pub fn pol_mul_reduce<Z: BaseRing>(
     Ok(Poly::from_coefs(coefs))
 }
 
-pub fn slice_wrapping_dot_product<Z: BaseRing>(
+pub fn slice_wrapping_dot_product<Z: BaseRing, const EXTENSION_DEGREE: usize>(
     lhs: &[Z],
-    rhs: &[ResiduePolyF8<Z>],
-) -> anyhow::Result<ResiduePolyF8<Z>> {
+    rhs: &[ResiduePoly<Z, EXTENSION_DEGREE>],
+) -> anyhow::Result<ResiduePoly<Z, EXTENSION_DEGREE>> {
     lhs.iter()
         .zip_longest(rhs.iter())
-        .try_fold(ResiduePolyF8::ZERO, |acc, left_right| {
+        .try_fold(ResiduePoly::ZERO, |acc, left_right| {
             if let EitherOrBoth::Both(&left, &right) = left_right {
                 Ok(acc + right * left)
             } else {
@@ -118,11 +118,14 @@ pub fn slice_wrapping_dot_product<Z: BaseRing>(
         })
 }
 
-pub fn polynomial_wrapping_add_multisum_assign<Z: BaseRing>(
-    output_body: &mut [ResiduePolyF8<Z>],
+pub fn polynomial_wrapping_add_multisum_assign<Z: BaseRing, const EXTENSION_DEGREE: usize>(
+    output_body: &mut [ResiduePoly<Z, EXTENSION_DEGREE>],
     output_mask: &[Z],
-    glwe_secret_key_share: &GlweSecretKeyShare<Z>,
-) -> anyhow::Result<()> {
+    glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
+) -> anyhow::Result<()>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+{
     let pol_dimension = glwe_secret_key_share.polynomial_size.0;
     let mut pol_output_body = Poly::from_coefs(output_body.to_vec());
     let pol_output_mask = slice_to_polynomials(output_mask, pol_dimension);
@@ -153,7 +156,10 @@ pub fn polynomial_wrapping_add_multisum_assign<Z: BaseRing>(
     Ok(())
 }
 
-pub fn slice_wrapping_scalar_mul_assign<Z: BaseRing>(lhs: &mut [ResiduePolyF8<Z>], rhs: Z) {
+pub fn slice_wrapping_scalar_mul_assign<Z: BaseRing, const EXTENSION_DEGREE: usize>(
+    lhs: &mut [ResiduePoly<Z, EXTENSION_DEGREE>],
+    rhs: Z,
+) {
     lhs.iter_mut().for_each(|lhs| *lhs = *lhs * rhs);
 }
 

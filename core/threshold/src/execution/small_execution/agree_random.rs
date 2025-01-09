@@ -511,7 +511,7 @@ mod tests {
         RealAgreeRandom, RealAgreeRandomWithAbort,
     };
     use crate::{
-        algebra::galois_rings::degree_8::ResiduePolyF8Z128,
+        algebra::{galois_rings::degree_8::ResiduePolyF8Z128, structure_traits::Ring},
         commitment::{Commitment, Opening, COMMITMENT_BYTE_LEN, DSEP_COMM, KEY_BYTE_LEN},
         execution::{
             runtime::{
@@ -645,7 +645,12 @@ mod tests {
         }
 
         // Sync because it is part of the offline phase
-        let res = execute_protocol_small(
+        let res = execute_protocol_small::<
+            _,
+            _,
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >(
             num_parties,
             threshold,
             Some(expected_rounds),
@@ -689,8 +694,10 @@ mod tests {
         assert_eq!(identities.len(), num_parties);
 
         // Sync because it is part of the offline phase
-        let runtime =
-            DistributedTestRuntime::new(identities, threshold as u8, NetworkMode::Sync, None);
+        let runtime: DistributedTestRuntime<
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        > = DistributedTestRuntime::new(identities, threshold as u8, NetworkMode::Sync, None);
 
         // create sessions for each prss party, except party 0, which does not respond in this case
         let sessions: Vec<SmallSession<ResiduePolyF8Z128>> = (1..num_parties)

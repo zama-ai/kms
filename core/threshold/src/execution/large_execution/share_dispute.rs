@@ -709,6 +709,7 @@ pub(crate) mod tests {
     /// before executing the protocol
     fn test_share_dispute_strategies<
         Z: Ring + RingEmbed + ErrorCorrect + Invert,
+        const EXTENSION_DEGREE: usize,
         S: ShareDispute + 'static,
     >(
         params: TestingParameters,
@@ -757,20 +758,21 @@ pub(crate) mod tests {
 
         //Execute the protocol with malicious parties and added disputes
         //ShareDispute assumes Sync network
-        let (result_honest, _) = execute_protocol_large_w_disputes_and_malicious::<Z, _, _, _, _, _>(
-            &params,
-            &params.dispute_pairs,
-            &[
-                malicious_due_to_dispute.clone(),
-                params.malicious_roles.to_vec(),
-            ]
-            .concat(),
-            malicious_share_dispute,
-            NetworkMode::Sync,
-            None,
-            &mut task_honest,
-            &mut task_malicious,
-        );
+        let (result_honest, _) =
+            execute_protocol_large_w_disputes_and_malicious::<_, _, _, _, _, Z, EXTENSION_DEGREE>(
+                &params,
+                &params.dispute_pairs,
+                &[
+                    malicious_due_to_dispute.clone(),
+                    params.malicious_roles.to_vec(),
+                ]
+                .concat(),
+                malicious_share_dispute,
+                NetworkMode::Sync,
+                None,
+                &mut task_honest,
+                &mut task_malicious,
+            );
 
         //Check that dispute (pi,pj) maps to 0 for pi and pj, malicious map to 0 for all
         //and otherwise share sent are share received between honest parties.
@@ -889,14 +891,15 @@ pub(crate) mod tests {
     #[case(TestingParameters::init_dispute(7, 2, &[(1,2),(1,3),(4,6),(0,5)]))]
     fn test_share_dispute_honest_z128(#[case] params: TestingParameters) {
         let malicious_share_dispute = RealShareDispute::default();
-        test_share_dispute_strategies::<ResiduePolyF8Z64, _>(
+        test_share_dispute_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_share_dispute.clone(),
         );
-        test_share_dispute_strategies::<ResiduePolyF8Z128, _>(
-            params.clone(),
-            malicious_share_dispute.clone(),
-        );
+        test_share_dispute_strategies::<
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            _,
+        >(params.clone(), malicious_share_dispute.clone());
     }
 
     #[cfg(feature = "slow_tests")]
@@ -911,14 +914,15 @@ pub(crate) mod tests {
     #[case(TestingParameters::init(7, 2, &[2,6], &[], &[(0,2),(1,3),(0,4),(1,5)], false, None))]
     fn test_share_dispute_dropout(#[case] params: TestingParameters) {
         let dropping_share_dispute = DroppingShareDispute::default();
-        test_share_dispute_strategies::<ResiduePolyF8Z64, _>(
+        test_share_dispute_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             dropping_share_dispute.clone(),
         );
-        test_share_dispute_strategies::<ResiduePolyF8Z128, _>(
-            params.clone(),
-            dropping_share_dispute.clone(),
-        );
+        test_share_dispute_strategies::<
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            _,
+        >(params.clone(), dropping_share_dispute.clone());
     }
 
     #[cfg(feature = "slow_tests")]
@@ -933,14 +937,15 @@ pub(crate) mod tests {
     fn test_malicious_share_dispute(#[case] params: TestingParameters) {
         let malicious_share_dispute_recons = WrongShareDisputeRecons::default();
 
-        test_share_dispute_strategies::<ResiduePolyF8Z64, _>(
+        test_share_dispute_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_share_dispute_recons.clone(),
         );
-        test_share_dispute_strategies::<ResiduePolyF8Z128, _>(
-            params.clone(),
-            malicious_share_dispute_recons.clone(),
-        );
+        test_share_dispute_strategies::<
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            _,
+        >(params.clone(), malicious_share_dispute_recons.clone());
     }
 
     #[traced_test]

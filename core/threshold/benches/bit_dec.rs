@@ -2,6 +2,7 @@ use aes_prng::AesRng;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use distributed_decryption::algebra::base_ring::Z64;
 use distributed_decryption::algebra::galois_rings::degree_8::ResiduePolyF8Z64;
+use distributed_decryption::algebra::structure_traits::Ring;
 use distributed_decryption::execution::endpoints::decryption::{
     init_prep_bitdec_large, init_prep_bitdec_small,
 };
@@ -80,17 +81,23 @@ fn bit_dec_online(c: &mut Criterion) {
                             session.threshold() as usize,
                             session.my_role().unwrap().zero_based(),
                         );
-                        let _bits = bit_dec_batch::<Z64, _, _, _>(
-                            &mut session,
-                            &mut prep,
-                            [input_a].to_vec(),
-                        )
-                        .await
-                        .unwrap();
+                        let _bits =
+                            bit_dec_batch::<Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _, _, _>(
+                                &mut session,
+                                &mut prep,
+                                [input_a].to_vec(),
+                            )
+                            .await
+                            .unwrap();
                     };
 
                     //Async is fine because we use Dummy preprocessing
-                    let _result = execute_protocol_large::<ResiduePolyF8Z64, _, _>(
+                    let _result = execute_protocol_large::<
+                        _,
+                        _,
+                        ResiduePolyF8Z64,
+                        { ResiduePolyF8Z64::EXTENSION_DEGREE },
+                    >(
                         config.n,
                         config.t,
                         None,
@@ -139,17 +146,26 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
                             })
                             .collect();
 
-                        let _bits = bit_dec_batch::<Z64, dyn BitDecPreprocessing, _, _>(
-                            &mut session,
-                            bitdec_prep.as_mut(),
-                            inputs,
+                        let _bits = bit_dec_batch::<
+                            Z64,
+                            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+                            dyn BitDecPreprocessing<{ ResiduePolyF8Z64::EXTENSION_DEGREE }>,
+                            _,
+                            _,
+                        >(
+                            &mut session, bitdec_prep.as_mut(), inputs
                         )
                         .await
                         .unwrap();
                     };
 
                     //Need Sync network because we execute preprocessing
-                    let _result = execute_protocol_small::<ResiduePolyF8Z64, _, _>(
+                    let _result = execute_protocol_small::<
+                        _,
+                        _,
+                        ResiduePolyF8Z64,
+                        { ResiduePolyF8Z64::EXTENSION_DEGREE },
+                    >(
                         config.n,
                         config.t as u8,
                         None,
@@ -197,17 +213,26 @@ fn bit_dec_large_e2e(c: &mut Criterion) {
                             })
                             .collect();
 
-                        let _bits = bit_dec_batch::<Z64, dyn BitDecPreprocessing, _, _>(
-                            &mut session,
-                            bitdec_prep.as_mut(),
-                            inputs,
+                        let _bits = bit_dec_batch::<
+                            Z64,
+                            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+                            dyn BitDecPreprocessing<{ ResiduePolyF8Z64::EXTENSION_DEGREE }>,
+                            _,
+                            _,
+                        >(
+                            &mut session, bitdec_prep.as_mut(), inputs
                         )
                         .await
                         .unwrap();
                     };
 
                     //Need Sync network because we execute preprocessing
-                    let _result = execute_protocol_large::<ResiduePolyF8Z64, _, _>(
+                    let _result = execute_protocol_large::<
+                        _,
+                        _,
+                        ResiduePolyF8Z64,
+                        { ResiduePolyF8Z64::EXTENSION_DEGREE },
+                    >(
                         config.n,
                         config.t,
                         None,

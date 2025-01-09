@@ -303,6 +303,7 @@ mod test {
     use itertools::Itertools;
     use rand::SeedableRng;
 
+    use crate::algebra::structure_traits::Ring;
     use crate::execution::sharing::shamir::InputOp;
     use crate::networking::NetworkMode;
     use crate::{
@@ -352,7 +353,12 @@ mod test {
         let threshold = 1;
         // expect a single round for opening
 
-        let _ = execute_protocol_large::<ResiduePolyF8Z128, _, _>(
+        let _ = execute_protocol_large::<
+            _,
+            _,
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >(
             parties,
             threshold,
             Some(1),
@@ -370,7 +376,12 @@ mod test {
 
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let _ = execute_protocol_large::<ResiduePolyF8Z128, _, _>(
+        let _ = execute_protocol_large::<
+            _,
+            _,
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >(
             parties,
             threshold,
             Some(1),

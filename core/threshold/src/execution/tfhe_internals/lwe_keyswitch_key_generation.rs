@@ -1,7 +1,7 @@
 use crate::{
     algebra::{
-        galois_rings::degree_8::ResiduePolyF8,
-        structure_traits::{BaseRing, Zero},
+        galois_rings::common::ResiduePoly,
+        structure_traits::{BaseRing, Ring, Zero},
     },
     error::error_handler::anyhow_error_and_log,
 };
@@ -18,20 +18,22 @@ use tfhe::{
     shortint::parameters::{DecompositionBaseLog, DecompositionLevelCount, LweDimension},
 };
 
-pub fn generate_lwe_keyswitch_key<Z, Gen>(
-    input_lwe_sk: &LweSecretKeyShare<Z>,
-    output_lwe_sk: &LweSecretKeyShare<Z>,
-    lwe_keyswitch_key: &mut LweKeySwitchKeyShare<Z>,
-    generator: &mut MPCEncryptionRandomGenerator<Z, Gen>,
+pub fn generate_lwe_keyswitch_key<Z, Gen, const EXTENSION_DEGREE: usize>(
+    input_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    output_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    lwe_keyswitch_key: &mut LweKeySwitchKeyShare<Z, EXTENSION_DEGREE>,
+    generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
 ) -> anyhow::Result<()>
 where
     Z: BaseRing,
+    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
     Gen: ByteRandomGenerator,
 {
     let decomp_base_log = lwe_keyswitch_key.decomposition_base_log();
     let decomp_level_count = lwe_keyswitch_key.decomposition_level_count();
 
-    let mut decomposition_plaintexts_buffer = vec![ResiduePolyF8::<Z>::ZERO; decomp_level_count.0];
+    let mut decomposition_plaintexts_buffer =
+        vec![ResiduePoly::<Z, EXTENSION_DEGREE>::ZERO; decomp_level_count.0];
 
     for input_key_element_key_switch_key_block in input_lwe_sk
         .data_as_raw_vec()
@@ -68,15 +70,16 @@ where
     Ok(())
 }
 
-pub fn allocate_and_generate_new_lwe_keyswitch_key<Z, Gen>(
-    input_lwe_sk: &LweSecretKeyShare<Z>,
-    output_lwe_sk: &LweSecretKeyShare<Z>,
+pub fn allocate_and_generate_new_lwe_keyswitch_key<Z, Gen, const EXTENSION_DEGREE: usize>(
+    input_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    output_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
     decomp_base_log: DecompositionBaseLog,
     decomp_level_count: DecompositionLevelCount,
-    generator: &mut MPCEncryptionRandomGenerator<Z, Gen>,
-) -> anyhow::Result<LweKeySwitchKeyShare<Z>>
+    generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
+) -> anyhow::Result<LweKeySwitchKeyShare<Z, EXTENSION_DEGREE>>
 where
     Z: BaseRing,
+    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
     Gen: ByteRandomGenerator,
 {
     let mut new_lwe_keyswitch_key = LweKeySwitchKeyShare::new(
@@ -136,7 +139,9 @@ mod tests {
     };
 
     use crate::{
-        algebra::{base_ring::Z64, galois_rings::degree_8::ResiduePolyF8Z64},
+        algebra::{
+            base_ring::Z64, galois_rings::degree_8::ResiduePolyF8Z64, structure_traits::Ring,
+        },
         execution::{
             online::{
                 gen_bits::{BitGenEven, RealBitGenEven},
@@ -185,7 +190,7 @@ mod tests {
             let mut large_preproc = DummyPreprocessing::new(seed as u64, session.clone());
 
             //Generate the Lwe key
-            let lwe_secret_key_share = LweSecretKeyShare::<Z64> {
+            let lwe_secret_key_share = LweSecretKeyShare::<Z64, 8> {
                 data: RealBitGenEven::gen_bits_even(
                     num_key_bits_lwe,
                     &mut large_preproc,
@@ -196,7 +201,7 @@ mod tests {
             };
 
             //Generate the Glwe key
-            let glwe_secret_key_share = GlweSecretKeyShare::<Z64> {
+            let glwe_secret_key_share = GlweSecretKeyShare::<Z64, 8> {
                 data: RealBitGenEven::gen_bits_even(
                     num_key_bits_glwe,
                     &mut large_preproc,
@@ -256,7 +261,12 @@ mod tests {
         //This is Async because triples are generated from dummy preprocessing
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let results = execute_protocol_large::<ResiduePolyF8Z64, _, _>(
+        let results = execute_protocol_large::<
+            _,
+            _,
+            ResiduePolyF8Z64,
+            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+        >(
             parties,
             threshold,
             None,

@@ -151,6 +151,7 @@ mod tests {
     use std::sync::Arc;
 
     use crate::algebra::structure_traits::One;
+    use crate::algebra::structure_traits::Ring;
     use crate::algebra::structure_traits::ZConsts;
     use crate::algebra::structure_traits::Zero;
     use crate::execution::runtime::session::ParameterHandles;
@@ -238,7 +239,7 @@ mod tests {
             identities.first().unwrap().clone(),
             tokio::time::Duration::from_secs(1),
         )]);
-        let runtime: DistributedTestRuntime<LevelOne> =
+        let runtime: DistributedTestRuntime<LevelOne, { LevelOne::EXTENSION_DEGREE }> =
             DistributedTestRuntime::new(identities, threshold, NetworkMode::Async, Some(delay_map));
 
         let session_id = SessionId(1);

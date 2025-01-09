@@ -1,5 +1,4 @@
 use crate::algebra::base_ring::{Z128, Z64};
-use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z64;
 use crate::execution::online::preprocessing::{DKGPreprocessing, RandomPreprocessing};
 use crate::execution::sharing::share::Share;
 use crate::execution::tfhe_internals::compression_decompression_key::CompressionPrivateKeyShares;
@@ -11,7 +10,7 @@ use crate::execution::tfhe_internals::parameters::{
 use crate::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
 use crate::{
     algebra::{
-        galois_rings::degree_8::{ResiduePolyF8, ResiduePolyF8Z128},
+        galois_rings::common::ResiduePoly,
         structure_traits::{BaseRing, ErrorCorrect, Ring},
     },
     error::error_handler::anyhow_error_and_log,
@@ -229,44 +228,52 @@ impl RawPubKeySet {
     }
 }
 
-struct GenericPrivateKeySet<Z: Clone> {
+struct GenericPrivateKeySet<Z: Clone, const EXTENSION_DEGREE: usize> {
     //The two Lwe keys are the same if there's no dedicated pk parameters
-    pub lwe_encryption_secret_key_share: LweSecretKeyShare<Z>,
-    pub lwe_secret_key_share: LweSecretKeyShare<Z>,
-    pub glwe_secret_key_share: GlweSecretKeyShare<Z>,
-    pub glwe_secret_key_share_sns: Option<GlweSecretKeyShare<Z>>,
-    pub glwe_secret_key_share_compression: Option<CompressionPrivateKeyShares<Z>>,
+    pub lwe_encryption_secret_key_share: LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    pub lwe_secret_key_share: LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    pub glwe_secret_key_share: GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    pub glwe_secret_key_share_sns: Option<GlweSecretKeyShare<Z, EXTENSION_DEGREE>>,
+    pub glwe_secret_key_share_compression: Option<CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, VersionsDispatch)]
-pub enum PrivateKeySetVersioned {
-    V0(PrivateKeySet),
+pub enum PrivateKeySetVersioned<const EXTENSION_DEGREE: usize> {
+    V0(PrivateKeySet<EXTENSION_DEGREE>),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Versionize, PartialEq)]
 #[versionize(PrivateKeySetVersioned)]
-pub struct PrivateKeySet {
+pub struct PrivateKeySet<const EXTENSION_DEGREE: usize> {
     //The two Lwe keys are the same if there's no dedicated pk parameters
-    pub lwe_encryption_secret_key_share: LweSecretKeyShare<Z64>,
-    pub lwe_compute_secret_key_share: LweSecretKeyShare<Z64>,
-    pub glwe_secret_key_share: GlweSecretKeyShare<Z64>,
-    pub glwe_secret_key_share_sns_as_lwe: Option<LweSecretKeyShare<Z128>>,
-    pub glwe_secret_key_share_compression: Option<CompressionPrivateKeyShares<Z64>>,
+    pub lwe_encryption_secret_key_share: LweSecretKeyShare<Z64, EXTENSION_DEGREE>,
+    pub lwe_compute_secret_key_share: LweSecretKeyShare<Z64, EXTENSION_DEGREE>,
+    pub glwe_secret_key_share: GlweSecretKeyShare<Z64, EXTENSION_DEGREE>,
+    pub glwe_secret_key_share_sns_as_lwe: Option<LweSecretKeyShare<Z128, EXTENSION_DEGREE>>,
+    pub glwe_secret_key_share_compression:
+        Option<CompressionPrivateKeyShares<Z64, EXTENSION_DEGREE>>,
     pub parameters: ClassicPBSParameters,
 }
 
-impl PrivateKeySet {
+impl<const EXTENSION_DEGREE: usize> PrivateKeySet<EXTENSION_DEGREE> {
     pub fn write_to_file(&self, path: String) -> anyhow::Result<()> {
-        write_element(path, self)
+        write_element(format!("{}_DEGREE_{}", path, EXTENSION_DEGREE), self)
     }
 
     pub fn read_from_file(path: String) -> anyhow::Result<Self> {
-        read_element(path)
+        read_element(format!("{}_DEGREE_{}", path, EXTENSION_DEGREE))
     }
 }
 
-impl GenericPrivateKeySet<Z128> {
-    pub fn finalize_keyset(self, parameters: ClassicPBSParameters) -> PrivateKeySet {
+impl<const EXTENSION_DEGREE: usize> GenericPrivateKeySet<Z128, EXTENSION_DEGREE>
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+{
+    pub fn finalize_keyset(
+        self,
+        parameters: ClassicPBSParameters,
+    ) -> PrivateKeySet<EXTENSION_DEGREE> {
         let lwe_compute_data = self
             .lwe_secret_key_share
             .data
@@ -344,8 +351,11 @@ impl GenericPrivateKeySet<Z128> {
     }
 }
 
-impl GenericPrivateKeySet<Z64> {
-    pub fn finalize_keyset(self, parameters: ClassicPBSParameters) -> PrivateKeySet {
+impl<const EXTENSION_DEGREE: usize> GenericPrivateKeySet<Z64, EXTENSION_DEGREE> {
+    pub fn finalize_keyset(
+        self,
+        parameters: ClassicPBSParameters,
+    ) -> PrivateKeySet<EXTENSION_DEGREE> {
         PrivateKeySet {
             lwe_encryption_secret_key_share: self.lwe_encryption_secret_key_share,
             lwe_compute_secret_key_share: self.lwe_secret_key_share,
@@ -384,18 +394,22 @@ async fn sample_seed<
 ///Generates the lwe private key share and associated public key
 fn generate_lwe_key_shares<
     Z: BaseRing,
-    P: DKGPreprocessing<ResiduePolyF8<Z>> + ?Sized,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
     Gen: ByteRandomGenerator,
+    const EXTENSION_DEGREE: usize,
 >(
     params: &DKGParams,
-    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen>,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     session: &mut S,
     preprocessing: &mut P,
-) -> anyhow::Result<(LweSecretKeyShare<Z>, LweCompactPublicKeyShare<Z>)>
+) -> anyhow::Result<(
+    LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    LweCompactPublicKeyShare<Z, EXTENSION_DEGREE>,
+)>
 where
-    ResiduePolyF8<Z>: ErrorCorrect,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let params = params.get_params_basics_handle();
     let my_role = session.my_role()?;
@@ -429,18 +443,22 @@ where
 #[instrument(skip( mpc_encryption_rng, session, preprocessing), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity()))]
 async fn generate_lwe_private_public_key_pair<
     Z: BaseRing,
-    P: DKGPreprocessing<ResiduePolyF8<Z>> + ?Sized,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
     Gen: ByteRandomGenerator,
+    const EXTENSION_DEGREE: usize,
 >(
     params: &DKGParams,
-    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen>,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     session: &mut S,
     preprocessing: &mut P,
-) -> anyhow::Result<(LweSecretKeyShare<Z>, LweCompactPublicKey<Vec<u64>>)>
+) -> anyhow::Result<(
+    LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    LweCompactPublicKey<Vec<u64>>,
+)>
 where
-    ResiduePolyF8<Z>: ErrorCorrect,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let (lwe_secret_key_share, lwe_public_key_shared) =
         generate_lwe_key_shares(params, mpc_encryption_rng, session, preprocessing)?;
@@ -457,20 +475,21 @@ where
 #[instrument(skip(input_lwe_sk, output_lwe_sk, mpc_encryption_rng, session, preprocessing), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity()))]
 async fn generate_key_switch_key<
     Z: BaseRing,
-    P: DKGPreprocessing<ResiduePolyF8<Z>> + ?Sized,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
     Gen: ByteRandomGenerator,
+    const EXTENSION_DEGREE: usize,
 >(
-    input_lwe_sk: &LweSecretKeyShare<Z>,
-    output_lwe_sk: &LweSecretKeyShare<Z>,
+    input_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    output_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
     params: &KSKParams,
-    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen>,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     session: &mut S,
     preprocessing: &mut P,
 ) -> anyhow::Result<LweKeyswitchKey<Vec<u64>>>
 where
-    ResiduePolyF8<Z>: ErrorCorrect,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let my_role = session.my_role()?;
     tracing::info!("(Party {my_role}) Generating KSK...Start");
@@ -500,21 +519,22 @@ where
 #[instrument(skip(glwe_secret_key_share, lwe_secret_key_share, mpc_encryption_rng, session, preprocessing), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity()))]
 async fn generate_bootstrap_key<
     Z: BaseRing,
-    P: DKGPreprocessing<ResiduePolyF8<Z>> + ?Sized,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
     Gen: ByteRandomGenerator,
     Scalar: UnsignedInteger,
+    const EXTENSION_DEGREE: usize,
 >(
-    glwe_secret_key_share: &GlweSecretKeyShare<Z>,
-    lwe_secret_key_share: &LweSecretKeyShare<Z>,
+    glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    lwe_secret_key_share: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
     params: BKParams,
-    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen>,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     session: &mut S,
     preprocessing: &mut P,
 ) -> anyhow::Result<LweBootstrapKey<Vec<Scalar>>>
 where
-    ResiduePolyF8<Z>: ErrorCorrect,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let my_role = session.my_role()?;
     //First sample the noise
@@ -552,21 +572,22 @@ where
 
 async fn generate_compression_decompression_keys<
     Z: BaseRing,
-    P: DKGPreprocessing<ResiduePolyF8<Z>> + ?Sized,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
     Gen: ByteRandomGenerator,
+    const EXTENSION_DEGREE: usize,
 >(
-    private_glwe_compute_key_as_lwe: &LweSecretKeyShare<Z>,
-    private_glwe_compute_key: &GlweSecretKeyShare<Z>,
-    private_compression_key: &CompressionPrivateKeyShares<Z>,
+    private_glwe_compute_key_as_lwe: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    private_glwe_compute_key: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    private_compression_key: &CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>,
     params: DistributedCompressionParameters,
-    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen>,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     session: &mut S,
     preprocessing: &mut P,
 ) -> anyhow::Result<(CompressionKey, DecompressionKey)>
 where
-    ResiduePolyF8<Z>: ErrorCorrect,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let noise_vec = preprocessing
         .next_noise_vec(params.ksk_num_noise, params.ksk_noisebound)?
@@ -632,24 +653,28 @@ where
 /// is the PRF seed/key and it is randomly sampled and discarded.
 pub async fn distributed_homprf_bsk_gen<
     Z: BaseRing,
-    P: DKGPreprocessing<ResiduePolyF8<Z>> + ?Sized,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
     Scalar: UnsignedInteger,
+    const EXTENSION_DEGREE: usize,
 >(
-    glwe_secret_key_share: &GlweSecretKeyShare<Z>,
+    glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
     params: &DKGParams,
     preprocessing: &mut P,
     session: &mut S,
 ) -> anyhow::Result<LweBootstrapKey<Vec<Scalar>>>
 where
-    ResiduePolyF8<Z>: ErrorCorrect,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let params_basics_handle = params.get_params_basics_handle();
     let seed = sample_seed(params_basics_handle.get_sec(), session, preprocessing).await?;
     //Init the XOF with the seed computed above
-    let mut mpc_encryption_rng =
-        MPCEncryptionRandomGenerator::<Z, SoftwareRandomGenerator>::new_from_seed(seed);
+    let mut mpc_encryption_rng = MPCEncryptionRandomGenerator::<
+        Z,
+        SoftwareRandomGenerator,
+        EXTENSION_DEGREE,
+    >::new_from_seed(seed);
 
     // the `lwe_secret_key_share` is the PRF key/seed
     // we don't need the public component
@@ -692,21 +717,25 @@ async fn distributed_keygen<
     Z: BaseRing,
     R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
-    P: DKGPreprocessing<ResiduePolyF8<Z>> + Send + ?Sized,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
+    const EXTENSION_DEGREE: usize,
 >(
     session: &mut S,
     preprocessing: &mut P,
     params: DKGParams,
-) -> anyhow::Result<(RawPubKeySet, GenericPrivateKeySet<Z>)>
+) -> anyhow::Result<(RawPubKeySet, GenericPrivateKeySet<Z, EXTENSION_DEGREE>)>
 where
-    ResiduePolyF8<Z>: ErrorCorrect,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let params_basics_handle = params.get_params_basics_handle();
     let my_role = session.my_role()?;
     let seed = sample_seed(params_basics_handle.get_sec(), session, preprocessing).await?;
     //Init the XOF with the seed computed above
-    let mut mpc_encryption_rng =
-        MPCEncryptionRandomGenerator::<Z, SoftwareRandomGenerator>::new_from_seed(seed);
+    let mut mpc_encryption_rng = MPCEncryptionRandomGenerator::<
+        Z,
+        SoftwareRandomGenerator,
+        EXTENSION_DEGREE,
+    >::new_from_seed(seed);
 
     //Generate the shared LWE hat secret key and corresponding public key
     let (lwe_hat_secret_key_share, lwe_public_key) = generate_lwe_private_public_key_pair(
@@ -888,12 +917,16 @@ where
 pub async fn distributed_keygen_z64<
     R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
-    P: DKGPreprocessing<ResiduePolyF8Z64> + Send + ?Sized,
+    P: DKGPreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send + ?Sized,
+    const EXTENSION_DEGREE: usize,
 >(
     session: &mut S,
     preprocessing: &mut P,
     params: DKGParams,
-) -> anyhow::Result<(FhePubKeySet, PrivateKeySet)> {
+) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
+where
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+{
     if let DKGParams::WithSnS(_) = params {
         return Err(anyhow_error_and_log(
             "Can not generate Switch and Squash key with ResiduePolyF8Z64".to_string(),
@@ -913,12 +946,17 @@ pub async fn distributed_keygen_z64<
 pub async fn distributed_keygen_z128<
     R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
-    P: DKGPreprocessing<ResiduePolyF8Z128> + Send + ?Sized,
+    P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
+    const EXTENSION_DEGREE: usize,
 >(
     session: &mut S,
     preprocessing: &mut P,
     params: DKGParams,
-) -> anyhow::Result<(FhePubKeySet, PrivateKeySet)> {
+) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+{
     let (pub_key_set, priv_key_set) = distributed_keygen(session, preprocessing, params).await?;
     Ok((
         pub_key_set.to_pubkeyset(params),
@@ -969,7 +1007,7 @@ pub mod tests {
         algebra::{
             base_ring::Z128,
             galois_rings::degree_8::{ResiduePolyF8, ResiduePolyF8Z128},
-            structure_traits::{BaseRing, ErrorCorrect},
+            structure_traits::{BaseRing, ErrorCorrect, Ring},
         },
         execution::{
             online::preprocessing::dummy::DummyPreprocessing,
@@ -1416,7 +1454,12 @@ pub mod tests {
         };
 
         // Sync network because we also init the PRSS in the task
-        let results = execute_protocol_small::<ResiduePolyF8Z128, _, _>(
+        let results = execute_protocol_small::<
+            _,
+            _,
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >(
             num_parties,
             threshold as u8,
             None,
@@ -1456,7 +1499,7 @@ pub mod tests {
             let mut large_preproc = DummyPreprocessing::new(0_u64, session.clone());
 
             let (pk, sk) =
-                distributed_keygen::<Z128, _, _, _>(&mut session, &mut large_preproc, params)
+                distributed_keygen::<Z128, _, _, _, 8>(&mut session, &mut large_preproc, params)
                     .await
                     .unwrap();
 
@@ -1474,7 +1517,12 @@ pub mod tests {
         //Async because the preprocessing is Dummy
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let results = execute_protocol_large::<ResiduePolyF8Z128, _, _>(
+        let results = execute_protocol_large::<
+            _,
+            _,
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >(
             num_parties,
             threshold,
             None,
@@ -1502,6 +1550,8 @@ pub mod tests {
         num_parties: usize,
         threshold: usize,
     ) -> LweBootstrapKey<Vec<u64>> {
+        use crate::algebra::structure_traits::Ring;
+
         let mut task = |mut session: LargeSession| async move {
             // assume private key shares exist
             // TODO how to pass it into this closure nicely?
@@ -1517,7 +1567,7 @@ pub mod tests {
                 data: share_ref.to_vec(),
                 polynomial_size: PolynomialSize(share_ref.len()),
             };
-            let bsk = distributed_homprf_bsk_gen::<_, _, _, _, u64>(
+            let bsk = distributed_homprf_bsk_gen::<_, _, _, _, u64, 8>(
                 &share,
                 &params,
                 &mut large_preproc,
@@ -1531,7 +1581,12 @@ pub mod tests {
         //Async because the preprocessing is Dummy
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let results = execute_protocol_large::<ResiduePolyF8Z128, _, _>(
+        let results = execute_protocol_large::<
+            _,
+            _,
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >(
             num_parties,
             threshold,
             None,

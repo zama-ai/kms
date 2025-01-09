@@ -44,30 +44,32 @@ use tfhe_versionable::VersionsDispatch;
 use zeroize::Zeroize;
 
 /// Represents an element Z_{2^bitlen}[X]/F[X]
-/// for F[X] of given DEGREE.
+/// for F[X] of given EXTENSION_DEGREE.
 /// Corresponding irreducible polynomial are defined in `galois_fields`
 ///
 /// This is also the 'value' of a single ShamirShare.
 #[derive(Clone, Copy, PartialEq, Hash, Eq, Debug, Zeroize, Versionize)]
 #[versionize(ResiduePolyVersioned)]
-pub struct ResiduePoly<Z, const DEGREE: usize> {
-    pub coefs: [Z; DEGREE], // TODO(Daniel) can this be a slice instead of an array?
+pub struct ResiduePoly<Z, const EXTENSION_DEGREE: usize> {
+    pub coefs: [Z; EXTENSION_DEGREE], // TODO(Daniel) can this be a slice instead of an array?
 }
 
-impl<Z: Default + Copy, const DEGREE: usize> Default for ResiduePoly<Z, DEGREE> {
+impl<Z: Default + Copy, const EXTENSION_DEGREE: usize> Default
+    for ResiduePoly<Z, EXTENSION_DEGREE>
+{
     fn default() -> Self {
         Self {
-            coefs: [Z::default(); DEGREE],
+            coefs: [Z::default(); EXTENSION_DEGREE],
         }
     }
 }
 
-impl<Z: Serialize, const DEGREE: usize> Serialize for ResiduePoly<Z, DEGREE> {
+impl<Z: Serialize, const EXTENSION_DEGREE: usize> Serialize for ResiduePoly<Z, EXTENSION_DEGREE> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        let mut s = serializer.serialize_tuple(DEGREE)?;
+        let mut s = serializer.serialize_tuple(EXTENSION_DEGREE)?;
         for coef in self.coefs.iter() {
             s.serialize_element(coef)?;
         }
@@ -75,23 +77,27 @@ impl<Z: Serialize, const DEGREE: usize> Serialize for ResiduePoly<Z, DEGREE> {
     }
 }
 
-impl<'a, Z: Deserialize<'a>, const DEGREE: usize> Deserialize<'a> for ResiduePoly<Z, DEGREE> {
+impl<'a, Z: Deserialize<'a>, const EXTENSION_DEGREE: usize> Deserialize<'a>
+    for ResiduePoly<Z, EXTENSION_DEGREE>
+{
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'a>,
     {
-        let coefs =
-            deserializer.deserialize_tuple(DEGREE, ArrayVisitor::<Z, DEGREE>(PhantomData))?;
+        let coefs = deserializer.deserialize_tuple(
+            EXTENSION_DEGREE,
+            ArrayVisitor::<Z, EXTENSION_DEGREE>(PhantomData),
+        )?;
         Ok(Self { coefs })
     }
 }
 
 #[derive(Serialize, Deserialize, Clone, VersionsDispatch)]
-pub enum ResiduePolyVersioned<Z, const DEGREE: usize> {
-    V0(ResiduePoly<Z, DEGREE>),
+pub enum ResiduePolyVersioned<Z, const EXTENSION_DEGREE: usize> {
+    V0(ResiduePoly<Z, EXTENSION_DEGREE>),
 }
 
-impl<Z: BaseRing, const DEGREE: usize> FromU128 for ResiduePoly<Z, DEGREE> {
+impl<Z: BaseRing, const EXTENSION_DEGREE: usize> FromU128 for ResiduePoly<Z, EXTENSION_DEGREE> {
     fn from_u128(value: u128) -> Self {
         Self::from_scalar(Z::from_u128(value))
     }
@@ -99,21 +105,21 @@ impl<Z: BaseRing, const DEGREE: usize> FromU128 for ResiduePoly<Z, DEGREE> {
 
 //Cant do TryInto with generics, see https://github.com/rust-lang/rust/issues/50133#issuecomment-646908391
 pub struct TryFromWrapper<Z>(pub Z);
-impl<Z: Ring + std::fmt::Display, const DEGREE: usize> TryFrom<ResiduePoly<Z, DEGREE>>
-    for TryFromWrapper<Z>
+impl<Z: Ring + std::fmt::Display, const EXTENSION_DEGREE: usize>
+    TryFrom<ResiduePoly<Z, EXTENSION_DEGREE>> for TryFromWrapper<Z>
 {
     type Error = anyhow::Error;
-    fn try_from(poly: ResiduePoly<Z, DEGREE>) -> Result<TryFromWrapper<Z>, Self::Error> {
+    fn try_from(poly: ResiduePoly<Z, EXTENSION_DEGREE>) -> Result<TryFromWrapper<Z>, Self::Error> {
         Ok(TryFromWrapper(poly.to_scalar()?))
     }
 }
 
-impl<Z: Clone, const DEGREE: usize> ResiduePoly<Z, DEGREE> {
+impl<Z: Clone, const EXTENSION_DEGREE: usize> ResiduePoly<Z, EXTENSION_DEGREE> {
     pub fn from_scalar(x: Z) -> Self
     where
         Z: Zero,
     {
-        let mut coefs = [Z::ZERO; DEGREE];
+        let mut coefs = [Z::ZERO; EXTENSION_DEGREE];
         coefs[0] = x;
         ResiduePoly { coefs }
     }
@@ -122,7 +128,7 @@ impl<Z: Clone, const DEGREE: usize> ResiduePoly<Z, DEGREE> {
     where
         Z: Zero + PartialEq + Display + Copy,
     {
-        for i in 1..DEGREE {
+        for i in 1..EXTENSION_DEGREE {
             if self.coefs[i] != Z::ZERO {
                 return Err(anyhow_error_and_log(format!(
                     "Higher coefficient must be zero but was {}",
@@ -133,14 +139,14 @@ impl<Z: Clone, const DEGREE: usize> ResiduePoly<Z, DEGREE> {
         Ok(self.coefs[0])
     }
 
-    pub fn from_array(coefs: [Z; DEGREE]) -> Self {
+    pub fn from_array(coefs: [Z; EXTENSION_DEGREE]) -> Self {
         ResiduePoly { coefs }
     }
 
     pub fn from_vec(coefs: Vec<Z>) -> anyhow::Result<Self> {
-        if coefs.len() != DEGREE {
+        if coefs.len() != EXTENSION_DEGREE {
             return Err(anyhow_error_and_log(format!(
-                "Error: required {DEGREE} coefficients, but got {}",
+                "Error: required {EXTENSION_DEGREE} coefficients, but got {}",
                 coefs.len()
             )));
         }
@@ -170,9 +176,11 @@ impl<Z: Clone, const DEGREE: usize> ResiduePoly<Z, DEGREE> {
     }
 }
 
-impl<Z: Zero + Sample + Copy, const DEGREE: usize> Sample for ResiduePoly<Z, DEGREE> {
+impl<Z: Zero + Sample + Copy, const EXTENSION_DEGREE: usize> Sample
+    for ResiduePoly<Z, EXTENSION_DEGREE>
+{
     fn sample<R: Rng + CryptoRng>(rng: &mut R) -> Self {
-        let mut coefs = [Z::ZERO; DEGREE];
+        let mut coefs = [Z::ZERO; EXTENSION_DEGREE];
         for coef in coefs.iter_mut() {
             *coef = Z::sample(rng);
         }
@@ -180,43 +188,47 @@ impl<Z: Zero + Sample + Copy, const DEGREE: usize> Sample for ResiduePoly<Z, DEG
     }
 }
 
-impl<Z: Zero + Clone, const DEGREE: usize> Zero for ResiduePoly<Z, DEGREE> {
+impl<Z: Zero + Clone, const EXTENSION_DEGREE: usize> Zero for ResiduePoly<Z, EXTENSION_DEGREE> {
     const ZERO: Self = ResiduePoly {
-        coefs: [Z::ZERO; DEGREE],
+        coefs: [Z::ZERO; EXTENSION_DEGREE],
     };
 }
 
-impl<Z: One + Zero + Copy, const DEGREE: usize> One for ResiduePoly<Z, DEGREE> {
+impl<Z: One + Zero + Copy, const EXTENSION_DEGREE: usize> One for ResiduePoly<Z, EXTENSION_DEGREE> {
     const ONE: Self = {
-        let mut coefs = [Z::ZERO; DEGREE];
+        let mut coefs = [Z::ZERO; EXTENSION_DEGREE];
         coefs[0] = Z::ONE;
         ResiduePoly { coefs }
     };
 }
 
-impl<Z: One + Zero + ZConsts + Copy, const DEGREE: usize> ZConsts for ResiduePoly<Z, DEGREE> {
+impl<Z: One + Zero + ZConsts + Copy, const EXTENSION_DEGREE: usize> ZConsts
+    for ResiduePoly<Z, EXTENSION_DEGREE>
+{
     const TWO: Self = {
-        let mut coefs = [Z::ZERO; DEGREE];
+        let mut coefs = [Z::ZERO; EXTENSION_DEGREE];
         coefs[0] = Z::TWO;
         ResiduePoly { coefs }
     };
 
     const THREE: Self = {
-        let mut coefs = [Z::ZERO; DEGREE];
+        let mut coefs = [Z::ZERO; EXTENSION_DEGREE];
         coefs[0] = Z::THREE;
         ResiduePoly { coefs }
     };
 
     const MAX: Self = {
-        let mut coefs = [Z::ZERO; DEGREE];
+        let mut coefs = [Z::ZERO; EXTENSION_DEGREE];
         coefs[0] = Z::MAX;
         ResiduePoly { coefs }
     };
 }
 
-impl<Z: Zero + Copy + AddAssign, const DEGREE: usize> Sum<Self> for ResiduePoly<Z, DEGREE> {
+impl<Z: Zero + Copy + AddAssign, const EXTENSION_DEGREE: usize> Sum<Self>
+    for ResiduePoly<Z, EXTENSION_DEGREE>
+{
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
-        let mut coefs = [Z::ZERO; DEGREE];
+        let mut coefs = [Z::ZERO; EXTENSION_DEGREE];
         for poly in iter {
             for (i, coef) in coefs.iter_mut().enumerate() {
                 *coef += poly.coefs[i];
@@ -227,43 +239,45 @@ impl<Z: Zero + Copy + AddAssign, const DEGREE: usize> Sum<Self> for ResiduePoly<
     }
 }
 
-impl<Z, const DEGREE: usize> Add<Self> for ResiduePoly<Z, DEGREE>
+impl<Z, const EXTENSION_DEGREE: usize> Add<Self> for ResiduePoly<Z, EXTENSION_DEGREE>
 where
     Z: Copy,
     Z: AddAssign<Z>,
 {
     type Output = Self;
-    fn add(mut self, other: ResiduePoly<Z, DEGREE>) -> Self::Output {
-        for i in 0..DEGREE {
+    fn add(mut self, other: ResiduePoly<Z, EXTENSION_DEGREE>) -> Self::Output {
+        for i in 0..EXTENSION_DEGREE {
             self.coefs[i] += other.coefs[i];
         }
         self
     }
 }
 
-impl<Z, const DEGREE: usize> AddAssign<Self> for ResiduePoly<Z, DEGREE>
+impl<Z, const EXTENSION_DEGREE: usize> AddAssign<Self> for ResiduePoly<Z, EXTENSION_DEGREE>
 where
     Z: AddAssign + Copy,
 {
     fn add_assign(&mut self, other: Self) {
-        for i in 0..DEGREE {
+        for i in 0..EXTENSION_DEGREE {
             self.coefs[i] += other.coefs[i];
         }
     }
 }
 
-impl<Z, const DEGREE: usize> AddAssign<&Self> for ResiduePoly<Z, DEGREE>
+impl<Z, const EXTENSION_DEGREE: usize> AddAssign<&Self> for ResiduePoly<Z, EXTENSION_DEGREE>
 where
     Z: AddAssign + Copy,
 {
-    fn add_assign(&mut self, other: &ResiduePoly<Z, DEGREE>) {
-        for i in 0..DEGREE {
+    fn add_assign(&mut self, other: &ResiduePoly<Z, EXTENSION_DEGREE>) {
+        for i in 0..EXTENSION_DEGREE {
             self.coefs[i] += other.coefs[i];
         }
     }
 }
 
-impl<Z: Neg<Output = Z> + Clone, const DEGREE: usize> Neg for ResiduePoly<Z, DEGREE> {
+impl<Z: Neg<Output = Z> + Clone, const EXTENSION_DEGREE: usize> Neg
+    for ResiduePoly<Z, EXTENSION_DEGREE>
+{
     type Output = Self;
     fn neg(self) -> Self::Output {
         ResiduePoly {
@@ -272,60 +286,60 @@ impl<Z: Neg<Output = Z> + Clone, const DEGREE: usize> Neg for ResiduePoly<Z, DEG
     }
 }
 
-impl<Z, const DEGREE: usize> Sub<Self> for ResiduePoly<Z, DEGREE>
+impl<Z, const EXTENSION_DEGREE: usize> Sub<Self> for ResiduePoly<Z, EXTENSION_DEGREE>
 where
     Z: Copy,
     Z: SubAssign<Z>,
 {
     type Output = Self;
-    fn sub(mut self, other: ResiduePoly<Z, DEGREE>) -> Self::Output {
-        for i in 0..DEGREE {
+    fn sub(mut self, other: ResiduePoly<Z, EXTENSION_DEGREE>) -> Self::Output {
+        for i in 0..EXTENSION_DEGREE {
             self.coefs[i] -= other.coefs[i];
         }
         ResiduePoly { coefs: self.coefs }
     }
 }
 
-impl<Z, const DEGREE: usize> SubAssign<Self> for ResiduePoly<Z, DEGREE>
+impl<Z, const EXTENSION_DEGREE: usize> SubAssign<Self> for ResiduePoly<Z, EXTENSION_DEGREE>
 where
     Z: SubAssign + Copy,
 {
-    fn sub_assign(&mut self, other: ResiduePoly<Z, DEGREE>) {
-        for i in 0..DEGREE {
+    fn sub_assign(&mut self, other: ResiduePoly<Z, EXTENSION_DEGREE>) {
+        for i in 0..EXTENSION_DEGREE {
             self.coefs[i] -= other.coefs[i];
         }
     }
 }
 
-impl<Z, const DEGREE: usize> Add<&Self> for ResiduePoly<Z, DEGREE>
+impl<Z, const EXTENSION_DEGREE: usize> Add<&Self> for ResiduePoly<Z, EXTENSION_DEGREE>
 where
     Z: Copy,
     Z: AddAssign<Z>,
 {
     type Output = Self;
-    fn add(mut self, other: &ResiduePoly<Z, DEGREE>) -> Self::Output {
-        for i in 0..DEGREE {
+    fn add(mut self, other: &ResiduePoly<Z, EXTENSION_DEGREE>) -> Self::Output {
+        for i in 0..EXTENSION_DEGREE {
             self.coefs[i] += other.coefs[i];
         }
         ResiduePoly { coefs: self.coefs }
     }
 }
 
-impl<Z, const DEGREE: usize> Sub<&Self> for ResiduePoly<Z, DEGREE>
+impl<Z, const EXTENSION_DEGREE: usize> Sub<&Self> for ResiduePoly<Z, EXTENSION_DEGREE>
 where
     Z: Copy,
     Z: SubAssign<Z>,
 {
     type Output = Self;
-    fn sub(mut self, other: &ResiduePoly<Z, DEGREE>) -> Self::Output {
-        for i in 0..DEGREE {
+    fn sub(mut self, other: &ResiduePoly<Z, EXTENSION_DEGREE>) -> Self::Output {
+        for i in 0..EXTENSION_DEGREE {
             self.coefs[i] -= other.coefs[i];
         }
         ResiduePoly { coefs: self.coefs }
     }
 }
 
-impl<Z, const DEGREE: usize> Add<Z> for ResiduePoly<Z, DEGREE>
+impl<Z, const EXTENSION_DEGREE: usize> Add<Z> for ResiduePoly<Z, EXTENSION_DEGREE>
 where
     Z: AddAssign<Z> + Clone,
 {
@@ -337,7 +351,7 @@ where
     }
 }
 
-impl<Z, const DEGREE: usize> Mul<Z> for ResiduePoly<Z, DEGREE>
+impl<Z, const EXTENSION_DEGREE: usize> Mul<Z> for ResiduePoly<Z, EXTENSION_DEGREE>
 where
     Z: Copy,
     Z: Mul<Z, Output = Z>,
@@ -350,12 +364,12 @@ where
     }
 }
 
-impl<Z, const DEGREE: usize> Mul<Z> for &ResiduePoly<Z, DEGREE>
+impl<Z, const EXTENSION_DEGREE: usize> Mul<Z> for &ResiduePoly<Z, EXTENSION_DEGREE>
 where
     Z: Copy,
     Z: Mul<Z, Output = Z>,
 {
-    type Output = ResiduePoly<Z, DEGREE>;
+    type Output = ResiduePoly<Z, EXTENSION_DEGREE>;
     fn mul(self, other: Z) -> Self::Output {
         ResiduePoly {
             coefs: self.coefs.map(|x| x * other),
@@ -363,12 +377,12 @@ where
     }
 }
 
-impl<Z, const DEGREE: usize> Add<Z> for &ResiduePoly<Z, DEGREE>
+impl<Z, const EXTENSION_DEGREE: usize> Add<Z> for &ResiduePoly<Z, EXTENSION_DEGREE>
 where
     Z: Copy,
     Z: AddAssign<Z>,
 {
-    type Output = ResiduePoly<Z, DEGREE>;
+    type Output = ResiduePoly<Z, EXTENSION_DEGREE>;
     fn add(self, other: Z) -> Self::Output {
         // add const only to free term:
         let mut coefs = self.coefs;
@@ -379,7 +393,7 @@ where
 
 /// Compute R << i which translates to left shifting by i each coefficient of the ResiduePoly
 /// If i >= Z::CHAR_LOG2 then it computes R << (i % Z::CHAR_LOG2)
-impl<Z, const DEGREE: usize> Shl<usize> for ResiduePoly<Z, DEGREE>
+impl<Z, const EXTENSION_DEGREE: usize> Shl<usize> for ResiduePoly<Z, EXTENSION_DEGREE>
 where
     Z: Ring + ZConsts,
     Z: std::ops::Shl<usize, Output = Z>,
@@ -399,14 +413,15 @@ pub trait LutMulReduction<Z> {
     fn reduce_mul(lower_coefs: &[Z]) -> Self;
 }
 
-impl<Z: BaseRing, const DEGREE: usize> LutMulReduction<Z> for ResiduePoly<Z, DEGREE>
+impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LutMulReduction<Z>
+    for ResiduePoly<Z, EXTENSION_DEGREE>
 where
-    ResiduePoly<Z, DEGREE>: ReductionTable<Z, DEGREE>,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ReductionTable<Z, EXTENSION_DEGREE>,
 {
     fn reduce_mul(coefs: &[Z]) -> Self {
-        let mut res = Self::from_array(coefs[0..DEGREE].try_into().unwrap());
-        for (i, coef) in coefs.iter().enumerate().skip(DEGREE) {
-            for j in 0..DEGREE {
+        let mut res = Self::from_array(coefs[0..EXTENSION_DEGREE].try_into().unwrap());
+        for (i, coef) in coefs.iter().enumerate().skip(EXTENSION_DEGREE) {
+            for j in 0..EXTENSION_DEGREE {
                 res.coefs[j] += *Self::REDUCTION_TABLES.entry(i, j) * *coef;
             }
         }
@@ -414,23 +429,23 @@ where
     }
 }
 
-pub trait ReductionTable<Z: Clone, const DEGREE: usize> {
-    const REDUCTION_TABLES: ReductionTables<Z, DEGREE>;
+pub trait ReductionTable<Z: Clone, const EXTENSION_DEGREE: usize> {
+    const REDUCTION_TABLES: ReductionTables<Z, EXTENSION_DEGREE>;
 }
 
 /// Precomputes reductions of x^8, x^9, ...x^14 to help us in reducing polynomials faster
-pub struct ReductionTables<Z: Clone, const DEGREE: usize> {
-    pub reduced: [ResiduePoly<Z, DEGREE>; DEGREE],
+pub struct ReductionTables<Z: Clone, const EXTENSION_DEGREE: usize> {
+    pub reduced: [ResiduePoly<Z, EXTENSION_DEGREE>; EXTENSION_DEGREE],
 }
 
-impl<Z: Clone, const DEGREE: usize> ReductionTables<Z, DEGREE> {
+impl<Z: Clone, const EXTENSION_DEGREE: usize> ReductionTables<Z, EXTENSION_DEGREE> {
     #[inline(always)]
     pub fn entry(&self, deg: usize, idx_coef: usize) -> &Z {
-        &self.reduced[deg - DEGREE].coefs[idx_coef]
+        &self.reduced[deg - EXTENSION_DEGREE].coefs[idx_coef]
     }
 }
 
-impl<Z: BaseRing, const DEGREE: usize> ResiduePoly<Z, DEGREE> {
+impl<Z: BaseRing, const EXTENSION_DEGREE: usize> ResiduePoly<Z, EXTENSION_DEGREE> {
     pub fn multiple_pow2(&self, exp: usize) -> bool {
         assert!(exp <= Z::BIT_LENGTH);
         if exp == Z::BIT_LENGTH {
@@ -453,7 +468,7 @@ impl<Z: BaseRing, const DEGREE: usize> ResiduePoly<Z, DEGREE> {
     }
 }
 
-impl<const DEGREE: usize> Derive for ResiduePoly<Z128, DEGREE>
+impl<const EXTENSION_DEGREE: usize> Derive for ResiduePoly<Z128, EXTENSION_DEGREE>
 where
     Self: QuotientMaximalIdeal,
 {
@@ -498,7 +513,7 @@ where
     const SIZE_EXCEPTIONAL_SET: usize = Self::QUOTIENT_OUTPUT_SIZE;
 }
 
-impl<const DEGREE: usize> Derive for ResiduePoly<Z64, DEGREE>
+impl<const EXTENSION_DEGREE: usize> Derive for ResiduePoly<Z64, EXTENSION_DEGREE>
 where
     Self: QuotientMaximalIdeal,
 {
@@ -543,17 +558,17 @@ where
     const SIZE_EXCEPTIONAL_SET: usize = Self::QUOTIENT_OUTPUT_SIZE;
 }
 
-impl<Z: Ring, const DEGREE: usize> RingEmbed for ResiduePoly<Z, DEGREE> {
+impl<Z: Ring, const EXTENSION_DEGREE: usize> RingEmbed for ResiduePoly<Z, EXTENSION_DEGREE> {
     fn embed_exceptional_set(idx: usize) -> anyhow::Result<Self> {
-        if idx >= (1 << DEGREE) {
+        if idx >= (1 << EXTENSION_DEGREE) {
             return Err(anyhow_error_and_log(format!(
                 "Value {idx} is too large to be embedded!"
             )));
         }
 
-        let mut coefs: [Z; DEGREE] = [Z::ZERO; DEGREE];
+        let mut coefs: [Z; EXTENSION_DEGREE] = [Z::ZERO; EXTENSION_DEGREE];
 
-        for (i, val) in coefs.iter_mut().enumerate().take(DEGREE) {
+        for (i, val) in coefs.iter_mut().enumerate().take(EXTENSION_DEGREE) {
             let b = (idx >> i) & 1;
             if b > 0 {
                 *val = Z::ONE;
@@ -564,9 +579,9 @@ impl<Z: Ring, const DEGREE: usize> RingEmbed for ResiduePoly<Z, DEGREE> {
     }
 }
 
-impl<Z: BaseRing, const DEGREE: usize> Syndrome for ResiduePoly<Z, DEGREE>
+impl<Z: BaseRing, const EXTENSION_DEGREE: usize> Syndrome for ResiduePoly<Z, EXTENSION_DEGREE>
 where
-    ResiduePoly<Z, DEGREE>: QuotientMaximalIdeal,
+    ResiduePoly<Z, EXTENSION_DEGREE>: QuotientMaximalIdeal,
 {
     //NIST: Level Zero Operation (I believe this is is SynDecode + last step of correction)
     // decode a ring syndrome into an error vector, containing the error magnitudes at the respective indices
@@ -664,9 +679,9 @@ where
     }
 }
 
-impl<Z: BaseRing, const DEGREE: usize> Invert for ResiduePoly<Z, DEGREE>
+impl<Z: BaseRing, const EXTENSION_DEGREE: usize> Invert for ResiduePoly<Z, EXTENSION_DEGREE>
 where
-    ResiduePoly<Z, DEGREE>: QuotientMaximalIdeal,
+    ResiduePoly<Z, EXTENSION_DEGREE>: QuotientMaximalIdeal,
 {
     /// invert and lift an Integer to the large Ring
     fn invert(self) -> anyhow::Result<Self> {
@@ -689,9 +704,9 @@ where
     }
 }
 
-impl<Z: BaseRing, const DEGREE: usize> ResiduePoly<Z, DEGREE>
+impl<Z: BaseRing, const EXTENSION_DEGREE: usize> ResiduePoly<Z, EXTENSION_DEGREE>
 where
-    ResiduePoly<Z, DEGREE>: QuotientMaximalIdeal,
+    ResiduePoly<Z, EXTENSION_DEGREE>: QuotientMaximalIdeal,
 {
     pub fn shamir_bit_lift(
         x: &ShamirFieldPoly<<Self as QuotientMaximalIdeal>::QuotientOutput>,
@@ -706,9 +721,9 @@ where
     }
 }
 
-impl<Z: BaseRing, const DEGREE: usize> Solve for ResiduePoly<Z, DEGREE>
+impl<Z: BaseRing, const EXTENSION_DEGREE: usize> Solve for ResiduePoly<Z, EXTENSION_DEGREE>
 where
-    ResiduePoly<Z, DEGREE>: Solve1,
+    ResiduePoly<Z, EXTENSION_DEGREE>: Solve1,
     Self: Mul<Self, Output = Self>,
 {
     //NIST: Level Zero Operation
@@ -749,10 +764,10 @@ where
 }
 
 #[cfg(feature = "non-wasm")]
-impl<const DEGREE: usize> PRSSConversions for ResiduePoly<Z128, DEGREE> {
+impl<const EXTENSION_DEGREE: usize> PRSSConversions for ResiduePoly<Z128, EXTENSION_DEGREE> {
     fn from_u128_chunks(coefs: Vec<u128>) -> Self {
-        assert_eq!(coefs.len(), DEGREE);
-        let mut poly_coefs = [Z128::ZERO; DEGREE];
+        assert_eq!(coefs.len(), EXTENSION_DEGREE);
+        let mut poly_coefs = [Z128::ZERO; EXTENSION_DEGREE];
         for (idx, coef) in coefs.into_iter().enumerate() {
             poly_coefs[idx] = Wrapping(coef);
         }
@@ -764,10 +779,10 @@ impl<const DEGREE: usize> PRSSConversions for ResiduePoly<Z128, DEGREE> {
 }
 
 #[cfg(feature = "non-wasm")]
-impl<const DEGREE: usize> PRSSConversions for ResiduePoly<Z64, DEGREE> {
+impl<const EXTENSION_DEGREE: usize> PRSSConversions for ResiduePoly<Z64, EXTENSION_DEGREE> {
     fn from_u128_chunks(coefs: Vec<u128>) -> Self {
-        assert_eq!(coefs.len(), DEGREE);
-        let mut poly_coefs = [Z64::ZERO; DEGREE];
+        assert_eq!(coefs.len(), EXTENSION_DEGREE);
+        let mut poly_coefs = [Z64::ZERO; EXTENSION_DEGREE];
         for (idx, coef) in coefs.into_iter().enumerate() {
             poly_coefs[idx] = Wrapping(coef as u64);
         }
@@ -779,11 +794,11 @@ impl<const DEGREE: usize> PRSSConversions for ResiduePoly<Z64, DEGREE> {
     }
 }
 
-impl<const DEGREE: usize> ResiduePoly<Z128, DEGREE> {
-    pub fn to_residuepoly64(self) -> ResiduePoly<Z64, DEGREE> {
+impl<const EXTENSION_DEGREE: usize> ResiduePoly<Z128, EXTENSION_DEGREE> {
+    pub fn to_residuepoly64(self) -> ResiduePoly<Z64, EXTENSION_DEGREE> {
         let coefs = self.coefs;
         let output_coefs = coefs.map(|coef| coef.to_z64());
-        ResiduePoly::<Z64, DEGREE> {
+        ResiduePoly::<Z64, EXTENSION_DEGREE> {
             coefs: output_coefs,
         }
     }
@@ -805,17 +820,17 @@ where
 /// q_0 = p_0 + p_1 * X + p_2 * X^2 + ... + p_{F_DEG-1} * X^{F_DEG-1},
 /// q_1 = p_{F_DEG} + p_{F_DEG + 1} * X + ... + p_{2 * F_DEG-1} * X^{F_DEG-1},
 /// q_2 = ...
-pub fn pack_residue_poly<const DEGREE: usize, Z: BaseRing>(
-    polys: &[ResiduePoly<Z, DEGREE>],
-) -> Vec<ResiduePoly<Z, DEGREE>>
+pub fn pack_residue_poly<const EXTENSION_DEGREE: usize, Z: BaseRing>(
+    polys: &[ResiduePoly<Z, EXTENSION_DEGREE>],
+) -> Vec<ResiduePoly<Z, EXTENSION_DEGREE>>
 where
-    ResiduePoly<Z, DEGREE>: Monomials,
-    ResiduePoly<Z, DEGREE>: Ring,
+    ResiduePoly<Z, EXTENSION_DEGREE>: Monomials,
+    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
 {
-    let monomials = ResiduePoly::<Z, DEGREE>::monomials();
+    let monomials = ResiduePoly::<Z, EXTENSION_DEGREE>::monomials();
 
     polys
-        .chunks(DEGREE)
+        .chunks(EXTENSION_DEGREE)
         .map(|chunk| {
             let mut out = ResiduePoly::ZERO;
             for (p, monomial) in chunk.iter().zip(monomials.iter()) {

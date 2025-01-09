@@ -707,7 +707,7 @@ mod tests {
     use rand::SeedableRng;
     use std::num::Wrapping;
 
-    fn legitimate_broadcast<Z: Ring>(
+    fn legitimate_broadcast<Z: Ring, const EXTENSION_DEGREE: usize>(
         sender_parties: &[Role],
     ) -> (Vec<Identity>, Vec<BroadcastValue<Z>>, Vec<RoleValueMap<Z>>) {
         let num_parties = 4;
@@ -729,7 +729,7 @@ mod tests {
 
         let mut set = JoinSet::new();
         //Broadcast assumes Sync network
-        let test_runtime = DistributedTestRuntime::<Z>::new(
+        let test_runtime = DistributedTestRuntime::<Z, EXTENSION_DEGREE>::new(
             identities.clone(),
             threshold,
             NetworkMode::Sync,
@@ -777,8 +777,10 @@ mod tests {
     #[test]
     fn test_broadcast_all() {
         let sender_parties: Vec<Role> = (0..4).map(Role::indexed_by_zero).collect();
-        let (identities, input_values, results) =
-            legitimate_broadcast::<ResiduePolyF8Z128>(&sender_parties);
+        let (identities, input_values, results) = legitimate_broadcast::<
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >(&sender_parties);
 
         // check that we have exactly n bcast outputs, for each party
         assert_eq!(results.len(), identities.len());
@@ -798,8 +800,10 @@ mod tests {
     #[test]
     fn test_broadcast_p3() {
         let sender_parties = vec![Role::indexed_by_zero(3)];
-        let (identities, input_values, results) =
-            legitimate_broadcast::<ResiduePolyF8Z128>(&sender_parties);
+        let (identities, input_values, results) = legitimate_broadcast::<
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >(&sender_parties);
 
         // check that we have exactly n bcast outputs, for each party
         assert_eq!(results.len(), identities.len());
@@ -820,8 +824,10 @@ mod tests {
     #[test]
     fn test_broadcast_p0_p2() {
         let sender_parties = vec![Role::indexed_by_one(1), Role::indexed_by_one(3)];
-        let (identities, input_values, results) =
-            legitimate_broadcast::<ResiduePolyF8Z128>(&sender_parties);
+        let (identities, input_values, results) = legitimate_broadcast::<
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >(&sender_parties);
         // check that we have exactly n bcast outputs, for each party
         assert_eq!(results.len(), identities.len());
 
@@ -855,12 +861,10 @@ mod tests {
         // code for session setup
         let threshold = 1;
         //Broadcast assumes Sync network
-        let runtime = DistributedTestRuntime::<ResiduePolyF8Z128>::new(
-            identities,
-            threshold,
-            NetworkMode::Sync,
-            None,
-        );
+        let runtime = DistributedTestRuntime::<
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >::new(identities, threshold, NetworkMode::Sync, None);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -914,12 +918,10 @@ mod tests {
         // code for session setup
         let threshold = 1;
         //Broadcast assumes Sync network
-        let runtime = DistributedTestRuntime::<ResiduePolyF8Z128>::new(
-            identities.clone(),
-            threshold,
-            NetworkMode::Sync,
-            None,
-        );
+        let runtime = DistributedTestRuntime::<
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >::new(identities.clone(), threshold, NetworkMode::Sync, None);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1123,12 +1125,10 @@ mod tests {
         // code for session setup
         let threshold = 1;
         //Broadcast assumes Sync network
-        let runtime = DistributedTestRuntime::<ResiduePolyF8Z128>::new(
-            identities.clone(),
-            threshold,
-            NetworkMode::Sync,
-            None,
-        );
+        let runtime = DistributedTestRuntime::<
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >::new(identities.clone(), threshold, NetworkMode::Sync, None);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1302,12 +1302,10 @@ mod tests {
         // code for session setup
         let threshold = 1;
         //Broadcast assumes Sync network
-        let runtime = DistributedTestRuntime::<ResiduePolyF8Z128>::new(
-            identities.clone(),
-            threshold,
-            NetworkMode::Sync,
-            None,
-        );
+        let runtime = DistributedTestRuntime::<
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >::new(identities.clone(), threshold, NetworkMode::Sync, None);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();

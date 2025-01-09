@@ -185,7 +185,7 @@ mod tests {
 
     use super::{bgv_distributed_keygen, BGVDkgPreprocessing};
     use crate::{
-        algebra::structure_traits::{One, ZConsts, Zero},
+        algebra::structure_traits::{One, Ring, ZConsts, Zero},
         execution::{
             online::{preprocessing::dummy::DummyPreprocessing, triple::open_list},
             runtime::session::{BaseSessionHandles, SmallSession},
@@ -271,7 +271,7 @@ mod tests {
         //This is Async because preproc is completely dummy, so we only do the DKG
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let mut results = execute_protocol_small(
+        let mut results = execute_protocol_small::<_, _, _, { LevelEll::EXTENSION_DEGREE }>(
             parties,
             threshold,
             None,
@@ -317,8 +317,14 @@ mod tests {
         };
 
         //This is Sync because Sync of the preproc takes priority over Async of the actual DKG
-        let mut results =
-            execute_protocol_small(parties, threshold, None, NetworkMode::Sync, None, &mut task);
+        let mut results = execute_protocol_small::<_, _, _, { LevelEll::EXTENSION_DEGREE }>(
+            parties,
+            threshold,
+            None,
+            NetworkMode::Sync,
+            None,
+            &mut task,
+        );
 
         test_dkg(&mut results, PLAINTEXT_MODULUS.get().0);
     }

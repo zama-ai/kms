@@ -1,7 +1,10 @@
 use aes_prng::AesRng;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use distributed_decryption::{
-    algebra::galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
+    algebra::{
+        galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
+        structure_traits::Ring,
+    },
     execution::{
         constants::REAL_KEY_PATH,
         endpoints::decryption::threshold_decrypt64,
@@ -81,12 +84,10 @@ fn ddec_nsmall(c: &mut Criterion) {
 
         let identities = generate_fixed_identities(config.n);
         //Using Sync because threshold_decrypt64 encompasses both online and offline
-        let mut runtime = DistributedTestRuntime::<ResiduePolyF8Z128>::new(
-            identities,
-            config.t as u8,
-            NetworkMode::Sync,
-            None,
-        );
+        let mut runtime = DistributedTestRuntime::<
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >::new(identities, config.t as u8, NetworkMode::Sync, None);
         let ctc = Arc::new(raw_ct);
 
         let keyset_ck = Arc::new(keyset.public_keys.sns_key.clone().unwrap());
@@ -148,11 +149,11 @@ fn ddec_bitdec_nsmall(c: &mut Criterion) {
         let ctc = Arc::new(raw_ct);
         let key_shares = Arc::new(key_shares);
         //Using Sync because threshold_decrypt64 encompasses both online and offline
-        let mut runtime = DistributedTestRuntime::<ResiduePolyF8Z64>::new(
-            identities.clone(),
-            config.t as u8,
-            NetworkMode::Sync,
-            None,
+        let mut runtime = DistributedTestRuntime::<
+            ResiduePolyF8Z64,
+            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+        >::new(
+            identities.clone(), config.t as u8, NetworkMode::Sync, None
         );
         runtime.setup_sks(key_shares.clone().to_vec());
         group.bench_with_input(
@@ -211,12 +212,10 @@ fn ddec_nlarge(c: &mut Criterion) {
 
         let identities = generate_fixed_identities(config.n);
         //Using Sync because threshold_decrypt64 encompasses both online and offline
-        let mut runtime = DistributedTestRuntime::<ResiduePolyF8Z128>::new(
-            identities,
-            config.t as u8,
-            NetworkMode::Sync,
-            None,
-        );
+        let mut runtime = DistributedTestRuntime::<
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >::new(identities, config.t as u8, NetworkMode::Sync, None);
 
         let ctc = Arc::new(raw_ct);
         let conversion_key = Arc::new(keyset.public_keys.sns_key.clone().unwrap());
@@ -280,7 +279,7 @@ fn ddec_bitdec_nlarge(c: &mut Criterion) {
         let key_shares = Arc::new(key_shares);
         let mut runtime =
         //Using Sync because threshold_decrypt64 encompasses both online and offline
-            DistributedTestRuntime::<ResiduePolyF8Z64>::new(identities.clone(), config.t as u8, NetworkMode::Sync, None);
+            DistributedTestRuntime::<ResiduePolyF8Z64,{ResiduePolyF8Z64::EXTENSION_DEGREE}>::new(identities.clone(), config.t as u8, NetworkMode::Sync, None);
         runtime.setup_sks(key_shares.clone().to_vec());
         group.bench_with_input(
             BenchmarkId::from_parameter(config),

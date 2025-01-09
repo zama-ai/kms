@@ -1,7 +1,11 @@
 use itertools::Itertools;
 
 use crate::{
-    algebra::galois_rings::degree_8::ResiduePolyF8Z128,
+    algebra::{
+        base_ring::Z128,
+        galois_rings::common::ResiduePoly,
+        structure_traits::{ErrorCorrect, Invert, Solve},
+    },
     error::error_handler::anyhow_error_and_log,
     execution::{
         constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, STATSEC},
@@ -22,24 +26,31 @@ use crate::execution::online::preprocessing::NoiseFloodPreprocessing;
 use async_trait::async_trait;
 
 #[derive(Default)]
-pub struct InMemoryNoiseFloodPreprocessing {
-    available_masks: Vec<ResiduePolyF8Z128>,
+pub struct InMemoryNoiseFloodPreprocessing<const EXTENSION_DEGREE: usize> {
+    available_masks: Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>,
 }
 
 #[async_trait]
-impl NoiseFloodPreprocessing for InMemoryNoiseFloodPreprocessing {
-    fn append_masks(&mut self, masks: Vec<ResiduePolyF8Z128>) {
+impl<const EXTENSION_DEGREE: usize> NoiseFloodPreprocessing<EXTENSION_DEGREE>
+    for InMemoryNoiseFloodPreprocessing<EXTENSION_DEGREE>
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: Invert + Solve + ErrorCorrect,
+{
+    fn append_masks(&mut self, masks: Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>) {
         masks
             .into_iter()
             .for_each(|elem| self.available_masks.push(elem));
     }
 
-    fn next_mask(&mut self) -> anyhow::Result<ResiduePolyF8Z128> {
+    fn next_mask(&mut self) -> anyhow::Result<ResiduePoly<Z128, EXTENSION_DEGREE>> {
         self.available_masks
             .pop()
             .ok_or_else(|| anyhow_error_and_log("available masks is empty".to_string()))
     }
-    fn next_mask_vec(&mut self, amount: usize) -> anyhow::Result<Vec<ResiduePolyF8Z128>> {
+    fn next_mask_vec(
+        &mut self,
+        amount: usize,
+    ) -> anyhow::Result<Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>> {
         if self.available_masks.len() >= amount {
             let mut res = Vec::with_capacity(amount);
             for _ in 0..amount {
@@ -57,7 +68,7 @@ impl NoiseFloodPreprocessing for InMemoryNoiseFloodPreprocessing {
     /// [`crate::execution::small_execution::prss::PRSSSetup`]
     fn fill_from_small_session(
         &mut self,
-        session: &mut SmallSession<ResiduePolyF8Z128>,
+        session: &mut SmallSession<ResiduePoly<Z128, EXTENSION_DEGREE>>,
         amount: usize,
     ) -> anyhow::Result<()> {
         let own_role = session.my_role()?;
@@ -76,7 +87,7 @@ impl NoiseFloodPreprocessing for InMemoryNoiseFloodPreprocessing {
     /// Requires interaction to create the bits out of the [BasePreprocessing] material
     async fn fill_from_base_preproc(
         &mut self,
-        preprocessing: &mut dyn BasePreprocessing<ResiduePolyF8Z128>,
+        preprocessing: &mut dyn BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>,
         session: &mut BaseSession,
         num_ctxts: usize,
     ) -> anyhow::Result<()> {
@@ -92,7 +103,7 @@ impl NoiseFloodPreprocessing for InMemoryNoiseFloodPreprocessing {
     ///Directly fill from [BitPreprocessing], does not require interaction
     fn fill_from_bits_preproc(
         &mut self,
-        bit_preproc: &mut dyn BitPreprocessing<ResiduePolyF8Z128>,
+        bit_preproc: &mut dyn BitPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>,
         num_ctxts: usize,
     ) -> anyhow::Result<()> {
         let bound_d = (STATSEC + LOG_B_SWITCH_SQUASH) as usize;

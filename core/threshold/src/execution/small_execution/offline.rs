@@ -472,7 +472,10 @@ mod test {
     const RANDOM_BATCH_SIZE: usize = 10;
     const TRIPLE_BATCH_SIZE: usize = 10;
 
-    fn test_rand_generation<Z: RingEmbed + PRSSConversions + ErrorCorrect + Invert>() {
+    fn test_rand_generation<
+        Z: RingEmbed + PRSSConversions + ErrorCorrect + Invert,
+        const EXTENSION_DEGREE: usize,
+    >() {
         let parties = 4;
         let threshold = 1;
 
@@ -499,7 +502,7 @@ mod test {
         let rounds = 0_usize;
 
         // Does not really matter Sync or Async as there's no communication here, default to Sync
-        let result = execute_protocol_small(
+        let result = execute_protocol_small::<_, _, Z, EXTENSION_DEGREE>(
             parties,
             threshold,
             Some(rounds),
@@ -527,15 +530,18 @@ mod test {
 
     #[test]
     fn test_rand_generation_z128() {
-        test_rand_generation::<ResiduePolyF8Z128>();
+        test_rand_generation::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }>();
     }
 
     #[test]
     fn test_rand_generation_z64() {
-        test_rand_generation::<ResiduePolyF8Z64>();
+        test_rand_generation::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }>();
     }
 
-    fn test_triple_generation<Z: Ring + RingEmbed + PRSSConversions + ErrorCorrect + Invert>() {
+    fn test_triple_generation<
+        Z: Ring + RingEmbed + PRSSConversions + ErrorCorrect + Invert,
+        const EXTENSION_DEGREE: usize,
+    >() {
         let parties = 4;
         let threshold = 1;
 
@@ -562,7 +568,7 @@ mod test {
         let rounds = 3 + threshold as usize;
 
         // Sync because it is triple generation
-        let result = execute_protocol_small(
+        let result = execute_protocol_small::<_, _, Z, EXTENSION_DEGREE>(
             parties,
             threshold,
             Some(rounds),
@@ -590,12 +596,12 @@ mod test {
 
     #[test]
     fn test_triple_generation_z128() {
-        test_triple_generation::<ResiduePolyF8Z128>();
+        test_triple_generation::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }>();
     }
 
     #[test]
     fn test_triple_generation_z64() {
-        test_triple_generation::<ResiduePolyF8Z64>();
+        test_triple_generation::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }>();
     }
 
     #[test]
@@ -625,7 +631,12 @@ mod test {
         let rounds = 3 + threshold as usize;
 
         // Sync because it is triple generation
-        let _result = execute_protocol_small(
+        let _result = execute_protocol_small::<
+            _,
+            _,
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >(
             parties,
             threshold,
             Some(rounds),
@@ -707,8 +718,12 @@ mod test {
         }
 
         // Sync because it is triple generation
-        let result =
-            execute_protocol_small(parties, threshold, None, NetworkMode::Sync, None, &mut task);
+        let result = execute_protocol_small::<
+            _,
+            _,
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >(parties, threshold, None, NetworkMode::Sync, None, &mut task);
 
         //Check we can reconstruct everything and we do have multiplication triples
         for idx in 0..TRIPLE_BATCH_SIZE {
@@ -790,8 +805,12 @@ mod test {
         }
 
         // Sync because it is triple generation
-        let result =
-            execute_protocol_small(parties, threshold, None, NetworkMode::Sync, None, &mut task);
+        let result = execute_protocol_small::<
+            _,
+            _,
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >(parties, threshold, None, NetworkMode::Sync, None, &mut task);
 
         // Check that the malicious party has been added to the list
         for (cur_ses, _, _) in result.clone() {
@@ -871,8 +890,12 @@ mod test {
         }
 
         // Sync because it is triple generation
-        let result =
-            execute_protocol_small(parties, threshold, None, NetworkMode::Sync, None, &mut task);
+        let result = execute_protocol_small::<
+            _,
+            _,
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >(parties, threshold, None, NetworkMode::Sync, None, &mut task);
 
         // Check that the malicious party has been added to the list
         for cur_ses in result.clone() {

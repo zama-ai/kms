@@ -1,6 +1,6 @@
-use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z128;
-use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z64;
-use crate::algebra::structure_traits::Ring;
+use crate::algebra::base_ring::{Z128, Z64};
+use crate::algebra::galois_rings::common::ResiduePoly;
+use crate::algebra::structure_traits::{ErrorCorrect, Invert, Ring, Solve};
 use crate::execution::online::preprocessing::BasePreprocessing;
 use crate::execution::online::preprocessing::BitPreprocessing;
 use crate::execution::online::preprocessing::PreprocessorFactory;
@@ -39,18 +39,27 @@ impl Default for RedisConf {
     }
 }
 
-pub fn redis_factory(key_prefix: String, conf: &RedisConf) -> Box<dyn PreprocessorFactory> {
-    Box::new(RedisPreprocessorFactory::new(key_prefix, conf))
+pub fn redis_factory<const EXTENSION_DEGREE: usize>(
+    key_prefix: String,
+    conf: &RedisConf,
+) -> Box<dyn PreprocessorFactory<EXTENSION_DEGREE>>
+where
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+{
+    Box::new(RedisPreprocessorFactory::<EXTENSION_DEGREE>::new(
+        key_prefix, conf,
+    ))
 }
 
 /// The RedisPreprocessorFactory is a factory for creating RedisBasePreprocessing instances
-struct RedisPreprocessorFactory {
+struct RedisPreprocessorFactory<const EXTENSION_DEGREE: usize> {
     key_prefix: String,
     client: Arc<Client>,
     counter_instances_created: HashMap<PreprocessingTypes, usize>,
 }
 
-impl RedisPreprocessorFactory {
+impl<const EXTENSION_DEGREE: usize> RedisPreprocessorFactory<EXTENSION_DEGREE> {
     pub fn new(key_prefix: String, conf: &RedisConf) -> Self {
         let client = Client::open(conf.host.clone()).expect("Failed to create Redis client");
         Self {
@@ -204,105 +213,130 @@ fn get_counter_and_update(
 
 /// The RedisPreprocessorFactory is a factory for creating RedisBasePreprocessing instances
 /// The factory is generic over the ring type R
-impl PreprocessorFactory for RedisPreprocessorFactory {
+impl<const EXTENSION_DEGREE: usize> PreprocessorFactory<EXTENSION_DEGREE>
+    for RedisPreprocessorFactory<EXTENSION_DEGREE>
+where
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+{
     fn create_base_preprocessing_residue_64(
         &mut self,
-    ) -> Box<dyn BasePreprocessing<ResiduePolyF8Z64>> {
+    ) -> Box<dyn BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>> {
         let counter_value = get_counter_and_update(
             &mut self.counter_instances_created,
             PreprocessingTypes::Base64,
         );
-        Box::new(RedisPreprocessing::<ResiduePolyF8Z64>::new(
-            format!("{}_Base64_{}", self.key_prefix(), counter_value),
-            self.get_redis_client(),
-        ))
+        Box::new(
+            RedisPreprocessing::<ResiduePoly<Z64, EXTENSION_DEGREE>>::new(
+                format!("{}_Base64_{}", self.key_prefix(), counter_value),
+                self.get_redis_client(),
+            ),
+        )
     }
 
     fn create_base_preprocessing_residue_128(
         &mut self,
-    ) -> Box<dyn BasePreprocessing<ResiduePolyF8Z128>> {
+    ) -> Box<dyn BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>> {
         let counter_value = get_counter_and_update(
             &mut self.counter_instances_created,
             PreprocessingTypes::Base128,
         );
-        Box::new(RedisPreprocessing::<ResiduePolyF8Z128>::new(
-            format!("{}_Base128_{}", self.key_prefix(), counter_value),
-            self.get_redis_client(),
-        ))
+        Box::new(
+            RedisPreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(
+                format!("{}_Base128_{}", self.key_prefix(), counter_value),
+                self.get_redis_client(),
+            ),
+        )
     }
 
     fn create_bit_preprocessing_residue_64(
         &mut self,
-    ) -> Box<dyn BitPreprocessing<ResiduePolyF8Z64>> {
+    ) -> Box<dyn BitPreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>> {
         let counter_value = get_counter_and_update(
             &mut self.counter_instances_created,
             PreprocessingTypes::Bits64,
         );
-        Box::new(RedisPreprocessing::<ResiduePolyF8Z64>::new(
-            format!("{}_Bits64_{}", self.key_prefix(), counter_value),
-            self.get_redis_client(),
-        ))
+        Box::new(
+            RedisPreprocessing::<ResiduePoly<Z64, EXTENSION_DEGREE>>::new(
+                format!("{}_Bits64_{}", self.key_prefix(), counter_value),
+                self.get_redis_client(),
+            ),
+        )
     }
 
     fn create_bit_preprocessing_residue_128(
         &mut self,
-    ) -> Box<dyn BitPreprocessing<ResiduePolyF8Z128>> {
+    ) -> Box<dyn BitPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>> {
         let counter_value = get_counter_and_update(
             &mut self.counter_instances_created,
             PreprocessingTypes::Bits128,
         );
-        Box::new(RedisPreprocessing::<ResiduePolyF8Z128>::new(
-            format!("{}_Bits128_{}", self.key_prefix(), counter_value),
-            self.get_redis_client(),
-        ))
+        Box::new(
+            RedisPreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(
+                format!("{}_Bits128_{}", self.key_prefix(), counter_value),
+                self.get_redis_client(),
+            ),
+        )
     }
 
-    fn create_bit_decryption_preprocessing(&mut self) -> Box<dyn BitDecPreprocessing> {
+    fn create_bit_decryption_preprocessing(
+        &mut self,
+    ) -> Box<dyn BitDecPreprocessing<EXTENSION_DEGREE>> {
         let counter_value = get_counter_and_update(
             &mut self.counter_instances_created,
             PreprocessingTypes::BitDecryption,
         );
-        Box::new(RedisPreprocessing::<ResiduePolyF8Z64>::new(
-            format!("{}_BitDecryption_{}", self.key_prefix(), counter_value),
-            self.get_redis_client(),
-        ))
+        Box::new(
+            RedisPreprocessing::<ResiduePoly<Z64, EXTENSION_DEGREE>>::new(
+                format!("{}_BitDecryption_{}", self.key_prefix(), counter_value),
+                self.get_redis_client(),
+            ),
+        )
     }
 
-    fn create_noise_flood_preprocessing(&mut self) -> Box<dyn NoiseFloodPreprocessing> {
+    fn create_noise_flood_preprocessing(
+        &mut self,
+    ) -> Box<dyn NoiseFloodPreprocessing<EXTENSION_DEGREE>> {
         let counter_value = get_counter_and_update(
             &mut self.counter_instances_created,
             PreprocessingTypes::NoiseFlood,
         );
-        Box::new(RedisPreprocessing::<ResiduePolyF8Z128>::new(
-            format!("{}_NoiseFlood_{}", self.key_prefix(), counter_value),
-            self.get_redis_client(),
-        ))
+        Box::new(
+            RedisPreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(
+                format!("{}_NoiseFlood_{}", self.key_prefix(), counter_value),
+                self.get_redis_client(),
+            ),
+        )
     }
 
     fn create_dkg_preprocessing_no_sns(
         &mut self,
-    ) -> Box<dyn super::DKGPreprocessing<ResiduePolyF8Z64>> {
+    ) -> Box<dyn super::DKGPreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>> {
         let counter_value = get_counter_and_update(
             &mut self.counter_instances_created,
             PreprocessingTypes::DkgNoSns,
         );
-        Box::new(RedisPreprocessing::<ResiduePolyF8Z64>::new(
-            format!("{}_DkgNoSnS_{}", self.key_prefix(), counter_value),
-            self.get_redis_client(),
-        ))
+        Box::new(
+            RedisPreprocessing::<ResiduePoly<Z64, EXTENSION_DEGREE>>::new(
+                format!("{}_DkgNoSnS_{}", self.key_prefix(), counter_value),
+                self.get_redis_client(),
+            ),
+        )
     }
 
     fn create_dkg_preprocessing_with_sns(
         &mut self,
-    ) -> Box<dyn super::DKGPreprocessing<ResiduePolyF8Z128>> {
+    ) -> Box<dyn super::DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>> {
         let counter_value = get_counter_and_update(
             &mut self.counter_instances_created,
             PreprocessingTypes::DkgWithSns,
         );
-        Box::new(RedisPreprocessing::<ResiduePolyF8Z128>::new(
-            format!("{}_DkgWithSnS_{}", self.key_prefix(), counter_value),
-            self.get_redis_client(),
-        ))
+        Box::new(
+            RedisPreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(
+                format!("{}_DkgWithSnS_{}", self.key_prefix(), counter_value),
+                self.get_redis_client(),
+            ),
+        )
     }
 }
 

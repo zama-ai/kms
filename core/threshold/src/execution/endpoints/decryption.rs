@@ -1,7 +1,8 @@
+use crate::algebra::structure_traits::Derive;
 #[cfg(any(test, feature = "testing"))]
 use crate::algebra::structure_traits::Ring;
 #[cfg(any(test, feature = "testing"))]
-use crate::algebra::structure_traits::{Invert, RingEmbed};
+use crate::algebra::structure_traits::{ErrorCorrect, Invert, RingEmbed, Solve};
 use crate::execution::config::BatchParams;
 use crate::execution::large_execution::offline::LargePreprocessing;
 use crate::execution::online::preprocessing::create_memory_factory;
@@ -35,8 +36,7 @@ use crate::session_id::SessionId;
 use crate::{
     algebra::{
         base_ring::{Z128, Z64},
-        galois_rings::degree_8::ResiduePolyF8Z128,
-        galois_rings::degree_8::ResiduePolyF8Z64,
+        galois_rings::common::ResiduePoly,
         structure_traits::Zero,
     },
     error::error_handler::anyhow_error_and_log,
@@ -68,12 +68,18 @@ use tracing::instrument;
 use super::keygen::PrivateKeySet;
 use super::reconstruct::{combine_decryptions, reconstruct_message};
 
-pub struct Small {
-    session: RefCell<SmallSession<ResiduePolyF8Z128>>,
+pub struct Small<const EXTENSION_DEGREE: usize>
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
+{
+    session: RefCell<SmallSession<ResiduePoly<Z128, EXTENSION_DEGREE>>>,
 }
 
-impl Small {
-    pub fn new(session: SmallSession<ResiduePolyF8Z128>) -> Self {
+impl<const EXTENSION_DEGREE: usize> Small<EXTENSION_DEGREE>
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
+{
+    pub fn new(session: SmallSession<ResiduePoly<Z128, EXTENSION_DEGREE>>) -> Self {
         Small {
             session: RefCell::new(session),
         }
@@ -93,22 +99,27 @@ impl Large {
 }
 
 #[async_trait]
-pub trait NoiseFloodPreparation {
+pub trait NoiseFloodPreparation<const EXTENSION_DEGREE: usize> {
     async fn init_prep_noiseflooding(
         &mut self,
         num_ctxt: usize,
-    ) -> anyhow::Result<Box<dyn NoiseFloodPreprocessing>>;
+    ) -> anyhow::Result<Box<dyn NoiseFloodPreprocessing<EXTENSION_DEGREE>>>;
 }
 
 #[async_trait]
-impl NoiseFloodPreparation for Small {
+impl<const EXTENSION_DEGREE: usize> NoiseFloodPreparation<EXTENSION_DEGREE>
+    for Small<EXTENSION_DEGREE>
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+{
     /// Load precomputed init data for noise flooding.
     ///
     /// Note: this is actually a synchronous function. It just needs to be async to implement the trait (which is async in the Large case)
     async fn init_prep_noiseflooding(
         &mut self,
         num_ctxt: usize,
-    ) -> anyhow::Result<Box<dyn NoiseFloodPreprocessing>> {
+    ) -> anyhow::Result<Box<dyn NoiseFloodPreprocessing<EXTENSION_DEGREE>>> {
         let session = self.session.get_mut();
         let mut sns_preprocessing = create_memory_factory().create_noise_flood_preprocessing();
         sns_preprocessing.fill_from_small_session(session, num_ctxt)?;
@@ -117,12 +128,16 @@ impl NoiseFloodPreparation for Small {
 }
 
 #[async_trait]
-impl NoiseFloodPreparation for Large {
+impl<const EXTENSION_DEGREE: usize> NoiseFloodPreparation<EXTENSION_DEGREE> for Large
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+{
     /// Compute precomputed init data for noise flooding.
     async fn init_prep_noiseflooding(
         &mut self,
         num_ctxt: usize,
-    ) -> anyhow::Result<Box<dyn NoiseFloodPreprocessing>> {
+    ) -> anyhow::Result<Box<dyn NoiseFloodPreprocessing<EXTENSION_DEGREE>>> {
         let session = self.session.get_mut();
         let num_preproc = 2 * num_ctxt * ((STATSEC + LOG_B_SWITCH_SQUASH) as usize + 2);
         let batch_size = BatchParams {
@@ -179,21 +194,22 @@ impl NoiseFloodPreparation for Large {
 ///
 #[allow(clippy::too_many_arguments)]
 #[instrument(skip(session, protocol, ck, ct, secret_key_share), fields(session_id = ?session.session_id(), own_identity = %_own_identity, mode = %_mode))]
-pub async fn decrypt_using_noiseflooding<S, P, R, T>(
+pub async fn decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, S, P, R, T>(
     session: &mut S,
     protocol: &mut P,
     ck: &SwitchAndSquashKey,
     ct: Ciphertext64,
-    secret_key_share: &PrivateKeySet,
+    secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
     _mode: DecryptionMode,
     _own_identity: Identity,
 ) -> anyhow::Result<(HashMap<String, T>, Duration)>
 where
     R: Rng + CryptoRng + Send,
     S: BaseSessionHandles<R>,
-    P: NoiseFloodPreparation,
+    P: NoiseFloodPreparation<EXTENSION_DEGREE>,
     T: tfhe::integer::block_decomposition::Recomposable
         + tfhe::core_crypto::commons::traits::CastFrom<u128>,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let execution_start_timer = Instant::now();
     let ct_large = ck.to_large_ciphertext(&ct)?;
@@ -201,9 +217,13 @@ where
     let len = ct_large.len();
     let mut preparation = protocol.init_prep_noiseflooding(len).await?;
     let preparation = preparation.as_mut();
-    let outputs =
-        run_decryption_noiseflood::<_, _, _, T>(session, preparation, secret_key_share, ct_large)
-            .await?;
+    let outputs = run_decryption_noiseflood::<EXTENSION_DEGREE, _, _, _, T>(
+        session,
+        preparation,
+        secret_key_share,
+        ct_large,
+    )
+    .await?;
 
     tracing::info!("Result in session {:?} is ready", session.session_id());
     results.insert(format!("{}", session.session_id()), outputs);
@@ -241,20 +261,24 @@ where
 /// 3. The local decryption is executed
 /// 4. The results are returned
 ///
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 #[instrument(skip(session, protocol, ck, ct, secret_key_share), fields(session_id = ?session.session_id(), own_identity = %session.own_identity(), mode = %_mode))]
-pub async fn partial_decrypt_using_noiseflooding<S, P, R>(
+pub async fn partial_decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, S, P, R>(
     session: &mut S,
     protocol: &mut P,
     ck: &SwitchAndSquashKey,
     ct: Ciphertext64,
-    secret_key_share: &PrivateKeySet,
+    secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
     _mode: DecryptionMode,
-) -> anyhow::Result<(HashMap<String, Vec<ResiduePolyF8Z128>>, Duration)>
+) -> anyhow::Result<(
+    HashMap<String, Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>>,
+    Duration,
+)>
 where
     R: Rng + CryptoRng + Send,
     S: BaseSessionHandles<R>,
-    P: NoiseFloodPreparation,
+    P: NoiseFloodPreparation<EXTENSION_DEGREE>,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
 {
     let execution_start_timer = Instant::now();
     let ct_large = ck.to_large_ciphertext(&ct)?;
@@ -327,10 +351,14 @@ where
     .unwrap()
 }
 
-pub async fn init_prep_bitdec_small(
-    session: &mut SmallSession64,
+pub async fn init_prep_bitdec_small<const EXTENSION_DEGREE: usize>(
+    session: &mut SmallSession64<EXTENSION_DEGREE>,
     num_ctxts: usize,
-) -> anyhow::Result<Box<dyn BitDecPreprocessing>> {
+) -> anyhow::Result<Box<dyn BitDecPreprocessing<EXTENSION_DEGREE>>>
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+{
     let mut bitdec_preprocessing = create_memory_factory().create_bit_decryption_preprocessing();
     let bitdec_batch = BatchParams {
         triples: bitdec_preprocessing.num_required_triples(num_ctxts)
@@ -338,9 +366,11 @@ pub async fn init_prep_bitdec_small(
         randoms: bitdec_preprocessing.num_required_bits(num_ctxts),
     };
 
-    let mut small_preprocessing =
-        SmallPreprocessing::<ResiduePolyF8Z64, RealAgreeRandom>::init(session, bitdec_batch)
-            .await?;
+    let mut small_preprocessing = SmallPreprocessing::<
+        ResiduePoly<Z64, EXTENSION_DEGREE>,
+        RealAgreeRandom,
+    >::init(session, bitdec_batch)
+    .await?;
 
     bitdec_preprocessing
         .fill_from_base_preproc(
@@ -353,10 +383,14 @@ pub async fn init_prep_bitdec_small(
     Ok(bitdec_preprocessing)
 }
 
-pub async fn init_prep_bitdec_large(
+pub async fn init_prep_bitdec_large<const EXTENSION_DEGREE: usize>(
     session: &mut LargeSession,
     num_ctxts: usize,
-) -> anyhow::Result<Box<dyn BitDecPreprocessing>> {
+) -> anyhow::Result<Box<dyn BitDecPreprocessing<EXTENSION_DEGREE>>>
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+{
     let mut bitdec_preprocessing = create_memory_factory().create_bit_decryption_preprocessing();
     let bitdec_batch = BatchParams {
         triples: bitdec_preprocessing.num_required_triples(num_ctxts)
@@ -365,9 +399,9 @@ pub async fn init_prep_bitdec_large(
     };
 
     let mut large_preprocessing = LargePreprocessing::<
-        ResiduePolyF8Z64,
-        TrueSingleSharing<ResiduePolyF8Z64>,
-        TrueDoubleSharing<ResiduePolyF8Z64>,
+        ResiduePoly<Z64, EXTENSION_DEGREE>,
+        TrueSingleSharing<ResiduePoly<Z64, EXTENSION_DEGREE>>,
+        TrueDoubleSharing<ResiduePoly<Z64, EXTENSION_DEGREE>>,
     >::init(
         session,
         bitdec_batch,
@@ -388,12 +422,19 @@ pub async fn init_prep_bitdec_large(
 }
 
 /// test the threshold decryption for a given 64-bit TFHE-rs ciphertext
+///
+/// NOTE: Trait bounds are a bit odd here because this function does a bit too many things
+/// at once
 #[cfg(any(test, feature = "testing"))]
-pub fn threshold_decrypt64<Z: Ring>(
-    runtime: &DistributedTestRuntime<Z>,
+pub fn threshold_decrypt64<Z: Ring, const EXTENSION_DEGREE: usize>(
+    runtime: &DistributedTestRuntime<Z, EXTENSION_DEGREE>,
     ct: &Ciphertext64,
     mode: DecryptionMode,
-) -> anyhow::Result<HashMap<Identity, Z64>> {
+) -> anyhow::Result<HashMap<Identity, Z64>>
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+{
     let session_id = SessionId::new(ct)?;
 
     let rt = tokio::runtime::Runtime::new()?;
@@ -445,7 +486,9 @@ pub fn threshold_decrypt64<Z: Ring>(
             DecryptionMode::PRSSDecrypt => {
                 let large_ct = large_ct.unwrap();
                 set.spawn(async move {
-                    let mut session = setup_small_session::<ResiduePolyF8Z128>(base_session).await;
+                    let mut session =
+                        setup_small_session::<ResiduePoly<Z128, EXTENSION_DEGREE>>(base_session)
+                            .await;
 
                     let mut noiseflood_preprocessing = Small::new(session.clone())
                         .init_prep_noiseflooding(ct.blocks().len())
@@ -506,7 +549,9 @@ pub fn threshold_decrypt64<Z: Ring>(
             DecryptionMode::BitDecSmallDecrypt => {
                 let ks_key = runtime.get_ks_key();
                 set.spawn(async move {
-                    let mut session = setup_small_session::<ResiduePolyF8Z64>(base_session).await;
+                    let mut session =
+                        setup_small_session::<ResiduePoly<Z64, EXTENSION_DEGREE>>(base_session)
+                            .await;
                     let mut prep = init_prep_bitdec_small(&mut session, ct.blocks().len())
                         .await
                         .unwrap();
@@ -536,19 +581,33 @@ pub fn threshold_decrypt64<Z: Ring>(
     Ok(results)
 }
 
-async fn open_masked_ptxts<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+async fn open_masked_ptxts<
+    const EXTENSION_DEGREE: usize,
+    R: Rng + CryptoRng,
+    S: BaseSessionHandles<R>,
+>(
     session: &S,
-    res: Vec<ResiduePolyF8Z128>,
-    keyshares: &PrivateKeySet,
-) -> anyhow::Result<Vec<Z128>> {
+    res: Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>,
+    keyshares: &PrivateKeySet<EXTENSION_DEGREE>,
+) -> anyhow::Result<Vec<Z128>>
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+{
     let openeds = robust_opens_to_all(session, &res, session.threshold() as usize).await?;
     reconstruct_message(openeds, &keyshares.parameters)
 }
 
-async fn open_bit_composed_ptxts<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+async fn open_bit_composed_ptxts<
+    const EXTENSION_DEGREE: usize,
+    R: Rng + CryptoRng,
+    S: BaseSessionHandles<R>,
+>(
     session: &S,
-    res: Vec<ResiduePolyF8Z64>,
-) -> anyhow::Result<Vec<Z64>> {
+    res: Vec<ResiduePoly<Z64, EXTENSION_DEGREE>>,
+) -> anyhow::Result<Vec<Z64>>
+where
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+{
     let openeds = robust_opens_to_all(session, &res, session.threshold() as usize).await?;
 
     let mut out = Vec::with_capacity(res.len());
@@ -574,19 +633,21 @@ async fn open_bit_composed_ptxts<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     fields(batch_size=?ciphertext.len())
 )]
 pub async fn run_decryption_noiseflood<
+    const EXTENSION_DEGREE: usize,
     R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
-    P: NoiseFloodPreprocessing + ?Sized,
+    P: NoiseFloodPreprocessing<EXTENSION_DEGREE> + ?Sized,
     T,
 >(
     session: &mut S,
     preprocessing: &mut P,
-    keyshares: &PrivateKeySet,
+    keyshares: &PrivateKeySet<EXTENSION_DEGREE>,
     ciphertext: Ciphertext128,
 ) -> anyhow::Result<T>
 where
     T: tfhe::integer::block_decomposition::Recomposable
         + tfhe::core_crypto::commons::traits::CastFrom<u128>,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let mut shared_masked_ptxts = Vec::with_capacity(ciphertext.len());
     for current_ct_block in ciphertext {
@@ -606,32 +667,44 @@ where
     fields(batch_size=?ciphertext.len())
 )]
 pub async fn run_decryption_noiseflood_64<
+    const EXTENSION_DEGREE: usize,
     R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
-    P: NoiseFloodPreprocessing + ?Sized,
+    P: NoiseFloodPreprocessing<EXTENSION_DEGREE> + ?Sized,
 >(
     session: &mut S,
     preprocessing: &mut P,
-    keyshares: &PrivateKeySet,
+    keyshares: &PrivateKeySet<EXTENSION_DEGREE>,
     ciphertext: Ciphertext128,
-) -> anyhow::Result<Z64> {
-    let res =
-        run_decryption_noiseflood::<_, _, _, u64>(session, preprocessing, keyshares, ciphertext)
-            .await?;
+) -> anyhow::Result<Z64>
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let res = run_decryption_noiseflood::<EXTENSION_DEGREE, _, _, _, u64>(
+        session,
+        preprocessing,
+        keyshares,
+        ciphertext,
+    )
+    .await?;
     Ok(Wrapping(res))
 }
 
 pub async fn run_decryption_bitdec_64<
-    P: BitDecPreprocessing + Send + ?Sized,
+    const EXTENSION_DEGREE: usize,
+    P: BitDecPreprocessing<EXTENSION_DEGREE> + Send + ?Sized,
     Rnd: Rng + CryptoRng,
     Ses: BaseSessionHandles<Rnd>,
 >(
     session: &mut Ses,
     prep: &mut P,
-    keyshares: &PrivateKeySet,
+    keyshares: &PrivateKeySet<EXTENSION_DEGREE>,
     ksk: &LweKeyswitchKey<Vec<u64>>,
     ciphertext: Ciphertext64,
-) -> anyhow::Result<Z64> {
+) -> anyhow::Result<Z64>
+where
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Solve,
+{
     let res = run_decryption_bitdec(session, prep, keyshares, ksk, ciphertext).await?;
     Ok(Wrapping(res))
 }
@@ -642,20 +715,22 @@ pub async fn run_decryption_bitdec_64<
     fields(batch_size=?ciphertext.blocks().len())
 )]
 pub async fn run_decryption_bitdec<
-    P: BitDecPreprocessing + Send + ?Sized,
+    const EXTENSION_DEGREE: usize,
+    P: BitDecPreprocessing<EXTENSION_DEGREE> + Send + ?Sized,
     Rnd: Rng + CryptoRng,
     Ses: BaseSessionHandles<Rnd>,
     T,
 >(
     session: &mut Ses,
     prep: &mut P,
-    keyshares: &PrivateKeySet,
+    keyshares: &PrivateKeySet<EXTENSION_DEGREE>,
     ksk: &LweKeyswitchKey<Vec<u64>>,
     ciphertext: Ciphertext64,
 ) -> anyhow::Result<T>
 where
     T: tfhe::integer::block_decomposition::Recomposable
         + tfhe::core_crypto::commons::traits::CastFrom<u128>,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Solve,
 {
     let own_role = session.my_role()?;
 
@@ -665,7 +740,7 @@ where
         shared_ptxts.push(Share::new(own_role, partial_dec));
     }
 
-    let bits = bit_dec_batch::<Z64, P, _, _>(session, prep, shared_ptxts).await?;
+    let bits = bit_dec_batch::<Z64, EXTENSION_DEGREE, P, _, _>(session, prep, shared_ptxts).await?;
 
     let total_bits = keyshares.parameters.total_block_bits() as usize;
 
@@ -687,10 +762,13 @@ where
 }
 
 /// computes b - <a, s> with no rounding of the noise. This is used for noise flooding decryption
-pub fn partial_decrypt128(
-    sk_share: &PrivateKeySet,
+pub fn partial_decrypt128<const EXTENSION_DEGREE: usize>(
+    sk_share: &PrivateKeySet<EXTENSION_DEGREE>,
     ct: &Ciphertext128Block,
-) -> anyhow::Result<ResiduePolyF8Z128> {
+) -> anyhow::Result<ResiduePoly<Z128, EXTENSION_DEGREE>>
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
+{
     let sns_secret_key = match &sk_share.glwe_secret_key_share_sns_as_lwe {
         Some(key) => key.data_as_raw_vec(),
         None => {
@@ -700,21 +778,29 @@ pub fn partial_decrypt128(
         }
     };
     let (mask, body) = ct.get_mask_and_body();
-    let a_time_s = (0..sns_secret_key.len()).fold(ResiduePolyF8Z128::ZERO, |acc, column| {
-        acc + sns_secret_key[column]
-            * ResiduePolyF8Z128::from_scalar(Wrapping(mask.as_ref()[column]))
-    });
+    let a_time_s = (0..sns_secret_key.len()).fold(
+        ResiduePoly::<Z128, EXTENSION_DEGREE>::ZERO,
+        |acc, column| {
+            acc + sns_secret_key[column]
+                * ResiduePoly::<Z128, EXTENSION_DEGREE>::from_scalar(Wrapping(
+                    mask.as_ref()[column],
+                ))
+        },
+    );
     // b-<a, s>
-    let res = ResiduePolyF8Z128::from_scalar(Wrapping(*body.data)) - a_time_s;
+    let res = ResiduePoly::<Z128, EXTENSION_DEGREE>::from_scalar(Wrapping(*body.data)) - a_time_s;
     Ok(res)
 }
 
 // computes b - <a, s> + \Delta/2 for the bitwise decryption method
-pub fn partial_decrypt64(
-    sk_share: &PrivateKeySet,
+pub fn partial_decrypt64<const EXTENSION_DEGREE: usize>(
+    sk_share: &PrivateKeySet<EXTENSION_DEGREE>,
     ksk: &LweKeyswitchKey<Vec<u64>>,
     ct_block: &Ciphertext64Block,
-) -> anyhow::Result<ResiduePolyF8Z64> {
+) -> anyhow::Result<ResiduePoly<Z64, EXTENSION_DEGREE>>
+where
+    ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+{
     let ciphertext_modulus = 64;
     let mut output_ctxt;
 
@@ -731,20 +817,25 @@ pub fn partial_decrypt64(
         .lwe_compute_secret_key_share
         .data_as_raw_vec()
         .clone();
-    let a_time_s = (0..key_share64.len()).fold(ResiduePolyF8Z64::ZERO, |acc, column| {
-        acc + key_share64[column] * ResiduePolyF8Z64::from_scalar(Wrapping(mask.as_ref()[column]))
-    });
+    let a_time_s =
+        (0..key_share64.len()).fold(ResiduePoly::<Z64, EXTENSION_DEGREE>::ZERO, |acc, column| {
+            acc + key_share64[column]
+                * ResiduePoly::<Z64, EXTENSION_DEGREE>::from_scalar(Wrapping(mask.as_ref()[column]))
+        });
     // b-<a, s>
     // Compute Delta, taking into account that total_block_bits omits the additional padding bit
     let delta_pad_bits = ciphertext_modulus - (sk_share.parameters.total_block_bits() + 1);
     let delta_pad_half = 1_u64 << (delta_pad_bits - 1);
-    let scalar_delta_half = ResiduePolyF8Z64::from_scalar(Wrapping(delta_pad_half));
-    let res = ResiduePolyF8Z64::from_scalar(Wrapping(*body.data)) - a_time_s + scalar_delta_half;
+    let scalar_delta_half =
+        ResiduePoly::<Z64, EXTENSION_DEGREE>::from_scalar(Wrapping(delta_pad_half));
+    let res = ResiduePoly::<Z64, EXTENSION_DEGREE>::from_scalar(Wrapping(*body.data)) - a_time_s
+        + scalar_delta_half;
     Ok(res)
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::algebra::structure_traits::Ring;
     use crate::execution::sharing::shamir::RevealOp;
     use crate::execution::tfhe_internals::test_feature::KeySet;
     use crate::networking::NetworkMode;
@@ -776,7 +867,7 @@ mod tests {
         let glwe_secret_key = keyset.get_raw_glwe_client_key();
         let glwe_secret_key_sns_as_lwe = keyset.sns_secret_key.key.clone();
         let params = keyset.sns_secret_key.params;
-        let shares = keygen_all_party_shares(
+        let shares = keygen_all_party_shares::<_, 8>(
             lwe_secret_key,
             glwe_secret_key,
             glwe_secret_key_sns_as_lwe,
@@ -833,12 +924,10 @@ mod tests {
 
         let identities = generate_fixed_identities(num_parties);
         //Assumes Sync because preprocessing is part of the task
-        let mut runtime = DistributedTestRuntime::<ResiduePolyF8Z128>::new(
-            identities,
-            threshold as u8,
-            NetworkMode::Sync,
-            None,
-        );
+        let mut runtime = DistributedTestRuntime::<
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+        >::new(identities, threshold as u8, NetworkMode::Sync, None);
 
         runtime.setup_conversion_key(Arc::new(keyset.public_keys.sns_key.clone().unwrap()));
         runtime.setup_sks(key_shares);
@@ -878,12 +967,10 @@ mod tests {
 
         let identities = generate_fixed_identities(num_parties);
         //Assumes Sync because preprocessing is part of the task
-        let mut runtime = DistributedTestRuntime::<ResiduePolyF8Z128>::new(
-            identities,
-            threshold as u8,
-            NetworkMode::Sync,
-            None,
-        );
+        let mut runtime = DistributedTestRuntime::<
+            ResiduePolyF8Z128,
+            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+        >::new(identities, threshold as u8, NetworkMode::Sync, None);
 
         runtime.setup_conversion_key(Arc::new(keyset.public_keys.sns_key.clone().unwrap()));
         runtime.setup_sks(key_shares);
@@ -923,12 +1010,10 @@ mod tests {
 
         let identities = generate_fixed_identities(num_parties);
         //Assumes Sync because preprocessing is part of the task
-        let mut runtime = DistributedTestRuntime::<ResiduePolyF8Z64>::new(
-            identities,
-            threshold as u8,
-            NetworkMode::Sync,
-            None,
-        );
+        let mut runtime = DistributedTestRuntime::<
+            ResiduePolyF8Z64,
+            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+        >::new(identities, threshold as u8, NetworkMode::Sync, None);
 
         runtime.setup_sks(key_shares);
         runtime.setup_ks(Arc::new(
@@ -977,12 +1062,10 @@ mod tests {
 
         let identities = generate_fixed_identities(num_parties);
         //Assumes Sync because preprocessing is part of the task
-        let mut runtime = DistributedTestRuntime::<ResiduePolyF8Z64>::new(
-            identities,
-            threshold as u8,
-            NetworkMode::Sync,
-            None,
-        );
+        let mut runtime = DistributedTestRuntime::<
+            ResiduePolyF8Z64,
+            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+        >::new(identities, threshold as u8, NetworkMode::Sync, None);
 
         runtime.setup_sks(key_shares);
         runtime.setup_ks(Arc::new(
