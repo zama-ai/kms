@@ -917,6 +917,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::networking::thread_handle::OsThreadGroup;
     use std::{collections::HashMap, sync::Arc, thread};
 
     use itertools::Itertools;
@@ -1191,14 +1192,14 @@ mod tests {
             .collect_vec();
         let runtimes = Arc::new(runtimes);
 
-        let mut threads = Vec::new();
+        let mut handles = OsThreadGroup::new();
 
         //For test runtime we need multiple runtimes for mutltiple channels
         let rt = tokio::runtime::Runtime::new().unwrap();
         for party_id in 0..num_parties {
             let runtimes = runtimes.clone();
             let rt_handle = rt.handle().clone();
-            threads.push(thread::spawn(move || {
+            handles.add(thread::spawn(move || {
                 //inside a party
                 let _guard = rt_handle.enter();
                 println!("Thread created for {party_id}");
@@ -1264,9 +1265,7 @@ mod tests {
         }
 
         let mut channels = Vec::new();
-        for thread in threads {
-            channels.push(thread.join().unwrap());
-        }
+        channels.extend(handles.join_all_with_results().unwrap());
 
         (identities, channels)
     }
@@ -1384,12 +1383,13 @@ mod tests {
             .collect_vec();
         let runtimes = Arc::new(runtimes);
 
-        let mut threads = Vec::new();
+        let mut handles = OsThreadGroup::new();
+
         let rt = tokio::runtime::Runtime::new().unwrap();
         for party_id in 0..num_parties {
             let runtimes = runtimes.clone();
             let rt_handle = rt.handle().clone();
-            threads.push(thread::spawn(move || {
+            handles.add(thread::spawn(move || {
                 let _guard = rt_handle.enter();
                 println!("Thread created for {party_id}");
 
@@ -1454,9 +1454,7 @@ mod tests {
         }
 
         let mut channels = Vec::new();
-        for thread in threads {
-            channels.push(thread.join().unwrap());
-        }
+        channels.extend(handles.join_all_with_results().unwrap());
 
         (identities, channels)
     }

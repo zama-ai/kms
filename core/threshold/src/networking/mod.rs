@@ -13,6 +13,7 @@ pub mod constants;
 pub mod grpc;
 pub mod local;
 pub mod sending_service;
+pub mod thread_handle;
 pub mod value;
 
 pub type NetworkingStrategy =

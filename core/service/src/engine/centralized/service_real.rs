@@ -252,9 +252,9 @@ impl<
             "Cannot find centralized keys".to_string(),
         )?;
 
-        // we do not need to hold the handle,
-        // the result of the computation is tracked by the reenc_meta_store
-        let _handle = tokio::spawn(
+        let mut handles = self.thread_handles.write().await;
+
+        let handle = tokio::spawn(
             async move {
                 let _permit = permit;
                 let keys = match crypto_storage
@@ -276,6 +276,7 @@ impl<
                         return;
                     }
                 };
+
                 tracing::info!(
                     "Starting reencryption using key_id {} for request ID {}",
                     &key_id,
@@ -311,6 +312,7 @@ impl<
             .instrument(tracing::Span::current()),
         );
 
+        handles.add(handle);
         Ok(Response::new(Empty {}))
     }
 
@@ -509,6 +511,7 @@ impl<
         request: Request<RequestId>,
     ) -> Result<Response<DecryptionResponse>, Status> {
         let request_id = request.into_inner();
+        tracing::debug!("Received get key gen result request with id {}", request_id);
         validate_request_id(&request_id)?;
 
         let status = {

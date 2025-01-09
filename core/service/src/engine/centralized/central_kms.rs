@@ -24,6 +24,7 @@ use distributed_decryption::execution::endpoints::keygen::FhePubKeySet;
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 #[cfg(feature = "non-wasm")]
 use distributed_decryption::execution::zk::ceremony::make_centralized_public_parameters;
+use distributed_decryption::networking::thread_handle::ThreadHandleGroup;
 use k256::ecdsa::SigningKey;
 use kms_grpc::kms::v1::FheType;
 #[cfg(feature = "non-wasm")]
@@ -233,6 +234,7 @@ pub struct RealCentralizedKms<
     pub(crate) rate_limiter: RateLimiter,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
     pub(crate) tracker: Arc<TaskTracker>,
+    pub(crate) thread_handles: Arc<RwLock<ThreadHandleGroup>>,
 }
 
 /// Perform asynchronous decryption and serialize the result
@@ -515,6 +517,7 @@ impl<
             ))),
             rate_limiter: RateLimiter::new(rate_limiter_conf.unwrap_or_default()),
             tracker: Arc::new(TaskTracker::new()),
+            thread_handles: Arc::new(RwLock::new(ThreadHandleGroup::new())),
         })
     }
 }
@@ -531,6 +534,23 @@ impl<
         self.tracker.wait().await;
         // TODO add health end points to this
         Ok(())
+    }
+}
+
+#[cfg(feature = "non-wasm")]
+impl<
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
+        BackS: Storage + Sync + Send + 'static,
+    > Drop for RealCentralizedKms<PubS, PrivS, BackS>
+{
+    fn drop(&mut self) {
+        if let Some(handles) = Arc::get_mut(&mut self.thread_handles) {
+            let handles = std::mem::take(handles.get_mut());
+            if let Err(e) = handles.join_all_blocking() {
+                tracing::error!("Error joining threads on drop: {}", e);
+            }
+        }
     }
 }
 

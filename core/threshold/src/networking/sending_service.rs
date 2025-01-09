@@ -22,6 +22,7 @@ use crate::error::error_handler::anyhow_error_and_log;
 use crate::{execution::runtime::party::Identity, session_id::SessionId};
 
 use super::grpc::{CoreToCoreNetworkConfig, MessageQueueStore, OptionConfigWrapper};
+use super::thread_handle::ThreadHandleGroup;
 use super::{NetworkMode, Networking};
 
 mod gen {
@@ -66,6 +67,7 @@ pub struct GrpcSendingService {
     config: OptionConfigWrapper,
     /// Contains the certificate bundles
     certificate_bundle: Option<CertificatePaths>,
+    thread_handles: Arc<RwLock<ThreadHandleGroup>>,
 }
 
 impl GrpcSendingService {
@@ -189,6 +191,18 @@ impl GrpcSendingService {
 impl SendingService for GrpcSendingService {
     /// Communicates with the service thread to spin up a new connection with `other`
     /// __NOTE__: This requires the service to be running already
+    fn new(
+        certificate_bundle: Option<CertificatePaths>,
+        config: Option<CoreToCoreNetworkConfig>,
+    ) -> Self {
+        Self {
+            config: OptionConfigWrapper { conf: config },
+            certificate_bundle,
+            thread_handles: Arc::new(RwLock::new(ThreadHandleGroup::new())),
+        }
+    }
+
+    /// Adds one connection and outputs the mpsc Sender channel other processes will use to communicate to other
     fn add_connection(&self, other: Identity) -> anyhow::Result<UnboundedSender<SendValueRequest>> {
         let (sender, receiver) = unbounded_channel::<SendValueRequest>();
         let network_channel = self.connect_to_party(other.clone())?;
@@ -198,16 +212,22 @@ impl SendingService for GrpcSendingService {
             multiplier: self.config.get_multiplier(),
             ..Default::default()
         };
-        tokio::spawn(Self::run_network_task(
+        let mut handles = self.thread_handles.write().map_err(|e| {
+            anyhow_error_and_log(format!(
+                "Failed to acquire write lock for thread handles: {}",
+                e
+            ))
+        })?;
+        let handle = tokio::spawn(Self::run_network_task(
             receiver,
             network_channel,
             exponential_backoff,
         ));
+        handles.add(handle);
         Ok(sender)
     }
 
-    /// Does the same as [`SyncSendingService::add_connection`] but for multiple others
-    /// __NOTE__: This requires the service to be running already
+    ///Adds multiple connections at once
     fn add_connections(
         &self,
         others: Vec<Identity>,
@@ -219,14 +239,26 @@ impl SendingService for GrpcSendingService {
         }
         Ok(map)
     }
+}
 
-    fn new(
-        certificate_bundle: Option<CertificatePaths>,
-        config: Option<CoreToCoreNetworkConfig>,
-    ) -> Self {
-        Self {
-            config: OptionConfigWrapper { conf: config },
-            certificate_bundle,
+impl Drop for GrpcSendingService {
+    fn drop(&mut self) {
+        match Arc::get_mut(&mut self.thread_handles) {
+            Some(lock) => match RwLock::get_mut(lock) {
+                Ok(handles) => {
+                    let handles = std::mem::take(handles);
+                    match handles.join_all_blocking() {
+                        Ok(_) => tracing::debug!("Successfully cleaned up all handles"),
+                        Err(e) => tracing::error!("Error joining threads on drop: {}", e),
+                    }
+                }
+                Err(_) => {
+                    tracing::warn!("Could not get exclusive access to thread handles for cleanup")
+                }
+            },
+            None => {
+                tracing::debug!("Thread handles are still referenced elsewhere, skipping cleanup")
+            }
         }
     }
 }
@@ -451,13 +483,13 @@ fn hostname_is_valid(hostname: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
+    use crate::networking::thread_handle::OsThreadGroup;
     use crate::{
         execution::runtime::party::{Identity, Role, RoleAssignment},
         networking::{grpc::GrpcNetworkingManager, sending_service::hostname_is_valid, Networking},
         session_id::SessionId,
     };
+    use std::time::Duration;
 
     #[test]
     fn test_network_stack() {
@@ -470,7 +502,8 @@ mod tests {
         role_assignment.insert(role_1, id_1.clone());
         role_assignment.insert(role_2, id_2.clone());
 
-        let mut handles = Vec::new();
+        // Keep a Vec for collecting results
+        let mut handles = OsThreadGroup::new();
         for (role, id) in role_assignment.iter() {
             //Wait a little while to make sure retry works fine
             std::thread::sleep(Duration::from_secs(5));
@@ -480,7 +513,7 @@ mod tests {
             let id_2 = id_2.clone();
             let port_digit = role.zero_based();
             let role_assignment = role_assignment.clone();
-            handles.push(std::thread::spawn(move || {
+            handles.add(std::thread::spawn(move || {
                 let runtime = tokio::runtime::Runtime::new().unwrap();
                 let _guard = runtime.enter();
                 let networking = GrpcNetworkingManager::new(id.clone(), None, None);
@@ -526,13 +559,13 @@ mod tests {
                         send.send(msg).unwrap();
                     });
                 }
-                recv.blocking_recv()
+                recv.blocking_recv().unwrap()
             }));
         }
 
         let id = id_2;
         let port_digit = 1;
-        handles.push(std::thread::spawn(move || {
+        handles.add(std::thread::spawn(move || {
             std::thread::sleep(Duration::from_secs(5));
             let runtime = tokio::runtime::Runtime::new().unwrap();
             let _guard = runtime.enter();
@@ -567,15 +600,15 @@ mod tests {
                 tracing::info!("Received TWICE {:?}", msg);
                 send.send(msg).unwrap();
             });
-            recv.blocking_recv()
+            recv.blocking_recv().unwrap()
         }));
 
-        let mut res = Vec::new();
-        for handle in handles {
-            res.push(handle.join().unwrap().unwrap());
-        }
-        let ref_res = res.first().unwrap();
-        for res in res.iter() {
+        // Join all threads and collect results
+        let results = handles.join_all_with_results().unwrap();
+
+        // Check results
+        let ref_res = results.first().unwrap();
+        for res in results.iter() {
             assert_eq!(res, ref_res);
         }
     }

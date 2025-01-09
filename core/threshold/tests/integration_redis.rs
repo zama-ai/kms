@@ -180,7 +180,10 @@ fn test_dkg_orchestrator_large(
     threshold: u8,
     params: DKGParams,
 ) {
-    use distributed_decryption::{algebra::structure_traits::Ring, networking::NetworkMode};
+    use distributed_decryption::{
+        algebra::structure_traits::Ring,
+        networking::{thread_handle::OsThreadGroup, NetworkMode},
+    };
 
     let params_basics_handles = params.get_params_basics_handle();
     params_basics_handles
@@ -205,11 +208,11 @@ fn test_dkg_orchestrator_large(
     let runtimes = Arc::new(runtimes);
 
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let mut threads = Vec::new();
+    let mut handles = OsThreadGroup::new();
     for party_id in 0..num_parties {
         let runtimes = runtimes.clone();
         let rt_handle = rt.handle().clone();
-        threads.push(thread::spawn(move || {
+        handles.add(thread::spawn(move || {
             let _guard = rt_handle.enter();
             println!("Thread created for {party_id}");
 
@@ -250,8 +253,7 @@ fn test_dkg_orchestrator_large(
     }
 
     let mut pk_ref = None;
-    for thread in threads {
-        let (party_id, pk, sk) = thread.join().unwrap();
+    for (party_id, pk, sk) in handles.join_all_with_results().unwrap() {
         match pk_ref {
             None => pk_ref = Some(pk),
             Some(ref ref_key) => assert_eq!(ref_key, &pk),
