@@ -18,7 +18,7 @@ jobs:
     uses: ./.github/workflows/common-build-big-instance.yml
     with:
       working-directory: './core/threshold'
-      args-tests: '--lib'
+      args-tests: '-F slow_tests --lib'
       package-name: 'distributed-decryption'
     permissions:
       contents: 'read'

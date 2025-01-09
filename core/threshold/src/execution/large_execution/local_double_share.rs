@@ -736,8 +736,11 @@ pub(crate) mod tests {
         );
     }
 
+    // marking as serial test because too many tests in parallel causes thread contention
+    // and slows down the tests, which leads to timeouts in our protocols
     #[cfg(feature = "slow_tests")]
     #[rstest]
+    #[serial_test::serial]
     fn test_ldl_malicious_subprotocols_caught<
         V: Vss,
         C: Coinflip + 'static,
@@ -781,8 +784,11 @@ pub(crate) mod tests {
         );
     }
 
+    // marking as serial test because too many tests in parallel causes thread contention
+    // and slows down the tests, which leads to timeouts in our protocols
     #[cfg(feature = "slow_tests")]
     #[rstest]
+    #[serial_test::serial]
     fn test_ldl_malicious_subprotocols_not_caught<
         V: Vss,
         C: Coinflip + 'static,
