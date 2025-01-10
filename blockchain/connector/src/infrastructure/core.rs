@@ -1154,28 +1154,28 @@ impl<S> Poller<KeyGenPreprocStatus> for KeyGenPreprocVal<S> {
         Result<Response<KeyGenPreprocStatus>, Status>,
     ) -> Result<PollerStatus<KmsOperationResponse>, anyhow::Error> {
         move |res: Result<Response<KeyGenPreprocStatus>, Status>| -> anyhow::Result<PollerStatus<_>, anyhow::Error> {
-        match res {
-            Ok(res) => {
-                let inner = res.into_inner();
-                let status = KeyGenPreprocStatusEnum::try_from(inner.result)?;
-                match status {
-                    KeyGenPreprocStatusEnum::Finished => {
-                    let input = GenericMapResponseInput::new_from_poller_input(Response::new(inner), input.clone());
-                        Ok(PollerStatus::Done(Self::map_response(input)?))
-                    }
-                    KeyGenPreprocStatusEnum::InProgress => {
-                        Ok(PollerStatus::Poll)
-                    }
-                    other => {
-                        Err(anyhow!("{description} error while getting status: {}", other.as_str_name()))
+            match res {
+                Ok(res) => {
+                    let inner = res.into_inner();
+                    let status = KeyGenPreprocStatusEnum::try_from(inner.result)?;
+                    match status {
+                        KeyGenPreprocStatusEnum::Finished => {
+                            let input = GenericMapResponseInput::new_from_poller_input(Response::new(inner), input.clone());
+                            Ok(PollerStatus::Done(Self::map_response(input)?))
+                        }
+                        KeyGenPreprocStatusEnum::InProgress => {
+                            Ok(PollerStatus::Poll)
+                        }
+                        other => {
+                            Err(anyhow!("{description} error while getting status: {}", other.as_str_name()))
+                        }
                     }
                 }
-            }
-            Err(e) => {
-                Err(anyhow!(e.to_string()))
+                Err(e) => {
+                    Err(anyhow!(e.to_string()))
+                }
             }
         }
-    }
     }
 
     // This dispatch_catchup_response doesn't exactly follow the standard template so

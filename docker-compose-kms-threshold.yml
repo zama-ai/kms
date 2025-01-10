@@ -17,8 +17,8 @@ services:
       dockerfile: core/service/operations/docker/ci.dockerfile  
       args:
         LTO_RELEASE: release-test
-    environment:
-      - RUST_LOG=info,tonic=info,h2=info
+    env_file:
+      - "docker-compose-kms-core.env"
     entrypoint: >
       /bin/sh -c "
       echo \"Starting TLS certificates generation\" &&
@@ -56,9 +56,10 @@ services:
         condition: service_completed_successfully
       dev-kms-core-certs:
         condition: service_completed_successfully
+    env_file:
+      - "docker-compose-kms-core.env"
     environment:
       - DOCKER_BUILDKIT=1    
-      - RUST_LOG=info,tonic=info,h2=info
     # We do a key-gen first because otherwise the service won't start
     # NOTE: currently debugging the upload to s3
     # Credentials are set with both credentials file and env-var
@@ -94,8 +95,9 @@ services:
       - "kms-blockchain-connector"
       - "--config-file"
       - "config/compose_1.toml"
+    env_file:
+      - "docker-compose-kms-connector.env"
     environment:
-      - RUST_LOG=info,tonic=info,h2=info
       - DOCKER_BUILDKIT=1
       - ASC_CONN__BLOCKCHAIN__ADDRESSES=http://dev-kms-blockchain-validator:9090
       - ASC_CONN__CORE__ADDRESSES=http://dev-kms-core-1:50100
@@ -130,9 +132,10 @@ services:
       - ./core/service/config/:/app/kms/core/service/config
       - certs:/app/kms/core/service/certs
       - minio_secrets:/minio_secrets
+    env_file:
+      - "docker-compose-kms-core.env"
     environment:
       - DOCKER_BUILDKIT=1    
-      - RUST_LOG=info,tonic=info,h2=info
     entrypoint: >
       /bin/sh -c "
       export AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
@@ -161,9 +164,10 @@ services:
       - "kms-blockchain-connector"
       - "--config-file"
       - "config/compose_2.toml"
+    env_file:
+      - "docker-compose-kms-connector.env"
     environment:
       - DOCKER_BUILDKIT=1    
-      - RUST_LOG=info,tonic=info,h2=info
       - ASC_CONN__BLOCKCHAIN__ADDRESSES=http://dev-kms-blockchain-validator:9090
       - ASC_CONN__CORE__ADDRESSES=http://dev-kms-core-2:50200
       - ASC_CONN__STORE__URL=http://dev-kv-store:8088
@@ -197,9 +201,10 @@ services:
       - certs:/app/kms/core/service/certs
       - minio_secrets:/minio_secrets
       - ./core/service/config/:/app/kms/core/service/config
+    env_file:
+      - "docker-compose-kms-core.env"
     environment:
       - DOCKER_BUILDKIT=1    
-      - RUST_LOG=info,tonic=info,h2=info
     entrypoint: >
       /bin/sh -c "
       export AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
@@ -231,9 +236,10 @@ services:
       - "config/compose_3.toml"
       - "--catch-up-num-blocks"
       - "100000" # Each block takes about a second so this is around 27 hours. Should be adjusted in a real deployment
+    env_file:
+      - "docker-compose-kms-connector.env"
     environment:
       - DOCKER_BUILDKIT=1        
-      - RUST_LOG=info,tonic=info,h2=info
       - ASC_CONN__BLOCKCHAIN__ADDRESSES=http://dev-kms-blockchain-validator:9090
       - ASC_CONN__CORE__ADDRESSES=http://dev-kms-core-3:50300
       - ASC_CONN__STORE__URL=http://dev-kv-store:8088
@@ -267,9 +273,10 @@ services:
       - ./core/service/config/:/app/kms/core/service/config
       - certs:/app/kms/core/service/certs
       - minio_secrets:/minio_secrets
+    env_file:
+      - "docker-compose-kms-core.env"
     environment:
       - DOCKER_BUILDKIT=1    
-      - RUST_LOG=info,tonic=info,h2=info
     entrypoint: >
       /bin/sh -c "
       export AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
@@ -298,9 +305,10 @@ services:
       - "kms-blockchain-connector"
       - "--config-file"
       - "config/compose_4.toml"
+    env_file:
+      - "docker-compose-kms-connector.env"
     environment:
       - DOCKER_BUILDKIT=1        
-      - RUST_LOG=info,tonic=info,h2=info
       - ASC_CONN__BLOCKCHAIN__ADDRESSES=http://dev-kms-blockchain-validator:9090
       - ASC_CONN__CORE__ADDRESSES=http://dev-kms-core-4:50400
       - ASC_CONN__STORE__URL=http://dev-kv-store:8088
@@ -331,8 +339,9 @@ services:
         condition: service_healthy
       dev-kms-core-4:
         condition: service_healthy
+    env_file:
+      - "docker-compose-kms-core.env"
     environment:
-      - RUST_LOG=info,tonic=info,h2=info
       - RUN_MODE=dev
     entrypoint: >
       /bin/sh -c "

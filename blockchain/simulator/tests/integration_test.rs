@@ -7,7 +7,6 @@ use std::path::PathBuf;
 use std::string::String;
 use test_context::{test_context, AsyncTestContext};
 use tests_utils::{DockerCompose, KMSMode};
-use tokio::fs;
 
 // IMPORTANT: These integration tests require Docker running and images build.
 // You can build the images by running the following commands from the root of the repo:
@@ -27,7 +26,6 @@ trait DockerComposeContext {
 
 struct DockerComposeCentralizedContext {
     pub cmd: DockerCompose,
-    pub test_dir: std::path::PathBuf,
 }
 
 impl DockerComposeContext for DockerComposeCentralizedContext {
@@ -42,28 +40,21 @@ impl DockerComposeContext for DockerComposeCentralizedContext {
 
 impl AsyncTestContext for DockerComposeCentralizedContext {
     async fn setup() -> Self {
-        // TODO: probably dangerous in the case of concurrent tests
-        // We should probably create a folder per-test and add it to the test context
-        let test_dir = std::path::Path::new("tests/data");
-        fs::create_dir_all(test_dir).await.unwrap();
         DockerComposeCentralizedContext {
             cmd: DockerCompose::new(KMSMode::Centralized),
-            test_dir: test_dir.to_path_buf(),
         }
     }
 
     async fn teardown(self) {
-        fs::remove_dir_all(self.test_dir).await.unwrap();
         drop(self.cmd);
     }
 }
 
-struct DockerComposeThresholdContext {
+struct DockerComposeThresholdContextDefault {
     pub cmd: DockerCompose,
-    pub test_dir: std::path::PathBuf,
 }
 
-impl DockerComposeContext for DockerComposeThresholdContext {
+impl DockerComposeContext for DockerComposeThresholdContextDefault {
     fn root_path(&self) -> PathBuf {
         self.cmd.cmd.root_path.clone()
     }
@@ -73,18 +64,40 @@ impl DockerComposeContext for DockerComposeThresholdContext {
     }
 }
 
-impl AsyncTestContext for DockerComposeThresholdContext {
+impl AsyncTestContext for DockerComposeThresholdContextDefault {
     async fn setup() -> Self {
-        let test_dir = std::path::Path::new("tests/data");
-        fs::create_dir_all(test_dir).await.unwrap();
-        DockerComposeThresholdContext {
-            cmd: DockerCompose::new(KMSMode::Threshold),
-            test_dir: test_dir.to_path_buf(),
+        Self {
+            cmd: DockerCompose::new(KMSMode::ThresholdDefaultParameter),
         }
     }
 
     async fn teardown(self) {
-        fs::remove_dir_all(self.test_dir).await.unwrap();
+        drop(self.cmd);
+    }
+}
+
+struct DockerComposeThresholdContextTest {
+    pub cmd: DockerCompose,
+}
+
+impl DockerComposeContext for DockerComposeThresholdContextTest {
+    fn root_path(&self) -> PathBuf {
+        self.cmd.cmd.root_path.clone()
+    }
+
+    fn config_path(&self) -> &str {
+        "blockchain/simulator/config/local_threshold.toml"
+    }
+}
+
+impl AsyncTestContext for DockerComposeThresholdContextTest {
+    async fn setup() -> Self {
+        Self {
+            cmd: DockerCompose::new(KMSMode::ThresholdTestParameter),
+        }
+    }
+
+    async fn teardown(self) {
         drop(self.cmd);
     }
 }
@@ -108,7 +121,7 @@ async fn key_and_crs_gen<T: DockerComposeContext>(
         max_iter: 200,
         expect_all_responses: true,
     };
-    println!("Doing key-gen");
+    println!("Doing insecure key-gen");
     let key_gen_results = main_from_config(
         &config.file_conf.unwrap(),
         &config.command,
@@ -118,7 +131,7 @@ async fn key_and_crs_gen<T: DockerComposeContext>(
     )
     .await
     .unwrap();
-    println!("Key-gen done");
+    println!("Insecure key-gen done");
 
     let command = match insecure_crs_gen {
         true => SimulatorCommand::InsecureCrsGen(CrsParameters { max_num_bits: 2048 }),
@@ -133,7 +146,7 @@ async fn key_and_crs_gen<T: DockerComposeContext>(
     };
 
     let key_ids: Vec<String> = match key_gen_results {
-        Some(values) => values
+        (Some(values), _) => values
             .iter()
             .map(|x| match x {
                 OperationValue::KeyGenResponse(key_gen_response) => {
@@ -157,7 +170,7 @@ async fn key_and_crs_gen<T: DockerComposeContext>(
     .unwrap();
     println!("CRS-gen done");
     let crs_ids: Vec<String> = match crs_gen_results {
-        Some(values) => values
+        (Some(values), _) => values
             .iter()
             .map(|x| match x {
                 OperationValue::CrsGenResponse(crs_gen_response) => {
@@ -171,6 +184,68 @@ async fn key_and_crs_gen<T: DockerComposeContext>(
     let crs_id = crs_ids.first().expect("CRS id is None").to_lowercase();
     let key_id = key_ids.first().expect("Key id is None").to_lowercase();
     (key_id.to_string(), crs_id.to_string())
+}
+
+async fn real_preproc_and_keygen<T: DockerComposeContext>(ctx: &mut T) -> String {
+    // Wait for contract to be in-chain
+    // TODO: add status check for contract in-chain
+    tokio::time::sleep(tokio::time::Duration::from_secs(BOOTSTRAP_TIME_TO_SLEEP)).await;
+
+    let path_to_config = ctx.root_path().join(ctx.config_path());
+    let keys_folder: &Path = Path::new("tests/data/keys");
+
+    let config = Config {
+        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+        command: SimulatorCommand::PreprocKeyGen(NoParameters {}),
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+    };
+    println!("Doing preprocessing");
+    let (_, preproc_id) = main_from_config(
+        &config.file_conf.unwrap(),
+        &config.command,
+        keys_folder,
+        config.max_iter,
+        config.expect_all_responses,
+    )
+    .await
+    .unwrap();
+    println!("Preprocessing done with ID {}", preproc_id);
+
+    let config = Config {
+        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+        command: SimulatorCommand::KeyGen(KeyGenParameters { preproc_id }),
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+    };
+    println!("Doing key-gen");
+    let key_gen_results = main_from_config(
+        &config.file_conf.unwrap(),
+        &config.command,
+        keys_folder,
+        config.max_iter,
+        config.expect_all_responses,
+    )
+    .await
+    .unwrap();
+    println!("Key-gen done");
+
+    let key_ids: Vec<String> = match key_gen_results {
+        (Some(values), _) => values
+            .iter()
+            .map(|x| match x {
+                OperationValue::KeyGenResponse(key_gen_response) => {
+                    key_gen_response.request_id().to_hex()
+                }
+                _ => panic!("Not all responses are KeyGenResponses"),
+            })
+            .collect(),
+        _ => panic!("Error doing keygen"),
+    };
+
+    key_ids.first().expect("Key id is None").to_lowercase()
 }
 
 async fn test_template<T: DockerComposeContext>(ctx: &mut T, commands: Vec<SimulatorCommand>) {
@@ -210,7 +285,7 @@ async fn test_template<T: DockerComposeContext>(ctx: &mut T, commands: Vec<Simul
 #[test_context(DockerComposeCentralizedContext)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_centralized_secure_crs(ctx: &mut DockerComposeCentralizedContext) {
+async fn test_centralized_secure(ctx: &mut DockerComposeCentralizedContext) {
     init_logging();
     let (key_id, crs_id) = key_and_crs_gen(ctx, false).await;
     integration_test_commands(ctx, key_id, crs_id).await;
@@ -219,26 +294,26 @@ async fn test_centralized_secure_crs(ctx: &mut DockerComposeCentralizedContext) 
 #[test_context(DockerComposeCentralizedContext)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_centralized_insecure_crs(ctx: &mut DockerComposeCentralizedContext) {
+async fn test_centralized_insecure(ctx: &mut DockerComposeCentralizedContext) {
     init_logging();
     let (key_id, crs_id) = key_and_crs_gen(ctx, true).await;
     integration_test_commands(ctx, key_id, crs_id).await;
 }
 
 #[ignore]
-#[test_context(DockerComposeThresholdContext)]
+#[test_context(DockerComposeThresholdContextDefault)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_threshold_secure_crs(ctx: &mut DockerComposeThresholdContext) {
+async fn test_threshold_secure(ctx: &mut DockerComposeThresholdContextDefault) {
     init_logging();
     let (key_id, crs_id) = key_and_crs_gen(ctx, false).await;
     integration_test_commands(ctx, key_id, crs_id).await;
 }
 
-#[test_context(DockerComposeThresholdContext)]
+#[test_context(DockerComposeThresholdContextDefault)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_threshold_insecure_crs(ctx: &mut DockerComposeThresholdContext) {
+async fn test_threshold_insecure(ctx: &mut DockerComposeThresholdContextDefault) {
     init_logging();
     let (key_id, crs_id) = key_and_crs_gen(ctx, true).await;
     integration_test_commands(ctx, key_id, crs_id).await;
@@ -328,4 +403,12 @@ async fn integration_test_commands<T: DockerComposeContext>(
     ];
 
     test_template(ctx, commands).await
+}
+
+#[test_context(DockerComposeThresholdContextTest)]
+#[tokio::test]
+#[serial(docker)]
+async fn test_threshold_preproc_keygen(ctx: &mut DockerComposeThresholdContextTest) {
+    init_logging();
+    let _key_id = real_preproc_and_keygen(ctx).await;
 }

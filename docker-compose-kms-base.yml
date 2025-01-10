@@ -43,6 +43,7 @@ services:
       RUST_LOG: info
       VALIDATOR_NODE_ENDPOINT: http://dev-kms-blockchain-validator:26657
       DOCKER_BUILDKIT: 1
+      FHE_PARAMETER: ${FHE_PARAMETER}
     volumes:
       - ./blockchain/scripts:/app/scripts
       - validator_secrets:/app/secrets

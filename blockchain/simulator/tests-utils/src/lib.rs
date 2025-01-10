@@ -11,7 +11,8 @@ pub struct DockerComposeCmd {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum KMSMode {
-    Threshold,
+    ThresholdDefaultParameter,
+    ThresholdTestParameter,
     Centralized,
 }
 
@@ -51,6 +52,9 @@ impl DockerComposeCmd {
     pub fn up(&self) {
         self.down(); // Make sure that no container is running
         let build_docker = env::var("DOCKER_BUILD_TEST_SIMULATOR").unwrap_or("".to_string());
+        if let KMSMode::ThresholdTestParameter = self.mode {
+            env::set_var("FHE_PARAMETER", "test");
+        }
 
         let mut build = Command::new("docker");
         build
@@ -60,10 +64,13 @@ impl DockerComposeCmd {
             .arg("docker-compose-kms-base.yml")
             .arg("-f");
 
-        if self.mode == KMSMode::Centralized {
-            build.arg("docker-compose-kms-centralized.yml");
-        } else {
-            build.arg("docker-compose-kms-threshold.yml");
+        match self.mode {
+            KMSMode::ThresholdDefaultParameter | KMSMode::ThresholdTestParameter => {
+                build.arg("docker-compose-kms-threshold.yml");
+            }
+            KMSMode::Centralized => {
+                build.arg("docker-compose-kms-centralized.yml");
+            }
         }
 
         build.arg("up").arg("-d");
@@ -104,10 +111,13 @@ impl DockerComposeCmd {
                 .arg("-f")
                 .arg("docker-compose-kms-base.yml")
                 .arg("-f");
-            if self.mode == KMSMode::Centralized {
-                docker_logs.arg("docker-compose-kms-centralized.yml");
-            } else {
-                docker_logs.arg("docker-compose-kms-threshold.yml");
+            match self.mode {
+                KMSMode::ThresholdDefaultParameter | KMSMode::ThresholdTestParameter => {
+                    docker_logs.arg("docker-compose-kms-threshold.yml");
+                }
+                KMSMode::Centralized => {
+                    docker_logs.arg("docker-compose-kms-centralized.yml");
+                }
             }
 
             docker_logs.arg("logs");
@@ -127,10 +137,13 @@ impl DockerComposeCmd {
                 .arg("-f")
                 .arg("docker-compose-kms-base.yml")
                 .arg("-f");
-            if self.mode == KMSMode::Centralized {
-                docker_down.arg("docker-compose-kms-centralized.yml");
-            } else {
-                docker_down.arg("docker-compose-kms-threshold.yml");
+            match self.mode {
+                KMSMode::ThresholdDefaultParameter | KMSMode::ThresholdTestParameter => {
+                    docker_down.arg("docker-compose-kms-threshold.yml");
+                }
+                KMSMode::Centralized => {
+                    docker_down.arg("docker-compose-kms-centralized.yml");
+                }
             }
             docker_down
                 .arg("down")

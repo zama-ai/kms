@@ -848,7 +848,7 @@ pub async fn execute_insecure_crsgen_contract(
     Ok((ev, cv))
 }
 
-pub async fn execute_insecure_key_gen_contract(
+pub async fn execute_insecure_keygen_contract(
     client: &Client,
     query_client: &QueryClient,
 ) -> Result<(KmsEvent, InsecureKeyGenValues), Box<dyn std::error::Error + 'static>> {
@@ -865,7 +865,7 @@ pub async fn execute_insecure_key_gen_contract(
     let evs = execute_contract(client, query_client, insecure_key_gen_value, None).await?;
     let ev = evs[0].clone();
 
-    tracing::info!("TxId: {:?}", ev.txn_id().to_hex(),);
+    tracing::info!("InsecureKeyGen TxId: {:?}", ev.txn_id().to_hex(),);
     Ok((ev, ikv))
 }
 
@@ -878,7 +878,7 @@ pub async fn execute_preproc_keygen_contract(
     let evs = execute_contract(client, query_client, preproc_value, None).await?;
     let ev = evs[0].clone();
 
-    tracing::info!("TxId: {:?}", ev.txn_id().to_hex(),);
+    tracing::info!("Preproc TxId: {:?}", ev.txn_id().to_hex(),);
     Ok(ev)
 }
 
@@ -887,7 +887,6 @@ pub async fn execute_keygen_contract(
     query_client: &QueryClient,
     preproc_id: HexVector,
 ) -> Result<(KmsEvent, KeyGenValues), Box<dyn std::error::Error + 'static>> {
-    // TODO we need to first do a pre-processing execute
     let kv = KeyGenValues::new(
         preproc_id,
         EIP712_NAME.to_string(),
@@ -901,7 +900,7 @@ pub async fn execute_keygen_contract(
     let evs = execute_contract(client, query_client, keygen_value, None).await?;
     let ev = evs[0].clone();
 
-    tracing::info!("TxId: {:?}", ev.txn_id().to_hex(),);
+    tracing::info!("KeyGen TxId: {:?}", ev.txn_id().to_hex(),);
     Ok((ev, kv))
 }
 
@@ -1833,7 +1832,7 @@ pub async fn main_from_config(
     destination_prefix: &Path,
     max_iter: u64,
     expect_all_responses: bool,
-) -> Result<Option<Vec<OperationValue>>, Box<dyn std::error::Error + 'static>> {
+) -> Result<(Option<Vec<OperationValue>>, String), Box<dyn std::error::Error + 'static>> {
     tracing::info!("Path to config: {:?}", path_to_config);
     tracing::info!("starting command: {:?}", command);
     let sim_conf: SimulatorConfig = Settings::builder()
@@ -1872,8 +1871,6 @@ pub async fn main_from_config(
         tokio::time::Duration::from_secs(1),
     )
     .await?;
-
-    let mut return_value: Option<Vec<OperationValue>> = None;
 
     match command {
         SimulatorCommand::Decrypt(cipher_params) | SimulatorCommand::ReEncrypt(cipher_params) => {
@@ -1928,7 +1925,7 @@ pub async fn main_from_config(
     // TODO: add optional faucet configuration in CSC
 
     // Execute the proper command
-    match command {
+    let res = match command {
         SimulatorCommand::Decrypt(cipher_params) => {
             let (event, ptxt, decrypt_values) = execute_decryption_contract(
                 parse_hex(cipher_params.to_encrypt.as_str())?,
@@ -1940,6 +1937,7 @@ pub async fn main_from_config(
                 Some(cipher_params.compressed),
             )
             .await?;
+            let req_id = event.txn_id.to_hex();
 
             let num_expected_responses = if expect_all_responses {
                 num_parties
@@ -1953,7 +1951,7 @@ pub async fn main_from_config(
                 )
                 .await?
             };
-            return_value = Some(
+            let return_value = Some(
                 wait_for_response(
                     event,
                     &query_client,
@@ -1972,6 +1970,7 @@ pub async fn main_from_config(
                 &kms_addrs,
             )
             .unwrap();
+            (return_value, req_id)
         }
         SimulatorCommand::ReEncrypt(cipher_params) => {
             // Get the parameter choice from the CSC
@@ -1993,6 +1992,7 @@ pub async fn main_from_config(
                     num_parties,
                 )
                 .await?;
+            let req_id = event.txn_id.to_hex();
 
             let num_expected_responses = if expect_all_responses {
                 num_parties
@@ -2006,7 +2006,7 @@ pub async fn main_from_config(
                 )
                 .await?
             };
-            return_value = Some(
+            let return_value = Some(
                 wait_for_response(
                     event,
                     &query_client,
@@ -2028,213 +2028,118 @@ pub async fn main_from_config(
                 enc_sk,
             )
             .unwrap();
+            (return_value, req_id)
         }
-
         SimulatorCommand::PreprocKeyGen(NoParameters {}) => {
-            unimplemented!(
-                "We only support InsecureKeyGen for now, thus no preprocessing required."
+            let event = execute_preproc_keygen_contract(&client, &query_client).await?;
+            let req_id = event.txn_id.to_hex();
+            let num_expected_responses = if expect_all_responses {
+                num_parties
+            } else {
+                // Get the number of responses needed for a majority vote from the CSC if we accept less
+                // responses than the number of parties
+                query_csc(
+                    &query_client,
+                    &sim_conf,
+                    CscQuery::GetResponseCountForMajorityVote {},
+                )
+                .await?
+            };
+            let responses = wait_for_response(
+                event,
+                &query_client,
+                &sim_conf,
+                max_iter,
+                num_expected_responses,
             )
-            //let event = execute_preproc_keygen_contract(&client, &query_client).await?;
-            ////Do nothing with the response (for now ?)
-            //let _responses = wait_for_response(event, &query_client, &sim_conf, max_iter).await?;
+            .await?;
+            let return_value = Some(responses.clone());
+
+            for response in responses {
+                if let OperationValue::KeyGenPreprocResponse(response) = &response {
+                    tracing::info!(
+                        "Received KeyGenPreprocResponse {:?} for request_id {}",
+                        response,
+                        &req_id
+                    );
+                } else {
+                    panic!("Did not receive CrsGenResponse, got {:?}", response)
+                }
+            }
+            (return_value, req_id)
         }
-        SimulatorCommand::KeyGen(_ex) => {
-            unimplemented!("We only support InsecureKeyGen for now.")
-            //let preproc_id = HexVector::from_hex(&ex.preproc_id)?;
-            //let event = execute_keygen_contract(&client, &query_client, preproc_id).await?;
-            ////Do nothing with the response (for now ?)
-            //let _responses = wait_for_response(event, &query_client, &sim_conf, max_iter).await?;
+        SimulatorCommand::KeyGen(KeyGenParameters { preproc_id }) => {
+            let preproc_id = HexVector::from_hex(preproc_id)?;
+            let (event, keygen_vals) =
+                execute_keygen_contract(&client, &query_client, preproc_id).await?;
+            let req_id = event.txn_id.to_hex();
+            let return_value = process_keygen(
+                expect_all_responses,
+                num_parties,
+                max_iter,
+                &query_client,
+                &sim_conf,
+                &kms_addrs,
+                destination_prefix,
+                event,
+                &keygen_vals,
+            )
+            .await?;
+            (return_value, req_id)
         }
         SimulatorCommand::InsecureKeyGen(NoParameters {}) => {
             let (event, insecure_keygen_vals) =
-                execute_insecure_key_gen_contract(&client, &query_client).await?;
-            let req_id = &event.txn_id.to_hex();
-
-            let num_expected_responses = if expect_all_responses {
-                num_parties
-            } else {
-                // Get the number of responses needed for a majority vote from the CSC if we accept less
-                // responses than the number of parties
-                query_csc(
-                    &query_client,
-                    &sim_conf,
-                    CscQuery::GetResponseCountForMajorityVote {},
-                )
-                .await?
-            };
-            let responses = wait_for_response(
-                event,
+                execute_insecure_keygen_contract(&client, &query_client).await?;
+            let req_id = event.txn_id.to_hex();
+            let return_value = process_keygen(
+                expect_all_responses,
+                num_parties,
+                max_iter,
                 &query_client,
                 &sim_conf,
-                max_iter,
-                num_expected_responses,
+                &kms_addrs,
+                destination_prefix,
+                event,
+                &insecure_keygen_vals,
             )
             .await?;
-
-            // Download the generated keys. We do this just once, to save time, assuming that all generated keys are indentical.
-            // If we want to test for malicious behavior in the threshold case, we need to download all keys and compare them.
-            fetch_key(req_id, &sim_conf, destination_prefix).await?;
-            let pk = load_pk_from_storage(Some(destination_prefix), req_id).await;
-            let sk = load_server_key_from_storage(Some(destination_prefix), req_id).await;
-
-            return_value = Some(responses.clone());
-            for response in responses {
-                if let OperationValue::KeyGenResponse(response) = &response {
-                    tracing::info!(
-                            "Received KeyGenResponse with request ID {}, pk digest {}, pk signature {}, server key digest {}, server key signature {}",
-                            response.request_id().to_hex(),
-                            response.public_key_digest(),
-                            response.public_key_signature().to_hex(),
-                            response.server_key_digest(),
-                            response.server_key_signature().to_hex(),
-                        );
-                    assert_eq!(
-                        req_id,
-                        &response.request_id().to_string(),
-                        "Request ID of response does not match the transaction"
-                    );
-
-                    check_ext_pubdata_signature(
-                        &pk,
-                        &response.public_key_external_signature().0,
-                        &insecure_keygen_vals,
-                        &kms_addrs,
-                    )?;
-
-                    check_ext_pubdata_signature(
-                        &sk,
-                        &response.server_key_external_signature().0,
-                        &insecure_keygen_vals,
-                        &kms_addrs,
-                    )?;
-
-                    tracing::info!("EIP712 verification of Public Key and Server Key successful.");
-                } else {
-                    panic!("Received response {:?} during InsecureKeyGen", response)
-                }
-            }
+            (return_value, req_id)
         }
         SimulatorCommand::CrsGen(CrsParameters { max_num_bits }) => {
-            // the actual CRS ceremony takes time
-            let (event, crs_values) =
+            let (event, crs_vals) =
                 execute_crsgen_contract(&client, &query_client, *max_num_bits).await?;
-            let req_id = &event.txn_id.to_hex();
-
-            let num_expected_responses = if expect_all_responses {
-                num_parties
-            } else {
-                // Get the number of responses needed for a majority vote from the CSC if we accept less
-                // responses than the number of parties
-                query_csc(
-                    &query_client,
-                    &sim_conf,
-                    CscQuery::GetResponseCountForMajorityVote {},
-                )
-                .await?
-            };
-            let responses = wait_for_response(
-                event,
+            let req_id = event.txn_id.to_hex();
+            let return_value = process_crs(
+                expect_all_responses,
+                num_parties,
+                max_iter,
                 &query_client,
                 &sim_conf,
-                max_iter,
-                num_expected_responses,
+                &kms_addrs,
+                destination_prefix,
+                event,
+                &crs_vals,
             )
             .await?;
-            return_value = Some(responses.clone());
-
-            // Download the generated CRS. We do this just once, to save time, assuming that all generated CRSes are indentical.
-            // If we want to test for malicious behavior in the threshold case, we need to download all CRSes and compare them.
-            fetch_crs(req_id, &sim_conf, destination_prefix).await?;
-            let crs = load_crs_from_storage(Some(destination_prefix), req_id).await;
-
-            for response in responses {
-                if let OperationValue::CrsGenResponse(response) = &response {
-                    tracing::info!(
-                        "Received CrsGenResponse with request ID {}, digest {}, signature {}, and external signature {}",
-                        response.request_id(),
-                        response.digest(),
-                        response.signature().to_hex(),
-                        response.external_signature().to_hex(),
-                    );
-                    assert_eq!(
-                        req_id,
-                        response.request_id(),
-                        "Request ID of response does not match the transaction"
-                    );
-
-                    check_ext_pubdata_signature(
-                        &crs,
-                        &response.external_signature().0,
-                        &crs_values,
-                        &kms_addrs,
-                    )?;
-
-                    tracing::info!("EIP712 verification of CRS successful.");
-                } else {
-                    panic!("Received response {:?} during CrsGen", response)
-                }
-            }
+            (return_value, req_id)
         }
         SimulatorCommand::InsecureCrsGen(CrsParameters { max_num_bits }) => {
-            // the actual CRS ceremony takes time
-            let (event, crs_values) =
+            let (event, crs_vals) =
                 execute_insecure_crsgen_contract(&client, &query_client, *max_num_bits).await?;
-            let req_id = &event.txn_id.to_hex();
-
-            let num_expected_responses = if expect_all_responses {
-                num_parties
-            } else {
-                // Get the number of responses needed for a majority vote from the CSC if we accept less
-                // responses than the number of parties
-                query_csc(
-                    &query_client,
-                    &sim_conf,
-                    CscQuery::GetResponseCountForMajorityVote {},
-                )
-                .await?
-            };
-            let responses = wait_for_response(
-                event,
+            let req_id = event.txn_id.to_hex();
+            let return_value = process_crs(
+                expect_all_responses,
+                num_parties,
+                max_iter,
                 &query_client,
                 &sim_conf,
-                max_iter,
-                num_expected_responses,
+                &kms_addrs,
+                destination_prefix,
+                event,
+                &crs_vals,
             )
             .await?;
-            return_value = Some(responses.clone());
-
-            // Download the generated CRS. We do this just once, to save time, assuming that all generated CRSes are indentical.
-            // If we want to test for malicious behavior in the threshold case, we need to download all CRSes and compare them.
-            fetch_crs(req_id, &sim_conf, destination_prefix).await?;
-            let crs = load_crs_from_storage(Some(destination_prefix), req_id).await;
-
-            for response in responses {
-                if let OperationValue::CrsGenResponse(response) = &response {
-                    tracing::info!(
-                        "Received CrsGenResponse with request ID {}, digest {}, signature {}, and external signature {}",
-                        response.request_id(),
-                        response.digest(),
-                        response.signature().to_hex(),
-                        response.external_signature().to_hex(),
-                    );
-                    assert_eq!(
-                        req_id,
-                        response.request_id(),
-                        "Request ID of response does not match the transaction"
-                    );
-
-                    check_ext_pubdata_signature(
-                        &crs,
-                        &response.external_signature().0,
-                        &crs_values,
-                        &kms_addrs,
-                    )?;
-
-                    tracing::info!("EIP712 verification of CRS successful.");
-                } else {
-                    panic!("Received response {:?} during InsecureCrsGen", response)
-                }
-            }
+            (return_value, req_id)
         }
         SimulatorCommand::VerifyProvenCt(VerifyProvenCtParameters {
             to_encrypt,
@@ -2252,6 +2157,7 @@ pub async fn main_from_config(
                 destination_prefix,
             )
             .await?;
+            let req_id = event.txn_id.to_hex();
             let num_expected_responses = if expect_all_responses {
                 num_parties
             } else {
@@ -2264,8 +2170,7 @@ pub async fn main_from_config(
                 )
                 .await?
             };
-            //Do nothing with the response (for now ?)
-            return_value = Some(
+            let return_value = Some(
                 wait_for_response(
                     event,
                     &query_client,
@@ -2275,12 +2180,12 @@ pub async fn main_from_config(
                 )
                 .await?,
             );
+            (return_value, req_id)
         }
         SimulatorCommand::QueryContract(query) => {
-            // Get the values associated to the event from the ASC
-            return_value =
+            let return_value =
                 Some(get_values_from_event(&sim_conf, query.clone(), &query_client).await?);
-            // tracing::info!("Query result: {:?}", return_value);
+            (return_value, "".to_string())
         }
         SimulatorCommand::GetFunds(faucet_params) => {
             call_faucet(
@@ -2288,9 +2193,11 @@ pub async fn main_from_config(
                 &client.get_account_address()?,
             )
             .await?;
+            (None, "".to_string())
         }
         SimulatorCommand::DoNothing(NoParameters {}) => {
             tracing::info!("Nothing to do.");
+            (None, "".to_string())
         }
     };
 
@@ -2303,6 +2210,157 @@ pub async fn main_from_config(
     );
 
     tracing::info!("Simulator terminated successfully.");
+    Ok(res)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn process_keygen(
+    expect_all_responses: bool,
+    num_parties: usize,
+    max_iter: u64,
+    query_client: &QueryClient,
+    sim_conf: &SimulatorConfig,
+    kms_addrs: &[alloy_primitives::Address],
+    destination_prefix: &Path,
+    event: KmsEvent,
+    keygen_vals: &impl Eip712Values,
+) -> Result<Option<Vec<OperationValue>>, Box<dyn std::error::Error + 'static>> {
+    let req_id = &event.txn_id.to_hex();
+    let num_expected_responses = if expect_all_responses {
+        num_parties
+    } else {
+        // Get the number of responses needed for a majority vote from the CSC if we accept less
+        // responses than the number of parties
+        query_csc(
+            query_client,
+            sim_conf,
+            CscQuery::GetResponseCountForMajorityVote {},
+        )
+        .await?
+    };
+    let responses = wait_for_response(
+        event,
+        query_client,
+        sim_conf,
+        max_iter,
+        num_expected_responses,
+    )
+    .await?;
+
+    // Download the generated keys. We do this just once, to save time, assuming that all generated keys are indentical.
+    // If we want to test for malicious behavior in the threshold case, we need to download all keys and compare them.
+    fetch_key(req_id, sim_conf, destination_prefix).await?;
+    let pk = load_pk_from_storage(Some(destination_prefix), req_id).await;
+    let sk = load_server_key_from_storage(Some(destination_prefix), req_id).await;
+
+    let return_value = Some(responses.clone());
+    for response in responses {
+        if let OperationValue::KeyGenResponse(response) = &response {
+            tracing::info!(
+                            "Received KeyGenResponse with request ID {}, pk digest {}, pk signature {}, server key digest {}, server key signature {}",
+                            response.request_id().to_hex(),
+                            response.public_key_digest(),
+                            response.public_key_signature().to_hex(),
+                            response.server_key_digest(),
+                            response.server_key_signature().to_hex(),
+                        );
+            assert_eq!(
+                req_id,
+                &response.request_id().to_string(),
+                "Request ID of response does not match the transaction"
+            );
+
+            check_ext_pubdata_signature(
+                &pk,
+                &response.public_key_external_signature().0,
+                keygen_vals,
+                kms_addrs,
+            )?;
+
+            check_ext_pubdata_signature(
+                &sk,
+                &response.server_key_external_signature().0,
+                keygen_vals,
+                kms_addrs,
+            )?;
+
+            tracing::info!("EIP712 verification of Public Key and Server Key successful.");
+        } else {
+            panic!("Did not received KeyGenResponse, got {:?}", response)
+        }
+    }
+    Ok(return_value)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn process_crs(
+    expect_all_responses: bool,
+    num_parties: usize,
+    max_iter: u64,
+    query_client: &QueryClient,
+    sim_conf: &SimulatorConfig,
+    kms_addrs: &[alloy_primitives::Address],
+    destination_prefix: &Path,
+    event: KmsEvent,
+    crs_vals: &impl Eip712Values,
+) -> Result<Option<Vec<OperationValue>>, Box<dyn std::error::Error + 'static>> {
+    let req_id = &event.txn_id.to_hex();
+
+    let num_expected_responses = if expect_all_responses {
+        num_parties
+    } else {
+        // Get the number of responses needed for a majority vote from the CSC if we accept less
+        // responses than the number of parties
+        query_csc(
+            query_client,
+            sim_conf,
+            CscQuery::GetResponseCountForMajorityVote {},
+        )
+        .await?
+    };
+    let responses = wait_for_response(
+        event,
+        query_client,
+        sim_conf,
+        max_iter,
+        num_expected_responses,
+    )
+    .await?;
+    let return_value = Some(responses.clone());
+
+    // Download the generated CRS. We do this just once, to save time, assuming that all generated CRSes are indentical.
+    // If we want to test for malicious behavior in the threshold case, we need to download all CRSes and compare them.
+    fetch_crs(req_id, sim_conf, destination_prefix).await?;
+    let crs = load_crs_from_storage(Some(destination_prefix), req_id).await;
+
+    for response in responses {
+        if let OperationValue::CrsGenResponse(response) = &response {
+            tracing::info!(
+                        "Received CrsGenResponse with request ID {}, digest {}, signature {}, and external signature {}",
+                        response.request_id(),
+                        response.digest(),
+                        response.signature().to_hex(),
+                        response.external_signature().to_hex(),
+                    );
+            assert_eq!(
+                req_id,
+                response.request_id(),
+                "Request ID of response does not match the transaction"
+            );
+
+            check_ext_pubdata_signature(
+                &crs,
+                &response.external_signature().0,
+                crs_vals,
+                kms_addrs,
+            )?;
+
+            tracing::info!("EIP712 verification of CRS successful.");
+        } else {
+            panic!("Did not receive CrsGenResponse, got {:?}", response)
+        }
+    }
+
     Ok(return_value)
 }
 

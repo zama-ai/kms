@@ -35,14 +35,14 @@ retry_interval = 10
 max_poll_count = 200
 
 [core.timeout_config.keygen]
-initial_wait_time = 18000
-retry_interval = 15000
-max_poll_count = 1150
+initial_wait_time = 60
+retry_interval = 15
+max_poll_count = 10000
 
 [core.timeout_config.preproc]
-initial_wait_time = 18000
-retry_interval = 15000
-max_poll_count = 1150
+initial_wait_time = 60
+retry_interval = 15
+max_poll_count = 10000
 
 [core.timeout_config.decryption]
 initial_wait_time = 0

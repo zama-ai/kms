@@ -26,7 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     .await;
 
     match res {
-        Ok(success) => {
+        Ok((success, _)) => {
             if let Some(value) = success {
                 println!("{}", serde_json::to_string_pretty(&value)?);
             }

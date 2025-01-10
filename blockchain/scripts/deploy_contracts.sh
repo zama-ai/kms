@@ -17,9 +17,9 @@ set -euo pipefail
 # NOTE: To deploy the ASC and BSC we first need to know the address of the CSC
 
 echo ""
-echo "+++++++++++++++++++++++"
-echo "Starting contracts setups"
-echo "+++++++++++++++++++++++"
+echo "++++++++++++++++++++++++"
+echo "Starting contracts setup"
+echo "++++++++++++++++++++++++"
 echo ""
 
 ulimit unlimited
@@ -42,6 +42,16 @@ export PUBLIC_STORAGE_LABEL_1="PUB-p1"
 export PUBLIC_STORAGE_LABEL_2="PUB-p2"
 export PUBLIC_STORAGE_LABEL_3="PUB-p3"
 export PUBLIC_STORAGE_LABEL_4="PUB-p4"
+
+# FHE_PARAMETER
+# temporarily remove the unbound variable check and then add it back later
+set +u
+if [ -z "$FHE_PARAMETER" ]
+then
+  FHE_PARAMETER="default"
+fi
+set -u
+echo "Using FHE_PARAMETER=${FHE_PARAMETER}"
 
 # Get addresses
 # NOTE: here we use the connector address because it's the one we allow to do key-gen
@@ -186,13 +196,13 @@ echo "Ethereum IPSC code ID: ${TM_IPSC_ETHEREUM_CODE_ID}"
 echo "Instantiating CSC"
 if [ "$MODE" = "threshold" ]; then
   echo "(for threshold mode)"
-  CSC_INST_TX_HASH=$(echo $KEYRING_PASSWORD | wasmd tx wasm instantiate "${CSC_CODE_ID}" '{ "parties": {"'"${SIGNING_KEY_HANDLE_1}"'": {"public_storage_label": "'"${PUBLIC_STORAGE_LABEL_1}"'"}, "'"${SIGNING_KEY_HANDLE_2}"'": {"public_storage_label": "'"${PUBLIC_STORAGE_LABEL_2}"'"}, "'"${SIGNING_KEY_HANDLE_3}"'": {"public_storage_label": "'"${PUBLIC_STORAGE_LABEL_3}"'"}, "'"${SIGNING_KEY_HANDLE_4}"'": {"public_storage_label": "'"${PUBLIC_STORAGE_LABEL_4}"'"}}, "response_count_for_majority_vote": 3, "response_count_for_reconstruction": 3, "degree_for_reconstruction": 1, "fhe_parameter": "default", "storage_base_url": "'"${STORAGE_BASE_URL}"'", "allowlists":{"admin": ["'"${CONNECTOR_ADDRESS_1}"'"], "configure": ["'"${CONNECTOR_ADDRESS_1}"'"]} }' --label "csc-threshold" --from validator --output json --node "$NODE" --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 | jq -r '.txhash')
+  CSC_INST_TX_HASH=$(echo $KEYRING_PASSWORD | wasmd tx wasm instantiate "${CSC_CODE_ID}" '{ "parties": {"'"${SIGNING_KEY_HANDLE_1}"'": {"public_storage_label": "'"${PUBLIC_STORAGE_LABEL_1}"'"}, "'"${SIGNING_KEY_HANDLE_2}"'": {"public_storage_label": "'"${PUBLIC_STORAGE_LABEL_2}"'"}, "'"${SIGNING_KEY_HANDLE_3}"'": {"public_storage_label": "'"${PUBLIC_STORAGE_LABEL_3}"'"}, "'"${SIGNING_KEY_HANDLE_4}"'": {"public_storage_label": "'"${PUBLIC_STORAGE_LABEL_4}"'"}}, "response_count_for_majority_vote": 3, "response_count_for_reconstruction": 3, "degree_for_reconstruction": 1, "fhe_parameter": "'"${FHE_PARAMETER}"'", "storage_base_url": "'"${STORAGE_BASE_URL}"'", "allowlists":{"admin": ["'"${CONNECTOR_ADDRESS_1}"'"], "configure": ["'"${CONNECTOR_ADDRESS_1}"'"]} }' --label "csc-threshold" --from validator --output json --node "$NODE" --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 | jq -r '.txhash')
 elif [ "$MODE" = "centralized" ]; then
   echo "(for centralized mode)"
-  CSC_INST_TX_HASH=$(echo $KEYRING_PASSWORD | wasmd tx wasm instantiate "${CSC_CODE_ID}" '{ "parties": {"'"${SIGNING_KEY_HANDLE_1}"'": {"public_storage_label": "'"${PUBLIC_STORAGE_LABEL_1}"'"}}, "response_count_for_majority_vote": 1, "response_count_for_reconstruction": 1, "degree_for_reconstruction": 0, "fhe_parameter": "default", "storage_base_url": "'"${STORAGE_BASE_URL}"'", "allowlists":{"admin": ["'"${CONNECTOR_ADDRESS_1}"'"], "configure": ["'"${CONNECTOR_ADDRESS_1}"'"]} }' --label "csc-centralized" --from validator --output json --node "$NODE" --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 | jq -r '.txhash')
+  CSC_INST_TX_HASH=$(echo $KEYRING_PASSWORD | wasmd tx wasm instantiate "${CSC_CODE_ID}" '{ "parties": {"'"${SIGNING_KEY_HANDLE_1}"'": {"public_storage_label": "'"${PUBLIC_STORAGE_LABEL_1}"'"}}, "response_count_for_majority_vote": 1, "response_count_for_reconstruction": 1, "degree_for_reconstruction": 0, "fhe_parameter": "'"${FHE_PARAMETER}"'", "storage_base_url": "'"${STORAGE_BASE_URL}"'", "allowlists":{"admin": ["'"${CONNECTOR_ADDRESS_1}"'"], "configure": ["'"${CONNECTOR_ADDRESS_1}"'"]} }' --label "csc-centralized" --from validator --output json --node "$NODE" --chain-id testing -y --admin "${VALIDATOR_ADDRESS}" --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 | jq -r '.txhash')
 else
-    echo "MODE is ${MODE} which is neither 'threshold' nor 'centralized', can't instantiate smart contract"
-    exit 1
+  echo "MODE is ${MODE} which is neither 'threshold' nor 'centralized', can't instantiate smart contract"
+  exit 1
 fi
 export CSC_INST_TX_HASH
 echo "CSC_INST_TX_HASH: ${CSC_INST_TX_HASH}"
