@@ -7,6 +7,7 @@ on:
       - 'core/**'
       - 'conf-trace/**'
       - '.github/workflows/blockchain-simulator-pr.yml'
+      - 'Cargo.toml'
 
 concurrency:
   group: blockchain-simulator-${{ github.ref }}
@@ -36,4 +37,3 @@ jobs:
         run: echo Pipeline Done
     needs:
       - build
-

@@ -146,10 +146,14 @@ opt-level = 3
 [profile.bench]
 debug = true
 
+# actual release profile
 [profile.release]
-opt-level = 3
+# enforce LTO to fat, which makes compilation much more expensive (time and memory), but can improve runtime performance
 lto = "fat"
 
-[profile.release-test]
-# inherits from test for lto-thin
-inherits = "test"
+# profile for testing and CI
+[profile.release-lto-off]
+# use release profile settings
+inherits = "release"
+# but set LTO to the default (off instead of fat)
+lto = "off"
