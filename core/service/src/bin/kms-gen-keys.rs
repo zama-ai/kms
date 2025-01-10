@@ -333,9 +333,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn handle_central_cmd<'a, PubS: StorageForText, PrivS: StorageForText>(
+async fn handle_central_cmd<PubS: StorageForText, PrivS: StorageForText>(
     param_test: bool,
-    args: &mut CentralCmdArgs<'a, PubS, PrivS>,
+    args: &mut CentralCmdArgs<'_, PubS, PrivS>,
     cmd: ConstructCommand,
 ) {
     let params = if param_test {
@@ -421,9 +421,9 @@ async fn handle_central_cmd<'a, PubS: StorageForText, PrivS: StorageForText>(
     }
 }
 
-async fn handle_threshold_cmd<'a, PubS: StorageForText, PrivS: StorageForText>(
+async fn handle_threshold_cmd<PubS: StorageForText, PrivS: StorageForText>(
     param_test: bool,
-    args: &mut ThresholdCmdArgs<'a, PubS, PrivS>,
+    args: &mut ThresholdCmdArgs<'_, PubS, PrivS>,
     cmd: ConstructCommand,
 ) {
     let params = if param_test {

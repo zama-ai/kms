@@ -79,7 +79,7 @@ tfhe = { workspace = true, features = ["seeder_unix"] }
 
 [dev-dependencies]
 criterion = "=0.5.1"
-ctor = "=0.2.8"
+ctor = "=0.2.9"
 proptest = "=1.5.0"
 pprof = { version = "=0.13.0", features = ["flamegraph", "criterion"] }
 rstest = "=0.23.0"

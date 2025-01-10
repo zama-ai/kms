@@ -186,10 +186,10 @@ where
 }
 
 /// This function will perform verionize on the type.
-pub async fn store_pk_at_request_id<'a, S: Storage>(
+pub async fn store_pk_at_request_id<S: Storage>(
     storage: &mut S,
     request_id: &RequestId,
-    pk: WrappedPublicKey<'a>,
+    pk: WrappedPublicKey<'_>,
 ) -> anyhow::Result<()> {
     tracing::info!("Storing public key");
     match pk {

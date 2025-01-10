@@ -62,7 +62,7 @@ where
     pub(crate) metrics: M,
 }
 
-impl<'a> SubscriptionEventBuilder<'a> {
+impl SubscriptionEventBuilder<'_> {
     pub async fn subscription(
         self,
     ) -> Result<
