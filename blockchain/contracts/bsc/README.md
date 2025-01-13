@@ -24,7 +24,7 @@ An example of BSC deployment can be found in [`deploy_contracts.sh`](../../scrip
 
 ## Building the BSC
 
-These steps are similar to what is done in the [ci.dockerfile](../operations/docker/ci.dockerfile).
+These steps are similar to what is done in the [ci.dockerfile](../../../docker/blockchain/contracts/ci.dockerfile).
 
 1. Clone the [kms-core](https://github.com/zama-ai/kms-core) repository and checkout the branch corresponding to the version to be deployed.
 

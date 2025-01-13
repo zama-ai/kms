@@ -10,12 +10,12 @@ CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
 #into production.
 [tasks.tfhe-docker-image]
 command = "docker"
-args = ["build", "-f", "operations/docker/local.dockerfile", "--build-arg", "FEATURES=--features testing,choreographer", "-t", "tfhe-core", "../../"]
+args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=--features testing,choreographer", "-t", "tfhe-core", "../../"]
 
 #Build the image for BGV parties (with centralized DKG available)
 [tasks.bgv-docker-image]
 command = "docker"
-args = ["build", "-f", "operations/docker/local.dockerfile", "--build-arg", "FEATURES=--features experimental,choreographer", "-t", "bgv-core", "../../"]
+args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=--features experimental,choreographer", "-t", "bgv-core", "../../"]
 
 #Generate the certificate for TLS communication of the parties
 [tasks.gen-test-certs]
@@ -146,7 +146,7 @@ run_task = { name = ["setup", "gen-test-certs", "bgv-gen-experiment", "experimen
 #Build the docker image based on bench.dockerfile (which has the testing feature for centralized dkg)
 [tasks.docker-image-ci]
 command = "docker"
-args = ["build", "--build-arg=CONCRETE_ACTIONS_TOKEN=${CONCRETE_ACTIONS_TOKEN}", "-f", "operations/docker/bench.dockerfile", "-t", "tfhe-core", "../../"]
+args = ["build", "--build-arg=CONCRETE_ACTIONS_TOKEN=${CONCRETE_ACTIONS_TOKEN}", "-f", "../../docker/core/threshold/bench.dockerfile", "-t", "tfhe-core", "../../"]
 
 [tasks.ci-test]
 run_task = { name = ["docker-image-ci", "grpc-bench"] }

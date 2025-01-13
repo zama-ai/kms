@@ -62,7 +62,7 @@ jobs:
         with:
           build-args: |
             CONCRETE_ACTIONS_TOKEN=${{ secrets.CONCRETE_ACTIONS_TOKEN }}
-          file: operations/docker/ci.dockerfile
+          file: ../../docker/core/threshold/ci.dockerfile
           push: ${{ inputs.push_image }}
           tags: ghcr.io/zama-ai/ddec:${{env.DOCKER_TAG_IMAGE}},ghcr.io/zama-ai/ddec:latest
           cache-from: type=gha

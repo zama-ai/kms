@@ -7,7 +7,7 @@ services:
     image: ghcr.io/zama-ai/kms-blockchain-simulator:latest
     build:
       context: .
-      dockerfile: blockchain/simulator/operations/docker/ci.dockerfile
+      dockerfile: ./docker/blockchain/simulator/ci.dockerfile
     depends_on:
       dev-kms-blockchain-asc-deploy:
         condition: service_completed_successfully
@@ -32,7 +32,7 @@ services:
     image: ghcr.io/zama-ai/kms-blockchain-gateway:latest
     build:
       context: .
-      dockerfile: blockchain/gateway/operations/docker/ci.dockerfile
+      dockerfile: ./docker/blockchain/gateway/ci.dockerfile
     ports:
       - "7077:7077"
     entrypoint: >

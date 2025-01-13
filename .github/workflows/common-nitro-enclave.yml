@@ -111,7 +111,7 @@ jobs:
             IMAGE_NAME=ghcr.io/zama-ai/${{ inputs.image-name }}
             IMAGE_TAG=${{ env.DOCKER_TAG_IMAGE }}
           build-contexts: eif=${{ env.EIF_OUTPUT_DIR }}
-          file: ${{ inputs.working-directory}}/operations/docker/${{ inputs.docker-file-enclave }}
+          file: ./docker/${{ inputs.working-directory}}/${{ inputs.docker-file-enclave }}
           push: ${{ inputs.push_image }}
           pull: false
           tags: ghcr.io/zama-ai/${{ inputs.image-enclave-name }}:${{env.DOCKER_TAG_IMAGE}},ghcr.io/zama-ai/${{ inputs.image-enclave-name }}:latest

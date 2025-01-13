@@ -109,7 +109,7 @@ jobs:
           context: ${{ inputs.docker-context }}
           platforms: ${{ matrix.platform }}
           secrets: BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-          file: ${{ inputs.working-directory }}/operations/docker/${{ inputs.docker-file }}
+          file: ./docker/${{ inputs.working-directory }}/${{ inputs.docker-file }}
           push: ${{ inputs.push_image }}
           pull: false
           provenance: false

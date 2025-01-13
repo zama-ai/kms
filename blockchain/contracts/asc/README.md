@@ -19,7 +19,7 @@ An ASC needs to be bound to an IPSC specific to the blockchain. An example can b
 
 ## Building the Ethereum-IPSC
 
-These steps are similar to what is done in the [ci.dockerfile](../../operations/docker/ci.dockerfile).
+These steps are similar to what is done in the [ci.dockerfile](../../../docker/blockchain/contracts/ci.dockerfile).
 
 1. Clone kms-core repository and checkout the branch corresponding to the version to be deployed.
 

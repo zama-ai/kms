@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1
 # Multistage build to reduce image size
+#change for test
 FROM rust:1.82-slim-bookworm AS base
 
 ARG LTO_RELEASE=release

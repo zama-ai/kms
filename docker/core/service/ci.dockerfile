@@ -28,6 +28,7 @@ RUN mkdir -p -m 0600 /root/.ssh
 RUN ssh-keyscan -H github.com >> ~/.ssh/known_hosts
 RUN --mount=type=secret,id=BLOCKCHAIN_ACTIONS_TOKEN,env=BLOCKCHAIN_ACTIONS_TOKEN git config --global url."https://$BLOCKCHAIN_ACTIONS_TOKEN@github.com".insteadOf ssh://git@github.com
 
+
 ## Second stage builds the kms-core binaries
 FROM --platform=$BUILDPLATFORM base AS kms-core
 
@@ -89,8 +90,8 @@ COPY --from=go-runtime /root/go/bin/grpc-health-probe ./bin/
 COPY --from=go-runtime /root/go/bin/yq ./bin/
 
 # Copy parent-side and enclave-side init scripts
-COPY ./core/service/operations/docker/start_parent_proxies.sh ./bin/
-COPY ./core/service/operations/docker/init_enclave.sh ./bin/
+COPY ./docker/core/service/start_parent_proxies.sh ./bin/
+COPY ./docker/core/service/init_enclave.sh ./bin/
 
 # Change user to limit root access
 RUN groupadd -g 10002 kms && \

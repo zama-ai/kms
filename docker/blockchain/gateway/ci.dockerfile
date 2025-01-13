@@ -36,6 +36,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/app/gateway/target,sharing=locked \
     cargo install --profile=${LTO_RELEASE} --path blockchain/gateway --root blockchain/gateway --bins
 
+    
 # Final runtime stage
 FROM debian:stable-slim AS runtime
 

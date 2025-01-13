@@ -15,7 +15,7 @@ services:
       - RUST_LOG=info,tonic=info,h2=info
     build:
       context: .
-      dockerfile: core/service/operations/docker/ci.dockerfile
+      dockerfile: ./docker/core/service/ci.dockerfile
       args:
         LTO_RELEASE: release-lto-off
     ports:
@@ -45,7 +45,7 @@ services:
   dev-kms-connector:
     build:
       context: .
-      dockerfile: blockchain/connector/operations/docker/ci.dockerfile
+      dockerfile: ./docker/blockchain/connector/ci.dockerfile
       args:
         LTO_RELEASE: release-lto-off
     image: ghcr.io/zama-ai/kms-blockchain-connector:latest

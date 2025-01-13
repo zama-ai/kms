@@ -133,7 +133,7 @@ These benchmarks run the scripts located in the `test_scripts` folder.
 To simulate a certain network connection on all containers run the following (replace `wan.sh` with the desired network below):
 ```sh
 # configure network on all running containers
-./operations/docker/scripts/runinallcontainers.sh ./operations/docker/scripts/wan.sh
+./docker/core/threshold/scripts/runinallcontainers.sh ./docker/core/threshold/scripts/wan.sh
 # verify that ping latency has changed as desired
 docker exec tfhe-core-p1-1 ping tfhe-core--p2-1
 ```

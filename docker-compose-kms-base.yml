@@ -15,7 +15,7 @@ services:
     image: ghcr.io/zama-ai/kms-blockchain-asc:latest
     build:
       context: .
-      dockerfile: blockchain/contracts/operations/docker/ci.dockerfile
+      dockerfile: ./docker/blockchain/contracts/ci.dockerfile
     healthcheck:
       test: "wget -Sq --spider http://localhost:26657/status"
       interval: 1s
@@ -37,7 +37,7 @@ services:
     image: ghcr.io/zama-ai/kms-blockchain-asc:latest
     build:
       context: .
-      dockerfile: blockchain/contracts/operations/docker/ci.dockerfile
+      dockerfile: ./docker/blockchain/contracts/ci.dockerfile
     restart: "no"
     environment:
       RUST_LOG: info
@@ -71,12 +71,13 @@ services:
   # KV-Store
   dev-kv-store:
     image: ghcr.io/zama-ai/kms-blockchain-gateway:latest
+    pull_policy: always
     environment:
       DOCKER_BUILDKIT: 1
       RUST_LOG: info
     build:
       context: .
-      dockerfile: blockchain/gateway/operations/docker/ci.dockerfile
+      dockerfile: ./docker/blockchain/gateway/ci.dockerfile
       args:
         LTO_RELEASE: release-lto-off
     ports:

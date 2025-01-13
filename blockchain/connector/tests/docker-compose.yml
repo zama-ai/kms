@@ -4,7 +4,7 @@ services:
   kms-full-node:
     build:
       context: ../../../
-      dockerfile: ./blockchain/contracts/operations/docker/ci.dockerfile
+      dockerfile: ./docker/blockchain/contracts/ci.dockerfile
     ports:
       - "36656:26656"
       - "36658:26657"
@@ -32,7 +32,7 @@ services:
       MODE: centralized
     build:
       context: ../../../
-      dockerfile: ./blockchain/contracts/operations/docker/ci.dockerfile
+      dockerfile: ./docker/blockchain/contracts/ci.dockerfile
     volumes:
       - ../../scripts/:/app/scripts
       - validator_secrets:/app/secrets
