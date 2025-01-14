@@ -154,6 +154,11 @@ where
         num_parties: usize,
         threshold: usize,
     ) -> anyhow::Result<Self> {
+        if threshold >= num_parties {
+            anyhow::bail!(
+                "number of parties {num_parties} must be less than the threshold {threshold}"
+            );
+        }
         let poly = Poly::sample_random_with_fixed_constant(rng, secret, threshold);
         let shares: Vec<_> = (1..=num_parties)
             .map(|xi| {
@@ -237,6 +242,7 @@ where
     let num_heard_from = sharing.shares.len() + num_bots;
     //Make sure we have enough shares already to try and reconstrcut
     if degree + 2 * threshold < num_parties && num_heard_from > degree + 2 * threshold {
+        // TODO not this might panic
         let max_errs = threshold - num_bots;
         let opened = sharing.err_reconstruct(degree, max_errs)?;
         return Ok(Some(opened));

@@ -16,6 +16,7 @@ members = [
     "blockchain/simulator",
     "blockchain/contracts/common",
     "conf-trace",
+    "core/backup",
     "core/grpc",
     "core/service",
     "core/threshold",
