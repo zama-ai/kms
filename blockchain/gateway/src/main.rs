@@ -26,7 +26,7 @@ async fn main() -> anyhow::Result<()> {
     .await?;
     // Loading the state
     let (state, old_state, kms_bc_starting_block) =
-        GatewayState::restore_state(&config.state_path)?;
+        GatewayState::restore_state(&config.state_path).await?;
     // Some starting logs
     print_intro(&config);
     // Channel for communication

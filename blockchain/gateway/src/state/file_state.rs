@@ -34,17 +34,21 @@ pub struct GatewayState {
 }
 
 impl GatewayState {
-    fn new_state(path: &str) -> anyhow::Result<Self> {
+    async fn new_state(path: &str) -> anyhow::Result<Self> {
         let file = File::create(path)?;
-        Ok(Self {
+        let state = Self {
             file: Arc::new(Mutex::new(file)),
             inner_state: Arc::new(RwLock::new(InnerState::default())),
-        })
+        };
+        state.save_state(None).await?;
+        Ok(state)
     }
 
     // Returns the state, the inner state that was saved and that is used for catchup
     // as well as from which block do we need to catchup on the KMS BC
-    pub fn restore_state(path: &str) -> anyhow::Result<(Self, Option<MapState>, Option<usize>)> {
+    pub async fn restore_state(
+        path: &str,
+    ) -> anyhow::Result<(Self, Option<MapState>, Option<usize>)> {
         match OpenOptions::new().read(true).write(true).open(path) {
             Ok(mut file) => {
                 let mut content = vec![];
@@ -64,7 +68,7 @@ impl GatewayState {
                     kms_bc_starting_block,
                 ))
             }
-            Err(_) => Ok((Self::new_state(path)?, None, None)),
+            Err(_) => Ok((Self::new_state(path).await?, None, None)),
         }
     }
 
@@ -160,7 +164,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_state() {
-        let state = GatewayState::new_state("test.state").unwrap();
+        let state = GatewayState::new_state("test.state").await.unwrap();
 
         let values = ApiReencryptValues {
             signature: HexVector::from(vec![1, 2, 3]),
@@ -181,7 +185,7 @@ mod tests {
         drop(state);
 
         let (new_state, _old_state, _kms_blockchain_height) =
-            GatewayState::restore_state("test.state").unwrap();
+            GatewayState::restore_state("test.state").await.unwrap();
         {
             let inner_state = new_state.inner_state.read().await;
 

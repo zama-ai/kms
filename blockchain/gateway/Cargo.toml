@@ -22,9 +22,15 @@ clap.workspace = true
 conf-trace.workspace = true
 cosmos-proto.workspace = true
 cosmwasm-std.workspace = true
-dashmap = {version = "=6.1.0", features = ["serde"]}
+dashmap = { version = "=6.1.0", features = ["serde"] }
 deep_space = "=2.26.0"
-ethers = { version = "=2.0.14", features = ["abigen", "rustls", "ws", "ethers-solc", "legacy"] }
+ethers = { version = "=2.0.14", features = [
+    "abigen",
+    "rustls",
+    "ws",
+    "ethers-solc",
+    "legacy",
+] }
 events = { workspace = true, features = ["subscription"] }
 eyre = "=0.6.12"
 futures.workspace = true
@@ -39,7 +45,7 @@ prost.workspace = true
 rand.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 secp256k1.workspace = true
-serde = { workspace = true , features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sha2.workspace = true
 strum = { workspace = true, features = ["derive"] }
@@ -59,4 +65,5 @@ tonic-build.workspace = true
 
 [dev-dependencies]
 rand.workspace = true
+serial_test.workspace = true
 temp-env = "=0.3.6"

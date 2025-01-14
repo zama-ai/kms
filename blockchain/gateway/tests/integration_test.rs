@@ -41,7 +41,12 @@ mod tests {
         let (sender, receiver) = mpsc::channel(100);
         let url_server = config.api_url.clone();
         let url_client = config.api_url.clone();
-        let (state, _, _) = GatewayState::restore_state(GATEWAY_STATE_PATH).unwrap();
+        let restored_state_result = GatewayState::restore_state(GATEWAY_STATE_PATH).await;
+        if let Err(e) = &restored_state_result {
+            eprintln!("Error restoring state: {}", e);
+        }
+        let (state, _, _) = restored_state_result.unwrap();
+
         let http_handle =
             tokio::spawn(async move { start_http_server(url_server, sender.clone()).await });
         let gateway_handle =
@@ -53,6 +58,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
+
     async fn integration_test_keyurl() {
         let (client, url_client, http_handle, gateway_handle) = new_client().await;
         let test_count = 10;
@@ -155,6 +162,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn integration_test_zkp_event_correct() {
         let body_map: serde_json::Value = serde_json::Value::Object(serde_json::Map::from_iter([
             ("ct_proof".into(), json!("00")),
@@ -199,6 +207,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn integration_test_zkp_event_bad_address() {
         let body_map: serde_json::Value = serde_json::Value::Object(serde_json::Map::from_iter([
             ("ct_proof".into(), json!("00")),
@@ -240,6 +249,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn integration_test_zkp_event_bad_proof_explicit() {
         let body_map: serde_json::Value = serde_json::Value::Object(serde_json::Map::from_iter([
             ("ct_proof".into(), json!("01")),
@@ -284,6 +294,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn integration_test_zkp_event_bad_proof_implicit() {
         let body_map: serde_json::Value = serde_json::Value::Object(serde_json::Map::from_iter([
             ("ct_proof".into(), json!("03")),
@@ -328,6 +339,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn integration_test_zkp_event_bad_field() {
         let body_map: serde_json::Value = serde_json::Value::Object(serde_json::Map::from_iter([
             ("ct_proof".into(), json!("01")),
@@ -366,6 +378,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn integration_test_zkp_event_missing_field() {
         let body_map: serde_json::Value = serde_json::Value::Object(serde_json::Map::from_iter([
             ("ct_proof".into(), json!("01")),

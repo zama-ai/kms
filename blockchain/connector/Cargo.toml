@@ -44,7 +44,7 @@ alloy-sol-types.workspace = true
 kms = { workspace = true, features = ["testing", "insecure", "non-wasm"] }
 rand.workspace = true
 rstest = "=0.23.0"
-serial_test = "=3.1.1"
+serial_test.workspace = true
 temp-env = "=0.3.6"
 test-context = "=0.3.0"
 test-utilities = { path = "./utilities" }
