@@ -20,7 +20,6 @@ use distributed_decryption::{
 use kms_common::load_and_unversionize;
 use serde::Serialize;
 use std::{env, path::Path};
-
 use tfhe_versionable::Unversionize;
 
 fn compare_prss_setup<Z>(
@@ -69,7 +68,6 @@ fn test_prss_setup(
 }
 
 struct DistributedDecryption;
-
 impl TestedModule for DistributedDecryption {
     type Metadata = TestMetadataDD;
     const METADATA_FILE: &'static str = "distributed_decryption.ron";

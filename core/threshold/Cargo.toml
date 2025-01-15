@@ -95,6 +95,7 @@ backward-compatibility = { workspace = true, features = [
     "load",
     "tests",
 ] }
+distributed-decryption = {workspace = true, features = ["testing"]} # needed for backward compat. integration test
 
 [lib]
 crate-type = ["lib", "cdylib"]

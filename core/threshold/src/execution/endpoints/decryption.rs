@@ -1,8 +1,8 @@
 use crate::algebra::structure_traits::Derive;
-#[cfg(any(test, feature = "testing"))]
 use crate::algebra::structure_traits::Ring;
 #[cfg(any(test, feature = "testing"))]
-use crate::algebra::structure_traits::{ErrorCorrect, Invert, RingEmbed, Solve};
+use crate::algebra::structure_traits::RingEmbed;
+use crate::algebra::structure_traits::{ErrorCorrect, Invert, Solve};
 use crate::execution::config::BatchParams;
 use crate::execution::large_execution::offline::LargePreprocessing;
 use crate::execution::online::preprocessing::create_memory_factory;
