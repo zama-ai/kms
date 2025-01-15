@@ -83,10 +83,10 @@ jobs:
 
     steps:
       - name: Checkout Project
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2      
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      # LFS files are needed for backward compatibility tests    
-      # Install git LFS before checkout does not seem possible on our self-hosted runners, so we 
+      # LFS files are needed for backward compatibility tests
+      # Install git LFS before checkout does not seem possible on our self-hosted runners, so we
       # need to do it right after and then manually pull LFS files
       - name: Install git-lfs
         run: |
@@ -95,8 +95,8 @@ jobs:
 
       - name: Setup Home
         if: ${{ inputs.runs-on != 'ubuntu-latest' }}
-        run: echo "HOME=/home/ubuntu" >> "${GITHUB_ENV}"        
-          
+        run: echo "HOME=/home/ubuntu" >> "${GITHUB_ENV}"
+
       # Needed to be able to pull some docker images for the simulator test
       - name: Login to GitHub Container Registry
         uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
@@ -191,7 +191,18 @@ jobs:
           AWS_DEFAULT_REGION: "eu-north-1"
           AWS_ENDPOINT: "http://127.0.0.1:9000"
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-        run: RUST_BACKTRACE=full cargo test ${{ inputs.args-tests }} ${{ inputs.args-tests-fhe }}
+        run: |
+          mkdir -p ~/.aws/ &&
+          echo "[default]" > ~/.aws/credentials &&
+          echo "aws_access_key_id = ${AWS_ACCESS_KEY_ID}" >> ~/.aws/credentials &&
+          echo "aws_secret_access_key = ${AWS_SECRET_ACCESS_KEY}" >> ~/.aws/credentials &&
+          cat ~/.aws/credentials &&
+          echo "[default]" > ~/.aws/config &&
+          echo "output=json" >> ~/.aws/config &&
+          echo "region=${AWS_DEFAULT_REGION}" >> ~/.aws/config &&
+          echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
+          cat ~/.aws/config &&
+          RUST_BACKTRACE=full cargo test ${{ inputs.args-tests }} ${{ inputs.args-tests-fhe }}
 
       # Coverage reporting
       - name: Run Tests with Coverage
