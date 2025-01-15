@@ -180,10 +180,8 @@ fn test_dkg_orchestrator_large(
     threshold: u8,
     params: DKGParams,
 ) {
-    use distributed_decryption::{
-        algebra::structure_traits::Ring,
-        networking::{thread_handle::OsThreadGroup, NetworkMode},
-    };
+    use distributed_decryption::{algebra::structure_traits::Ring, networking::NetworkMode};
+    use kms_core_utils::thread_handles::OsThreadGroup;
 
     let params_basics_handles = params.get_params_basics_handle();
     params_basics_handles

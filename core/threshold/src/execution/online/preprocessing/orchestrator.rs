@@ -917,7 +917,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::networking::thread_handle::OsThreadGroup;
+    use kms_core_utils::thread_handles::OsThreadGroup;
     use std::{collections::HashMap, sync::Arc, thread};
 
     use itertools::Itertools;

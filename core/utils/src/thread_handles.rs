@@ -1,12 +1,17 @@
+//! Utilities for managing OS threads and Tokio tasks.
+
 use anyhow::anyhow;
 use futures::FutureExt;
 use lazy_static::lazy_static;
 use std::time::Duration;
-use tokio::task::JoinHandle;
+use tokio::{
+    runtime::{Builder, Runtime},
+    task::JoinHandle,
+};
 use tracing::error;
 
 lazy_static! {
-    static ref CLEANUP_RT: tokio::runtime::Runtime = tokio::runtime::Builder::new_current_thread()
+    static ref CLEANUP_RT: Runtime = Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("Failed to create cleanup runtime");

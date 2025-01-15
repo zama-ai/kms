@@ -3312,6 +3312,7 @@ dependencies = [
  "getrandom",
  "itertools 0.13.0",
  "kms-common",
+ "kms-core-utils",
  "lazy_static",
  "minijinja",
  "mockall",
@@ -5324,6 +5325,7 @@ dependencies = [
  "itertools 0.13.0",
  "k256",
  "kms-common",
+ "kms-core-utils",
  "kms-grpc",
  "lazy_static",
  "nom",
@@ -5460,6 +5462,17 @@ dependencies = [
  "anyhow",
  "backward-compatibility",
  "tfhe-versionable",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "kms-core-utils"
+version = "0.10.0-rc1"
+dependencies = [
+ "anyhow",
+ "futures",
+ "lazy_static",
  "tokio",
  "tracing",
 ]

@@ -24,8 +24,8 @@ use distributed_decryption::execution::endpoints::keygen::FhePubKeySet;
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 #[cfg(feature = "non-wasm")]
 use distributed_decryption::execution::zk::ceremony::make_centralized_public_parameters;
-use distributed_decryption::networking::thread_handle::ThreadHandleGroup;
 use k256::ecdsa::SigningKey;
+use kms_core_utils::thread_handles::ThreadHandleGroup;
 use kms_grpc::kms::v1::FheType;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms::v1::RequestId;

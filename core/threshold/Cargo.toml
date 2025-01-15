@@ -20,6 +20,7 @@ bincode.workspace = true
 cfg-if.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 kms-common.workspace = true
+kms-core-utils = { workspace = true, optional = true }
 concrete-csprng = "=0.4.1"
 conf-trace = { workspace = true, optional = true }
 const_format = "=0.2.33"
@@ -50,7 +51,7 @@ serde_json.workspace = true
 sha3.workspace = true
 strum = {  workspace = true, features = ["derive"] }
 strum_macros.workspace = true
-tokio = { workspace = true, features = ["full", "sync"], optional = true }
+tokio = { workspace = true, features = ["sync", "rt", "macros", "time"], optional = true }
 tonic = { workspace = true, features = ["tls"], optional = true }
 tonic-health = { workspace = true, optional = true }
 tower = { workspace = true, features = ["retry", "timeout"], optional = true }
@@ -185,4 +186,5 @@ non-wasm = [
     "dep:opentelemetry",
     "dep:redis",
     "dep:tfhe-zk-pok",
+    "dep:kms-core-utils",
 ]

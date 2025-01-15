@@ -6,6 +6,7 @@ use conf_trace::{
         OP_TYPE_TOTAL, OP_VERIFY_PROVEN_CT, TAG_OPERATION_TYPE,
     },
 };
+use kms_core_utils::thread_handles::ThreadHandleGroup;
 use kms_grpc::kms::v1::{
     RequestId, VerifyProvenCtRequest, VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
 };
@@ -47,7 +48,8 @@ pub(crate) async fn non_blocking_verify_proven_ct<
         guarded_meta_store.insert(&request_id)?;
     }
     let sigkey = Arc::clone(&client_sk);
-    let _handle = tokio::spawn(
+    let mut thread_group = ThreadHandleGroup::new();
+    let handle = tokio::spawn(
         async move {
             let _permit = permit;
             let verify_proven_ct_start_instant = tokio::time::Instant::now();
@@ -91,6 +93,7 @@ pub(crate) async fn non_blocking_verify_proven_ct<
         }
         .instrument(tracing::Span::current()),
     );
+    thread_group.add(handle);
     Ok(())
 }
 

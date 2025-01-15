@@ -61,6 +61,7 @@ conf-trace = { workspace = true, optional = true }
 crypto_box = { version = "=0.9.1", features = ["salsa20"] }
 distributed-decryption = { workspace = true, default-features = false }
 kms-grpc = { workspace = true, default-features = false }
+kms-core-utils = { workspace = true, optional = true }
 hex.workspace = true
 http = "=0.2.12"
 hyper-rustls = { version = "=0.24.2", optional = true }
@@ -166,6 +167,7 @@ non-wasm = [
     "dep:tfhe-zk-pok",
     "dep:tower",
     "dep:tower-http",
+    "dep:kms-core-utils",
 ]
 slow_tests = ["testing"]
 sequential_sns = ["distributed-decryption/sequential_sns"]

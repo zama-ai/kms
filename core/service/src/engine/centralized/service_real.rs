@@ -20,6 +20,7 @@ use crate::{tonic_handle_potential_err, tonic_some_or_err};
 use aes_prng::AesRng;
 use ahash::RandomState;
 use alloy_sol_types::Eip712Domain;
+use anyhow::Result;
 use conf_trace::metrics::METRICS;
 use conf_trace::metrics_names::{
     ERR_CRS_GEN_FAILED, ERR_DECRYPTION_FAILED, ERR_KEY_EXISTS, ERR_KEY_NOT_FOUND,
@@ -27,6 +28,7 @@ use conf_trace::metrics_names::{
     OP_DECRYPT, OP_KEYGEN, OP_REENCRYPT, OP_VERIFY_PROVEN_CT, TAG_CIPHERTEXT_ID, TAG_PARTY_ID,
 };
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
+use kms_core_utils::thread_handles::ThreadHandleGroup;
 use kms_grpc::kms::v1::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenRequest, KeyGenResult,
@@ -140,9 +142,10 @@ impl<
         let sk = Arc::clone(&self.base_kms.sig_key);
 
         let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref());
-        self.tracker.spawn(
+        let mut thread_group = ThreadHandleGroup::new();
+        let handle = self.tracker.spawn(
             async move {
-                key_gen_background(
+                if let Err(e) = key_gen_background(
                     &req_id,
                     meta_store,
                     crypto_storage,
@@ -151,11 +154,19 @@ impl<
                     eip712_domain,
                     permit,
                 )
-                .await;
-                tracing::info!("Key generation of request {} exiting normally.", req_id);
+                .await
+                {
+                    tracing::error!("Key generation of request {} failed: {}", req_id, e);
+                } else {
+                    tracing::info!(
+                        "Key generation of request {} completed successfully.",
+                        req_id
+                    );
+                }
             }
             .instrument(tracing::Span::current()),
         );
+        thread_group.add(handle);
 
         Ok(Response::new(Empty {}))
     }
@@ -594,9 +605,10 @@ impl<
         let rng = self.base_kms.new_rng().await;
 
         let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref());
-        self.tracker.spawn(
+        let mut thread_group = ThreadHandleGroup::new();
+        let handle = self.tracker.spawn(
             async move {
-                crs_gen_background(
+                if let Err(e) = crs_gen_background(
                     &req_id,
                     rng,
                     meta_store,
@@ -607,11 +619,19 @@ impl<
                     inner.max_num_bits,
                     permit,
                 )
-                .await;
-                tracing::info!("CRS generation of request {} exiting normally.", req_id);
+                .await
+                {
+                    tracing::error!("CRS generation of request {} failed: {}", req_id, e);
+                } else {
+                    tracing::info!(
+                        "CRS generation of request {} completed successfully.",
+                        req_id
+                    );
+                }
             }
             .instrument(tracing::Span::current()),
         );
+        thread_group.add(handle);
         Ok(Response::new(Empty {}))
     }
 
@@ -730,7 +750,7 @@ async fn key_gen_background<
     params: DKGParams,
     eip712_domain: Option<Eip712Domain>,
     permit: OwnedSemaphorePermit,
-) {
+) -> Result<(), anyhow::Error> {
     let _permit = permit;
     let start = tokio::time::Instant::now();
     {
@@ -741,39 +761,41 @@ async fn key_gen_background<
             .is_ok()
         {
             let mut guarded_meta_store = meta_store.write().await;
-            if let Err(e) = METRICS
+            METRICS
                 .increment_error_counter(OP_KEYGEN, ERR_KEY_EXISTS)
-                .map_err(|e| tracing::warn!("Failed to increment error counter: {:?}", e))
-            {
-                tracing::warn!("Failed to increment error counter: {:?}", e);
-            }
+                .map_err(|e| {
+                    tracing::warn!("Failed to increment error counter: {:?}", e);
+                    anyhow::anyhow!("Failed to increment error counter: {:?}", e)
+                })?;
             let _ = guarded_meta_store.update(
                 req_id,
                 Err(format!(
                     "Failed key generation: Key with ID {req_id} already exists!"
                 )),
             );
-            return;
+            return Ok(());
         }
     }
     let (fhe_key_set, key_info) =
-        match async_generate_fhe_keys(&sk, params, None, eip712_domain.as_ref()).await {
-            Ok((fhe_key_set, key_info)) => (fhe_key_set, key_info),
-            Err(_e) => {
-                let mut guarded_meta_store = meta_store.write().await;
+        async_generate_fhe_keys(&sk, params, None, eip712_domain.as_ref())
+            .await
+            .map_err(|e| {
+                let mut guarded_meta_store = meta_store.blocking_write();
                 let _ = guarded_meta_store.update(
                     req_id,
-                    Err(format!("Failed key generation: Key with ID {req_id}!")),
+                    Err(format!(
+                        "Failed key generation for key with ID {req_id}: {e}"
+                    )),
                 );
-                return;
-            }
-        };
+                anyhow::anyhow!("Failed key generation: {}", e)
+            })?;
 
     crypto_storage
         .write_centralized_keys_with_meta_store(req_id, key_info, fhe_key_set, meta_store)
         .await;
 
     tracing::info!("⏱️ Core Event Time for Keygen: {:?}", start.elapsed());
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -791,30 +813,32 @@ async fn crs_gen_background<
     eip712_domain: Option<Eip712Domain>,
     max_number_bits: Option<u32>,
     permit: OwnedSemaphorePermit,
-) {
+) -> Result<(), anyhow::Error> {
     let _permit = permit;
     let start = tokio::time::Instant::now();
 
     let (pp, crs_info) =
-        match async_generate_crs(&sk, rng, params, max_number_bits, eip712_domain.as_ref()).await {
-            Ok((pp, crs_info)) => (pp, crs_info),
-            Err(e) => {
+        async_generate_crs(&sk, rng, params, max_number_bits, eip712_domain.as_ref())
+            .await
+            .map_err(|e| {
                 tracing::error!("Error in inner CRS generation: {}", e);
-                let mut guarded_meta_store = meta_store.write().await;
+                let mut guarded_meta_store = meta_store.blocking_write();
                 let _ = guarded_meta_store.update(
                     req_id,
-                    Err(format!("Failed CRS generation for CRS with ID {req_id}!")),
+                    Err(format!(
+                        "Failed CRS generation for CRS with ID {req_id}: {e}"
+                    )),
                 );
                 METRICS
                     .increment_error_counter(OP_CRS_GEN, ERR_CRS_GEN_FAILED)
                     .ok();
-                return;
-            }
-        };
+                anyhow::anyhow!("Failed CRS generation: {}", e)
+            })?;
 
     crypto_storage
         .write_crs_with_meta_store(req_id, pp, crs_info, meta_store)
         .await;
 
     tracing::info!("⏱️ Core Event Time for CRS-gen: {:?}", start.elapsed());
+    Ok(())
 }

@@ -73,14 +73,24 @@ pub fn get_options() -> Route {
 /// Starts an http server on the gateway with support for all the REST endpoints.
 /// For now this includes health, reencryption, keyurl and verify_proven_ct.
 pub async fn start_http_server(api_url: String, sender: mpsc::Sender<GatewayEvent>) {
-    let _handle = HttpServer::new(move || {
+    if let Err(e) = start_http_server_inner(api_url, sender).await {
+        tracing::error!("HTTP server error: {}", e);
+        std::process::exit(1); // Exit with error in case of server failure
+    }
+}
+
+async fn start_http_server_inner(
+    api_url: String,
+    sender: mpsc::Sender<GatewayEvent>,
+) -> anyhow::Result<()> {
+    let server = HttpServer::new(move || {
         let reencrypt_publisher = ReencryptionEventPublisher::new(sender.clone());
         let verify_proven_ct_publisher = VerifyProvenCtEventPublisher::new(sender.clone());
         let keyurl_publisher = KeyUrlEventPublisher::new(sender.clone());
         App::new()
             .wrap(TracingLogger::default())
             .wrap(get_cors())
-            .route("/health", web::get().to(health_check)) // Add health endpoint
+            .route("/health", web::get().to(health_check))
             .app_data(web::PayloadConfig::new(HTTP_PAYLOAD_LIMIT))
             .app_data(web::Data::new(Arc::new(reencrypt_publisher)))
             .route(
@@ -99,10 +109,28 @@ pub async fn start_http_server(api_url: String, sender: mpsc::Sender<GatewayEven
             .route(&KeyUrlEventPublisher::path(), get_options())
     })
     .workers(HTTP_WORKERS)
-    .bind(api_url)
-    .unwrap()
-    .run()
-    .await;
+    .bind(&api_url)
+    .map_err(|e| anyhow::anyhow!("Failed to bind HTTP server to {}: {}", api_url, e))?
+    .run();
+
+    let server_handle = server.handle();
+
+    tokio::select! {
+        result = server => {
+            if let Err(e) = result {
+                tracing::error!("HTTP server error: {}", e);
+                return Err(anyhow::anyhow!("HTTP server error: {}", e));
+            }
+            Ok(())
+        }
+        _ = tokio::signal::ctrl_c() => {
+            tracing::info!("Received shutdown signal, stopping HTTP server...");
+            // Give ongoing requests a chance to complete
+            server_handle.stop(true).await;
+            tracing::info!("HTTP server stopped gracefully");
+            Ok(())
+        }
+    }
 }
 
 async fn health_check() -> impl Responder {
