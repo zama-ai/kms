@@ -2,7 +2,7 @@ use aes_prng::AesRng;
 use rand::SeedableRng;
 use rand::{CryptoRng, Rng};
 use tfhe::{
-    core_crypto::prelude::{ActivatedRandomGenerator, SecretRandomGenerator},
+    core_crypto::prelude::{DefaultRandomGenerator, SecretRandomGenerator},
     Seed,
 };
 
@@ -13,8 +13,8 @@ pub fn get_rng() -> impl Rng + CryptoRng {
 }
 
 /// Get a SecretRandomGenerator, for secret key generation based on a seed.
-pub fn secret_rng_from_seed(seed: u128) -> SecretRandomGenerator<ActivatedRandomGenerator> {
-    SecretRandomGenerator::<ActivatedRandomGenerator>::new(Seed(seed))
+pub fn secret_rng_from_seed(seed: u128) -> SecretRandomGenerator<DefaultRandomGenerator> {
+    SecretRandomGenerator::<DefaultRandomGenerator>::new(Seed(seed))
 }
 
 /// Sample a seed from a random number generator.

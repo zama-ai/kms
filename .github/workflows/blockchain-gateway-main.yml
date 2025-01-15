@@ -22,7 +22,6 @@ jobs:
     uses: ./.github/workflows/common-build-big-instance.yml
     with:
       working-directory: './blockchain/gateway'
-      args-tests-fhe: ''
       package-name: 'gateway'
     permissions:
       contents: 'write'

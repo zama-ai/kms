@@ -30,7 +30,6 @@ use crate::{
     },
     file_handling::{read_element, write_element},
 };
-use concrete_csprng::generators::SoftwareRandomGenerator;
 use itertools::Itertools;
 use num_integer::div_ceil;
 use rand::{CryptoRng, Rng};
@@ -52,6 +51,7 @@ use tfhe::{
         server_key::ShortintBootstrappingKey,
     },
 };
+use tfhe_csprng::generators::SoftwareRandomGenerator;
 use tfhe_versionable::VersionsDispatch;
 use tracing::instrument;
 
@@ -972,7 +972,6 @@ where
 pub mod tests {
     use std::fs;
 
-    use concrete_csprng::seeders::Seeder;
     use itertools::Itertools;
     #[cfg(feature = "slow_tests")]
     use tfhe::{
@@ -991,7 +990,7 @@ pub mod tests {
             },
             commons::{
                 generators::{DeterministicSeeder, EncryptionRandomGenerator},
-                math::random::{ActivatedRandomGenerator, TUniform},
+                math::random::{DefaultRandomGenerator, TUniform},
                 traits::CastInto,
             },
             entities::{Fourier128LweBootstrapKey, GlweSecretKey, LweBootstrapKey, LweSecretKey},
@@ -1002,7 +1001,21 @@ pub mod tests {
         shortint::parameters::CoreCiphertextModulus,
         CompressedCiphertextListBuilder, FheUint32, FheUint64, FheUint8,
     };
+    use tfhe_csprng::seeders::Seeder;
 
+    use crate::execution::{
+        random::{get_rng, seed_from_rng},
+        tfhe_internals::{
+            parameters::{
+                BC_PARAMS_SAM_NO_SNS, NIST_PARAMS_P32_NO_SNS_FGLWE, NIST_PARAMS_P32_NO_SNS_LWE,
+                NIST_PARAMS_P32_SNS_FGLWE, NIST_PARAMS_P8_NO_SNS_FGLWE, NIST_PARAMS_P8_NO_SNS_LWE,
+                NIST_PARAMS_P8_SNS_FGLWE, OLD_PARAMS_P32_REAL_WITH_SNS, PARAMS_TEST_BK_SNS,
+            },
+            switch_and_squash::SwitchAndSquashKey,
+            test_feature::to_hl_client_key,
+            utils::tests::reconstruct_glwe_secret_key_from_file,
+        },
+    };
     use crate::{
         algebra::{
             base_ring::{Z128, Z64},
@@ -1012,7 +1025,10 @@ pub mod tests {
         execution::{
             online::preprocessing::dummy::DummyPreprocessing,
             runtime::session::{LargeSession, ParameterHandles},
-            tfhe_internals::parameters::{DKGParamsBasics, DKGParamsRegular, DKGParamsSnS},
+            tfhe_internals::{
+                parameters::{DKGParamsBasics, DKGParamsRegular, DKGParamsSnS},
+                utils::expanded_encrypt,
+            },
         },
         tests::helper::tests_and_benches::execute_protocol_large,
     };
@@ -1031,23 +1047,6 @@ pub mod tests {
             },
         },
         networking::NetworkMode,
-    };
-    use crate::{
-        execution::{
-            random::{get_rng, seed_from_rng},
-            tfhe_internals::{
-                parameters::{
-                    BC_PARAMS_SAM_NO_SNS, NIST_PARAMS_P32_NO_SNS_FGLWE, NIST_PARAMS_P32_NO_SNS_LWE,
-                    NIST_PARAMS_P32_SNS_FGLWE, NIST_PARAMS_P8_NO_SNS_FGLWE,
-                    NIST_PARAMS_P8_NO_SNS_LWE, NIST_PARAMS_P8_SNS_FGLWE,
-                    OLD_PARAMS_P32_REAL_WITH_SNS, PARAMS_TEST_BK_SNS,
-                },
-                switch_and_squash::SwitchAndSquashKey,
-                test_feature::to_hl_client_key,
-                utils::tests::reconstruct_glwe_secret_key_from_file,
-            },
-        },
-        expanded_encrypt,
     };
 
     #[cfg(feature = "slow_tests")]
@@ -1857,8 +1856,8 @@ pub mod tests {
         );
         let mut rng = get_rng();
         let mut deterministic_seeder =
-            DeterministicSeeder::<ActivatedRandomGenerator>::new(seed_from_rng(&mut rng));
-        let mut enc_rng = EncryptionRandomGenerator::<ActivatedRandomGenerator>::new(
+            DeterministicSeeder::<DefaultRandomGenerator>::new(seed_from_rng(&mut rng));
+        let mut enc_rng = EncryptionRandomGenerator::<DefaultRandomGenerator>::new(
             deterministic_seeder.seed(),
             &mut deterministic_seeder,
         );
@@ -1888,7 +1887,7 @@ pub mod tests {
 
         let ck_bis = SwitchAndSquashKey::new(fbsk_out, ck.ksk.clone());
 
-        let small_ct: FheUint64 = expanded_encrypt!(&ddec_pk, message as u64, 64);
+        let small_ct: FheUint64 = expanded_encrypt(&ddec_pk, message as u64, 64).unwrap();
         let (raw_ct, _id, _tag) = small_ct.clone().into_raw_parts();
         let large_ct = ck.to_large_ciphertext(&raw_ct).unwrap();
         let large_ct_bis = ck_bis.to_large_ciphertext(&raw_ct).unwrap();
@@ -2042,7 +2041,7 @@ pub mod tests {
 
         let modulus = shortint_client_key.parameters.message_modulus().0;
 
-        let expected_res = ((clear_a * scalar as u64 - clear_b) * clear_b) % modulus as u64;
+        let expected_res = ((clear_a * scalar as u64 - clear_b) * clear_b) % modulus;
         assert_eq!(clear_res, expected_res);
     }
 

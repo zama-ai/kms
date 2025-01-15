@@ -203,7 +203,6 @@ pub fn get_batch_param_lwe_key_gen(lwe_dimension: LweDimension) -> (usize, usize
 
 #[cfg(test)]
 mod tests {
-    use concrete_csprng::generators::SoftwareRandomGenerator;
     use itertools::Itertools;
     use std::collections::HashMap;
     use tfhe::{
@@ -214,7 +213,7 @@ mod tests {
             },
             commons::{
                 generators::{EncryptionRandomGenerator, SecretRandomGenerator},
-                math::random::{ActivatedRandomGenerator, RandomGenerator, TUniform},
+                math::random::{DefaultRandomGenerator, RandomGenerator, TUniform},
             },
             entities::{LweCiphertext, LweSecretKeyOwned, Plaintext},
             seeders::new_seeder,
@@ -225,6 +224,7 @@ mod tests {
     };
     #[cfg(feature = "slow_tests")]
     use tfhe::{prelude::FheDecrypt, ConfigBuilder, FheUint8};
+    use tfhe_csprng::generators::SoftwareRandomGenerator;
 
     #[cfg(feature = "slow_tests")]
     use crate::execution::tfhe_internals::lwe_key::to_tfhe_hl_api_compact_public_key;
@@ -361,9 +361,9 @@ mod tests {
         let plaintext = Plaintext(msg << scaling);
 
         let mut seeder = new_seeder();
-        let mut encryption_random_generator: EncryptionRandomGenerator<ActivatedRandomGenerator> =
+        let mut encryption_random_generator: EncryptionRandomGenerator<DefaultRandomGenerator> =
             EncryptionRandomGenerator::new(seeder.seed(), seeder.as_mut());
-        let mut secret_random_generator: SecretRandomGenerator<ActivatedRandomGenerator> =
+        let mut secret_random_generator: SecretRandomGenerator<DefaultRandomGenerator> =
             SecretRandomGenerator::new(seeder.seed());
 
         let noise_distrib =
@@ -388,7 +388,7 @@ mod tests {
     #[cfg(feature = "slow_tests")]
     #[test]
     fn hl_pk_key_conversion() {
-        use crate::expanded_encrypt;
+        use crate::execution::tfhe_internals::utils::expanded_encrypt;
 
         let config = ConfigBuilder::default().build();
         let (client_key, _server_key) = tfhe::generate_keys(config);
@@ -398,7 +398,7 @@ mod tests {
 
         let hl_client_key = to_tfhe_hl_api_compact_public_key(lcpk, params);
         assert_eq!(hl_client_key.into_raw_parts(), pk.clone().into_raw_parts());
-        let ct: FheUint8 = expanded_encrypt!(&pk, 42_u8, 8);
+        let ct: FheUint8 = expanded_encrypt(&pk, 42_u8, 8).unwrap();
         let msg: u8 = ct.decrypt(&client_key);
         assert_eq!(42, msg);
     }

@@ -25,7 +25,7 @@ use super::{
 };
 use distributed_decryption::execution::endpoints::keygen::FhePubKeySet;
 use std::{collections::HashMap, sync::Arc};
-use tfhe::zk::CompactPkePublicParams;
+use tfhe::zk::CompactPkeCrs;
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
 
 #[tonic::async_trait]
@@ -69,7 +69,7 @@ impl CryptoMaterialReader for KmsFheKeyHandles {
 }
 
 #[tonic::async_trait]
-impl CryptoMaterialReader for CompactPkePublicParams {
+impl CryptoMaterialReader for CompactPkeCrs {
     async fn read_from_storage<S>(storage: &S, request_id: &RequestId) -> anyhow::Result<Self>
     where
         S: Storage + Send + Sync + 'static,
@@ -101,7 +101,7 @@ impl<
         private_storage: PrivS,
         backup_storage: Option<BackS>,
         pk_cache: HashMap<RequestId, WrappedPublicKeyOwned>,
-        crs_cache: HashMap<RequestId, CompactPkePublicParams>,
+        crs_cache: HashMap<RequestId, CompactPkeCrs>,
         fhe_keys: HashMap<RequestId, ThresholdFheKeys>,
     ) -> Self {
         Self {
@@ -129,7 +129,7 @@ impl<
     pub(crate) async fn write_crs_with_meta_store(
         &self,
         req_id: &RequestId,
-        pp: CompactPkePublicParams,
+        pp: CompactPkeCrs,
         crs_info: SignedPubDataHandleInternal,
         meta_store: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
     ) {
@@ -353,7 +353,7 @@ impl<
         private_storage: PrivS,
         backup_storage: Option<BackS>,
         pk_cache: HashMap<RequestId, WrappedPublicKeyOwned>,
-        crs_cache: HashMap<RequestId, CompactPkePublicParams>,
+        crs_cache: HashMap<RequestId, CompactPkeCrs>,
         fhe_keys: HashMap<RequestId, KmsFheKeyHandles>,
     ) -> Self {
         Self {
@@ -376,7 +376,7 @@ impl<
     pub(crate) async fn write_crs_with_meta_store(
         &self,
         req_id: &RequestId,
-        pp: CompactPkePublicParams,
+        pp: CompactPkeCrs,
         crs_info: SignedPubDataHandleInternal,
         meta_store: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
     ) {
@@ -574,7 +574,7 @@ pub(crate) struct CryptoMaterialStorage<
     // Map storing the already generated public keys.
     pk_cache: Arc<RwLock<HashMap<RequestId, WrappedPublicKeyOwned>>>,
     // Map storing the already generated CRS.
-    crs_cache: Arc<RwLock<HashMap<RequestId, CompactPkePublicParams>>>,
+    crs_cache: Arc<RwLock<HashMap<RequestId, CompactPkeCrs>>>,
 }
 
 impl<
@@ -670,14 +670,13 @@ impl<
     pub(crate) async fn read_guarded_crs_from_cache(
         &self,
         req_id: &RequestId,
-    ) -> anyhow::Result<
-        OwnedRwLockReadGuard<HashMap<RequestId, CompactPkePublicParams>, CompactPkePublicParams>,
-    > {
+    ) -> anyhow::Result<OwnedRwLockReadGuard<HashMap<RequestId, CompactPkeCrs>, CompactPkeCrs>>
+    {
         Self::read_guarded_crypto_material_from_cache(req_id, self.crs_cache.clone()).await
     }
 
     pub(crate) async fn refresh_crs(&self, req_id: &RequestId) -> anyhow::Result<()> {
-        Self::refresh_crypto_material::<CompactPkePublicParams, _>(
+        Self::refresh_crypto_material::<CompactPkeCrs, _>(
             self.crs_cache.clone(),
             req_id,
             self.public_storage.clone(),
@@ -693,7 +692,7 @@ impl<
     pub(crate) async fn write_crs_with_meta_store(
         &self,
         req_id: &RequestId,
-        pp: CompactPkePublicParams,
+        pp: CompactPkeCrs,
         crs_info: SignedPubDataHandleInternal,
         meta_store: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
     ) {

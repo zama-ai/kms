@@ -1,13 +1,11 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use distributed_decryption::{
-    execution::{
-        random::get_rng,
-        tfhe_internals::{
-            parameters::{DKGParams, BC_PARAMS_SAM_SNS},
-            test_feature::gen_key_set,
-        },
+use distributed_decryption::execution::{
+    random::get_rng,
+    tfhe_internals::{
+        parameters::{DKGParams, BC_PARAMS_SAM_SNS},
+        test_feature::gen_key_set,
+        utils::expanded_encrypt,
     },
-    expanded_encrypt,
 };
 use tfhe::{integer::IntegerCiphertext, set_server_key, FheUint16, FheUint8};
 
@@ -23,8 +21,8 @@ fn bench_switch_and_squash(c: &mut Criterion) {
 
     set_server_key(keyset.public_keys.server_key.clone());
 
-    let ct8: FheUint8 = expanded_encrypt!(&keyset.public_keys.public_key, msg8, 8);
-    let ct16: FheUint16 = expanded_encrypt!(&keyset.public_keys.public_key, msg16, 16);
+    let ct8: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, msg8, 8).unwrap();
+    let ct16: FheUint16 = expanded_encrypt(&keyset.public_keys.public_key, msg16, 16).unwrap();
     let public_key = bincode::serialize(&(keyset.public_keys.public_key)).unwrap();
     let server_key = bincode::serialize(&(keyset.public_keys.server_key)).unwrap();
     let conversion_key = bincode::serialize(&(keyset.public_keys.sns_key)).unwrap();

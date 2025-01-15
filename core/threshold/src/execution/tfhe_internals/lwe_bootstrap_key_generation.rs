@@ -130,7 +130,6 @@ where
 mod tests {
     use std::{collections::HashMap, ops::Deref};
 
-    use concrete_csprng::{generators::SoftwareRandomGenerator, seeders::Seeder};
     use itertools::Itertools;
     use tfhe::{
         core_crypto::{
@@ -142,7 +141,7 @@ mod tests {
                 generators::{DeterministicSeeder, EncryptionRandomGenerator},
                 math::{
                     decomposition::SignedDecomposer,
-                    random::{ActivatedRandomGenerator, TUniform},
+                    random::{DefaultRandomGenerator, TUniform},
                 },
                 traits::{ContiguousEntityContainer, ContiguousEntityContainerMut},
             },
@@ -154,6 +153,7 @@ mod tests {
             CoreCiphertextModulus, DecompositionBaseLog, DecompositionLevelCount, PolynomialSize,
         },
     };
+    use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::Seeder};
 
     use crate::{
         algebra::{
@@ -327,8 +327,8 @@ mod tests {
 
         let mut rng = get_rng();
         let mut deterministic_seeder =
-            DeterministicSeeder::<ActivatedRandomGenerator>::new(seed_from_rng(&mut rng));
-        let mut enc_rng = EncryptionRandomGenerator::<ActivatedRandomGenerator>::new(
+            DeterministicSeeder::<DefaultRandomGenerator>::new(seed_from_rng(&mut rng));
+        let mut enc_rng = EncryptionRandomGenerator::<DefaultRandomGenerator>::new(
             deterministic_seeder.seed(),
             &mut deterministic_seeder,
         );

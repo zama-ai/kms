@@ -18,7 +18,6 @@ jobs:
     uses: ./.github/workflows/common-build-big-instance.yml
     with:
       working-directory: './blockchain/simulator'
-      args-tests-fhe: ''
       package-name: 'simulator'
     permissions:
       contents: 'write'

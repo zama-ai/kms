@@ -37,7 +37,7 @@ use tfhe_0_8::{
     core_crypto::commons::{
         ciphertext_modulus::CiphertextModulus,
         generators::DeterministicSeeder,
-        math::random::{ActivatedRandomGenerator, Seed, TUniform},
+        math::random::{DefaultRandomGenerator, Seed, TUniform},
     },
     shortint::{
         engine::ShortintEngine,
@@ -1244,7 +1244,7 @@ impl KMSCoreVersion for V0_9 {
 
     // Without this, some keys will be generated differently every time we run the script
     fn seed_prng(seed: u128) {
-        let mut seeder = DeterministicSeeder::<ActivatedRandomGenerator>::new(Seed(seed));
+        let mut seeder = DeterministicSeeder::<DefaultRandomGenerator>::new(Seed(seed));
         let shortint_engine = ShortintEngine::new_from_seeder(&mut seeder);
         ShortintEngine::with_thread_local_mut(|local_engine| {
             let _ = std::mem::replace(local_engine, shortint_engine);

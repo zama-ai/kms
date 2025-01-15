@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.4
 # Multistage build to reduce image size
-FROM rust:1.82-slim-bookworm AS builder
+FROM rust:1.84-slim-bookworm AS builder
 
 # Install only essential build dependencies, alphabetically sorted
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \

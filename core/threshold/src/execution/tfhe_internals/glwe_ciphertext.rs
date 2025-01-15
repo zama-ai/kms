@@ -186,7 +186,6 @@ mod tests {
     use std::{collections::HashMap, num::Wrapping};
 
     use aes_prng::AesRng;
-    use concrete_csprng::generators::SoftwareRandomGenerator;
     use itertools::Itertools;
     use rand::SeedableRng;
     use tfhe::{
@@ -206,6 +205,7 @@ mod tests {
             CiphertextModulus,
         },
     };
+    use tfhe_csprng::generators::SoftwareRandomGenerator;
 
     use crate::{
         algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring},

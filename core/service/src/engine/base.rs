@@ -306,7 +306,7 @@ pub fn compute_external_pubdata_message_hash<D: Serialize + Versionize + Named>(
 
     // distinguish between the different types of public data we can sign according to their type name and sign it with EIP-712
     let message_hash = match D::NAME {
-        "zk::CompactPkePublicParams" => {
+        "zk::CompactPkeCrs" => {
             let message = CRS { crs: bytes.into() };
             message.eip712_signing_hash(eip712_domain)
         }
@@ -324,7 +324,7 @@ pub fn compute_external_pubdata_message_hash<D: Serialize + Versionize + Named>(
         }
         e => {
             return Err(anyhow_error_and_log(format!(
-                "Cannot compute EIP-712 signature on type {}. Expected one of: zk::CompactPkePublicParams, high_level_api::CompactPublicKey, high_level_api::ServerKey.",
+                "Cannot compute EIP-712 signature on type {}. Expected one of: zk::CompactPkeCrs, high_level_api::CompactPublicKey, high_level_api::ServerKey.",
                 e
             )))
         }

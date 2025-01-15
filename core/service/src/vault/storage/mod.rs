@@ -480,11 +480,9 @@ pub mod tests {
 
         // Ensure no old data is present
         let _ = delete_at_request_id(storage, &req_id, data_type).await;
-        assert!(
-            store_versioned_at_request_id(storage, &req_id, &data, data_type)
-                .await
-                .is_ok()
-        );
+        store_versioned_at_request_id(storage, &req_id, &data, data_type)
+            .await
+            .unwrap();
         let retrieved_store: TestType = read_versioned_at_request_id(storage, &req_id, data_type)
             .await
             .unwrap();

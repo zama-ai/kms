@@ -24,7 +24,6 @@ jobs:
     with:
       working-directory: './blockchain/connector'
       args-tests: '-F slow_tests'
-      args-tests-fhe: ''
       package-name: 'kms-blockchain-connector'
     permissions:
       contents: 'write'

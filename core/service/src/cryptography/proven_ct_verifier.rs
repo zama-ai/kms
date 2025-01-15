@@ -12,9 +12,7 @@ use kms_grpc::kms::v1::{
 };
 use kms_grpc::rpc_types::WrappedPublicKeyOwned;
 use std::sync::Arc;
-use tfhe::{
-    safe_serialization::safe_deserialize, zk::CompactPkePublicParams, ProvenCompactCiphertextList,
-};
+use tfhe::{safe_serialization::safe_deserialize, zk::CompactPkeCrs, ProvenCompactCiphertextList};
 use tokio::sync::{OwnedSemaphorePermit, RwLock};
 use tonic::{Request, Response, Status};
 use tracing::{trace_span, Instrument};
@@ -254,7 +252,7 @@ async fn verify_proven_ct_and_sign<
 
 fn verify_ct_proofs(
     proven_ct: &ProvenCompactCiphertextList,
-    pp: &CompactPkePublicParams,
+    pp: &CompactPkeCrs,
     wrapped_pk: &WrappedPublicKeyOwned,
     metadata: &[u8],
 ) -> bool {
@@ -266,7 +264,7 @@ fn verify_ct_proofs(
         .start();
     match wrapped_pk {
         WrappedPublicKeyOwned::Compact(pk) => {
-            if let tfhe::zk::ZkVerificationOutCome::Invalid = proven_ct.verify(pp, pk, metadata) {
+            if let tfhe::zk::ZkVerificationOutcome::Invalid = proven_ct.verify(pp, pk, metadata) {
                 return false;
             }
         }

@@ -8,7 +8,7 @@ use tfhe::{
     shortint::{
         parameters::{
             CompactCiphertextListExpansionKind, CompactPublicKeyEncryptionParameters,
-            ShortintKeySwitchingParameters,
+            ShortintKeySwitchingParameters, SupportedCompactPkeZkScheme,
         },
         prelude::*,
     },
@@ -43,6 +43,7 @@ pub const NIST_PARAM_PKE_MESSAGE_1_CARRY_1_PBS_KS_TUNIFORM_2M128:
     carry_modulus: CarryModulus(2),
     ciphertext_modulus: CiphertextModulus::new_native(),
     expansion_kind: CompactCiphertextListExpansionKind::RequiresCasting,
+    zk_scheme: SupportedCompactPkeZkScheme::V1,
 };
 
 // Parameters to keyswitch from input PKE 1_1 TUniform parameters to 1_1 PBS_KS compute parameters
@@ -85,6 +86,7 @@ pub const NIST_PARAM_PKE_MESSAGE_2_CARRY_2_PBS_KS_TUNIFORM_2M128:
     carry_modulus: CarryModulus(4),
     ciphertext_modulus: CiphertextModulus::new_native(),
     expansion_kind: CompactCiphertextListExpansionKind::RequiresCasting,
+    zk_scheme: SupportedCompactPkeZkScheme::V1,
 };
 
 // Parameters to keyswitch from input PKE 2_2 TUniform parameters to 2_2 PBS_KS compute parameters
@@ -127,6 +129,7 @@ pub const NIST_PARAM_PKE_MESSAGE_1_CARRY_1_KS_PBS_TUNIFORM_2M128:
     carry_modulus: CarryModulus(2),
     ciphertext_modulus: CiphertextModulus::new_native(),
     expansion_kind: CompactCiphertextListExpansionKind::RequiresCasting,
+    zk_scheme: SupportedCompactPkeZkScheme::V1,
 };
 
 // Parameters to keyswitch from input PKE 1_1 TUniform parameters to 1_1 KS_PBS compute parameters
@@ -169,6 +172,7 @@ pub const NIST_PARAM_PKE_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128:
     carry_modulus: CarryModulus(4),
     ciphertext_modulus: CiphertextModulus::new_native(),
     expansion_kind: CompactCiphertextListExpansionKind::RequiresCasting,
+    zk_scheme: SupportedCompactPkeZkScheme::V1,
 };
 
 // Parameters to keyswitch from input PKE 2_2 TUniform parameters to 2_2 KS_PBS compute parameters

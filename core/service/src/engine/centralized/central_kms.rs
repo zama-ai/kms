@@ -41,7 +41,7 @@ use std::sync::Arc;
 use std::{fmt, panic};
 use tfhe::prelude::FheDecrypt;
 #[cfg(feature = "non-wasm")]
-use tfhe::zk::CompactPkePublicParams;
+use tfhe::zk::CompactPkeCrs;
 #[cfg(feature = "non-wasm")]
 use tfhe::Seed;
 use tfhe::ServerKey;
@@ -80,7 +80,7 @@ pub async fn async_generate_crs(
     params: DKGParams,
     max_num_bits: Option<u32>,
     eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
-) -> anyhow::Result<(CompactPkePublicParams, SignedPubDataHandleInternal)> {
+) -> anyhow::Result<(CompactPkeCrs, SignedPubDataHandleInternal)> {
     let (send, recv) = tokio::sync::oneshot::channel();
     let sk_copy = sk.to_owned();
     let eip712_domain_copy = eip712_domain.cloned();
@@ -170,7 +170,7 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     max_num_bits: Option<u32>,
     mut rng: R,
     eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
-) -> anyhow::Result<(CompactPkePublicParams, SignedPubDataHandleInternal)> {
+) -> anyhow::Result<(CompactPkeCrs, SignedPubDataHandleInternal)> {
     use crate::engine::base::compute_info;
 
     let internal_pp = make_centralized_public_parameters(
@@ -492,7 +492,7 @@ impl<
             read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
 
         // read the CRS
-        let crs: HashMap<RequestId, CompactPkePublicParams> =
+        let crs: HashMap<RequestId, CompactPkeCrs> =
             read_all_data_versioned(&public_storage, &PubDataType::CRS.to_string()).await?;
 
         let crypto_storage = CentralizedCryptoMaterialStorage::new(

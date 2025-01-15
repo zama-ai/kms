@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
 use std::collections::{BTreeMap, HashMap};
 #[cfg(any(test, feature = "testing"))]
-use tfhe::zk::CompactPkePublicParams;
+use tfhe::zk::CompactPkeCrs;
 
 pub(crate) const BCAST_HASH_BYTE_LEN: usize = 32;
 pub(crate) const DSEP_BRACH: &[u8; 5] = b"BRACH";
@@ -88,7 +88,7 @@ pub enum NetworkValue<Z: Eq + Zero> {
     #[cfg(feature = "experimental")]
     PubBgvKeySet(Box<PublicBgvKeySet>),
     #[cfg(any(test, feature = "testing"))]
-    Crs(Box<CompactPkePublicParams>),
+    Crs(Box<CompactPkeCrs>),
     RingValue(Z),
     VecRingValue(Vec<Z>),
     VecPairRingValue(Vec<(Z, Z)>),

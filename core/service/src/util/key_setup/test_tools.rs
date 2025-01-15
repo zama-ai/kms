@@ -5,12 +5,12 @@ use crate::vault::storage::{
     delete_all_at_request_id, read_versioned_at_request_id, StorageReader,
 };
 use crate::vault::storage::{read_pk_at_request_id, StorageType};
-use distributed_decryption::expanded_encrypt;
+use distributed_decryption::execution::tfhe_internals::utils::expanded_encrypt;
 use kms_grpc::kms::v1::{FheType, RequestId, TypedPlaintext};
 use kms_grpc::rpc_types::{PubDataType, WrappedPublicKeyOwned};
 use std::path::Path;
 use tfhe::safe_serialization::safe_serialize;
-use tfhe::zk::CompactPkePublicParams;
+use tfhe::zk::CompactPkeCrs;
 use tfhe::{
     set_server_key, FheBool, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048,
     FheUint256, FheUint32, FheUint4, FheUint512, FheUint64, FheUint8, ProvenCompactCiphertextList,
@@ -19,14 +19,12 @@ use tfhe::{
 
 macro_rules! serialize_ctxt {
     ($t:ty,$msg:expr,$pk:expr,$server_key:expr,$num_bits:expr,$compression:expr) => {{
-        let ct: $t = expanded_encrypt!($pk, $msg, $num_bits);
+        let ct: $t = expanded_encrypt($pk, $msg, $num_bits).unwrap();
         let compression_key = $server_key.and_then(|k| k.clone().into_raw_parts().2);
-        if let Some(compression_key) = compression_key {
+        // here we just check that it exists
+        if let Some(_compression_key) = compression_key {
             if $compression {
-                crate::cryptography::decompression::test_tools::compress_serialize_versioned(
-                    ct,
-                    &compression_key,
-                )
+                crate::cryptography::decompression::test_tools::compress_serialize_versioned(ct)
             } else {
                 // NOTE: we have to copy this chunk of code because we can't write
                 // if let Some(x) = y && z
@@ -49,6 +47,11 @@ pub fn compute_cipher(
     server_key: Option<&ServerKey>,
     compression: bool,
 ) -> (Vec<u8>, FheType) {
+    if let Some(s) = server_key {
+        // TODO is there a way to do this without cloning?
+        // wait until context is ready and use that instead
+        tfhe::set_server_key(s.clone());
+    }
     let fhe_type = msg.into();
     (
         match msg {
@@ -361,12 +364,9 @@ pub async fn load_pk_from_storage(pub_path: Option<&Path>, key_id: &str) -> FheP
     pk
 }
 
-pub async fn load_crs_from_storage(
-    pub_path: Option<&Path>,
-    crs_id: &str,
-) -> CompactPkePublicParams {
+pub async fn load_crs_from_storage(pub_path: Option<&Path>, crs_id: &str) -> CompactPkeCrs {
     let storage = get_storage(pub_path, crs_id, &PubDataType::CRS.to_string()).await;
-    let crs: CompactPkePublicParams = read_versioned_at_request_id(
+    let crs: CompactPkeCrs = read_versioned_at_request_id(
         &storage,
         &RequestId {
             request_id: crs_id.to_string(),
@@ -417,7 +417,7 @@ pub async fn compute_proven_ct_from_stored_key(
         .await
         .unwrap();
         let WrappedPublicKeyOwned::Compact(pk) = wrapped_pk;
-        let pp: CompactPkePublicParams = storage.read_data(&crs_url).await.unwrap();
+        let pp: CompactPkeCrs = storage.read_data(&crs_url).await.unwrap();
         (pk, pp)
     } else {
         // Try with the threshold storage
@@ -434,7 +434,7 @@ pub async fn compute_proven_ct_from_stored_key(
         .await
         .unwrap();
         let WrappedPublicKeyOwned::Compact(pk) = wrapped_pk;
-        let pp: CompactPkePublicParams = storage.read_data(&crs_url).await.unwrap();
+        let pp: CompactPkeCrs = storage.read_data(&crs_url).await.unwrap();
         (pk, pp)
     };
 

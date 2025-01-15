@@ -17,7 +17,6 @@ jobs:
     uses: ./.github/workflows/common-build.yml
     with:
       working-directory: './blockchain/contracts/common'
-      args-tests-fhe: ''
       package-name: 'contracts-common'
     permissions:
       contents: 'read'
@@ -29,7 +28,6 @@ jobs:
     uses: ./.github/workflows/common-build.yml
     with:
       working-directory: './blockchain/contracts/csc'
-      args-tests-fhe: ''
       package-name: 'csc'
     permissions:
       contents: 'read'
@@ -41,7 +39,6 @@ jobs:
     uses: ./.github/workflows/common-build.yml
     with:
       working-directory: './blockchain/contracts/asc'
-      args-tests-fhe: ''
       package-name: 'asc'
     permissions:
       contents: 'read'
@@ -53,7 +50,6 @@ jobs:
     uses: ./.github/workflows/common-build.yml
     with:
       working-directory: './blockchain/contracts/bsc'
-      args-tests-fhe: ''
       package-name: 'bsc'
     permissions:
       contents: 'read'
@@ -65,7 +61,6 @@ jobs:
     uses: ./.github/workflows/common-build.yml
     with:
       working-directory: './blockchain/contracts/tendermint-ipsc'
-      args-tests-fhe: ''
       package-name: 'tendermint-ipsc'
     permissions:
       contents: 'read'
@@ -77,7 +72,6 @@ jobs:
     uses: ./.github/workflows/common-build.yml
     with:
       working-directory: './blockchain/contracts/ethereum-ipsc'
-      args-tests-fhe: ''
       package-name: 'ethereum-ipsc'
     permissions:
       contents: 'read'
@@ -89,7 +83,6 @@ jobs:
     uses: ./.github/workflows/common-build.yml
     with:
       working-directory: './blockchain/inclusion_proofs/ethereum'
-      args-tests-fhe: ''
       package-name: 'ethereum-inclusion-proofs'
     permissions:
       contents: 'read'
@@ -101,7 +94,6 @@ jobs:
     uses: ./.github/workflows/common-build.yml
     with:
       working-directory: './blockchain/inclusion_proofs/ethereum-triedb'
-      args-tests-fhe: ''
       package-name: 'ethereum-triedb-local'
     permissions:
       contents: 'read'

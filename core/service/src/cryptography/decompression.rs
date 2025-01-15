@@ -55,10 +55,8 @@ where
 
 pub mod test_tools {
     use serde::Serialize;
-    use tfhe::integer::ciphertext::{CompressedCiphertextListBuilder, Compressible};
-    use tfhe::integer::compression_keys::CompressionKey;
     use tfhe::named::Named;
-    use tfhe::{CompressedCiphertextList as HLCompressedCiphertextList, Versionize};
+    use tfhe::{CompressedCiphertextListBuilder, HlCompressible, Versionize};
 
     use crate::consts::SAFE_SER_SIZE_LIMIT;
 
@@ -72,18 +70,17 @@ pub mod test_tools {
         serialized_ct
     }
 
-    pub fn compress_serialize_versioned<T>(
-        ciphertext: T,
-        compression_key: &CompressionKey,
-    ) -> Vec<u8>
+    /// Before calling this function,
+    /// `server_key` needs to be set beforehand.
+    pub fn compress_serialize_versioned<T>(ciphertext: T) -> Vec<u8>
     where
-        T: Versionize + Named + Compressible,
+        T: Versionize + Named + HlCompressible,
     {
-        let compressed = CompressedCiphertextListBuilder::new()
+        // TODO should we trust tfhe-rs to pick the right compression key?
+        let hl_compressed = CompressedCiphertextListBuilder::new()
             .push(ciphertext)
-            .build(compression_key);
-        let hl_compressed =
-            HLCompressedCiphertextList::from_raw_parts(compressed, tfhe::Tag::default());
+            .build()
+            .unwrap();
         safe_serialize_versioned(&hl_compressed)
     }
 }
@@ -98,27 +95,23 @@ mod test {
         DKGParams, PARAMS_TEST_BK_SNS,
     };
     use tfhe::integer::bigint::StaticUnsignedBigInt;
-    use tfhe::integer::ciphertext::{CompressedCiphertextListBuilder, Compressible};
+    use tfhe::integer::ciphertext::Expandable;
     use tfhe::named::Named;
     use tfhe::prelude::{CiphertextList, FheDecrypt, FheEncrypt};
+    use tfhe::set_server_key;
     use tfhe::shortint::parameters::{
         COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
         PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
     };
-    use tfhe::{generate_keys, ClientKey};
+    use tfhe::CompactPublicKey;
+    use tfhe::CompressedCiphertextListBuilder;
+    use tfhe::ConfigBuilder;
+    use tfhe::{generate_keys, ClientKey, HlCompressible};
     use tfhe::{
         FheBool, FheUint1024, FheUint128, FheUint16, FheUint2048, FheUint256, FheUint32, FheUint4,
         FheUint512, FheUint64, FheUint8,
     };
     use tfhe::{Unversionize, Versionize};
-
-    use tfhe::integer::ciphertext::Expandable;
-
-    use tfhe::set_server_key;
-    use tfhe::CompactPublicKey;
-    use tfhe::CompressedCiphertextList as HLCompressedCiphertextList;
-    use tfhe::CompressedCiphertextListBuilder as HLCompressedCiphertextListBuilder;
-    use tfhe::ConfigBuilder;
 
     fn max_val(num_bits: usize) -> StaticUnsignedBigInt<1> {
         StaticUnsignedBigInt::from([(2_u128.pow(num_bits as u32) - 1) as u64; 1])
@@ -132,15 +125,14 @@ mod test {
         .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64)
         .build();
         let (client_key, server_key) = generate_keys(config);
-        let compression_key = server_key.clone().into_raw_parts().2;
+        set_server_key(server_key);
         let decompression_key = None;
         let not_compressed = FheUint4::encrypt(0_u32, &client_key);
-        let compressed = CompressedCiphertextListBuilder::new()
+        let hl_compressed = CompressedCiphertextListBuilder::new()
             .push(not_compressed.clone())
             .push(not_compressed)
-            .build(&compression_key.unwrap());
-        let hl_compressed =
-            HLCompressedCiphertextList::from_raw_parts(compressed, tfhe::Tag::default());
+            .build()
+            .unwrap();
 
         let mut bytes = Vec::new();
         tfhe::safe_serialization::safe_serialize(&hl_compressed, &mut bytes, SAFE_SER_SIZE_LIMIT)
@@ -157,10 +149,12 @@ mod test {
         .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64)
         .build();
         let (client_key, server_key) = generate_keys(config);
-        let compression_key = server_key.clone().into_raw_parts().2;
         let decompression_key = server_key.clone().into_raw_parts().3;
         let not_compressed = FheUint4::encrypt(0_u32, &client_key);
-        let compressed = compress_serialize_versioned(not_compressed, &compression_key.unwrap());
+
+        set_server_key(server_key);
+        let compressed = compress_serialize_versioned(not_compressed);
+
         let result = from_bytes::<FheUint8>(&decompression_key, &compressed);
         assert!(result.is_err());
     }
@@ -173,10 +167,12 @@ mod test {
         .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64)
         .build();
         let (client_key, server_key) = generate_keys(config);
-        let compression_key = server_key.clone().into_raw_parts().2;
         let decompression_key = None;
         let not_compressed = FheUint4::encrypt(0_u32, &client_key);
-        let compressed = compress_serialize_versioned(not_compressed, &compression_key.unwrap());
+
+        set_server_key(server_key);
+        let compressed = compress_serialize_versioned(not_compressed);
+
         let result = from_bytes::<FheUint4>(&decompression_key, &compressed);
         assert!(result.is_err());
     }
@@ -265,7 +261,7 @@ mod test {
             + FheEncrypt<StaticUnsignedBigInt<N>, ClientKey>
             + FheDecrypt<StaticUnsignedBigInt<N>>
             + Clone
-            + Compressible
+            + HlCompressible
             + serde::de::DeserializeOwned
             + serde::Serialize
             + Named
@@ -285,7 +281,10 @@ mod test {
         assert!(compression_key.is_some());
         assert!(decompression_key.is_some());
         let not_compressed = T::encrypt(clear_value, &client_key);
-        let compressed = compress_serialize_versioned(not_compressed, &compression_key.unwrap());
+
+        set_server_key(server_key);
+        let compressed = compress_serialize_versioned(not_compressed);
+
         let result = from_bytes::<T>(&decompression_key, &compressed);
         let result = match result {
             Ok(result) => result,
@@ -309,7 +308,10 @@ mod test {
         assert!(compression_key.is_some());
         assert!(decompression_key.is_some());
         let not_compressed = FheBool::encrypt(clear_value, &client_key);
-        let compressed = compress_serialize_versioned(not_compressed, &compression_key.unwrap());
+
+        set_server_key(server_key);
+        let compressed = compress_serialize_versioned(not_compressed);
+
         let result = from_bytes::<FheBool>(&decompression_key, &compressed);
         let result = match result {
             Ok(result) => result,
@@ -365,7 +367,7 @@ mod test {
         // TODO: use verify_and_expand instead
         let not_compressed = expander.get::<FheUint8>(0).unwrap().unwrap();
         let not_compressed = not_compressed.reverse_bits();
-        let compressed = HLCompressedCiphertextListBuilder::new()
+        let compressed = CompressedCiphertextListBuilder::new()
             .push(not_compressed.clone())
             .build()
             .unwrap();

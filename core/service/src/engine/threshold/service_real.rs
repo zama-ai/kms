@@ -96,7 +96,7 @@ use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::named::Named;
-use tfhe::zk::CompactPkePublicParams;
+use tfhe::zk::CompactPkeCrs;
 use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, OwnedSemaphorePermit, RwLock};
@@ -333,7 +333,7 @@ where
         read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
 
     // load crs from storage
-    let crs_map: HashMap<RequestId, CompactPkePublicParams> =
+    let crs_map: HashMap<RequestId, CompactPkeCrs> =
         read_all_data_versioned(&public_storage, &PubDataType::CRS.to_string()).await?;
 
     let role_assignments: RoleAssignment = peer_configs

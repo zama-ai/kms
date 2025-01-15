@@ -3,7 +3,6 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
 };
 
-use concrete_csprng::generators::ForkError;
 use itertools::Itertools;
 use tfhe::{
     core_crypto::commons::{
@@ -14,6 +13,7 @@ use tfhe::{
     shortint::parameters::{DecompositionLevelCount, GlweDimension, LweDimension, PolynomialSize},
     Seed,
 };
+use tfhe_csprng::generators::ForkError;
 
 use super::parameters::EncryptionType;
 //Question:

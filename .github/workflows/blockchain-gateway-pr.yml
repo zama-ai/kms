@@ -18,7 +18,6 @@ jobs:
     uses: ./.github/workflows/common-build-big-instance.yml
     with:
       working-directory: './blockchain/gateway'
-      args-tests-fhe: ''
       package-name: 'gateway'
       test-coverage: true
       test-minimum-coverage: 40

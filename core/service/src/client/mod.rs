@@ -55,7 +55,7 @@ cfg_if::cfg_if! {
         use kms_grpc::rpc_types::{PubDataType, PublicKeyType, WrappedPublicKeyOwned};
         use std::collections::HashMap;
         use std::fmt;
-        use tfhe::zk::CompactPkePublicParams;
+        use tfhe::zk::CompactPkeCrs;
         use tfhe::ProvenCompactCiphertextList;
         use tfhe::ServerKey;
         use tfhe_versionable::{Unversionize, Versionize};
@@ -566,7 +566,7 @@ impl Client {
         results: Vec<CrsGenResult>,
         storage_readers: &[S],
         min_agree_count: u32,
-    ) -> anyhow::Result<CompactPkePublicParams> {
+    ) -> anyhow::Result<CompactPkeCrs> {
         let mut verifying_pks = std::collections::HashSet::new();
         // counter of digest (digest -> usize)
         let mut hash_counter_map = HashMap::new();
@@ -583,7 +583,7 @@ impl Client {
             let (pp_w_id, info) = if let Some(info) = result.crs_results {
                 let url =
                     storage.compute_url(&request_id.to_string(), &PubDataType::CRS.to_string())?;
-                let pp: CompactPkePublicParams = storage.read_data(&url).await?;
+                let pp: CompactPkeCrs = storage.read_data(&url).await?;
                 (pp, info)
             } else {
                 tracing::warn!("empty SignedPubDataHandle");
@@ -912,7 +912,7 @@ impl Client {
         &self,
         crs_gen_result: &CrsGenResult,
         storage: &R,
-    ) -> anyhow::Result<Option<CompactPkePublicParams>> {
+    ) -> anyhow::Result<Option<CompactPkeCrs>> {
         let crs_info = some_or_err(
             crs_gen_result.crs_results.clone(),
             "Could not find CRS info".to_string(),
@@ -950,9 +950,9 @@ impl Client {
         &self,
         crs_id: &RequestId,
         storage: &R,
-    ) -> anyhow::Result<CompactPkePublicParams> {
+    ) -> anyhow::Result<CompactPkeCrs> {
         let url = storage.compute_url(&crs_id.to_string(), &PubDataType::CRS.to_string())?;
-        let pp: CompactPkePublicParams = storage.read_data(&url).await?;
+        let pp: CompactPkeCrs = storage.read_data(&url).await?;
         Ok(pp)
     }
 
@@ -2381,7 +2381,7 @@ pub(crate) mod tests {
     use rand::SeedableRng;
     use serial_test::serial;
     use std::collections::{hash_map::Entry, HashMap};
-    use tfhe::zk::CompactPkePublicParams;
+    use tfhe::zk::CompactPkeCrs;
     use tfhe::ProvenCompactCiphertextList;
     use tfhe::Tag;
     use tokio::task::JoinSet;
@@ -2780,8 +2780,7 @@ pub(crate) mod tests {
         crs_path.replace_range(0..7, ""); // remove leading "file:/" from URI, so we can read the file
 
         // check that CRS signature is verified correctly for the current version
-        let crs_unversioned: CompactPkePublicParams =
-            safe_read_element_versioned(&crs_path).await.unwrap();
+        let crs_unversioned: CompactPkeCrs = safe_read_element_versioned(&crs_path).await.unwrap();
         let client_handle = compute_handle(&crs_unversioned).unwrap();
         assert_eq!(&client_handle, &crs_info.key_handle);
 
@@ -3027,7 +3026,7 @@ pub(crate) mod tests {
             .get_crs(crs_req_id, &pub_storage)
             .await
             .unwrap();
-        assert!(tfhe::zk::ZkVerificationOutCome::Valid == proven_ct.verify(&pp, &pk, &metadata));
+        assert!(tfhe::zk::ZkVerificationOutcome::Valid == proven_ct.verify(&pp, &pk, &metadata));
 
         let verify_proven_ct_req = internal_client
             .verify_proven_ct_request(
@@ -3067,7 +3066,7 @@ pub(crate) mod tests {
         kms_server.assert_shutdown().await;
     }
 
-    async fn verify_pp(dkg_params: &DKGParams, pp: &CompactPkePublicParams) {
+    async fn verify_pp(dkg_params: &DKGParams, pp: &CompactPkeCrs) {
         let dkg_params_handle = dkg_params.get_params_basics_handle();
 
         let cks = tfhe::integer::ClientKey::new(dkg_params_handle.to_classic_pbs_parameters());
@@ -3090,9 +3089,9 @@ pub(crate) mod tests {
             tfhe::CompactPublicKey::from_raw_parts(pk, Tag::default())
         };
 
-        let max_msg_len = pp.k;
+        let max_msg_len = pp.max_num_messages().0;
         let msgs = (0..max_msg_len)
-            .map(|i| (i % dkg_params_handle.get_message_modulus().0) as u64)
+            .map(|i| i as u64 % dkg_params_handle.get_message_modulus().0)
             .collect::<Vec<_>>();
 
         let metadata = vec![23_u8, 42];
@@ -3630,7 +3629,7 @@ pub(crate) mod tests {
         .await;
         // Sanity check that the proof is valid
         let pk = load_pk_from_storage(None, &key_handle.to_string()).await;
-        assert!(tfhe::zk::ZkVerificationOutCome::Valid == proven_ct.verify(&pp, &pk, &metadata));
+        assert!(tfhe::zk::ZkVerificationOutcome::Valid == proven_ct.verify(&pp, &pk, &metadata));
 
         let reqs: Vec<_> = (0..parallelism)
             .map(|j| {

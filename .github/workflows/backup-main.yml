@@ -16,7 +16,6 @@ jobs:
     uses: ./.github/workflows/common-build-big-instance.yml
     with:
       working-directory: './core/backup'
-      args-tests-fhe: ''
       args-tests: '--all-features'
       package-name: 'kms-backup'
     permissions:

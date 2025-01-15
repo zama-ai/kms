@@ -3,8 +3,8 @@
 //part of this code is integrated in tfhe-rs
 use itertools::{EitherOrBoth, Itertools};
 use tfhe::{
-    core_crypto::prelude::Numeric, integer::ciphertext::Compactable, CompactCiphertextList,
-    CompactPublicKey,
+    core_crypto::prelude::Numeric, integer::ciphertext::Compactable, prelude::Tagged,
+    CompactCiphertextList, CompactPublicKey, HlExpandable,
 };
 
 use crate::{
@@ -168,28 +168,28 @@ pub fn compact_encrypt_helper<M: Compactable + Numeric>(
     pk: &CompactPublicKey,
     msg: M,
     num_bits: usize,
-) -> CompactCiphertextList {
+) -> anyhow::Result<CompactCiphertextList> {
     let mut compact_list_builder = CompactCiphertextList::builder(pk);
     if num_bits == 1 {
         compact_list_builder.push(msg == M::ONE);
     } else {
-        compact_list_builder
-            .push_with_num_bits(msg, num_bits)
-            .unwrap();
+        compact_list_builder.push_with_num_bits(msg, num_bits)?;
     }
-    compact_list_builder.build()
+    Ok(compact_list_builder.build())
 }
 
-// NOTE: this is a workaround until HlExpandable is available on tfhe-rs.
-#[macro_export]
-macro_rules! expanded_encrypt {
-    ($pk:expr,$msg:expr,$num_bits:expr) => {{
-        use tfhe::prelude::CiphertextList;
-        use $crate::execution::tfhe_internals::utils;
-        let compact_list = utils::compact_encrypt_helper($pk, $msg, $num_bits);
-        let expanded = compact_list.expand().unwrap();
-        expanded.get(0).unwrap().unwrap()
-    }};
+pub fn expanded_encrypt<M: Compactable + Numeric, T: HlExpandable + Tagged>(
+    pk: &CompactPublicKey,
+    msg: M,
+    num_bits: usize,
+) -> anyhow::Result<T> {
+    use crate::execution::tfhe_internals::utils;
+    use tfhe::prelude::CiphertextList;
+    let compact_list = utils::compact_encrypt_helper(pk, msg, num_bits)?;
+    let expanded = compact_list.expand()?;
+    expanded
+        .get::<T>(0)?
+        .ok_or(anyhow::anyhow!("expanded ciphertext list is empty"))
 }
 
 #[cfg(test)]

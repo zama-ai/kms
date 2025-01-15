@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.4
 
 # Build Stage
-FROM rust:1.82-slim-bookworm AS builder
+FROM rust:1.84-slim-bookworm AS builder
 
 # Install build dependencies with cache mount
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \

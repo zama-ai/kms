@@ -2,7 +2,7 @@
 
 ### Multistage build to reduce image size
 ## First stage sets up basic Rust build environment
-FROM rust:1.82-slim-bookworm AS base
+FROM rust:1.84-slim-bookworm AS base
 
 # Added memory usage optimization through `--no-install-recommends`
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \

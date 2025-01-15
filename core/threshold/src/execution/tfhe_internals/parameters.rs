@@ -14,6 +14,7 @@ use tfhe::{
             CompactCiphertextListExpansionKind, CompactPublicKeyEncryptionParameters,
             CompressionParameters, DecompositionBaseLog, DecompositionLevelCount, GlweDimension,
             LweDimension, PolynomialSize, ShortintKeySwitchingParameters,
+            SupportedCompactPkeZkScheme,
         },
         CarryModulus, ClassicPBSParameters, EncryptionKeyChoice, MaxNoiseLevel, MessageModulus,
         PBSOrder, PBSParameters,
@@ -897,7 +898,8 @@ impl DkgParamsAvailable {
 const BC_PARAMS_SAM : DKGParamsRegular = DKGParamsRegular {
     sec: 128,
     ciphertext_parameters: tfhe::shortint::parameters::PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
-    dedicated_compact_public_key_parameters: Some((tfhe::shortint::parameters::compact_public_key_only::p_fail_2_minus_64::ks_pbs::PARAM_PKE_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,tfhe::shortint::parameters::key_switching::p_fail_2_minus_64::ks_pbs::PARAM_KEYSWITCH_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64 )),
+    // Now it's DynamicDistribution::new_t_uniform(43), before it was 42?
+    dedicated_compact_public_key_parameters: Some((tfhe::shortint::parameters::compact_public_key_only::p_fail_2_minus_64::ks_pbs::V0_11_PARAM_PKE_TO_SMALL_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64_ZKV1,tfhe::shortint::parameters::key_switching::p_fail_2_minus_64::ks_pbs::V0_11_PARAM_KEYSWITCH_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64)),
     compression_decompression_parameters: Some(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64),
     flag: true
 };
@@ -948,6 +950,7 @@ const BC_PARAMS_NIGEL: DKGParamsRegular = DKGParamsRegular {
             carry_modulus: CarryModulus(4),
             ciphertext_modulus: CiphertextModulus::new_native(),
             expansion_kind: CompactCiphertextListExpansionKind::RequiresCasting,
+            zk_scheme: SupportedCompactPkeZkScheme::V1,
         },
         ShortintKeySwitchingParameters {
             ks_level: DecompositionLevelCount(1),
@@ -1016,6 +1019,7 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
                 carry_modulus: CarryModulus(4),
                 ciphertext_modulus: CiphertextModulus::new_native(),
                 expansion_kind: CompactCiphertextListExpansionKind::RequiresCasting,
+                zk_scheme: SupportedCompactPkeZkScheme::V1,
             },
             ShortintKeySwitchingParameters {
                 ks_level: DecompositionLevelCount(1),

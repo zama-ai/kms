@@ -5,6 +5,7 @@ use distributed_decryption::{
         galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
         structure_traits::Ring,
     },
+    execution::tfhe_internals::utils::expanded_encrypt,
     execution::{
         constants::REAL_KEY_PATH,
         endpoints::decryption::threshold_decrypt64,
@@ -14,7 +15,6 @@ use distributed_decryption::{
         },
         tfhe_internals::test_feature::{keygen_all_party_shares, KeySet},
     },
-    expanded_encrypt,
     file_handling::read_element,
     networking::NetworkMode,
 };
@@ -79,7 +79,7 @@ fn ddec_nsmall(c: &mut Criterion) {
             config.t,
         )
         .unwrap();
-        let ct: FheUint8 = expanded_encrypt!(&keyset.public_keys.public_key, message, 8);
+        let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8).unwrap();
         let (raw_ct, _id, _tag) = ct.into_raw_parts();
 
         let identities = generate_fixed_identities(config.n);
@@ -142,7 +142,7 @@ fn ddec_bitdec_nsmall(c: &mut Criterion) {
             config.t,
         )
         .unwrap();
-        let ct: FheUint8 = expanded_encrypt!(&keyset.public_keys.public_key, message, 8);
+        let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8).unwrap();
         let (raw_ct, _id, _tag) = ct.into_raw_parts();
 
         let identities = generate_fixed_identities(config.n);
@@ -207,7 +207,7 @@ fn ddec_nlarge(c: &mut Criterion) {
         )
         .unwrap();
 
-        let ct: FheUint8 = expanded_encrypt!(&keyset.public_keys.public_key, message, 8);
+        let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8).unwrap();
         let (raw_ct, _id, _tag) = ct.into_raw_parts();
 
         let identities = generate_fixed_identities(config.n);
@@ -271,7 +271,7 @@ fn ddec_bitdec_nlarge(c: &mut Criterion) {
         )
         .unwrap();
 
-        let ct: FheUint8 = expanded_encrypt!(&keyset.public_keys.public_key, message, 8);
+        let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8).unwrap();
         let (raw_ct, _id, _tag) = ct.into_raw_parts();
 
         let identities = generate_fixed_identities(config.n);

@@ -125,7 +125,7 @@ mod tests {
                 generators::EncryptionRandomGenerator,
                 math::{
                     decomposition::SignedDecomposer,
-                    random::{ActivatedRandomGenerator, TUniform},
+                    random::{DefaultRandomGenerator, TUniform},
                 },
             },
             entities::{GlweSecretKeyOwned, LweCiphertext, LweSecretKeyOwned, Plaintext},
@@ -162,7 +162,7 @@ mod tests {
         networking::NetworkMode,
         tests::helper::tests_and_benches::execute_protocol_large,
     };
-    use concrete_csprng::generators::SoftwareRandomGenerator;
+    use tfhe_csprng::generators::SoftwareRandomGenerator;
 
     use super::allocate_and_generate_new_lwe_keyswitch_key;
 
@@ -314,7 +314,7 @@ mod tests {
         let mut seeder = new_seeder();
         let seeder = seeder.as_mut();
         let mut encryption_generator =
-            EncryptionRandomGenerator::<ActivatedRandomGenerator>::new(seeder.seed(), seeder);
+            EncryptionRandomGenerator::<DefaultRandomGenerator>::new(seeder.seed(), seeder);
 
         let ct = allocate_and_encrypt_new_lwe_ciphertext(
             &big_lwe_sk,

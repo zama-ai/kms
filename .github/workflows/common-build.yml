@@ -19,10 +19,6 @@ on:
         type: string
         required: false
         default: ""
-      args-tests-fhe:
-        type: string
-        required: false
-        default: "-F tfhe/seeder_unix -F tfhe/x86_64"
       run-minio:
         type: boolean
         required: false
@@ -202,7 +198,7 @@ jobs:
           echo "region=${AWS_DEFAULT_REGION}" >> ~/.aws/config &&
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           cat ~/.aws/config &&
-          RUST_BACKTRACE=full cargo test ${{ inputs.args-tests }} ${{ inputs.args-tests-fhe }}
+          RUST_BACKTRACE=full cargo test ${{ inputs.args-tests }}
 
       # Coverage reporting
       - name: Run Tests with Coverage
@@ -216,7 +212,7 @@ jobs:
           export CARGO_INCREMENTAL=0
           export RUSTFLAGS='-Cinstrument-coverage'
           export LLVM_PROFILE_FILE='cargo-test-%p-%m.profraw'
-          cargo test ${{ inputs.args-tests }} ${{ inputs.args-tests-fhe }}
+          cargo test ${{ inputs.args-tests }}
           cargo install grcov
           mkdir coverage
           ~/.cargo/bin/grcov . --binary-path ../../target/debug/deps/ -s . --branch --ignore-not-existing --ignore '../*' --ignore "/*" -o coverage/ -t markdown
@@ -270,8 +266,8 @@ jobs:
       - name: Generate wasm test files
         if: ${{ inputs.run-wasm }}
         run: |
-          cargo test test_reencryption_threshold_and_write_transcript -F tfhe/seeder_unix -F tfhe/x86_64 ${{ inputs.wasm-test-feature }}
-          cargo test test_reencryption_centralized_and_write_transcript -F tfhe/seeder_unix -F tfhe/x86_64 ${{ inputs.wasm-test-feature }}
+          cargo test test_reencryption_threshold_and_write_transcript ${{ inputs.wasm-test-feature }}
+          cargo test test_reencryption_centralized_and_write_transcript ${{ inputs.wasm-test-feature }}
 
       - name: Test wasm
         if: ${{ inputs.run-wasm }}

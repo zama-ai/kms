@@ -113,9 +113,6 @@ wasm-bindgen = { version = "=0.2.99", features = ["serde-serialize"] }
 tfhe-versionable.workspace = true
 async_cell = "0.2.2"
 
-[target.'cfg(unix)'.dependencies]
-tfhe = { workspace = true, features = ["seeder_unix"] }
-
 [dev-dependencies]
 assert_cmd = "=2.0.16"
 serial_test.workspace = true

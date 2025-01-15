@@ -12,7 +12,7 @@ use tfhe::{
         },
         commons::{
             generators::{DeterministicSeeder, EncryptionRandomGenerator},
-            math::random::ActivatedRandomGenerator,
+            math::random::DefaultRandomGenerator,
             traits::Numeric,
         },
         entities::{
@@ -25,7 +25,7 @@ use tfhe::{
     shortint::{
         self, list_compression::CompressionPrivateKeys, ClassicPBSParameters, ShortintParameterSet,
     },
-    zk::CompactPkePublicParams,
+    zk::CompactPkeCrs,
     ClientKey,
 };
 use tokio::{task::JoinSet, time::timeout_at};
@@ -396,9 +396,9 @@ pub async fn transfer_pub_key<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
 /// Send the CRS to the other parties, if I am the input party in this session. Else receive the CRS.
 pub async fn transfer_crs<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     session: &S,
-    some_crs: Option<CompactPkePublicParams>,
+    some_crs: Option<CompactPkeCrs>,
     input_party_id: usize,
-) -> anyhow::Result<CompactPkePublicParams> {
+) -> anyhow::Result<CompactPkeCrs> {
     session.network().increase_round_counter()?;
     if session.my_role()?.one_based() == input_party_id {
         // send CRS
@@ -509,8 +509,8 @@ pub fn generate_large_keys<R: Rng + CryptoRng>(
 
     let mut secret_rng = secret_rng_from_seed(seed_from_rng(rng).0);
     let mut deterministic_seeder =
-        DeterministicSeeder::<ActivatedRandomGenerator>::new(seed_from_rng(rng));
-    let mut enc_rng = EncryptionRandomGenerator::<ActivatedRandomGenerator>::new(
+        DeterministicSeeder::<DefaultRandomGenerator>::new(seed_from_rng(rng));
+    let mut enc_rng = EncryptionRandomGenerator::<DefaultRandomGenerator>::new(
         deterministic_seeder.seed(),
         &mut deterministic_seeder,
     );

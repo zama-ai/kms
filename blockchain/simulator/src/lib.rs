@@ -2376,7 +2376,7 @@ mod tests {
         util::key_setup::{ensure_central_crs_exists, ensure_central_server_signing_keys_exist},
         vault::storage::{ram::RamStorage, read_versioned_at_request_id},
     };
-    use tfhe::zk::CompactPkePublicParams;
+    use tfhe::zk::CompactPkeCrs;
 
     use super::*;
 
@@ -2424,7 +2424,7 @@ mod tests {
             true,
         )
         .await;
-        let crs: CompactPkePublicParams = read_versioned_at_request_id(
+        let crs: CompactPkeCrs = read_versioned_at_request_id(
             &pub_storage,
             &RequestId {
                 request_id: TEST_CENTRAL_CRS_ID.to_string(),

@@ -13,12 +13,11 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, Mul, Neg};
 use tfhe::{
-    shortint::parameters::CompactPublicKeyEncryptionParameters, zk::CompactPkePublicParams,
+    core_crypto::prelude::LweCiphertextCount,
+    shortint::parameters::CompactPublicKeyEncryptionParameters,
+    zk::{CompactPkeCrs, CompactPkeZkScheme, ZkCompactPkeV1PublicParams},
 };
-use tfhe_zk_pok::{
-    curve_api::{bls12_446 as curve, CurveGroupOps},
-    proofs::pke,
-};
+use tfhe_zk_pok::curve_api::{bls12_446 as curve, CurveGroupOps};
 use tracing::instrument;
 use zeroize::Zeroize;
 
@@ -32,6 +31,31 @@ pub struct PartialProof {
     h_pok: curve::Zp,
     s_pok: curve::Zp,
     pub new_pp: InternalPublicParameter,
+}
+
+impl PartialProof {
+    pub fn validate_points(&self) -> anyhow::Result<()> {
+        let (g_list_valid, g_hat_list_valid) = rayon::join(
+            || {
+                self.new_pp
+                    .inner
+                    .g1s
+                    .par_iter()
+                    .all(curve::G1::validate_projective)
+            },
+            || {
+                self.new_pp
+                    .inner
+                    .g2s
+                    .par_iter()
+                    .all(curve::G2::validate_projective)
+            },
+        );
+        if !(g_list_valid && g_hat_list_valid) {
+            anyhow::bail!("some points are not valid")
+        }
+        Ok(())
+    }
 }
 
 struct MetaParameter {
@@ -50,14 +74,14 @@ fn compute_meta_parameter(
     params: &CompactPublicKeyEncryptionParameters,
     max_num_bits: Option<usize>,
 ) -> anyhow::Result<MetaParameter> {
-    let size = params.encryption_lwe_dimension;
+    let lwe_dim = params.encryption_lwe_dimension;
     let noise_distribution = params.encryption_noise_distribution;
-    let mut plaintext_modulus = (params.message_modulus.0 * params.carry_modulus.0) as u64;
+    let mut plaintext_modulus = params.message_modulus.0 * params.carry_modulus.0;
     // Our plaintext modulus does not take into account the bit of padding
     plaintext_modulus *= 2;
 
     let max_bit_size = max_num_bits.unwrap_or(ZK_DEFAULT_MAX_NUM_BITS);
-    let max_num_cleartext = {
+    let max_num_cleartext = LweCiphertextCount({
         if params.carry_modulus.0 < params.message_modulus.0 {
             return Err(anyhow_error_and_log(
                 "parameters must have CarryModulus >= MessageModulus".to_string(),
@@ -66,24 +90,32 @@ fn compute_meta_parameter(
 
         let carry_and_message_bit_capacity =
             (params.carry_modulus.0 * params.message_modulus.0).ilog2() as usize;
-        max_bit_size.div_ceil(carry_and_message_bit_capacity)
-    };
+        let out = max_bit_size.div_ceil(carry_and_message_bit_capacity);
+
+        // If our lwe_dim is low, we need to reduce the max_num_cleartext appropriately,
+        // otherwise there will be an error when preparing the zk parameters.
+        // Alternatively, we can remove ZK_DEFAULT_MAX_NUM_BITS and everytime
+        // the max_num_bits is not given we'll use the lwe_dim,
+        // but this requires more refactoring.
+        out.min(lwe_dim.0)
+    });
 
     let (d, k, b, q, t) = tfhe::zk::CompactPkeCrs::prepare_crs_parameters(
-        size,
+        lwe_dim,
         max_num_cleartext,
         noise_distribution,
         params.ciphertext_modulus,
         plaintext_modulus,
+        CompactPkeZkScheme::V1,
     )?;
-    let (n, big_d, b_r) = tfhe_zk_pok::proofs::pke::compute_crs_params(d.0, k, b, q, t, 1);
+    let (n, big_d, b_r) = tfhe_zk_pok::proofs::pke::compute_crs_params(d.0, k.0, b, q, t, 1);
 
     debug_assert_eq!(k, max_num_cleartext);
     Ok(MetaParameter {
         big_d,
         n,
         d: d.0,
-        k,
+        k: k.0,
         b,
         b_r,
         q,
@@ -99,6 +131,8 @@ pub fn compute_witness_dim(
     Ok(compute_meta_parameter(params, max_num_bits)?.n)
 }
 
+// TODO consider making this a wrapper around GroupElements,
+// instead of our own WrappedG1G2s
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
 pub struct InternalPublicParameter {
     round: usize,
@@ -133,7 +167,7 @@ impl InternalPublicParameter {
     pub fn try_into_tfhe_zk_pok_pp(
         &self,
         params: &CompactPublicKeyEncryptionParameters,
-    ) -> anyhow::Result<pke::PublicParams<tfhe_zk_pok::curve_api::Bls12_446>> {
+    ) -> anyhow::Result<CompactPkeCrs> {
         let MetaParameter {
             big_d,
             n,
@@ -160,7 +194,7 @@ impl InternalPublicParameter {
             .into_iter()
             .map(|x| x.normalize())
             .collect_vec();
-        Ok(CompactPkePublicParams::from_vec(
+        Ok(CompactPkeCrs::PkeV1(ZkCompactPkeV1PublicParams::from_vec(
             g_list,
             g_hat_list,
             big_d,
@@ -178,7 +212,7 @@ impl InternalPublicParameter {
             *ZK_DSEP_HASH_LMAP_PADDED,
             *ZK_DSEP_HASH_Z_PADDED,
             *ZK_DSEP_HASH_W_PADDED,
-        ))
+        )))
     }
 
     /// Create new PublicParameter for given witness dimension containing the generators
@@ -339,6 +373,8 @@ fn verify_proof(
     current_pp: &InternalPublicParameter,
     partial_proof: &PartialProof,
 ) -> anyhow::Result<InternalPublicParameter> {
+    partial_proof.validate_points()?;
+
     if current_pp.round >= partial_proof.new_pp.round {
         return Err(anyhow_error_and_log("bad round number".to_string()));
     }

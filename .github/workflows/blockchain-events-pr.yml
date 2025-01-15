@@ -16,7 +16,6 @@ jobs:
     uses: ./.github/workflows/common-build.yml
     with:
       working-directory: './blockchain/events'
-      args-tests-fhe: ''
       args-tests: '--all-features'
       package-name: 'events'
     permissions:
