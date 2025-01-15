@@ -10,12 +10,12 @@ CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
 #into production.
 [tasks.tfhe-docker-image]
 command = "docker"
-args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=--features testing,choreographer", "-t", "tfhe-core", "../../"]
+args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,choreographer", "-t", "tfhe-core", "../../"]
 
 #Build the image for BGV parties (with centralized DKG available)
 [tasks.bgv-docker-image]
 command = "docker"
-args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=--features experimental,choreographer", "-t", "bgv-core", "../../"]
+args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=experimental,choreographer", "-t", "bgv-core", "../../"]
 
 #Generate the certificate for TLS communication of the parties
 [tasks.gen-test-certs]
