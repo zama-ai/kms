@@ -178,7 +178,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use tokio::time::Duration;
+    use std::time::Duration;
 
     use aes_prng::AesRng;
     use rand::{RngCore, SeedableRng};
@@ -202,7 +202,7 @@ mod tests {
             },
             constants::PLAINTEXT_MODULUS,
         },
-        networking::NetworkMode,
+        networking::{constants::NETWORK_TIMEOUT_ASYNC, NetworkMode},
         tests::helper::tests_and_benches::execute_protocol_small,
     };
 
@@ -271,7 +271,7 @@ mod tests {
         //This is Async because preproc is completely dummy, so we only do the DKG
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let mut results = execute_protocol_small::<_, _, _, { LevelEll::EXTENSION_DEGREE }>(
+        let mut results = execute_protocol_small::<_, _, _, { LevelKsw::EXTENSION_DEGREE }>(
             parties,
             threshold,
             None,
@@ -293,6 +293,10 @@ mod tests {
                     session.clone(),
                 );
 
+            session
+                .network()
+                .set_timeout_for_next_round(Duration::from_secs(600))
+                .unwrap();
             let mut bgv_preproc = InMemoryBGVDkgPreprocessing::default();
             bgv_preproc
                 .fill_from_base_preproc(N65536::VALUE, &mut session, &mut dummy_preproc)
@@ -301,7 +305,7 @@ mod tests {
 
             session
                 .network()
-                .set_timeout_for_next_round(Duration::from_secs(600))
+                .set_timeout_for_next_round(*NETWORK_TIMEOUT_ASYNC)
                 .unwrap();
             let (pk, sk) = bgv_distributed_keygen::<N65536, _, _, _>(
                 &mut session,
@@ -317,7 +321,7 @@ mod tests {
         };
 
         //This is Sync because Sync of the preproc takes priority over Async of the actual DKG
-        let mut results = execute_protocol_small::<_, _, _, { LevelEll::EXTENSION_DEGREE }>(
+        let mut results = execute_protocol_small::<_, _, _, { LevelKsw::EXTENSION_DEGREE }>(
             parties,
             threshold,
             None,

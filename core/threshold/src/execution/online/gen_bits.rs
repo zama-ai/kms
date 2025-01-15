@@ -74,8 +74,8 @@ impl BitGenEven for RealBitGenEven {
 mod tests {
     use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
     use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z64;
-    use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z128;
-    use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z64;
+    #[cfg(feature = "extension_degree_8")]
+    use crate::algebra::galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64};
     use crate::algebra::structure_traits::Ring;
     use crate::execution::online::gen_bits::BitGenEven;
     use crate::execution::online::gen_bits::RealBitGenEven;
@@ -239,8 +239,12 @@ mod tests {
             }
         };
     }
+
+    #[cfg(feature = "extension_degree_8")]
     test_bitgen![ResiduePolyF8Z64, u64];
+    #[cfg(feature = "extension_degree_8")]
     test_bitgen![ResiduePolyF8Z128, u128];
+
     test_bitgen![ResiduePolyF4Z64, u64];
     test_bitgen![ResiduePolyF4Z128, u128];
 }

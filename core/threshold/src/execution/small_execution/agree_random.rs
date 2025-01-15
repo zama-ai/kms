@@ -511,7 +511,7 @@ mod tests {
         RealAgreeRandom, RealAgreeRandomWithAbort,
     };
     use crate::{
-        algebra::{galois_rings::degree_8::ResiduePolyF8Z128, structure_traits::Ring},
+        algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
         commitment::{Commitment, Opening, COMMITMENT_BYTE_LEN, DSEP_COMM, KEY_BYTE_LEN},
         execution::{
             runtime::{
@@ -596,7 +596,7 @@ mod tests {
             let _guard = rt.enter();
             let keys = rt
                 .block_on(async {
-                    DummyAgreeRandom::agree_random::<ResiduePolyF8Z128, _, _>(&mut sess).await
+                    DummyAgreeRandom::agree_random::<ResiduePolyF4Z128, _, _>(&mut sess).await
                 })
                 .unwrap();
 
@@ -637,9 +637,9 @@ mod tests {
         let threshold = 2;
 
         async fn task<A: AgreeRandom>(
-            mut session: SmallSession<ResiduePolyF8Z128>,
+            mut session: SmallSession<ResiduePolyF4Z128>,
         ) -> (Role, VecDeque<PrfKey>) {
-            let keys = A::agree_random::<ResiduePolyF8Z128, _, _>(&mut session).await;
+            let keys = A::agree_random::<ResiduePolyF4Z128, _, _>(&mut session).await;
             let vd = VecDeque::from(keys.unwrap());
             (session.my_role().unwrap(), vd)
         }
@@ -648,8 +648,8 @@ mod tests {
         let res = execute_protocol_small::<
             _,
             _,
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >(
             num_parties,
             threshold,
@@ -695,12 +695,12 @@ mod tests {
 
         // Sync because it is part of the offline phase
         let runtime: DistributedTestRuntime<
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
         > = DistributedTestRuntime::new(identities, threshold as u8, NetworkMode::Sync, None);
 
         // create sessions for each prss party, except party 0, which does not respond in this case
-        let sessions: Vec<SmallSession<ResiduePolyF8Z128>> = (1..num_parties)
+        let sessions: Vec<SmallSession<ResiduePolyF4Z128>> = (1..num_parties)
             .map(|p| {
                 let num = p as u8;
                 runtime.small_session_for_party(
@@ -720,7 +720,7 @@ mod tests {
             let mut ss = sess.clone();
 
             jobs.spawn(async move {
-                RealAgreeRandom::agree_random::<ResiduePolyF8Z128, _, _>(&mut ss).await
+                RealAgreeRandom::agree_random::<ResiduePolyF4Z128, _, _>(&mut ss).await
             });
         }
 
@@ -748,7 +748,7 @@ mod tests {
     fn test_check_and_unpack_coms() {
         // test normal behavior
         let num_parties = 3;
-        let mut rc: HashMap<Role, NetworkValue<ResiduePolyF8Z128>> = HashMap::new();
+        let mut rc: HashMap<Role, NetworkValue<ResiduePolyF4Z128>> = HashMap::new();
         let c1 = Commitment([12_u8; COMMITMENT_BYTE_LEN]);
         let c2 = Commitment([42_u8; COMMITMENT_BYTE_LEN]);
 
@@ -786,7 +786,7 @@ mod tests {
     #[test]
     fn test_check_and_unpack_coms_type() {
         let num_parties = 2;
-        let mut rc: HashMap<Role, NetworkValue<ResiduePolyF8Z128>> = HashMap::new();
+        let mut rc: HashMap<Role, NetworkValue<ResiduePolyF4Z128>> = HashMap::new();
 
         // Test Error when receiving a wrong AR value
         let ko = (
@@ -817,7 +817,7 @@ mod tests {
     fn test_check_and_unpack_keys_openings() {
         // test normal behavior
         let num_parties = 3;
-        let mut rc: HashMap<Role, NetworkValue<ResiduePolyF8Z128>> = HashMap::new();
+        let mut rc: HashMap<Role, NetworkValue<ResiduePolyF4Z128>> = HashMap::new();
         let ko1 = (PrfKey([1_u8; KEY_BYTE_LEN]), Opening([2_u8; KEY_BYTE_LEN]));
         let ko2 = (
             PrfKey([42_u8; KEY_BYTE_LEN]),
@@ -856,7 +856,7 @@ mod tests {
     #[test]
     fn test_check_and_unpack_keys_openings_type() {
         let num_parties = 2;
-        let mut rc: HashMap<Role, NetworkValue<ResiduePolyF8Z128>> = HashMap::new();
+        let mut rc: HashMap<Role, NetworkValue<ResiduePolyF4Z128>> = HashMap::new();
         // Test Error when receiving a wrong AR value
         let c = Commitment([12_u8; COMMITMENT_BYTE_LEN]);
 
@@ -884,7 +884,7 @@ mod tests {
     fn test_check_and_unpack_keys() {
         // test normal behavior
         let num_parties = 3;
-        let mut rc: HashMap<Role, NetworkValue<ResiduePolyF8Z128>> = HashMap::new();
+        let mut rc: HashMap<Role, NetworkValue<ResiduePolyF4Z128>> = HashMap::new();
         let key1 = PrfKey([1_u8; KEY_BYTE_LEN]);
         let key2 = PrfKey([42_u8; KEY_BYTE_LEN]);
 
@@ -917,7 +917,7 @@ mod tests {
     fn test_check_and_unpack_keys_type() {
         // Test Error when receiving a wrong AR value
         let num_parties = 2;
-        let mut rc: HashMap<Role, NetworkValue<ResiduePolyF8Z128>> = HashMap::new();
+        let mut rc: HashMap<Role, NetworkValue<ResiduePolyF4Z128>> = HashMap::new();
 
         rc.insert(
             Role::indexed_by_one(2),

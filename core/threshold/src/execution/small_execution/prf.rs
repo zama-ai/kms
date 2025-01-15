@@ -215,7 +215,7 @@ fn inner_chi(pa: &ChiAes, ctr: u128, i: u8, j: u8, block_ctr: u8) -> u128 {
 mod tests {
     use super::*;
     use crate::{
-        algebra::galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
+        algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
         execution::constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, STATSEC},
     };
 
@@ -286,12 +286,12 @@ mod tests {
 
     #[test]
     fn test_pi_z128() {
-        test_psi::<ResiduePolyF8Z128>();
+        test_psi::<ResiduePolyF4Z128>();
     }
 
     #[test]
     fn test_pi_64() {
-        test_psi::<ResiduePolyF8Z64>();
+        test_psi::<ResiduePolyF4Z64>();
     }
 
     fn test_chi<Z: Ring + PRSSConversions>() {
@@ -312,12 +312,12 @@ mod tests {
 
     #[test]
     fn test_chi_z128() {
-        test_chi::<ResiduePolyF8Z128>();
+        test_chi::<ResiduePolyF4Z128>();
     }
 
     #[test]
     fn test_chi_z64() {
-        test_chi::<ResiduePolyF8Z128>();
+        test_chi::<ResiduePolyF4Z128>();
     }
 
     /// check that all three PRFs cause different encryptions, even when initialized from the same key
@@ -349,11 +349,11 @@ mod tests {
 
     #[test]
     fn test_all_prfs_differ_z128() {
-        test_all_prfs_differ::<ResiduePolyF8Z128>();
+        test_all_prfs_differ::<ResiduePolyF4Z128>();
     }
 
     #[test]
     fn test_all_prfs_differ_z64() {
-        test_all_prfs_differ::<ResiduePolyF8Z64>();
+        test_all_prfs_differ::<ResiduePolyF4Z64>();
     }
 }

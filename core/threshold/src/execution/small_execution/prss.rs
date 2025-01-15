@@ -728,7 +728,7 @@ mod tests {
     use crate::networking::NetworkMode;
     use crate::{
         algebra::{
-            galois_rings::degree_8::{ResiduePolyF8, ResiduePolyF8Z128, ResiduePolyF8Z64},
+            galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
             structure_traits::{One, Zero},
         },
         commitment::KEY_BYTE_LEN,
@@ -797,7 +797,7 @@ mod tests {
         Some(hm)
     }
 
-    //NOTE: Need to generalize (some of) the tests to ResiduePolyF8Z64 ?
+    //NOTE: Need to generalize (some of) the tests to ResiduePolyF4Z64 ?
     impl<Z: Ring + RingEmbed + Invert> PRSSSetup<Z> {
         // initializes the epoch for a single party (without actual networking)
         pub fn testing_party_epoch_init(
@@ -869,7 +869,7 @@ mod tests {
 
         let shares = (1..=num_parties)
             .map(|p| {
-                let prss_setup = PRSSSetup::<ResiduePolyF8Z128>::testing_party_epoch_init(
+                let prss_setup = PRSSSetup::<ResiduePolyF4Z128>::testing_party_epoch_init(
                     num_parties,
                     threshold,
                     p,
@@ -961,7 +961,7 @@ mod tests {
 
         let mut seed = [0_u8; aes_prng::SEED_SIZE];
         // create sessions for each prss party
-        let sessions: Vec<SmallSession<ResiduePolyF8Z128>> = (0..num_parties)
+        let sessions: Vec<SmallSession<ResiduePolyF4Z128>> = (0..num_parties)
             .map(|p| {
                 seed[0] = p as u8;
                 runtime.small_session_for_party(
@@ -976,15 +976,15 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
         let prss_setups = rt.block_on(async {
-            setup_prss_sess::<ResiduePolyF8Z128, RealAgreeRandomWithAbort>(sessions.clone()).await
+            setup_prss_sess::<ResiduePolyF4Z128, RealAgreeRandomWithAbort>(sessions.clone()).await
         });
 
         runtime.setup_prss(prss_setups);
 
         // test PRSS with decryption endpoint
         let results_dec = threshold_decrypt64::<
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >(&runtime, &raw_ct, DecryptionMode::PRSSDecrypt)
         .unwrap();
         let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
@@ -994,15 +994,15 @@ mod tests {
         // Test with Dummy AgreeRandom
         let _guard = rt.enter();
         let prss_setups = rt.block_on(async {
-            setup_prss_sess::<ResiduePolyF8Z128, DummyAgreeRandom>(sessions).await
+            setup_prss_sess::<ResiduePolyF4Z128, DummyAgreeRandom>(sessions).await
         });
 
         runtime.setup_prss(prss_setups);
 
         // test PRSS with decryption endpoint
         let results_dec = threshold_decrypt64::<
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >(&runtime, &raw_ct, DecryptionMode::PRSSDecrypt)
         .unwrap();
         let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
@@ -1027,7 +1027,7 @@ mod tests {
 
         assert_eq!(state.mask_ctr, 0);
 
-        let mut prev = ResiduePolyF8Z128::ZERO;
+        let mut prev = ResiduePolyF4Z128::ZERO;
         for _ in 0..rounds {
             let cur = state
                 .mask_next(Role::indexed_by_one(1), B_SWITCH_SQUASH)
@@ -1051,16 +1051,16 @@ mod tests {
     /// check that points computed on f_A are well-formed
     fn test_prss_fa_poly(#[case] num_parties: usize, #[case] threshold: usize) {
         let prss =
-            PRSSSetup::<ResiduePolyF8Z128>::testing_party_epoch_init(num_parties, threshold, 1)
+            PRSSSetup::<ResiduePolyF4Z128>::testing_party_epoch_init(num_parties, threshold, 1)
                 .unwrap();
 
         for set in prss.sets.iter() {
             for p in 1..=num_parties {
                 let point = set.f_a_points[p - 1];
                 if set.parties.contains(&p) {
-                    assert_ne!(point, ResiduePolyF8Z128::ZERO)
+                    assert_ne!(point, ResiduePolyF4Z128::ZERO)
                 } else {
-                    assert_eq!(point, ResiduePolyF8Z128::ZERO)
+                    assert_eq!(point, ResiduePolyF4Z128::ZERO)
                 }
             }
         }
@@ -1069,7 +1069,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "PRSS set size is too large!")]
     fn test_prss_too_large() {
-        let _prss = PRSSSetup::<ResiduePolyF8Z128>::testing_party_epoch_init(22, 7, 1).unwrap();
+        let _prss = PRSSSetup::<ResiduePolyF4Z128>::testing_party_epoch_init(22, 7, 1).unwrap();
     }
 
     #[test]
@@ -1111,7 +1111,7 @@ mod tests {
 
         let shares = (1..=num_parties)
             .map(|p| {
-                let prss_setup = PRSSSetup::<ResiduePolyF8Z128>::testing_party_epoch_init(
+                let prss_setup = PRSSSetup::<ResiduePolyF4Z128>::testing_party_epoch_init(
                     num_parties,
                     threshold,
                     p,
@@ -1197,10 +1197,10 @@ mod tests {
 
         // sum psi values for all sets
         // we don't need the f_A polys here, as we have all information
-        let mut psi_sum = ResiduePolyF8Z128::ZERO;
+        let mut psi_sum = ResiduePolyF4Z128::ZERO;
         for (idx, _set) in all_sets.iter().enumerate() {
             let psi_aes = PsiAes::new(&keys[idx], sid);
-            let psi: ResiduePolyF8Z128 = psi(&psi_aes, 0).unwrap();
+            let psi: ResiduePolyF4Z128 = psi(&psi_aes, 0).unwrap();
             psi_sum += psi
         }
         tracing::info!("reconstructed psi sum: {:?}", psi_sum);
@@ -1216,8 +1216,8 @@ mod tests {
 
         //Could probably be run Async, but NIST doc says all offline is Sync
         let runtime = DistributedTestRuntime::<
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >::new(identities, threshold, NetworkMode::Sync, None);
         let session_id = SessionId(23);
 
@@ -1275,8 +1275,8 @@ mod tests {
                 // Perform sanity checks (i.e. that nothing is a trivial element and party IDs are in a valid range)
                 assert!(received_role.one_based() <= parties);
                 assert!(received_role.one_based() > 0);
-                assert_ne!(&ResiduePolyF8::ZERO, received_poly);
-                assert_ne!(&ResiduePolyF8::ONE, received_poly);
+                assert_ne!(&ResiduePolyF4::ZERO, received_poly);
+                assert_ne!(&ResiduePolyF4::ONE, received_poly);
             }
         }
     }
@@ -1289,8 +1289,8 @@ mod tests {
 
         //Could probably be run Async, but NIST doc says all offline is Sync
         let runtime = DistributedTestRuntime::<
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >::new(identities, threshold, NetworkMode::Sync, None);
         let session_id = SessionId(17);
 
@@ -1348,8 +1348,8 @@ mod tests {
                 // Perform sanity checks (i.e. that nothing is a trivial element and party IDs are in a valid range)
                 assert!(received_role.one_based() <= parties);
                 assert!(received_role.one_based() > 0);
-                assert_ne!(&ResiduePolyF8::ZERO, received_poly);
-                assert_ne!(&ResiduePolyF8::ONE, received_poly);
+                assert_ne!(&ResiduePolyF4::ZERO, received_poly);
+                assert_ne!(&ResiduePolyF4::ONE, received_poly);
             }
         }
     }
@@ -1360,7 +1360,7 @@ mod tests {
         let my_role = Role::indexed_by_one(3);
         let mut session = get_networkless_base_session_for_parties(parties, 0, my_role);
         let set = Vec::from([1, 2, 3]);
-        let value = vec![ResiduePolyF8Z128::from_scalar(Wrapping(87654))];
+        let value = vec![ResiduePolyF4Z128::from_scalar(Wrapping(87654))];
         let values = Vec::from([(set.clone(), value.clone())]);
         let broadcast_result = HashMap::from([
             (
@@ -1399,7 +1399,7 @@ mod tests {
         let my_role = Role::indexed_by_one(1);
         let mut session = get_networkless_base_session_for_parties(parties, 0, my_role);
         let set = Vec::from([1, 2, 3]);
-        let value = ResiduePolyF8Z64::from_scalar(Wrapping(42));
+        let value = ResiduePolyF4Z64::from_scalar(Wrapping(42));
         let values = Vec::from([(set.clone(), vec![value])]);
         let broadcast_result = HashMap::from([
             (
@@ -1408,11 +1408,11 @@ mod tests {
             ),
             (
                 Role::indexed_by_one(2),
-                BroadcastValue::RingValue(ResiduePolyF8Z64::from_scalar(Wrapping(333))),
+                BroadcastValue::RingValue(ResiduePolyF4Z64::from_scalar(Wrapping(333))),
             ), // Not the broadcast type
             (
                 Role::indexed_by_one(3),
-                BroadcastValue::RingVector(Vec::from([ResiduePolyF8Z64::from_scalar(Wrapping(
+                BroadcastValue::RingVector(Vec::from([ResiduePolyF4Z64::from_scalar(Wrapping(
                     42,
                 ))])),
             ), // Not the right broadcast type again
@@ -1436,7 +1436,7 @@ mod tests {
         let parties = 3;
         let my_role = Role::indexed_by_one(1);
         let mut session = get_networkless_base_session_for_parties(parties, 0, my_role);
-        let value = vec![ResiduePolyF8Z128::from_scalar(Wrapping(42))];
+        let value = vec![ResiduePolyF4Z128::from_scalar(Wrapping(42))];
         let mut votes = HashMap::new();
 
         PRSSState::add_vote(&mut votes, &value, Role::indexed_by_one(3), &mut session).unwrap();
@@ -1475,11 +1475,11 @@ mod tests {
         let my_role = Role::indexed_by_one(1);
         let mut session = get_networkless_base_session_for_parties(parties, 0, my_role);
         let set = Vec::from([1, 2, 3]);
-        let value = vec![ResiduePolyF8Z128::from_scalar(Wrapping(42))];
+        let value = vec![ResiduePolyF4Z128::from_scalar(Wrapping(42))];
         let true_psi_vals = HashMap::from([(&set, &value)]);
         let votes = HashMap::from([
             (
-                vec![ResiduePolyF8Z128::from_scalar(Wrapping(1))],
+                vec![ResiduePolyF4Z128::from_scalar(Wrapping(1))],
                 HashSet::from([Role::indexed_by_one(1), Role::indexed_by_one(2)]),
             ),
             (
@@ -1504,7 +1504,7 @@ mod tests {
         let set = Vec::from([1, 3, 2]);
         let mut session =
             get_networkless_base_session_for_parties(parties, 0, Role::indexed_by_one(1));
-        let value = vec![ResiduePolyF8Z128::from_scalar(Wrapping(42))];
+        let value = vec![ResiduePolyF4Z128::from_scalar(Wrapping(42))];
         let ref_value = value.clone();
         let true_psi_vals = HashMap::from([(&set, &ref_value)]);
         // Party 3 is not voting for the correct value
@@ -1533,7 +1533,7 @@ mod tests {
         let _guard = rt.enter();
         let prss_setup = rt
             .block_on(async {
-                PRSSSetup::<ResiduePolyF8Z128>::init_with_abort::<DummyAgreeRandom, _, _>(
+                PRSSSetup::<ResiduePolyF4Z128>::init_with_abort::<DummyAgreeRandom, _, _>(
                     &mut session,
                 )
                 .await
@@ -1565,7 +1565,7 @@ mod tests {
     #[case(7, 2)]
     #[case(10, 3)]
     fn sunnshine_init_with_abort_res128(#[case] parties: usize, #[case] threshold: u8) {
-        sunshine_init_with_abort::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }>(
+        sunshine_init_with_abort::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>(
             parties, threshold,
         );
     }
@@ -1658,7 +1658,7 @@ mod tests {
     #[case(7, 2)]
     #[case(10, 3)]
     fn sunshine_robust_init(#[case] parties: usize, #[case] threshold: u8) {
-        async fn task(mut session: SmallSession<ResiduePolyF8Z128>) -> Share<ResiduePolyF8Z128> {
+        async fn task(mut session: SmallSession<ResiduePolyF4Z128>) -> Share<ResiduePolyF4Z128> {
             let prss_setup = PRSSSetup::robust_init(&mut session, &RealVss::default())
                 .await
                 .unwrap();
@@ -1688,8 +1688,8 @@ mod tests {
         let result = execute_protocol_small::<
             _,
             _,
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >(
             parties,
             threshold,
@@ -1708,7 +1708,7 @@ mod tests {
         let threshold = 1;
         let bad_party = 3;
 
-        let mut task = |mut session: SmallSession<ResiduePolyF8Z128>| async move {
+        let mut task = |mut session: SmallSession<ResiduePolyF4Z128>| async move {
             if session.my_role().unwrap().one_based() != bad_party {
                 let prss_setup = PRSSSetup::robust_init(&mut session, &RealVss::default())
                     .await
@@ -1717,7 +1717,7 @@ mod tests {
                 let role = session.my_role().unwrap();
                 Share::new(role, state.prss_next(role).unwrap())
             } else {
-                Share::new(Role::indexed_by_one(bad_party), ResiduePolyF8Z128::ZERO)
+                Share::new(Role::indexed_by_one(bad_party), ResiduePolyF4Z128::ZERO)
             }
         };
 
@@ -1725,11 +1725,11 @@ mod tests {
         let result = execute_protocol_small::<
             _,
             _,
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >(parties, threshold, None, NetworkMode::Sync, None, &mut task);
 
-        let sharing = ShamirSharings::<ResiduePolyF8Z128>::create(result);
+        let sharing = ShamirSharings::<ResiduePolyF4Z128>::create(result);
         assert!(sharing
             .err_reconstruct(threshold.into(), threshold.into())
             .is_ok());
@@ -1739,47 +1739,47 @@ mod tests {
         let res = transpose_vdm(3, 4).unwrap();
         // Check first row is
         // 1, 1, 1, 1
-        assert_eq!(ResiduePolyF8::ONE, res[[0, 0]]);
-        assert_eq!(ResiduePolyF8::ONE, res[[0, 1]]);
-        assert_eq!(ResiduePolyF8::ONE, res[[0, 2]]);
-        assert_eq!(ResiduePolyF8::ONE, res[[0, 3]]);
+        assert_eq!(ResiduePolyF4::ONE, res[[0, 0]]);
+        assert_eq!(ResiduePolyF4::ONE, res[[0, 1]]);
+        assert_eq!(ResiduePolyF4::ONE, res[[0, 2]]);
+        assert_eq!(ResiduePolyF4::ONE, res[[0, 3]]);
         // Check second row is
         // 1, 2, 3, 4 = 1, x, 1+x, 2x
         assert_eq!(
-            ResiduePolyF8::embed_exceptional_set(1).unwrap(),
+            ResiduePolyF4::embed_exceptional_set(1).unwrap(),
             res[[1, 0]]
         );
         assert_eq!(
-            ResiduePolyF8::embed_exceptional_set(2).unwrap(),
+            ResiduePolyF4::embed_exceptional_set(2).unwrap(),
             res[[1, 1]]
         );
         assert_eq!(
-            ResiduePolyF8::embed_exceptional_set(3).unwrap(),
+            ResiduePolyF4::embed_exceptional_set(3).unwrap(),
             res[[1, 2]]
         );
         assert_eq!(
-            ResiduePolyF8::embed_exceptional_set(4).unwrap(),
+            ResiduePolyF4::embed_exceptional_set(4).unwrap(),
             res[[1, 3]]
         );
         // Check third row is
         // 1, x^2, (1+x)^2, (2x)^2
         assert_eq!(
-            ResiduePolyF8::embed_exceptional_set(1).unwrap(),
+            ResiduePolyF4::embed_exceptional_set(1).unwrap(),
             res[[2, 0]]
         );
         assert_eq!(
-            ResiduePolyF8Z128::embed_exceptional_set(2).unwrap()
-                * ResiduePolyF8Z128::embed_exceptional_set(2).unwrap(),
+            ResiduePolyF4Z128::embed_exceptional_set(2).unwrap()
+                * ResiduePolyF4Z128::embed_exceptional_set(2).unwrap(),
             res[[2, 1]]
         );
         assert_eq!(
-            ResiduePolyF8Z128::embed_exceptional_set(3).unwrap()
-                * ResiduePolyF8Z128::embed_exceptional_set(3).unwrap(),
+            ResiduePolyF4Z128::embed_exceptional_set(3).unwrap()
+                * ResiduePolyF4Z128::embed_exceptional_set(3).unwrap(),
             res[[2, 2]]
         );
         assert_eq!(
-            ResiduePolyF8Z128::embed_exceptional_set(4).unwrap()
-                * ResiduePolyF8Z128::embed_exceptional_set(4).unwrap(),
+            ResiduePolyF4Z128::embed_exceptional_set(4).unwrap()
+                * ResiduePolyF4Z128::embed_exceptional_set(4).unwrap(),
             res[[2, 3]]
         );
     }
@@ -1791,7 +1791,7 @@ mod tests {
         let session = get_networkless_base_session_for_parties(parties, 0, Role::indexed_by_one(1));
         // Use an empty hash map to ensure that
         let psi_values = HashMap::new();
-        assert!(PRSSState::<ResiduePolyF8Z128>::compute_party_shares(
+        assert!(PRSSState::<ResiduePolyF4Z128>::compute_party_shares(
             &psi_values,
             &session,
             ComputeShareMode::Prss

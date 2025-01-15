@@ -66,7 +66,7 @@ pub async fn async_generate_fhe_keys(
     let sk_copy = sk.to_owned();
     let eip712_domain_copy = eip712_domain.cloned();
 
-    rayon::spawn(move || {
+    rayon::spawn_fifo(move || {
         let out = generate_fhe_keys(&sk_copy, params, seed, eip712_domain_copy.as_ref());
         let _ = send.send(out);
     });
@@ -85,7 +85,7 @@ pub async fn async_generate_crs(
     let sk_copy = sk.to_owned();
     let eip712_domain_copy = eip712_domain.cloned();
 
-    rayon::spawn(move || {
+    rayon::spawn_fifo(move || {
         let out = gen_centralized_crs(
             &sk_copy,
             &params,
@@ -424,7 +424,7 @@ impl<
     ) -> anyhow::Result<Vec<u8>> {
         let plaintext = Self::decrypt(keys, ct, fhe_type)?;
         // Observe that we encrypt the plaintext itself, this is different from the threshold case
-        // where it is first mapped to a Vec<ResiduePolyF8<Z128>> element
+        // where it is first mapped to a Vec<ResiduePolyF4Z128> element
         let signcryption_msg = SigncryptionPayload {
             plaintext,
             link: link.to_vec(),

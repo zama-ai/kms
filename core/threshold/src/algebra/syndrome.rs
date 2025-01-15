@@ -174,11 +174,14 @@ pub fn decode_syndrome<F: Field>(syndrome: &Poly<F>, x_alpha: &[F], r: usize) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "extension_degree_8")]
+    use crate::algebra::galois_fields::gf256::GF256;
     use crate::algebra::{
-        galois_fields::{gf16::GF16, gf256::GF256},
+        galois_fields::gf16::GF16,
         poly::{gao_decoding, lagrange_interpolation},
     };
 
+    #[cfg(feature = "extension_degree_8")]
     #[test]
     fn test_compute_syndrome_field_f8() {
         test_compute_syndrome_field::<GF256>()
@@ -235,6 +238,7 @@ mod tests {
         assert_ne!(syndrome, Poly::zeros(r));
     }
 
+    #[cfg(feature = "extension_degree_8")]
     #[test]
     fn test_syndrome_decode_field_f8() {
         test_syndrome_decode_field::<GF256>();

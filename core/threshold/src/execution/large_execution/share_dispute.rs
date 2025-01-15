@@ -443,7 +443,7 @@ pub(crate) mod tests {
     use crate::networking::NetworkMode;
     use crate::{
         algebra::{
-            galois_rings::degree_8::{ResiduePolyF8, ResiduePolyF8Z128, ResiduePolyF8Z64},
+            galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
             poly::Poly,
             structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed, Zero},
         },
@@ -891,13 +891,13 @@ pub(crate) mod tests {
     #[case(TestingParameters::init_dispute(7, 2, &[(1,2),(1,3),(4,6),(0,5)]))]
     fn test_share_dispute_honest_z128(#[case] params: TestingParameters) {
         let malicious_share_dispute = RealShareDispute::default();
-        test_share_dispute_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
+        test_share_dispute_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_share_dispute.clone(),
         );
         test_share_dispute_strategies::<
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
             _,
         >(params.clone(), malicious_share_dispute.clone());
     }
@@ -914,13 +914,13 @@ pub(crate) mod tests {
     #[case(TestingParameters::init(7, 2, &[2,6], &[], &[(0,2),(1,3),(0,4),(1,5)], false, None))]
     fn test_share_dispute_dropout(#[case] params: TestingParameters) {
         let dropping_share_dispute = DroppingShareDispute::default();
-        test_share_dispute_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
+        test_share_dispute_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             dropping_share_dispute.clone(),
         );
         test_share_dispute_strategies::<
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
             _,
         >(params.clone(), dropping_share_dispute.clone());
     }
@@ -937,13 +937,13 @@ pub(crate) mod tests {
     fn test_malicious_share_dispute(#[case] params: TestingParameters) {
         let malicious_share_dispute_recons = WrongShareDisputeRecons::default();
 
-        test_share_dispute_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
+        test_share_dispute_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_share_dispute_recons.clone(),
         );
         test_share_dispute_strategies::<
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
             _,
         >(params.clone(), malicious_share_dispute_recons.clone());
     }
@@ -955,14 +955,14 @@ pub(crate) mod tests {
         let msg = 42;
         let zero_points = vec![1];
         // Constant base-poly
-        let base = Poly::from_coefs(vec![ResiduePolyF8::from_scalar(Wrapping(msg))]);
+        let base = Poly::from_coefs(vec![ResiduePolyF4::from_scalar(Wrapping(msg))]);
         let res = evaluate_w_new_roots(parties, zero_points.clone(), &base).unwrap();
         // Check msg is in the constant
-        assert_eq!(ResiduePolyF8::from_scalar(Wrapping::<u128>(msg)), res[0]);
+        assert_eq!(ResiduePolyF4::from_scalar(Wrapping::<u128>(msg)), res[0]);
         // Check that the zero_points are 0
         zero_points
             .iter()
-            .for_each(|x| assert_eq!(ResiduePolyF8::ZERO, res[*x]));
+            .for_each(|x| assert_eq!(ResiduePolyF4::ZERO, res[*x]));
     }
 
     #[test]
@@ -995,7 +995,7 @@ pub(crate) mod tests {
             parties,
             threshold,
             dispute_ids.clone(),
-            ResiduePolyF8::from_scalar(Wrapping::<u128>(msg)),
+            ResiduePolyF4::from_scalar(Wrapping::<u128>(msg)),
         )
         .is_err());
     }
@@ -1012,13 +1012,13 @@ pub(crate) mod tests {
             parties,
             threshold,
             dispute_ids.clone(),
-            ResiduePolyF8::from_scalar(Wrapping(msg)),
+            ResiduePolyF4::from_scalar(Wrapping(msg)),
         )
         .unwrap();
         // Check that the points of dispuite_ids are 0
         dispute_ids
             .iter()
-            .for_each(|x| assert_eq!(ResiduePolyF8::ZERO, interpolation[*x - 1]));
+            .for_each(|x| assert_eq!(ResiduePolyF4::ZERO, interpolation[*x - 1]));
         // Map the y-points to their corresponding (not embedded) x-points
         let points = (1..parties)
             .map(|x| Share::new(Role::indexed_by_one(x), interpolation[x - 1]))
@@ -1044,7 +1044,7 @@ pub(crate) mod tests {
             parties,
             threshold,
             dispute_ids.clone(),
-            ResiduePolyF8::from_scalar(Wrapping::<u128>(msg)),
+            ResiduePolyF4::from_scalar(Wrapping::<u128>(msg)),
         )
         .is_err());
     }

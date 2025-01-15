@@ -150,7 +150,7 @@ where
     L: LargeSessionHandles<R>,
     S: ShareDispute,
 {
-    let m = div_ceil(DISPUTE_STAT_SEC, Z::SIZE_EXCEPTIONAL_SET);
+    let m = div_ceil(DISPUTE_STAT_SEC, Z::LOG_SIZE_EXCEPTIONAL_SET);
     let my_pads = (0..m).map(|_| Z::sample(session.rng())).collect_vec();
     share_dispute.execute_double(session, &my_pads).await
 }
@@ -186,11 +186,12 @@ async fn verify_sharing<
     );
 
     let roles = session.role_assignments().keys().cloned().collect_vec();
-    let m = div_ceil(DISPUTE_STAT_SEC, Z::SIZE_EXCEPTIONAL_SET);
+    let m = div_ceil(DISPUTE_STAT_SEC, Z::LOG_SIZE_EXCEPTIONAL_SET);
     let my_role = session.my_role()?;
 
     //TODO: Could be done in parallel (to minimize round complexity)
     for g in 0..m {
+        tracing::warn!("I AM {my_role} DOING LOOP OF LSL {g} out of {m}");
         let map_challenges = Z::derive_challenges_from_coinflip(x, g.try_into()?, l, &roles);
 
         //Compute my share of check values for every sharing of degree t
@@ -322,10 +323,14 @@ async fn verify_sharing<
         }
 
         //Set 0 share for newly_corrupt senders and add them to corrupt set
+        let mut should_return = false;
         for role_pi in bcast_corrupts {
             secrets_shares_all_t.insert(role_pi, vec![Z::ZERO; l]);
             secrets_shares_all_2t.insert(role_pi, vec![Z::ZERO; l]);
-            session.add_corrupt(role_pi)?;
+            should_return |= session.add_corrupt(role_pi)?;
+        }
+        if should_return {
+            return Ok(false);
         }
 
         //Returns as soon as we have a new dispute
@@ -360,7 +365,7 @@ pub(crate) mod tests {
     use crate::algebra::structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingEmbed};
     use crate::execution::sharing::shamir::RevealOp;
     use crate::{
-        algebra::galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
+        algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
         networking::NetworkMode,
     };
     use crate::{
@@ -718,26 +723,24 @@ pub(crate) mod tests {
     //      share dispute = 1 round
     //      pads =  1 round
     //      coinflip = vss + open = (1 + 3 + t) + 1
-    //      verify = 1 reliable_broadcast = 3 + t rounds
-    // Total: 10 + 2*t rounds
+    //      verify = m reliable_broadcast = m*(3 + t) rounds
+    // with m = div_ceil(DISPUTE_STAT_SEC,Z::LOG_SIZE_EXCEPTIONAL_SET) (=20 for ResiduePolyF4)
     #[rstest]
-    #[case(TestingParameters::init_honest(4, 1, Some(12)))]
-    #[case(TestingParameters::init_honest(7, 2, Some(14)))]
+    #[case(TestingParameters::init_honest(4, 1, Some(88)))]
+    #[case(TestingParameters::init_honest(7, 2, Some(109)))]
     fn test_ldl_z128(#[case] params: TestingParameters) {
         let malicious_ldl = RealLocalDoubleShare::<TrueCoinFlip, RealShareDispute>::default();
 
-        test_ldl_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
+        test_ldl_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_ldl.clone(),
         );
-        test_ldl_strategies::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }, _>(
+        test_ldl_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_ldl.clone(),
         );
     }
 
-    // marking as serial test because too many tests in parallel causes thread contention
-    // and slows down the tests, which leads to timeouts in our protocols
     #[cfg(feature = "slow_tests")]
     #[rstest]
     #[serial_test::serial]
@@ -774,18 +777,16 @@ pub(crate) mod tests {
             coinflip: coinflip_strategy,
             share_dispute: share_dispute_strategy,
         };
-        test_ldl_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
+        test_ldl_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_ldl.clone(),
         );
-        test_ldl_strategies::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }, _>(
+        test_ldl_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_ldl.clone(),
         );
     }
 
-    // marking as serial test because too many tests in parallel causes thread contention
-    // and slows down the tests, which leads to timeouts in our protocols
     #[cfg(feature = "slow_tests")]
     #[rstest]
     #[serial_test::serial]
@@ -816,11 +817,11 @@ pub(crate) mod tests {
             coinflip: coinflip_strategy,
             share_dispute: share_dispute_strategy,
         };
-        test_ldl_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
+        test_ldl_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_ldl.clone(),
         );
-        test_ldl_strategies::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }, _>(
+        test_ldl_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_ldl.clone(),
         );
@@ -842,11 +843,11 @@ pub(crate) mod tests {
             coinflip: coinflip_strategy,
             share_dispute: share_dispute_strategy,
         };
-        test_ldl_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
+        test_ldl_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_ldl.clone(),
         );
-        test_ldl_strategies::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }, _>(
+        test_ldl_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_ldl.clone(),
         );
@@ -887,11 +888,11 @@ pub(crate) mod tests {
             share_dispute: share_dispute_strategy,
             roles_to_lie_to: roles_from_idxs(&params.roles_to_lie_to),
         };
-        test_ldl_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
+        test_ldl_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_ldl.clone(),
         );
-        test_ldl_strategies::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }, _>(
+        test_ldl_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_ldl.clone(),
         );
@@ -931,11 +932,11 @@ pub(crate) mod tests {
             share_dispute: share_dispute_strategy,
             roles_to_lie_to: roles_from_idxs(&params.roles_to_lie_to),
         };
-        test_ldl_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
+        test_ldl_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_ldl.clone(),
         );
-        test_ldl_strategies::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }, _>(
+        test_ldl_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_ldl.clone(),
         );

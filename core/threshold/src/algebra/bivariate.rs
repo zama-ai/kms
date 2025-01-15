@@ -162,10 +162,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "extension_degree_8")]
+    use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z128;
     use crate::algebra::{
         galois_rings::{
             common::ResiduePoly,
-            degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
+            degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
         },
         structure_traits::One,
     };
@@ -173,13 +175,14 @@ mod tests {
     use aes_prng::AesRng;
     use rand::SeedableRng;
     use rstest::rstest;
+    #[cfg(feature = "extension_degree_8")]
     use std::num::Wrapping;
 
     //Checks that we error on incompatible sizes and dimensions
     #[test]
     fn test_matmul_bounds() {
-        let x11 = ArrayD::from_elem(IxDyn(&[1, 1]), ResiduePolyF8Z128::ONE);
-        let y2 = ArrayD::from_elem(IxDyn(&[2]), ResiduePolyF8Z128::ONE);
+        let x11 = ArrayD::from_elem(IxDyn(&[1, 1]), ResiduePolyF4Z128::ONE);
+        let y2 = ArrayD::from_elem(IxDyn(&[2]), ResiduePolyF4Z128::ONE);
         // test (1, 1) X (2) mul error
         assert!(x11.matmul(&y2).is_err());
         assert!(y2.matmul(&x11).is_err());
@@ -187,83 +190,84 @@ mod tests {
         // we do not support mul between two 2d matrices
         assert!(x11.matmul(&x11).is_err());
 
-        let z22 = ArrayD::from_elem(IxDyn(&[2, 2]), ResiduePolyF8Z128::ONE);
+        let z22 = ArrayD::from_elem(IxDyn(&[2, 2]), ResiduePolyF4Z128::ONE);
         // test vec-matrix bound check returns ok
         assert!(y2.matmul(&z22).is_ok());
 
         // test matrix-vec bound check returns ok
         assert!(z22.matmul(&y2).is_ok());
 
-        let y4 = ArrayD::from_elem(IxDyn(&[4]), ResiduePolyF8Z128::ONE);
+        let y4 = ArrayD::from_elem(IxDyn(&[4]), ResiduePolyF4Z128::ONE);
 
         // test 1x1 vector mul errors
         assert!(y4.matmul(&y2).is_err());
         assert!(y2.matmul(&y4).is_err());
     }
 
-    //Test that eval at 0 return the secret for ResiduePolyF8Z128
+    //Test that eval at 0 return the secret for ResiduePolyF4Z128
     #[rstest]
     #[case(4)]
     #[case(10)]
     #[case(20)]
     fn test_bivariate_zero_128(#[case] degree: usize) {
         let mut rng = AesRng::seed_from_u64(0);
-        let secret = ResiduePolyF8Z128::sample(&mut rng);
+        let secret = ResiduePolyF4Z128::sample(&mut rng);
         let bpoly = BivariatePoly::from_secret(&mut rng, secret, degree).unwrap();
         let ev_zero = bpoly
-            .full_evaluation(ResiduePolyF8Z128::ZERO, ResiduePolyF8Z128::ZERO)
+            .full_evaluation(ResiduePolyF4Z128::ZERO, ResiduePolyF4Z128::ZERO)
             .unwrap();
         assert_eq!(ev_zero, secret);
     }
 
-    //Test that eval at 0 return the secret for ResiduePolyF8Z64
+    //Test that eval at 0 return the secret for ResiduePolyF4Z64
     #[rstest]
     #[case(4)]
     #[case(10)]
     #[case(20)]
     fn test_bivariate_zero_64(#[case] degree: usize) {
         let mut rng = AesRng::seed_from_u64(0);
-        let secret = ResiduePolyF8Z64::sample(&mut rng);
+        let secret = ResiduePolyF4Z64::sample(&mut rng);
         let bpoly = BivariatePoly::from_secret(&mut rng, secret, degree).unwrap();
         let ev_zero = bpoly
-            .full_evaluation(ResiduePolyF8Z64::ZERO, ResiduePolyF8Z64::ZERO)
+            .full_evaluation(ResiduePolyF4Z64::ZERO, ResiduePolyF4Z64::ZERO)
             .unwrap();
         assert_eq!(ev_zero, secret);
     }
 
-    //Test that eval at 1 return the sum of all coefs of the poly for ResiduePolyF8Z128
+    //Test that eval at 1 return the sum of all coefs of the poly for ResiduePolyF4Z128
     #[rstest]
     #[case(4)]
     #[case(10)]
     #[case(20)]
     fn test_bivariate_one_128(#[case] degree: usize) {
         let mut rng = AesRng::seed_from_u64(0);
-        let secret = ResiduePolyF8Z128::sample(&mut rng);
+        let secret = ResiduePolyF4Z128::sample(&mut rng);
         let bpoly = BivariatePoly::from_secret(&mut rng, secret, degree).unwrap();
         let ev_one = bpoly
-            .full_evaluation(ResiduePolyF8Z128::ONE, ResiduePolyF8Z128::ONE)
+            .full_evaluation(ResiduePolyF4Z128::ONE, ResiduePolyF4Z128::ONE)
             .unwrap();
         let sum_coefs = bpoly.coefs.iter().fold(ResiduePoly::ZERO, |acc, x| acc + x);
         assert_eq!(ev_one, sum_coefs);
     }
 
-    //Test that eval at 1 return the sum of all coefs of the poly for ResiduePolyF8Z64
+    //Test that eval at 1 return the sum of all coefs of the poly for ResiduePolyF4Z64
     #[rstest]
     #[case(4)]
     #[case(10)]
     #[case(20)]
     fn test_bivariate_one_64(#[case] degree: usize) {
         let mut rng = AesRng::seed_from_u64(0);
-        let secret = ResiduePolyF8Z64::sample(&mut rng);
+        let secret = ResiduePolyF4Z64::sample(&mut rng);
         let bpoly = BivariatePoly::from_secret(&mut rng, secret, degree).unwrap();
         let ev_one = bpoly
-            .full_evaluation(ResiduePolyF8Z64::ONE, ResiduePolyF8Z64::ONE)
+            .full_evaluation(ResiduePolyF4Z64::ONE, ResiduePolyF4Z64::ONE)
             .unwrap();
         let sum_coefs = bpoly.coefs.iter().fold(ResiduePoly::ZERO, |acc, x| acc + x);
         assert_eq!(ev_one, sum_coefs);
     }
 
     //Setup up a hardcoded polynomial chosen at random with Sage
+    #[cfg(feature = "extension_degree_8")]
     fn poly_setup() -> (BivariatePoly<ResiduePolyF8Z128>, ResiduePolyF8Z128) {
         let coefs = vec![
             ResiduePoly {
@@ -592,6 +596,7 @@ mod tests {
     }
 
     //Checking partial eval x of the setup polynomial, checked against Sage
+    #[cfg(feature = "extension_degree_8")]
     #[test]
     fn test_bivariate_partial_eval_x() {
         let (bpoly, point) = poly_setup();
@@ -666,6 +671,7 @@ mod tests {
     }
 
     //Checking partial eval y of the setup polynomial, checked against Sage
+    #[cfg(feature = "extension_degree_8")]
     #[test]
     fn test_bivariate_partial_eval_y() {
         //Taking Sage as reference
@@ -739,6 +745,7 @@ mod tests {
         assert_eq!(res, expected_result);
     }
 
+    #[cfg(feature = "extension_degree_8")]
     #[test]
     fn test_full_eval() {
         let (bpoly, point) = poly_setup();

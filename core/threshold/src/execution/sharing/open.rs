@@ -307,9 +307,7 @@ mod test {
     use crate::execution::sharing::shamir::InputOp;
     use crate::networking::NetworkMode;
     use crate::{
-        algebra::{
-            galois_rings::degree_8::ResiduePolyF8, galois_rings::degree_8::ResiduePolyF8Z128,
-        },
+        algebra::galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128},
         execution::{
             runtime::session::{LargeSession, ParameterHandles},
             sharing::{open::robust_opens_to_all, shamir::ShamirSharings},
@@ -317,7 +315,7 @@ mod test {
         tests::helper::tests_and_benches::execute_protocol_large,
     };
 
-    async fn open_task(session: LargeSession) -> Vec<ResiduePolyF8Z128> {
+    async fn open_task(session: LargeSession) -> Vec<ResiduePolyF4Z128> {
         let parties = 4;
         let threshold = 1;
         let num_secrets = 10;
@@ -326,7 +324,7 @@ mod test {
             .map(|idx| {
                 ShamirSharings::share(
                     &mut rng,
-                    ResiduePolyF8::from_scalar(Wrapping(idx)),
+                    ResiduePolyF4::from_scalar(Wrapping(idx)),
                     parties,
                     threshold,
                 )
@@ -356,8 +354,8 @@ mod test {
         let _ = execute_protocol_large::<
             _,
             _,
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >(
             parties,
             threshold,
@@ -379,8 +377,8 @@ mod test {
         let _ = execute_protocol_large::<
             _,
             _,
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >(
             parties,
             threshold,

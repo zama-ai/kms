@@ -1,5 +1,4 @@
 use super::{
-    galois_fields::{gf16::GF16, gf256::GF256},
     galois_rings::common::{LutMulReduction, ResiduePoly},
     structure_traits::{Field, Invert, One, Ring, RingEmbed, Sample, Zero},
 };
@@ -22,15 +21,17 @@ pub struct BitwisePoly {
     pub coefs: Vec<u8>,
 }
 
-impl From<Poly<GF256>> for BitwisePoly {
-    fn from(poly: Poly<GF256>) -> BitwisePoly {
+#[cfg(feature = "extension_degree_8")]
+impl From<Poly<super::galois_fields::gf256::GF256>> for BitwisePoly {
+    fn from(poly: Poly<super::galois_fields::gf256::GF256>) -> BitwisePoly {
         let coefs: Vec<u8> = poly.coefs.iter().map(|coef_2| coef_2.0).collect();
         BitwisePoly { coefs }
     }
 }
 
-impl From<Poly<GF16>> for BitwisePoly {
-    fn from(poly: Poly<GF16>) -> BitwisePoly {
+#[cfg(feature = "extension_degree_4")]
+impl From<Poly<super::galois_fields::gf16::GF16>> for BitwisePoly {
+    fn from(poly: Poly<super::galois_fields::gf16::GF16>) -> BitwisePoly {
         let coefs: Vec<u8> = poly.coefs.iter().map(|coef_2| coef_2.0).collect();
         BitwisePoly { coefs }
     }
@@ -579,8 +580,8 @@ pub fn gao_decoding<F: Field>(
 mod tests {
     use super::*;
     use crate::algebra::error_correction::MemoizedExceptionals;
-    use crate::algebra::galois_fields::gf256::GF256;
-    use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z128;
+    use crate::algebra::galois_fields::gf16::GF16;
+    use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
     use proptest::prelude::*;
     use rstest::rstest;
 
@@ -588,19 +589,19 @@ mod tests {
     fn test_lagrange_mod2() {
         let poly = Poly {
             coefs: vec![
-                GF256::from(11),
-                GF256::from(2),
-                GF256::from(3),
-                GF256::from(22),
-                GF256::from(9),
+                GF16::from(11),
+                GF16::from(2),
+                GF16::from(3),
+                GF16::from(5),
+                GF16::from(9),
             ],
         };
         let xs = vec![
-            GF256::from(0),
-            GF256::from(21),
-            GF256::from(30),
-            GF256::from(40),
-            GF256::from(42),
+            GF16::from(0),
+            GF16::from(1),
+            GF16::from(3),
+            GF16::from(4),
+            GF16::from(2),
         ];
 
         // we need at least degree + 1 points to interpolate
@@ -612,15 +613,15 @@ mod tests {
     }
 
     #[rstest]
-    #[case(vec![GF256::from(7),
-                GF256::from(4),
-                GF256::from(5),
-                GF256::from(4)],
-            vec![GF256::from(1), GF256::from(0), GF256::from(1)],
+    #[case(vec![GF16::from(7),
+                GF16::from(4),
+                GF16::from(5),
+                GF16::from(4)],
+            vec![GF16::from(1), GF16::from(0), GF16::from(1)],
     )]
-    #[case(vec![GF256::from(255), GF256::from(123)],
-        vec![GF256::from(1)])]
-    fn test_poly_divmod(#[case] coefs_a: Vec<GF256>, #[case] coefs_b: Vec<GF256>) {
+    #[case(vec![GF16::from(15), GF16::from(12)],
+        vec![GF16::from(1)])]
+    fn test_poly_divmod(#[case] coefs_a: Vec<GF16>, #[case] coefs_b: Vec<GF16>) {
         let a = Poly { coefs: coefs_a };
         let b = Poly { coefs: coefs_b };
 
@@ -632,8 +633,8 @@ mod tests {
     proptest! {
         #[test]
         fn test_fuzzy_divmod((coefs_a, coefs_b) in (
-            proptest::collection::vec(any::<u8>().prop_map(GF256::from), 1..10),
-            proptest::collection::vec(any::<u8>().prop_map(GF256::from), 1..10)
+            proptest::collection::vec(any::<u8>().prop_map(GF16::from), 1..10),
+            proptest::collection::vec(any::<u8>().prop_map(GF16::from), 1..10)
         )) {
 
             let a = Poly { coefs: coefs_a };
@@ -648,13 +649,13 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Division by 0 in GF256")]
+    #[should_panic(expected = "Division by 0 in GF16")]
     fn test_specific_panic() {
         let a = Poly {
-            coefs: vec![GF256::from(255), GF256::from(123)],
+            coefs: vec![GF16::from(15), GF16::from(3)],
         };
         let b = Poly {
-            coefs: vec![GF256::from(0)],
+            coefs: vec![GF16::from(0)],
         };
         let (_q, _r) = a / b;
     }
@@ -662,16 +663,16 @@ mod tests {
     #[test]
     fn test_gao_decoding() {
         let f = Poly {
-            coefs: vec![GF256::from(7), GF256::from(13), GF256::from(2)],
+            coefs: vec![GF16::from(7), GF16::from(13), GF16::from(2)],
         };
         let xs = vec![
-            GF256::from(20),
-            GF256::from(30),
-            GF256::from(40),
-            GF256::from(50),
-            GF256::from(60),
-            GF256::from(70),
-            GF256::from(80),
+            GF16::from(2),
+            GF16::from(3),
+            GF16::from(4),
+            GF16::from(5),
+            GF16::from(6),
+            GF16::from(7),
+            GF16::from(8),
         ];
         let mut ys: Vec<_> = xs.iter().map(|x| f.eval(x)).collect();
 
@@ -684,29 +685,29 @@ mod tests {
         );
 
         // add an error
-        ys[0] += GF256::from(3);
-        ys[1] += GF256::from(4);
+        ys[0] += GF16::from(3);
+        ys[1] += GF16::from(4);
         let polynomial = gao_decoding(&xs, &ys, f.coefs.len(), 2).unwrap();
-        assert_eq!(polynomial.eval(&GF256::from(0)), GF256::from(7));
+        assert_eq!(polynomial.eval(&GF16::from(0)), GF16::from(7));
     }
 
     #[test]
     fn test_gao_decoding_failure() {
         let f = Poly {
-            coefs: vec![GF256::from(7), GF256::from(23), GF256::from(8)],
+            coefs: vec![GF16::from(7), GF16::from(3), GF16::from(8)],
         };
         let xs = vec![
-            GF256::from(20),
-            GF256::from(30),
-            GF256::from(40),
-            GF256::from(50),
-            GF256::from(60),
-            GF256::from(70),
+            GF16::from(2),
+            GF16::from(3),
+            GF16::from(4),
+            GF16::from(5),
+            GF16::from(6),
+            GF16::from(7),
         ];
         let mut ys: Vec<_> = xs.iter().map(|x| f.eval(x)).collect();
         // adding two errors
-        ys[0] += GF256::from(222);
-        ys[1] += GF256::from(55);
+        ys[0] += GF16::from(2);
+        ys[1] += GF16::from(5);
         let r = gao_decoding(&xs, &ys, 3, 1).unwrap_err().to_string();
         assert!(r.contains(
             "Gao decoding failure: Allowed at most 1 errors but xgcd factor degree indicates 2."
@@ -715,19 +716,14 @@ mod tests {
 
     #[test]
     fn test_formal_derivative() {
-        // f(x) = 7 + 23x + 8x^2 + 2x^3
+        // f(x) = 7 + 3x + 8x^2 + 2x^3
         let f = Poly {
-            coefs: vec![
-                GF256::from(7),
-                GF256::from(23),
-                GF256::from(8),
-                GF256::from(2),
-            ],
+            coefs: vec![GF16::from(7), GF16::from(3), GF16::from(8), GF16::from(2)],
         };
 
-        // f'(x) = 23 + 0x + 2x^2 (Note: addition in GF256 is XOR)
+        // f'(x) = 3 + 0x + 2x^2 (Note: addition in GF16 is XOR)
         let f1 = Poly {
-            coefs: vec![GF256::from(23), GF256::from(0), GF256::from(2)],
+            coefs: vec![GF16::from(3), GF16::from(0), GF16::from(2)],
         };
 
         // f''(x) = 0
@@ -741,18 +737,18 @@ mod tests {
     #[test]
     fn test_bitwise_poly() {
         let f = Poly {
-            coefs: vec![GF256::from(7), GF256::from(23), GF256::from(8)],
+            coefs: vec![GF16::from(7), GF16::from(3), GF16::from(8)],
         };
         let degree = f.coefs.len();
 
         let shifted_pos = 10;
-        let lifted_f = ResiduePolyF8Z128::shamir_bit_lift(&f, shifted_pos).unwrap();
+        let lifted_f = ResiduePolyF4Z128::shamir_bit_lift(&f, shifted_pos).unwrap();
 
         let party_ids = [0, 1, 2, 3, 4, 5];
-        let ring_evals: Vec<ResiduePolyF8Z128> = party_ids
+        let ring_evals: Vec<ResiduePolyF4Z128> = party_ids
             .iter()
             .map(|id| {
-                let embedded_xi = ResiduePolyF8Z128::embed_exceptional_set(*id)?;
+                let embedded_xi = ResiduePolyF4Z128::embed_exceptional_set(*id)?;
                 Ok(lifted_f.eval(&embedded_xi))
             })
             .collect::<anyhow::Result<Vec<_>>>()
@@ -763,7 +759,7 @@ mod tests {
         for party_id in party_ids {
             assert_eq!(
                 ring_evals[party_id],
-                bitwise.lazy_eval(&ResiduePolyF8Z128::exceptional_set(party_id, degree).unwrap())
+                bitwise.lazy_eval(&ResiduePolyF4Z128::exceptional_set(party_id, degree).unwrap())
                     << 10,
                 "party with index {party_id} failed with wrong evaluation"
             );

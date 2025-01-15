@@ -455,7 +455,7 @@ impl<
 
                 // run the computation in a separate rayon thread to avoid blocking the tokio runtime
                 let (send, recv) = tokio::sync::oneshot::channel();
-                rayon::spawn(move || {
+                rayon::spawn_fifo(move || {
                     let decryptions = central_decrypt::<PubS, PrivS, BackS>(&keys, &ciphertexts);
                     let _ = send.send(decryptions);
                 });

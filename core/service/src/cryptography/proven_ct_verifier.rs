@@ -202,7 +202,7 @@ async fn verify_proven_ct_and_sign<
 
     let proof_start_instant = tokio::time::Instant::now();
     let (send, recv) = tokio::sync::oneshot::channel();
-    rayon::spawn(move || {
+    rayon::spawn_fifo(move || {
         let ok = verify_ct_proofs(&proven_ct, &pp_guard, &wrapped_pk, &metadata);
         let _ = send.send(ok);
     });

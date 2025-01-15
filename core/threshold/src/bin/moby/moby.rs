@@ -13,7 +13,12 @@ pub struct Cli {
     conf_file: Option<String>,
 }
 
+// Below we set EXTENSION_DEGREE to be the highest available from the compilation flags
+#[cfg(all(feature = "extension_degree_4", not(feature = "extension_degree_8")))]
+const EXTENSION_DEGREE: usize = 4;
+#[cfg(feature = "extension_degree_8")]
 const EXTENSION_DEGREE: usize = 8;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Cli::parse();

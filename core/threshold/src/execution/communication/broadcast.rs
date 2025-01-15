@@ -32,7 +32,7 @@ pub async fn send_to_all<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
     // `to_network` may take some time
     // so we put it inside a rayon::spawn
     let (send, recv) = tokio::sync::oneshot::channel();
-    rayon::spawn(move || {
+    rayon::spawn_fifo(move || {
         let _ = send.send(msg.to_network());
     });
     let serialized_message = recv.await?;
@@ -90,7 +90,7 @@ where
             let task = async move {
                 let stripped_message = networking.receive(&sender_id).await;
                 let (send, recv) = tokio::sync::oneshot::channel();
-                rayon::spawn(move || {
+                rayon::spawn_fifo(move || {
                     let _ = send.send(NetworkValue::<Z>::from_network(stripped_message));
                 });
                 let stripped_message = match recv.await {
@@ -695,7 +695,7 @@ async fn broadcast_w_corruption_helper<Z: Ring, R: Rng + CryptoRng, Ses: BaseSes
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z128;
+    use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
     use crate::execution::runtime::session::ParameterHandles;
     use crate::execution::runtime::test_runtime::{
         generate_fixed_identities, DistributedTestRuntime,
@@ -778,8 +778,8 @@ mod tests {
     fn test_broadcast_all() {
         let sender_parties: Vec<Role> = (0..4).map(Role::indexed_by_zero).collect();
         let (identities, input_values, results) = legitimate_broadcast::<
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >(&sender_parties);
 
         // check that we have exactly n bcast outputs, for each party
@@ -801,8 +801,8 @@ mod tests {
     fn test_broadcast_p3() {
         let sender_parties = vec![Role::indexed_by_zero(3)];
         let (identities, input_values, results) = legitimate_broadcast::<
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >(&sender_parties);
 
         // check that we have exactly n bcast outputs, for each party
@@ -825,8 +825,8 @@ mod tests {
     fn test_broadcast_p0_p2() {
         let sender_parties = vec![Role::indexed_by_one(1), Role::indexed_by_one(3)];
         let (identities, input_values, results) = legitimate_broadcast::<
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >(&sender_parties);
         // check that we have exactly n bcast outputs, for each party
         assert_eq!(results.len(), identities.len());
@@ -852,18 +852,18 @@ mod tests {
         let identities = generate_fixed_identities(4);
 
         let input_values = vec![
-            BroadcastValue::from(ResiduePolyF8Z128::from_scalar(Wrapping(1))),
-            BroadcastValue::from(ResiduePolyF8Z128::from_scalar(Wrapping(2))),
-            BroadcastValue::from(ResiduePolyF8Z128::from_scalar(Wrapping(3))),
-            BroadcastValue::from(ResiduePolyF8Z128::from_scalar(Wrapping(4))),
+            BroadcastValue::from(ResiduePolyF4Z128::from_scalar(Wrapping(1))),
+            BroadcastValue::from(ResiduePolyF4Z128::from_scalar(Wrapping(2))),
+            BroadcastValue::from(ResiduePolyF4Z128::from_scalar(Wrapping(3))),
+            BroadcastValue::from(ResiduePolyF4Z128::from_scalar(Wrapping(4))),
         ];
 
         // code for session setup
         let threshold = 1;
         //Broadcast assumes Sync network
         let runtime = DistributedTestRuntime::<
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >::new(identities, threshold, NetworkMode::Sync, None);
         let session_id = SessionId(1);
 
@@ -911,7 +911,7 @@ mod tests {
     #[test]
     fn test_broadcast_w_corruption() {
         let num_parties = 4;
-        let msg = BroadcastValue::from(ResiduePolyF8Z128::from_scalar(Wrapping(42)));
+        let msg = BroadcastValue::from(ResiduePolyF4Z128::from_scalar(Wrapping(42)));
         let identities = generate_fixed_identities(num_parties);
         let parties = identities.len();
 
@@ -919,8 +919,8 @@ mod tests {
         let threshold = 1;
         //Broadcast assumes Sync network
         let runtime = DistributedTestRuntime::<
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >::new(identities.clone(), threshold, NetworkMode::Sync, None);
         let session_id = SessionId(1);
 
@@ -1115,9 +1115,9 @@ mod tests {
     //Test bcast with one actively malicious party
     #[test]
     fn broadcast_w_malicious_1() {
-        let msg = BroadcastValue::from(ResiduePolyF8Z128::from_scalar(Wrapping(42)));
+        let msg = BroadcastValue::from(ResiduePolyF4Z128::from_scalar(Wrapping(42)));
         let corrupt_msg = (0..5)
-            .map(|i| BroadcastValue::from(ResiduePolyF8Z128::from_scalar(Wrapping(43 + i))))
+            .map(|i| BroadcastValue::from(ResiduePolyF4Z128::from_scalar(Wrapping(43 + i))))
             .collect_vec();
         let identities = generate_fixed_identities(5);
         let parties = identities.len();
@@ -1126,8 +1126,8 @@ mod tests {
         let threshold = 1;
         //Broadcast assumes Sync network
         let runtime = DistributedTestRuntime::<
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >::new(identities.clone(), threshold, NetworkMode::Sync, None);
         let session_id = SessionId(1);
 
@@ -1292,9 +1292,9 @@ mod tests {
     #[test]
     #[cfg(feature = "slow_tests")]
     fn broadcast_w_malicious_2() {
-        let msg = BroadcastValue::from(ResiduePolyF8Z128::from_scalar(Wrapping(42)));
+        let msg = BroadcastValue::from(ResiduePolyF4Z128::from_scalar(Wrapping(42)));
         let corrupt_msg = (0..5)
-            .map(|i| BroadcastValue::from(ResiduePolyF8Z128::from_scalar(Wrapping(43 + i))))
+            .map(|i| BroadcastValue::from(ResiduePolyF4Z128::from_scalar(Wrapping(43 + i))))
             .collect_vec();
         let identities = generate_fixed_identities(4);
         let parties = identities.len();
@@ -1303,8 +1303,8 @@ mod tests {
         let threshold = 1;
         //Broadcast assumes Sync network
         let runtime = DistributedTestRuntime::<
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >::new(identities.clone(), threshold, NetworkMode::Sync, None);
         let session_id = SessionId(1);
 

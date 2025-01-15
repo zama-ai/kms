@@ -835,12 +835,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::algebra::structure_traits::Ring;
+    use crate::algebra::structure_traits::{Derive, ErrorCorrect, Invert, Solve};
     use crate::execution::sharing::shamir::RevealOp;
     use crate::execution::tfhe_internals::test_feature::KeySet;
     use crate::networking::NetworkMode;
     use crate::{
-        algebra::galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
+        algebra::base_ring::{Z128, Z64},
+        algebra::galois_rings::common::ResiduePoly,
         execution::tfhe_internals::test_feature::keygen_all_party_shares,
         execution::{
             constants::SMALL_TEST_KEY_PATH,
@@ -867,7 +868,7 @@ mod tests {
         let glwe_secret_key = keyset.get_raw_glwe_client_key();
         let glwe_secret_key_sns_as_lwe = keyset.sns_secret_key.key.clone();
         let params = keyset.sns_secret_key.params;
-        let shares = keygen_all_party_shares::<_, 8>(
+        let shares = keygen_all_party_shares::<_, 4>(
             lwe_secret_key,
             glwe_secret_key,
             glwe_secret_key_sns_as_lwe,
@@ -896,8 +897,22 @@ mod tests {
         assert_eq!(keyset.sns_secret_key.key.into_container()[0], inner_rec.0);
     }
 
+    #[cfg(feature = "extension_degree_8")]
     #[test]
-    fn test_large_threshold_decrypt() {
+    fn test_large_threshold_decrypt_f8() {
+        test_large_threshold_decrypt::<8>()
+    }
+
+    #[test]
+    fn test_large_threshold_decrypt_f4() {
+        test_large_threshold_decrypt::<4>()
+    }
+
+    fn test_large_threshold_decrypt<const EXTENSION_DEGREE: usize>()
+    where
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+    {
         let threshold = 1;
         let num_parties = 5;
         let msg: u8 = 3;
@@ -925,8 +940,8 @@ mod tests {
         let identities = generate_fixed_identities(num_parties);
         //Assumes Sync because preprocessing is part of the task
         let mut runtime = DistributedTestRuntime::<
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePoly<Z128, EXTENSION_DEGREE>,
+            EXTENSION_DEGREE,
         >::new(identities, threshold as u8, NetworkMode::Sync, None);
 
         runtime.setup_conversion_key(Arc::new(keyset.public_keys.sns_key.clone().unwrap()));
@@ -939,8 +954,22 @@ mod tests {
         assert_eq!(*out_dec, ref_res);
     }
 
+    #[cfg(feature = "extension_degree_8")]
     #[test]
-    fn test_small_threshold_decrypt() {
+    fn test_small_threshold_decrypt_f8() {
+        test_small_threshold_decrypt::<8>()
+    }
+
+    #[test]
+    fn test_small_threshold_decrypt_f4() {
+        test_small_threshold_decrypt::<4>()
+    }
+
+    fn test_small_threshold_decrypt<const EXTENSION_DEGREE: usize>()
+    where
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+    {
         let threshold = 1;
         let num_parties = 4;
         let msg: u8 = 3;
@@ -968,8 +997,8 @@ mod tests {
         let identities = generate_fixed_identities(num_parties);
         //Assumes Sync because preprocessing is part of the task
         let mut runtime = DistributedTestRuntime::<
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+            ResiduePoly<Z128, EXTENSION_DEGREE>,
+            EXTENSION_DEGREE,
         >::new(identities, threshold as u8, NetworkMode::Sync, None);
 
         runtime.setup_conversion_key(Arc::new(keyset.public_keys.sns_key.clone().unwrap()));
@@ -982,8 +1011,22 @@ mod tests {
         assert_eq!(*out_dec, ref_res);
     }
 
+    #[cfg(feature = "extension_degree_8")]
     #[test]
-    fn test_small_bitdec_threshold_decrypt() {
+    fn test_small_bitdec_threshold_decrypt_f8() {
+        test_small_bitdec_threshold_decrypt::<8>()
+    }
+
+    #[test]
+    fn test_small_bitdec_threshold_decrypt_f4() {
+        test_small_bitdec_threshold_decrypt::<4>()
+    }
+
+    fn test_small_bitdec_threshold_decrypt<const EXTENSION_DEGREE: usize>()
+    where
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+    {
         let threshold = 1;
         let num_parties = 5;
         let msg: u8 = 3;
@@ -1011,8 +1054,8 @@ mod tests {
         let identities = generate_fixed_identities(num_parties);
         //Assumes Sync because preprocessing is part of the task
         let mut runtime = DistributedTestRuntime::<
-            ResiduePolyF8Z64,
-            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+            ResiduePoly<Z64, EXTENSION_DEGREE>,
+            EXTENSION_DEGREE,
         >::new(identities, threshold as u8, NetworkMode::Sync, None);
 
         runtime.setup_sks(key_shares);
@@ -1034,8 +1077,22 @@ mod tests {
         assert_eq!(*out_dec, ref_res);
     }
 
+    #[cfg(feature = "extension_degree_8")]
     #[test]
-    fn test_large_bitdec_threshold_decrypt() {
+    fn test_large_bitdec_threshold_decrypt_f8() {
+        test_large_bitdec_threshold_decrypt::<8>()
+    }
+
+    #[test]
+    fn test_large_bitdec_threshold_decrypt_f4() {
+        test_large_bitdec_threshold_decrypt::<4>()
+    }
+
+    fn test_large_bitdec_threshold_decrypt<const EXTENSION_DEGREE: usize>()
+    where
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+    {
         let threshold = 1;
         let num_parties = 5;
         let msg: u8 = 15;
@@ -1063,8 +1120,8 @@ mod tests {
         let identities = generate_fixed_identities(num_parties);
         //Assumes Sync because preprocessing is part of the task
         let mut runtime = DistributedTestRuntime::<
-            ResiduePolyF8Z64,
-            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+            ResiduePoly<Z64, EXTENSION_DEGREE>,
+            EXTENSION_DEGREE,
         >::new(identities, threshold as u8, NetworkMode::Sync, None);
 
         runtime.setup_sks(key_shares);

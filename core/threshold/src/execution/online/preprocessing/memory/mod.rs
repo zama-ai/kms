@@ -175,7 +175,7 @@ mod tests {
 
     use crate::algebra::base_ring::Z128;
     use crate::algebra::base_ring::Z64;
-    use crate::algebra::galois_rings::degree_8::ResiduePolyF8;
+    use crate::algebra::galois_rings::degree_4::ResiduePolyF4;
     use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
     use crate::execution::online::preprocessing::RandomPreprocessing;
     use crate::execution::online::preprocessing::TriplePreprocessing;
@@ -192,11 +192,11 @@ mod tests {
                 // Test what happens when no more triples are preset
                 #[test]
                 fn [<test_no_more_elements_ $z:lower>]() {
-                    let share = Share::new(Role::indexed_by_one(1), ResiduePolyF8::<$z>::from_scalar(Wrapping(1)));
+                    let share = Share::new(Role::indexed_by_one(1), ResiduePolyF4::<$z>::from_scalar(Wrapping(1)));
                     let triple = Triple::new(share.clone(), share.clone(), share.clone());
                     const TRIPLE_BATCH_SIZE: usize = 10; // Replace 10 with the desired value
 
-                    let mut preproc = InMemoryBasePreprocessing::<ResiduePolyF8<$z>> {
+                    let mut preproc = InMemoryBasePreprocessing::<ResiduePolyF4<$z>> {
                         available_triples: (0..TRIPLE_BATCH_SIZE).map(|_i| triple.clone()).collect_vec(),
                         available_randoms: (0..TRIPLE_BATCH_SIZE).map(|_i| share.clone()).collect_vec(),
                     };

@@ -150,7 +150,7 @@ mod tests {
 
     #[test]
     fn test_bitgen() {
-        let parties = 5;
+        let parties = 4;
         let threshold = 1;
         let amount = 100;
         let mut task = |mut session: SmallSession<LevelKsw>| async move {

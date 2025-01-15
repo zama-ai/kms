@@ -426,11 +426,13 @@ mod tests {
         (glwe_sns_sk128, lwe_sk64, glwe_sk64)
     }
 
+    #[cfg(feature = "extension_degree_8")]
     #[test]
     fn reshare_no_error_f8() -> anyhow::Result<()> {
         simulate_reshare::<8>(false)
     }
 
+    #[cfg(feature = "extension_degree_8")]
     #[test]
     fn reshare_with_error_f8() -> anyhow::Result<()> {
         simulate_reshare::<8>(true)

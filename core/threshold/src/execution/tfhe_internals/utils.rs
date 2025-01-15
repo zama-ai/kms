@@ -195,18 +195,16 @@ macro_rules! expanded_encrypt {
 #[cfg(test)]
 pub mod tests {
     use std::collections::HashMap;
-    use std::num::Wrapping;
 
     use itertools::Itertools;
     use tfhe::core_crypto::entities::{GlweSecretKeyOwned, LweSecretKeyOwned};
 
+    use crate::algebra::base_ring::{Z128, Z64};
+    use crate::algebra::galois_rings::common::ResiduePoly;
     use crate::execution::sharing::shamir::RevealOp;
     use crate::execution::tfhe_internals::parameters::{DKGParams, DKGParamsBasics};
     use crate::{
-        algebra::{
-            galois_rings::degree_8::ResiduePolyF8,
-            structure_traits::{BaseRing, ErrorCorrect},
-        },
+        algebra::structure_traits::{BaseRing, ErrorCorrect},
         execution::{
             endpoints::keygen::PrivateKeySet,
             runtime::party::Role,
@@ -214,14 +212,14 @@ pub mod tests {
         },
     };
 
-    pub fn reconstruct_glwe_body_vec<Z: BaseRing>(
-        input: HashMap<Role, Vec<Share<ResiduePolyF8<Z>>>>,
+    pub fn reconstruct_glwe_body_vec<Z: BaseRing, const EXTENSION_DEGREE: usize>(
+        input: HashMap<Role, Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
         expected_num_glwe_ctxt: usize,
         polynomial_size: usize,
         threshold: usize,
     ) -> Vec<Vec<Z>>
     where
-        ResiduePolyF8<Z>: ErrorCorrect,
+        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
     {
         let mut output_body_vec = Vec::new();
         for glwe_ctxt_idx in 0..expected_num_glwe_ctxt {
@@ -247,13 +245,13 @@ pub mod tests {
         output_body_vec
     }
 
-    pub fn reconstruct_bit_vec<Z: BaseRing>(
-        input: HashMap<Role, Vec<Share<ResiduePolyF8<Z>>>>,
+    pub fn reconstruct_bit_vec<Z: BaseRing, const EXTENSION_DEGREE: usize>(
+        input: HashMap<Role, Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
         expected_num_bits: usize,
         threshold: usize,
     ) -> Vec<u64>
     where
-        ResiduePolyF8<Z>: ErrorCorrect,
+        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
     {
         let mut output_bit_vec = Vec::new();
         for idx in 0..expected_num_bits {
@@ -279,18 +277,27 @@ pub mod tests {
         output_bit_vec
     }
 
-    pub fn reconstruct_lwe_secret_key_from_file<Params: DKGParamsBasics + ?Sized>(
+    pub fn reconstruct_lwe_secret_key_from_file<
+        const EXTENSION_DEGREE: usize,
+        Params: DKGParamsBasics + ?Sized,
+    >(
         parties: usize,
         threshold: usize,
         params: &Params,
         prefix_path: String,
-    ) -> LweSecretKeyOwned<u64> {
+    ) -> LweSecretKeyOwned<u64>
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+    {
         let mut sk_shares = HashMap::new();
         for party in 0..parties {
             sk_shares.insert(
                 Role::indexed_by_zero(party),
-                PrivateKeySet::read_from_file(format!("{}/sk_p{}.der", prefix_path, party))
-                    .unwrap(),
+                PrivateKeySet::<EXTENSION_DEGREE>::read_from_file(format!(
+                    "{}/sk_p{}.der",
+                    prefix_path, party
+                ))
+                .unwrap(),
             );
         }
 
@@ -309,13 +316,13 @@ pub mod tests {
     }
 
     #[allow(clippy::type_complexity)]
-    pub fn read_secret_key_shares_from_file(
+    pub fn read_secret_key_shares_from_file<const EXTENSION_DEGREE: usize>(
         parties: usize,
         params: DKGParams,
         prefix_path: String,
     ) -> (
-        HashMap<Role, Vec<Share<ResiduePolyF8<Wrapping<u64>>>>>,
-        HashMap<Role, Vec<Share<ResiduePolyF8<Wrapping<u128>>>>>,
+        HashMap<Role, Vec<Share<ResiduePoly<Z64, EXTENSION_DEGREE>>>>,
+        HashMap<Role, Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>>,
     ) {
         let mut sk_shares = HashMap::new();
         for party in 0..parties {
@@ -342,14 +349,18 @@ pub mod tests {
         (glwe_key_shares, big_glwe_key_shares)
     }
 
-    pub fn reconstruct_glwe_secret_key_from_file(
+    pub fn reconstruct_glwe_secret_key_from_file<const EXTENSION_DEGREE: usize>(
         parties: usize,
         threshold: usize,
         params: DKGParams,
         prefix_path: String,
-    ) -> (GlweSecretKeyOwned<u64>, Option<LweSecretKeyOwned<u128>>) {
+    ) -> (GlweSecretKeyOwned<u64>, Option<LweSecretKeyOwned<u128>>)
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+    {
         let (glwe_key_shares, big_glwe_key_shares) =
-            read_secret_key_shares_from_file(parties, params, prefix_path);
+            read_secret_key_shares_from_file::<EXTENSION_DEGREE>(parties, params, prefix_path);
         let glwe_key = reconstruct_bit_vec(
             glwe_key_shares,
             params.get_params_basics_handle().glwe_sk_num_bits(),

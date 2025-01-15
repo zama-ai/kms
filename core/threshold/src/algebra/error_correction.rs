@@ -228,11 +228,13 @@ mod tests {
     use aes_prng::AesRng;
     use rand::SeedableRng;
 
+    #[cfg(feature = "extension_degree_8")]
+    use crate::algebra::galois_fields::gf256::GF256;
     use crate::{
         algebra::{
             base_ring::Z64,
             error_correction::{error_correction, shamir_error_correct},
-            galois_fields::{gf16::GF16, gf256::GF256},
+            galois_fields::gf16::GF16,
             galois_rings::common::{LutMulReduction, ResiduePoly},
             poly::{BitWiseEval, BitwisePoly, Poly},
             structure_traits::{
@@ -247,6 +249,7 @@ mod tests {
 
     use super::MemoizedExceptionals;
 
+    #[cfg(feature = "extension_degree_8")]
     #[test]
     fn test_divisibility_fail_f8() {
         test_divisibility_fail::<8>();
@@ -306,6 +309,7 @@ mod tests {
         assert_eq!(err_indices[0], (0, 2));
     }
 
+    #[cfg(feature = "extension_degree_8")]
     #[test]
     fn test_error_correction_f8() {
         test_error_correction::<GF256>();

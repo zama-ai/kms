@@ -143,7 +143,7 @@ pub trait Derive: Sized {
     /// "LDS" stands for local double sharing
     /// but this is also used for local single sharing in the NIST spec.
     const DSEP_LDS: &[u8] = b"LDS";
-    const SIZE_EXCEPTIONAL_SET: usize;
+    const LOG_SIZE_EXCEPTIONAL_SET: usize;
     /// This is known as H_{LDS} from the NIST spec.
     fn derive_challenges_from_coinflip(
         x: &Self,

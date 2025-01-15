@@ -441,7 +441,7 @@ mod test {
     use crate::networking::NetworkMode;
     use crate::{
         algebra::{
-            galois_rings::degree_8::{ResiduePolyF8, ResiduePolyF8Z128, ResiduePolyF8Z64},
+            galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
             structure_traits::{One, Zero},
         },
         execution::{
@@ -530,12 +530,12 @@ mod test {
 
     #[test]
     fn test_rand_generation_z128() {
-        test_rand_generation::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }>();
+        test_rand_generation::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>();
     }
 
     #[test]
     fn test_rand_generation_z64() {
-        test_rand_generation::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }>();
+        test_rand_generation::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }>();
     }
 
     fn test_triple_generation<
@@ -596,12 +596,12 @@ mod test {
 
     #[test]
     fn test_triple_generation_z128() {
-        test_triple_generation::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }>();
+        test_triple_generation::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>();
     }
 
     #[test]
     fn test_triple_generation_z64() {
-        test_triple_generation::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }>();
+        test_triple_generation::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }>();
     }
 
     #[test]
@@ -609,7 +609,7 @@ mod test {
         let parties = 5;
         let threshold = 1;
 
-        async fn task(mut session: SmallSession<ResiduePolyF8Z128>) {
+        async fn task(mut session: SmallSession<ResiduePolyF4Z128>) {
             let batch_size = BatchParams {
                 triples: 3,
                 randoms: 2,
@@ -634,8 +634,8 @@ mod test {
         let _result = execute_protocol_small::<
             _,
             _,
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >(
             parties,
             threshold,
@@ -655,17 +655,17 @@ mod test {
         let d_recons = HashMap::from([
             (
                 Role::indexed_by_one(1),
-                BroadcastValue::RingVector(Vec::from([ResiduePolyF8Z128::from_scalar(Wrapping(
+                BroadcastValue::RingVector(Vec::from([ResiduePolyF4Z128::from_scalar(Wrapping(
                     42,
                 ))])),
             ),
             (
                 Role::indexed_by_one(2),
-                BroadcastValue::RingValue(ResiduePolyF8Z128::from_scalar(Wrapping(13))),
+                BroadcastValue::RingValue(ResiduePolyF4Z128::from_scalar(Wrapping(13))),
             ),
         ]);
         assert!(session.corrupt_roles().is_empty());
-        let res = SmallPreprocessing::<ResiduePolyF8Z128, DummyAgreeRandom>::reconstruct_d_values(
+        let res = SmallPreprocessing::<ResiduePolyF4Z128, DummyAgreeRandom>::reconstruct_d_values(
             &mut session,
             1,
             d_recons,
@@ -687,11 +687,11 @@ mod test {
         let threshold = 1;
         const BAD_ID: usize = 3;
         async fn task(
-            mut session: SmallSession<ResiduePolyF8Z128>,
+            mut session: SmallSession<ResiduePolyF4Z128>,
         ) -> (
-            SmallSession<ResiduePolyF8Z128>,
-            Vec<Triple<ResiduePolyF8Z128>>,
-            Vec<Share<ResiduePolyF8Z128>>,
+            SmallSession<ResiduePolyF4Z128>,
+            Vec<Triple<ResiduePolyF4Z128>>,
+            Vec<Share<ResiduePolyF4Z128>>,
         ) {
             let mut triple_res = Vec::new();
             let mut rand_res = Vec::new();
@@ -721,8 +721,8 @@ mod test {
         let result = execute_protocol_small::<
             _,
             _,
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >(parties, threshold, None, NetworkMode::Sync, None, &mut task);
 
         //Check we can reconstruct everything and we do have multiplication triples
@@ -752,8 +752,8 @@ mod test {
             assert_eq!(recon_a * recon_b, recon_c);
             let recon_rand = reconstruct(test_session, to_recon_rand).unwrap();
             // Sanity check the random reconstruction
-            assert_ne!(recon_rand, ResiduePolyF8::ZERO);
-            assert_ne!(recon_rand, ResiduePolyF8::ONE);
+            assert_ne!(recon_rand, ResiduePolyF4::ZERO);
+            assert_ne!(recon_rand, ResiduePolyF4::ONE);
         }
     }
 
@@ -765,11 +765,11 @@ mod test {
         const BAD_ID: usize = 3;
 
         async fn task(
-            mut session: SmallSession<ResiduePolyF8Z128>,
+            mut session: SmallSession<ResiduePolyF4Z128>,
         ) -> (
-            SmallSession<ResiduePolyF8Z128>,
-            Vec<Triple<ResiduePolyF8Z128>>,
-            Vec<Share<ResiduePolyF8Z128>>,
+            SmallSession<ResiduePolyF4Z128>,
+            Vec<Triple<ResiduePolyF4Z128>>,
+            Vec<Share<ResiduePolyF4Z128>>,
         ) {
             let mut triple_res = Vec::new();
             let mut rand_res = Vec::new();
@@ -808,8 +808,8 @@ mod test {
         let result = execute_protocol_small::<
             _,
             _,
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >(parties, threshold, None, NetworkMode::Sync, None, &mut task);
 
         // Check that the malicious party has been added to the list
@@ -848,8 +848,8 @@ mod test {
             assert_eq!(recon_a * recon_b, recon_c);
             let recon_rand = reconstruct(test_session, to_recon_rand).unwrap();
             // Sanity check the random reconstruction
-            assert_ne!(recon_rand, ResiduePolyF8::ZERO);
-            assert_ne!(recon_rand, ResiduePolyF8::ONE);
+            assert_ne!(recon_rand, ResiduePolyF4::ZERO);
+            assert_ne!(recon_rand, ResiduePolyF4::ONE);
         }
     }
 
@@ -862,8 +862,8 @@ mod test {
         const BAD_ID: usize = 2;
 
         async fn task(
-            mut session: SmallSession<ResiduePolyF8Z128>,
-        ) -> SmallSession<ResiduePolyF8Z128> {
+            mut session: SmallSession<ResiduePolyF4Z128>,
+        ) -> SmallSession<ResiduePolyF4Z128> {
             if session.my_role().unwrap() == Role::indexed_by_one(BAD_ID) {
                 // Change the counter offset to make the party use wrong values
                 let prss_state = session.prss_as_mut();
@@ -893,8 +893,8 @@ mod test {
         let result = execute_protocol_small::<
             _,
             _,
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >(parties, threshold, None, NetworkMode::Sync, None, &mut task);
 
         // Check that the malicious party has been added to the list

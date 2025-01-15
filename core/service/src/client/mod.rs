@@ -15,7 +15,7 @@ use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
 use bincode::{deserialize, serialize};
 use distributed_decryption::algebra::base_ring::Z128;
-use distributed_decryption::algebra::galois_rings::degree_8::ResiduePolyF8;
+use distributed_decryption::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
 use distributed_decryption::execution::endpoints::reconstruct::{
     combine_decryptions, reconstruct_packed_message,
 };
@@ -1052,7 +1052,7 @@ impl Client {
             // Observe that we don't encode exactly the same in the centralized case and in the
             // distributed case. For the centralized case we directly encode the [Plaintext]
             // object whereas for the distributed we encode the plain text as a
-            // Vec<ResiduePolyF8<Z128>>.
+            // Vec<ResiduePolyF4Z128>.
             self.centralized_reencryption_resp(
                 client_request,
                 eip712_domain,
@@ -1477,7 +1477,7 @@ impl Client {
             let shares =
                 insecure_decrypt_ignoring_signature(&payload.signcrypted_ciphertext, client_keys)?;
 
-            let cipher_blocks_share: Vec<ResiduePolyF8<Z128>> = deserialize(&shares.bytes)?;
+            let cipher_blocks_share: Vec<ResiduePolyF4Z128> = deserialize(&shares.bytes)?;
             let mut cur_blocks = Vec::with_capacity(cipher_blocks_share.len());
             for cur_block_share in cipher_blocks_share {
                 cur_blocks.push(cur_block_share);
@@ -1548,7 +1548,7 @@ impl Client {
         agg_resp: &[ReencryptionResponsePayload],
         fhe_type: FheType,
         client_keys: &SigncryptionPair,
-    ) -> anyhow::Result<Vec<ShamirSharings<ResiduePolyF8<Z128>>>> {
+    ) -> anyhow::Result<Vec<ShamirSharings<ResiduePolyF4Z128>>> {
         let num_blocks = fhe_type.to_num_blocks(
             &self
                 .params
@@ -1573,7 +1573,7 @@ impl Client {
                 &cur_verf_key,
             ) {
                 Ok(decryption_share) => {
-                    let cipher_blocks_share: Vec<ResiduePolyF8<Z128>> =
+                    let cipher_blocks_share: Vec<ResiduePolyF4Z128> =
                         deserialize(&decryption_share.bytes)?;
                     let mut cur_blocks = Vec::with_capacity(cipher_blocks_share.len());
                     for cur_block_share in cipher_blocks_share {

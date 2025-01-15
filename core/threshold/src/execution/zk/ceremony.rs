@@ -541,7 +541,7 @@ impl Ceremony for RealCeremony {
                 let mut tau = curve::Zp::rand(&mut session.rng());
                 let mut r = curve::Zp::rand(&mut session.rng());
                 let (send, recv) = tokio::sync::oneshot::channel();
-                rayon::spawn(move || {
+                rayon::spawn_fifo(move || {
                     let partial_proof = make_partial_proof_deterministic(&pp, tau, round + 1, r);
                     tau.zeroize();
                     r.zeroize();
@@ -577,7 +577,7 @@ impl Ceremony for RealCeremony {
                                     // this will avoid cloning the whole pp which is just two vectors.
                                     // The rayon threadpool is used again (see comment above).
                                     let (send, recv) = tokio::sync::oneshot::channel();
-                                    rayon::spawn(move || {
+                                    rayon::spawn_fifo(move || {
                                         let res = verify_proof(&pp, &proof);
                                         let _ = send.send((res, pp));
                                     });
@@ -622,7 +622,7 @@ impl Ceremony for RealCeremony {
 mod tests {
     use super::*;
     use crate::{
-        algebra::galois_rings::degree_8::ResiduePolyF8Z64,
+        algebra::galois_rings::degree_4::ResiduePolyF4Z64,
         execution::runtime::{
             session::{LargeSession, ParameterHandles},
             test_runtime::{generate_fixed_identities, DistributedTestRuntime},
@@ -684,8 +684,8 @@ mod tests {
         let identities = generate_fixed_identities(num_parties);
         //CRS generation is round robin, so Sync by nature
         let runtime: DistributedTestRuntime<
-            ResiduePolyF8Z64,
-            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+            ResiduePolyF4Z64,
+            { ResiduePolyF4Z64::EXTENSION_DEGREE },
         > = DistributedTestRuntime::new(identities, threshold as u8, NetworkMode::Sync, None);
 
         let session_id = SessionId(2);
@@ -699,7 +699,7 @@ mod tests {
             let ceremony = ceremony_f();
             set.spawn(async move {
                 let out = ceremony
-                    .execute::<ResiduePolyF8Z64, _, _>(&mut session, witness_dim, Some(1))
+                    .execute::<ResiduePolyF4Z64, _, _>(&mut session, witness_dim, Some(1))
                     .await
                     .unwrap();
                 (session.my_role().unwrap(), out)
@@ -928,7 +928,7 @@ mod tests {
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
     fn test_dropping_ceremony(#[case] params: TestingParameters, #[case] witness_dim: usize) {
         let malicious_party = DroppingCeremony::default();
-        test_ceremony_strategies_large::<_, ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }>(
+        test_ceremony_strategies_large::<_, ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }>(
             params.clone(),
             witness_dim,
             malicious_party.clone(),
@@ -940,7 +940,7 @@ mod tests {
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
     fn test_bad_proof_ceremony(#[case] params: TestingParameters, #[case] witness_dim: usize) {
         let malicious_party = BadProofCeremony::default();
-        test_ceremony_strategies_large::<_, ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }>(
+        test_ceremony_strategies_large::<_, ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }>(
             params.clone(),
             witness_dim,
             malicious_party.clone(),
@@ -952,7 +952,7 @@ mod tests {
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
     fn test_rushing_ceremony(#[case] params: TestingParameters, #[case] witness_dim: usize) {
         let malicious_party = RushingCeremony::default();
-        test_ceremony_strategies_large::<_, ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }>(
+        test_ceremony_strategies_large::<_, ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }>(
             params.clone(),
             witness_dim,
             malicious_party.clone(),

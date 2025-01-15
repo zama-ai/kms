@@ -140,7 +140,7 @@ mod tests {
 
     use crate::{
         algebra::{
-            base_ring::Z64, galois_rings::degree_8::ResiduePolyF8Z64, structure_traits::Ring,
+            base_ring::Z64, galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring,
         },
         execution::{
             online::{
@@ -190,7 +190,7 @@ mod tests {
             let mut large_preproc = DummyPreprocessing::new(seed as u64, session.clone());
 
             //Generate the Lwe key
-            let lwe_secret_key_share = LweSecretKeyShare::<Z64, 8> {
+            let lwe_secret_key_share = LweSecretKeyShare::<Z64, 4> {
                 data: RealBitGenEven::gen_bits_even(
                     num_key_bits_lwe,
                     &mut large_preproc,
@@ -201,7 +201,7 @@ mod tests {
             };
 
             //Generate the Glwe key
-            let glwe_secret_key_share = GlweSecretKeyShare::<Z64, 8> {
+            let glwe_secret_key_share = GlweSecretKeyShare::<Z64, 4> {
                 data: RealBitGenEven::gen_bits_even(
                     num_key_bits_glwe,
                     &mut large_preproc,
@@ -264,8 +264,8 @@ mod tests {
         let results = execute_protocol_large::<
             _,
             _,
-            ResiduePolyF8Z64,
-            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+            ResiduePolyF4Z64,
+            { ResiduePolyF4Z64::EXTENSION_DEGREE },
         >(
             parties,
             threshold,

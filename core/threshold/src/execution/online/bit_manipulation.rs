@@ -506,7 +506,7 @@ mod tests {
     use rstest::rstest;
 
     use crate::algebra::base_ring::Z64;
-    use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z64;
+    use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z64;
     use crate::execution::online::bit_manipulation::bit_dec_batch;
     use crate::execution::online::bit_manipulation::BatchedBits;
     use crate::execution::online::bit_manipulation::Bits;
@@ -519,9 +519,9 @@ mod tests {
     use crate::tests::helper::tests_and_benches::execute_protocol_small;
 
     /// Helper method to get a sharing of a simple u64 value
-    fn get_my_share(val: u64, session: &SmallSession<ResiduePolyF8Z64>) -> Share<ResiduePolyF8Z64> {
+    fn get_my_share(val: u64, session: &SmallSession<ResiduePolyF4Z64>) -> Share<ResiduePolyF4Z64> {
         let mut rng = AesRng::seed_from_u64(val);
-        let secret = ResiduePolyF8Z64::from_scalar(Wrapping(val));
+        let secret = ResiduePolyF4Z64::from_scalar(Wrapping(val));
         let shares = ShamirSharings::share(
             &mut rng,
             secret,
@@ -541,10 +541,10 @@ mod tests {
         let plain_rhs: [u64; 5] = [1_u64, 0, 1, 0, 1];
         // Compute reference value, as the xor
         let plain_ref = (0..plain_lhs.len())
-            .map(|i| ResiduePolyF8Z64::from_scalar(Wrapping(plain_lhs[i] ^ plain_rhs[i])))
+            .map(|i| ResiduePolyF4Z64::from_scalar(Wrapping(plain_lhs[i] ^ plain_rhs[i])))
             .collect_vec();
 
-        let mut task = |mut session: SmallSession<ResiduePolyF8Z64>| async move {
+        let mut task = |mut session: SmallSession<ResiduePolyF4Z64>| async move {
             let lhs = plain_lhs
                 .iter()
                 .map(|cur_val| get_my_share(*cur_val, &session))
@@ -554,11 +554,11 @@ mod tests {
                 .map(|cur_val| get_my_share(*cur_val, &session))
                 .collect_vec();
             let mut preprocessing = DummyPreprocessing::<
-                ResiduePolyF8Z64,
+                ResiduePolyF4Z64,
                 AesRng,
-                SmallSession<ResiduePolyF8Z64>,
+                SmallSession<ResiduePolyF4Z64>,
             >::new(42, session.clone());
-            let bits = Bits::<ResiduePolyF8Z64>::xor_list_secret_secret(
+            let bits = Bits::<ResiduePolyF4Z64>::xor_list_secret_secret(
                 &lhs,
                 &rhs,
                 &mut preprocessing,
@@ -576,8 +576,8 @@ mod tests {
         let results = execute_protocol_small::<
             _,
             _,
-            ResiduePolyF8Z64,
-            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+            ResiduePolyF4Z64,
+            { ResiduePolyF4Z64::EXTENSION_DEGREE },
         >(
             parties,
             threshold as u8,
@@ -603,12 +603,12 @@ mod tests {
         // Observe that the above input bits are ordered [LSB, ..., MSB]; written in the more common form 10110_2 = 22_10
         let ref_val = 22;
 
-        let mut task = |session: SmallSession<ResiduePolyF8Z64>| async move {
+        let mut task = |session: SmallSession<ResiduePolyF4Z64>| async move {
             let input = plain_input
                 .iter()
                 .map(|cur_val| get_my_share(*cur_val, &session))
                 .collect_vec();
-            let bits = Bits::<ResiduePolyF8Z64>::bit_sum(&input).unwrap();
+            let bits = Bits::<ResiduePolyF4Z64>::bit_sum(&input).unwrap();
             open_list(&[bits], &session).await.unwrap()[0]
         };
 
@@ -619,8 +619,8 @@ mod tests {
         let results = execute_protocol_small::<
             _,
             _,
-            ResiduePolyF8Z64,
-            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+            ResiduePolyF4Z64,
+            { ResiduePolyF4Z64::EXTENSION_DEGREE },
         >(
             parties,
             threshold as u8,
@@ -631,7 +631,7 @@ mod tests {
         );
 
         for cur_res in results {
-            assert_eq!(ResiduePolyF8Z64::from_scalar(Wrapping(ref_val)), cur_res);
+            assert_eq!(ResiduePolyF4Z64::from_scalar(Wrapping(ref_val)), cur_res);
         }
     }
 
@@ -644,11 +644,11 @@ mod tests {
 
         let ref_val = Wrapping(a) + Wrapping(b);
 
-        let mut task = |mut session: SmallSession<ResiduePolyF8Z64>| async move {
+        let mut task = |mut session: SmallSession<ResiduePolyF4Z64>| async move {
             let mut prep = DummyPreprocessing::<
-                ResiduePolyF8Z64,
+                ResiduePolyF4Z64,
                 AesRng,
-                SmallSession<ResiduePolyF8Z64>,
+                SmallSession<ResiduePolyF4Z64>,
             >::new(42, session.clone());
 
             let input_a = (0..Z64::CHAR_LOG2)
@@ -657,11 +657,11 @@ mod tests {
             let input_a = vec![input_a];
 
             let input_b = (0..Z64::CHAR_LOG2)
-                .map(|bit_idx| ResiduePolyF8Z64::from_scalar(Wrapping((b >> bit_idx) & 1)))
+                .map(|bit_idx| ResiduePolyF4Z64::from_scalar(Wrapping((b >> bit_idx) & 1)))
                 .collect_vec();
             let input_b = vec![input_b];
 
-            let bits = BatchedBits::<ResiduePolyF8Z64>::binary_adder_secret_clear(
+            let bits = BatchedBits::<ResiduePolyF4Z64>::binary_adder_secret_clear(
                 &mut session,
                 &input_a,
                 &input_b,
@@ -670,7 +670,7 @@ mod tests {
             .await
             .unwrap();
 
-            let bit_sum = Bits::<ResiduePolyF8Z64>::bit_sum(&bits[0]).unwrap();
+            let bit_sum = Bits::<ResiduePolyF4Z64>::bit_sum(&bits[0]).unwrap();
             open_list(&[bit_sum], &session).await.unwrap()[0]
         };
 
@@ -682,8 +682,8 @@ mod tests {
         let results = execute_protocol_small::<
             _,
             _,
-            ResiduePolyF8Z64,
-            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+            ResiduePolyF4Z64,
+            { ResiduePolyF4Z64::EXTENSION_DEGREE },
         >(
             parties,
             threshold as u8,
@@ -694,7 +694,7 @@ mod tests {
         );
 
         for cur_res in results {
-            assert_eq!(ResiduePolyF8Z64::from_scalar(ref_val), cur_res);
+            assert_eq!(ResiduePolyF4Z64::from_scalar(ref_val), cur_res);
         }
     }
 
@@ -710,11 +710,11 @@ mod tests {
         let bits_c: Vec<_> = (0..64).map(|bit_idx| (c >> bit_idx) & 1).collect();
         let bits_d: Vec<_> = (0..64).map(|bit_idx| (d >> bit_idx) & 1).collect();
 
-        let mut task = |mut session: SmallSession<ResiduePolyF8Z64>| async move {
+        let mut task = |mut session: SmallSession<ResiduePolyF4Z64>| async move {
             let mut prep = DummyPreprocessing::<
-                ResiduePolyF8Z64,
+                ResiduePolyF4Z64,
                 AesRng,
-                SmallSession<ResiduePolyF8Z64>,
+                SmallSession<ResiduePolyF4Z64>,
             >::new(42, session.clone());
 
             let input_a = (0..Z64::CHAR_LOG2)
@@ -737,7 +737,7 @@ mod tests {
                 .collect_vec();
             let input_d = vec![input_d];
 
-            let (a_xor_b, c_and_d) = BatchedBits::<ResiduePolyF8Z64>::compressed_xor_and(
+            let (a_xor_b, c_and_d) = BatchedBits::<ResiduePolyF4Z64>::compressed_xor_and(
                 &input_a,
                 &input_b,
                 &input_c,
@@ -748,14 +748,14 @@ mod tests {
             .await
             .unwrap();
 
-            let a_xor_b: Vec<Share<ResiduePolyF8Z64>> = a_xor_b
+            let a_xor_b: Vec<Share<ResiduePolyF4Z64>> = a_xor_b
                 .iter()
                 .flatten()
                 .cloned()
-                .collect::<Vec<Share<ResiduePolyF8Z64>>>();
+                .collect::<Vec<Share<ResiduePolyF4Z64>>>();
             let opened1 = open_list(&a_xor_b, &session).await.unwrap();
 
-            let target_xor = BatchedBits::<ResiduePolyF8Z64>::xor_list_secret_secret(
+            let target_xor = BatchedBits::<ResiduePolyF4Z64>::xor_list_secret_secret(
                 &input_a,
                 &input_b,
                 &mut prep,
@@ -767,17 +767,17 @@ mod tests {
                 .iter()
                 .flatten()
                 .cloned()
-                .collect::<Vec<Share<ResiduePolyF8Z64>>>();
+                .collect::<Vec<Share<ResiduePolyF4Z64>>>();
             let opened1_target = open_list(&target_xor, &session).await.unwrap();
 
-            let c_and_d: Vec<Share<ResiduePolyF8Z64>> = c_and_d
+            let c_and_d: Vec<Share<ResiduePolyF4Z64>> = c_and_d
                 .iter()
                 .flatten()
                 .cloned()
-                .collect::<Vec<Share<ResiduePolyF8Z64>>>();
+                .collect::<Vec<Share<ResiduePolyF4Z64>>>();
             let opened2 = open_list(&c_and_d, &session).await.unwrap();
 
-            let target_and = BatchedBits::<ResiduePolyF8Z64>::and_list_secret_secret(
+            let target_and = BatchedBits::<ResiduePolyF4Z64>::and_list_secret_secret(
                 &input_c,
                 &input_d,
                 &mut prep,
@@ -789,7 +789,7 @@ mod tests {
                 .iter()
                 .flatten()
                 .cloned()
-                .collect::<Vec<Share<ResiduePolyF8Z64>>>();
+                .collect::<Vec<Share<ResiduePolyF4Z64>>>();
             let opened2_target = open_list(&target_and, &session).await.unwrap();
 
             (opened1, opened1_target, opened2, opened2_target)
@@ -801,8 +801,8 @@ mod tests {
         let results = &execute_protocol_small::<
             _,
             _,
-            ResiduePolyF8Z64,
-            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+            ResiduePolyF4Z64,
+            { ResiduePolyF4Z64::EXTENSION_DEGREE },
         >(
             parties,
             threshold as u8,
@@ -817,7 +817,7 @@ mod tests {
         for i in 0..xor1.len() {
             assert_eq!(
                 xor1[i],
-                ResiduePolyF8Z64::from_scalar(Wrapping(bits_a[i] ^ bits_b[i])),
+                ResiduePolyF4Z64::from_scalar(Wrapping(bits_a[i] ^ bits_b[i])),
                 "failed xor at index {}",
                 i
             );
@@ -828,7 +828,7 @@ mod tests {
         for i in 0..and1.len() {
             assert_eq!(
                 and1[i],
-                ResiduePolyF8Z64::from_scalar(Wrapping(bits_c[i] & bits_d[i])),
+                ResiduePolyF4Z64::from_scalar(Wrapping(bits_c[i] & bits_d[i])),
                 "failed and at index {}",
                 i
             );
@@ -847,17 +847,17 @@ mod tests {
 
         let ref_val: Vec<_> = (0..64).map(|bit_idx| (a >> bit_idx) & 1).collect();
 
-        let mut task = |mut session: SmallSession<ResiduePolyF8Z64>| async move {
+        let mut task = |mut session: SmallSession<ResiduePolyF4Z64>| async move {
             let mut prep = DummyPreprocessing::<
-                ResiduePolyF8Z64,
+                ResiduePolyF4Z64,
                 AesRng,
-                SmallSession<ResiduePolyF8Z64>,
+                SmallSession<ResiduePolyF4Z64>,
             >::new(42, session.clone());
 
             let input_a = get_my_share(a, &session);
             let input_a = vec![input_a];
 
-            let bits = bit_dec_batch::<Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _, _, _>(
+            let bits = bit_dec_batch::<Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _, _, _>(
                 &mut session,
                 &mut prep,
                 input_a,
@@ -880,8 +880,8 @@ mod tests {
         let results = &execute_protocol_small::<
             _,
             _,
-            ResiduePolyF8Z64,
-            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+            ResiduePolyF4Z64,
+            { ResiduePolyF4Z64::EXTENSION_DEGREE },
         >(
             parties,
             threshold as u8,
@@ -894,7 +894,7 @@ mod tests {
         for i in 0..results.len() {
             assert_eq!(
                 results[i],
-                ResiduePolyF8Z64::from_scalar(Wrapping(ref_val[i]))
+                ResiduePolyF4Z64::from_scalar(Wrapping(ref_val[i]))
             );
         }
     }

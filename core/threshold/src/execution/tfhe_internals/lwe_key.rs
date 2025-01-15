@@ -230,7 +230,7 @@ mod tests {
     use crate::execution::tfhe_internals::lwe_key::to_tfhe_hl_api_compact_public_key;
     use crate::{
         algebra::{
-            base_ring::Z64, galois_rings::degree_8::ResiduePolyF8Z64, structure_traits::Ring,
+            base_ring::Z64, galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring,
         },
         execution::{
             online::{
@@ -275,7 +275,7 @@ mod tests {
                     .unwrap();
 
             //Generate secret key
-            let lwe_secret_key_share: LweSecretKeyShare<Z64, 8> = LweSecretKeyShare {
+            let lwe_secret_key_share: LweSecretKeyShare<Z64, 4> = LweSecretKeyShare {
                 data: vec_shared_bits,
             };
 
@@ -321,8 +321,8 @@ mod tests {
         let results = execute_protocol_large::<
             _,
             _,
-            ResiduePolyF8Z64,
-            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+            ResiduePolyF4Z64,
+            { ResiduePolyF4Z64::EXTENSION_DEGREE },
         >(
             parties,
             threshold,

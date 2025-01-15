@@ -168,7 +168,7 @@ mod tests {
     use std::num::Wrapping;
 
     use crate::{
-        algebra::galois_rings::degree_8::ResiduePolyF8Z128,
+        algebra::galois_rings::degree_4::ResiduePolyF4Z128,
         execution::{runtime::party::Role, sharing::share::Share},
     };
 
@@ -176,12 +176,12 @@ mod tests {
     fn op_overload() {
         let share = Share::new(
             Role::indexed_by_one(1),
-            ResiduePolyF8Z128::from_scalar(Wrapping(42)),
+            ResiduePolyF4Z128::from_scalar(Wrapping(42)),
         );
-        let one = ResiduePolyF8Z128::from_scalar(Wrapping(1));
-        let two = ResiduePolyF8Z128::from_scalar(Wrapping(2));
+        let one = ResiduePolyF4Z128::from_scalar(Wrapping(1));
+        let two = ResiduePolyF4Z128::from_scalar(Wrapping(2));
         let res = share * two + one - two;
-        assert_eq!(res.value(), ResiduePolyF8Z128::from_scalar(Wrapping(83)));
+        assert_eq!(res.value(), ResiduePolyF4Z128::from_scalar(Wrapping(83)));
         let mut new_share = share;
         new_share += new_share;
         assert_eq!(share * two, new_share);

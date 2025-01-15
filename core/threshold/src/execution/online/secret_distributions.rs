@@ -102,7 +102,7 @@ mod tests {
 
     use crate::{
         algebra::{
-            galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
+            galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
             structure_traits::Ring,
         },
         execution::{
@@ -122,8 +122,8 @@ mod tests {
         let bound = 10; //NewHope(B) gives range [-10,10] with mean 0 and std deviation sqrt(5)
         let batch = 100;
 
-        let mut task = |session: SmallSession<ResiduePolyF8Z64>| async move {
-            let mut preproc = DummyPreprocessing::<ResiduePolyF8Z64, _, _>::new(0, session.clone());
+        let mut task = |session: SmallSession<ResiduePolyF4Z64>| async move {
+            let mut preproc = DummyPreprocessing::<ResiduePolyF4Z64, _, _>::new(0, session.clone());
 
             let res_vec = RealSecretDistributions::newhope(batch, bound, &mut preproc).unwrap();
 
@@ -136,8 +136,8 @@ mod tests {
         let results = execute_protocol_small::<
             _,
             _,
-            ResiduePolyF8Z64,
-            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+            ResiduePolyF4Z64,
+            { ResiduePolyF4Z64::EXTENSION_DEGREE },
         >(
             parties,
             threshold,
@@ -171,7 +171,7 @@ mod tests {
 
         let mut task = |session: LargeSession| async move {
             let mut large_preproc =
-                DummyPreprocessing::<ResiduePolyF8Z128, _, _>::new(0, session.clone());
+                DummyPreprocessing::<ResiduePolyF4Z128, _, _>::new(0, session.clone());
 
             let res_vec =
                 RealSecretDistributions::t_uniform(batch, bound, &mut large_preproc).unwrap();
@@ -202,8 +202,8 @@ mod tests {
         let results = execute_protocol_large::<
             _,
             _,
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >(
             parties,
             threshold,
@@ -240,7 +240,7 @@ mod tests {
         let batch = 100_usize;
 
         let mut task = |session: LargeSession| async move {
-            //let mut large_preproc = RealLargePreprocessing::<ResiduePolyF8Z64>::init(
+            //let mut large_preproc = RealLargePreprocessing::<ResiduePolyF4Z64>::init(
             //    &mut session,
             //    batch_sizes,
             //    TrueSingleSharing::default(),
@@ -250,7 +250,7 @@ mod tests {
             //.unwrap();
 
             let mut large_preproc =
-                DummyPreprocessing::<ResiduePolyF8Z64, _, _>::new(0, session.clone());
+                DummyPreprocessing::<ResiduePolyF4Z64, _, _>::new(0, session.clone());
 
             let res_vec =
                 RealSecretDistributions::t_uniform(batch, bound, &mut large_preproc).unwrap();
@@ -281,8 +281,8 @@ mod tests {
         let results = execute_protocol_large::<
             _,
             _,
-            ResiduePolyF8Z64,
-            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+            ResiduePolyF4Z64,
+            { ResiduePolyF4Z64::EXTENSION_DEGREE },
         >(
             parties,
             threshold,

@@ -1005,9 +1005,9 @@ pub mod tests {
 
     use crate::{
         algebra::{
-            base_ring::Z128,
-            galois_rings::degree_8::{ResiduePolyF8, ResiduePolyF8Z128},
-            structure_traits::{BaseRing, ErrorCorrect, Ring},
+            base_ring::{Z128, Z64},
+            galois_rings::common::ResiduePoly,
+            structure_traits::{ErrorCorrect, Invert, Ring, Solve},
         },
         execution::{
             online::preprocessing::dummy::DummyPreprocessing,
@@ -1071,32 +1071,51 @@ pub mod tests {
         try_tfhe_pk_compactlist_computation(&client_key, &server_key, &public_key);
     }
 
+    #[cfg(feature = "extension_degree_8")]
     #[test]
     #[ignore]
-    fn old_keygen_params32_with_sns() {
+    fn old_keygen_params32_with_sns_f8() {
+        old_keygen_params32_with_sns::<8>()
+    }
+
+    #[test]
+    #[ignore]
+    fn old_keygen_params32_with_sns_f4() {
+        old_keygen_params32_with_sns::<4>()
+    }
+
+    fn old_keygen_params32_with_sns<const EXTENSION_DEGREE: usize>()
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
+    {
         let params = OLD_PARAMS_P32_REAL_WITH_SNS;
         let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
         let threshold = 1;
-        let prefix_path = params_basics_handles.get_prefix_path();
+        let prefix_path = format!(
+            "{}/{}",
+            params_basics_handles.get_prefix_path(),
+            EXTENSION_DEGREE
+        );
 
         if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
             .try_exists()
             .unwrap()
         {
-            _ = fs::create_dir(prefix_path.clone());
+            _ = fs::create_dir_all(prefix_path.clone());
             run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
         }
 
         run_switch_and_squash(prefix_path.clone(), num_parties, threshold);
 
-        run_tfhe_computation_shortint::<Z128, DKGParamsSnS>(
+        run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsSnS>(
             prefix_path.clone(),
             num_parties,
             threshold,
             false,
         );
-        run_tfhe_computation_fheuint::<Z128, DKGParamsSnS>(
+        run_tfhe_computation_fheuint::<EXTENSION_DEGREE, DKGParamsSnS>(
             prefix_path,
             num_parties,
             threshold,
@@ -1104,31 +1123,49 @@ pub mod tests {
         );
     }
 
-    ///Tests related to [`PARAMS_P32_NO_SNS_FGLWE`]
+    #[cfg(feature = "extension_degree_8")]
     #[test]
     #[ignore]
-    fn keygen_params32_no_sns_fglwe() {
+    fn keygen_params32_no_sns_fglwe_f8() {
+        keygen_params32_no_sns_fglwe::<8>()
+    }
+    #[test]
+    #[ignore]
+    fn keygen_params32_no_sns_fglwe_f4() {
+        keygen_params32_no_sns_fglwe::<4>()
+    }
+
+    ///Tests related to [`PARAMS_P32_NO_SNS_FGLWE`]
+    fn keygen_params32_no_sns_fglwe<const EXTENSION_DEGREE: usize>()
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
+    {
         let params = NIST_PARAMS_P32_NO_SNS_FGLWE;
         let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
         let threshold = 1;
-        let prefix_path = params_basics_handles.get_prefix_path();
+        let prefix_path = format!(
+            "{}/{}",
+            params_basics_handles.get_prefix_path(),
+            EXTENSION_DEGREE
+        );
 
         if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
             .try_exists()
             .unwrap()
         {
-            _ = fs::create_dir(prefix_path.clone());
+            _ = fs::create_dir_all(prefix_path.clone());
             run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
         }
 
-        run_tfhe_computation_shortint::<Z128, DKGParamsRegular>(
+        run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
             prefix_path.clone(),
             num_parties,
             threshold,
             true,
         );
-        run_tfhe_computation_fheuint::<Z128, DKGParamsRegular>(
+        run_tfhe_computation_fheuint::<EXTENSION_DEGREE, DKGParamsRegular>(
             prefix_path,
             num_parties,
             threshold,
@@ -1136,26 +1173,45 @@ pub mod tests {
         );
     }
 
-    ///Tests related to [`PARAMS_P8_NO_SNS_FGLWE`]
+    #[cfg(feature = "extension_degree_8")]
     #[test]
     #[ignore]
-    fn keygen_params8_no_sns_fglwe() {
+    fn keygen_params8_no_sns_fglwe_f8() {
+        keygen_params8_no_sns_fglwe::<8>()
+    }
+
+    #[test]
+    #[ignore]
+    fn keygen_params8_no_sns_fglwe_f4() {
+        keygen_params8_no_sns_fglwe::<4>()
+    }
+
+    ///Tests related to [`PARAMS_P8_NO_SNS_FGLWE`]
+    fn keygen_params8_no_sns_fglwe<const EXTENSION_DEGREE: usize>()
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
+    {
         let params = NIST_PARAMS_P8_NO_SNS_FGLWE;
         let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
         let threshold = 1;
-        let prefix_path = params_basics_handles.get_prefix_path();
+        let prefix_path = format!(
+            "{}/{}",
+            params_basics_handles.get_prefix_path(),
+            EXTENSION_DEGREE
+        );
 
         if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
             .try_exists()
             .unwrap()
         {
-            _ = fs::create_dir(prefix_path.clone());
+            _ = fs::create_dir_all(prefix_path.clone());
             run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
         }
 
         //This parameter set isnt big enough to run the fheuint tests
-        run_tfhe_computation_shortint::<Z128, DKGParamsRegular>(
+        run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
             prefix_path.clone(),
             num_parties,
             threshold,
@@ -1163,31 +1219,50 @@ pub mod tests {
         );
     }
 
-    ///Tests related to [`PARAMS_P32_NO_SNS_LWE`]
+    #[cfg(feature = "extension_degree_8")]
     #[test]
     #[ignore]
-    fn keygen_params32_no_sns_lwe() {
+    fn keygen_params32_no_sns_lwe_f8() {
+        keygen_params32_no_sns_lwe::<8>()
+    }
+
+    #[test]
+    #[ignore]
+    fn keygen_params32_no_sns_lwe_f4() {
+        keygen_params32_no_sns_lwe::<4>()
+    }
+
+    ///Tests related to [`PARAMS_P32_NO_SNS_LWE`]
+    fn keygen_params32_no_sns_lwe<const EXTENSION_DEGREE: usize>()
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
+    {
         let params = NIST_PARAMS_P32_NO_SNS_LWE;
         let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
         let threshold = 1;
-        let prefix_path = params_basics_handles.get_prefix_path();
+        let prefix_path = format!(
+            "{}/{}",
+            params_basics_handles.get_prefix_path(),
+            EXTENSION_DEGREE
+        );
 
         if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
             .try_exists()
             .unwrap()
         {
-            _ = fs::create_dir(prefix_path.clone());
+            _ = fs::create_dir_all(prefix_path.clone());
             run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
         }
 
-        run_tfhe_computation_shortint::<Z128, DKGParamsRegular>(
+        run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
             prefix_path.clone(),
             num_parties,
             threshold,
             true,
         );
-        run_tfhe_computation_fheuint::<Z128, DKGParamsRegular>(
+        run_tfhe_computation_fheuint::<EXTENSION_DEGREE, DKGParamsRegular>(
             prefix_path,
             num_parties,
             threshold,
@@ -1195,26 +1270,45 @@ pub mod tests {
         );
     }
 
-    ///Tests related to [`PARAMS_P8_NO_SNS_LWE`]
+    #[cfg(feature = "extension_degree_8")]
     #[test]
     #[ignore]
-    fn keygen_params8_no_sns_lwe() {
+    fn keygen_params8_no_sns_lwe_f8() {
+        keygen_params8_no_sns_lwe::<8>()
+    }
+
+    #[test]
+    #[ignore]
+    fn keygen_params8_no_sns_lwe_f4() {
+        keygen_params8_no_sns_lwe::<4>()
+    }
+
+    ///Tests related to [`PARAMS_P8_NO_SNS_LWE`]
+    fn keygen_params8_no_sns_lwe<const EXTENSION_DEGREE: usize>()
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
+    {
         let params = NIST_PARAMS_P8_NO_SNS_LWE;
         let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
         let threshold = 1;
-        let prefix_path = params_basics_handles.get_prefix_path();
+        let prefix_path = format!(
+            "{}/{}",
+            params_basics_handles.get_prefix_path(),
+            EXTENSION_DEGREE
+        );
 
         if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
             .try_exists()
             .unwrap()
         {
-            _ = fs::create_dir(prefix_path.clone());
+            _ = fs::create_dir_all(prefix_path.clone());
             run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
         }
 
         //This parameter set isnt big enough to run the fheuint tests
-        run_tfhe_computation_shortint::<Z128, DKGParamsRegular>(
+        run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
             prefix_path,
             num_parties,
             threshold,
@@ -1222,33 +1316,51 @@ pub mod tests {
         );
     }
 
-    ///Tests related to [`PARAMS_TEST_BK_SNS`]
+    #[cfg(feature = "extension_degree_8")]
     #[test]
     #[ignore]
-    fn keygen_params_bk_sns() {
+    fn keygen_params_bk_sns_f8() {
+        keygen_params_bk_sns::<8>()
+    }
+
+    #[test]
+    #[ignore]
+    fn keygen_params_bk_sns_f4() {
+        keygen_params_bk_sns::<4>()
+    }
+    ///Tests related to [`PARAMS_TEST_BK_SNS`]
+    fn keygen_params_bk_sns<const EXTENSION_DEGREE: usize>()
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
+    {
         let params = PARAMS_TEST_BK_SNS;
         let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
         let threshold = 1;
-        let prefix_path = params_basics_handles.get_prefix_path();
+        let prefix_path = format!(
+            "{}/{}",
+            params_basics_handles.get_prefix_path(),
+            EXTENSION_DEGREE
+        );
 
         if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
             .try_exists()
             .unwrap()
         {
-            _ = fs::create_dir(prefix_path.clone());
+            _ = fs::create_dir_all(prefix_path.clone());
             run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
         }
 
         run_switch_and_squash(prefix_path.clone(), num_parties, threshold);
 
-        run_tfhe_computation_shortint::<Z128, DKGParamsSnS>(
+        run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsSnS>(
             prefix_path.clone(),
             num_parties,
             threshold,
             true,
         );
-        run_tfhe_computation_fheuint::<Z128, DKGParamsSnS>(
+        run_tfhe_computation_fheuint::<EXTENSION_DEGREE, DKGParamsSnS>(
             prefix_path,
             num_parties,
             threshold,
@@ -1256,15 +1368,35 @@ pub mod tests {
         );
     }
 
-    ///Tests related to [`PARAMS_TEST_BK_SNS`] using _less fake_ preprocessing
+    #[cfg(feature = "extension_degree_8")]
     #[cfg(feature = "slow_tests")]
     #[test]
-    fn integration_keygen_params_bk_sns() {
+    fn integration_keygen_params_bk_sns_f8() {
+        integration_keygen_params_bk_sns::<8>()
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[test]
+    fn integration_keygen_params_bk_sns_f4() {
+        integration_keygen_params_bk_sns::<4>()
+    }
+
+    #[cfg(feature = "slow_tests")]
+    ///Tests related to [`PARAMS_TEST_BK_SNS`] using _less fake_ preprocessing
+    fn integration_keygen_params_bk_sns<const EXTENSION_DEGREE: usize>()
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
+    {
         let params = PARAMS_TEST_BK_SNS;
         let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 4;
         let threshold = 1;
-        let prefix_path = params_basics_handles.get_prefix_path() + "/integration";
+        let prefix_path = format!(
+            "{}/{}",
+            params_basics_handles.get_prefix_path(),
+            EXTENSION_DEGREE
+        ) + "/integration";
 
         if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
             .try_exists()
@@ -1276,13 +1408,13 @@ pub mod tests {
 
         run_switch_and_squash(prefix_path.clone(), num_parties, threshold);
 
-        run_tfhe_computation_shortint::<Z128, DKGParamsSnS>(
+        run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsSnS>(
             prefix_path.clone(),
             num_parties,
             threshold,
             true,
         );
-        run_tfhe_computation_fheuint::<Z128, DKGParamsSnS>(
+        run_tfhe_computation_fheuint::<EXTENSION_DEGREE, DKGParamsSnS>(
             prefix_path,
             num_parties,
             threshold,
@@ -1290,33 +1422,52 @@ pub mod tests {
         );
     }
 
-    ///Tests related to [`PARAMS_P32_SNS_FGLWE`]
+    #[cfg(feature = "extension_degree_8")]
     #[test]
     #[ignore]
-    fn keygen_params32_with_sns_fglwe() {
+    fn keygen_params32_with_sns_fglwe_f8() {
+        keygen_params32_with_sns_fglwe::<8>()
+    }
+
+    #[test]
+    #[ignore]
+    fn keygen_params32_with_sns_fglwe_f4() {
+        keygen_params32_with_sns_fglwe::<4>()
+    }
+
+    ///Tests related to [`PARAMS_P32_SNS_FGLWE`]
+    fn keygen_params32_with_sns_fglwe<const EXTENSION_DEGREE: usize>()
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
+    {
         let params = NIST_PARAMS_P32_SNS_FGLWE;
         let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
         let threshold = 1;
-        let prefix_path = params_basics_handles.get_prefix_path();
+        let prefix_path = format!(
+            "{}/{}",
+            params_basics_handles.get_prefix_path(),
+            EXTENSION_DEGREE
+        );
 
         if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
             .try_exists()
             .unwrap()
         {
-            _ = fs::create_dir(prefix_path.clone());
+            _ = fs::create_dir_all(prefix_path.clone());
             run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
         }
 
         run_switch_and_squash(prefix_path.clone(), num_parties, threshold);
 
-        run_tfhe_computation_shortint::<Z128, DKGParamsSnS>(
+        run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsSnS>(
             prefix_path.clone(),
             num_parties,
             threshold,
             true,
         );
-        run_tfhe_computation_fheuint::<Z128, DKGParamsSnS>(
+        run_tfhe_computation_fheuint::<EXTENSION_DEGREE, DKGParamsSnS>(
             prefix_path,
             num_parties,
             threshold,
@@ -1324,28 +1475,47 @@ pub mod tests {
         );
     }
 
-    ///Tests related to [`PARAMS_P8_REAL_WITH_SNS`]
+    #[cfg(feature = "extension_degree_8")]
     #[test]
     #[ignore]
-    fn keygen_params8_with_sns_fglwe() {
+    fn keygen_params8_with_sns_fglwe_f8() {
+        keygen_params8_with_sns_fglwe::<8>()
+    }
+
+    #[test]
+    #[ignore]
+    fn keygen_params8_with_sns_fglwe_f4() {
+        keygen_params8_with_sns_fglwe::<4>()
+    }
+
+    ///Tests related to [`PARAMS_P8_REAL_WITH_SNS`]
+    fn keygen_params8_with_sns_fglwe<const EXTENSION_DEGREE: usize>()
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
+    {
         let params = NIST_PARAMS_P8_SNS_FGLWE;
         let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
         let threshold = 1;
-        let prefix_path = params_basics_handles.get_prefix_path();
+        let prefix_path = format!(
+            "{}/{}",
+            params_basics_handles.get_prefix_path(),
+            EXTENSION_DEGREE
+        );
 
         if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
             .try_exists()
             .unwrap()
         {
-            _ = fs::create_dir(prefix_path.clone());
+            _ = fs::create_dir_all(prefix_path.clone());
             run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
         }
 
         run_switch_and_squash(prefix_path.clone(), num_parties, threshold);
 
         //This parameter set isnt big enough to run the fheuint tests
-        run_tfhe_computation_shortint::<Z128, DKGParamsSnS>(
+        run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsSnS>(
             prefix_path,
             num_parties,
             threshold,
@@ -1353,31 +1523,50 @@ pub mod tests {
         );
     }
 
-    ///Tests related to [`BC_PARAMS_SAM_NO_SNS`]
+    #[cfg(feature = "extension_degree_8")]
     #[test]
     #[ignore]
-    fn keygen_params_blockchain_without_sns() {
+    fn keygen_params_blockchain_without_sns_f8() {
+        keygen_params_blockchain_without_sns::<8>()
+    }
+
+    #[test]
+    #[ignore]
+    fn keygen_params_blockchain_without_sns_f4() {
+        keygen_params_blockchain_without_sns::<4>()
+    }
+
+    ///Tests related to [`BC_PARAMS_SAM_NO_SNS`]
+    fn keygen_params_blockchain_without_sns<const EXTENSION_DEGREE: usize>()
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
+    {
         let params = BC_PARAMS_SAM_NO_SNS;
         let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
         let threshold = 1;
-        let prefix_path = params_basics_handles.get_prefix_path();
+        let prefix_path = format!(
+            "{}/{}",
+            params_basics_handles.get_prefix_path(),
+            EXTENSION_DEGREE
+        );
 
         if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
             .try_exists()
             .unwrap()
         {
-            _ = fs::create_dir(prefix_path.clone());
+            _ = fs::create_dir_all(prefix_path.clone());
             run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
         }
 
-        run_tfhe_computation_shortint::<Z128, DKGParamsRegular>(
+        run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
             prefix_path.clone(),
             num_parties,
             threshold,
             true,
         );
-        run_tfhe_computation_fheuint::<Z128, DKGParamsRegular>(
+        run_tfhe_computation_fheuint::<EXTENSION_DEGREE, DKGParamsRegular>(
             prefix_path,
             num_parties,
             threshold,
@@ -1386,12 +1575,15 @@ pub mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
-    fn run_real_dkg_and_save(
+    fn run_real_dkg_and_save<const EXTENSION_DEGREE: usize>(
         params: DKGParams,
         num_parties: usize,
         threshold: usize,
         prefix_path: String,
-    ) {
+    ) where
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+    {
         use tokio::time::Duration;
 
         use crate::{
@@ -1409,7 +1601,7 @@ pub mod tests {
             .write_to_file(format!("{}/params.json", prefix_path))
             .unwrap();
 
-        let mut task = |mut session: SmallSession<ResiduePolyF8Z128>| async move {
+        let mut task = |mut session: SmallSession<ResiduePoly<Z128, EXTENSION_DEGREE>>| async move {
             session
                 .network()
                 .set_timeout_for_next_round(Duration::from_secs(120))
@@ -1454,19 +1646,15 @@ pub mod tests {
         };
 
         // Sync network because we also init the PRSS in the task
-        let results = execute_protocol_small::<
-            _,
-            _,
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
-        >(
-            num_parties,
-            threshold as u8,
-            None,
-            NetworkMode::Sync,
-            None,
-            &mut task,
-        );
+        let results =
+            execute_protocol_small::<_, _, ResiduePoly<Z128, EXTENSION_DEGREE>, EXTENSION_DEGREE>(
+                num_parties,
+                threshold as u8,
+                None,
+                NetworkMode::Sync,
+                None,
+                &mut task,
+            );
 
         let pk_ref = results[0].1.clone();
 
@@ -1483,12 +1671,15 @@ pub mod tests {
 
     ///Runs the DKG protocol with [`DummyPreprocessing`]
     /// and [`FakeBitGenEven`]. Saves the results to file.
-    fn run_dkg_and_save(
+    fn run_dkg_and_save<const EXTENSION_DEGREE: usize>(
         params: DKGParams,
         num_parties: usize,
         threshold: usize,
         prefix_path: String,
-    ) {
+    ) where
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+    {
         let params_basics_handles = params.get_params_basics_handle();
         params_basics_handles
             .write_to_file(format!("{}/params.json", prefix_path))
@@ -1498,10 +1689,13 @@ pub mod tests {
             let my_role = session.my_role().unwrap();
             let mut large_preproc = DummyPreprocessing::new(0_u64, session.clone());
 
-            let (pk, sk) =
-                distributed_keygen::<Z128, _, _, _, 8>(&mut session, &mut large_preproc, params)
-                    .await
-                    .unwrap();
+            let (pk, sk) = distributed_keygen::<Z128, _, _, _, EXTENSION_DEGREE>(
+                &mut session,
+                &mut large_preproc,
+                params,
+            )
+            .await
+            .unwrap();
 
             (
                 my_role,
@@ -1517,19 +1711,15 @@ pub mod tests {
         //Async because the preprocessing is Dummy
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let results = execute_protocol_large::<
-            _,
-            _,
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
-        >(
-            num_parties,
-            threshold,
-            None,
-            NetworkMode::Async,
-            Some(delay_vec),
-            &mut task,
-        );
+        let results =
+            execute_protocol_large::<_, _, ResiduePoly<Z128, EXTENSION_DEGREE>, EXTENSION_DEGREE>(
+                num_parties,
+                threshold,
+                None,
+                NetworkMode::Async,
+                Some(delay_vec),
+                &mut task,
+            );
 
         let pk_ref = results[0].1.clone();
 
@@ -1545,55 +1735,60 @@ pub mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
-    fn run_homprf_keygen_and_save(
+    fn run_homprf_keygen_and_save<const EXTENSION_DEGREE: usize>(
         params: DKGParams,
         num_parties: usize,
         threshold: usize,
-    ) -> LweBootstrapKey<Vec<u64>> {
-        use crate::algebra::structure_traits::Ring;
+        prefix_path: String,
+    ) -> LweBootstrapKey<Vec<u64>>
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+    {
+        use std::sync::Arc;
 
-        let mut task = |mut session: LargeSession| async move {
+        let arc_prefix_path = Arc::new(prefix_path.clone());
+        let mut task = move |mut session: LargeSession| {
             // assume private key shares exist
             // TODO how to pass it into this closure nicely?
-            let prefix_path = params.get_params_basics_handle().get_prefix_path();
-            let (glwe_key_shares, _) =
-                read_secret_key_shares_from_file(num_parties, params, prefix_path);
+            let (glwe_key_shares, _) = read_secret_key_shares_from_file(
+                num_parties,
+                params,
+                Arc::clone(&arc_prefix_path).to_string(),
+            );
 
-            let my_role = session.my_role().unwrap();
-            let mut large_preproc = DummyPreprocessing::new(1_u64, session.clone());
+            async move {
+                let my_role = session.my_role().unwrap();
+                let mut large_preproc = DummyPreprocessing::new(1_u64, session.clone());
 
-            let share_ref = glwe_key_shares.get(&my_role).unwrap();
-            let share = GlweSecretKeyShare {
-                data: share_ref.to_vec(),
-                polynomial_size: PolynomialSize(share_ref.len()),
-            };
-            let bsk = distributed_homprf_bsk_gen::<_, _, _, _, u64, 8>(
-                &share,
-                &params,
-                &mut large_preproc,
-                &mut session,
-            )
-            .await
-            .unwrap();
-            (my_role, bsk)
+                let share_ref = glwe_key_shares.get(&my_role).unwrap();
+                let share = GlweSecretKeyShare {
+                    data: share_ref.to_vec(),
+                    polynomial_size: PolynomialSize(share_ref.len()),
+                };
+                let bsk = distributed_homprf_bsk_gen::<_, _, _, _, u64, EXTENSION_DEGREE>(
+                    &share,
+                    &params,
+                    &mut large_preproc,
+                    &mut session,
+                )
+                .await
+                .unwrap();
+                (my_role, bsk)
+            }
         };
 
         //Async because the preprocessing is Dummy
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let results = execute_protocol_large::<
-            _,
-            _,
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
-        >(
-            num_parties,
-            threshold,
-            None,
-            NetworkMode::Async,
-            Some(delay_vec),
-            &mut task,
-        );
+        let results =
+            execute_protocol_large::<_, _, ResiduePoly<Z64, EXTENSION_DEGREE>, EXTENSION_DEGREE>(
+                num_parties,
+                threshold,
+                None,
+                NetworkMode::Async,
+                Some(delay_vec),
+                &mut task,
+            );
 
         let bsk_ref = results[0].1.clone();
 
@@ -1601,27 +1796,29 @@ pub mod tests {
             assert_eq!(bsk, bsk_ref);
         }
 
-        let params_basics_handles = params.get_params_basics_handle();
-        write_element(
-            format!("{}/homprf_bsk.der", params_basics_handles.get_prefix_path()),
-            &bsk_ref,
-        )
-        .unwrap();
+        write_element(format!("{}/homprf_bsk.der", prefix_path), &bsk_ref).unwrap();
 
         bsk_ref
     }
 
-    fn run_switch_and_squash(prefix_path: String, num_parties: usize, threshold: usize) {
+    fn run_switch_and_squash<const EXTENSION_DEGREE: usize>(
+        prefix_path: String,
+        num_parties: usize,
+        threshold: usize,
+    ) where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+    {
         let params = DKGParamsSnS::read_from_file(prefix_path.clone() + "/params.json").unwrap();
         let message = (params.get_message_modulus().0 - 1) as u8;
 
-        let sk_lwe = reconstruct_lwe_secret_key_from_file(
+        let sk_lwe = reconstruct_lwe_secret_key_from_file::<EXTENSION_DEGREE, _>(
             num_parties,
             threshold,
             &params,
             prefix_path.clone(),
         );
-        let (sk_glwe, big_sk_glwe) = reconstruct_glwe_secret_key_from_file(
+        let (sk_glwe, big_sk_glwe) = reconstruct_glwe_secret_key_from_file::<EXTENSION_DEGREE>(
             num_parties,
             threshold,
             DKGParams::WithSnS(params),
@@ -1706,19 +1903,24 @@ pub mod tests {
     }
 
     ///Runs only the shortint computation
-    pub fn run_tfhe_computation_shortint<Z: BaseRing, Params: DKGParamsBasics>(
+    pub fn run_tfhe_computation_shortint<const EXTENSION_DEGREE: usize, Params: DKGParamsBasics>(
         prefix_path: String,
         num_parties: usize,
         threshold: usize,
         with_compact: bool,
     ) where
-        ResiduePolyF8<Z>: ErrorCorrect,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
     {
         let params = Params::read_from_file(prefix_path.clone() + "/params.json")
             .unwrap()
             .to_dkg_params();
-        let (shortint_sk, pk) =
-            retrieve_keys_from_files::<Z>(params, num_parties, threshold, prefix_path);
+        let (shortint_sk, pk) = retrieve_keys_from_files::<EXTENSION_DEGREE>(
+            params,
+            num_parties,
+            threshold,
+            prefix_path,
+        );
         let pub_key_set = pk.to_pubkeyset(params);
 
         set_server_key(pub_key_set.server_key);
@@ -1744,19 +1946,24 @@ pub mod tests {
     }
 
     ///Runs both shortint and fheuint computation
-    fn run_tfhe_computation_fheuint<Z: BaseRing, Params: DKGParamsBasics>(
+    fn run_tfhe_computation_fheuint<const EXTENSION_DEGREE: usize, Params: DKGParamsBasics>(
         prefix_path: String,
         num_parties: usize,
         threshold: usize,
         do_compression_test: bool,
     ) where
-        ResiduePolyF8<Z>: ErrorCorrect,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
     {
         let params = Params::read_from_file(prefix_path.clone() + "/params.json")
             .unwrap()
             .to_dkg_params();
-        let (shortint_sk, pk) =
-            retrieve_keys_from_files::<Z>(params, num_parties, threshold, prefix_path);
+        let (shortint_sk, pk) = retrieve_keys_from_files::<EXTENSION_DEGREE>(
+            params,
+            num_parties,
+            threshold,
+            prefix_path,
+        );
 
         let pub_key_set = pk.to_pubkeyset(params);
 
@@ -1778,26 +1985,27 @@ pub mod tests {
 
     ///Read files created by [`run_dkg_and_save`] and reconstruct the secret keys
     ///from the parties' shares
-    fn retrieve_keys_from_files<Z: BaseRing>(
+    fn retrieve_keys_from_files<const EXTENSION_DEGREE: usize>(
         params: DKGParams,
         num_parties: usize,
         threshold: usize,
         prefix_path: String,
     ) -> (tfhe::shortint::ClientKey, RawPubKeySet)
     where
-        ResiduePolyF8<Z>: ErrorCorrect,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
     {
         let params_tfhe_rs = params
             .get_params_basics_handle()
             .to_classic_pbs_parameters();
 
-        let lwe_secret_key = reconstruct_lwe_secret_key_from_file(
+        let lwe_secret_key = reconstruct_lwe_secret_key_from_file::<EXTENSION_DEGREE, _>(
             num_parties,
             threshold,
             params.get_params_basics_handle(),
             prefix_path.clone(),
         );
-        let (glwe_secret_key, _) = reconstruct_glwe_secret_key_from_file(
+        let (glwe_secret_key, _) = reconstruct_glwe_secret_key_from_file::<EXTENSION_DEGREE>(
             num_parties,
             threshold,
             params,
@@ -1949,28 +2157,40 @@ pub mod tests {
     // against the plaintext output. But no plaintext implementation
     // of the PRF exists so we simply check that the PRF output
     // is different when the PRF key is different.
+    #[cfg(all(feature = "slow_tests", feature = "extension_degree_8"))]
+    #[test]
+    fn keygen_params32_no_sns_fglwe_w_homprf_f8() {
+        keygen_params32_no_sns_fglwe_w_homprf::<8>()
+    }
+
     #[cfg(feature = "slow_tests")]
     #[test]
-    fn keygen_params32_no_sns_fglwe_w_homprf() {
+    fn keygen_params32_no_sns_fglwe_w_homprf_f4() {
+        keygen_params32_no_sns_fglwe_w_homprf::<4>()
+    }
+
+    #[cfg(feature = "slow_tests")]
+    fn keygen_params32_no_sns_fglwe_w_homprf<const EXTENSION_DEGREE: usize>()
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+    {
         let params = PARAMS_TEST_BK_SNS.get_params_without_sns();
         let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 2;
         let threshold = 0;
-
-        if !std::path::Path::new(&params_basics_handles.get_prefix_path())
-            .try_exists()
-            .unwrap()
-        {
-            _ = fs::create_dir(params_basics_handles.get_prefix_path());
-            run_dkg_and_save(
-                params,
-                num_parties,
-                threshold,
-                params_basics_handles.get_prefix_path(),
-            );
-        }
-        run_tfhe_computation_shortint::<Z128, DKGParamsRegular>(
+        let prefix_path = format!(
+            "{}/{}",
             params_basics_handles.get_prefix_path(),
+            EXTENSION_DEGREE
+        );
+
+        if !std::path::Path::new(&prefix_path).try_exists().unwrap() {
+            fs::create_dir_all(prefix_path.clone()).unwrap();
+            run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
+        }
+        run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
+            prefix_path.clone(),
             num_parties,
             threshold,
             true,
@@ -1978,19 +2198,19 @@ pub mod tests {
 
         // generate new bsk used for the hom-prf
         // this assumes the regular evaluation keys exist
-        let homprf_bsk_path = format!("{}/homprf_bsk.der", params_basics_handles.get_prefix_path());
+        let homprf_bsk_path = format!("{}/homprf_bsk.der", prefix_path);
         let homprf_bsk = if std::path::Path::new(&homprf_bsk_path).try_exists().unwrap() {
             read_element(homprf_bsk_path).unwrap()
         } else {
-            run_homprf_keygen_and_save(params, num_parties, threshold)
+            run_homprf_keygen_and_save(params, num_parties, threshold, prefix_path.clone())
         };
 
         // we need to create a new ServerKey with the new bsk
-        let (sk, pk) = retrieve_keys_from_files::<Z128>(
+        let (sk, pk) = retrieve_keys_from_files::<EXTENSION_DEGREE>(
             params,
             num_parties,
             threshold,
-            params_basics_handles.get_prefix_path(),
+            prefix_path,
         );
         let orig_pk = pk.compute_tfhe_shortint_server_key(params);
         let mut homprf_pk = orig_pk.clone();

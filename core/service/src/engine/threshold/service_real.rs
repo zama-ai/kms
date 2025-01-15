@@ -39,7 +39,7 @@ use conf_trace::metrics_names::{
     OP_REENCRYPT, TAG_CIPHERTEXT_ID, TAG_PARTY_ID,
 };
 use distributed_decryption::algebra::galois_rings::common::pack_residue_poly;
-use distributed_decryption::algebra::galois_rings::degree_8::ResiduePolyF8Z128;
+use distributed_decryption::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
 use distributed_decryption::algebra::structure_traits::Ring;
 use distributed_decryption::conf::party::CertificatePaths;
 use distributed_decryption::execution::endpoints::decryption::{
@@ -197,7 +197,7 @@ pub enum ThresholdFheKeysVersioned {
 #[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
 #[versionize(ThresholdFheKeysVersioned)]
 pub struct ThresholdFheKeys {
-    pub private_keys: PrivateKeySet<{ ResiduePolyF8Z128::EXTENSION_DEGREE }>,
+    pub private_keys: PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
     pub sns_key: SwitchAndSquashKey,
     pub decompression_key: Option<DecompressionKey>,
     pub pk_meta_data: KeyGenCallValues,
@@ -207,7 +207,7 @@ impl Named for ThresholdFheKeys {
     const NAME: &'static str = "ThresholdFheKeys";
 }
 
-type BucketMetaStore = Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF8Z128>>>>;
+type BucketMetaStore = Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF4Z128>>>>;
 
 /// Compute all the info of a [FhePubKeySet] and return the result as as [KeyGenCallValues]
 pub fn compute_all_info(
@@ -280,7 +280,7 @@ async fn new_real_threshold_kms<PubS, PrivS, BackS, F>(
     listen_address: &str,
     listen_port: u16,
     my_id: usize,
-    preproc_factory: Box<dyn PreprocessorFactory<{ ResiduePolyF8Z128::EXTENSION_DEGREE }>>,
+    preproc_factory: Box<dyn PreprocessorFactory<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
     num_sessions_preproc: u16,
     peer_configs: Vec<PeerConf>,
     public_storage: PubS,
@@ -628,7 +628,7 @@ struct SessionPreparer {
     my_id: usize,
     role_assignments: RoleAssignment,
     networking_strategy: Arc<RwLock<NetworkingStrategy>>,
-    prss_setup: Arc<RwLock<Option<PRSSSetup<ResiduePolyF8Z128>>>>,
+    prss_setup: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>,
 }
 
 impl SessionPreparer {
@@ -671,7 +671,7 @@ impl SessionPreparer {
     async fn prepare_ddec_data_from_requestid(
         &self,
         request_id: &RequestId,
-    ) -> anyhow::Result<SmallSession<ResiduePolyF8Z128>> {
+    ) -> anyhow::Result<SmallSession<ResiduePolyF4Z128>> {
         self.prepare_ddec_data_from_sessionid(SessionId(request_id.clone().try_into()?))
             .await
     }
@@ -679,7 +679,7 @@ impl SessionPreparer {
     async fn prepare_ddec_data_from_sessionid(
         &self,
         session_id: SessionId,
-    ) -> anyhow::Result<SmallSession<ResiduePolyF8Z128>> {
+    ) -> anyhow::Result<SmallSession<ResiduePolyF4Z128>> {
         //DDec for small session is only online, so requires only Async network
         let base_session = self
             .make_base_session(session_id, NetworkMode::Async)
@@ -712,7 +712,7 @@ impl SessionPreparer {
 
 pub struct RealInitiator<PrivS: Storage + Send + Sync + 'static> {
     // TODO eventually add mode to allow for nlarge as well.
-    prss_setup: Arc<RwLock<Option<PRSSSetup<ResiduePolyF8Z128>>>>,
+    prss_setup: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>,
     private_storage: Arc<Mutex<PrivS>>,
     session_preparer: SessionPreparer,
     health_reporter: Arc<RwLock<HealthReporter>>,
@@ -779,7 +779,7 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
             .await?;
 
         tracing::info!("Starting PRSS for identity {}.", own_identity);
-        let prss_setup_obj: PRSSSetup<ResiduePolyF8Z128> =
+        let prss_setup_obj: PRSSSetup<ResiduePolyF4Z128> =
             PRSSSetup::robust_init(&mut base_session, &RealVss::default()).await?;
 
         let mut guarded_prss_setup = self.prss_setup.write().await;
@@ -850,8 +850,8 @@ impl<
     /// This function does not perform reencryption in a background thread.
     #[allow(clippy::too_many_arguments)]
     async fn inner_reencrypt(
-        session: &mut SmallSession<ResiduePolyF8Z128>,
-        protocol: &mut Small<{ ResiduePolyF8Z128::EXTENSION_DEGREE }>,
+        session: &mut SmallSession<ResiduePolyF4Z128>,
+        protocol: &mut Small<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         rng: &mut (impl CryptoRng + RngCore),
         ct: &[u8],
         fhe_type: FheType,
@@ -1117,8 +1117,8 @@ impl<
     /// Helper method for decryption which carries out the actual threshold decryption using noise
     /// flooding.
     async fn inner_decrypt<T>(
-        session: &mut SmallSession<ResiduePolyF8Z128>,
-        protocol: &mut Small<{ ResiduePolyF8Z128::EXTENSION_DEGREE }>,
+        session: &mut SmallSession<ResiduePolyF4Z128>,
+        protocol: &mut Small<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         ct: &[u8],
         fhe_type: FheType,
         fhe_keys: OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>,
@@ -1545,7 +1545,7 @@ impl<
 // more clear to label the variants as `Secure`
 // and `Insecure`.
 enum PreprocHandleWithMode {
-    Secure(Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF8Z128>>>>),
+    Secure(Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF4Z128>>>>),
     Insecure,
 }
 
@@ -1814,10 +1814,10 @@ impl<
 
 pub struct RealPreprocessor {
     // TODO eventually add mode to allow for nlarge as well.
-    prss_setup: Arc<RwLock<Option<PRSSSetup<ResiduePolyF8Z128>>>>,
+    prss_setup: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>,
     preproc_buckets: Arc<RwLock<MetaStore<BucketMetaStore>>>,
     preproc_factory:
-        Arc<Mutex<Box<dyn PreprocessorFactory<{ ResiduePolyF8Z128::EXTENSION_DEGREE }>>>>,
+        Arc<Mutex<Box<dyn PreprocessorFactory<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>>>,
     num_sessions_preproc: u16,
     session_preparer: SessionPreparer,
     tracker: Arc<TaskTracker>,
@@ -1896,17 +1896,17 @@ impl RealPreprocessor {
         req_id: &RequestId,
         base_sessions: Vec<BaseSessionStruct<AesRng, SessionParameters>>,
         bucket_store: Arc<RwLock<MetaStore<BucketMetaStore>>>,
-        prss_setup: PRSSSetup<ResiduePolyF8Z128>,
+        prss_setup: PRSSSetup<ResiduePolyF4Z128>,
         own_identity: Identity,
         params: DKGParams,
-        factory: Arc<Mutex<Box<dyn PreprocessorFactory<{ ResiduePolyF8Z128::EXTENSION_DEGREE }>>>>,
+        factory: Arc<Mutex<Box<dyn PreprocessorFactory<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>>>,
         permit: OwnedSemaphorePermit,
     ) {
         let _permit = permit; // dropped at the end of the function
         fn create_sessions(
             base_sessions: Vec<BaseSessionStruct<AesRng, SessionParameters>>,
-            prss_setup: PRSSSetup<ResiduePolyF8Z128>,
-        ) -> Vec<SmallSession<ResiduePolyF8Z128>> {
+            prss_setup: PRSSSetup<ResiduePolyF4Z128>,
+        ) -> Vec<SmallSession<ResiduePolyF4Z128>> {
             base_sessions
                 .into_iter()
                 .map(|base_session| {
@@ -1919,7 +1919,7 @@ impl RealPreprocessor {
         let orchestrator = {
             let mut factory_guard = factory.lock().await;
             let factory = factory_guard.as_mut();
-            PreprocessingOrchestrator::<ResiduePolyF8Z128>::new(factory, params).unwrap()
+            PreprocessingOrchestrator::<ResiduePolyF4Z128>::new(factory, params).unwrap()
         };
         tracing::info!("Starting Preproc Orchestration on P[{:?}]", own_identity);
         let preproc_result = orchestrator

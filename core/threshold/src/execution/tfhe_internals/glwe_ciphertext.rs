@@ -208,7 +208,7 @@ mod tests {
     };
 
     use crate::{
-        algebra::{galois_rings::degree_8::ResiduePolyF8Z64, structure_traits::Ring},
+        algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring},
         execution::{
             online::{
                 gen_bits::{BitGenEven, RealBitGenEven},
@@ -259,7 +259,7 @@ mod tests {
                 .map(|idx| {
                     ShamirSharings::share(
                         &mut AesRng::seed_from_u64(idx as u64),
-                        ResiduePolyF8Z64::from_scalar(Wrapping(msg << scaling)),
+                        ResiduePolyF4Z64::from_scalar(Wrapping(msg << scaling)),
                         session.num_parties(),
                         session.threshold() as usize,
                     )
@@ -321,8 +321,8 @@ mod tests {
         let results = execute_protocol_large::<
             _,
             _,
-            ResiduePolyF8Z64,
-            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+            ResiduePolyF4Z64,
+            { ResiduePolyF4Z64::EXTENSION_DEGREE },
         >(
             parties,
             threshold,

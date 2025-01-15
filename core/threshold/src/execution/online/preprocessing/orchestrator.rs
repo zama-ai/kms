@@ -925,9 +925,9 @@ mod tests {
 
     use crate::{
         algebra::{
-            base_ring::Z64,
-            galois_rings::degree_8::ResiduePolyF8Z64,
-            structure_traits::{One, Ring, Zero},
+            base_ring::{Z128, Z64},
+            galois_rings::common::ResiduePoly,
+            structure_traits::{Derive, ErrorCorrect, Invert, One, Solve, Zero},
         },
         execution::{
             online::{
@@ -1005,12 +1005,14 @@ mod tests {
         Randoms,
         Bits,
     }
-    fn check_triples_reconstruction(
-        all_parties_channels: Vec<ReceiverChannelCollection<ResiduePolyF8Z64>>,
+    fn check_triples_reconstruction<const EXTENSION_DEGREE: usize>(
+        all_parties_channels: Vec<ReceiverChannelCollection<ResiduePoly<Z64, EXTENSION_DEGREE>>>,
         identities: &[Identity],
         num_triples: usize,
         threshold: usize,
-    ) {
+    ) where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+    {
         let mut triple_preprocs = all_parties_channels
             .into_iter()
             .map(|channels| {
@@ -1066,12 +1068,14 @@ mod tests {
         }
     }
 
-    fn check_bits_reconstruction(
-        all_parties_channels: Vec<ReceiverChannelCollection<ResiduePolyF8Z64>>,
+    fn check_bits_reconstruction<const EXTENSION_DEGREE: usize>(
+        all_parties_channels: Vec<ReceiverChannelCollection<ResiduePoly<Z64, EXTENSION_DEGREE>>>,
         identities: &[Identity],
         num_bits: usize,
         threshold: usize,
-    ) {
+    ) where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+    {
         let mut bit_preprocs = all_parties_channels
             .into_iter()
             .map(|channels| {
@@ -1115,12 +1119,14 @@ mod tests {
         }
     }
 
-    fn check_randomness_reconstruction(
-        all_parties_channels: Vec<ReceiverChannelCollection<ResiduePolyF8Z64>>,
+    fn check_randomness_reconstruction<const EXTENSION_DEGREE: usize>(
+        all_parties_channels: Vec<ReceiverChannelCollection<ResiduePoly<Z64, EXTENSION_DEGREE>>>,
         identities: &[Identity],
         num_randomness: usize,
         threshold: usize,
-    ) {
+    ) where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+    {
         let mut random_preprocs = all_parties_channels
             .into_iter()
             .map(|channels| {
@@ -1166,7 +1172,7 @@ mod tests {
         }
     }
 
-    fn test_orchestrator_large(
+    fn test_orchestrator_large<const EXTENSION_DEGREE: usize>(
         num_sessions: u128,
         num_correlations: usize,
         batch_size: usize,
@@ -1175,21 +1181,24 @@ mod tests {
         type_orchestration: TypeOrchestration,
     ) -> (
         Vec<Identity>,
-        Vec<ReceiverChannelCollection<ResiduePolyF8Z64>>,
-    ) {
+        Vec<ReceiverChannelCollection<ResiduePoly<Z64, EXTENSION_DEGREE>>>,
+    )
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+    {
         //Create identities and runtime
         let identities = generate_fixed_identities(num_parties);
         // Preprocessing assumes Sync network
-        let runtimes = (0..num_sessions)
-            .map(|_| {
-                DistributedTestRuntime::<ResiduePolyF8Z64, {ResiduePolyF8Z64::EXTENSION_DEGREE}>::new(
-                    identities.clone(),
-                    threshold,
-                    NetworkMode::Sync,
-                    None,
-                )
-            })
-            .collect_vec();
+        let runtimes =
+            (0..num_sessions)
+                .map(|_| {
+                    DistributedTestRuntime::<
+                    ResiduePoly<Z64, EXTENSION_DEGREE>,
+                    EXTENSION_DEGREE ,
+                >::new(identities.clone(), threshold, NetworkMode::Sync, None)
+                })
+                .collect_vec();
         let runtimes = Arc::new(runtimes);
 
         let mut handles = OsThreadGroup::new();
@@ -1218,11 +1227,12 @@ mod tests {
                 //DKGParams just for being able to call new (no SNS for ResiduePolyF8Z64)
                 let params = NIST_PARAMS_P8_NO_SNS_FGLWE;
 
-                let orchestrator = PreprocessingOrchestrator::<ResiduePolyF8Z64>::new(
-                    inmemory_factory.as_mut(),
-                    params,
-                )
-                .unwrap();
+                let orchestrator =
+                    PreprocessingOrchestrator::<ResiduePoly<Z64, EXTENSION_DEGREE>>::new(
+                        inmemory_factory.as_mut(),
+                        params,
+                    )
+                    .unwrap();
 
                 let (
                     (triple_sender_channels, triple_receiver_channels),
@@ -1270,8 +1280,22 @@ mod tests {
         (identities, channels)
     }
 
+    #[cfg(feature = "extension_degree_8")]
     #[test]
-    fn test_triple_orchestrator_large() {
+    fn test_triple_orchestrator_large_f8() {
+        test_triple_orchestrator_large::<8>()
+    }
+
+    #[test]
+    fn test_triple_orchestrator_large_f4() {
+        test_triple_orchestrator_large::<4>()
+    }
+
+    fn test_triple_orchestrator_large<const EXTENSION_DEGREE: usize>()
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+    {
         let num_parties = 5;
         let threshold = 1;
         let num_sessions = 5;
@@ -1282,7 +1306,7 @@ mod tests {
         //Want 1k, so each session needs running twice (5 sessions, each batch is 100)
         let num_triples = num_sessions * batch_size * TEST_NUM_LOOP;
 
-        let (identities, all_parties_channels) = test_orchestrator_large(
+        let (identities, all_parties_channels) = test_orchestrator_large::<EXTENSION_DEGREE>(
             num_sessions as u128,
             num_triples,
             batch_size,
@@ -1299,8 +1323,22 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "extension_degree_8")]
     #[test]
-    fn test_bit_orchestrator_large() {
+    fn test_bit_orchestrator_large_f8() {
+        test_bit_orchestrator_large::<8>()
+    }
+
+    #[test]
+    fn test_bit_orchestrator_large_f4() {
+        test_bit_orchestrator_large::<4>()
+    }
+
+    fn test_bit_orchestrator_large<const EXTENSION_DEGREE: usize>()
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+    {
         let num_parties = 5;
         let threshold = 1;
         let num_sessions = 5;
@@ -1311,7 +1349,7 @@ mod tests {
         //Want 1k, so each session needs running twice (5 sessions, each batch is 100)
         let num_bits = num_sessions * batch_size * TEST_NUM_LOOP;
 
-        let (identities, all_parties_channels) = test_orchestrator_large(
+        let (identities, all_parties_channels) = test_orchestrator_large::<EXTENSION_DEGREE>(
             num_sessions as u128,
             num_bits,
             batch_size,
@@ -1328,8 +1366,22 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "extension_degree_8")]
     #[test]
-    fn test_random_orchestrator_large() {
+    fn test_random_orchestrator_large_f8() {
+        test_random_orchestrator_large::<8>()
+    }
+
+    #[test]
+    fn test_random_orchestrator_large_f4() {
+        test_random_orchestrator_large::<4>()
+    }
+
+    fn test_random_orchestrator_large<const EXTENSION_DEGREE: usize>()
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+    {
         let num_parties = 5;
         let threshold = 1;
         let num_sessions = 5;
@@ -1340,7 +1392,7 @@ mod tests {
         //Want 1k, so each session needs running twice (5 sessions, each batch is 100)
         let num_randomness = num_sessions * batch_size * TEST_NUM_LOOP;
 
-        let (identities, all_parties_channels) = test_orchestrator_large(
+        let (identities, all_parties_channels) = test_orchestrator_large::<EXTENSION_DEGREE>(
             num_sessions as u128,
             num_randomness,
             batch_size,
@@ -1357,7 +1409,7 @@ mod tests {
         );
     }
 
-    fn test_orchestrator_small(
+    fn test_orchestrator_small<const EXTENSION_DEGREE: usize>(
         num_sessions: u128,
         num_correlations: usize,
         batch_size: usize,
@@ -1366,14 +1418,18 @@ mod tests {
         type_orchestration: TypeOrchestration,
     ) -> (
         Vec<Identity>,
-        Vec<ReceiverChannelCollection<ResiduePolyF8Z64>>,
-    ) {
+        Vec<ReceiverChannelCollection<ResiduePoly<Z64, EXTENSION_DEGREE>>>,
+    )
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+    {
         //Create identities and runtime
         let identities = generate_fixed_identities(num_parties);
         // Preprocessing assumes Sync network
         let runtimes = (0..num_sessions)
             .map(|_| {
-                DistributedTestRuntime::<ResiduePolyF8Z64, {ResiduePolyF8Z64::EXTENSION_DEGREE}>::new(
+                DistributedTestRuntime::<ResiduePoly<Z64, EXTENSION_DEGREE>, EXTENSION_DEGREE>::new(
                     identities.clone(),
                     threshold,
                     NetworkMode::Sync,
@@ -1407,11 +1463,12 @@ mod tests {
                 //DKGParams just for being able to call new (no SNS for ResiduePolyF8Z64)
                 let params = NIST_PARAMS_P8_NO_SNS_FGLWE;
 
-                let orchestrator = PreprocessingOrchestrator::<ResiduePolyF8Z64>::new(
-                    inmemory_factory.as_mut(),
-                    params,
-                )
-                .unwrap();
+                let orchestrator =
+                    PreprocessingOrchestrator::<ResiduePoly<Z64, EXTENSION_DEGREE>>::new(
+                        inmemory_factory.as_mut(),
+                        params,
+                    )
+                    .unwrap();
 
                 let (
                     (triple_sender_channels, triple_receiver_channels),
@@ -1459,8 +1516,22 @@ mod tests {
         (identities, channels)
     }
 
+    #[cfg(feature = "extension_degree_8")]
     #[test]
-    fn test_triple_orchestrator_small() {
+    fn test_triple_orchestrator_small_f8() {
+        test_triple_orchestrator_small::<8>()
+    }
+
+    #[test]
+    fn test_triple_orchestrator_small_f4() {
+        test_triple_orchestrator_small::<4>()
+    }
+
+    fn test_triple_orchestrator_small<const EXTENSION_DEGREE: usize>()
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+    {
         let num_parties = 5;
         let threshold = 1;
         let num_sessions = 5;
@@ -1471,7 +1542,7 @@ mod tests {
         //Want 1k, so each session needs running twice (5 sessions, each batch is 100)
         let num_triples = num_sessions * batch_size * TEST_NUM_LOOP;
 
-        let (identities, all_parties_channels) = test_orchestrator_small(
+        let (identities, all_parties_channels) = test_orchestrator_small::<EXTENSION_DEGREE>(
             num_sessions as u128,
             num_triples,
             batch_size,
@@ -1488,8 +1559,22 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "extension_degree_8")]
     #[test]
-    fn test_bit_orchestrator_small() {
+    fn test_bit_orchestrator_small_f8() {
+        test_bit_orchestrator_small::<8>()
+    }
+
+    #[test]
+    fn test_bit_orchestrator_small_f4() {
+        test_bit_orchestrator_small::<4>()
+    }
+
+    fn test_bit_orchestrator_small<const EXTENSION_DEGREE: usize>()
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+    {
         let num_parties = 5;
         let threshold = 1;
         let num_sessions = 5;
@@ -1500,7 +1585,7 @@ mod tests {
         //Want 1k, so each session needs running twice (5 sessions, each batch is 100)
         let num_bits = num_sessions * batch_size * TEST_NUM_LOOP;
 
-        let (identities, all_parties_channels) = test_orchestrator_small(
+        let (identities, all_parties_channels) = test_orchestrator_small::<EXTENSION_DEGREE>(
             num_sessions as u128,
             num_bits,
             batch_size,
@@ -1517,8 +1602,22 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "extension_degree_8")]
     #[test]
-    fn test_randomness_orchestrator_small() {
+    fn test_randomness_orchestrator_small_f8() {
+        test_randomness_orchestrator_small::<8>()
+    }
+
+    #[test]
+    fn test_randomness_orchestrator_small_f4() {
+        test_randomness_orchestrator_small::<4>()
+    }
+
+    fn test_randomness_orchestrator_small<const EXTENSION_DEGREE: usize>()
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+    {
         let num_parties = 5;
         let threshold = 1;
         let num_sessions = 5;
@@ -1529,7 +1628,7 @@ mod tests {
         //Want 1k, so each session needs running twice (5 sessions, each batch is 100)
         let num_randomness = num_sessions * batch_size * TEST_NUM_LOOP;
 
-        let (identities, all_parties_channels) = test_orchestrator_small(
+        let (identities, all_parties_channels) = test_orchestrator_small::<EXTENSION_DEGREE>(
             num_sessions as u128,
             num_randomness,
             batch_size,

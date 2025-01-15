@@ -920,8 +920,8 @@ fn round_4_fix_conflicts<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSession
 pub(crate) mod tests {
     use super::*;
     use crate::algebra::bivariate::{BivariateEval, BivariatePoly};
-    use crate::algebra::galois_rings::degree_8::{
-        ResiduePolyF8, ResiduePolyF8Z128, ResiduePolyF8Z64,
+    use crate::algebra::galois_rings::degree_4::{
+        ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64,
     };
     use crate::algebra::structure_traits::{ErrorCorrect, Invert};
     use crate::execution::runtime::session::SmallSession;
@@ -951,7 +951,7 @@ pub(crate) mod tests {
     fn setup_parties_and_secret(
         num_parties: usize,
         num_secrets: usize,
-    ) -> (Vec<Identity>, Vec<Vec<ResiduePolyF8Z128>>) {
+    ) -> (Vec<Identity>, Vec<Vec<ResiduePolyF4Z128>>) {
         let identities: Vec<Identity> = (0..num_parties)
             .map(|party_nb| {
                 let mut id_str = "localhost:500".to_owned();
@@ -963,11 +963,11 @@ pub(crate) mod tests {
         let secret_f = |secret: usize| {
             (0..num_secrets)
                 .map(|i| {
-                    ResiduePolyF8Z128::from_scalar(Wrapping(((secret + 1) * i).try_into().unwrap()))
+                    ResiduePolyF4Z128::from_scalar(Wrapping(((secret + 1) * i).try_into().unwrap()))
                 })
                 .collect_vec()
         };
-        let secrets: Vec<Vec<ResiduePolyF8Z128>> = (0..num_parties).map(secret_f).collect();
+        let secrets: Vec<Vec<ResiduePolyF4Z128>> = (0..num_parties).map(secret_f).collect();
 
         (identities, secrets)
     }
@@ -981,8 +981,8 @@ pub(crate) mod tests {
         let threshold = 1;
         // VSS assumes sync network
         let runtime = DistributedTestRuntime::<
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >::new(identities.clone(), threshold, NetworkMode::Sync, None);
         let session_id = SessionId(1);
 
@@ -1057,8 +1057,8 @@ pub(crate) mod tests {
         let threshold = 1;
         // VSS assumes sync network
         let runtime = DistributedTestRuntime::<
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >::new(identities.clone(), threshold, NetworkMode::Sync, None);
         let session_id = SessionId(1);
 
@@ -1092,8 +1092,8 @@ pub(crate) mod tests {
         //Check that bivariate polynomial has correct 0 coeffs
         //Also check that both univariate polynomial interpolate to secret
         for (party_nb, result) in results.clone().iter() {
-            let x_0 = ResiduePolyF8::from_scalar(Wrapping(0));
-            let y_0 = ResiduePolyF8::from_scalar(Wrapping(0));
+            let x_0 = ResiduePolyF4::from_scalar(Wrapping(0));
+            let y_0 = ResiduePolyF4::from_scalar(Wrapping(0));
             let expected_secret = &secrets[*party_nb];
             assert_eq!(
                 &result
@@ -1106,7 +1106,7 @@ pub(crate) mod tests {
             //Check that received share come from bivariate pol
             for (pn, r) in results.clone().iter() {
                 if pn != party_nb {
-                    let embedded_pn = ResiduePolyF8Z128::embed_exceptional_set(pn + 1).unwrap();
+                    let embedded_pn = ResiduePolyF4Z128::embed_exceptional_set(pn + 1).unwrap();
                     let expected_result_x = result
                         .my_poly
                         .iter()
@@ -1143,7 +1143,7 @@ pub(crate) mod tests {
             let mut vec_y = Vec::with_capacity(4);
             for (pn, r) in results.clone().iter() {
                 if pn != party_nb {
-                    let point_pn = ResiduePolyF8Z128::embed_exceptional_set(0).unwrap();
+                    let point_pn = ResiduePolyF4Z128::embed_exceptional_set(0).unwrap();
                     vec_x.push(
                         (0..num_secrets)
                             .map(|i| {
@@ -1428,7 +1428,7 @@ pub(crate) mod tests {
     #[case(TestingParameters::init_honest(7, 2, Some(6)), 5)]
     #[case(TestingParameters::init_honest(10, 3, Some(7)), 5)]
     fn test_vss_small_honest(#[case] params: TestingParameters, #[case] num_secrets: usize) {
-        test_vss_small::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }>(
+        test_vss_small::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>(
             params,
             num_secrets,
         )
@@ -1526,12 +1526,12 @@ pub(crate) mod tests {
     #[case(TestingParameters::init_honest(10, 3, Some(7)), 5)]
     fn test_vss_honest_z128(#[case] params: TestingParameters, #[case] num_secrets: usize) {
         let malicious_vss = RealVss::default();
-        test_vss_strategies_large::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
+        test_vss_strategies_large::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             num_secrets,
             malicious_vss.clone(),
         );
-        test_vss_strategies_large::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }, _>(
+        test_vss_strategies_large::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             num_secrets,
             malicious_vss.clone(),
@@ -1544,12 +1544,12 @@ pub(crate) mod tests {
     #[case(TestingParameters::init(7,2,&[0,2],&[],&[],true,None), 4)]
     fn test_vss_wrong_secret_len(#[case] params: TestingParameters, #[case] num_secrets: usize) {
         let wrong_secret_len_vss = WrongSecretLenVss::default();
-        test_vss_strategies_large::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
+        test_vss_strategies_large::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             num_secrets,
             wrong_secret_len_vss.clone(),
         );
-        test_vss_strategies_large::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }, _>(
+        test_vss_strategies_large::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             num_secrets,
             wrong_secret_len_vss.clone(),
@@ -1571,12 +1571,12 @@ pub(crate) mod tests {
     #[case(TestingParameters::init(7,2,&[5,6],&[],&[],true,None), 2)]
     fn test_vss_dropping_from_start(#[case] params: TestingParameters, #[case] num_secrets: usize) {
         let dropping_vss_from_start = DroppingVssFromStart::default();
-        test_vss_strategies_large::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
+        test_vss_strategies_large::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             num_secrets,
             dropping_vss_from_start.clone(),
         );
-        test_vss_strategies_large::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }, _>(
+        test_vss_strategies_large::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             num_secrets,
             dropping_vss_from_start.clone(),
@@ -1604,12 +1604,12 @@ pub(crate) mod tests {
         let malicious_vss_r1 = MaliciousVssR1 {
             roles_to_lie_to: roles_from_idxs(&params.roles_to_lie_to),
         };
-        test_vss_strategies_large::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
+        test_vss_strategies_large::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             num_secrets,
             malicious_vss_r1.clone(),
         );
-        test_vss_strategies_large::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }, _>(
+        test_vss_strategies_large::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             num_secrets,
             malicious_vss_r1.clone(),
@@ -1630,12 +1630,12 @@ pub(crate) mod tests {
     #[case(TestingParameters::init(7,2,&[5,6],&[],&[],true,None), 2)]
     fn test_vss_dropout_after_r1(#[case] params: TestingParameters, #[case] num_secrets: usize) {
         let dropping_vss_after_r1 = DroppingVssAfterR1::default();
-        test_vss_strategies_large::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
+        test_vss_strategies_large::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             num_secrets,
             dropping_vss_after_r1.clone(),
         );
-        test_vss_strategies_large::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }, _>(
+        test_vss_strategies_large::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             num_secrets,
             dropping_vss_after_r1.clone(),
@@ -1656,12 +1656,12 @@ pub(crate) mod tests {
     #[case(TestingParameters::init(7,2,&[5,6],&[],&[],false,None), 2)]
     fn test_dropout_r3(#[case] params: TestingParameters, #[case] num_secrets: usize) {
         let dropping_vss_after_r2 = DroppingVssAfterR2::default();
-        test_vss_strategies_large::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
+        test_vss_strategies_large::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             num_secrets,
             dropping_vss_after_r2.clone(),
         );
-        test_vss_strategies_large::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }, _>(
+        test_vss_strategies_large::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             num_secrets,
             dropping_vss_after_r2.clone(),

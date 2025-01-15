@@ -503,14 +503,17 @@ where
                 output_reader.read(&mut challenges_idx);
                 let challenges = challenges_idx
                     .iter()
-                    .map(|idx| Self::bit_lift_from_idx(*idx as usize, 0).unwrap())
+                    .map(|idx| {
+                        Self::bit_lift_from_idx((*idx as usize) % (1 << EXTENSION_DEGREE), 0)
+                            .unwrap()
+                    })
                     .collect_vec();
                 (*role, challenges)
             })
             .collect()
     }
 
-    const SIZE_EXCEPTIONAL_SET: usize = Self::QUOTIENT_OUTPUT_SIZE;
+    const LOG_SIZE_EXCEPTIONAL_SET: usize = Self::QUOTIENT_OUTPUT_SIZE.ilog2() as usize;
 }
 
 impl<const EXTENSION_DEGREE: usize> Derive for ResiduePoly<Z64, EXTENSION_DEGREE>
@@ -548,14 +551,17 @@ where
                 output_reader.read(&mut challenges_idx);
                 let challenges = challenges_idx
                     .iter()
-                    .map(|idx| Self::bit_lift_from_idx(*idx as usize, 0).unwrap())
+                    .map(|idx| {
+                        Self::bit_lift_from_idx((*idx as usize) % (1 << EXTENSION_DEGREE), 0)
+                            .unwrap()
+                    })
                     .collect_vec();
                 (*role, challenges)
             })
             .collect()
     }
 
-    const SIZE_EXCEPTIONAL_SET: usize = Self::QUOTIENT_OUTPUT_SIZE;
+    const LOG_SIZE_EXCEPTIONAL_SET: usize = Self::QUOTIENT_OUTPUT_SIZE.ilog2() as usize;
 }
 
 impl<Z: Ring, const EXTENSION_DEGREE: usize> RingEmbed for ResiduePoly<Z, EXTENSION_DEGREE> {

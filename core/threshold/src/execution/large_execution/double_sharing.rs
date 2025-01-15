@@ -177,14 +177,16 @@ fn compute_next_batch<Z: Ring>(
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use num_integer::div_ceil;
     use rstest::rstest;
 
-    use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z128;
-    use crate::algebra::galois_rings::degree_8::ResiduePolyF8Z64;
+    use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
+    use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z64;
     use crate::algebra::structure_traits::Derive;
     use crate::algebra::structure_traits::ErrorCorrect;
     use crate::algebra::structure_traits::Invert;
     use crate::algebra::structure_traits::RingEmbed;
+    use crate::execution::large_execution::constants::DISPUTE_STAT_SEC;
     use crate::execution::runtime::session::BaseSessionHandles;
     use crate::execution::sharing::shamir::RevealOp;
     use crate::networking::NetworkMode;
@@ -247,11 +249,12 @@ pub(crate) mod tests {
         //      share dispute = 1 round
         //      pads =  1 round
         //      coinflip = vss + open = (1 + 3 + threshold) + 1
-        //      verify = 1 reliable_broadcast = 3 + t rounds
+        //      verify = m reliable_broadcast = m*(3 + t) rounds
         // next() calls for the batch
         //      We're doing one more sharing than pre-computed in the initial init (see num_output)
         //      Thus we have one more call to init, and therefore we double the rounds from above
-        let rounds = (1 + 1 + (1 + 3 + threshold) + 1 + (3 + threshold)) * 2;
+        let m = div_ceil(DISPUTE_STAT_SEC, Z::LOG_SIZE_EXCEPTIONAL_SET);
+        let rounds = (1 + 1 + (1 + 3 + threshold) + 1 + m * (3 + threshold)) * 2;
         //DoubleSharing assumes Sync network
         let result = execute_protocol_large::<_, _, Z, EXTENSION_DEGREE>(
             parties,
@@ -288,7 +291,7 @@ pub(crate) mod tests {
     #[case(4, 1)]
     #[case(7, 2)]
     fn test_doublesharing_z128(#[case] num_parties: usize, #[case] threshold: usize) {
-        test_doublesharing::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }>(
+        test_doublesharing::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>(
             num_parties,
             threshold,
         );
@@ -298,7 +301,7 @@ pub(crate) mod tests {
     #[case(4, 1)]
     #[case(7, 2)]
     fn test_doublesharing_z64(#[case] num_parties: usize, #[case] threshold: usize) {
-        test_doublesharing::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }>(
+        test_doublesharing::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }>(
             num_parties,
             threshold,
         );
@@ -309,14 +312,14 @@ pub(crate) mod tests {
         let parties = 5;
         let threshold = 1;
 
-        async fn task(mut session: LargeSession) -> (Role, Vec<DoubleShare<ResiduePolyF8Z128>>) {
+        async fn task(mut session: LargeSession) -> (Role, Vec<DoubleShare<ResiduePolyF4Z128>>) {
             let ldl_batch_size = 10_usize;
             let extracted_size = session.num_parties() - session.threshold() as usize;
             let num_output = ldl_batch_size * extracted_size + 1;
             let mut res = Vec::new();
             if session.my_role().unwrap().zero_based() != 1 {
                 let mut double_sharing =
-                    RealDoubleSharing::<ResiduePolyF8Z128, TrueLocalDoubleShare>::default();
+                    RealDoubleSharing::<ResiduePolyF4Z128, TrueLocalDoubleShare>::default();
                 double_sharing
                     .init(&mut session, ldl_batch_size)
                     .await
@@ -328,8 +331,8 @@ pub(crate) mod tests {
             } else {
                 for _ in 0..num_output {
                     res.push(DoubleShare {
-                        degree_t: ResiduePolyF8Z128::sample(session.rng()),
-                        degree_2t: ResiduePolyF8Z128::sample(session.rng()),
+                        degree_t: ResiduePolyF4Z128::sample(session.rng()),
+                        degree_2t: ResiduePolyF4Z128::sample(session.rng()),
                     })
                 }
             }
@@ -340,8 +343,8 @@ pub(crate) mod tests {
         let result = execute_protocol_large::<
             _,
             _,
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >(parties, threshold, None, NetworkMode::Sync, None, &mut task);
 
         //Check we can reconstruct both degree t and 2t, and they are equal

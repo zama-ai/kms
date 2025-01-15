@@ -103,7 +103,7 @@ crate-type = ["lib", "cdylib"]
 [[bin]]
 name = "moby"
 path = "src/bin/moby/moby.rs"
-required-features = ["choreographer"]
+required-features = ["choreographer", "extension_degree_4", "extension_degree_8"]
 
 [[bin]]
 name = "mobygo"
@@ -165,10 +165,10 @@ harness = false
 required-features = ["testing"]
 
 [features]
-default = ["non-wasm"]
+default = ["non-wasm", "extension_degree_4"]
 # Some utilities used in the `testing` feature require the `non-wasm` feature to be enabled
 testing = ["dep:tokio", "non-wasm"]
-slow_tests = ["testing"]
+slow_tests = ["testing", "extension_degree_4", "extension_degree_8"]
 sequential_sns = []
 experimental = ["dep:crypto-bigint", "choreographer"]
 templating = ["minijinja"]
@@ -189,3 +189,6 @@ non-wasm = [
     "dep:tfhe-zk-pok",
     "dep:kms-core-utils",
 ]
+extension_degree_8 = []
+extension_degree_4 = []
+

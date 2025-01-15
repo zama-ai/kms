@@ -384,7 +384,7 @@ mod tests {
     };
 
     use crate::{
-        algebra::{galois_rings::degree_8::ResiduePolyF8Z64, structure_traits::Ring},
+        algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring},
         execution::{
             online::{
                 gen_bits::{BitGenEven, RealBitGenEven},
@@ -436,7 +436,7 @@ mod tests {
             let my_role = session.my_role().unwrap();
             let shared_message = ShamirSharings::share(
                 &mut AesRng::seed_from_u64(0),
-                ResiduePolyF8Z64::from_scalar(Wrapping(msg)),
+                ResiduePolyF4Z64::from_scalar(Wrapping(msg)),
                 session.num_parties(),
                 session.threshold() as usize,
             )
@@ -481,7 +481,7 @@ mod tests {
                 },
             };
 
-            let mut output: GgswCiphertextShare<_, 8> = GgswCiphertextShare::new(
+            let mut output: GgswCiphertextShare<_, 4> = GgswCiphertextShare::new(
                 glwe_dimension.to_glwe_size(),
                 polynomial_size,
                 decomp_base_log,
@@ -510,8 +510,8 @@ mod tests {
         let results = execute_protocol_large::<
             _,
             _,
-            ResiduePolyF8Z64,
-            { ResiduePolyF8Z64::EXTENSION_DEGREE },
+            ResiduePolyF4Z64,
+            { ResiduePolyF4Z64::EXTENSION_DEGREE },
         >(
             parties,
             threshold,

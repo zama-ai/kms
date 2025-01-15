@@ -91,7 +91,7 @@ pub(crate) mod tests {
         DroppingVssAfterR1, DroppingVssAfterR2, DroppingVssFromStart, MaliciousVssR1,
     };
     use crate::{
-        algebra::galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
+        algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
         execution::{
             large_execution::vss::{RealVss, Vss},
             runtime::{
@@ -132,8 +132,8 @@ pub(crate) mod tests {
         let threshold = 1;
         //Coinflip assumes Sync network
         let runtime = DistributedTestRuntime::<
-            ResiduePolyF8Z128,
-            { ResiduePolyF8Z128::EXTENSION_DEGREE },
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >::new(identities.clone(), threshold, NetworkMode::Sync, None);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -151,7 +151,7 @@ pub(crate) mod tests {
                 (
                     party_nb,
                     dummy_coinflip
-                        .execute::<ResiduePolyF8Z128, _, _>(&mut session)
+                        .execute::<ResiduePolyF4Z128, _, _>(&mut session)
                         .await
                         .unwrap(),
                 )
@@ -335,11 +335,11 @@ pub(crate) mod tests {
     #[case(TestingParameters::init_honest(10, 3, Some(8)))]
     fn test_coinflip_honest_z128(#[case] params: TestingParameters) {
         let malicious_coinflip = RealCoinflip::<RealVss>::default();
-        test_coinflip_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
+        test_coinflip_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_coinflip.clone(),
         );
-        test_coinflip_strategies::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }, _>(
+        test_coinflip_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_coinflip.clone(),
         );
@@ -364,11 +364,11 @@ pub(crate) mod tests {
         let dropping_coinflip = DroppingCoinflipAfterVss {
             vss: malicious_vss.clone(),
         };
-        test_coinflip_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
+        test_coinflip_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             dropping_coinflip.clone(),
         );
-        test_coinflip_strategies::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }, _>(
+        test_coinflip_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             dropping_coinflip.clone(),
         );
@@ -394,11 +394,11 @@ pub(crate) mod tests {
             vss: malicious_vss.clone(),
         };
 
-        test_coinflip_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
+        test_coinflip_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             real_coinflip_with_malicious_vss.clone(),
         );
-        test_coinflip_strategies::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }, _>(
+        test_coinflip_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             real_coinflip_with_malicious_vss.clone(),
         );
@@ -423,11 +423,11 @@ pub(crate) mod tests {
             vss: malicious_vss.clone(),
         };
 
-        test_coinflip_strategies::<ResiduePolyF8Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _>(
+        test_coinflip_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_coinflip_recons.clone(),
         );
-        test_coinflip_strategies::<ResiduePolyF8Z128, { ResiduePolyF8Z128::EXTENSION_DEGREE }, _>(
+        test_coinflip_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_coinflip_recons.clone(),
         );

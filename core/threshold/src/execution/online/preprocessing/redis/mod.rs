@@ -495,8 +495,8 @@ pub mod tests {
     use std::num::Wrapping;
 
     use crate::algebra::base_ring::{Z128, Z64};
-    use crate::algebra::galois_fields::gf256::GF256;
-    use crate::algebra::galois_rings::degree_8::ResiduePolyF8;
+    use crate::algebra::galois_fields::gf16::GF16;
+    use crate::algebra::galois_rings::degree_4::ResiduePolyF4;
     use crate::execution::online::triple::Triple;
     use crate::execution::runtime::party::Role;
     use crate::execution::sharing::share::Share;
@@ -509,7 +509,7 @@ pub mod tests {
                 fn [<test_share_serialization_deserialization $z:lower>]() {
                     let share = Share::new(
                         Role::indexed_by_one(1),
-                        ResiduePolyF8::<$z>::from_scalar(Wrapping(42)),
+                        ResiduePolyF4::<$z>::from_scalar(Wrapping(42)),
                     );
 
                     let serialized = bincode::serialize(&share).unwrap();
@@ -521,22 +521,22 @@ pub mod tests {
                 fn [<test_triple_serialization_deserialization $z:lower>]() {
                     let share_one = Share::new(
                         Role::indexed_by_one(1),
-                        ResiduePolyF8::<$z>::from_scalar(Wrapping(42)),
+                        ResiduePolyF4::<$z>::from_scalar(Wrapping(42)),
                     );
 
                     let share_two = Share::new(
                         Role::indexed_by_one(2),
-                        ResiduePolyF8::<$z>::from_scalar(Wrapping(43)),
+                        ResiduePolyF4::<$z>::from_scalar(Wrapping(43)),
                     );
 
                     let share_three = Share::new(
                         Role::indexed_by_one(3),
-                        ResiduePolyF8::<$z>::from_scalar(Wrapping(42)),
+                        ResiduePolyF4::<$z>::from_scalar(Wrapping(42)),
                     );
 
-                    let triple = Triple::<ResiduePolyF8<$z>>::new(share_one, share_two, share_three);
+                    let triple = Triple::<ResiduePolyF4<$z>>::new(share_one, share_two, share_three);
                     let serialized = bincode::serialize(&triple).unwrap();
-                    let deserialized: Triple<ResiduePolyF8<$z>> = bincode::deserialize(&serialized).unwrap();
+                    let deserialized: Triple<ResiduePolyF4<$z>> = bincode::deserialize(&serialized).unwrap();
 
                     assert_eq!(triple, deserialized);
                 }
@@ -549,10 +549,10 @@ pub mod tests {
 
     #[test]
     fn test_share_serialization_deserialization_gf256() {
-        let share = Share::new(Role::indexed_by_one(1), GF256::from(42));
+        let share = Share::new(Role::indexed_by_one(1), GF16::from(12));
 
         let serialized = bincode::serialize(&share).unwrap();
-        let deserialized: Share<GF256> = bincode::deserialize(&serialized).unwrap();
+        let deserialized: Share<GF16> = bincode::deserialize(&serialized).unwrap();
         assert_eq!(share, deserialized);
     }
 
