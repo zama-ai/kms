@@ -57,9 +57,9 @@ services:
       - "config/default.toml"
     environment:
       - DOCKER_BUILDKIT=1
-      - ASC_CONN__BLOCKCHAIN__ADDRESSES=http://dev-kms-blockchain-validator:9090
-      - ASC_CONN__CORE__ADDRESSES=http://dev-kms-core:50051
-      - ASC_CONN__STORE__URL=http://dev-kv-store:8088
+      - BSC_CONN__BLOCKCHAIN__ADDRESSES=http://dev-kms-blockchain-validator:9090
+      - BSC_CONN__CORE__ADDRESSES=http://dev-kms-core:50051
+      - BSC_CONN__STORE__URL=http://dev-kv-store:8088
       - ASC_CONN__CORE__TIMEOUT_CONFIG__DECRYPTION__INITIAL_WAIT_TIME=1
       - ASC_CONN__CORE__TIMEOUT_CONFIG__DECRYPTION__RETRY_INTERVAL=1
       - ASC_CONN__CORE__TIMEOUT_CONFIG__REENCRYPTION__INITIAL_WAIT_TIME=1

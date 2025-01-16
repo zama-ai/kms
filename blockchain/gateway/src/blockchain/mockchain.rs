@@ -32,6 +32,7 @@ impl Blockchain for MockchainImpl {
         _event: DecryptionEvent,
         typed_cts: Vec<(Vec<u8>, FheType, Vec<u8>)>,
         eip712_domain: Eip712DomainMsg,
+        asc_address: String,
         acl_address: String,
     ) -> anyhow::Result<(Vec<Token>, Vec<Vec<u8>>)> {
         let mut ptxts = Vec::new();
@@ -57,6 +58,7 @@ impl Blockchain for MockchainImpl {
         }
 
         tracing::debug!("🍊 eip712_domain: {:?}", eip712_domain);
+        tracing::debug!("🍊 asc_address: {:?}", asc_address);
         tracing::debug!("🍊 acl_address: {:?}", acl_address);
 
         let mock_sig = vec![0u8; 65];
@@ -121,6 +123,7 @@ impl Blockchain for MockchainImpl {
         eip712_verifying_contract: String,
         chain_id: U256,
         salt: Option<Vec<u8>>,
+        asc_address: String,
         acl_address: String,
     ) -> anyhow::Result<Vec<ReencryptResponseValues>> {
         tracing::debug!("🐛 Mockchain reencrypting ciphertext");
@@ -135,6 +138,7 @@ impl Blockchain for MockchainImpl {
             eip712_verifying_contract
         );
         tracing::debug!("🐛 chain_id: {:?}", chain_id);
+        tracing::debug!("🐛 asc_address: {:?}", asc_address);
         tracing::debug!("🐛 acl_address: {:?}", acl_address);
         tracing::debug!("🐛 salt: {:?}", salt);
 
@@ -156,6 +160,7 @@ impl Blockchain for MockchainImpl {
         crs_id_str: String,
         ct_proof: Vec<u8>,
         eip712_domain: Eip712DomainMsg,
+        asc_address: String,
         acl_address: String,
     ) -> anyhow::Result<HexVectorList> {
         tracing::debug!("🐛 Mockchain verify proven ct");
@@ -165,6 +170,7 @@ impl Blockchain for MockchainImpl {
         tracing::debug!("🐛 crs_id_str: {:?}", crs_id_str);
         tracing::debug!("🐛 ct_proof: {:?}", ct_proof);
         tracing::debug!("🐛 eip712_domain: {:?}", eip712_domain);
+        tracing::debug!("🐛 asc_address: {:?}", asc_address);
         tracing::debug!("🐛 acl_address: {:?}", acl_address);
 
         if ct_proof[0] == 0 {

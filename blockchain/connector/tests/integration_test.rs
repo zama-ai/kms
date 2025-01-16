@@ -14,7 +14,7 @@ use events::{
 };
 use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractRequest, ProtoCoin};
 use kms_blockchain_client::query_client::{
-    AscQuery, QueryClient, QueryClientBuilder, TransactionQuery,
+    BscQuery, QueryClient, QueryClientBuilder, TransactionQuery,
 };
 use kms_blockchain_connector::application::kms_core_connector::{
     KmsCoreConnector, KmsCoreEventHandler,
@@ -190,8 +190,6 @@ async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
         ClientBuilder::builder()
             .mnemonic_wallet(mnemonic.as_deref())
             .grpc_addresses(addresses.clone())
-            .asc_address(&bsc_address)
-            .csc_address(&csc_address)
             .kv_store_address(None)
             .build()
             .try_into()
@@ -206,12 +204,13 @@ async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
     // Wait for the event to be processed and send the response back to the blockchain
     let query_client = Arc::new(query_client);
     let cloned_query_client = Arc::clone(&query_client);
+    let cloned_bsc_address = bsc_address.clone();
     let handle = tokio::spawn(async move {
-        wait_for_event_response(handler, &bsc_address.clone(), cloned_query_client, &mut rc).await;
+        wait_for_event_response(handler, &cloned_bsc_address, cloned_query_client, &mut rc).await;
     });
 
     // Execute insecure key generation flow to enable the subsequent decryption request
-    let keygen_request_txhash = send_insecure_key_generation_request(&client).await;
+    let keygen_request_txhash = send_insecure_key_generation_request(&client, &bsc_address).await;
     let keygen_tx_response =
         wait_for_tx_processed(Arc::clone(&query_client), keygen_request_txhash.clone())
             .await
@@ -221,6 +220,7 @@ async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
         .unwrap();
     let keygen_response_txhash = send_key_generation_response(
         &client,
+        &bsc_address,
         TransactionId::from_hex(&txn_id).unwrap(),
         key_id.clone(),
     )
@@ -230,7 +230,7 @@ async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
         .unwrap();
 
     // Send decryption request to the blockchain in order to get events after
-    let txhash = send_decrypt_request(&client, key_id).await;
+    let txhash = send_decrypt_request(&client, &bsc_address, key_id).await;
 
     wait_for_tx_processed(query_client, txhash.clone())
         .await
@@ -316,9 +316,9 @@ async fn check_event(
 ) {
     loop {
         let tx: Transaction = query_client
-            .query_asc(
+            .query_bsc(
                 bsc_address.clone(),
-                AscQuery::GetTransaction(TransactionQuery {
+                BscQuery::GetTransaction(TransactionQuery {
                     txn_id: event.txn_id().clone(),
                 }),
             )
@@ -374,7 +374,7 @@ async fn start_sync_handler(
             .into_iter()
             .map(|x| x.to_string())
             .collect(),
-        asc_address: bsc_address.to_string(),
+        bsc_address: bsc_address.to_string(),
         csc_address: csc_address.to_string(),
         fee: ContractFee {
             amount: 250_000u64,
@@ -428,7 +428,10 @@ fn get_event_value_from_response(
     ))
 }
 
-async fn send_insecure_key_generation_request(client: &RwLock<Client>) -> String {
+async fn send_insecure_key_generation_request(
+    client: &RwLock<Client>,
+    bsc_address: &str,
+) -> String {
     let keygen_request = InsecureKeyGenValues::new(
         "eip712name".to_string(),
         "version".to_string(),
@@ -439,6 +442,7 @@ async fn send_insecure_key_generation_request(client: &RwLock<Client>) -> String
     .unwrap();
     let operation = events::kms::OperationValue::InsecureKeyGen(keygen_request);
     let request = ExecuteContractRequest::builder()
+        .contract_address(bsc_address.to_string())
         .message(KmsMessage::builder().value(operation).build())
         .gas_limit(200000u64)
         .funds(vec![ProtoCoin::builder()
@@ -454,6 +458,7 @@ async fn send_insecure_key_generation_request(client: &RwLock<Client>) -> String
 
 async fn send_key_generation_response(
     client: &RwLock<Client>,
+    bsc_address: &str,
     txn_id: TransactionId,
     key_id: Vec<u8>,
 ) -> String {
@@ -469,6 +474,7 @@ async fn send_key_generation_response(
     );
     let operation = events::kms::OperationValue::KeyGenResponse(keygen_response);
     let request = ExecuteContractRequest::builder()
+        .contract_address(bsc_address.to_string())
         .message(
             KmsMessage::builder()
                 .value(operation)
@@ -487,7 +493,11 @@ async fn send_key_generation_response(
     resp.unwrap().txhash
 }
 
-async fn send_decrypt_request(client: &RwLock<Client>, key_id: Vec<u8>) -> String {
+async fn send_decrypt_request(
+    client: &RwLock<Client>,
+    bsc_address: &str,
+    key_id: Vec<u8>,
+) -> String {
     let decrypt = DecryptValues::new(
         key_id,
         vec![[0, 0, 0, 0, 0, 1, 1, 1, 1, 1].to_vec()],
@@ -506,6 +516,7 @@ async fn send_decrypt_request(client: &RwLock<Client>, key_id: Vec<u8>) -> Strin
     let operation = events::kms::OperationValue::Decrypt(decrypt);
 
     let request = ExecuteContractRequest::builder()
+        .contract_address(bsc_address.to_string())
         .message(KmsMessage::builder().value(operation).build())
         .gas_limit(200000u64)
         .funds(vec![ProtoCoin::builder()

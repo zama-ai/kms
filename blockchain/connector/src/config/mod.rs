@@ -27,7 +27,7 @@ impl std::fmt::Debug for SignKeyConfig {
 #[derive(TypedBuilder, Deserialize, Serialize, Clone, Default, Debug)]
 pub struct BlockchainConfig {
     pub addresses: Vec<String>,
-    pub asc_address: String,
+    pub bsc_address: String,
     pub csc_address: String,
     pub fee: ContractFee,
     pub signkey: SignKeyConfig,
@@ -168,7 +168,7 @@ impl CoreConfig {
 pub fn init_conf(config_file: &str) -> anyhow::Result<ConnectorConfig> {
     Settings::builder()
         .path(config_file)
-        .env_prefix("ASC_CONN")
+        .env_prefix("BSC_CONN")
         .parse_keys(vec!["blockchain.addresses", "core.addresses"])
         .build()
         .init_conf()
@@ -179,7 +179,7 @@ pub async fn init_conf_with_trace(config_file: &str) -> anyhow::Result<Connector
     let conf = init_conf(config_file)?;
     let tracing = conf.tracing.clone().unwrap_or_else(|| {
         TelemetryConfig::builder()
-            .tracing_service_name("asc_connector".to_string())
+            .tracing_service_name("bsc_connector".to_string())
             .build()
     });
     init_telemetry(&tracing)?;
@@ -193,8 +193,8 @@ mod tests {
     #[test]
     fn core_config() {
         let envs: [(&str, Option<&str>); 2] = [
-            ("ASC_CONN___CORE__ADDRESSES", None),
-            ("ASC_CONN___BLOCKCHAIN__ADDRESSES", None),
+            ("BSC_CONN___CORE__ADDRESSES", None),
+            ("BSC_CONN___BLOCKCHAIN__ADDRESSES", None),
         ];
 
         temp_env::with_vars(envs, || {
@@ -220,11 +220,11 @@ mod tests {
     fn core_config_with_rewrite_env() {
         let envs = [
             (
-                "ASC_CONN__CORE__ADDRESSES",
+                "BSC_CONN__CORE__ADDRESSES",
                 Some("http://localhost:50051,http://localhost:50052"),
             ),
             (
-                "ASC_CONN__BLOCKCHAIN__ADDRESSES",
+                "BSC_CONN__BLOCKCHAIN__ADDRESSES",
                 Some("http://localhost:9091"),
             ),
         ];

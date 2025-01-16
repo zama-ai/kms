@@ -3,7 +3,6 @@
 //! This module provides a comprehensive set of tools and structures for interacting with blockchain-based
 //! contracts, specifically targeting the CosmWasm smart contracts within the Cosmos SDK. It includes functionality
 //! for cryptographic operations, RPC communications, and transaction handling.
-use crate::cosmos::account::AccountId;
 use crate::crypto::pubkey::PublicKey;
 use crate::crypto::signing_key::SigningKey;
 use crate::errors::Error;
@@ -27,7 +26,6 @@ use cosmos_proto::messages::cosmwasm::wasm::v1::MsgExecuteContract;
 use events::kms::KmsMessage;
 use prost_types::Any;
 use std::str;
-use std::str::FromStr;
 use std::time::Duration;
 use tonic::transport::{Channel, Endpoint};
 use typed_builder::TypedBuilder;
@@ -49,6 +47,7 @@ pub struct ProtoCoin {
 
 #[derive(TypedBuilder, Clone, Debug)]
 pub struct ExecuteContractRequest {
+    contract_address: String,
     message: KmsMessage,
     gas_limit: u64,
     #[builder(setter(strip_option), default)]
@@ -60,8 +59,6 @@ pub struct ClientBuilder<'a> {
     grpc_addresses: Vec<&'a str>,
     #[builder(setter(into), default = None)]
     kv_store_address: Option<&'a str>,
-    asc_address: &'a str,
-    csc_address: &'a str,
     #[builder(default = None)]
     mnemonic_wallet: Option<&'a str>,
     #[builder(default = None)]
@@ -115,10 +112,6 @@ impl TryFrom<ClientBuilder<'_>> for Client {
 
         let coin_denom = value.coin_denom.unwrap_or(DENOM).to_string();
 
-        let asc_address = AccountId::from_str(value.asc_address)?;
-
-        let csc_address = AccountId::from_str(value.csc_address)?;
-
         let gas_price = value.gas_price;
 
         Ok(Client {
@@ -129,8 +122,6 @@ impl TryFrom<ClientBuilder<'_>> for Client {
             sender_key,
             chain_id,
             coin_denom,
-            asc_address,
-            csc_address,
             gas_price,
         })
     }
@@ -141,8 +132,6 @@ pub struct Client {
     client: Channel,
     pub kv_store_address: Option<String>,
     sender_key: SigningKey,
-    pub asc_address: AccountId,
-    pub csc_address: AccountId,
     coin_denom: String,
     chain_id: String,
     gas_price: f64,
@@ -227,14 +216,15 @@ impl Client {
             .map(|msg| msg.to_string().as_bytes().to_vec())
             .map_err(|e| Error::ExecuteContractRequestError(e.to_string()))?;
 
-        let gas_limit = request.gas_limit;
-
-        let gas_price = self.gas_price;
-
-        let funds = request.funds;
-
         let tx_bytes = self
-            .prepare_msg(&account, &msg_payload, gas_limit, gas_price, funds)
+            .prepare_msg(
+                &account,
+                &request.contract_address,
+                &msg_payload,
+                request.gas_limit,
+                self.gas_price,
+                request.funds,
+            )
             .await?;
 
         let mut tx_client = ServiceClient::new(self.client.clone());
@@ -271,6 +261,7 @@ impl Client {
     async fn prepare_msg(
         &self,
         account: &BaseAccount,
+        contract_address: &str,
         msg_payload: &[u8],
         gas_limit: u64,
         gas_price: f64,
@@ -290,7 +281,7 @@ impl Client {
 
         let msg = MsgExecuteContract {
             sender: sender_account_id.to_string(),
-            contract: self.asc_address.to_string(),
+            contract: contract_address.to_string(),
             msg: msg_payload.to_vec(),
             funds,
         };

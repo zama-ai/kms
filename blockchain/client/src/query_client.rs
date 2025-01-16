@@ -83,6 +83,15 @@ pub enum AscQuery {
     GetCrsGenResponseValues(GenCrsIdQuery),
     #[serde(rename = "get_operations_values_from_event")]
     GetOperationsValuesFromEvent(EventQuery),
+}
+
+/// Messages for querying the BSC
+///
+/// Important: serde's rename must exactly match the BSC's associated method name
+#[derive(EnumString, Serialize, Debug)]
+pub enum BscQuery {
+    #[serde(rename = "get_operations_values_from_event")]
+    GetOperationsValuesFromEvent(EventQuery),
     #[serde(rename = "get_transaction")]
     GetTransaction(TransactionQuery),
 }
@@ -126,6 +135,28 @@ impl QueryClient {
         &self,
         contract_address: String,
         query_msg: AscQuery,
+    ) -> Result<T, Error> {
+        tracing::info!("contract address: {}", contract_address);
+        let request = QuerySmartContractStateRequest {
+            address: contract_address,
+            query_data: serde_json::json!(query_msg).to_string().as_bytes().to_vec(),
+        };
+        self.send_request(request).await
+    }
+
+    /// Query BSC's state with a specific message.
+    ///
+    /// # Arguments
+    /// * `contract_address` - The BSC's address to query.
+    /// * `query_msg` - The message to be sent to the BSC.
+    ///
+    /// # Returns
+    /// A `Result` containing the response from the BSC or an error.
+    #[tracing::instrument(skip(self))]
+    pub async fn query_bsc<T: DeserializeOwned>(
+        &self,
+        contract_address: String,
+        query_msg: BscQuery,
     ) -> Result<T, Error> {
         tracing::info!("contract address: {}", contract_address);
         let request = QuerySmartContractStateRequest {

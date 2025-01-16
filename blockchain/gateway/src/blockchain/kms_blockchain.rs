@@ -100,12 +100,10 @@ fn add_unless_duplicate(list: &mut HexVectorList, val: &HexVector, resp: &str) {
     }
 }
 
-impl<'a> KmsBlockchainImpl {
+impl KmsBlockchainImpl {
     fn new(
         mnemonic: Option<String>,
-        addresses: Vec<&'a str>,
-        asc_address: &'a str,
-        csc_address: &'a str,
+        addresses: Vec<&str>,
         config: GatewayConfig,
         state: GatewayState,
     ) -> Self {
@@ -144,8 +142,6 @@ impl<'a> KmsBlockchainImpl {
                 ClientBuilder::builder()
                     .mnemonic_wallet(mnemonic.as_deref())
                     .grpc_addresses(addresses.clone())
-                    .asc_address(asc_address)
-                    .csc_address(csc_address)
                     .kv_store_address(Some(config.storage.url.as_str()))
                     .build()
                     .try_into()
@@ -173,16 +169,7 @@ impl<'a> KmsBlockchainImpl {
         let mnemonic = Some(config.kms.mnemonic.to_string());
         let binding = config.kms.address.to_string();
         let addresses = vec![binding.as_str()];
-        let asc_address = &config.kms.asc_address;
-        let csc_address = &config.kms.csc_address;
-        let kms_bc_impl = Self::new(
-            mnemonic,
-            addresses,
-            asc_address.to_string().as_str(),
-            csc_address.to_string().as_str(),
-            config,
-            state,
-        );
+        let kms_bc_impl = Self::new(mnemonic, addresses, config, state);
 
         Ok(kms_bc_impl)
     }
@@ -220,10 +207,12 @@ impl<'a> KmsBlockchainImpl {
     #[tracing::instrument(skip(self, operation), fields(op_name=operation.values_name()))]
     async fn make_req_to_kms_blockchain(
         &self,
+        asc_address: String,
         data_size: u32,
         operation: OperationValue,
     ) -> anyhow::Result<KmsEventWithHeight> {
         let request = ExecuteContractRequest::builder()
+            .contract_address(asc_address)
             .message(KmsMessage::builder().value(operation.clone()).build())
             .gas_limit(10_000_000u64)
             .funds(vec![ProtoCoin::builder()
@@ -901,6 +890,7 @@ impl Blockchain for KmsBlockchainImpl {
         decryption_event: DecryptionEvent,
         typed_cts: Vec<(Vec<u8>, FheType, Vec<u8>)>,
         eip712_domain: Eip712DomainMsg,
+        asc_address: String,
         acl_address: String,
     ) -> anyhow::Result<(Vec<Token>, Vec<Vec<u8>>)> {
         let (operation, fhe_types, total_size) = self
@@ -910,7 +900,7 @@ impl Blockchain for KmsBlockchainImpl {
         // Execute the smart contract and wait for the Tx to appear in a block.
         // Returns the corresponding KmsEvent of this transaction
         let ev = self
-            .make_req_to_kms_blockchain(total_size, operation)
+            .make_req_to_kms_blockchain(asc_address, total_size, operation)
             .await?;
 
         //Update the GW state
@@ -1021,6 +1011,7 @@ impl Blockchain for KmsBlockchainImpl {
         eip712_verifying_contract: String,
         chain_id: U256,
         eip712_salt: Option<Vec<u8>>,
+        asc_address: String,
         acl_address: String,
     ) -> anyhow::Result<Vec<ReencryptResponseValues>> {
         tracing::info!(
@@ -1110,7 +1101,7 @@ impl Blockchain for KmsBlockchainImpl {
         let data_size = footprint::extract_ciphertext_size(&ctxt_handle);
         tracing::info!("🍊 Reencrypting ciphertext of size: {:?}", data_size);
         let ev = self
-            .make_req_to_kms_blockchain(data_size, operation)
+            .make_req_to_kms_blockchain(asc_address, data_size, operation)
             .await?
             .event;
 
@@ -1195,6 +1186,7 @@ impl Blockchain for KmsBlockchainImpl {
         crs_id_str: String,
         ct_proof: Vec<u8>,
         eip712_domain: Eip712DomainMsg,
+        asc_address: String,
         acl_address: String,
     ) -> anyhow::Result<HexVectorList> {
         tracing::info!(
@@ -1238,7 +1230,7 @@ impl Blockchain for KmsBlockchainImpl {
         tracing::info!("🍊 Verify proven ciphertext of size: {:?}", data_size);
         // TODO how do we handle payment of verify proven ct validation?
         let ev = self
-            .make_req_to_kms_blockchain(data_size, operation)
+            .make_req_to_kms_blockchain(asc_address, data_size, operation)
             .await?
             .event;
 

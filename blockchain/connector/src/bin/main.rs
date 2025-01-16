@@ -2,7 +2,7 @@ use clap::Parser;
 use kms_blockchain_connector::config::{init_conf_with_trace, ConnectorConfig};
 
 #[derive(Parser, Debug)]
-#[clap(name = "kms-asc-connector")]
+#[clap(name = "kms-bsc-connector")]
 pub struct Cli {
     #[clap(short, long, default_value = "config/default.toml")]
     config_file: Option<String>,
@@ -19,7 +19,7 @@ async fn main() -> anyhow::Result<()> {
     let config: ConnectorConfig = init_conf_with_trace(cli.config_file.as_deref().unwrap()).await?;
 
     tracing::info!(
-        "Starting kms-asc-connector - config {:?}. Catching up {:?} blocks in the past.",
+        "Starting kms-bsc-connector - config {:?}. Catching up {:?} blocks in the past.",
         config,
         cli.catch_up_num_blocks
     );

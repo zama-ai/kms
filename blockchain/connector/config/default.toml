@@ -10,9 +10,9 @@ tick_interval_secs = 1
 # sending transactions to CosmWasm (KMS blockchain).
 addresses = ["http://localhost:9090"]
 
-# The Application Smart Contract address. See
-# kms-core/blockchain/contracts/asc/README.md for more documentation.
-asc_address = "wasm1qwlgtx52gsdu7dtp0cekka5zehdl0uj3fhp9acg325fvgs8jdzksu3v4ff"
+# The Backend Smart Contract address. See
+# kms-core/blockchain/contracts/bsc/README.md for more documentation.
+bsc_address = "wasm1qwlgtx52gsdu7dtp0cekka5zehdl0uj3fhp9acg325fvgs8jdzksu3v4ff"
 
 # The Configuration Smart Contract address. See
 # kms-core/blockchain/contracts/csc/README.md for more documentation.
@@ -124,7 +124,7 @@ max_poll_count = 24
 # The service name. This is used to identify the service in the tracing system.
 # It is recommended to use the same service name across all instances of the
 # service.
-service_name = "kms-asc-connector"
+service_name = "kms-bsc-connector"
 
 # The endpoint of the tracing system. If it is not set, tracing will be
 # redirected to stdout. This is an optional configuration.

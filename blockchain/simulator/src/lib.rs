@@ -484,6 +484,30 @@ impl TryFrom<PlaintextWrapper> for Token {
     }
 }
 
+pub struct DecryptionParams<'a> {
+    to_encrypt: Vec<u8>,
+    data_type: FheType,
+    key_id: &'a str,
+    keys_folder: &'a Path,
+    compressed: Option<bool>,
+}
+
+pub struct VerifyProvenCtParams<'a> {
+    to_encrypt: Vec<u8>,
+    data_type: FheType,
+    crs_id: &'a str,
+    key_id: &'a str,
+    keys_folder: &'a Path,
+}
+
+pub struct ReencryptionParams<'a> {
+    ct_config: CiphertextConfig,
+    key_id: &'a str,
+    keys_folder: &'a Path,
+    fhe_parameter: FheParameter,
+    num_parties: usize,
+}
+
 fn get_latest_deployed_contract_address(
     validator_tcp_endpoint: &str,
 ) -> Result<String, anyhow::Error> {
@@ -754,10 +778,12 @@ pub async fn store_cipher(
 async fn execute_contract(
     client: &Client,
     query_client: &QueryClient,
+    contract_address: String,
     value: OperationValue,
     max_iter: Option<u64>,
 ) -> anyhow::Result<Vec<KmsEvent>> {
     let request = ExecuteContractRequest::builder()
+        .contract_address(contract_address)
         .message(KmsMessage::builder().value(value).build())
         .gas_limit(3_100_000)
         .funds(vec![ProtoCoin::builder()
@@ -797,6 +823,7 @@ async fn execute_contract(
 pub async fn execute_crsgen_contract(
     client: &Client,
     query_client: &QueryClient,
+    asc_address: String,
     max_amount_of_bits: u32,
 ) -> Result<(KmsEvent, CrsGenValues), Box<dyn std::error::Error + 'static>> {
     let cv = CrsGenValues::new(
@@ -811,6 +838,7 @@ pub async fn execute_crsgen_contract(
     let evs = execute_contract(
         client,
         query_client,
+        asc_address,
         OperationValue::CrsGen(cv.clone()),
         None,
     )
@@ -824,6 +852,7 @@ pub async fn execute_crsgen_contract(
 pub async fn execute_insecure_crsgen_contract(
     client: &Client,
     query_client: &QueryClient,
+    asc_address: String,
     max_amount_of_bits: u32,
 ) -> Result<(KmsEvent, InsecureCrsGenValues), Box<dyn std::error::Error + 'static>> {
     let cv = InsecureCrsGenValues::new(
@@ -838,6 +867,7 @@ pub async fn execute_insecure_crsgen_contract(
     let evs = execute_contract(
         client,
         query_client,
+        asc_address,
         OperationValue::InsecureCrsGen(cv.clone()),
         None,
     )
@@ -851,6 +881,7 @@ pub async fn execute_insecure_crsgen_contract(
 pub async fn execute_insecure_keygen_contract(
     client: &Client,
     query_client: &QueryClient,
+    asc_address: String,
 ) -> Result<(KmsEvent, InsecureKeyGenValues), Box<dyn std::error::Error + 'static>> {
     let ikv = InsecureKeyGenValues::new(
         EIP712_NAME.to_string(),
@@ -862,7 +893,14 @@ pub async fn execute_insecure_keygen_contract(
 
     let insecure_key_gen_value = OperationValue::InsecureKeyGen(ikv.clone());
 
-    let evs = execute_contract(client, query_client, insecure_key_gen_value, None).await?;
+    let evs = execute_contract(
+        client,
+        query_client,
+        asc_address,
+        insecure_key_gen_value,
+        None,
+    )
+    .await?;
     let ev = evs[0].clone();
 
     tracing::info!("InsecureKeyGen TxId: {:?}", ev.txn_id().to_hex(),);
@@ -872,10 +910,11 @@ pub async fn execute_insecure_keygen_contract(
 pub async fn execute_preproc_keygen_contract(
     client: &Client,
     query_client: &QueryClient,
+    asc_address: String,
 ) -> Result<KmsEvent, Box<dyn std::error::Error + 'static>> {
     let preproc_value = OperationValue::KeyGenPreproc(KeyGenPreprocValues {});
 
-    let evs = execute_contract(client, query_client, preproc_value, None).await?;
+    let evs = execute_contract(client, query_client, asc_address, preproc_value, None).await?;
     let ev = evs[0].clone();
 
     tracing::info!("Preproc TxId: {:?}", ev.txn_id().to_hex(),);
@@ -885,6 +924,7 @@ pub async fn execute_preproc_keygen_contract(
 pub async fn execute_keygen_contract(
     client: &Client,
     query_client: &QueryClient,
+    asc_address: String,
     preproc_id: HexVector,
 ) -> Result<(KmsEvent, KeyGenValues), Box<dyn std::error::Error + 'static>> {
     let kv = KeyGenValues::new(
@@ -897,7 +937,7 @@ pub async fn execute_keygen_contract(
     )?;
     let keygen_value = OperationValue::KeyGen(kv.clone());
 
-    let evs = execute_contract(client, query_client, keygen_value, None).await?;
+    let evs = execute_contract(client, query_client, asc_address, keygen_value, None).await?;
     let ev = evs[0].clone();
 
     tracing::info!("KeyGen TxId: {:?}", ev.txn_id().to_hex(),);
@@ -907,18 +947,21 @@ pub async fn execute_keygen_contract(
 pub async fn execute_verify_proven_ct_contract(
     client: &Client,
     query_client: &QueryClient,
-    to_encrypt: Vec<u8>,
-    data_type: FheType,
-    crs_id: &str,
-    key_id: &str,
-    keys_folder: &Path,
+    asc_address: String,
+    verify_proven_ct_params: VerifyProvenCtParams<'_>,
 ) -> Result<KmsEvent, Box<dyn std::error::Error + 'static>> {
     // These are some random addresses used to create a valid verify proven ciphertext request
     let verifying_contract = alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657");
     let contract_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
     let acl_address = alloy_primitives::address!("01da6bf26964af9d7eed9e03e53415d37aa960ff");
     let client_address = alloy_primitives::address!("b5d85CBf7cB3EE0D56b3bB207D5Fc4B82f43F511");
-
+    let VerifyProvenCtParams {
+        to_encrypt,
+        data_type,
+        crs_id,
+        key_id,
+        keys_folder,
+    } = verify_proven_ct_params;
     let dummy_domain = alloy_sol_types::eip712_domain!(
         name: "Authorization token",
         version: "1",
@@ -961,7 +1004,7 @@ pub async fn execute_verify_proven_ct_contract(
         Some(EIP712_SALT.to_vec()),
     )?);
 
-    let evs = execute_contract(client, query_client, value, None).await?;
+    let evs = execute_contract(client, query_client, asc_address, value, None).await?;
     let ev = evs[0].clone();
 
     tracing::info!("TxId: {:?}", ev.txn_id().to_hex(),);
@@ -969,14 +1012,18 @@ pub async fn execute_verify_proven_ct_contract(
 }
 
 pub async fn execute_decryption_contract(
-    to_encrypt: Vec<u8>,
-    data_type: FheType,
     client: &Client,
     query_client: &QueryClient,
-    key_id: &str,
-    keys_folder: &Path,
-    compressed: Option<bool>,
+    asc_address: String,
+    decryption_params: DecryptionParams<'_>,
 ) -> Result<(KmsEvent, TypedPlaintext, DecryptValues), Box<dyn std::error::Error + 'static>> {
+    let DecryptionParams {
+        to_encrypt,
+        data_type,
+        key_id,
+        keys_folder,
+        compressed,
+    } = decryption_params;
     let (cipher, ptxt) = encrypt(to_encrypt, data_type, key_id, keys_folder, compressed).await?;
     let kv_store_address = client
         .kv_store_address
@@ -1003,6 +1050,7 @@ pub async fn execute_decryption_contract(
     let evs = execute_contract(
         client,
         query_client,
+        asc_address,
         OperationValue::Decrypt(dv.clone()),
         None,
     )
@@ -1020,13 +1068,10 @@ pub struct CiphertextConfig {
 }
 
 pub async fn execute_reencryption_contract(
-    ct_config: CiphertextConfig,
     client: &Client,
     query_client: &QueryClient,
-    key_id: &str,
-    keys_folder: &Path,
-    fhe_parameter: FheParameter,
-    num_parties: usize,
+    asc_address: String,
+    reencryption_params: ReencryptionParams<'_>,
 ) -> Result<
     (
         KmsEvent,
@@ -1039,6 +1084,13 @@ pub async fn execute_reencryption_contract(
     ),
     Box<dyn std::error::Error + 'static>,
 > {
+    let ReencryptionParams {
+        ct_config,
+        key_id,
+        keys_folder,
+        fhe_parameter,
+        num_parties,
+    } = reencryption_params;
     //NOTE: I(Titouan) believe we don't really even care
     //given how we'll use the client
     let params = match fhe_parameter {
@@ -1165,7 +1217,7 @@ pub async fn execute_reencryption_contract(
         kms_lib::client::Client::new(verf_keys, client_address, Some(sig_sk), params);
     kms_client.convert_to_addresses();
 
-    let evs = execute_contract(client, query_client, value, None).await?;
+    let evs = execute_contract(client, query_client, asc_address, value, None).await?;
     let ev = evs[0].clone();
 
     tracing::info!("TxId: {:?}", ev.txn_id().to_hex(),);
@@ -1850,8 +1902,6 @@ pub async fn main_from_config(
     let client: Client = ClientBuilder::builder()
         .kv_store_address(Some(sim_conf.kv_store_address.as_str()))
         .grpc_addresses(validator_addresses.clone())
-        .asc_address(&sim_conf.asc_address)
-        .csc_address(&sim_conf.csc_address)
         .mnemonic_wallet(Some(&sim_conf.mnemonic.clone()))
         .build()
         .try_into()?;
@@ -1927,14 +1977,18 @@ pub async fn main_from_config(
     // Execute the proper command
     let res = match command {
         SimulatorCommand::Decrypt(cipher_params) => {
+            let decryption_params = DecryptionParams {
+                to_encrypt: parse_hex(cipher_params.to_encrypt.as_str())?,
+                data_type: cipher_params.data_type,
+                key_id: &cipher_params.key_id,
+                keys_folder: destination_prefix,
+                compressed: Some(cipher_params.compressed),
+            };
             let (event, ptxt, decrypt_values) = execute_decryption_contract(
-                parse_hex(cipher_params.to_encrypt.as_str())?,
-                cipher_params.data_type,
                 &client,
                 &query_client,
-                &cipher_params.key_id,
-                destination_prefix,
-                Some(cipher_params.compressed),
+                sim_conf.asc_address.to_string(),
+                decryption_params,
             )
             .await?;
             let req_id = event.txn_id.to_hex();
@@ -1977,19 +2031,23 @@ pub async fn main_from_config(
             let fhe_parameter: FheParameter =
                 query_csc(&query_client, &sim_conf, CscQuery::GetFheParameter {}).await?;
 
+            let reencryption_params = ReencryptionParams {
+                ct_config: CiphertextConfig {
+                    clear_value: parse_hex(cipher_params.to_encrypt.as_str())?,
+                    compressed: Some(cipher_params.compressed),
+                    data_type: cipher_params.data_type,
+                },
+                key_id: &cipher_params.key_id,
+                keys_folder: destination_prefix,
+                fhe_parameter,
+                num_parties,
+            };
             let (event, ptxt, request, kms_client, domain, enc_pk, enc_sk) =
                 execute_reencryption_contract(
-                    CiphertextConfig {
-                        clear_value: parse_hex(cipher_params.to_encrypt.as_str())?,
-                        compressed: Some(cipher_params.compressed),
-                        data_type: cipher_params.data_type,
-                    },
                     &client,
                     &query_client,
-                    &cipher_params.key_id,
-                    destination_prefix,
-                    fhe_parameter,
-                    num_parties,
+                    sim_conf.asc_address.to_string(),
+                    reencryption_params,
                 )
                 .await?;
             let req_id = event.txn_id.to_hex();
@@ -2031,7 +2089,12 @@ pub async fn main_from_config(
             (return_value, req_id)
         }
         SimulatorCommand::PreprocKeyGen(NoParameters {}) => {
-            let event = execute_preproc_keygen_contract(&client, &query_client).await?;
+            let event = execute_preproc_keygen_contract(
+                &client,
+                &query_client,
+                sim_conf.asc_address.to_string(),
+            )
+            .await?;
             let req_id = event.txn_id.to_hex();
             let num_expected_responses = if expect_all_responses {
                 num_parties
@@ -2070,8 +2133,13 @@ pub async fn main_from_config(
         }
         SimulatorCommand::KeyGen(KeyGenParameters { preproc_id }) => {
             let preproc_id = HexVector::from_hex(preproc_id)?;
-            let (event, keygen_vals) =
-                execute_keygen_contract(&client, &query_client, preproc_id).await?;
+            let (event, keygen_vals) = execute_keygen_contract(
+                &client,
+                &query_client,
+                sim_conf.asc_address.to_string(),
+                preproc_id,
+            )
+            .await?;
             let req_id = event.txn_id.to_hex();
             let return_value = process_keygen(
                 expect_all_responses,
@@ -2088,8 +2156,12 @@ pub async fn main_from_config(
             (return_value, req_id)
         }
         SimulatorCommand::InsecureKeyGen(NoParameters {}) => {
-            let (event, insecure_keygen_vals) =
-                execute_insecure_keygen_contract(&client, &query_client).await?;
+            let (event, insecure_keygen_vals) = execute_insecure_keygen_contract(
+                &client,
+                &query_client,
+                sim_conf.asc_address.to_string(),
+            )
+            .await?;
             let req_id = event.txn_id.to_hex();
             let return_value = process_keygen(
                 expect_all_responses,
@@ -2106,8 +2178,13 @@ pub async fn main_from_config(
             (return_value, req_id)
         }
         SimulatorCommand::CrsGen(CrsParameters { max_num_bits }) => {
-            let (event, crs_vals) =
-                execute_crsgen_contract(&client, &query_client, *max_num_bits).await?;
+            let (event, crs_vals) = execute_crsgen_contract(
+                &client,
+                &query_client,
+                sim_conf.asc_address.to_string(),
+                *max_num_bits,
+            )
+            .await?;
             let req_id = event.txn_id.to_hex();
             let return_value = process_crs(
                 expect_all_responses,
@@ -2124,8 +2201,13 @@ pub async fn main_from_config(
             (return_value, req_id)
         }
         SimulatorCommand::InsecureCrsGen(CrsParameters { max_num_bits }) => {
-            let (event, crs_vals) =
-                execute_insecure_crsgen_contract(&client, &query_client, *max_num_bits).await?;
+            let (event, crs_vals) = execute_insecure_crsgen_contract(
+                &client,
+                &query_client,
+                sim_conf.asc_address.to_string(),
+                *max_num_bits,
+            )
+            .await?;
             let req_id = event.txn_id.to_hex();
             let return_value = process_crs(
                 expect_all_responses,
@@ -2147,14 +2229,18 @@ pub async fn main_from_config(
             crs_id,
             key_id,
         }) => {
+            let verify_proven_ct_params = VerifyProvenCtParams {
+                to_encrypt: parse_hex(to_encrypt.as_str())?,
+                data_type: *data_type,
+                crs_id: crs_id.as_str(),
+                key_id: key_id.as_str(),
+                keys_folder: destination_prefix,
+            };
             let event = execute_verify_proven_ct_contract(
                 &client,
                 &query_client,
-                parse_hex(to_encrypt.as_str())?,
-                *data_type,
-                crs_id,
-                key_id,
-                destination_prefix,
+                sim_conf.asc_address.to_string(),
+                verify_proven_ct_params,
             )
             .await?;
             let req_id = event.txn_id.to_hex();

@@ -179,6 +179,7 @@ async fn decrypt(
     let kms_verifier_address =
         alloy_primitives::Address::from_slice(&config.ethereum.kmsverifier_vc_address.0)
             .to_string();
+    let asc_address = config.kms.asc_address.to_string();
     let acl_address =
         alloy_primitives::Address::from_slice(&config.ethereum.acl_address.0).to_string();
 
@@ -191,7 +192,7 @@ async fn decrypt(
     };
 
     blockchain
-        .decrypt(event, typed_cts, domain, acl_address)
+        .decrypt(event, typed_cts, domain, asc_address, acl_address)
         .await
 }
 
@@ -226,6 +227,7 @@ pub(crate) async fn handle_reencryption_event(
         return Err(anyhow::anyhow!(err_str));
     }
 
+    let asc_address = config.kms.asc_address.to_string();
     let acl_address =
         alloy_primitives::Address::from_slice(&config.ethereum.acl_address.0).to_string();
 
@@ -240,6 +242,7 @@ pub(crate) async fn handle_reencryption_event(
             event.eip712_verifying_contract.clone(),
             chain_id,
             config.parse_eip712_salt(),
+            asc_address,
             acl_address,
         )
         .await;
@@ -283,6 +286,7 @@ pub(crate) async fn handle_verify_proven_ct_event(
     let kms_verifier_address =
         alloy_primitives::Address::from_slice(&config.ethereum.kmsverifier_vc_address.0)
             .to_string();
+    let asc_address = config.kms.asc_address.to_string();
     let acl_address =
         alloy_primitives::Address::from_slice(&config.ethereum.acl_address.0).to_string();
     let domain = Eip712DomainMsg {
@@ -301,6 +305,7 @@ pub(crate) async fn handle_verify_proven_ct_event(
             event.crs_id.clone(),
             event.ct_proof.0.clone(),
             domain,
+            asc_address,
             acl_address,
         )
         .await?;

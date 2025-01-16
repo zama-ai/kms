@@ -7,7 +7,7 @@ use events::kms::{FheParameter, KmsEvent, KmsMessage, OperationValue};
 use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractRequest};
 use kms_blockchain_client::errors::Error;
 use kms_blockchain_client::query_client::{
-    AscQuery, CscQuery, EventQuery, QueryClient, QueryClientBuilder,
+    BscQuery, CscQuery, EventQuery, QueryClient, QueryClientBuilder,
 };
 use kms_common::retry_fatal_loop;
 use std::sync::Arc;
@@ -28,8 +28,6 @@ impl KmsBlockchain {
         metrics: OpenTelemetryMetrics,
     ) -> Result<Self, anyhow::Error> {
         let client: Client = ClientBuilder::builder()
-            .asc_address(&config.asc_address)
-            .csc_address(&config.csc_address)
             .grpc_addresses(config.grpc_addresses())
             .coin_denom(&config.fee.denom)
             .mnemonic_wallet(config.signkey.mnemonic.as_deref())
@@ -94,6 +92,7 @@ impl Blockchain for KmsBlockchain {
         let mut client = self.client.lock().await;
         let msg_str: KmsMessage = result.into();
         let request = ExecuteContractRequest::builder()
+            .contract_address(self.config.bsc_address.to_owned())
             .message(msg_str)
             .gas_limit(self.config.fee.amount)
             .build();
@@ -110,15 +109,15 @@ impl Blockchain for KmsBlockchain {
             })
     }
 
-    /// Get all the operation values associated with a given event (operation type + transaction ID) from the ASC
+    /// Get all the operation values associated with a given event (operation type + transaction ID) from the BSC
     #[tracing::instrument(skip(self))]
     async fn get_operation_value(&self, event: &KmsEvent) -> anyhow::Result<OperationValue> {
         let result: Vec<OperationValue> = {
             let query_client = self.query_client.lock().await;
             query_client
-                .query_asc(
-                    self.config.asc_address.to_owned(),
-                    AscQuery::GetOperationsValuesFromEvent(EventQuery {
+                .query_bsc(
+                    self.config.bsc_address.to_owned(),
+                    BscQuery::GetOperationsValuesFromEvent(EventQuery {
                         event: event.clone(),
                     }),
                 )

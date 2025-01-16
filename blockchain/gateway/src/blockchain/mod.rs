@@ -64,6 +64,7 @@ pub(crate) trait Blockchain: KmsEventSubscriber {
         event: DecryptionEvent,
         typed_cts: Vec<(Vec<u8>, FheType, Vec<u8>)>,
         eip712_domain: Eip712DomainMsg,
+        asc_address: String,
         acl_address: String,
     ) -> anyhow::Result<(Vec<Token>, Vec<Vec<u8>>)>;
 
@@ -84,6 +85,7 @@ pub(crate) trait Blockchain: KmsEventSubscriber {
         eip712_verifying_contract: String,
         chain_id: U256,
         salt: Option<Vec<u8>>,
+        asc_address: String,
         acl_address: String,
     ) -> anyhow::Result<Vec<ReencryptResponseValues>>;
 
@@ -95,6 +97,7 @@ pub(crate) trait Blockchain: KmsEventSubscriber {
         crs_id_str: String,
         ct_proof: Vec<u8>,
         eip712_domain: Eip712DomainMsg,
+        asc_address: String,
         acl_address: String,
     ) -> anyhow::Result<HexVectorList>;
 

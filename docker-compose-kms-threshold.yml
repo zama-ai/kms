@@ -99,9 +99,9 @@ services:
       - "docker-compose-kms-connector.env"
     environment:
       - DOCKER_BUILDKIT=1
-      - ASC_CONN__BLOCKCHAIN__ADDRESSES=http://dev-kms-blockchain-validator:9090
-      - ASC_CONN__CORE__ADDRESSES=http://dev-kms-core-1:50100
-      - ASC_CONN__STORE__URL=http://dev-kv-store:8088
+      - BSC_CONN__BLOCKCHAIN__ADDRESSES=http://dev-kms-blockchain-validator:9090
+      - BSC_CONN__CORE__ADDRESSES=http://dev-kms-core-1:50100
+      - BSC_CONN__STORE__URL=http://dev-kv-store:8088
       # - ASC_CONN__CORE__TIMEOUT_CONFIG__DECRYPTION__INITIAL_WAIT_TIME=1
       # - ASC_CONN__CORE__TIMEOUT_CONFIG__DECRYPTION__RETRY_INTERVAL=1
       # - ASC_CONN__CORE__TIMEOUT_CONFIG__REENCRYPTION__INITIAL_WAIT_TIME=1
@@ -168,9 +168,9 @@ services:
       - "docker-compose-kms-connector.env"
     environment:
       - DOCKER_BUILDKIT=1
-      - ASC_CONN__BLOCKCHAIN__ADDRESSES=http://dev-kms-blockchain-validator:9090
-      - ASC_CONN__CORE__ADDRESSES=http://dev-kms-core-2:50200
-      - ASC_CONN__STORE__URL=http://dev-kv-store:8088
+      - BSC_CONN__BLOCKCHAIN__ADDRESSES=http://dev-kms-blockchain-validator:9090
+      - BSC_CONN__CORE__ADDRESSES=http://dev-kms-core-2:50200
+      - BSC_CONN__STORE__URL=http://dev-kv-store:8088
       # - ASC_CONN__CORE__TIMEOUT_CONFIG__DECRYPTION__INITIAL_WAIT_TIME=1
       # - ASC_CONN__CORE__TIMEOUT_CONFIG__DECRYPTION__RETRY_INTERVAL=1
       # - ASC_CONN__CORE__TIMEOUT_CONFIG__REENCRYPTION__INITIAL_WAIT_TIME=1
@@ -240,9 +240,9 @@ services:
       - "docker-compose-kms-connector.env"
     environment:
       - DOCKER_BUILDKIT=1
-      - ASC_CONN__BLOCKCHAIN__ADDRESSES=http://dev-kms-blockchain-validator:9090
-      - ASC_CONN__CORE__ADDRESSES=http://dev-kms-core-3:50300
-      - ASC_CONN__STORE__URL=http://dev-kv-store:8088
+      - BSC_CONN__BLOCKCHAIN__ADDRESSES=http://dev-kms-blockchain-validator:9090
+      - BSC_CONN__CORE__ADDRESSES=http://dev-kms-core-3:50300
+      - BSC_CONN__STORE__URL=http://dev-kv-store:8088
       # - ASC_CONN__CORE__TIMEOUT_CONFIG__DECRYPTION__INITIAL_WAIT_TIME=1
       # - ASC_CONN__CORE__TIMEOUT_CONFIG__DECRYPTION__RETRY_INTERVAL=1
       # - ASC_CONN__CORE__TIMEOUT_CONFIG__REENCRYPTION__INITIAL_WAIT_TIME=1
@@ -309,9 +309,9 @@ services:
       - "docker-compose-kms-connector.env"
     environment:
       - DOCKER_BUILDKIT=1
-      - ASC_CONN__BLOCKCHAIN__ADDRESSES=http://dev-kms-blockchain-validator:9090
-      - ASC_CONN__CORE__ADDRESSES=http://dev-kms-core-4:50400
-      - ASC_CONN__STORE__URL=http://dev-kv-store:8088
+      - BSC_CONN__BLOCKCHAIN__ADDRESSES=http://dev-kms-blockchain-validator:9090
+      - BSC_CONN__CORE__ADDRESSES=http://dev-kms-core-4:50400
+      - BSC_CONN__STORE__URL=http://dev-kv-store:8088
       # - ASC_CONN__CORE__TIMEOUT_CONFIG__DECRYPTION__INITIAL_WAIT_TIME=1
       # - ASC_CONN__CORE__TIMEOUT_CONFIG__DECRYPTION__RETRY_INTERVAL=1
       # - ASC_CONN__CORE__TIMEOUT_CONFIG__REENCRYPTION__INITIAL_WAIT_TIME=1
