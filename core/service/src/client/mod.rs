@@ -1847,18 +1847,6 @@ pub fn assemble_metadata_req(req: &VerifyProvenCtRequest) -> anyhow::Result<[u8;
     ))
 }
 
-pub fn ecdsa_public_key_to_address(pk: &PublicSigKey) -> anyhow::Result<Vec<u8>> {
-    use k256::elliptic_curve::sec1::ToEncodedPoint;
-    let affine = pk.pk().as_ref();
-    let encoded = affine.to_encoded_point(false);
-    let pk_buf = &encoded.as_bytes()[1..];
-    if pk_buf.len() != 64 {
-        return Err(anyhow::anyhow!("incorrect public key buffer size"));
-    }
-    let digest = alloy_primitives::keccak256(pk_buf);
-    Ok(digest[12..].to_vec())
-}
-
 pub fn recover_ecdsa_public_key_from_signature(
     sig: &[u8],
     pub_enc_key: &[u8],
@@ -2475,7 +2463,6 @@ pub(crate) mod tests {
         };
         let mut rng = aes_prng::AesRng::seed_from_u64(12);
         let (client_pk, client_sk) = gen_sig_keys(&mut rng);
-        //let target_address = ecdsa_public_key_to_address(&client_pk).unwrap();
 
         let signer = PrivateKeySigner::from_signing_key(client_sk.sk().clone());
         let target_address = signer.address();

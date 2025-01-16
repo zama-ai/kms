@@ -5,4 +5,4 @@ package-lock.json
 package.json
 .store
 .GW_STATE
-
+.GW_INTEGRATION_STATE

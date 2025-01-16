@@ -56,8 +56,7 @@ fn check_talking_to_myself<R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
     Ok(r != &session.my_role()?)
 }
 
-/// Send specific values to all honest parties.
-/// I.e. not the sending party or corrupt parties.
+/// Send specific values to all parties.
 /// Each party is supposed to receive a specific value, mapped to their role in `values_to_send`.
 /// Automatically increases the round counter when called
 /// Note: This also sends to corrupt parties
@@ -66,7 +65,8 @@ pub async fn send_to_parties<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<
     session: &B,
 ) -> anyhow::Result<()> {
     session.network().increase_round_counter()?;
-    internal_send_to_parties(values_to_send, session, &check_talking_to_myself).await?;
+    // pass the always-true fn as check-fn, since we're checking for equal sender and receiver inside internal_send_to_parties
+    internal_send_to_parties(values_to_send, session, &|_a: &Role, _b: &B| Ok(true)).await?;
     Ok(())
 }
 
@@ -90,22 +90,26 @@ async fn internal_send_to_parties<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHan
     session: &B,
     check_fn: &(dyn Fn(&Role, &B) -> anyhow::Result<bool> + Sync),
 ) -> anyhow::Result<()> {
+    let my_role = session.my_role()?;
     for (cur_receiver, cur_value) in values_to_send.iter() {
-        // Ensure the party we want to send to passes the check we specified
-        if check_fn(cur_receiver, session)? {
-            let networking = Arc::clone(session.network());
-            let receiver_identity = session.identity_from(cur_receiver)?;
-            let value_to_send = cur_value.clone();
-            networking
-                .send(value_to_send.to_network(), &receiver_identity)
-                .await?;
-        } else {
-            tracing::info!(
-                "I am {:?} trying to send to receiver {:?}, who doesn't pass check",
-                session.my_role()?,
-                cur_receiver
-            );
-            continue;
+        // do not send to myself
+        if cur_receiver != &my_role {
+            // Ensure the party we want to send to passes the check we specified
+            if check_fn(cur_receiver, session)? {
+                let networking = Arc::clone(session.network());
+                let receiver_identity = session.identity_from(cur_receiver)?;
+                let value_to_send = cur_value.clone();
+                networking
+                    .send(value_to_send.to_network(), &receiver_identity)
+                    .await?;
+            } else {
+                tracing::warn!(
+                    "I am {:?} trying to send to receiver {:?}, who doesn't pass check",
+                    my_role,
+                    cur_receiver
+                );
+                continue;
+            }
         }
     }
     Ok(())

@@ -11,7 +11,7 @@ use backward_compatibility::{
 };
 use distributed_decryption::{
     algebra::{
-        galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
+        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
         structure_traits::{Invert, Ring, RingEmbed},
     },
     execution::{runtime::party::Role, small_execution::prss::PRSSSetup},
@@ -57,8 +57,8 @@ fn test_prss_setup(
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
     match test.residue_poly_size {
-        64 => compare_prss_setup::<ResiduePolyF8Z64>(dir, test, format, 64),
-        128 => compare_prss_setup::<ResiduePolyF8Z128>(dir, test, format, 128),
+        64 => compare_prss_setup::<ResiduePolyF4Z64>(dir, test, format, 64),
+        128 => compare_prss_setup::<ResiduePolyF4Z128>(dir, test, format, 128),
         _ => Err(test.failure(
             "Invalid residue poly size for PRSS setup: residue_poly_size must be 64 or 128"
                 .to_string(),
