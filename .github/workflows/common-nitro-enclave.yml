@@ -64,7 +64,11 @@ jobs:
       - name: Current branch sha
         if: github.event_name != 'release'
         run: |
-          echo "DOCKER_TAG_IMAGE=$(git rev-parse --short "$GITHUB_SHA")" >> "$GITHUB_ENV"
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            echo "DOCKER_TAG_IMAGE=nightly-$(git rev-parse --short "$GITHUB_SHA")" >> "$GITHUB_ENV"
+          else
+            echo "DOCKER_TAG_IMAGE=$(git rev-parse --short "$GITHUB_SHA")" >> "$GITHUB_ENV"
+          fi
 
       - name: Current Tag
         if: github.event_name == 'release'
@@ -120,4 +124,3 @@ jobs:
           labels: |
             zama.kms.version=${{ env.DOCKER_TAG_IMAGE }}
             zama.kms.eif_pcr0=${{ steps.eif.outputs.eif_pcr0 }}
-      
