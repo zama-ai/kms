@@ -87,26 +87,33 @@ where
 
             let networking = Arc::clone(session.network());
             let identity = session.own_identity();
+            let my_role = session.my_role()?;
+            let timeout = session.network().get_timeout_current_round()?;
             let task = async move {
-                let stripped_message = networking.receive(&sender_id).await;
-                let (send, recv) = tokio::sync::oneshot::channel();
-                rayon::spawn_fifo(move || {
-                    let _ = send.send(NetworkValue::<Z>::from_network(stripped_message));
-                });
-                let stripped_message = match recv.await {
-                    Ok(x) => match x {
-                        Ok(x) => match_network_value_fn(x, &identity),
-                        Err(e) => Err(e),
-                    },
-                    Err(e) => Err(anyhow::anyhow!(e)),
-                };
-                (sender, stripped_message)
+                let stripped_message = timeout_at(timeout, networking.receive(&sender_id)).await;
+                match stripped_message {
+                    Ok(stripped_message) => {
+                        let (send, recv) = tokio::sync::oneshot::channel();
+                        rayon::spawn_fifo(move || {
+                            let _ = send.send(NetworkValue::<Z>::from_network(stripped_message));
+                        });
+                        let stripped_message = match recv.await {
+                            Ok(x) => match x {
+                                Ok(x) => match_network_value_fn(x, &identity),
+                                Err(e) => Err(e),
+                            },
+                            Err(e) => Err(anyhow::anyhow!(e)),
+                        };
+                        Ok((sender, stripped_message))
+                    }
+                    Err(e) => {
+                        tracing::warn!("Sender {sender} timed out when sending to {my_role}");
+                        Err(e)
+                    }
+                }
             }
             .instrument(tracing::Span::current());
-            jobs.spawn(timeout_at(
-                session.network().get_timeout_current_round()?,
-                task,
-            ));
+            jobs.spawn(task);
         }
     }
     Ok(())
