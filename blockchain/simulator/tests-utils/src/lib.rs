@@ -82,23 +82,25 @@ impl DockerComposeCmd {
         build.arg("--wait");
         println!("{:?}", build);
 
-        match build.output() {
+        match build.spawn() {
             Err(error) => {
                 self.down();
                 panic!("Failed to execute docker compose up command: {}", error);
             }
-            Ok(output) => {
-                std::io::stdout().write_all(&output.stdout).unwrap();
-                if !output.status.success() {
+            Ok(mut p) => match p.wait() {
+                Err(error) => {
                     self.down();
-                    panic!(
-                        "Docker compose failed to start.\n{}",
-                        format_output(&output)
-                    );
-                } else {
-                    println!("Successfully launch command: {:?}", build);
+                    panic!("Failed to execute docker compose up command: {}", error);
                 }
-            }
+                Ok(status) => {
+                    if !status.success() {
+                        self.down();
+                        panic!("Docker compose failed to start. See output above\n");
+                    } else {
+                        println!("Successfully launch command: {:?}", build);
+                    }
+                }
+            },
         };
     }
 
