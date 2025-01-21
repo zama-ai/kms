@@ -5,6 +5,7 @@ use simulator::*;
 use std::path::Path;
 use std::path::PathBuf;
 use std::string::String;
+use test_context::futures::future::join_all;
 use test_context::{test_context, AsyncTestContext};
 use tests_utils::{DockerCompose, KMSMode};
 
@@ -186,16 +187,15 @@ async fn key_and_crs_gen<T: DockerComposeContext>(
     (key_id.to_string(), crs_id.to_string())
 }
 
-async fn real_preproc_and_keygen<T: DockerComposeContext>(ctx: &mut T) -> String {
+async fn real_preproc_and_keygen(config_path: &str) -> String {
     // Wait for contract to be in-chain
     // TODO: add status check for contract in-chain
     tokio::time::sleep(tokio::time::Duration::from_secs(BOOTSTRAP_TIME_TO_SLEEP)).await;
 
-    let path_to_config = ctx.root_path().join(ctx.config_path());
     let keys_folder: &Path = Path::new("tests/data/keys");
 
     let config = Config {
-        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+        file_conf: Some(config_path.to_string()),
         command: SimulatorCommand::PreprocKeyGen(NoParameters {}),
         logs: true,
         max_iter: 200,
@@ -214,7 +214,7 @@ async fn real_preproc_and_keygen<T: DockerComposeContext>(ctx: &mut T) -> String
     println!("Preprocessing done with ID {}", preproc_id);
 
     let config = Config {
-        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+        file_conf: Some(config_path.to_string()),
         command: SimulatorCommand::KeyGen(KeyGenParameters { preproc_id }),
         logs: true,
         max_iter: 200,
@@ -405,10 +405,36 @@ async fn integration_test_commands<T: DockerComposeContext>(
     test_template(ctx, commands).await
 }
 
+fn config_path_from_context(ctx: &DockerComposeThresholdContextTest) -> String {
+    ctx.root_path()
+        .join(ctx.config_path())
+        .to_str()
+        .unwrap()
+        .to_string()
+}
+
 #[test_context(DockerComposeThresholdContextTest)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_threshold_preproc_keygen(ctx: &mut DockerComposeThresholdContextTest) {
+async fn test_threshold_2_sequential_preproc_keygen(ctx: &DockerComposeThresholdContextTest) {
     init_logging();
-    let _key_id = real_preproc_and_keygen(ctx).await;
+    let config_path = config_path_from_context(ctx);
+    let key_id_1 = real_preproc_and_keygen(&config_path).await;
+    let key_id_2 = real_preproc_and_keygen(&config_path).await;
+    assert_ne!(key_id_1, key_id_2);
+}
+
+// https://github.com/zama-ai/kms-core/issues/1941
+#[should_panic]
+#[test_context(DockerComposeThresholdContextTest)]
+#[tokio::test]
+#[serial(docker)]
+async fn test_threshold_3_concurrent_preproc_keygen(ctx: &DockerComposeThresholdContextTest) {
+    init_logging();
+    let config_path = config_path_from_context(ctx);
+    let _ = join_all([
+        real_preproc_and_keygen(&config_path),
+        real_preproc_and_keygen(&config_path),
+    ])
+    .await;
 }
