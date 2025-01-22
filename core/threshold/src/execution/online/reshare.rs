@@ -448,6 +448,18 @@ mod tests {
         simulate_reshare::<4>(true)
     }
 
+    #[cfg(feature = "extension_degree_3")]
+    #[test]
+    fn reshare_no_error_f3() -> anyhow::Result<()> {
+        simulate_reshare::<3>(false)
+    }
+
+    #[cfg(feature = "extension_degree_3")]
+    #[test]
+    fn reshare_with_error_f3() -> anyhow::Result<()> {
+        simulate_reshare::<3>(true)
+    }
+
     fn simulate_reshare<const EXTENSION_DEGREE: usize>(add_error: bool) -> anyhow::Result<()>
     where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,

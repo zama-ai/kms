@@ -348,7 +348,6 @@ pub(crate) mod tests {
     //Test when coinflip aborts after the VSS for all kinds of VSS
     //No matter the strategy we expect all honest parties to output the same thing
     //We also specify whether we expect the cheating strategy to be detected, if so we check we do detect the cheaters
-    #[cfg(feature = "slow_tests")]
     #[rstest]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), RealVss::default())]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None), DroppingVssAfterR1::default())]
@@ -357,6 +356,7 @@ pub(crate) mod tests {
     #[case(TestingParameters::init(4, 1, &[1], &[0,2], &[], true, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
     #[case(TestingParameters::init(7, 2, &[1,3], &[0,2], &[], false, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
     #[case(TestingParameters::init(7, 2, &[1,3], &[0,2,4,6], &[], true, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
+    #[cfg(feature = "slow_tests")]
     fn test_coinflip_dropout<V: Vss + 'static>(
         #[case] params: TestingParameters,
         #[case] malicious_vss: V,
@@ -377,7 +377,6 @@ pub(crate) mod tests {
     //Test honest coinflip with all kinds of malicious strategies for VSS
     //No matter the strategy, we expect all honest parties to end up with the same output
     //We also specify whether we expect the cheating strategy to be detected, if so we check we do detect the cheaters
-    #[cfg(feature = "slow_tests")]
     #[rstest]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None), DroppingVssFromStart::default())]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None), DroppingVssAfterR1::default())]
@@ -386,6 +385,7 @@ pub(crate) mod tests {
     #[case(TestingParameters::init(4, 1, &[1], &[0,2], &[], true, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
     #[case(TestingParameters::init(7, 2, &[1,3], &[0,2], &[], false, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
     #[case(TestingParameters::init(7, 2, &[1,3], &[0,2,4,6], &[], true, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
+    #[cfg(feature = "slow_tests")]
     fn test_coinflip_malicious_vss<V: Vss + 'static>(
         #[case] params: TestingParameters,
         #[case] malicious_vss: V,
@@ -406,7 +406,6 @@ pub(crate) mod tests {
 
     //Test malicious coinflip with all kinds of strategies for VSS (honest and malicious)
     //Again, we always expect the honest parties to agree on the output
-    #[cfg(feature = "slow_tests")]
     #[rstest]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), RealVss::default())]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None), DroppingVssAfterR1::default())]
@@ -415,6 +414,7 @@ pub(crate) mod tests {
     #[case(TestingParameters::init(4, 1, &[1], &[0,2], &[], true, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
     #[case(TestingParameters::init(7, 2, &[1,3], &[0,2], &[], false, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
     #[case(TestingParameters::init(7, 2, &[1,3], &[0,2,4,6], &[], true, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
+    #[cfg(feature = "slow_tests")]
     fn test_malicious_coinflip_malicious_vss<V: Vss + 'static>(
         #[case] params: TestingParameters,
         #[case] malicious_vss: V,

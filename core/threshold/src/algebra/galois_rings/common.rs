@@ -433,8 +433,10 @@ pub trait ReductionTable<Z: Clone, const EXTENSION_DEGREE: usize> {
     const REDUCTION_TABLES: ReductionTables<Z, EXTENSION_DEGREE>;
 }
 
-/// Precomputes reductions of x^8, x^9, ...x^14 to help us in reducing polynomials faster
+/// Precomputes reductions of monomials of higher degree to help us in reducing polynomials
+/// after multiplication faster
 pub struct ReductionTables<Z: Clone, const EXTENSION_DEGREE: usize> {
+    /// NOTE: We only need up to EXTENSION_DEGREE - 1 but can't do `const` operations with generic
     pub reduced: [ResiduePoly<Z, EXTENSION_DEGREE>; EXTENSION_DEGREE],
 }
 
@@ -446,6 +448,7 @@ impl<Z: Clone, const EXTENSION_DEGREE: usize> ReductionTables<Z, EXTENSION_DEGRE
 }
 
 impl<Z: BaseRing, const EXTENSION_DEGREE: usize> ResiduePoly<Z, EXTENSION_DEGREE> {
+    //Checks if each coefficient is a multiple of 2^exp
     pub fn multiple_pow2(&self, exp: usize) -> bool {
         assert!(exp <= Z::BIT_LENGTH);
         if exp == Z::BIT_LENGTH {

@@ -1291,6 +1291,12 @@ mod tests {
         test_triple_orchestrator_large::<4>()
     }
 
+    #[cfg(feature = "extension_degree_3")]
+    #[test]
+    fn test_triple_orchestrator_large_f3() {
+        test_triple_orchestrator_large::<3>()
+    }
+
     fn test_triple_orchestrator_large<const EXTENSION_DEGREE: usize>()
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
@@ -1334,6 +1340,12 @@ mod tests {
         test_bit_orchestrator_large::<4>()
     }
 
+    #[cfg(feature = "extension_degree_3")]
+    #[test]
+    fn test_bit_orchestrator_large_f3() {
+        test_bit_orchestrator_large::<3>()
+    }
+
     fn test_bit_orchestrator_large<const EXTENSION_DEGREE: usize>()
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
@@ -1375,6 +1387,12 @@ mod tests {
     #[test]
     fn test_random_orchestrator_large_f4() {
         test_random_orchestrator_large::<4>()
+    }
+
+    #[cfg(feature = "extension_degree_3")]
+    #[test]
+    fn test_random_orchestrator_large_f3() {
+        test_random_orchestrator_large::<3>()
     }
 
     fn test_random_orchestrator_large<const EXTENSION_DEGREE: usize>()
@@ -1527,6 +1545,12 @@ mod tests {
         test_triple_orchestrator_small::<4>()
     }
 
+    #[cfg(feature = "extension_degree_3")]
+    #[test]
+    fn test_triple_orchestrator_small_f3() {
+        test_triple_orchestrator_small::<3>()
+    }
+
     fn test_triple_orchestrator_small<const EXTENSION_DEGREE: usize>()
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
@@ -1570,6 +1594,12 @@ mod tests {
         test_bit_orchestrator_small::<4>()
     }
 
+    #[cfg(feature = "extension_degree_3")]
+    #[test]
+    fn test_bit_orchestrator_small_f3() {
+        test_bit_orchestrator_small::<3>()
+    }
+
     fn test_bit_orchestrator_small<const EXTENSION_DEGREE: usize>()
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
@@ -1611,6 +1641,12 @@ mod tests {
     #[test]
     fn test_randomness_orchestrator_small_f4() {
         test_randomness_orchestrator_small::<4>()
+    }
+
+    #[cfg(feature = "extension_degree_3")]
+    #[test]
+    fn test_randomness_orchestrator_small_f3() {
+        test_randomness_orchestrator_small::<3>()
     }
 
     fn test_randomness_orchestrator_small<const EXTENSION_DEGREE: usize>()

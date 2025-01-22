@@ -168,6 +168,8 @@ pub async fn open_list<
 #[cfg(test)]
 mod tests {
     use super::Share;
+    #[cfg(feature = "extension_degree_3")]
+    use crate::algebra::galois_rings::degree_3::{ResiduePolyF3Z128, ResiduePolyF3Z64};
     #[cfg(feature = "extension_degree_8")]
     use crate::algebra::galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64};
     use crate::{
@@ -352,4 +354,10 @@ mod tests {
 
     test_triples![ResiduePolyF4Z64, u64];
     test_triples![ResiduePolyF4Z128, u128];
+
+    #[cfg(feature = "extension_degree_3")]
+    test_triples![ResiduePolyF3Z64, u64];
+
+    #[cfg(feature = "extension_degree_3")]
+    test_triples![ResiduePolyF3Z128, u128];
 }

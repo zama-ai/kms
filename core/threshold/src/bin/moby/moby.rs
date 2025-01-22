@@ -14,7 +14,26 @@ pub struct Cli {
 }
 
 // Below we set EXTENSION_DEGREE to be the highest available from the compilation flags
-#[cfg(all(feature = "extension_degree_4", not(feature = "extension_degree_8")))]
+#[cfg(all(
+    feature = "extension_degree_3",
+    not(any(
+        feature = "extension_degree_8",
+        feature = "extension_degree_7",
+        feature = "extension_degree_6",
+        feature = "extension_degree_5",
+        feature = "extension_degree_4"
+    ))
+))]
+const EXTENSION_DEGREE: usize = 3;
+#[cfg(all(
+    feature = "extension_degree_4",
+    not(any(
+        feature = "extension_degree_8",
+        feature = "extension_degree_7",
+        feature = "extension_degree_6",
+        feature = "extension_degree_5",
+    ))
+))]
 const EXTENSION_DEGREE: usize = 4;
 #[cfg(feature = "extension_degree_8")]
 const EXTENSION_DEGREE: usize = 8;

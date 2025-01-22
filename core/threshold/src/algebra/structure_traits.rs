@@ -153,10 +153,14 @@ pub trait Derive: Sized {
     ) -> HashMap<Role, Vec<Self>>;
 }
 
+/// Implement the Solve function defined in NIST doc (Fig.36)
 pub trait Solve: Sized + ZConsts {
     fn solve(v: &Self) -> anyhow::Result<Self>;
 }
 
+/// Implement the Solve_1 function defined in NIST doc.
+/// and used for Solve (Fig.36)
+/// Solves X^2 + X = v (mod 2)
 pub trait Solve1: Sized {
     fn solve_1(v: &Self) -> anyhow::Result<Self>;
 }

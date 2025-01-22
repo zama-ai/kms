@@ -1083,6 +1083,13 @@ pub mod tests {
         old_keygen_params32_with_sns::<4>()
     }
 
+    #[cfg(feature = "extension_degree_3")]
+    #[test]
+    #[ignore]
+    fn old_keygen_params32_with_sns_f3() {
+        old_keygen_params32_with_sns::<3>()
+    }
+
     fn old_keygen_params32_with_sns<const EXTENSION_DEGREE: usize>()
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
@@ -1128,10 +1135,18 @@ pub mod tests {
     fn keygen_params32_no_sns_fglwe_f8() {
         keygen_params32_no_sns_fglwe::<8>()
     }
+
     #[test]
     #[ignore]
     fn keygen_params32_no_sns_fglwe_f4() {
         keygen_params32_no_sns_fglwe::<4>()
+    }
+
+    #[cfg(feature = "extension_degree_3")]
+    #[test]
+    #[ignore]
+    fn keygen_params32_no_sns_fglwe_f3() {
+        keygen_params32_no_sns_fglwe::<3>()
     }
 
     ///Tests related to [`PARAMS_P32_NO_SNS_FGLWE`]
@@ -1185,6 +1200,13 @@ pub mod tests {
         keygen_params8_no_sns_fglwe::<4>()
     }
 
+    #[cfg(feature = "extension_degree_3")]
+    #[test]
+    #[ignore]
+    fn keygen_params8_no_sns_fglwe_f3() {
+        keygen_params8_no_sns_fglwe::<3>()
+    }
+
     ///Tests related to [`PARAMS_P8_NO_SNS_FGLWE`]
     fn keygen_params8_no_sns_fglwe<const EXTENSION_DEGREE: usize>()
     where
@@ -1229,6 +1251,13 @@ pub mod tests {
     #[ignore]
     fn keygen_params32_no_sns_lwe_f4() {
         keygen_params32_no_sns_lwe::<4>()
+    }
+
+    #[cfg(feature = "extension_degree_3")]
+    #[test]
+    #[ignore]
+    fn keygen_params32_no_sns_lwe_f3() {
+        keygen_params32_no_sns_lwe::<3>()
     }
 
     ///Tests related to [`PARAMS_P32_NO_SNS_LWE`]
@@ -1282,6 +1311,13 @@ pub mod tests {
         keygen_params8_no_sns_lwe::<4>()
     }
 
+    #[cfg(feature = "extension_degree_3")]
+    #[test]
+    #[ignore]
+    fn keygen_params8_no_sns_lwe_f3() {
+        keygen_params8_no_sns_lwe::<3>()
+    }
+
     ///Tests related to [`PARAMS_P8_NO_SNS_LWE`]
     fn keygen_params8_no_sns_lwe<const EXTENSION_DEGREE: usize>()
     where
@@ -1327,6 +1363,14 @@ pub mod tests {
     fn keygen_params_bk_sns_f4() {
         keygen_params_bk_sns::<4>()
     }
+
+    #[cfg(feature = "extension_degree_3")]
+    #[test]
+    #[ignore]
+    fn keygen_params_bk_sns_f3() {
+        keygen_params_bk_sns::<3>()
+    }
+
     ///Tests related to [`PARAMS_TEST_BK_SNS`]
     fn keygen_params_bk_sns<const EXTENSION_DEGREE: usize>()
     where
@@ -1367,7 +1411,6 @@ pub mod tests {
         );
     }
 
-    #[cfg(feature = "extension_degree_8")]
     #[cfg(feature = "slow_tests")]
     #[test]
     fn integration_keygen_params_bk_sns_f8() {
@@ -1378,6 +1421,12 @@ pub mod tests {
     #[test]
     fn integration_keygen_params_bk_sns_f4() {
         integration_keygen_params_bk_sns::<4>()
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[test]
+    fn integration_keygen_params_bk_sns_f3() {
+        integration_keygen_params_bk_sns::<3>()
     }
 
     #[cfg(feature = "slow_tests")]
@@ -1434,6 +1483,13 @@ pub mod tests {
         keygen_params32_with_sns_fglwe::<4>()
     }
 
+    #[cfg(feature = "extension_degree_3")]
+    #[test]
+    #[ignore]
+    fn keygen_params32_with_sns_fglwe_f3() {
+        keygen_params32_with_sns_fglwe::<3>()
+    }
+
     ///Tests related to [`PARAMS_P32_SNS_FGLWE`]
     fn keygen_params32_with_sns_fglwe<const EXTENSION_DEGREE: usize>()
     where
@@ -1487,6 +1543,13 @@ pub mod tests {
         keygen_params8_with_sns_fglwe::<4>()
     }
 
+    #[cfg(feature = "extension_degree_3")]
+    #[test]
+    #[ignore]
+    fn keygen_params8_with_sns_fglwe_f3() {
+        keygen_params8_with_sns_fglwe::<3>()
+    }
+
     ///Tests related to [`PARAMS_P8_REAL_WITH_SNS`]
     fn keygen_params8_with_sns_fglwe<const EXTENSION_DEGREE: usize>()
     where
@@ -1533,6 +1596,13 @@ pub mod tests {
     #[ignore]
     fn keygen_params_blockchain_without_sns_f4() {
         keygen_params_blockchain_without_sns::<4>()
+    }
+
+    #[cfg(feature = "extension_degree_3")]
+    #[test]
+    #[ignore]
+    fn keygen_params_blockchain_without_sns_f3() {
+        keygen_params_blockchain_without_sns::<3>()
     }
 
     ///Tests related to [`BC_PARAMS_SAM_NO_SNS`]
@@ -2156,7 +2226,7 @@ pub mod tests {
     // against the plaintext output. But no plaintext implementation
     // of the PRF exists so we simply check that the PRF output
     // is different when the PRF key is different.
-    #[cfg(all(feature = "slow_tests", feature = "extension_degree_8"))]
+    #[cfg(feature = "slow_tests")]
     #[test]
     fn keygen_params32_no_sns_fglwe_w_homprf_f8() {
         keygen_params32_no_sns_fglwe_w_homprf::<8>()
@@ -2166,6 +2236,12 @@ pub mod tests {
     #[test]
     fn keygen_params32_no_sns_fglwe_w_homprf_f4() {
         keygen_params32_no_sns_fglwe_w_homprf::<4>()
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[test]
+    fn keygen_params32_no_sns_fglwe_w_homprf_f3() {
+        keygen_params32_no_sns_fglwe_w_homprf::<3>()
     }
 
     #[cfg(feature = "slow_tests")]

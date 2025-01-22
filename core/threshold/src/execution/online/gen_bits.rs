@@ -72,6 +72,8 @@ impl BitGenEven for RealBitGenEven {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "extension_degree_3")]
+    use crate::algebra::galois_rings::degree_3::{ResiduePolyF3Z128, ResiduePolyF3Z64};
     use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
     use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z64;
     #[cfg(feature = "extension_degree_8")]
@@ -80,7 +82,7 @@ mod tests {
     use crate::execution::online::gen_bits::BitGenEven;
     use crate::execution::online::gen_bits::RealBitGenEven;
     use crate::{
-        algebra::structure_traits::{One, Sample, Zero},
+        algebra::structure_traits::{One, Sample, ZConsts, Zero},
         execution::{
             online::{
                 gen_bits::Solve,
@@ -208,7 +210,13 @@ mod tests {
                     let mut rng = AesRng::seed_from_u64(1);
                     let a = $z::sample(&mut rng);
                     // The input not of the form a+a*a
-                    let t = a + a * a - $z::ONE;
+                    // but has a solution to X^2 + X = t
+                    // i.e. Tr(t) = 0 (mod 2) (section 7.1.5 in NIST doc)
+                    let t = if $z::EXTENSION_DEGREE % 2 == 0 {
+                        a + a * a - $z::ONE
+                    } else {
+                        a + a * a - $z::TWO
+                    };
                     let x = $z::solve(&t).unwrap();
                     assert_ne!(a + a * a, x + x * x);
                 }
@@ -247,4 +255,9 @@ mod tests {
 
     test_bitgen![ResiduePolyF4Z64, u64];
     test_bitgen![ResiduePolyF4Z128, u128];
+
+    #[cfg(feature = "extension_degree_3")]
+    test_bitgen![ResiduePolyF3Z64, u64];
+    #[cfg(feature = "extension_degree_3")]
+    test_bitgen![ResiduePolyF3Z128, u128];
 }

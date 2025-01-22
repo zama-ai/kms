@@ -24,7 +24,7 @@ use super::{
 };
 
 /// This defines a degree 8 extension based on the irreducible polynomial
-/// F = x8 + x4 + x3 + x + 1
+/// F = X^8 + X^4 + X^3 + X + 1
 pub type ResiduePolyF8<Z> = ResiduePoly<Z, 8>;
 pub type ResiduePolyF8Z128 = ResiduePolyF8<Z128>;
 pub type ResiduePolyF8Z64 = ResiduePolyF8<Z64>;
@@ -48,7 +48,11 @@ impl<Z: BaseRing> Ring for ResiduePolyF8<Z> {
 }
 
 impl<Z: Clone> ResiduePolyF8<Z> {
-    /// multiplies a ResiduePoly by x using the irreducible poly F = x8 + x4 + x3 + x + 1
+    /// multiplies a ResiduePoly by x using the irreducible poly F = X^8 + X^4 + X^3 + X + 1
+    /// i.e. X * (aX^7 + bX^6 + cX^5 + dX^4 + eX^3 + fX^2 + gX + h)
+    ///      = aX^8 + bX^7 + cX^6 + dX^5 + eX^4 + fX^3 + gX^2 + hX
+    ///      = -a(X^4 + X^3 + X + 1) + bX^7 + cX^6 + dX^5 + eX^4 + fX^3 + gX^2 + hX
+    ///      = bX^7 + cX^6 + dX^5 + (e-a)X^4 + (f-a)X^3 + gX^2 + (h-a) X - a
     pub fn mul_by_x(&mut self)
     where
         Z: Neg<Output = Z> + SubAssign + Copy,
@@ -127,7 +131,9 @@ where
 {
     pub const fn new() -> Self {
         Self {
+            //Taken mod X^8 + X^4 + X^3 + X + 1
             reduced: [
+                //X^8 = -X^4 - X^3 - X - 1
                 ResiduePoly {
                     coefs: [
                         Z::MAX,
@@ -140,6 +146,7 @@ where
                         Z::ZERO,
                     ],
                 },
+                //X^9 = -X^5 - X^4 - X^2 - X
                 ResiduePoly {
                     coefs: [
                         Z::ZERO,
@@ -152,6 +159,7 @@ where
                         Z::ZERO,
                     ],
                 },
+                //X^10 = -X^6 - X^5 - X^3 - X^2
                 ResiduePoly {
                     coefs: [
                         Z::ZERO,
@@ -164,6 +172,7 @@ where
                         Z::ZERO,
                     ],
                 },
+                //X^11 = -X^7 - X^6 - X^4 - X^3
                 ResiduePoly {
                     coefs: [
                         Z::ZERO,
@@ -176,6 +185,7 @@ where
                         Z::MAX,
                     ],
                 },
+                //X^12 = -X^7 - X^5 + X^3 + X + 1
                 ResiduePoly {
                     coefs: [
                         Z::ONE,
@@ -188,6 +198,7 @@ where
                         Z::MAX,
                     ],
                 },
+                //X^13 = -X^6 + 2X^4 + X^3 + X^2 + 2X + 1
                 ResiduePoly {
                     coefs: [
                         Z::ONE,
@@ -200,6 +211,7 @@ where
                         Z::ZERO,
                     ],
                 },
+                //X^14 = -X^7 + 2X^5 + X^4 + X^3 + 2X^2 + X
                 ResiduePoly {
                     coefs: [
                         Z::ZERO,
@@ -212,6 +224,8 @@ where
                         Z::MAX,
                     ],
                 },
+                // NEVER USED, only there because generic can't be used in const operation
+                // X^15 = 2X^6 + X^5 + 2X^4 + 3X^3 + X^2 + X + 1
                 ResiduePoly {
                     coefs: [
                         Z::ONE,
@@ -254,6 +268,7 @@ impl<Z: BaseRing> QuotientMaximalIdeal for ResiduePolyF8<Z> {
         GF256::from(x)
     }
 
+    // Lift an element of GF256 to element of ResiduePolyF8
     fn bit_lift(x: GF256, pos: usize) -> anyhow::Result<Self> {
         let c8: u8 = x.into();
         let shifted_coefs: Vec<_> = (0..8)
@@ -738,15 +753,18 @@ mod tests {
                     ],
                 };
 
+                //All coefs are multiple of 1 and 2 but not 2^5
                 assert!(s.multiple_pow2(0));
                 assert!(s.multiple_pow2(1));
                 assert!(!s.multiple_pow2(5));
 
+                //All coefs are multiple of 1 but not 2 nor 2^5
                 s.coefs[0] = Wrapping(7);
                 assert!(s.multiple_pow2(0));
                 assert!(!s.multiple_pow2(1));
                 assert!(!s.multiple_pow2(5));
 
+                //All coefs are multiple of 1, 2, 2^5, 2^6 but not 2^7 nor 2^23
                 s.coefs = [Wrapping(64); 8];
                 assert!(s.multiple_pow2(0));
                 assert!(s.multiple_pow2(1));

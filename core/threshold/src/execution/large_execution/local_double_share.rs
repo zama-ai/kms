@@ -743,7 +743,6 @@ pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[rstest]
-    #[serial_test::serial]
     fn test_ldl_malicious_subprotocols_caught<
         V: Vss,
         C: Coinflip + 'static,
@@ -789,7 +788,6 @@ pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[rstest]
-    #[serial_test::serial]
     fn test_ldl_malicious_subprotocols_not_caught<
         V: Vss,
         C: Coinflip + 'static,
@@ -827,10 +825,10 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(feature = "slow_tests")]
     #[rstest]
     #[case(TestingParameters::init(4,1,&[2],&[0],&[],true,None), TrueCoinFlip::default(), MaliciousShareDisputeRecons::init(&params.roles_to_lie_to))]
     #[case(TestingParameters::init(4,1,&[2],&[],&[(3,0)],false,None), MaliciousCoinflipRecons::<RealVss>::default(), RealShareDispute::default())]
+    #[cfg(feature = "slow_tests")]
     fn test_ldl_malicious_subprotocols_fine_grain<
         C: Coinflip + 'static,
         S: ShareDispute + 'static,

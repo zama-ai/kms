@@ -15,6 +15,7 @@ use std::sync::RwLock;
 g2p!(
     GF256,
     8,
+    // Polynomial X^8 + X^4 + X^4 + X + 1
     modulus: 0b_1_0001_1011,
 );
 

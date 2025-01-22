@@ -37,6 +37,14 @@ impl From<Poly<super::galois_fields::gf16::GF16>> for BitwisePoly {
     }
 }
 
+#[cfg(feature = "extension_degree_3")]
+impl From<Poly<super::galois_fields::gf8::GF8>> for BitwisePoly {
+    fn from(poly: Poly<super::galois_fields::gf8::GF8>) -> BitwisePoly {
+        let coefs: Vec<u8> = poly.coefs.iter().map(|coef_2| coef_2.0).collect();
+        BitwisePoly { coefs }
+    }
+}
+
 pub trait BitWiseEval<Z, const EXTENSION_DEGREE: usize>
 where
     Z: Zero + for<'a> AddAssign<&'a Z> + Copy + Clone,

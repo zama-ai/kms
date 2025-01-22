@@ -173,7 +173,7 @@ required-features = ["testing"]
 default = ["non-wasm", "extension_degree_4"]
 # Some utilities used in the `testing` feature require the `non-wasm` feature to be enabled
 testing = ["dep:tokio", "non-wasm"]
-slow_tests = ["testing", "extension_degree_4", "extension_degree_8"]
+slow_tests = ["testing", "all_extension_degrees" ]
 sequential_sns = []
 experimental = ["dep:crypto-bigint", "choreographer"]
 templating = ["minijinja"]
@@ -194,5 +194,17 @@ non-wasm = [
     "dep:tfhe-zk-pok",
     "dep:kms-core-utils",
 ]
+all_extension_degrees = [
+    "extension_degree_3", 
+    "extension_degree_4", 
+    "extension_degree_5",
+    "extension_degree_6",
+    "extension_degree_7", 
+    "extension_degree_8"
+]
 extension_degree_8 = []
+extension_degree_7 = []
+extension_degree_6 = []
+extension_degree_5 = []
 extension_degree_4 = []
+extension_degree_3 = []

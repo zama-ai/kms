@@ -230,6 +230,8 @@ mod tests {
 
     #[cfg(feature = "extension_degree_8")]
     use crate::algebra::galois_fields::gf256::GF256;
+    #[cfg(feature = "extension_degree_3")]
+    use crate::algebra::galois_fields::gf8::GF8;
     use crate::{
         algebra::{
             base_ring::Z64,
@@ -258,6 +260,12 @@ mod tests {
     #[test]
     fn test_divisibility_fail_f4() {
         test_divisibility_fail::<4>();
+    }
+
+    #[cfg(feature = "extension_degree_3")]
+    #[test]
+    fn test_divisibility_fail_f3() {
+        test_divisibility_fail::<3>();
     }
 
     fn test_divisibility_fail<const EXTENSION_DEGREE: usize>()
@@ -318,6 +326,12 @@ mod tests {
     #[test]
     fn test_error_correction_f4() {
         test_error_correction::<GF16>();
+    }
+
+    #[cfg(feature = "extension_degree_3")]
+    #[test]
+    fn test_error_correction_f3() {
+        test_error_correction::<GF8>();
     }
 
     fn test_error_correction<BaseField: Field>() {

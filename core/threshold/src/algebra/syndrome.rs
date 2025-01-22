@@ -176,6 +176,8 @@ mod tests {
     use super::*;
     #[cfg(feature = "extension_degree_8")]
     use crate::algebra::galois_fields::gf256::GF256;
+    #[cfg(feature = "extension_degree_3")]
+    use crate::algebra::galois_fields::gf8::GF8;
     use crate::algebra::{
         galois_fields::gf16::GF16,
         poly::{gao_decoding, lagrange_interpolation},
@@ -184,20 +186,26 @@ mod tests {
     #[cfg(feature = "extension_degree_8")]
     #[test]
     fn test_compute_syndrome_field_f8() {
-        test_compute_syndrome_field::<GF256>()
+        test_compute_syndrome_field::<GF256>(10)
     }
 
     #[test]
     fn test_compute_syndrome_field_f4() {
-        test_compute_syndrome_field::<GF16>()
+        test_compute_syndrome_field::<GF16>(10)
     }
 
-    fn test_compute_syndrome_field<BaseField: Field>() {
+    #[cfg(feature = "extension_degree_3")]
+    #[test]
+    fn test_compute_syndrome_field_f3() {
+        test_compute_syndrome_field::<GF8>(5)
+    }
+
+    fn test_compute_syndrome_field<BaseField: Field>(num_parties: u128) {
         let f = Poly {
             coefs: vec![BaseField::from_u128(7), BaseField::from_u128(42)],
         };
 
-        let n = 10;
+        let n = num_parties;
         let v = f.coefs.len(); //called k for RS codes in some literature, equals threshold + 1
         let r = n as usize - v;
 
@@ -247,6 +255,12 @@ mod tests {
     #[test]
     fn test_syndrome_decode_field_f4() {
         test_syndrome_decode_field::<GF16>();
+    }
+
+    #[cfg(feature = "extension_degree_3")]
+    #[test]
+    fn test_syndrome_decode_field_f3() {
+        test_syndrome_decode_field::<GF8>();
     }
 
     fn test_syndrome_decode_field<BaseField: Field>() {

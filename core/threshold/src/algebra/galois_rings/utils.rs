@@ -45,7 +45,14 @@ where
 // KARATSUBA MULTIPLICATION
 
 /* (a1*X+a0)*(b1*X+b0) */
-#[cfg(any(feature = "extension_degree_8", feature = "extension_degree_4"))]
+#[cfg(any(
+    feature = "extension_degree_3",
+    feature = "extension_degree_4",
+    feature = "extension_degree_5",
+    feature = "extension_degree_6",
+    feature = "extension_degree_7",
+    feature = "extension_degree_8",
+))]
 pub(crate) fn karatsuba_2<Z>(a: &[Z], b: &[Z]) -> [Z; 3]
 where
     Z: Add<Z, Output = Z>,
@@ -64,7 +71,12 @@ where
 }
 
 /*  (a2*X^2+a1*X+a0)*(b2*X^2+b1*X+b0) */
-#[allow(dead_code)]
+#[cfg(any(
+    feature = "extension_degree_3",
+    feature = "extension_degree_5",
+    feature = "extension_degree_6",
+    feature = "extension_degree_7"
+))]
 pub(crate) fn karatsuba_3<Z>(a: &[Z], b: &[Z]) -> [Z; 5]
 where
     Z: Add<Z, Output = Z>,
@@ -82,7 +94,11 @@ where
 }
 
 /* (a3*X^3+a2*X^2+a1*X+a0)*(b3*X^3+b2*X^2+b1*X+b0) */
-#[cfg(any(feature = "extension_degree_8", feature = "extension_degree_4"))]
+#[cfg(any(
+    feature = "extension_degree_4",
+    feature = "extension_degree_7",
+    feature = "extension_degree_8",
+))]
 pub(crate) fn karatsuba_4<Z>(a: &[Z], b: &[Z]) -> [Z; 7]
 where
     Z: Add<Z, Output = Z>,
@@ -112,6 +128,7 @@ where
 }
 
 /* (a4*X^4+3*X^3+a2*X^2+a1*X+a0)*(b4*X^4+b3*X^3+b2*X^2+b1*X+b0) */
+#[cfg(feature = "extension_degree_5")]
 #[allow(dead_code)]
 pub(crate) fn karatsuba_5<Z>(a: &[Z], b: &[Z]) -> [Z; 9]
 where
@@ -149,6 +166,7 @@ where
 }
 
 /* (a5*X^5+a4*X^4+a3*X^3+a2*X^2+a1*X+a0)*(b5*X^5+b4*X^4+b3*X^3+b2*X^2+b1*X+b0) */
+#[cfg(feature = "extension_degree_6")]
 #[allow(dead_code)]
 pub(crate) fn karatsuba_6<Z>(a: &[Z], b: &[Z]) -> [Z; 11]
 where
@@ -188,6 +206,7 @@ where
 }
 
 /* (a6*X^6+a5*X^5+a4*X^4+a3*X^3+a2*X^2+a1*X+a0)*(b6*X^6+b5*X^5+b4*X^4+b3*X^3+b2*X^2+b1*X+b0) */
+#[cfg(feature = "extension_degree_7")]
 #[allow(dead_code)]
 pub(crate) fn karatsuba_7<Z>(a: &[Z], b: &[Z]) -> [Z; 13]
 where
@@ -282,9 +301,19 @@ mod tests {
         ops::{AddAssign, Mul},
     };
 
+    use super::karatsuba_2;
+    #[cfg(feature = "extension_degree_3")]
+    use super::karatsuba_3;
+    #[cfg(feature = "extension_degree_4")]
+    use super::karatsuba_4;
+    #[cfg(feature = "extension_degree_5")]
+    use super::karatsuba_5;
+    #[cfg(feature = "extension_degree_6")]
+    use super::karatsuba_6;
+    #[cfg(feature = "extension_degree_7")]
+    use super::karatsuba_7;
     #[cfg(feature = "extension_degree_8")]
     use super::karatsuba_8;
-    use super::{karatsuba_2, karatsuba_3, karatsuba_4, karatsuba_5, karatsuba_6, karatsuba_7};
     use crate::algebra::structure_traits::Zero;
 
     fn naive_mult<Z>(a: &[Z], b: &[Z]) -> Vec<Z>
@@ -317,6 +346,7 @@ mod tests {
 
         }
 
+        #[cfg(feature = "extension_degree_3")]
         #[test]
         fn test_karatsuba_3((a, b) in (
             proptest::arbitrary::any::<[Wrapping<u64>;3]>(),
@@ -329,6 +359,7 @@ mod tests {
 
         }
 
+        #[cfg(feature = "extension_degree_4")]
         #[test]
         fn test_karatsuba_4((a, b) in (
             proptest::arbitrary::any::<[Wrapping<u64>;4]>(),
@@ -341,6 +372,7 @@ mod tests {
 
         }
 
+        #[cfg(feature = "extension_degree_5")]
         #[test]
         fn test_karatsuba_5((a, b) in (
             proptest::arbitrary::any::<[Wrapping<u64>;5]>(),
@@ -353,6 +385,7 @@ mod tests {
 
         }
 
+        #[cfg(feature = "extension_degree_6")]
         #[test]
         fn test_karatsuba_6((a, b) in (
             proptest::arbitrary::any::<[Wrapping<u64>;6]>(),
@@ -365,6 +398,7 @@ mod tests {
 
         }
 
+        #[cfg(feature = "extension_degree_7")]
         #[test]
         fn test_karatsuba_7((a, b) in (
             proptest::arbitrary::any::<[Wrapping<u64>;7]>(),

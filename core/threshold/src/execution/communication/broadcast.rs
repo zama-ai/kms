@@ -29,13 +29,7 @@ pub async fn send_to_all<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
     sender: &Role,
     msg: NetworkValue<Z>,
 ) -> anyhow::Result<()> {
-    // `to_network` may take some time
-    // so we put it inside a rayon::spawn
-    let (send, recv) = tokio::sync::oneshot::channel();
-    rayon::spawn_fifo(move || {
-        let _ = send.send(msg.to_network());
-    });
-    let serialized_message = recv.await?;
+    let serialized_message = msg.to_network();
 
     session.network().increase_round_counter()?;
     for (other_role, other_identity) in session.role_assignments().iter() {
@@ -93,17 +87,11 @@ where
                 let stripped_message = timeout_at(timeout, networking.receive(&sender_id)).await;
                 match stripped_message {
                     Ok(stripped_message) => {
-                        let (send, recv) = tokio::sync::oneshot::channel();
-                        rayon::spawn_fifo(move || {
-                            let _ = send.send(NetworkValue::<Z>::from_network(stripped_message));
-                        });
-                        let stripped_message = match recv.await {
-                            Ok(x) => match x {
+                        let stripped_message =
+                            match NetworkValue::<Z>::from_network(stripped_message) {
                                 Ok(x) => match_network_value_fn(x, &identity),
                                 Err(e) => Err(e),
-                            },
-                            Err(e) => Err(anyhow::anyhow!(e)),
-                        };
+                            };
                         Ok((sender, stripped_message))
                     }
                     Err(e) => {
