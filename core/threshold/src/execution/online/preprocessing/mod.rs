@@ -234,6 +234,8 @@ pub trait DKGPreprocessing<Z: Ring>: BasePreprocessing<Z> + BitPreprocessing<Z> 
         preprocessing_triples: &mut dyn BasePreprocessing<Z>,
         preprocessing_bits: &mut dyn BitPreprocessing<Z>,
     ) -> anyhow::Result<()>;
+
+    fn noise_len(&self, bound: NoiseBounds) -> usize;
 }
 
 pub trait PreprocessorFactory<const EXTENSION_DEGREE: usize>: Sync + Send {

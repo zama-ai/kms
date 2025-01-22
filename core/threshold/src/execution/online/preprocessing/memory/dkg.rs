@@ -399,4 +399,14 @@ where
 
         Ok(())
     }
+
+    fn noise_len(&self, bound: NoiseBounds) -> usize {
+        match bound {
+            NoiseBounds::LweNoise(_) => self.available_noise_lwe.len(),
+            NoiseBounds::LweHatNoise(_) => self.available_noise_lwe_hat.len(),
+            NoiseBounds::GlweNoise(_) => self.available_noise_glwe.len(),
+            NoiseBounds::GlweNoiseSnS(_) => self.available_noise_oglwe.len(),
+            NoiseBounds::CompressionKSKNoise(_) => self.available_noise_compression_key.len(),
+        }
+    }
 }

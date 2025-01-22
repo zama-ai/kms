@@ -388,6 +388,12 @@ where
     ) -> anyhow::Result<()> {
         unimplemented!("We do not implement filling for DummyPreprocessing")
     }
+
+    ///__NOTE__ : Since we only generate noise on the fly,
+    /// this call will always return 0;
+    fn noise_len(&self, _bound: NoiseBounds) -> usize {
+        0
+    }
 }
 
 /// Dummy preprocessing struct constructed primarely for use for debugging

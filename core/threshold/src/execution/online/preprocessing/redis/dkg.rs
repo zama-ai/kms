@@ -19,7 +19,10 @@ use crate::{
     },
 };
 
-use super::{fetch_correlated_randomness, store_correlated_randomness, RedisPreprocessing};
+use super::{
+    correlated_randomness_len, fetch_correlated_randomness, store_correlated_randomness,
+    RedisPreprocessing,
+};
 
 #[async_trait]
 impl<Z> DKGPreprocessing<Z> for RedisPreprocessing<Z>
@@ -27,6 +30,7 @@ where
     Z: Ring + RingEmbed + Solve + Invert + ErrorCorrect + PRSSConversions,
 {
     fn append_noises(&mut self, noises: Vec<Share<Z>>, bound: NoiseBounds) {
+        // TODO unwrap is ok?
         store_correlated_randomness(
             self.get_client(),
             &noises,
@@ -244,5 +248,9 @@ where
         self.append_randoms(preprocessing_base.next_random_vec(num_randomness_required)?);
 
         Ok(())
+    }
+
+    fn noise_len(&self, bound: NoiseBounds) -> usize {
+        correlated_randomness_len(self.get_client(), bound.get_type(), self.key_prefix())
     }
 }

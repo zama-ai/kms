@@ -1698,10 +1698,24 @@ pub mod tests {
                 .await
                 .unwrap();
 
+            assert_ne!(0, dkg_preproc.bits_len());
+            assert_ne!(0, dkg_preproc.triples_len());
+            assert_ne!(0, dkg_preproc.randoms_len());
+
             let my_role = session.my_role().unwrap();
             let (pk, sk) = distributed_keygen(&mut session, dkg_preproc.as_mut(), params)
                 .await
                 .unwrap();
+
+            // make sure we used up all the preprocessing materials
+            assert_eq!(0, dkg_preproc.bits_len());
+            assert_eq!(0, dkg_preproc.triples_len());
+            assert_eq!(0, dkg_preproc.randoms_len());
+
+            use strum::IntoEnumIterator;
+            for bound in crate::execution::tfhe_internals::parameters::NoiseBounds::iter() {
+                assert_eq!(0, dkg_preproc.noise_len(bound));
+            }
 
             (
                 my_role,

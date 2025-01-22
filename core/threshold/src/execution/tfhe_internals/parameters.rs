@@ -35,10 +35,10 @@ pub enum EncryptionType {
     Bits128,
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Debug, Default)]
 pub struct TUniformBound(pub usize);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, strum_macros::EnumIter)]
 pub enum NoiseBounds {
     LweNoise(TUniformBound),
     LweHatNoise(TUniformBound),
