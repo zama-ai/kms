@@ -318,6 +318,16 @@ impl Networking for LocalNetworking {
     fn get_network_mode(&self) -> NetworkMode {
         self.network_mode
     }
+
+    #[cfg(feature = "choreographer")]
+    fn get_num_byte_sent(&self) -> anyhow::Result<usize> {
+        Ok(0)
+    }
+
+    #[cfg(feature = "choreographer")]
+    fn get_num_byte_received(&self) -> anyhow::Result<usize> {
+        Ok(0)
+    }
 }
 
 #[derive(Debug, Clone)]

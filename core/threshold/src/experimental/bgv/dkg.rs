@@ -40,7 +40,7 @@ impl BGVShareSecretKey {
     }
 }
 
-#[instrument(name="BGV.Threshold-KeyGen",skip_all, fields(session_id = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="BGV.Threshold-KeyGen",skip_all, fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
 pub async fn bgv_distributed_keygen<
     N,
     R: Rng + CryptoRng,

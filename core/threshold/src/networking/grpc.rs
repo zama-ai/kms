@@ -201,6 +201,8 @@ impl GrpcNetworkingManager {
             current_network_timeout: RwLock::new(timeout),
             next_network_timeout: RwLock::new(timeout),
             max_elapsed_time: RwLock::new(Duration::ZERO),
+            #[cfg(feature = "choreographer")]
+            num_byte_sent: RwLock::new(0),
         })
     }
 }
@@ -227,6 +229,15 @@ pub struct NetworkingImpl {
     message_queues: Arc<MessageQueueStores>,
 }
 
+// We do the measurement of received bytes here because
+// some messages may never reach the application level
+// (i.e. in the Networking trait)
+#[cfg(feature = "choreographer")]
+lazy_static::lazy_static! {
+    pub static ref NETWORK_RECEIVED_MEASUREMENT: DashMap<SessionId,usize> =
+        DashMap::new();
+}
+
 #[async_trait]
 impl Gnetworking for NetworkingImpl {
     async fn send_value(
@@ -248,6 +259,19 @@ impl Gnetworking for NetworkingImpl {
         let tag = bincode::deserialize::<Tag>(&request.tag).map_err(|_e| {
             tonic::Status::new(tonic::Code::Aborted, "failed to parse value".to_string())
         })?;
+
+        #[cfg(feature = "choreographer")]
+        {
+            match NETWORK_RECEIVED_MEASUREMENT.entry(tag.session_id) {
+                dashmap::Entry::Occupied(mut occupied_entry) => {
+                    let entry = occupied_entry.get_mut();
+                    *entry += request.tag.len() + request.value.len()
+                }
+                dashmap::Entry::Vacant(vacant_entry) => {
+                    vacant_entry.insert(request.tag.len() + request.value.len());
+                }
+            };
+        }
 
         if let Some(sender) = valid_tls_senders {
             // tag.sender has the form hostname:port

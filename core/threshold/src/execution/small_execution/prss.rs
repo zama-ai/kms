@@ -262,7 +262,7 @@ where
 
     /// Compute the PRSS.check() method which returns the summed up psi value for each party based on the supplied counter `ctr`.
     /// If parties are behaving maliciously they get added to the corruption list in [SmallSessionHandles]
-    #[instrument(name = "PRSS.check", skip(self, session))]
+    #[instrument(name = "PRSS.check", skip(self, session), fields(sid=?session.session_id(),own_identity=?session.own_identity()))]
     pub async fn prss_check<R: Rng + CryptoRng, S: SmallSessionHandles<Z, R>>(
         &self,
         session: &mut S,
@@ -302,7 +302,7 @@ where
 
     /// Compute the PRZS.check() method which returns the summed up chi value for each party based on the supplied counter `ctr`.
     /// If parties are behaving maliciously they get added to the corruption list in [SmallSessionHandles]
-    #[instrument(name = "PRZS.Check", skip(self, session, ctr))]
+    #[instrument(name = "PRZS.Check", skip(self, session, ctr), fields(sid=?session.session_id(),own_identity=?session.own_identity()))]
     pub async fn przs_check<R: Rng + CryptoRng, S: SmallSessionHandles<Z, R>>(
         &self,
         session: &mut S,
@@ -555,7 +555,7 @@ where
     /// initialize the PRSS setup for this epoch and a given party
     ///
     /// __NOTE__: Needs to be instantiated with [`RealAgreeRandomWithAbort`] to match the spec
-    #[instrument(name="PRSS.Init (abort)",skip(session),fields(own_identity = ?session.own_identity()))]
+    #[instrument(name="PRSS.Init (abort)",skip(session),fields(sid=?session.session_id(),own_identity = ?session.own_identity()))]
     pub async fn init_with_abort<A: AgreeRandom, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         session: &mut S,
     ) -> anyhow::Result<Self> {
@@ -609,7 +609,7 @@ where
     Z: RingEmbed,
     Z: Invert,
 {
-    #[instrument(name="PRSS.Init (robust)",skip(session, vss),fields(own_identity = ?session.own_identity()))]
+    #[instrument(name="PRSS.Init (robust)",skip(session, vss),fields(sid=?session.session_id(),own_identity = ?session.own_identity()))]
     pub async fn robust_init<V: Vss, R: Rng + CryptoRng, L: BaseSessionHandles<R>>(
         session: &mut L,
         vss: &V,

@@ -759,7 +759,7 @@ where
     ///Bit processing function that creates TUniform noise from bits, and pushes
     ///these and the desired amount of raw bits to the provided
     /// [`bit_writer`]
-    #[instrument(skip(bit_writer, bit_receiver_channels))]
+    #[instrument(name = "Bit Processing", skip(bit_writer, bit_receiver_channels))]
     async fn bit_processing(
         bit_writer: Arc<RwLock<Box<dyn DKGPreprocessing<R>>>>,
         mut tuniform_productions: Vec<TUniformProduction>,

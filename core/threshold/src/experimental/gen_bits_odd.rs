@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use tonic::async_trait;
-use tracing::instrument;
+use tracing::{info_span, instrument};
 
 use crate::{
     algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed, ZConsts},
@@ -47,7 +47,7 @@ pub struct RealBitGenOdd {}
 impl BitGenOdd for RealBitGenOdd {
     /// Generates a vector of secret shared random bits using a preprocessing functionality and a session.
     /// The code only works when the modulo of the ring used is odd.
-    #[instrument(name="MPC.GenBits",skip(amount, preproc, session), fields(session_id = ?session.session_id(), own_identity= ?session.own_identity(), batch_size=?amount))]
+    #[instrument(name="MPC.GenBits",skip(amount, preproc, session), fields(sid = ?session.session_id(), own_identity= ?session.own_identity(), batch_size=?amount))]
     async fn gen_bits_odd<
         Z: Ring + RingEmbed + Invert + ErrorCorrect + LargestPrimeFactor + ZConsts + PRSSConversions,
         Rnd: Rng + CryptoRng,
@@ -103,8 +103,9 @@ impl BitGenOdd for RealBitGenOdd {
         let r_vec: Vec<Z> = {
             let prss_state = session.prss_as_mut();
 
-            (0..amount)
-                .map(|_| prss_state.mask_next(own_role, 1))
+            let prss_span = info_span!("PRSS-MASK.Next", batch_size = amount);
+            prss_span
+                .in_scope(|| (0..amount).map(|_| prss_state.mask_next(own_role, 1)))
                 .try_collect::<_, Vec<Z>, _>()?
                 .into_iter()
                 .map(|x| x + dist_shift)

@@ -226,7 +226,7 @@ where
         Ok((res1, res2))
     }
 
-    #[instrument(name="BitAdd (secret,clear)",skip(session,lhs,rhs,prep),fields(batch_size=?lhs.len()))]
+    #[instrument(name="BitAdd (secret,clear)",skip(session,lhs,rhs,prep),fields(sid=?session.session_id(),own_identity=?session.own_identity(),batch_size=?lhs.len()))]
     async fn binary_adder_secret_clear<
         Rnd: Rng + CryptoRng,
         Ses: BaseSessionHandles<Rnd>,
@@ -350,7 +350,7 @@ where
     }
 
     /// Computes XOR(\<a\>,\<b\>) for a and b vecs
-    #[instrument(name="XOR", skip(lhs,rhs,preproc,session),fields(batch_size=?lhs.len()))]
+    #[instrument(name="XOR", skip(lhs,rhs,preproc,session),fields(sid=?session.session_id(),own_identity=?session.own_identity(),batch_size=?lhs.len()))]
     pub async fn xor_list_secret_secret<
         Rnd: Rng + CryptoRng,
         Ses: BaseSessionHandles<Rnd>,
@@ -415,7 +415,7 @@ where
 }
 
 /// Bit decomposition of the input, assuming the secret lies in the base ring and not the extension.
-#[instrument(name="BitDec",skip(session,prep,inputs),fields(batch_size=?inputs.len()))]
+#[instrument(name="BitDec",skip(session,prep,inputs),fields(sid=?session.session_id(),own_identity=?session.own_identity(),batch_size=?inputs.len()))]
 pub async fn bit_dec_batch<
     Z,
     const EXTENSION_DEGREE: usize,

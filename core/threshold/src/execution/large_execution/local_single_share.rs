@@ -66,7 +66,7 @@ pub struct RealLocalSingleShare<C: Coinflip, S: ShareDispute> {
 
 #[async_trait]
 impl<C: Coinflip, S: ShareDispute> LocalSingleShare for RealLocalSingleShare<C, S> {
-    #[instrument(name="LocalSingleShare",skip(self,session,secrets),fields(session_id = ?session.session_id(),own_identity=?session.own_identity(),batch_size = ?secrets.len()))]
+    #[instrument(name="LocalSingleShare",skip(self,session,secrets),fields(sid = ?session.session_id(),own_identity=?session.own_identity(),batch_size = ?secrets.len()))]
     async fn execute<
         Z: Ring + RingEmbed + Invert + Derive + ErrorCorrect,
         R: Rng + CryptoRng,

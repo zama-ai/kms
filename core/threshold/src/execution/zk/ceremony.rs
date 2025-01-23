@@ -548,7 +548,7 @@ pub struct RealCeremony {}
 
 #[async_trait]
 impl Ceremony for RealCeremony {
-    #[instrument(name = "CRS-Ceremony", skip_all)]
+    #[instrument(name = "CRS-Ceremony", skip_all, fields(sid=?session.session_id(),own_identity=?session.own_identity()))]
     async fn execute<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         &self,
         session: &mut S,

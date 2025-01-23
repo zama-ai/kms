@@ -57,7 +57,7 @@ fn partial_decrypt<N: Const + NTTConstants<LevelOne>>(
         .collect_vec()
 }
 // run decryption with noise flooding
-#[instrument(name = "BGV.Threshold-Dec", skip_all,fields(session_id = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name = "BGV.Threshold-Dec", skip_all,fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
 pub(crate) async fn noise_flood_decryption<
     N: Clone + Const + NTTConstants<LevelOne>,
     R: Rng + CryptoRng,

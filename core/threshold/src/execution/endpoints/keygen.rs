@@ -440,7 +440,7 @@ where
 }
 
 ///Generates the lwe private key share and associated public key
-#[instrument(skip( mpc_encryption_rng, session, preprocessing), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen Lwe keys",skip( mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
 async fn generate_lwe_private_public_key_pair<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
@@ -472,7 +472,7 @@ where
 
 ///Generate the Key Switch Key from a Glwe key given in Lwe format,
 ///and an actual Lwe key
-#[instrument(skip(input_lwe_sk, output_lwe_sk, mpc_encryption_rng, session, preprocessing), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen KSK",skip(input_lwe_sk, output_lwe_sk, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
 async fn generate_key_switch_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
@@ -516,7 +516,7 @@ where
 
 ///Generates a Bootstrapping Key given a Glwe key in Glwe format
 ///, a Lwe key and the params for the BK generation
-#[instrument(skip(glwe_secret_key_share, lwe_secret_key_share, mpc_encryption_rng, session, preprocessing), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen BK", skip(glwe_secret_key_share, lwe_secret_key_share, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
 async fn generate_bootstrap_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
@@ -712,7 +712,7 @@ where
 ///If the [`DKGParams::o_flag`] is set in the params, then the sharing domain must be [`ResiduePolyF8Z128`] but the domain of
 ///all non-overlined key material is still [`u64`].
 /// Note that there is some redundancy of information because we also explicitly ask the [`BaseRing`] as trait parameter
-#[instrument(name="TFHE.Threshold-KeyGen", skip(session, preprocessing), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="TFHE.Threshold-KeyGen", skip(session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
 async fn distributed_keygen<
     Z: BaseRing,
     R: Rng + CryptoRng,

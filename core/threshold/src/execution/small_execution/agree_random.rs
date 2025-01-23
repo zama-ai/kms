@@ -53,7 +53,7 @@ pub(crate) const DSEP_AR: &[u8; 2] = b"AR";
 /// n and t are dictated by the [`BaseSessionHandles`] parameters num_parties and threshold.
 /// The parties in party_set[set_id] agree on shares[set_id]
 /// Returns the list of agreed randomness only for the subsets I am part of
-#[instrument(name="AgreeRandom-Robust",skip(session,shares),fields(session_id = ?session.session_id(),own_identity = ?session.own_identity(),batch_size = ?shares.len()))]
+#[instrument(name="AgreeRandom-Robust",skip(session,shares),fields(sid = ?session.session_id(),own_identity = ?session.own_identity(),batch_size = ?shares.len()))]
 pub async fn agree_random_robust<
     Z: Ring + ErrorCorrect,
     Rnd: Rng + CryptoRng,
@@ -106,7 +106,7 @@ impl AgreeRandom for RealAgreeRandom {
     ///
     /// n and t are dictated by the [`BaseSessionHandles`] parameters num_parties and threshold.
     /// Returns the list of agreed randomness in a vec indexed by set_id
-    #[instrument(name = "AgreeRandom", skip(session),fields(session_id = ?session.session_id(),own_identity = ?session.own_identity()))]
+    #[instrument(name = "AgreeRandom", skip(session),fields(sid = ?session.session_id(),own_identity = ?session.own_identity()))]
     async fn agree_random<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         session: &mut S,
     ) -> anyhow::Result<Vec<PrfKey>> {
@@ -158,7 +158,7 @@ impl AgreeRandom for RealAgreeRandomWithAbort {
     ///
     /// n and t are dictated by the [`BaseSessionHandles`] parameters num_parties and threshold.
     /// Returns the list of agreed randomness in a vec indexed by set_id
-    #[instrument(name="AgreeRandom-w-Abort",skip(session),fields(session_id = ?session.session_id(),own_identity = ?session.own_identity()))]
+    #[instrument(name="AgreeRandom-w-Abort",skip(session),fields(sid = ?session.session_id(),own_identity = ?session.own_identity()))]
     async fn agree_random<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         session: &mut S,
     ) -> anyhow::Result<Vec<PrfKey>> {

@@ -51,7 +51,7 @@ impl<V: Vss> RealCoinflip<V> {
 
 #[async_trait]
 impl<V: Vss> Coinflip for RealCoinflip<V> {
-    #[instrument(name="CoinFlip",skip(self,session),fields(session_id = ?session.session_id(), own_identity=?session.own_identity()))]
+    #[instrument(name="CoinFlip",skip(self,session),fields(sid = ?session.session_id(), own_identity=?session.own_identity()))]
     async fn execute<Z, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &self,
         session: &mut L,

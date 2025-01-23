@@ -1,4 +1,3 @@
-version: '3'
 services:
 {% for i in range(n_parties) %}
   p{{ i+1 }}:
@@ -11,7 +10,7 @@ services:
     environment:
       - RUST_BACKTRACE=1
       - RUN_MODE=dev
-      - RUST_LOG=distributed_decryption=debug,moby=info
+      - RUST_LOG=info
       - NO_COLOR=true
       - DDEC__PROTOCOL__HOST__ADDRESS=p{{ i+1 }}
       - DDEC__PROTOCOL__HOST__PORT=50000

@@ -36,7 +36,7 @@ pub struct RealBitGenEven {}
 impl BitGenEven for RealBitGenEven {
     /// Generates a vector of secret shared random bits using a preprocessing functionality and a session.
     /// The code only works when the modulo of the ring used is even.
-    #[instrument(name="MPC.GenBits", skip(amount, preproc, session), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity(),batch_size=?amount))]
+    #[instrument(name="MPC.GenBits", skip(amount, preproc, session), fields(sid = ?session.session_id(), own_identity = ?session.own_identity(),batch_size=?amount))]
     async fn gen_bits_even<
         Z: Invert + Solve + ErrorCorrect,
         Rnd: Rng + CryptoRng,

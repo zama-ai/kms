@@ -21,6 +21,8 @@ use crate::conf::party::CertificatePaths;
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::{execution::runtime::party::Identity, session_id::SessionId};
 
+#[cfg(feature = "choreographer")]
+use super::grpc::NETWORK_RECEIVED_MEASUREMENT;
 use super::grpc::{CoreToCoreNetworkConfig, MessageQueueStore, OptionConfigWrapper};
 use super::{NetworkMode, Networking};
 use kms_core_utils::thread_handles::ThreadHandleGroup;
@@ -276,12 +278,15 @@ pub struct NetworkSession {
     pub sending_channels: HashMap<Identity, UnboundedSender<SendValueRequest>>,
     /// Channels which are filled by the grpc server receiving messages from the other parties
     pub receiving_channels: Arc<MessageQueueStore>,
-    //Round counter for the current session, behind a lock to be able to update it without a mut ref to self
+    // Round counter for the current session, behind a lock to be able to update it without a mut ref to self
     pub round_counter: RwLock<usize>,
-    //Network mode is either async or sync
+    // Measure the number of bytes sent by this session
+    #[cfg(feature = "choreographer")]
+    pub num_byte_sent: RwLock<usize>,
+    // Network mode is either async or sync
     pub network_mode: NetworkMode,
-    //If Network mode is sync, we need to keep track of the values below to make sure
-    //we are within time bound
+    // If Network mode is sync, we need to keep track of the values below to make sure
+    // we are within time bound
     pub conf: OptionConfigWrapper,
     pub init_time: OnceLock<Instant>,
     pub current_network_timeout: RwLock<Duration>,
@@ -306,6 +311,12 @@ impl Networking for NetworkSession {
 
         let tag = bincode::serialize(&tagged_value)
             .map_err(|e| anyhow_error_and_log(format!("networking error: {:?}", e)))?;
+
+        #[cfg(feature = "choreographer")]
+        {
+            let mut sent = self.num_byte_sent.write().unwrap();
+            *sent += tag.len() + value.len();
+        }
         let request = SendValueRequest {
             tag,
             value: value.clone(),
@@ -456,6 +467,27 @@ impl Networking for NetworkSession {
 
     fn get_network_mode(&self) -> NetworkMode {
         self.network_mode
+    }
+
+    #[cfg(feature = "choreographer")]
+    fn get_num_byte_sent(&self) -> anyhow::Result<usize> {
+        if let Ok(num_byte_sent) = self.num_byte_sent.read() {
+            Ok(*num_byte_sent)
+        } else {
+            Err(anyhow_error_and_log("Couldn't lock num_byte_sent RwLock"))
+        }
+    }
+
+    #[cfg(feature = "choreographer")]
+    fn get_num_byte_received(&self) -> anyhow::Result<usize> {
+        if let Some(num_byte_received) = NETWORK_RECEIVED_MEASUREMENT.get(&self.session_id) {
+            Ok(*num_byte_received)
+        } else {
+            Err(anyhow_error_and_log(format!(
+                "Couldn't find session {} in the NETWORK_RECEIVED_MEASUREMENT",
+                self.session_id
+            )))
+        }
     }
 }
 

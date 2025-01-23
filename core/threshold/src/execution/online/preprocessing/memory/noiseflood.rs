@@ -1,4 +1,5 @@
 use itertools::Itertools;
+use tracing::info_span;
 
 use crate::{
     algebra::{
@@ -73,9 +74,12 @@ where
     ) -> anyhow::Result<()> {
         let own_role = session.my_role()?;
 
-        let masks = (0..amount)
-            .map(|_| session.prss_state.mask_next(own_role, B_SWITCH_SQUASH))
-            .try_collect()?;
+        let prss_span = info_span!("PRSS-MASK.Next", batch_size = amount);
+        let masks = prss_span.in_scope(|| {
+            (0..amount)
+                .map(|_| session.prss_state.mask_next(own_role, B_SWITCH_SQUASH))
+                .try_collect()
+        })?;
 
         self.append_masks(masks);
 

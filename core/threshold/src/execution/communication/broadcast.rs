@@ -452,7 +452,7 @@ async fn gather_votes<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
 /// Function returns a map bcast_data: Role => Value such that
 /// all parties have the broadcasted values inside the map: bcast_data\[Pj] = Vj for all j in \[n].
 /// This function does *not* handle corrupt parties.
-#[instrument(name= "Synch-Broadcast",skip(session,sender_list,vi),fields(own_identity = ?session.own_identity()))]
+#[instrument(name= "Syn-Bcast",skip(session,sender_list,vi),fields(sid = ?session.session_id(),own_identity = ?session.own_identity()))]
 pub async fn reliable_broadcast<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
     session: &B,
     sender_list: &[Role],
@@ -638,7 +638,7 @@ enum BroadcastType<'a, Z: Zero + Eq> {
 
 /// Executes a reliable broadcast either from all parties or from a single party,
 /// depending on the `bcast_type`, handling corrupt parties
-#[instrument(name= "Synch-Broadcast-Corrupt",skip(session,bcast_type),fields(own_identity = ?session.own_identity()))]
+#[instrument(name= "Syn-Bcast-Corrupt",skip(session,bcast_type),fields(sid = ?session.session_id(),own_identity = ?session.own_identity()))]
 async fn broadcast_w_corruption_helper<Z: Ring, R: Rng + CryptoRng, Ses: BaseSessionHandles<R>>(
     session: &mut Ses,
     bcast_type: BroadcastType<'_, Z>,

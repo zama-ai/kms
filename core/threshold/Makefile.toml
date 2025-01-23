@@ -125,7 +125,7 @@ args = ["test_scripts/bgv_test_script_fake_dkg.sh", "temp/${EXPERIMENT_NAME}.tom
 
 ##For TFHE we set NUM_PARTIES to 5 to be able to test both small and large sessions
 [tasks.tfhe-bench-fake-dkg]
-env = {"NUM_PARTIES" = "5", THRESHOLD = "1", EXPERIMENT_NAME="tfhe-fake-dkg-bench"}
+env = {"NUM_PARTIES" = "4", THRESHOLD = "1", EXPERIMENT_NAME="tfhe-fake-dkg-bench"}
 run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy", "tfhe-test-fake-dkg"], fork = true, cleanup_task = "shutdown" }
 
 [tasks.tfhe-bench-real-dkg]

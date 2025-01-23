@@ -1,30 +1,40 @@
 echo "Running test script on config file $1".
-#Setting all the variables needed
+#build mobygo
+cargo build --bin mobygo --features="choreographer"
 ROOT_DIR=$(cargo locate-project --workspace -q --message-format plain|grep -o '.*/')
 MOBYGO_EXEC="${ROOT_DIR}/target/debug/mobygo"
 CURR_SID=1
 KEY_PATH="./temp/tfhe-key"
 NUM_CTXTS=10
-PARAMS="bc-params-sam-sns"
+PARAMS="params-test-bk-sns"
+
+export RUN_MODE=dev
+export RUST_LOG=info
 
 exec 2>&1
 set -x
 set -e
 
-#build mobygo
-cargo build --bin mobygo --features="choreographer"
 #Init the PRSS
-$MOBYGO_EXEC -c $1 prss-init --ring residue-poly64 --sid $CURR_SID
+$MOBYGO_EXEC -c $1 prss-init --ring residue-poly-z64 --sid $CURR_SID
 $MOBYGO_EXEC -c $1 status-check --sid $CURR_SID  --keep-retry true 
 CURR_SID=$(( CURR_SID + 1 ))
-$MOBYGO_EXEC -c $1 prss-init --ring residue-poly128 --sid $CURR_SID
+$MOBYGO_EXEC -c $1 prss-init --ring residue-poly-z128 --sid $CURR_SID
 $MOBYGO_EXEC -c $1 status-check --sid $CURR_SID  --keep-retry true 
 CURR_SID=$(( CURR_SID + 1 ))
 
 ##FAKE KEY GEN (centralized generation and shared)
 #Get the key
+#mkdir -p $KEY_PATH
+#$MOBYGO_EXEC -c $1 threshold-key-gen-result --sid $CURR_SID --storage-path $KEY_PATH --generate-params $PARAMS 
+#CURR_SID=$(( CURR_SID + 1 ))
+#Execute DKG using dummy preproc (because for now we only generate 10% of preproc)
+$MOBYGO_EXEC -c $1 threshold-key-gen --dkg-params $PARAMS --sid $CURR_SID 
+#Checking every 10mn
+$MOBYGO_EXEC -c $1 status-check --sid $CURR_SID  --keep-retry true --interval 120 
+#Get the key
 mkdir -p $KEY_PATH
-$MOBYGO_EXEC -c $1 threshold-key-gen-result --sid $CURR_SID --storage-path $KEY_PATH --generate-params $PARAMS 
+$MOBYGO_EXEC -c $1 threshold-key-gen-result --sid $CURR_SID  --storage-path $KEY_PATH
 CURR_SID=$(( CURR_SID + 1 ))
 
 ###Perform 10 dec of each types

@@ -41,6 +41,7 @@ num-integer = "=0.1.46"
 num-traits = "=0.2.19"
 opentelemetry = { workspace = true, optional = true }
 paste = "=1.0.15"
+peak_alloc = {version = "=0.2.1", optional = true}
 prost.workspace = true
 rand.workspace = true
 rayon.workspace = true
@@ -107,7 +108,6 @@ path = "src/bin/moby/moby.rs"
 required-features = [
     "choreographer",
     "extension_degree_4",
-    "extension_degree_8",
 ]
 
 [[bin]]
@@ -177,7 +177,7 @@ slow_tests = ["testing", "all_extension_degrees" ]
 sequential_sns = []
 experimental = ["dep:crypto-bigint", "choreographer"]
 templating = ["minijinja"]
-choreographer = []
+choreographer = ["dep:peak_alloc"]
 # put all the dependencies that does not work well with wasm
 # namely libraries that doesn't work on 32-bit architectures
 # or uses tokio

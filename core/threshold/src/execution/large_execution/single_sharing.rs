@@ -42,7 +42,7 @@ pub struct RealSingleSharing<Z, S: LocalSingleShare> {
 impl<Z: Ring + RingEmbed + Invert + Derive + ErrorCorrect, S: LocalSingleShare> SingleSharing<Z>
     for RealSingleSharing<Z, S>
 {
-    #[instrument(name="SingleSharing.Init",skip(self,session),fields(session_id = ?session.session_id(),own_identity=?session.own_identity(), batch_size = ?l))]
+    #[instrument(name="SingleSharing.Init",skip(self,session),fields(sid = ?session.session_id(),own_identity=?session.own_identity(), batch_size = ?l))]
     async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,

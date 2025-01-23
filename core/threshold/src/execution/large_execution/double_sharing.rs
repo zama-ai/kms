@@ -53,7 +53,7 @@ pub struct RealDoubleSharing<Z, S: LocalDoubleShare> {
 impl<Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert, S: LocalDoubleShare> DoubleSharing<Z>
     for RealDoubleSharing<Z, S>
 {
-    #[instrument(name="DoubleSharing.Init",skip(self,session),fields(session_id = ?session.session_id(),own_identity=?session.own_identity(), batch_size = ?l))]
+    #[instrument(name="DoubleSharing.Init",skip(self,session),fields(sid = ?session.session_id(),own_identity=?session.own_identity(), batch_size = ?l))]
     async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,

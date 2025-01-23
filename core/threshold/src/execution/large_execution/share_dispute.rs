@@ -126,7 +126,7 @@ fn fill_incomplete_output<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>
 
 #[async_trait]
 impl ShareDispute for RealShareDispute {
-    #[instrument(name="ShareDispute (t,2t)",skip(self,session,secrets),fields(session_id = ?session.session_id(),own_identity=?session.own_identity(),batch_size= ?secrets.len()))]
+    #[instrument(name="ShareDispute (t,2t)",skip(self,session,secrets),fields(sid = ?session.session_id(),own_identity=?session.own_identity(),batch_size= ?secrets.len()))]
     async fn execute_double<
         Z: Ring + RingEmbed + Invert,
         R: Rng + CryptoRng,
@@ -182,7 +182,7 @@ impl ShareDispute for RealShareDispute {
         send_and_receive_share_dispute_double(session, polypoints_map, secrets.len()).await
     }
 
-    #[instrument(name="ShareDispute (t)",skip(self,session,secrets),fields(session_id = ?session.session_id(),own_identity=?session.own_identity(),batch_size=?secrets.len()))]
+    #[instrument(name="ShareDispute (t)",skip(self,session,secrets),fields(sid = ?session.session_id(),own_identity=?session.own_identity(),batch_size=?secrets.len()))]
     async fn execute<
         Z: Ring + RingEmbed + Invert,
         R: Rng + CryptoRng,

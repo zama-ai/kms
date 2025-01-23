@@ -12,6 +12,7 @@ use opentelemetry::{global, propagation::Injector, trace::TracerProvider as _, K
 use opentelemetry_http::HeaderExtractor;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_prometheus::exporter;
+use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::{metrics::SdkMeterProvider, runtime::Tokio, Resource};
 use prometheus::{Encoder, Registry as PrometheusRegistry, TextEncoder};
 use std::{env, net::SocketAddr, sync::Arc, time::Duration};
@@ -265,6 +266,8 @@ pub fn init_tracing(settings: &TelemetryConfig) -> Result<(), anyhow::Error> {
         .with(env_filter)
         .try_init()
         .context("Failed to initialize tracing")?;
+
+    global::set_text_map_propagator(TraceContextPropagator::new());
 
     Ok(())
 }

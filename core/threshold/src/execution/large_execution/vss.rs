@@ -197,7 +197,7 @@ pub struct RealVss {}
 
 #[async_trait]
 impl Vss for RealVss {
-    #[instrument(name="VSS", skip(self,session, secrets),fields(session_id = ?session.session_id(),own_identity = ?session.own_identity()), batch_size= ?secrets.len())]
+    #[instrument(name="VSS", skip(self,session, secrets),fields(sid = ?session.session_id(),own_identity = ?session.own_identity()), batch_size= ?secrets.len())]
     async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         &self,
         session: &mut S,

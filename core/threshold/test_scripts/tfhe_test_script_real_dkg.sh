@@ -8,6 +8,8 @@ KEY_PATH="./temp/tfhe-key"
 NUM_CTXTS=10
 PARAMS="nist-params-p32-sns-fglwe"
 
+export RUN_MODE=dev
+
 exec 2>&1
 set -x
 set -e
@@ -28,7 +30,7 @@ CURR_SID=$(( CURR_SID + 1 ))
 #Execute DKG using the produced preproc
 $MOBYGO_EXEC -c $1 threshold-key-gen --dkg-params $PARAMS --sid $CURR_SID  --preproc-sid $(( CURR_SID - 1)) 
 #Checking every 10mn
-$MOBYGO_EXEC -c $1 status-check --sid $CURR_SID  --keep-retry true --interval 600 
+$MOBYGO_EXEC -c $1 status-check --sid $CURR_SID  --keep-retry true --interval 600
 #Get the key
 mkdir -p $KEY_PATH
 $MOBYGO_EXEC -c $1 threshold-key-gen-result --sid $CURR_SID  --storage-path $KEY_PATH

@@ -72,7 +72,7 @@ pub struct Small<const EXTENSION_DEGREE: usize>
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
 {
-    session: RefCell<SmallSession<ResiduePoly<Z128, EXTENSION_DEGREE>>>,
+    pub session: RefCell<SmallSession<ResiduePoly<Z128, EXTENSION_DEGREE>>>,
 }
 
 impl<const EXTENSION_DEGREE: usize> Small<EXTENSION_DEGREE>
@@ -87,7 +87,7 @@ where
 }
 
 pub struct Large {
-    session: RefCell<LargeSession>,
+    pub session: RefCell<LargeSession>,
 }
 
 impl Large {
@@ -193,7 +193,7 @@ where
 /// 4. The results are returned
 ///
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip(session, protocol, ck, ct, secret_key_share), fields(session_id = ?session.session_id(), own_identity = %_own_identity, mode = %_mode))]
+#[instrument(skip(session, protocol, ck, ct, secret_key_share), fields(sid = ?session.session_id(), own_identity = %_own_identity, mode = %_mode))]
 pub async fn decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, S, P, R, T>(
     session: &mut S,
     protocol: &mut P,
@@ -262,7 +262,7 @@ where
 /// 4. The results are returned
 ///
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-#[instrument(skip(session, protocol, ck, ct, secret_key_share), fields(session_id = ?session.session_id(), own_identity = %session.own_identity(), mode = %_mode))]
+#[instrument(skip(session, protocol, ck, ct, secret_key_share), fields(sid = ?session.session_id(), own_identity = %session.own_identity(), mode = %_mode))]
 pub async fn partial_decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, S, P, R>(
     session: &mut S,
     protocol: &mut P,
@@ -630,7 +630,7 @@ where
 #[instrument(
     name = "TFHE.Threshold-Dec-1",
     skip(session, preprocessing, keyshares, ciphertext)
-    fields(batch_size=?ciphertext.len())
+    fields(sid=?session.session_id(),batch_size=?ciphertext.len())
 )]
 pub async fn run_decryption_noiseflood<
     const EXTENSION_DEGREE: usize,
@@ -664,7 +664,7 @@ where
 #[instrument(
     name = "TFHE.Threshold-Dec-1",
     skip(session, preprocessing, keyshares, ciphertext)
-    fields(batch_size=?ciphertext.len())
+    fields(sid=?session.session_id(),batch_size=?ciphertext.len())
 )]
 pub async fn run_decryption_noiseflood_64<
     const EXTENSION_DEGREE: usize,
@@ -712,7 +712,7 @@ where
 #[instrument(
     name = "TFHE.Threshold-Dec-2",
     skip(session, prep, keyshares, ksk, ciphertext),
-    fields(batch_size=?ciphertext.blocks().len())
+    fields(sid=?session.session_id(),batch_size=?ciphertext.blocks().len())
 )]
 pub async fn run_decryption_bitdec<
     const EXTENSION_DEGREE: usize,

@@ -71,7 +71,7 @@ where
     }
 
     /// Computes a new batch of random values and appends the new batch to the the existing stash of preprocessing random values.
-    #[instrument(name="MPC_Small.GenRandom",skip(self,session), fields(session_id= ?session.session_id(), own_identity = ?session.own_identity(),batch_size = ?self.batch_sizes.randoms))]
+    #[instrument(name="MPC_Small.GenRandom",skip(self,session), fields(sid= ?session.session_id(), own_identity = ?session.own_identity(),batch_size = ?self.batch_sizes.randoms))]
     async fn next_random_batch<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
         &mut self,
         session: &mut Ses,
@@ -97,7 +97,7 @@ where
     /// If the method terminates correctly then an _entire_ new batch has been constructed and added to the internal stash.
     /// If corruption occurs during the process then the corrupt parties are added to the corrupt set in `session` and the method
     /// Caller then needs to retry to construct any missing triples, to ensure a full batch has been constructed before returning.
-    #[instrument(name="MPC_Small.GenTriples",skip(self,session), fields(session_id= ?session.session_id(), own_identity = ?session.own_identity(),batch_size = amount))]
+    #[instrument(name="MPC_Small.GenTriples",skip(self,session), fields(sid= ?session.session_id(), own_identity = ?session.own_identity(),batch_size = amount))]
     async fn next_triple_batch<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
         &mut self,
         session: &mut Ses,
@@ -315,7 +315,7 @@ where
     }
 
     /// Output amount of PRSS.Next() calls
-    #[instrument(name="PRSS.Next",skip(session,amount),fields(batch_size=?amount))]
+    #[instrument(name="PRSS.Next",skip(session,amount),fields(sid=?session.session_id(),own_identity=?session.own_identity(),batch_size=?amount))]
     fn prss_list<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
         session: &mut Ses,
         amount: usize,
@@ -329,7 +329,7 @@ where
     }
 
     /// Output amount of PRZS.Next() calls
-    #[instrument(name="PRZS.Next",skip(session,amount),fields(batch_size=?amount))]
+    #[instrument(name="PRZS.Next",skip(session,amount),fields(sid=?session.session_id(),own_identity=?session.own_identity(),batch_size=?amount))]
     fn przs_list<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
         session: &mut Ses,
         amount: usize,

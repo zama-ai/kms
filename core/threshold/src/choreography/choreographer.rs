@@ -173,7 +173,7 @@ impl ChoreoRuntime {
         Ok(*ref_response)
     }
 
-    #[instrument(name = "DKG Request", skip(self,session_id), fields(sid = ?session_id, preproc_sid = ?session_id_preproc))]
+    #[instrument(name = "DKG Request", skip(self,session_id, session_id_preproc), fields(sid = ?session_id, preproc_sid = ?session_id_preproc))]
     pub async fn initiate_threshold_keygen(
         &self,
         session_id: SessionId,

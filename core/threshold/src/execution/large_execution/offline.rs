@@ -33,7 +33,7 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
         mut ssh: S,
         mut dsh: D,
     ) -> anyhow::Result<Self> {
-        let init_span = info_span!("MPC_Large.Init");
+        let init_span = info_span!("MPC_Large.Init", sid=?session.session_id(), own_identity=?session.own_identity(), batch_size=?batch_sizes);
         //Init single sharing, we need 2 calls per triple and 1 call per randomness
         ssh.init(session, 2 * batch_sizes.triples + batch_sizes.randoms)
             .instrument(init_span.clone())
@@ -69,7 +69,7 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
 
     /// Constructs a new batch of triples and appends this to the internal triple storage.
     /// If the method terminates correctly then an _entire_ new batch has been constructed and added to the internal stash.
-    #[instrument(name="MPC_Large.GenTriples",skip(self,session), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity(), ?batch_size=self.triple_batch_size))]
+    #[instrument(name="MPC_Large.GenTriples",skip(self,session), fields(sid = ?session.session_id(), own_identity = ?session.own_identity(), ?batch_size=self.triple_batch_size))]
     async fn next_triple_batch<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
@@ -90,7 +90,7 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
         //NOTE: We create the telemetry span fro DoubleSharing Next here, but in truth the bulk of the work has been done in init
         //Next will simply pop stuff
         let double_sharing_span = info_span!("DoubleSharing.Next",
-            session_id = ?session.session_id(),
+            sid = ?session.session_id(),
                 own_identity = ?session.own_identity(),
                 batch_size =  self.triple_batch_size
         );
@@ -167,7 +167,7 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
 
     /// Computes a new batch of random values and appends the new batch to the the existing stash of prepreocessing random values.
     /// If the method terminates correctly then an _entire_ new batch has been constructed and added to the internal stash.
-    #[instrument(name="MPC_Large.GenRandom",skip(self,session), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity(), batch_size = ?self.random_batch_size))]
+    #[instrument(name="MPC_Large.GenRandom",skip(self,session), fields(sid = ?session.session_id(), own_identity = ?session.own_identity(), batch_size = ?self.random_batch_size))]
     async fn next_random_batch<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
@@ -176,7 +176,7 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
         //Next will simply pop stuff
         let single_sharing_span = info_span!(
             "SingleSharing.Next",
-            session_id = ?session.session_id(),
+            sid = ?session.session_id(),
             own_identity = ?session.own_identity(),
             batch_size = self.random_batch_size
         );

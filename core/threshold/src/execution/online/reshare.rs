@@ -68,6 +68,7 @@ where
 #[instrument(
     name = "ReShare (same sets)",
     skip(preproc128, preproc64, session, input_share)
+    fields(sid=?session.session_id(),own_identity=?session.own_identity())
 )]
 pub async fn reshare_sk_same_sets<
     Rnd: Rng + CryptoRng,

@@ -136,7 +136,7 @@ pub async fn robust_open_to_all<
 ///
 /// Output:
 /// - The reconstructed secrets if reconstruction for all was possible
-#[instrument(name="RobustOpen",skip(session,shares),fields(session_id= ?session.session_id(), own_identity = ?session.own_identity(),batch_size = ?shares.len()))]
+#[instrument(name="RobustOpen",skip(session,shares),fields(sid= ?session.session_id(), own_identity = ?session.own_identity(),batch_size = ?shares.len()))]
 pub async fn robust_opens_to_all<
     Z: Ring + ErrorCorrect,
     R: Rng + CryptoRng,
@@ -231,7 +231,7 @@ pub async fn robust_opens_to<
 }
 
 /// Try to reconstruct different secrets to different specific parties.
-#[instrument(name="RobustOpenTo",skip(session,shares),fields(session_id= ?session.session_id(), own_identity = ?session.own_identity(),num_receivers = ?shares.len()))]
+#[instrument(name="RobustOpenTo",skip(session,shares),fields(sid= ?session.session_id(), own_identity = ?session.own_identity(),num_receivers = ?shares.len()))]
 pub async fn multi_robust_opens_to<
     Z: Ring + ErrorCorrect,
     R: Rng + CryptoRng,

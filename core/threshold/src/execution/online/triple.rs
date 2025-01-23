@@ -56,7 +56,7 @@ pub async fn mult<Z: Ring + ErrorCorrect, Rnd: Rng + CryptoRng, Ses: BaseSession
 ///     [rho]       =[y]+[triple.b]
 ///     Open        [epsilon], [rho]
 ///     Output [z]  =[y]*epsilon-[triple.a]*rho+[triple.c]
-#[instrument(name="MPC.Mult", skip(session,x_vec,y_vec,triples), fields(session_id = ?session.session_id(),own_identity=?session.own_identity(),batch_size=?x_vec.len()))]
+#[instrument(name="MPC.Mult", skip(session,x_vec,y_vec,triples), fields(sid = ?session.session_id(),own_identity=?session.own_identity(),batch_size=?x_vec.len()))]
 pub async fn mult_list<
     Z: Ring + ErrorCorrect,
     Rnd: Rng + CryptoRng,
@@ -144,7 +144,7 @@ pub async fn open<Z: Ring + ErrorCorrect, Rnd: Rng + CryptoRng, Ses: BaseSession
 }
 
 /// Opens a list of secrets to all parties
-#[instrument(name="MPC.Open",skip(to_open, session),fields(batch_size=?to_open.len()))]
+#[instrument(name="MPC.Open",skip(to_open, session),fields(sid=?session.session_id(),own_identity=?session.own_identity(),batch_size=?to_open.len()))]
 pub async fn open_list<
     Z: Ring + ErrorCorrect,
     Rnd: Rng + CryptoRng,

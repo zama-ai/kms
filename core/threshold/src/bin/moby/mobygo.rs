@@ -4,7 +4,7 @@
 use clap::{Args, Parser, Subcommand};
 use conf_trace::{
     conf::{Settings, TelemetryConfig},
-    telemetry::init_telemetry,
+    telemetry::init_tracing,
 };
 use distributed_decryption::{
     choreography::{
@@ -27,6 +27,7 @@ use tfhe::{
     set_server_key, FheBool, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32,
     FheUint4, FheUint64, FheUint8,
 };
+use tokio::time;
 
 #[derive(Args, Debug)]
 struct PrssInitArgs {
@@ -591,7 +592,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .build(),
     );
 
-    init_telemetry(&telemetry)?;
+    init_tracing(&telemetry)?;
 
     let runtime = ChoreoRuntime::new_from_conf(&conf)?;
     match args.command {
@@ -626,6 +627,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             status_check_command(runtime, params).await?;
         }
     };
+    time::sleep(tokio::time::Duration::from_secs(5)).await;
     opentelemetry::global::shutdown_tracer_provider();
     Ok(())
 }

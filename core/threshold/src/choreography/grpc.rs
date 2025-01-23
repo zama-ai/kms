@@ -17,6 +17,7 @@ use self::gen::{
 use crate::algebra::base_ring::{Z128, Z64};
 use crate::algebra::galois_rings::common::ResiduePoly;
 use crate::algebra::structure_traits::{Derive, ErrorCorrect, Invert, RingEmbed, Solve};
+use crate::allocator::MEM_ALLOCATOR;
 use crate::choreography::requests::{
     CrsGenParams, PreprocDecryptParams, PreprocKeyGenParams, PrssInitParams, SessionType, Status,
     ThresholdDecryptParams, ThresholdKeyGenParams, ThresholdKeyGenResultParams,
@@ -37,8 +38,8 @@ use crate::execution::online::preprocessing::{
     BitDecPreprocessing, DKGPreprocessing, NoiseFloodPreprocessing, PreprocessorFactory,
 };
 use crate::execution::runtime::party::{Identity, Role};
-use crate::execution::runtime::session::BaseSession;
 use crate::execution::runtime::session::SmallSession;
+use crate::execution::runtime::session::{BaseSession, BaseSessionHandles};
 use crate::execution::runtime::session::{BaseSessionStruct, ParameterHandles};
 use crate::execution::runtime::session::{DecryptionMode, LargeSession, SessionParameters};
 use crate::execution::tfhe_internals::parameters::DKGParams;
@@ -52,7 +53,7 @@ use clap::ValueEnum;
 use dashmap::DashMap;
 use gen::{CrsGenRequest, CrsGenResponse};
 use itertools::Itertools;
-use rand::SeedableRng;
+use rand::{CryptoRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -170,11 +171,16 @@ where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
     ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
 {
-    #[instrument(name = "PRSS-INIT", skip_all)]
+    #[instrument(
+        name = "PRSS-INIT",
+        skip_all,
+        fields(network_round, network_sent, network_received, peak_mem)
+    )]
     async fn prss_init(
         &self,
         request: tonic::Request<PrssInitRequest>,
     ) -> Result<tonic::Response<PrssInitResponse>, tonic::Status> {
+        MEM_ALLOCATOR.get().unwrap().reset_peak_usage();
         let request = request.into_inner();
 
         let threshold: u8 = request.threshold.try_into().map_err(|_e| {
@@ -242,7 +248,8 @@ where
                         SupportedRing::ResiduePolyZ128,
                         SupportedPRSSSetup::ResiduePolyZ128(prss_setup),
                     );
-                    tracing::info!("PRSS Setup for ResiduePolyF8Z128 Done.");
+                    tracing::info!("PRSS Setup for ResiduePoly128 Done.");
+                    fill_network_memory_info(&base_session);
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -261,7 +268,8 @@ where
                         SupportedRing::ResiduePolyZ64,
                         SupportedPRSSSetup::ResiduePolyZ64(prss_setup),
                     );
-                    tracing::info!("PRSS Setup for ResiduePolyF8Z64 Done.");
+                    tracing::info!("PRSS Setup for ResiduePoly64 Done.");
+                    fill_network_memory_info(&base_session);
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -273,6 +281,7 @@ where
         Ok(tonic::Response::new(PrssInitResponse {}))
     }
 
+    //TODO: FILL NETWORK INFO FROM ALL THE SESSONS
     #[instrument(name = "DKG-PREPROC", skip_all)]
     async fn preproc_key_gen(
         &self,
@@ -497,11 +506,16 @@ where
         }))
     }
 
-    #[instrument(name = "DKG", skip_all)]
+    #[instrument(
+        name = "DKG",
+        skip_all,
+        fields(network_round, network_sent, network_received, peak_mem)
+    )]
     async fn threshold_key_gen(
         &self,
         request: tonic::Request<ThresholdKeyGenRequest>,
     ) -> Result<tonic::Response<ThresholdKeyGenResponse>, tonic::Status> {
+        MEM_ALLOCATOR.get().unwrap().reset_peak_usage();
         let request = request.into_inner();
 
         let threshold: u8 = request.threshold.try_into().map_err(|_e| {
@@ -580,6 +594,7 @@ where
                             .await
                             .unwrap();
                     key_store.insert(session_id, Arc::new(keys));
+                    fill_network_memory_info(&base_session);
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -594,6 +609,7 @@ where
                         .await
                         .unwrap();
                     key_store.insert(session_id, Arc::new(keys));
+                    fill_network_memory_info(&base_session);
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -621,6 +637,7 @@ where
                             .await
                             .unwrap();
                     key_store.insert(session_id, Arc::new(keys));
+                    fill_network_memory_info(&base_session);
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -635,6 +652,7 @@ where
                         .await
                         .unwrap();
                     key_store.insert(session_id, Arc::new(keys));
+                    fill_network_memory_info(&base_session);
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -745,11 +763,16 @@ where
         }
     }
 
-    #[instrument(name = "DDEC-PREPROC", skip_all)]
+    #[instrument(
+        name = "DDEC-PREPROC",
+        skip_all,
+        fields(network_round, network_sent, network_received, peak_mem)
+    )]
     async fn preproc_decrypt(
         &self,
         request: tonic::Request<PreprocDecryptRequest>,
     ) -> Result<tonic::Response<PreprocDecryptResponse>, tonic::Status> {
+        MEM_ALLOCATOR.get().unwrap().reset_peak_usage();
         let request = request.into_inner();
 
         let threshold: u8 = request.threshold.try_into().map_err(|_e| {
@@ -820,6 +843,8 @@ where
                             );
                         }
                     };
+
+                    fill_network_memory_info(&large_session);
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -853,6 +878,7 @@ where
                             );
                         }
                     };
+                    fill_network_memory_info(&small_session);
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -887,6 +913,7 @@ where
                         }
                     };
                     store.insert(session_id, preproc);
+                    fill_network_memory_info(&small_session.session.into_inner());
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -907,6 +934,8 @@ where
                             );
                         }
                     };
+
+                    fill_network_memory_info(&large_session.session.into_inner());
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -926,11 +955,16 @@ where
         }))
     }
 
-    #[instrument(name = "DDEC", skip_all)]
+    #[instrument(
+        name = "DDEC",
+        skip_all,
+        fields(network_round, network_sent, network_received, peak_mem)
+    )]
     async fn threshold_decrypt(
         &self,
         request: tonic::Request<ThresholdDecryptRequest>,
     ) -> Result<tonic::Response<ThresholdDecryptResponse>, tonic::Status> {
+        MEM_ALLOCATOR.get().unwrap().reset_peak_usage();
         let request = request.into_inner();
 
         let threshold: u8 = request.threshold.try_into().map_err(|_e| {
@@ -1040,6 +1074,7 @@ where
                         )
                     }
                     res_store.insert(session_id, res);
+                    fill_network_memory_info(&base_session);
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -1086,6 +1121,7 @@ where
                         )
                     }
                     res_store.insert(session_id, res);
+                    fill_network_memory_info(&base_session);
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -1142,11 +1178,16 @@ where
         }))
     }
 
-    #[instrument(name = "CRS-GEN", skip_all)]
+    #[instrument(
+        name = "CRS-GEN",
+        skip_all,
+        fields(network_round, network_sent, network_received, peak_mem)
+    )]
     async fn crs_gen(
         &self,
         request: tonic::Request<CrsGenRequest>,
     ) -> Result<tonic::Response<CrsGenResponse>, tonic::Status> {
+        MEM_ALLOCATOR.get().unwrap().reset_peak_usage();
         let request = request.into_inner();
 
         let threshold: u8 = request.threshold.try_into().map_err(|_e| {
@@ -1211,6 +1252,7 @@ where
                 .await
                 .unwrap();
             crs_store.insert(session_id, pp);
+            fill_network_memory_info(&base_session);
         };
 
         self.data.status_store.insert(
@@ -1300,6 +1342,23 @@ where
             status: status_serialized,
         }))
     }
+}
+
+fn fill_network_memory_info<R: Rng + CryptoRng, B: BaseSessionHandles<R>>(session: &B) {
+    let span = tracing::Span::current();
+    let num_rounds = session.network().get_current_round().unwrap();
+    span.record("network_round", num_rounds);
+    if num_rounds > 0 {
+        span.record(
+            "network_sent",
+            session.network().get_num_byte_sent().unwrap(),
+        );
+        span.record(
+            "network_received",
+            session.network().get_num_byte_received().unwrap(),
+        );
+    }
+    span.record("peak_mem", MEM_ALLOCATOR.get().unwrap().peak_usage());
 }
 
 #[cfg(feature = "testing")]
