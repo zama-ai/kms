@@ -16,6 +16,7 @@
 - [Installing KMS On-prem](guides/on_prem_installation.md)
 - [Calling KMS main entry points](guides/entry_points.md)
 - [Using KMS blockchain](guides/blockchain.md)
+- [Common errors](guides/common_errors.md)
 
 ## Tutorials
 
