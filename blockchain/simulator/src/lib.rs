@@ -1098,6 +1098,14 @@ pub async fn execute_reencryption_contract(
         events::kms::FheParameter::Test => TEST_PARAM,
     };
 
+    // TODO(1968)
+    tracing::info!(
+        "[1968] reenc sim ct_config: {:?}, {:?}, {:?}",
+        hex::encode(&ct_config.clear_value),
+        ct_config.data_type,
+        ct_config.compressed,
+    );
+
     let (cipher, ptxt) = encrypt(
         ct_config.clear_value,
         ct_config.data_type,
@@ -1106,6 +1114,15 @@ pub async fn execute_reencryption_contract(
         ct_config.compressed,
     )
     .await?;
+
+    // TODO(1968)
+    tracing::info!(
+        "[1968] reenc sim ct: {:?}, ptxt bytes: {:?}, ptxt type: {:?}",
+        hex::encode(&cipher),
+        hex::encode(&ptxt.bytes),
+        ptxt.fhe_type,
+    );
+
     let dummy_external_ciphertext_handle = vec![0_u8, 32];
     let kv_store_address = client
         .kv_store_address
@@ -1124,6 +1141,12 @@ pub async fn execute_reencryption_contract(
     //a wrapper around a crypto_box::PublicKey
     let (enc_pk, enc_sk) = ephemeral_encryption_key_generation(&mut AesRng::seed_from_u64(1));
     let serialized_enc_key = bincode::serialize(&enc_pk).unwrap();
+
+    // TODO(1968)
+    tracing::info!(
+        "[1968] reenc sim enc_pk {enc_pk:?}, in bytes: {}",
+        hex::encode(&serialized_enc_key)
+    );
 
     //signature is an alloy_primitives::Signature on Eip Domain and encryption key
     //using client address as public key
@@ -1191,7 +1214,7 @@ pub async fn execute_reencryption_contract(
                 &PubDataType::VerfKey.to_string(),
             )
             .unwrap();
-        tracing::info!("{:?}", url);
+        tracing::info!("storage URL: {:?}", url);
         let verf_key: PublicSigKey = storage.read_data(&url).await.unwrap();
         vec![verf_key]
     } else {
@@ -1777,6 +1800,13 @@ fn process_reencrypt_responses(
                 <&HexVector as Into<Vec<u8>>>::into(resp.payload()).as_slice(),
             )?;
             let signature = resp.signature().0.clone();
+
+            // TODO(1968)
+            tracing::info!(
+                "[1968] found a response: ct: {}, fhe_type: {}",
+                hex::encode(&payload.signcrypted_ciphertext),
+                payload.fhe_type
+            );
 
             reenc_responses.push(ReencryptionResponse {
                 signature,

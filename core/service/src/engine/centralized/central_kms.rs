@@ -422,13 +422,36 @@ impl<
         client_enc_key: &PublicEncKey,
         client_address: &alloy_primitives::Address,
     ) -> anyhow::Result<Vec<u8>> {
+        // TODO(1968)
+        #[cfg(feature = "insecure")]
+        tracing::info!(
+            "[1968] reenc with keys: {:?}, ct: {:?} and fhe_type: {:?}",
+            keys,
+            hex::encode(ct),
+            fhe_type
+        );
+
         let plaintext = Self::decrypt(keys, ct, fhe_type)?;
         // Observe that we encrypt the plaintext itself, this is different from the threshold case
         // where it is first mapped to a Vec<ResiduePolyF4Z128> element
+
+        // TODO(1968)
+        #[cfg(feature = "insecure")]
+        tracing::info!(
+            "[1968] reenc intermediate plaintext bytes: {:?}, type: {:?}",
+            hex::encode(&plaintext.bytes),
+            plaintext.fhe_type,
+        );
+
         let signcryption_msg = SigncryptionPayload {
             plaintext,
             link: link.to_vec(),
         };
+
+        // TODO(1968)
+        #[cfg(feature = "insecure")]
+        tracing::info!("[1968] reenc signcrypting using: {:?}", client_enc_key);
+
         let enc_res = signcrypt(
             rng,
             &serialize(&signcryption_msg)?,
@@ -438,6 +461,11 @@ impl<
         )?;
         let res = serialize(&enc_res)?;
         tracing::info!("Completed reencryption of ciphertext");
+
+        // TODO(1968)
+        #[cfg(feature = "insecure")]
+        tracing::info!("[1968] reenc output: {:?}", hex::encode(&res));
+
         Ok(res)
     }
 }
