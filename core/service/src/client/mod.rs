@@ -65,6 +65,9 @@ cfg_if::cfg_if! {
 #[cfg(not(feature = "non-wasm"))]
 pub mod js_api;
 
+#[cfg(all(test, feature = "slow_tests"))]
+mod nightly_tests;
+
 /// Helper method for combining reconstructed messages after decryption.
 fn decrypted_blocks_to_plaintext(
     params: &ClassicPBSParameters,
@@ -2928,26 +2931,6 @@ pub(crate) mod tests {
         kms_server.assert_shutdown().await;
     }
 
-    #[cfg(feature = "slow_tests")]
-    #[rstest::rstest]
-    #[case(vec![TestingPlaintext::Bool(true)])]
-    #[case(vec![TestingPlaintext::U4(12)])]
-    #[case(vec![TestingPlaintext::U8(u8::MAX)])]
-    #[case(vec![TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))])]
-    #[tokio::test(flavor = "multi_thread")]
-    #[serial]
-    async fn default_verify_proven_ct_centralized(#[case] msgs: Vec<TestingPlaintext>) {
-        let proven_ct_id = RequestId::derive("default_verify_proven_ct_centralized").unwrap();
-        verify_proven_ct_centralized(
-            msgs,
-            &crate::consts::DEFAULT_PARAM,
-            &proven_ct_id,
-            &crate::consts::DEFAULT_CENTRAL_CRS_ID,
-            &DEFAULT_CENTRAL_KEY_ID.to_string(),
-        )
-        .await;
-    }
-
     #[rstest::rstest]
     #[case(vec![TestingPlaintext::Bool(true)])]
     #[case(vec![TestingPlaintext::U4(12)])]
@@ -2967,7 +2950,7 @@ pub(crate) mod tests {
     }
 
     /// test centralized ZK probing via client interface
-    async fn verify_proven_ct_centralized(
+    pub(crate) async fn verify_proven_ct_centralized(
         msgs: Vec<TestingPlaintext>,
         dkg_params: &DKGParams,
         proven_ct_id: &RequestId,
@@ -3568,7 +3551,7 @@ pub(crate) mod tests {
         .await
     }
 
-    async fn verify_proven_ct_threshold(
+    pub(crate) async fn verify_proven_ct_threshold(
         msgs: Vec<TestingPlaintext>,
         parallelism: usize,
         crs_handle: &RequestId,
@@ -3751,23 +3734,7 @@ pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(vec![TestingPlaintext::Bool(true)], 5)]
     #[case(vec![TestingPlaintext::U8(u8::MAX)], 4)]
-    #[case(vec![TestingPlaintext::U8(0)], 4)]
-    #[case(vec![TestingPlaintext::U16(u16::MAX)], 2)]
-    #[case(vec![TestingPlaintext::U16(0)], 1)]
-    #[case(vec![TestingPlaintext::U32(u32::MAX)], 1)]
-    #[case(vec![TestingPlaintext::U32(1234567)], 1)]
-    #[case(vec![TestingPlaintext::U64(u64::MAX)], 1)]
-    #[case(vec![TestingPlaintext::U128(u128::MAX)], 1)]
-    #[case(vec![TestingPlaintext::U128(0)], 1)]
-    #[case(vec![TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128)))], 1)]
-    #[case(vec![TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX)))], 1)]
-    #[case(vec![TestingPlaintext::U512(tfhe::integer::bigint::U512::from([512_u64; 8]))], 1)]
-    #[case(vec![TestingPlaintext::U1024(tfhe::integer::bigint::U1024::from([1024_u64; 16]))], 1)]
-    #[case(vec![TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1)]
-    #[case(vec![TestingPlaintext::U8(0), TestingPlaintext::U64(999), TestingPlaintext::U32(32),TestingPlaintext::U128(99887766)], 1)] // test mixed types in batch
-    #[case(vec![TestingPlaintext::U8(0), TestingPlaintext::U64(999), TestingPlaintext::U32(32)], 3)] // test mixed types in batch and in parallel
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn default_decryption_centralized(
@@ -3786,7 +3753,7 @@ pub(crate) mod tests {
         .await;
     }
 
-    async fn decryption_centralized(
+    pub(crate) async fn decryption_centralized(
         dkg_params: &DKGParams,
         key_id: &str,
         msgs: Vec<TestingPlaintext>,
@@ -4010,19 +3977,7 @@ pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(TestingPlaintext::Bool(true), 2)]
     #[case(TestingPlaintext::U8(u8::MAX), 1)]
-    #[case(TestingPlaintext::U8(0), 1)]
-    #[case(TestingPlaintext::U16(u16::MAX), 1)]
-    #[case(TestingPlaintext::U16(0), 1)]
-    #[case(TestingPlaintext::U32(u32::MAX), 1)]
-    #[case(TestingPlaintext::U32(1234567), 1)]
-    #[case(TestingPlaintext::U64(u64::MAX), 1)]
-    #[case(TestingPlaintext::U128(u128::MAX), 1)]
-    #[case(TestingPlaintext::U128(0), 1)]
-    #[case(TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1)]
-    #[case(TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1)]
-    #[case(TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1)]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn default_reencryption_centralized(
@@ -4043,7 +3998,7 @@ pub(crate) mod tests {
         .await;
     }
 
-    async fn reencryption_centralized(
+    pub(crate) async fn reencryption_centralized(
         dkg_params: &DKGParams,
         key_id: &str,
         _write_transcript: bool,
@@ -4301,16 +4256,6 @@ pub(crate) mod tests {
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
     #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 7, &DEFAULT_THRESHOLD_KEY_ID_7P.to_string())]
-    #[case(vec![TestingPlaintext::Bool(true)], 2, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(vec![TestingPlaintext::U16(u16::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(vec![TestingPlaintext::U32(u32::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(vec![TestingPlaintext::U64(u64::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(vec![TestingPlaintext::U128(u128::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(vec![TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128)))], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(vec![TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX)))], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    // TODO: this takes approx. 138 secs locally.
-    // #[case(vec![TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1)]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     #[tracing_test::traced_test]
@@ -4336,17 +4281,7 @@ pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 7, Some(vec![7,4]), &DEFAULT_THRESHOLD_KEY_ID_7P.to_string())]
-    #[case(vec![TestingPlaintext::Bool(true)], 4, 4, Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4,Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(vec![TestingPlaintext::U16(u16::MAX)], 1, 4,Some(vec![3]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(vec![TestingPlaintext::U32(u32::MAX)], 1, 4,Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(vec![TestingPlaintext::U64(u64::MAX)], 1, 4,Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(vec![TestingPlaintext::U128(u128::MAX)], 1, 4,Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(vec![TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128)))], 1, 4,Some(vec![3]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(vec![TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX)))], 1, 4,Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    // TODO: this takes approx. 138 secs locally.
-    // #[case(vec![TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn default_decryption_threshold_with_crash(
@@ -4370,7 +4305,7 @@ pub(crate) mod tests {
         .await;
     }
 
-    async fn decryption_threshold(
+    pub(crate) async fn decryption_threshold(
         dkg_params: DKGParams,
         key_id: &str,
         msgs: Vec<TestingPlaintext>,
@@ -4650,17 +4585,7 @@ pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(TestingPlaintext::U8(u8::MAX), 1, 7, &DEFAULT_THRESHOLD_KEY_ID_7P.to_string())]
-    #[case(TestingPlaintext::Bool(true), 2, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     #[case(TestingPlaintext::U8(u8::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TestingPlaintext::U16(u16::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TestingPlaintext::U32(u32::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TestingPlaintext::U64(u64::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TestingPlaintext::U128(u128::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    // TODO: this takes approx. 300 secs locally.
-    // #[case(TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     #[tracing_test::traced_test]
@@ -4725,7 +4650,7 @@ pub(crate) mod tests {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn reencryption_threshold(
+    pub(crate) async fn reencryption_threshold(
         dkg_params: DKGParams,
         key_id: &str,
         write_transcript: bool,
