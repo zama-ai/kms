@@ -94,10 +94,7 @@ tracing-test = "=0.2.5"
 kms-common = { workspace = true, features = ["testing"] }
 backward-compatibility = { workspace = true, features = ["load", "tests"] }
 # "self-import" needed for integration test
-distributed-decryption = { workspace = true, features = [
-    "testing",
-    "extension_degree_4",
-] }
+distributed-decryption = { workspace = true, features = ["testing"] }
 
 [lib]
 crate-type = ["lib", "cdylib"]
@@ -128,7 +125,7 @@ required-features = ["experimental", "choreographer", "testing"]
 [[bench]]
 name = "ddec"
 harness = false
-required-features = ["testing"]
+required-features = ["testing", "extension_degree_8"]
 
 [[bench]]
 name = "decoding"
@@ -153,27 +150,28 @@ required-features = ["testing"]
 [[bench]]
 name = "bench_prss"
 harness = false
+required-features = ["extension_degree_8"]
 
 [[bench]]
 name = "prep"
 harness = false
-required-features = ["testing"]
+required-features = ["testing", "extension_degree_8"]
 
 [[bench]]
 name = "bit_dec"
 harness = false
-required-features = ["testing"]
+required-features = ["testing", "extension_degree_8"]
 
 [[bench]]
 name = "ceremony"
 harness = false
-required-features = ["testing"]
+required-features = ["testing", "extension_degree_8"]
 
 [features]
 default = ["non-wasm", "extension_degree_4"]
 # Some utilities used in the `testing` feature require the `non-wasm` feature to be enabled
 testing = ["dep:tokio", "non-wasm"]
-slow_tests = ["testing", "all_extension_degrees" ]
+slow_tests = ["testing", "all_extension_degrees"]
 sequential_sns = []
 experimental = ["dep:crypto-bigint", "choreographer"]
 templating = ["minijinja"]
@@ -195,12 +193,12 @@ non-wasm = [
     "dep:kms-core-utils",
 ]
 all_extension_degrees = [
-    "extension_degree_3", 
-    "extension_degree_4", 
+    "extension_degree_3",
+    "extension_degree_4",
     "extension_degree_5",
     "extension_degree_6",
-    "extension_degree_7", 
-    "extension_degree_8"
+    "extension_degree_7",
+    "extension_degree_8",
 ]
 extension_degree_8 = []
 extension_degree_7 = []

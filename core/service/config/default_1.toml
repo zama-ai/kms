@@ -104,6 +104,8 @@ num_sessions_preproc = 2
 tls_cert_path = "certs/cert_p1.pem"
 tls_key_path = "certs/key_p1.pem"
 
+# The type of decryption protocol to run. Available types: NoiseFloodSmall or BitDecSmall
+decryption_mode = "NoiseFloodSmall"
 
 # Every core/service needs to be aware of all other core/services. In the
 # future there should be an option to load this configuration from a blockchain

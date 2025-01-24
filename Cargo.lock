@@ -5603,6 +5603,9 @@ version = "0.10.0-rc1"
 dependencies = [
  "anyhow",
  "backward-compatibility",
+ "clap",
+ "derive_more 1.0.0",
+ "serde",
  "tfhe-versionable",
  "tokio",
  "tracing",

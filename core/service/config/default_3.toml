@@ -34,6 +34,8 @@ num_sessions_preproc = 2
 tls_cert_path = "certs/cert_p3.pem"
 tls_key_path = "certs/key_p3.pem"
 
+decryption_mode = "NoiseFloodSmall"
+
 [[threshold.peers]]
 party_id = 1
 address = "p1"

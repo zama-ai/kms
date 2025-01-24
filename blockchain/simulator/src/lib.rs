@@ -25,7 +25,7 @@ use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractReques
 use kms_blockchain_client::query_client::{
     AscQuery, CscQuery, EventQuery, QueryClient, QueryClientBuilder,
 };
-use kms_common::retry_loop;
+use kms_common::{retry_loop, DecryptionMode};
 use kms_grpc::kms::v1::{
     DecryptionResponsePayload, Eip712DomainMsg, ReencryptionResponse, ReencryptionResponsePayload,
     TypedPlaintext,
@@ -99,6 +99,8 @@ pub struct SimulatorConfig {
     pub mnemonic: String,
     /// Address of the CSC
     pub csc_address: String,
+    /// The decryption mode used for reencryption reconstruction in threshold mode
+    pub decryption_mode: Option<DecryptionMode>,
 }
 
 fn parse_contract_address(
@@ -129,6 +131,7 @@ impl<'de> Deserialize<'de> for SimulatorConfig {
             pub asc_address: String,
             pub mnemonic: String,
             pub csc_address: String,
+            pub decryption_mode: Option<DecryptionMode>,
         }
 
         let temp = SimulatorConfigBuffer::deserialize(deserializer)?;
@@ -146,6 +149,7 @@ impl<'de> Deserialize<'de> for SimulatorConfig {
             asc_address,
             mnemonic: temp.mnemonic,
             csc_address: temp.csc_address,
+            decryption_mode: temp.decryption_mode,
         })
     }
 }
@@ -506,6 +510,7 @@ pub struct ReencryptionParams<'a> {
     keys_folder: &'a Path,
     fhe_parameter: FheParameter,
     num_parties: usize,
+    decryption_mode: Option<DecryptionMode>,
 }
 
 fn get_latest_deployed_contract_address(
@@ -1090,6 +1095,7 @@ pub async fn execute_reencryption_contract(
         keys_folder,
         fhe_parameter,
         num_parties,
+        decryption_mode,
     } = reencryption_params;
     //NOTE: I(Titouan) believe we don't really even care
     //given how we'll use the client
@@ -1236,8 +1242,14 @@ pub async fn execute_reencryption_contract(
         res
     };
 
-    let mut kms_client =
-        kms_lib::client::Client::new(verf_keys, client_address, Some(sig_sk), params);
+    let mut kms_client = kms_lib::client::Client::new(
+        verf_keys,
+        client_address,
+        Some(sig_sk),
+        params,
+        decryption_mode, // This must match what is deployed on core/service (i.e. threshold.decryption_mode in the core config toml)! Can be set in simulator config.
+    );
+
     kms_client.convert_to_addresses();
 
     let evs = execute_contract(client, query_client, asc_address, value, None).await?;
@@ -2071,6 +2083,7 @@ pub async fn main_from_config(
                 keys_folder: destination_prefix,
                 fhe_parameter,
                 num_parties,
+                decryption_mode: sim_conf.decryption_mode,
             };
             let (event, ptxt, request, kms_client, domain, enc_pk, enc_sk) =
                 execute_reencryption_contract(

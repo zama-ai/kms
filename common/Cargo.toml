@@ -12,7 +12,10 @@ backward-compatibility = { workspace = true, features = [
     "load",
     "tests",
 ], optional = true }
+clap = { workspace = true, features = ["derive", "env"] }
+derive_more = { version = "=1.0.0", features = ["display"] }
 tfhe-versionable.workspace = true
+serde = { workspace = true, features = ["derive", "rc"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = [

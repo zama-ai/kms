@@ -105,7 +105,7 @@ async fn central_requests(address: String) -> anyhow::Result<()> {
     )?;
     let pub_storage = vec![FileStorage::new(None, StorageType::PUB, None).unwrap()];
     let client_storage = FileStorage::new(None, StorageType::CLIENT, None).unwrap();
-    let mut internal_client = Client::new_client(client_storage, pub_storage, &DEFAULT_PARAM)
+    let mut internal_client = Client::new_client(client_storage, pub_storage, &DEFAULT_PARAM, None)
         .await
         .unwrap();
     let msg = rng.gen::<u32>();
@@ -448,7 +448,7 @@ async fn threshold_requests(addresses: Vec<String>, init: bool) -> anyhow::Resul
         pub_storage.push(FileStorage::new(None, StorageType::PUB, Some(i + 1)).unwrap());
     }
 
-    let mut internal_client = Client::new_client(client_storage, pub_storage, &DEFAULT_PARAM)
+    let mut internal_client = Client::new_client(client_storage, pub_storage, &DEFAULT_PARAM, None)
         .await
         .unwrap();
 

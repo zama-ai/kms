@@ -15,12 +15,12 @@ use distributed_decryption::{
     conf::choreo::ChoreoConf,
     execution::{
         endpoints::keygen::FhePubKeySet,
-        runtime::session::DecryptionMode,
         tfhe_internals::{parameters::DkgParamsAvailable, utils::expanded_encrypt},
     },
     session_id::SessionId,
 };
 use itertools::Itertools;
+use kms_common::DecryptionMode;
 use rand::{distributions::Uniform, random, Rng};
 use tfhe::{
     integer::{ciphertext::BaseRadixCiphertext, IntegerCiphertext},

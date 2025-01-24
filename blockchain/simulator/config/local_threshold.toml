@@ -14,3 +14,9 @@ mnemonic = "whisper stereo great helmet during hollow nominee skate frown daught
 
 # Address of the CSC
 csc_address = "wasm14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9s0phg4d"
+
+# Decryption mode used in reencryption reconstruction.
+# Options are NoiseFloodSmall and BitDecSmall.
+# Must match the deployed core/service setting!
+# Only relevant for threshold.
+decryption_mode = "NoiseFloodSmall"

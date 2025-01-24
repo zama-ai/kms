@@ -35,6 +35,8 @@ num_sessions_preproc = 2
 tls_cert_path = "certs/cert_dev-kms-core-2.pem"
 tls_key_path = "certs/key_dev-kms-core-2.pem"
 
+decryption_mode = "NoiseFloodSmall"
+
 [[threshold.peers]]
 party_id = 1
 address = "dev-kms-core-1"

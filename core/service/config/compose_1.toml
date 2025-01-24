@@ -4,7 +4,6 @@
 listen_address = "0.0.0.0"
 listen_port = 50100
 timeout_secs = 360
-# maximum grpc message size in bytes
 grpc_max_message_size = 20971520 # 20 MiB
 
 [tracing]
@@ -35,6 +34,8 @@ num_sessions_preproc = 2
 
 tls_cert_path = "certs/cert_dev-kms-core-1.pem"
 tls_key_path = "certs/key_dev-kms-core-1.pem"
+
+decryption_mode = "NoiseFloodSmall"
 
 [[threshold.peers]]
 party_id = 1

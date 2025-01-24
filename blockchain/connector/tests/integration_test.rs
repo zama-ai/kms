@@ -841,6 +841,7 @@ async fn generic_sunshine_test(
             priv_storage,
             true,
             None,
+            None,
         )
         .await
     } else {
@@ -988,7 +989,7 @@ async fn reenc_sunshine(key_id: &RequestId, amount_parties: usize, slow: bool) {
     }
     let client_storage = FileStorage::new(None, StorageType::CLIENT, None).unwrap();
     let mut kms_client =
-        kms_lib::client::Client::new_client(client_storage, pub_storage, &TEST_PARAM)
+        kms_lib::client::Client::new_client(client_storage, pub_storage, &TEST_PARAM, None)
             .await
             .unwrap();
 
@@ -1087,9 +1088,10 @@ async fn verify_proven_ct_sunshine(
         pub_storage.push(FileStorage::new(None, StorageType::PUB, Some(i)).unwrap());
     }
     let client_storage = FileStorage::new(None, StorageType::CLIENT, None).unwrap();
-    let kms_client = kms_lib::client::Client::new_client(client_storage, pub_storage, &TEST_PARAM)
-        .await
-        .unwrap();
+    let kms_client =
+        kms_lib::client::Client::new_client(client_storage, pub_storage, &TEST_PARAM, None)
+            .await
+            .unwrap();
 
     let request_id = RequestId {
         request_id: "2222000000000000000000000000000000001111".to_string(),

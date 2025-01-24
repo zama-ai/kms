@@ -11,8 +11,9 @@ use crate::execution::online::preprocessing::NoiseFloodPreprocessing;
 use crate::execution::runtime::party::Identity;
 #[cfg(any(test, feature = "testing"))]
 use crate::execution::runtime::session::BaseSessionStruct;
+use crate::execution::runtime::session::ParameterHandles;
+use crate::execution::runtime::session::SmallSession64;
 use crate::execution::runtime::session::ToBaseSession;
-use crate::execution::runtime::session::{DecryptionMode, SmallSession64};
 use crate::execution::sharing::share::Share;
 use crate::execution::small_execution::agree_random::RealAgreeRandom;
 use crate::execution::small_execution::offline::SmallPreprocessing;
@@ -49,6 +50,7 @@ use crate::{
 #[cfg(any(test, feature = "testing"))]
 use aes_prng::AesRng;
 use async_trait::async_trait;
+use kms_common::DecryptionMode;
 #[cfg(any(test, feature = "testing"))]
 use rand::SeedableRng;
 use rand::{CryptoRng, Rng};
@@ -165,7 +167,7 @@ where
     }
 }
 
-/// Decrypts a ciphertext noise flooding.
+/// Decrypts a ciphertext using noise flooding.
 ///
 /// Returns the plaintext plus some timing information.
 ///
@@ -173,7 +175,7 @@ where
 ///
 /// # Arguments
 /// * `session` - The session object that contains the networking and the role of the party_keyshare
-/// * `protocol` - The protocol object that contains the decryption `ProtocolType`. `ProtocolType` is the preparation of the noise flooding which holds the `Session` type
+/// * `preparation` - The preparation object that contains the decryption `ProtocolType`. `ProtocolType` is the preparation of the noise flooding which holds the `Session` type
 /// * `ck` - The conversion key, used for switch&squash
 /// * `ct` - The ciphertext to be decrypted
 /// * `secret_key_share` - The secret key share of the party_keyshare
@@ -188,15 +190,15 @@ where
 /// # Remarks
 /// The decryption protocol is executed in the following steps:
 /// 1. The ciphertext is converted to a large ciphertext block
-/// 2. The protocol is initialized with the noise flooding
+/// 2. The protocol preprocessing is initialized with the noise flooding
 /// 3. The decryption is executed
 /// 4. The results are returned
 ///
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip(session, protocol, ck, ct, secret_key_share), fields(sid = ?session.session_id(), own_identity = %_own_identity, mode = %_mode))]
+#[instrument(skip(session, preparation, ck, ct, secret_key_share), fields(sid = ?session.session_id(), own_identity = %_own_identity, mode = %_mode))]
 pub async fn decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, S, P, R, T>(
     session: &mut S,
-    protocol: &mut P,
+    preparation: &mut P,
     ck: &SwitchAndSquashKey,
     ct: Ciphertext64,
     secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
@@ -215,17 +217,20 @@ where
     let ct_large = ck.to_large_ciphertext(&ct)?;
     let mut results = HashMap::with_capacity(1);
     let len = ct_large.len();
-    let mut preparation = protocol.init_prep_noiseflooding(len).await?;
-    let preparation = preparation.as_mut();
+    let mut preprocessing = preparation.init_prep_noiseflooding(len).await?;
+    let preprocessing = preprocessing.as_mut();
     let outputs = run_decryption_noiseflood::<EXTENSION_DEGREE, _, _, _, T>(
         session,
-        preparation,
+        preprocessing,
         secret_key_share,
         ct_large,
     )
     .await?;
 
-    tracing::info!("Result in session {:?} is ready", session.session_id());
+    tracing::info!(
+        "Noiseflood result in session {:?} is ready",
+        session.session_id()
+    );
     results.insert(format!("{}", session.session_id()), outputs);
 
     let execution_stop_timer = Instant::now();
@@ -242,7 +247,7 @@ where
 ///
 /// # Arguments
 /// * `session` - The session object that contains the networking and the role of the party_keyshare
-/// * `protocol` - The protocol object that contains the decryption `ProtocolType`. `ProtocolType` is the preparation of the noise flooding which holds the `Session` type
+/// * `preparation` - The preparation object that contains the decryption `ProtocolType`. `ProtocolType` is the preparation of the noise flooding which holds the `Session` type
 /// * `ck` - The conversion key, used for switch&squash
 /// * `ct` - The ciphertext to be decrypted
 /// * `secret_key_share` - The secret key share of the party_keyshare
@@ -258,14 +263,14 @@ where
 /// The partial decryption protocol is executed in the following steps:
 /// 1. The ciphertext is converted to a large ciphertext block
 /// 2. The protocol is initialized with the noise flooding
-/// 3. The local decryption is executed
+/// 3. The local decryption is executed, without opening the result resulting in a partial decryption
 /// 4. The results are returned
 ///
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-#[instrument(skip(session, protocol, ck, ct, secret_key_share), fields(sid = ?session.session_id(), own_identity = %session.own_identity(), mode = %_mode))]
+#[instrument(skip(session, preparation, ck, ct, secret_key_share), fields(sid = ?session.session_id(), own_identity = %session.own_identity(), mode = %_mode))]
 pub async fn partial_decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, S, P, R>(
     session: &mut S,
-    protocol: &mut P,
+    preparation: &mut P,
     ck: &SwitchAndSquashKey,
     ct: Ciphertext64,
     secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
@@ -284,7 +289,7 @@ where
     let ct_large = ck.to_large_ciphertext(&ct)?;
     let mut results = HashMap::with_capacity(1);
     let len = ct_large.len();
-    let mut preparation = protocol.init_prep_noiseflooding(len).await?;
+    let mut preparation = preparation.init_prep_noiseflooding(len).await?;
     let preparation = preparation.as_mut();
     let mut shared_masked_ptxts = Vec::with_capacity(ct_large.len());
     for current_ct_block in ct_large {
@@ -295,11 +300,155 @@ where
     }
 
     tracing::info!(
-        "Result in session {:?} is ready, got {} blocks",
+        "Noiseflood result in session {:?} is ready, got {} blocks",
         session.session_id(),
         len
     );
     results.insert(format!("{}", session.session_id()), shared_masked_ptxts);
+
+    let execution_stop_timer = Instant::now();
+    let elapsed_time = execution_stop_timer.duration_since(execution_start_timer);
+    Ok((results, elapsed_time))
+}
+
+/// Decrypts a ciphertext using bit decomposition.
+///
+/// Returns the plaintext plus some timing information.
+///
+/// This is the entry point of the decryption protocol.
+///
+/// # Arguments
+/// * `session` - The session object that contains the networking and the role of the party_keyshare
+/// * `ct` - The ciphertext to be decrypted
+/// * `secret_key_share` - The secret key share of the party_keyshare
+/// * `ksk` - The public keyswitch key
+/// * `_mode` - The decryption mode. This is used only for tracing purposes
+/// * `_own_identity` - The identity of the party_keyshare. This is used only for tracing purposes
+///
+/// # Returns
+/// * A tuple containing the results of the decryption and the time it took to execute the decryption
+/// * The results of the decryption are a hashmap containing the session id and the decrypted plaintexts
+/// * The time it took to execute the decryption
+///
+/// # Remarks
+/// The decryption protocol is executed in the following steps:
+/// 1. The protocol preprocessing is initialized and the required number of random bits and triples are generated.
+/// 2. The decryption protocol is executed
+/// 3. The results are returned
+///
+#[allow(clippy::too_many_arguments)]
+#[instrument(skip(session, ct, secret_key_share, ksk), fields(session_id = ?session.base_session.parameters.session_id, own_identity = %_own_identity, mode = %_mode))]
+pub async fn decrypt_using_bitdec<const EXTENSION_DEGREE: usize, T>(
+    session: &mut SmallSession<ResiduePoly<Z64, EXTENSION_DEGREE>>,
+    ct: Ciphertext64,
+    secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
+    ksk: &LweKeyswitchKey<Vec<u64>>,
+    _mode: DecryptionMode,
+    _own_identity: Identity,
+) -> anyhow::Result<(HashMap<String, T>, Duration)>
+where
+    T: tfhe::integer::block_decomposition::Recomposable
+        + tfhe::core_crypto::commons::traits::CastFrom<u128>,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+{
+    let execution_start_timer = Instant::now();
+    let mut results = HashMap::with_capacity(1);
+
+    let sid = session.base_session.parameters.session_id;
+
+    let mut preparation = init_prep_bitdec_small(session, ct.blocks().len()).await?;
+
+    let preparation = preparation.as_mut();
+    let outputs = run_decryption_bitdec::<EXTENSION_DEGREE, _, _, _, T>(
+        session,
+        preparation,
+        secret_key_share,
+        ksk,
+        ct,
+    )
+    .await?;
+
+    tracing::info!("Bitdec result in session {:?} is ready", sid);
+    results.insert(format!("{}", sid), outputs);
+
+    let execution_stop_timer = Instant::now();
+    let elapsed_time = execution_stop_timer.duration_since(execution_start_timer);
+    Ok((results, elapsed_time))
+}
+
+/// Partially decrypt a ciphertext using bit decomposition.
+/// Partially here means that each party outputs a share of the decrypted result.
+///
+/// Returns this party's share of the plaintext plus some timing information.
+///
+/// This is the entry point of the reencryption protocol.
+///
+/// # Arguments
+/// * `session` - The session object that contains the networking and the role of the party_keyshare
+/// * `ct` - The ciphertext to be decrypted
+/// * `secret_key_share` - The secret key share of the party_keyshare
+/// * `ksk` - The public keyswitch key
+/// * `_mode` - The decryption mode. This is used only for tracing purposes
+/// * `_own_identity` - The identity of the party_keyshare. This is used only for tracing purposes
+///
+/// # Returns
+/// * A tuple containing the results of the partial decryption and the time it took to execute
+/// * The results of the partial decryption are a hashmap containing the session id and the partially decrypted ciphertexts
+/// * The time it took to execute the partial decryption
+///
+/// # Remarks
+/// The partial decryption protocol is executed in the following steps:
+/// 1. The protocol preprocessing is initialized and the required number of random bits and triples are generated.
+/// 2. The partial interactive decryption is executed, without opening the result in the last step
+/// 4. The results are returned
+///
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+#[instrument(skip(session, ct, secret_key_share, ksk), fields(session_id = ?session.base_session.parameters.session_id, own_identity = ?session.base_session.parameters.own_identity, mode = %_mode))]
+pub async fn partial_decrypt_using_bitdec<const EXTENSION_DEGREE: usize>(
+    session: &mut SmallSession<ResiduePoly<Z64, EXTENSION_DEGREE>>,
+    ct: Ciphertext64,
+    secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
+    ksk: &LweKeyswitchKey<Vec<u64>>,
+    _mode: DecryptionMode,
+) -> anyhow::Result<(
+    HashMap<String, Vec<ResiduePoly<Z64, EXTENSION_DEGREE>>>,
+    Duration,
+)>
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+{
+    let execution_start_timer = Instant::now();
+    let sid = session.base_session.parameters.session_id;
+    let own_role = session.my_role()?;
+    let mut prep = init_prep_bitdec_small(session, ct.blocks().len()).await?;
+    let prep = prep.as_mut();
+
+    let mut results = HashMap::with_capacity(1);
+
+    let mut pdec_blocks = Vec::with_capacity(ct.blocks().len());
+    for current_ct_block in ct.blocks() {
+        let partial_dec = partial_decrypt64(secret_key_share, ksk, current_ct_block)?;
+        pdec_blocks.push(Share::new(own_role, partial_dec));
+    }
+
+    // bit decomposition
+    let bits = bit_dec_batch::<Z64, EXTENSION_DEGREE, _, _, _>(
+        &mut session.base_session,
+        prep,
+        pdec_blocks,
+    )
+    .await?;
+
+    let total_bits = secret_key_share.parameters.total_block_bits() as usize;
+
+    // bit-compose the plaintexts
+    let ptxt_sums = BatchedBits::extract_ptxts(bits, total_bits, prep, session).await?;
+    let ptxt_sums: Vec<_> = ptxt_sums.iter().map(|ptxt_sum| ptxt_sum.value()).collect();
+
+    tracing::info!("Bitdec result in session {:?} is ready", sid);
+    results.insert(format!("{}", sid), ptxt_sums);
 
     let execution_stop_timer = Instant::now();
     let elapsed_time = execution_stop_timer.duration_since(execution_start_timer);
@@ -351,6 +500,7 @@ where
     .unwrap()
 }
 
+/// compute preprocessing information for a bit-decomposition decryption for the given session and number of ciphertexts for the nSmall protocol variant.
 pub async fn init_prep_bitdec_small<const EXTENSION_DEGREE: usize>(
     session: &mut SmallSession64<EXTENSION_DEGREE>,
     num_ctxts: usize,
@@ -383,6 +533,7 @@ where
     Ok(bitdec_preprocessing)
 }
 
+/// compute preprocessing information for a bit-decomposition decryption for the given session and number of ciphertexts for the nLarge protocol variant.
 pub async fn init_prep_bitdec_large<const EXTENSION_DEGREE: usize>(
     session: &mut LargeSession,
     num_ctxts: usize,
@@ -444,7 +595,7 @@ where
 
     // Do the Switch&Squash for testing only once instead of having all test parties run it.
     let large_ct = match mode {
-        DecryptionMode::PRSSDecrypt | DecryptionMode::LargeDecrypt => {
+        DecryptionMode::NoiseFloodSmall | DecryptionMode::NoiseFloodLarge => {
             tracing::info!("Switch&Squash started...");
             let keyset_ck = runtime.get_conversion_key();
             let large_ct = keyset_ck.to_large_ciphertext(ct)?;
@@ -483,7 +634,7 @@ where
             BaseSessionStruct::new(session_params, net, AesRng::from_entropy()).unwrap();
 
         match mode {
-            DecryptionMode::PRSSDecrypt => {
+            DecryptionMode::NoiseFloodSmall => {
                 let large_ct = large_ct.unwrap();
                 set.spawn(async move {
                     let mut session =
@@ -506,7 +657,7 @@ where
                     (identity, out)
                 });
             }
-            DecryptionMode::LargeDecrypt => {
+            DecryptionMode::NoiseFloodLarge => {
                 let large_ct = large_ct.unwrap();
                 set.spawn(async move {
                     let mut session = LargeSession::new(base_session);
@@ -526,7 +677,7 @@ where
                     (identity, out)
                 });
             }
-            DecryptionMode::BitDecLargeDecrypt => {
+            DecryptionMode::BitDecLarge => {
                 let ks_key = runtime.get_ks_key();
                 set.spawn(async move {
                     let mut session = LargeSession::new(base_session);
@@ -546,7 +697,7 @@ where
                     (identity, out)
                 });
             }
-            DecryptionMode::BitDecSmallDecrypt => {
+            DecryptionMode::BitDecSmall => {
                 let ks_key = runtime.get_ks_key();
                 set.spawn(async move {
                     let mut session =
@@ -848,7 +999,6 @@ mod tests {
             endpoints::decryption::threshold_decrypt64,
             runtime::{
                 party::{Identity, Role},
-                session::DecryptionMode,
                 test_runtime::{generate_fixed_identities, DistributedTestRuntime},
             },
             sharing::{shamir::ShamirSharings, share::Share},
@@ -856,6 +1006,7 @@ mod tests {
         file_handling::read_element,
     };
     use aes_prng::AesRng;
+    use kms_common::DecryptionMode;
     use rand::SeedableRng;
     use std::sync::Arc;
     use tfhe::{prelude::FheEncrypt, FheUint8};
@@ -953,7 +1104,8 @@ mod tests {
         runtime.setup_conversion_key(Arc::new(keyset.public_keys.sns_key.clone().unwrap()));
         runtime.setup_sks(key_shares);
 
-        let results_dec = threshold_decrypt64(&runtime, &ct, DecryptionMode::LargeDecrypt).unwrap();
+        let results_dec =
+            threshold_decrypt64(&runtime, &ct, DecryptionMode::NoiseFloodLarge).unwrap();
         let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
 
         let ref_res = std::num::Wrapping(msg as u64);
@@ -1016,7 +1168,8 @@ mod tests {
         runtime.setup_conversion_key(Arc::new(keyset.public_keys.sns_key.clone().unwrap()));
         runtime.setup_sks(key_shares);
 
-        let results_dec = threshold_decrypt64(&runtime, &ct, DecryptionMode::PRSSDecrypt).unwrap();
+        let results_dec =
+            threshold_decrypt64(&runtime, &ct, DecryptionMode::NoiseFloodSmall).unwrap();
         let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
 
         let ref_res = std::num::Wrapping(msg as u64);
@@ -1087,8 +1240,7 @@ mod tests {
                 .key_switching_key,
         ));
 
-        let results_dec =
-            threshold_decrypt64(&runtime, &ct, DecryptionMode::BitDecSmallDecrypt).unwrap();
+        let results_dec = threshold_decrypt64(&runtime, &ct, DecryptionMode::BitDecSmall).unwrap();
         let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
 
         let ref_res = std::num::Wrapping(msg as u64);
@@ -1159,8 +1311,7 @@ mod tests {
                 .key_switching_key,
         ));
 
-        let results_dec =
-            threshold_decrypt64(&runtime, &ct, DecryptionMode::BitDecLargeDecrypt).unwrap();
+        let results_dec = threshold_decrypt64(&runtime, &ct, DecryptionMode::BitDecLarge).unwrap();
         let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
 
         let ref_res = std::num::Wrapping(msg as u64);

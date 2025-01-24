@@ -60,6 +60,7 @@ async fn default_decryption_threshold(
         true,
         amount_parties,
         None,
+        None,
     )
     .await;
 }
@@ -192,6 +193,7 @@ async fn default_decryption_threshold_with_crash(
         true,
         amount_parties,
         party_ids_to_crash,
+        None,
     )
     .await;
 }
@@ -229,6 +231,7 @@ async fn default_reencryption_threshold(
         parallelism,
         secure,
         amount_parties,
+        None,
         None,
     )
     .await;

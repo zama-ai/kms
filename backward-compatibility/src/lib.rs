@@ -204,6 +204,7 @@ pub struct ThresholdFheKeysTest {
     pub sns_key_filename: Cow<'static, str>,
     pub info_filename: Cow<'static, str>,
     pub decompression_key_filename: Cow<'static, str>,
+    pub keyswitch_key_filename: Cow<'static, str>,
     pub state: u64,
     pub amount: usize,
     pub threshold: u8,

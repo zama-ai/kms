@@ -41,7 +41,7 @@ use crate::execution::runtime::party::{Identity, Role};
 use crate::execution::runtime::session::SmallSession;
 use crate::execution::runtime::session::{BaseSession, BaseSessionHandles};
 use crate::execution::runtime::session::{BaseSessionStruct, ParameterHandles};
-use crate::execution::runtime::session::{DecryptionMode, LargeSession, SessionParameters};
+use crate::execution::runtime::session::{LargeSession, SessionParameters};
 use crate::execution::tfhe_internals::parameters::DKGParams;
 use crate::execution::zk::ceremony::{Ceremony, InternalPublicParameter, RealCeremony};
 use crate::networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
@@ -53,6 +53,7 @@ use clap::ValueEnum;
 use dashmap::DashMap;
 use gen::{CrsGenRequest, CrsGenResponse};
 use itertools::Itertools;
+use kms_common::DecryptionMode;
 use rand::{CryptoRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -829,7 +830,7 @@ where
             })?;
 
         match decryption_mode {
-            DecryptionMode::BitDecLargeDecrypt => {
+            DecryptionMode::BitDecLarge => {
                 let mut large_session = LargeSession::new(base_session);
                 let store = self.data.ddec_preproc_store_bd.clone();
                 let my_future = || async move {
@@ -851,7 +852,7 @@ where
                     tokio::spawn(my_future().instrument(tracing::Span::current())),
                 );
             }
-            DecryptionMode::BitDecSmallDecrypt => {
+            DecryptionMode::BitDecSmall => {
                 let prss_state = self
                     .data
                     .prss_setup
@@ -885,7 +886,7 @@ where
                     tokio::spawn(my_future().instrument(tracing::Span::current())),
                 );
             }
-            DecryptionMode::PRSSDecrypt => {
+            DecryptionMode::NoiseFloodSmall => {
                 let prss_state = self
                     .data
                     .prss_setup
@@ -920,7 +921,7 @@ where
                     tokio::spawn(my_future().instrument(tracing::Span::current())),
                 );
             }
-            DecryptionMode::LargeDecrypt => {
+            DecryptionMode::NoiseFloodLarge => {
                 let mut large_session = Large::new(LargeSession::new(base_session));
                 let store = self.data.ddec_preproc_store_nf.clone();
                 let my_future = || async move {
@@ -1036,7 +1037,7 @@ where
 
         let res_store = self.data.ddec_result_store.clone();
         match decryption_mode {
-            DecryptionMode::BitDecLargeDecrypt | DecryptionMode::BitDecSmallDecrypt => {
+            DecryptionMode::BitDecLarge | DecryptionMode::BitDecSmall => {
                 let mut preprocessing = if let Some(preproc_sid) = preproc_sid {
                     self.data.ddec_preproc_store_bd.remove(&preproc_sid).ok_or_else(|| {
                         tonic::Status::new(
@@ -1081,7 +1082,7 @@ where
                     tokio::spawn(my_future().instrument(tracing::Span::current())),
                 );
             }
-            DecryptionMode::PRSSDecrypt | DecryptionMode::LargeDecrypt => {
+            DecryptionMode::NoiseFloodSmall | DecryptionMode::NoiseFloodLarge => {
                 if key_ref.0.sns_key.is_none() {
                     return Err(tonic::Status::new(tonic::Code::Aborted,format!("Asked for NoiseFlood decrypt but there is no Switch and Squash key for key at session ID {key_sid}")));
                 }

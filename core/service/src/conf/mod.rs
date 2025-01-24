@@ -1,6 +1,6 @@
 use crate::util::rate_limiter::RateLimiterConfig;
 
-use self::threshold::ThresholdParty;
+use self::threshold::ThresholdPartyConf;
 use conf_trace::conf::{Settings, TelemetryConfig};
 use conf_trace::telemetry::init_telemetry;
 use serde::{Deserialize, Serialize};
@@ -18,7 +18,7 @@ pub struct CoreConfig {
     pub private_vault: Option<Vault>,
     pub backup_vault: Option<Vault>,
     pub rate_limiter_conf: Option<RateLimiterConfig>,
-    pub threshold: Option<ThresholdParty>,
+    pub threshold: Option<ThresholdPartyConf>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

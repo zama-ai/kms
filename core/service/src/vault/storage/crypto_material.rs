@@ -1289,11 +1289,21 @@ mod tests {
 
         let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
         let fhe_key_set = key_set.public_keys.clone();
+
+        let ksk = key_set
+            .public_keys
+            .server_key
+            .into_raw_parts()
+            .0
+            .into_raw_parts()
+            .key_switching_key;
+
         let threshold_fhe_keys = ThresholdFheKeys {
             private_keys: key_shares[0].to_owned(),
             sns_key: key_set.public_keys.sns_key.to_owned().unwrap(),
             decompression_key: None,
             pk_meta_data: HashMap::new(),
+            ksk,
         };
 
         // write to an empty meta store should fail

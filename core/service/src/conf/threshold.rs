@@ -2,10 +2,11 @@ use distributed_decryption::conf::party::CertificatePaths;
 use distributed_decryption::execution::online::preprocessing::redis::RedisConf;
 use distributed_decryption::execution::runtime::party::{Identity, Role};
 use distributed_decryption::networking::grpc::CoreToCoreNetworkConfig;
+use kms_common::DecryptionMode;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ThresholdParty {
+pub struct ThresholdPartyConf {
     // endpoint for incoming peer requests
     pub listen_address: String,
     pub listen_port: u16,
@@ -20,9 +21,10 @@ pub struct ThresholdParty {
     pub tls_key_path: Option<String>,
     pub peers: Vec<PeerConf>,
     pub core_to_core_net: Option<CoreToCoreNetworkConfig>,
+    pub decryption_mode: DecryptionMode,
 }
 
-impl ThresholdParty {
+impl ThresholdPartyConf {
     pub fn get_tls_cert_paths(&self) -> Option<CertificatePaths> {
         let cert_paths: Option<Vec<String>> =
             self.peers.iter().map(|c| c.tls_cert_path.clone()).collect();

@@ -1,5 +1,8 @@
 pub mod retry;
 
+use clap::ValueEnum;
+use derive_more::derive::Display;
+use serde::{Deserialize, Serialize};
 #[cfg(feature = "testing")]
 use {
     backward_compatibility::load::{load_versioned_auxiliary, DataFormat, TestFailure},
@@ -36,6 +39,18 @@ macro_rules! impl_generic_versionize {
 
         impl tfhe_versionable::NotVersioned for $t {}
     };
+}
+
+#[derive(Copy, Clone, Serialize, Deserialize, Display, Debug, ValueEnum)]
+pub enum DecryptionMode {
+    /// nSmall Noise Flooding
+    NoiseFloodSmall,
+    /// nLarge Noise Flooding
+    NoiseFloodLarge,
+    /// nSmall Bit Decomposition
+    BitDecSmall,
+    /// nLarge Bit Decomposition
+    BitDecLarge,
 }
 
 #[cfg(feature = "testing")]

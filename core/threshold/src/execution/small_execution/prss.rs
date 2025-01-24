@@ -741,8 +741,8 @@ mod tests {
             runtime::party::{Identity, Role},
             runtime::{
                 session::{
-                    BaseSessionHandles, DecryptionMode, ParameterHandles, SessionParameters,
-                    SmallSession, SmallSessionStruct,
+                    BaseSessionHandles, ParameterHandles, SessionParameters, SmallSession,
+                    SmallSessionStruct,
                 },
                 test_runtime::{generate_fixed_identities, DistributedTestRuntime},
             },
@@ -756,6 +756,7 @@ mod tests {
         },
     };
     use aes_prng::AesRng;
+    use kms_common::DecryptionMode;
     use rand::SeedableRng;
     use rstest::rstest;
     use sha3::digest::{ExtendableOutput, Update, XofReader};
@@ -986,7 +987,7 @@ mod tests {
         let results_dec = threshold_decrypt64::<
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
-        >(&runtime, &raw_ct, DecryptionMode::PRSSDecrypt)
+        >(&runtime, &raw_ct, DecryptionMode::NoiseFloodSmall)
         .unwrap();
         let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
         let ref_res = std::num::Wrapping(msg as u64);
@@ -1004,7 +1005,7 @@ mod tests {
         let results_dec = threshold_decrypt64::<
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
-        >(&runtime, &raw_ct, DecryptionMode::PRSSDecrypt)
+        >(&runtime, &raw_ct, DecryptionMode::NoiseFloodSmall)
         .unwrap();
         let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
         let ref_res = std::num::Wrapping(msg as u64);

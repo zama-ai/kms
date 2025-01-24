@@ -9,15 +9,13 @@ use distributed_decryption::{
     execution::{
         constants::REAL_KEY_PATH,
         endpoints::decryption::threshold_decrypt64,
-        runtime::{
-            session::DecryptionMode,
-            test_runtime::{generate_fixed_identities, DistributedTestRuntime},
-        },
+        runtime::test_runtime::{generate_fixed_identities, DistributedTestRuntime},
         tfhe_internals::test_feature::{keygen_all_party_shares, KeySet},
     },
     file_handling::read_element,
     networking::NetworkMode,
 };
+use kms_common::DecryptionMode;
 use pprof::criterion::{Output, PProfProfiler};
 use rand::{Rng, SeedableRng};
 use std::sync::Arc;
@@ -100,7 +98,8 @@ fn ddec_nsmall(c: &mut Criterion) {
             &(config, ctc, runtime),
             |b, (_config, cti, runtime)| {
                 b.iter(|| {
-                    let _ = threshold_decrypt64(runtime, cti.as_ref(), DecryptionMode::PRSSDecrypt);
+                    let _ =
+                        threshold_decrypt64(runtime, cti.as_ref(), DecryptionMode::NoiseFloodSmall);
                 });
             },
         );
@@ -161,11 +160,7 @@ fn ddec_bitdec_nsmall(c: &mut Criterion) {
             &(config, ctc, runtime),
             |b, (_config, ct, runtime)| {
                 b.iter(|| {
-                    let _ = threshold_decrypt64(
-                        runtime,
-                        ct.as_ref(),
-                        DecryptionMode::BitDecSmallDecrypt,
-                    );
+                    let _ = threshold_decrypt64(runtime, ct.as_ref(), DecryptionMode::BitDecSmall);
                 })
             },
         );
@@ -228,7 +223,8 @@ fn ddec_nlarge(c: &mut Criterion) {
             &(config, ctc, runtime),
             |b, (_config, ct, runtime)| {
                 b.iter(|| {
-                    let _ = threshold_decrypt64(runtime, ct.as_ref(), DecryptionMode::LargeDecrypt);
+                    let _ =
+                        threshold_decrypt64(runtime, ct.as_ref(), DecryptionMode::NoiseFloodLarge);
                 });
             },
         );
@@ -286,11 +282,7 @@ fn ddec_bitdec_nlarge(c: &mut Criterion) {
             &(config, ctc, runtime),
             |b, (_config, ct, runtime)| {
                 b.iter(|| {
-                    let _ = threshold_decrypt64(
-                        runtime,
-                        ct.as_ref(),
-                        DecryptionMode::BitDecLargeDecrypt,
-                    );
+                    let _ = threshold_decrypt64(runtime, ct.as_ref(), DecryptionMode::BitDecLarge);
                 })
             },
         );

@@ -38,6 +38,8 @@ The simulator currently ships with the following pre-defined configurations:
 
 - The `mnemonic` field must match an address that has been funded with the appropriate amount of tokens to run operations. In the local deployment, this is currently the `connector` wallet.
 
+- For a threshold deployment the `decryption_mode` must match to what is deployed on the threshold servers. The default is `NoiseFloodSmall`.
+
 - The `contract` address must be set to the contract that manages the KMS operations.
 If you are not sure about this, then consult the Docker logs when running the simulator or simulator tests. More specifically:
 1. Open Docker _while_ the simulator or a test of the simulator is running. It needs to be done while it is running as the images will be shut down and the log destroyed after the simulator is closed or test completed.

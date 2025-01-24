@@ -14,8 +14,11 @@ use alloy_signer::SignerSync;
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
 use bincode::{deserialize, serialize};
-use distributed_decryption::algebra::base_ring::Z128;
-use distributed_decryption::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
+use distributed_decryption::algebra::base_ring::{Z128, Z64};
+use distributed_decryption::algebra::galois_rings::degree_4::{
+    ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64,
+};
+use distributed_decryption::algebra::structure_traits::BaseRing;
 use distributed_decryption::execution::endpoints::reconstruct::{
     combine_decryptions, reconstruct_packed_message,
 };
@@ -26,6 +29,7 @@ use distributed_decryption::execution::sharing::shamir::{
 use distributed_decryption::execution::tfhe_internals::parameters::{
     AugmentedCiphertextParameters, DKGParams,
 };
+use kms_common::DecryptionMode;
 use kms_grpc::kms::v1::{
     FheType, ReencryptionRequest, ReencryptionRequestPayload, ReencryptionResponse,
     ReencryptionResponsePayload, RequestId, TypedPlaintext,
@@ -35,8 +39,12 @@ use kms_grpc::rpc_types::{
 };
 use rand::SeedableRng;
 use std::collections::HashSet;
+use std::num::Wrapping;
 use tfhe::shortint::ClassicPBSParameters;
 use wasm_bindgen::prelude::*;
+
+// The default decryption mode to use in the client, when no other mode is specified explicitly. Currentlt Noise Flooding in the nSmall variant.
+const DEFAULT_DECRYPTION_MODE: DecryptionMode = DecryptionMode::NoiseFloodSmall;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
@@ -138,6 +146,7 @@ pub struct Client {
     client_address: alloy_primitives::Address,
     client_sk: Option<PrivateSigKey>,
     params: DKGParams,
+    decryption_mode: DecryptionMode,
 }
 
 // This testing struct needs to be outside of js_api module
@@ -345,38 +354,45 @@ impl Client {
     /// from a [PublicStorage].
     ///
     /// * `server_pks` - a set of tkms core public keys.
-    ///
     /// * `client_address` - the client wallet address.
-    ///
     /// * `client_sk` - client private key.
     ///   This is optional because sometimes the private signing key is kept
     ///   in a secure location, e.g., hardware wallet or web extension.
     ///   Calling functions that requires `client_sk` when it is None will return an error.
-    ///
     /// * `params` - the FHE parameters.
+    /// * `decryption_mode` - the decryption mode to use. Currently available modes are: NoiseFloodSmall and BitDecSmall. If set to none, the default mode in `DEFAULT_DECRYPTION_MODE` is used.
     pub fn new(
         server_pks: Vec<PublicSigKey>,
         client_address: alloy_primitives::Address,
         client_sk: Option<PrivateSigKey>,
         params: DKGParams,
+        decryption_mode: Option<DecryptionMode>,
     ) -> Self {
+        let decryption_mode = decryption_mode.unwrap_or(DEFAULT_DECRYPTION_MODE);
         Client {
             rng: Box::new(AesRng::from_entropy()), // todo should be argument
             server_identities: ServerIdentities::Pks(server_pks),
             client_address,
             client_sk,
             params,
+            decryption_mode,
         }
     }
 
     /// Helper method to create a client based on a specific type of storage for loading the keys.
     /// Observe that this method is decoupled from the [Client] to ensure wasm compliance as wasm cannot handle
     /// file reading or generic traits.
+    ///
+    /// * `client_storage` - the storage where the client's keys (for signing and verifying) are stored.
+    /// * `pub_storages` - the storages where the public verification keys of the servers are stored. These must be unique.
+    /// * `params` - the FHE parameters
+    /// * `decryption_mode` - the decryption mode to use. Currently available modes are: NoiseFloodSmall and BitDecSmall. If set to none, the default mode in `DEFAULT_DECRYPTION_MODE` is used.
     #[cfg(feature = "non-wasm")]
     pub async fn new_client<ClientS: Storage, PubS: StorageReader>(
         client_storage: ClientS,
         pub_storages: Vec<PubS>,
         params: &DKGParams,
+        decryption_mode: Option<DecryptionMode>,
     ) -> anyhow::Result<Client> {
         let mut pks: Vec<PublicSigKey> = Vec::new();
         for cur_storage in pub_storages {
@@ -407,7 +423,13 @@ impl Client {
             tracing::error!("client sk hashmap is not exactly 1: {}", e);
         })?;
 
-        Ok(Client::new(pks, client_address, Some(client_sk), *params))
+        Ok(Client::new(
+            pks,
+            client_address,
+            Some(client_sk),
+            *params,
+            decryption_mode,
+        ))
     }
 
     /// This is used for tests to convert public keys into addresses
@@ -1416,47 +1438,112 @@ impl Client {
             "No valid responses parsed".to_string(),
         )?
         .degree as usize;
-        let sharings = self.recover_sharings(&validated_resps, fhe_type, client_keys)?;
+
         let amount_shares = validated_resps.len();
         // TODO: in general this is not true, degree isn't a perfect proxy for num_parties
         let num_parties = 3 * degree + 1;
-        let mut decrypted_blocks = Vec::new();
-        for cur_block_shares in sharings {
-            // NOTE: this performs optimistic reconstruction
-            if let Ok(Some(r)) = reconstruct_w_errors_sync(
-                num_parties,
-                degree,
-                degree,
-                num_parties - amount_shares,
-                &cur_block_shares,
-            ) {
-                decrypted_blocks.push(r);
-            } else {
-                return Err(anyhow_error_and_log("Could not reconstruct all blocks"));
-            }
-        }
+
         let pbs_params = self
             .params
             .get_params_basics_handle()
             .to_classic_pbs_parameters();
 
-        let recon_blocks = reconstruct_packed_message(
-            Some(decrypted_blocks),
-            &pbs_params,
-            fhe_type.to_num_blocks(
-                &self
-                    .params
-                    .get_params_basics_handle()
-                    .to_classic_pbs_parameters(),
-            ),
-        )?;
-        decrypted_blocks_to_plaintext(&pbs_params, fhe_type, recon_blocks)
+        let res = match self.decryption_mode {
+            DecryptionMode::BitDecSmall => {
+                let mut decrypted_blocks = Vec::new();
+
+                let sharings =
+                    self.recover_sharings::<Z64>(&validated_resps, fhe_type, client_keys)?;
+
+                for cur_block_shares in sharings {
+                    // NOTE: this performs optimistic reconstruction
+                    if let Ok(Some(r)) = reconstruct_w_errors_sync(
+                        num_parties,
+                        degree,
+                        degree,
+                        num_parties - amount_shares,
+                        &cur_block_shares,
+                    ) {
+                        decrypted_blocks.push(r);
+                    } else {
+                        return Err(anyhow_error_and_log("Could not reconstruct all blocks"));
+                    }
+                }
+
+                // extract plaintexts from decrypted blocks
+                let mut ptxts64 = Vec::new();
+                for block in decrypted_blocks {
+                    let scalar = block.to_scalar()?;
+                    ptxts64.push(scalar);
+                }
+
+                // convert to Z128
+                ptxts64
+                    .iter()
+                    .map(|ptxt| Wrapping(ptxt.0 as u128))
+                    .collect()
+            }
+            DecryptionMode::NoiseFloodSmall => {
+                let mut decrypted_blocks = Vec::new();
+
+                let sharings =
+                    self.recover_sharings::<Z128>(&validated_resps, fhe_type, client_keys)?;
+
+                for cur_block_shares in sharings {
+                    // NOTE: this performs optimistic reconstruction
+                    if let Ok(Some(r)) = reconstruct_w_errors_sync(
+                        num_parties,
+                        degree,
+                        degree,
+                        num_parties - amount_shares,
+                        &cur_block_shares,
+                    ) {
+                        decrypted_blocks.push(r);
+                    } else {
+                        return Err(anyhow_error_and_log("Could not reconstruct all blocks"));
+                    }
+                }
+
+                reconstruct_packed_message(
+                    Some(decrypted_blocks),
+                    &pbs_params,
+                    fhe_type.to_num_blocks(
+                        &self
+                            .params
+                            .get_params_basics_handle()
+                            .to_classic_pbs_parameters(),
+                    ),
+                )?
+            }
+            e => {
+                return Err(anyhow_error_and_log(format!(
+                    "Unsupported decryption mode: {e}"
+                )));
+            }
+        };
+
+        decrypted_blocks_to_plaintext(&pbs_params, fhe_type, res)
     }
 
-    /// Decrypt the reencryption response from the threshold KMS.
-    /// This function does *not* do any verification and is thus insecure and should be used only for testing.
-    /// TODO hide behind flag for insecure function?
     fn insecure_threshold_reencryption_resp(
+        &self,
+        agg_resp: &[ReencryptionResponse],
+        client_keys: &SigncryptionPair,
+    ) -> anyhow::Result<TypedPlaintext> {
+        match self.decryption_mode {
+            DecryptionMode::BitDecSmall => {
+                self.insecure_threshold_reencryption_resp_z64(agg_resp, client_keys)
+            }
+            DecryptionMode::NoiseFloodSmall => {
+                self.insecure_threshold_reencryption_resp_z128(agg_resp, client_keys)
+            }
+            e => Err(anyhow_error_and_log(format!(
+                "Unsupported decryption mode: {e}"
+            ))),
+        }
+    }
+
+    fn insecure_threshold_reencryption_resp_z128(
         &self,
         agg_resp: &[ReencryptionResponse],
         client_keys: &SigncryptionPair,
@@ -1544,14 +1631,106 @@ impl Client {
         decrypted_blocks_to_plaintext(&pbs_params, fhe_type, recon_blocks)
     }
 
+    /// Decrypt the reencryption response from the threshold KMS.
+    /// This function does *not* do any verification and is thus insecure and should be used only for testing.
+    /// TODO hide behind flag for insecure function?
+    fn insecure_threshold_reencryption_resp_z64(
+        &self,
+        agg_resp: &[ReencryptionResponse],
+        client_keys: &SigncryptionPair,
+    ) -> anyhow::Result<TypedPlaintext> {
+        // Recover sharings
+        let mut opt_sharings = None;
+        let degree = some_or_err(
+            some_or_err(agg_resp.first().as_ref(), "empty responses".to_owned())?
+                .payload
+                .as_ref(),
+            "empty payload".to_owned(),
+        )?
+        .degree as usize;
+
+        // Trust all responses have all expected blocks
+        for cur_resp in agg_resp {
+            let payload = some_or_err(
+                cur_resp.payload.clone(),
+                "Payload does not exist".to_owned(),
+            )?;
+            let shares =
+                insecure_decrypt_ignoring_signature(&payload.signcrypted_ciphertext, client_keys)?;
+
+            let cipher_blocks_share: Vec<ResiduePolyF4Z64> = deserialize(&shares.bytes)?;
+            let mut cur_blocks = Vec::with_capacity(cipher_blocks_share.len());
+            for cur_block_share in cipher_blocks_share {
+                cur_blocks.push(cur_block_share);
+            }
+            if opt_sharings.is_none() {
+                opt_sharings = Some(Vec::new());
+                for _i in 0..cur_blocks.len() {
+                    (opt_sharings.as_mut()).unwrap().push(ShamirSharings::new());
+                }
+            }
+            let num_values = cur_blocks.len();
+            fill_indexed_shares(
+                opt_sharings.as_mut().unwrap(),
+                cur_blocks,
+                num_values,
+                Role::indexed_by_one(payload.party_id as usize),
+            )?;
+        }
+        let sharings = opt_sharings.unwrap();
+        // TODO: in general this is not true, degree isn't a perfect proxy for num_parties
+        let num_parties = 3 * degree + 1;
+        let amount_shares = agg_resp.len();
+        let mut decrypted_blocks = Vec::new();
+        for cur_block_shares in sharings {
+            // NOTE: this performs optimistic reconstruction
+            if let Ok(Some(r)) = reconstruct_w_errors_sync(
+                num_parties,
+                degree,
+                degree,
+                num_parties - amount_shares,
+                &cur_block_shares,
+            ) {
+                decrypted_blocks.push(r);
+            } else {
+                return Err(anyhow_error_and_log("Could not reconstruct all blocks"));
+            }
+        }
+
+        let fhe_type = agg_resp[0]
+            .payload
+            .as_ref()
+            .ok_or(anyhow::anyhow!("Missing payload in reencryption response"))?
+            .fhe_type();
+
+        let pbs_params = self
+            .params
+            .get_params_basics_handle()
+            .to_classic_pbs_parameters();
+
+        let mut ptxts64 = Vec::new();
+
+        for opened in decrypted_blocks {
+            let v_scalar = opened.to_scalar()?;
+            ptxts64.push(v_scalar);
+        }
+
+        let ptxts128: Vec<_> = ptxts64
+            .iter()
+            .map(|ptxt| Wrapping(ptxt.0 as u128))
+            .collect();
+
+        decrypted_blocks_to_plaintext(&pbs_params, fhe_type, ptxts128)
+    }
+
     /// Decrypts the reencryption responses and decodes the responses onto the Shamir shares
     /// that the servers should have encrypted.
-    fn recover_sharings(
+    fn recover_sharings<Z: BaseRing>(
         &self,
         agg_resp: &[ReencryptionResponsePayload],
         fhe_type: FheType,
         client_keys: &SigncryptionPair,
-    ) -> anyhow::Result<Vec<ShamirSharings<ResiduePolyF4Z128>>> {
+    ) -> anyhow::Result<Vec<ShamirSharings<ResiduePolyF4<Z>>>> {
         let num_blocks = fhe_type.to_num_blocks(
             &self
                 .params
@@ -1576,7 +1755,7 @@ impl Client {
                 &cur_verf_key,
             ) {
                 Ok(decryption_share) => {
-                    let cipher_blocks_share: Vec<ResiduePolyF4Z128> =
+                    let cipher_blocks_share: Vec<ResiduePolyF4<Z>> =
                         deserialize(&decryption_share.bytes)?;
                     let mut cur_blocks = Vec::with_capacity(cipher_blocks_share.len());
                     for cur_block_share in cipher_blocks_share {
@@ -1909,7 +2088,7 @@ pub mod test_tools {
     };
     use crate::{
         conf::{
-            threshold::{PeerConf, ThresholdParty},
+            threshold::{PeerConf, ThresholdPartyConf},
             ServiceEndpoint,
         },
         util::random_free_port::random_free_ports,
@@ -1917,6 +2096,7 @@ pub mod test_tools {
     use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
     use futures_util::FutureExt;
     use itertools::Itertools;
+    use kms_common::DecryptionMode;
     use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
     use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
     use std::str::FromStr;
@@ -1940,6 +2120,7 @@ pub mod test_tools {
         priv_storage: Vec<PrivS>,
         run_prss: bool,
         rate_limiter_conf: Option<RateLimiterConfig>,
+        decryption_mode: Option<DecryptionMode>,
     ) -> HashMap<u32, ServerHandle> {
         ensure_testing_material_exists().await;
         #[cfg(feature = "slow_tests")]
@@ -1969,6 +2150,9 @@ pub mod test_tools {
             })
             .collect_vec();
 
+        // use NoiseFloodSmall unless some other DecryptionMode was set as parameter
+        let decryption_mode = decryption_mode.unwrap_or(DEFAULT_DECRYPTION_MODE);
+
         // a vector of sender that will trigger shutdown of core/threshold servers
         let mut ddec_shutdown_txs = Vec::new();
 
@@ -1990,7 +2174,7 @@ pub mod test_tools {
             let (health_reporter, health_service) = tonic_health::server::health_reporter();
             let thread_health_reporter = Arc::new(RwLock::new(health_reporter));
             handles.push(tokio::spawn(async move {
-                let threshold_config = ThresholdParty {
+                let threshold_party_config = ThresholdPartyConf {
                     listen_address: peers[i - 1].address.clone(),
                     listen_port: peers[i - 1].port,
                     threshold,
@@ -2003,11 +2187,12 @@ pub mod test_tools {
                     tls_key_path: None,
                     peers,
                     core_to_core_net: None,
+                    decryption_mode,
                 };
 
                 // TODO pass in cert_paths for testing TLS
                 let server = threshold_server_init(
-                    threshold_config,
+                    threshold_party_config,
                     cur_pub_storage,
                     cur_priv_storage,
                     None as Option<PrivS>,
@@ -2180,6 +2365,7 @@ pub mod test_tools {
         priv_storage: Vec<PrivS>,
         run_prss: bool,
         rate_limiter_conf: Option<RateLimiterConfig>,
+        decryption_mode: Option<DecryptionMode>,
     ) -> (
         HashMap<u32, ServerHandle>,
         HashMap<u32, CoreServiceEndpointClient<Channel>>,
@@ -2192,6 +2378,7 @@ pub mod test_tools {
             priv_storage,
             run_prss,
             rate_limiter_conf,
+            decryption_mode,
         )
         .await;
         assert_eq!(server_handles.len(), num_parties);
@@ -2305,7 +2492,7 @@ pub mod test_tools {
         // TODO why are these FileStorage and not depend on the StorageVersion?
         let pub_storage = vec![FileStorage::new(None, StorageType::PUB, None).unwrap()];
         let client_storage = FileStorage::new(None, StorageType::CLIENT, None).unwrap();
-        let internal_client = Client::new_client(client_storage, pub_storage, param)
+        let internal_client = Client::new_client(client_storage, pub_storage, param, None)
             .await
             .unwrap();
         (kms_server, kms_client, internal_client)
@@ -2361,6 +2548,7 @@ pub(crate) mod tests {
     use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
     #[cfg(feature = "wasm_tests")]
     use distributed_decryption::execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
+    use kms_common::DecryptionMode;
     #[cfg(feature = "wasm_tests")]
     use kms_grpc::kms::v1::TypedPlaintext;
     use kms_grpc::kms::v1::{
@@ -2405,6 +2593,7 @@ pub(crate) mod tests {
         amount_parties: usize,
         run_prss: bool,
         rate_limiter_conf: Option<RateLimiterConfig>,
+        decryption_mode: Option<DecryptionMode>,
     ) -> (
         HashMap<u32, ServerHandle>,
         HashMap<u32, CoreServiceEndpointClient<Channel>>,
@@ -2426,6 +2615,7 @@ pub(crate) mod tests {
                     priv_storage,
                     run_prss,
                     rate_limiter_conf,
+                    decryption_mode,
                 )
                 .await
             }
@@ -2442,6 +2632,7 @@ pub(crate) mod tests {
                     priv_storage,
                     run_prss,
                     rate_limiter_conf,
+                    decryption_mode,
                 )
                 .await
             }
@@ -2451,9 +2642,10 @@ pub(crate) mod tests {
             pub_storage.push(FileStorage::new(None, StorageType::PUB, Some(i)).unwrap());
         }
         let client_storage = FileStorage::new(None, StorageType::CLIENT, None).unwrap();
-        let internal_client = Client::new_client(client_storage, pub_storage, &params)
-            .await
-            .unwrap();
+        let internal_client =
+            Client::new_client(client_storage, pub_storage, &params, decryption_mode)
+                .await
+                .unwrap();
         (kms_servers, kms_clients, internal_client)
     }
 
@@ -2527,7 +2719,7 @@ pub(crate) mod tests {
     async fn test_threshold_health_endpoint_availability() {
         // make sure the store does not contain any PRSS info (currently stored under ID PRSS_EPOCH_ID)
         let req_id = &RequestId::derive(&format!(
-            "PRSSSetup_ID_{}_{}_{}",
+            "PRSSSetup_Z128_ID_{}_{}_{}",
             PRSS_EPOCH_ID, DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD
         ))
         .unwrap();
@@ -2539,6 +2731,7 @@ pub(crate) mod tests {
             TEST_PARAM,
             DEFAULT_AMOUNT_PARTIES,
             false,
+            None,
             None,
         )
         .await;
@@ -3256,6 +3449,7 @@ pub(crate) mod tests {
             amount_parties,
             true,
             Some(rate_limiter_conf),
+            None,
         )
         .await;
 
@@ -3565,8 +3759,15 @@ pub(crate) mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         // The threshold handle should only be started after the storage is purged
         // since the threshold parties will load the CRS from private storage
-        let (mut kms_servers, mut kms_clients, internal_client) =
-            threshold_handles(StorageVersion::Dev, dkg_params, amount_parties, true, None).await;
+        let (mut kms_servers, mut kms_clients, internal_client) = threshold_handles(
+            StorageVersion::Dev,
+            dkg_params,
+            amount_parties,
+            true,
+            None,
+            None,
+        )
+        .await;
 
         let pub_storage = FileStorage::new(None, StorageType::PUB, Some(1)).unwrap();
         let pp = internal_client
@@ -4203,13 +4404,15 @@ pub(crate) mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     #[rstest::rstest]
-    #[case(7, &TEST_THRESHOLD_KEY_ID_7P.to_string())]
-    #[case(4, &TEST_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(7, &TEST_THRESHOLD_KEY_ID_7P.to_string(), DecryptionMode::NoiseFloodSmall)]
+    #[case(4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
+    #[case(4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::BitDecSmall)]
     #[serial]
     #[tracing_test::traced_test]
     async fn test_decryption_threshold_no_decompression(
         #[case] amount_parties: usize,
         #[case] key_id: &str,
+        #[case] decryption_mode: DecryptionMode,
     ) {
         decryption_threshold(
             TEST_PARAM,
@@ -4223,19 +4426,22 @@ pub(crate) mod tests {
             false,
             amount_parties,
             None,
+            Some(decryption_mode),
         )
         .await;
     }
 
     #[tokio::test(flavor = "multi_thread")]
     #[rstest::rstest]
-    #[case(7, &TEST_THRESHOLD_KEY_ID_7P.to_string())]
-    #[case(4, &TEST_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(7, &TEST_THRESHOLD_KEY_ID_7P.to_string(), DecryptionMode::NoiseFloodSmall)]
+    #[case(4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
+    #[case(4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::BitDecSmall)]
     #[serial]
     #[tracing_test::traced_test]
     async fn test_decryption_threshold_with_decompression(
         #[case] amount_parties: usize,
         #[case] key_id: &str,
+        #[case] decryption_mode: DecryptionMode,
     ) {
         decryption_threshold(
             TEST_PARAM,
@@ -4249,6 +4455,7 @@ pub(crate) mod tests {
             true,
             amount_parties,
             None,
+            Some(decryption_mode),
         )
         .await;
     }
@@ -4274,6 +4481,7 @@ pub(crate) mod tests {
             parallelism,
             true,
             amount_parties,
+            None,
             None,
         )
         .await;
@@ -4301,10 +4509,12 @@ pub(crate) mod tests {
             true,
             amount_parties,
             party_ids_to_crash,
+            None,
         )
         .await;
     }
 
+    #[expect(clippy::too_many_arguments)]
     pub(crate) async fn decryption_threshold(
         dkg_params: DKGParams,
         key_id: &str,
@@ -4313,6 +4523,7 @@ pub(crate) mod tests {
         compression: bool,
         amount_parties: usize,
         party_ids_to_crash: Option<Vec<usize>>,
+        decryption_mode: Option<DecryptionMode>,
     ) {
         assert!(parallelism > 0);
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
@@ -4331,6 +4542,7 @@ pub(crate) mod tests {
             amount_parties,
             true,
             Some(rate_limiter_conf),
+            decryption_mode,
         )
         .await;
         let key_id_req = key_id.to_string().try_into().unwrap();
@@ -4497,9 +4709,11 @@ pub(crate) mod tests {
     }
 
     #[rstest::rstest]
-    #[case(true, 7, &TEST_THRESHOLD_KEY_ID_7P.to_string())]
-    #[case(true, 4, &TEST_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(false, 4, &TEST_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(true, 7, &TEST_THRESHOLD_KEY_ID_7P.to_string(), DecryptionMode::NoiseFloodSmall)]
+    #[case(true, 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
+    #[case(false, 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
+    #[case(true, 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::BitDecSmall)]
+    #[case(false, 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::BitDecSmall)]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     #[tracing_test::traced_test]
@@ -4507,6 +4721,7 @@ pub(crate) mod tests {
         #[case] secure: bool,
         #[case] amount_parties: usize,
         #[case] key_id: &str,
+        #[case] decryption_mode: DecryptionMode,
     ) {
         reencryption_threshold(
             TEST_PARAM,
@@ -4517,6 +4732,7 @@ pub(crate) mod tests {
             secure,
             amount_parties,
             None,
+            Some(decryption_mode),
         )
         .await;
     }
@@ -4542,6 +4758,7 @@ pub(crate) mod tests {
             1,
             secure,
             amount_parties,
+            None,
             None,
         )
         .await;
@@ -4579,6 +4796,7 @@ pub(crate) mod tests {
             secure,
             amount_parties,
             None,
+            None,
         )
         .await;
     }
@@ -4606,6 +4824,7 @@ pub(crate) mod tests {
             parallelism,
             secure,
             amount_parties,
+            None,
             None,
         )
         .await;
@@ -4645,6 +4864,7 @@ pub(crate) mod tests {
             secure,
             amount_parties,
             party_ids_to_crash,
+            None,
         )
         .await;
     }
@@ -4659,13 +4879,21 @@ pub(crate) mod tests {
         secure: bool,
         amount_parties: usize,
         party_ids_to_crash: Option<Vec<usize>>,
+        decryption_mode: Option<DecryptionMode>,
     ) {
         assert!(parallelism > 0);
         _ = write_transcript;
 
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-        let (mut kms_servers, mut kms_clients, mut internal_client) =
-            threshold_handles(StorageVersion::Dev, dkg_params, amount_parties, true, None).await;
+        let (mut kms_servers, mut kms_clients, mut internal_client) = threshold_handles(
+            StorageVersion::Dev,
+            dkg_params,
+            amount_parties,
+            true,
+            None,
+            decryption_mode,
+        )
+        .await;
         let (ct, fhe_type) = compute_cipher_from_stored_key(None, msg, key_id).await;
 
         internal_client.convert_to_addresses();
@@ -4911,6 +5139,7 @@ pub(crate) mod tests {
             client_address,
             Some(keys.client_sk.clone()),
             keys.params,
+            None,
         );
         let request_id = RequestId::derive("TEST_REENC_ID_123").unwrap();
         let (req, _enc_pk, _enc_sk) = internal_client
@@ -5016,8 +5245,15 @@ pub(crate) mod tests {
         use kms_grpc::kms::v1::{KeyGenPreprocRequest, KeyGenPreprocStatusEnum};
 
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-        let (kms_servers, kms_clients, internal_client) =
-            threshold_handles(StorageVersion::Dev, TEST_PARAM, amount_parties, true, None).await;
+        let (kms_servers, kms_clients, internal_client) = threshold_handles(
+            StorageVersion::Dev,
+            TEST_PARAM,
+            amount_parties,
+            true,
+            None,
+            None,
+        )
+        .await;
 
         let request_ids: Vec<_> = (0..parallelism)
             .map(|j| RequestId::derive(&format!("test_preproc_{amount_parties}_{j}")).unwrap())
@@ -5171,8 +5407,15 @@ pub(crate) mod tests {
         purge(None, None, &req_key.to_string(), amount_parties).await;
 
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-        let (kms_servers, kms_clients, internal_client) =
-            threshold_handles(StorageVersion::Dev, TEST_PARAM, amount_parties, true, None).await;
+        let (kms_servers, kms_clients, internal_client) = threshold_handles(
+            StorageVersion::Dev,
+            TEST_PARAM,
+            amount_parties,
+            true,
+            None,
+            None,
+        )
+        .await;
 
         let req_keygen = internal_client
             .key_gen_request(
@@ -5220,6 +5463,7 @@ pub(crate) mod tests {
             DEFAULT_PARAM,
             amount_parties,
             true,
+            None,
             None,
         )
         .await;
@@ -5287,6 +5531,7 @@ pub(crate) mod tests {
             amount_parties,
             true,
             Some(rate_limiter_conf),
+            None,
         )
         .await;
 

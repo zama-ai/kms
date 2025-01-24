@@ -310,18 +310,18 @@ where
             // if sign_bit == 1, then return 0
             // if sign_bit == 0, return plaintext_sum
             // MUX(sign_bit, 0 || plaintext_sum) <=>
-            // sign_bit * 0 + (1 - sign_bit) * plaintext_sum
+            // sign_bit * 0 + (1 - sign_bit) * plaintext_sum <=>
             // plaintext_sum - sign_bit * plaintext_sum
             let sign_bit = partial_dec[ct_len - 1];
             sign_bits.push(sign_bit);
             recomposed_decryptions.push(plaintext_sum);
         }
 
-        //Perform the MUX described above, on all messages in one round
+        // Perform the MUX described above, on all messages in one round
         let triples = preproc.next_triple_vec(sign_bits.len())?;
         let prods = mult_list(&sign_bits, &recomposed_decryptions, triples, session).await?;
 
-        // compute plaintext_sum - sign_bit * plaintext_sum, final step of the MUX
+        // Compute plaintext_sum - sign_bit * plaintext_sum, final step of the MUX
         let res: Vec<Share<Z>> = prods
             .iter()
             .enumerate()
@@ -415,6 +415,7 @@ where
 }
 
 /// Bit decomposition of the input, assuming the secret lies in the base ring and not the extension.
+/// Algorithm BitDec(<a>), Fig. 84 in the NIST Doc
 #[instrument(name="BitDec",skip(session,prep,inputs),fields(sid=?session.session_id(),own_identity=?session.own_identity(),batch_size=?inputs.len()))]
 pub async fn bit_dec_batch<
     Z,
@@ -438,12 +439,13 @@ where
 {
     let batch_size = inputs.len();
 
-    //Take random bits from preprocessing
+    // Take random bits from preprocessing (BitDec Step 1)
     let mut random_bits = prep.next_bit_vec(Z::CHAR_LOG2 * batch_size)?;
-    tracing::debug!("Finished generating the random bits...");
+    tracing::debug!("Finished generating the random bits. Batch size {batch_size}");
 
-    //For each value, bit recompose random bits to form a mask,
-    //keeping in memory both the mask and the individual bits
+    // For each value, bit recompose random bits to form a mask,
+    // keeping in memory both the mask and the individual bits
+    // (BitDec Step 2)
     let mut masks = Vec::with_capacity(batch_size);
     let mut prep_bits = Vec::<SecretBitArray<ResiduePoly<Z, EXTENSION_DEGREE>>>::new();
     for _ in 0..batch_size {
@@ -456,25 +458,27 @@ where
     }
 
     // Mask the secrets with the masks we've just computed
+    // (BitDec Step 3: <t> = <a> - <r>)
     let masked_secrets: Vec<_> = inputs
         .iter()
         .zip(masks.iter())
         .map(|(secret, mask)| secret - mask)
         .collect();
 
-    // value are safe to open now
-    // opening the masked values
+    // Values are safe to open now
+    // opening the masked values (BitDec Step 4)
     let opened_masks = open_list(&masked_secrets, session).await?;
 
+    // (BitDec Step 5)
     let mut opened_masked_bits = Vec::new();
     for entry in opened_masks {
-        //This assumes the secret was in the base ring and not in the extension
+        // This assumes the secret was in the base ring and not in the extension
         let scalar = entry.to_scalar()?;
-        //Bit decompose the masked secret
+        // Bit decompose the masked secret
         let scalar_bits: Vec<u8> = (0..Z::CHAR_LOG2)
             .map(|bit_idx| scalar.extract_bit(bit_idx))
             .collect();
-        //Embed the bit decomposition back into the extension ring
+        // Embed the bit decomposition back into the extension ring
         let residue_bits: Vec<ResiduePoly<Z, EXTENSION_DEGREE>> = scalar_bits
             .iter()
             .map(|bit| ResiduePoly::<Z, EXTENSION_DEGREE>::from_scalar(Z::from_u128(*bit as u128)))
@@ -482,7 +486,8 @@ where
         opened_masked_bits.push(residue_bits);
     }
 
-    //Use a binary adder to add back the mask to the masked secret, getting back the secret in binary format
+    // Use a binary adder to add back the mask to the masked secret, getting back the secret in binary format
+    // (BitDec Step 6)
     let add_res = BatchedBits::<ResiduePoly<Z, EXTENSION_DEGREE>>::binary_adder_secret_clear(
         session,
         &prep_bits,

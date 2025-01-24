@@ -21,3 +21,9 @@ csc_address = "wasm1nc5tatafv6eyq7llkr2gv50ff9e22mnf70qgjlv737ktmt4eswrqr5j2ht"
 
 mnemonic = "museum talent border youth universe accident have kidney daring check hidden carbon valid glance intact object rule creek weather spoil panda brisk swing alone"
 faucet_address = "http://localhost:8000"
+
+# Decryption mode used in reencryption reconstruction.
+# Options are NoiseFloodSmall and BitDecSmall.
+# Must match the deployed core/service setting!
+# Only relevant for threshold.
+decryption_mode = "NoiseFloodSmall"

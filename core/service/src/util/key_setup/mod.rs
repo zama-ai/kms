@@ -529,6 +529,14 @@ where
 
     let sns_key = key_set.public_keys.sns_key.to_owned().unwrap();
     let decompression_key = key_set.public_keys.server_key.to_owned().into_raw_parts().3;
+    let ksk = key_set
+        .public_keys
+        .server_key
+        .clone()
+        .into_raw_parts()
+        .0
+        .into_raw_parts()
+        .key_switching_key;
 
     for i in 1..=amount_parties {
         // Get first signing key
@@ -539,6 +547,7 @@ where
             sns_key: sns_key.clone(),
             decompression_key: decompression_key.clone(),
             pk_meta_data: info,
+            ksk: ksk.clone(),
         };
         store_pk_at_request_id(
             &mut pub_storages[i - 1],

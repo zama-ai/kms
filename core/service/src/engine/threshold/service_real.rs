@@ -1,4 +1,4 @@
-use crate::conf::threshold::{PeerConf, ThresholdParty};
+use crate::conf::threshold::{PeerConf, ThresholdPartyConf};
 use crate::consts::{INFLIGHT_REQUEST_WAITING_TIME, MINIMUM_SESSIONS_PREPROC, PRSS_EPOCH_ID};
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey};
 use crate::cryptography::proven_ct_verifier::{
@@ -39,11 +39,14 @@ use conf_trace::metrics_names::{
     OP_REENCRYPT, TAG_CIPHERTEXT_ID, TAG_PARTY_ID,
 };
 use distributed_decryption::algebra::galois_rings::common::pack_residue_poly;
-use distributed_decryption::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
+use distributed_decryption::algebra::galois_rings::degree_4::{
+    ResiduePolyF4Z128, ResiduePolyF4Z64,
+};
 use distributed_decryption::algebra::structure_traits::Ring;
 use distributed_decryption::conf::party::CertificatePaths;
 use distributed_decryption::execution::endpoints::decryption::{
-    decrypt_using_noiseflooding, partial_decrypt_using_noiseflooding, Small,
+    decrypt_using_bitdec, decrypt_using_noiseflooding, partial_decrypt_using_bitdec,
+    partial_decrypt_using_noiseflooding, Small,
 };
 use distributed_decryption::execution::endpoints::keygen::{
     distributed_keygen_z128, PrivateKeySet,
@@ -55,8 +58,7 @@ use distributed_decryption::execution::online::preprocessing::{
 };
 use distributed_decryption::execution::runtime::party::{Identity, Role, RoleAssignment};
 use distributed_decryption::execution::runtime::session::{
-    BaseSessionStruct, DecryptionMode, ParameterHandles, SessionParameters, SmallSession,
-    ToBaseSession,
+    BaseSessionStruct, ParameterHandles, SessionParameters, SmallSession, ToBaseSession,
 };
 use distributed_decryption::execution::small_execution::prss::PRSSSetup;
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
@@ -76,6 +78,7 @@ use distributed_decryption::session_id::SessionId;
 use distributed_decryption::{algebra::base_ring::Z64, execution::endpoints::keygen::FhePubKeySet};
 use itertools::Itertools;
 use k256::ecdsa::SigningKey;
+use kms_common::DecryptionMode;
 use kms_grpc::kms::v1::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus,
@@ -94,6 +97,7 @@ use std::collections::HashMap;
 use std::hash::{BuildHasher, Hasher};
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
+use tfhe::core_crypto::prelude::LweKeyswitchKey;
 use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::named::Named;
 use tfhe::zk::CompactPkeCrs;
@@ -107,8 +111,6 @@ use tonic::transport::{Server, ServerTlsConfig};
 use tonic::{Request, Response, Status};
 use tonic_health::server::HealthReporter;
 use tracing::Instrument;
-
-const DECRYPTION_MODE: DecryptionMode = DecryptionMode::PRSSDecrypt;
 
 /// Initialize a threshold KMS server using the DDec initialization protocol.
 /// This MUST be done before the server is started.
@@ -131,7 +133,7 @@ pub async fn threshold_server_init<
     BackS: Storage + Sync + Send + 'static,
     F: std::future::Future<Output = ()> + Send + 'static,
 >(
-    config: ThresholdParty,
+    config: ThresholdPartyConf,
     public_storage: PubS,
     private_storage: PrivS,
     backup_storage: Option<BackS>,
@@ -173,6 +175,7 @@ pub async fn threshold_server_init<
         backup_storage,
         cert_paths,
         config.core_to_core_net,
+        config.decryption_mode,
         run_prss,
         rate_limiter_conf,
         health_reporter,
@@ -201,6 +204,7 @@ pub struct ThresholdFheKeys {
     pub sns_key: SwitchAndSquashKey,
     pub decompression_key: Option<DecompressionKey>,
     pub pk_meta_data: KeyGenCallValues,
+    pub ksk: LweKeyswitchKey<Vec<u64>>,
 }
 
 impl Named for ThresholdFheKeys {
@@ -288,6 +292,7 @@ async fn new_real_threshold_kms<PubS, PrivS, BackS, F>(
     backup_storage: Option<BackS>,
     cert_paths: Option<CertificatePaths>,
     core_to_core_net_conf: Option<CoreToCoreNetworkConfig>,
+    decryption_mode: DecryptionMode,
     run_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     core_service_health_reporter: Arc<RwLock<HealthReporter>>,
@@ -471,7 +476,8 @@ where
     )));
     let base_kms = BaseKmsStruct::new(sk)?;
 
-    let prss_setup = Arc::new(RwLock::new(None));
+    let prss_setup_128 = Arc::new(RwLock::new(None));
+    let prss_setup_64 = Arc::new(RwLock::new(None));
     let preproc_buckets = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     let preproc_factory = Arc::new(Mutex::new(preproc_factory));
     let crs_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(crs_info)));
@@ -495,7 +501,8 @@ where
         my_id,
         role_assignments: role_assignments.clone(),
         networking_strategy,
-        prss_setup: prss_setup.clone(),
+        prss_setup_z128: prss_setup_128.clone(),
+        prss_setup_z64: prss_setup_64.clone(),
     };
 
     {
@@ -507,7 +514,8 @@ where
             .await;
     }
     let initiator = RealInitiator {
-        prss_setup: Arc::clone(&prss_setup),
+        prss_setup_128: Arc::clone(&prss_setup_128),
+        prss_setup_64: Arc::clone(&prss_setup_64),
         private_storage: crypto_storage.get_private_storage(),
         session_preparer: session_preparer.new_instance().await,
         health_reporter: core_service_health_reporter.clone(),
@@ -540,18 +548,20 @@ where
         base_kms: base_kms.new_instance().await,
         crypto_storage: crypto_storage.clone(),
         reenc_meta_store,
-        session_preparer: session_preparer.new_instance().await,
+        session_preparer: Arc::new(session_preparer.new_instance().await),
         tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
+        decryption_mode,
     };
 
     let decryptor = RealDecryptor {
         base_kms: base_kms.new_instance().await,
         crypto_storage: crypto_storage.clone(),
         dec_meta_store,
-        session_preparer: session_preparer.new_instance().await,
+        session_preparer: Arc::new(session_preparer.new_instance().await),
         tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
+        decryption_mode,
     };
 
     let keygenerator = RealKeyGenerator {
@@ -569,7 +579,7 @@ where
     let insecure_keygenerator = RealInsecureKeyGenerator::from_real_keygen(&keygenerator).await;
 
     let keygen_preprocessor = RealPreprocessor {
-        prss_setup,
+        prss_setup: prss_setup_128,
         preproc_buckets,
         preproc_factory,
         num_sessions_preproc,
@@ -628,7 +638,8 @@ struct SessionPreparer {
     my_id: usize,
     role_assignments: RoleAssignment,
     networking_strategy: Arc<RwLock<NetworkingStrategy>>,
-    prss_setup: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>,
+    prss_setup_z128: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>, // TODO make generic?
+    prss_setup_z64: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z64>>>>,   // TODO make generic?
 }
 
 impl SessionPreparer {
@@ -668,15 +679,7 @@ impl SessionPreparer {
         Ok(base_session)
     }
 
-    async fn prepare_ddec_data_from_requestid(
-        &self,
-        request_id: &RequestId,
-    ) -> anyhow::Result<SmallSession<ResiduePolyF4Z128>> {
-        self.prepare_ddec_data_from_sessionid(SessionId(request_id.clone().try_into()?))
-            .await
-    }
-
-    async fn prepare_ddec_data_from_sessionid(
+    async fn prepare_ddec_data_from_sessionid_z128(
         &self,
         session_id: SessionId,
     ) -> anyhow::Result<SmallSession<ResiduePolyF4Z128>> {
@@ -685,8 +688,29 @@ impl SessionPreparer {
             .make_base_session(session_id, NetworkMode::Async)
             .await?;
         let prss_setup = tonic_some_or_err(
-            self.prss_setup.read().await.clone(),
-            "No PRSS setup exists".to_string(),
+            self.prss_setup_z128.read().await.clone(),
+            "No PRSS setup Z128 exists".to_string(),
+        )?;
+        let prss_state = prss_setup.new_prss_session_state(session_id);
+
+        let session = SmallSession {
+            base_session,
+            prss_state,
+        };
+        Ok(session)
+    }
+
+    async fn prepare_ddec_data_from_sessionid_z64(
+        &self,
+        session_id: SessionId,
+    ) -> anyhow::Result<SmallSession<ResiduePolyF4Z64>> {
+        //DDec for small session is only online, so requires only Async network
+        let base_session = self
+            .make_base_session(session_id, NetworkMode::Async)
+            .await?;
+        let prss_setup = tonic_some_or_err(
+            self.prss_setup_z64.read().await.clone(),
+            "No PRSS setup Z64 exists".to_string(),
         )?;
         let prss_state = prss_setup.new_prss_session_state(session_id);
 
@@ -705,14 +729,16 @@ impl SessionPreparer {
             my_id: self.my_id,
             role_assignments: self.role_assignments.clone(),
             networking_strategy: self.networking_strategy.clone(),
-            prss_setup: self.prss_setup.clone(),
+            prss_setup_z128: self.prss_setup_z128.clone(),
+            prss_setup_z64: self.prss_setup_z64.clone(),
         }
     }
 }
 
 pub struct RealInitiator<PrivS: Storage + Send + Sync + 'static> {
     // TODO eventually add mode to allow for nlarge as well.
-    prss_setup: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>,
+    prss_setup_128: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>,
+    prss_setup_64: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z64>>>>,
     private_storage: Arc<Mutex<PrivS>>,
     session_preparer: SessionPreparer,
     health_reporter: Arc<RwLock<HealthReporter>>,
@@ -722,7 +748,7 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
     async fn init_prss_from_disk(&self) -> anyhow::Result<()> {
         // TODO pass epoch ID fom config? (once we have epochs)
         let epoch_id = PRSS_EPOCH_ID;
-        let prss_setup_from_file = {
+        let prss_setup_z128_from_file = {
             let guarded_private_storage = self.private_storage.lock().await;
             let base_session = self
                 .session_preparer
@@ -731,7 +757,7 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
             read_versioned_at_request_id(
                 &(*guarded_private_storage),
                 &RequestId::derive(&format!(
-                    "PRSSSetup_ID_{epoch_id}_{}_{}",
+                    "PRSSSetup_Z128_ID_{epoch_id}_{}_{}",
                     base_session.parameters.num_parties(),
                     base_session.parameters.threshold()
                 ))?,
@@ -739,19 +765,51 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
             )
             .await
             .inspect_err(|e| {
-                tracing::warn!("failed to read PRSS from file with error: {e}");
+                tracing::warn!("failed to read PRSS Z128 from file with error: {e}");
             })
         };
 
         // check if a PRSS setup already exists in storage.
-        match prss_setup_from_file {
+        match prss_setup_z128_from_file {
             Ok(prss_setup) => {
-                let mut guarded_prss_setup = self.prss_setup.write().await;
+                let mut guarded_prss_setup = self.prss_setup_128.write().await;
                 *guarded_prss_setup = Some(prss_setup);
-                tracing::info!("Initializing threshold KMS server with PRSS Setup from disk",)
+                tracing::info!("Initializing threshold KMS server with PRSS Setup Z128 from disk",)
             }
             Err(e) => return Err(e),
         }
+
+        let prss_setup_z64_from_file = {
+            let guarded_private_storage = self.private_storage.lock().await;
+            let base_session = self
+                .session_preparer
+                .make_base_session(SessionId(epoch_id), NetworkMode::Sync)
+                .await?;
+            read_versioned_at_request_id(
+                &(*guarded_private_storage),
+                &RequestId::derive(&format!(
+                    "PRSSSetup_Z64_ID_{epoch_id}_{}_{}",
+                    base_session.parameters.num_parties(),
+                    base_session.parameters.threshold()
+                ))?,
+                &PrivDataType::PrssSetup.to_string(),
+            )
+            .await
+            .inspect_err(|e| {
+                tracing::warn!("failed to read PRSS Z64 from file with error: {e}");
+            })
+        };
+
+        // check if a PRSS setup already exists in storage.
+        match prss_setup_z64_from_file {
+            Ok(prss_setup) => {
+                let mut guarded_prss_setup = self.prss_setup_64.write().await;
+                *guarded_prss_setup = Some(prss_setup);
+                tracing::info!("Initializing threshold KMS server with PRSS Setup Z64 from disk",)
+            }
+            Err(e) => return Err(e),
+        }
+
         {
             // Notice that this is a hack to get the health reporter to report serving. The type `PrivS` has no influence on the service name.
             self.health_reporter
@@ -764,7 +822,7 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
     }
 
     async fn init_prss(&self) -> anyhow::Result<()> {
-        if self.prss_setup.read().await.is_some() {
+        if self.prss_setup_128.read().await.is_some() || self.prss_setup_64.read().await.is_some() {
             return Err(anyhow_error_and_log("PRSS state already exists"));
         }
 
@@ -779,11 +837,17 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
             .await?;
 
         tracing::info!("Starting PRSS for identity {}.", own_identity);
-        let prss_setup_obj: PRSSSetup<ResiduePolyF4Z128> =
+        let prss_setup_obj_z128: PRSSSetup<ResiduePolyF4Z128> =
             PRSSSetup::robust_init(&mut base_session, &RealVss::default()).await?;
 
-        let mut guarded_prss_setup = self.prss_setup.write().await;
-        *guarded_prss_setup = Some(prss_setup_obj.clone());
+        let prss_setup_obj_z64: PRSSSetup<ResiduePolyF4Z64> =
+            PRSSSetup::robust_init(&mut base_session, &RealVss::default()).await?;
+
+        let mut guarded_prss_setup = self.prss_setup_128.write().await;
+        *guarded_prss_setup = Some(prss_setup_obj_z128.clone());
+
+        let mut guarded_prss_setup = self.prss_setup_64.write().await;
+        *guarded_prss_setup = Some(prss_setup_obj_z64.clone());
 
         // serialize and write PRSS Setup to disk into private storage
         let private_storage = Arc::clone(&self.private_storage);
@@ -791,11 +855,23 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
         store_versioned_at_request_id(
             &mut (*priv_storage),
             &RequestId::derive(&format!(
-                "PRSSSetup_ID_{epoch_id}_{}_{}",
+                "PRSSSetup_Z128_ID_{epoch_id}_{}_{}",
                 base_session.parameters.num_parties(),
                 base_session.parameters.threshold(),
             ))?,
-            &prss_setup_obj,
+            &prss_setup_obj_z128,
+            &PrivDataType::PrssSetup.to_string(),
+        )
+        .await?;
+
+        store_versioned_at_request_id(
+            &mut (*priv_storage),
+            &RequestId::derive(&format!(
+                "PRSSSetup_Z64_ID_{epoch_id}_{}_{}",
+                base_session.parameters.num_parties(),
+                base_session.parameters.threshold(),
+            ))?,
+            &prss_setup_obj_z64,
             &PrivDataType::PrssSetup.to_string(),
         )
         .await?;
@@ -833,9 +909,10 @@ pub struct RealReencryptor<
     base_kms: BaseKmsStruct,
     crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
     reenc_meta_store: Arc<RwLock<MetaStore<ReencCallValues>>>,
-    session_preparer: SessionPreparer,
+    session_preparer: Arc<SessionPreparer>,
     tracker: Arc<TaskTracker>,
     rate_limiter: RateLimiter,
+    decryption_mode: DecryptionMode,
 }
 
 impl<
@@ -845,13 +922,13 @@ impl<
     > RealReencryptor<PubS, PrivS, BackS>
 {
     /// Helper method for reencryptin which carries out the actual threshold decryption using noise
-    /// flooding.
+    /// flooding or bit-decomposition.
     ///
     /// This function does not perform reencryption in a background thread.
     #[allow(clippy::too_many_arguments)]
     async fn inner_reencrypt(
-        session: &mut SmallSession<ResiduePolyF4Z128>,
-        protocol: &mut Small<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+        session_id: SessionId,
+        session_prep: Arc<SessionPreparer>,
         rng: &mut (impl CryptoRng + RngCore),
         ct: &[u8],
         fhe_type: FheType,
@@ -860,54 +937,122 @@ impl<
         client_address: &alloy_primitives::Address,
         sig_key: Arc<PrivateSigKey>,
         fhe_keys: OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>,
+        dec_mode: DecryptionMode,
     ) -> anyhow::Result<Vec<u8>> {
         let keys = fhe_keys;
+
         let low_level_ct = deserialize_to_low_level(&fhe_type, ct, &keys.decompression_key)?;
-        let partial_signcryption = match partial_decrypt_using_noiseflooding(
-            session,
-            protocol,
-            &keys.sns_key,
-            low_level_ct,
-            &keys.private_keys,
-            DECRYPTION_MODE,
-        )
-        .await
-        {
-            Ok((partial_dec_map, time)) => {
-                let partial_signcryption = match partial_dec_map
-                    .get(&session.session_id().to_string())
-                {
-                    Some(partial_dec) => {
-                        let partial_dec = pack_residue_poly(partial_dec);
-                        let partial_dec_serialized = bincode::serialize(&partial_dec)?;
-                        let signcryption_msg = SigncryptionPayload {
-                            plaintext: TypedPlaintext::from_bytes(partial_dec_serialized, fhe_type),
-                            link,
+
+        let pdec: Result<(Vec<u8>, std::time::Duration), anyhow::Error> = match dec_mode {
+            DecryptionMode::NoiseFloodSmall => {
+                let mut session = tonic_handle_potential_err(
+                    session_prep
+                        .prepare_ddec_data_from_sessionid_z128(session_id)
+                        .await,
+                    "Could not prepare ddec data for noiseflood decryption".to_string(),
+                )?;
+                let mut preparation = Small::new(session.clone());
+
+                let pdec = partial_decrypt_using_noiseflooding(
+                    &mut session,
+                    &mut preparation,
+                    &keys.sns_key,
+                    low_level_ct,
+                    &keys.private_keys,
+                    DecryptionMode::NoiseFloodSmall,
+                )
+                .await;
+
+                let res = match pdec {
+                    Ok((partial_dec_map, time)) => {
+                        let pdec_serialized = match partial_dec_map.get(&session_id.to_string()) {
+                            Some(partial_dec) => {
+                                let partial_dec = pack_residue_poly(partial_dec);
+                                bincode::serialize(&partial_dec)?
+                            }
+                            None => {
+                                return Err(anyhow!(
+                                    "Reencryption with session ID {} could not be retrived",
+                                    session_id.to_string()
+                                ))
+                            }
                         };
-                        let enc_res = signcrypt(
-                            rng,
-                            &bincode::serialize(&signcryption_msg)?,
-                            client_enc_key,
-                            client_address,
-                            &sig_key,
-                        )?;
-                        bincode::serialize(&enc_res)?
+
+                        (pdec_serialized, time)
                     }
-                    None => {
-                        return Err(anyhow!(
-                            "Reencryption with session ID {} could not be retrived",
-                            session.session_id().to_string()
-                        ))
-                    }
+                    Err(e) => return Err(anyhow!("Failed reencryption with noiseflooding: {e}")),
                 };
+                Ok(res)
+            }
+            DecryptionMode::BitDecSmall => {
+                let mut session = tonic_handle_potential_err(
+                    session_prep
+                        .prepare_ddec_data_from_sessionid_z64(session_id)
+                        .await,
+                    "Could not prepare ddec data for bitdec decryption".to_string(),
+                )?;
+
+                let pdec = partial_decrypt_using_bitdec(
+                    &mut session,
+                    low_level_ct,
+                    &keys.private_keys,
+                    &keys.ksk,
+                    DecryptionMode::BitDecSmall,
+                )
+                .await;
+
+                let res = match pdec {
+                    Ok((partial_dec_map, time)) => {
+                        let pdec_serialized = match partial_dec_map.get(&session_id.to_string()) {
+                            Some(partial_dec) => {
+                                // let partial_dec = pack_residue_poly(partial_dec); // TODO use more compact packing for bitdec?
+                                bincode::serialize(&partial_dec)?
+                            }
+                            None => {
+                                return Err(anyhow!(
+                                    "Reencryption with session ID {} could not be retrived",
+                                    session_id.to_string()
+                                ))
+                            }
+                        };
+
+                        (pdec_serialized, time)
+                    }
+                    Err(e) => return Err(anyhow!("Failed reencryption with bitdec: {e}")),
+                };
+                Ok(res)
+            }
+            mode => {
+                return Err(anyhow_error_and_log(format!(
+                    "Unsupported Decryption Mode for reencrypt: {}",
+                    mode
+                )));
+            }
+        };
+
+        let partial_signcryption = match pdec {
+            Ok((pdec_serialized, time)) => {
+                let signcryption_msg = SigncryptionPayload {
+                    plaintext: TypedPlaintext::from_bytes(pdec_serialized, fhe_type),
+                    link,
+                };
+                let enc_res = signcrypt(
+                    rng,
+                    &bincode::serialize(&signcryption_msg)?,
+                    client_enc_key,
+                    client_address,
+                    &sig_key,
+                )?;
+                let res = bincode::serialize(&enc_res)?;
+
                 tracing::info!(
                     "Reencryption completed for type {}. Inner thread took {:?} ms",
                     fhe_type.as_str_name(),
                     time.as_millis()
                 );
-                partial_signcryption
+                res
             }
-            Err(e) => return Err(anyhow!("Failed reencryption with noiseflooding: {e}")),
+            Err(e) => return Err(anyhow!("Failed reencryption: {e}")),
         };
         Ok(partial_signcryption)
     }
@@ -971,13 +1116,6 @@ impl<
         }
         .ok();
 
-        let mut session = tonic_handle_potential_err(
-            self.session_preparer
-                .prepare_ddec_data_from_requestid(&req_id)
-                .await,
-            "Could not prepare ddec data".to_string(),
-        )?;
-        let mut protocol = Small::new(session.clone());
         let meta_store = Arc::clone(&self.reenc_meta_store);
         let crypto_storage = self.crypto_storage.clone();
         let mut rng = self.base_kms.new_rng().await;
@@ -1001,7 +1139,15 @@ impl<
             "Cannot find threshold keys".to_string(),
         )?;
 
-        // the result of the computation is tracked the crs_meta_store
+        let session_id = SessionId(tonic_handle_potential_err(
+            req_id.clone().try_into(),
+            "Could not turn request id to session id".to_string(),
+        )?);
+
+        let prep = Arc::clone(&self.session_preparer);
+        let dec_mode = self.decryption_mode;
+
+        // the result of the computation is tracked the tracker
         self.tracker.spawn(
             async move {
                 // explicitly move the rate limiter context
@@ -1012,8 +1158,8 @@ impl<
                 let tmp = match fhe_keys_rlock {
                     Ok(k) => {
                         Self::inner_reencrypt(
-                            &mut session,
-                            &mut protocol,
+                            session_id,
+                            prep,
                             &mut rng,
                             &ciphertext,
                             fhe_type,
@@ -1022,6 +1168,7 @@ impl<
                             &client_address,
                             sig_key,
                             k,
+                            dec_mode,
                         )
                         .await
                     }
@@ -1103,9 +1250,10 @@ pub struct RealDecryptor<
     base_kms: BaseKmsStruct,
     crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
     dec_meta_store: Arc<RwLock<MetaStore<DecCallValues>>>,
-    session_preparer: SessionPreparer,
+    session_preparer: Arc<SessionPreparer>,
     tracker: Arc<TaskTracker>,
     rate_limiter: RateLimiter,
+    decryption_mode: DecryptionMode,
 }
 
 impl<
@@ -1115,45 +1263,85 @@ impl<
     > RealDecryptor<PubS, PrivS, BackS>
 {
     /// Helper method for decryption which carries out the actual threshold decryption using noise
-    /// flooding.
+    /// flooding or bit-decomposition
     async fn inner_decrypt<T>(
-        session: &mut SmallSession<ResiduePolyF4Z128>,
-        protocol: &mut Small<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+        session_id: SessionId,
+        session_prep: Arc<SessionPreparer>,
         ct: &[u8],
         fhe_type: FheType,
         fhe_keys: OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>,
+        dec_mode: DecryptionMode,
     ) -> anyhow::Result<T>
     where
         T: tfhe::integer::block_decomposition::Recomposable
             + tfhe::core_crypto::commons::traits::CastFrom<u128>,
     {
-        tracing::info!("{:?} started inner_decrypt", session.own_identity());
+        tracing::info!("{:?} started inner_decrypt", session_prep.own_identity());
+
         let keys = fhe_keys;
         let low_level_ct = deserialize_to_low_level(&fhe_type, ct, &keys.decompression_key)?;
-        let raw_decryption = match decrypt_using_noiseflooding(
-            session,
-            protocol,
-            &keys.sns_key,
-            low_level_ct,
-            &keys.private_keys,
-            DECRYPTION_MODE,
-            session.own_identity(),
-        )
-        .await
-        {
+
+        let dec = match dec_mode {
+            DecryptionMode::NoiseFloodSmall => {
+                let mut session = tonic_handle_potential_err(
+                    session_prep
+                        .prepare_ddec_data_from_sessionid_z128(session_id)
+                        .await,
+                    "Could not prepare ddec data for noiseflood decryption".to_string(),
+                )?;
+                let mut preparation = Small::new(session.clone());
+
+                decrypt_using_noiseflooding(
+                    &mut session,
+                    &mut preparation,
+                    &keys.sns_key,
+                    low_level_ct,
+                    &keys.private_keys,
+                    dec_mode,
+                    session_prep.own_identity()?,
+                )
+                .await
+            }
+            DecryptionMode::BitDecSmall => {
+                let mut session = tonic_handle_potential_err(
+                    session_prep
+                        .prepare_ddec_data_from_sessionid_z64(session_id)
+                        .await,
+                    "Could not prepare ddec data for bitdec decryption".to_string(),
+                )?;
+
+                decrypt_using_bitdec(
+                    &mut session,
+                    low_level_ct,
+                    &keys.private_keys,
+                    &keys.ksk,
+                    dec_mode,
+                    session_prep.own_identity()?,
+                )
+                .await
+            }
+            mode => {
+                return Err(anyhow_error_and_log(format!(
+                    "Unsupported Decryption Mode: {}",
+                    mode
+                )));
+            }
+        };
+
+        let raw_decryption = match dec {
             Ok((partial_dec, time)) => {
-                let raw_decryption = match partial_dec.get(&session.session_id().to_string()) {
+                let raw_decryption = match partial_dec.get(&session_id.to_string()) {
                     Some(raw_decryption) => *raw_decryption,
                     None => {
                         return Err(anyhow!(
                             "Decryption with session ID {} could not be retrived",
-                            session.session_id().to_string()
+                            session_id.to_string()
                         ))
                     }
                 };
                 tracing::info!(
                     "Decryption completed on {:?}. Inner thread took {:?} ms",
-                    session.own_identity(),
+                    session_prep.own_identity(),
                     time.as_millis()
                 );
                 raw_decryption
@@ -1262,21 +1450,14 @@ impl<
             .collect::<Vec<_>>();
 
         let mut dec_tasks = Vec::new();
+        let dec_mode = self.decryption_mode;
 
         // iterate over ciphertexts in this batch and decrypt each in their own session (so that it happens in parallel)
         for (idx, ct) in ciphertexts.into_iter().enumerate() {
             let internal_sid = SessionId::from(internal_sid + idx as u128);
             let key_id = key_id.clone();
-
-            let mut session = tonic_handle_potential_err(
-                self.session_preparer
-                    .prepare_ddec_data_from_sessionid(internal_sid)
-                    .await,
-                "Could not prepare ddec data for reencryption".to_string(),
-            )?;
-
-            let mut protocol = Small::new(session.clone());
             let crypto_storage = self.crypto_storage.clone();
+            let prep = Arc::clone(&self.session_preparer);
 
             // we do not need to hold the handle,
             // the result of the computation is tracked by the dec_meta_store
@@ -1297,56 +1478,62 @@ impl<
 
                 let res_plaintext = match fhe_type {
                     FheType::Euint2048 => Self::inner_decrypt::<tfhe::integer::bigint::U2048>(
-                        &mut session,
-                        &mut protocol,
+                        internal_sid,
+                        prep,
                         ciphertext,
                         fhe_type,
                         fhe_keys_rlock,
+                        dec_mode,
                     )
                     .await
                     .map(TypedPlaintext::from_u2048),
                     FheType::Euint1024 => Self::inner_decrypt::<tfhe::integer::bigint::U1024>(
-                        &mut session,
-                        &mut protocol,
+                        internal_sid,
+                        prep,
                         ciphertext,
                         fhe_type,
                         fhe_keys_rlock,
+                        dec_mode,
                     )
                     .await
                     .map(TypedPlaintext::from_u1024),
                     FheType::Euint512 => Self::inner_decrypt::<tfhe::integer::bigint::U512>(
-                        &mut session,
-                        &mut protocol,
+                        internal_sid,
+                        prep,
                         ciphertext,
                         fhe_type,
                         fhe_keys_rlock,
+                        dec_mode,
                     )
                     .await
                     .map(TypedPlaintext::from_u512),
                     FheType::Euint256 => Self::inner_decrypt::<tfhe::integer::U256>(
-                        &mut session,
-                        &mut protocol,
+                        internal_sid,
+                        prep,
                         ciphertext,
                         fhe_type,
                         fhe_keys_rlock,
+                        dec_mode,
                     )
                     .await
                     .map(TypedPlaintext::from_u256),
                     FheType::Euint160 => Self::inner_decrypt::<tfhe::integer::U256>(
-                        &mut session,
-                        &mut protocol,
+                        internal_sid,
+                        prep,
                         ciphertext,
                         fhe_type,
                         fhe_keys_rlock,
+                        dec_mode,
                     )
                     .await
                     .map(TypedPlaintext::from_u160),
                     FheType::Euint128 => Self::inner_decrypt::<u128>(
-                        &mut session,
-                        &mut protocol,
+                        internal_sid,
+                        prep,
                         ciphertext,
                         fhe_type,
                         fhe_keys_rlock,
+                        dec_mode,
                     )
                     .await
                     .map(|x| TypedPlaintext::new(x, fhe_type)),
@@ -1356,11 +1543,12 @@ impl<
                     | FheType::Euint16
                     | FheType::Euint32
                     | FheType::Euint64 => Self::inner_decrypt::<u64>(
-                        &mut session,
-                        &mut protocol,
+                        internal_sid,
+                        prep,
                         ciphertext,
                         fhe_type,
                         fhe_keys_rlock,
+                        dec_mode,
                     )
                     .await
                     .map(|x| TypedPlaintext::new(x as u128, fhe_type)),
@@ -1763,18 +1951,21 @@ impl<
         let decompression_key = raw_decompression_key.clone();
 
         pub_key_set.server_key = tfhe::ServerKey::from_raw_parts(
-            raw_server_key,
+            raw_server_key.clone(),
             raw_ksk_material,
             raw_compression_key,
             raw_decompression_key,
             raw_tag,
         );
 
+        let ksk = raw_server_key.into_raw_parts().key_switching_key;
+
         let threshold_fhe_keys = ThresholdFheKeys {
             private_keys,
             sns_key,
             decompression_key,
             pk_meta_data: info.clone(),
+            ksk,
         };
         crypto_storage
             .write_threshold_keys_with_meta_store(
@@ -2129,7 +2320,7 @@ impl<
         let session_id = SessionId(req_id.clone().try_into()?);
         let session = self
             .session_preparer
-            .prepare_ddec_data_from_sessionid(session_id)
+            .prepare_ddec_data_from_sessionid_z128(session_id)
             .await?
             .to_base_session()?;
 
@@ -2420,8 +2611,6 @@ impl<
 
 #[cfg(test)]
 mod tests {
-    use kms_grpc::kms::v1::RequestId;
-
     use crate::{
         client::test_tools,
         consts::{DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD, PRSS_EPOCH_ID},
@@ -2429,6 +2618,7 @@ mod tests {
         vault::storage::file::FileStorage,
         vault::storage::StorageType,
     };
+    use kms_grpc::kms::v1::RequestId;
 
     #[tokio::test]
     #[serial_test::serial]
@@ -2443,7 +2633,14 @@ mod tests {
 
             // make sure the store does not contain any PRSS info (currently stored under ID 1)
             let req_id = &RequestId::derive(&format!(
-                "PRSSSetup_ID_{PRSS_EPOCH_ID}_{}_{}",
+                "PRSSSetup_Z128_ID_{PRSS_EPOCH_ID}_{}_{}",
+                DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD
+            ))
+            .unwrap();
+            purge(None, None, &req_id.to_string(), DEFAULT_AMOUNT_PARTIES).await;
+
+            let req_id = &RequestId::derive(&format!(
+                "PRSSSetup_Z64_ID_{PRSS_EPOCH_ID}_{}_{}",
                 DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD
             ))
             .unwrap();
@@ -2459,6 +2656,7 @@ mod tests {
             priv_storage.clone(),
             true,
             None,
+            None,
         )
         .await;
         assert_eq!(core_handles.len(), DEFAULT_AMOUNT_PARTIES);
@@ -2468,9 +2666,12 @@ mod tests {
             h.assert_shutdown().await;
         }
 
-        // check that PRSS was created (and not read from disk)
+        // check that PRSS setups were created (and not read from disk)
         assert!(!logs_contain(
-            "Initializing threshold KMS server with PRSS Setup from disk"
+            "Initializing threshold KMS server with PRSS Setup Z128 from disk"
+        ));
+        assert!(!logs_contain(
+            "Initializing threshold KMS server with PRSS Setup Z64 from disk"
         ));
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
@@ -2481,13 +2682,17 @@ mod tests {
             priv_storage,
             false,
             None,
+            None,
         )
         .await;
         assert_eq!(core_handles.len(), DEFAULT_AMOUNT_PARTIES);
 
-        // check that PRSS was not created, but instead read from disk now
+        // check that PRSS setups were not created, but instead read from disk now
         assert!(logs_contain(
-            "Initializing threshold KMS server with PRSS Setup from disk"
+            "Initializing threshold KMS server with PRSS Setup Z128 from disk"
+        ));
+        assert!(logs_contain(
+            "Initializing threshold KMS server with PRSS Setup Z64 from disk"
         ));
 
         for h in core_handles.into_values() {

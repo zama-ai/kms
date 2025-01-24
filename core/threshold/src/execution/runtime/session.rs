@@ -12,8 +12,6 @@ use crate::{
 };
 use aes_prng::AesRng;
 use async_trait::async_trait;
-use clap::ValueEnum;
-use derive_more::Display;
 use rand::{CryptoRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -22,18 +20,6 @@ use std::{
 };
 
 pub type NetworkingImpl = Arc<dyn Networking + Send + Sync>;
-
-#[derive(Clone, Serialize, Deserialize, Display, Debug, ValueEnum)]
-pub enum DecryptionMode {
-    /// nSmall Noise Flooding
-    PRSSDecrypt,
-    /// nLarge Noise Flooding
-    LargeDecrypt,
-    /// nSmall Bit Decomposition
-    BitDecSmallDecrypt,
-    /// nLarge Bit Decomposition
-    BitDecLargeDecrypt,
-}
 
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct SessionParameters {

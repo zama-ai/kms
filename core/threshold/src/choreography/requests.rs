@@ -1,7 +1,7 @@
-use crate::execution::runtime::session::DecryptionMode;
 use crate::execution::tfhe_internals::parameters::{Ciphertext64, DKGParams};
 use crate::session_id::SessionId;
 use clap::ValueEnum;
+use kms_common::DecryptionMode;
 use serde::{Deserialize, Serialize};
 
 use super::grpc::SupportedRing;
