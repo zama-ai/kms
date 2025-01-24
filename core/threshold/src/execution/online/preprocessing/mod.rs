@@ -1,4 +1,5 @@
 use self::redis::{redis_factory, CorrelatedRandomnessType, RedisConf};
+use super::secret_distributions::{RealSecretDistributions, SecretDistributions};
 use super::triple::Triple;
 use crate::algebra::base_ring::{Z128, Z64};
 use crate::algebra::galois_rings::common::ResiduePoly;
@@ -190,28 +191,6 @@ pub trait DKGPreprocessing<Z: Ring>: BasePreprocessing<Z> + BitPreprocessing<Z> 
         bound: NoiseBounds,
     ) -> anyhow::Result<Vec<Share<Z>>>;
 
-    /// __Fill the noise directly from the [`crate::execution::small_execution::prss::PRSSState`] available from [`SmallSession`]
-    /// as described in the appendix of the NIST document.__
-    /// The bits and triples are generated/pulled from the [`BasePreprocessing`],
-    /// we thus need interaction to generate the bits.
-    async fn fill_from_base_preproc_small_session_appendix_version(
-        &mut self,
-        params: DKGParams,
-        session: &mut SmallSession<Z>,
-        preprocessing: &mut dyn BasePreprocessing<Z>,
-    ) -> anyhow::Result<()>;
-
-    /// __Fill the noise directly from the [`crate::execution::small_execution::prss::PRSSState`] available from [`SmallSession`]
-    /// as described in the appendix of the NIST document.__
-    /// Pull the triples from [`TriplePreprocessing`] and the bits from [`BitPreprocessing`]
-    fn fill_from_triples_and_bit_preproc_small_session_appendix_version(
-        &mut self,
-        params: DKGParams,
-        session: &mut SmallSession<Z>,
-        preprocessing_triples: &mut dyn BasePreprocessing<Z>,
-        preprocessing_bits: &mut dyn BitPreprocessing<Z>,
-    ) -> anyhow::Result<()>;
-
     /// Fill the noise from [`crate::execution::online::secret_distributions::SecretDistributions`]
     /// where the bits required to do so are generated through the [`BasePreprocessing`]
     /// Also generate the additional bits (and triples) needed from [`BasePreprocessing`]
@@ -236,6 +215,82 @@ pub trait DKGPreprocessing<Z: Ring>: BasePreprocessing<Z> + BitPreprocessing<Z> 
     ) -> anyhow::Result<()>;
 
     fn noise_len(&self, bound: NoiseBounds) -> usize;
+}
+
+pub(crate) fn dkg_fill_from_triples_and_bit_preproc<Z: Ring>(
+    prep: &mut impl DKGPreprocessing<Z>,
+    params: DKGParams,
+    preprocessing_base: &mut dyn BasePreprocessing<Z>,
+    preprocessing_bits: &mut dyn BitPreprocessing<Z>,
+) -> anyhow::Result<()> {
+    let params_basics_handles = params.get_params_basics_handle();
+
+    //Generate noise needed for pksk (if needed) and the key switch key
+    prep.append_noises(
+        RealSecretDistributions::from_noise_info(
+            params_basics_handles.all_lwe_noise(),
+            preprocessing_bits,
+        )?,
+        NoiseBounds::LweNoise(params_basics_handles.lwe_tuniform_bound()),
+    );
+
+    //Generate noise needed for the pksk (if needed), the bootstrap key
+    //and the decompression key
+    prep.append_noises(
+        RealSecretDistributions::from_noise_info(
+            params_basics_handles.all_glwe_noise(),
+            preprocessing_bits,
+        )?,
+        NoiseBounds::GlweNoise(params_basics_handles.glwe_tuniform_bound()),
+    );
+
+    // Generate noise needed for compression key
+    let ksk_noise = params_basics_handles.all_compression_ksk_noise();
+    prep.append_noises(
+        RealSecretDistributions::from_noise_info(ksk_noise.clone(), preprocessing_bits)?,
+        ksk_noise.bound,
+    );
+
+    //Generate noise needed for Switch and Squash bootstrap key if needed
+    match params {
+        DKGParams::WithSnS(sns_params) => {
+            prep.append_noises(
+                RealSecretDistributions::from_noise_info(
+                    sns_params.all_bk_sns_noise(),
+                    preprocessing_bits,
+                )?,
+                NoiseBounds::GlweNoiseSnS(sns_params.glwe_tuniform_bound_sns()),
+            );
+        }
+        DKGParams::WithoutSnS(_) => (),
+    }
+
+    //Generate noise needed for the pk
+    prep.append_noises(
+        RealSecretDistributions::from_noise_info(
+            params_basics_handles.all_lwe_hat_noise(),
+            preprocessing_bits,
+        )?,
+        NoiseBounds::LweHatNoise(params_basics_handles.lwe_hat_tuniform_bound()),
+    );
+
+    //Fill in the required number of _raw_ bits
+    let num_bits_required = params_basics_handles.num_raw_bits();
+
+    prep.append_bits(preprocessing_bits.next_bit_vec(num_bits_required)?);
+
+    //Fill in the required number of triples
+    let num_triples_required = params_basics_handles.total_triples_required()
+        - params_basics_handles.total_bits_required();
+
+    prep.append_triples(preprocessing_base.next_triple_vec(num_triples_required)?);
+
+    //Fill in the required number of randomness
+    let num_randomness_required = params_basics_handles.total_randomness_required()
+        - params_basics_handles.total_bits_required();
+    prep.append_randoms(preprocessing_base.next_random_vec(num_randomness_required)?);
+
+    Ok(())
 }
 
 pub trait PreprocessorFactory<const EXTENSION_DEGREE: usize>: Sync + Send {

@@ -352,24 +352,6 @@ where
     /// we generate them on the fly with no interaction
     fn append_noises(&mut self, _noises: Vec<Share<Z>>, _bound: NoiseBounds) {}
 
-    async fn fill_from_base_preproc_small_session_appendix_version(
-        &mut self,
-        _params: DKGParams,
-        _session: &mut SmallSession<Z>,
-        _preprocessing: &mut dyn BasePreprocessing<Z>,
-    ) -> anyhow::Result<()> {
-        unimplemented!("We do not implement filling for DummyPreprocessing")
-    }
-
-    fn fill_from_triples_and_bit_preproc_small_session_appendix_version(
-        &mut self,
-        _params: DKGParams,
-        _session: &mut SmallSession<Z>,
-        _preprocessing_triples: &mut dyn BasePreprocessing<Z>,
-        _preprocessing_bits: &mut dyn BitPreprocessing<Z>,
-    ) -> anyhow::Result<()> {
-        unimplemented!("We do not implement filling for DummyPreprocessing")
-    }
     async fn fill_from_base_preproc(
         &mut self,
         _params: DKGParams,

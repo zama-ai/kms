@@ -1,4 +1,3 @@
-use tfhe::shortint::EncryptionKeyChoice;
 use tonic::async_trait;
 
 use crate::{
@@ -11,12 +10,11 @@ use crate::{
                 BasePreprocessing, BitPreprocessing, DKGPreprocessing, NoiseBounds,
                 RandomPreprocessing, TriplePreprocessing,
             },
-            secret_distributions::{RealSecretDistributions, SecretDistributions},
             triple::Triple,
         },
-        runtime::session::{BaseSession, ParameterHandles, SmallSession, SmallSessionHandles},
+        runtime::session::BaseSession,
         sharing::share::Share,
-        small_execution::{prf::PRSSConversions, prss::PRSSState},
+        small_execution::prf::PRSSConversions,
         tfhe_internals::parameters::DKGParams,
     },
 };
@@ -127,150 +125,6 @@ where
         }
     }
 
-    /// __Fill the noise directly from the [`crate::execution::small_execution::prss::PRSSState`] available from [`SmallSession`]
-    /// as described in the appendix of the NIST document.__
-    /// The bits and triples are generated/pulled from the [`BasePreprocessing`],
-    /// we thus need interaction to generate the bits.
-    async fn fill_from_base_preproc_small_session_appendix_version(
-        &mut self,
-        params: DKGParams,
-        session: &mut SmallSession<Z>,
-        preprocessing: &mut dyn BasePreprocessing<Z>,
-    ) -> anyhow::Result<()> {
-        //Need bits for lwe sk, pk lwe sk, glwe sk and maybe glwe sk sns
-        let num_bits_needed = params.get_params_basics_handle().lwe_dimension().0
-            + params.get_params_basics_handle().lwe_hat_dimension().0
-            + params.get_params_basics_handle().glwe_sk_num_bits()
-            + match params {
-                DKGParams::WithoutSnS(_) => 0,
-                DKGParams::WithSnS(sns_params) => sns_params.glwe_sk_num_bits_sns(),
-            };
-
-        let mut bit_preproc = InMemoryBitPreprocessing::default();
-
-        bit_preproc.append_bits(
-            RealBitGenEven::gen_bits_even(num_bits_needed, preprocessing, session).await?,
-        );
-
-        self.fill_from_triples_and_bit_preproc_small_session_appendix_version(
-            params,
-            session,
-            preprocessing,
-            &mut bit_preproc,
-        )
-    }
-
-    /// __Fill the noise directly from the [`crate::execution::small_execution::prss::PRSSState`] available from [`SmallSession`]
-    /// as described in the appendix of the NIST document.__
-    /// Pull the triples from [`TriplePreprocessing`] and the bits from [`BitPreprocessing`]
-    fn fill_from_triples_and_bit_preproc_small_session_appendix_version(
-        &mut self,
-        params: DKGParams,
-        session: &mut SmallSession<Z>,
-        preprocessing_base: &mut dyn BasePreprocessing<Z>,
-        preprocessing_bits: &mut dyn BitPreprocessing<Z>,
-    ) -> anyhow::Result<()> {
-        let my_role = session.my_role()?;
-        let prss_state = session.prss_as_mut();
-
-        let mut fill_noise = |prss_state: &mut PRSSState<Z>, num: usize, bound: NoiseBounds| {
-            self.append_noises(
-                (0..num)
-                    .map(|_| {
-                        Ok::<_, anyhow::Error>(Share::new(
-                            my_role,
-                            prss_state.mask_next(my_role, 1u128 << bound.get_bound().0)?,
-                        ))
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-                bound,
-            );
-            Ok::<_, anyhow::Error>(())
-        };
-
-        let params_basics_handles = params.get_params_basics_handle();
-
-        //Depending on encryption type, pksk requires either LweNoise noise or GlweNoise
-        let (amount_pksk_lwe_noise, amount_pksk_glwe_noise) = match params_basics_handles
-            .get_pksk_destination()
-        {
-            //type = LWE case
-            Some(EncryptionKeyChoice::Small) => (params_basics_handles.num_needed_noise_pksk(), 0),
-            //type = F-GLWE case
-            Some(EncryptionKeyChoice::Big) => (0, params_basics_handles.num_needed_noise_pksk()),
-            _ => (0, 0),
-        };
-
-        //Generate noise needed for the pksk (if needed) and the key switch key
-        fill_noise(
-            prss_state,
-            amount_pksk_lwe_noise + params_basics_handles.num_needed_noise_ksk(),
-            NoiseBounds::LweNoise(params_basics_handles.lwe_tuniform_bound()),
-        )?;
-
-        //Generate noise needed for pksk (if needed), the bootstrap key
-        //and the decompression key
-        fill_noise(
-            prss_state,
-            amount_pksk_glwe_noise
-                + params_basics_handles.num_needed_noise_bk()
-                + params_basics_handles.num_needed_noise_decompression_key(),
-            NoiseBounds::GlweNoise(params_basics_handles.glwe_tuniform_bound()),
-        )?;
-
-        //Generate noise needed for compression key
-        if let Some(bound) = params_basics_handles.compression_key_tuniform_bound() {
-            fill_noise(
-                prss_state,
-                params_basics_handles.num_needed_noise_compression_key(),
-                NoiseBounds::CompressionKSKNoise(bound),
-            )?;
-        }
-
-        //Generate noise needed for Switch and Squash bootstrap key if needed
-        match params {
-            DKGParams::WithSnS(sns_params) => {
-                fill_noise(
-                    prss_state,
-                    sns_params.num_needed_noise_bk_sns(),
-                    NoiseBounds::GlweNoiseSnS(sns_params.glwe_tuniform_bound_sns()),
-                )?;
-            }
-            DKGParams::WithoutSnS(_) => (),
-        }
-
-        //Generate noise needed for pk
-        fill_noise(
-            prss_state,
-            params_basics_handles.num_needed_noise_pk(),
-            NoiseBounds::LweHatNoise(params_basics_handles.lwe_hat_tuniform_bound()),
-        )?;
-
-        //Fill in the required number of _raw_ bits
-        let num_bits_needed = params_basics_handles.lwe_dimension().0
-            + params_basics_handles.lwe_hat_dimension().0
-            + params_basics_handles.glwe_sk_num_bits()
-            + params_basics_handles.compression_sk_num_bits()
-            + match params {
-                DKGParams::WithSnS(sns_params) => sns_params.glwe_sk_num_bits_sns(),
-                DKGParams::WithoutSnS(_) => 0,
-            };
-
-        self.append_bits(preprocessing_bits.next_bit_vec(num_bits_needed)?);
-
-        //Fill in the required number of triples
-        let num_triples_needed = params_basics_handles.total_triples_required()
-            - params_basics_handles.total_bits_required();
-        self.append_triples(preprocessing_base.next_triple_vec(num_triples_needed)?);
-
-        //Fill in the required number of randomness
-        let num_randomness_needed = params_basics_handles.total_randomness_required()
-            - params_basics_handles.total_bits_required();
-        self.append_randoms(preprocessing_base.next_random_vec(num_randomness_needed)?);
-
-        Ok(())
-    }
-
     /// Fill the noise from [`crate::execution::online::secret_distributions::SecretDistributions`]
     /// where the bits required to do so are generated through the [`BasePreprocessing`]
     /// Also generate the additional bits (and triples) needed from [`BasePreprocessing`]
@@ -303,101 +157,12 @@ where
         preprocessing_base: &mut dyn BasePreprocessing<Z>,
         preprocessing_bits: &mut dyn BitPreprocessing<Z>,
     ) -> anyhow::Result<()> {
-        let params_basics_handles = params.get_params_basics_handle();
-        let (amount_pksk_lwe_noise, amount_pksk_glwe_noise) = match params_basics_handles
-            .get_pksk_destination()
-        {
-            //type = LWE case
-            Some(EncryptionKeyChoice::Small) => (params_basics_handles.num_needed_noise_pksk(), 0),
-            //type = F-GLWE case
-            Some(EncryptionKeyChoice::Big) => (0, params_basics_handles.num_needed_noise_pksk()),
-            _ => (0, 0),
-        };
-
-        //Generate noise needed for pksk (if needed) and the key switch key
-        self.append_noises(
-            RealSecretDistributions::t_uniform(
-                params_basics_handles.num_needed_noise_ksk() + amount_pksk_lwe_noise,
-                params_basics_handles.lwe_tuniform_bound(),
-                preprocessing_bits,
-            )?,
-            NoiseBounds::LweNoise(params_basics_handles.lwe_tuniform_bound()),
-        );
-
-        //Generate noise needed for the pksk (if needed), the bootstrap key
-        //and the decompression key
-        self.append_noises(
-            RealSecretDistributions::t_uniform(
-                params_basics_handles.num_needed_noise_bk()
-                    + amount_pksk_glwe_noise
-                    + params_basics_handles.num_needed_noise_decompression_key(),
-                params_basics_handles.glwe_tuniform_bound(),
-                preprocessing_bits,
-            )?,
-            NoiseBounds::GlweNoise(params_basics_handles.glwe_tuniform_bound()),
-        );
-
-        //Generate noise needed for compression key
-        if let Some(bound) = params_basics_handles.compression_key_tuniform_bound() {
-            self.append_noises(
-                RealSecretDistributions::t_uniform(
-                    params_basics_handles.num_needed_noise_compression_key(),
-                    bound,
-                    preprocessing_bits,
-                )?,
-                NoiseBounds::CompressionKSKNoise(bound),
-            );
-        }
-
-        //Generate noise needed for Switch and Squash bootstrap key if needed
-        match params {
-            DKGParams::WithSnS(sns_params) => {
-                self.append_noises(
-                    RealSecretDistributions::t_uniform(
-                        sns_params.num_needed_noise_bk_sns(),
-                        sns_params.glwe_tuniform_bound_sns(),
-                        preprocessing_bits,
-                    )?,
-                    NoiseBounds::GlweNoiseSnS(sns_params.glwe_tuniform_bound_sns()),
-                );
-            }
-            DKGParams::WithoutSnS(_) => (),
-        }
-
-        //Generate noise needed for the pk
-        self.append_noises(
-            RealSecretDistributions::t_uniform(
-                params_basics_handles.num_needed_noise_pk(),
-                params_basics_handles.lwe_hat_tuniform_bound(),
-                preprocessing_bits,
-            )?,
-            NoiseBounds::LweHatNoise(params_basics_handles.lwe_hat_tuniform_bound()),
-        );
-
-        //Fill in the required number of _raw_ bits
-        let num_bits_required = params_basics_handles.lwe_dimension().0
-            + params_basics_handles.glwe_sk_num_bits()
-            + params_basics_handles.lwe_hat_dimension().0
-            + params_basics_handles.compression_sk_num_bits()
-            + match params {
-                DKGParams::WithSnS(sns_params) => sns_params.glwe_sk_num_bits_sns(),
-                DKGParams::WithoutSnS(_) => 0,
-            };
-
-        self.append_bits(preprocessing_bits.next_bit_vec(num_bits_required)?);
-
-        //Fill in the required number of triples
-        let num_triples_required = params_basics_handles.total_triples_required()
-            - params_basics_handles.total_bits_required();
-
-        self.append_triples(preprocessing_base.next_triple_vec(num_triples_required)?);
-
-        //Fill in the required number of randomness
-        let num_randomness_required = params_basics_handles.total_randomness_required()
-            - params_basics_handles.total_bits_required();
-        self.append_randoms(preprocessing_base.next_random_vec(num_randomness_required)?);
-
-        Ok(())
+        crate::execution::online::preprocessing::dkg_fill_from_triples_and_bit_preproc(
+            self,
+            params,
+            preprocessing_base,
+            preprocessing_bits,
+        )
     }
 
     fn noise_len(&self, bound: NoiseBounds) -> usize {

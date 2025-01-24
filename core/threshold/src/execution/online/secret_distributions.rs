@@ -4,10 +4,21 @@ use super::preprocessing::BitPreprocessing;
 use crate::{
     algebra::structure_traits::Ring,
     error::error_handler::anyhow_error_and_log,
-    execution::{sharing::share::Share, tfhe_internals::parameters::TUniformBound},
+    execution::{
+        sharing::share::Share,
+        tfhe_internals::parameters::{NoiseInfo, TUniformBound},
+    },
 };
 
 pub trait SecretDistributions {
+    fn from_noise_info<Z, P>(
+        noise_info: NoiseInfo,
+        preproc: &mut P,
+    ) -> anyhow::Result<Vec<Share<Z>>>
+    where
+        Z: Ring,
+        P: BitPreprocessing<Z> + Send + ?Sized;
+
     fn t_uniform<Z, P>(
         n: usize,
         bound: TUniformBound,
@@ -27,6 +38,17 @@ pub trait SecretDistributions {
 pub struct RealSecretDistributions {}
 
 impl SecretDistributions for RealSecretDistributions {
+    fn from_noise_info<Z, P>(
+        noise_info: NoiseInfo,
+        preproc: &mut P,
+    ) -> anyhow::Result<Vec<Share<Z>>>
+    where
+        Z: Ring,
+        P: BitPreprocessing<Z> + Send + ?Sized,
+    {
+        Self::t_uniform(noise_info.amount, noise_info.tuniform_bound(), preproc)
+    }
+
     /// Sample shares of a secret sampled from the TUniform(1, -2^bound, 2^bound)
     /// that is every value in (-2^bound, 2^bound) is selected with prob 1/2^{bound+1}
     /// and the endpoints are selected with prob 1/2^{bound+2}

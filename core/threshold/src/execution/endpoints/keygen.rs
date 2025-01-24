@@ -5,7 +5,7 @@ use crate::execution::tfhe_internals::compression_decompression_key::Compression
 use crate::execution::tfhe_internals::lwe_key::LweCompactPublicKeyShare;
 use crate::execution::tfhe_internals::lwe_packing_keyswitch_key_generation::allocate_and_generate_lwe_packing_keyswitch_key;
 use crate::execution::tfhe_internals::parameters::{
-    BKParams, DKGParams, DistributedCompressionParameters, KSKParams, NoiseBounds,
+    BKParams, DKGParams, DistributedCompressionParameters, KSKParams, NoiseInfo,
 };
 use crate::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
 use crate::{
@@ -418,11 +418,9 @@ where
     let lwe_secret_key_share =
         LweSecretKeyShare::new_from_preprocessing(params.lwe_hat_dimension(), preprocessing)?;
     tracing::info!("(Party {my_role}) Generating corresponding public key...Start");
+    let NoiseInfo { amount, bound } = params.num_needed_noise_pk();
     let vec_tuniform_noise = preprocessing
-        .next_noise_vec(
-            params.num_needed_noise_pk(),
-            NoiseBounds::LweHatNoise(params.lwe_hat_tuniform_bound()),
-        )?
+        .next_noise_vec(amount, bound)?
         .iter()
         .map(|share| share.value())
         .collect_vec();

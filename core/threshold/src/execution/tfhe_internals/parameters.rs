@@ -176,6 +176,22 @@ pub struct DKGParamsSnS {
     pub sns_params: SwitchAndSquashParameters,
 }
 
+#[derive(Debug, Clone)]
+pub struct NoiseInfo {
+    pub amount: usize,
+    pub bound: NoiseBounds,
+}
+
+impl NoiseInfo {
+    pub fn tuniform_bound(&self) -> TUniformBound {
+        self.bound.get_bound()
+    }
+
+    pub fn num_bits_needed(&self) -> usize {
+        self.amount * (self.tuniform_bound().0 + 2)
+    }
+}
+
 pub trait DKGParamsBasics: Sync {
     fn write_to_file(&self, path: String) -> anyhow::Result<()>;
     fn read_from_file(path: String) -> anyhow::Result<Self>
@@ -214,12 +230,13 @@ pub trait DKGParamsBasics: Sync {
     fn decomposition_level_count_ksk(&self) -> DecompositionLevelCount;
     fn decomposition_level_count_pksk(&self) -> DecompositionLevelCount;
     fn decomposition_level_count_bk(&self) -> DecompositionLevelCount;
-    fn num_needed_noise_pk(&self) -> usize;
-    fn num_needed_noise_ksk(&self) -> usize;
-    fn num_needed_noise_pksk(&self) -> usize;
-    fn num_needed_noise_bk(&self) -> usize;
-    fn num_needed_noise_compression_key(&self) -> usize;
-    fn num_needed_noise_decompression_key(&self) -> usize;
+    fn num_needed_noise_pk(&self) -> NoiseInfo;
+    fn num_needed_noise_ksk(&self) -> NoiseInfo;
+    fn num_needed_noise_pksk(&self) -> NoiseInfo;
+    fn num_needed_noise_bk(&self) -> NoiseInfo;
+    fn num_needed_noise_compression_key(&self) -> NoiseInfo;
+    fn num_needed_noise_decompression_key(&self) -> NoiseInfo;
+    fn num_raw_bits(&self) -> usize;
     fn encryption_key_choice(&self) -> EncryptionKeyChoice;
     fn pbs_order(&self) -> PBSOrder;
     fn to_dkg_params(&self) -> DKGParams;
@@ -236,6 +253,47 @@ pub trait DKGParamsBasics: Sync {
     fn get_pksk_params(&self) -> Option<KSKParams>;
     fn get_bk_params(&self) -> BKParams;
     fn get_compression_decompression_params(&self) -> Option<DistributedCompressionParameters>;
+
+    // functions below may take a configuration in the future
+    // to "filter out" some keys that we don't care about
+    fn all_lwe_noise(&self) -> NoiseInfo;
+    fn all_lwe_hat_noise(&self) -> NoiseInfo;
+    fn all_glwe_noise(&self) -> NoiseInfo;
+    fn all_compression_ksk_noise(&self) -> NoiseInfo;
+}
+
+fn combine_noise_info(target_bound: NoiseBounds, list: &[NoiseInfo]) -> NoiseInfo {
+    let mut total = 0;
+    let mut bound = target_bound;
+    for noise_info in list {
+        match (noise_info.bound, target_bound) {
+            (NoiseBounds::LweNoise(_), NoiseBounds::LweNoise(_)) => {
+                total += noise_info.amount;
+                bound = noise_info.bound;
+            }
+            (NoiseBounds::LweHatNoise(_), NoiseBounds::LweHatNoise(_)) => {
+                total += noise_info.amount;
+                bound = noise_info.bound;
+            }
+            (NoiseBounds::GlweNoise(_), NoiseBounds::GlweNoise(_)) => {
+                total += noise_info.amount;
+                bound = noise_info.bound;
+            }
+            (NoiseBounds::GlweNoiseSnS(_), NoiseBounds::GlweNoiseSnS(_)) => {
+                total += noise_info.amount;
+                bound = noise_info.bound;
+            }
+            (NoiseBounds::CompressionKSKNoise(_), NoiseBounds::CompressionKSKNoise(_)) => {
+                total += noise_info.amount;
+                bound = noise_info.bound;
+            }
+            _ => { /* do nothing */ }
+        }
+    }
+    NoiseInfo {
+        amount: total,
+        bound,
+    }
 }
 
 impl DKGParamsBasics for DKGParamsRegular {
@@ -282,42 +340,32 @@ impl DKGParamsBasics for DKGParamsRegular {
     }
 
     fn total_bits_required(&self) -> usize {
-        //Need bits for the two lwe sk, glwe sk
+        //Need bits for the two lwe sk, glwe sk, and the compression sk
         //Counted twice if there's no dedicated pk parameter
-        let mut num_bits_needed =
-            self.lwe_dimension().0 + self.lwe_hat_dimension().0 + self.glwe_sk_num_bits();
+        let mut num_bits_needed = self.num_raw_bits();
 
         //And additionally, need bits to process the TUniform noises
         //(we need bound + 2 bits to sample a TUniform(bound))
         //For pk
-        num_bits_needed += self.num_needed_noise_pk() * (self.lwe_hat_tuniform_bound().0 + 2);
+        num_bits_needed += self.num_needed_noise_pk().num_bits_needed();
 
         //For ksk
-        num_bits_needed += self.num_needed_noise_ksk() * (self.lwe_tuniform_bound().0 + 2);
+        num_bits_needed += self.num_needed_noise_ksk().num_bits_needed();
 
         //For bk
-        num_bits_needed += self.num_needed_noise_bk() * (self.glwe_tuniform_bound().0 + 2);
+        num_bits_needed += self.num_needed_noise_bk().num_bits_needed();
 
         //For pksk
-        num_bits_needed += self.num_needed_noise_pksk()
-            * match self.get_pksk_destination() {
-                Some(EncryptionKeyChoice::Big) => self.glwe_tuniform_bound().0 + 2,
-                Some(EncryptionKeyChoice::Small) => self.lwe_tuniform_bound().0 + 2,
-                _ => 0,
-            };
+        num_bits_needed += self.num_needed_noise_pksk().num_bits_needed();
 
         //For (de)compression keys
-        // using let Some instead of unwrap
-        if let Some(compression_key_tuniform_bound) = self.compression_key_tuniform_bound() {
-            //For (de)compression private key
-            num_bits_needed += self.compression_sk_num_bits();
-            //For compression keys
-            num_bits_needed +=
-                self.num_needed_noise_compression_key() * (compression_key_tuniform_bound.0 + 2);
-            //For decompression keys
-            num_bits_needed +=
-                self.num_needed_noise_decompression_key() * (self.glwe_tuniform_bound().0 + 2);
-        };
+        //note that the bits are automatically 0
+        //if compression is not supported by the parameters
+
+        //For compression keys
+        num_bits_needed += self.num_needed_noise_compression_key().num_bits_needed();
+        //For decompression keys
+        num_bits_needed += self.num_needed_noise_decompression_key().num_bits_needed();
 
         num_bits_needed
     }
@@ -423,23 +471,46 @@ impl DKGParamsBasics for DKGParamsRegular {
         self.ciphertext_parameters.pbs_level
     }
 
-    fn num_needed_noise_pk(&self) -> usize {
-        self.lwe_hat_dimension().0
+    fn num_needed_noise_pk(&self) -> NoiseInfo {
+        NoiseInfo {
+            amount: self.lwe_hat_dimension().0,
+            bound: NoiseBounds::LweHatNoise(self.lwe_hat_tuniform_bound()),
+        }
     }
 
-    fn num_needed_noise_pksk(&self) -> usize {
-        self.lwe_hat_dimension().0 * self.decomposition_level_count_pksk().0
+    fn num_needed_noise_pksk(&self) -> NoiseInfo {
+        let amount = self.lwe_hat_dimension().0 * self.decomposition_level_count_pksk().0;
+
+        // it doesn't matter what bound we set if the amount is 0
+        let (amount, bound) = match self.get_pksk_destination() {
+            Some(EncryptionKeyChoice::Big) => {
+                //type = F-GLWE case
+                (amount, NoiseBounds::GlweNoise(self.glwe_tuniform_bound()))
+            }
+            Some(EncryptionKeyChoice::Small) => {
+                //type = LWE case
+                (amount, NoiseBounds::LweNoise(self.lwe_tuniform_bound()))
+            }
+            _ => (0, NoiseBounds::LweNoise(self.lwe_tuniform_bound())),
+        };
+        NoiseInfo { amount, bound }
     }
 
-    fn num_needed_noise_ksk(&self) -> usize {
-        self.glwe_dimension().0 * self.polynomial_size().0 * self.decomposition_level_count_ksk().0
+    fn num_needed_noise_ksk(&self) -> NoiseInfo {
+        let amount = self.glwe_dimension().0
+            * self.polynomial_size().0
+            * self.decomposition_level_count_ksk().0;
+        let bound = NoiseBounds::LweNoise(self.lwe_tuniform_bound());
+        NoiseInfo { amount, bound }
     }
 
-    fn num_needed_noise_bk(&self) -> usize {
-        self.lwe_dimension().0
+    fn num_needed_noise_bk(&self) -> NoiseInfo {
+        let amount = self.lwe_dimension().0
             * (self.glwe_dimension().0 + 1)
             * self.decomposition_level_count_bk().0
-            * self.polynomial_size().0
+            * self.polynomial_size().0;
+        let bound = NoiseBounds::GlweNoise(self.glwe_tuniform_bound());
+        NoiseInfo { amount, bound }
     }
 
     fn to_dkg_params(&self) -> DKGParams {
@@ -478,36 +549,30 @@ impl DKGParamsBasics for DKGParamsRegular {
     }
 
     fn get_ksk_params(&self) -> KSKParams {
+        let NoiseInfo { amount, bound } = self.num_needed_noise_ksk();
         KSKParams {
-            num_needed_noise: self.num_needed_noise_ksk(),
-            noise_bound: NoiseBounds::LweNoise(self.lwe_tuniform_bound()),
+            num_needed_noise: amount,
+            noise_bound: bound,
             decomposition_base_log: self.decomposition_base_log_ksk(),
             decomposition_level_count: self.decomposition_level_count_ksk(),
         }
     }
 
     fn get_pksk_params(&self) -> Option<KSKParams> {
-        match self.get_pksk_destination() {
-            Some(EncryptionKeyChoice::Big) => Some(KSKParams {
-                num_needed_noise: self.num_needed_noise_pksk(),
-                noise_bound: NoiseBounds::GlweNoise(self.glwe_tuniform_bound()),
-                decomposition_base_log: self.decomposition_base_log_pksk(),
-                decomposition_level_count: self.decomposition_level_count_pksk(),
-            }),
-            Some(EncryptionKeyChoice::Small) => Some(KSKParams {
-                num_needed_noise: self.num_needed_noise_pksk(),
-                noise_bound: NoiseBounds::LweNoise(self.lwe_tuniform_bound()),
-                decomposition_base_log: self.decomposition_base_log_pksk(),
-                decomposition_level_count: self.decomposition_level_count_pksk(),
-            }),
-            None => None,
-        }
+        let NoiseInfo { amount, bound } = self.num_needed_noise_pksk();
+        self.get_pksk_destination().map(|_| KSKParams {
+            num_needed_noise: amount,
+            noise_bound: bound,
+            decomposition_base_log: self.decomposition_base_log_pksk(),
+            decomposition_level_count: self.decomposition_level_count_pksk(),
+        })
     }
 
     fn get_bk_params(&self) -> BKParams {
+        let NoiseInfo { amount, bound } = self.num_needed_noise_bk();
         BKParams {
-            num_needed_noise: self.num_needed_noise_bk(),
-            noise_bound: NoiseBounds::GlweNoise(self.glwe_tuniform_bound()),
+            num_needed_noise: amount,
+            noise_bound: bound,
             decomposition_base_log: self.decomposition_base_log_bk(),
             decomposition_level_count: self.decomposition_level_count_bk(),
             enc_type: EncryptionType::Bits64,
@@ -522,27 +587,118 @@ impl DKGParamsBasics for DKGParamsRegular {
         }
     }
 
-    fn num_needed_noise_compression_key(&self) -> usize {
-        if let Some(comp_params) = self.compression_decompression_parameters {
-            self.glwe_dimension().0
-                * self.polynomial_size().0
-                * comp_params.packing_ks_level.0
-                * comp_params.packing_ks_polynomial_size.0
-        } else {
-            0
+    fn num_needed_noise_compression_key(&self) -> NoiseInfo {
+        // both must exist to make a valid NoiseInfo
+        match (
+            self.compression_decompression_parameters,
+            self.compression_key_tuniform_bound(),
+        ) {
+            (Some(comp_params), Some(compression_key_tuniform_bound)) => {
+                let amount = self.glwe_dimension().0
+                    * self.polynomial_size().0
+                    * comp_params.packing_ks_level.0
+                    * comp_params.packing_ks_polynomial_size.0;
+                NoiseInfo {
+                    amount,
+                    bound: NoiseBounds::CompressionKSKNoise(compression_key_tuniform_bound),
+                }
+            }
+            _ => {
+                // use a dummy bound
+                NoiseInfo {
+                    amount: 0,
+                    bound: NoiseBounds::LweNoise(self.lwe_tuniform_bound()),
+                }
+            }
         }
     }
 
-    fn num_needed_noise_decompression_key(&self) -> usize {
-        if let Some(comp_params) = self.compression_decompression_parameters {
-            comp_params.packing_ks_polynomial_size.0
-                * comp_params.packing_ks_glwe_dimension.0
-                * (self.glwe_dimension().0 + 1)
-                * self.polynomial_size().0
-                * comp_params.br_level.0
-        } else {
-            0
+    fn num_needed_noise_decompression_key(&self) -> NoiseInfo {
+        match (
+            self.compression_decompression_parameters,
+            self.compression_key_tuniform_bound(),
+        ) {
+            (Some(comp_params), Some(_compression_key_tuniform_bound)) => {
+                let amount = comp_params.packing_ks_polynomial_size.0
+                    * comp_params.packing_ks_glwe_dimension.0
+                    * (self.glwe_dimension().0 + 1)
+                    * self.polynomial_size().0
+                    * comp_params.br_level.0;
+                NoiseInfo {
+                    amount,
+                    bound: NoiseBounds::GlweNoise(self.glwe_tuniform_bound()),
+                }
+            }
+            _ => {
+                // use a dummy bound
+                NoiseInfo {
+                    amount: 0,
+                    bound: NoiseBounds::LweNoise(self.lwe_tuniform_bound()),
+                }
+            }
         }
+    }
+
+    fn num_raw_bits(&self) -> usize {
+        self.lwe_dimension().0
+            + self.lwe_hat_dimension().0
+            + self.glwe_sk_num_bits()
+            + self.compression_sk_num_bits()
+    }
+
+    fn all_lwe_noise(&self) -> NoiseInfo {
+        let target_bound = self.num_needed_noise_ksk().bound;
+        let noises = &[self.num_needed_noise_ksk(), self.num_needed_noise_pksk()];
+
+        #[cfg(test)]
+        {
+            // sanity check
+            assert!(matches!(target_bound, NoiseBounds::LweNoise(..)));
+            for noise in noises {
+                if matches!(noise.bound, NoiseBounds::LweNoise(..)) {
+                    assert_eq!(noise.tuniform_bound().0, target_bound.get_bound().0);
+                }
+            }
+        }
+        combine_noise_info(target_bound, noises)
+    }
+
+    fn all_lwe_hat_noise(&self) -> NoiseInfo {
+        let out = self.num_needed_noise_pk();
+        #[cfg(test)]
+        assert!(matches!(out.bound, NoiseBounds::LweHatNoise(..)));
+        out
+    }
+
+    fn all_glwe_noise(&self) -> NoiseInfo {
+        let target_bound = self.num_needed_noise_bk().bound;
+        let noises = &[
+            self.num_needed_noise_bk(),
+            self.num_needed_noise_pksk(),
+            self.num_needed_noise_decompression_key(),
+        ];
+
+        #[cfg(test)]
+        {
+            assert!(matches!(target_bound, NoiseBounds::GlweNoise(..)));
+            for noise in noises {
+                if matches!(noise.bound, NoiseBounds::GlweNoise(..)) {
+                    assert_eq!(noise.tuniform_bound().0, target_bound.get_bound().0);
+                }
+            }
+        }
+        combine_noise_info(target_bound, noises)
+    }
+
+    fn all_compression_ksk_noise(&self) -> NoiseInfo {
+        let out = self.num_needed_noise_compression_key();
+        #[cfg(test)]
+        {
+            if out.amount != 0 {
+                assert!(matches!(out.bound, NoiseBounds::CompressionKSKNoise(..)));
+            }
+        }
+        out
     }
 
     fn compression_key_tuniform_bound(&self) -> Option<TUniformBound> {
@@ -561,21 +717,19 @@ impl DKGParamsBasics for DKGParamsRegular {
 
     fn get_compression_decompression_params(&self) -> Option<DistributedCompressionParameters> {
         if let Some(comp_params) = self.compression_decompression_parameters {
-            let ksk_num_noise = self.num_needed_noise_compression_key();
+            let NoiseInfo {
+                amount: ksk_num_noise,
+                bound: ksk_noisebound,
+            } = self.num_needed_noise_compression_key();
 
-            let ksk_noisebound = if let DynamicDistribution::TUniform(bound) =
-                comp_params.packing_ks_key_noise_distribution
-            {
-                NoiseBounds::CompressionKSKNoise(TUniformBound(bound.bound_log2() as usize))
-            } else {
-                panic!("We do not support non TUniform noise distribution for compression keys.",);
-            };
-
-            let bk_num_needed_noise = self.num_needed_noise_decompression_key();
+            let NoiseInfo {
+                amount: bk_num_noise,
+                bound: bk_noisebound,
+            } = self.num_needed_noise_decompression_key();
 
             let bk_params = BKParams {
-                num_needed_noise: bk_num_needed_noise,
-                noise_bound: NoiseBounds::GlweNoise(self.glwe_tuniform_bound()),
+                num_needed_noise: bk_num_noise,
+                noise_bound: bk_noisebound,
                 decomposition_base_log: comp_params.br_base_log,
                 decomposition_level_count: comp_params.br_level,
                 enc_type: EncryptionType::Bits64,
@@ -649,7 +803,7 @@ impl DKGParamsBasics for DKGParamsSnS {
         //And for the additional glwe sk
         self.glwe_sk_num_bits_sns() +
         //And for the noise for the bk sns
-        self.num_needed_noise_bk_sns()
+        self.all_bk_sns_noise().amount
         * (self
             .glwe_tuniform_bound_sns()
             .0
@@ -733,19 +887,19 @@ impl DKGParamsBasics for DKGParamsSnS {
         self.regular_params.decomposition_level_count_bk()
     }
 
-    fn num_needed_noise_pk(&self) -> usize {
+    fn num_needed_noise_pk(&self) -> NoiseInfo {
         self.regular_params.num_needed_noise_pk()
     }
 
-    fn num_needed_noise_ksk(&self) -> usize {
+    fn num_needed_noise_ksk(&self) -> NoiseInfo {
         self.regular_params.num_needed_noise_ksk()
     }
 
-    fn num_needed_noise_pksk(&self) -> usize {
+    fn num_needed_noise_pksk(&self) -> NoiseInfo {
         self.regular_params.num_needed_noise_pksk()
     }
 
-    fn num_needed_noise_bk(&self) -> usize {
+    fn num_needed_noise_bk(&self) -> NoiseInfo {
         self.regular_params.num_needed_noise_bk()
     }
 
@@ -788,12 +942,32 @@ impl DKGParamsBasics for DKGParamsSnS {
         self.regular_params.get_compression_decompression_params()
     }
 
-    fn num_needed_noise_compression_key(&self) -> usize {
+    fn num_needed_noise_compression_key(&self) -> NoiseInfo {
         self.regular_params.num_needed_noise_compression_key()
     }
 
-    fn num_needed_noise_decompression_key(&self) -> usize {
+    fn num_needed_noise_decompression_key(&self) -> NoiseInfo {
         self.regular_params.num_needed_noise_decompression_key()
+    }
+
+    fn num_raw_bits(&self) -> usize {
+        self.regular_params.num_raw_bits() + self.glwe_sk_num_bits_sns()
+    }
+
+    fn all_lwe_noise(&self) -> NoiseInfo {
+        self.regular_params.all_lwe_noise()
+    }
+
+    fn all_lwe_hat_noise(&self) -> NoiseInfo {
+        self.regular_params.all_lwe_hat_noise()
+    }
+
+    fn all_glwe_noise(&self) -> NoiseInfo {
+        self.regular_params.all_glwe_noise()
+    }
+
+    fn all_compression_ksk_noise(&self) -> NoiseInfo {
+        self.regular_params.all_compression_ksk_noise()
     }
 
     fn compression_key_tuniform_bound(&self) -> Option<TUniformBound> {
@@ -838,17 +1012,25 @@ impl DKGParamsSnS {
         self.sns_params.pbs_level
     }
 
-    pub fn num_needed_noise_bk_sns(&self) -> usize {
-        self.lwe_dimension().0
+    pub fn all_bk_sns_noise(&self) -> NoiseInfo {
+        let amount = self.lwe_dimension().0
             * (self.glwe_dimension_sns().0 + 1)
             * self.decomposition_level_count_bk_sns().0
-            * self.polynomial_size_sns().0
+            * self.polynomial_size_sns().0;
+        NoiseInfo {
+            amount,
+            bound: NoiseBounds::GlweNoiseSnS(self.glwe_tuniform_bound_sns()),
+        }
     }
 
     pub fn get_bk_sns_params(&self) -> BKParams {
+        let NoiseInfo {
+            amount: num_needed_noise,
+            bound: noise_bound,
+        } = self.all_bk_sns_noise();
         BKParams {
-            num_needed_noise: self.num_needed_noise_bk_sns(),
-            noise_bound: NoiseBounds::GlweNoiseSnS(self.glwe_tuniform_bound_sns()),
+            num_needed_noise,
+            noise_bound,
             decomposition_base_log: self.decomposition_base_log_bk_sns(),
             decomposition_level_count: self.decomposition_level_count_bk_sns(),
             enc_type: EncryptionType::Bits128,
@@ -856,6 +1038,7 @@ impl DKGParamsSnS {
     }
 }
 
+#[cfg_attr(test, derive(strum_macros::EnumIter))]
 #[derive(ValueEnum, Clone, Debug)]
 #[allow(non_camel_case_types)]
 pub enum DkgParamsAvailable {
@@ -1185,3 +1368,21 @@ pub const NIST_PARAMS_P32_SNS_FGLWE: DKGParams = DKGParams::WithSnS(DKGParamsSnS
         ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
     },
 });
+
+#[cfg(test)]
+mod tests {
+    use super::DkgParamsAvailable;
+    use strum::IntoEnumIterator;
+
+    #[test]
+    fn test_all_noise() {
+        for param in DkgParamsAvailable::iter() {
+            let p = param.to_param();
+            let h = p.get_params_basics_handle();
+            let _ = h.all_compression_ksk_noise();
+            let _ = h.all_glwe_noise();
+            let _ = h.all_lwe_hat_noise();
+            let _ = h.all_lwe_noise();
+        }
+    }
+}

@@ -1,7 +1,6 @@
 use super::{
     constants::{BATCH_SIZE_BITS, BATCH_SIZE_TRIPLES, CHANNEL_BUFFER_SIZE},
     memory::InMemoryBitPreprocessing,
-    NoiseBounds,
 };
 use crate::{
     algebra::{
@@ -26,7 +25,7 @@ use crate::{
         small_execution::{
             agree_random::RealAgreeRandom, offline::SmallPreprocessing, prf::PRSSConversions,
         },
-        tfhe_internals::parameters::DKGParams,
+        tfhe_internals::parameters::{DKGParams, NoiseInfo},
     },
 };
 use futures::Future;
@@ -34,7 +33,6 @@ use itertools::Itertools;
 use num_integer::div_ceil;
 use rand::{CryptoRng, Rng};
 use std::sync::{Arc, RwLock};
-use tfhe::shortint::EncryptionKeyChoice;
 use tokio::{
     sync::{
         mpsc::{channel, Receiver, Sender},
@@ -48,12 +46,6 @@ use tracing::{instrument, Instrument};
 pub struct PreprocessingOrchestrator<Z> {
     params: DKGParams,
     dkg_preproc: Arc<RwLock<Box<dyn DKGPreprocessing<Z>>>>,
-}
-
-#[derive(Debug)]
-pub struct TUniformProduction {
-    pub bound: NoiseBounds,
-    pub amount: usize,
 }
 
 impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z64, EXTENSION_DEGREE>> {
@@ -762,7 +754,7 @@ where
     #[instrument(name = "Bit Processing", skip(bit_writer, bit_receiver_channels))]
     async fn bit_processing(
         bit_writer: Arc<RwLock<Box<dyn DKGPreprocessing<R>>>>,
-        mut tuniform_productions: Vec<TUniformProduction>,
+        mut tuniform_productions: Vec<NoiseInfo>,
         mut num_bits_required: usize,
         bit_receiver_channels: Vec<Mutex<Receiver<Vec<Share<R>>>>>,
     ) -> anyhow::Result<()> {
@@ -770,7 +762,7 @@ where
         let mut receiver_iterator = inner_bit_receiver_channels.iter().cycle();
         let mut bit_batch = Vec::new();
         for tuniform_production in tuniform_productions.iter_mut() {
-            let tuniform_req_bits = tuniform_production.bound.get_bound().0 + 2;
+            let tuniform_req_bits = tuniform_production.tuniform_bound().0 + 2;
             while tuniform_production.amount != 0 {
                 if bit_batch.len() < tuniform_req_bits {
                     bit_batch.extend(
@@ -855,52 +847,22 @@ where
     }
 
     ///Returns the numbers of TUniform required as well as the number of raw bits
-    fn get_num_tuniform_raw_bits_required(&self) -> (Vec<TUniformProduction>, usize) {
+    fn get_num_tuniform_raw_bits_required(&self) -> (Vec<NoiseInfo>, usize) {
         let mut tuniform_productions = Vec::new();
         let params_basics_handle = self.params.get_params_basics_handle();
 
-        //Depending on encryption type of destination, pksk requires either LweNoise noise or GlweNoise
-        let (amount_pksk_lwe_noise, amount_pksk_glwe_noise) = match params_basics_handle
-            .get_pksk_destination()
-        {
-            //type = LWE case
-            Some(EncryptionKeyChoice::Small) => (params_basics_handle.num_needed_noise_pksk(), 0),
-            //type = F-GLWE case
-            Some(EncryptionKeyChoice::Big) => (0, params_basics_handle.num_needed_noise_pksk()),
-            _ => (0, 0),
-        };
-
-        tuniform_productions.push(TUniformProduction {
-            bound: NoiseBounds::LweNoise(params_basics_handle.lwe_tuniform_bound()),
-            amount: params_basics_handle.num_needed_noise_ksk() + amount_pksk_lwe_noise,
-        });
-        tuniform_productions.push(TUniformProduction {
-            bound: NoiseBounds::GlweNoise(params_basics_handle.glwe_tuniform_bound()),
-            amount: params_basics_handle.num_needed_noise_bk()
-                + amount_pksk_glwe_noise
-                + params_basics_handle.num_needed_noise_decompression_key(),
-        });
-
-        if let Some(bound) = params_basics_handle.compression_key_tuniform_bound() {
-            tuniform_productions.push(TUniformProduction {
-                bound: NoiseBounds::CompressionKSKNoise(bound),
-                amount: params_basics_handle.num_needed_noise_compression_key(),
-            });
-        }
+        tuniform_productions.push(params_basics_handle.all_lwe_noise());
+        tuniform_productions.push(params_basics_handle.all_glwe_noise());
+        tuniform_productions.push(params_basics_handle.all_compression_ksk_noise());
 
         match self.params {
-            DKGParams::WithSnS(sns_params) => tuniform_productions.push(TUniformProduction {
-                bound: NoiseBounds::GlweNoiseSnS(sns_params.glwe_tuniform_bound_sns()),
-                amount: sns_params.num_needed_noise_bk_sns(),
-            }),
+            DKGParams::WithSnS(sns_params) => {
+                tuniform_productions.push(sns_params.all_bk_sns_noise())
+            }
             DKGParams::WithoutSnS(_) => (),
         }
 
-        //pk requires LweHatNoise
-        tuniform_productions.push(TUniformProduction {
-            bound: NoiseBounds::LweHatNoise(params_basics_handle.lwe_hat_tuniform_bound()),
-            amount: params_basics_handle.num_needed_noise_pk(),
-        });
+        tuniform_productions.push(params_basics_handle.all_lwe_hat_noise());
 
         //Required number of _raw_ bits
         let num_bits_required = params_basics_handle.lwe_dimension().0
