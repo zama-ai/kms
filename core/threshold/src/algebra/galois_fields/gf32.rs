@@ -13,34 +13,34 @@ use std::ops::Neg;
 use std::sync::RwLock;
 
 g2p!(
-    GF256,
-    8,
-    // Polynomial X^8 + X^4 + X^4 + X + 1
-    modulus: 0b_1_0001_1011,
+    GF32,
+    5,
+    // Polynomial X^5 + X^2 + 1
+    modulus: 0b100101,
 );
 
-impl Zero for GF256 {
-    const ZERO: Self = <GF256 as GaloisField>::ZERO;
+impl Zero for GF32 {
+    const ZERO: Self = <GF32 as GaloisField>::ZERO;
 }
 
-impl One for GF256 {
-    const ONE: Self = <GF256 as GaloisField>::ONE;
+impl One for GF32 {
+    const ONE: Self = <GF32 as GaloisField>::ONE;
 }
 
-impl Sample for GF256 {
+impl Sample for GF32 {
     fn sample<R: rand::Rng>(rng: &mut R) -> Self {
         let mut candidate = [0_u8; 1];
         rng.fill_bytes(candidate.as_mut());
-        GF256::from(candidate[0])
+        GF32::from(candidate[0])
     }
 }
-impl Default for GF256 {
+impl Default for GF32 {
     fn default() -> Self {
-        <GF256 as Zero>::ZERO
+        <GF32 as Zero>::ZERO
     }
 }
 
-impl Serialize for GF256 {
+impl Serialize for GF32 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -49,37 +49,37 @@ impl Serialize for GF256 {
     }
 }
 
-impl<'de> Deserialize<'de> for GF256 {
+impl<'de> Deserialize<'de> for GF32 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        Ok(GF256(u8::deserialize(deserializer)?))
+        Ok(GF32(u8::deserialize(deserializer)?))
     }
 }
 
-impl std::hash::Hash for GF256 {
+impl std::hash::Hash for GF32 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.0.hash(state);
     }
 }
 
-impl std::iter::Sum for GF256 {
+impl std::iter::Sum for GF32 {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
-        iter.fold(<GF256 as Zero>::ZERO, |acc, x| acc + x)
+        iter.fold(<GF32 as Zero>::ZERO, |acc, x| acc + x)
     }
 }
 
-impl FromU128 for GF256 {
+impl FromU128 for GF32 {
     fn from_u128(value: u128) -> Self {
-        GF256::from(value as u8)
+        GF32::from(value as u8)
     }
 }
 
-impl Ring for GF256 {
-    const BIT_LENGTH: usize = 8;
+impl Ring for GF32 {
+    const BIT_LENGTH: usize = 5;
     const CHAR_LOG2: usize = 1;
-    const EXTENSION_DEGREE: usize = 8;
+    const EXTENSION_DEGREE: usize = 5;
     const NUM_BITS_STAT_SEC_BASE_RING: usize = 1;
 
     fn to_byte_vec(&self) -> Vec<u8> {
@@ -87,21 +87,21 @@ impl Ring for GF256 {
     }
 }
 
-impl Neg for GF256 {
+impl Neg for GF32 {
     type Output = Self;
     fn neg(self) -> Self::Output {
-        // Subtraction and addition in GF256 are identical and just an XOR.
+        // Subtraction and addition in GF32 are identical and just an XOR.
         // That means we can just return the element itself when we want the additive inverse.
         self
     }
 }
 
 lazy_static! {
-    static ref LAGRANGE_STORE: RwLock<HashMap<Vec<GF256>, Vec<Poly<GF256>>>> =
+    static ref LAGRANGE_STORE: RwLock<HashMap<Vec<GF32>, Vec<Poly<GF32>>>> =
         RwLock::new(HashMap::new());
 }
 
-impl Field for GF256 {
+impl Field for GF32 {
     fn memoize_lagrange(points: &[Self]) -> anyhow::Result<Vec<Poly<Self>>> {
         if let Ok(lock_lagrange_store) = LAGRANGE_STORE.read() {
             match lock_lagrange_store.get(points) {
@@ -127,13 +127,13 @@ impl Field for GF256 {
     }
 
     fn invert(&self) -> Self {
-        <GF256 as GaloisField>::ONE / *self
+        <GF32 as GaloisField>::ONE / *self
     }
 }
 
 /// Computes the vector which is input ^ (2^i) for i=0..max_power.
 /// I.e. input, input^2, input^4, input^8, ...
-pub fn two_powers(input: GF256, max_power: usize) -> Vec<GF256> {
+pub fn two_powers(input: GF32, max_power: usize) -> Vec<GF32> {
     let mut res = Vec::with_capacity(max_power);
     let mut temp = input;
     res.push(temp);
@@ -144,40 +144,15 @@ pub fn two_powers(input: GF256, max_power: usize) -> Vec<GF256> {
     res
 }
 
-// Expansion of inner loop needed for computing the initial value of x for Newton-Raphson.
-// Computed using the following code:
-// const TRACE_ONE: GF256 = GF256(42); // ... which is an element with trace 1
-// fn compute_inner_loop() -> [GF256; 7] {
-//     let delta_powers = two_powers(TRACE_ONE, D);
-//     let mut inner_loop: [GF256; (D - 1) as usize] = [GF256(0); (D - 1) as usize];
-//     for i in 0..(D - 1) {
-//         let mut inner_temp = GF256::from(0);
-//         for j in i + 1..D {
-//             inner_temp += delta_powers[j as usize];
-//         }
-//         inner_loop[i as usize] = inner_temp;
-//     }
-//     inner_loop
-// }
-pub static GF256_NEWTON_INNER_LOOP: [GF256; 7] = [
-    GF256(43),
-    GF256(3),
-    GF256(47),
-    GF256(19),
-    GF256(52),
-    GF256(77),
-    GF256(208),
-];
-
 lazy_static::lazy_static! {
-    //Pre-compute the set S defined in Fig.58 (i.e. GF256 from generator X+1)
-    pub static ref GF256_FROM_GENERATOR : Vec<GF256> =
+    //Pre-compute the set S defined in Fig.58 (i.e. GF32 from generator X)
+    pub static ref GF32_FROM_GENERATOR : Vec<GF32> =
     {
 
-        let generator = GF256::from(3);
-         (0..256)
-            .scan(GF256::from(1), |state, idx| {
-                let res = if idx == 255 { GF256::from(0) } else { *state };
+        let generator = GF32::from(2);
+         (0..32)
+            .scan(GF32::from(1), |state, idx| {
+                let res = if idx == 31 { GF32::from(0) } else { *state };
                 *state = res * generator;
                 Some(res)
             })

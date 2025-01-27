@@ -74,8 +74,13 @@ impl BitGenEven for RealBitGenEven {
 mod tests {
     #[cfg(feature = "extension_degree_3")]
     use crate::algebra::galois_rings::degree_3::{ResiduePolyF3Z128, ResiduePolyF3Z64};
-    use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
-    use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z64;
+    use crate::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
+    #[cfg(feature = "extension_degree_5")]
+    use crate::algebra::galois_rings::degree_5::{ResiduePolyF5Z128, ResiduePolyF5Z64};
+    #[cfg(feature = "extension_degree_6")]
+    use crate::algebra::galois_rings::degree_6::{ResiduePolyF6Z128, ResiduePolyF6Z64};
+    #[cfg(feature = "extension_degree_7")]
+    use crate::algebra::galois_rings::degree_7::{ResiduePolyF7Z128, ResiduePolyF7Z64};
     #[cfg(feature = "extension_degree_8")]
     use crate::algebra::galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64};
     use crate::algebra::structure_traits::Ring;
@@ -248,11 +253,6 @@ mod tests {
         };
     }
 
-    #[cfg(feature = "extension_degree_8")]
-    test_bitgen![ResiduePolyF8Z64, u64];
-    #[cfg(feature = "extension_degree_8")]
-    test_bitgen![ResiduePolyF8Z128, u128];
-
     test_bitgen![ResiduePolyF4Z64, u64];
     test_bitgen![ResiduePolyF4Z128, u128];
 
@@ -260,4 +260,24 @@ mod tests {
     test_bitgen![ResiduePolyF3Z64, u64];
     #[cfg(feature = "extension_degree_3")]
     test_bitgen![ResiduePolyF3Z128, u128];
+
+    #[cfg(feature = "extension_degree_5")]
+    test_bitgen![ResiduePolyF5Z64, u64];
+    #[cfg(feature = "extension_degree_5")]
+    test_bitgen![ResiduePolyF5Z128, u128];
+
+    #[cfg(feature = "extension_degree_6")]
+    test_bitgen![ResiduePolyF6Z64, u64];
+    #[cfg(feature = "extension_degree_6")]
+    test_bitgen![ResiduePolyF6Z128, u128];
+
+    #[cfg(feature = "extension_degree_7")]
+    test_bitgen![ResiduePolyF7Z64, u64];
+    #[cfg(feature = "extension_degree_7")]
+    test_bitgen![ResiduePolyF7Z128, u128];
+
+    #[cfg(feature = "extension_degree_8")]
+    test_bitgen![ResiduePolyF8Z64, u64];
+    #[cfg(feature = "extension_degree_8")]
+    test_bitgen![ResiduePolyF8Z128, u128];
 }

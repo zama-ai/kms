@@ -3,6 +3,12 @@ pub mod common;
 pub mod degree_3;
 #[cfg(feature = "extension_degree_4")]
 pub mod degree_4;
+#[cfg(feature = "extension_degree_5")]
+pub mod degree_5;
+#[cfg(feature = "extension_degree_6")]
+pub mod degree_6;
+#[cfg(feature = "extension_degree_7")]
+pub mod degree_7;
 #[cfg(feature = "extension_degree_8")]
 pub mod degree_8;
 pub mod utils;

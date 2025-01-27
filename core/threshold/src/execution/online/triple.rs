@@ -170,6 +170,12 @@ mod tests {
     use super::Share;
     #[cfg(feature = "extension_degree_3")]
     use crate::algebra::galois_rings::degree_3::{ResiduePolyF3Z128, ResiduePolyF3Z64};
+    #[cfg(feature = "extension_degree_5")]
+    use crate::algebra::galois_rings::degree_5::{ResiduePolyF5Z128, ResiduePolyF5Z64};
+    #[cfg(feature = "extension_degree_6")]
+    use crate::algebra::galois_rings::degree_6::{ResiduePolyF6Z128, ResiduePolyF6Z64};
+    #[cfg(feature = "extension_degree_7")]
+    use crate::algebra::galois_rings::degree_7::{ResiduePolyF7Z128, ResiduePolyF7Z64};
     #[cfg(feature = "extension_degree_8")]
     use crate::algebra::galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64};
     use crate::{
@@ -346,12 +352,6 @@ mod tests {
         };
     }
 
-    #[cfg(feature = "extension_degree_8")]
-    test_triples![ResiduePolyF8Z64, u64];
-
-    #[cfg(feature = "extension_degree_8")]
-    test_triples![ResiduePolyF8Z128, u128];
-
     test_triples![ResiduePolyF4Z64, u64];
     test_triples![ResiduePolyF4Z128, u128];
 
@@ -360,4 +360,28 @@ mod tests {
 
     #[cfg(feature = "extension_degree_3")]
     test_triples![ResiduePolyF3Z128, u128];
+
+    #[cfg(feature = "extension_degree_5")]
+    test_triples![ResiduePolyF5Z64, u64];
+
+    #[cfg(feature = "extension_degree_5")]
+    test_triples![ResiduePolyF5Z128, u128];
+
+    #[cfg(feature = "extension_degree_6")]
+    test_triples![ResiduePolyF6Z64, u64];
+
+    #[cfg(feature = "extension_degree_6")]
+    test_triples![ResiduePolyF6Z128, u128];
+
+    #[cfg(feature = "extension_degree_7")]
+    test_triples![ResiduePolyF7Z64, u64];
+
+    #[cfg(feature = "extension_degree_7")]
+    test_triples![ResiduePolyF7Z128, u128];
+
+    #[cfg(feature = "extension_degree_8")]
+    test_triples![ResiduePolyF8Z64, u64];
+
+    #[cfg(feature = "extension_degree_8")]
+    test_triples![ResiduePolyF8Z128, u128];
 }

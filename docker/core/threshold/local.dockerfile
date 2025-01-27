@@ -33,7 +33,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,target=/app/ddec/target,sharing=locked \
     mkdir -p /app/ddec/bin && \
-    cargo install --path core/threshold --root . --bins --features=${FEATURES}
+    cargo install --path core/threshold --root . --bins --no-default-features --features=${FEATURES}
 
 # Go tooling stage - only for grpc-health-probe
 FROM debian:stable-slim AS go-builder

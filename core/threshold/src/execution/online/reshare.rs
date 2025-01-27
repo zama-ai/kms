@@ -427,18 +427,6 @@ mod tests {
         (glwe_sns_sk128, lwe_sk64, glwe_sk64)
     }
 
-    #[cfg(feature = "extension_degree_8")]
-    #[test]
-    fn reshare_no_error_f8() -> anyhow::Result<()> {
-        simulate_reshare::<8>(false)
-    }
-
-    #[cfg(feature = "extension_degree_8")]
-    #[test]
-    fn reshare_with_error_f8() -> anyhow::Result<()> {
-        simulate_reshare::<8>(true)
-    }
-
     #[test]
     fn reshare_no_error_f4() -> anyhow::Result<()> {
         simulate_reshare::<4>(false)
@@ -459,6 +447,54 @@ mod tests {
     #[test]
     fn reshare_with_error_f3() -> anyhow::Result<()> {
         simulate_reshare::<3>(true)
+    }
+
+    #[cfg(feature = "extension_degree_5")]
+    #[test]
+    fn reshare_no_error_f5() -> anyhow::Result<()> {
+        simulate_reshare::<5>(false)
+    }
+
+    #[cfg(feature = "extension_degree_5")]
+    #[test]
+    fn reshare_with_error_f5() -> anyhow::Result<()> {
+        simulate_reshare::<5>(true)
+    }
+
+    #[cfg(feature = "extension_degree_6")]
+    #[test]
+    fn reshare_no_error_f6() -> anyhow::Result<()> {
+        simulate_reshare::<6>(false)
+    }
+
+    #[cfg(feature = "extension_degree_6")]
+    #[test]
+    fn reshare_with_error_f6() -> anyhow::Result<()> {
+        simulate_reshare::<6>(true)
+    }
+
+    #[cfg(feature = "extension_degree_7")]
+    #[test]
+    fn reshare_no_error_f7() -> anyhow::Result<()> {
+        simulate_reshare::<7>(false)
+    }
+
+    #[cfg(feature = "extension_degree_7")]
+    #[test]
+    fn reshare_with_error_f7() -> anyhow::Result<()> {
+        simulate_reshare::<7>(true)
+    }
+
+    #[cfg(feature = "extension_degree_8")]
+    #[test]
+    fn reshare_no_error_f8() -> anyhow::Result<()> {
+        simulate_reshare::<8>(false)
+    }
+
+    #[cfg(feature = "extension_degree_8")]
+    #[test]
+    fn reshare_with_error_f8() -> anyhow::Result<()> {
+        simulate_reshare::<8>(true)
     }
 
     fn simulate_reshare<const EXTENSION_DEGREE: usize>(add_error: bool) -> anyhow::Result<()>

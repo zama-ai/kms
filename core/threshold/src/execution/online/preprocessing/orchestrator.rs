@@ -1242,12 +1242,6 @@ mod tests {
         (identities, channels)
     }
 
-    #[cfg(feature = "extension_degree_8")]
-    #[test]
-    fn test_triple_orchestrator_large_f8() {
-        test_triple_orchestrator_large::<8>()
-    }
-
     #[test]
     fn test_triple_orchestrator_large_f4() {
         test_triple_orchestrator_large::<4>()
@@ -1257,6 +1251,30 @@ mod tests {
     #[test]
     fn test_triple_orchestrator_large_f3() {
         test_triple_orchestrator_large::<3>()
+    }
+
+    #[cfg(feature = "extension_degree_5")]
+    #[test]
+    fn test_triple_orchestrator_large_f5() {
+        test_triple_orchestrator_large::<5>()
+    }
+
+    #[cfg(feature = "extension_degree_6")]
+    #[test]
+    fn test_triple_orchestrator_large_f6() {
+        test_triple_orchestrator_large::<6>()
+    }
+
+    #[cfg(feature = "extension_degree_7")]
+    #[test]
+    fn test_triple_orchestrator_large_f7() {
+        test_triple_orchestrator_large::<7>()
+    }
+
+    #[cfg(feature = "extension_degree_8")]
+    #[test]
+    fn test_triple_orchestrator_large_f8() {
+        test_triple_orchestrator_large::<8>()
     }
 
     fn test_triple_orchestrator_large<const EXTENSION_DEGREE: usize>()
@@ -1291,12 +1309,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "extension_degree_8")]
-    #[test]
-    fn test_bit_orchestrator_large_f8() {
-        test_bit_orchestrator_large::<8>()
-    }
-
     #[test]
     fn test_bit_orchestrator_large_f4() {
         test_bit_orchestrator_large::<4>()
@@ -1306,6 +1318,30 @@ mod tests {
     #[test]
     fn test_bit_orchestrator_large_f3() {
         test_bit_orchestrator_large::<3>()
+    }
+
+    #[cfg(feature = "extension_degree_5")]
+    #[test]
+    fn test_bit_orchestrator_large_f5() {
+        test_bit_orchestrator_large::<5>()
+    }
+
+    #[cfg(feature = "extension_degree_6")]
+    #[test]
+    fn test_bit_orchestrator_large_f6() {
+        test_bit_orchestrator_large::<6>()
+    }
+
+    #[cfg(feature = "extension_degree_7")]
+    #[test]
+    fn test_bit_orchestrator_large_f7() {
+        test_bit_orchestrator_large::<7>()
+    }
+
+    #[cfg(feature = "extension_degree_8")]
+    #[test]
+    fn test_bit_orchestrator_large_f8() {
+        test_bit_orchestrator_large::<8>()
     }
 
     fn test_bit_orchestrator_large<const EXTENSION_DEGREE: usize>()
@@ -1340,12 +1376,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "extension_degree_8")]
-    #[test]
-    fn test_random_orchestrator_large_f8() {
-        test_random_orchestrator_large::<8>()
-    }
-
     #[test]
     fn test_random_orchestrator_large_f4() {
         test_random_orchestrator_large::<4>()
@@ -1355,6 +1385,30 @@ mod tests {
     #[test]
     fn test_random_orchestrator_large_f3() {
         test_random_orchestrator_large::<3>()
+    }
+
+    #[cfg(feature = "extension_degree_5")]
+    #[test]
+    fn test_random_orchestrator_large_f5() {
+        test_random_orchestrator_large::<5>()
+    }
+
+    #[cfg(feature = "extension_degree_6")]
+    #[test]
+    fn test_random_orchestrator_large_f6() {
+        test_random_orchestrator_large::<6>()
+    }
+
+    #[cfg(feature = "extension_degree_7")]
+    #[test]
+    fn test_random_orchestrator_large_f7() {
+        test_random_orchestrator_large::<7>()
+    }
+
+    #[cfg(feature = "extension_degree_8")]
+    #[test]
+    fn test_random_orchestrator_large_f8() {
+        test_random_orchestrator_large::<8>()
     }
 
     fn test_random_orchestrator_large<const EXTENSION_DEGREE: usize>()
@@ -1496,12 +1550,6 @@ mod tests {
         (identities, channels)
     }
 
-    #[cfg(feature = "extension_degree_8")]
-    #[test]
-    fn test_triple_orchestrator_small_f8() {
-        test_triple_orchestrator_small::<8>()
-    }
-
     #[test]
     fn test_triple_orchestrator_small_f4() {
         test_triple_orchestrator_small::<4>()
@@ -1511,6 +1559,30 @@ mod tests {
     #[test]
     fn test_triple_orchestrator_small_f3() {
         test_triple_orchestrator_small::<3>()
+    }
+
+    #[cfg(feature = "extension_degree_5")]
+    #[test]
+    fn test_triple_orchestrator_small_f5() {
+        test_triple_orchestrator_small::<5>()
+    }
+
+    #[cfg(feature = "extension_degree_6")]
+    #[test]
+    fn test_triple_orchestrator_small_f6() {
+        test_triple_orchestrator_small::<6>()
+    }
+
+    #[cfg(feature = "extension_degree_7")]
+    #[test]
+    fn test_triple_orchestrator_small_f7() {
+        test_triple_orchestrator_small::<7>()
+    }
+
+    #[cfg(feature = "extension_degree_8")]
+    #[test]
+    fn test_triple_orchestrator_small_f8() {
+        test_triple_orchestrator_small::<8>()
     }
 
     fn test_triple_orchestrator_small<const EXTENSION_DEGREE: usize>()
@@ -1545,12 +1617,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "extension_degree_8")]
-    #[test]
-    fn test_bit_orchestrator_small_f8() {
-        test_bit_orchestrator_small::<8>()
-    }
-
     #[test]
     fn test_bit_orchestrator_small_f4() {
         test_bit_orchestrator_small::<4>()
@@ -1560,6 +1626,30 @@ mod tests {
     #[test]
     fn test_bit_orchestrator_small_f3() {
         test_bit_orchestrator_small::<3>()
+    }
+
+    #[cfg(feature = "extension_degree_5")]
+    #[test]
+    fn test_bit_orchestrator_small_f5() {
+        test_bit_orchestrator_small::<5>()
+    }
+
+    #[cfg(feature = "extension_degree_6")]
+    #[test]
+    fn test_bit_orchestrator_small_f6() {
+        test_bit_orchestrator_small::<6>()
+    }
+
+    #[cfg(feature = "extension_degree_7")]
+    #[test]
+    fn test_bit_orchestrator_small_f7() {
+        test_bit_orchestrator_small::<7>()
+    }
+
+    #[cfg(feature = "extension_degree_8")]
+    #[test]
+    fn test_bit_orchestrator_small_f8() {
+        test_bit_orchestrator_small::<8>()
     }
 
     fn test_bit_orchestrator_small<const EXTENSION_DEGREE: usize>()
@@ -1594,12 +1684,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "extension_degree_8")]
-    #[test]
-    fn test_randomness_orchestrator_small_f8() {
-        test_randomness_orchestrator_small::<8>()
-    }
-
     #[test]
     fn test_randomness_orchestrator_small_f4() {
         test_randomness_orchestrator_small::<4>()
@@ -1609,6 +1693,30 @@ mod tests {
     #[test]
     fn test_randomness_orchestrator_small_f3() {
         test_randomness_orchestrator_small::<3>()
+    }
+
+    #[cfg(feature = "extension_degree_5")]
+    #[test]
+    fn test_randomness_orchestrator_small_f5() {
+        test_randomness_orchestrator_small::<5>()
+    }
+
+    #[cfg(feature = "extension_degree_6")]
+    #[test]
+    fn test_randomness_orchestrator_small_f6() {
+        test_randomness_orchestrator_small::<6>()
+    }
+
+    #[cfg(feature = "extension_degree_7")]
+    #[test]
+    fn test_randomness_orchestrator_small_f7() {
+        test_randomness_orchestrator_small::<7>()
+    }
+
+    #[cfg(feature = "extension_degree_8")]
+    #[test]
+    fn test_randomness_orchestrator_small_f8() {
+        test_randomness_orchestrator_small::<8>()
     }
 
     fn test_randomness_orchestrator_small<const EXTENSION_DEGREE: usize>()

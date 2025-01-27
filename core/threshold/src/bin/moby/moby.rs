@@ -39,6 +39,25 @@ const EXTENSION_DEGREE: usize = 3;
     ))
 ))]
 const EXTENSION_DEGREE: usize = 4;
+#[cfg(all(
+    feature = "extension_degree_5",
+    not(any(
+        feature = "extension_degree_8",
+        feature = "extension_degree_7",
+        feature = "extension_degree_6",
+    ))
+))]
+const EXTENSION_DEGREE: usize = 5;
+#[cfg(all(
+    feature = "extension_degree_6",
+    not(any(feature = "extension_degree_8", feature = "extension_degree_7",))
+))]
+const EXTENSION_DEGREE: usize = 6;
+#[cfg(all(
+    feature = "extension_degree_7",
+    not(any(feature = "extension_degree_8",))
+))]
+const EXTENSION_DEGREE: usize = 7;
 #[cfg(feature = "extension_degree_8")]
 const EXTENSION_DEGREE: usize = 8;
 

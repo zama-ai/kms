@@ -12,6 +12,30 @@ CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
 command = "docker"
 args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,choreographer", "-t", "tfhe-core", "../../"]
 
+[tasks.tfhe-docker-image-degree-3]
+command = "docker"
+args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,choreographer,extension_degree_3", "-t", "tfhe-core-degree-3", "../../"]
+
+[tasks.tfhe-docker-image-degree-4]
+command = "docker"
+args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,choreographer,extension_degree_4", "-t", "tfhe-core-degree-4", "../../"]
+
+[tasks.tfhe-docker-image-degree-5]
+command = "docker"
+args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,choreographer,extension_degree_5", "-t", "tfhe-core-degree-5", "../../"]
+
+[tasks.tfhe-docker-image-degree-6]
+command = "docker"
+args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,choreographer,extension_degree_6", "-t", "tfhe-core-degree-6", "../../"]
+
+[tasks.tfhe-docker-image-degree-7]
+command = "docker"
+args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,choreographer,extension_degree_7", "-t", "tfhe-core-degree-7", "../../"]
+
+[tasks.tfhe-docker-image-degree-8]
+command = "docker"
+args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,choreographer,extension_degree_8", "-t", "tfhe-core-degree-8", "../../"]
+
 #Build the image for BGV parties (with centralized DKG available)
 [tasks.bgv-docker-image]
 command = "docker"

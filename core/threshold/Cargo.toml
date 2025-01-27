@@ -102,10 +102,7 @@ crate-type = ["lib", "cdylib"]
 [[bin]]
 name = "moby"
 path = "src/bin/moby/moby.rs"
-required-features = [
-    "choreographer",
-    "extension_degree_4",
-]
+required-features = ["choreographer"]
 
 [[bin]]
 name = "mobygo"

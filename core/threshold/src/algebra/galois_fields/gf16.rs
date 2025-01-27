@@ -176,27 +176,3 @@ lazy_static::lazy_static! {
             .collect()
     };
 }
-
-//#[cfg(test)]
-//mod tests {
-//    use crate::algebra::galois_fields::gf16::GF16;
-//
-//    use super::two_powers;
-//
-//    #[test]
-//    fn compute_inner_loop() {
-//        const TRACE_ONE: GF16 = GF16(9);
-//        const D: usize = 4;
-//        let delta_powers = two_powers(TRACE_ONE, D);
-//        let mut inner_loop: [GF16; D - 1] = [GF16(0); D - 1];
-//        for i in 0..(D - 1) {
-//            let mut inner_temp = GF16::from(0);
-//            for j in i + 1..D {
-//                inner_temp += delta_powers[j];
-//            }
-//            inner_loop[i] = inner_temp;
-//        }
-//        println!("{:?}", inner_loop);
-//    }
-//}
-//

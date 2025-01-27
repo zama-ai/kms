@@ -1048,12 +1048,6 @@ mod tests {
         assert_eq!(keyset.sns_secret_key.key.into_container()[0], inner_rec.0);
     }
 
-    #[cfg(feature = "extension_degree_8")]
-    #[test]
-    fn test_large_threshold_decrypt_f8() {
-        test_large_threshold_decrypt::<8>()
-    }
-
     #[test]
     fn test_large_threshold_decrypt_f4() {
         test_large_threshold_decrypt::<4>()
@@ -1063,6 +1057,30 @@ mod tests {
     #[test]
     fn test_large_threshold_decrypt_f3() {
         test_large_threshold_decrypt::<3>()
+    }
+
+    #[cfg(feature = "extension_degree_5")]
+    #[test]
+    fn test_large_threshold_decrypt_f5() {
+        test_large_threshold_decrypt::<5>()
+    }
+
+    #[cfg(feature = "extension_degree_6")]
+    #[test]
+    fn test_large_threshold_decrypt_f6() {
+        test_large_threshold_decrypt::<6>()
+    }
+
+    #[cfg(feature = "extension_degree_7")]
+    #[test]
+    fn test_large_threshold_decrypt_f7() {
+        test_large_threshold_decrypt::<7>()
+    }
+
+    #[cfg(feature = "extension_degree_8")]
+    #[test]
+    fn test_large_threshold_decrypt_f8() {
+        test_large_threshold_decrypt::<8>()
     }
 
     fn test_large_threshold_decrypt<const EXTENSION_DEGREE: usize>()
@@ -1112,12 +1130,6 @@ mod tests {
         assert_eq!(*out_dec, ref_res);
     }
 
-    #[cfg(feature = "extension_degree_8")]
-    #[test]
-    fn test_small_threshold_decrypt_f8() {
-        test_small_threshold_decrypt::<8>()
-    }
-
     #[test]
     fn test_small_threshold_decrypt_f4() {
         test_small_threshold_decrypt::<4>()
@@ -1127,6 +1139,30 @@ mod tests {
     #[test]
     fn test_small_threshold_decrypt_f3() {
         test_small_threshold_decrypt::<3>()
+    }
+
+    #[cfg(feature = "extension_degree_5")]
+    #[test]
+    fn test_small_threshold_decrypt_f5() {
+        test_small_threshold_decrypt::<5>()
+    }
+
+    #[cfg(feature = "extension_degree_6")]
+    #[test]
+    fn test_small_threshold_decrypt_f6() {
+        test_small_threshold_decrypt::<6>()
+    }
+
+    #[cfg(feature = "extension_degree_7")]
+    #[test]
+    fn test_small_threshold_decrypt_f7() {
+        test_small_threshold_decrypt::<7>()
+    }
+
+    #[cfg(feature = "extension_degree_8")]
+    #[test]
+    fn test_small_threshold_decrypt_f8() {
+        test_small_threshold_decrypt::<8>()
     }
 
     fn test_small_threshold_decrypt<const EXTENSION_DEGREE: usize>()
@@ -1176,12 +1212,6 @@ mod tests {
         assert_eq!(*out_dec, ref_res);
     }
 
-    #[cfg(feature = "extension_degree_8")]
-    #[test]
-    fn test_small_bitdec_threshold_decrypt_f8() {
-        test_small_bitdec_threshold_decrypt::<8>()
-    }
-
     #[test]
     fn test_small_bitdec_threshold_decrypt_f4() {
         test_small_bitdec_threshold_decrypt::<4>()
@@ -1191,6 +1221,30 @@ mod tests {
     #[test]
     fn test_small_bitdec_threshold_decrypt_f3() {
         test_small_bitdec_threshold_decrypt::<3>()
+    }
+
+    #[cfg(feature = "extension_degree_5")]
+    #[test]
+    fn test_small_bitdec_threshold_decrypt_f5() {
+        test_small_bitdec_threshold_decrypt::<5>()
+    }
+
+    #[cfg(feature = "extension_degree_6")]
+    #[test]
+    fn test_small_bitdec_threshold_decrypt_f6() {
+        test_small_bitdec_threshold_decrypt::<6>()
+    }
+
+    #[cfg(feature = "extension_degree_7")]
+    #[test]
+    fn test_small_bitdec_threshold_decrypt_f7() {
+        test_small_bitdec_threshold_decrypt::<7>()
+    }
+
+    #[cfg(feature = "extension_degree_8")]
+    #[test]
+    fn test_small_bitdec_threshold_decrypt_f8() {
+        test_small_bitdec_threshold_decrypt::<8>()
     }
 
     fn test_small_bitdec_threshold_decrypt<const EXTENSION_DEGREE: usize>()
@@ -1247,12 +1301,6 @@ mod tests {
         assert_eq!(*out_dec, ref_res);
     }
 
-    #[cfg(feature = "extension_degree_8")]
-    #[test]
-    fn test_large_bitdec_threshold_decrypt_f8() {
-        test_large_bitdec_threshold_decrypt::<8>()
-    }
-
     #[test]
     fn test_large_bitdec_threshold_decrypt_f4() {
         test_large_bitdec_threshold_decrypt::<4>()
@@ -1262,6 +1310,30 @@ mod tests {
     #[test]
     fn test_large_bitdec_threshold_decrypt_f3() {
         test_large_bitdec_threshold_decrypt::<3>()
+    }
+
+    #[cfg(feature = "extension_degree_5")]
+    #[test]
+    fn test_large_bitdec_threshold_decrypt_f5() {
+        test_large_bitdec_threshold_decrypt::<5>()
+    }
+
+    #[cfg(feature = "extension_degree_6")]
+    #[test]
+    fn test_large_bitdec_threshold_decrypt_f6() {
+        test_large_bitdec_threshold_decrypt::<6>()
+    }
+
+    #[cfg(feature = "extension_degree_7")]
+    #[test]
+    fn test_large_bitdec_threshold_decrypt_f7() {
+        test_large_bitdec_threshold_decrypt::<7>()
+    }
+
+    #[cfg(feature = "extension_degree_8")]
+    #[test]
+    fn test_large_bitdec_threshold_decrypt_f8() {
+        test_large_bitdec_threshold_decrypt::<8>()
     }
 
     fn test_large_bitdec_threshold_decrypt<const EXTENSION_DEGREE: usize>()
