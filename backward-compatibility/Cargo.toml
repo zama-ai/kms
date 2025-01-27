@@ -22,7 +22,7 @@ tfhe_versionable_0_3 = { package = "tfhe-versionable", version = "0.3.1", option
 tfhe_0_8 = { package = "tfhe", version = "0.8.2", optional = true, features = [
     "shortint",
 ] }
-serde = { version = "=1.0.214", features = ["derive"] }
+serde = { version = "=1.0.217", features = ["derive"] }
 strum = { version = "=0.26.3", features = ["derive"] }
 semver = { version = "=1.0.23", optional = true }
 ron = { version = "=0.8.1", features = ["integer128"] }

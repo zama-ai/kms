@@ -22,7 +22,7 @@ clap = { workspace = true, features = ["derive", "env"] }
 kms-common.workspace = true
 kms-core-utils = { workspace = true, optional = true }
 conf-trace = { workspace = true, optional = true }
-const_format = "=0.2.33"
+const_format = "=0.2.34"
 crypto-bigint = { version = "=0.6.0-rc.6", features = [
     "serde",
     "rand_core",
