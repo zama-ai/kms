@@ -28,9 +28,7 @@ COPY --from=eif enclave.eif /app/kms/core/service/enclave.eif
 
 RUN chown -R kms:kms /app/kms && \
     chown -R kms:kms /var/log/nitro_enclaves && \
-    chown -R kms:kms /run/nitro_enclaves && \
-    chown -R kms:kms /dev/nitro_enclaves && \
-    chmod 770 /dev/nitro_enclaves
+    chown -R kms:kms /run/nitro_enclaves
 
 USER kms
 
