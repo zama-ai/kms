@@ -79,6 +79,7 @@ use distributed_decryption::{algebra::base_ring::Z64, execution::endpoints::keyg
 use itertools::Itertools;
 use k256::ecdsa::SigningKey;
 use kms_common::DecryptionMode;
+use kms_core_utils::thread_handles::ThreadHandleGroup;
 use kms_grpc::kms::v1::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus,
@@ -601,12 +602,14 @@ where
 
     #[cfg(feature = "insecure")]
     let insecure_crs_generator = RealInsecureCrsGenerator::from_real_crsgen(&crs_generator).await;
+    let thread_handles = Arc::new(RwLock::new(ThreadHandleGroup::default()));
 
     let proven_ct_verifier = RealProvenCtVerifier {
         crypto_storage: crypto_storage.clone(),
         base_kms,
         ct_verifier_payload_meta_store,
         rate_limiter: rate_limiter.clone(),
+        thread_handles: Arc::clone(&thread_handles),
     };
 
     let kms = GenericKms::new(
@@ -2544,6 +2547,7 @@ pub struct RealProvenCtVerifier<
     crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
     ct_verifier_payload_meta_store: Arc<RwLock<MetaStore<VerifyProvenCtResponsePayload>>>,
     rate_limiter: RateLimiter,
+    thread_handles: Arc<RwLock<ThreadHandleGroup>>,
 }
 
 #[tonic::async_trait]
@@ -2588,6 +2592,7 @@ impl<
             request.into_inner(),
             sigkey,
             permit,
+            Arc::clone(&self.thread_handles),
         )
         .await
         .map_err(|e| {

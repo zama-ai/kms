@@ -27,7 +27,7 @@ kms-common.workspace = true
 kms-blockchain-client.workspace = true
 opentelemetry = { workspace = true, features = ["metrics"] }
 prost-types.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 serde = { workspace = true, features = ["derive"] }
 sha2.workspace = true
 strum = { workspace = true, features = ["derive"] }

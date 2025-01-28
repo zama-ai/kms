@@ -143,6 +143,7 @@ pub fn new_client(
         client_address,
         client_sk: None,
         params,
+        decryption_mode: DEFAULT_DECRYPTION_MODE,
     })
 }
 
@@ -245,6 +246,7 @@ pub fn transcript_to_client(transcript: &TestingReencryptionTranscript) -> Clien
         client_address: transcript.client_address,
         client_sk: transcript.client_sk.clone(),
         params: transcript.params,
+        decryption_mode: DEFAULT_DECRYPTION_MODE,
     }
 }
 

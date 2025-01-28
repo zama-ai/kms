@@ -91,7 +91,7 @@ prost-build = "=0.13.4"
 prost-types = "=0.13.4"
 rand = "=0.8.5"
 rayon = "=1.10.0"
-reqwest = "=0.12.9"
+reqwest = { version = "=0.12.9", default-features = false, features = ["json", "rustls-tls"] }
 schemars = "=0.8.21"
 secp256k1 = "=0.30.0"
 serde = { version = "=1.0.217", features = ["derive", "rc"] }

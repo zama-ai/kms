@@ -40,13 +40,13 @@ pub(crate) async fn non_blocking_verify_proven_ct<
     request: VerifyProvenCtRequest,
     client_sk: Arc<PrivateSigKey>,
     permit: OwnedSemaphorePermit,
+    thread_handles: Arc<RwLock<ThreadHandleGroup>>,
 ) -> anyhow::Result<()> {
     {
         let mut guarded_meta_store = meta_store.write().await;
         guarded_meta_store.insert(&request_id)?;
     }
     let sigkey = Arc::clone(&client_sk);
-    let mut thread_group = ThreadHandleGroup::new();
     let handle = tokio::spawn(
         async move {
             let _permit = permit;
@@ -91,7 +91,7 @@ pub(crate) async fn non_blocking_verify_proven_ct<
         }
         .instrument(tracing::Span::current()),
     );
-    thread_group.add(handle);
+    thread_handles.write().await.add(handle);
     Ok(())
 }
 

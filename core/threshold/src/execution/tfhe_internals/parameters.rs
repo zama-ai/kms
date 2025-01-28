@@ -47,6 +47,18 @@ pub enum NoiseBounds {
     CompressionKSKNoise(TUniformBound),
 }
 
+impl NoiseBounds {
+    pub fn get_bound(&self) -> TUniformBound {
+        match self {
+            NoiseBounds::LweNoise(bound) => *bound,
+            NoiseBounds::LweHatNoise(bound) => *bound,
+            NoiseBounds::GlweNoise(bound) => *bound,
+            NoiseBounds::GlweNoiseSnS(bound) => *bound,
+            NoiseBounds::CompressionKSKNoise(bound) => *bound,
+        }
+    }
+}
+
 #[derive(Serialize, Copy, Clone, Deserialize, Debug, PartialEq)]
 pub struct SwitchAndSquashParameters {
     pub glwe_dimension: GlweDimension,

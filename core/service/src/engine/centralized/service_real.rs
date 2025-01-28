@@ -28,7 +28,6 @@ use conf_trace::metrics_names::{
     OP_DECRYPT, OP_KEYGEN, OP_REENCRYPT, OP_VERIFY_PROVEN_CT, TAG_CIPHERTEXT_ID, TAG_PARTY_ID,
 };
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
-use kms_core_utils::thread_handles::ThreadHandleGroup;
 use kms_grpc::kms::v1::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenRequest, KeyGenResult,
@@ -142,7 +141,6 @@ impl<
         let sk = Arc::clone(&self.base_kms.sig_key);
 
         let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref());
-        let mut thread_group = ThreadHandleGroup::new();
         let handle = self.tracker.spawn(
             async move {
                 if let Err(e) = key_gen_background(
@@ -166,7 +164,7 @@ impl<
             }
             .instrument(tracing::Span::current()),
         );
-        thread_group.add(handle);
+        self.thread_handles.write().await.add(handle);
 
         Ok(Response::new(Empty {}))
     }
@@ -605,7 +603,6 @@ impl<
         let rng = self.base_kms.new_rng().await;
 
         let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref());
-        let mut thread_group = ThreadHandleGroup::new();
         let handle = self.tracker.spawn(
             async move {
                 if let Err(e) = crs_gen_background(
@@ -631,7 +628,7 @@ impl<
             }
             .instrument(tracing::Span::current()),
         );
-        thread_group.add(handle);
+        self.thread_handles.write().await.add(handle);
         Ok(Response::new(Empty {}))
     }
 
@@ -717,6 +714,7 @@ impl<
             request.into_inner(),
             sigkey,
             permit,
+            Arc::clone(&self.thread_handles),
         )
         .await
         .map_err(|e| {

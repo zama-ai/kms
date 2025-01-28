@@ -21,8 +21,14 @@ impl Storage for KVStore {
         let identifier = hex::encode(handle);
         tracing::info!("📦 Retrieving ciphertext: {}", identifier);
 
-        // Create an HTTP client
-        let client = Client::new();
+        let client = Client::builder()
+            .pool_max_idle_per_host(0) // Disable connection pooling to prevent potential issues with connection handles being kept alive across task panics
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to create HTTP client: {:?}", e);
+                panic!("Failed to create HTTP client: {:?}", e);
+            });
 
         let size_hex = &identifier[..8];
         let hash = &identifier[8..];

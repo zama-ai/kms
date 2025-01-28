@@ -2,20 +2,9 @@
 
 use anyhow::anyhow;
 use futures::FutureExt;
-use lazy_static::lazy_static;
 use std::time::Duration;
-use tokio::{
-    runtime::{Builder, Runtime},
-    task::JoinHandle,
-};
+use tokio::task::JoinHandle;
 use tracing::error;
-
-lazy_static! {
-    static ref CLEANUP_RT: Runtime = Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("Failed to create cleanup runtime");
-}
 
 #[derive(Debug, Default)]
 pub struct ThreadHandleGroup {
@@ -65,11 +54,12 @@ impl ThreadHandleGroup {
 
         // Simple blocking join with timeout using thread::sleep
         let start = std::time::Instant::now();
-        let timeout = Duration::from_secs(30);
+        let timeout = Duration::from_secs(10);
 
         for handle in self.handles {
             while !handle.is_finished() {
                 if start.elapsed() > timeout {
+                    error!("Cleanup timed out");
                     return Err(anyhow!("Cleanup timed out"));
                 }
                 std::thread::sleep(Duration::from_millis(10));

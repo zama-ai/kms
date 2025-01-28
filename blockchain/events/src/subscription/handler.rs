@@ -160,37 +160,66 @@ where
         };
         self.update_last_seen_height(starting_height).await;
         tracing::info!("Starting polling Blockchain on block {starting_height}");
+
         let mut last_height = starting_height;
         let clonable_self = Arc::new(self);
+
+        // Create a channel to communicate between tasks
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let mut active_task: Option<tokio::task::JoinHandle<()>> = None;
+
         loop {
+            // If we have an active task, check if it's completed
+            if let Some(task) = active_task.as_ref() {
+                if task.is_finished() {
+                    // Task is done, clean it up
+                    if let Some(task) = active_task.take() {
+                        match task.await {
+                            Ok(()) => {}
+                            Err(e) => {
+                                tracing::error!("Task panicked: {:?}", e);
+                                // Add delay before retrying to prevent tight loop
+                                sleep(Duration::from_secs(1)).await;
+                            }
+                        }
+                    }
+                }
+            }
             //We don't sleep when catching up
             if last_height >= bc_height {
                 tracing::trace!(
                     "Waiting {} secs for next tick before getting events",
                     clonable_self.tick_time_in_sec
                 );
-                sleep(Duration::from_secs(clonable_self.tick_time_in_sec)).await;
             }
-            let cloned_handler = handler.clone();
-            let cloned_self = Arc::clone(&clonable_self);
-            // Spawn a task here, so in the event of a panic we catch it as a JoinError
-            // but keep going
-            let handler_handle = tokio::spawn(async move {
-                cloned_self
-                    .handle_events(cloned_handler, bc_height)
-                    .await
-                    .unwrap_or_else(|e| {
-                        tracing::error!("Error handling events: {:?}", e);
-                        last_height
-                    })
-            });
-            last_height = match handler_handle.await {
-                Ok(height) => height,
-                Err(e) => {
-                    tracing::error!("Error handling events: {:?}", e);
-                    last_height
+
+            // Only spawn new task if we don't have an active one
+            if active_task.is_none() {
+                let cloned_handler = handler.clone();
+                let cloned_self = Arc::clone(&clonable_self);
+                let tx = tx.clone();
+
+                active_task = Some(tokio::spawn(async move {
+                    match cloned_self.handle_events(cloned_handler, bc_height).await {
+                        Ok(new_height) => {
+                            let _ = tx.send(new_height).await;
+                        }
+                        Err(e) => {
+                            tracing::error!("Error handling events: {:?}", e);
+                        }
+                    }
+                }));
+            }
+
+            // Wait for either a new height or timeout
+            tokio::select! {
+                Some(new_height) = rx.recv() => {
+                    last_height = new_height;
                 }
-            };
+                _ = sleep(Duration::from_secs(clonable_self.tick_time_in_sec)) => {
+                    // Timeout occurred, continue loop
+                }
+            }
         }
     }
 

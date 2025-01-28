@@ -250,7 +250,9 @@ impl Drop for GrpcSendingService {
                 Ok(handles) => {
                     let handles = std::mem::take(handles);
                     match handles.join_all_blocking() {
-                        Ok(_) => tracing::debug!("Successfully cleaned up all handles"),
+                        Ok(_) => tracing::info!(
+                            "Successfully cleaned up all handles in grpc sending service"
+                        ),
                         Err(e) => tracing::error!("Error joining threads on drop: {}", e),
                     }
                 }
@@ -259,9 +261,10 @@ impl Drop for GrpcSendingService {
                 }
             },
             None => {
-                tracing::debug!("Thread handles are still referenced elsewhere, skipping cleanup")
+                tracing::warn!("Thread handles are still referenced elsewhere, skipping cleanup")
             }
         }
+        tracing::info!("dropped grpc sending service");
     }
 }
 

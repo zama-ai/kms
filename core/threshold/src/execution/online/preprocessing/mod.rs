@@ -6,7 +6,7 @@ use crate::algebra::galois_rings::common::ResiduePoly;
 use crate::algebra::structure_traits::{ErrorCorrect, Invert, Solve};
 use crate::execution::online::preprocessing::memory::memory_factory;
 use crate::execution::runtime::session::{BaseSession, SmallSession};
-use crate::execution::tfhe_internals::parameters::{DKGParams, NoiseBounds, TUniformBound};
+use crate::execution::tfhe_internals::parameters::{DKGParams, NoiseBounds};
 use crate::{
     algebra::structure_traits::Ring, error::error_handler::anyhow_error_and_log,
     execution::sharing::share::Share,
@@ -152,16 +152,6 @@ where
 }
 
 impl NoiseBounds {
-    pub fn get_bound(&self) -> TUniformBound {
-        match self {
-            NoiseBounds::LweNoise(bound) => *bound,
-            NoiseBounds::LweHatNoise(bound) => *bound,
-            NoiseBounds::GlweNoise(bound) => *bound,
-            NoiseBounds::GlweNoiseSnS(bound) => *bound,
-            NoiseBounds::CompressionKSKNoise(bound) => *bound,
-        }
-    }
-
     pub(crate) fn get_type(&self) -> CorrelatedRandomnessType {
         match self {
             NoiseBounds::LweNoise(_) => CorrelatedRandomnessType::NoiseLwe,

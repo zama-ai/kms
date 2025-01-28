@@ -31,7 +31,7 @@ hash-db = { version = "=0.16.0", default-features = false, optional = true }
 
 # Default only dependencies
 ethereum-triedb = { version = "=0.1.1", optional = true }
-reqwest = { workspace = true, features = ["json"], optional = true }
+reqwest = { workspace = true, features = ["json", "rustls-tls"], optional = true }
 
 [features]
 cosmwasm = ["ethereum-triedb-local", "hash256-std-hasher", "hash-db"]
