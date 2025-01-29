@@ -44,6 +44,10 @@ on:
         type: boolean
         required: false
         default: false
+      slab-backend:
+        type: string
+        required: false
+        default: 'big-instance'
     secrets:
       SLAB_ACTION_TOKEN:
         required: true
@@ -75,7 +79,7 @@ jobs:
           slab-url: ${{ secrets.SLAB_BASE_URL }}
           job-secret: ${{ secrets.JOB_SECRET }}
           backend: aws
-          profile: big-instance
+          profile: ${{ inputs.slab-backend }}
 
   run-build:
     needs: start-runner

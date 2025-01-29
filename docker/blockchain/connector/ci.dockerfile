@@ -7,6 +7,7 @@ ARG LTO_RELEASE=release
 
 # Install build dependencies
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && \
     apt-get install -y --no-install-recommends \
     gcc \
@@ -48,6 +49,7 @@ FROM debian:stable-slim AS runtime
 
 # Install minimal runtime dependencies
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && \
     apt-get install -y --no-install-recommends \
     libssl3 \

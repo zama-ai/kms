@@ -16,6 +16,8 @@ services:
     build:
       context: .
       dockerfile: ./docker/blockchain/contracts/ci.dockerfile
+      cache_from:
+        - ghcr.io/zama-ai/kms-blockchain-asc:latest
     healthcheck:
       test: "wget -Sq --spider http://localhost:26657/status"
       interval: 1s
@@ -38,6 +40,8 @@ services:
     build:
       context: .
       dockerfile: ./docker/blockchain/contracts/ci.dockerfile
+      cache_from:
+        - ghcr.io/zama-ai/kms-blockchain-asc:latest
     restart: "no"
     environment:
       RUST_LOG: info
@@ -78,6 +82,8 @@ services:
     build:
       context: .
       dockerfile: ./docker/blockchain/gateway/ci.dockerfile
+      cache_from:
+        - ghcr.io/zama-ai/kms-blockchain-gateway:latest
       args:
         LTO_RELEASE: release-lto-off
     ports:

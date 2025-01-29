@@ -5,7 +5,8 @@
 FROM rust:1.84-slim-bookworm AS base
 
 # Added memory usage optimization through `--no-install-recommends`
-RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && \
     apt-get install -y --no-install-recommends \
         dnsutils \
@@ -40,24 +41,29 @@ ARG LTO_RELEASE=release
 WORKDIR /app/kms
 COPY . .
 RUN mkdir -p /app/kms/core/service/bin
-ENV CARGO_HOME=/var/cache/buildkit/cargo \
-    CARGO_TARGET_DIR=/var/cache/buildkit/target
-RUN --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/kms/target,sharing=locked \
     cargo fetch --locked
-RUN --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/kms/target,sharing=locked \
     cargo build --locked --profile=${LTO_RELEASE} -p kms --bin kms-server --bin kms-gen-tls-certs --bin kms-init -F insecure && \
     cargo build --locked --profile=${LTO_RELEASE} -p kms --bin kms-gen-keys -F testing -F insecure && \
-    cp /var/cache/buildkit/target/${LTO_RELEASE}/kms-server \
-       /var/cache/buildkit/target/${LTO_RELEASE}/kms-gen-tls-certs \
-       /var/cache/buildkit/target/${LTO_RELEASE}/kms-init \
-       /var/cache/buildkit/target/${LTO_RELEASE}/kms-gen-keys \
+    cp /app/kms/target/${LTO_RELEASE}/kms-server \
+       /app/kms/target/${LTO_RELEASE}/kms-gen-tls-certs \
+       /app/kms/target/${LTO_RELEASE}/kms-init \
+       /app/kms/target/${LTO_RELEASE}/kms-gen-keys \
     ./core/service/bin
 
 ## Third stage builds Go dependencies
 FROM --platform=$BUILDPLATFORM debian:stable-slim AS go-runtime
 WORKDIR /app/kms
 
-RUN --mount=type=cache,sharing=locked,target=/var/cache/apt apt update && \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt update && \
     apt install -y curl netcat-openbsd
 
 # We are going to need grpc-health-probe to check the health of the grpc server for docker-compose or future deployments

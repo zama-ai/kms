@@ -28,7 +28,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cargo install --path blockchain/simulator --root blockchain/simulator --bins
 
 
-    
+
 # Runtime Stage
 FROM debian:stable-slim
 

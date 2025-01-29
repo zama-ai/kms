@@ -2,9 +2,12 @@ name: kms-connector-test
 
 services:
   kms-full-node:
+    image: ghcr.io/zama-ai/kms-blockchain-asc:latest
     build:
       context: ../../../
       dockerfile: ./docker/blockchain/contracts/ci.dockerfile
+      cache_from:
+        - ghcr.io/zama-ai/kms-blockchain-asc:latest
     ports:
       - "36656:26656"
       - "36658:26657"
@@ -33,6 +36,8 @@ services:
     build:
       context: ../../../
       dockerfile: ./docker/blockchain/contracts/ci.dockerfile
+      cache_from:
+        - ghcr.io/zama-ai/kms-blockchain-asc:latest
     volumes:
       - ../../scripts/:/app/scripts
       - validator_secrets:/app/secrets

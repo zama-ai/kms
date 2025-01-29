@@ -14,15 +14,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  prepare-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+    - id: set-matrix
+      run: |
+        MATRIX="matrix={\"include\":["
+        if [[ "${{ github.event_name }}" == "schedule" ]]; then
+          MATRIX="${MATRIX}{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure nightly_tests\"}"
+        else
+          MATRIX="${MATRIX}{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure default_reencryption_threshold -- --skip nightly_tests --test-threads=1\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure default_verify_proven_ct_threshold -- --skip nightly_tests --test-threads=1\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure threshold -- --skip default_reencryption_threshold --skip default_verify_proven_ct_threshold --skip nightly_tests --test-threads=1\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly_tests --test-threads=1\"}"
+        fi
+        MATRIX="${MATRIX%,}]}"
+        echo "$MATRIX" >> "$GITHUB_OUTPUT"
+        echo "$MATRIX"
+
   build:
+    needs: prepare-matrix
+    strategy:
+      matrix: ${{fromJson(needs.prepare-matrix.outputs.matrix)}}
     uses: ./.github/workflows/common-build-big-instance.yml
     with:
       working-directory: './core/service'
-      args-tests: '-F slow_tests -F s3_tests -F insecure'
+      args-tests: ${{ matrix.args-tests }}
       run-minio: true
       run-wasm: true
       package-name: 'kms'
+      slab-backend: 'big-instance-service'
     permissions:
+      actions: write
       contents: 'read'
       id-token: 'write'
     secrets:

@@ -6,6 +6,7 @@ ARG LTO_RELEASE=release
 
 # Install build dependencies
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && \
     apt-get install -y --no-install-recommends \
     gcc \
@@ -36,12 +37,13 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/app/gateway/target,sharing=locked \
     cargo install --profile=${LTO_RELEASE} --path blockchain/gateway --root blockchain/gateway --bins
 
-    
+
 # Final runtime stage
 FROM debian:stable-slim AS runtime
 
 # Install runtime dependencies
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && \
     apt-get install -y --no-install-recommends \
     libssl3 \

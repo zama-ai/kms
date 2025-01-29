@@ -15,6 +15,8 @@ services:
     build:
       context: .
       dockerfile: ./docker/core/service/ci.dockerfile
+      cache_from:
+        - ghcr.io/zama-ai/kms-service:latest
       args:
         LTO_RELEASE: release-lto-off
     env_file:
@@ -35,6 +37,8 @@ services:
     build:
       context: .
       dockerfile: ./docker/core/service/ci.dockerfile
+      cache_from:
+        - ghcr.io/zama-ai/kms-service:latest
       args:
         LTO_RELEASE: release-lto-off
     ports:
@@ -87,6 +91,8 @@ services:
     build:
       context: .
       dockerfile: ./docker/blockchain/connector/ci.dockerfile
+      cache_from:
+        - ghcr.io/zama-ai/kms-blockchain-connector:latest
       args:
         LTO_RELEASE: release-lto-off
     volumes:
@@ -117,6 +123,8 @@ services:
     build:
       context: .
       dockerfile: ./docker/core/service/ci.dockerfile
+      cache_from:
+        - ghcr.io/zama-ai/kms-service:latest
       args:
         LTO_RELEASE: release-lto-off
     ports:
@@ -156,6 +164,8 @@ services:
     build:
       context: .
       dockerfile: ./docker/blockchain/connector/ci.dockerfile
+      cache_from:
+        - ghcr.io/zama-ai/kms-blockchain-connector:latest
       args:
         LTO_RELEASE: release-lto-off
     volumes:
@@ -186,6 +196,8 @@ services:
     build:
       context: .
       dockerfile: ./docker/core/service/ci.dockerfile
+      cache_from:
+        - ghcr.io/zama-ai/kms-service:latest
       args:
         LTO_RELEASE: release-lto-off
     ports:
@@ -226,6 +238,8 @@ services:
     build:
       context: .
       dockerfile: ./docker/blockchain/connector/ci.dockerfile
+      cache_from:
+        - ghcr.io/zama-ai/kms-blockchain-connector:latest
       args:
         LTO_RELEASE: release-lto-off
     volumes:
@@ -258,6 +272,8 @@ services:
     build:
       context: .
       dockerfile: ./docker/core/service/ci.dockerfile
+      cache_from:
+        - ghcr.io/zama-ai/kms-service:latest
       args:
         LTO_RELEASE: release-lto-off
     ports:
@@ -297,6 +313,8 @@ services:
     build:
       context: .
       dockerfile: ./docker/blockchain/connector/ci.dockerfile
+      cache_from:
+        - ghcr.io/zama-ai/kms-blockchain-connector:latest
       args:
         LTO_RELEASE: release-lto-off
     volumes:
@@ -328,6 +346,8 @@ services:
     build:
       context: .
       dockerfile: ./docker/core/service/ci.dockerfile
+      cache_from:
+        - ghcr.io/zama-ai/kms-service:latest
       args:
         LTO_RELEASE: release-lto-off
     depends_on:
