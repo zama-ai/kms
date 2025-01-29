@@ -10,6 +10,7 @@ use crate::algebra::structure_traits::ErrorCorrect;
 use crate::algebra::structure_traits::RingEmbed;
 use crate::execution::constants::LOG_B_SWITCH_SQUASH;
 use crate::execution::constants::STATSEC;
+use crate::execution::keyset_config::KeySetConfig;
 use crate::execution::online::preprocessing::BasePreprocessing;
 use crate::execution::online::preprocessing::RandomPreprocessing;
 use crate::execution::online::preprocessing::TriplePreprocessing;
@@ -276,6 +277,7 @@ where
     fn append_masks(&mut self, _masks: Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>) {
         unimplemented!("We do not implement filling for DummyPreprocessing")
     }
+
     fn next_mask(&mut self) -> anyhow::Result<ResiduePoly<Z128, EXTENSION_DEGREE>> {
         Ok(self.next_mask_vec(1)?.pop().unwrap())
     }
@@ -355,6 +357,7 @@ where
     async fn fill_from_base_preproc(
         &mut self,
         _params: DKGParams,
+        _keyset_config: KeySetConfig,
         _session: &mut BaseSession,
         _preprocessing: &mut dyn BasePreprocessing<Z>,
     ) -> anyhow::Result<()> {
@@ -364,6 +367,7 @@ where
     fn fill_from_triples_and_bit_preproc(
         &mut self,
         _params: DKGParams,
+        _keyset_config: KeySetConfig,
         _session: &mut BaseSession,
         _preprocessing_triples: &mut dyn BasePreprocessing<Z>,
         _preprocessing_bits: &mut dyn BitPreprocessing<Z>,

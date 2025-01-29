@@ -786,7 +786,7 @@ mod tests {
     /// Method tries to encrypt using both public and client keys and validates
     /// that the results are correct and consistent.
     fn sunshine_hl_keys(path: &str) {
-        let keyset: KeySet = read_element(path.to_string()).unwrap();
+        let keyset: KeySet = read_element(path).unwrap();
 
         let ctxt_build = tfhe::CompactCiphertextListBuilder::new(&keyset.public_keys.public_key)
             .push(42_u8)

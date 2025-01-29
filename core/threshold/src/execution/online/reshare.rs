@@ -505,7 +505,7 @@ mod tests {
         let num_parties = 7;
         let threshold = 2;
 
-        let mut keyset: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
+        let mut keyset: KeySet = read_element(std::path::Path::new(SMALL_TEST_KEY_PATH)).unwrap();
 
         // we make the shares shorter to make sure the test doesn't take too long
         truncate_client_keys(&mut keyset);

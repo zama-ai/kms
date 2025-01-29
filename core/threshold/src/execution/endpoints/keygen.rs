@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use crate::algebra::base_ring::{Z128, Z64};
 use crate::execution::online::preprocessing::{DKGPreprocessing, RandomPreprocessing};
 use crate::execution::sharing::share::Share;
@@ -63,11 +65,11 @@ pub struct FhePubKeySet {
 }
 
 impl FhePubKeySet {
-    pub fn write_to_file(&self, path: String) -> anyhow::Result<()> {
+    pub fn write_to_file(&self, path: &Path) -> anyhow::Result<()> {
         write_element(path, self)
     }
 
-    pub fn read_from_file(path: String) -> anyhow::Result<Self> {
+    pub fn read_from_file(path: &Path) -> anyhow::Result<Self> {
         read_element(path)
     }
 }
@@ -86,12 +88,12 @@ impl Eq for RawPubKeySet {}
 
 impl RawPubKeySet {
     #[allow(dead_code)]
-    pub fn write_to_file(&self, path: String) -> anyhow::Result<()> {
+    pub fn write_to_file(&self, path: &Path) -> anyhow::Result<()> {
         write_element(path, self)
     }
 
     #[allow(dead_code)]
-    pub fn read_from_file(path: String) -> anyhow::Result<Self> {
+    pub fn read_from_file(path: &Path) -> anyhow::Result<Self> {
         read_element(path)
     }
 
@@ -256,12 +258,12 @@ pub struct PrivateKeySet<const EXTENSION_DEGREE: usize> {
 }
 
 impl<const EXTENSION_DEGREE: usize> PrivateKeySet<EXTENSION_DEGREE> {
-    pub fn write_to_file(&self, path: String) -> anyhow::Result<()> {
-        write_element(format!("{}_DEGREE_{}", path, EXTENSION_DEGREE), self)
+    pub fn write_to_file(&self, path: &Path) -> anyhow::Result<()> {
+        write_element(path, self)
     }
 
-    pub fn read_from_file(path: String) -> anyhow::Result<Self> {
-        read_element(format!("{}_DEGREE_{}", path, EXTENSION_DEGREE))
+    pub fn read_from_file(path: &Path) -> anyhow::Result<Self> {
+        read_element(path)
     }
 }
 
@@ -644,71 +646,18 @@ where
     Ok((compression_key, decompression_key))
 }
 
-/// This function generates a bootstrapping key (bsk)
-/// that is used for the homomorphic PRF.
-/// Typically bootstrapping keys are encryptions of some
-/// LWE ciphertext. In thise use case, the LWE ciphertext
-/// is the PRF seed/key and it is randomly sampled and discarded.
-pub async fn distributed_homprf_bsk_gen<
-    Z: BaseRing,
-    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
-    Scalar: UnsignedInteger,
-    const EXTENSION_DEGREE: usize,
->(
-    glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
-    params: &DKGParams,
-    preprocessing: &mut P,
-    session: &mut S,
-) -> anyhow::Result<LweBootstrapKey<Vec<Scalar>>>
-where
-    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
-{
-    let params_basics_handle = params.get_params_basics_handle();
-    let seed = sample_seed(params_basics_handle.get_sec(), session, preprocessing).await?;
-    //Init the XOF with the seed computed above
-    let mut mpc_encryption_rng = MPCEncryptionRandomGenerator::<
-        Z,
-        SoftwareRandomGenerator,
-        EXTENSION_DEGREE,
-    >::new_from_seed(seed);
-
-    // the `lwe_secret_key_share` is the PRF key/seed
-    // we don't need the public component
-    let lwe_secret_key_share = LweSecretKeyShare::new_from_preprocessing(
-        params_basics_handle.lwe_dimension(),
-        preprocessing,
-    )?;
-
-    // now generate the bootstrapping key
-    let bsk = generate_bootstrap_key(
-        glwe_secret_key_share,
-        &lwe_secret_key_share,
-        params_basics_handle.get_bk_params(),
-        &mut mpc_encryption_rng,
-        session,
-        preprocessing,
-    )
-    .await?;
-
-    // lwe_secret_key_share is dropped here
-    Ok(bsk)
-}
-
-///Runs the distributed key generation protocol.
+/// Runs the distributed key generation protocol.
 ///
-/// Expects:
-/// - session: the session that holds necessary information for networking
-/// - preprocessing: [`DKGPreprocessing`] handle with enough triples, bits and noise available
-/// - params: [`DKGParams`] parameters for the Distributed Key Generation
+/// Inputs:
+/// - `session`: the session that holds necessary information for networking
+/// - `preprocessing`: [`DKGPreprocessing`] handle with enough triples, bits and noise available
+/// - `params`: [`DKGParams`] parameters for the Distributed Key Generation
 ///
 /// Outputs:
 /// - A [`RawPubKeySet`] composed of the public key, the KSK, the BK and the BK_sns if required
 /// - a [`PrivateKeySet`] composed of shares of the lwe and glwe private keys
 ///
-///If the [`DKGParams::o_flag`] is set in the params, then the sharing domain must be [`ResiduePolyF8Z128`] but the domain of
-///all non-overlined key material is still [`u64`].
+/// When using the DKGParams::WithSnS variant, the sharing domain must be ResiduePoly<Z128, EXTENSION_DEGREE>.
 /// Note that there is some redundancy of information because we also explicitly ask the [`BaseRing`] as trait parameter
 #[instrument(name="TFHE.Threshold-KeyGen", skip(session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
 async fn distributed_keygen<
@@ -721,6 +670,110 @@ async fn distributed_keygen<
     session: &mut S,
     preprocessing: &mut P,
     params: DKGParams,
+) -> anyhow::Result<(RawPubKeySet, GenericPrivateKeySet<Z, EXTENSION_DEGREE>)>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    distributed_keygen_from_optional_compression_sk(session, preprocessing, params, None).await
+}
+
+/// Note that in the return value, it is possible for [CompressionPrivateKeyShares] to be None
+/// while [CompressionKey], [DecompressionKey] exists because we do not copy the secret shares again.
+async fn distributed_keygen_compression_material<
+    Z: BaseRing,
+    R: Rng + CryptoRng,
+    S: BaseSessionHandles<R>,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
+    const EXTENSION_DEGREE: usize,
+>(
+    session: &mut S,
+    preprocessing: &mut P,
+    params: DKGParams,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<
+        Z,
+        SoftwareRandomGenerator,
+        EXTENSION_DEGREE,
+    >,
+    glwe_sk_share_as_lwe: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    glwe_secret_key_share_compression: Option<&CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>>,
+) -> anyhow::Result<(
+    Option<CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>>,
+    Option<(CompressionKey, DecompressionKey)>,
+)>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let params_basics_handle = params.get_params_basics_handle();
+
+    let compression_material = if let Some(comp_params) =
+        params_basics_handle.get_compression_decompression_params()
+    {
+        match glwe_secret_key_share_compression {
+            Some(inner) => {
+                let compression_keys = generate_compression_decompression_keys(
+                    glwe_sk_share_as_lwe,
+                    glwe_secret_key_share,
+                    inner,
+                    comp_params,
+                    mpc_encryption_rng,
+                    session,
+                    preprocessing,
+                )
+                .await?;
+                (None, Some(compression_keys))
+            }
+            None => {
+                let private_compression_key = CompressionPrivateKeyShares::new_from_preprocessing(
+                    comp_params.raw_compression_parameters,
+                    preprocessing,
+                )?;
+                let compression_keys = generate_compression_decompression_keys(
+                    glwe_sk_share_as_lwe,
+                    glwe_secret_key_share,
+                    &private_compression_key,
+                    comp_params,
+                    mpc_encryption_rng,
+                    session,
+                    preprocessing,
+                )
+                .await?;
+                (Some(private_compression_key), Some(compression_keys))
+            }
+        }
+    } else {
+        (None, None)
+    };
+    Ok(compression_material)
+}
+
+/// Runs the distributed key generation protocol but optionally
+/// uses an existing compression secret key.
+///
+/// Inputs:
+/// - `session`: the session that holds necessary information for networking
+/// - `preprocessing`: [`DKGPreprocessing`] handle with enough triples, bits and noise available
+/// - `params`: [`DKGParams`] parameters for the Distributed Key Generation
+/// - `existing_compression_sk`: an optional compression secret key,
+///   a new one is generated if this argument is None.
+///
+/// Outputs:
+/// - A [`RawPubKeySet`] composed of the public key, the KSK, the BK and the BK_sns if required
+/// - a [`PrivateKeySet`] composed of shares of the lwe and glwe private keys
+///
+/// When using the DKGParams::WithSnS variant, the sharing domain must be ResiduePoly<Z128, EXTENSION_DEGREE>.
+/// Note that there is some redundancy of information because we also explicitly ask the [`BaseRing`] as trait parameter
+async fn distributed_keygen_from_optional_compression_sk<
+    Z: BaseRing,
+    R: Rng + CryptoRng,
+    S: BaseSessionHandles<R>,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
+    const EXTENSION_DEGREE: usize,
+>(
+    session: &mut S,
+    preprocessing: &mut P,
+    params: DKGParams,
+    existing_compression_sk: Option<&CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>>,
 ) -> anyhow::Result<(RawPubKeySet, GenericPrivateKeySet<Z, EXTENSION_DEGREE>)>
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
@@ -769,30 +822,18 @@ where
     tracing::info!("(Party {my_role}) Generating GLWE secret key...Done");
 
     //Generate the compression keys if needed
-    let compression_material =
-        if let Some(comp_params) = params_basics_handle.get_compression_decompression_params() {
-            let compression_glwe_secret_key_share =
-                CompressionPrivateKeyShares::new_from_preprocessing(
-                    comp_params.raw_compression_parameters,
-                    preprocessing,
-                )?;
-            let (compression_key, decompression_key) = generate_compression_decompression_keys(
-                &glwe_sk_share_as_lwe,
-                &glwe_secret_key_share,
-                &compression_glwe_secret_key_share,
-                comp_params,
-                &mut mpc_encryption_rng,
-                session,
-                preprocessing,
-            )
-            .await?;
-            Some((
-                compression_glwe_secret_key_share,
-                (compression_key, decompression_key),
-            ))
-        } else {
-            None
-        };
+    //Generate the compression keys, we'll have None if there are no
+    //compression materials to generate
+    let compression_material = distributed_keygen_compression_material(
+        session,
+        preprocessing,
+        params,
+        &mut mpc_encryption_rng,
+        &glwe_sk_share_as_lwe,
+        &glwe_secret_key_share,
+        existing_compression_sk,
+    )
+    .await?;
 
     //Generate the KSK
     let ksk_params = params_basics_handle.get_ksk_params();
@@ -889,8 +930,9 @@ where
         }
     };
 
-    let (glwe_secret_key_share_compression, compression_keys) =
-        compression_material.map_or_else(|| (None, None), |(sk, pk)| (Some(sk), Some(pk)));
+    // note that glwe_secret_key_share_compression may be None even if compression_keys is Some
+    // this is because we might have generated the compression keys from an existing compression sk share
+    let (glwe_secret_key_share_compression, compression_keys) = compression_material;
 
     let pub_key_set = RawPubKeySet {
         lwe_public_key,
@@ -968,19 +1010,9 @@ where
 
 #[cfg(test)]
 pub mod tests {
-    use std::fs;
+    use std::path::Path;
 
     use itertools::Itertools;
-    #[cfg(feature = "slow_tests")]
-    use tfhe::{
-        core_crypto::{
-            algorithms::par_convert_standard_lwe_bootstrap_key_to_fourier,
-            entities::FourierLweBootstrapKey,
-        },
-        integer::parameters::PolynomialSize,
-        shortint::server_key::ShortintBootstrappingKey,
-        Seed,
-    };
     use tfhe::{
         core_crypto::{
             algorithms::{
@@ -1005,9 +1037,10 @@ pub mod tests {
         random::{get_rng, seed_from_rng},
         tfhe_internals::{
             parameters::{
-                BC_PARAMS_SAM_NO_SNS, NIST_PARAMS_P32_NO_SNS_FGLWE, NIST_PARAMS_P32_NO_SNS_LWE,
-                NIST_PARAMS_P32_SNS_FGLWE, NIST_PARAMS_P8_NO_SNS_FGLWE, NIST_PARAMS_P8_NO_SNS_LWE,
-                NIST_PARAMS_P8_SNS_FGLWE, OLD_PARAMS_P32_REAL_WITH_SNS, PARAMS_TEST_BK_SNS,
+                DKGParams, BC_PARAMS_SAM_NO_SNS, NIST_PARAMS_P32_NO_SNS_FGLWE,
+                NIST_PARAMS_P32_NO_SNS_LWE, NIST_PARAMS_P32_SNS_FGLWE, NIST_PARAMS_P8_NO_SNS_FGLWE,
+                NIST_PARAMS_P8_NO_SNS_LWE, NIST_PARAMS_P8_SNS_FGLWE, OLD_PARAMS_P32_REAL_WITH_SNS,
+                PARAMS_TEST_BK_SNS,
             },
             switch_and_squash::SwitchAndSquashKey,
             test_feature::to_hl_client_key,
@@ -1030,13 +1063,6 @@ pub mod tests {
         },
         tests::helper::tests_and_benches::execute_protocol_large,
     };
-    #[cfg(feature = "slow_tests")]
-    use crate::{
-        execution::tfhe_internals::{
-            glwe_key::GlweSecretKeyShare, utils::tests::read_secret_key_shares_from_file,
-        },
-        file_handling::{read_element, write_element},
-    };
     use crate::{
         execution::{
             endpoints::keygen::RawPubKeySet,
@@ -1048,8 +1074,10 @@ pub mod tests {
     };
 
     #[cfg(feature = "slow_tests")]
-    use super::distributed_homprf_bsk_gen;
-    use super::{distributed_keygen, DKGParams};
+    use crate::execution::keyset_config::KeySetConfig;
+
+    #[cfg(feature = "slow_tests")]
+    use super::{distributed_keygen, distributed_keygen_from_optional_compression_sk};
 
     #[cfg(not(target_arch = "aarch64"))]
     #[test]
@@ -1094,33 +1122,22 @@ pub mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
     {
         let params = OLD_PARAMS_P32_REAL_WITH_SNS;
-        let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
         let threshold = 1;
-        let prefix_path = format!(
-            "{}/{}",
-            params_basics_handles.get_prefix_path(),
-            EXTENSION_DEGREE
-        );
+        let temp_dir = tempfile::tempdir().unwrap();
 
-        if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
-            .try_exists()
-            .unwrap()
-        {
-            _ = fs::create_dir_all(prefix_path.clone());
-            run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
-        }
+        run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
 
-        run_switch_and_squash(prefix_path.clone(), num_parties, threshold);
+        run_switch_and_squash(temp_dir.path(), num_parties, threshold);
 
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsSnS>(
-            prefix_path.clone(),
+            temp_dir.path(),
             num_parties,
             threshold,
             false,
         );
         run_tfhe_computation_fheuint::<EXTENSION_DEGREE, DKGParamsSnS>(
-            prefix_path,
+            temp_dir.path(),
             num_parties,
             threshold,
             false,
@@ -1154,31 +1171,20 @@ pub mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
     {
         let params = NIST_PARAMS_P32_NO_SNS_FGLWE;
-        let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
         let threshold = 1;
-        let prefix_path = format!(
-            "{}/{}",
-            params_basics_handles.get_prefix_path(),
-            EXTENSION_DEGREE
-        );
+        let temp_dir = tempfile::tempdir().unwrap();
 
-        if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
-            .try_exists()
-            .unwrap()
-        {
-            _ = fs::create_dir_all(prefix_path.clone());
-            run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
-        }
+        run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
 
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
-            prefix_path.clone(),
+            temp_dir.path(),
             num_parties,
             threshold,
             true,
         );
         run_tfhe_computation_fheuint::<EXTENSION_DEGREE, DKGParamsRegular>(
-            prefix_path,
+            temp_dir.path(),
             num_parties,
             threshold,
             false,
@@ -1212,26 +1218,15 @@ pub mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
     {
         let params = NIST_PARAMS_P8_NO_SNS_FGLWE;
-        let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
         let threshold = 1;
-        let prefix_path = format!(
-            "{}/{}",
-            params_basics_handles.get_prefix_path(),
-            EXTENSION_DEGREE
-        );
+        let temp_dir = tempfile::tempdir().unwrap();
 
-        if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
-            .try_exists()
-            .unwrap()
-        {
-            _ = fs::create_dir_all(prefix_path.clone());
-            run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
-        }
+        run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
 
         //This parameter set isnt big enough to run the fheuint tests
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
-            prefix_path.clone(),
+            temp_dir.path(),
             num_parties,
             threshold,
             true,
@@ -1265,31 +1260,20 @@ pub mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
     {
         let params = NIST_PARAMS_P32_NO_SNS_LWE;
-        let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
         let threshold = 1;
-        let prefix_path = format!(
-            "{}/{}",
-            params_basics_handles.get_prefix_path(),
-            EXTENSION_DEGREE
-        );
+        let temp_dir = tempfile::tempdir().unwrap();
 
-        if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
-            .try_exists()
-            .unwrap()
-        {
-            _ = fs::create_dir_all(prefix_path.clone());
-            run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
-        }
+        run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
 
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
-            prefix_path.clone(),
+            temp_dir.path(),
             num_parties,
             threshold,
             true,
         );
         run_tfhe_computation_fheuint::<EXTENSION_DEGREE, DKGParamsRegular>(
-            prefix_path,
+            temp_dir.path(),
             num_parties,
             threshold,
             false,
@@ -1323,26 +1307,15 @@ pub mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
     {
         let params = NIST_PARAMS_P8_NO_SNS_LWE;
-        let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
         let threshold = 1;
-        let prefix_path = format!(
-            "{}/{}",
-            params_basics_handles.get_prefix_path(),
-            EXTENSION_DEGREE
-        );
+        let temp_dir = tempfile::tempdir().unwrap();
 
-        if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
-            .try_exists()
-            .unwrap()
-        {
-            _ = fs::create_dir_all(prefix_path.clone());
-            run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
-        }
+        run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
 
         //This parameter set isnt big enough to run the fheuint tests
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
-            prefix_path,
+            temp_dir.path(),
             num_parties,
             threshold,
             true,
@@ -1376,33 +1349,22 @@ pub mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
     {
         let params = PARAMS_TEST_BK_SNS;
-        let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
         let threshold = 1;
-        let prefix_path = format!(
-            "{}/{}",
-            params_basics_handles.get_prefix_path(),
-            EXTENSION_DEGREE
-        );
+        let temp_dir = tempfile::tempdir().unwrap();
 
-        if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
-            .try_exists()
-            .unwrap()
-        {
-            _ = fs::create_dir_all(prefix_path.clone());
-            run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
-        }
+        run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
 
-        run_switch_and_squash(prefix_path.clone(), num_parties, threshold);
+        run_switch_and_squash(temp_dir.path(), num_parties, threshold);
 
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsSnS>(
-            prefix_path.clone(),
+            temp_dir.path(),
             num_parties,
             threshold,
             true,
         );
         run_tfhe_computation_fheuint::<EXTENSION_DEGREE, DKGParamsSnS>(
-            prefix_path,
+            temp_dir.path(),
             num_parties,
             threshold,
             true,
@@ -1412,56 +1374,57 @@ pub mod tests {
     #[cfg(feature = "slow_tests")]
     #[test]
     fn integration_keygen_params_bk_sns_f8() {
-        integration_keygen_params_bk_sns::<8>()
+        integration_keygen_params_bk_sns::<8>(KeySetConfig::default())
     }
 
     #[cfg(feature = "slow_tests")]
     #[test]
     fn integration_keygen_params_bk_sns_f4() {
-        integration_keygen_params_bk_sns::<4>()
+        integration_keygen_params_bk_sns::<4>(KeySetConfig::default())
     }
 
     #[cfg(feature = "slow_tests")]
     #[test]
     fn integration_keygen_params_bk_sns_f3() {
-        integration_keygen_params_bk_sns::<3>()
+        integration_keygen_params_bk_sns::<3>(KeySetConfig::default())
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[test]
+    fn integration_keygen_params_bk_sns_existing_compression_sk_f4() {
+        integration_keygen_params_bk_sns::<4>(KeySetConfig::use_existing_compression_sk())
     }
 
     #[cfg(feature = "slow_tests")]
     ///Tests related to [`PARAMS_TEST_BK_SNS`] using _less fake_ preprocessing
-    fn integration_keygen_params_bk_sns<const EXTENSION_DEGREE: usize>()
+    fn integration_keygen_params_bk_sns<const EXTENSION_DEGREE: usize>(keyset_config: KeySetConfig)
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
     {
         let params = PARAMS_TEST_BK_SNS;
-        let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 4;
         let threshold = 1;
-        let prefix_path = format!(
-            "{}/{}",
-            params_basics_handles.get_prefix_path(),
-            EXTENSION_DEGREE
-        ) + "/integration";
+        let temp_dir = tempfile::tempdir().unwrap();
 
-        if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
-            .try_exists()
-            .unwrap()
-        {
-            _ = fs::create_dir_all(prefix_path.clone());
-            run_real_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
-        }
+        run_real_dkg_and_save(
+            params,
+            num_parties,
+            threshold,
+            temp_dir.path(),
+            keyset_config,
+        );
 
-        run_switch_and_squash(prefix_path.clone(), num_parties, threshold);
+        run_switch_and_squash(temp_dir.path(), num_parties, threshold);
 
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsSnS>(
-            prefix_path.clone(),
+            temp_dir.path(),
             num_parties,
             threshold,
             true,
         );
         run_tfhe_computation_fheuint::<EXTENSION_DEGREE, DKGParamsSnS>(
-            prefix_path,
+            temp_dir.path(),
             num_parties,
             threshold,
             true,
@@ -1495,33 +1458,22 @@ pub mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
     {
         let params = NIST_PARAMS_P32_SNS_FGLWE;
-        let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
         let threshold = 1;
-        let prefix_path = format!(
-            "{}/{}",
-            params_basics_handles.get_prefix_path(),
-            EXTENSION_DEGREE
-        );
+        let temp_dir = tempfile::tempdir().unwrap();
 
-        if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
-            .try_exists()
-            .unwrap()
-        {
-            _ = fs::create_dir_all(prefix_path.clone());
-            run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
-        }
+        run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
 
-        run_switch_and_squash(prefix_path.clone(), num_parties, threshold);
+        run_switch_and_squash(temp_dir.path(), num_parties, threshold);
 
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsSnS>(
-            prefix_path.clone(),
+            temp_dir.path(),
             num_parties,
             threshold,
             true,
         );
         run_tfhe_computation_fheuint::<EXTENSION_DEGREE, DKGParamsSnS>(
-            prefix_path,
+            temp_dir.path(),
             num_parties,
             threshold,
             false,
@@ -1555,28 +1507,17 @@ pub mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
     {
         let params = NIST_PARAMS_P8_SNS_FGLWE;
-        let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
         let threshold = 1;
-        let prefix_path = format!(
-            "{}/{}",
-            params_basics_handles.get_prefix_path(),
-            EXTENSION_DEGREE
-        );
+        let temp_dir = tempfile::tempdir().unwrap();
 
-        if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
-            .try_exists()
-            .unwrap()
-        {
-            _ = fs::create_dir_all(prefix_path.clone());
-            run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
-        }
+        run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
 
-        run_switch_and_squash(prefix_path.clone(), num_parties, threshold);
+        run_switch_and_squash(temp_dir.path(), num_parties, threshold);
 
         //This parameter set isnt big enough to run the fheuint tests
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsSnS>(
-            prefix_path,
+            temp_dir.path(),
             num_parties,
             threshold,
             true,
@@ -1610,31 +1551,20 @@ pub mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
     {
         let params = BC_PARAMS_SAM_NO_SNS;
-        let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
         let threshold = 1;
-        let prefix_path = format!(
-            "{}/{}",
-            params_basics_handles.get_prefix_path(),
-            EXTENSION_DEGREE
-        );
+        let temp_dir = tempfile::tempdir().unwrap();
 
-        if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
-            .try_exists()
-            .unwrap()
-        {
-            _ = fs::create_dir_all(prefix_path.clone());
-            run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
-        }
+        run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
 
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
-            prefix_path.clone(),
+            temp_dir.path(),
             num_parties,
             threshold,
             true,
         );
         run_tfhe_computation_fheuint::<EXTENSION_DEGREE, DKGParamsRegular>(
-            prefix_path,
+            temp_dir.path(),
             num_parties,
             threshold,
             true,
@@ -1646,7 +1576,8 @@ pub mod tests {
         params: DKGParams,
         num_parties: usize,
         threshold: usize,
-        prefix_path: String,
+        prefix_path: &Path,
+        keyset_config: KeySetConfig,
     ) where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
@@ -1665,19 +1596,45 @@ pub mod tests {
 
         let params_basics_handles = params.get_params_basics_handle();
         params_basics_handles
-            .write_to_file(format!("{}/params.json", prefix_path))
+            .write_to_file(&prefix_path.join("params.json"))
             .unwrap();
 
         let mut task = |mut session: SmallSession<ResiduePoly<Z128, EXTENSION_DEGREE>>| async move {
+            use crate::execution::tfhe_internals::compression_decompression_key::CompressionPrivateKeyShares;
+            let compression_sk_skares = if keyset_config.is_using_existing_compression_sk() {
+                // we use dummy preprocessing to generate the existing compression sk
+                // because it won't consume our preprocessing materials
+                let mut large_preproc = DummyPreprocessing::<
+                    ResiduePoly<Z128, EXTENSION_DEGREE>,
+                    _,
+                    _,
+                >::new(0_u64, session.clone());
+                let params_basics_handles = params.get_params_basics_handle();
+                Some(
+                    CompressionPrivateKeyShares::new_from_preprocessing(
+                        params_basics_handles
+                            .get_compression_decompression_params()
+                            .unwrap()
+                            .raw_compression_parameters,
+                        &mut large_preproc,
+                    )
+                    .unwrap(),
+                )
+            } else {
+                None
+            };
+
             session
                 .network()
                 .set_timeout_for_next_round(Duration::from_secs(120))
                 .unwrap();
             let batch_size = BatchParams {
-                triples: params.get_params_basics_handle().total_triples_required(),
+                triples: params
+                    .get_params_basics_handle()
+                    .total_triples_required(keyset_config),
                 randoms: params
                     .get_params_basics_handle()
-                    .total_randomness_required(),
+                    .total_randomness_required(keyset_config),
             };
 
             let mut small_preproc =
@@ -1690,6 +1647,7 @@ pub mod tests {
             dkg_preproc
                 .fill_from_base_preproc(
                     params,
+                    keyset_config,
                     &mut session.to_base_session().unwrap(),
                     &mut small_preproc,
                 )
@@ -1701,9 +1659,20 @@ pub mod tests {
             assert_ne!(0, dkg_preproc.randoms_len());
 
             let my_role = session.my_role().unwrap();
-            let (pk, sk) = distributed_keygen(&mut session, dkg_preproc.as_mut(), params)
+            let (pk, sk) = if keyset_config.is_using_existing_compression_sk() {
+                distributed_keygen_from_optional_compression_sk(
+                    &mut session,
+                    dkg_preproc.as_mut(),
+                    params,
+                    compression_sk_skares.as_ref(),
+                )
                 .await
-                .unwrap();
+                .unwrap()
+            } else {
+                distributed_keygen(&mut session, dkg_preproc.as_mut(), params)
+                    .await
+                    .unwrap()
+            };
 
             // make sure we used up all the preprocessing materials
             assert_eq!(0, dkg_preproc.bits_len());
@@ -1741,13 +1710,11 @@ pub mod tests {
 
         for (role, pk, sk) in results {
             assert_eq!(pk, pk_ref);
-            sk.write_to_file(format!("{}/sk_p{}.der", prefix_path, role.zero_based()))
+            sk.write_to_file(&prefix_path.join(format!("sk_p{}.der", role.zero_based())))
                 .unwrap();
         }
 
-        pk_ref
-            .write_to_file(format!("{}/pk.der", prefix_path))
-            .unwrap();
+        pk_ref.write_to_file(&prefix_path.join("pk.der")).unwrap();
     }
 
     ///Runs the DKG protocol with [`DummyPreprocessing`]
@@ -1756,14 +1723,14 @@ pub mod tests {
         params: DKGParams,
         num_parties: usize,
         threshold: usize,
-        prefix_path: String,
+        prefix_path: &Path,
     ) where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
         ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
     {
         let params_basics_handles = params.get_params_basics_handle();
         params_basics_handles
-            .write_to_file(format!("{}/params.json", prefix_path))
+            .write_to_file(&prefix_path.join("params.json"))
             .unwrap();
 
         let mut task = |mut session: LargeSession| async move {
@@ -1806,110 +1773,41 @@ pub mod tests {
 
         for (role, pk, sk) in results {
             assert_eq!(pk, pk_ref);
-            sk.write_to_file(format!("{}/sk_p{}.der", prefix_path, role.zero_based()))
+            sk.write_to_file(&prefix_path.join(format!("sk_p{}.der", role.zero_based())))
                 .unwrap();
         }
 
-        pk_ref
-            .write_to_file(format!("{}/pk.der", prefix_path))
-            .unwrap();
-    }
-
-    #[cfg(feature = "slow_tests")]
-    fn run_homprf_keygen_and_save<const EXTENSION_DEGREE: usize>(
-        params: DKGParams,
-        num_parties: usize,
-        threshold: usize,
-        prefix_path: String,
-    ) -> LweBootstrapKey<Vec<u64>>
-    where
-        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
-    {
-        use std::sync::Arc;
-
-        let arc_prefix_path = Arc::new(prefix_path.clone());
-        let mut task = move |mut session: LargeSession| {
-            // assume private key shares exist
-            // TODO how to pass it into this closure nicely?
-            let (glwe_key_shares, _) = read_secret_key_shares_from_file(
-                num_parties,
-                params,
-                Arc::clone(&arc_prefix_path).to_string(),
-            );
-
-            async move {
-                let my_role = session.my_role().unwrap();
-                let mut large_preproc = DummyPreprocessing::new(1_u64, session.clone());
-
-                let share_ref = glwe_key_shares.get(&my_role).unwrap();
-                let share = GlweSecretKeyShare {
-                    data: share_ref.to_vec(),
-                    polynomial_size: PolynomialSize(share_ref.len()),
-                };
-                let bsk = distributed_homprf_bsk_gen::<_, _, _, _, u64, EXTENSION_DEGREE>(
-                    &share,
-                    &params,
-                    &mut large_preproc,
-                    &mut session,
-                )
-                .await
-                .unwrap();
-                (my_role, bsk)
-            }
-        };
-
-        //Async because the preprocessing is Dummy
-        //Delay P1 by 1s every round
-        let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let results =
-            execute_protocol_large::<_, _, ResiduePoly<Z64, EXTENSION_DEGREE>, EXTENSION_DEGREE>(
-                num_parties,
-                threshold,
-                None,
-                NetworkMode::Async,
-                Some(delay_vec),
-                &mut task,
-            );
-
-        let bsk_ref = results[0].1.clone();
-
-        for (_, bsk) in results {
-            assert_eq!(bsk, bsk_ref);
-        }
-
-        write_element(format!("{}/homprf_bsk.der", prefix_path), &bsk_ref).unwrap();
-
-        bsk_ref
+        pk_ref.write_to_file(&prefix_path.join("pk.der")).unwrap();
     }
 
     fn run_switch_and_squash<const EXTENSION_DEGREE: usize>(
-        prefix_path: String,
+        prefix_path: &Path,
         num_parties: usize,
         threshold: usize,
     ) where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
     {
-        let params = DKGParamsSnS::read_from_file(prefix_path.clone() + "/params.json").unwrap();
+        let params = DKGParamsSnS::read_from_file(&prefix_path.join("params.json")).unwrap();
         let message = (params.get_message_modulus().0 - 1) as u8;
 
         let sk_lwe = reconstruct_lwe_secret_key_from_file::<EXTENSION_DEGREE, _>(
             num_parties,
             threshold,
             &params,
-            prefix_path.clone(),
+            prefix_path,
         );
         let (sk_glwe, big_sk_glwe) = reconstruct_glwe_secret_key_from_file::<EXTENSION_DEGREE>(
             num_parties,
             threshold,
             DKGParams::WithSnS(params),
-            prefix_path.clone(),
+            prefix_path,
         );
         let sk_large = SnsClientKey::new(
             params.to_classic_pbs_parameters(),
             big_sk_glwe.clone().unwrap(),
         );
-        let pk = RawPubKeySet::read_from_file(format!("{}/pk.der", prefix_path)).unwrap();
+        let pk = RawPubKeySet::read_from_file(&prefix_path.join("pk.der")).unwrap();
         let pub_key_set = pk.to_pubkeyset(DKGParams::WithSnS(params));
 
         set_server_key(pub_key_set.server_key);
@@ -1985,7 +1883,7 @@ pub mod tests {
 
     ///Runs only the shortint computation
     pub fn run_tfhe_computation_shortint<const EXTENSION_DEGREE: usize, Params: DKGParamsBasics>(
-        prefix_path: String,
+        prefix_path: &Path,
         num_parties: usize,
         threshold: usize,
         with_compact: bool,
@@ -1993,7 +1891,7 @@ pub mod tests {
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
     {
-        let params = Params::read_from_file(prefix_path.clone() + "/params.json")
+        let params = Params::read_from_file(&prefix_path.join("params.json"))
             .unwrap()
             .to_dkg_params();
         let (shortint_sk, pk) = retrieve_keys_from_files::<EXTENSION_DEGREE>(
@@ -2028,7 +1926,7 @@ pub mod tests {
 
     ///Runs both shortint and fheuint computation
     fn run_tfhe_computation_fheuint<const EXTENSION_DEGREE: usize, Params: DKGParamsBasics>(
-        prefix_path: String,
+        prefix_path: &Path,
         num_parties: usize,
         threshold: usize,
         do_compression_test: bool,
@@ -2036,7 +1934,7 @@ pub mod tests {
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
     {
-        let params = Params::read_from_file(prefix_path.clone() + "/params.json")
+        let params = Params::read_from_file(&prefix_path.join("params.json"))
             .unwrap()
             .to_dkg_params();
         let (shortint_sk, pk) = retrieve_keys_from_files::<EXTENSION_DEGREE>(
@@ -2055,6 +1953,8 @@ pub mod tests {
             try_tfhe_shortint_computation(&shortint_sk, &shortint_pk);
         }
 
+        // Note that there is no `compression_key` because this key is never used to
+        // encrypt/decrypt. We only compress and decompress which doesn't require this key.
         let tfhe_sk =
             tfhe::ClientKey::from_raw_parts(shortint_sk.into(), None, None, tfhe::Tag::default());
 
@@ -2070,7 +1970,7 @@ pub mod tests {
         params: DKGParams,
         num_parties: usize,
         threshold: usize,
-        prefix_path: String,
+        prefix_path: &Path,
     ) -> (tfhe::shortint::ClientKey, RawPubKeySet)
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
@@ -2084,15 +1984,15 @@ pub mod tests {
             num_parties,
             threshold,
             params.get_params_basics_handle(),
-            prefix_path.clone(),
+            prefix_path,
         );
         let (glwe_secret_key, _) = reconstruct_glwe_secret_key_from_file::<EXTENSION_DEGREE>(
             num_parties,
             threshold,
             params,
-            prefix_path.clone(),
+            prefix_path,
         );
-        let pk = RawPubKeySet::read_from_file(format!("{}/pk.der", prefix_path)).unwrap();
+        let pk = RawPubKeySet::read_from_file(&prefix_path.join("pk.der")).unwrap();
 
         let shortint_client_key = tfhe::shortint::ClientKey::from_raw_parts(
             glwe_secret_key,
@@ -2214,6 +2114,7 @@ pub mod tests {
         // FheUint8: Encrypted equivalent to u8
         let encrypted_c = FheUint8::try_encrypt(clear_c, client_key).unwrap();
 
+        // note that the server key is set in the caller of this function
         let compressed = CompressedCiphertextListBuilder::new()
             .push(encrypted_a)
             .push(encrypted_b)
@@ -2232,113 +2133,5 @@ pub mod tests {
         let decompressed: FheUint8 = compressed.get(2).unwrap().unwrap();
         let decrypted: u8 = decompressed.decrypt(client_key);
         assert_eq!(decrypted, clear_c);
-    }
-
-    // TODO: ideally we'd like to verify the homPRF output
-    // against the plaintext output. But no plaintext implementation
-    // of the PRF exists so we simply check that the PRF output
-    // is different when the PRF key is different.
-    #[cfg(feature = "slow_tests")]
-    #[test]
-    fn keygen_params32_no_sns_fglwe_w_homprf_f8() {
-        keygen_params32_no_sns_fglwe_w_homprf::<8>()
-    }
-
-    #[cfg(feature = "slow_tests")]
-    #[test]
-    fn keygen_params32_no_sns_fglwe_w_homprf_f4() {
-        keygen_params32_no_sns_fglwe_w_homprf::<4>()
-    }
-
-    #[cfg(feature = "slow_tests")]
-    #[test]
-    fn keygen_params32_no_sns_fglwe_w_homprf_f3() {
-        keygen_params32_no_sns_fglwe_w_homprf::<3>()
-    }
-
-    #[cfg(feature = "slow_tests")]
-    fn keygen_params32_no_sns_fglwe_w_homprf<const EXTENSION_DEGREE: usize>()
-    where
-        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
-        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
-    {
-        let params = PARAMS_TEST_BK_SNS.get_params_without_sns();
-        let params_basics_handles = params.get_params_basics_handle();
-        let num_parties = 2;
-        let threshold = 0;
-        let prefix_path = format!(
-            "{}/{}",
-            params_basics_handles.get_prefix_path(),
-            EXTENSION_DEGREE
-        );
-
-        if !std::path::Path::new(&prefix_path).try_exists().unwrap() {
-            fs::create_dir_all(prefix_path.clone()).unwrap();
-            run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
-        }
-        run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
-            prefix_path.clone(),
-            num_parties,
-            threshold,
-            true,
-        );
-
-        // generate new bsk used for the hom-prf
-        // this assumes the regular evaluation keys exist
-        let homprf_bsk_path = format!("{}/homprf_bsk.der", prefix_path);
-        let homprf_bsk = if std::path::Path::new(&homprf_bsk_path).try_exists().unwrap() {
-            read_element(homprf_bsk_path).unwrap()
-        } else {
-            run_homprf_keygen_and_save(params, num_parties, threshold, prefix_path.clone())
-        };
-
-        // we need to create a new ServerKey with the new bsk
-        let (sk, pk) = retrieve_keys_from_files::<EXTENSION_DEGREE>(
-            params,
-            num_parties,
-            threshold,
-            prefix_path,
-        );
-        let orig_pk = pk.compute_tfhe_shortint_server_key(params);
-        let mut homprf_pk = orig_pk.clone();
-        let mut homprf_fourier_bsk = FourierLweBootstrapKey::new(
-            homprf_bsk.input_lwe_dimension(),
-            homprf_bsk.glwe_size(),
-            homprf_bsk.polynomial_size(),
-            homprf_bsk.decomposition_base_log(),
-            homprf_bsk.decomposition_level_count(),
-        );
-
-        // substitute bsk part of the original evaluation key
-        par_convert_standard_lwe_bootstrap_key_to_fourier(&homprf_bsk, &mut homprf_fourier_bsk);
-        homprf_pk.bootstrapping_key = ShortintBootstrappingKey::Classic(homprf_fourier_bsk);
-
-        // run the homprf and make sure it's different
-        // if we run the homprf using the original bsk
-        let mut equals = 0usize;
-        let count = 1000usize;
-        // the probability for one output to be equal is 4/16
-        // 4 possible ways to be equal out of 16 by counting
-        // so expected value is (1/4)*count
-        for s in 0..count {
-            let ct = homprf_pk.generate_oblivious_pseudo_random(Seed(s as u128), 2);
-            let out = sk.decrypt_message_and_carry(&ct);
-            // run the homprf on a different set of keys and we should see some differences
-            let ct2 = orig_pk.generate_oblivious_pseudo_random(Seed(s as u128), 2);
-            let out2 = sk.decrypt_message_and_carry(&ct2);
-
-            if out == out2 {
-                equals += 1;
-            }
-        }
-
-        // we can compute the exact binomial distribution
-        // so k out of n are equals is
-        // P(n,k,p) = binomial(n, k)*p^k*(1-p)^(n-k)
-        // if we're interested in a range of k, then just sum it
-        // sum_{i=k}^n P(n,i,p)
-        // for n = 1000, k > 350 this is less than 1e-12
-        println!("{equals} / {count}");
-        assert!(equals < 350);
     }
 }

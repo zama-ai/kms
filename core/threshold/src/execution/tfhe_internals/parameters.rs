@@ -1,4 +1,7 @@
-use std::hash::{Hash, Hasher};
+use std::{
+    hash::{Hash, Hasher},
+    path::{Path, PathBuf},
+};
 
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
@@ -21,7 +24,10 @@ use tfhe::{
     },
 };
 
-use crate::file_handling::{read_as_json, write_as_json};
+use crate::{
+    execution::keyset_config::KeySetConfig,
+    file_handling::{read_as_json, write_as_json},
+};
 
 pub type Ciphertext64 = BaseRadixCiphertext<tfhe::shortint::Ciphertext>;
 pub type Ciphertext64Block = tfhe::shortint::Ciphertext;
@@ -205,8 +211,8 @@ impl NoiseInfo {
 }
 
 pub trait DKGParamsBasics: Sync {
-    fn write_to_file(&self, path: String) -> anyhow::Result<()>;
-    fn read_from_file(path: String) -> anyhow::Result<Self>
+    fn write_to_file(&self, path: &Path) -> anyhow::Result<()>;
+    fn read_from_file(path: &Path) -> anyhow::Result<Self>
     where
         Self: std::marker::Sized;
 
@@ -219,13 +225,13 @@ pub trait DKGParamsBasics: Sync {
     ///
     ///__Thus any two sets of parameters that share these characteristics
     ///will have the same prefix path, which may result in a clash.__
-    fn get_prefix_path(&self) -> String;
+    fn get_prefix_path(&self) -> PathBuf;
     fn get_sec(&self) -> u64;
     fn get_message_modulus(&self) -> MessageModulus;
     fn get_carry_modulus(&self) -> CarryModulus;
-    fn total_bits_required(&self) -> usize;
-    fn total_triples_required(&self) -> usize;
-    fn total_randomness_required(&self) -> usize;
+    fn total_bits_required(&self, keyset_config: KeySetConfig) -> usize;
+    fn total_triples_required(&self, keyset_config: KeySetConfig) -> usize;
+    fn total_randomness_required(&self, keyset_config: KeySetConfig) -> usize;
     fn lwe_dimension(&self) -> LweDimension;
     fn lwe_hat_dimension(&self) -> LweDimension;
     fn glwe_dimension(&self) -> GlweDimension;
@@ -248,7 +254,7 @@ pub trait DKGParamsBasics: Sync {
     fn num_needed_noise_bk(&self) -> NoiseInfo;
     fn num_needed_noise_compression_key(&self) -> NoiseInfo;
     fn num_needed_noise_decompression_key(&self) -> NoiseInfo;
-    fn num_raw_bits(&self) -> usize;
+    fn num_raw_bits(&self, keyset_config: KeySetConfig) -> usize;
     fn encryption_key_choice(&self) -> EncryptionKeyChoice;
     fn pbs_order(&self) -> PBSOrder;
     fn to_dkg_params(&self) -> DKGParams;
@@ -309,12 +315,12 @@ fn combine_noise_info(target_bound: NoiseBounds, list: &[NoiseInfo]) -> NoiseInf
 }
 
 impl DKGParamsBasics for DKGParamsRegular {
-    fn write_to_file(&self, path: String) -> anyhow::Result<()> {
-        write_as_json(path, self)
+    fn write_to_file(&self, path: &Path) -> anyhow::Result<()> {
+        write_as_json(&path, self)
     }
 
-    fn read_from_file(path: String) -> anyhow::Result<Self> {
-        read_as_json(path)
+    fn read_from_file(path: &Path) -> anyhow::Result<Self> {
+        read_as_json(&path)
     }
 
     fn to_classic_pbs_parameters(&self) -> ClassicPBSParameters {
@@ -325,18 +331,18 @@ impl DKGParamsBasics for DKGParamsRegular {
     /// - [DKGParams::message_modulus]
     /// - [DKGParams::carry_modulus]
     /// - a hash of the whole parameter set to make it unique
-    fn get_prefix_path(&self) -> String {
+    fn get_prefix_path(&self) -> PathBuf {
         let mut h = std::hash::DefaultHasher::new();
         let serialized = bincode::serialize(self).unwrap();
         serialized.hash(&mut h);
         let hash = h.finish();
-        format!(
+        PathBuf::from(format!(
             "temp/dkg/MSGMOD_{}_CARRYMOD_{}_SNS_false_compression_{}_{}",
             self.get_message_modulus().0,
             self.get_carry_modulus().0,
             self.compression_decompression_parameters.is_some(),
             hash
-        )
+        ))
     }
 
     fn get_sec(&self) -> u64 {
@@ -351,10 +357,10 @@ impl DKGParamsBasics for DKGParamsRegular {
         self.ciphertext_parameters.carry_modulus
     }
 
-    fn total_bits_required(&self) -> usize {
+    fn total_bits_required(&self, keyset_config: KeySetConfig) -> usize {
         //Need bits for the two lwe sk, glwe sk, and the compression sk
         //Counted twice if there's no dedicated pk parameter
-        let mut num_bits_needed = self.num_raw_bits();
+        let mut num_bits_needed = self.num_raw_bits(keyset_config);
 
         //And additionally, need bits to process the TUniform noises
         //(we need bound + 2 bits to sample a TUniform(bound))
@@ -382,7 +388,7 @@ impl DKGParamsBasics for DKGParamsRegular {
         num_bits_needed
     }
 
-    fn total_triples_required(&self) -> usize {
+    fn total_triples_required(&self, keyset_config: KeySetConfig) -> usize {
         //Required for the "normal" BK
         let mut num_triples_needed = self.lwe_dimension().0 * self.glwe_sk_num_bits();
 
@@ -393,15 +399,15 @@ impl DKGParamsBasics for DKGParamsRegular {
                     * comp_params.packing_ks_polynomial_size.0)
         }
 
-        self.total_bits_required() + num_triples_needed
+        self.total_bits_required(keyset_config) + num_triples_needed
     }
 
-    fn total_randomness_required(&self) -> usize {
+    fn total_randomness_required(&self, keyset_config: KeySetConfig) -> usize {
         //Need 1 more element to sample the seed
         //as we always work in huge rings
         let num_randomness_needed = 1;
 
-        self.total_bits_required() + num_randomness_needed
+        self.total_bits_required(keyset_config) + num_randomness_needed
     }
 
     fn lwe_dimension(&self) -> LweDimension {
@@ -651,11 +657,15 @@ impl DKGParamsBasics for DKGParamsRegular {
         }
     }
 
-    fn num_raw_bits(&self) -> usize {
+    fn num_raw_bits(&self, keyset_config: KeySetConfig) -> usize {
         self.lwe_dimension().0
             + self.lwe_hat_dimension().0
             + self.glwe_sk_num_bits()
-            + self.compression_sk_num_bits()
+            + if keyset_config.is_using_existing_compression_sk() {
+                0
+            } else {
+                self.compression_sk_num_bits()
+            }
     }
 
     fn all_lwe_noise(&self) -> NoiseInfo {
@@ -769,24 +779,24 @@ impl DKGParamsBasics for DKGParamsRegular {
 }
 
 impl DKGParamsBasics for DKGParamsSnS {
-    fn write_to_file(&self, path: String) -> anyhow::Result<()> {
-        write_as_json(path, self)
+    fn write_to_file(&self, path: &Path) -> anyhow::Result<()> {
+        write_as_json(&path, self)
     }
 
-    fn read_from_file(path: String) -> anyhow::Result<Self> {
-        read_as_json(path)
+    fn read_from_file(path: &Path) -> anyhow::Result<Self> {
+        read_as_json(&path)
     }
 
     fn to_classic_pbs_parameters(&self) -> ClassicPBSParameters {
         self.regular_params.to_classic_pbs_parameters()
     }
 
-    fn get_prefix_path(&self) -> String {
+    fn get_prefix_path(&self) -> PathBuf {
         let mut h = std::hash::DefaultHasher::new();
         let serialized = bincode::serialize(self).unwrap();
         serialized.hash(&mut h);
         let hash = h.finish();
-        format!(
+        PathBuf::from(format!(
             "temp/dkg/MSGMOD_{}_CARRYMOD_{}_SNS_true_compression_{}_{}",
             self.get_message_modulus().0,
             self.get_carry_modulus().0,
@@ -794,7 +804,7 @@ impl DKGParamsBasics for DKGParamsSnS {
                 .compression_decompression_parameters
                 .is_some(),
             hash
-        )
+        ))
     }
 
     fn get_sec(&self) -> u64 {
@@ -809,20 +819,16 @@ impl DKGParamsBasics for DKGParamsSnS {
         self.regular_params.get_carry_modulus()
     }
 
-    fn total_bits_required(&self) -> usize {
+    fn total_bits_required(&self, keyset_config: KeySetConfig) -> usize {
         //Need the bits for regular keygen
-        self.regular_params.total_bits_required() +
+        self.regular_params.total_bits_required(keyset_config) +
         //And for the additional glwe sk
         self.glwe_sk_num_bits_sns() +
         //And for the noise for the bk sns
-        self.all_bk_sns_noise().amount
-        * (self
-            .glwe_tuniform_bound_sns()
-            .0
-            + 2)
+        self.all_bk_sns_noise().num_bits_needed()
     }
 
-    fn total_triples_required(&self) -> usize {
+    fn total_triples_required(&self, keyset_config: KeySetConfig) -> usize {
         // Raw triples necessary for the 2 BK
         let mut num_triples_needed =
             self.lwe_dimension().0 * (self.glwe_sk_num_bits() + self.glwe_sk_num_bits_sns());
@@ -834,13 +840,13 @@ impl DKGParamsBasics for DKGParamsSnS {
                     * comp_params.packing_ks_polynomial_size.0)
         }
 
-        self.total_bits_required() + num_triples_needed
+        self.total_bits_required(keyset_config) + num_triples_needed
     }
 
-    fn total_randomness_required(&self) -> usize {
+    fn total_randomness_required(&self, keyset_config: KeySetConfig) -> usize {
         let num_randomness_needed = 1;
 
-        self.total_bits_required() + num_randomness_needed
+        self.total_bits_required(keyset_config) + num_randomness_needed
     }
 
     fn lwe_dimension(&self) -> LweDimension {
@@ -962,8 +968,8 @@ impl DKGParamsBasics for DKGParamsSnS {
         self.regular_params.num_needed_noise_decompression_key()
     }
 
-    fn num_raw_bits(&self) -> usize {
-        self.regular_params.num_raw_bits() + self.glwe_sk_num_bits_sns()
+    fn num_raw_bits(&self, keyset_config: KeySetConfig) -> usize {
+        self.regular_params.num_raw_bits(keyset_config) + self.glwe_sk_num_bits_sns()
     }
 
     fn all_lwe_noise(&self) -> NoiseInfo {
@@ -1093,7 +1099,6 @@ impl DkgParamsAvailable {
 const BC_PARAMS_SAM : DKGParamsRegular = DKGParamsRegular {
     sec: 128,
     ciphertext_parameters: tfhe::shortint::parameters::PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
-    // Now it's DynamicDistribution::new_t_uniform(43), before it was 42?
     dedicated_compact_public_key_parameters: Some((tfhe::shortint::parameters::compact_public_key_only::p_fail_2_minus_64::ks_pbs::V0_11_PARAM_PKE_TO_SMALL_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64_ZKV1,tfhe::shortint::parameters::key_switching::p_fail_2_minus_64::ks_pbs::V0_11_PARAM_KEYSWITCH_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64)),
     compression_decompression_parameters: Some(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64),
     flag: true
@@ -1383,7 +1388,9 @@ pub const NIST_PARAMS_P32_SNS_FGLWE: DKGParams = DKGParams::WithSnS(DKGParamsSnS
 
 #[cfg(test)]
 mod tests {
-    use super::DkgParamsAvailable;
+    use crate::execution::keyset_config::KeySetConfig;
+
+    use super::{DkgParamsAvailable, BC_PARAMS_SAM_NO_SNS};
     use strum::IntoEnumIterator;
 
     #[test]
@@ -1396,5 +1403,23 @@ mod tests {
             let _ = h.all_lwe_hat_noise();
             let _ = h.all_lwe_noise();
         }
+    }
+
+    #[test]
+    fn test_required_preproc() {
+        let keyset_config = KeySetConfig::default();
+        let param = BC_PARAMS_SAM_NO_SNS;
+        let h = param.get_params_basics_handle();
+        let sk_total = h.lwe_dimension().0
+            + h.lwe_hat_dimension().0
+            + h.glwe_sk_num_bits()
+            + h.compression_sk_num_bits();
+        assert_eq!(sk_total, h.num_raw_bits(keyset_config));
+        let noise_total = h.all_compression_ksk_noise().num_bits_needed()
+            + h.all_glwe_noise().num_bits_needed()
+            + h.all_lwe_hat_noise().num_bits_needed()
+            + h.all_lwe_noise().num_bits_needed();
+
+        assert_eq!(sk_total + noise_total, h.total_bits_required(keyset_config));
     }
 }

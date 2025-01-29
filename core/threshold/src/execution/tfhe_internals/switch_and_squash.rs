@@ -328,7 +328,7 @@ mod tests {
     #[test]
     fn sunshine_domain_switching() {
         let message = 255_u8;
-        let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
+        let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
         let small_ct = FheUint8::encrypt(message, &keyset.client_key);
         let large_ct = keyset
             .public_keys
@@ -344,7 +344,7 @@ mod tests {
 
     #[test]
     fn sunshine_enc_dec() {
-        let keys: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
+        let keys: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
         set_server_key(keys.public_keys.server_key);
         let mut compact_list_builder = CompactCiphertextList::builder(&keys.public_keys.public_key);
         for msg in 0_u8..8 {

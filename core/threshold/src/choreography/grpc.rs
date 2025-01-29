@@ -31,6 +31,7 @@ use crate::execution::endpoints::keygen::FhePubKeySet;
 use crate::execution::endpoints::keygen::{
     distributed_keygen_z128, distributed_keygen_z64, PrivateKeySet,
 };
+use crate::execution::keyset_config::KeySetConfig;
 use crate::execution::large_execution::vss::RealVss;
 use crate::execution::online::preprocessing::dummy::DummyPreprocessing;
 use crate::execution::online::preprocessing::orchestrator::PreprocessingOrchestrator;
@@ -387,7 +388,9 @@ where
                         let mut factory_guard = factory.try_lock().unwrap();
                         let factory = factory_guard.as_mut();
                         PreprocessingOrchestrator::<ResiduePoly<Z64, EXTENSION_DEGREE>>::new(
-                            factory, dkg_params,
+                            factory,
+                            dkg_params,
+                            KeySetConfig::default(),
                         )
                         .unwrap()
                     };
@@ -415,7 +418,9 @@ where
                         let mut factory_guard = factory.try_lock().unwrap();
                         let factory = factory_guard.as_mut();
                         PreprocessingOrchestrator::<ResiduePoly<Z64, EXTENSION_DEGREE>>::new(
-                            factory, dkg_params,
+                            factory,
+                            dkg_params,
+                            KeySetConfig::default(),
                         )
                         .unwrap()
                     };
@@ -453,7 +458,9 @@ where
                         let mut factory_guard = factory.try_lock().unwrap();
                         let factory = factory_guard.as_mut();
                         PreprocessingOrchestrator::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(
-                            factory, dkg_params,
+                            factory,
+                            dkg_params,
+                            KeySetConfig::default(),
                         )
                         .unwrap()
                     };
@@ -478,7 +485,9 @@ where
                         let mut factory_guard = factory.try_lock().unwrap();
                         let factory = factory_guard.as_mut();
                         PreprocessingOrchestrator::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(
-                            factory, dkg_params,
+                            factory,
+                            dkg_params,
+                            KeySetConfig::default(),
                         )
                         .unwrap()
                     };

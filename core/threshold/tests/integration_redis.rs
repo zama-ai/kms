@@ -180,15 +180,20 @@ fn test_dkg_orchestrator_large(
     threshold: u8,
     params: DKGParams,
 ) {
-    use distributed_decryption::{algebra::structure_traits::Ring, networking::NetworkMode};
+    use distributed_decryption::{
+        algebra::structure_traits::Ring, execution::keyset_config::KeySetConfig,
+        networking::NetworkMode,
+    };
     use kms_core_utils::thread_handles::OsThreadGroup;
 
     let params_basics_handles = params.get_params_basics_handle();
     params_basics_handles
-        .write_to_file(format!(
-            "{}/ORCHESTRATOR/params.json",
-            params_basics_handles.get_prefix_path()
-        ))
+        .write_to_file(
+            &params_basics_handles
+                .get_prefix_path()
+                .join("ORCHESTRATOR")
+                .join("params.json"),
+        )
         .unwrap();
 
     let identities = generate_fixed_identities(num_parties);
@@ -227,9 +232,12 @@ fn test_dkg_orchestrator_large(
             let redis_conf = RedisConf::default();
             let mut redis_factory =
                 create_redis_factory(format!("LargeOrchestrator_{}", identity), &redis_conf);
-            let orchestrator =
-                PreprocessingOrchestrator::<ResiduePolyF4Z64>::new(redis_factory.as_mut(), params)
-                    .unwrap();
+            let orchestrator = PreprocessingOrchestrator::<ResiduePolyF4Z64>::new(
+                redis_factory.as_mut(),
+                params,
+                KeySetConfig::default(),
+            )
+            .unwrap();
 
             let (mut sessions, mut preproc) = rt_handle.block_on(async {
                 orchestrator
@@ -256,19 +264,22 @@ fn test_dkg_orchestrator_large(
             None => pk_ref = Some(pk),
             Some(ref ref_key) => assert_eq!(ref_key, &pk),
         };
-        sk.write_to_file(format!(
-            "{}/ORCHESTRATOR/sk_p{}.der",
-            params_basics_handles.get_prefix_path(),
-            party_id,
-        ))
+        sk.write_to_file(
+            &params_basics_handles
+                .get_prefix_path()
+                .join("ORCHESTRATOR")
+                .join(format!("sk_p{}.der", party_id)),
+        )
         .unwrap();
     }
     let pk_ref = pk_ref.unwrap();
     pk_ref
-        .write_to_file(format!(
-            "{}/ORCHESTRATOR/pk.der",
-            params_basics_handles.get_prefix_path()
-        ))
+        .write_to_file(
+            &params_basics_handles
+                .get_prefix_path()
+                .join("ORCHESTRATOR")
+                .join("pk.der"),
+        )
         .unwrap();
 }
 
@@ -279,10 +290,12 @@ fn test_dkg_orchestrator_params8_small_no_sns() {
 
     let params = PARAMS_TEST_BK_SNS;
     let params = params.get_params_without_sns();
-    fs::create_dir_all(format!(
-        "{}/ORCHESTRATOR",
-        params.get_params_basics_handle().get_prefix_path()
-    ))
+    fs::create_dir_all(
+        params
+            .get_params_basics_handle()
+            .get_prefix_path()
+            .join("ORCHESTRATOR"),
+    )
     .unwrap();
     let num_sessions = 10;
     let num_parties = 5;

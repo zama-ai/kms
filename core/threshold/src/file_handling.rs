@@ -1,21 +1,27 @@
-use std::{fs::File, io::Write};
+use std::{fs::File, io::Write, path::Path};
 
 use serde::{de::DeserializeOwned, Serialize};
 
-pub fn write_as_json<T: serde::Serialize>(file_path: String, to_store: &T) -> anyhow::Result<()> {
+pub fn write_as_json<T: serde::Serialize, P: AsRef<Path>>(
+    file_path: &P,
+    to_store: &T,
+) -> anyhow::Result<()> {
     let json_data = serde_json::to_string(&to_store)?;
     let mut file = File::create(file_path)?;
     file.write_all(json_data.as_bytes())?;
     Ok(())
 }
 
-pub fn read_as_json<T: DeserializeOwned>(file_path: String) -> anyhow::Result<T> {
-    let read_json = std::fs::read(file_path.clone())?;
+pub fn read_as_json<T: DeserializeOwned, P: AsRef<Path>>(file_path: &P) -> anyhow::Result<T> {
+    let read_json = std::fs::read(file_path)?;
     let res = serde_json::from_slice::<T>(&read_json)?;
     Ok(res)
 }
 
-pub fn write_element<T: serde::Serialize>(file_path: String, element: &T) -> anyhow::Result<()> {
+pub fn write_element<T: serde::Serialize, P: AsRef<Path>>(
+    file_path: P,
+    element: &T,
+) -> anyhow::Result<()> {
     let mut serialized_data = Vec::new();
     let _ = bincode::serialize_into(&mut serialized_data, &element);
     let mut file = File::create(file_path)?;
@@ -23,8 +29,10 @@ pub fn write_element<T: serde::Serialize>(file_path: String, element: &T) -> any
     Ok(())
 }
 
-pub fn read_element<T: DeserializeOwned + Serialize>(file_path: String) -> anyhow::Result<T> {
-    let read_element = std::fs::read(file_path.clone())?;
+pub fn read_element<T: DeserializeOwned + Serialize, P: AsRef<Path>>(
+    file_path: P,
+) -> anyhow::Result<T> {
+    let read_element = std::fs::read(file_path)?;
     Ok(bincode::deserialize_from(read_element.as_slice())?)
 }
 
@@ -52,9 +60,9 @@ mod tests {
             key: u32,
         }
         let test_struct = Test { key: 42 };
-        let file_name = "temp/test_json.json".to_string();
-        write_as_json(file_name.clone(), &test_struct).unwrap();
-        let read_json = read_as_json(file_name.clone()).unwrap();
+        let file_name = "temp/test_json.json";
+        write_as_json(&file_name, &test_struct).unwrap();
+        let read_json = read_as_json(&file_name).unwrap();
         assert_eq!(test_struct, read_json);
         remove_file(file_name).unwrap();
     }

@@ -11,6 +11,7 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
         config::BatchParams,
+        keyset_config::KeySetConfig,
         large_execution::offline::{LargePreprocessing, TrueDoubleSharing, TrueSingleSharing},
         online::{
             gen_bits::{BitGenEven, RealBitGenEven},
@@ -45,6 +46,7 @@ use tracing::{instrument, Instrument};
 #[derive(Clone)]
 pub struct PreprocessingOrchestrator<Z> {
     params: DKGParams,
+    keyset_config: KeySetConfig,
     dkg_preproc: Arc<RwLock<Box<dyn DKGPreprocessing<Z>>>>,
 }
 
@@ -58,6 +60,7 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z64, E
     pub fn new<F: PreprocessorFactory<EXTENSION_DEGREE> + ?Sized>(
         factory: &mut F,
         params: DKGParams,
+        keyset_config: KeySetConfig,
     ) -> anyhow::Result<Self> {
         if let DKGParams::WithSnS(_) = params {
             return Err(anyhow_error_and_log("Cant have SnS with ResiduePolyF8Z64"));
@@ -65,6 +68,7 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z64, E
 
         Ok(Self {
             params,
+            keyset_config,
             dkg_preproc: Arc::new(RwLock::new(factory.create_dkg_preprocessing_no_sns())),
         })
     }
@@ -80,6 +84,7 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z128, 
     pub fn new<F: PreprocessorFactory<EXTENSION_DEGREE> + ?Sized>(
         factory: &mut F,
         params: DKGParams,
+        keyset_config: KeySetConfig,
     ) -> anyhow::Result<Self> {
         if let DKGParams::WithoutSnS(_) = params {
             return Err(anyhow_error_and_log(
@@ -89,6 +94,7 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z128, 
 
         Ok(Self {
             params,
+            keyset_config,
             dkg_preproc: Arc::new(RwLock::new(factory.create_dkg_preprocessing_with_sns())),
         })
     }
@@ -839,9 +845,11 @@ where
     fn get_num_correlated_randomness_required(&self) -> (usize, usize, usize) {
         let params_basics_handle = self.params.get_params_basics_handle();
 
-        let num_bits = params_basics_handle.total_bits_required();
-        let num_triples = params_basics_handle.total_triples_required() - num_bits;
-        let num_randomness = params_basics_handle.total_randomness_required() - num_bits;
+        let num_bits = params_basics_handle.total_bits_required(self.keyset_config);
+        let num_triples =
+            params_basics_handle.total_triples_required(self.keyset_config) - num_bits;
+        let num_randomness =
+            params_basics_handle.total_randomness_required(self.keyset_config) - num_bits;
 
         (num_bits, num_triples, num_randomness)
     }
@@ -865,14 +873,7 @@ where
         tuniform_productions.push(params_basics_handle.all_lwe_hat_noise());
 
         //Required number of _raw_ bits
-        let num_bits_required = params_basics_handle.lwe_dimension().0
-            + params_basics_handle.lwe_hat_dimension().0
-            + params_basics_handle.glwe_sk_num_bits()
-            + params_basics_handle.compression_sk_num_bits()
-            + match self.params {
-                DKGParams::WithSnS(sns_params) => sns_params.glwe_sk_num_bits_sns(),
-                DKGParams::WithoutSnS(_) => 0,
-            };
+        let num_bits_required = params_basics_handle.num_raw_bits(self.keyset_config);
         (tuniform_productions, num_bits_required)
     }
 }
@@ -892,6 +893,7 @@ mod tests {
             structure_traits::{Derive, ErrorCorrect, Invert, One, Solve, Zero},
         },
         execution::{
+            keyset_config::KeySetConfig,
             online::{
                 preprocessing::{
                     create_memory_factory,
@@ -1193,6 +1195,7 @@ mod tests {
                     PreprocessingOrchestrator::<ResiduePoly<Z64, EXTENSION_DEGREE>>::new(
                         inmemory_factory.as_mut(),
                         params,
+                        KeySetConfig::default(),
                     )
                     .unwrap();
 
@@ -1501,6 +1504,7 @@ mod tests {
                     PreprocessingOrchestrator::<ResiduePoly<Z64, EXTENSION_DEGREE>>::new(
                         inmemory_factory.as_mut(),
                         params,
+                        KeySetConfig::default(),
                     )
                     .unwrap();
 

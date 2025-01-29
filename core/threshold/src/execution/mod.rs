@@ -96,6 +96,7 @@ pub mod tfhe_internals {
     #[cfg(feature = "non-wasm")]
     pub mod utils;
 }
+
 pub mod config;
 
 #[cfg(feature = "non-wasm")]
@@ -103,3 +104,5 @@ pub mod zk {
     pub mod ceremony;
     pub mod constants;
 }
+
+pub mod keyset_config;

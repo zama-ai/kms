@@ -930,7 +930,7 @@ mod tests {
         // RNG for keys
         let mut rng = AesRng::seed_from_u64(69);
         let msg: u8 = 3;
-        let keys: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
+        let keys: KeySet = read_element(std::path::Path::new(SMALL_TEST_KEY_PATH)).unwrap();
 
         let identities = generate_fixed_identities(num_parties);
 

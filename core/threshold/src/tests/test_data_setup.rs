@@ -17,11 +17,11 @@ pub mod tests {
     pub const REAL_PARAMETERS: DKGParams = BC_PARAMS_SAM_SNS;
 
     pub fn ensure_keys_exist(path: &str, params: DKGParams) {
-        match read_element::<KeySet>(path.to_string()) {
+        match read_element::<KeySet, _>(&path) {
             Ok(_key_bytes) => (),
             Err(_e) => {
                 let keys = generate_keys(params);
-                write_element(path.to_string(), &keys).unwrap();
+                write_element(path, &keys).unwrap();
             }
         }
     }

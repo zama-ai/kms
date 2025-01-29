@@ -4,6 +4,7 @@ use crate::{
     algebra::structure_traits::{ErrorCorrect, Invert, Ring, Solve},
     error::error_handler::anyhow_error_and_log,
     execution::{
+        keyset_config::KeySetConfig,
         online::{
             gen_bits::{BitGenEven, RealBitGenEven},
             preprocessing::{
@@ -132,10 +133,13 @@ where
     async fn fill_from_base_preproc(
         &mut self,
         params: DKGParams,
+        keyset_config: KeySetConfig,
         session: &mut BaseSession,
         preprocessing: &mut dyn BasePreprocessing<Z>,
     ) -> anyhow::Result<()> {
-        let num_bits_required = params.get_params_basics_handle().total_bits_required();
+        let num_bits_required = params
+            .get_params_basics_handle()
+            .total_bits_required(keyset_config);
 
         let mut bit_preproc = InMemoryBitPreprocessing::default();
 
@@ -143,7 +147,13 @@ where
             RealBitGenEven::gen_bits_even(num_bits_required, preprocessing, session).await?,
         );
 
-        self.fill_from_triples_and_bit_preproc(params, session, preprocessing, &mut bit_preproc)
+        self.fill_from_triples_and_bit_preproc(
+            params,
+            keyset_config,
+            session,
+            preprocessing,
+            &mut bit_preproc,
+        )
     }
 
     /// Fill the noise from [`crate::execution::online::secret_distributions::SecretDistributions`]
@@ -153,6 +163,7 @@ where
     fn fill_from_triples_and_bit_preproc(
         &mut self,
         params: DKGParams,
+        keyset_config: KeySetConfig,
         _session: &mut BaseSession,
         preprocessing_base: &mut dyn BasePreprocessing<Z>,
         preprocessing_bits: &mut dyn BitPreprocessing<Z>,
@@ -160,6 +171,7 @@ where
         crate::execution::online::preprocessing::dkg_fill_from_triples_and_bit_preproc(
             self,
             params,
+            keyset_config,
             preprocessing_base,
             preprocessing_bits,
         )

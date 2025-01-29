@@ -1014,7 +1014,7 @@ mod tests {
     #[test]
     fn reconstruct_key() {
         let parties = 5;
-        let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
+        let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
         let lwe_secret_key = keyset.get_raw_lwe_client_key();
         let glwe_secret_key = keyset.get_raw_glwe_client_key();
         let glwe_secret_key_sns_as_lwe = keyset.sns_secret_key.key.clone();
@@ -1091,7 +1091,7 @@ mod tests {
         let threshold = 1;
         let num_parties = 5;
         let msg: u8 = 3;
-        let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
+        let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
 
         let lwe_secret_key = keyset.get_raw_lwe_client_key();
         let glwe_secret_key = keyset.get_raw_glwe_client_key();
@@ -1173,7 +1173,7 @@ mod tests {
         let threshold = 1;
         let num_parties = 4;
         let msg: u8 = 3;
-        let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
+        let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
 
         let lwe_secret_key = keyset.get_raw_lwe_client_key();
         let glwe_secret_key = keyset.get_raw_glwe_client_key();
@@ -1255,7 +1255,7 @@ mod tests {
         let threshold = 1;
         let num_parties = 5;
         let msg: u8 = 3;
-        let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
+        let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
 
         let lwe_secret_key = keyset.get_raw_lwe_client_key();
         let glwe_secret_key = keyset.get_raw_glwe_client_key();
@@ -1344,7 +1344,7 @@ mod tests {
         let threshold = 1;
         let num_parties = 5;
         let msg: u8 = 15;
-        let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
+        let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
 
         let lwe_secret_key = keyset.get_raw_lwe_client_key();
         let glwe_secret_key = keyset.get_raw_glwe_client_key();

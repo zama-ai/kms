@@ -416,7 +416,7 @@ pub mod tests {
     /// Indeterministic cipher generation.
     /// Encrypts a small message with deterministic randomness
     pub fn generate_cipher(_key_name: &str, message: u8) -> Ciphertext64 {
-        let keys: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
+        let keys: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
         let (ct, _id, _tag) = FheUint8::encrypt(message, &keys.client_key).into_raw_parts();
         ct
     }

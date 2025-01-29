@@ -56,7 +56,7 @@ fn ddec_nsmall(c: &mut Criterion) {
 
     group.sample_size(10);
     group.sampling_mode(criterion::SamplingMode::Flat);
-    let keyset: KeySet = read_element(REAL_KEY_PATH.to_string()).unwrap();
+    let keyset: KeySet = read_element(REAL_KEY_PATH).unwrap();
 
     set_server_key(keyset.public_keys.server_key.clone());
 
@@ -123,7 +123,7 @@ fn ddec_bitdec_nsmall(c: &mut Criterion) {
 
     group.sample_size(10);
     group.sampling_mode(criterion::SamplingMode::Flat);
-    let keyset: KeySet = read_element(REAL_KEY_PATH.to_string()).unwrap();
+    let keyset: KeySet = read_element(REAL_KEY_PATH).unwrap();
     let mut rng = AesRng::from_entropy();
     for config in params {
         let message = rng.gen::<u64>();
@@ -183,7 +183,7 @@ fn ddec_nlarge(c: &mut Criterion) {
     ];
     group.sample_size(10);
     group.sampling_mode(criterion::SamplingMode::Flat);
-    let keyset: KeySet = read_element(REAL_KEY_PATH.to_string()).unwrap();
+    let keyset: KeySet = read_element(REAL_KEY_PATH).unwrap();
     let mut rng = AesRng::from_entropy();
     for config in params {
         let message = rng.gen::<u64>();
@@ -248,7 +248,7 @@ fn ddec_bitdec_nlarge(c: &mut Criterion) {
 
     group.sample_size(10);
     group.sampling_mode(criterion::SamplingMode::Flat);
-    let keyset: KeySet = read_element(REAL_KEY_PATH.to_string()).unwrap();
+    let keyset: KeySet = read_element(REAL_KEY_PATH).unwrap();
     let mut rng = AesRng::from_entropy();
     for config in params {
         let message = rng.gen::<u64>();

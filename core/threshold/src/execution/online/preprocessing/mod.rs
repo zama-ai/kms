@@ -4,6 +4,7 @@ use super::triple::Triple;
 use crate::algebra::base_ring::{Z128, Z64};
 use crate::algebra::galois_rings::common::ResiduePoly;
 use crate::algebra::structure_traits::{ErrorCorrect, Invert, Solve};
+use crate::execution::keyset_config::KeySetConfig;
 use crate::execution::online::preprocessing::memory::memory_factory;
 use crate::execution::runtime::session::{BaseSession, SmallSession};
 use crate::execution::tfhe_internals::parameters::{DKGParams, NoiseBounds};
@@ -188,6 +189,7 @@ pub trait DKGPreprocessing<Z: Ring>: BasePreprocessing<Z> + BitPreprocessing<Z> 
     async fn fill_from_base_preproc(
         &mut self,
         params: DKGParams,
+        keyset_config: KeySetConfig,
         session: &mut BaseSession,
         preprocessing: &mut dyn BasePreprocessing<Z>,
     ) -> anyhow::Result<()>;
@@ -199,6 +201,7 @@ pub trait DKGPreprocessing<Z: Ring>: BasePreprocessing<Z> + BitPreprocessing<Z> 
     fn fill_from_triples_and_bit_preproc(
         &mut self,
         params: DKGParams,
+        keyset_config: KeySetConfig,
         session: &mut BaseSession,
         preprocessing_triples: &mut dyn BasePreprocessing<Z>,
         preprocessing_bits: &mut dyn BitPreprocessing<Z>,
@@ -210,6 +213,7 @@ pub trait DKGPreprocessing<Z: Ring>: BasePreprocessing<Z> + BitPreprocessing<Z> 
 pub(crate) fn dkg_fill_from_triples_and_bit_preproc<Z: Ring>(
     prep: &mut impl DKGPreprocessing<Z>,
     params: DKGParams,
+    keyset_config: KeySetConfig,
     preprocessing_base: &mut dyn BasePreprocessing<Z>,
     preprocessing_bits: &mut dyn BitPreprocessing<Z>,
 ) -> anyhow::Result<()> {
@@ -265,19 +269,19 @@ pub(crate) fn dkg_fill_from_triples_and_bit_preproc<Z: Ring>(
     );
 
     //Fill in the required number of _raw_ bits
-    let num_bits_required = params_basics_handles.num_raw_bits();
+    let num_bits_required = params_basics_handles.num_raw_bits(keyset_config);
 
     prep.append_bits(preprocessing_bits.next_bit_vec(num_bits_required)?);
 
     //Fill in the required number of triples
-    let num_triples_required = params_basics_handles.total_triples_required()
-        - params_basics_handles.total_bits_required();
+    let num_triples_required = params_basics_handles.total_triples_required(keyset_config)
+        - params_basics_handles.total_bits_required(keyset_config);
 
     prep.append_triples(preprocessing_base.next_triple_vec(num_triples_required)?);
 
     //Fill in the required number of randomness
-    let num_randomness_required = params_basics_handles.total_randomness_required()
-        - params_basics_handles.total_bits_required();
+    let num_randomness_required = params_basics_handles.total_randomness_required(keyset_config)
+        - params_basics_handles.total_bits_required(keyset_config);
     prep.append_randoms(preprocessing_base.next_random_vec(num_randomness_required)?);
 
     Ok(())

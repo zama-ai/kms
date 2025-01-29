@@ -51,6 +51,7 @@ use distributed_decryption::execution::endpoints::decryption::{
 use distributed_decryption::execution::endpoints::keygen::{
     distributed_keygen_z128, PrivateKeySet,
 };
+use distributed_decryption::execution::keyset_config::KeySetConfig;
 use distributed_decryption::execution::large_execution::vss::RealVss;
 use distributed_decryption::execution::online::preprocessing::orchestrator::PreprocessingOrchestrator;
 use distributed_decryption::execution::online::preprocessing::{
@@ -2113,7 +2114,12 @@ impl RealPreprocessor {
         let orchestrator = {
             let mut factory_guard = factory.lock().await;
             let factory = factory_guard.as_mut();
-            PreprocessingOrchestrator::<ResiduePolyF4Z128>::new(factory, params).unwrap()
+            PreprocessingOrchestrator::<ResiduePolyF4Z128>::new(
+                factory,
+                params,
+                KeySetConfig::default(),
+            )
+            .unwrap()
         };
         tracing::info!("Starting Preproc Orchestration on P[{:?}]", own_identity);
         let preproc_result = orchestrator

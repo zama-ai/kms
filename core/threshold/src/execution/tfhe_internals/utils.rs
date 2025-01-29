@@ -195,6 +195,7 @@ pub fn expanded_encrypt<M: Compactable + Numeric, T: HlExpandable + Tagged>(
 #[cfg(test)]
 pub mod tests {
     use std::collections::HashMap;
+    use std::path::Path;
 
     use itertools::Itertools;
     use tfhe::core_crypto::entities::{GlweSecretKeyOwned, LweSecretKeyOwned};
@@ -284,7 +285,7 @@ pub mod tests {
         parties: usize,
         threshold: usize,
         params: &Params,
-        prefix_path: String,
+        prefix_path: &Path,
     ) -> LweSecretKeyOwned<u64>
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
@@ -293,10 +294,9 @@ pub mod tests {
         for party in 0..parties {
             sk_shares.insert(
                 Role::indexed_by_zero(party),
-                PrivateKeySet::<EXTENSION_DEGREE>::read_from_file(format!(
-                    "{}/sk_p{}.der",
-                    prefix_path, party
-                ))
+                PrivateKeySet::<EXTENSION_DEGREE>::read_from_file(
+                    prefix_path.join(format!("sk_p{}.der", party)).as_path(),
+                )
                 .unwrap(),
             );
         }
@@ -319,7 +319,7 @@ pub mod tests {
     pub fn read_secret_key_shares_from_file<const EXTENSION_DEGREE: usize>(
         parties: usize,
         params: DKGParams,
-        prefix_path: String,
+        prefix_path: &Path,
     ) -> (
         HashMap<Role, Vec<Share<ResiduePoly<Z64, EXTENSION_DEGREE>>>>,
         HashMap<Role, Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>>,
@@ -328,8 +328,10 @@ pub mod tests {
         for party in 0..parties {
             sk_shares.insert(
                 Role::indexed_by_zero(party),
-                PrivateKeySet::read_from_file(format!("{}/sk_p{}.der", prefix_path, party))
-                    .unwrap(),
+                PrivateKeySet::read_from_file(
+                    prefix_path.join(format!("sk_p{}.der", party)).as_path(),
+                )
+                .unwrap(),
             );
         }
 
@@ -353,7 +355,7 @@ pub mod tests {
         parties: usize,
         threshold: usize,
         params: DKGParams,
-        prefix_path: String,
+        prefix_path: &Path,
     ) -> (GlweSecretKeyOwned<u64>, Option<LweSecretKeyOwned<u128>>)
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,

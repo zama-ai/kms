@@ -128,7 +128,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_box_sending() {
-        let keys: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
+        let keys: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
 
         let identities: Vec<Identity> = vec!["alice".into(), "bob".into()];
         let net_producer = LocalNetworkingProducer::from_ids(&identities);
