@@ -71,6 +71,7 @@ socat -u VSOCK-CONNECT:$PARENT_CID:$CONFIG_PORT CREATE:$KMS_SERVER_CONFIG_FILE |
 # tracing and AWS API proxies
 start_tcp_proxy_out "tracing" "$(get_configured_port "tracing.endpoint")"
 start_tcp_proxy_out "AWS IMDS" "$(get_configured_port "aws.imds_endpoint")"
+start_tcp_proxy_out "AWS STS" "$(get_configured_port "aws.sts_endpoint")"
 start_tcp_proxy_out "AWS S3" "$(get_configured_port "aws.s3_endpoint")"
 start_tcp_proxy_out "AWS KMS" "$(get_configured_port "aws.awskms_endpoint")"
 
@@ -84,6 +85,7 @@ is_threshold || \
 	    --root-key-id "$(get_value "private_vault.keychain")" \
 	    --aws-region "$(get_value "aws.region")" \
 	    --aws-imds-endpoint "$(get_value "aws.imds_endpoint")" \
+	    --aws-sts-endpoint "$(get_value "aws.sts_endpoint")" \
 	    --aws-s3-endpoint "$(get_value "aws.s3_endpoint")" \
 	    --aws-kms-endpoint "$(get_value "aws.awskms_endpoint")" \
 	    centralized --write-privkey \
@@ -99,6 +101,7 @@ is_threshold && \
 	    --root-key-id "$(get_value "private_vault.keychain")" \
 	    --aws-region "$(get_value "aws.region")" \
 	    --aws-imds-endpoint "$(get_value "aws.imds_endpoint")" \
+	    --aws-sts-endpoint "$(get_value "aws.sts_endpoint")" \
 	    --aws-s3-endpoint "$(get_value "aws.s3_endpoint")" \
 	    --aws-kms-endpoint "$(get_value "aws.awskms_endpoint")" \
 	    --cmd signing-keys \

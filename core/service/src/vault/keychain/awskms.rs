@@ -12,8 +12,8 @@ use aws_config::SdkConfig;
 use aws_sdk_kms::{
     primitives::Blob,
     types::{
-        DataKeySpec::Aes256 as Aes256Type, KeyEncryptionMechanism,
-        RecipientInfo as KMSRecipientInfo,
+        DataKeySpec::Aes256 as Aes256Type, KeyEncryptionMechanism, KeySpec::Rsa4096 as Rsa4096Type,
+        KeyUsageType::EncryptDecrypt, RecipientInfo as KMSRecipientInfo,
     },
     Client as AWSKMSClient,
 };
@@ -30,7 +30,7 @@ use rasn_cms::{
     algorithms::AES256_CBC, ContentInfo, EnvelopedData, RecipientInfo, CONTENT_DATA,
     CONTENT_ENVELOPED_DATA,
 };
-use rsa::{sha2::Sha256, Oaep, RsaPrivateKey, RsaPublicKey};
+use rsa::{pkcs8::DecodePublicKey, sha2::Sha256, Oaep, RsaPrivateKey, RsaPublicKey};
 use serde::{de::DeserializeOwned, Serialize};
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tfhe::{named::Named, Unversionize};
@@ -46,25 +46,83 @@ const AWS_KMS_ENVELOPED_DATA_VERSION: isize = 2;
 // AWS KMS is expected to produce this version of the recipient substructure
 const AWS_KMS_ENVELOPED_DATA_RECIPIENT_VERSION: isize = 2;
 
+pub trait RootKey {}
+
+pub struct Symm {
+    pub key_id: String,
+}
+
+impl Symm {
+    pub fn new(key_id: String) -> Self {
+        Self { key_id }
+    }
+}
+
+impl RootKey for Symm {}
+
+pub struct Asymm {
+    pub key_id: String,
+    pub pk: RsaPublicKey,
+}
+
+impl Asymm {
+    pub async fn new(awskms_client: AWSKMSClient, root_key_id: String) -> anyhow::Result<Self> {
+        let get_public_key_response = awskms_client
+            .get_public_key()
+            .key_id(root_key_id.clone())
+            .send()
+            .await?;
+
+        let pk_spec = some_or_err(
+            get_public_key_response.key_spec,
+            "No key spec returned for the root public key by AWS KMS".to_string(),
+        )?;
+        ensure!(
+            pk_spec == Rsa4096Type,
+            "Root public key must be RSA4096: check AWS KMS deployment"
+        );
+
+        let pk_usage = some_or_err(
+            get_public_key_response.key_usage,
+            "No key usage returned for the root public key by AWS KMS".to_string(),
+        )?;
+        ensure!(pk_usage == EncryptDecrypt, "Root public key is not allowed to be used for encryption/decryption: check AWS KMS key policy");
+
+        let pk_bytes = some_or_err(
+            get_public_key_response.public_key,
+            "No public key blob returned by AWS KMS".to_string(),
+        )?;
+
+        let pk = RsaPublicKey::from_public_key_der(pk_bytes.as_ref())?;
+
+        Ok(Self {
+            key_id: root_key_id,
+            pk,
+        })
+    }
+}
+
+impl RootKey for Asymm {}
+
 /// Keeps together everything needed for running a chain of trust for working
 /// with application secret keys (such as FHE private keys). The root key
 /// encrypt data keys which encrypt application keys. The root key is stored in
 /// AWS KMS and never leaves it. Encrypted application keys (together with the
 /// corresponding data keys) are stored on S3. The enclave keypair permits
 /// secure decryption of data keys by AWS KMS.
-pub struct AWSKMSKeychain<S: SecurityModule> {
+pub struct AWSKMSKeychain<S: SecurityModule, K: RootKey> {
     awskms_client: AWSKMSClient,
     security_module: S,
     recipient_sk: RsaPrivateKey,
     recipient_pk: RsaPublicKey,
-    root_key_id: String,
+    root_key: K,
 }
 
-impl<S: SecurityModule> AWSKMSKeychain<S> {
+impl<S: SecurityModule, K: RootKey> AWSKMSKeychain<S, K> {
     pub fn new(
         awskms_client: AWSKMSClient,
         security_module: S,
-        root_key_id: String,
+        root_key: K,
     ) -> anyhow::Result<Self> {
         let recipient_sk = RsaPrivateKey::new(&mut OsRng, RECIPIENT_KEYPAIR_SIZE)?;
         let recipient_pk = RsaPublicKey::from(&recipient_sk);
@@ -73,69 +131,7 @@ impl<S: SecurityModule> AWSKMSKeychain<S> {
             security_module,
             recipient_sk,
             recipient_pk,
-            root_key_id,
-        })
-    }
-}
-
-#[tonic::async_trait]
-impl<S: SecurityModule + Sync> Keychain for AWSKMSKeychain<S> {
-    /// Request a data key from AWS KMS and encrypt an application key (such as the FHE private key) on
-    /// it. Stores a copy of the data key encrypted on the root key (stored in AWS KMS) together with
-    /// the encrypted application key.
-    async fn encrypt<T: Serialize + Versionize + Named + Send + Sync>(
-        &self,
-        payload: &T,
-    ) -> anyhow::Result<AppKeyBlob> {
-        // request enclave attestation before making an AWS KMS request, so the
-        // attestation is fresh and not older than 5 minutes
-        let attestation = self
-            .security_module
-            .attest_rsa_pk(&self.recipient_pk)
-            .await?;
-
-        // request the data key from AWS KMS to encrypt the app key
-        let gen_data_key_response = self
-            .awskms_client
-            .generate_data_key()
-            .key_id(&self.root_key_id)
-            .key_spec(Aes256Type)
-            .recipient(
-                KMSRecipientInfo::builder()
-                    .key_encryption_algorithm(KeyEncryptionMechanism::RsaesOaepSha256)
-                    .attestation_document(Blob::new(attestation))
-                    .build(),
-            )
-            .send()
-            .await?;
-
-        // decrypt the data key with the Nitro enclave private key
-        let gen_data_key_response_ciphertext_blob = some_or_err(
-            gen_data_key_response.ciphertext_for_recipient,
-            "No ciphertext for recipient returned in data key generation response from AWS KMS"
-                .to_string(),
-        )?;
-        let data_key = decrypt_ciphertext_for_recipient(
-            gen_data_key_response_ciphertext_blob.into_inner(),
-            &self.recipient_sk,
-        )?;
-
-        // encrypt the app key under the data key
-        let mut blob_bytes = Vec::new();
-        safe_serialize(payload, &mut blob_bytes, SAFE_SER_SIZE_LIMIT)?;
-        let iv = self.security_module.get_random(APP_BLOB_NONCE_SIZE).await?;
-        let auth_tag = encrypt_under_data_key(&mut blob_bytes, &data_key, &iv)?;
-        Ok(AppKeyBlob {
-            root_key_id: self.root_key_id.to_string(),
-            data_key_blob: some_or_err(
-                gen_data_key_response.ciphertext_blob,
-                "No ciphertext blob returned in data key generation response from AWS KMS"
-                    .to_string(),
-            )?
-            .into_inner(),
-            ciphertext: blob_bytes,
-            iv,
-            auth_tag,
+            root_key,
         })
     }
 
@@ -184,6 +180,111 @@ impl<S: SecurityModule + Sync> Keychain for AWSKMSKeychain<S> {
         )?;
         let mut buf = std::io::Cursor::new(&envelope.ciphertext);
         safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| anyhow::anyhow!(e))
+    }
+}
+
+#[tonic::async_trait]
+impl<S: SecurityModule + Sync> Keychain for AWSKMSKeychain<S, Symm> {
+    /// Request a data key from AWS KMS and encrypt an application key (such as the FHE private key) on
+    /// it. Stores a copy of the data key encrypted on the root key (stored in AWS KMS) together with
+    /// the encrypted application key.
+    async fn encrypt<T: Serialize + Versionize + Named + Send + Sync>(
+        &self,
+        payload: &T,
+    ) -> anyhow::Result<AppKeyBlob> {
+        // request enclave attestation before making an AWS KMS request, so the
+        // attestation is fresh and not older than 5 minutes
+        let attestation = self
+            .security_module
+            .attest_rsa_pk(&self.recipient_pk)
+            .await?;
+
+        // request the data key from AWS KMS to encrypt the app key
+        let gen_data_key_response = self
+            .awskms_client
+            .generate_data_key()
+            .key_id(&self.root_key.key_id)
+            .key_spec(Aes256Type)
+            .recipient(
+                KMSRecipientInfo::builder()
+                    .key_encryption_algorithm(KeyEncryptionMechanism::RsaesOaepSha256)
+                    .attestation_document(Blob::new(attestation))
+                    .build(),
+            )
+            .send()
+            .await?;
+
+        // decrypt the data key with the Nitro enclave private key
+        let gen_data_key_response_ciphertext_blob = some_or_err(
+            gen_data_key_response.ciphertext_for_recipient,
+            "No ciphertext for recipient returned in data key generation response from AWS KMS"
+                .to_string(),
+        )?;
+        let data_key = decrypt_ciphertext_for_recipient(
+            gen_data_key_response_ciphertext_blob.into_inner(),
+            &self.recipient_sk,
+        )?;
+
+        // encrypt the app key under the data key
+        let mut blob_bytes = Vec::new();
+        safe_serialize(payload, &mut blob_bytes, SAFE_SER_SIZE_LIMIT)?;
+        let iv = self.security_module.get_random(APP_BLOB_NONCE_SIZE).await?;
+        let auth_tag = encrypt_under_data_key(&mut blob_bytes, &data_key, &iv)?;
+        Ok(AppKeyBlob {
+            root_key_id: self.root_key.key_id.to_string(),
+            data_key_blob: some_or_err(
+                gen_data_key_response.ciphertext_blob,
+                "No ciphertext blob returned in data key generation response from AWS KMS"
+                    .to_string(),
+            )?
+            .into_inner(),
+            ciphertext: blob_bytes,
+            iv,
+            auth_tag,
+        })
+    }
+
+    async fn decrypt<T: DeserializeOwned + Unversionize + Named + Send>(
+        &self,
+        envelope: &mut AppKeyBlob,
+    ) -> anyhow::Result<T> {
+        AWSKMSKeychain::<S, Symm>::decrypt(self, envelope).await
+    }
+}
+
+#[tonic::async_trait]
+impl<S: SecurityModule + Sync> Keychain for AWSKMSKeychain<S, Asymm> {
+    async fn encrypt<T: Serialize + Versionize + Named + Send + Sync>(
+        &self,
+        payload: &T,
+    ) -> anyhow::Result<AppKeyBlob> {
+        // generate a fresh data key
+        let data_key = self.security_module.get_random(Aes256::key_size()).await?;
+        let enc_data_key = self
+            .root_key
+            .pk
+            .encrypt(&mut OsRng, Oaep::new::<Sha256>(), data_key.as_ref())
+            .map_err(|e| anyhow_error_and_log(format!("Cannot encrypt data key: {}", e)))?;
+
+        // encrypt the app key under the data key
+        let mut blob_bytes = Vec::new();
+        safe_serialize(payload, &mut blob_bytes, SAFE_SER_SIZE_LIMIT)?;
+        let iv = self.security_module.get_random(APP_BLOB_NONCE_SIZE).await?;
+        let auth_tag = encrypt_under_data_key(&mut blob_bytes, &data_key, &iv)?;
+        Ok(AppKeyBlob {
+            root_key_id: self.root_key.key_id.clone(),
+            data_key_blob: enc_data_key,
+            ciphertext: blob_bytes,
+            iv,
+            auth_tag,
+        })
+    }
+
+    async fn decrypt<T: DeserializeOwned + Unversionize + Named + Send>(
+        &self,
+        envelope: &mut AppKeyBlob,
+    ) -> anyhow::Result<T> {
+        AWSKMSKeychain::<S, Asymm>::decrypt(self, envelope).await
     }
 }
 

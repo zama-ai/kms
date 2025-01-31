@@ -48,6 +48,7 @@ impl ConfigTracing for CoreConfig {
 pub struct AWSConfig {
     pub region: String,
     pub imds_endpoint: Option<Url>,
+    pub sts_endpoint: Option<Url>,
     pub s3_endpoint: Option<Url>,
     pub awskms_endpoint: Option<Url>,
 }

@@ -41,7 +41,8 @@ pub trait Keychain {
 }
 
 pub enum KeychainProxy {
-    AwsKms(awskms::AWSKMSKeychain<SecurityModuleProxy>),
+    AwsKmsSymm(awskms::AWSKMSKeychain<SecurityModuleProxy, awskms::Symm>),
+    AwsKmsAsymm(awskms::AWSKMSKeychain<SecurityModuleProxy, awskms::Asymm>),
 }
 
 #[tonic::async_trait]
@@ -51,7 +52,8 @@ impl Keychain for KeychainProxy {
         payload: &T,
     ) -> anyhow::Result<AppKeyBlob> {
         match &self {
-            KeychainProxy::AwsKms(k) => k.encrypt(payload).await,
+            KeychainProxy::AwsKmsSymm(k) => k.encrypt(payload).await,
+            KeychainProxy::AwsKmsAsymm(k) => k.encrypt(payload).await,
         }
     }
     async fn decrypt<T: DeserializeOwned + Unversionize + Named + Send>(
@@ -59,12 +61,13 @@ impl Keychain for KeychainProxy {
         envelope: &mut AppKeyBlob,
     ) -> anyhow::Result<T> {
         match &self {
-            KeychainProxy::AwsKms(k) => k.decrypt(envelope).await,
+            KeychainProxy::AwsKmsSymm(k) => k.decrypt(envelope).await,
+            KeychainProxy::AwsKmsAsymm(k) => k.decrypt(envelope).await,
         }
     }
 }
 
-pub fn make_keychain(
+pub async fn make_keychain(
     keychain_url: Url,
     awskms_client: Option<AWSKMSClient>,
     security_module: Option<SecurityModuleProxy>,
@@ -73,18 +76,29 @@ pub fn make_keychain(
         "awskms" => {
             let awskms_client = awskms_client.expect("AWS KMS client must be configured");
 	    let security_module = security_module.expect("Security module must be present");
-            let root_key_id = some_or_err(
+            let root_key_spec = some_or_err(
                 keychain_url.host_str(),
-                "Root key ID must be provided".to_string(),
-            )?
-            .to_string();
-            KeychainProxy::AwsKms(awskms::AWSKMSKeychain::new(
-                awskms_client,
-                security_module,
-                root_key_id,
-            )?)
+                "Root key spec (symm/asymm) must be provided".to_string(),
+            )?;
+	    let root_key_id = some_or_err(
+		keychain_url.path_segments().and_then(|mut p| p.next()),
+		"Root key ID must be provided".to_string(),
+	    )?.to_string();
+	    match root_key_spec {
+		"symm" => KeychainProxy::AwsKmsSymm(awskms::AWSKMSKeychain::new(
+                    awskms_client,
+                    security_module,
+                    awskms::Symm::new(root_key_id),
+		)?),
+		"asymm" => KeychainProxy::AwsKmsAsymm(awskms::AWSKMSKeychain::new(
+		    awskms_client.clone(),
+		    security_module,
+		    awskms::Asymm::new(awskms_client, root_key_id).await?,
+		)?),
+		_ => anyhow::bail!("Root key spec must be one of symm/asymm")
+	    }
         }
-        _ => anyhow::bail!("Only AWS KMS is currently supported, make sure to specify a keychain URL in the format awskms://root_key_id"),
+        _ => anyhow::bail!("Only AWS KMS is currently supported, make sure to specify a keychain URL in the format awskms://root_key_spec/root_key_id"),
     };
     Ok(keychain)
 }

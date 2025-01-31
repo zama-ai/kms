@@ -54,6 +54,9 @@ struct Args {
     /// Optional AWS IMDS API endpoint
     #[clap(long, default_value = None)]
     aws_imds_endpoint: Option<Url>,
+    /// Optional AWS STS API endpoint
+    #[clap(long, default_value = None)]
+    aws_sts_endpoint: Option<Url>,
     /// Optional AWS S3 API endpoint
     #[clap(long, default_value = None)]
     aws_s3_endpoint: Option<Url>,
@@ -199,7 +202,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_kms_core_telemetry()?;
     let args = Args::parse();
     // common AWS configuration
-    let aws_sdk_config = build_aws_sdk_config(args.aws_region, args.aws_imds_endpoint).await;
+    let aws_sdk_config = build_aws_sdk_config(
+        args.aws_region,
+        args.aws_imds_endpoint,
+        args.aws_sts_endpoint,
+    )
+    .await;
     // AWS S3 client
     let need_s3_client = args
         .pub_url
@@ -263,10 +271,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
             .unwrap(),
         );
-        let private_keychain = root_key_id
-            .as_ref()
-            .map(|k| make_keychain(k.clone(), awskms_client.clone(), security_module.clone()))
-            .transpose()?;
+        let private_keychain = match root_key_id {
+            Some(ref k) => Some(
+                make_keychain(k.clone(), awskms_client.clone(), security_module.clone()).await?,
+            ),
+            None => None,
+        };
         priv_vaults.push(Vault {
             storage: make_storage(
                 args.priv_url.clone(),

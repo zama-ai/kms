@@ -62,7 +62,12 @@ async fn main() -> anyhow::Result<()> {
     // common AWS configuration
     let aws_sdk_config = match core_config.aws {
         Some(ref aws_config) => Some(
-            build_aws_sdk_config(aws_config.region.clone(), aws_config.imds_endpoint.clone()).await,
+            build_aws_sdk_config(
+                aws_config.region.clone(),
+                aws_config.imds_endpoint.clone(),
+                aws_config.sts_endpoint.clone(),
+            )
+            .await,
         ),
         None => None,
     };
@@ -97,12 +102,12 @@ async fn main() -> anyhow::Result<()> {
 
     // AWS KMS client
     let need_awskms_client = core_config
-        .public_vault
+        .private_vault
         .as_ref()
         .and_then(|v| v.keychain.as_ref().map(|k| k.scheme() == "awskms"))
         .unwrap_or(false)
         || core_config
-            .private_vault
+            .backup_vault
             .as_ref()
             .and_then(|v| v.keychain.as_ref().map(|k| k.scheme() == "awskms"))
             .unwrap_or(false);
@@ -150,15 +155,14 @@ async fn main() -> anyhow::Result<()> {
         keychain: None,
     };
     // private vault
-    let private_keychain = core_config
+    let private_keychain_url = core_config
         .private_vault
         .as_ref()
-        .and_then(|v| {
-            v.keychain
-                .clone()
-                .map(|k| make_keychain(k, awskms_client.clone(), security_module.clone()))
-        })
-        .transpose()?;
+        .and_then(|v| v.keychain.clone());
+    let private_keychain = match private_keychain_url {
+        Some(k) => Some(make_keychain(k, awskms_client.clone(), security_module.clone()).await?),
+        None => None,
+    };
     let private_vault = Vault {
         storage: make_storage(
             core_config
@@ -175,6 +179,14 @@ async fn main() -> anyhow::Result<()> {
     // backup vault (unlike for private/public storage, there cannot be a
     // default location for backup storage, so there has to be
     // Some(storage_url))
+    let backup_keychain_url = core_config
+        .backup_vault
+        .as_ref()
+        .and_then(|v| v.keychain.clone());
+    let backup_keychain = match backup_keychain_url {
+        Some(k) => Some(make_keychain(k, awskms_client, security_module).await?),
+        None => None,
+    };
     let backup_vault = core_config
         .backup_vault
         .as_ref()
@@ -186,12 +198,9 @@ async fn main() -> anyhow::Result<()> {
                 None,
                 s3_client,
             )
-            .and_then(|storage| {
-                v.keychain
-                    .clone()
-                    .map(|k| make_keychain(k, awskms_client, security_module))
-                    .transpose()
-                    .map(|keychain| Vault { storage, keychain })
+            .map(|storage| Vault {
+                storage,
+                keychain: backup_keychain,
             })
         })
         .transpose()?;
