@@ -8,10 +8,8 @@ use kms_grpc::kms_service::v1::core_service_endpoint_server::{
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::RwLock;
 use tonic::transport::Server;
 use tonic_health::pb::health_server::{Health, HealthServer};
-use tonic_health::server::HealthReporter;
 use tower_http::classify::{GrpcCode, GrpcFailureClass};
 use tower_http::trace::TraceLayer;
 use tracing::Span;
@@ -22,7 +20,7 @@ pub mod threshold;
 pub mod traits;
 pub mod validation;
 
-/// Trait for shutting down the KMS gracefully.
+/// Trait for shutting down a server gracefully.
 #[tonic::async_trait]
 pub trait Shutdown {
     async fn shutdown(&self) -> anyhow::Result<()>;
@@ -83,8 +81,7 @@ pub async fn run_server<
     F: std::future::Future<Output = ()> + Send + 'static,
 >(
     config: ServiceEndpoint,
-    kms_service: S,
-    health_reporter: Arc<RwLock<HealthReporter>>,
+    kms_service: Arc<S>,
     health_service: HealthServer<impl Health>,
     shutdown_signal: F,
 ) -> anyhow::Result<()> {
@@ -107,7 +104,10 @@ pub async fn run_server<
     }
 
     // Create shutdown channel
-    let (tx, rx) = tokio::sync::oneshot::channel();
+    let (tx, rx): (
+        tokio::sync::oneshot::Sender<()>,
+        tokio::sync::oneshot::Receiver<()>,
+    ) = tokio::sync::oneshot::channel();
 
     // Set up signal handlers for graceful shutdown
     tokio::spawn(prepare_shutdown_signals(shutdown_signal, tx));
@@ -128,7 +128,6 @@ pub async fn run_server<
                 },
             ),
     );
-    let arc_kms_service = Arc::new(kms_service);
     let server = Server::builder()
         .layer(trace_request)
         // Make sure we never abort because we spent too much time on the blocking part of the get result
@@ -138,7 +137,7 @@ pub async fn run_server<
         ))
         .add_service(health_service)
         .add_service(
-            CoreServiceEndpointServer::from_arc(Arc::clone(&arc_kms_service))
+            CoreServiceEndpointServer::from_arc(Arc::clone(&kms_service))
                 .max_decoding_message_size(config.grpc_max_message_size)
                 .max_encoding_message_size(config.grpc_max_message_size),
         );
@@ -154,15 +153,7 @@ pub async fn run_server<
             socket_addr
         );
 
-        // Set health check to not serving
-        {
-            health_reporter
-                .write()
-                .await
-                .set_not_serving::<CoreServiceEndpointServer<S>>()
-                .await;
-        }
-        let res = arc_kms_service.shutdown().await;
+        let res = kms_service.shutdown().await;
         if res.is_err() {
             tracing::error!(
                 "Failed to shutdown core/service at {}: {}",

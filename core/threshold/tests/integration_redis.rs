@@ -12,21 +12,15 @@ use std::num::Wrapping;
 
 #[cfg(feature = "testing")]
 use distributed_decryption::{
-    algebra::galois_rings::degree_4::ResiduePolyF4Z64,
     execution::{
         endpoints::keygen::distributed_keygen_z64,
         online::preprocessing::orchestrator::PreprocessingOrchestrator,
-        runtime::{
-            session::ParameterHandles,
-            test_runtime::{generate_fixed_identities, DistributedTestRuntime},
-        },
+        runtime::test_runtime::{generate_fixed_identities, DistributedTestRuntime},
         tfhe_internals::parameters::DKGParams,
     },
     session_id::SessionId,
 };
 
-#[cfg(feature = "testing")]
-use itertools::Itertools;
 #[cfg(feature = "testing")]
 use std::{fs, sync::Arc, thread};
 
@@ -181,9 +175,11 @@ fn test_dkg_orchestrator_large(
     params: DKGParams,
 ) {
     use distributed_decryption::{
-        algebra::structure_traits::Ring, execution::keyset_config::KeySetConfig,
+        algebra::galois_rings::degree_4::ResiduePolyF4Z64, algebra::structure_traits::Ring,
+        execution::keyset_config::KeySetConfig, execution::runtime::session::ParameterHandles,
         networking::NetworkMode,
     };
+    use itertools::Itertools;
     use kms_core_utils::thread_handles::OsThreadGroup;
 
     let params_basics_handles = params.get_params_basics_handle();

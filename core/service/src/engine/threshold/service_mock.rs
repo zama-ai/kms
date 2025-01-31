@@ -1,13 +1,4 @@
-use futures_util::FutureExt;
-use kms_grpc::rpc_types::PubDataType;
-use std::collections::HashMap;
-use std::net::SocketAddr;
-use std::str::FromStr;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use tokio_util::task::TaskTracker;
-use tonic::{transport, Request, Response, Status};
-
+use crate::client::await_server_ready;
 use crate::client::test_tools::ServerHandle;
 use crate::consts::DEFAULT_URL;
 use crate::engine::threshold::generic::GenericKms;
@@ -18,6 +9,7 @@ use crate::engine::threshold::traits::{
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
 use crate::util::random_free_port::random_free_ports;
+use futures_util::FutureExt;
 use kms_grpc::kms::v1::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenPreprocStatusEnum,
@@ -26,27 +18,46 @@ use kms_grpc::kms::v1::{
     VerifyProvenCtRequest, VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
+use kms_grpc::rpc_types::PubDataType;
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::str::FromStr;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use tokio_util::task::TaskTracker;
+use tonic::server::NamedService;
+use tonic::{transport, Request, Response, Status};
+use tonic_health::pb::health_server::{Health, HealthServer};
 
 pub async fn setup_mock_kms(n: usize) -> HashMap<u32, ServerHandle> {
     let mut out = HashMap::new();
     let ip_addr = DEFAULT_URL.parse().unwrap();
-    let client_ports = random_free_ports(50000, 55000, &ip_addr, n).await.unwrap();
+    let service_ports = random_free_ports(50000, 55000, &ip_addr, n).await.unwrap();
     for i in 1..=n {
-        let port = client_ports[i - 1];
+        let port = service_ports[i - 1];
         let url = format!("{ip_addr}:{port}");
         let addr = SocketAddr::from_str(url.as_str()).unwrap();
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let handle = tokio::spawn(async move {
-            let kms = new_dummy_threshold_kms();
-            let _ = transport::Server::builder()
-                .add_service(CoreServiceEndpointServer::new(kms))
+        let (kms, health_service) = new_dummy_threshold_kms().await;
+        let arc_kms = Arc::new(kms);
+        let arc_kms_clone = Arc::clone(&arc_kms);
+        tokio::spawn(async move {
+            transport::Server::builder()
+                .add_service(health_service)
+                .add_service(CoreServiceEndpointServer::from_arc(arc_kms))
                 .serve_with_shutdown(addr, rx.map(drop))
-                .await;
+                .await
+                .expect("Failed to start mock server {i}");
         });
-        out.insert(i as u32, ServerHandle::new(port, handle, tx, None));
+        out.insert(
+            i as u32,
+            ServerHandle::new_centralized(arc_kms_clone, service_ports[i - 1], tx),
+        );
     }
-    // We need to sleep as the servers keep running in the background and hence do not return
-    tokio::time::sleep(tokio::time::Duration::from_secs(2 * (n as u64) / 4)).await;
+    for i in 1..=n {
+        let service_name = <CoreServiceEndpointServer<DummyThresholdKms> as NamedService>::NAME;
+        await_server_ready(service_name, service_ports[i - 1]).await;
+    }
     out
 }
 
@@ -76,23 +87,31 @@ type DummyThresholdKms = GenericKms<
     DummyProvenCtVerifier,
 >;
 
-fn new_dummy_threshold_kms() -> DummyThresholdKms {
-    let handle = tokio::spawn(async {});
-    DummyThresholdKms::new(
-        DummyInitiator {},
-        DummyReencryptor { degree: 1 },
-        DummyDecryptor {},
-        DummyKeyGenerator {},
-        #[cfg(feature = "insecure")]
-        DummyKeyGenerator {},
-        DummyPreprocessor {},
-        DummyCrsGenerator {},
-        #[cfg(feature = "insecure")]
-        DummyCrsGenerator {},
-        DummyProvenCtVerifier {},
-        Arc::new(TaskTracker::new()), // todo should this be captured in a dummy as well ?
-        Arc::new(Mutex::new(HashMap::new())),
-        handle.abort_handle(),
+async fn new_dummy_threshold_kms() -> (DummyThresholdKms, HealthServer<impl Health>) {
+    let handle = tokio::spawn(async { Ok(()) });
+    let (mut threshold_health_reporter, threshold_health_service) =
+        tonic_health::server::health_reporter();
+    threshold_health_reporter
+        .set_serving::<CoreServiceEndpointServer<DummyThresholdKms>>()
+        .await;
+    (
+        DummyThresholdKms::new(
+            DummyInitiator {},
+            DummyReencryptor { degree: 1 },
+            DummyDecryptor {},
+            DummyKeyGenerator {},
+            #[cfg(feature = "insecure")]
+            DummyKeyGenerator {},
+            DummyPreprocessor {},
+            DummyCrsGenerator {},
+            #[cfg(feature = "insecure")]
+            DummyCrsGenerator {},
+            DummyProvenCtVerifier {},
+            Arc::new(TaskTracker::new()),
+            Arc::new(RwLock::new(threshold_health_reporter)),
+            handle,
+        ),
+        threshold_health_service,
     )
 }
 

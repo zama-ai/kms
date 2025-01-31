@@ -1,5 +1,4 @@
-use std::sync::Arc;
-
+use clap::Parser;
 use kms_lib::{
     conf::{init_conf_kms_core_telemetry, CoreConfig},
     cryptography::attestation::make_security_module,
@@ -13,9 +12,7 @@ use kms_lib::{
         Vault,
     },
 };
-
-use clap::Parser;
-use tokio::sync::RwLock;
+use std::sync::Arc;
 
 pub const SIG_SK_BLOB_KEY: &str = "private_sig_key";
 pub const SIG_PK_BLOB_KEY: &str = "public_sig_key";
@@ -205,33 +202,29 @@ async fn main() -> anyhow::Result<()> {
         })
         .transpose()?;
 
-    let (health_reporter, health_service) = tonic_health::server::health_reporter();
-    let thread_health_reporter = Arc::new(RwLock::new(health_reporter));
     // initialize KMS core
     match core_config.threshold {
         Some(threshold_config) => {
-            let kms = threshold_server_init(
+            let (kms, health_service) = threshold_server_init(
                 threshold_config,
                 public_vault,
                 private_vault,
                 backup_vault,
                 false,
                 core_config.rate_limiter_conf,
-                thread_health_reporter.clone(),
                 std::future::pending(),
             )
             .await?;
             run_server(
                 core_config.service,
-                kms,
-                thread_health_reporter,
+                Arc::new(kms),
                 health_service,
                 std::future::pending(),
             )
             .await?;
         }
         None => {
-            let kms = RealCentralizedKms::new(
+            let (kms, health_service) = RealCentralizedKms::new(
                 public_vault,
                 private_vault,
                 backup_vault,
@@ -240,8 +233,7 @@ async fn main() -> anyhow::Result<()> {
             .await?;
             run_server(
                 core_config.service,
-                kms,
-                thread_health_reporter,
+                Arc::new(kms),
                 health_service,
                 std::future::pending(),
             )

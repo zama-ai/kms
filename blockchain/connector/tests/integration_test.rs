@@ -48,9 +48,9 @@ use kms_lib::util::key_setup::{
 use kms_lib::{
     client::{test_tools, ParsedReencryptionRequest},
     consts::{
-        DEFAULT_PROT, DEFAULT_URL, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_CRS_ID, TEST_CENTRAL_KEY_ID,
-        TEST_THRESHOLD_CRS_ID_4P, TEST_THRESHOLD_CRS_ID_7P, TEST_THRESHOLD_KEY_ID_4P,
-        TEST_THRESHOLD_KEY_ID_7P,
+        DEFAULT_PROTOCOL, DEFAULT_URL, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_CRS_ID,
+        TEST_CENTRAL_KEY_ID, TEST_THRESHOLD_CRS_ID_4P, TEST_THRESHOLD_CRS_ID_7P,
+        TEST_THRESHOLD_KEY_ID_4P, TEST_THRESHOLD_KEY_ID_7P,
     },
     engine::threshold::service_mock::setup_mock_kms,
     util::key_setup::{
@@ -657,7 +657,10 @@ async fn generic_centralized_sunshine_test(
     let join_handle =
         test_tools::setup_centralized_no_client(pub_storage, priv_storage, None).await;
 
-    let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", join_handle.port);
+    let url = format!(
+        "{DEFAULT_PROTOCOL}://{DEFAULT_URL}:{}",
+        join_handle.service_port
+    );
     let config = CoreConfig {
         addresses: vec![url],
         timeout_config: TimeoutConfig::mocking_default(),
@@ -852,8 +855,12 @@ async fn generic_sunshine_test(
     // create configs
     let configs = (0..amount_parties as u32)
         .map(|i| {
-            let port = core_handles.get(&(i + 1)).as_ref().unwrap().port;
-            let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{port}");
+            let port = core_handles
+                .get(&(i + 1))
+                .as_ref()
+                .expect("No handle for core with id {i}")
+                .service_port;
+            let url = format!("{DEFAULT_PROTOCOL}://{DEFAULT_URL}:{port}");
             CoreConfig {
                 addresses: vec![url],
                 timeout_config: if slow {

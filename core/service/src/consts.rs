@@ -32,14 +32,16 @@ pub const SAFE_SER_SIZE_LIMIT: u64 = kms_grpc::rpc_types::SAFE_SER_SIZE_LIMIT;
 //TODO: Do we want to load this from configuration ?
 pub const DURATION_WAITING_ON_RESULT_SECONDS: u64 = 60;
 
-pub const INFLIGHT_REQUEST_WAITING_TIME: u64 = 1;
+// Maximum number of attempts to try to wait for a result to be done on the server
+pub const MAX_TRIES: usize = 50;
+
+pub const DEFAULT_URL: &str = "127.0.0.1";
+pub const DEFAULT_PROTOCOL: &str = "http";
 
 cfg_if::cfg_if! {
     if #[cfg(any(test, feature = "testing"))] {
         use kms_grpc::kms::v1::RequestId;
 
-        pub const DEFAULT_URL: &str = "127.0.0.1";
-        pub const DEFAULT_PROT: &str = "http";
         pub const TMP_PATH_PREFIX: &str = "temp";
         pub const DEFAULT_CENTRAL_KEYS_PATH: &str = "temp/default-central-keys.bin";
 

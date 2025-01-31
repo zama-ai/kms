@@ -32,6 +32,8 @@ use kms_grpc::kms::v1::RequestId;
 use kms_grpc::kms::v1::TypedPlaintext;
 use kms_grpc::kms::v1::{TypedCiphertext, VerifyProvenCtResponsePayload};
 #[cfg(feature = "non-wasm")]
+use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
+#[cfg(feature = "non-wasm")]
 use kms_grpc::rpc_types::SignedPubDataHandleInternal;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType, SigncryptionPayload};
 use rand::{CryptoRng, Rng, RngCore};
@@ -45,6 +47,8 @@ use tfhe::zk::CompactPkeCrs;
 #[cfg(feature = "non-wasm")]
 use tfhe::Seed;
 use tfhe::ServerKey;
+use tonic_health::pb::health_server::{Health, HealthServer};
+use tonic_health::server::HealthReporter;
 
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::{
@@ -232,6 +236,8 @@ pub struct RealCentralizedKms<
     pub(crate) proven_ct_payload_meta_map: Arc<RwLock<MetaStore<VerifyProvenCtResponsePayload>>>,
     // Rate limiting
     pub(crate) rate_limiter: RateLimiter,
+    // Health reporter for the the grpc server
+    pub(crate) health_reporter: Arc<RwLock<HealthReporter>>,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
     pub(crate) tracker: Arc<TaskTracker>,
     pub(crate) thread_handles: Arc<RwLock<ThreadHandleGroup>>,
@@ -482,7 +488,7 @@ impl<
         private_storage: PrivS,
         backup_storage: Option<BackS>,
         rate_limiter_conf: Option<RateLimiterConfig>,
-    ) -> anyhow::Result<Self> {
+    ) -> anyhow::Result<(Self, HealthServer<impl Health>)> {
         let sks: HashMap<RequestId, PrivateSigKey> =
             read_all_data_versioned(&private_storage, &PrivDataType::SigningKey.to_string())
                 .await?;
@@ -532,21 +538,30 @@ impl<
             key_info,
         );
 
-        Ok(RealCentralizedKms {
-            base_kms: BaseKmsStruct::new(sk)?,
-            crypto_storage,
-            key_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(public_key_info))),
-            dec_meta_store: Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE))),
-            reenc_meta_map: Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE))),
-            crs_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(crs_info))),
-            proven_ct_payload_meta_map: Arc::new(RwLock::new(MetaStore::new(
-                DEC_CAPACITY,
-                MIN_DEC_CACHE,
-            ))),
-            rate_limiter: RateLimiter::new(rate_limiter_conf.unwrap_or_default()),
-            tracker: Arc::new(TaskTracker::new()),
-            thread_handles: Arc::new(RwLock::new(ThreadHandleGroup::new())),
-        })
+        let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
+        // We will serve as soon as the server is started
+        health_reporter
+            .set_serving::<CoreServiceEndpointServer<RealCentralizedKms<PubS, PrivS, PrivS>>>()
+            .await;
+        Ok((
+            RealCentralizedKms {
+                base_kms: BaseKmsStruct::new(sk)?,
+                crypto_storage,
+                key_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(public_key_info))),
+                dec_meta_store: Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE))),
+                reenc_meta_map: Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE))),
+                crs_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(crs_info))),
+                proven_ct_payload_meta_map: Arc::new(RwLock::new(MetaStore::new(
+                    DEC_CAPACITY,
+                    MIN_DEC_CACHE,
+                ))),
+                rate_limiter: RateLimiter::new(rate_limiter_conf.unwrap_or_default()),
+                health_reporter: Arc::new(RwLock::new(health_reporter)),
+                tracker: Arc::new(TaskTracker::new()),
+                thread_handles: Arc::new(RwLock::new(ThreadHandleGroup::new())),
+            },
+            health_service,
+        ))
     }
 }
 
@@ -558,13 +573,19 @@ impl<
     > Shutdown for RealCentralizedKms<PubS, PrivS, BackS>
 {
     async fn shutdown(&self) -> anyhow::Result<()> {
+        self.health_reporter
+            .write()
+            .await
+            .set_not_serving::<CoreServiceEndpointServer<Self>>()
+            .await;
         self.tracker.close();
         self.tracker.wait().await;
-        // TODO add health end points to this
+        tracing::info!("Central core service endpoint server shutdown complete.");
         Ok(())
     }
 }
 
+#[allow(clippy::let_underscore_future)]
 #[cfg(feature = "non-wasm")]
 impl<
         PubS: Storage + Sync + Send + 'static,
@@ -579,6 +600,8 @@ impl<
                 tracing::error!("Error joining threads on drop: {}", e);
             }
         }
+        // Let the shutdown run in the background
+        let _ = self.shutdown();
     }
 }
 
@@ -852,7 +875,7 @@ pub(crate) mod tests {
             compute_cipher(msg.into(), &pub_keys.public_key, None, false)
         };
         let kms = {
-            let inner = RealCentralizedKms::new(
+            let (inner, _health_service) = RealCentralizedKms::new(
                 new_pub_ram_storage_from_existing_keys(&keys.pub_fhe_keys)
                     .await
                     .unwrap(),
@@ -1007,7 +1030,7 @@ pub(crate) mod tests {
         };
 
         let kms = {
-            let mut inner = RealCentralizedKms::new(
+            let (mut inner, _health_service) = RealCentralizedKms::new(
                 new_pub_ram_storage_from_existing_keys(&keys.pub_fhe_keys)
                     .await
                     .unwrap(),
@@ -1111,7 +1134,7 @@ pub(crate) mod tests {
         // i.e., only using a signing key
         // this test makes sure the output is consistent
         let keys = get_test_keys().await;
-        let kms = {
+        let (kms, _health_service) = {
             RealCentralizedKms::new(
                 new_pub_ram_storage_from_existing_keys(&keys.pub_fhe_keys)
                     .await

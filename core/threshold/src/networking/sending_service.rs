@@ -66,9 +66,9 @@ pub trait SendingService: Send + Sync {
 #[derive(Debug, Clone)]
 pub struct GrpcSendingService {
     /// Contains all the information needed by the sync network
-    config: OptionConfigWrapper,
+    pub(crate) config: OptionConfigWrapper,
     /// Contains the certificate bundles
-    certificate_bundle: Option<CertificatePaths>,
+    pub(crate) certificate_bundle: Option<CertificatePaths>,
     thread_handles: Arc<RwLock<ThreadHandleGroup>>,
 }
 
@@ -187,6 +187,30 @@ impl GrpcSendingService {
             tracing::info!("Network task succeeded and transmitted {received_request} values");
         }
     }
+
+    /// Shut down the sending service.
+    pub fn shutdown(&mut self) {
+        match Arc::get_mut(&mut self.thread_handles) {
+            Some(lock) => match RwLock::get_mut(lock) {
+                Ok(handles) => {
+                    let handles = std::mem::take(handles);
+                    match handles.join_all_blocking() {
+                        Ok(_) => tracing::info!(
+                            "Successfully cleaned up all handles in grpc sending service"
+                        ),
+                        Err(e) => tracing::error!("Error joining threads on drop: {}", e),
+                    }
+                }
+                Err(_) => {
+                    tracing::warn!("Could not get exclusive access to thread handles for cleanup")
+                }
+            },
+            None => {
+                tracing::warn!("Thread handles are still referenced elsewhere, skipping cleanup")
+            }
+        }
+        tracing::info!("dropped grpc sending service");
+    }
 }
 
 #[async_trait]
@@ -245,26 +269,7 @@ impl SendingService for GrpcSendingService {
 
 impl Drop for GrpcSendingService {
     fn drop(&mut self) {
-        match Arc::get_mut(&mut self.thread_handles) {
-            Some(lock) => match RwLock::get_mut(lock) {
-                Ok(handles) => {
-                    let handles = std::mem::take(handles);
-                    match handles.join_all_blocking() {
-                        Ok(_) => tracing::info!(
-                            "Successfully cleaned up all handles in grpc sending service"
-                        ),
-                        Err(e) => tracing::error!("Error joining threads on drop: {}", e),
-                    }
-                }
-                Err(_) => {
-                    tracing::warn!("Could not get exclusive access to thread handles for cleanup")
-                }
-            },
-            None => {
-                tracing::warn!("Thread handles are still referenced elsewhere, skipping cleanup")
-            }
-        }
-        tracing::info!("dropped grpc sending service");
+        self.shutdown();
     }
 }
 

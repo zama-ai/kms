@@ -67,6 +67,11 @@ cfg_if::cfg_if! {
         use tfhe::ProvenCompactCiphertextList;
         use tfhe::ServerKey;
         use tfhe_versionable::{Unversionize, Versionize};
+        use tonic::transport::Channel;
+        use tonic_health::pb::health_client::HealthClient;
+        use tonic_health::ServingStatus;
+        use tonic_health::pb::HealthCheckRequest;
+        use crate::consts::{DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES};
     }
 }
 
@@ -2067,6 +2072,60 @@ pub fn recover_ecdsa_public_key_from_signature(
     ))
 }
 
+/// Wait for a server to be ready for requests. I.e. wait until it enters the SERVING state.
+/// Note that this method may panic if the server does not become ready within a certain time frame.
+#[cfg(feature = "non-wasm")]
+pub async fn await_server_ready(service_name: &str, port: u16) {
+    let mut wrapped_client = get_health_client(port).await;
+    let mut client_tries = 1;
+    while wrapped_client.is_err() {
+        if client_tries >= MAX_TRIES {
+            panic!("Failed to start health client on server {service_name} on port {port}");
+        }
+        wrapped_client = get_health_client(port).await;
+        client_tries += 1;
+    }
+    // We can safely unwrap here since we know the wrapped client does not contain an error
+    let mut client = wrapped_client.unwrap();
+    let mut status = get_status(&mut client, service_name).await;
+    let mut service_tries = 1;
+    while status.is_err()
+        || status
+            .clone()
+            .is_ok_and(|status| status == ServingStatus::NotServing as i32)
+    {
+        if service_tries >= MAX_TRIES {
+            panic!(
+                "Failed to get health status on {service_name} on port {port}. Status: {:?}",
+                status
+            );
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        status = get_status(&mut client, service_name).await;
+        service_tries += 1;
+    }
+}
+
+#[cfg(feature = "non-wasm")]
+async fn get_health_client(port: u16) -> anyhow::Result<HealthClient<Channel>> {
+    let server_address = &format!("{DEFAULT_PROTOCOL}://{DEFAULT_URL}:{}", port);
+    let channel_builder = Channel::from_shared(server_address.to_string())?;
+    let channel = channel_builder.connect().await?;
+    Ok(HealthClient::new(channel))
+}
+
+#[cfg(feature = "non-wasm")]
+async fn get_status(
+    health_client: &mut HealthClient<Channel>,
+    service_name: &str,
+) -> Result<i32, tonic::Status> {
+    let request = tonic::Request::new(HealthCheckRequest {
+        service: service_name.to_string(),
+    });
+    let response = health_client.check(request).await?;
+    Ok(response.into_inner().status)
+}
+
 // TODO this module should be behind cfg(test) normally
 // but we need it in other places such as the connector
 // and cfg(test) is not compiled by tests in other crates.
@@ -2075,17 +2134,13 @@ pub fn recover_ecdsa_public_key_from_signature(
 #[cfg(feature = "non-wasm")]
 pub mod test_tools {
     use super::*;
-    use crate::consts::{
-        DEC_CAPACITY, DEFAULT_PROT, DEFAULT_URL, INFLIGHT_REQUEST_WAITING_TIME, MIN_DEC_CACHE,
-    };
+    use crate::consts::{DEC_CAPACITY, DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES, MIN_DEC_CACHE};
     use crate::engine::centralized::central_kms::RealCentralizedKms;
-    use crate::engine::run_server;
     use crate::engine::threshold::service_real::threshold_server_init;
+    use crate::engine::{run_server, Shutdown};
     use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
     use crate::util::rate_limiter::RateLimiterConfig;
-    use crate::vault::storage::{
-        file::FileStorage, ram::RamStorage, Storage, StorageType, StorageVersion,
-    };
+    use crate::vault::storage::{file::FileStorage, Storage, StorageType};
     use crate::{
         conf::{
             threshold::{PeerConf, ThresholdPartyConf},
@@ -2094,6 +2149,7 @@ pub mod test_tools {
         util::random_free_port::random_free_ports,
     };
     use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
+    use distributed_decryption::networking::grpc::GrpcServer;
     use futures_util::FutureExt;
     use itertools::Itertools;
     use kms_common::DecryptionMode;
@@ -2101,12 +2157,8 @@ pub mod test_tools {
     use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
     use std::str::FromStr;
     use std::sync::Arc;
-    use tokio::sync::RwLock;
-    use tokio::task::JoinHandle;
+    use tonic::server::NamedService;
     use tonic::transport::{Channel, Uri};
-
-    // Maximum number of attempts to try to wait for a result to be done on the server
-    pub const MAX_TRIES: usize = 50;
 
     #[cfg(feature = "slow_tests")]
     use crate::util::key_setup::test_tools::setup::ensure_default_material_exists;
@@ -2130,16 +2182,16 @@ pub mod test_tools {
         tracing::info!("Spawning servers...");
         let num_parties = priv_storage.len();
         let ip_addr = DEFAULT_URL.parse().unwrap();
-        let client_ports = random_free_ports(50000, 55000, &ip_addr, num_parties)
+        let service_ports = random_free_ports(50000, 55000, &ip_addr, num_parties)
             .await
             .unwrap();
-        let peer_ports = random_free_ports(55000, 60000, &ip_addr, num_parties)
+        let mpc_ports = random_free_ports(55000, 60000, &ip_addr, num_parties)
             .await
             .unwrap();
 
-        tracing::info!("client ports: {:?}", client_ports);
-        tracing::info!("peer ports: {:?}", peer_ports);
-        let peers = peer_ports
+        tracing::info!("service ports: {:?}", service_ports);
+        tracing::info!("MPC ports: {:?}", mpc_ports);
+        let mpc_confs = mpc_ports
             .into_iter()
             .enumerate()
             .map(|(i, port)| PeerConf {
@@ -2154,29 +2206,30 @@ pub mod test_tools {
         let decryption_mode = decryption_mode.unwrap_or(DEFAULT_DECRYPTION_MODE);
 
         // a vector of sender that will trigger shutdown of core/threshold servers
-        let mut ddec_shutdown_txs = Vec::new();
+        let mut mpc_shutdown_txs = Vec::new();
 
         for i in 1..=num_parties {
             let cur_pub_storage = pub_storage[i - 1].to_owned();
             let cur_priv_storage = priv_storage[i - 1].to_owned();
             let service_config = ServiceEndpoint {
                 listen_address: ip_addr.to_string(),
-                listen_port: client_ports[i - 1],
+                listen_port: service_ports[i - 1],
                 timeout_secs: 60u64,
                 grpc_max_message_size: 2 * 10 * 1024 * 1024, // 20 MiB
             };
-            let peers = peers.clone();
+            let mpc_conf = mpc_confs.clone();
 
             // create channels that will trigger core/threshold shutdown
-            let (tx, rx) = tokio::sync::oneshot::channel();
-            ddec_shutdown_txs.push(tx);
+            let (mpc_core_tx, mpc_core_rx): (
+                tokio::sync::oneshot::Sender<()>,
+                tokio::sync::oneshot::Receiver<()>,
+            ) = tokio::sync::oneshot::channel();
+            mpc_shutdown_txs.push(mpc_core_tx);
             let rl_conf = rate_limiter_conf.clone();
-            let (health_reporter, health_service) = tonic_health::server::health_reporter();
-            let thread_health_reporter = Arc::new(RwLock::new(health_reporter));
             handles.push(tokio::spawn(async move {
                 let threshold_party_config = ThresholdPartyConf {
-                    listen_address: peers[i - 1].address.clone(),
-                    listen_port: peers[i - 1].port,
+                    listen_address: mpc_conf[i - 1].address.clone(),
+                    listen_port: mpc_conf[i - 1].port,
                     threshold,
                     dec_capacity: DEC_CAPACITY,
                     min_dec_cache: MIN_DEC_CACHE,
@@ -2185,7 +2238,7 @@ pub mod test_tools {
                     num_sessions_preproc: None,
                     tls_cert_path: None,
                     tls_key_path: None,
-                    peers,
+                    peers: mpc_conf,
                     core_to_core_net: None,
                     decryption_mode,
                 };
@@ -2198,17 +2251,10 @@ pub mod test_tools {
                     None as Option<PrivS>,
                     run_prss,
                     rl_conf,
-                    thread_health_reporter.clone(),
-                    rx.map(drop),
+                    mpc_core_rx.map(drop),
                 )
                 .await;
-                (
-                    i,
-                    server,
-                    service_config,
-                    thread_health_reporter,
-                    health_service,
-                )
+                (i, server, service_config)
             }));
         }
         assert_eq!(handles.len(), num_parties);
@@ -2216,50 +2262,53 @@ pub mod test_tools {
         tracing::info!("Client waiting for server");
         let mut servers = Vec::with_capacity(num_parties);
         for cur_handle in handles {
-            let (i, kms_server_res, service_config, health_reporter, health_service) =
-                cur_handle.await.unwrap();
+            let (i, kms_server_res, service_config) =
+                cur_handle.await.expect("Server {i} failed to start");
             match kms_server_res {
-                Ok(kms_server) => servers.push((
-                    i,
-                    kms_server,
-                    service_config,
-                    health_reporter,
-                    health_service,
-                )),
+                Ok((kms_server, health_service)) => {
+                    servers.push((i, kms_server, service_config, health_service))
+                }
                 Err(e) => panic!("Failed to start server {i} with error {:?}", e),
             }
         }
         tracing::info!("Servers initialized. Starting servers...");
         let mut server_handles = HashMap::new();
-        for ((i, cur_server, service_config, cur_health_reporter, cur_health_service), ddec_tx) in
-            servers.into_iter().zip(ddec_shutdown_txs)
+        for ((i, cur_server, service_config, cur_health_service), cur_mpc_shutdown) in
+            servers.into_iter().zip(mpc_shutdown_txs)
         {
-            let (core_shutdown_tx, core_shutdown_rx) = tokio::sync::oneshot::channel();
-            let handle = tokio::spawn(async move {
+            let cur_arc_server = Arc::new(cur_server);
+            let arc_server_clone = Arc::clone(&cur_arc_server);
+            let (server_shutdown_tx, server_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+            tokio::spawn(async move {
                 run_server(
                     service_config,
-                    cur_server,
-                    cur_health_reporter,
+                    cur_arc_server,
                     cur_health_service,
-                    core_shutdown_rx.map(drop),
+                    server_shutdown_rx.map(drop),
                 )
                 .await
                 .expect("Failed to start threshold server");
             });
             server_handles.insert(
                 i as u32,
-                ServerHandle::new(client_ports[i - 1], handle, core_shutdown_tx, Some(ddec_tx)),
+                ServerHandle::new_threshold(
+                    arc_server_clone,
+                    service_ports[i - 1],
+                    mpc_confs[i - 1].port,
+                    server_shutdown_tx,
+                    cur_mpc_shutdown,
+                ),
             );
+            // Wait until MPC server is ready, this should happen as soon as the MPC server boots up
+            let threshold_service_name = <GrpcServer as NamedService>::NAME;
+            await_server_ready(threshold_service_name, mpc_confs[i - 1].port).await;
+            // Observe that we don't check that the core server is ready here. The reason is that it depends on whether PRSS has been executed or loaded from disc.
+            // Thus if requests are send to the core without PRSS being executed, then a failure will happen.
         }
-        // We need to sleep as the servers keep running in the background and hence do not return
-        tokio::time::sleep(tokio::time::Duration::from_secs(
-            2 * (num_parties as u64) / 4,
-        ))
-        .await;
         server_handles
     }
 
-    /// try to connect to a URI and retry every 200ms for 25 times before giving up after 5 seconds.
+    /// try to connect to a URI and retry every 200ms for 50 times before giving up after 5 seconds.
     pub async fn connect_with_retry(uri: Uri) -> Channel {
         tracing::info!("Client connecting to {}", uri);
         let mut channel = Channel::builder(uri.clone()).connect().await;
@@ -2292,13 +2341,17 @@ pub mod test_tools {
         }
     }
 
-    async fn check_port_is_closed(port: u16) {
-        let addr = std::net::SocketAddr::new(DEFAULT_URL.parse().unwrap(), port);
+    pub(crate) async fn check_port_is_closed(port: u16) {
+        let addr = std::net::SocketAddr::new(
+            DEFAULT_URL.parse().expect("Default URL cannot be parsed"),
+            port,
+        );
         // try for 10 seconds to wait for the ports to close
         for _ in 0..10 {
             let res = tokio::net::TcpListener::bind(addr).await;
             match res {
-                Ok(_) => {
+                Ok(listener) => {
+                    drop(listener);
                     // port is closed if we can bind again
                     break;
                 }
@@ -2307,52 +2360,84 @@ pub mod test_tools {
                     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                 }
             }
-
-            // at this point the port must be closed, so we should be able to bind again
-            _ = tokio::net::TcpListener::bind(addr).await.unwrap();
         }
     }
 
+    /// Helper struct for managing servers in testing
     pub struct ServerHandle {
-        pub port: u16,
-        pub handle: JoinHandle<()>,
-        pub core_shutdown_tx: tokio::sync::oneshot::Sender<()>,
-        pub ddec_shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+        pub server: Arc<dyn Shutdown>,
+        // The service port is the port that is used to connect to the core server
+        pub service_port: u16,
+        // In the threshold setting the mpc port is the port that is used to connect to the other MPC parties
+        pub mpc_port: Option<u16>,
+        // The handle to shut down the core service which is receiving the external requests
+        pub service_shutdown_tx: tokio::sync::oneshot::Sender<()>,
+        // The handle to shut down the optional MPC server
+        pub mpc_shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
     }
 
     impl ServerHandle {
-        pub fn new(
-            port: u16,
-            handle: JoinHandle<()>,
-            core_shutdown_tx: tokio::sync::oneshot::Sender<()>,
-            ddec_shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+        pub fn new_threshold(
+            server: Arc<dyn Shutdown>,
+            service_port: u16,
+            mpc_port: u16,
+            service_shutdown_tx: tokio::sync::oneshot::Sender<()>,
+            mpc_shutdown_tx: tokio::sync::oneshot::Sender<()>,
         ) -> Self {
             Self {
-                port,
-                handle,
-                core_shutdown_tx,
-                ddec_shutdown_tx,
+                server,
+                service_port,
+                mpc_port: Some(mpc_port),
+                service_shutdown_tx,
+                mpc_shutdown_tx: Some(mpc_shutdown_tx),
             }
         }
 
+        pub fn new_centralized(
+            server: Arc<dyn Shutdown>,
+            service_port: u16,
+            service_shutdown_tx: tokio::sync::oneshot::Sender<()>,
+        ) -> Self {
+            Self {
+                server,
+                service_port,
+                mpc_port: None,
+                service_shutdown_tx,
+                mpc_shutdown_tx: None,
+            }
+        }
+
+        pub fn service_port(&self) -> u16 {
+            self.service_port
+        }
+
+        pub fn mpc_port(&self) -> Option<u16> {
+            self.mpc_port
+        }
+
         pub async fn assert_shutdown(self) {
-            // the receiver should not be closed, that's why we unwrap
-            self.core_shutdown_tx.send(()).unwrap();
-            if let Some(chan) = self.ddec_shutdown_tx {
-                chan.send(()).unwrap();
+            // Call shutdown so we can await the server to shut down even though sending the shutdown signal already calls this
+            self.server
+                .shutdown()
+                .await
+                .expect("Failed to await core service server shutdown");
+            // Shut down the core server
+            // The receiver should not be closed, that's why we unwrap
+            self.service_shutdown_tx
+                .send(())
+                .expect("Could not send shut down signal to  core server");
+
+            if let Some(chan) = self.mpc_shutdown_tx {
+                // Shut down MPC server
+                chan.send(())
+                    .expect("Could not send shut down signal to the MPC server");
             }
 
-            // wait a bit before we abort everything, which should succeed
-            tokio::time::sleep(tokio::time::Duration::from_secs(
-                INFLIGHT_REQUEST_WAITING_TIME * 2,
-            ))
-            .await;
-
-            // at the point the task should be aborted
-            // so awaiting the handle should not result in an error
-            self.handle.abort();
-            self.handle.await.unwrap();
-            check_port_is_closed(self.port).await;
+            // Validate that both the MPC and server are fully closed
+            check_port_is_closed(self.service_port).await;
+            if let Some(mpc_port) = self.mpc_port {
+                check_port_is_closed(mpc_port).await;
+            }
         }
     }
 
@@ -2372,7 +2457,7 @@ pub mod test_tools {
     ) {
         let num_parties = priv_storage.len();
         // Setup the threshold scheme with lazy PRSS generation
-        let server_handles = setup_threshold_no_client(
+        let server_handles = setup_threshold_no_client::<PubS, PrivS>(
             threshold,
             pub_storage,
             priv_storage,
@@ -2384,8 +2469,11 @@ pub mod test_tools {
         assert_eq!(server_handles.len(), num_parties);
         let mut client_handles = HashMap::new();
 
-        for (i, handle) in &server_handles {
-            let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", handle.port);
+        for (i, server_handle) in &server_handles {
+            let url = format!(
+                "{DEFAULT_PROTOCOL}://{DEFAULT_URL}:{}",
+                server_handle.service_port()
+            );
             let uri = Uri::from_str(&url).unwrap();
             let channel = connect_with_retry(uri).await;
             client_handles.insert(*i, CoreServiceEndpointClient::new(channel));
@@ -2412,41 +2500,33 @@ pub mod test_tools {
         // which cores are running in the centralized mode from the logs
         let listen_port = random_free_ports(60000, 61000, &ip_addr, 1).await.unwrap()[0];
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let server_handle = tokio::spawn(async move {
+        let (kms, health_service) = RealCentralizedKms::new(
+            pub_storage,
+            priv_storage,
+            None as Option<PrivS>,
+            rate_limiter_conf,
+        )
+        .await
+        .expect("Could not create KMS");
+        let arc_kms = Arc::new(kms);
+        let arc_kms_clone = Arc::clone(&arc_kms);
+        tokio::spawn(async move {
             let config = ServiceEndpoint {
                 listen_address: ip_addr.to_string(),
                 listen_port,
                 timeout_secs: 360,
                 grpc_max_message_size: 2 * 10 * 1024 * 1024, // 20 MiB to allow for 2048 bit encryptions
             };
-            let (health_reporter, health_service) = tonic_health::server::health_reporter();
-            let thread_health_reporter = Arc::new(RwLock::new(health_reporter));
-            // We will serve as soon as the server is started
-            thread_health_reporter
-                .write()
+
+            run_server(config, arc_kms, health_service, rx.map(drop))
                 .await
-                .set_serving::<CoreServiceEndpointServer<RealCentralizedKms<PubS, PrivS, PrivS>>>()
-                .await;
-            run_server(
-                config,
-                RealCentralizedKms::new(
-                    pub_storage,
-                    priv_storage,
-                    None as Option<PrivS>,
-                    rate_limiter_conf,
-                )
-                .await
-                .expect("Could not create KMS"),
-                thread_health_reporter,
-                health_service,
-                rx.map(drop),
-            )
-            .await
-            .expect("Could not start server");
+                .expect("Could not start server");
         });
-        // We have to wait for the server to start since it will keep running in the background
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-        ServerHandle::new(listen_port, server_handle, tx, None)
+        let service_name = <CoreServiceEndpointServer<
+            RealCentralizedKms<FileStorage, FileStorage, FileStorage>,
+        > as NamedService>::NAME;
+        await_server_ready(service_name, listen_port).await;
+        ServerHandle::new_centralized(arc_kms_clone, listen_port, tx)
     }
 
     pub(crate) async fn setup_centralized<
@@ -2462,7 +2542,10 @@ pub mod test_tools {
     ) {
         let server_handle =
             setup_centralized_no_client(pub_storage, priv_storage, rate_limiter_conf).await;
-        let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", server_handle.port);
+        let url = format!(
+            "{DEFAULT_PROTOCOL}://{DEFAULT_URL}:{}",
+            server_handle.service_port
+        );
         let uri = Uri::from_str(&url).unwrap();
         let channel = connect_with_retry(uri).await;
         let client = CoreServiceEndpointClient::new(channel);
@@ -2473,23 +2556,13 @@ pub mod test_tools {
     /// server, client end-point connection (which is needed to communicate with the server) and
     /// an internal client (for constructing requests and validating responses).
     pub async fn centralized_handles(
-        storage_version: StorageVersion,
         param: &DKGParams,
         rate_limiter_conf: Option<RateLimiterConfig>,
     ) -> (ServerHandle, CoreServiceEndpointClient<Channel>, Client) {
-        let (kms_server, kms_client) = match storage_version {
-            StorageVersion::Dev => {
-                let priv_storage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
-                let pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
-                setup_centralized(pub_storage, priv_storage, rate_limiter_conf).await
-            }
-            StorageVersion::Ram => {
-                let pub_storage = RamStorage::new(StorageType::PUB);
-                let priv_storage = RamStorage::new(StorageType::PRIV);
-                setup_centralized(pub_storage, priv_storage, rate_limiter_conf).await
-            }
-        };
-        // TODO why are these FileStorage and not depend on the StorageVersion?
+        let priv_storage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
+        let pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
+        let (kms_server, kms_client) =
+            setup_centralized(pub_storage, priv_storage, rate_limiter_conf).await;
         let pub_storage = vec![FileStorage::new(None, StorageType::PUB, None).unwrap()];
         let client_storage = FileStorage::new(None, StorageType::CLIENT, None).unwrap();
         let internal_client = Client::new_client(client_storage, pub_storage, param, None)
@@ -2503,21 +2576,22 @@ pub mod test_tools {
 pub(crate) mod tests {
     use super::test_tools::ServerHandle;
     use super::{recover_ecdsa_public_key_from_signature, Client};
-    use crate::client::assemble_metadata_alloy;
-    use crate::client::test_tools::MAX_TRIES;
+    use crate::client::test_tools::check_port_is_closed;
     #[cfg(feature = "wasm_tests")]
     use crate::client::TestingReencryptionTranscript;
+    use crate::client::{
+        assemble_metadata_alloy, await_server_ready, get_health_client, get_status,
+    };
     use crate::client::{ParsedReencryptionRequest, ServerIdentities};
     use crate::consts::DEFAULT_THRESHOLD;
+    use crate::consts::MAX_TRIES;
     use crate::consts::PRSS_EPOCH_ID;
-    #[cfg(feature = "wasm_tests")]
-    use crate::consts::TEST_CENTRAL_KEY_ID;
     use crate::consts::TEST_PARAM;
     use crate::consts::TEST_THRESHOLD_CRS_ID_4P;
     use crate::consts::TEST_THRESHOLD_CRS_ID_7P;
     use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
     use crate::consts::TEST_THRESHOLD_KEY_ID_7P;
-    use crate::consts::{DEFAULT_AMOUNT_PARTIES, DEFAULT_PROT, DEFAULT_URL};
+    use crate::consts::{DEFAULT_AMOUNT_PARTIES, TEST_CENTRAL_KEY_ID};
     #[cfg(feature = "slow_tests")]
     use crate::consts::{
         DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_CRS_ID_7P,
@@ -2540,7 +2614,7 @@ pub(crate) mod tests {
     };
     use crate::util::rate_limiter::RateLimiterConfig;
     use crate::vault::storage::StorageReader;
-    use crate::vault::storage::{file::FileStorage, ram::RamStorage, StorageType, StorageVersion};
+    use crate::vault::storage::{file::FileStorage, StorageType};
     use alloy_primitives::Bytes;
     use alloy_signer::Signer;
     use alloy_signer_local::PrivateKeySigner;
@@ -2548,6 +2622,7 @@ pub(crate) mod tests {
     use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
     #[cfg(feature = "wasm_tests")]
     use distributed_decryption::execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
+    use distributed_decryption::networking::grpc::GrpcServer;
     use kms_common::DecryptionMode;
     #[cfg(feature = "wasm_tests")]
     use kms_grpc::kms::v1::TypedPlaintext;
@@ -2567,11 +2642,10 @@ pub(crate) mod tests {
     use tonic::server::NamedService;
     use tonic::transport::Channel;
     use tonic_health::pb::health_check_response::ServingStatus;
-    use tonic_health::pb::health_client::HealthClient;
     use tonic_health::pb::HealthCheckRequest;
 
     // Time to sleep to ensure that previous servers and tests have shut down properly.
-    const TIME_TO_SLEEP_MS: u64 = 800;
+    const TIME_TO_SLEEP_MS: u64 = 500;
 
     fn dummy_domain() -> alloy_sol_types::Eip712Domain {
         alloy_sol_types::eip712_domain!(
@@ -2588,7 +2662,6 @@ pub(crate) mod tests {
     /// client is returned (which is responsible for constructing requests and validating
     /// responses).
     async fn threshold_handles(
-        storage_version: StorageVersion,
         params: DKGParams,
         amount_parties: usize,
         run_prss: bool,
@@ -2601,42 +2674,21 @@ pub(crate) mod tests {
     ) {
         // Compute threshold < amount_parties/3
         let threshold = max_threshold(amount_parties);
-        let (kms_servers, kms_clients) = match storage_version {
-            StorageVersion::Dev => {
-                let mut pub_storage = Vec::new();
-                let mut priv_storage = Vec::new();
-                for i in 1..=amount_parties {
-                    priv_storage.push(FileStorage::new(None, StorageType::PRIV, Some(i)).unwrap());
-                    pub_storage.push(FileStorage::new(None, StorageType::PUB, Some(i)).unwrap());
-                }
-                super::test_tools::setup_threshold(
-                    threshold as u8,
-                    pub_storage,
-                    priv_storage,
-                    run_prss,
-                    rate_limiter_conf,
-                    decryption_mode,
-                )
-                .await
-            }
-            StorageVersion::Ram => {
-                let mut pub_storage = Vec::new();
-                let mut priv_storage = Vec::new();
-                for _i in 1..=amount_parties {
-                    priv_storage.push(RamStorage::new(StorageType::PRIV));
-                    pub_storage.push(RamStorage::new(StorageType::PUB));
-                }
-                super::test_tools::setup_threshold(
-                    threshold as u8,
-                    pub_storage,
-                    priv_storage,
-                    run_prss,
-                    rate_limiter_conf,
-                    decryption_mode,
-                )
-                .await
-            }
-        };
+        let mut pub_storage = Vec::new();
+        let mut priv_storage = Vec::new();
+        for i in 1..=amount_parties {
+            priv_storage.push(FileStorage::new(None, StorageType::PRIV, Some(i)).unwrap());
+            pub_storage.push(FileStorage::new(None, StorageType::PUB, Some(i)).unwrap());
+        }
+        let (kms_servers, kms_clients) = super::test_tools::setup_threshold(
+            threshold as u8,
+            pub_storage,
+            priv_storage,
+            run_prss,
+            rate_limiter_conf,
+            decryption_mode,
+        )
+        .await;
         let mut pub_storage = Vec::with_capacity(amount_parties);
         for i in 1..=amount_parties {
             pub_storage.push(FileStorage::new(None, StorageType::PUB, Some(i)).unwrap());
@@ -2680,16 +2732,16 @@ pub(crate) mod tests {
         assert_eq!(recovered_pk, client_pk);
     }
 
+    /// Check that the centralized health service is serving as soons as boot is completed.
     #[tokio::test]
     #[serial]
     async fn test_central_health_endpoint_availability() {
         let (kms_server, _kms_client, _internal_client) =
-            super::test_tools::centralized_handles(StorageVersion::Dev, &TEST_PARAM, None).await;
-        let server_address = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", kms_server.port);
-
-        let channel_builder = Channel::from_shared(server_address).unwrap();
-        let channel = channel_builder.connect().await.unwrap();
-        let mut client = HealthClient::new(channel);
+            super::test_tools::centralized_handles(&TEST_PARAM, None).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
+        let mut health_client = get_health_client(kms_server.service_port)
+            .await
+            .expect("Failed to get health client");
         let service_name = <CoreServiceEndpointServer<
             RealCentralizedKms<FileStorage, FileStorage, FileStorage>,
         > as NamedService>::NAME;
@@ -2697,7 +2749,7 @@ pub(crate) mod tests {
             service: service_name.to_string(),
         });
 
-        let response = client
+        let response = health_client
             .check(request)
             .await
             .expect("Health check request failed");
@@ -2712,8 +2764,11 @@ pub(crate) mod tests {
     }
 
     /// Test that the health endpoint is available for the threshold service only *after* they have been initialized.
+    /// Also check that shutdown of the servers triggers the health endpoint to stop serving as expected.
+    /// This tests validates the availability of both the core service but also the internal service between the MPC parties.
     ///
-    /// We do this by *not* running PRSS at boot and ensure no old PRSS data is there.
+    /// The crux of the test is based on the fact that the MPC servers serve immidiately but the core server only serves after
+    /// the PRSS initialization has been completed.
     #[tokio::test]
     #[serial]
     async fn test_threshold_health_endpoint_availability() {
@@ -2724,44 +2779,59 @@ pub(crate) mod tests {
         ))
         .unwrap();
         purge(None, None, &req_id.to_string(), DEFAULT_AMOUNT_PARTIES).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
 
         // DON'T setup PRSS in order to ensure the server is not ready yet
-        let (kms_servers, kms_clients, _internal_client) = threshold_handles(
-            StorageVersion::Dev,
-            TEST_PARAM,
-            DEFAULT_AMOUNT_PARTIES,
-            false,
-            None,
-            None,
+        let (kms_servers, kms_clients, mut internal_client) =
+            threshold_handles(TEST_PARAM, DEFAULT_AMOUNT_PARTIES, false, None, None).await;
+
+        // Validate that the core server is not ready
+        let (dec_tasks, req_id) = send_dec_reqs(
+            1,
+            &TEST_THRESHOLD_KEY_ID_4P,
+            &kms_clients,
+            &mut internal_client,
         )
         .await;
+        let dec_res = dec_tasks.join_all().await;
+        // Even though servers are not initialized they will accept the requests
+        assert!(dec_res.iter().all(|res| res.is_ok()));
+        // But the response will result in an error
+        let dec_resp_tasks = get_dec_resp(&req_id, &kms_clients).await;
+        let dec_resp_res = dec_resp_tasks.join_all().await;
+        assert!(dec_resp_res.iter().all(|res| res.is_err()));
 
-        // Set server address for server 1
-        let server_address = &format!(
-            "{DEFAULT_PROT}://{DEFAULT_URL}:{}",
-            kms_servers.get(&1).unwrap().port
-        );
-
-        let channel_builder = Channel::from_shared(server_address.to_string()).unwrap();
-        let channel = channel_builder.connect().await.unwrap();
-        let mut health_client = HealthClient::new(channel);
-        let service_name = <CoreServiceEndpointServer<
+        // Get health client for main server 1
+        let mut main_health_client = get_health_client(kms_servers.get(&1).unwrap().service_port)
+            .await
+            .expect("Failed to get core health client");
+        let core_service_name = <CoreServiceEndpointServer<
             RealThresholdKms<FileStorage, FileStorage, FileStorage>,
         > as NamedService>::NAME;
-        let request = tonic::Request::new(HealthCheckRequest {
-            service: service_name.to_string(),
-        });
-
-        let response = health_client
-            .check(request)
+        let status = get_status(&mut main_health_client, core_service_name)
             .await
-            .expect("Health check request failed");
-
-        let status = response.into_inner().status;
+            .unwrap();
+        // Check that the main server is not serving since it has not been initialized yet
         assert_eq!(
             status,
             ServingStatus::NotServing as i32,
             "Service is not in NOT_SERVING status. Got status: {}",
+            status
+        );
+        // Get health client for main server 1
+        let mut threshold_health_client =
+            get_health_client(kms_servers.get(&1).unwrap().mpc_port.unwrap())
+                .await
+                .expect("Failed to get threshold health client");
+        let threshold_service_name = <GrpcServer as NamedService>::NAME;
+        let status = get_status(&mut threshold_health_client, threshold_service_name)
+            .await
+            .unwrap();
+        // Threshold servers will start serving as soon as they boot
+        assert_eq!(
+            status,
+            ServingStatus::Serving as i32,
+            "Service is not in SERVING status. Got status: {}",
             status
         );
 
@@ -2778,10 +2848,58 @@ pub(crate) mod tests {
         while let Some(inner) = req_tasks.join_next().await {
             assert!(inner.unwrap().is_ok());
         }
+        let status = get_status(&mut main_health_client, core_service_name)
+            .await
+            .unwrap();
+        assert_eq!(
+            status,
+            ServingStatus::Serving as i32,
+            "Service is not in SERVING status. Got status: {}",
+            status
+        );
 
+        // Shutdown the servers and check that the health endpoint is no longer serving
+        for (_, server) in kms_servers {
+            // Shut down MPC servers triggers a shutdown of the core server
+            server.mpc_shutdown_tx.unwrap().send(()).unwrap();
+        }
+        //  The core server should not be serving
+        let mut status = get_status(&mut main_health_client, core_service_name).await;
+        // As long as the server is open check that it is not serving
+        while status.is_ok() {
+            assert_eq!(
+                status.clone().unwrap(),
+                ServingStatus::NotServing as i32,
+                "Service is not in NOT_SERVING status. Got status: {}",
+                status.unwrap()
+            );
+            // Sleep a bit and check whether the server has shut down
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            status = get_status(&mut main_health_client, core_service_name).await;
+        }
+
+        // The MPC servers should be closed at this point
+        let status = get_status(&mut threshold_health_client, threshold_service_name).await;
+        assert!(status.is_err(),);
+    }
+
+    /// Validate that dropping the server signal triggers the server to shut down
+    #[tokio::test]
+    #[serial]
+    async fn test_central_close_after_drop() {
+        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
+        let (kms_server, kms_client, mut internal_client) =
+            super::test_tools::centralized_handles(&TEST_PARAM, None).await;
+        let mut health_client = get_health_client(kms_server.service_port)
+            .await
+            .expect("Failed to get health client");
+        let service_name = <CoreServiceEndpointServer<
+            RealCentralizedKms<FileStorage, FileStorage, FileStorage>,
+        > as NamedService>::NAME;
         let request = tonic::Request::new(HealthCheckRequest {
             service: service_name.to_string(),
         });
+
         let response = health_client
             .check(request)
             .await
@@ -2794,6 +2912,234 @@ pub(crate) mod tests {
             "Service is not in SERVING status. Got status: {}",
             status
         );
+        let client_map = HashMap::from([(1, kms_client)]);
+        // Keep the server occupied so it won't shut down immidiately after dropping the handle
+        let (tasks, req_id) =
+            send_dec_reqs(3, &TEST_CENTRAL_KEY_ID, &client_map, &mut internal_client).await;
+        // Drop server
+        drop(kms_server);
+        // Get status and validate that it is not serving
+        let status = get_status(&mut health_client, service_name).await.unwrap();
+        // Threshold servers will start serving as soon as they boot
+        // WARNING there is a risk this check fails if the server is shut down before was can complete the status check
+        assert_eq!(
+            status,
+            ServingStatus::NotServing as i32,
+            "Service is not in NOT SERVING status. Got status: {}",
+            status
+        );
+        // Wait for dec tasks to be done
+        let dec_res = tasks.join_all().await;
+        assert!(dec_res.iter().all(|res| res.is_ok()));
+        // And wait for decryption to also be done
+        let dec_resp_tasks = get_dec_resp(&req_id, &client_map).await;
+        let dec_resp_res = dec_resp_tasks.join_all().await;
+        // TODO the response for the server that were not dropped should actually be ok since we only drop one <=t server
+        assert!(dec_resp_res.iter().all(|res| res.is_err()));
+        // Check the server is no longer there
+        assert!(get_status(&mut health_client, service_name).await.is_err());
+    }
+
+    /// Validate that dropping the server signal triggers the server to shut down
+    #[tokio::test]
+    #[serial]
+    async fn test_threshold_close_after_drop() {
+        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
+        // If PRSS is not already present, then let us retry and include prss initialization
+        let (mut kms_servers, _kms_clients, _internal_client) =
+            threshold_handles(TEST_PARAM, DEFAULT_AMOUNT_PARTIES, false, None, None).await;
+
+        // Get health client for main server 1
+        let mut core_health_client = get_health_client(kms_servers.get(&1).unwrap().service_port)
+            .await
+            .expect("Failed to get core health client");
+        let core_service_name = <CoreServiceEndpointServer<
+            RealThresholdKms<FileStorage, FileStorage, FileStorage>,
+        > as NamedService>::NAME;
+        // Get health client for main server 1
+        let mut threshold_health_client =
+            get_health_client(kms_servers.get(&1).unwrap().mpc_port.unwrap())
+                .await
+                .expect("Failed to get threshold health client");
+        let threshold_service_name = <GrpcServer as NamedService>::NAME;
+        // Check things are working
+        let status = get_status(&mut core_health_client, core_service_name)
+            .await
+            .unwrap();
+        assert_eq!(
+            status,
+            ServingStatus::Serving as i32,
+            "Service is not in SERVING status. Got status: {}",
+            status
+        );
+        let status = get_status(&mut threshold_health_client, threshold_service_name)
+            .await
+            .unwrap();
+        assert_eq!(
+            status,
+            ServingStatus::Serving as i32,
+            "Service is not in SERVING status. Got status: {}",
+            status
+        );
+        let res = kms_servers.remove(&1).unwrap();
+        // Trigger the shutdown
+        drop(res);
+        // Sleep to allow completion of the shut down which should be quick since we waited for existing tasks to be done
+        tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+        // Check the server is no longer there
+        assert!(get_status(&mut core_health_client, core_service_name)
+            .await
+            .is_err());
+        assert!(
+            get_status(&mut threshold_health_client, threshold_service_name)
+                .await
+                .is_err()
+        );
+    }
+
+    /// Validate that shutdown signals work
+    #[tokio::test]
+    #[serial]
+    async fn test_threshold_shutdown() {
+        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
+        let (mut kms_servers, kms_clients, mut internal_client) =
+            threshold_handles(TEST_PARAM, DEFAULT_AMOUNT_PARTIES, true, None, None).await;
+        // Ensure that the servers are ready
+        for cur_handle in kms_servers.values() {
+            let service_name = <CoreServiceEndpointServer<
+                RealThresholdKms<FileStorage, FileStorage, FileStorage>,
+            > as NamedService>::NAME;
+            await_server_ready(service_name, cur_handle.service_port).await;
+        }
+        let mpc_port = kms_servers.get(&1).unwrap().mpc_port.unwrap();
+        let service_port = kms_servers.get(&1).unwrap().service_port;
+        // Get health client for main server 1
+        let mut core_health_client = get_health_client(kms_servers.get(&1).unwrap().service_port)
+            .await
+            .expect("Failed to get core health client");
+        let core_service_name = <CoreServiceEndpointServer<
+            RealThresholdKms<FileStorage, FileStorage, FileStorage>,
+        > as NamedService>::NAME;
+        let status = get_status(&mut core_health_client, core_service_name)
+            .await
+            .unwrap();
+        assert_eq!(
+            status,
+            ServingStatus::Serving as i32,
+            "Service is not in SERVING status. Got status: {}",
+            status
+        );
+        // Get health client for main server 1
+        let mut threshold_health_client = get_health_client(mpc_port)
+            .await
+            .expect("Failed to get threshold health client");
+        let threshold_service_name = <GrpcServer as NamedService>::NAME;
+        let status = get_status(&mut threshold_health_client, threshold_service_name)
+            .await
+            .unwrap();
+        assert_eq!(
+            status,
+            ServingStatus::Serving as i32,
+            "Service is not in SERVING status. Got status: {}",
+            status
+        );
+        // Keep the server occupied so it won't shut down immidiately after dropping the handle
+        let (tasks, _req_id) = send_dec_reqs(
+            3,
+            &TEST_THRESHOLD_KEY_ID_4P,
+            &kms_clients,
+            &mut internal_client,
+        )
+        .await;
+        let dec_res = tasks.join_all().await;
+        assert!(dec_res.iter().all(|res| res.is_ok()));
+        let server_handle = kms_servers.remove(&1).unwrap();
+        // Shut down the Core server (which also shuts down the MPC server)
+        server_handle.service_shutdown_tx.send(()).unwrap();
+        // Get status and validate that it is not serving
+        // Observe that the server should already have set status to net serving while it is finishing the decryption requests.
+        // Sleep to give the server some time to set the health reporter to not serving. To fix we need to add shutdown that takes care of thread_group is finished before finishing
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        let status = get_status(&mut core_health_client, core_service_name)
+            .await
+            .unwrap();
+        // Threshold servers will start serving as soon as they boot
+        // WARNING there is a risk this check fails if the server is shut down before was can complete the status check
+        assert_eq!(
+            status,
+            ServingStatus::NotServing as i32,
+            "Service is not in NOT SERVING status. Got status: {}",
+            status
+        );
+        let _ = server_handle.server.shutdown().await;
+        check_port_is_closed(mpc_port).await;
+        check_port_is_closed(service_port).await;
+    }
+
+    async fn send_dec_reqs(
+        amount_cts: usize,
+        key_id: &RequestId,
+        kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+        internal_client: &mut Client,
+    ) -> (
+        JoinSet<Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status>>,
+        RequestId,
+    ) {
+        let key_id_req = key_id.to_string().try_into().unwrap();
+
+        let mut cts = Vec::new();
+        for i in 0..amount_cts {
+            let msg = TestingPlaintext::U32(i as u32);
+            let (ct, fhe_type) =
+                compute_compressed_cipher_from_stored_key(None, msg, &key_id.to_string()).await;
+            let ctt = TypedCiphertext {
+                ciphertext: ct,
+                fhe_type: fhe_type.into(),
+                external_handle: None,
+            };
+            cts.push(ctt);
+        }
+
+        let dummy_acl_address =
+            alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
+
+        // make parallel requests by calling [decrypt] in a thread
+        let request_id = RequestId::derive("TEST_DEC_ID").unwrap();
+        let req = internal_client
+            .decryption_request(
+                cts.clone(),
+                &dummy_domain(),
+                &request_id,
+                &dummy_acl_address,
+                &key_id_req,
+            )
+            .unwrap();
+        let mut join_set = JoinSet::new();
+        for i in 1..=kms_clients.len() as u32 {
+            let req_clone = req.clone();
+            let mut cur_client = kms_clients.get(&i).unwrap().clone();
+            join_set.spawn(async move { cur_client.decrypt(tonic::Request::new(req_clone)).await });
+        }
+        (join_set, request_id)
+    }
+
+    async fn get_dec_resp(
+        request_id: &RequestId,
+        kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    ) -> JoinSet<Result<tonic::Response<kms_grpc::kms::v1::DecryptionResponse>, tonic::Status>>
+    {
+        // make parallel requests by calling [get_decrypt_result] in a thread
+        let mut join_set = JoinSet::new();
+        for i in 1..=kms_clients.len() as u32 {
+            let mut cur_client = kms_clients.get(&i).unwrap().clone();
+            let req_id_clone = request_id.clone();
+            join_set.spawn(async move {
+                cur_client
+                    .get_decrypt_result(tonic::Request::new(req_id_clone))
+                    .await
+            });
+        }
+        join_set
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
@@ -2843,12 +3189,9 @@ pub(crate) mod tests {
             keygen: 100,
             verify_proven_ct: 1,
         };
-        let (kms_server, mut kms_client, internal_client) = super::test_tools::centralized_handles(
-            StorageVersion::Dev,
-            &dkg_params,
-            Some(rate_limiter_conf),
-        )
-        .await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
+        let (kms_server, mut kms_client, internal_client) =
+            super::test_tools::centralized_handles(&dkg_params, Some(rate_limiter_conf)).await;
 
         let gen_req = internal_client
             .key_gen_request(request_id, None, params, None)
@@ -2912,8 +3255,9 @@ pub(crate) mod tests {
         request_id: &RequestId,
         params: Option<FheParameter>,
     ) {
+        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (kms_server, mut kms_client, internal_client) =
-            super::test_tools::centralized_handles(StorageVersion::Dev, dkg_params, None).await;
+            super::test_tools::centralized_handles(dkg_params, None).await;
 
         let max_num_bits = if params.unwrap() == FheParameter::Test {
             Some(1)
@@ -3049,12 +3393,9 @@ pub(crate) mod tests {
             keygen: 1,
             verify_proven_ct: 1,
         };
-        let (kms_server, mut kms_client, internal_client) = super::test_tools::centralized_handles(
-            StorageVersion::Dev,
-            dkg_params,
-            Some(rate_limiter_conf),
-        )
-        .await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
+        let (kms_server, mut kms_client, internal_client) =
+            super::test_tools::centralized_handles(dkg_params, Some(rate_limiter_conf)).await;
 
         let max_num_bits = if params.unwrap() == FheParameter::Test {
             Some(1)
@@ -3150,8 +3491,9 @@ pub(crate) mod tests {
         crs_req_id: &RequestId,
         key_handle: &str,
     ) {
+        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (kms_server, mut kms_client, internal_client) =
-            super::test_tools::centralized_handles(StorageVersion::Dev, dkg_params, None).await;
+            super::test_tools::centralized_handles(dkg_params, None).await;
 
         // next use the verify endpoint to check the proof
         // for this we need to read the key
@@ -3275,7 +3617,6 @@ pub(crate) mod tests {
     #[case(1, 7)]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    #[tracing_test::traced_test]
     async fn test_crs_gen_threshold(#[case] parallelism: usize, #[case] amount_parties: usize) {
         // CRS generation is slow
         // so we set this as a slow test
@@ -3295,7 +3636,6 @@ pub(crate) mod tests {
     #[case(7)]
     #[case(4)]
     #[serial]
-    #[tracing_test::traced_test]
     async fn test_insecure_crs_gen_threshold(#[case] amount_parties: usize) {
         crs_gen_threshold(1, &TEST_PARAM, FheParameter::Test, amount_parties, true).await
     }
@@ -3307,7 +3647,6 @@ pub(crate) mod tests {
     #[case(7)]
     #[case(4)]
     #[serial]
-    #[tracing_test::traced_test]
     async fn default_insecure_crs_gen_threshold(#[case] amount_parties: usize) {
         use crate::consts::DEFAULT_PARAM;
 
@@ -3443,15 +3782,8 @@ pub(crate) mod tests {
             keygen: 1,
             verify_proven_ct: 1,
         };
-        let (kms_servers, kms_clients, internal_client) = threshold_handles(
-            StorageVersion::Dev,
-            *param,
-            amount_parties,
-            true,
-            Some(rate_limiter_conf),
-            None,
-        )
-        .await;
+        let (_kms_servers, kms_clients, internal_client) =
+            threshold_handles(*param, amount_parties, true, Some(rate_limiter_conf), None).await;
 
         let max_num_bits = Some(32);
         let reqs: Vec<_> = (0..parallelism)
@@ -3666,9 +3998,6 @@ pub(crate) mod tests {
                 .await
                 .is_err());
         }
-        for handle in kms_servers.into_values() {
-            handle.assert_shutdown().await;
-        }
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -3677,7 +4006,6 @@ pub(crate) mod tests {
     #[case(vec![TestingPlaintext::U8(u8::MAX)], 4, &TEST_THRESHOLD_KEY_ID_4P, &TEST_THRESHOLD_CRS_ID_4P)]
     #[case(vec![TestingPlaintext::Bool(true)], 4, &TEST_THRESHOLD_KEY_ID_4P, &TEST_THRESHOLD_CRS_ID_4P)]
     #[serial]
-    #[tracing_test::traced_test]
     async fn test_verify_proven_ct_threshold(
         #[case] msgs: Vec<TestingPlaintext>,
         #[case] amount_parties: usize,
@@ -3696,7 +4024,6 @@ pub(crate) mod tests {
     #[case(vec![TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    #[tracing_test::traced_test]
     async fn default_verify_proven_ct_threshold(
         #[case] msgs: Vec<TestingPlaintext>,
         #[case] parallelism: usize,
@@ -3759,15 +4086,8 @@ pub(crate) mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         // The threshold handle should only be started after the storage is purged
         // since the threshold parties will load the CRS from private storage
-        let (mut kms_servers, mut kms_clients, internal_client) = threshold_handles(
-            StorageVersion::Dev,
-            dkg_params,
-            amount_parties,
-            true,
-            None,
-            None,
-        )
-        .await;
+        let (mut kms_servers, mut kms_clients, internal_client) =
+            threshold_handles(dkg_params, amount_parties, true, None, None).await;
 
         let pub_storage = FileStorage::new(None, StorageType::PUB, Some(1)).unwrap();
         let pp = internal_client
@@ -3829,8 +4149,9 @@ pub(crate) mod tests {
             for i in 1..=amount_parties as u32 {
                 if party_ids_to_crash.contains(&(i as usize)) {
                     // After the first "parallel" iteration the party is already crashed
-                    if let Some(server) = kms_servers.remove(&i) {
-                        server.assert_shutdown().await;
+                    if let Some(server_handle) = kms_servers.remove(&i) {
+                        server_handle.server.shutdown().await.unwrap();
+                        check_port_is_closed(server_handle.service_port).await;
                         let _kms_client = kms_clients.remove(&i).unwrap();
                     }
                 } else {
@@ -3891,14 +4212,10 @@ pub(crate) mod tests {
                 (amount_parties - party_ids_to_crash.len())
             );
         }
-        for handle in kms_servers.into_values() {
-            handle.assert_shutdown().await;
-        }
     }
 
     #[tokio::test]
     #[serial]
-    #[tracing_test::traced_test]
     async fn test_decryption_central() {
         decryption_centralized(
             &TEST_PARAM,
@@ -3962,8 +4279,9 @@ pub(crate) mod tests {
         compression: bool,
     ) {
         assert!(parallelism > 0);
+        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (kms_server, kms_client, mut internal_client) =
-            super::test_tools::centralized_handles(StorageVersion::Dev, dkg_params, None).await;
+            super::test_tools::centralized_handles(dkg_params, None).await;
         let req_key_id = key_id.to_owned().try_into().unwrap();
 
         let mut cts = Vec::new();
@@ -4208,8 +4526,9 @@ pub(crate) mod tests {
         secure: bool,
     ) {
         assert!(parallelism > 0);
+        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (kms_server, kms_client, mut internal_client) =
-            super::test_tools::centralized_handles(StorageVersion::Dev, dkg_params, None).await;
+            super::test_tools::centralized_handles(dkg_params, None).await;
         let (ct, fhe_type) = compute_compressed_cipher_from_stored_key(None, msg, key_id).await;
         let req_key_id = key_id.to_owned().try_into().unwrap();
 
@@ -4408,7 +4727,6 @@ pub(crate) mod tests {
     #[case(4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
     #[case(4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::BitDecSmall)]
     #[serial]
-    #[tracing_test::traced_test]
     async fn test_decryption_threshold_no_decompression(
         #[case] amount_parties: usize,
         #[case] key_id: &str,
@@ -4437,7 +4755,6 @@ pub(crate) mod tests {
     #[case(4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
     #[case(4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::BitDecSmall)]
     #[serial]
-    #[tracing_test::traced_test]
     async fn test_decryption_threshold_with_decompression(
         #[case] amount_parties: usize,
         #[case] key_id: &str,
@@ -4465,7 +4782,6 @@ pub(crate) mod tests {
     #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 7, &DEFAULT_THRESHOLD_KEY_ID_7P.to_string())]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    #[tracing_test::traced_test]
     async fn default_decryption_threshold(
         #[case] msg: Vec<TestingPlaintext>,
         #[case] parallelism: usize,
@@ -4537,7 +4853,6 @@ pub(crate) mod tests {
             verify_proven_ct: 1,
         };
         let (mut kms_servers, mut kms_clients, mut internal_client) = threshold_handles(
-            StorageVersion::Dev,
             dkg_params,
             amount_parties,
             true,
@@ -4590,8 +4905,8 @@ pub(crate) mod tests {
         let party_ids_to_crash = party_ids_to_crash.unwrap_or_default();
         for i in 1..=amount_parties as u32 {
             if party_ids_to_crash.contains(&(i as usize)) {
-                let server = kms_servers.remove(&i).unwrap();
-                server.assert_shutdown().await;
+                let server_handle = kms_servers.remove(&i).unwrap();
+                server_handle.assert_shutdown().await;
                 let _kms_client = kms_clients.remove(&i).unwrap();
             } else {
                 for j in 0..parallelism {
@@ -4660,10 +4975,6 @@ pub(crate) mod tests {
             resp_response_vec.push(resp.unwrap());
         }
 
-        for handle in kms_servers.into_values() {
-            handle.assert_shutdown().await;
-        }
-
         for req in &reqs {
             let req_id = req.request_id.as_ref().unwrap();
             let responses: Vec<_> = resp_response_vec
@@ -4716,7 +5027,6 @@ pub(crate) mod tests {
     #[case(false, 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::BitDecSmall)]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    #[tracing_test::traced_test]
     async fn test_reencryption_threshold(
         #[case] secure: bool,
         #[case] amount_parties: usize,
@@ -4744,7 +5054,6 @@ pub(crate) mod tests {
     #[case(false, 4, &TEST_THRESHOLD_KEY_ID_4P.to_string())]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    #[tracing_test::traced_test]
     async fn test_reencryption_threshold_and_write_transcript(
         #[case] secure: bool,
         #[case] amount_parties: usize,
@@ -4806,7 +5115,6 @@ pub(crate) mod tests {
     #[case(TestingPlaintext::U8(u8::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    #[tracing_test::traced_test]
     async fn default_reencryption_threshold(
         #[case] msg: TestingPlaintext,
         #[case] parallelism: usize,
@@ -4885,15 +5193,8 @@ pub(crate) mod tests {
         _ = write_transcript;
 
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-        let (mut kms_servers, mut kms_clients, mut internal_client) = threshold_handles(
-            StorageVersion::Dev,
-            dkg_params,
-            amount_parties,
-            true,
-            None,
-            decryption_mode,
-        )
-        .await;
+        let (mut kms_servers, mut kms_clients, mut internal_client) =
+            threshold_handles(dkg_params, amount_parties, true, None, decryption_mode).await;
         let (ct, fhe_type) = compute_cipher_from_stored_key(None, msg, key_id).await;
 
         internal_client.convert_to_addresses();
@@ -4926,8 +5227,8 @@ pub(crate) mod tests {
                     if j > 0 {
                         continue;
                     }
-                    let server = kms_servers.remove(&i).unwrap();
-                    server.assert_shutdown().await;
+                    let server_handle = kms_servers.remove(&i).unwrap();
+                    server_handle.assert_shutdown().await;
                     let _kms_client = kms_clients.remove(&i).unwrap();
                 } else {
                     let mut cur_client = kms_clients.get(&i).unwrap().clone();
@@ -5003,10 +5304,6 @@ pub(crate) mod tests {
                     .unwrap()
                     .push(resp.unwrap().into_inner());
             }
-        }
-
-        for handle in kms_servers.into_values() {
-            handle.assert_shutdown().await;
         }
 
         #[cfg(feature = "wasm_tests")]
@@ -5121,6 +5418,7 @@ pub(crate) mod tests {
             keygen: 1,
             verify_proven_ct: 1,
         };
+        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (kms_server, mut kms_client) = super::test_tools::setup_centralized(
             new_pub_ram_storage_from_existing_keys(&keys.pub_fhe_keys)
                 .await
@@ -5245,15 +5543,8 @@ pub(crate) mod tests {
         use kms_grpc::kms::v1::{KeyGenPreprocRequest, KeyGenPreprocStatusEnum};
 
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-        let (kms_servers, kms_clients, internal_client) = threshold_handles(
-            StorageVersion::Dev,
-            TEST_PARAM,
-            amount_parties,
-            true,
-            None,
-            None,
-        )
-        .await;
+        let (kms_servers, kms_clients, internal_client) =
+            threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
 
         let request_ids: Vec<_> = (0..parallelism)
             .map(|j| RequestId::derive(&format!("test_preproc_{amount_parties}_{j}")).unwrap())
@@ -5407,15 +5698,8 @@ pub(crate) mod tests {
         purge(None, None, &req_key.to_string(), amount_parties).await;
 
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-        let (kms_servers, kms_clients, internal_client) = threshold_handles(
-            StorageVersion::Dev,
-            TEST_PARAM,
-            amount_parties,
-            true,
-            None,
-            None,
-        )
-        .await;
+        let (_kms_servers, kms_clients, internal_client) =
+            threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
 
         let req_keygen = internal_client
             .key_gen_request(
@@ -5438,10 +5722,6 @@ pub(crate) mod tests {
             true,
         )
         .await;
-
-        for handle in kms_servers.into_values() {
-            handle.assert_shutdown().await;
-        }
     }
 
     #[cfg(feature = "insecure")]
@@ -5458,15 +5738,8 @@ pub(crate) mod tests {
         purge(None, None, &req_key.to_string(), amount_parties).await;
 
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-        let (kms_servers, kms_clients, internal_client) = threshold_handles(
-            StorageVersion::Dev,
-            DEFAULT_PARAM,
-            amount_parties,
-            true,
-            None,
-            None,
-        )
-        .await;
+        let (_kms_servers, kms_clients, internal_client) =
+            threshold_handles(DEFAULT_PARAM, amount_parties, true, None, None).await;
 
         let req_keygen = internal_client
             .key_gen_request(
@@ -5490,10 +5763,6 @@ pub(crate) mod tests {
             true,
         )
         .await;
-
-        for handle in kms_servers.into_values() {
-            handle.assert_shutdown().await;
-        }
     }
 
     #[cfg(feature = "slow_tests")]
@@ -5502,7 +5771,6 @@ pub(crate) mod tests {
     #[case(7)]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    #[tracing_test::traced_test]
     async fn test_dkg(#[case] amount_parties: usize) {
         use itertools::Itertools;
         use kms_grpc::kms::v1::KeyGenPreprocStatusEnum;
@@ -5526,7 +5794,6 @@ pub(crate) mod tests {
             verify_proven_ct: 1,
         };
         let (kms_servers, kms_clients, internal_client) = threshold_handles(
-            StorageVersion::Dev,
             TEST_PARAM,
             amount_parties,
             true,

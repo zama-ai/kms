@@ -181,7 +181,14 @@ impl Choreography for ExperimentalGrpcChoreography {
         })?;
 
         let networking =
-            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Sync);
+            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Sync)
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("Failed to create networking: {:?}", e),
+                    )
+                })?;
 
         //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
         let mut base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
@@ -279,7 +286,14 @@ impl Choreography for ExperimentalGrpcChoreography {
         })?;
 
         let networking =
-            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Sync);
+            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Sync)
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("Failed to create networking: {:?}", e),
+                    )
+                })?;
 
         //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
         let base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
@@ -385,7 +399,14 @@ impl Choreography for ExperimentalGrpcChoreography {
         })?;
 
         let networking =
-            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Async);
+            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Async)
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("Failed to create networking: {:?}", e),
+                    )
+                })?;
 
         //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
         let mut base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
@@ -505,7 +526,14 @@ impl Choreography for ExperimentalGrpcChoreography {
             })?;
 
             let networking =
-                (self.networking_strategy)(session_id, role_assignments, NetworkMode::Async);
+                (self.networking_strategy)(session_id, role_assignments, NetworkMode::Async)
+                    .await
+                    .map_err(|e| {
+                        tonic::Status::new(
+                            tonic::Code::Aborted,
+                            format!("Failed to create networking: {:?}", e),
+                        )
+                    })?;
 
             //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
             let mut base_session =
@@ -636,7 +664,14 @@ impl Choreography for ExperimentalGrpcChoreography {
         })?;
 
         let networking =
-            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Async);
+            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Async)
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("Failed to create networking: {:?}", e),
+                    )
+                })?;
 
         //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
         let base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())

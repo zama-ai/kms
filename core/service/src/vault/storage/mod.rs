@@ -144,7 +144,7 @@ pub async fn delete_at_request_id<S: Storage>(
         })
     } else {
         tracing::warn!(
-            "Data with ID {} and type {} does not exist",
+            "Tried to delete data with ID {} and type {}, but did not exist",
             request_id,
             data_type
         );

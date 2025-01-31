@@ -1033,6 +1033,7 @@ pub mod tests {
     };
     use tfhe_csprng::seeders::Seeder;
 
+    use super::distributed_keygen;
     use crate::execution::{
         random::{get_rng, seed_from_rng},
         tfhe_internals::{
@@ -1074,10 +1075,9 @@ pub mod tests {
     };
 
     #[cfg(feature = "slow_tests")]
-    use crate::execution::keyset_config::KeySetConfig;
-
+    use super::distributed_keygen_from_optional_compression_sk;
     #[cfg(feature = "slow_tests")]
-    use super::{distributed_keygen, distributed_keygen_from_optional_compression_sk};
+    use crate::execution::keyset_config::KeySetConfig;
 
     #[cfg(not(target_arch = "aarch64"))]
     #[test]

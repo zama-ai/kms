@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 pub struct ThresholdPartyConf {
     // endpoint for incoming peer requests
     pub listen_address: String,
+    // endpoint for the communication between the MPC servers
     pub listen_port: u16,
 
     pub threshold: u8,

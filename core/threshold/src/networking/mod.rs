@@ -1,12 +1,14 @@
 //! Networking traits and implementations.
 
+use std::future::Future;
+use std::pin::Pin;
 use tokio::time::Duration;
 
 use crate::execution::runtime::party::Identity;
 use crate::execution::runtime::party::RoleAssignment;
-use crate::execution::runtime::session::NetworkingImpl;
 use crate::session_id::SessionId;
 use async_trait::async_trait;
+use std::sync::Arc;
 use tokio::time::Instant;
 
 pub mod constants;
@@ -15,8 +17,16 @@ pub mod local;
 pub mod sending_service;
 pub mod value;
 
-pub type NetworkingStrategy =
-    Box<dyn Fn(SessionId, RoleAssignment, NetworkMode) -> NetworkingImpl + Send + Sync>;
+pub type NetworkingStrategy = Box<
+    dyn Fn(
+            SessionId,
+            RoleAssignment,
+            NetworkMode,
+        ) -> Pin<
+            Box<dyn Future<Output = anyhow::Result<Arc<dyn Networking + Send + Sync>>> + Send>,
+        > + Send
+        + Sync,
+>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum NetworkMode {

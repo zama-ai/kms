@@ -225,7 +225,14 @@ where
 
         //Requires Sync network because PRSS robust init relies on bcast
         let networking =
-            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Sync);
+            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Sync)
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("Failed to create networking: {:?}", e),
+                    )
+                })?;
 
         //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
         let mut base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
@@ -343,29 +350,35 @@ where
 
         let own_identity = self.own_identity.clone();
         let factory = self.factory.clone();
-        let base_sessions = (start_sid.0..start_sid.0 + num_sessions as u128)
-            .map(|session_id| {
-                //Set the 126th bit to 1 to avoid collision with future session id
-                //this way a "normal user" sending request with id 1,2,3,...
-                //won't end up with a dirty sid because of preproc dkg spawning multiple sessions.
-                //An alternative would be to derive the other session IDs by using hash of given sid as seed to a PRG
-                let session_id = SessionId(session_id | (1u128 << 125));
-                let params = SessionParameters::new(
-                    threshold,
-                    session_id,
-                    own_identity.clone(),
-                    role_assignments.clone(),
-                )
-                .unwrap();
-                //We are executing offline phase, so requires Sync network
-                let networking = (self.networking_strategy)(
-                    session_id,
-                    role_assignments.clone(),
-                    NetworkMode::Sync,
-                );
-                BaseSessionStruct::new(params.clone(), networking, AesRng::from_entropy()).unwrap()
-            })
-            .collect_vec();
+        let mut base_sessions = Vec::new();
+        for session_id in start_sid.0..start_sid.0 + num_sessions as u128 {
+            //Set the 126th bit to 1 to avoid collision with future session id
+            //this way a "normal user" sending request with id 1,2,3,...
+            //won't end up with a dirty sid because of preproc dkg spawning multiple sessions.
+            //An alternative would be to derive the other session IDs by using hash of given sid as seed to a PRG
+            let session_id = SessionId(session_id | (1u128 << 125));
+            let params = SessionParameters::new(
+                threshold,
+                session_id,
+                own_identity.clone(),
+                role_assignments.clone(),
+            )
+            .unwrap();
+            //We are executing offline phase, so requires Sync network
+            let networking =
+                (self.networking_strategy)(session_id, role_assignments.clone(), NetworkMode::Sync)
+                    .await
+                    .map_err(|e| {
+                        tonic::Status::new(
+                            tonic::Code::Aborted,
+                            format!("Failed to create networking: {:?}", e),
+                        )
+                    })?;
+            base_sessions.push(
+                BaseSessionStruct::new(params.clone(), networking, AesRng::from_entropy())
+                    .expect("Failed to create Base Session"),
+            );
+        }
 
         match (dkg_params, session_type) {
             (DKGParams::WithoutSnS(_), SessionType::Small) => {
@@ -570,7 +583,14 @@ where
 
         //This is online phase of DKG, so can work in Async network
         let networking =
-            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Async);
+            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Async)
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("Failed to create networking: {:?}", e),
+                    )
+                })?;
 
         //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
         let mut base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
@@ -722,7 +742,14 @@ where
 
             //We are running a fake dkg, network mode doesn't matter here
             let networking =
-                (self.networking_strategy)(session_id, role_assignments, NetworkMode::Async);
+                (self.networking_strategy)(session_id, role_assignments, NetworkMode::Async)
+                    .await
+                    .map_err(|e| {
+                        tonic::Status::new(
+                            tonic::Code::Aborted,
+                            format!("Failed to create networking: {:?}", e),
+                        )
+                    })?;
 
             //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
             let mut base_session =
@@ -827,7 +854,14 @@ where
 
         //This is running offline phase for ddec, so requires Sync network
         let networking =
-            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Sync);
+            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Sync)
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("Failed to create networking: {:?}", e),
+                    )
+                })?;
 
         //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
         let base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
@@ -1033,7 +1067,14 @@ where
 
         //This is running the online phase of ddec, so can work in Async network
         let networking =
-            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Async);
+            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Async)
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("Failed to create networking: {:?}", e),
+                    )
+                })?;
 
         //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
         let mut base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
@@ -1240,7 +1281,14 @@ where
 
         //CRS gen is a round robin, so requires a Sync network
         let networking =
-            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Sync);
+            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Sync)
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("Failed to create networking: {:?}", e),
+                    )
+                })?;
 
         let mut base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
             .map_err(|e| {

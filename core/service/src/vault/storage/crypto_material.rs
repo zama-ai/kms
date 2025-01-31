@@ -263,6 +263,10 @@ impl<
             // Ignore any failure to delete something since it might be
             // because the data did not get created
             // In any case, we can't do much.
+            tracing::warn!(
+                "Failed to ensure existance of threshold key material for request with ID: {}",
+                req_id
+            );
             self.purge_key_material(req_id, guarded_meta_storage).await;
         }
     }
@@ -1229,7 +1233,8 @@ mod tests {
                 meta_store.clone(),
             )
             .await;
-        // TODO should fail
+        // Check that the approach fails with the expected error message
+        assert!(logs_contain("while updating PK meta store for"));
 
         // write on a failed storage device should fail
         {
@@ -1257,7 +1262,193 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn write_threshold_keys() {
+    #[tracing_test::traced_test]
+    async fn write_threshold_empty_update() {
+        let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store();
+        let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+        let req_id = RequestId::derive("write_threshold_empty_update").unwrap();
+
+        // Check no errors happened
+        assert!(!logs_contain(&format!(
+            "while updating KeyGen meta store for {}",
+            req_id
+        )));
+        assert!(!logs_contain(&format!(
+            "PK already exists in pk_cache for {}",
+            req_id
+        )));
+        assert!(!logs_contain(&format!(
+            "Failed to ensure existance of threshold key material for {}.",
+            req_id
+        )));
+        // write to an empty meta store should fail
+        crypto_storage
+            .write_threshold_keys_with_meta_store(
+                &req_id,
+                threshold_fhe_keys.clone(),
+                fhe_key_set.clone(),
+                HashMap::new(),
+                meta_store.clone(),
+            )
+            .await;
+        // Check that the expected error happened
+        assert!(logs_contain("while updating KeyGen meta store for"));
+
+        // update the meta store and the write should be ok
+        {
+            let meta_store = meta_store.clone();
+            let mut guard = meta_store.write().await;
+            guard.insert(&req_id).unwrap();
+        }
+        crypto_storage
+            .write_threshold_keys_with_meta_store(
+                &req_id,
+                threshold_fhe_keys.clone(),
+                fhe_key_set.clone(),
+                HashMap::new(),
+                meta_store.clone(),
+            )
+            .await;
+
+        // check the meta store is correct
+        {
+            let guard = meta_store.read().await;
+            assert!(guard.exists(&req_id));
+        }
+    }
+
+    #[tokio::test]
+    #[tracing_test::traced_test]
+    async fn write_threshold_keys_meta_update() {
+        let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store();
+        let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+        let req_id = RequestId::derive("write_threshold_keys_meta_update").unwrap();
+
+        // update the meta store and the write should be ok
+        {
+            let meta_store = meta_store.clone();
+            let mut guard = meta_store.write().await;
+            guard.insert(&req_id).unwrap();
+        }
+        crypto_storage
+            .write_threshold_keys_with_meta_store(
+                &req_id,
+                threshold_fhe_keys.clone(),
+                fhe_key_set.clone(),
+                HashMap::new(),
+                meta_store.clone(),
+            )
+            .await;
+        // Check that no errors were logged
+        assert!(!logs_contain(&format!(
+            "while updating KeyGen meta store for {}",
+            req_id
+        )));
+        assert!(!logs_contain(&format!(
+            "PK already exists in pk_cache for {}",
+            req_id
+        )));
+        assert!(logs_contain(&format!(
+            "Finished DKG for Request Id {}.",
+            req_id
+        )));
+
+        // check the meta store is correct
+        {
+            let guard = meta_store.read().await;
+            assert!(guard.exists(&req_id));
+        }
+
+        // writing the same thing should fail because the
+        // meta store disallow updating a cell that is set
+        crypto_storage
+            .write_threshold_keys_with_meta_store(
+                &req_id,
+                threshold_fhe_keys.clone(),
+                fhe_key_set.clone(),
+                HashMap::new(),
+                meta_store.clone(),
+            )
+            .await;
+        assert!(logs_contain("while updating KeyGen meta store for"));
+    }
+
+    #[tokio::test]
+    #[tracing_test::traced_test]
+    async fn write_threshold_keys_failed_storage() {
+        let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store();
+        let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+        let pub_storage = crypto_storage.inner.public_storage.clone();
+        let req_id = RequestId::derive("write_threshold_keys_failed_storage").unwrap();
+
+        // update the meta store and the write should be ok
+        {
+            let meta_store = meta_store.clone();
+            let mut guard = meta_store.write().await;
+            guard.insert(&req_id).unwrap();
+        }
+        crypto_storage
+            .write_threshold_keys_with_meta_store(
+                &req_id,
+                threshold_fhe_keys.clone(),
+                fhe_key_set.clone(),
+                HashMap::new(),
+                meta_store.clone(),
+            )
+            .await;
+        // Check that no errors were logged
+        assert!(!logs_contain(&format!(
+            "while updating KeyGen meta store for {}",
+            req_id
+        )));
+        assert!(!logs_contain(&format!(
+            "PK already exists in pk_cache for {}",
+            req_id
+        )));
+        assert!(logs_contain(&format!(
+            "Finished DKG for Request Id {}.",
+            req_id
+        )));
+
+        // check the meta store is correct
+        {
+            let guard = meta_store.read().await;
+            assert!(guard.exists(&req_id));
+        }
+
+        // write on a failed storage device should fail
+        {
+            let mut storage_guard = pub_storage.lock().await;
+            storage_guard.set_available_writes(0);
+        }
+        let new_req_id = RequestId::derive("write_threshold_keys_failed_storage_2").unwrap();
+        crypto_storage
+            .write_threshold_keys_with_meta_store(
+                &new_req_id,
+                threshold_fhe_keys.clone(),
+                fhe_key_set.clone(),
+                HashMap::new(),
+                meta_store.clone(),
+            )
+            .await;
+        // Check that no errors were logged
+        assert!(!logs_contain(
+            "while updating KeyGen meta store for {new_req_id}"
+        ));
+
+        // check the meta store is correct
+        {
+            let guard = meta_store.read().await;
+            assert!(guard.exists(&req_id));
+            assert!(!guard.exists(&new_req_id));
+        }
+    }
+
+    fn setup_threshold_store() -> (
+        ThresholdCryptoMaterialStorage<FailingRamStorage, RamStorage, RamStorage>,
+        ThresholdFheKeys,
+        FhePubKeySet,
+    ) {
         let crypto_storage = ThresholdCryptoMaterialStorage::new(
             FailingRamStorage::new(StorageType::PUB, 100),
             RamStorage::new(StorageType::PUB),
@@ -1266,9 +1457,6 @@ mod tests {
             HashMap::new(),
             HashMap::new(),
         );
-        let pub_storage = crypto_storage.inner.public_storage.clone();
-
-        let req_id = RequestId::derive("write_threshold_keys").unwrap();
 
         let pbs_params: ClassicPBSParameters = TEST_PARAM
             .get_params_basics_handle()
@@ -1287,7 +1475,6 @@ mod tests {
         )
         .unwrap();
 
-        let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
         let fhe_key_set = key_set.public_keys.clone();
 
         let ksk = key_set
@@ -1305,69 +1492,6 @@ mod tests {
             pk_meta_data: HashMap::new(),
             ksk,
         };
-
-        // write to an empty meta store should fail
-        crypto_storage
-            .write_threshold_keys_with_meta_store(
-                &req_id,
-                threshold_fhe_keys.clone(),
-                fhe_key_set.clone(),
-                HashMap::new(),
-                meta_store.clone(),
-            )
-            .await;
-        // TODO should fail
-
-        // update the meta store and the write should be ok
-        {
-            let meta_store = meta_store.clone();
-            let mut guard = meta_store.write().await;
-            guard.insert(&req_id).unwrap();
-        }
-        crypto_storage
-            .write_threshold_keys_with_meta_store(
-                &req_id,
-                threshold_fhe_keys.clone(),
-                fhe_key_set.clone(),
-                HashMap::new(),
-                meta_store.clone(),
-            )
-            .await;
-
-        // writing the same thing should fail because the
-        // meta store disallow updating a cell that is set
-        crypto_storage
-            .write_threshold_keys_with_meta_store(
-                &req_id,
-                threshold_fhe_keys.clone(),
-                fhe_key_set.clone(),
-                HashMap::new(),
-                meta_store.clone(),
-            )
-            .await;
-        // TODO should fail
-        // write on a failed storage device should fail
-        {
-            let mut storage_guard = pub_storage.lock().await;
-            storage_guard.set_available_writes(0);
-        }
-        let new_req_id = RequestId::derive("write_central_keys_2").unwrap();
-        crypto_storage
-            .write_threshold_keys_with_meta_store(
-                &new_req_id,
-                threshold_fhe_keys.clone(),
-                fhe_key_set.clone(),
-                HashMap::new(),
-                meta_store.clone(),
-            )
-            .await;
-        // TODO should fail
-
-        // check the meta store is correct
-        {
-            let guard = meta_store.read().await;
-            assert!(guard.exists(&req_id));
-            assert!(!guard.exists(&new_req_id));
-        }
+        (crypto_storage, threshold_fhe_keys, fhe_key_set)
     }
 }

@@ -10,7 +10,11 @@ use crate::execution::runtime::party::{Identity, RoleAssignment};
 use crate::experimental::choreography::grpc::ExperimentalGrpcChoreography;
 use crate::networking::constants::NETWORK_TIMEOUT_LONG;
 use crate::networking::grpc::{GrpcNetworkingManager, GrpcServer};
+#[cfg(feature = "experimental")]
+use crate::networking::Networking;
 use conf_trace::telemetry::make_span;
+#[cfg(feature = "experimental")]
+use std::sync::Arc;
 use tonic::transport::{Server, ServerTlsConfig};
 use tower_http::trace::TraceLayer;
 
@@ -62,7 +66,11 @@ where
     let choreography = ExperimentalGrpcChoreography::new(
         own_identity,
         Box::new(move |session_id, roles, network_mode| {
-            networking.make_session(session_id, roles, network_mode)
+            let nm = networking.clone();
+            Box::pin(async move {
+                let impl_networking = nm.make_session(session_id, roles, network_mode);
+                Ok(impl_networking as Arc<dyn Networking + Send + Sync>)
+            })
         }),
         factory,
     )

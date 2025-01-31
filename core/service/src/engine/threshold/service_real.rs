@@ -1,5 +1,5 @@
 use crate::conf::threshold::{PeerConf, ThresholdPartyConf};
-use crate::consts::{INFLIGHT_REQUEST_WAITING_TIME, MINIMUM_SESSIONS_PREPROC, PRSS_EPOCH_ID};
+use crate::consts::{MINIMUM_SESSIONS_PREPROC, PRSS_EPOCH_ID};
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey};
 use crate::cryptography::proven_ct_verifier::{
     get_verify_proven_ct_result, non_blocking_verify_proven_ct,
@@ -73,8 +73,8 @@ use distributed_decryption::execution::zk::ceremony::{
 use distributed_decryption::networking::grpc::{
     CoreToCoreNetworkConfig, GrpcNetworkingManager, GrpcServer,
 };
-use distributed_decryption::networking::NetworkMode;
 use distributed_decryption::networking::NetworkingStrategy;
+use distributed_decryption::networking::{NetworkMode, Networking};
 use distributed_decryption::session_id::SessionId;
 use distributed_decryption::{algebra::base_ring::Z64, execution::endpoints::keygen::FhePubKeySet};
 use itertools::Itertools;
@@ -111,6 +111,7 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tonic::transport::{Server, ServerTlsConfig};
 use tonic::{Request, Response, Status};
+use tonic_health::pb::health_server::{Health, HealthServer};
 use tonic_health::server::HealthReporter;
 use tracing::Instrument;
 
@@ -141,9 +142,11 @@ pub async fn threshold_server_init<
     backup_storage: Option<BackS>,
     run_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
-    health_reporter: Arc<RwLock<HealthReporter>>,
     shutdown_signal: F,
-) -> anyhow::Result<RealThresholdKms<PubS, PrivS, BackS>> {
+) -> anyhow::Result<(
+    RealThresholdKms<PubS, PrivS, BackS>,
+    HealthServer<impl Health>,
+)> {
     let cert_paths = config.get_tls_cert_paths();
 
     //If no RedisConf is provided, we just use in-memory storage for the preprocessing buckets.
@@ -162,6 +165,7 @@ pub async fn threshold_server_init<
         MINIMUM_SESSIONS_PREPROC
     };
 
+    let (health_reporter, health_service) = tonic_health::server::health_reporter();
     let kms = new_real_threshold_kms(
         config.threshold,
         config.dec_capacity,
@@ -189,7 +193,7 @@ pub async fn threshold_server_init<
         "Initialization done! Starting threshold KMS server for party {} ...",
         config.my_id
     );
-    Ok(kms)
+    Ok((kms, health_service))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
@@ -284,7 +288,7 @@ async fn new_real_threshold_kms<PubS, PrivS, BackS, F>(
     dec_capacity: usize,
     min_dec_cache: usize,
     listen_address: &str,
-    listen_port: u16,
+    mpc_port: u16,
     my_id: usize,
     preproc_factory: Box<dyn PreprocessorFactory<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
     num_sessions_preproc: u16,
@@ -297,7 +301,7 @@ async fn new_real_threshold_kms<PubS, PrivS, BackS, F>(
     decryption_mode: DecryptionMode,
     run_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
-    core_service_health_reporter: Arc<RwLock<HealthReporter>>,
+    core_service_health_reporter: HealthReporter,
     shutdown_signal: F,
 ) -> anyhow::Result<RealThresholdKms<PubS, PrivS, BackS>>
 where
@@ -307,7 +311,7 @@ where
     F: std::future::Future<Output = ()> + Send + 'static,
 {
     tracing::info!(
-        "Starting threshold KMS Server. Party ID {my_id}, listening on {listen_address}:{listen_port} ...",
+        "Starting threshold KMS Server. Party ID {my_id}, listening for MPC communication on {listen_address}:{mpc_port}...",
     );
 
     let sks: HashMap<RequestId, PrivateSigKey> =
@@ -406,13 +410,17 @@ where
     // This will setup TLS if cert_paths is set to Some(...)
     let (mut threshold_health_reporter, threshold_health_service) =
         tonic_health::server::health_reporter();
-    let networking_manager =
-        GrpcNetworkingManager::new(own_identity.to_owned(), cert_paths, core_to_core_net_conf);
-    let networking_server = networking_manager.new_server();
+    let networking_manager = Arc::new(RwLock::new(GrpcNetworkingManager::new(
+        own_identity.to_owned(),
+        cert_paths,
+        core_to_core_net_conf,
+    )));
+    let manager_clone = Arc::clone(&networking_manager);
+    let networking_server = networking_manager.write().await.new_server();
     let router = server
         .add_service(networking_server)
         .add_service(threshold_health_service);
-    let socket_addr = format!("{}:{}", listen_address, listen_port)
+    let socket_addr = format!("{}:{}", listen_address, mpc_port)
         .to_socket_addrs()?
         .next()
         .expect("Failed to parse socket address for internal core network");
@@ -428,16 +436,28 @@ where
             "socket address {socket_addr} is not free for core/threshold"
         ));
     }
+    let networking_strategy: Arc<RwLock<NetworkingStrategy>> = Arc::new(RwLock::new(Box::new(
+        move |session_id, roles, network_mode| {
+            let nm = networking_manager.clone();
+            Box::pin(async move {
+                let manager = nm.read().await;
+                let impl_networking = manager.make_session(session_id, roles, network_mode);
+                Ok(impl_networking as Arc<dyn Networking + Send + Sync>)
+            })
+        },
+    )));
     let abort_handle = tokio::spawn(async move {
         let (tx, rx) = tokio::sync::oneshot::channel();
         tokio::spawn(prepare_shutdown_signals(shutdown_signal, tx));
-
         match router
             .serve_with_shutdown(socket_addr, async {
                 // Set the server to be serving when we boot
                 threshold_health_reporter.set_serving::<GrpcServer>().await;
                 // await is the same as recv on a oneshot channel
                 _ = rx.await;
+                manager_clone.write().await.sending_service.shutdown();
+                // Observe that the following is the shut down of the core (which communicates with the other cores)
+                // That is, not the threshold KMS server itself which picks up requests from the blockchain.
                 tracing::info!(
                     "Starting graceful shutdown of core/threshold {}",
                     socket_addr
@@ -445,12 +465,6 @@ where
                 threshold_health_reporter
                     .set_not_serving::<GrpcServer>()
                     .await;
-
-                // Allow time for in-flight requests to complete
-                tokio::time::sleep(tokio::time::Duration::from_secs(
-                    INFLIGHT_REQUEST_WAITING_TIME,
-                ))
-                .await;
             })
             .await
         {
@@ -470,16 +484,10 @@ where
             }
         }
     });
-
-    let networking_strategy: Arc<RwLock<NetworkingStrategy>> = Arc::new(RwLock::new(Box::new(
-        move |session_id, roles, network_mode| {
-            networking_manager.make_session(session_id, roles, network_mode)
-        },
-    )));
     let base_kms = BaseKmsStruct::new(sk)?;
 
-    let prss_setup_128 = Arc::new(RwLock::new(None));
-    let prss_setup_64 = Arc::new(RwLock::new(None));
+    let prss_setup_z128 = Arc::new(RwLock::new(None));
+    let prss_setup_z64 = Arc::new(RwLock::new(None));
     let preproc_buckets = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     let preproc_factory = Arc::new(Mutex::new(preproc_factory));
     let crs_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(crs_info)));
@@ -503,24 +511,25 @@ where
         my_id,
         role_assignments: role_assignments.clone(),
         networking_strategy,
-        prss_setup_z128: prss_setup_128.clone(),
-        prss_setup_z64: prss_setup_64.clone(),
+        prss_setup_z128: Arc::clone(&prss_setup_z128),
+        prss_setup_z64: Arc::clone(&prss_setup_z64),
     };
 
+    let thread_core_health_reporter = Arc::new(RwLock::new(core_service_health_reporter));
     {
         // We are only serving after initialization
-        core_service_health_reporter
+        thread_core_health_reporter
             .write()
             .await
             .set_not_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS, BackS>>>()
             .await;
     }
     let initiator = RealInitiator {
-        prss_setup_128: Arc::clone(&prss_setup_128),
-        prss_setup_64: Arc::clone(&prss_setup_64),
+        prss_setup_z128: Arc::clone(&prss_setup_z128),
+        prss_setup_z64: Arc::clone(&prss_setup_z64),
         private_storage: crypto_storage.get_private_storage(),
         session_preparer: session_preparer.new_instance().await,
-        health_reporter: core_service_health_reporter.clone(),
+        health_reporter: thread_core_health_reporter.clone(),
     };
     if run_prss {
         tracing::info!(
@@ -581,7 +590,7 @@ where
     let insecure_keygenerator = RealInsecureKeyGenerator::from_real_keygen(&keygenerator).await;
 
     let keygen_preprocessor = RealPreprocessor {
-        prss_setup: prss_setup_128,
+        prss_setup: prss_setup_z128,
         preproc_buckets,
         preproc_factory,
         num_sessions_preproc,
@@ -626,8 +635,8 @@ where
         insecure_crs_generator,
         proven_ct_verifier,
         Arc::clone(&tracker),
-        Arc::clone(&slow_events),
-        abort_handle.abort_handle(),
+        Arc::clone(&thread_core_health_reporter),
+        abort_handle,
     );
 
     Ok(kms)
@@ -659,9 +668,10 @@ impl SessionPreparer {
         &self,
         session_id: SessionId,
         network_mode: NetworkMode,
-    ) -> distributed_decryption::execution::runtime::session::NetworkingImpl {
+    ) -> anyhow::Result<distributed_decryption::execution::runtime::session::NetworkingImpl> {
         let strat = self.networking_strategy.read().await;
-        (strat)(session_id, self.role_assignments.clone(), network_mode)
+        let networking = (strat)(session_id, self.role_assignments.clone(), network_mode).await?;
+        Ok(networking)
     }
 
     async fn make_base_session(
@@ -679,7 +689,7 @@ impl SessionPreparer {
             self.role_assignments.clone(),
         )?;
         let base_session =
-            BaseSessionStruct::new(parameters, networking, self.base_kms.new_rng().await)?;
+            BaseSessionStruct::new(parameters, networking?, self.base_kms.new_rng().await)?;
         Ok(base_session)
     }
 
@@ -741,8 +751,8 @@ impl SessionPreparer {
 
 pub struct RealInitiator<PrivS: Storage + Send + Sync + 'static> {
     // TODO eventually add mode to allow for nlarge as well.
-    prss_setup_128: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>,
-    prss_setup_64: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z64>>>>,
+    prss_setup_z128: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>,
+    prss_setup_z64: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z64>>>>,
     private_storage: Arc<Mutex<PrivS>>,
     session_preparer: SessionPreparer,
     health_reporter: Arc<RwLock<HealthReporter>>,
@@ -776,7 +786,7 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
         // check if a PRSS setup already exists in storage.
         match prss_setup_z128_from_file {
             Ok(prss_setup) => {
-                let mut guarded_prss_setup = self.prss_setup_128.write().await;
+                let mut guarded_prss_setup = self.prss_setup_z128.write().await;
                 *guarded_prss_setup = Some(prss_setup);
                 tracing::info!("Initializing threshold KMS server with PRSS Setup Z128 from disk",)
             }
@@ -807,7 +817,7 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
         // check if a PRSS setup already exists in storage.
         match prss_setup_z64_from_file {
             Ok(prss_setup) => {
-                let mut guarded_prss_setup = self.prss_setup_64.write().await;
+                let mut guarded_prss_setup = self.prss_setup_z64.write().await;
                 *guarded_prss_setup = Some(prss_setup);
                 tracing::info!("Initializing threshold KMS server with PRSS Setup Z64 from disk",)
             }
@@ -826,7 +836,8 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
     }
 
     async fn init_prss(&self) -> anyhow::Result<()> {
-        if self.prss_setup_128.read().await.is_some() || self.prss_setup_64.read().await.is_some() {
+        if self.prss_setup_z128.read().await.is_some() || self.prss_setup_z64.read().await.is_some()
+        {
             return Err(anyhow_error_and_log("PRSS state already exists"));
         }
 
@@ -847,10 +858,10 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
         let prss_setup_obj_z64: PRSSSetup<ResiduePolyF4Z64> =
             PRSSSetup::robust_init(&mut base_session, &RealVss::default()).await?;
 
-        let mut guarded_prss_setup = self.prss_setup_128.write().await;
+        let mut guarded_prss_setup = self.prss_setup_z128.write().await;
         *guarded_prss_setup = Some(prss_setup_obj_z128.clone());
 
-        let mut guarded_prss_setup = self.prss_setup_64.write().await;
+        let mut guarded_prss_setup = self.prss_setup_z64.write().await;
         *guarded_prss_setup = Some(prss_setup_obj_z64.clone());
 
         // serialize and write PRSS Setup to disk into private storage
@@ -2623,11 +2634,10 @@ impl<
 #[cfg(test)]
 mod tests {
     use crate::{
-        client::test_tools,
+        client::test_tools::{self},
         consts::{DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD, PRSS_EPOCH_ID},
         util::key_setup::test_tools::purge,
-        vault::storage::file::FileStorage,
-        vault::storage::StorageType,
+        vault::storage::{file::FileStorage, StorageType},
     };
     use kms_grpc::kms::v1::RequestId;
 
@@ -2661,7 +2671,7 @@ mod tests {
         }
 
         // create parties and run PrssSetup
-        let core_handles = test_tools::setup_threshold_no_client(
+        let server_handles = test_tools::setup_threshold_no_client(
             DEFAULT_THRESHOLD as u8,
             pub_storage.clone(),
             priv_storage.clone(),
@@ -2670,11 +2680,11 @@ mod tests {
             None,
         )
         .await;
-        assert_eq!(core_handles.len(), DEFAULT_AMOUNT_PARTIES);
+        assert_eq!(server_handles.len(), DEFAULT_AMOUNT_PARTIES);
 
         // shut parties down
-        for h in core_handles.into_values() {
-            h.assert_shutdown().await;
+        for server_handle in server_handles.into_values() {
+            server_handle.assert_shutdown().await;
         }
 
         // check that PRSS setups were created (and not read from disk)
@@ -2687,7 +2697,7 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
         // create parties again without running PrssSetup this time (it should now be read from disk)
-        let core_handles = test_tools::setup_threshold_no_client(
+        let server_handles = test_tools::setup_threshold_no_client(
             DEFAULT_THRESHOLD as u8,
             pub_storage,
             priv_storage,
@@ -2696,7 +2706,7 @@ mod tests {
             None,
         )
         .await;
-        assert_eq!(core_handles.len(), DEFAULT_AMOUNT_PARTIES);
+        assert_eq!(server_handles.len(), DEFAULT_AMOUNT_PARTIES);
 
         // check that PRSS setups were not created, but instead read from disk now
         assert!(logs_contain(
@@ -2705,9 +2715,5 @@ mod tests {
         assert!(logs_contain(
             "Initializing threshold KMS server with PRSS Setup Z64 from disk"
         ));
-
-        for h in core_handles.into_values() {
-            h.assert_shutdown().await;
-        }
     }
 }

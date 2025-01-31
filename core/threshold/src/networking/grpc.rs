@@ -120,7 +120,7 @@ pub struct GrpcNetworkingManager {
     pub message_queues: Arc<MessageQueueStores>,
     owner: Identity,
     conf: OptionConfigWrapper,
-    sending_service: GrpcSendingService,
+    pub sending_service: GrpcSendingService,
 }
 
 pub type GrpcServer = GnetworkingServer<NetworkingImpl>;
