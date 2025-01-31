@@ -47,20 +47,17 @@ impl ThreadHandleGroup {
     /// Join all handles in the group in a blocking manner
     /// This is useful when async context is not available, like in Drop implementations
     pub fn join_all_blocking(self) -> anyhow::Result<()> {
-        // Try to abort handles first to prevent hanging
-        for handle in &self.handles {
-            handle.abort();
-        }
-
         // Simple blocking join with timeout using thread::sleep
         let start = std::time::Instant::now();
-        let timeout = Duration::from_secs(10);
+        let timeout = Duration::from_secs(20);
 
-        for handle in self.handles {
+        'handle_loop: for handle in self.handles {
             while !handle.is_finished() {
                 if start.elapsed() > timeout {
-                    error!("Cleanup timed out");
-                    return Err(anyhow!("Cleanup timed out"));
+                    error!("Cleanup timed out, aborting the stalling task.");
+                    handle.abort();
+                    std::thread::sleep(Duration::from_secs(1));
+                    continue 'handle_loop;
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }

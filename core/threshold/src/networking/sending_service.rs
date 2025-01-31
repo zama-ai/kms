@@ -583,19 +583,19 @@ mod tests {
                 if role.zero_based() == 0 {
                     tokio::spawn(async move {
                         let msg = vec![1u8; 10];
-                        tracing::info!("Sending ONCE");
+                        println!("Sending ONCE");
                         network_stack.send(msg.clone(), &id_2).await.unwrap();
-                        tokio::time::sleep(tokio::time::Duration::from_secs(4)).await;
-                        tracing::info!("Sending TWICE");
+                        tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+                        println!("Sending TWICE");
                         network_stack.send(msg.clone(), &id_2).await.unwrap();
                         send.send(msg).unwrap();
                     });
                     //Keep this std thread alive for a while
-                    std::thread::sleep(Duration::from_secs(15));
+                    std::thread::sleep(Duration::from_secs(20));
                 } else {
                     tokio::spawn(async move {
                         let msg = network_stack.receive(&id_1).await.unwrap();
-                        tracing::info!("Received ONCE {:?}", msg);
+                        println!("Received ONCE {:?}", msg);
                         send.send(msg).unwrap();
                     });
                 }
@@ -623,7 +623,7 @@ mod tests {
                 core_router.serve(format!("0.0.0.0:600{}", port_digit).parse().unwrap());
 
             tokio::spawn(async move {
-                tracing::info!("Spinning up second server");
+                println!("Spinning up second server");
                 let _res = futures::join!(core_future);
             });
 
@@ -635,9 +635,9 @@ mod tests {
 
             let (send, recv) = tokio::sync::oneshot::channel();
             tokio::spawn(async move {
-                tracing::info!("Ready to receive");
+                println!("Ready to receive");
                 let msg = network_stack.receive(&id_1).await.unwrap();
-                tracing::info!("Received TWICE {:?}", msg);
+                println!("Received TWICE {:?}", msg);
                 send.send(msg).unwrap();
             });
             recv.blocking_recv().unwrap()
