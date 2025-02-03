@@ -77,13 +77,13 @@ mod tests {
     #[tokio::test]
     async fn test_random_free_ports() {
         let ip_addr = "127.0.0.1".parse().unwrap();
-        let ports = random_free_ports(41000, 50000, &ip_addr, 10).await.unwrap();
+        let ports = random_free_ports(31000, 40000, &ip_addr, 10).await.unwrap();
 
         let port_set: HashSet<u16> = HashSet::from_iter(ports.into_iter());
         assert_eq!(port_set.len(), 10);
 
         for port in port_set {
-            assert!((41000..50000).contains(&port));
+            assert!((31000..40000).contains(&port));
         }
     }
 

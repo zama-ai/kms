@@ -32,7 +32,7 @@ use tonic_health::pb::health_server::{Health, HealthServer};
 pub async fn setup_mock_kms(n: usize) -> HashMap<u32, ServerHandle> {
     let mut out = HashMap::new();
     let ip_addr = DEFAULT_URL.parse().unwrap();
-    let service_ports = random_free_ports(50000, 55000, &ip_addr, n).await.unwrap();
+    let service_ports = random_free_ports(40001, 45000, &ip_addr, n).await.unwrap();
     for i in 1..=n {
         let port = service_ports[i - 1];
         let url = format!("{ip_addr}:{port}");

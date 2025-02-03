@@ -2182,10 +2182,10 @@ pub mod test_tools {
         tracing::info!("Spawning servers...");
         let num_parties = priv_storage.len();
         let ip_addr = DEFAULT_URL.parse().unwrap();
-        let service_ports = random_free_ports(50000, 55000, &ip_addr, num_parties)
+        let service_ports = random_free_ports(30000, 35000, &ip_addr, num_parties)
             .await
             .unwrap();
-        let mpc_ports = random_free_ports(55000, 60000, &ip_addr, num_parties)
+        let mpc_ports = random_free_ports(35001, 40000, &ip_addr, num_parties)
             .await
             .unwrap();
 
@@ -2496,9 +2496,9 @@ pub mod test_tools {
         ensure_default_material_exists().await;
 
         let ip_addr = DEFAULT_URL.parse().unwrap();
-        // we use port numbers above 60000 so that it's easy to identify
+        // we use port numbers above 40001 so that it's easy to identify
         // which cores are running in the centralized mode from the logs
-        let listen_port = random_free_ports(60000, 61000, &ip_addr, 1).await.unwrap()[0];
+        let listen_port = random_free_ports(40001, 41000, &ip_addr, 1).await.unwrap()[0];
         let (tx, rx) = tokio::sync::oneshot::channel();
         let (kms, health_service) = RealCentralizedKms::new(
             pub_storage,
