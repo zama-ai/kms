@@ -223,7 +223,8 @@ mod tests {
             tfhe_internals::{
                 parameters::{EncryptionType, TUniformBound},
                 randomness::{MPCMaskRandomGenerator, MPCNoiseRandomGenerator},
-                utils::tests::{reconstruct_bit_vec, reconstruct_glwe_body_vec},
+                utils::reconstruct_bit_vec,
+                utils::reconstruct_glwe_body_vec,
             },
         },
         networking::NetworkMode,

@@ -307,7 +307,7 @@ pub enum PrivDataType {
     SigningKey,
     FheKeyInfo,
     CrsInfo,
-    FhePrivateKey,
+    FhePrivateKey, // Only used for the centralized case
     PrssSetup,
 }
 

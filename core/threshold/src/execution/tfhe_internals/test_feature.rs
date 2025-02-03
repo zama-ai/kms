@@ -21,7 +21,7 @@ use tfhe::{
         },
         seeders::Seeder,
     },
-    integer::{block_decomposition::BlockRecomposer, parameters::PolynomialSize},
+    integer::block_decomposition::BlockRecomposer,
     shortint::{
         self, list_compression::CompressionPrivateKeys, ClassicPBSParameters, ShortintParameterSet,
     },
@@ -43,7 +43,10 @@ use crate::{
         random::{secret_rng_from_seed, seed_from_rng},
         runtime::{party::Role, session::BaseSessionHandles},
         sharing::{input::robust_input, share::Share},
-        tfhe_internals::{glwe_key::GlweSecretKeyShare, lwe_key::LweSecretKeyShare},
+        tfhe_internals::{
+            compression_decompression_key::CompressionPrivateKeyShares,
+            glwe_key::GlweSecretKeyShare, lwe_key::LweSecretKeyShare,
+        },
     },
     networking::value::NetworkValue,
 };
@@ -72,6 +75,32 @@ impl KeySet {
         let (_glwe_secret_key, lwe_secret_key, _shortint_param) = short_client_key.into_raw_parts();
         lwe_secret_key
     }
+
+    pub fn get_raw_lwe_encryption_client_key(&self) -> LweSecretKey<Vec<u64>> {
+        // We should have this key even if the compact PKE parameters are empty
+        // because we want to match the behaviour of a normal DKG.
+        // In the normal DKG the shares that correspond to the lwe private key
+        // is copied to the encryption private key if the compact PKE parameters
+        // don't exist.
+        let (_, compact_private_key, _, _) = self.client_key.clone().into_raw_parts();
+        if let Some(inner) = compact_private_key {
+            let raw_parts = inner.0.into_raw_parts();
+            raw_parts.into_raw_parts().0
+        } else {
+            self.get_raw_lwe_client_key()
+        }
+    }
+
+    pub fn get_raw_compression_client_key(&self) -> Option<GlweSecretKey<Vec<u64>>> {
+        let (_, _, compression_sk, _) = self.client_key.clone().into_raw_parts();
+        if let Some(inner) = compression_sk {
+            let raw_parts = inner.into_raw_parts();
+            Some(raw_parts.post_packing_ks_key)
+        } else {
+            None
+        }
+    }
+
     pub fn get_raw_glwe_client_key(&self) -> GlweSecretKey<Vec<u64>> {
         let (inner_client_key, _, _, _) = self.client_key.clone().into_raw_parts();
         let short_client_key = inner_client_key.into_raw_parts();
@@ -215,6 +244,7 @@ pub fn to_hl_client_key(
     )
 }
 
+// TODO we should add a unit test for this
 pub async fn initialize_key_material<
     R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
@@ -249,6 +279,20 @@ where
             vec![Numeric::ZERO; params_basic_handle.lwe_dimension().0]
         });
 
+    let lwe_encryption_sk_container64: Vec<u64> = keyset
+        .as_ref()
+        .map(|s| {
+            s.clone()
+                .get_raw_lwe_encryption_client_key()
+                .into_container()
+        })
+        .unwrap_or_else(|| vec![Numeric::ZERO; params_basic_handle.lwe_hat_dimension().0]);
+
+    let glwe_sk_container64: Vec<u64> = keyset
+        .as_ref()
+        .map(|s| s.clone().get_raw_glwe_client_key().into_container())
+        .unwrap_or_else(|| vec![Numeric::ZERO; params_basic_handle.glwe_sk_num_bits()]);
+
     let sns_sk_container128: Option<Vec<u128>> = if let DKGParams::WithSnS(params_sns) = params {
         Some(
             keyset
@@ -267,15 +311,61 @@ where
         None
     };
 
-    // iterate through sk and share each element
+    // We need to check that when the compression parameters are available,
+    // there is always a compression client key, otherwise there will
+    // be an inconsistency between the leader (party 1) and the other parties
+    // since the leader will output None for compression_sk_container64
+    // and the other parties will output Some(vec![..]).
+    if let Some(ks) = &keyset {
+        if ks.get_raw_compression_client_key().is_none()
+            && params_basic_handle
+                .get_compression_decompression_params()
+                .is_some()
+        {
+            anyhow::bail!("Compression client key is missing when parameter is available")
+        }
+    }
 
+    let compression_sk_container64: Option<Vec<u64>> = match &keyset {
+        Some(s) => {
+            if params_basic_handle
+                .get_compression_decompression_params()
+                .is_none()
+            {
+                None
+            } else {
+                s.clone()
+                    .get_raw_compression_client_key()
+                    .map(|x| x.into_container())
+            }
+        }
+        None => {
+            if params_basic_handle
+                .get_compression_decompression_params()
+                .is_none()
+            {
+                None
+            } else {
+                Some(vec![
+                    Numeric::ZERO;
+                    params_basic_handle.compression_sk_num_bits()
+                ])
+            }
+        }
+    };
+
+    // iterate through sk and share each element
     let mut lwe_key_shares64 = Vec::new();
     // iterate through sk and share each element
     // TODO(Dragos) this sharing can be done in a single round
-    tracing::debug!("Sharing key64 to be sent: len {}", lwe_sk_container64.len());
+    tracing::debug!(
+        "I'm {:?}, Sharing key64 to be sent: len {}",
+        session.my_role(),
+        lwe_sk_container64.len()
+    );
     for cur in lwe_sk_container64 {
         let secret = match own_role.one_based() {
-            1 => Some(ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping::<
+            INPUT_PARTY_ID => Some(ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping::<
                 u64,
             >(
                 cur
@@ -287,24 +377,65 @@ where
         lwe_key_shares64.push(Share::new(own_role, share));
     }
 
+    let mut lwe_encryption_key_shares64 = Vec::new();
+    tracing::debug!(
+        "I'm {:?}, Sharing encryption key64 to be sent: len {}",
+        session.my_role(),
+        lwe_encryption_sk_container64.len()
+    );
+    for cur in lwe_encryption_sk_container64 {
+        let secret = match own_role.one_based() {
+            INPUT_PARTY_ID => Some(ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping::<
+                u64,
+            >(
+                cur
+            ))),
+            _ => None,
+        };
+        let share = robust_input(session, &secret, &own_role, INPUT_PARTY_ID).await?; //TODO(Daniel) batch this for all big_ell
+
+        lwe_encryption_key_shares64.push(Share::new(own_role, share));
+    }
+
+    let mut glwe_key_shares64 = Vec::new();
+    tracing::debug!(
+        "I'm {:?}, Sharing glwe client key 64 to be sent: len {}",
+        session.my_role(),
+        glwe_sk_container64.len(),
+    );
+    for cur in glwe_sk_container64 {
+        let secret = match own_role.one_based() {
+            INPUT_PARTY_ID => Some(ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping::<
+                u64,
+            >(
+                cur
+            ))),
+            _ => None,
+        };
+        let share = robust_input(session, &secret, &own_role, INPUT_PARTY_ID).await?; //TODO(Daniel) batch this for all big_ell
+        glwe_key_shares64.push(Share::new(own_role, share));
+    }
+
     let sns_key_shares128 = if let Some(sns_sk_container128) = sns_sk_container128 {
         let mut sns_key_shares128 = Vec::new();
         // TODO(Dragos) this sharing can be done in a single round
         tracing::debug!(
-            "Sharing key128 to be sent: len {}",
+            "I'm {:?}, Sharing key128 to be sent: len {}",
+            session.my_role(),
             sns_sk_container128.len()
         );
         for cur in sns_sk_container128 {
             let secret = match own_role.one_based() {
-                1 => Some(ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping::<
-                    u128,
-                >(
-                    cur
-                ))),
+                INPUT_PARTY_ID => {
+                    Some(ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping::<
+                        u128,
+                    >(
+                        cur
+                    )))
+                }
                 _ => None,
             };
             let share = robust_input(session, &secret, &own_role, INPUT_PARTY_ID).await?; //TODO(Daniel) batch this for all big_ell
-
             sns_key_shares128.push(Share::new(own_role, share));
         }
         Some(LweSecretKeyShare {
@@ -313,6 +444,44 @@ where
     } else {
         None
     };
+
+    tracing::debug!(
+        "I'm {:?}, Sharing compression key: len {:?}",
+        session.my_role(),
+        compression_sk_container64.as_ref().map(|x| x.len()),
+    );
+    // there doesn't seem to be a way to get the compression key as a reference
+    let mut glwe_compression_key_shares64 = Vec::new();
+    if let Some(compression_container) = compression_sk_container64 {
+        for cur in compression_container {
+            let secret = match own_role.one_based() {
+                INPUT_PARTY_ID => {
+                    Some(ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping::<
+                        u64,
+                    >(
+                        cur
+                    )))
+                }
+                _ => None,
+            };
+            let share = robust_input(session, &secret, &own_role, INPUT_PARTY_ID).await?; //TODO(Daniel) batch this for all big_ell
+            glwe_compression_key_shares64.push(Share::new(own_role, share));
+        }
+    };
+    tracing::debug!("I'm {:?}, private keys are all sent", session.my_role());
+
+    let glwe_secret_key_share_compression = params_basic_handle
+        .get_compression_decompression_params()
+        .map(|compression_params| {
+            let params = compression_params.raw_compression_parameters;
+            CompressionPrivateKeyShares {
+                post_packing_ks_key: GlweSecretKeyShare {
+                    data: glwe_compression_key_shares64,
+                    polynomial_size: params.packing_ks_polynomial_size,
+                },
+                params,
+            }
+        });
 
     let transferred_pub_key = transfer_pub_key(
         session,
@@ -326,17 +495,16 @@ where
         lwe_compute_secret_key_share: LweSecretKeyShare {
             data: lwe_key_shares64,
         },
-        // Using dummy enc secret key as it is not needed in tests
-        lwe_encryption_secret_key_share: LweSecretKeyShare { data: vec![] },
-        // Using a dummy glwe secret key as it is not needed in tests
+        lwe_encryption_secret_key_share: LweSecretKeyShare {
+            data: lwe_encryption_key_shares64,
+        },
         glwe_secret_key_share: GlweSecretKeyShare {
-            data: vec![],
-            polynomial_size: PolynomialSize(0),
+            data: glwe_key_shares64,
+            polynomial_size: params_basic_handle.polynomial_size(),
         },
         glwe_secret_key_share_sns_as_lwe: sns_key_shares128,
         parameters: params_basic_handle.to_classic_pbs_parameters(),
-        // Always using None here as we never need the compression secret key in tests
-        glwe_secret_key_share_compression: None,
+        glwe_secret_key_share_compression,
     };
 
     Ok((transferred_pub_key, shared_sk))

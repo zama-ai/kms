@@ -402,7 +402,7 @@ mod tests {
                 randomness::{
                     MPCEncryptionRandomGenerator, MPCMaskRandomGenerator, MPCNoiseRandomGenerator,
                 },
-                utils::tests::{reconstruct_bit_vec, reconstruct_glwe_body_vec},
+                utils::{reconstruct_bit_vec, reconstruct_glwe_body_vec},
             },
         },
         tests::helper::tests_and_benches::execute_protocol_large,

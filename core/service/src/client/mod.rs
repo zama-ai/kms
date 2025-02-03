@@ -5731,7 +5731,9 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn default_insecure_dkg(#[case] amount_parties: usize) {
-        use crate::consts::DEFAULT_PARAM;
+        let params = FheParameter::Default;
+        let full_params: crate::cryptography::internal_crypto_types::WrappedDKGParams =
+            params.into();
 
         let req_preproc = RequestId::derive("test_dkg-preproc_{amount_parties}").unwrap();
         let req_key = RequestId::derive("test_dkg-key_{amount_parties}").unwrap();
@@ -5739,15 +5741,10 @@ pub(crate) mod tests {
 
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (_kms_servers, kms_clients, internal_client) =
-            threshold_handles(DEFAULT_PARAM, amount_parties, true, None, None).await;
+            threshold_handles(*full_params, amount_parties, true, None, None).await;
 
         let req_keygen = internal_client
-            .key_gen_request(
-                &req_key,
-                Some(req_preproc.clone()),
-                Some(FheParameter::Test),
-                None,
-            )
+            .key_gen_request(&req_key, Some(req_preproc.clone()), Some(params), None)
             .unwrap();
         let responses = launch_dkg(req_keygen.clone(), &kms_clients, true).await;
 
@@ -5893,6 +5890,13 @@ pub(crate) mod tests {
         internal_client: &Client,
         insecure: bool,
     ) {
+        use distributed_decryption::execution::{
+            runtime::party::Role, tfhe_internals::utils::reconstruct_bit_vec,
+        };
+        use kms_grpc::rpc_types::PrivDataType;
+
+        use crate::engine::threshold::service_real::ThresholdFheKeys;
+
         let mut finished = Vec::new();
         // Wait at most MAX_TRIES times 15 seconds for all preprocessing to finish
         for _ in 0..MAX_TRIES {
@@ -5943,21 +5947,23 @@ pub(crate) mod tests {
             }
         }
 
-        let finished = finished
-            .into_iter()
-            .map(|x| x.1.unwrap().into_inner())
-            .collect::<Vec<_>>();
+        finished.sort_by(|(i, _), (j, _)| i.cmp(j));
+        assert_eq!(finished.len(), kms_clients.len());
 
         let mut serialized_ref_pk = Vec::new();
         let mut serialized_ref_server_key = Vec::new();
-        for (idx, kg_res) in finished.into_iter().enumerate() {
-            let storage = FileStorage::new(None, StorageType::PUB, Some(idx + 1)).unwrap();
+        let mut all_threshold_fhe_keys = HashMap::new();
+        for (idx, kg_res) in finished.into_iter() {
+            let role = Role::indexed_by_one(idx as usize);
+            let i = role.zero_based();
+            let kg_res = kg_res.unwrap().into_inner();
+            let storage = FileStorage::new(None, StorageType::PUB, Some(i + 1)).unwrap();
             let pk = internal_client
                 .retrieve_public_key(&kg_res, &storage)
                 .await
                 .unwrap();
             assert!(pk.is_some());
-            if idx == 0 {
+            if i == 0 {
                 serialized_ref_pk = bincode::serialize(&(pk.unwrap())).unwrap();
             } else {
                 assert_eq!(
@@ -5970,7 +5976,7 @@ pub(crate) mod tests {
                 .await
                 .unwrap();
             assert!(server_key.is_some());
-            if idx == 0 {
+            if i == 0 {
                 serialized_ref_server_key = bincode::serialize(&(server_key.unwrap())).unwrap();
             } else {
                 assert_eq!(
@@ -5978,7 +5984,47 @@ pub(crate) mod tests {
                     bincode::serialize(&(server_key.unwrap())).unwrap()
                 )
             }
+
+            let priv_storage = FileStorage::new(None, StorageType::PRIV, Some(i + 1)).unwrap();
+            let sk_urls = priv_storage
+                .all_urls(&PrivDataType::FheKeyInfo.to_string())
+                .await
+                .unwrap();
+            let sk_url = sk_urls.get(&kg_res.request_id.unwrap().request_id).unwrap();
+            let threshold_fhe_keys: ThresholdFheKeys =
+                priv_storage.read_data(sk_url).await.unwrap();
+            all_threshold_fhe_keys.insert(role, threshold_fhe_keys);
         }
+
+        let param = internal_client.params;
+        let param_handle = param.get_params_basics_handle();
+        let threshold = kms_clients.len().div_ceil(3) - 1;
+        let lwe_shares = all_threshold_fhe_keys
+            .iter()
+            .map(|(k, v)| (*k, v.private_keys.lwe_compute_secret_key_share.data.clone()))
+            .collect::<HashMap<_, _>>();
+        _ = reconstruct_bit_vec(lwe_shares, param_handle.lwe_dimension().0, threshold);
+
+        let lwe_enc_shares = all_threshold_fhe_keys
+            .iter()
+            .map(|(k, v)| {
+                (
+                    *k,
+                    v.private_keys.lwe_encryption_secret_key_share.data.clone(),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        _ = reconstruct_bit_vec(
+            lwe_enc_shares,
+            param_handle.lwe_hat_dimension().0,
+            threshold,
+        );
+
+        let glwe_shares = all_threshold_fhe_keys
+            .iter()
+            .map(|(k, v)| (*k, v.private_keys.glwe_secret_key_share.data.clone()))
+            .collect::<HashMap<_, _>>();
+        _ = reconstruct_bit_vec(glwe_shares, param_handle.glwe_sk_num_bits(), threshold);
 
         if !insecure {
             // Try to request another kg with the same preproc but another request id,

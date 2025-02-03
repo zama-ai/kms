@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 //This file contains code related to algebraric operations
 //I put them there as they may not be needed anymore when/if
 //part of this code is integrated in tfhe-rs
@@ -7,13 +9,18 @@ use tfhe::{
     CompactCiphertextList, CompactPublicKey, HlExpandable,
 };
 
+use crate::execution::sharing::shamir::RevealOp;
 use crate::{
     algebra::{
         galois_rings::common::ResiduePoly,
         poly::Poly,
-        structure_traits::{BaseRing, Ring, Zero},
+        structure_traits::{BaseRing, ErrorCorrect, Ring, Zero},
     },
     error::error_handler::anyhow_error_and_log,
+    execution::{
+        runtime::party::Role,
+        sharing::{shamir::ShamirSharings, share::Share},
+    },
 };
 
 use super::glwe_key::GlweSecretKeyShare;
@@ -192,6 +199,71 @@ pub fn expanded_encrypt<M: Compactable + Numeric, T: HlExpandable + Tagged>(
         .ok_or(anyhow::anyhow!("expanded ciphertext list is empty"))
 }
 
+pub fn reconstruct_bit_vec<Z: BaseRing, const EXTENSION_DEGREE: usize>(
+    input: HashMap<Role, Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
+    expected_num_bits: usize,
+    threshold: usize,
+) -> Vec<u64>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let mut output_bit_vec = Vec::new();
+    for idx in 0..expected_num_bits {
+        let mut vec_bit = Vec::new();
+        for (_, values) in input.iter() {
+            vec_bit.push(values[idx]);
+        }
+
+        let key_bit = ShamirSharings::create(vec_bit)
+            .reconstruct(threshold)
+            .unwrap()
+            .to_scalar()
+            .unwrap();
+
+        //Assert we indeed have a bit
+        assert_eq!(key_bit * (Z::ONE - key_bit), Z::ZERO);
+        if key_bit == Z::ZERO {
+            output_bit_vec.push(0_u64);
+        } else {
+            output_bit_vec.push(1_u64);
+        }
+    }
+    output_bit_vec
+}
+
+pub fn reconstruct_glwe_body_vec<Z: BaseRing, const EXTENSION_DEGREE: usize>(
+    input: HashMap<Role, Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
+    expected_num_glwe_ctxt: usize,
+    polynomial_size: usize,
+    threshold: usize,
+) -> Vec<Vec<Z>>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let mut output_body_vec = Vec::new();
+    for glwe_ctxt_idx in 0..expected_num_glwe_ctxt {
+        let mut body = Vec::new();
+        let slice_start_idx = glwe_ctxt_idx * polynomial_size;
+        let slice_end_idx = slice_start_idx + polynomial_size;
+        for curr_glwe_ctxt_index in slice_start_idx..slice_end_idx {
+            let mut vec_body = Vec::new();
+            for (_role, values) in input.iter() {
+                vec_body.push(values[curr_glwe_ctxt_index]);
+            }
+            body.push(
+                ShamirSharings::create(vec_body)
+                    .reconstruct(threshold)
+                    .unwrap()
+                    .to_scalar()
+                    .unwrap(),
+            );
+        }
+
+        output_body_vec.push(body);
+    }
+    output_body_vec
+}
+
 #[cfg(test)]
 pub mod tests {
     use std::collections::HashMap;
@@ -202,81 +274,15 @@ pub mod tests {
 
     use crate::algebra::base_ring::{Z128, Z64};
     use crate::algebra::galois_rings::common::ResiduePoly;
-    use crate::execution::sharing::shamir::RevealOp;
     use crate::execution::tfhe_internals::parameters::{DKGParams, DKGParamsBasics};
     use crate::{
-        algebra::structure_traits::{BaseRing, ErrorCorrect},
+        algebra::structure_traits::ErrorCorrect,
         execution::{
-            endpoints::keygen::PrivateKeySet,
-            runtime::party::Role,
-            sharing::{shamir::ShamirSharings, share::Share},
+            endpoints::keygen::PrivateKeySet, runtime::party::Role, sharing::share::Share,
         },
     };
 
-    pub fn reconstruct_glwe_body_vec<Z: BaseRing, const EXTENSION_DEGREE: usize>(
-        input: HashMap<Role, Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
-        expected_num_glwe_ctxt: usize,
-        polynomial_size: usize,
-        threshold: usize,
-    ) -> Vec<Vec<Z>>
-    where
-        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
-    {
-        let mut output_body_vec = Vec::new();
-        for glwe_ctxt_idx in 0..expected_num_glwe_ctxt {
-            let mut body = Vec::new();
-            let slice_start_idx = glwe_ctxt_idx * polynomial_size;
-            let slice_end_idx = slice_start_idx + polynomial_size;
-            for curr_glwe_ctxt_index in slice_start_idx..slice_end_idx {
-                let mut vec_body = Vec::new();
-                for (_role, values) in input.iter() {
-                    vec_body.push(values[curr_glwe_ctxt_index]);
-                }
-                body.push(
-                    ShamirSharings::create(vec_body)
-                        .reconstruct(threshold)
-                        .unwrap()
-                        .to_scalar()
-                        .unwrap(),
-                );
-            }
-
-            output_body_vec.push(body);
-        }
-        output_body_vec
-    }
-
-    pub fn reconstruct_bit_vec<Z: BaseRing, const EXTENSION_DEGREE: usize>(
-        input: HashMap<Role, Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
-        expected_num_bits: usize,
-        threshold: usize,
-    ) -> Vec<u64>
-    where
-        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
-    {
-        let mut output_bit_vec = Vec::new();
-        for idx in 0..expected_num_bits {
-            let mut vec_bit = Vec::new();
-            for (_, values) in input.iter() {
-                vec_bit.push(values[idx]);
-            }
-
-            let key_bit = ShamirSharings::create(vec_bit)
-                .reconstruct(threshold)
-                .unwrap()
-                .to_scalar()
-                .unwrap();
-
-            //Assert we indeed have a bit
-            assert_eq!(key_bit * (Z::ONE - key_bit), Z::ZERO);
-            if key_bit == Z::ZERO {
-                output_bit_vec.push(0_u64);
-            } else {
-                output_bit_vec.push(1_u64);
-            }
-        }
-        output_bit_vec
-    }
+    use super::reconstruct_bit_vec;
 
     pub fn reconstruct_lwe_secret_key_from_file<
         const EXTENSION_DEGREE: usize,
