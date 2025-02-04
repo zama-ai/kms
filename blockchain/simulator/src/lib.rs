@@ -1920,7 +1920,7 @@ async fn fetch_crs(
     Ok(())
 }
 
-pub async fn main_from_config(
+pub async fn execute_cmd(
     path_to_config: &str,
     command: &SimulatorCommand,
     destination_prefix: &Path,

@@ -14,7 +14,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     }
 
     let keys_folder: &Path = Path::new("keys");
-    let res = main_from_config(
+    let res = execute_cmd(
         &config
             .file_conf
             .unwrap_or_else(|| "config/local_centralized.toml".to_string()),

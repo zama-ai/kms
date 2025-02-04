@@ -41,9 +41,13 @@ impl DockerComposeContext for DockerComposeCentralizedContext {
 
 impl AsyncTestContext for DockerComposeCentralizedContext {
     async fn setup() -> Self {
-        DockerComposeCentralizedContext {
+        let ctx = DockerComposeCentralizedContext {
             cmd: DockerCompose::new(KMSMode::Centralized),
-        }
+        };
+        // Wait for contract to be in-chain
+        // TODO: add status check for contract in-chain
+        tokio::time::sleep(tokio::time::Duration::from_secs(BOOTSTRAP_TIME_TO_SLEEP)).await;
+        ctx
     }
 
     async fn teardown(self) {
@@ -67,9 +71,13 @@ impl DockerComposeContext for DockerComposeThresholdContextDefault {
 
 impl AsyncTestContext for DockerComposeThresholdContextDefault {
     async fn setup() -> Self {
-        Self {
+        let ctx = Self {
             cmd: DockerCompose::new(KMSMode::ThresholdDefaultParameter),
-        }
+        };
+        // Wait for contract to be in-chain
+        // TODO: add status check for contract in-chain
+        tokio::time::sleep(tokio::time::Duration::from_secs(BOOTSTRAP_TIME_TO_SLEEP)).await;
+        ctx
     }
 
     async fn teardown(self) {
@@ -93,9 +101,13 @@ impl DockerComposeContext for DockerComposeThresholdContextTest {
 
 impl AsyncTestContext for DockerComposeThresholdContextTest {
     async fn setup() -> Self {
-        Self {
+        let ctx = Self {
             cmd: DockerCompose::new(KMSMode::ThresholdTestParameter),
-        }
+        };
+        // Wait for contract to be in-chain
+        // TODO: add status check for contract in-chain
+        tokio::time::sleep(tokio::time::Duration::from_secs(BOOTSTRAP_TIME_TO_SLEEP)).await;
+        ctx
     }
 
     async fn teardown(self) {
@@ -103,14 +115,7 @@ impl AsyncTestContext for DockerComposeThresholdContextTest {
     }
 }
 
-async fn key_and_crs_gen<T: DockerComposeContext>(
-    ctx: &mut T,
-    insecure_crs_gen: bool,
-) -> (String, String) {
-    // Wait for contract to be in-chain
-    // TODO: add status check for contract in-chain
-    tokio::time::sleep(tokio::time::Duration::from_secs(BOOTSTRAP_TIME_TO_SLEEP)).await;
-
+async fn insecure_key_gen<T: DockerComposeContext>(ctx: &T) -> String {
     let path_to_config = ctx.root_path().join(ctx.config_path());
 
     let keys_folder: &Path = Path::new("tests/data/keys");
@@ -123,7 +128,7 @@ async fn key_and_crs_gen<T: DockerComposeContext>(
         expect_all_responses: true,
     };
     println!("Doing insecure key-gen");
-    let key_gen_results = main_from_config(
+    let key_gen_results = execute_cmd(
         &config.file_conf.unwrap(),
         &config.command,
         keys_folder,
@@ -133,18 +138,6 @@ async fn key_and_crs_gen<T: DockerComposeContext>(
     .await
     .unwrap();
     println!("Insecure key-gen done");
-
-    let command = match insecure_crs_gen {
-        true => SimulatorCommand::InsecureCrsGen(CrsParameters { max_num_bits: 2048 }),
-        false => SimulatorCommand::CrsGen(CrsParameters { max_num_bits: 2048 }),
-    };
-    let config = Config {
-        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
-        command,
-        logs: true,
-        max_iter: 200,
-        expect_all_responses: true,
-    };
 
     let key_ids: Vec<String> = match key_gen_results {
         (Some(values), _) => values
@@ -159,8 +152,38 @@ async fn key_and_crs_gen<T: DockerComposeContext>(
         _ => panic!("Error doing keygen"),
     };
 
-    println!("Doing CRS-gen: insecure?: {}", insecure_crs_gen);
-    let crs_gen_results = main_from_config(
+    let key_id = key_ids.first().expect("Key id is None").to_lowercase();
+    key_id.to_string()
+}
+
+async fn key_and_crs_gen<T: DockerComposeContext>(
+    ctx: &mut T,
+    insecure_crs_gen: bool,
+) -> (String, String) {
+    let key_id = insecure_key_gen(ctx).await;
+    let crs_id = crs_gen(ctx, insecure_crs_gen).await;
+    (key_id, crs_id)
+}
+
+async fn crs_gen<T: DockerComposeContext>(ctx: &T, insecure_crs_gen: bool) -> String {
+    let path_to_config = ctx.root_path().join(ctx.config_path());
+
+    let keys_folder: &Path = Path::new("tests/data/keys");
+
+    let command = match insecure_crs_gen {
+        true => SimulatorCommand::InsecureCrsGen(CrsParameters { max_num_bits: 2048 }),
+        false => SimulatorCommand::CrsGen(CrsParameters { max_num_bits: 2048 }),
+    };
+    let config = Config {
+        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+        command,
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+    };
+
+    println!("Doing CRS-gen");
+    let crs_gen_results = execute_cmd(
         &config.file_conf.unwrap(),
         &config.command,
         keys_folder,
@@ -183,15 +206,10 @@ async fn key_and_crs_gen<T: DockerComposeContext>(
         _ => panic!("Error doing crsgen"),
     };
     let crs_id = crs_ids.first().expect("CRS id is None").to_lowercase();
-    let key_id = key_ids.first().expect("Key id is None").to_lowercase();
-    (key_id.to_string(), crs_id.to_string())
+    crs_id.to_string()
 }
 
 async fn real_preproc_and_keygen(config_path: &str) -> String {
-    // Wait for contract to be in-chain
-    // TODO: add status check for contract in-chain
-    tokio::time::sleep(tokio::time::Duration::from_secs(BOOTSTRAP_TIME_TO_SLEEP)).await;
-
     let keys_folder: &Path = Path::new("tests/data/keys");
 
     let config = Config {
@@ -202,7 +220,7 @@ async fn real_preproc_and_keygen(config_path: &str) -> String {
         expect_all_responses: true,
     };
     println!("Doing preprocessing");
-    let (_, preproc_id) = main_from_config(
+    let (_, preproc_id) = execute_cmd(
         &config.file_conf.unwrap(),
         &config.command,
         keys_folder,
@@ -221,7 +239,7 @@ async fn real_preproc_and_keygen(config_path: &str) -> String {
         expect_all_responses: true,
     };
     println!("Doing key-gen");
-    let key_gen_results = main_from_config(
+    let key_gen_results = execute_cmd(
         &config.file_conf.unwrap(),
         &config.command,
         keys_folder,
@@ -266,7 +284,7 @@ async fn test_template<T: DockerComposeContext>(ctx: &mut T, commands: Vec<Simul
             expect_all_responses: true,
         };
 
-        main_from_config(
+        execute_cmd(
             &config.file_conf.unwrap(),
             &config.command,
             keys_folder,
@@ -280,8 +298,6 @@ async fn test_template<T: DockerComposeContext>(ctx: &mut T, commands: Vec<Simul
     }
 }
 
-// TODO do we want to run these as well?
-#[ignore]
 #[test_context(DockerComposeCentralizedContext)]
 #[tokio::test]
 #[serial(docker)]
@@ -416,7 +432,7 @@ fn config_path_from_context(ctx: &DockerComposeThresholdContextTest) -> String {
 #[test_context(DockerComposeThresholdContextTest)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_threshold_2_sequential_preproc_keygen(ctx: &DockerComposeThresholdContextTest) {
+async fn test_threshold_sequential_preproc_keygen(ctx: &DockerComposeThresholdContextTest) {
     init_logging();
     let config_path = config_path_from_context(ctx);
     let key_id_1 = real_preproc_and_keygen(&config_path).await;
@@ -429,7 +445,7 @@ async fn test_threshold_2_sequential_preproc_keygen(ctx: &DockerComposeThreshold
 #[test_context(DockerComposeThresholdContextTest)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_threshold_3_concurrent_preproc_keygen(ctx: &DockerComposeThresholdContextTest) {
+async fn test_threshold_concurrent_preproc_keygen(ctx: &DockerComposeThresholdContextTest) {
     init_logging();
     let config_path = config_path_from_context(ctx);
     let _ = join_all([
@@ -437,4 +453,25 @@ async fn test_threshold_3_concurrent_preproc_keygen(ctx: &DockerComposeThreshold
         real_preproc_and_keygen(&config_path),
     ])
     .await;
+}
+
+#[test_context(DockerComposeThresholdContextTest)]
+#[tokio::test]
+#[serial(docker)]
+async fn test_threshold_sequential_crs(ctx: &DockerComposeThresholdContextTest) {
+    init_logging();
+    let crs_id_1 = crs_gen(ctx, false).await;
+    let crs_id_2 = crs_gen(ctx, false).await;
+    assert_ne!(crs_id_1, crs_id_2);
+}
+
+// https://github.com/zama-ai/kms-core/issues/1941
+#[should_panic]
+#[test_context(DockerComposeThresholdContextTest)]
+#[tokio::test]
+#[serial(docker)]
+async fn test_threshold_concurrent_crs(ctx: &DockerComposeThresholdContextTest) {
+    init_logging();
+    let res = join_all([crs_gen(ctx, false), crs_gen(ctx, false)]).await;
+    assert_ne!(res[0], res[1]);
 }
