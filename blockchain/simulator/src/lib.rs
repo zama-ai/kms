@@ -3,7 +3,8 @@
 /// This library implements most functionnalities to interact with a KMS ASC.
 /// This library also includes an associated CLI.
 use aes_prng::AesRng;
-use alloy_signer::{Signature, SignerSync};
+use alloy_primitives::PrimitiveSignature;
+use alloy_signer::SignerSync;
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use anyhow::anyhow;
 use bech32::{self, FromBase32};
@@ -1176,7 +1177,9 @@ pub async fn execute_reencryption_contract(
     let message_hash = message.eip712_signing_hash(&domain);
     let signer = alloy_signer_local::PrivateKeySigner::from_signing_key(sig_sk.sk().clone());
 
-    let signature = signer.sign_hash_sync(&message_hash).unwrap();
+    let signature = alloy_primitives::PrimitiveSignature::try_from(
+        signer.sign_hash_sync(&message_hash)?.as_bytes().as_slice(),
+    )?;
 
     //ciphertext digest is SHA3 of the ctxt
     let ciphertext_digest = hash_element(&cipher);
@@ -1665,7 +1668,7 @@ fn check_ext_pubdata_signature<D: Serialize + Versionize + Named>(
         ));
     }
     // Deserialize the Signature. It reverses the call to `signature.as_bytes()` that we use for serialization.
-    let sig = Signature::from_bytes_and_parity(external_sig, external_sig[64] & 0x01 == 0)?;
+    let sig = PrimitiveSignature::from_bytes_and_parity(external_sig, external_sig[64] & 0x01 == 0);
 
     let edm = Eip712DomainMsg {
         name: vals.eip712_name().to_string(),
@@ -1710,7 +1713,7 @@ fn check_ext_pt_signature(
         ));
     }
     // this reverses the call to `signature.as_bytes()` that we use for serialization
-    let sig = Signature::from_bytes_and_parity(external_sig, external_sig[64] & 0x01 == 0)?;
+    let sig = PrimitiveSignature::from_bytes_and_parity(external_sig, external_sig[64] & 0x01 == 0);
 
     let edm = Eip712DomainMsg {
         name: decrypt_vals.eip712_name().to_string(),

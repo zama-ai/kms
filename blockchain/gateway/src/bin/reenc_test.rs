@@ -61,7 +61,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let binding = signature.as_bytes().to_vec();
     let signature = binding.as_slice();
 
-    let signature = alloy_primitives::Signature::try_from(signature)?;
+    let signature = alloy_primitives::PrimitiveSignature::try_from(signature)?;
 
     let recovered_key = signature.recover_from_prehash(&message_hash)?; //signature.recover_from_msg(message_hash.clone())?;
     println!("Recovered key: {:?}", recovered_key);

@@ -242,8 +242,9 @@ pub(crate) fn verify_reencryption_eip712(request: &ReencryptionRequest) -> anyho
     // but this signature cannot be wrapper into our own `Signature`
     // type since our own type uses k256::ecdsa, which is not the same
     // as the one in alloy.
-    let alloy_signature = alloy_primitives::Signature::try_from(signature_bytes.as_slice())
-        .inspect_err(|e| tracing::error!("Failed to parse alloy signature with error: {e}"))?;
+    let alloy_signature =
+        alloy_primitives::PrimitiveSignature::try_from(signature_bytes.as_slice())
+            .inspect_err(|e| tracing::error!("Failed to parse alloy signature with error: {e}"))?;
 
     check_normalized(&Signature {
         sig: alloy_signature.to_k256()?,

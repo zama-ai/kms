@@ -183,7 +183,7 @@ pub struct TestingReencryptionTranscript {
 pub struct ParsedReencryptionRequest {
     // We allow dead_code because these are required to parse from JSON
     #[allow(dead_code)]
-    signature: alloy_primitives::Signature,
+    signature: alloy_primitives::PrimitiveSignature,
     #[allow(dead_code)]
     client_address: alloy_primitives::Address,
     enc_key: Vec<u8>,
@@ -193,7 +193,7 @@ pub struct ParsedReencryptionRequest {
 
 impl ParsedReencryptionRequest {
     pub fn new(
-        signature: alloy_primitives::Signature,
+        signature: alloy_primitives::PrimitiveSignature,
         client_address: alloy_primitives::Address,
         enc_key: Vec<u8>,
         ciphertext_digest: Vec<u8>,
@@ -229,7 +229,7 @@ impl TryFrom<&ParsedReencryptionRequestHex> for ParsedReencryptionRequest {
 
     fn try_from(req_hex: &ParsedReencryptionRequestHex) -> Result<Self, Self::Error> {
         let signature_buf = hex_decode_js_err(&req_hex.signature)?;
-        let signature = alloy_primitives::Signature::try_from(signature_buf.as_slice())
+        let signature = alloy_primitives::PrimitiveSignature::try_from(signature_buf.as_slice())
             .map_err(|e| JsError::new(&e.to_string()))?;
         let client_address =
             alloy_primitives::Address::parse_checksummed(&req_hex.client_address, None)
@@ -286,7 +286,7 @@ impl TryFrom<&ReencryptionRequest> for ParsedReencryptionRequest {
             .as_ref()
             .ok_or(anyhow::anyhow!("Missing domain"))?;
 
-        let signature = alloy_primitives::Signature::try_from(value.signature.as_slice())?;
+        let signature = alloy_primitives::PrimitiveSignature::try_from(value.signature.as_slice())?;
 
         let client_address =
             alloy_primitives::Address::parse_checksummed(&payload.client_address, None)?;
@@ -2047,7 +2047,7 @@ pub fn recover_ecdsa_public_key_from_signature(
     tracing::debug!("EIP712: {:?}", domain);
     tracing::debug!("Target address: {:?}", hex::encode(target_address));
 
-    let signature = alloy_primitives::Signature::try_from(sig)?;
+    let signature = alloy_primitives::PrimitiveSignature::try_from(sig)?;
     check_normalized(&Signature {
         sig: signature.to_k256()?,
     })?;

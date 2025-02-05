@@ -124,11 +124,11 @@ tracing-subscriber = { version = "=0.3.19", features = ["fmt", "std"] }
 tracing-actix-web = "=0.7.15"
 typed-builder = "=0.20.0"
 
-alloy-dyn-abi = "=0.8.11"
-alloy-primitives = "=0.8.11"
-alloy-sol-types = "=0.8.11"
-alloy-signer = "=0.3.6"
-alloy-signer-local = "=0.3.6"
+alloy-dyn-abi = "=0.8.20"
+alloy-primitives = "=0.8.20"
+alloy-sol-types = "=0.8.20"
+alloy-signer = "=0.11.0"
+alloy-signer-local = "=0.11.0"
 
 [profile.wasm]
 inherits = "release"
