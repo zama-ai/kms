@@ -3,7 +3,6 @@ use core::fmt;
 use kms_grpc::kms::v1::RequestId;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType, SIGNING_KEY_ID};
 use kms_lib::{
-    conf::init_kms_core_telemetry,
     consts::{
         DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM, DEFAULT_THRESHOLD_CRS_ID_4P,
         DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_DEFAULT_ID, TEST_PARAM,
@@ -199,7 +198,6 @@ impl<'a, PubS: Storage, PrivS: Storage> ThresholdCmdArgs<'a, PubS, PrivS> {
 /// ```
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    init_kms_core_telemetry()?;
     let args = Args::parse();
     // common AWS configuration
     let aws_sdk_config = build_aws_sdk_config(

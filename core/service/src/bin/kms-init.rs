@@ -1,7 +1,6 @@
 use clap::Parser;
 use kms_grpc::kms::v1::{Config, InitRequest};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_lib::conf::init_kms_core_telemetry;
 
 /// This CLI initializes the threshold KMS core nodes.
 /// After the KMS servers are up and running (using the kms-server)
@@ -23,7 +22,6 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    init_kms_core_telemetry()?;
     let args = Args::parse();
 
     let mut handles = Vec::new();
