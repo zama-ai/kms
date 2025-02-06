@@ -1,4 +1,6 @@
 use clap::{Parser, Subcommand, ValueEnum};
+use conf_trace::conf::TelemetryConfig;
+use conf_trace::telemetry::init_tracing;
 use core::fmt;
 use kms_grpc::kms::v1::RequestId;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType, SIGNING_KEY_ID};
@@ -199,7 +201,13 @@ impl<'a, PubS: Storage, PrivS: Storage> ThresholdCmdArgs<'a, PubS, PrivS> {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
-    // common AWS configuration
+
+    // Initialize telemetry with stdout tracing only and disabled metrics
+    let telemetry = TelemetryConfig::builder()
+        .tracing_service_name("kms_core".to_string())
+        .build();
+    init_tracing(&telemetry)?;
+
     let aws_sdk_config = build_aws_sdk_config(
         args.aws_region,
         args.aws_imds_endpoint,

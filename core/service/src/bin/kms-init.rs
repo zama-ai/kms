@@ -1,4 +1,6 @@
 use clap::Parser;
+use conf_trace::conf::TelemetryConfig;
+use conf_trace::telemetry::init_tracing;
 use kms_grpc::kms::v1::{Config, InitRequest};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 
@@ -22,6 +24,12 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize telemetry with stdout tracing only and disabled metrics
+    let telemetry = TelemetryConfig::builder()
+        .tracing_service_name("kms_core".to_string())
+        .build();
+    init_tracing(&telemetry)?;
+
     let args = Args::parse();
 
     let mut handles = Vec::new();
