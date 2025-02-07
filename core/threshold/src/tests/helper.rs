@@ -41,7 +41,8 @@ pub mod tests_and_benches {
         expected_rounds: Option<usize>,
         network_mode: NetworkMode,
         delay_vec: Option<Vec<Duration>>,
-        task: &mut dyn FnMut(SmallSession<Z>) -> TaskOutputT,
+        task_added_info: &mut dyn FnMut(SmallSession<Z>, Option<String>) -> TaskOutputT,
+        added_info: Option<String>,
     ) -> Vec<OutputT>
     where
         TaskOutputT: Future<Output = OutputT>,
@@ -72,7 +73,7 @@ pub mod tests_and_benches {
                 party_id,
                 Some(AesRng::seed_from_u64(party_id as u64)),
             );
-            tasks.spawn(task(session));
+            tasks.spawn(task_added_info(session, added_info.clone()));
         }
 
         // Here only 'Ok(v)' is appended to 'results' in order to avoid task crashes. We might want

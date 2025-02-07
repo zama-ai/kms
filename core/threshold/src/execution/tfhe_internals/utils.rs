@@ -284,6 +284,42 @@ pub mod tests {
 
     use super::reconstruct_bit_vec;
 
+    fn reconstruct_bit_vec_from_glwe_share_enum<const EXTENSION_DEGREE: usize>(
+        input: HashMap<
+            Role,
+            crate::execution::endpoints::keygen::GlweSecretKeyShareEnum<EXTENSION_DEGREE>,
+        >,
+        expected_num_bits: usize,
+        threshold: usize,
+    ) -> Vec<u64>
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+    {
+        // TODO hopefully this method will go away since it's not
+        // an elegant way to do reconstruction because we
+        // have an enum on every share, instead of an enum on
+        // all the shares, not to mention the use of "unsafe_cast"
+        let some_key = input.keys().last().unwrap();
+        let some_val = input.get(some_key).unwrap();
+        match some_val {
+            crate::execution::endpoints::keygen::GlweSecretKeyShareEnum::Z64(_share) => {
+                let input: HashMap<_, _> = input
+                    .into_iter()
+                    .map(|(k, v)| (k, v.unsafe_cast_to_z64().data))
+                    .collect();
+                reconstruct_bit_vec::<Z64, EXTENSION_DEGREE>(input, expected_num_bits, threshold)
+            }
+            crate::execution::endpoints::keygen::GlweSecretKeyShareEnum::Z128(_share) => {
+                let input: HashMap<_, _> = input
+                    .into_iter()
+                    .map(|(k, v)| (k, v.unsafe_cast_to_z128().data))
+                    .collect();
+                reconstruct_bit_vec::<Z128, EXTENSION_DEGREE>(input, expected_num_bits, threshold)
+            }
+        }
+    }
+
     pub fn reconstruct_lwe_secret_key_from_file<
         const EXTENSION_DEGREE: usize,
         Params: DKGParamsBasics + ?Sized,
@@ -322,12 +358,15 @@ pub mod tests {
     }
 
     #[allow(clippy::type_complexity)]
-    pub fn read_secret_key_shares_from_file<const EXTENSION_DEGREE: usize>(
+    fn read_secret_key_shares_from_file<const EXTENSION_DEGREE: usize>(
         parties: usize,
         params: DKGParams,
         prefix_path: &Path,
     ) -> (
-        HashMap<Role, Vec<Share<ResiduePoly<Z64, EXTENSION_DEGREE>>>>,
+        HashMap<
+            Role,
+            crate::execution::endpoints::keygen::GlweSecretKeyShareEnum<EXTENSION_DEGREE>,
+        >,
         HashMap<Role, Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>>,
     ) {
         let mut sk_shares = HashMap::new();
@@ -344,7 +383,7 @@ pub mod tests {
         let mut glwe_key_shares = HashMap::new();
         let mut big_glwe_key_shares = HashMap::new();
         for (role, sk) in sk_shares {
-            glwe_key_shares.insert(role, sk.glwe_secret_key_share.data);
+            glwe_key_shares.insert(role, sk.glwe_secret_key_share);
 
             match params {
                 DKGParams::WithoutSnS(_) => (),
@@ -369,7 +408,7 @@ pub mod tests {
     {
         let (glwe_key_shares, big_glwe_key_shares) =
             read_secret_key_shares_from_file::<EXTENSION_DEGREE>(parties, params, prefix_path);
-        let glwe_key = reconstruct_bit_vec(
+        let glwe_key = reconstruct_bit_vec_from_glwe_share_enum(
             glwe_key_shares,
             params.get_params_basics_handle().glwe_sk_num_bits(),
             threshold,

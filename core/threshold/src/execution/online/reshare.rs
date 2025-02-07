@@ -9,7 +9,9 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
         communication::broadcast::broadcast_from_all,
-        endpoints::keygen::PrivateKeySet,
+        endpoints::keygen::{
+            CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum, PrivateKeySet,
+        },
         online::preprocessing::BasePreprocessing,
         runtime::{party::Role, session::BaseSessionHandles},
         sharing::{
@@ -119,30 +121,49 @@ where
         .await?,
     };
 
-    let glwe_secret_key_share = GlweSecretKeyShare {
-        data: reshare_same_sets(
-            preproc64,
-            session,
-            &mut input_share.glwe_secret_key_share.data,
-        )
-        .await?,
-        polynomial_size: input_share.glwe_secret_key_share.polynomial_size(),
+    let glwe_secret_key_share = match &mut input_share.glwe_secret_key_share {
+        GlweSecretKeyShareEnum::Z64(share) => GlweSecretKeyShareEnum::Z64(GlweSecretKeyShare {
+            data: reshare_same_sets(preproc64, session, &mut share.data).await?,
+            polynomial_size: share.polynomial_size(),
+        }),
+        GlweSecretKeyShareEnum::Z128(share) => GlweSecretKeyShareEnum::Z128(GlweSecretKeyShare {
+            data: reshare_same_sets(preproc128, session, &mut share.data).await?,
+            polynomial_size: share.polynomial_size(),
+        }),
     };
 
     let glwe_secret_key_share_compression =
         if let Some(compression_secret_key) = &mut input_share.glwe_secret_key_share_compression {
-            Some(CompressionPrivateKeyShares {
-                post_packing_ks_key: GlweSecretKeyShare {
-                    data: reshare_same_sets(
-                        preproc64,
-                        session,
-                        &mut compression_secret_key.post_packing_ks_key.data,
-                    )
-                    .await?,
-                    polynomial_size: compression_secret_key.polynomial_size(),
-                },
-                params: compression_secret_key.params,
-            })
+            match compression_secret_key {
+                CompressionPrivateKeySharesEnum::Z64(compression_sk_share) => Some(
+                    CompressionPrivateKeySharesEnum::Z64(CompressionPrivateKeyShares {
+                        post_packing_ks_key: GlweSecretKeyShare {
+                            data: reshare_same_sets(
+                                preproc64,
+                                session,
+                                &mut compression_sk_share.post_packing_ks_key.data,
+                            )
+                            .await?,
+                            polynomial_size: compression_sk_share.polynomial_size(),
+                        },
+                        params: compression_sk_share.params,
+                    }),
+                ),
+                CompressionPrivateKeySharesEnum::Z128(compression_sk_share) => Some(
+                    CompressionPrivateKeySharesEnum::Z128(CompressionPrivateKeyShares {
+                        post_packing_ks_key: GlweSecretKeyShare {
+                            data: reshare_same_sets(
+                                preproc128,
+                                session,
+                                &mut compression_sk_share.post_packing_ks_key.data,
+                            )
+                            .await?,
+                            polynomial_size: compression_sk_share.polynomial_size(),
+                        },
+                        params: compression_sk_share.params,
+                    }),
+                ),
+            }
         } else {
             None
         };
@@ -414,10 +435,16 @@ mod tests {
             .map(|x| x.0)
             .collect_vec();
 
-        // reconstruct the 64-bit glwe key
+        // reconstruct the 64/128-bit glwe key
+        // we need this temporary type to reconstruct
         let shares64 = shares
             .iter()
-            .map(|x| x.glwe_secret_key_share.clone().data_as_raw_vec())
+            .map(|x| {
+                x.glwe_secret_key_share
+                    .clone()
+                    .unsafe_cast_to_z64()
+                    .data_as_raw_vec()
+            })
             .collect_vec();
         let glwe_sk64 = reconstruct_shares_to_scalar(shares64, threshold)
             .into_iter()
@@ -553,16 +580,16 @@ mod tests {
                         key_shares[1].lwe_encryption_secret_key_share.data.len()
                     ],
                 },
-                glwe_secret_key_share: GlweSecretKeyShare {
+                glwe_secret_key_share: GlweSecretKeyShareEnum::Z64(GlweSecretKeyShare {
                     data: vec![
                         Share::new(
                             Role::indexed_by_zero(0),
                             ResiduePoly::<Z64, EXTENSION_DEGREE>::sample(&mut rng)
                         );
-                        key_shares[1].glwe_secret_key_share.data.len()
+                        key_shares[1].glwe_secret_key_share.len()
                     ],
-                    polynomial_size: key_shares[1].glwe_secret_key_share.polynomial_size,
-                },
+                    polynomial_size: key_shares[1].glwe_secret_key_share.polynomial_size(),
+                }),
                 glwe_secret_key_share_sns_as_lwe: Some(LweSecretKeyShare {
                     data: vec![
                         Share::new(

@@ -28,6 +28,7 @@ struct OneShotConfig {
     batch_size: usize,
     t: usize,
 }
+
 impl OneShotConfig {
     fn new(n: usize, t: usize, batch_size: usize) -> OneShotConfig {
         OneShotConfig { n, t, batch_size }
@@ -129,7 +130,7 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
             &config,
             |b, &config| {
                 b.iter(|| {
-                    let mut computation = |mut session: SmallSession<ResiduePolyF8Z64>| async move {
+                    let mut computation = |mut session: SmallSession<ResiduePolyF8Z64>, _bot: Option<String>| async move {
                         let mut bitdec_prep =
                             init_prep_bitdec_small(&mut session, config.batch_size)
                                 .await
@@ -172,6 +173,7 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
                         NetworkMode::Sync,
                         None,
                         &mut computation,
+                        None,
                     );
                 });
             },

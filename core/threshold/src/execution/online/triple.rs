@@ -208,7 +208,7 @@ mod tests {
                 fn [<mult_sunshine_ $z:lower>]() {
                     let parties = 4;
                     let threshold = 1;
-                    async fn task(session: SmallSession<$z>) -> Vec<$z> {
+                    async fn task(session: SmallSession<$z>, _bot: Option<String>) -> Vec<$z> {
                         let mut preprocessing = DummyPreprocessing::<$z, AesRng, SmallSession<$z>>::new(42, session.clone());
                         let cur_a = preprocessing.next_random().unwrap();
                         let cur_b = preprocessing.next_random().unwrap();
@@ -221,7 +221,7 @@ mod tests {
                     // Online phase so Async
                     //Delay P1 by 1s every round
                     let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-                    let results = execute_protocol_small::<_,_,$z,{$z::EXTENSION_DEGREE}>(parties, threshold, Some(2), NetworkMode::Async, Some(delay_vec), &mut task);
+                    let results = execute_protocol_small::<_,_,$z,{$z::EXTENSION_DEGREE}>(parties, threshold, Some(2), NetworkMode::Async, Some(delay_vec), &mut task, None);
                     assert_eq!(results.len(), parties);
 
                     for cur_res in results {
@@ -240,6 +240,7 @@ mod tests {
                     const AMOUNT: usize = 3;
                     async fn task(
                         session: SmallSession<$z>,
+                        _bot: Option<String>,
                     ) -> (
                         Vec<$z>,
                         Vec<$z>,
@@ -265,7 +266,7 @@ mod tests {
                     // Online phase so Async
                     //Delay P1 by 1s every round
                     let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-                    let results = execute_protocol_small::<_,_,$z,{$z::EXTENSION_DEGREE}>(parties, threshold, Some(4), NetworkMode::Async,Some(delay_vec), &mut task);
+                    let results = execute_protocol_small::<_,_,$z,{$z::EXTENSION_DEGREE}>(parties, threshold, Some(4), NetworkMode::Async,Some(delay_vec), &mut task, None);
                     assert_eq!(results.len(), parties);
                     for (a_vec, b_vec, c_vec) in &results {
                         for i in 0..AMOUNT {
@@ -283,7 +284,7 @@ mod tests {
                     let parties = 4;
                     let threshold = 1;
                     let bad_role: Role = Role::indexed_by_one(4);
-                    let mut task = |session: SmallSession<$z>| async move {
+                    let mut task = |session: SmallSession<$z>, _bot: Option<String>| async move {
                         if session.my_role().unwrap() != bad_role {
                             let mut preprocessing = DummyPreprocessing::<$z, AesRng, SmallSession<$z>>::new(42, session.clone());
                             let cur_a = preprocessing.next_random().unwrap();
@@ -302,7 +303,7 @@ mod tests {
                     // Online phase so Async
                     //Delay P1 by 1s every round
                     let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-                    let results = execute_protocol_small::<_,_,$z,{$z::EXTENSION_DEGREE}>(parties, threshold, None, NetworkMode::Async, Some(delay_vec), &mut task);
+                    let results = execute_protocol_small::<_,_,$z,{$z::EXTENSION_DEGREE}>(parties, threshold, None, NetworkMode::Async, Some(delay_vec), &mut task, None);
                     assert_eq!(results.len(), parties);
 
                     for (cur_role, cur_res) in results {
@@ -323,7 +324,7 @@ mod tests {
                     let parties = 4;
                     let threshold = 1;
                     let bad_role: Role = Role::indexed_by_one(4);
-                    let mut task = |session: SmallSession<$z>| async move {
+                    let mut task = |session: SmallSession<$z>, _bot: Option<String>| async move {
                         let mut preprocessing = DummyPreprocessing::<$z, AesRng, SmallSession<$z>>::new(42, session.clone());
                         let cur_a = preprocessing.next_random().unwrap();
                         let cur_b = match session.my_role().unwrap() {
@@ -338,7 +339,7 @@ mod tests {
                     // Online phase so Async
                     //Delay P1 by 1s every round
                     let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-                    let results = execute_protocol_small::<_,_,$z,{$z::EXTENSION_DEGREE}>(parties, threshold, None, NetworkMode::Async, Some(delay_vec), &mut task);
+                    let results = execute_protocol_small::<_,_,$z,{$z::EXTENSION_DEGREE}>(parties, threshold, None, NetworkMode::Async, Some(delay_vec), &mut task, None);
                     assert_eq!(results.len(), parties);
 
                     for cur_res in results {

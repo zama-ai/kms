@@ -53,11 +53,10 @@ cfg_if::cfg_if! {
         use crate::engine::traits::BaseKms;
         use crate::engine::base::BaseKmsStruct;
         use crate::vault::storage::{read_all_data_versioned, Storage, StorageReader};
-        use kms_grpc::kms::v1::DecryptionResponse;
-        use kms_grpc::kms::v1::FheParameter;
         use kms_grpc::kms::v1::{
-            CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponsePayload,
-            KeyGenPreprocRequest, KeyGenRequest, KeyGenResult, TypedCiphertext, VerifyProvenCtRequest,
+            KeySetAddedInfo, KeySetConfig, CrsGenRequest, CrsGenResult, DecryptionRequest,
+            DecryptionResponse, DecryptionResponsePayload, FheParameter, KeyGenPreprocRequest,
+            KeyGenRequest, KeyGenResult, TypedCiphertext, VerifyProvenCtRequest,
             VerifyProvenCtResponse,
         };
         use kms_grpc::rpc_types::{PubDataType, PublicKeyType, WrappedPublicKeyOwned};
@@ -507,6 +506,8 @@ impl Client {
         request_id: &RequestId,
         preproc_id: Option<RequestId>,
         param: Option<FheParameter>,
+        keyset_config: Option<KeySetConfig>,
+        keyset_added_info: Option<KeySetAddedInfo>,
         eip712_domain: Option<Eip712Domain>,
     ) -> anyhow::Result<KeyGenRequest> {
         let parsed_param: i32 = match param {
@@ -529,6 +530,8 @@ impl Client {
             preproc_id,
             request_id: Some(request_id.clone()),
             domain,
+            keyset_config,
+            keyset_added_info,
         })
     }
 
@@ -561,12 +564,8 @@ impl Client {
         &self,
         request_id: &RequestId,
         param: Option<FheParameter>,
+        keyset_config: Option<KeySetConfig>,
     ) -> anyhow::Result<KeyGenPreprocRequest> {
-        let parsed_param: i32 = match param {
-            Some(parsed_param) => parsed_param.into(),
-            None => FheParameter::Default.into(),
-        };
-
         if !request_id.is_valid() {
             return Err(anyhow_error_and_log(format!(
                 "The request id format is not valid {request_id}"
@@ -574,7 +573,8 @@ impl Client {
         }
 
         Ok(KeyGenPreprocRequest {
-            params: parsed_param,
+            params: param.unwrap_or_default().into(),
+            keyset_config,
             request_id: Some(request_id.clone()),
         })
     }
@@ -3194,7 +3194,7 @@ pub(crate) mod tests {
             super::test_tools::centralized_handles(&dkg_params, Some(rate_limiter_conf)).await;
 
         let gen_req = internal_client
-            .key_gen_request(request_id, None, params, None)
+            .key_gen_request(request_id, None, params, None, None, None)
             .unwrap();
         let req_id = gen_req.request_id.clone().unwrap();
         let gen_response = kms_client
@@ -5555,7 +5555,7 @@ pub(crate) mod tests {
             .iter()
             .map(|req_id| {
                 internal_client
-                    .preproc_request(req_id, Some(FheParameter::Test))
+                    .preproc_request(req_id, Some(FheParameter::Test), None)
                     .unwrap()
             })
             .collect();
@@ -5596,7 +5596,7 @@ pub(crate) mod tests {
         // This request should give us the correct status
         for request_id in &request_ids {
             let req_status_ok = internal_client
-                .preproc_request(request_id, Some(FheParameter::Test))
+                .preproc_request(request_id, Some(FheParameter::Test), None)
                 .unwrap();
             test_preproc_status(
                 req_status_ok.clone(),
@@ -5608,7 +5608,7 @@ pub(crate) mod tests {
 
         //This request is not ok because no preproc was ever started for this session id
         let req_status_nok_sid = internal_client
-            .preproc_request(&request_id_nok, Some(FheParameter::Test))
+            .preproc_request(&request_id_nok, Some(FheParameter::Test), None)
             .unwrap();
         test_preproc_status(
             req_status_nok_sid,
@@ -5707,6 +5707,8 @@ pub(crate) mod tests {
                 Some(req_preproc.clone()),
                 Some(FheParameter::Test),
                 None,
+                None,
+                None,
             )
             .unwrap();
         let responses = launch_dkg(req_keygen.clone(), &kms_clients, true).await;
@@ -5720,6 +5722,7 @@ pub(crate) mod tests {
             &kms_clients,
             &internal_client,
             true,
+            false,
         )
         .await;
     }
@@ -5744,7 +5747,14 @@ pub(crate) mod tests {
             threshold_handles(*full_params, amount_parties, true, None, None).await;
 
         let req_keygen = internal_client
-            .key_gen_request(&req_key, Some(req_preproc.clone()), Some(params), None)
+            .key_gen_request(
+                &req_key,
+                Some(req_preproc.clone()),
+                Some(params),
+                None,
+                None,
+                None,
+            )
             .unwrap();
         let responses = launch_dkg(req_keygen.clone(), &kms_clients, true).await;
 
@@ -5758,49 +5768,31 @@ pub(crate) mod tests {
             &kms_clients,
             &internal_client,
             true,
+            false,
         )
         .await;
     }
 
     #[cfg(feature = "slow_tests")]
-    #[rstest::rstest]
-    #[case(4)]
-    #[case(7)]
-    #[tokio::test(flavor = "multi_thread")]
-    #[serial]
-    async fn test_dkg(#[case] amount_parties: usize) {
+    async fn test_dkg_inner(
+        req_preproc: RequestId,
+        req_key: RequestId,
+        amount_parties: usize,
+        kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+        internal_client: &Client,
+        decompression_keygen: Option<(RequestId, RequestId)>,
+    ) {
         use itertools::Itertools;
-        use kms_grpc::kms::v1::KeyGenPreprocStatusEnum;
-
-        let req_preproc = RequestId::derive("test_dkg-preproc_{amount_parties}").unwrap();
-        let req_key = RequestId::derive("test_dkg-key_{amount_parties}").unwrap();
-        purge(None, None, &req_key.to_string(), amount_parties).await;
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-        // Preproc should use all the tokens in the bucket,
-        // then they're returned to the bucket before keygen starts.
-        // If something is wrong with the rate limiter logic
-        // then the keygen step should fail since there are not enough tokens.
-        let rate_limiter_conf = RateLimiterConfig {
-            bucket_size: 100,
-            dec: 1,
-            reenc: 1,
-            crsgen: 1,
-            preproc: 100,
-            keygen: 100,
-            verify_proven_ct: 1,
+        use kms_grpc::kms::v1::{
+            KeyGenPreprocStatusEnum, KeySetAddedInfo, KeySetConfig, KeySetType,
         };
-        let (kms_servers, kms_clients, internal_client) = threshold_handles(
-            TEST_PARAM,
-            amount_parties,
-            true,
-            Some(rate_limiter_conf),
-            None,
-        )
-        .await;
 
+        let keyset_config = decompression_keygen.as_ref().map(|_| KeySetConfig {
+            keyset_type: KeySetType::DecompressionOnly.into(),
+            standard_keyset_config: None,
+        });
         let preprocessing_req_data = internal_client
-            .preproc_request(&req_preproc, Some(FheParameter::Test))
+            .preproc_request(&req_preproc, Some(FheParameter::Test), keyset_config)
             .unwrap();
 
         let mut tasks_gen = JoinSet::new();
@@ -5841,7 +5833,7 @@ pub(crate) mod tests {
         for _ in 0..MAX_TRIES {
             tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
 
-            let status = get_preproc_status(preprocessing_req_data.clone(), &kms_clients).await;
+            let status = get_preproc_status(preprocessing_req_data.clone(), kms_clients).await;
             finished = status
                 .into_iter()
                 .filter(|x| x.result == finished_enum)
@@ -5853,16 +5845,27 @@ pub(crate) mod tests {
 
         //Make sure we broke for loop because we indeed have finished preproc
         assert_eq!(finished.len(), amount_parties);
+
+        let keyset_added_info = decompression_keygen
+            .clone()
+            .map(|(from, to)| KeySetAddedInfo {
+                compression_keyset_id: None,
+                from_compression_keyset_id: Some(from),
+                to_compression_keyset_id: Some(to),
+            });
+
         //Preproc is now ready, start legitimate dkg
         let req_keygen = internal_client
             .key_gen_request(
                 &req_key,
                 Some(req_preproc.clone()),
                 Some(FheParameter::Test),
+                keyset_config,
+                keyset_added_info,
                 None,
             )
             .unwrap();
-        let responses = launch_dkg(req_keygen.clone(), &kms_clients, false).await;
+        let responses = launch_dkg(req_keygen.clone(), kms_clients, false).await;
         for response in responses {
             assert!(response.is_ok());
         }
@@ -5871,9 +5874,130 @@ pub(crate) mod tests {
         wait_for_keygen_result(
             req_get_keygen,
             req_preproc,
+            kms_clients,
+            internal_client,
+            false,
+            decompression_keygen.is_some(),
+        )
+        .await;
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[rstest::rstest]
+    #[case(4)]
+    #[case(7)]
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn test_dkg(#[case] amount_parties: usize) {
+        let req_preproc = RequestId::derive("test_dkg-preproc_{amount_parties}").unwrap();
+        let req_key = RequestId::derive("test_dkg-key_{amount_parties}").unwrap();
+        purge(None, None, &req_key.to_string(), amount_parties).await;
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
+        // Preproc should use all the tokens in the bucket,
+        // then they're returned to the bucket before keygen starts.
+        // If something is wrong with the rate limiter logic
+        // then the keygen step should fail since there are not enough tokens.
+        let rate_limiter_conf = RateLimiterConfig {
+            bucket_size: 100,
+            dec: 1,
+            reenc: 1,
+            crsgen: 1,
+            preproc: 100,
+            keygen: 100,
+            verify_proven_ct: 1,
+        };
+        let (kms_servers, kms_clients, internal_client) = threshold_handles(
+            TEST_PARAM,
+            amount_parties,
+            true,
+            Some(rate_limiter_conf),
+            None,
+        )
+        .await;
+
+        test_dkg_inner(
+            req_preproc,
+            req_key,
+            amount_parties,
             &kms_clients,
             &internal_client,
-            false,
+            None,
+        )
+        .await;
+
+        for handle in kms_servers.into_values() {
+            handle.assert_shutdown().await;
+        }
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn test_decompression_keygen() {
+        let amount_parties: usize = 4;
+        let req_preproc_1 = RequestId::derive("test_dkg-preproc-1_{amount_parties}").unwrap();
+        let req_key_1 = RequestId::derive("test_dkg-key-1_{amount_parties}").unwrap();
+        purge(None, None, &req_key_1.to_string(), amount_parties).await;
+
+        let req_preproc_2 = RequestId::derive("test_dkg-preproc-2_{amount_parties}").unwrap();
+        let req_key_2 = RequestId::derive("test_dkg-key-2_{amount_parties}").unwrap();
+        purge(None, None, &req_key_2.to_string(), amount_parties).await;
+
+        let req_preproc_3 = RequestId::derive("test_dkg-preproc-3_{amount_parties}").unwrap();
+        let req_key_3 = RequestId::derive("test_dkg-key-3_{amount_parties}").unwrap();
+        purge(None, None, &req_key_3.to_string(), amount_parties).await;
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
+        // Preproc should use all the tokens in the bucket,
+        // then they're returned to the bucket before keygen starts.
+        // If something is wrong with the rate limiter logic
+        // then the keygen step should fail since there are not enough tokens.
+        let rate_limiter_conf = RateLimiterConfig {
+            bucket_size: 100,
+            dec: 1,
+            reenc: 1,
+            crsgen: 1,
+            preproc: 100,
+            keygen: 100,
+            verify_proven_ct: 1,
+        };
+        let (kms_servers, kms_clients, internal_client) = threshold_handles(
+            TEST_PARAM,
+            amount_parties,
+            true,
+            Some(rate_limiter_conf),
+            None,
+        )
+        .await;
+
+        test_dkg_inner(
+            req_preproc_1,
+            req_key_1.clone(),
+            amount_parties,
+            &kms_clients,
+            &internal_client,
+            None,
+        )
+        .await;
+        test_dkg_inner(
+            req_preproc_2,
+            req_key_2.clone(),
+            amount_parties,
+            &kms_clients,
+            &internal_client,
+            None,
+        )
+        .await;
+
+        // finally do the decompression keygen between the first and second keysets
+        test_dkg_inner(
+            req_preproc_3,
+            req_key_3,
+            amount_parties,
+            &kms_clients,
+            &internal_client,
+            Some((req_key_1, req_key_2)),
         )
         .await;
 
@@ -5889,11 +6013,11 @@ pub(crate) mod tests {
         kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
         internal_client: &Client,
         insecure: bool,
+        decompression_keygen: bool,
     ) {
-        use distributed_decryption::execution::{
-            runtime::party::Role, tfhe_internals::utils::reconstruct_bit_vec,
-        };
+        use distributed_decryption::execution::runtime::party::Role;
         use kms_grpc::rpc_types::PrivDataType;
+        use tfhe::integer::compression_keys::DecompressionKey;
 
         use crate::engine::threshold::service_real::ThresholdFheKeys;
 
@@ -5950,55 +6074,121 @@ pub(crate) mod tests {
         finished.sort_by(|(i, _), (j, _)| i.cmp(j));
         assert_eq!(finished.len(), kms_clients.len());
 
-        let mut serialized_ref_pk = Vec::new();
-        let mut serialized_ref_server_key = Vec::new();
-        let mut all_threshold_fhe_keys = HashMap::new();
-        for (idx, kg_res) in finished.into_iter() {
-            let role = Role::indexed_by_one(idx as usize);
-            let i = role.zero_based();
-            let kg_res = kg_res.unwrap().into_inner();
-            let storage = FileStorage::new(None, StorageType::PUB, Some(i + 1)).unwrap();
-            let pk = internal_client
-                .retrieve_public_key(&kg_res, &storage)
-                .await
-                .unwrap();
-            assert!(pk.is_some());
-            if i == 0 {
-                serialized_ref_pk = bincode::serialize(&(pk.unwrap())).unwrap();
-            } else {
-                assert_eq!(
-                    serialized_ref_pk,
-                    bincode::serialize(&(pk.unwrap())).unwrap()
-                )
+        if decompression_keygen {
+            let mut serialized_ref_decompression_key = Vec::new();
+            for (idx, kg_res) in finished.into_iter() {
+                let role = Role::indexed_by_one(idx as usize);
+                let i = role.zero_based();
+                let kg_res = kg_res.unwrap().into_inner();
+                let storage = FileStorage::new(None, StorageType::PUB, Some(i + 1)).unwrap();
+                let decompression_key: Option<DecompressionKey> = internal_client
+                    .retrieve_key(&kg_res, PubDataType::DecompressionKey, &storage)
+                    .await
+                    .unwrap();
+                assert!(decompression_key.is_some());
+                if i == 0 {
+                    serialized_ref_decompression_key =
+                        bincode::serialize(&(decompression_key.unwrap())).unwrap();
+                } else {
+                    assert_eq!(
+                        serialized_ref_decompression_key,
+                        bincode::serialize(&(decompression_key.unwrap())).unwrap()
+                    )
+                }
             }
-            let server_key: Option<tfhe::ServerKey> = internal_client
-                .retrieve_server_key(&kg_res, &storage)
-                .await
-                .unwrap();
-            assert!(server_key.is_some());
-            if i == 0 {
-                serialized_ref_server_key = bincode::serialize(&(server_key.unwrap())).unwrap();
-            } else {
-                assert_eq!(
-                    serialized_ref_server_key,
-                    bincode::serialize(&(server_key.unwrap())).unwrap()
-                )
+        } else {
+            let mut serialized_ref_pk = Vec::new();
+            let mut serialized_ref_server_key = Vec::new();
+            let mut all_threshold_fhe_keys = HashMap::new();
+            for (idx, kg_res) in finished.into_iter() {
+                let role = Role::indexed_by_one(idx as usize);
+                let i = role.zero_based();
+                let kg_res = kg_res.unwrap().into_inner();
+                let storage = FileStorage::new(None, StorageType::PUB, Some(i + 1)).unwrap();
+                let pk = internal_client
+                    .retrieve_public_key(&kg_res, &storage)
+                    .await
+                    .unwrap();
+                assert!(pk.is_some());
+                if i == 0 {
+                    serialized_ref_pk = bincode::serialize(&(pk.unwrap())).unwrap();
+                } else {
+                    assert_eq!(
+                        serialized_ref_pk,
+                        bincode::serialize(&(pk.unwrap())).unwrap()
+                    )
+                }
+                let server_key: Option<tfhe::ServerKey> = internal_client
+                    .retrieve_server_key(&kg_res, &storage)
+                    .await
+                    .unwrap();
+                assert!(server_key.is_some());
+                if i == 0 {
+                    serialized_ref_server_key = bincode::serialize(&(server_key.unwrap())).unwrap();
+                } else {
+                    assert_eq!(
+                        serialized_ref_server_key,
+                        bincode::serialize(&(server_key.unwrap())).unwrap()
+                    )
+                }
+
+                let priv_storage = FileStorage::new(None, StorageType::PRIV, Some(i + 1)).unwrap();
+                let sk_urls = priv_storage
+                    .all_urls(&PrivDataType::FheKeyInfo.to_string())
+                    .await
+                    .unwrap();
+                let sk_url = sk_urls.get(&kg_res.request_id.unwrap().request_id).unwrap();
+                let threshold_fhe_keys: ThresholdFheKeys =
+                    priv_storage.read_data(sk_url).await.unwrap();
+                all_threshold_fhe_keys.insert(role, threshold_fhe_keys);
             }
 
-            let priv_storage = FileStorage::new(None, StorageType::PRIV, Some(i + 1)).unwrap();
-            let sk_urls = priv_storage
-                .all_urls(&PrivDataType::FheKeyInfo.to_string())
-                .await
-                .unwrap();
-            let sk_url = sk_urls.get(&kg_res.request_id.unwrap().request_id).unwrap();
-            let threshold_fhe_keys: ThresholdFheKeys =
-                priv_storage.read_data(sk_url).await.unwrap();
-            all_threshold_fhe_keys.insert(role, threshold_fhe_keys);
+            let threshold = kms_clients.len().div_ceil(3) - 1;
+            try_reconstruct_shares(internal_client.params, threshold, all_threshold_fhe_keys);
         }
 
-        let param = internal_client.params;
+        if !insecure {
+            // Try to request another kg with the same preproc but another request id,
+            // we should see that it fails because the preproc material is consumed.
+            //
+            // We only test for the secure variant of the dkg because the insecure
+            // variant does not use preprocessing material.
+            tracing::debug!("starting another dkg with a used preproc ID");
+            let other_key_gen_id = RequestId::derive("test_dkg other key id").unwrap();
+            let keygen_req_data = internal_client
+                .key_gen_request(
+                    &other_key_gen_id,
+                    Some(req_preproc),
+                    Some(FheParameter::Test),
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap();
+            let responses = launch_dkg(keygen_req_data.clone(), kms_clients, insecure).await;
+            for response in responses {
+                assert_eq!(response.unwrap_err().code(), tonic::Code::NotFound);
+            }
+        }
+    }
+
+    #[cfg(any(feature = "slow_tests", feature = "insecure"))]
+    use distributed_decryption::execution::runtime::party::Role;
+
+    #[cfg(any(feature = "slow_tests", feature = "insecure"))]
+    fn try_reconstruct_shares(
+        param: DKGParams,
+        threshold: usize,
+        all_threshold_fhe_keys: HashMap<
+            Role,
+            crate::engine::threshold::service_real::ThresholdFheKeys,
+        >,
+    ) {
+        use distributed_decryption::execution::{
+            endpoints::keygen::GlweSecretKeyShareEnum, tfhe_internals::utils::reconstruct_bit_vec,
+        };
+
         let param_handle = param.get_params_basics_handle();
-        let threshold = kms_clients.len().div_ceil(3) - 1;
         let lwe_shares = all_threshold_fhe_keys
             .iter()
             .map(|(k, v)| (*k, v.private_keys.lwe_compute_secret_key_share.data.clone()))
@@ -6020,32 +6210,21 @@ pub(crate) mod tests {
             threshold,
         );
 
+        // normal keygen should always give us a z128 glwe
         let glwe_shares = all_threshold_fhe_keys
             .iter()
-            .map(|(k, v)| (*k, v.private_keys.glwe_secret_key_share.data.clone()))
+            .map(|(k, v)| {
+                (
+                    *k,
+                    match v.private_keys.glwe_secret_key_share.clone() {
+                        GlweSecretKeyShareEnum::Z64(_) => {
+                            panic!("expected z128 in glwe shares")
+                        }
+                        GlweSecretKeyShareEnum::Z128(inner) => inner.data,
+                    },
+                )
+            })
             .collect::<HashMap<_, _>>();
         _ = reconstruct_bit_vec(glwe_shares, param_handle.glwe_sk_num_bits(), threshold);
-
-        if !insecure {
-            // Try to request another kg with the same preproc but another request id,
-            // we should see that it fails because the preproc material is consumed.
-            //
-            // We only test for the secure variant of the dkg because the insecure
-            // variant does not use preprocessing material.
-            tracing::debug!("starting another dkg with a used preproc ID");
-            let other_key_gen_id = RequestId::derive("test_dkg other key id").unwrap();
-            let keygen_req_data = internal_client
-                .key_gen_request(
-                    &other_key_gen_id,
-                    Some(req_preproc),
-                    Some(FheParameter::Test),
-                    None,
-                )
-                .unwrap();
-            let responses = launch_dkg(keygen_req_data.clone(), kms_clients, insecure).await;
-            for response in responses {
-                assert_eq!(response.unwrap_err().code(), tonic::Code::NotFound);
-            }
-        }
     }
 }

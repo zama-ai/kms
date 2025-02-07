@@ -549,7 +549,7 @@ mod tests {
             .map(|i| ResiduePolyF4Z64::from_scalar(Wrapping(plain_lhs[i] ^ plain_rhs[i])))
             .collect_vec();
 
-        let mut task = |mut session: SmallSession<ResiduePolyF4Z64>| async move {
+        let mut task = |mut session: SmallSession<ResiduePolyF4Z64>, _bot: Option<String>| async move {
             let lhs = plain_lhs
                 .iter()
                 .map(|cur_val| get_my_share(*cur_val, &session))
@@ -590,6 +590,7 @@ mod tests {
             NetworkMode::Async,
             Some(delay_vec),
             &mut task,
+            None,
         );
 
         for cur_res in results {
@@ -608,7 +609,7 @@ mod tests {
         // Observe that the above input bits are ordered [LSB, ..., MSB]; written in the more common form 10110_2 = 22_10
         let ref_val = 22;
 
-        let mut task = |session: SmallSession<ResiduePolyF4Z64>| async move {
+        let mut task = |session: SmallSession<ResiduePolyF4Z64>, _bot: Option<String>| async move {
             let input = plain_input
                 .iter()
                 .map(|cur_val| get_my_share(*cur_val, &session))
@@ -633,6 +634,7 @@ mod tests {
             NetworkMode::Async,
             Some(delay_vec),
             &mut task,
+            None,
         );
 
         for cur_res in results {
@@ -649,7 +651,7 @@ mod tests {
 
         let ref_val = Wrapping(a) + Wrapping(b);
 
-        let mut task = |mut session: SmallSession<ResiduePolyF4Z64>| async move {
+        let mut task = |mut session: SmallSession<ResiduePolyF4Z64>, _bot: Option<String>| async move {
             let mut prep = DummyPreprocessing::<
                 ResiduePolyF4Z64,
                 AesRng,
@@ -696,6 +698,7 @@ mod tests {
             NetworkMode::Async,
             Some(delay_vec),
             &mut task,
+            None,
         );
 
         for cur_res in results {
@@ -715,7 +718,7 @@ mod tests {
         let bits_c: Vec<_> = (0..64).map(|bit_idx| (c >> bit_idx) & 1).collect();
         let bits_d: Vec<_> = (0..64).map(|bit_idx| (d >> bit_idx) & 1).collect();
 
-        let mut task = |mut session: SmallSession<ResiduePolyF4Z64>| async move {
+        let mut task = |mut session: SmallSession<ResiduePolyF4Z64>, _bot: Option<String>| async move {
             let mut prep = DummyPreprocessing::<
                 ResiduePolyF4Z64,
                 AesRng,
@@ -815,6 +818,7 @@ mod tests {
             NetworkMode::Async,
             Some(delay_vec),
             &mut task,
+            None,
         )[0];
         let (xor1, xor2, and1, and2) = results;
         assert_eq!(xor1, xor2);
@@ -852,7 +856,7 @@ mod tests {
 
         let ref_val: Vec<_> = (0..64).map(|bit_idx| (a >> bit_idx) & 1).collect();
 
-        let mut task = |mut session: SmallSession<ResiduePolyF4Z64>| async move {
+        let mut task = |mut session: SmallSession<ResiduePolyF4Z64>, _bot: Option<String>| async move {
             let mut prep = DummyPreprocessing::<
                 ResiduePolyF4Z64,
                 AesRng,
@@ -894,6 +898,7 @@ mod tests {
             NetworkMode::Async,
             Some(delay_vec),
             &mut task,
+            None,
         )[0];
         assert_eq!(results.len(), ref_val.len());
         for i in 0..results.len() {

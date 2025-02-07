@@ -109,7 +109,8 @@ impl<Z: Ring> BitPreprocessing<Z> for InMemoryBitPreprocessing<Z> {
             Ok(self.available_bits.drain(0..amount).collect())
         } else {
             Err(anyhow_error_and_log(format!(
-                "Not enough bits to drain {amount}"
+                "Not enough bits to drain, need {amount}, got {}",
+                self.available_bits.len()
             )))
         }
     }

@@ -117,7 +117,7 @@ mod tests {
                     let parties = 4;
                     let threshold = 1;
                     const AMOUNT: usize = 10;
-                    async fn task(mut session: SmallSession<$z>) -> Vec<$z> {
+                    async fn task(mut session: SmallSession<$z>, _bot: Option<String>) -> Vec<$z> {
                         let mut preprocessing = DummyPreprocessing::<$z, AesRng, SmallSession<$z>>::new(42, session.clone());
                         let bits = RealBitGenEven::gen_bits_even(AMOUNT, &mut preprocessing, &mut session)
                             .await
@@ -129,7 +129,7 @@ mod tests {
                     // Async because the triple gen is dummy
                     //Delay P1 by 1s every round
                     let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-                    let results = execute_protocol_small::<_,_,$z, {$z::EXTENSION_DEGREE}>(parties, threshold, Some(3), NetworkMode::Async, Some(delay_vec), &mut task);
+                    let results = execute_protocol_small::<_,_,$z, {$z::EXTENSION_DEGREE}>(parties, threshold, Some(3), NetworkMode::Async, Some(delay_vec), &mut task, None);
                     [<validate_res_ $z:lower>](results, AMOUNT, parties);
                 }
 
@@ -139,7 +139,7 @@ mod tests {
                     let threshold = 1;
                     let bad_party: Role = Role::indexed_by_one(2);
                     const AMOUNT: usize = 10;
-                    let mut task = |mut session: SmallSession<$z>| async move {
+                    let mut task = |mut session: SmallSession<$z>, _bot: Option<String>| async move {
                         let mut preprocessing = DummyPreprocessing::<$z, AesRng, SmallSession<$z>>::new(42, session.clone());
                         // Execute with dummy prepreocessing for honest parties and a mock for the bad one
                         let bits = if session.my_role().unwrap() == bad_party {
@@ -173,7 +173,7 @@ mod tests {
                     // Async because the triple gen is dummy
                     //Delay P1 by 1s every round
                     let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-                    let results = execute_protocol_small::<_,_,$z, {$z::EXTENSION_DEGREE}>(parties, threshold, None, NetworkMode::Async, Some(delay_vec), &mut task);
+                    let results = execute_protocol_small::<_,_,$z, {$z::EXTENSION_DEGREE}>(parties, threshold, None, NetworkMode::Async, Some(delay_vec), &mut task, None);
                     [<validate_res_ $z:lower>](results, AMOUNT, parties);
                 }
 

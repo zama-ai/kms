@@ -3,7 +3,8 @@ use crate::cryptography::proven_ct_verifier::{
     get_verify_proven_ct_result, non_blocking_verify_proven_ct,
 };
 use crate::engine::base::{
-    compute_external_pt_signature, convert_key_response, retrieve_parameters, KeyGenCallValues,
+    compute_external_pt_signature, convert_key_response, preproc_proto_to_keyset_config,
+    retrieve_parameters, KeyGenCallValues,
 };
 use crate::engine::centralized::central_kms::{
     async_generate_crs, async_generate_fhe_keys, async_reencrypt, central_decrypt,
@@ -127,6 +128,19 @@ impl<
             retrieve_parameters(inner.params),
             "Parameter choice is not recognized".to_string(),
         )?;
+
+        let keyset_config = tonic_handle_potential_err(
+            preproc_proto_to_keyset_config(&inner.keyset_config),
+            "Invalid keyset config".to_string(),
+        )?;
+        // TODO we do not currently support configurable keygen in the centralized case
+        if !keyset_config.is_standard_cpu_generate_compression_key() {
+            return Err(tonic::Status::new(
+                tonic::Code::Aborted,
+                "Unsupported keyset_config",
+            ));
+        }
+
         {
             let mut guarded_meta_store = self.key_meta_map.write().await;
             // Insert [HandlerStatus::Started] into the meta store. Note that this will fail if the request ID is already in the meta store

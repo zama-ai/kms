@@ -60,21 +60,21 @@ fn triple_nsmall128(c: &mut Criterion) {
             &config,
             |b, &config| {
                 b.iter(|| {
-                    let mut computation = |mut session: SmallSession128<
-                        { ResiduePolyF8Z128::EXTENSION_DEGREE },
-                    >| async move {
-                        let default_batch_size = BatchParams {
-                            triples: config.batch_size,
-                            randoms: 0,
-                        };
+                    let mut computation =
+                        |mut session: SmallSession128<{ ResiduePolyF8Z128::EXTENSION_DEGREE }>,
+                         _bot: Option<String>| async move {
+                            let default_batch_size = BatchParams {
+                                triples: config.batch_size,
+                                randoms: 0,
+                            };
 
-                        let _prep = SmallPreprocessing::<_, RealAgreeRandom>::init(
-                            &mut session,
-                            default_batch_size,
-                        )
-                        .await
-                        .unwrap();
-                    };
+                            let _prep = SmallPreprocessing::<_, RealAgreeRandom>::init(
+                                &mut session,
+                                default_batch_size,
+                            )
+                            .await
+                            .unwrap();
+                        };
                     //Executing offline, so require Sync network
                     let _result = execute_protocol_small::<
                         _,
@@ -88,6 +88,7 @@ fn triple_nsmall128(c: &mut Criterion) {
                         NetworkMode::Sync,
                         None,
                         &mut computation,
+                        None,
                     );
                 });
             },

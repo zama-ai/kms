@@ -36,8 +36,8 @@ pub enum FheParameter {
 impl From<FheParameter> for i32 {
     fn from(value: FheParameter) -> Self {
         match value {
-            FheParameter::Test => 0,
-            FheParameter::Default => 1,
+            FheParameter::Default => 0,
+            FheParameter::Test => 1,
         }
     }
 }
@@ -47,8 +47,8 @@ impl TryFrom<i32> for FheParameter {
 
     fn try_from(value: i32) -> Result<FheParameter, Self::Error> {
         match value {
-            0 => Ok(FheParameter::Test),
-            1 => Ok(FheParameter::Default),
+            0 => Ok(FheParameter::Default),
+            1 => Ok(FheParameter::Test),
             _ => Err(anyhow::anyhow!("Invalid FHE parameter")),
         }
     }

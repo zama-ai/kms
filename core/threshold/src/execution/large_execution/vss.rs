@@ -1360,7 +1360,7 @@ pub(crate) mod tests {
         params: TestingParameters,
         num_secrets: usize,
     ) {
-        let mut task_honest = |mut session: SmallSession<Z>| async move {
+        let mut task_honest = |mut session: SmallSession<Z>, _bot: Option<String>| async move {
             let real_vss = RealVss::default();
             let secrets = (0..num_secrets)
                 .map(|_| Z::sample(session.rng()))
@@ -1381,6 +1381,7 @@ pub(crate) mod tests {
             NetworkMode::Sync,
             None,
             &mut task_honest,
+            None,
         );
         let mut expected_secrets = vec![vec![Z::ZERO; num_secrets]; params.num_parties];
         for (party_idx, _, s, _) in res.iter() {

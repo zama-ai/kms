@@ -600,6 +600,11 @@ impl Ceremony for RealCeremony {
 
                 // update our pp
                 pp = proof.new_pp;
+
+                tracing::info!(
+                    "Role {my_role} finished my turn in CRS ceremony for session {}",
+                    session.session_id()
+                );
             } else {
                 // do the following if it is not my turn to contribute
                 match broadcast_w_corruption::<Z, _, _>(session, &[*role], None).await {

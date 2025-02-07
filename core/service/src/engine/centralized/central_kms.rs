@@ -431,8 +431,7 @@ impl<
         // TODO(1968)
         #[cfg(feature = "insecure")]
         tracing::info!(
-            "[1968] reenc with keys: {:?}, ct: {:?} and fhe_type: {:?}",
-            keys,
+            "[1968] reenc with ct: {:?} and fhe_type: {:?}",
             hex::encode(ct),
             fhe_type
         );

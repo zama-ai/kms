@@ -250,11 +250,68 @@ pub struct PrivateKeySet<const EXTENSION_DEGREE: usize> {
     //The two Lwe keys are the same if there's no dedicated pk parameters
     pub lwe_encryption_secret_key_share: LweSecretKeyShare<Z64, EXTENSION_DEGREE>,
     pub lwe_compute_secret_key_share: LweSecretKeyShare<Z64, EXTENSION_DEGREE>,
-    pub glwe_secret_key_share: GlweSecretKeyShare<Z64, EXTENSION_DEGREE>,
+    // eventually we'll remove the enum here when we support more Z64+Z128 preproc
+    pub glwe_secret_key_share: GlweSecretKeyShareEnum<EXTENSION_DEGREE>,
     pub glwe_secret_key_share_sns_as_lwe: Option<LweSecretKeyShare<Z128, EXTENSION_DEGREE>>,
+    // eventually we'll remove the enum here when we support more Z64+Z128 preproc
     pub glwe_secret_key_share_compression:
-        Option<CompressionPrivateKeyShares<Z64, EXTENSION_DEGREE>>,
+        Option<CompressionPrivateKeySharesEnum<EXTENSION_DEGREE>>,
     pub parameters: ClassicPBSParameters,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, VersionsDispatch)]
+pub enum CompressionPrivateKeySharesEnumVersioned<const EXTENSION_DEGREE: usize> {
+    V0(CompressionPrivateKeySharesEnum<EXTENSION_DEGREE>),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Versionize, PartialEq)]
+#[versionize(CompressionPrivateKeySharesEnumVersioned)]
+pub enum CompressionPrivateKeySharesEnum<const EXTENSION_DEGREE: usize> {
+    Z64(CompressionPrivateKeyShares<Z64, EXTENSION_DEGREE>),
+    Z128(CompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, VersionsDispatch)]
+pub enum GlweSecretKeyShareEnumVersioned<const EXTENSION_DEGREE: usize> {
+    V0(GlweSecretKeyShareEnum<EXTENSION_DEGREE>),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Versionize, PartialEq)]
+#[versionize(GlweSecretKeyShareEnumVersioned)]
+pub enum GlweSecretKeyShareEnum<const EXTENSION_DEGREE: usize> {
+    Z64(GlweSecretKeyShare<Z64, EXTENSION_DEGREE>),
+    Z128(GlweSecretKeyShare<Z128, EXTENSION_DEGREE>),
+}
+
+#[cfg(test)]
+impl<const EXTENSION_DEGREE: usize> GlweSecretKeyShareEnum<EXTENSION_DEGREE> {
+    pub(crate) fn unsafe_cast_to_z64(self) -> GlweSecretKeyShare<Z64, EXTENSION_DEGREE> {
+        match self {
+            GlweSecretKeyShareEnum::Z64(inner) => inner,
+            GlweSecretKeyShareEnum::Z128(_) => panic!("not z64"),
+        }
+    }
+
+    pub(crate) fn unsafe_cast_to_z128(self) -> GlweSecretKeyShare<Z128, EXTENSION_DEGREE> {
+        match self {
+            GlweSecretKeyShareEnum::Z64(_) => panic!("not z128"),
+            GlweSecretKeyShareEnum::Z128(inner) => inner,
+        }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        match self {
+            GlweSecretKeyShareEnum::Z64(inner) => inner.data.len(),
+            GlweSecretKeyShareEnum::Z128(inner) => inner.data.len(),
+        }
+    }
+
+    pub(crate) fn polynomial_size(&self) -> tfhe::boolean::prelude::PolynomialSize {
+        match self {
+            GlweSecretKeyShareEnum::Z64(inner) => inner.polynomial_size,
+            GlweSecretKeyShareEnum::Z128(inner) => inner.polynomial_size,
+        }
+    }
 }
 
 impl<const EXTENSION_DEGREE: usize> PrivateKeySet<EXTENSION_DEGREE> {
@@ -307,14 +364,17 @@ where
             .data
             .into_iter()
             .map(|share| {
-                let converted_value = share.value().to_residuepoly64();
+                // TODO before we turn it to Z64 using to_residuepoly64, but we need Z128
+                // as it's used by the core/service preprocessing.
+                // this part needs to be reworked when we support Z64+Z128 preprocessing
+                let converted_value = share.value();
                 Share::new(share.owner(), converted_value)
             })
             .collect_vec();
-        let converted_glwe_secret_key_share = GlweSecretKeyShare {
+        let converted_glwe_secret_key_share = GlweSecretKeyShareEnum::Z128(GlweSecretKeyShare {
             data: glwe_data,
             polynomial_size: self.glwe_secret_key_share.polynomial_size,
-        };
+        });
 
         let glwe_secret_key_share_sns_as_lwe = self
             .glwe_secret_key_share_sns
@@ -324,21 +384,26 @@ where
             || None,
             |key| {
                 let polynomial_size = key.polynomial_size();
-                Some(CompressionPrivateKeyShares {
-                    post_packing_ks_key: GlweSecretKeyShare {
-                        data: key
-                            .post_packing_ks_key
-                            .data
-                            .into_iter()
-                            .map(|share| {
-                                let converted_value = share.value().to_residuepoly64();
-                                Share::new(share.owner(), converted_value)
-                            })
-                            .collect_vec(),
-                        polynomial_size,
+                Some(CompressionPrivateKeySharesEnum::Z128(
+                    CompressionPrivateKeyShares {
+                        post_packing_ks_key: GlweSecretKeyShare {
+                            data: key
+                                .post_packing_ks_key
+                                .data
+                                .into_iter()
+                                .map(|share| {
+                                    // TODO before we turn it to Z64 using to_residuepoly64, but we need Z128
+                                    // as it's used by the core/service preprocessing.
+                                    // this part needs to be reworked when we support Z64+Z128 preprocessing
+                                    let converted_value = share.value();
+                                    Share::new(share.owner(), converted_value)
+                                })
+                                .collect_vec(),
+                            polynomial_size,
+                        },
+                        params: key.params,
                     },
-                    params: key.params,
-                })
+                ))
             },
         );
 
@@ -361,9 +426,11 @@ impl<const EXTENSION_DEGREE: usize> GenericPrivateKeySet<Z64, EXTENSION_DEGREE> 
         PrivateKeySet {
             lwe_encryption_secret_key_share: self.lwe_encryption_secret_key_share,
             lwe_compute_secret_key_share: self.lwe_secret_key_share,
-            glwe_secret_key_share: self.glwe_secret_key_share,
+            glwe_secret_key_share: GlweSecretKeyShareEnum::Z64(self.glwe_secret_key_share),
             glwe_secret_key_share_sns_as_lwe: None,
-            glwe_secret_key_share_compression: self.glwe_secret_key_share_compression,
+            glwe_secret_key_share_compression: self
+                .glwe_secret_key_share_compression
+                .map(CompressionPrivateKeySharesEnum::Z64),
             parameters,
         }
     }
@@ -570,6 +637,57 @@ where
     Ok(bk)
 }
 
+#[instrument(name="Gen Decompression Key", skip(private_glwe_compute_key, private_compression_key, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+async fn generate_decompression_keys<
+    Z: BaseRing,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+    R: Rng + CryptoRng,
+    S: BaseSessionHandles<R>,
+    Gen: ByteRandomGenerator,
+    const EXTENSION_DEGREE: usize,
+>(
+    private_glwe_compute_key: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    private_compression_key: &CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>,
+    params: DistributedCompressionParameters,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
+    session: &mut S,
+    preprocessing: &mut P,
+) -> anyhow::Result<DecompressionKey>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let blind_rotate_key: LweBootstrapKey<Vec<u64>> = generate_bootstrap_key(
+        private_glwe_compute_key,
+        &private_compression_key.clone().into_lwe_secret_key(),
+        params.bk_params,
+        mpc_encryption_rng,
+        session,
+        preprocessing,
+    )
+    .await?;
+
+    // Creation of the bootstrapping key in the Fourier domain
+    let mut fourier_bsk = FourierLweBootstrapKey::new(
+        blind_rotate_key.input_lwe_dimension(),
+        blind_rotate_key.glwe_size(),
+        blind_rotate_key.polynomial_size(),
+        blind_rotate_key.decomposition_base_log(),
+        blind_rotate_key.decomposition_level_count(),
+    );
+
+    // Conversion to fourier domain
+    par_convert_standard_lwe_bootstrap_key_to_fourier(&blind_rotate_key, &mut fourier_bsk);
+
+    let blind_rotate_key = ShortintBootstrappingKey::Classic(fourier_bsk);
+
+    let decompression_key = DecompressionKey {
+        blind_rotate_key,
+        lwe_per_glwe: params.raw_compression_parameters.lwe_per_glwe,
+    };
+    Ok(decompression_key)
+}
+
+#[instrument(name="Gen Compression and Decompression Key", skip(private_glwe_compute_key_as_lwe, private_glwe_compute_key, private_compression_key, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
 async fn generate_compression_decompression_keys<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
@@ -615,34 +733,16 @@ where
         storage_log_modulus: params.raw_compression_parameters.storage_log_modulus,
     };
 
-    let blind_rotate_key: LweBootstrapKey<Vec<u64>> = generate_bootstrap_key(
+    let decompression_key = generate_decompression_keys(
         private_glwe_compute_key,
-        &private_compression_key.clone().into_lwe_secret_key(),
-        params.bk_params,
+        private_compression_key,
+        params,
         mpc_encryption_rng,
         session,
         preprocessing,
     )
     .await?;
 
-    // Creation of the bootstrapping key in the Fourier domain
-    let mut fourier_bsk = FourierLweBootstrapKey::new(
-        blind_rotate_key.input_lwe_dimension(),
-        blind_rotate_key.glwe_size(),
-        blind_rotate_key.polynomial_size(),
-        blind_rotate_key.decomposition_base_log(),
-        blind_rotate_key.decomposition_level_count(),
-    );
-
-    // Conversion to fourier domain
-    par_convert_standard_lwe_bootstrap_key_to_fourier(&blind_rotate_key, &mut fourier_bsk);
-
-    let blind_rotate_key = ShortintBootstrappingKey::Classic(fourier_bsk);
-
-    let decompression_key = DecompressionKey {
-        blind_rotate_key,
-        lwe_per_glwe: params.raw_compression_parameters.lwe_per_glwe,
-    };
     Ok((compression_key, decompression_key))
 }
 
@@ -728,6 +828,7 @@ where
                     comp_params.raw_compression_parameters,
                     preprocessing,
                 )?;
+
                 let compression_keys = generate_compression_decompression_keys(
                     glwe_sk_share_as_lwe,
                     glwe_secret_key_share,
@@ -1008,6 +1109,80 @@ where
     ))
 }
 
+#[instrument(name="DKG with optional compression SK Z128", skip(existing_compression_sk, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+pub async fn distributed_keygen_from_optional_compression_sk_z128<
+    R: Rng + CryptoRng,
+    S: BaseSessionHandles<R>,
+    P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
+    const EXTENSION_DEGREE: usize,
+>(
+    session: &mut S,
+    preprocessing: &mut P,
+    params: DKGParams,
+    existing_compression_sk: Option<&CompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>>,
+) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+{
+    let (pub_key_set, priv_key_set) = distributed_keygen_from_optional_compression_sk(
+        session,
+        preprocessing,
+        params,
+        existing_compression_sk,
+    )
+    .await?;
+    Ok((
+        pub_key_set.to_pubkeyset(params),
+        priv_key_set.finalize_keyset(
+            params
+                .get_params_basics_handle()
+                .to_classic_pbs_parameters(),
+        ),
+    ))
+}
+
+#[instrument(name="Gen Decompression Key Z128", skip(private_glwe_compute_key, private_compression_key, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+pub async fn distributed_decompression_keygen_z128<
+    R: Rng + CryptoRng,
+    S: BaseSessionHandles<R>,
+    P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
+    const EXTENSION_DEGREE: usize,
+>(
+    session: &mut S,
+    preprocessing: &mut P,
+    params: DKGParams,
+    private_glwe_compute_key: &GlweSecretKeyShare<Z128, EXTENSION_DEGREE>,
+    private_compression_key: &CompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>,
+) -> anyhow::Result<DecompressionKey>
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+{
+    let params_basics_handle = params.get_params_basics_handle();
+    let seed = sample_seed(params_basics_handle.get_sec(), session, preprocessing).await?;
+    //Init the XOF with the seed computed above
+    let mut mpc_encryption_rng = MPCEncryptionRandomGenerator::<
+        Z128,
+        SoftwareRandomGenerator,
+        EXTENSION_DEGREE,
+    >::new_from_seed(seed);
+
+    let params = params_basics_handle
+        .get_compression_decompression_params()
+        .ok_or(anyhow::anyhow!("missing (de)compression parameters"))?;
+
+    generate_decompression_keys(
+        private_glwe_compute_key,
+        private_compression_key,
+        params,
+        &mut mpc_encryption_rng,
+        session,
+        preprocessing,
+    )
+    .await
+}
+
 #[cfg(test)]
 pub mod tests {
     use std::path::Path;
@@ -1033,7 +1208,6 @@ pub mod tests {
     };
     use tfhe_csprng::seeders::Seeder;
 
-    use super::distributed_keygen;
     use crate::execution::{
         random::{get_rng, seed_from_rng},
         tfhe_internals::{
@@ -1075,9 +1249,23 @@ pub mod tests {
     };
 
     #[cfg(feature = "slow_tests")]
-    use super::distributed_keygen_from_optional_compression_sk;
+    use super::{distributed_keygen, distributed_keygen_from_optional_compression_sk};
+
     #[cfg(feature = "slow_tests")]
-    use crate::execution::keyset_config::KeySetConfig;
+    use tokio::time::Duration;
+
+    #[cfg(feature = "slow_tests")]
+    use crate::{
+        execution::{
+            config::BatchParams,
+            keyset_config::KeySetConfig,
+            online::preprocessing::create_memory_factory,
+            runtime::session::{BaseSessionHandles, SmallSession, ToBaseSession},
+            small_execution::{agree_random::DummyAgreeRandom, offline::SmallPreprocessing},
+            tfhe_internals::test_feature::KeySet,
+        },
+        tests::helper::tests_and_benches::execute_protocol_small,
+    };
 
     #[cfg(not(target_arch = "aarch64"))]
     #[test]
@@ -1571,6 +1759,274 @@ pub mod tests {
         );
     }
 
+    // taken from https://stackoverflow.com/questions/64498617/how-to-transpose-a-vector-of-vectors-in-rust
+    #[cfg(feature = "slow_tests")]
+    fn transpose2<T>(v: Vec<Vec<T>>) -> Vec<Vec<T>> {
+        assert!(!v.is_empty());
+        let len = v[0].len();
+        let mut iters: Vec<_> = v.into_iter().map(|n| n.into_iter()).collect();
+        (0..len)
+            .map(|_| {
+                iters
+                    .iter_mut()
+                    .map(|n| n.next().unwrap())
+                    .collect::<Vec<T>>()
+            })
+            .collect()
+    }
+
+    #[cfg(feature = "slow_tests")]
+    fn vec64_to_shares128<R: rand::Rng + rand::CryptoRng, const EXTENSION_DEGREE: usize>(
+        v: Vec<u64>,
+        n: usize,
+        t: usize,
+        rng: &mut R,
+    ) -> Vec<Vec<crate::execution::sharing::share::Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>>
+    where
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+    {
+        use crate::execution::sharing::shamir::{InputOp, ShamirSharings};
+        use std::num::Wrapping;
+        transpose2(
+            v.into_iter()
+                .map(|s| {
+                    let s = ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping::<u128>(
+                        s as u128,
+                    ));
+                    ShamirSharings::share(rng, s, n, t).unwrap().shares
+                })
+                .collect::<Vec<Vec<_>>>(),
+        )
+    }
+
+    #[cfg(feature = "slow_tests")]
+    fn run_real_decompression_dkg_and_save<const EXTENSION_DEGREE: usize>(
+        params: DKGParams,
+        num_parties: usize,
+        threshold: usize,
+        prefix_path: &Path,
+    ) where
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+    {
+        // first we need to generate two server keys
+        use crate::{
+            execution::{
+                endpoints::keygen::distributed_decompression_keygen_z128,
+                sharing::share::Share,
+                tfhe_internals::{
+                    compression_decompression_key::CompressionPrivateKeyShares,
+                    glwe_key::GlweSecretKeyShare, test_feature::gen_key_set,
+                },
+            },
+            file_handling::{read_element, write_element},
+        };
+
+        let keyset_config = KeySetConfig::DecompressionOnly;
+        let mut rng = aes_prng::AesRng::from_random_seed();
+        let keyset1 = gen_key_set(params, &mut rng);
+        let keyset2 = gen_key_set(params, &mut rng);
+
+        let compression_key_1_poly_size = keyset1
+            .get_raw_compression_client_key()
+            .unwrap()
+            .polynomial_size();
+        let compression_key_1 = keyset1
+            .get_raw_compression_client_key()
+            .unwrap()
+            .into_container();
+        let glwe_key_2_poly_size = keyset2.get_raw_glwe_client_key().polynomial_size();
+        let glwe_key_2 = keyset2.get_raw_glwe_client_key().into_container();
+
+        // and then secret share the secret keys
+        let compression_key_shares_1 =
+            vec64_to_shares128(compression_key_1, num_parties, threshold, &mut rng);
+        assert_eq!(compression_key_shares_1.len(), num_parties);
+        let glwe_key_shares_2 = vec64_to_shares128(glwe_key_2, num_parties, threshold, &mut rng);
+        assert_eq!(glwe_key_shares_2.len(), num_parties);
+
+        // We need to pass these shares into the FnMut,
+        // but FnMut doesn't allow us to move a reference
+        // so write these two shares into the temporary storage
+        // and then we'll read it in the task.
+        write_element(
+            prefix_path.join("compression_key_shares_1"),
+            &compression_key_shares_1,
+        )
+        .unwrap();
+        write_element(prefix_path.join("glwe_key_shares_2"), &glwe_key_shares_2).unwrap();
+
+        let mut task = |mut session: SmallSession<ResiduePoly<Z128, EXTENSION_DEGREE>>,
+                        prefix: Option<String>| async move {
+            session
+                .network()
+                .set_timeout_for_next_round(Duration::from_secs(120))
+                .unwrap();
+            let batch_size = BatchParams {
+                triples: params
+                    .get_params_basics_handle()
+                    .total_triples_required(keyset_config),
+                randoms: params
+                    .get_params_basics_handle()
+                    .total_randomness_required(keyset_config),
+            };
+
+            let mut small_preproc =
+                SmallPreprocessing::<_, DummyAgreeRandom>::init(&mut session, batch_size)
+                    .await
+                    .unwrap();
+
+            let mut dkg_preproc = create_memory_factory().create_dkg_preprocessing_with_sns();
+
+            dkg_preproc
+                .fill_from_base_preproc(
+                    params,
+                    keyset_config,
+                    &mut session.to_base_session().unwrap(),
+                    &mut small_preproc,
+                )
+                .await
+                .unwrap();
+
+            let my_role = session.my_role().unwrap();
+            let prefix = prefix.unwrap();
+            let path_compression_key_shares_1 = Path::new(&prefix).join("compression_key_shares_1");
+            let path_glwe_key_shares_2 = Path::new(&prefix).join("glwe_key_shares_2");
+            let compression_key_shares_1 = &read_element::<
+                Vec<Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>>,
+                _,
+            >(path_compression_key_shares_1)
+            .unwrap()[my_role.zero_based()];
+            let glwe_key_shares_2 = &read_element::<
+                Vec<Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>>,
+                _,
+            >(path_glwe_key_shares_2)
+            .unwrap()[my_role.zero_based()];
+
+            let params_handle = params.get_params_basics_handle();
+            let private_glwe_compute_key = GlweSecretKeyShare {
+                data: glwe_key_shares_2.to_vec(),
+                polynomial_size: glwe_key_2_poly_size,
+            };
+            let private_compression_key = CompressionPrivateKeyShares {
+                post_packing_ks_key: GlweSecretKeyShare {
+                    data: compression_key_shares_1.to_vec(),
+                    polynomial_size: compression_key_1_poly_size,
+                },
+                params: params_handle
+                    .get_compression_decompression_params()
+                    .unwrap()
+                    .raw_compression_parameters,
+            };
+            let decompression_key = distributed_decompression_keygen_z128(
+                &mut session,
+                dkg_preproc.as_mut(),
+                params,
+                &private_glwe_compute_key,
+                &private_compression_key,
+            )
+            .await
+            .unwrap();
+
+            // make sure we used up all the preprocessing materials
+            assert_eq!(0, dkg_preproc.bits_len());
+            assert_eq!(0, dkg_preproc.triples_len());
+            assert_eq!(0, dkg_preproc.randoms_len());
+
+            use strum::IntoEnumIterator;
+            for bound in crate::execution::tfhe_internals::parameters::NoiseBounds::iter() {
+                assert_eq!(0, dkg_preproc.noise_len(bound));
+            }
+
+            (my_role, decompression_key)
+        };
+
+        // Sync network because we also init the PRSS in the task
+        let mut results =
+            execute_protocol_small::<_, _, ResiduePoly<Z128, EXTENSION_DEGREE>, EXTENSION_DEGREE>(
+                num_parties,
+                threshold as u8,
+                None,
+                NetworkMode::Sync,
+                None,
+                &mut task,
+                Some(prefix_path.to_str().unwrap().to_string()),
+            );
+
+        // check that the decompression keys are the same
+        let decompression_key = results.pop().unwrap().1;
+        let decompression_key_bytes = bincode::serialize(&decompression_key).unwrap();
+        for (_role, key) in results {
+            let buf = bincode::serialize(&key).unwrap();
+            assert_eq!(buf, decompression_key_bytes);
+        }
+        // check that we can do the decompression
+        run_decompression_test(&keyset1, &keyset2, decompression_key);
+    }
+
+    #[cfg(feature = "slow_tests")]
+    fn run_decompression_test(
+        keyset1: &KeySet,
+        keyset2: &KeySet,
+        decompression_key: tfhe::shortint::list_compression::DecompressionKey,
+    ) {
+        // do some sanity checks
+        let server_key1 = keyset1.client_key.generate_server_key();
+        let (_, _, _, decompression_key1, _) = server_key1.clone().into_raw_parts();
+        let decompression_key1 = decompression_key1.unwrap().into_raw_parts();
+        assert_eq!(
+            decompression_key1.blind_rotate_key.glwe_size(),
+            decompression_key.blind_rotate_key.glwe_size()
+        );
+        assert_eq!(
+            decompression_key1.blind_rotate_key.input_lwe_dimension(),
+            decompression_key.blind_rotate_key.input_lwe_dimension(),
+        );
+        assert_eq!(
+            decompression_key1.blind_rotate_key.output_lwe_dimension(),
+            decompression_key.blind_rotate_key.output_lwe_dimension(),
+        );
+        assert_eq!(
+            decompression_key1.blind_rotate_key.polynomial_size(),
+            decompression_key.blind_rotate_key.polynomial_size(),
+        );
+
+        println!("Starting decompression test");
+        let decompression_key =
+            tfhe::integer::compression_keys::DecompressionKey::from_raw_parts(decompression_key);
+        // create a ciphertext using keyset 1
+        set_server_key(server_key1);
+        let pt = 12u32;
+        let ct = FheUint32::try_encrypt(pt, &keyset1.client_key).unwrap();
+        let compressed_ct = CompressedCiphertextListBuilder::new()
+            .push(ct)
+            .build()
+            .unwrap();
+
+        // then decompression it into keyset 2
+        println!("Decompression ct under keyset1 to keyset2");
+        let (radix_ciphertext, _) = compressed_ct.into_raw_parts();
+        let ct2: FheUint32 = radix_ciphertext
+            .get(0, &decompression_key)
+            .unwrap()
+            .unwrap();
+
+        // finally check we can decrypt it using the client key from keyset 2
+        println!("Attempting to decrypt under keyset2");
+        let pt2: u32 = ct2.decrypt(&keyset2.client_key);
+        assert_eq!(pt, pt2);
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[test]
+    fn decompresion_keygen_f4() {
+        let params = PARAMS_TEST_BK_SNS;
+        let num_parties = 4;
+        let threshold = 1;
+        let temp_dir = tempfile::tempdir().unwrap();
+        run_real_decompression_dkg_and_save::<4>(params, num_parties, threshold, temp_dir.path())
+    }
+
     #[cfg(feature = "slow_tests")]
     fn run_real_dkg_and_save<const EXTENSION_DEGREE: usize>(
         params: DKGParams,
@@ -1582,29 +2038,19 @@ pub mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
     {
-        use tokio::time::Duration;
-
-        use crate::{
-            execution::{
-                config::BatchParams,
-                online::preprocessing::create_memory_factory,
-                runtime::session::{BaseSessionHandles, SmallSession, ToBaseSession},
-                small_execution::{agree_random::DummyAgreeRandom, offline::SmallPreprocessing},
-            },
-            tests::helper::tests_and_benches::execute_protocol_small,
-        };
-
         let params_basics_handles = params.get_params_basics_handle();
         params_basics_handles
             .write_to_file(&prefix_path.join("params.json"))
             .unwrap();
 
-        let mut task = |mut session: SmallSession<ResiduePoly<Z128, EXTENSION_DEGREE>>| async move {
+        let mut task = |mut session: SmallSession<ResiduePoly<Z128, EXTENSION_DEGREE>>,
+                        _bot: Option<String>| async move {
             use crate::execution::tfhe_internals::compression_decompression_key::CompressionPrivateKeyShares;
-            let compression_sk_skares = if keyset_config.is_using_existing_compression_sk() {
+            let compression_sk_skares = if keyset_config.is_standard_using_existing_compression_sk()
+            {
                 // we use dummy preprocessing to generate the existing compression sk
                 // because it won't consume our preprocessing materials
-                let mut large_preproc = DummyPreprocessing::<
+                let mut dummy_preproc = DummyPreprocessing::<
                     ResiduePoly<Z128, EXTENSION_DEGREE>,
                     _,
                     _,
@@ -1616,7 +2062,7 @@ pub mod tests {
                             .get_compression_decompression_params()
                             .unwrap()
                             .raw_compression_parameters,
-                        &mut large_preproc,
+                        &mut dummy_preproc,
                     )
                     .unwrap(),
                 )
@@ -1659,7 +2105,7 @@ pub mod tests {
             assert_ne!(0, dkg_preproc.randoms_len());
 
             let my_role = session.my_role().unwrap();
-            let (pk, sk) = if keyset_config.is_using_existing_compression_sk() {
+            let (pk, sk) = if keyset_config.is_standard_using_existing_compression_sk() {
                 distributed_keygen_from_optional_compression_sk(
                     &mut session,
                     dkg_preproc.as_mut(),
@@ -1704,6 +2150,7 @@ pub mod tests {
                 NetworkMode::Sync,
                 None,
                 &mut task,
+                None,
             );
 
         let pk_ref = results[0].1.clone();
@@ -1737,7 +2184,7 @@ pub mod tests {
             let my_role = session.my_role().unwrap();
             let mut large_preproc = DummyPreprocessing::new(0_u64, session.clone());
 
-            let (pk, sk) = distributed_keygen::<Z128, _, _, _, EXTENSION_DEGREE>(
+            let (pk, sk) = super::distributed_keygen::<Z128, _, _, _, EXTENSION_DEGREE>(
                 &mut session,
                 &mut large_preproc,
                 params,

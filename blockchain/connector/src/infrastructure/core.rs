@@ -1269,6 +1269,7 @@ where
 
         let req = KeyGenPreprocRequest {
             params: fhe_parameter.into(),
+            keyset_config: None,
             request_id: Some(setup.req_id.clone()),
         };
 
@@ -1417,6 +1418,8 @@ where
                 verifying_contract: keygen.eip712_verifying_contract().to_string(),
                 salt: self.keygen.eip712_salt().map(|salt| salt.to_vec()),
             }),
+            keyset_config: None,
+            keyset_added_info: None,
         };
 
         let request = build_request(req.clone(), Some(setup.request_id.clone()), None)?;
@@ -1560,6 +1563,8 @@ where
                 verifying_contract: keygen.eip712_verifying_contract().to_string(),
                 salt: keygen.eip712_salt().map(|salt| salt.to_vec()),
             }),
+            keyset_config: None,
+            keyset_added_info: None,
         };
 
         let request = build_request(req.clone(), Some(setup.request_id.clone()), None)?;
@@ -1888,4 +1893,15 @@ where
         };
         self.dispatch_catchup_response(response, setup, generic_poller_input, "InsecureCrsGenVal")
     }
+}
+
+#[test]
+fn test_fhe_parameter_conversion() {
+    let events_default: i32 = FheParameter::Default.into();
+    let rpc_default: i32 = RPCFheParameter::Default.into();
+    assert_eq!(events_default, rpc_default);
+
+    let events_test: i32 = FheParameter::Test.into();
+    let rpc_test: i32 = RPCFheParameter::Test.into();
+    assert_eq!(events_test, rpc_test);
 }

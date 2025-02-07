@@ -92,6 +92,7 @@ pub struct BKParams {
     pub enc_type: EncryptionType,
 }
 
+#[derive(Debug)]
 pub struct DistributedCompressionParameters {
     pub raw_compression_parameters: CompressionParameters,
     pub ksk_num_noise: usize,
@@ -248,12 +249,15 @@ pub trait DKGParamsBasics: Sync {
     fn decomposition_level_count_ksk(&self) -> DecompositionLevelCount;
     fn decomposition_level_count_pksk(&self) -> DecompositionLevelCount;
     fn decomposition_level_count_bk(&self) -> DecompositionLevelCount;
+
+    // `num_needed_noise_` functions do not consider take KeySetConfig into consideration
     fn num_needed_noise_pk(&self) -> NoiseInfo;
     fn num_needed_noise_ksk(&self) -> NoiseInfo;
     fn num_needed_noise_pksk(&self) -> NoiseInfo;
     fn num_needed_noise_bk(&self) -> NoiseInfo;
     fn num_needed_noise_compression_key(&self) -> NoiseInfo;
     fn num_needed_noise_decompression_key(&self) -> NoiseInfo;
+
     fn num_raw_bits(&self, keyset_config: KeySetConfig) -> usize;
     fn encryption_key_choice(&self) -> EncryptionKeyChoice;
     fn pbs_order(&self) -> PBSOrder;
@@ -272,12 +276,10 @@ pub trait DKGParamsBasics: Sync {
     fn get_bk_params(&self) -> BKParams;
     fn get_compression_decompression_params(&self) -> Option<DistributedCompressionParameters>;
 
-    // functions below may take a configuration in the future
-    // to "filter out" some keys that we don't care about
-    fn all_lwe_noise(&self) -> NoiseInfo;
-    fn all_lwe_hat_noise(&self) -> NoiseInfo;
-    fn all_glwe_noise(&self) -> NoiseInfo;
-    fn all_compression_ksk_noise(&self) -> NoiseInfo;
+    fn all_lwe_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo;
+    fn all_lwe_hat_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo;
+    fn all_glwe_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo;
+    fn all_compression_ksk_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo;
 }
 
 fn combine_noise_info(target_bound: NoiseBounds, list: &[NoiseInfo]) -> NoiseInfo {
@@ -362,26 +364,28 @@ impl DKGParamsBasics for DKGParamsRegular {
         //Counted twice if there's no dedicated pk parameter
         let mut num_bits_needed = self.num_raw_bits(keyset_config);
 
-        //And additionally, need bits to process the TUniform noises
-        //(we need bound + 2 bits to sample a TUniform(bound))
-        //For pk
-        num_bits_needed += self.num_needed_noise_pk().num_bits_needed();
+        if keyset_config.is_standard() {
+            //And additionally, need bits to process the TUniform noises
+            //(we need bound + 2 bits to sample a TUniform(bound))
+            //For pk
+            num_bits_needed += self.num_needed_noise_pk().num_bits_needed();
 
-        //For ksk
-        num_bits_needed += self.num_needed_noise_ksk().num_bits_needed();
+            //For ksk
+            num_bits_needed += self.num_needed_noise_ksk().num_bits_needed();
 
-        //For bk
-        num_bits_needed += self.num_needed_noise_bk().num_bits_needed();
+            //For bk
+            num_bits_needed += self.num_needed_noise_bk().num_bits_needed();
 
-        //For pksk
-        num_bits_needed += self.num_needed_noise_pksk().num_bits_needed();
+            //For pksk
+            num_bits_needed += self.num_needed_noise_pksk().num_bits_needed();
 
-        //For (de)compression keys
-        //note that the bits are automatically 0
-        //if compression is not supported by the parameters
+            //For (de)compression keys
+            //note that the bits are automatically 0
+            //if compression is not supported by the parameters
 
-        //For compression keys
-        num_bits_needed += self.num_needed_noise_compression_key().num_bits_needed();
+            //For compression keys
+            num_bits_needed += self.num_needed_noise_compression_key().num_bits_needed();
+        }
         //For decompression keys
         num_bits_needed += self.num_needed_noise_decompression_key().num_bits_needed();
 
@@ -390,7 +394,10 @@ impl DKGParamsBasics for DKGParamsRegular {
 
     fn total_triples_required(&self, keyset_config: KeySetConfig) -> usize {
         //Required for the "normal" BK
-        let mut num_triples_needed = self.lwe_dimension().0 * self.glwe_sk_num_bits();
+        let mut num_triples_needed = 0;
+        if keyset_config.is_standard() {
+            num_triples_needed += self.lwe_dimension().0 * self.glwe_sk_num_bits();
+        }
 
         //Required for the compression BK
         if let Some(comp_params) = self.compression_decompression_parameters {
@@ -658,69 +665,106 @@ impl DKGParamsBasics for DKGParamsRegular {
     }
 
     fn num_raw_bits(&self, keyset_config: KeySetConfig) -> usize {
-        self.lwe_dimension().0
-            + self.lwe_hat_dimension().0
-            + self.glwe_sk_num_bits()
-            + if keyset_config.is_using_existing_compression_sk() {
-                0
-            } else {
-                self.compression_sk_num_bits()
+        match keyset_config {
+            KeySetConfig::Standard(config) => {
+                self.lwe_dimension().0
+                    + self.lwe_hat_dimension().0
+                    + self.glwe_sk_num_bits()
+                    + if config.is_using_existing_compression_sk() {
+                        0
+                    } else {
+                        self.compression_sk_num_bits()
+                    }
             }
-    }
-
-    fn all_lwe_noise(&self) -> NoiseInfo {
-        let target_bound = self.num_needed_noise_ksk().bound;
-        let noises = &[self.num_needed_noise_ksk(), self.num_needed_noise_pksk()];
-
-        #[cfg(test)]
-        {
-            // sanity check
-            assert!(matches!(target_bound, NoiseBounds::LweNoise(..)));
-            for noise in noises {
-                if matches!(noise.bound, NoiseBounds::LweNoise(..)) {
-                    assert_eq!(noise.tuniform_bound().0, target_bound.get_bound().0);
-                }
-            }
+            KeySetConfig::DecompressionOnly => 0,
         }
-        combine_noise_info(target_bound, noises)
     }
 
-    fn all_lwe_hat_noise(&self) -> NoiseInfo {
-        let out = self.num_needed_noise_pk();
-        #[cfg(test)]
-        assert!(matches!(out.bound, NoiseBounds::LweHatNoise(..)));
-        out
+    fn all_lwe_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo {
+        match keyset_config {
+            KeySetConfig::Standard(_inner_config) => {
+                let target_bound = self.num_needed_noise_ksk().bound;
+                let noises = &[self.num_needed_noise_ksk(), self.num_needed_noise_pksk()];
+
+                #[cfg(test)]
+                {
+                    // sanity check
+                    assert!(matches!(target_bound, NoiseBounds::LweNoise(..)));
+                    for noise in noises {
+                        if matches!(noise.bound, NoiseBounds::LweNoise(..)) {
+                            assert_eq!(noise.tuniform_bound().0, target_bound.get_bound().0);
+                        }
+                    }
+                }
+                combine_noise_info(target_bound, noises)
+            }
+            KeySetConfig::DecompressionOnly => NoiseInfo {
+                amount: 0,
+                bound: NoiseBounds::LweNoise(self.lwe_tuniform_bound()),
+            },
+        }
     }
 
-    fn all_glwe_noise(&self) -> NoiseInfo {
+    fn all_lwe_hat_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo {
+        match keyset_config {
+            KeySetConfig::Standard(_inner_config) => {
+                let out = self.num_needed_noise_pk();
+                #[cfg(test)]
+                assert!(matches!(out.bound, NoiseBounds::LweHatNoise(..)));
+                out
+            }
+            KeySetConfig::DecompressionOnly => NoiseInfo {
+                amount: 0,
+                bound: NoiseBounds::LweNoise(self.lwe_tuniform_bound()),
+            },
+        }
+    }
+
+    fn all_glwe_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo {
         let target_bound = self.num_needed_noise_bk().bound;
-        let noises = &[
-            self.num_needed_noise_bk(),
-            self.num_needed_noise_pksk(),
-            self.num_needed_noise_decompression_key(),
-        ];
+        match keyset_config {
+            KeySetConfig::Standard(_inner_config) => {
+                let noises = &[
+                    self.num_needed_noise_bk(),
+                    self.num_needed_noise_pksk(),
+                    self.num_needed_noise_decompression_key(),
+                ];
 
-        #[cfg(test)]
-        {
-            assert!(matches!(target_bound, NoiseBounds::GlweNoise(..)));
-            for noise in noises {
-                if matches!(noise.bound, NoiseBounds::GlweNoise(..)) {
-                    assert_eq!(noise.tuniform_bound().0, target_bound.get_bound().0);
+                #[cfg(test)]
+                {
+                    assert!(matches!(target_bound, NoiseBounds::GlweNoise(..)));
+                    for noise in noises {
+                        if matches!(noise.bound, NoiseBounds::GlweNoise(..)) {
+                            assert_eq!(noise.tuniform_bound().0, target_bound.get_bound().0);
+                        }
+                    }
                 }
+                combine_noise_info(target_bound, noises)
+            }
+            KeySetConfig::DecompressionOnly => {
+                let noises = &[self.num_needed_noise_decompression_key()];
+                combine_noise_info(target_bound, noises)
             }
         }
-        combine_noise_info(target_bound, noises)
     }
 
-    fn all_compression_ksk_noise(&self) -> NoiseInfo {
-        let out = self.num_needed_noise_compression_key();
-        #[cfg(test)]
-        {
-            if out.amount != 0 {
-                assert!(matches!(out.bound, NoiseBounds::CompressionKSKNoise(..)));
+    fn all_compression_ksk_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo {
+        match keyset_config {
+            KeySetConfig::Standard(_inner_config) => {
+                let out = self.num_needed_noise_compression_key();
+                #[cfg(test)]
+                {
+                    if out.amount != 0 {
+                        assert!(matches!(out.bound, NoiseBounds::CompressionKSKNoise(..)));
+                    }
+                }
+                out
             }
+            KeySetConfig::DecompressionOnly => NoiseInfo {
+                amount: 0,
+                bound: NoiseBounds::LweNoise(self.lwe_tuniform_bound()),
+            },
         }
-        out
     }
 
     fn compression_key_tuniform_bound(&self) -> Option<TUniformBound> {
@@ -821,17 +865,24 @@ impl DKGParamsBasics for DKGParamsSnS {
 
     fn total_bits_required(&self, keyset_config: KeySetConfig) -> usize {
         //Need the bits for regular keygen
-        self.regular_params.total_bits_required(keyset_config) +
-        //And for the additional glwe sk
-        self.glwe_sk_num_bits_sns() +
-        //And for the noise for the bk sns
-        self.all_bk_sns_noise().num_bits_needed()
+        let mut num_bits_needed = self.regular_params.total_bits_required(keyset_config);
+        if keyset_config.is_standard() {
+            num_bits_needed +=
+            //And for the additional glwe sk
+            self.glwe_sk_num_bits_sns() +
+            //And for the noise for the bk sns
+            self.all_bk_sns_noise().num_bits_needed();
+        }
+        num_bits_needed
     }
 
     fn total_triples_required(&self, keyset_config: KeySetConfig) -> usize {
-        // Raw triples necessary for the 2 BK
-        let mut num_triples_needed =
+        let mut num_triples_needed = 0;
+        if keyset_config.is_standard() {
+            num_triples_needed +=
+            // Raw triples necessary for the 2 BK
             self.lwe_dimension().0 * (self.glwe_sk_num_bits() + self.glwe_sk_num_bits_sns());
+        }
 
         //Required for the compression BK
         if let Some(comp_params) = self.regular_params.compression_decompression_parameters {
@@ -969,23 +1020,28 @@ impl DKGParamsBasics for DKGParamsSnS {
     }
 
     fn num_raw_bits(&self, keyset_config: KeySetConfig) -> usize {
-        self.regular_params.num_raw_bits(keyset_config) + self.glwe_sk_num_bits_sns()
+        self.regular_params.num_raw_bits(keyset_config)
+            + if keyset_config.is_standard() {
+                self.glwe_sk_num_bits_sns()
+            } else {
+                0
+            }
     }
 
-    fn all_lwe_noise(&self) -> NoiseInfo {
-        self.regular_params.all_lwe_noise()
+    fn all_lwe_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo {
+        self.regular_params.all_lwe_noise(keyset_config)
     }
 
-    fn all_lwe_hat_noise(&self) -> NoiseInfo {
-        self.regular_params.all_lwe_hat_noise()
+    fn all_lwe_hat_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo {
+        self.regular_params.all_lwe_hat_noise(keyset_config)
     }
 
-    fn all_glwe_noise(&self) -> NoiseInfo {
-        self.regular_params.all_glwe_noise()
+    fn all_glwe_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo {
+        self.regular_params.all_glwe_noise(keyset_config)
     }
 
-    fn all_compression_ksk_noise(&self) -> NoiseInfo {
-        self.regular_params.all_compression_ksk_noise()
+    fn all_compression_ksk_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo {
+        self.regular_params.all_compression_ksk_noise(keyset_config)
     }
 
     fn compression_key_tuniform_bound(&self) -> Option<TUniformBound> {
@@ -1395,13 +1451,14 @@ mod tests {
 
     #[test]
     fn test_all_noise() {
+        let keyset_config = KeySetConfig::default();
         for param in DkgParamsAvailable::iter() {
             let p = param.to_param();
             let h = p.get_params_basics_handle();
-            let _ = h.all_compression_ksk_noise();
-            let _ = h.all_glwe_noise();
-            let _ = h.all_lwe_hat_noise();
-            let _ = h.all_lwe_noise();
+            let _ = h.all_compression_ksk_noise(keyset_config);
+            let _ = h.all_glwe_noise(keyset_config);
+            let _ = h.all_lwe_hat_noise(keyset_config);
+            let _ = h.all_lwe_noise(keyset_config);
         }
     }
 
@@ -1415,11 +1472,27 @@ mod tests {
             + h.glwe_sk_num_bits()
             + h.compression_sk_num_bits();
         assert_eq!(sk_total, h.num_raw_bits(keyset_config));
-        let noise_total = h.all_compression_ksk_noise().num_bits_needed()
-            + h.all_glwe_noise().num_bits_needed()
-            + h.all_lwe_hat_noise().num_bits_needed()
-            + h.all_lwe_noise().num_bits_needed();
+        let noise_total = h.all_compression_ksk_noise(keyset_config).num_bits_needed()
+            + h.all_glwe_noise(keyset_config).num_bits_needed()
+            + h.all_lwe_hat_noise(keyset_config).num_bits_needed()
+            + h.all_lwe_noise(keyset_config).num_bits_needed();
 
         assert_eq!(sk_total + noise_total, h.total_bits_required(keyset_config));
+    }
+
+    #[test]
+    fn test_required_preproc_decompression() {
+        let keyset_config = KeySetConfig::DecompressionOnly;
+        let param = BC_PARAMS_SAM_NO_SNS;
+        let h = param.get_params_basics_handle();
+        let sk_total = 0;
+        assert_eq!(sk_total, h.num_raw_bits(keyset_config));
+        let noise_total = h.num_needed_noise_decompression_key().num_bits_needed();
+
+        assert_eq!(sk_total + noise_total, h.total_bits_required(keyset_config));
+        assert_eq!(
+            sk_total + noise_total,
+            h.all_glwe_noise(keyset_config).num_bits_needed()
+        );
     }
 }

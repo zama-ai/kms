@@ -154,7 +154,7 @@ mod tests {
         let parties = 4;
         let threshold = 1;
         let amount = 100;
-        let mut task = |mut session: SmallSession<LevelKsw>| async move {
+        let mut task = |mut session: SmallSession<LevelKsw>, _bot: Option<String>| async move {
             let mut preproc = DummyPreprocessing::<LevelKsw, AesRng, SmallSession<LevelKsw>>::new(
                 0,
                 session.clone(),
@@ -175,6 +175,7 @@ mod tests {
             NetworkMode::Async,
             Some(delay_vec),
             &mut task,
+            None,
         );
 
         //Make sure all are bits

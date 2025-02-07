@@ -25,7 +25,7 @@ use super::{
 };
 use distributed_decryption::execution::endpoints::keygen::FhePubKeySet;
 use std::{collections::HashMap, sync::Arc};
-use tfhe::zk::CompactPkeCrs;
+use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
 
 #[tonic::async_trait]
@@ -330,6 +330,18 @@ impl<
     ) {
         self.inner
             .purge_crs_material(req_id, guarded_meta_store)
+            .await
+    }
+
+    pub(crate) async fn write_decompression_key_with_meta_store(
+        &self,
+        req_id: &RequestId,
+        decompression_key: DecompressionKey,
+        info: HashMap<PubDataType, SignedPubDataHandleInternal>,
+        meta_store: Arc<RwLock<MetaStore<HashMap<PubDataType, SignedPubDataHandleInternal>>>>,
+    ) {
+        self.inner
+            .write_decompression_key_with_meta_store(req_id, decompression_key, info, meta_store)
             .await
     }
 }
@@ -802,6 +814,59 @@ impl<
             tracing::error!("Failed to remove crs cached data for request {}", req_id);
         } else {
             tracing::info!("Removed all crs cached data for request {}", req_id);
+        }
+    }
+
+    pub(crate) async fn write_decompression_key_with_meta_store(
+        &self,
+        req_id: &RequestId,
+        decompression_key: DecompressionKey,
+        info: HashMap<PubDataType, SignedPubDataHandleInternal>,
+        meta_store: Arc<RwLock<MetaStore<HashMap<PubDataType, SignedPubDataHandleInternal>>>>,
+    ) {
+        // use guarded_meta_store as the synchronization point
+        // all other locks are taken as needed so that we don't lock up
+        // other function calls too much
+        let mut guarded_meta_store = meta_store.write().await;
+
+        let f1 = async {
+            let mut pub_storage = self.public_storage.lock().await;
+            store_versioned_at_request_id(
+                &mut (*pub_storage),
+                req_id,
+                &decompression_key,
+                &PubDataType::DecompressionKey.to_string(),
+            )
+            .await
+            .is_ok()
+        };
+        if f1.await
+            && guarded_meta_store
+                .update(req_id, Ok(info))
+                .inspect_err(|e| {
+                    tracing::error!(
+                        "Error ({e}) while updating decompression key meta store for {}",
+                        req_id
+                    )
+                })
+                .is_ok()
+        {
+            // there is no cache to update
+        } else {
+            // delete the decompression key, we can't do much if there's an error
+            let mut pub_storage = self.public_storage.lock().await;
+            let _ = delete_at_request_id(
+                &mut (*pub_storage),
+                req_id,
+                &PubDataType::DecompressionKey.to_string(),
+            )
+            .await
+            .inspect_err(|e| {
+                tracing::error!(
+                    "Error ({e}) while deletingdecompression key meta store for {}",
+                    req_id
+                )
+            });
         }
     }
 

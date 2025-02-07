@@ -279,6 +279,7 @@ pub enum PubDataType {
     CRS,
     VerfKey,     // Type for the servers public verification keys
     VerfAddress, // The ethereum address of the KMS core, needed for KMS signature verification
+    DecompressionKey,
 }
 
 impl fmt::Display for PubDataType {
@@ -291,6 +292,7 @@ impl fmt::Display for PubDataType {
             PubDataType::CRS => write!(f, "CRS"),
             PubDataType::VerfKey => write!(f, "VerfKey"),
             PubDataType::VerfAddress => write!(f, "VerfAddress"),
+            PubDataType::DecompressionKey => write!(f, "DecompressionKey"),
         }
     }
 }
@@ -1020,7 +1022,7 @@ impl From<(String, FheType)> for TypedPlaintext {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::TypedPlaintext;
-    use crate::kms::v1::RequestId;
+    use crate::kms::v1::{ComputeKeyType, FheParameter, KeySetCompressionConfig, RequestId};
 
     #[test]
     fn idempotent_plaintext() {
@@ -1081,5 +1083,15 @@ pub(crate) mod tests {
         let x: u128 = request_id.clone().try_into().unwrap();
         let req_id2 = RequestId::from(x);
         assert_eq!(request_id, req_id2);
+    }
+
+    #[test]
+    fn test_enum_default() {
+        assert_eq!(FheParameter::default(), FheParameter::Default);
+        assert_eq!(ComputeKeyType::default(), ComputeKeyType::Cpu);
+        assert_eq!(
+            KeySetCompressionConfig::default(),
+            KeySetCompressionConfig::Generate
+        );
     }
 }

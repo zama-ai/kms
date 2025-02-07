@@ -5,11 +5,11 @@ use crate::cryptography::proven_ct_verifier::{
     get_verify_proven_ct_result, non_blocking_verify_proven_ct,
 };
 use crate::cryptography::signcryption::signcrypt;
-use crate::engine::base::compute_info;
 use crate::engine::base::BaseKmsStruct;
 use crate::engine::base::{
     compute_external_pt_signature, deserialize_to_low_level, retrieve_parameters,
 };
+use crate::engine::base::{compute_info, preproc_proto_to_keyset_config};
 use crate::engine::base::{convert_key_response, DecCallValues, KeyGenCallValues, ReencCallValues};
 use crate::engine::centralized::central_kms::async_generate_crs;
 use crate::engine::threshold::generic::GenericKms;
@@ -38,6 +38,7 @@ use conf_trace::metrics_names::{
     ERR_DECRYPTION_FAILED, ERR_RATE_LIMIT_EXCEEDED, HASH_CIPHERTEXT_SEEDS, OP_DECRYPT,
     OP_REENCRYPT, TAG_CIPHERTEXT_ID, TAG_PARTY_ID,
 };
+use distributed_decryption::algebra::base_ring::Z128;
 use distributed_decryption::algebra::galois_rings::common::pack_residue_poly;
 use distributed_decryption::algebra::galois_rings::degree_4::{
     ResiduePolyF4Z128, ResiduePolyF4Z64,
@@ -49,9 +50,11 @@ use distributed_decryption::execution::endpoints::decryption::{
     partial_decrypt_using_noiseflooding, Small,
 };
 use distributed_decryption::execution::endpoints::keygen::{
-    distributed_keygen_z128, PrivateKeySet,
+    distributed_decompression_keygen_z128, distributed_keygen_from_optional_compression_sk_z128,
+    distributed_keygen_z128, CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum,
+    PrivateKeySet,
 };
-use distributed_decryption::execution::keyset_config::KeySetConfig;
+use distributed_decryption::execution::keyset_config as ddec_keyset_config;
 use distributed_decryption::execution::large_execution::vss::RealVss;
 use distributed_decryption::execution::online::preprocessing::orchestrator::PreprocessingOrchestrator;
 use distributed_decryption::execution::online::preprocessing::{
@@ -84,7 +87,7 @@ use kms_core_utils::thread_handles::ThreadHandleGroup;
 use kms_grpc::kms::v1::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus,
-    KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult, ReencryptionRequest,
+    KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult, KeySetAddedInfo, ReencryptionRequest,
     ReencryptionResponse, ReencryptionResponsePayload, RequestId, TypedPlaintext,
     VerifyProvenCtRequest, VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
 };
@@ -1167,6 +1170,7 @@ impl<
             async move {
                 // explicitly move the rate limiter context
                 let _permit = permit;
+                // TODO will this hold the lock for a long time?
                 let fhe_keys_rlock = crypto_storage
                     .read_guarded_threshold_fhe_keys_from_cache(&key_id)
                     .await;
@@ -1758,9 +1762,12 @@ impl<
         BackS: Storage + Sync + Send + 'static,
     > RealKeyGenerator<PubS, PrivS, BackS>
 {
+    #[allow(clippy::too_many_arguments)]
     async fn launch_dkg(
         &self,
         dkg_params: DKGParams,
+        keyset_config: ddec_keyset_config::KeySetConfig,
+        keyset_added_info: KeySetAddedInfo,
         preproc_handle_w_mode: PreprocHandleWithMode,
         req_id: RequestId,
         eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
@@ -1796,10 +1803,48 @@ impl<
                 .insert(req_id.clone(), token.clone());
         }
         let ongoing = Arc::clone(&self.ongoing);
+
+        // we need to clone the req ID because async closures are not stable
+        let req_id_clone = req_id.clone();
+        let keygen_background = async move {
+            match keyset_config {
+                ddec_keyset_config::KeySetConfig::Standard(inner_config) => {
+                    Self::key_gen_background(
+                        &req_id_clone,
+                        base_session,
+                        meta_store,
+                        crypto_storage,
+                        preproc_handle_w_mode,
+                        sk,
+                        dkg_params,
+                        inner_config,
+                        keyset_added_info,
+                        eip712_domain_copy,
+                        permit,
+                    )
+                    .await
+                }
+                ddec_keyset_config::KeySetConfig::DecompressionOnly => {
+                    Self::decompression_key_gen_background(
+                        &req_id_clone,
+                        base_session,
+                        meta_store,
+                        crypto_storage,
+                        preproc_handle_w_mode,
+                        sk,
+                        dkg_params,
+                        keyset_added_info,
+                        eip712_domain_copy,
+                        permit,
+                    )
+                    .await
+                }
+            }
+        };
         self.tracker
             .spawn(async move {
                 tokio::select! {
-                    () = Self::key_gen_background(&req_id, base_session, meta_store, crypto_storage, preproc_handle_w_mode, sk, dkg_params, eip712_domain_copy, permit) => {
+                    () = keygen_background => {
                         // Remove cancellation token since generation is now done.
                         ongoing.lock().await.remove(&req_id);
                         tracing::info!("Key generation of request {} exiting normally.", req_id);
@@ -1827,10 +1872,10 @@ impl<
             .await
             .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
 
-        let req = request.into_inner();
-        tracing::info!("Keygen Request ID: {:?}", req.request_id);
+        let inner = request.into_inner();
+        tracing::info!("Keygen Request ID: {:?}", inner.request_id);
         let request_id = tonic_some_or_err(
-            req.request_id.clone(),
+            inner.request_id.clone(),
             "Request ID is not set (inner key gen)".to_string(),
         )?;
 
@@ -1845,7 +1890,7 @@ impl<
 
         //Retrieve kg params and preproc_id
         let dkg_params = tonic_handle_potential_err(
-            retrieve_parameters(req.params),
+            retrieve_parameters(inner.params),
             "Parameter choice is not recognized".to_string(),
         )?;
 
@@ -1853,7 +1898,7 @@ impl<
             PreprocHandleWithMode::Insecure
         } else {
             let preproc_id = tonic_some_or_err(
-                req.preproc_id.clone(),
+                inner.preproc_id.clone(),
                 "Pre-Processing ID is not set".to_string(),
             )?;
             let preproc = {
@@ -1865,11 +1910,24 @@ impl<
             )
         };
 
-        let eip712_domain = protobuf_to_alloy_domain_option(req.domain.as_ref());
+        let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref());
+
+        let keyset_config = tonic_handle_potential_err(
+            preproc_proto_to_keyset_config(&inner.keyset_config),
+            "Failed to parse KeySetConfig".to_string(),
+        )?;
+
+        let keyset_added_info = inner.keyset_added_info.unwrap_or(KeySetAddedInfo {
+            compression_keyset_id: None,
+            from_compression_keyset_id: None,
+            to_compression_keyset_id: None,
+        });
 
         tonic_handle_potential_err(
             self.launch_dkg(
                 dkg_params,
+                keyset_config,
+                keyset_added_info,
                 preproc_handle,
                 request_id.clone(),
                 eip712_domain.as_ref(),
@@ -1900,6 +1958,183 @@ impl<
         }))
     }
 
+    async fn decompression_key_gen_background_closure<P>(
+        base_session: &mut BaseSessionStruct<AesRng, SessionParameters>,
+        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
+        params: DKGParams,
+        keyset_added_info: KeySetAddedInfo,
+        preprocessing: &mut P,
+    ) -> anyhow::Result<DecompressionKey>
+    where
+        P: DKGPreprocessing<
+                distributed_decryption::algebra::galois_rings::common::ResiduePoly<Z128, 4>,
+            > + Send
+            + ?Sized,
+    {
+        let from_key_id = keyset_added_info
+            .from_compression_keyset_id
+            .ok_or(anyhow::anyhow!(
+                "missing from key ID for the keyset that contains the compression secret key share"
+            ))?;
+        let to_key_id = keyset_added_info
+            .to_compression_keyset_id
+            .ok_or(anyhow::anyhow!(
+                "missing to key ID for the keyset that contains the compression secret key share"
+            ))?;
+
+        let private_compression_key = {
+            let threshold_keys = crypto_storage
+                .read_guarded_threshold_fhe_keys_from_cache(&from_key_id)
+                .await?;
+            let compression_sk_share = threshold_keys
+                .private_keys
+                .glwe_secret_key_share_compression
+                .clone()
+                .ok_or(anyhow::anyhow!("missing compression secret key share"))?;
+            match compression_sk_share {
+                CompressionPrivateKeySharesEnum::Z64(_share) => {
+                    anyhow::bail!("z64 share is not supported")
+                }
+                CompressionPrivateKeySharesEnum::Z128(share) => share,
+            }
+        };
+        let private_glwe_compute_key = {
+            let threshold_keys = crypto_storage
+                .read_guarded_threshold_fhe_keys_from_cache(&to_key_id)
+                .await?;
+            match threshold_keys.private_keys.glwe_secret_key_share.clone() {
+                GlweSecretKeyShareEnum::Z64(_share) => {
+                    anyhow::bail!("expected glwe secret shares to be in z128")
+                }
+                GlweSecretKeyShareEnum::Z128(share) => share,
+            }
+        };
+        let shortint_decompression_key = distributed_decompression_keygen_z128(
+            base_session,
+            preprocessing,
+            params,
+            &private_glwe_compute_key,
+            &private_compression_key,
+        )
+        .await?;
+        Ok(DecompressionKey::from_raw_parts(shortint_decompression_key))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn decompression_key_gen_background(
+        req_id: &RequestId,
+        mut base_session: BaseSessionStruct<AesRng, SessionParameters>,
+        meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
+        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
+        preproc_handle_w_mode: PreprocHandleWithMode,
+        sk: Arc<PrivateSigKey>,
+        params: DKGParams,
+        keyset_added_info: KeySetAddedInfo,
+        eip712_domain: Option<alloy_sol_types::Eip712Domain>,
+        permit: OwnedSemaphorePermit,
+    ) {
+        let _permit = permit;
+        let start = Instant::now();
+        let dkg_res = match preproc_handle_w_mode {
+            PreprocHandleWithMode::Insecure => {
+                // TODO implement insecure decompression keygen
+                let mut guarded_meta_storage = meta_store.write().await;
+                let _ = guarded_meta_storage.update(
+                    req_id,
+                    Err("Insecure decompression keygen is not supported".to_string()),
+                );
+                return;
+            }
+            PreprocHandleWithMode::Secure(preproc_handle) => {
+                let mut preproc_handle = preproc_handle.lock().await;
+                Self::decompression_key_gen_background_closure(
+                    &mut base_session,
+                    crypto_storage.clone(),
+                    params,
+                    keyset_added_info,
+                    preproc_handle.as_mut(),
+                )
+                .await
+            }
+        };
+
+        // Make sure the dkg ended nicely
+        let decompression_key = match dkg_res {
+            Ok(k) => k,
+            Err(e) => {
+                // If dkg errored out, update status
+                let mut guarded_meta_storage = meta_store.write().await;
+                // We cannot do much if updating the storage fails at this point...
+                let _ = guarded_meta_storage.update(req_id, Err(e.to_string()));
+                return;
+            }
+        };
+
+        // Compute all the info required for storing
+        let info = match compute_info(&sk, &decompression_key, eip712_domain.as_ref()) {
+            Ok(info) => HashMap::from_iter(vec![(PubDataType::DecompressionKey, info)]),
+            Err(_) => {
+                let mut guarded_meta_storage = meta_store.write().await;
+                // We cannot do much if updating the storage fails at this point...
+                let _ = guarded_meta_storage
+                    .update(req_id, Err("Failed to compute key info".to_string()));
+                return;
+            }
+        };
+
+        crypto_storage
+            .write_decompression_key_with_meta_store(req_id, decompression_key, info, meta_store)
+            .await;
+
+        tracing::info!(
+            "Decompression DKG protocol took {} ms to complete for request {req_id}",
+            start.elapsed().as_millis()
+        );
+    }
+
+    async fn key_gen_from_existing_compression_sk<P>(
+        base_session: &mut BaseSessionStruct<AesRng, SessionParameters>,
+        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
+        params: DKGParams,
+        keyset_added_info: KeySetAddedInfo,
+        preprocessing: &mut P,
+    ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<4>)>
+    where
+        P: DKGPreprocessing<
+                distributed_decryption::algebra::galois_rings::common::ResiduePoly<Z128, 4>,
+            > + Send
+            + ?Sized,
+    {
+        let key_id = keyset_added_info
+            .compression_keyset_id
+            .ok_or(anyhow::anyhow!(
+                "missing key ID for the keyset that contains the compression secret key share"
+            ))?;
+        let existing_compression_sk = {
+            let threshold_keys = crypto_storage
+                .read_guarded_threshold_fhe_keys_from_cache(&key_id)
+                .await?;
+            let compression_sk_share = threshold_keys
+                .private_keys
+                .glwe_secret_key_share_compression
+                .clone()
+                .ok_or(anyhow::anyhow!("missing compression secret key share"))?;
+            match compression_sk_share {
+                CompressionPrivateKeySharesEnum::Z64(_share) => {
+                    anyhow::bail!("z64 share is not supported")
+                }
+                CompressionPrivateKeySharesEnum::Z128(share) => share,
+            }
+        };
+        distributed_keygen_from_optional_compression_sk_z128(
+            base_session,
+            preprocessing,
+            params,
+            Some(existing_compression_sk).as_ref(),
+        )
+        .await
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn key_gen_background(
         req_id: &RequestId,
@@ -1909,6 +2144,8 @@ impl<
         preproc_handle_w_mode: PreprocHandleWithMode,
         sk: Arc<PrivateSigKey>,
         params: DKGParams,
+        keyset_config: ddec_keyset_config::StandardKeySetConfig,
+        keyset_added_info: KeySetAddedInfo,
         eip712_domain: Option<alloy_sol_types::Eip712Domain>,
         permit: OwnedSemaphorePermit,
     ) {
@@ -1916,11 +2153,55 @@ impl<
         let start = Instant::now();
         let dkg_res = match preproc_handle_w_mode {
             PreprocHandleWithMode::Insecure => {
-                initialize_key_material(&mut base_session, params).await
+                match (
+                    keyset_config.compression_config,
+                    keyset_config.computation_key_type,
+                ) {
+                    (
+                        ddec_keyset_config::KeySetCompressionConfig::Generate,
+                        ddec_keyset_config::ComputeKeyType::Cpu,
+                    ) => initialize_key_material(&mut base_session, params).await,
+                    _ => {
+                        // TODO insecure keygen from existing compression key is not supported
+                        let mut guarded_meta_storage = meta_store.write().await;
+                        let _ = guarded_meta_storage.update(
+                            req_id,
+                            Err(
+                                "insecure keygen from existing compression key is not supported"
+                                    .to_string(),
+                            ),
+                        );
+                        return;
+                    }
+                }
             }
             PreprocHandleWithMode::Secure(preproc_handle) => {
                 let mut preproc_handle = preproc_handle.lock().await;
-                distributed_keygen_z128(&mut base_session, preproc_handle.as_mut(), params).await
+                match (
+                    keyset_config.compression_config,
+                    keyset_config.computation_key_type,
+                ) {
+                    (
+                        ddec_keyset_config::KeySetCompressionConfig::Generate,
+                        ddec_keyset_config::ComputeKeyType::Cpu,
+                    ) => {
+                        distributed_keygen_z128(&mut base_session, preproc_handle.as_mut(), params)
+                            .await
+                    }
+                    (
+                        ddec_keyset_config::KeySetCompressionConfig::UseExisting,
+                        ddec_keyset_config::ComputeKeyType::Cpu,
+                    ) => {
+                        Self::key_gen_from_existing_compression_sk(
+                            &mut base_session,
+                            crypto_storage.clone(),
+                            params,
+                            keyset_added_info,
+                            preproc_handle.as_mut(),
+                        )
+                        .await
+                    }
+                }
             }
         };
 
@@ -2035,6 +2316,7 @@ impl RealPreprocessor {
     async fn launch_dkg_preproc(
         &self,
         dkg_params: DKGParams,
+        keyset_config: ddec_keyset_config::KeySetConfig,
         request_id: RequestId,
         permit: OwnedSemaphorePermit,
     ) -> anyhow::Result<()> {
@@ -2078,7 +2360,7 @@ impl RealPreprocessor {
         self.tracker.spawn(
             async move {
                  tokio::select! {
-                    () = Self::preprocessing_background(&request_id, base_sessions, bucket_store, prss_setup, own_identity, dkg_params, factory, permit) => {
+                    () = Self::preprocessing_background(&request_id, base_sessions, bucket_store, prss_setup, own_identity, dkg_params, keyset_config, factory, permit) => {
                         // Remove cancellation token since generation is now done.
                         ongoing.lock().await.remove(&request_id);
                         tracing::info!("Preprocessing of request {} exiting normally.", &request_id);
@@ -2105,6 +2387,7 @@ impl RealPreprocessor {
         prss_setup: PRSSSetup<ResiduePolyF4Z128>,
         own_identity: Identity,
         params: DKGParams,
+        keyset_config: ddec_keyset_config::KeySetConfig,
         factory: Arc<Mutex<Box<dyn PreprocessorFactory<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>>>,
         permit: OwnedSemaphorePermit,
     ) {
@@ -2125,12 +2408,8 @@ impl RealPreprocessor {
         let orchestrator = {
             let mut factory_guard = factory.lock().await;
             let factory = factory_guard.as_mut();
-            PreprocessingOrchestrator::<ResiduePolyF4Z128>::new(
-                factory,
-                params,
-                KeySetConfig::default(),
-            )
-            .unwrap()
+            PreprocessingOrchestrator::<ResiduePolyF4Z128>::new(factory, params, keyset_config)
+                .unwrap()
         };
         tracing::info!("Starting Preproc Orchestration on P[{:?}]", own_identity);
         let preproc_result = orchestrator
@@ -2187,10 +2466,15 @@ impl KeyGenPreprocessor for RealPreprocessor {
             map.exists(&request_id)
         };
 
+        let keyset_config = tonic_handle_potential_err(
+            preproc_proto_to_keyset_config(&inner.keyset_config),
+            "Failed to process keyset config".to_string(),
+        )?;
+
         //If the entry did not exist before, start the preproc
         if !entry_exists {
             tracing::info!("Starting preproc generation for Request ID {}", request_id);
-            tonic_handle_potential_err(self.launch_dkg_preproc(dkg_params, request_id.clone(), permit).await, format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {:?}",dkg_params))?;
+            tonic_handle_potential_err(self.launch_dkg_preproc(dkg_params, keyset_config, request_id.clone(), permit).await, format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {:?}",dkg_params))?;
         } else {
             tracing::warn!(
                 "Tried to generate preproc multiple times for the same Request ID {} -- skipped it!",
@@ -2417,6 +2701,9 @@ impl<
         permit: OwnedSemaphorePermit,
         insecure: bool,
     ) {
+        tracing::info!(
+            "Starting crs gen background process for req_id={req_id:?} with witness_dim={witness_dim} and max_num_bits={max_num_bits:?}"
+        );
         let _permit = permit;
         let crs_start_timer = Instant::now();
         let my_role = base_session
@@ -2466,6 +2753,7 @@ impl<
             }
         };
 
+        tracing::info!("CRS generation completed for req_id={req_id:?}, storing the CRS.");
         crypto_storage
             .write_crs_with_meta_store(req_id, pp_id, meta_data, meta_store)
             .await;

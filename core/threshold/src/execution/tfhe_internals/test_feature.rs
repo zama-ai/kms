@@ -39,7 +39,9 @@ use crate::{
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
-        endpoints::keygen::{FhePubKeySet, PrivateKeySet},
+        endpoints::keygen::{
+            CompressionPrivateKeySharesEnum, FhePubKeySet, GlweSecretKeyShareEnum, PrivateKeySet,
+        },
         random::{secret_rng_from_seed, seed_from_rng},
         runtime::{party::Role, session::BaseSessionHandles},
         sharing::{input::robust_input, share::Share},
@@ -397,7 +399,7 @@ where
         lwe_encryption_key_shares64.push(Share::new(own_role, share));
     }
 
-    let mut glwe_key_shares64 = Vec::new();
+    let mut glwe_key_shares128 = Vec::new();
     tracing::debug!(
         "I'm {:?}, Sharing glwe client key 64 to be sent: len {}",
         session.my_role(),
@@ -406,14 +408,14 @@ where
     for cur in glwe_sk_container64 {
         let secret = match own_role.one_based() {
             INPUT_PARTY_ID => Some(ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping::<
-                u64,
+                u128,
             >(
-                cur
+                cur as u128, /* casting like this is ok as long as it's not shares */
             ))),
             _ => None,
         };
         let share = robust_input(session, &secret, &own_role, INPUT_PARTY_ID).await?; //TODO(Daniel) batch this for all big_ell
-        glwe_key_shares64.push(Share::new(own_role, share));
+        glwe_key_shares128.push(Share::new(own_role, share));
     }
 
     let sns_key_shares128 = if let Some(sns_sk_container128) = sns_sk_container128 {
@@ -451,21 +453,21 @@ where
         compression_sk_container64.as_ref().map(|x| x.len()),
     );
     // there doesn't seem to be a way to get the compression key as a reference
-    let mut glwe_compression_key_shares64 = Vec::new();
+    let mut glwe_compression_key_shares128 = Vec::new();
     if let Some(compression_container) = compression_sk_container64 {
         for cur in compression_container {
             let secret = match own_role.one_based() {
                 INPUT_PARTY_ID => {
                     Some(ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping::<
-                        u64,
+                        u128,
                     >(
-                        cur
+                        cur as u128, /* casting like this is ok as long as it's not shares */
                     )))
                 }
                 _ => None,
             };
             let share = robust_input(session, &secret, &own_role, INPUT_PARTY_ID).await?; //TODO(Daniel) batch this for all big_ell
-            glwe_compression_key_shares64.push(Share::new(own_role, share));
+            glwe_compression_key_shares128.push(Share::new(own_role, share));
         }
     };
     tracing::debug!("I'm {:?}, private keys are all sent", session.my_role());
@@ -474,13 +476,13 @@ where
         .get_compression_decompression_params()
         .map(|compression_params| {
             let params = compression_params.raw_compression_parameters;
-            CompressionPrivateKeyShares {
+            CompressionPrivateKeySharesEnum::Z128(CompressionPrivateKeyShares {
                 post_packing_ks_key: GlweSecretKeyShare {
-                    data: glwe_compression_key_shares64,
+                    data: glwe_compression_key_shares128,
                     polynomial_size: params.packing_ks_polynomial_size,
                 },
                 params,
-            }
+            })
         });
 
     let transferred_pub_key = transfer_pub_key(
@@ -498,10 +500,10 @@ where
         lwe_encryption_secret_key_share: LweSecretKeyShare {
             data: lwe_encryption_key_shares64,
         },
-        glwe_secret_key_share: GlweSecretKeyShare {
-            data: glwe_key_shares64,
+        glwe_secret_key_share: GlweSecretKeyShareEnum::Z128(GlweSecretKeyShare {
+            data: glwe_key_shares128,
             polynomial_size: params_basic_handle.polynomial_size(),
-        },
+        }),
         glwe_secret_key_share_sns_as_lwe: sns_key_shares128,
         parameters: params_basic_handle.to_classic_pbs_parameters(),
         glwe_secret_key_share_compression,
@@ -738,6 +740,8 @@ pub fn generate_large_keys<R: Rng + CryptoRng>(
 }
 
 /// Keygen that generates secret key shares for many parties
+/// Note that Z64 shares of glwe_secret_key_share is used. So this function
+/// should not be used in combination with key rotation tests.
 ///
 /// __NOTE__: Some secret keys are actually dummy or None, what we really need here are the key
 /// passed as input.
@@ -834,10 +838,10 @@ where
             lwe_encryption_secret_key_share: LweSecretKeyShare {
                 data: vv64_lwe_key[p].clone(),
             },
-            glwe_secret_key_share: GlweSecretKeyShare {
+            glwe_secret_key_share: GlweSecretKeyShareEnum::Z64(GlweSecretKeyShare {
                 data: vv64_glwe_key[p].clone(),
                 polynomial_size: glwe_poly_size,
-            },
+            }),
             glwe_secret_key_share_sns_as_lwe: Some(LweSecretKeyShare {
                 data: vv128[p].clone(),
             }),

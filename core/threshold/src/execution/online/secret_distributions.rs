@@ -144,7 +144,7 @@ mod tests {
         let bound = 10; //NewHope(B) gives range [-10,10] with mean 0 and std deviation sqrt(5)
         let batch = 100;
 
-        let mut task = |session: SmallSession<ResiduePolyF4Z64>| async move {
+        let mut task = |session: SmallSession<ResiduePolyF4Z64>, _bot: Option<String>| async move {
             let mut preproc = DummyPreprocessing::<ResiduePolyF4Z64, _, _>::new(0, session.clone());
 
             let res_vec = RealSecretDistributions::newhope(batch, bound, &mut preproc).unwrap();
@@ -167,6 +167,7 @@ mod tests {
             NetworkMode::Async,
             Some(delay_vec),
             &mut task,
+            None,
         );
 
         //Ensure all values fall within bound

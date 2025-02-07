@@ -44,9 +44,67 @@ enum FheType {
   Euint2048 = 11;
 }
 
+// The type of keyset to generate during in a key generation call.
+enum KeySetType {
+  // The standard keyset usually consists of the computation key,
+  // public key and compression/decompression keys, but it can be
+  // configured further using StandardKeySetConfig.
+  // This is the default variant.
+  Standard = 0;
+
+  // Only a decompression key is generated using this variant,
+  // which is used for supporting key rotation.
+  DecompressionOnly = 1;
+}
+
+// Configuration for the standard key type.
+// Required if KeySetType is set to Standard.
+message StandardKeySetConfig {
+  // Computation key type.
+  ComputeKeyType compute_key_type = 1;
+
+  // The compression configuration.
+  KeySetCompressionConfig keyset_compression_config = 2;
+}
+
+enum ComputeKeyType {
+  // Set the compute key type to be CPU.
+  // The default must be represented by 0.
+  CPU = 0;
+}
+
+message KeySetAddedInfo {
+  // Must be set if KeySetCompressionConfig::UseExisting is used
+  RequestId compression_keyset_id = 1;
+
+  // Must be set if KeySetType::DecompressionOnly is used
+  RequestId from_compression_keyset_id = 2;
+
+  // Must be set if KeySetType::DecompressionOnly is used
+  RequestId to_compression_keyset_id = 3;
+}
+
+// The keyset configuration message.
+// It should correspond to KeySetConfig in keyset_config.rs.
+message KeySetConfig {
+  // Set the keyset type.
+  KeySetType keyset_type = 1;
+
+  // Standard keyset config.
+  // It must be set if KeySetType::Standard is set.
+  StandardKeySetConfig standard_keyset_config = 2;
+}
+
 message KeyGenPreprocRequest {
   FheParameter params = 1;
-  RequestId request_id = 2;
+  KeySetConfig keyset_config = 2;
+  RequestId request_id = 3;
+}
+
+enum KeySetCompressionConfig {
+  // The default must be represented by 0.
+  Generate = 0;
+  UseExisting = 1;
 }
 
 message KeyGenPreprocStatus { KeyGenPreprocStatusEnum result = 1; }
@@ -54,10 +112,26 @@ message KeyGenPreprocStatus { KeyGenPreprocStatusEnum result = 1; }
 // Request for generating new keys under a certain handle and return a URI where
 // they can be accessed.
 message KeyGenRequest {
+  // The FHE parameters for key generation. This must match
+  // what was used in the preprocessing step.
   FheParameter params = 1;
+
+  // The request ID that generated the preprocessing materials.
   RequestId preproc_id = 2;
+
+  // The request ID of this request.
   RequestId request_id = 3;
+
+  // The EIP712 domain used for signing the response.
   Eip712DomainMsg domain = 4;
+
+  // The keyset configuration that controls what kind of key to generate.
+  // It must match the keyset_config field in the preprocessing call with ID preproc_id.
+  KeySetConfig keyset_config = 5;
+
+  // For certain keyset_config, additional information is needed,
+  // this is given by the documentation of KeySetAddedInfo.
+  KeySetAddedInfo keyset_added_info = 6;
 }
 
 message KeyGenResult {
@@ -81,8 +155,9 @@ message SignedPubDataHandle {
 // it needs to match what the config reads out of the toml config files,
 // e.g., in default_centralized.toml.
 enum FheParameter {
-  test = 0;
-  default = 1;
+  // The default must be represented by 0.
+  default = 0;
+  test = 1;
 }
 
 message CrsGenRequest {

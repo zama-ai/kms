@@ -249,7 +249,7 @@ mod tests {
     fn test_dkg_dummy_preproc() {
         let parties = 5;
         let threshold = 1;
-        let mut task = |mut session: SmallSession<LevelKsw>| async move {
+        let mut task = |mut session: SmallSession<LevelKsw>, _bot: Option<String>| async move {
             let mut prep = DummyPreprocessing::<LevelKsw, AesRng, SmallSession<LevelKsw>>::new(
                 0,
                 session.clone(),
@@ -278,6 +278,7 @@ mod tests {
             NetworkMode::Async,
             Some(delay_vec),
             &mut task,
+            None,
         );
         test_dkg(&mut results, PLAINTEXT_MODULUS.get().0);
     }
@@ -286,7 +287,7 @@ mod tests {
     fn test_dkg_with_offline() {
         let parties = 5;
         let threshold = 1;
-        let mut task = |mut session: SmallSession<LevelKsw>| async move {
+        let mut task = |mut session: SmallSession<LevelKsw>, _bot: Option<String>| async move {
             let mut dummy_preproc =
                 DummyPreprocessing::<LevelKsw, AesRng, SmallSession<LevelKsw>>::new(
                     0,
@@ -328,6 +329,7 @@ mod tests {
             NetworkMode::Sync,
             None,
             &mut task,
+            None,
         );
 
         test_dkg(&mut results, PLAINTEXT_MODULUS.get().0);

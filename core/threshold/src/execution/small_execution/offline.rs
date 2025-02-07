@@ -479,7 +479,7 @@ mod test {
         let parties = 4;
         let threshold = 1;
 
-        let mut task = |mut session: SmallSession<Z>| async move {
+        let mut task = |mut session: SmallSession<Z>, _bot: Option<String>| async move {
             let default_batch_size = BatchParams {
                 triples: 0,
                 randoms: RANDOM_BATCH_SIZE,
@@ -509,6 +509,7 @@ mod test {
             NetworkMode::Sync,
             None,
             &mut task,
+            None,
         );
 
         let mut first_to_recon = Vec::new();
@@ -545,7 +546,7 @@ mod test {
         let parties = 4;
         let threshold = 1;
 
-        let mut task = |mut session: SmallSession<Z>| async move {
+        let mut task = |mut session: SmallSession<Z>, _bot: Option<String>| async move {
             let default_batch_size = BatchParams {
                 triples: TRIPLE_BATCH_SIZE,
                 randoms: 0,
@@ -575,6 +576,7 @@ mod test {
             NetworkMode::Sync,
             None,
             &mut task,
+            None,
         );
 
         //Check we can reconstruct everything and we do have multiplication triples
@@ -609,7 +611,7 @@ mod test {
         let parties = 5;
         let threshold = 1;
 
-        async fn task(mut session: SmallSession<ResiduePolyF4Z128>) {
+        async fn task(mut session: SmallSession<ResiduePolyF4Z128>, _bot: Option<String>) {
             let batch_size = BatchParams {
                 triples: 3,
                 randoms: 2,
@@ -643,6 +645,7 @@ mod test {
             NetworkMode::Sync,
             None,
             &mut task,
+            None,
         );
     }
 
@@ -688,6 +691,7 @@ mod test {
         const BAD_ID: usize = 3;
         async fn task(
             mut session: SmallSession<ResiduePolyF4Z128>,
+            _bot: Option<String>,
         ) -> (
             SmallSession<ResiduePolyF4Z128>,
             Vec<Triple<ResiduePolyF4Z128>>,
@@ -723,7 +727,15 @@ mod test {
             _,
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
-        >(parties, threshold, None, NetworkMode::Sync, None, &mut task);
+        >(
+            parties,
+            threshold,
+            None,
+            NetworkMode::Sync,
+            None,
+            &mut task,
+            None,
+        );
 
         //Check we can reconstruct everything and we do have multiplication triples
         for idx in 0..TRIPLE_BATCH_SIZE {
@@ -766,6 +778,7 @@ mod test {
 
         async fn task(
             mut session: SmallSession<ResiduePolyF4Z128>,
+            _bot: Option<String>,
         ) -> (
             SmallSession<ResiduePolyF4Z128>,
             Vec<Triple<ResiduePolyF4Z128>>,
@@ -810,7 +823,15 @@ mod test {
             _,
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
-        >(parties, threshold, None, NetworkMode::Sync, None, &mut task);
+        >(
+            parties,
+            threshold,
+            None,
+            NetworkMode::Sync,
+            None,
+            &mut task,
+            None,
+        );
 
         // Check that the malicious party has been added to the list
         for (cur_ses, _, _) in result.clone() {
@@ -863,6 +884,7 @@ mod test {
 
         async fn task(
             mut session: SmallSession<ResiduePolyF4Z128>,
+            _bot: Option<String>,
         ) -> SmallSession<ResiduePolyF4Z128> {
             if session.my_role().unwrap() == Role::indexed_by_one(BAD_ID) {
                 // Change the counter offset to make the party use wrong values
@@ -895,7 +917,15 @@ mod test {
             _,
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
-        >(parties, threshold, None, NetworkMode::Sync, None, &mut task);
+        >(
+            parties,
+            threshold,
+            None,
+            NetworkMode::Sync,
+            None,
+            &mut task,
+            None,
+        );
 
         // Check that the malicious party has been added to the list
         for cur_ses in result.clone() {

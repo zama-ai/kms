@@ -638,6 +638,7 @@ mod tests {
 
         async fn task<A: AgreeRandom>(
             mut session: SmallSession<ResiduePolyF4Z128>,
+            _bot: Option<String>,
         ) -> (Role, VecDeque<PrfKey>) {
             let keys = A::agree_random::<ResiduePolyF4Z128, _, _>(&mut session).await;
             let vd = VecDeque::from(keys.unwrap());
@@ -657,6 +658,7 @@ mod tests {
             NetworkMode::Sync,
             None,
             &mut task::<A>,
+            None,
         );
 
         // unpack results into hashmap

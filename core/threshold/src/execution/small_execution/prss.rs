@@ -1601,7 +1601,7 @@ mod tests {
         parties: usize,
         threshold: u8,
     ) {
-        let mut task = |mut session: SmallSession<Z>| async move {
+        let mut task = |mut session: SmallSession<Z>, _bot: Option<String>| async move {
             let prss_setup =
                 PRSSSetup::<Z>::init_with_abort::<DummyAgreeRandom, AesRng, SmallSession<Z>>(
                     &mut session,
@@ -1622,6 +1622,7 @@ mod tests {
             NetworkMode::Sync,
             None,
             &mut task,
+            None,
         );
 
         validate_prss_init(ShamirSharings::create(result), parties, threshold as usize);
@@ -1660,7 +1661,10 @@ mod tests {
     #[case(7, 2)]
     #[case(10, 3)]
     fn sunshine_robust_init(#[case] parties: usize, #[case] threshold: u8) {
-        async fn task(mut session: SmallSession<ResiduePolyF4Z128>) -> Share<ResiduePolyF4Z128> {
+        async fn task(
+            mut session: SmallSession<ResiduePolyF4Z128>,
+            _bot: Option<String>,
+        ) -> Share<ResiduePolyF4Z128> {
             let prss_setup = PRSSSetup::robust_init(&mut session, &RealVss::default())
                 .await
                 .unwrap();
@@ -1699,6 +1703,7 @@ mod tests {
             NetworkMode::Sync,
             None,
             &mut task,
+            None,
         );
         let sharing = ShamirSharings::create(result);
         validate_prss_init(sharing, parties, threshold.into());
@@ -1710,7 +1715,7 @@ mod tests {
         let threshold = 1;
         let bad_party = 3;
 
-        let mut task = |mut session: SmallSession<ResiduePolyF4Z128>| async move {
+        let mut task = |mut session: SmallSession<ResiduePolyF4Z128>, _bot: Option<String>| async move {
             if session.my_role().unwrap().one_based() != bad_party {
                 let prss_setup = PRSSSetup::robust_init(&mut session, &RealVss::default())
                     .await
@@ -1729,7 +1734,15 @@ mod tests {
             _,
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
-        >(parties, threshold, None, NetworkMode::Sync, None, &mut task);
+        >(
+            parties,
+            threshold,
+            None,
+            NetworkMode::Sync,
+            None,
+            &mut task,
+            None,
+        );
 
         let sharing = ShamirSharings::<ResiduePolyF4Z128>::create(result);
         assert!(sharing

@@ -118,6 +118,7 @@ where
     /// Load precomputed init data for noise flooding.
     ///
     /// Note: this is actually a synchronous function. It just needs to be async to implement the trait (which is async in the Large case)
+    /// TODO: we should move the slow parts to rayon
     async fn init_prep_noiseflooding(
         &mut self,
         num_ctxt: usize,

@@ -1208,7 +1208,7 @@ mod tests {
     fn test_levelksw_triple_gen() {
         let parties = 5;
         let threshold = 1;
-        let mut task = |mut session: SmallSession<LevelKsw>| async move {
+        let mut task = |mut session: SmallSession<LevelKsw>, _bot: Option<String>| async move {
             let batch_size = BatchParams {
                 triples: 100,
                 randoms: 100,
@@ -1231,6 +1231,7 @@ mod tests {
             NetworkMode::Sync,
             None,
             &mut task,
+            None,
         );
 
         //Reconstruct everything and check triples are triples

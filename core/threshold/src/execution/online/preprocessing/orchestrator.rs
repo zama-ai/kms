@@ -859,9 +859,10 @@ where
         let mut tuniform_productions = Vec::new();
         let params_basics_handle = self.params.get_params_basics_handle();
 
-        tuniform_productions.push(params_basics_handle.all_lwe_noise());
-        tuniform_productions.push(params_basics_handle.all_glwe_noise());
-        tuniform_productions.push(params_basics_handle.all_compression_ksk_noise());
+        tuniform_productions.push(params_basics_handle.all_lwe_noise(self.keyset_config));
+        tuniform_productions.push(params_basics_handle.all_glwe_noise(self.keyset_config));
+        tuniform_productions
+            .push(params_basics_handle.all_compression_ksk_noise(self.keyset_config));
 
         match self.params {
             DKGParams::WithSnS(sns_params) => {
@@ -870,7 +871,7 @@ where
             DKGParams::WithoutSnS(_) => (),
         }
 
-        tuniform_productions.push(params_basics_handle.all_lwe_hat_noise());
+        tuniform_productions.push(params_basics_handle.all_lwe_hat_noise(self.keyset_config));
 
         //Required number of _raw_ bits
         let num_bits_required = params_basics_handle.num_raw_bits(self.keyset_config);

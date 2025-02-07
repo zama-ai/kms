@@ -222,7 +222,7 @@ pub(crate) fn dkg_fill_from_triples_and_bit_preproc<Z: Ring>(
     //Generate noise needed for pksk (if needed) and the key switch key
     prep.append_noises(
         RealSecretDistributions::from_noise_info(
-            params_basics_handles.all_lwe_noise(),
+            params_basics_handles.all_lwe_noise(keyset_config),
             preprocessing_bits,
         )?,
         NoiseBounds::LweNoise(params_basics_handles.lwe_tuniform_bound()),
@@ -232,37 +232,39 @@ pub(crate) fn dkg_fill_from_triples_and_bit_preproc<Z: Ring>(
     //and the decompression key
     prep.append_noises(
         RealSecretDistributions::from_noise_info(
-            params_basics_handles.all_glwe_noise(),
+            params_basics_handles.all_glwe_noise(keyset_config),
             preprocessing_bits,
         )?,
         NoiseBounds::GlweNoise(params_basics_handles.glwe_tuniform_bound()),
     );
 
     // Generate noise needed for compression key
-    let ksk_noise = params_basics_handles.all_compression_ksk_noise();
+    let ksk_noise = params_basics_handles.all_compression_ksk_noise(keyset_config);
     prep.append_noises(
         RealSecretDistributions::from_noise_info(ksk_noise.clone(), preprocessing_bits)?,
         ksk_noise.bound,
     );
 
     //Generate noise needed for Switch and Squash bootstrap key if needed
-    match params {
-        DKGParams::WithSnS(sns_params) => {
-            prep.append_noises(
-                RealSecretDistributions::from_noise_info(
-                    sns_params.all_bk_sns_noise(),
-                    preprocessing_bits,
-                )?,
-                NoiseBounds::GlweNoiseSnS(sns_params.glwe_tuniform_bound_sns()),
-            );
+    if keyset_config.is_standard() {
+        match params {
+            DKGParams::WithSnS(sns_params) => {
+                prep.append_noises(
+                    RealSecretDistributions::from_noise_info(
+                        sns_params.all_bk_sns_noise(),
+                        preprocessing_bits,
+                    )?,
+                    NoiseBounds::GlweNoiseSnS(sns_params.glwe_tuniform_bound_sns()),
+                );
+            }
+            DKGParams::WithoutSnS(_) => (),
         }
-        DKGParams::WithoutSnS(_) => (),
     }
 
     //Generate noise needed for the pk
     prep.append_noises(
         RealSecretDistributions::from_noise_info(
-            params_basics_handles.all_lwe_hat_noise(),
+            params_basics_handles.all_lwe_hat_noise(keyset_config),
             preprocessing_bits,
         )?,
         NoiseBounds::LweHatNoise(params_basics_handles.lwe_hat_tuniform_bound()),
