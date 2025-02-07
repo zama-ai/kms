@@ -40,7 +40,7 @@ impl S3Storage {
     pub fn new(
         s3_client: S3Client,
         blob_bucket: String,
-        path: Option<String>,
+        path: String,
         storage_type: StorageType,
         party_id: Option<usize>,
         cache: Option<StorageCache>,
@@ -49,12 +49,10 @@ impl S3Storage {
             Some(party_id) => format!("{storage_type}-p{party_id}"),
             None => format!("{storage_type}"),
         };
-        let blob_path = match path {
-            Some(path) => format!(
-                "{}/{extra_prefix}",
-                path.trim_start_matches('/').trim_end_matches('/'),
-            ),
-            None => extra_prefix,
+        let blob_path = if path.is_empty() {
+            extra_prefix
+        } else {
+            format!("{}/{extra_prefix}", path)
         };
         Ok(S3Storage {
             s3_client,
@@ -65,13 +63,10 @@ impl S3Storage {
     }
 
     /// Validates and parses an S3 URL into a bucket and path.
-    fn parse_url(url: &Url) -> anyhow::Result<(String, String)> {
+    pub fn parse_url(url: &Url) -> anyhow::Result<(String, String)> {
         ensure!(url.scheme() == "s3", "Storage URL is not an S3 URL");
-        ensure!(
-            url.path() != "/",
-            "Storage URL does not have an S3 key name"
-        );
-        let bucket = some_or_err(url.host(), "No host present in URL".to_string())?.to_string();
+        let bucket =
+            some_or_err(url.host(), "No host present in URL {url}".to_string())?.to_string();
         let path = url
             .path()
             .trim_start_matches('/')
@@ -390,7 +385,7 @@ pub mod tests {
         let storage = S3Storage::new(
             s3_client,
             "blob_bucket".to_string(),
-            Some("blob_key_prefix".to_string()),
+            "blob_key_prefix".to_string(),
             StorageType::PUB,
             None,
             None,
@@ -416,7 +411,7 @@ pub mod tests {
         let mut pub_storage = S3Storage::new(
             s3_client,
             BUCKET_NAME.to_string(),
-            Some(temp_dir.path().to_str().unwrap().to_string()),
+            temp_dir.path().to_str().unwrap().to_string(),
             StorageType::PUB,
             None,
             None,

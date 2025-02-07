@@ -1,4 +1,4 @@
-use crate::{anyhow_error_and_log, some_or_err};
+use crate::anyhow_error_and_log;
 use anyhow::anyhow;
 use aws_sdk_s3::Client as S3Client;
 use kms_grpc::kms::v1::RequestId;
@@ -391,21 +391,21 @@ pub fn make_storage(
     s3_client: Option<S3Client>,
 ) -> anyhow::Result<StorageProxy> {
     let storage = match storage {
-        Some(storage_url) => match storage_url.scheme() {
+        Some(ref storage_url) => match storage_url.scheme() {
             "s3" => {
                 let s3_client = s3_client.expect("AWS S3 client must be configured");
+                let (bucket, path) = s3::S3Storage::parse_url(storage_url)?;
                 StorageProxy::S3(s3::S3Storage::new(
                     s3_client,
-                    some_or_err(storage_url.host_str(), "No host in url {url}".to_string())?
-                        .to_string(),
-                    Some(storage_url.path().to_string()),
+                    bucket,
+                    path,
                     storage_type,
                     party_id,
                     storage_cache,
                 )?)
             }
             "file" => StorageProxy::File(file::FileStorage::new(
-                Some(file::url_to_pathbuf(&storage_url).as_path()),
+                Some(file::url_to_pathbuf(storage_url).as_path()),
                 storage_type,
                 party_id,
             )?),
