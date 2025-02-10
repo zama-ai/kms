@@ -28,26 +28,30 @@ use conf_trace::metrics_names::{
     ERR_RATE_LIMIT_EXCEEDED, ERR_REENCRYPTION_FAILED, HASH_CIPHERTEXT_SEEDS, OP_CRS_GEN,
     OP_DECRYPT, OP_KEYGEN, OP_REENCRYPT, OP_VERIFY_PROVEN_CT, TAG_CIPHERTEXT_ID, TAG_PARTY_ID,
 };
+use distributed_decryption::execution::keyset_config::KeySetConfig;
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 use kms_grpc::kms::v1::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenRequest, KeyGenResult,
-    ReencryptionRequest, ReencryptionResponse, ReencryptionResponsePayload, RequestId,
-    VerifyProvenCtRequest, VerifyProvenCtResponse,
+    KeySetAddedInfo, ReencryptionRequest, ReencryptionResponse, ReencryptionResponsePayload,
+    RequestId, VerifyProvenCtRequest, VerifyProvenCtResponse,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain_option, SignedPubDataHandleInternal};
+use std::collections::HashMap;
 use std::hash::{BuildHasher, Hasher};
 use std::sync::Arc;
 use tokio::sync::{OwnedSemaphorePermit, RwLock};
 use tonic::{Request, Response, Status};
 use tracing::Instrument;
 
+use super::central_kms::async_generate_decompression_keys;
+
 #[tonic::async_trait]
 impl<
-        PubS: Storage + std::marker::Sync + std::marker::Send + 'static,
-        PrivS: Storage + std::marker::Sync + std::marker::Send + 'static,
-        BackS: Storage + std::marker::Sync + std::marker::Send + 'static,
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
+        BackS: Storage + Sync + Send + 'static,
     > CoreServiceEndpoint for RealCentralizedKms<PubS, PrivS, BackS>
 {
     async fn init(&self, _request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
@@ -133,13 +137,6 @@ impl<
             preproc_proto_to_keyset_config(&inner.keyset_config),
             "Invalid keyset config".to_string(),
         )?;
-        // TODO we do not currently support configurable keygen in the centralized case
-        if !keyset_config.is_standard_cpu_generate_compression_key() {
-            return Err(tonic::Status::new(
-                tonic::Code::Aborted,
-                "Unsupported keyset_config",
-            ));
-        }
 
         {
             let mut guarded_meta_store = self.key_meta_map.write().await;
@@ -163,6 +160,8 @@ impl<
                     crypto_storage,
                     sk,
                     params,
+                    keyset_config,
+                    inner.keyset_added_info,
                     eip712_domain,
                     permit,
                 )
@@ -750,6 +749,7 @@ impl<
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn key_gen_background<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
@@ -760,6 +760,8 @@ async fn key_gen_background<
     crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS, BackS>,
     sk: Arc<PrivateSigKey>,
     params: DKGParams,
+    keyset_config: KeySetConfig,
+    keyset_added_info: Option<KeySetAddedInfo>,
     eip712_domain: Option<Eip712Domain>,
     permit: OwnedSemaphorePermit,
 ) -> Result<(), anyhow::Error> {
@@ -788,8 +790,17 @@ async fn key_gen_background<
             return Ok(());
         }
     }
-    let (fhe_key_set, key_info) =
-        async_generate_fhe_keys(&sk, params, None, eip712_domain.as_ref())
+    match keyset_config {
+        KeySetConfig::Standard(standard_key_set_config) => {
+            let (fhe_key_set, key_info) = async_generate_fhe_keys(
+                &sk,
+                crypto_storage.clone(),
+                params,
+                standard_key_set_config,
+                keyset_added_info,
+                None,
+                eip712_domain.as_ref(),
+            )
             .await
             .map_err(|e| {
                 let mut guarded_meta_store = meta_store.blocking_write();
@@ -802,11 +813,63 @@ async fn key_gen_background<
                 anyhow::anyhow!("Failed key generation: {}", e)
             })?;
 
-    crypto_storage
-        .write_centralized_keys_with_meta_store(req_id, key_info, fhe_key_set, meta_store)
-        .await;
+            crypto_storage
+                .write_centralized_keys_with_meta_store(req_id, key_info, fhe_key_set, meta_store)
+                .await;
 
-    tracing::info!("⏱️ Core Event Time for Keygen: {:?}", start.elapsed());
+            tracing::info!("⏱️ Core Event Time for Keygen: {:?}", start.elapsed());
+        }
+
+        KeySetConfig::DecompressionOnly => match keyset_added_info {
+            Some(added_info) => {
+                match (
+                    added_info.from_compression_keyset_id,
+                    added_info.to_compression_keyset_id,
+                ) {
+                    (Some(from), Some(to)) => {
+                        let decompression_key =
+                            async_generate_decompression_keys(crypto_storage.clone(), &from, &to)
+                                .await?;
+                        let info = match crate::engine::base::compute_info(
+                            &sk,
+                            &decompression_key,
+                            eip712_domain.as_ref(),
+                        ) {
+                            Ok(info) => HashMap::from_iter(vec![(
+                                kms_grpc::rpc_types::PubDataType::DecompressionKey,
+                                info,
+                            )]),
+                            Err(_) => {
+                                let mut guarded_meta_storage = meta_store.write().await;
+                                // We cannot do much if updating the storage fails at this point...
+                                let _ = guarded_meta_storage.update(
+                                    req_id,
+                                    Err("Failed to compute decompression key info".to_string()),
+                                );
+                                anyhow::bail!("Failed to compute decompression key info");
+                            }
+                        };
+                        crypto_storage
+                            .write_decompression_key_with_meta_store(
+                                req_id,
+                                decompression_key,
+                                info,
+                                meta_store,
+                            )
+                            .await;
+                        tracing::info!(
+                            "⏱️ Core Event Time for decompression Keygen: {:?}",
+                            start.elapsed()
+                        );
+                    }
+                    _ => anyhow::bail!("Missing from and to keyset information"),
+                }
+            }
+            None => {
+                anyhow::bail!("Added info is required when only generating a decompression key")
+            }
+        },
+    }
     Ok(())
 }
 

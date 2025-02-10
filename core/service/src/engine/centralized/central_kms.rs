@@ -21,6 +21,8 @@ use aes_prng::AesRng;
 use bincode::serialize;
 #[cfg(feature = "non-wasm")]
 use distributed_decryption::execution::endpoints::keygen::FhePubKeySet;
+#[cfg(feature = "non-wasm")]
+use distributed_decryption::execution::keyset_config::KeySetCompressionConfig;
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 #[cfg(feature = "non-wasm")]
 use distributed_decryption::execution::zk::ceremony::make_centralized_public_parameters;
@@ -41,6 +43,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::{fmt, panic};
+use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::prelude::FheDecrypt;
 #[cfg(feature = "non-wasm")]
 use tfhe::zk::CompactPkeCrs;
@@ -50,6 +53,10 @@ use tfhe::ServerKey;
 use tonic_health::pb::health_server::{Health, HealthServer};
 use tonic_health::server::HealthReporter;
 
+#[cfg(feature = "non-wasm")]
+use distributed_decryption::execution::keyset_config::StandardKeySetConfig;
+#[cfg(feature = "non-wasm")]
+use kms_grpc::kms::v1::KeySetAddedInfo;
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::{
     ClientKey, ConfigBuilder, FheBool, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048,
@@ -60,25 +67,97 @@ use tokio::sync::RwLock;
 use tokio_util::task::TaskTracker;
 
 #[cfg(feature = "non-wasm")]
-pub async fn async_generate_fhe_keys(
+pub(crate) async fn async_generate_fhe_keys<PubS, PrivS, BackS>(
     sk: &PrivateSigKey,
+    storage: CentralizedCryptoMaterialStorage<PubS, PrivS, BackS>,
     params: DKGParams,
+    keyset_config: StandardKeySetConfig,
+    keyset_added_info: Option<KeySetAddedInfo>,
     seed: Option<Seed>,
     eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
-) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
+) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)>
+where
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
+    BackS: Storage + Sync + Send + 'static,
+{
     let (send, recv) = tokio::sync::oneshot::channel();
     let sk_copy = sk.to_owned();
     let eip712_domain_copy = eip712_domain.cloned();
 
+    let existing_key_handle = match keyset_added_info {
+        Some(added_info) => match added_info.compression_keyset_id {
+            Some(key_id) => {
+                storage.refresh_centralized_fhe_keys(&key_id).await?;
+                Some(
+                    storage
+                        .read_cloned_centralized_fhe_keys_from_cache(&key_id)
+                        .await?,
+                )
+            }
+            None => None,
+        },
+        None => None,
+    };
+
     rayon::spawn_fifo(move || {
-        let out = generate_fhe_keys(&sk_copy, params, seed, eip712_domain_copy.as_ref());
+        let out = generate_fhe_keys(
+            &sk_copy,
+            params,
+            keyset_config,
+            existing_key_handle,
+            seed,
+            eip712_domain_copy.as_ref(),
+        );
         let _ = send.send(out);
     });
     recv.await.map_err(|e| anyhow::anyhow!(e.to_string()))?
 }
 
 #[cfg(feature = "non-wasm")]
-pub async fn async_generate_crs(
+pub(crate) async fn async_generate_decompression_keys<PubS, PrivS, BackS>(
+    storage: CentralizedCryptoMaterialStorage<PubS, PrivS, BackS>,
+    keyset1_id: &RequestId,
+    keyset2_id: &RequestId,
+) -> anyhow::Result<DecompressionKey>
+where
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
+    BackS: Storage + Sync + Send + 'static,
+{
+    storage.refresh_centralized_fhe_keys(keyset1_id).await?;
+    storage.refresh_centralized_fhe_keys(keyset2_id).await?;
+
+    // we need the private glwe key from keyset 2
+    let (client_key_2, _, _, _) = storage
+        .read_cloned_centralized_fhe_keys_from_cache(keyset2_id)
+        .await?
+        .client_key
+        .into_raw_parts();
+    // we need the private compression key from keyset 1
+    let (_, _, compression_private_key_1, _) = storage
+        .read_cloned_centralized_fhe_keys_from_cache(keyset1_id)
+        .await?
+        .client_key
+        .into_raw_parts();
+    match compression_private_key_1 {
+        Some(private_compression_key) => {
+            let (send, recv) = tokio::sync::oneshot::channel();
+            rayon::spawn_fifo(move || {
+                let (_, decompression_key) =
+                    client_key_2.new_compression_decompression_keys(&private_compression_key);
+                let _ = send.send(decompression_key);
+            });
+            recv.await.map_err(|e| anyhow::anyhow!(e.to_string()))
+        }
+        None => {
+            anyhow::bail!("Compression private key is missing");
+        }
+    }
+}
+
+#[cfg(feature = "non-wasm")]
+pub(crate) async fn async_generate_crs(
     sk: &PrivateSigKey,
     rng: AesRng,
     params: DKGParams,
@@ -106,11 +185,29 @@ pub async fn async_generate_crs(
 pub fn generate_fhe_keys(
     sk: &PrivateSigKey,
     params: DKGParams,
+    keyset_config: StandardKeySetConfig,
+    existing_key_handle: Option<KmsFheKeyHandles>,
     seed: Option<Seed>,
     eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
     let f = || -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
-        let client_key = generate_client_fhe_key(params, seed);
+        let client_key = match keyset_config.compression_config {
+            KeySetCompressionConfig::Generate => generate_client_fhe_key(params, seed),
+            KeySetCompressionConfig::UseExisting => {
+                match existing_key_handle {
+                    Some(key_handle) => {
+                        // we generate the client key as usual,
+                        // but we replace the compression private key using an existing compression private key
+                        let client_key = generate_client_fhe_key(params, seed);
+                        let (client_key, dedicated_compact_private_key, _, tag) = client_key.into_raw_parts();
+                        let (_, _, existing_compression_private_key, _) = key_handle.client_key.into_raw_parts();
+                        ClientKey::from_raw_parts(client_key, dedicated_compact_private_key, existing_compression_private_key, tag)
+                    },
+                    None => anyhow::bail!("existing key handle is required when using existing compression key for keygen")
+                }
+            }
+        };
+
         let server_key = client_key.generate_server_key();
         let server_key = server_key.into_raw_parts();
         let decompression_key = server_key.3.clone();
@@ -636,6 +733,7 @@ pub(crate) mod tests {
     use aes_prng::AesRng;
     use alloy_signer::SignerSync;
     use alloy_sol_types::SolStruct;
+    use distributed_decryption::execution::keyset_config::StandardKeySetConfig;
     use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
     use kms_grpc::kms::v1::{FheType, RequestId};
     use kms_grpc::rpc_types::{
@@ -750,11 +848,26 @@ pub(crate) mod tests {
         let mut rng = AesRng::seed_from_u64(100);
         let seed = Some(Seed(42));
         let (sig_pk, sig_sk) = gen_sig_keys(&mut rng);
-        let (pub_fhe_keys, key_info) = generate_fhe_keys(&sig_sk, dkg_params, seed, None).unwrap();
+        let (pub_fhe_keys, key_info) = generate_fhe_keys(
+            &sig_sk,
+            dkg_params,
+            StandardKeySetConfig::default(),
+            None,
+            seed,
+            None,
+        )
+        .unwrap();
         let mut key_info_map = HashMap::from([(key_id.to_string().try_into().unwrap(), key_info)]);
 
-        let (other_pub_fhe_keys, other_key_info) =
-            generate_fhe_keys(&sig_sk, dkg_params, seed, None).unwrap();
+        let (other_pub_fhe_keys, other_key_info) = generate_fhe_keys(
+            &sig_sk,
+            dkg_params,
+            StandardKeySetConfig::default(),
+            None,
+            seed,
+            None,
+        )
+        .unwrap();
 
         // Insert a key with another handle to setup a KMS with multiple keys
         key_info_map.insert(other_key_id.to_string().try_into().unwrap(), other_key_info);
@@ -790,7 +903,15 @@ pub(crate) mod tests {
     async fn test_gen_keys() {
         let mut rng = AesRng::seed_from_u64(100);
         let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
-        assert!(generate_fhe_keys(&sig_sk, DEFAULT_PARAM, None, None).is_ok());
+        assert!(generate_fhe_keys(
+            &sig_sk,
+            DEFAULT_PARAM,
+            StandardKeySetConfig::default(),
+            None,
+            None,
+            None
+        )
+        .is_ok());
     }
 
     #[tokio::test]

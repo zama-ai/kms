@@ -1218,7 +1218,7 @@ pub mod tests {
                 PARAMS_TEST_BK_SNS,
             },
             switch_and_squash::SwitchAndSquashKey,
-            test_feature::to_hl_client_key,
+            test_feature::{run_decompression_test, to_hl_client_key},
             utils::tests::reconstruct_glwe_secret_key_from_file,
         },
     };
@@ -1262,7 +1262,6 @@ pub mod tests {
             online::preprocessing::create_memory_factory,
             runtime::session::{BaseSessionHandles, SmallSession, ToBaseSession},
             small_execution::{agree_random::DummyAgreeRandom, offline::SmallPreprocessing},
-            tfhe_internals::test_feature::KeySet,
         },
         tests::helper::tests_and_benches::execute_protocol_small,
     };
@@ -1961,60 +1960,12 @@ pub mod tests {
             assert_eq!(buf, decompression_key_bytes);
         }
         // check that we can do the decompression
-        run_decompression_test(&keyset1, &keyset2, decompression_key);
-    }
-
-    #[cfg(feature = "slow_tests")]
-    fn run_decompression_test(
-        keyset1: &KeySet,
-        keyset2: &KeySet,
-        decompression_key: tfhe::shortint::list_compression::DecompressionKey,
-    ) {
-        // do some sanity checks
-        let server_key1 = keyset1.client_key.generate_server_key();
-        let (_, _, _, decompression_key1, _) = server_key1.clone().into_raw_parts();
-        let decompression_key1 = decompression_key1.unwrap().into_raw_parts();
-        assert_eq!(
-            decompression_key1.blind_rotate_key.glwe_size(),
-            decompression_key.blind_rotate_key.glwe_size()
+        run_decompression_test(
+            &keyset1.client_key,
+            &keyset2.client_key,
+            None,
+            decompression_key,
         );
-        assert_eq!(
-            decompression_key1.blind_rotate_key.input_lwe_dimension(),
-            decompression_key.blind_rotate_key.input_lwe_dimension(),
-        );
-        assert_eq!(
-            decompression_key1.blind_rotate_key.output_lwe_dimension(),
-            decompression_key.blind_rotate_key.output_lwe_dimension(),
-        );
-        assert_eq!(
-            decompression_key1.blind_rotate_key.polynomial_size(),
-            decompression_key.blind_rotate_key.polynomial_size(),
-        );
-
-        println!("Starting decompression test");
-        let decompression_key =
-            tfhe::integer::compression_keys::DecompressionKey::from_raw_parts(decompression_key);
-        // create a ciphertext using keyset 1
-        set_server_key(server_key1);
-        let pt = 12u32;
-        let ct = FheUint32::try_encrypt(pt, &keyset1.client_key).unwrap();
-        let compressed_ct = CompressedCiphertextListBuilder::new()
-            .push(ct)
-            .build()
-            .unwrap();
-
-        // then decompression it into keyset 2
-        println!("Decompression ct under keyset1 to keyset2");
-        let (radix_ciphertext, _) = compressed_ct.into_raw_parts();
-        let ct2: FheUint32 = radix_ciphertext
-            .get(0, &decompression_key)
-            .unwrap()
-            .unwrap();
-
-        // finally check we can decrypt it using the client key from keyset 2
-        println!("Attempting to decrypt under keyset2");
-        let pt2: u32 = ct2.decrypt(&keyset2.client_key);
-        assert_eq!(pt, pt2);
     }
 
     #[cfg(feature = "slow_tests")]

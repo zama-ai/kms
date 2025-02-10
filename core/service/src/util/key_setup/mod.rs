@@ -10,6 +10,7 @@ use crate::vault::storage::{
     store_versioned_at_request_id, Storage, StorageForText, StorageReader, StorageType,
 };
 use aes_prng::AesRng;
+use distributed_decryption::execution::keyset_config::StandardKeySetConfig;
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 use distributed_decryption::execution::{
     tfhe_internals::test_feature::{gen_key_set, keygen_all_party_shares},
@@ -289,8 +290,24 @@ where
         false => None,
     };
 
-    let (fhe_pub_keys_1, key_info_1) = generate_fhe_keys(&sk, dkg_params, seed, None).unwrap();
-    let (fhe_pub_keys_2, key_info_2) = generate_fhe_keys(&sk, dkg_params, seed, None).unwrap();
+    let (fhe_pub_keys_1, key_info_1) = generate_fhe_keys(
+        &sk,
+        dkg_params,
+        StandardKeySetConfig::default(),
+        None,
+        seed,
+        None,
+    )
+    .unwrap();
+    let (fhe_pub_keys_2, key_info_2) = generate_fhe_keys(
+        &sk,
+        dkg_params,
+        StandardKeySetConfig::default(),
+        None,
+        seed,
+        None,
+    )
+    .unwrap();
     let priv_fhe_map = HashMap::from([
         (key_id.clone(), key_info_1),
         (other_key_id.clone(), key_info_2),

@@ -22,6 +22,7 @@ use tfhe::{
         seeders::Seeder,
     },
     integer::block_decomposition::BlockRecomposer,
+    prelude::{FheDecrypt, FheTryEncrypt},
     shortint::{
         self, list_compression::CompressionPrivateKeys, ClassicPBSParameters, ShortintParameterSet,
     },
@@ -890,6 +891,62 @@ impl std::fmt::Debug for FhePubKeySet {
             .field("sns_key", &self.sns_key)
             .finish()
     }
+}
+
+pub fn run_decompression_test(
+    keyset1_client_key: &tfhe::ClientKey,
+    keyset2_client_key: &tfhe::ClientKey,
+    keyset1_server_key: Option<&tfhe::ServerKey>,
+    decompression_key: tfhe::shortint::list_compression::DecompressionKey,
+) {
+    // do some sanity checks
+    let server_key1 = match keyset1_server_key {
+        Some(inner) => inner,
+        None => &keyset1_client_key.generate_server_key(),
+    };
+    let (_, _, _, decompression_key1, _) = server_key1.clone().into_raw_parts();
+    let decompression_key1 = decompression_key1.unwrap().into_raw_parts();
+    assert_eq!(
+        decompression_key1.blind_rotate_key.glwe_size(),
+        decompression_key.blind_rotate_key.glwe_size()
+    );
+    assert_eq!(
+        decompression_key1.blind_rotate_key.input_lwe_dimension(),
+        decompression_key.blind_rotate_key.input_lwe_dimension(),
+    );
+    assert_eq!(
+        decompression_key1.blind_rotate_key.output_lwe_dimension(),
+        decompression_key.blind_rotate_key.output_lwe_dimension(),
+    );
+    assert_eq!(
+        decompression_key1.blind_rotate_key.polynomial_size(),
+        decompression_key.blind_rotate_key.polynomial_size(),
+    );
+
+    println!("Starting decompression test");
+    let decompression_key =
+        tfhe::integer::compression_keys::DecompressionKey::from_raw_parts(decompression_key);
+    // create a ciphertext using keyset 1
+    tfhe::set_server_key(server_key1.clone());
+    let pt = 12u32;
+    let ct = tfhe::FheUint32::try_encrypt(pt, keyset1_client_key).unwrap();
+    let compressed_ct = tfhe::CompressedCiphertextListBuilder::new()
+        .push(ct)
+        .build()
+        .unwrap();
+
+    // then decompression it into keyset 2
+    println!("Decompression ct under keyset1 to keyset2");
+    let (radix_ciphertext, _) = compressed_ct.into_raw_parts();
+    let ct2: tfhe::FheUint32 = radix_ciphertext
+        .get(0, &decompression_key)
+        .unwrap()
+        .unwrap();
+
+    // finally check we can decrypt it using the client key from keyset 2
+    println!("Attempting to decrypt under keyset2");
+    let pt2: u32 = ct2.decrypt(keyset2_client_key);
+    assert_eq!(pt, pt2);
 }
 
 #[cfg(test)]

@@ -333,6 +333,7 @@ impl<
             .await
     }
 
+    /// Note that we're not storing a shortint decompression key
     pub(crate) async fn write_decompression_key_with_meta_store(
         &self,
         req_id: &RequestId,
@@ -398,6 +399,18 @@ impl<
     ) {
         self.inner
             .write_crs_with_meta_store(req_id, pp, crs_info, meta_store)
+            .await
+    }
+
+    pub(crate) async fn write_decompression_key_with_meta_store(
+        &self,
+        req_id: &RequestId,
+        decompression_key: DecompressionKey,
+        info: HashMap<PubDataType, SignedPubDataHandleInternal>,
+        meta_store: Arc<RwLock<MetaStore<HashMap<PubDataType, SignedPubDataHandleInternal>>>>,
+    ) {
+        self.inner
+            .write_decompression_key_with_meta_store(req_id, decompression_key, info, meta_store)
             .await
     }
 

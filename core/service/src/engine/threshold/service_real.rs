@@ -1170,7 +1170,9 @@ impl<
             async move {
                 // explicitly move the rate limiter context
                 let _permit = permit;
-                // TODO will this hold the lock for a long time?
+                // Note that we'll hold a read lock for some time
+                // but this should be ok since write locks
+                // happen rarely as keygen is a rare event.
                 let fhe_keys_rlock = crypto_storage
                     .read_guarded_threshold_fhe_keys_from_cache(&key_id)
                     .await;

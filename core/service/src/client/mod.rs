@@ -54,10 +54,10 @@ cfg_if::cfg_if! {
         use crate::engine::base::BaseKmsStruct;
         use crate::vault::storage::{read_all_data_versioned, Storage, StorageReader};
         use kms_grpc::kms::v1::{
-            KeySetAddedInfo, KeySetConfig, CrsGenRequest, CrsGenResult, DecryptionRequest,
+            KeySetAddedInfo, CrsGenRequest, CrsGenResult, DecryptionRequest,
             DecryptionResponse, DecryptionResponsePayload, FheParameter, KeyGenPreprocRequest,
             KeyGenRequest, KeyGenResult, TypedCiphertext, VerifyProvenCtRequest,
-            VerifyProvenCtResponse,
+            VerifyProvenCtResponse, KeySetConfig,
         };
         use kms_grpc::rpc_types::{PubDataType, PublicKeyType, WrappedPublicKeyOwned};
         use std::collections::HashMap;
@@ -867,6 +867,22 @@ impl Client {
                 .map(WrappedPublicKeyOwned::Compact),
         };
         Ok(wrapped_pk)
+    }
+
+    /// Retrieve and validate a decompression key based on the result from storage.
+    /// The method will return the key if retrieval and validation is successful,
+    /// but will return None in case the signature is invalid or does not match the actual key
+    /// handle.
+    #[cfg(feature = "non-wasm")]
+    pub async fn retrieve_decompression_key<R: StorageReader>(
+        &self,
+        key_gen_result: &KeyGenResult,
+        storage: &R,
+    ) -> anyhow::Result<Option<tfhe::integer::compression_keys::DecompressionKey>> {
+        let decompression_key = self
+            .retrieve_key(key_gen_result, PubDataType::DecompressionKey, storage)
+            .await?;
+        Ok(decompression_key)
     }
 
     #[cfg(feature = "non-wasm")]
@@ -2622,12 +2638,14 @@ pub(crate) mod tests {
     use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
     #[cfg(feature = "wasm_tests")]
     use distributed_decryption::execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
+    use distributed_decryption::execution::tfhe_internals::test_feature::run_decompression_test;
     use distributed_decryption::networking::grpc::GrpcServer;
     use kms_common::DecryptionMode;
     #[cfg(feature = "wasm_tests")]
     use kms_grpc::kms::v1::TypedPlaintext;
     use kms_grpc::kms::v1::{
-        Empty, FheParameter, FheType, InitRequest, ReencryptionResponse, RequestId, TypedCiphertext,
+        Empty, FheParameter, FheType, InitRequest, KeySetAddedInfo, KeySetConfig, KeySetType,
+        ReencryptionResponse, RequestId, TypedCiphertext,
     };
     use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
     use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
@@ -3148,19 +3166,78 @@ pub(crate) mod tests {
         let request_id = RequestId::derive("test_key_gen_centralized").unwrap();
         // Delete potentially old data
         purge(None, None, &request_id.to_string(), 1).await;
-        key_gen_centralized(TEST_PARAM, &request_id, Some(FheParameter::Test)).await;
+        key_gen_centralized(&request_id, FheParameter::Test, None, None).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
+    async fn test_decompression_key_gen_centralized() {
+        let request_id_1 = RequestId::derive("test_key_gen_centralized-1").unwrap();
+        let request_id_2 = RequestId::derive("test_key_gen_centralized-2").unwrap();
+        let request_id_3 = RequestId::derive("test_decompression_key_gen_centralized").unwrap();
+        // Delete potentially old data
+        purge(None, None, &request_id_1.to_string(), 1).await;
+        purge(None, None, &request_id_2.to_string(), 1).await;
+        purge(None, None, &request_id_3.to_string(), 1).await;
+
+        key_gen_centralized(&request_id_1, FheParameter::Test, None, None).await;
+        key_gen_centralized(&request_id_2, FheParameter::Test, None, None).await;
+
+        key_gen_centralized(
+            &request_id_3,
+            FheParameter::Test,
+            Some(KeySetConfig {
+                keyset_type: KeySetType::DecompressionOnly.into(),
+                standard_keyset_config: None,
+            }),
+            Some(KeySetAddedInfo {
+                compression_keyset_id: None,
+                from_compression_keyset_id: Some(request_id_1),
+                to_compression_keyset_id: Some(request_id_2),
+            }),
+        )
+        .await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn default_key_gen_centralized() {
-        use crate::consts::DEFAULT_PARAM;
-
         let request_id = RequestId::derive("default_key_gen_centralized").unwrap();
         // Delete potentially old data
         purge(None, None, &request_id.to_string(), 1).await;
-        key_gen_centralized(DEFAULT_PARAM, &request_id, Some(FheParameter::Default)).await;
+        key_gen_centralized(&request_id, FheParameter::Default, None, None).await;
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
+    async fn default_decompression_key_gen_centralized() {
+        let request_id_1 = RequestId::derive("default_key_gen_centralized-1").unwrap();
+        let request_id_2 = RequestId::derive("default_key_gen_centralized-2").unwrap();
+        let request_id_3 = RequestId::derive("default_decompression_key_gen_centralized").unwrap();
+        // Delete potentially old data
+        purge(None, None, &request_id_1.to_string(), 1).await;
+        purge(None, None, &request_id_2.to_string(), 1).await;
+        purge(None, None, &request_id_3.to_string(), 1).await;
+
+        key_gen_centralized(&request_id_1, FheParameter::Default, None, None).await;
+        key_gen_centralized(&request_id_2, FheParameter::Default, None, None).await;
+
+        key_gen_centralized(
+            &request_id_3,
+            FheParameter::Default,
+            Some(KeySetConfig {
+                keyset_type: KeySetType::DecompressionOnly.into(),
+                standard_keyset_config: None,
+            }),
+            Some(KeySetAddedInfo {
+                compression_keyset_id: None,
+                from_compression_keyset_id: Some(request_id_1),
+                to_compression_keyset_id: Some(request_id_2),
+            }),
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -3176,10 +3253,14 @@ pub(crate) mod tests {
     }
 
     async fn key_gen_centralized(
-        dkg_params: DKGParams,
         request_id: &RequestId,
-        params: Option<FheParameter>,
+        params: FheParameter,
+        keyset_config: Option<KeySetConfig>,
+        keyset_added_info: Option<KeySetAddedInfo>,
     ) {
+        let dkg_params: crate::cryptography::internal_crypto_types::WrappedDKGParams =
+            params.into();
+
         let rate_limiter_conf = RateLimiterConfig {
             bucket_size: 100,
             dec: 1,
@@ -3194,7 +3275,14 @@ pub(crate) mod tests {
             super::test_tools::centralized_handles(&dkg_params, Some(rate_limiter_conf)).await;
 
         let gen_req = internal_client
-            .key_gen_request(request_id, None, params, None, None, None)
+            .key_gen_request(
+                request_id,
+                None,
+                Some(params),
+                keyset_config,
+                keyset_added_info.clone(),
+                None,
+            )
             .unwrap();
         let req_id = gen_req.request_id.clone().unwrap();
         let gen_response = kms_client
@@ -3227,16 +3315,68 @@ pub(crate) mod tests {
         }
         let inner_resp = response.unwrap().into_inner();
         let pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
-        let pk = internal_client
-            .retrieve_public_key(&inner_resp, &pub_storage)
-            .await
-            .unwrap();
-        assert!(pk.is_some());
-        let server_key: Option<tfhe::ServerKey> = internal_client
-            .retrieve_server_key(&inner_resp, &pub_storage)
-            .await
-            .unwrap();
-        assert!(server_key.is_some());
+        if let Some(inner_config) = keyset_config {
+            let keyset_type = KeySetType::try_from(inner_config.keyset_type).unwrap();
+            match keyset_type {
+                KeySetType::Standard => {
+                    let pk = internal_client
+                        .retrieve_public_key(&inner_resp, &pub_storage)
+                        .await
+                        .unwrap();
+                    assert!(pk.is_some());
+                    let server_key: Option<tfhe::ServerKey> = internal_client
+                        .retrieve_server_key(&inner_resp, &pub_storage)
+                        .await
+                        .unwrap();
+                    assert!(server_key.is_some());
+                }
+                KeySetType::DecompressionOnly => {
+                    // setup storage
+                    let keyid_1 = keyset_added_info
+                        .clone()
+                        .unwrap()
+                        .from_compression_keyset_id
+                        .unwrap();
+                    let keyid_2 = keyset_added_info.unwrap().to_compression_keyset_id.unwrap();
+                    let priv_storage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
+                    let sk_urls = priv_storage
+                        .all_urls(&kms_grpc::rpc_types::PrivDataType::FheKeyInfo.to_string())
+                        .await
+                        .unwrap();
+                    let sk_url_1 = sk_urls.get(&keyid_1.request_id).unwrap();
+                    let sk_url_2 = sk_urls.get(&keyid_2.request_id).unwrap();
+                    let handles_1: crate::engine::base::KmsFheKeyHandles =
+                        priv_storage.read_data(sk_url_1).await.unwrap();
+                    let handles_2: crate::engine::base::KmsFheKeyHandles =
+                        priv_storage.read_data(sk_url_2).await.unwrap();
+
+                    // get the client key 1 and client key 2
+                    let client_key_1 = handles_1.client_key;
+                    let client_key_2 = handles_2.client_key;
+
+                    // get the server key 1
+                    let server_key_1: tfhe::ServerKey = internal_client
+                        .get_key(&keyid_1, PubDataType::ServerKey, &pub_storage)
+                        .await
+                        .unwrap();
+
+                    // get decompression key
+                    let decompression_key = internal_client
+                        .retrieve_decompression_key(&inner_resp, &pub_storage)
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .into_raw_parts();
+                    run_decompression_test(
+                        &client_key_1,
+                        &client_key_2,
+                        Some(&server_key_1),
+                        decompression_key,
+                    );
+                }
+            }
+        }
+
         kms_server.assert_shutdown().await;
     }
 
@@ -5716,7 +5856,7 @@ pub(crate) mod tests {
             assert!(response.is_ok());
         }
 
-        wait_for_keygen_result(
+        _ = wait_for_keygen_result(
             req_keygen.request_id.clone().unwrap(),
             req_preproc,
             &kms_clients,
@@ -5762,7 +5902,7 @@ pub(crate) mod tests {
             assert!(response.is_ok());
         }
 
-        wait_for_keygen_result(
+        _ = wait_for_keygen_result(
             req_keygen.request_id.clone().unwrap(),
             req_preproc,
             &kms_clients,
@@ -5781,11 +5921,9 @@ pub(crate) mod tests {
         kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
         internal_client: &Client,
         decompression_keygen: Option<(RequestId, RequestId)>,
-    ) {
+    ) -> TestKeyGenResult {
         use itertools::Itertools;
-        use kms_grpc::kms::v1::{
-            KeyGenPreprocStatusEnum, KeySetAddedInfo, KeySetConfig, KeySetType,
-        };
+        use kms_grpc::kms::v1::KeyGenPreprocStatusEnum;
 
         let keyset_config = decompression_keygen.as_ref().map(|_| KeySetConfig {
             keyset_type: KeySetType::DecompressionOnly.into(),
@@ -5879,7 +6017,7 @@ pub(crate) mod tests {
             false,
             decompression_keygen.is_some(),
         )
-        .await;
+        .await
     }
 
     #[cfg(feature = "slow_tests")]
@@ -5916,7 +6054,7 @@ pub(crate) mod tests {
         )
         .await;
 
-        test_dkg_inner(
+        _ = test_dkg_inner(
             req_preproc,
             req_key,
             amount_parties,
@@ -5934,7 +6072,7 @@ pub(crate) mod tests {
     #[cfg(feature = "slow_tests")]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    async fn test_decompression_keygen() {
+    async fn test_decompression_dkg() {
         let amount_parties: usize = 4;
         let req_preproc_1 = RequestId::derive("test_dkg-preproc-1_{amount_parties}").unwrap();
         let req_key_1 = RequestId::derive("test_dkg-key-1_{amount_parties}").unwrap();
@@ -5971,7 +6109,7 @@ pub(crate) mod tests {
         )
         .await;
 
-        test_dkg_inner(
+        let keys1 = test_dkg_inner(
             req_preproc_1,
             req_key_1.clone(),
             amount_parties,
@@ -5980,7 +6118,8 @@ pub(crate) mod tests {
             None,
         )
         .await;
-        test_dkg_inner(
+        let (client_key_1, _public_key_1, server_key_1) = keys1.get_standard();
+        let keys2 = test_dkg_inner(
             req_preproc_2,
             req_key_2.clone(),
             amount_parties,
@@ -5989,9 +6128,10 @@ pub(crate) mod tests {
             None,
         )
         .await;
+        let (client_key_2, _public_key_2, _server_key_2) = keys2.get_standard();
 
         // finally do the decompression keygen between the first and second keysets
-        test_dkg_inner(
+        let decompression_key = test_dkg_inner(
             req_preproc_3,
             req_key_3,
             amount_parties,
@@ -5999,10 +6139,42 @@ pub(crate) mod tests {
             &internal_client,
             Some((req_key_1, req_key_2)),
         )
-        .await;
+        .await
+        .get_decompression_only();
 
         for handle in kms_servers.into_values() {
             handle.assert_shutdown().await;
+        }
+
+        run_decompression_test(
+            &client_key_1,
+            &client_key_2,
+            Some(&server_key_1),
+            decompression_key.into_raw_parts(),
+        );
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[allow(clippy::large_enum_variant)]
+    enum TestKeyGenResult {
+        DecompressionOnly(tfhe::integer::compression_keys::DecompressionKey),
+        Standard((tfhe::ClientKey, tfhe::CompactPublicKey, tfhe::ServerKey)),
+    }
+
+    #[cfg(feature = "slow_tests")]
+    impl TestKeyGenResult {
+        fn get_decompression_only(self) -> tfhe::integer::compression_keys::DecompressionKey {
+            match self {
+                TestKeyGenResult::DecompressionOnly(inner) => inner,
+                TestKeyGenResult::Standard(_) => panic!("expecting to match decompression only"),
+            }
+        }
+
+        fn get_standard(self) -> (tfhe::ClientKey, tfhe::CompactPublicKey, tfhe::ServerKey) {
+            match self {
+                TestKeyGenResult::DecompressionOnly(_) => panic!("expected to find standard"),
+                TestKeyGenResult::Standard(inner) => inner,
+            }
         }
     }
 
@@ -6014,8 +6186,10 @@ pub(crate) mod tests {
         internal_client: &Client,
         insecure: bool,
         decompression_keygen: bool,
-    ) {
-        use distributed_decryption::execution::runtime::party::Role;
+    ) -> TestKeyGenResult {
+        use distributed_decryption::execution::{
+            runtime::party::Role, tfhe_internals::test_feature::to_hl_client_key,
+        };
         use kms_grpc::rpc_types::PrivDataType;
         use tfhe::integer::compression_keys::DecompressionKey;
 
@@ -6074,6 +6248,7 @@ pub(crate) mod tests {
         finished.sort_by(|(i, _), (j, _)| i.cmp(j));
         assert_eq!(finished.len(), kms_clients.len());
 
+        let mut out = None;
         if decompression_keygen {
             let mut serialized_ref_decompression_key = Vec::new();
             for (idx, kg_res) in finished.into_iter() {
@@ -6088,18 +6263,25 @@ pub(crate) mod tests {
                 assert!(decompression_key.is_some());
                 if i == 0 {
                     serialized_ref_decompression_key =
-                        bincode::serialize(&(decompression_key.unwrap())).unwrap();
+                        bincode::serialize(decompression_key.as_ref().unwrap()).unwrap();
                 } else {
                     assert_eq!(
                         serialized_ref_decompression_key,
-                        bincode::serialize(&(decompression_key.unwrap())).unwrap()
+                        bincode::serialize(decompression_key.as_ref().unwrap()).unwrap()
                     )
+                }
+                if out.is_none() {
+                    out = Some(TestKeyGenResult::DecompressionOnly(
+                        decompression_key.unwrap(),
+                    ))
                 }
             }
         } else {
             let mut serialized_ref_pk = Vec::new();
             let mut serialized_ref_server_key = Vec::new();
             let mut all_threshold_fhe_keys = HashMap::new();
+            let mut final_public_key = None;
+            let mut final_server_key = None;
             for (idx, kg_res) in finished.into_iter() {
                 let role = Role::indexed_by_one(idx as usize);
                 let i = role.zero_based();
@@ -6111,11 +6293,11 @@ pub(crate) mod tests {
                     .unwrap();
                 assert!(pk.is_some());
                 if i == 0 {
-                    serialized_ref_pk = bincode::serialize(&(pk.unwrap())).unwrap();
+                    serialized_ref_pk = bincode::serialize(pk.as_ref().unwrap()).unwrap();
                 } else {
                     assert_eq!(
                         serialized_ref_pk,
-                        bincode::serialize(&(pk.unwrap())).unwrap()
+                        bincode::serialize(pk.as_ref().unwrap()).unwrap()
                     )
                 }
                 let server_key: Option<tfhe::ServerKey> = internal_client
@@ -6124,11 +6306,12 @@ pub(crate) mod tests {
                     .unwrap();
                 assert!(server_key.is_some());
                 if i == 0 {
-                    serialized_ref_server_key = bincode::serialize(&(server_key.unwrap())).unwrap();
+                    serialized_ref_server_key =
+                        bincode::serialize(server_key.as_ref().unwrap()).unwrap();
                 } else {
                     assert_eq!(
                         serialized_ref_server_key,
-                        bincode::serialize(&(server_key.unwrap())).unwrap()
+                        bincode::serialize(server_key.as_ref().unwrap()).unwrap()
                     )
                 }
 
@@ -6141,10 +6324,28 @@ pub(crate) mod tests {
                 let threshold_fhe_keys: ThresholdFheKeys =
                     priv_storage.read_data(sk_url).await.unwrap();
                 all_threshold_fhe_keys.insert(role, threshold_fhe_keys);
+                if final_public_key.is_none() {
+                    final_public_key = match pk.unwrap() {
+                        kms_grpc::rpc_types::WrappedPublicKeyOwned::Compact(inner) => Some(inner),
+                    };
+                }
+                if final_server_key.is_none() {
+                    final_server_key = server_key;
+                }
             }
 
             let threshold = kms_clients.len().div_ceil(3) - 1;
-            try_reconstruct_shares(internal_client.params, threshold, all_threshold_fhe_keys);
+            let (lwe_sk, glwe_sk) =
+                try_reconstruct_shares(internal_client.params, threshold, all_threshold_fhe_keys);
+            let regular_params = match internal_client.params {
+                DKGParams::WithSnS(p) => p.regular_params,
+                DKGParams::WithoutSnS(p) => p,
+            };
+            out = Some(TestKeyGenResult::Standard((
+                to_hl_client_key(&regular_params, lwe_sk, glwe_sk, None, None),
+                final_public_key.unwrap(),
+                final_server_key.unwrap(),
+            )));
         }
 
         if !insecure {
@@ -6170,6 +6371,7 @@ pub(crate) mod tests {
                 assert_eq!(response.unwrap_err().code(), tonic::Code::NotFound);
             }
         }
+        out.unwrap()
     }
 
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
@@ -6183,17 +6385,24 @@ pub(crate) mod tests {
             Role,
             crate::engine::threshold::service_real::ThresholdFheKeys,
         >,
+    ) -> (
+        tfhe::core_crypto::prelude::LweSecretKeyOwned<u64>,
+        tfhe::core_crypto::prelude::GlweSecretKeyOwned<u64>,
     ) {
         use distributed_decryption::execution::{
             endpoints::keygen::GlweSecretKeyShareEnum, tfhe_internals::utils::reconstruct_bit_vec,
         };
+        use tfhe::core_crypto::prelude::GlweSecretKeyOwned;
 
         let param_handle = param.get_params_basics_handle();
         let lwe_shares = all_threshold_fhe_keys
             .iter()
             .map(|(k, v)| (*k, v.private_keys.lwe_compute_secret_key_share.data.clone()))
             .collect::<HashMap<_, _>>();
-        _ = reconstruct_bit_vec(lwe_shares, param_handle.lwe_dimension().0, threshold);
+        let lwe_secret_key =
+            reconstruct_bit_vec(lwe_shares, param_handle.lwe_dimension().0, threshold);
+        let lwe_secret_key =
+            tfhe::core_crypto::prelude::LweSecretKeyOwned::from_container(lwe_secret_key);
 
         let lwe_enc_shares = all_threshold_fhe_keys
             .iter()
@@ -6225,6 +6434,10 @@ pub(crate) mod tests {
                 )
             })
             .collect::<HashMap<_, _>>();
-        _ = reconstruct_bit_vec(glwe_shares, param_handle.glwe_sk_num_bits(), threshold);
+        let glwe_sk = GlweSecretKeyOwned::from_container(
+            reconstruct_bit_vec(glwe_shares, param_handle.glwe_sk_num_bits(), threshold),
+            param_handle.polynomial_size(),
+        );
+        (lwe_secret_key, glwe_sk)
     }
 }
