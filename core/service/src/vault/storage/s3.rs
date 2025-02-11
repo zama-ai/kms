@@ -406,12 +406,20 @@ pub mod tests {
     #[tokio::test]
     async fn s3_storage_helper_methods() {
         let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
-        let s3_client = S3Client::new(&config);
+        let s3_client = build_s3_client(&config, Some(Url::parse(AWS_S3_ENDPOINT).unwrap()))
+            .await
+            .unwrap();
         let temp_dir = tempfile::tempdir().unwrap();
         let mut pub_storage = S3Storage::new(
             s3_client,
             BUCKET_NAME.to_string(),
-            temp_dir.path().to_str().unwrap().to_string(),
+            temp_dir
+                .path()
+                .to_str()
+                .unwrap()
+                .trim_start_matches('/')
+                .trim_end_matches('/')
+                .to_string(),
             StorageType::PUB,
             None,
             None,
