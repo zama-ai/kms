@@ -29,7 +29,7 @@ ron = { version = "=0.8.1", features = ["integer128"] }
 bincode = "=1.3.3"
 aes-prng = "=0.2.1"
 rand = "=0.8.5"
-tokio = { version = "=1.42.0", features = ["full"] }
+tokio = { version = "1.43.0", features = ["full"] }
 
 [[bin]]
 name = "backward-compatibility"

@@ -22,7 +22,7 @@ alloy-primitives = { workspace = true, features = ["k256"] }
 alloy-sol-types = { workspace = true, features = ["eip712-serde"] }
 alloy-signer.workspace = true
 alloy-signer-local.workspace = true
-bytes = "=1.8.0"
+bytes = "=1.10.0"
 reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 thiserror.workspace = true
 ethers = { version = "=2.0.14", features = [

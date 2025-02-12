@@ -25,6 +25,7 @@ members = [
     "blockchain/inclusion_proofs/ethereum-triedb",
     "blockchain/contracts/bsc",
     "test-utils",
+    "kms-connector",
 ]
 
 # The backward-compatibility module is excluded from the workspace in order to avoid dependency
@@ -106,7 +107,7 @@ sylvia-derive = "=1.1.0"
 tendermint = { version = "0.40.0", features = ["secp256k1"] }
 tendermint-proto = "=0.40.0"
 tendermint-rpc = { version = "=0.40.0", features = ["websocket-client"] }
-thiserror = "=2.0.7"
+thiserror = "=2.0.11"
 tonic-health = "=0.12.3"
 tower = "=0.5.2"
 tower-http = "=0.6.2"
@@ -114,7 +115,7 @@ tfhe = "=0.11.2"
 tfhe-csprng = "=0.5.0"
 tfhe-versionable = "=0.4.0"
 tfhe-zk-pok = "=0.4.0"
-tokio = { version = "=1.42.0", features = ["full"] }
+tokio = { version = "=1.43.0", features = ["full"] }
 tonic = "=0.12.3"
 tonic-build = "=0.12.3"
 tracing = { version = "=0.1.41", features = ["log"] }

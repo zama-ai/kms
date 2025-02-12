@@ -1,0 +1,54 @@
+[package]
+name = "kms-connector"
+version.workspace = true
+authors.workspace = true
+publish.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# TODO: use root Cargo.toml features, remove duplicates and shrink to bare minimum features
+[dependencies]
+alloy-primitives = "0.8.20"
+alloy-sol-types = "0.8.20"
+alloy-json-abi = "0.8.20"
+alloy = { version = "0.11", features = [
+    "eips",
+    "full",
+    "hyper",
+    "json-rpc",
+    "node-bindings",
+    "rpc-client",
+    "rpc-types-debug",
+    "rpc-types-trace",
+    "signer-aws",
+    "signer-gcp",
+    "signer-keystore",
+    "signer-ledger",
+    "signer-mnemonic",
+    "signer-trezor",
+    "signer-yubihsm",
+] }
+alloy-provider = { version = "0.11.0", features = ["ws"] }
+alloy-contract = "0.11.0"
+alloy-signer = "0.11.0"
+alloy-signer-local = { version = "0.11.0", features = ["mnemonic"] }
+alloy-transport = "0.11.0"
+tokio = { version = "1.43.0", features = ["full"] }
+toml = "0.8.20"
+futures = "0.3"
+thiserror = "2.0.11"
+anyhow = "1.0"
+tracing = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio-stream = "0.1"
+async-trait = "0.1"
+futures-util = "0.3"
+url = "2.5.0"
+bip39 = "2.1.0"
+
+# TODO: substitute with existing KMS-Core implementation
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "=3.16.0"

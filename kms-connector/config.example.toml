@@ -1,0 +1,40 @@
+# Example configuration for KMS Connector
+
+# WebSocket RPC URL for L2 connection (optional, defaults to ws://localhost:8545)
+rpc_url = "ws://localhost:8545"
+
+# BIP39 mnemonic phrase for wallet generation (required)
+# This is used to derive the private key for signing responses
+# IMPORTANT: Keep this secure and never share it!
+mnemonic = "test test test test test test test test test test test junk"
+
+# Optional passphrase for additional security
+passphrase = ""
+
+# Chain ID for the L2 network (required)
+chain_id = 1
+
+# Address of the DecryptionManager contract (required)
+# Format: hex string with 0x prefix
+decryption_manager_address = "0x0000000000000000000000000000000000000000"
+
+# Address of the HTTPZ contract (required)
+# Format: hex string with 0x prefix
+httpz_address = "0x0000000000000000000000000000000000000000"
+
+# Size of the event processing channel (optional, defaults to 100)
+channel_size = 1000
+
+# Optional WebSocket configuration
+[ws_config]
+# Maximum message size in bytes
+max_message_size = 32_000_000
+
+# Request timeout in seconds
+request_timeout = 60
+
+# Maximum number of concurrent requests
+max_concurrent_requests = 1000
+
+# Keepalive interval in seconds
+keepalive_interval = 10
