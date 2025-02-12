@@ -31,8 +31,9 @@ get_value() {
     yq -e -p toml -oy ".$KEY" "$KMS_SERVER_CONFIG_FILE" || fail "$KEY not present in config"
 }
 
-is_threshold() {
-    yq -e -p toml -oy '.threshold' "$KMS_SERVER_CONFIG_FILE" &>/dev/null
+has_value() {
+    local KEY="$1"
+    yq -e -p toml -oy ".$KEY" "$KMS_SERVER_CONFIG_FILE" &>/dev/null
 }
 
 start_tcp_proxy_out() {
@@ -68,15 +69,18 @@ route add -net 127.0.0.0 netmask 255.0.0.0 lo |& logger || fail "cannot add loop
 log "requesting kms-server config"
 socat -u VSOCK-CONNECT:$PARENT_CID:$CONFIG_PORT CREATE:$KMS_SERVER_CONFIG_FILE |& logger || fail "cannot receive kms-server config"
 
-# tracing and AWS API proxies
-start_tcp_proxy_out "tracing" "$(get_configured_port "tracing.endpoint")"
+# (optional) telemetry and AWS API proxies
+has_value "telemetry.metrics_bind_address" && \
+    start_tcp_proxy_in "metrics" "$(get_configured_port "telemetry.metrics_bind_address")"
+has_value "telemetry.tracing_endpoint" && \
+    start_tcp_proxy_out "tracing" "$(get_configured_port "telemetry.tracing_endpoint")"
 start_tcp_proxy_out "AWS IMDS" "$(get_configured_port "aws.imds_endpoint")"
 start_tcp_proxy_out "AWS STS" "$(get_configured_port "aws.sts_endpoint")"
 start_tcp_proxy_out "AWS S3" "$(get_configured_port "aws.s3_endpoint")"
 start_tcp_proxy_out "AWS KMS" "$(get_configured_port "aws.awskms_endpoint")"
 
 # ensure that all keys exist if running in centralized mode
-is_threshold || \
+has_value "threshold" || \
     {
 	log "generating keys for centralized KMS"
 	kms-gen-keys \
@@ -92,7 +96,7 @@ is_threshold || \
 	    |& logger || fail "cannot generate keys"
     }
 # ensure that signing keys if running in threshold mode
-is_threshold && \
+has_value "threshold" && \
     {
 	log "generating signing keys for threshold KMS"
 	kms-gen-keys \
@@ -111,7 +115,7 @@ is_threshold && \
 
 # gRPC proxies
 start_tcp_proxy_in "gRPC client" "$(get_configured_port "service.listen_port")"
-is_threshold && \
+has_value "threshold" && \
     {
 	start_tcp_proxy_in "gRPC peer" "$(get_configured_port "threshold.listen_port")" &
 
