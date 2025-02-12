@@ -8,6 +8,7 @@ use kms_grpc::kms_service::v1::core_service_endpoint_server::{
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::net::TcpListener;
 use tonic::transport::Server;
 use tonic_health::pb::health_server::{Health, HealthServer};
 use tower_http::classify::{GrpcCode, GrpcFailureClass};
@@ -81,6 +82,7 @@ pub async fn run_server<
     F: std::future::Future<Output = ()> + Send + 'static,
 >(
     config: ServiceEndpoint,
+    listener: TcpListener,
     kms_service: Arc<S>,
     health_service: HealthServer<impl Health>,
     shutdown_signal: F,
@@ -95,13 +97,6 @@ pub async fn run_server<
             "failed to parse socket address {}",
             socket_addr_str
         ))?;
-
-    // Ensure the port is available before starting
-    if !crate::util::random_free_port::is_free(socket_addr.port(), &socket_addr.ip()).await {
-        return Err(anyhow::anyhow!(
-            "socket address {socket_addr} is not free for core/service"
-        ));
-    }
 
     // Create shutdown channel
     let (tx, rx): (
@@ -145,25 +140,28 @@ pub async fn run_server<
     tracing::info!("Starting KMS core on socket {socket_addr}");
 
     // Create graceful shutdown future
-    let graceful = server.serve_with_shutdown(socket_addr, async {
-        // await is the same as recv on a oneshot channel
-        _ = rx.await;
-        tracing::info!(
-            "Starting graceful shutdown of core/service at {}",
-            socket_addr
-        );
-
-        let res = kms_service.shutdown().await;
-        if res.is_err() {
-            tracing::error!(
-                "Failed to shutdown core/service at {}: {}",
-                socket_addr,
-                res.err().unwrap()
+    let graceful = server.serve_with_incoming_shutdown(
+        tokio_stream::wrappers::TcpListenerStream::new(listener),
+        async {
+            // await is the same as recv on a oneshot channel
+            _ = rx.await;
+            tracing::info!(
+                "Starting graceful shutdown of core/service at {}",
+                socket_addr
             );
-        } else {
-            tracing::info!("Successfully shutdown core/service at {}", socket_addr);
-        }
-    });
+
+            let res = kms_service.shutdown().await;
+            if res.is_err() {
+                tracing::error!(
+                    "Failed to shutdown core/service at {}: {}",
+                    socket_addr,
+                    res.err().unwrap()
+                );
+            } else {
+                tracing::info!("Successfully shutdown core/service at {}", socket_addr);
+            }
+        },
+    );
 
     // Run the server with graceful shutdown
     match graceful.await {

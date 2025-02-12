@@ -2162,7 +2162,7 @@ pub mod test_tools {
             threshold::{PeerConf, ThresholdPartyConf},
             ServiceEndpoint,
         },
-        util::random_free_port::random_free_ports,
+        util::random_free_port::get_listeners_random_free_ports,
     };
     use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
     use distributed_decryption::networking::grpc::GrpcServer;
@@ -2198,12 +2198,21 @@ pub mod test_tools {
         tracing::info!("Spawning servers...");
         let num_parties = priv_storage.len();
         let ip_addr = DEFAULT_URL.parse().unwrap();
-        let service_ports = random_free_ports(30000, 35000, &ip_addr, num_parties)
+        let service_listeners = get_listeners_random_free_ports(&ip_addr, num_parties)
             .await
             .unwrap();
-        let mpc_ports = random_free_ports(35001, 40000, &ip_addr, num_parties)
+        let mpc_listeners = get_listeners_random_free_ports(&ip_addr, num_parties)
             .await
             .unwrap();
+
+        let service_ports = service_listeners
+            .iter()
+            .map(|listener_and_port| listener_and_port.1)
+            .collect_vec();
+        let mpc_ports = mpc_listeners
+            .iter()
+            .map(|listener_and_port| listener_and_port.1)
+            .collect_vec();
 
         tracing::info!("service ports: {:?}", service_ports);
         tracing::info!("MPC ports: {:?}", mpc_ports);
@@ -2224,7 +2233,7 @@ pub mod test_tools {
         // a vector of sender that will trigger shutdown of core/threshold servers
         let mut mpc_shutdown_txs = Vec::new();
 
-        for i in 1..=num_parties {
+        for (i, (mpc_listener, _mpc_port)) in (1..=num_parties).zip(mpc_listeners.into_iter()) {
             let cur_pub_storage = pub_storage[i - 1].to_owned();
             let cur_priv_storage = priv_storage[i - 1].to_owned();
             let service_config = ServiceEndpoint {
@@ -2262,6 +2271,7 @@ pub mod test_tools {
                 // TODO pass in cert_paths for testing TLS
                 let server = threshold_server_init(
                     threshold_party_config,
+                    mpc_listener,
                     cur_pub_storage,
                     cur_priv_storage,
                     None as Option<PrivS>,
@@ -2289,8 +2299,13 @@ pub mod test_tools {
         }
         tracing::info!("Servers initialized. Starting servers...");
         let mut server_handles = HashMap::new();
-        for ((i, cur_server, service_config, cur_health_service), cur_mpc_shutdown) in
-            servers.into_iter().zip(mpc_shutdown_txs)
+        for (
+            ((i, cur_server, service_config, cur_health_service), cur_mpc_shutdown),
+            (service_listener, _service_port),
+        ) in servers
+            .into_iter()
+            .zip(mpc_shutdown_txs)
+            .zip(service_listeners.into_iter())
         {
             let cur_arc_server = Arc::new(cur_server);
             let arc_server_clone = Arc::clone(&cur_arc_server);
@@ -2298,6 +2313,7 @@ pub mod test_tools {
             tokio::spawn(async move {
                 run_server(
                     service_config,
+                    service_listener,
                     cur_arc_server,
                     cur_health_service,
                     server_shutdown_rx.map(drop),
@@ -2514,7 +2530,11 @@ pub mod test_tools {
         let ip_addr = DEFAULT_URL.parse().unwrap();
         // we use port numbers above 40001 so that it's easy to identify
         // which cores are running in the centralized mode from the logs
-        let listen_port = random_free_ports(40001, 41000, &ip_addr, 1).await.unwrap()[0];
+        let (listener, listen_port) = get_listeners_random_free_ports(&ip_addr, 1)
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
         let (tx, rx) = tokio::sync::oneshot::channel();
         let (kms, health_service) = RealCentralizedKms::new(
             pub_storage,
@@ -2534,7 +2554,7 @@ pub mod test_tools {
                 grpc_max_message_size: 2 * 10 * 1024 * 1024, // 20 MiB to allow for 2048 bit encryptions
             };
 
-            run_server(config, arc_kms, health_service, rx.map(drop))
+            run_server(config, listener, arc_kms, health_service, rx.map(drop))
                 .await
                 .expect("Could not start server");
         });

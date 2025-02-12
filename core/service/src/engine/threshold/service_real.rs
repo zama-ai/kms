@@ -100,7 +100,6 @@ use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::hash::{BuildHasher, Hasher};
-use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use tfhe::core_crypto::prelude::LweKeyswitchKey;
 use tfhe::integer::compression_keys::DecompressionKey;
@@ -108,6 +107,7 @@ use tfhe::named::Named;
 use tfhe::zk::CompactPkeCrs;
 use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
+use tokio::net::TcpListener;
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, OwnedSemaphorePermit, RwLock};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -140,6 +140,7 @@ pub async fn threshold_server_init<
     F: std::future::Future<Output = ()> + Send + 'static,
 >(
     config: ThresholdPartyConf,
+    tcp_listener: TcpListener,
     public_storage: PubS,
     private_storage: PrivS,
     backup_storage: Option<BackS>,
@@ -173,8 +174,7 @@ pub async fn threshold_server_init<
         config.threshold,
         config.dec_capacity,
         config.min_dec_cache,
-        &config.listen_address,
-        config.listen_port,
+        tcp_listener,
         config.my_id,
         factory,
         num_sessions_preproc,
@@ -290,8 +290,7 @@ async fn new_real_threshold_kms<PubS, PrivS, BackS, F>(
     threshold: u8,
     dec_capacity: usize,
     min_dec_cache: usize,
-    listen_address: &str,
-    mpc_port: u16,
+    tcp_listener: TcpListener,
     my_id: usize,
     preproc_factory: Box<dyn PreprocessorFactory<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
     num_sessions_preproc: u16,
@@ -313,8 +312,9 @@ where
     BackS: Storage + Send + Sync + 'static,
     F: std::future::Future<Output = ()> + Send + 'static,
 {
+    let local_addr = tcp_listener.local_addr()?;
     tracing::info!(
-        "Starting threshold KMS Server. Party ID {my_id}, listening for MPC communication on {listen_address}:{mpc_port}...",
+        "Starting threshold KMS Server. Party ID {my_id}, listening for MPC communication on {:?}...",local_addr
     );
 
     let sks: HashMap<RequestId, PrivateSigKey> =
@@ -423,22 +423,13 @@ where
     let router = server
         .add_service(networking_server)
         .add_service(threshold_health_service);
-    let socket_addr = format!("{}:{}", listen_address, mpc_port)
-        .to_socket_addrs()?
-        .next()
-        .expect("Failed to parse socket address for internal core network");
 
     tracing::info!(
-        "Starting core-to-core server for identity {} on address {}.",
+        "Starting core-to-core server for identity {} on address {:?}.",
         own_identity,
-        socket_addr
+        local_addr
     );
-    // Ensure the port is available before starting
-    if !crate::util::random_free_port::is_free(socket_addr.port(), &socket_addr.ip()).await {
-        return Err(anyhow::anyhow!(
-            "socket address {socket_addr} is not free for core/threshold"
-        ));
-    }
+
     let networking_strategy: Arc<RwLock<NetworkingStrategy>> = Arc::new(RwLock::new(Box::new(
         move |session_id, roles, network_mode| {
             let nm = networking_manager.clone();
@@ -453,35 +444,38 @@ where
         let (tx, rx) = tokio::sync::oneshot::channel();
         tokio::spawn(prepare_shutdown_signals(shutdown_signal, tx));
         match router
-            .serve_with_shutdown(socket_addr, async {
-                // Set the server to be serving when we boot
-                threshold_health_reporter.set_serving::<GrpcServer>().await;
-                // await is the same as recv on a oneshot channel
-                _ = rx.await;
-                manager_clone.write().await.sending_service.shutdown();
-                // Observe that the following is the shut down of the core (which communicates with the other cores)
-                // That is, not the threshold KMS server itself which picks up requests from the blockchain.
-                tracing::info!(
-                    "Starting graceful shutdown of core/threshold {}",
-                    socket_addr
-                );
-                threshold_health_reporter
-                    .set_not_serving::<GrpcServer>()
-                    .await;
-            })
+            .serve_with_incoming_shutdown(
+                tokio_stream::wrappers::TcpListenerStream::new(tcp_listener),
+                async {
+                    // Set the server to be serving when we boot
+                    threshold_health_reporter.set_serving::<GrpcServer>().await;
+                    // await is the same as recv on a oneshot channel
+                    _ = rx.await;
+                    manager_clone.write().await.sending_service.shutdown();
+                    // Observe that the following is the shut down of the core (which communicates with the other cores)
+                    // That is, not the threshold KMS server itself which picks up requests from the blockchain.
+                    tracing::info!(
+                        "Starting graceful shutdown of core/threshold {}",
+                        local_addr
+                    );
+                    threshold_health_reporter
+                        .set_not_serving::<GrpcServer>()
+                        .await;
+                },
+            )
             .await
         {
             Ok(handle) => {
                 tracing::info!(
                     "core/threshold on {} shutdown completed successfully",
-                    socket_addr
+                    local_addr
                 );
                 Ok(handle)
             }
             Err(e) => {
                 let msg = format!(
                     "Failed to launch ddec server on {} with error: {:?}",
-                    socket_addr, e
+                    local_addr, e
                 );
                 Err(anyhow_error_and_log(msg))
             }

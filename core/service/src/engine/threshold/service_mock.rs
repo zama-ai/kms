@@ -8,7 +8,7 @@ use crate::engine::threshold::traits::{
 };
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
-use crate::util::random_free_port::random_free_ports;
+use crate::util::random_free_port::get_listeners_random_free_ports;
 use futures_util::FutureExt;
 use kms_grpc::kms::v1::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
@@ -20,8 +20,6 @@ use kms_grpc::kms::v1::{
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use kms_grpc::rpc_types::PubDataType;
 use std::collections::HashMap;
-use std::net::SocketAddr;
-use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::task::TaskTracker;
@@ -32,11 +30,10 @@ use tonic_health::pb::health_server::{Health, HealthServer};
 pub async fn setup_mock_kms(n: usize) -> HashMap<u32, ServerHandle> {
     let mut out = HashMap::new();
     let ip_addr = DEFAULT_URL.parse().unwrap();
-    let service_ports = random_free_ports(40001, 45000, &ip_addr, n).await.unwrap();
-    for i in 1..=n {
-        let port = service_ports[i - 1];
-        let url = format!("{ip_addr}:{port}");
-        let addr = SocketAddr::from_str(url.as_str()).unwrap();
+    let service_listeners = get_listeners_random_free_ports(&ip_addr, n).await.unwrap();
+    let mut ports = Vec::new();
+    for (i, (service_listener, service_port)) in (1..=n).zip(service_listeners.into_iter()) {
+        ports.push(service_port);
         let (tx, rx) = tokio::sync::oneshot::channel();
         let (kms, health_service) = new_dummy_threshold_kms().await;
         let arc_kms = Arc::new(kms);
@@ -45,18 +42,21 @@ pub async fn setup_mock_kms(n: usize) -> HashMap<u32, ServerHandle> {
             transport::Server::builder()
                 .add_service(health_service)
                 .add_service(CoreServiceEndpointServer::from_arc(arc_kms))
-                .serve_with_shutdown(addr, rx.map(drop))
+                .serve_with_incoming_shutdown(
+                    tokio_stream::wrappers::TcpListenerStream::new(service_listener),
+                    rx.map(drop),
+                )
                 .await
                 .expect("Failed to start mock server {i}");
         });
         out.insert(
             i as u32,
-            ServerHandle::new_centralized(arc_kms_clone, service_ports[i - 1], tx),
+            ServerHandle::new_centralized(arc_kms_clone, service_port, tx),
         );
     }
     for i in 1..=n {
         let service_name = <CoreServiceEndpointServer<DummyThresholdKms> as NamedService>::NAME;
-        await_server_ready(service_name, service_ports[i - 1]).await;
+        await_server_ready(service_name, ports[i - 1]).await;
     }
     out
 }

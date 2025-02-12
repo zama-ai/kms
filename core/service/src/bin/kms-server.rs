@@ -12,7 +12,8 @@ use kms_lib::{
         Vault,
     },
 };
-use std::sync::Arc;
+use std::{net::ToSocketAddrs, sync::Arc};
+use tokio::net::TcpListener;
 
 pub const SIG_SK_BLOB_KEY: &str = "private_sig_key";
 pub const SIG_PK_BLOB_KEY: &str = "public_sig_key";
@@ -203,10 +204,60 @@ async fn main() -> anyhow::Result<()> {
         .transpose()?;
 
     // initialize KMS core
+
+    let service_socket_addr_str = format!(
+        "{}:{}",
+        core_config.service.listen_address, core_config.service.listen_port
+    );
+    let service_socket_addr = service_socket_addr_str
+        .to_socket_addrs()
+        .unwrap_or_else(|e| {
+            panic!(
+                "Wrong service IP Address: {} \n {:?}",
+                core_config.service.listen_address, e
+            )
+        })
+        .next()
+        .unwrap_or_else(|| {
+            panic!(
+                "Failed to parse service IP Address: {}",
+                core_config.service.listen_address
+            )
+        });
+
+    let service_listener = TcpListener::bind(service_socket_addr)
+        .await
+        .unwrap_or_else(|e| panic!("Could not bind to {} \n {:?}", service_socket_addr, e));
+
     match core_config.threshold {
         Some(threshold_config) => {
+            let mpc_socket_addr_str = format!(
+                "{}:{}",
+                threshold_config.listen_address, threshold_config.listen_port
+            );
+
+            let mpc_socket_addr = mpc_socket_addr_str
+                .to_socket_addrs()
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "Wrong MPC IP Address: {} \n {:?}",
+                        threshold_config.listen_address, e
+                    )
+                })
+                .next()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Failed to parse MPC IP Address: {}",
+                        threshold_config.listen_address
+                    )
+                });
+
+            let mpc_listener = TcpListener::bind(mpc_socket_addr)
+                .await
+                .unwrap_or_else(|e| panic!("Could not bind to {} \n {:?}", mpc_socket_addr, e));
             let (kms, health_service) = threshold_server_init(
                 threshold_config,
+                mpc_listener,
                 public_vault,
                 private_vault,
                 backup_vault,
@@ -217,6 +268,7 @@ async fn main() -> anyhow::Result<()> {
             .await?;
             run_server(
                 core_config.service,
+                service_listener,
                 Arc::new(kms),
                 health_service,
                 std::future::pending(),
@@ -233,6 +285,7 @@ async fn main() -> anyhow::Result<()> {
             .await?;
             run_server(
                 core_config.service,
+                service_listener,
                 Arc::new(kms),
                 health_service,
                 std::future::pending(),

@@ -5554,6 +5554,7 @@ dependencies = [
  "tfhe-versionable",
  "tfhe-zk-pok",
  "tokio",
+ "tokio-stream",
  "tokio-util",
  "tonic",
  "tonic-build",
