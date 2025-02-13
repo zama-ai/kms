@@ -19,6 +19,7 @@ jobs:
     with:
       working-directory: './blockchain/simulator'
       package-name: 'simulator'
+      args-tests: '-- --skip full_gen_tests'
     permissions:
       contents: 'write'
       id-token: 'write'

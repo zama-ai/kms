@@ -17,7 +17,14 @@ use tests_utils::{DockerCompose, KMSMode};
 // ```
 // Any issue might be related to the fact that some obsolete Docker images exist.
 
-/// Wait 1 minute for everything to setup properly
+// Observe that ALL tests are run by default.
+// However, some tests will take days to complete and would rarely need to be run.
+// To skip these tests run:
+// ```
+// cargo test -- --skip full_gen_tests
+// ```
+
+// Wait 1 minute for everything to setup properly
 const BOOTSTRAP_TIME_TO_SLEEP: u64 = 60;
 
 trait DockerComposeContext {
@@ -421,7 +428,7 @@ async fn integration_test_commands<T: DockerComposeContext>(
     test_template(ctx, commands).await
 }
 
-fn config_path_from_context(ctx: &DockerComposeThresholdContextTest) -> String {
+fn config_path_from_context(ctx: &impl DockerComposeContext) -> String {
     ctx.root_path()
         .join(ctx.config_path())
         .to_str()
@@ -471,6 +478,61 @@ async fn test_threshold_sequential_crs(ctx: &DockerComposeThresholdContextTest) 
 #[tokio::test]
 #[serial(docker)]
 async fn test_threshold_concurrent_crs(ctx: &DockerComposeThresholdContextTest) {
+    init_logging();
+    let res = join_all([crs_gen(ctx, false), crs_gen(ctx, false)]).await;
+    assert_ne!(res[0], res[1]);
+}
+
+///////// FULL GEN TESTS//////////
+//////////////////////////////////
+
+#[test_context(DockerComposeThresholdContextDefault)]
+#[tokio::test]
+#[serial(docker)]
+async fn full_gen_tests_default_threshold_sequential_preproc_keygen(
+    ctx: &DockerComposeThresholdContextDefault,
+) {
+    init_logging();
+    let config_path = config_path_from_context(ctx);
+    let key_id_1 = real_preproc_and_keygen(&config_path).await;
+    let key_id_2 = real_preproc_and_keygen(&config_path).await;
+    assert_ne!(key_id_1, key_id_2);
+}
+
+// https://github.com/zama-ai/kms-core/issues/1941
+#[should_panic]
+#[test_context(DockerComposeThresholdContextDefault)]
+#[tokio::test]
+#[serial(docker)]
+async fn full_gen_tests_default_threshold_concurrent_preproc_keygen(
+    ctx: &DockerComposeThresholdContextDefault,
+) {
+    init_logging();
+    let config_path = config_path_from_context(ctx);
+    let key_id_1 = real_preproc_and_keygen(&config_path).await;
+    let key_id_2 = real_preproc_and_keygen(&config_path).await;
+    assert_ne!(key_id_1, key_id_2);
+}
+
+#[test_context(DockerComposeThresholdContextDefault)]
+#[tokio::test]
+#[serial(docker)]
+async fn full_gen_tests_default_threshold_sequential_crs(
+    ctx: &DockerComposeThresholdContextDefault,
+) {
+    init_logging();
+    let crs_id_1 = crs_gen(ctx, false).await;
+    let crs_id_2 = crs_gen(ctx, false).await;
+    assert_ne!(crs_id_1, crs_id_2);
+}
+// https://github.com/zama-ai/kms-core/issues/1941
+#[should_panic]
+#[test_context(DockerComposeThresholdContextDefault)]
+#[tokio::test]
+#[serial(docker)]
+async fn full_gen_tests_default_threshold_concurrent_crs(
+    ctx: &DockerComposeThresholdContextDefault,
+) {
     init_logging();
     let res = join_all([crs_gen(ctx, false), crs_gen(ctx, false)]).await;
     assert_ne!(res[0], res[1]);

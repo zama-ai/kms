@@ -1,12 +1,18 @@
-use super::tests::{
+use super::{
     decryption_centralized, decryption_threshold, reencryption_centralized, reencryption_threshold,
     verify_proven_ct_centralized, verify_proven_ct_threshold,
 };
+use crate::client::tests::crs_gen;
+use crate::client::tests::{
+    crs_gen_centralized, preproc_and_keygen, run_threshold_decompression_keygen,
+};
+use crate::consts::DEFAULT_PARAM;
 use crate::consts::{
     DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_CRS_ID_7P, DEFAULT_THRESHOLD_KEY_ID_4P,
     DEFAULT_THRESHOLD_KEY_ID_7P,
 };
-use crate::util::key_setup::test_tools::TestingPlaintext;
+use crate::util::key_setup::test_tools::{purge, TestingPlaintext};
+use kms_grpc::kms::v1::FheParameter;
 use kms_grpc::kms::v1::RequestId;
 use serial_test::serial;
 
@@ -221,8 +227,6 @@ async fn default_reencryption_threshold(
     #[case] key_id: &str,
     #[values(true)] secure: bool,
 ) {
-    use crate::consts::DEFAULT_PARAM;
-
     reencryption_threshold(
         DEFAULT_PARAM,
         key_id,
@@ -235,4 +239,115 @@ async fn default_reencryption_threshold(
         None,
     )
     .await;
+}
+
+// We test for both insecure and secure since these are distinct endpoints, although inner computation is the same
+#[cfg(feature = "insecure")]
+#[tokio::test(flavor = "multi_thread")]
+#[rstest::rstest]
+#[case(4)]
+#[case(10)]
+#[serial]
+async fn default_insecure_crs_gen_centralized(#[case] amount_parties: usize) {
+    let crs_req_id = RequestId::derive(&format!(
+        "default_insecure_crs_gen_centralized_{amount_parties}"
+    ))
+    .unwrap();
+    // Delete potentially old data
+    purge(None, None, &crs_req_id.to_string(), 1).await;
+
+    crs_gen_centralized(
+        &crate::consts::DEFAULT_PARAM,
+        &crs_req_id,
+        Some(FheParameter::Default),
+        true,
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[rstest::rstest]
+#[case(4)]
+#[case(10)]
+#[serial]
+async fn default_crs_gen_centralized(#[case] amount_parties: usize) {
+    let crs_req_id =
+        RequestId::derive(&format!("default_crs_gen_centralized_{amount_parties}")).unwrap();
+    // Delete potentially old data
+    purge(None, None, &crs_req_id.to_string(), 1).await;
+    // We test for both insecure and secure since these are distinct endpoints, although inner computation is the same
+    crs_gen_centralized(
+        &crate::consts::DEFAULT_PARAM,
+        &crs_req_id,
+        Some(FheParameter::Default),
+        false,
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[rstest::rstest]
+#[case(4)]
+#[case(7)]
+#[case(10)]
+#[serial]
+async fn test_secure_threshold_sequential_crs_default(#[case] amount_parties: usize) {
+    crs_gen(
+        amount_parties,
+        FheParameter::Default,
+        Some(2048),
+        false,
+        2,
+        false,
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[rstest::rstest]
+#[case(4)]
+#[case(7)]
+#[case(10)]
+#[serial]
+async fn test_secure_threshold_concurrent_crs_default(#[case] amount_parties: usize) {
+    crs_gen(
+        amount_parties,
+        FheParameter::Default,
+        Some(2048),
+        false,
+        2,
+        true,
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[rstest::rstest]
+#[case(4)]
+#[case(7)]
+#[case(10)]
+#[serial]
+async fn test_secure_threshold_sequential_keygen_test(#[case] amount_parties: usize) {
+    preproc_and_keygen(amount_parties, FheParameter::Test, false, 2, false).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[rstest::rstest]
+#[case(4)]
+#[case(7)]
+#[case(10)]
+#[serial]
+async fn test_secure_threshold_concurrent_keygen_test(#[case] amount_parties: usize) {
+    preproc_and_keygen(amount_parties, FheParameter::Test, false, 2, true).await;
+}
+
+#[cfg(feature = "slow_tests")]
+#[tokio::test(flavor = "multi_thread")]
+#[rstest::rstest]
+#[case(4)]
+#[case(7)]
+#[case(10)]
+#[serial]
+async fn test_secure_threshold_decompression_keygen(#[case] amount_parties: usize) {
+    run_threshold_decompression_keygen(amount_parties, FheParameter::Test, false).await;
 }

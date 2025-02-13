@@ -2172,7 +2172,7 @@ pub async fn execute_cmd(
                         &req_id
                     );
                 } else {
-                    panic!("Did not receive CrsGenResponse, got {:?}", response)
+                    panic!("Did not receive KeyGenPreprocResponse, got {:?}", response)
                 }
             }
             (return_value, req_id)
