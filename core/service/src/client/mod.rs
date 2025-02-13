@@ -5922,7 +5922,7 @@ pub(crate) mod tests {
             assert!(response.is_ok());
         }
 
-        _ = wait_for_keygen_result(
+        let keys = wait_for_keygen_result(
             req_keygen.request_id.clone().unwrap(),
             req_preproc,
             &kms_clients,
@@ -5931,6 +5931,10 @@ pub(crate) mod tests {
             false,
         )
         .await;
+        _ = keys.clone().get_standard();
+
+        let panic_res = std::panic::catch_unwind(|| keys.get_decompression_only());
+        assert!(panic_res.is_err());
     }
 
     #[cfg(feature = "slow_tests")]
@@ -6174,14 +6178,15 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(feature = "slow_tests")]
+    #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     #[allow(clippy::large_enum_variant)]
+    #[derive(Clone)]
     enum TestKeyGenResult {
         DecompressionOnly(tfhe::integer::compression_keys::DecompressionKey),
         Standard((tfhe::ClientKey, tfhe::CompactPublicKey, tfhe::ServerKey)),
     }
 
-    #[cfg(feature = "slow_tests")]
+    #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     impl TestKeyGenResult {
         fn get_decompression_only(self) -> tfhe::integer::compression_keys::DecompressionKey {
             match self {

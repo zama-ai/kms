@@ -1185,29 +1185,6 @@ where
 
 #[cfg(test)]
 pub mod tests {
-    use std::path::Path;
-
-    use itertools::Itertools;
-    use tfhe::{
-        core_crypto::{
-            algorithms::{
-                convert_standard_lwe_bootstrap_key_to_fourier_128, par_generate_lwe_bootstrap_key,
-            },
-            commons::{
-                generators::{DeterministicSeeder, EncryptionRandomGenerator},
-                math::random::{DefaultRandomGenerator, TUniform},
-                traits::CastInto,
-            },
-            entities::{Fourier128LweBootstrapKey, GlweSecretKey, LweBootstrapKey, LweSecretKey},
-        },
-        integer::parameters::DynamicDistribution,
-        prelude::{CiphertextList, FheDecrypt, FheMin, FheTryEncrypt},
-        set_server_key,
-        shortint::parameters::CoreCiphertextModulus,
-        CompressedCiphertextListBuilder, FheUint32, FheUint64, FheUint8,
-    };
-    use tfhe_csprng::seeders::Seeder;
-
     use crate::execution::{
         random::{get_rng, seed_from_rng},
         tfhe_internals::{
@@ -1218,7 +1195,7 @@ pub mod tests {
                 PARAMS_TEST_BK_SNS,
             },
             switch_and_squash::SwitchAndSquashKey,
-            test_feature::{run_decompression_test, to_hl_client_key},
+            test_feature::to_hl_client_key,
             utils::tests::reconstruct_glwe_secret_key_from_file,
         },
     };
@@ -1247,6 +1224,27 @@ pub mod tests {
         },
         networking::NetworkMode,
     };
+    use itertools::Itertools;
+    use std::path::Path;
+    use tfhe::{
+        core_crypto::{
+            algorithms::{
+                convert_standard_lwe_bootstrap_key_to_fourier_128, par_generate_lwe_bootstrap_key,
+            },
+            commons::{
+                generators::{DeterministicSeeder, EncryptionRandomGenerator},
+                math::random::{DefaultRandomGenerator, TUniform},
+                traits::CastInto,
+            },
+            entities::{Fourier128LweBootstrapKey, GlweSecretKey, LweBootstrapKey, LweSecretKey},
+        },
+        integer::parameters::DynamicDistribution,
+        prelude::{CiphertextList, FheDecrypt, FheMin, FheTryEncrypt},
+        set_server_key,
+        shortint::parameters::CoreCiphertextModulus,
+        CompressedCiphertextListBuilder, FheUint32, FheUint64, FheUint8,
+    };
+    use tfhe_csprng::seeders::Seeder;
 
     #[cfg(feature = "slow_tests")]
     use super::{distributed_keygen, distributed_keygen_from_optional_compression_sk};
@@ -1262,6 +1260,7 @@ pub mod tests {
             online::preprocessing::create_memory_factory,
             runtime::session::{BaseSessionHandles, SmallSession, ToBaseSession},
             small_execution::{agree_random::DummyAgreeRandom, offline::SmallPreprocessing},
+            tfhe_internals::test_feature::run_decompression_test,
         },
         tests::helper::tests_and_benches::execute_protocol_small,
     };
