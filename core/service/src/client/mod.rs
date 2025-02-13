@@ -3242,8 +3242,8 @@ pub(crate) mod tests {
             }),
             Some(KeySetAddedInfo {
                 compression_keyset_id: None,
-                from_compression_keyset_id: Some(request_id_1),
-                to_compression_keyset_id: Some(request_id_2),
+                from_keyset_id_decompression_only: Some(request_id_1),
+                to_keyset_id_decompression_only: Some(request_id_2),
             }),
         )
         .await;
@@ -3283,8 +3283,8 @@ pub(crate) mod tests {
             }),
             Some(KeySetAddedInfo {
                 compression_keyset_id: None,
-                from_compression_keyset_id: Some(request_id_1),
-                to_compression_keyset_id: Some(request_id_2),
+                from_keyset_id_decompression_only: Some(request_id_1),
+                to_keyset_id_decompression_only: Some(request_id_2),
             }),
         )
         .await;
@@ -3373,9 +3373,12 @@ pub(crate) mod tests {
                     let keyid_1 = keyset_added_info
                         .clone()
                         .unwrap()
-                        .from_compression_keyset_id
+                        .from_keyset_id_decompression_only
                         .unwrap();
-                    let keyid_2 = keyset_added_info.unwrap().to_compression_keyset_id.unwrap();
+                    let keyid_2 = keyset_added_info
+                        .unwrap()
+                        .to_keyset_id_decompression_only
+                        .unwrap();
                     let priv_storage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
                     let sk_urls = priv_storage
                         .all_urls(&PrivDataType::FheKeyInfo.to_string())
@@ -5810,13 +5813,6 @@ pub(crate) mod tests {
                 .unwrap();
         purge(None, None, &key_id_2.to_string(), amount_parties).await;
 
-        let preproc_id_3 = Some(
-            RequestId::derive(&format!(
-                "decom_dkg_preproc_{amount_parties}_{:?}_3",
-                parameter
-            ))
-            .unwrap(),
-        );
         let key_id_3: RequestId =
             RequestId::derive(&format!("decom_dkg_key_{amount_parties}_{:?}_3", parameter))
                 .unwrap();
@@ -5893,24 +5889,15 @@ pub(crate) mod tests {
         .await;
         let (client_key_2, _public_key_2, _server_key_2) = keys2.get_standard();
 
-        run_preproc(
-            amount_parties,
-            parameter,
-            &kms_clients,
-            &internal_client,
-            &preproc_id_3.clone().unwrap(),
-            None,
-        )
-        .await;
         // finally do the decompression keygen between the first and second keysets
         let decompression_key = run_keygen(
             parameter,
             &kms_clients,
             &internal_client,
-            preproc_id_3,
+            None,
             &key_id_3,
             Some((key_id_1, key_id_2)),
-            false, // The last key generation needs to be done securely for the test to make sense
+            insecure,
         )
         .await
         .get_decompression_only();
@@ -6225,8 +6212,8 @@ pub(crate) mod tests {
             .clone()
             .map(|(from, to)| KeySetAddedInfo {
                 compression_keyset_id: None,
-                from_compression_keyset_id: Some(from),
-                to_compression_keyset_id: Some(to),
+                from_keyset_id_decompression_only: Some(from),
+                to_keyset_id_decompression_only: Some(to),
             });
 
         let req_keygen = internal_client

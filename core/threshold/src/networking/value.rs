@@ -89,6 +89,8 @@ pub enum NetworkValue<Z: Eq + Zero> {
     PubBgvKeySet(Box<PublicBgvKeySet>),
     #[cfg(any(test, feature = "testing"))]
     Crs(Box<CompactPkeCrs>),
+    #[cfg(any(test, feature = "testing"))]
+    DecompressionKey(Box<tfhe::integer::compression_keys::DecompressionKey>),
     RingValue(Z),
     VecRingValue(Vec<Z>),
     VecPairRingValue(Vec<(Z, Z)>),

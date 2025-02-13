@@ -823,8 +823,8 @@ async fn key_gen_background<
         KeySetConfig::DecompressionOnly => match keyset_added_info {
             Some(added_info) => {
                 match (
-                    added_info.from_compression_keyset_id,
-                    added_info.to_compression_keyset_id,
+                    added_info.from_keyset_id_decompression_only,
+                    added_info.to_keyset_id_decompression_only,
                 ) {
                     (Some(from), Some(to)) => {
                         let decompression_key =

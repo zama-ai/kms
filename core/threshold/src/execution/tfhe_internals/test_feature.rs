@@ -21,7 +21,7 @@ use tfhe::{
         },
         seeders::Seeder,
     },
-    integer::block_decomposition::BlockRecomposer,
+    integer::{block_decomposition::BlockRecomposer, compression_keys::DecompressionKey},
     prelude::{FheDecrypt, FheTryEncrypt},
     shortint::{
         self, list_compression::CompressionPrivateKeys, ClassicPBSParameters, ShortintParameterSet,
@@ -63,7 +63,7 @@ use super::{
 };
 
 /// the party ID of the party doing the reconstruction
-pub(crate) const INPUT_PARTY_ID: usize = 1;
+pub const INPUT_PARTY_ID: usize = 1;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct KeySet {
@@ -486,13 +486,8 @@ where
             })
         });
 
-    let transferred_pub_key = transfer_pub_key(
-        session,
-        keyset.map(|set| set.public_keys),
-        &own_role,
-        INPUT_PARTY_ID,
-    )
-    .await?;
+    let transferred_pub_key =
+        transfer_pub_key(session, keyset.map(|set| set.public_keys), INPUT_PARTY_ID).await?;
 
     let shared_sk = PrivateKeySet {
         lwe_compute_secret_key_share: LweSecretKeyShare {
@@ -516,51 +511,15 @@ where
 pub async fn transfer_pub_key<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     session: &S,
     pubkey: Option<FhePubKeySet>,
-    role: &Role,
     input_party_id: usize,
 ) -> anyhow::Result<FhePubKeySet> {
-    session.network().increase_round_counter()?;
-    if role.one_based() == input_party_id {
-        let pubkey_raw =
-            pubkey.ok_or_else(|| anyhow_error_and_log("I have no public key to send!"))?;
-        let num_parties = session.num_parties();
-        let pkval = NetworkValue::<Z128>::PubKeySet(Box::new(pubkey_raw.clone()));
-
-        let mut set = JoinSet::new();
-        for to_send_role in 1..=num_parties {
-            if to_send_role != input_party_id {
-                let identity = session.identity_from(&Role::indexed_by_one(to_send_role))?;
-
-                let networking = Arc::clone(session.network());
-                let send_pk = pkval.clone();
-
-                set.spawn(async move {
-                    let _ = networking.send(send_pk.to_network(), &identity).await;
-                });
-            }
-        }
-        while (set.join_next().await).is_some() {}
-        Ok(pubkey_raw)
-    } else {
-        let receiver = session.identity_from(&Role::indexed_by_one(input_party_id))?;
-        let networking = Arc::clone(session.network());
-        let timeout = session.network().get_timeout_current_round()?;
-        tracing::debug!(
-            "Waiting for receiving public key from input party with timeout {:?}",
-            timeout
-        );
-        let data = tokio::spawn(timeout_at(timeout, async move {
-            networking.receive(&receiver).await
-        }))
-        .await??;
-
-        let pk = match NetworkValue::<Z128>::from_network(data)? {
-            NetworkValue::PubKeySet(pk) => pk,
-            _ => Err(anyhow_error_and_log(
-                "I have received sth different from a public key!",
-            ))?,
-        };
-        Ok(*pk)
+    let pkval = pubkey.map(|inner| NetworkValue::<Z128>::PubKeySet(Box::new(inner)));
+    let network_val = transfer_network_value(session, pkval, input_party_id).await?;
+    match network_val {
+        NetworkValue::PubKeySet(pk) => Ok(*pk),
+        _ => Err(anyhow_error_and_log(
+            "I have received something different from a public key!",
+        ))?,
     }
 }
 
@@ -570,39 +529,71 @@ pub async fn transfer_crs<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     some_crs: Option<CompactPkeCrs>,
     input_party_id: usize,
 ) -> anyhow::Result<CompactPkeCrs> {
+    let crs = some_crs.map(|inner| NetworkValue::<Z128>::Crs(Box::new(inner)));
+    let network_val = transfer_network_value(session, crs, input_party_id).await?;
+    match network_val {
+        NetworkValue::Crs(crs) => Ok(*crs),
+        _ => Err(anyhow_error_and_log(
+            "I have received something different from a CRS!",
+        ))?,
+    }
+}
+
+pub async fn transfer_decompression_key<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    session: &S,
+    decompression_key: Option<DecompressionKey>,
+    input_party_id: usize,
+) -> anyhow::Result<DecompressionKey> {
+    let decompression_key =
+        decompression_key.map(|inner| NetworkValue::<Z128>::DecompressionKey(Box::new(inner)));
+    let network_val = transfer_network_value(session, decompression_key, input_party_id).await?;
+    match network_val {
+        NetworkValue::DecompressionKey(dk) => Ok(*dk),
+        _ => Err(anyhow_error_and_log(
+            "I have received something different from a DecompressionKey!",
+        ))?,
+    }
+}
+
+async fn transfer_network_value<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    session: &S,
+    network_value: Option<NetworkValue<Z128>>,
+    input_party_id: usize,
+) -> anyhow::Result<NetworkValue<Z128>> {
     session.network().increase_round_counter()?;
     if session.my_role()?.one_based() == input_party_id {
-        // send CRS
-        let crs = some_crs.ok_or_else(|| anyhow_error_and_log("I have no CRS to send!"))?;
+        // send the value
+        let network_val =
+            network_value.ok_or_else(|| anyhow_error_and_log("I have no value to send!"))?;
         let num_parties = session.num_parties();
         tracing::debug!(
-            "I'm the input party. Sending CRS to {} other parties...",
+            "I'm the input party. Sending value to {} other parties...",
             num_parties - 1
         );
-        let crs_network_val = NetworkValue::<Z128>::Crs(Box::new(crs.clone()));
 
         let mut set = JoinSet::new();
+        let buf_to_send = network_val.clone().to_network();
         for receiver in 1..=num_parties {
             if receiver != input_party_id {
                 let rcv_identity = session.identity_from(&Role::indexed_by_one(receiver))?;
 
                 let networking = Arc::clone(session.network());
-                let send_crs = crs_network_val.clone();
 
+                let cloned_buf = buf_to_send.clone();
                 set.spawn(async move {
-                    let _ = networking.send(send_crs.to_network(), &rcv_identity).await;
+                    let _ = networking.send(cloned_buf, &rcv_identity).await;
                 });
             }
         }
         while (set.join_next().await).is_some() {}
-        Ok(crs)
+        Ok(network_val)
     } else {
-        // receive CRS
+        // receive the value
         let sender_identity = session.identity_from(&Role::indexed_by_one(input_party_id))?;
         let networking = Arc::clone(session.network());
         let timeout = session.network().get_timeout_current_round()?;
         tracing::debug!(
-            "Waiting to receive CRS from input party with timeout {:?}",
+            "Waiting to receive value from input party with timeout {:?}",
             timeout
         );
         let data = tokio::spawn(timeout_at(timeout, async move {
@@ -610,13 +601,7 @@ pub async fn transfer_crs<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         }))
         .await??;
 
-        let crs = match NetworkValue::<Z128>::from_network(data)? {
-            NetworkValue::Crs(crs) => crs,
-            _ => Err(anyhow_error_and_log(
-                "I have received something different from a CRS!",
-            ))?,
-        };
-        Ok(*crs)
+        Ok(NetworkValue::<Z128>::from_network(data)?)
     }
 }
 

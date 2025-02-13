@@ -11,14 +11,11 @@ use crate::engine::base::{
 };
 use crate::engine::base::{compute_info, preproc_proto_to_keyset_config};
 use crate::engine::base::{convert_key_response, DecCallValues, KeyGenCallValues, ReencCallValues};
-use crate::engine::centralized::central_kms::async_generate_crs;
 use crate::engine::threshold::generic::GenericKms;
 use crate::engine::threshold::traits::{
     CrsGenerator, Decryptor, Initiator, KeyGenPreprocessor, KeyGenerator, ProvenCtVerifier,
     Reencryptor,
 };
-#[cfg(feature = "insecure")]
-use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
 use crate::engine::validation::{
     validate_decrypt_req, validate_reencrypt_req, validate_request_id,
 };
@@ -67,9 +64,6 @@ use distributed_decryption::execution::runtime::session::{
 use distributed_decryption::execution::small_execution::prss::PRSSSetup;
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 use distributed_decryption::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
-use distributed_decryption::execution::tfhe_internals::test_feature::{
-    initialize_key_material, transfer_crs,
-};
 use distributed_decryption::execution::zk::ceremony::{
     compute_witness_dim, Ceremony, RealCeremony,
 };
@@ -117,6 +111,22 @@ use tonic::{Request, Response, Status};
 use tonic_health::pb::health_server::{Health, HealthServer};
 use tonic_health::server::HealthReporter;
 use tracing::Instrument;
+
+cfg_if::cfg_if! {
+    if #[cfg(feature = "insecure")] {
+        use crate::engine::centralized::central_kms::async_generate_crs;
+        use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
+        use distributed_decryption::algebra::galois_rings::common::{ResiduePoly};
+        use distributed_decryption::execution::sharing::open::robust_opens_to;
+        use distributed_decryption::execution::tfhe_internals::compression_decompression_key::CompressionPrivateKeyShares;
+        use distributed_decryption::execution::tfhe_internals::glwe_key::GlweSecretKeyShare;
+        use distributed_decryption::execution::tfhe_internals::test_feature::{
+            initialize_key_material, to_hl_client_key, transfer_crs, transfer_decompression_key,
+            INPUT_PARTY_ID,
+        };
+        use tfhe::core_crypto::prelude::{GlweSecretKeyOwned, LweSecretKeyOwned};
+    }
+}
 
 /// Initialize a threshold KMS server using the DDec initialization protocol.
 /// This MUST be done before the server is started.
@@ -1869,7 +1879,11 @@ impl<
             .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
 
         let inner = request.into_inner();
-        tracing::info!("Keygen Request ID: {:?}", inner.request_id);
+        tracing::info!(
+            "Keygen Request ID: {:?}, insecure={}",
+            inner.request_id,
+            insecure
+        );
         let request_id = tonic_some_or_err(
             inner.request_id.clone(),
             "Request ID is not set (inner key gen)".to_string(),
@@ -1884,7 +1898,7 @@ impl<
             ));
         }
 
-        //Retrieve kg params and preproc_id
+        // Retrieve kg params and preproc_id
         let dkg_params = tonic_handle_potential_err(
             retrieve_parameters(inner.params),
             "Parameter choice is not recognized".to_string(),
@@ -1915,8 +1929,8 @@ impl<
 
         let keyset_added_info = inner.keyset_added_info.unwrap_or(KeySetAddedInfo {
             compression_keyset_id: None,
-            from_compression_keyset_id: None,
-            to_compression_keyset_id: None,
+            from_keyset_id_decompression_only: None,
+            to_keyset_id_decompression_only: None,
         });
 
         tonic_handle_potential_err(
@@ -1954,7 +1968,7 @@ impl<
         }))
     }
 
-    async fn decompression_key_gen_background_closure<P>(
+    async fn decompression_key_gen_closure<P>(
         base_session: &mut BaseSessionStruct<AesRng, SessionParameters>,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
         params: DKGParams,
@@ -1967,18 +1981,20 @@ impl<
             > + Send
             + ?Sized,
     {
-        let from_key_id = keyset_added_info
-            .from_compression_keyset_id
-            .ok_or(anyhow::anyhow!(
+        let from_key_id =
+            keyset_added_info
+                .from_keyset_id_decompression_only
+                .ok_or(anyhow::anyhow!(
                 "missing from key ID for the keyset that contains the compression secret key share"
             ))?;
-        let to_key_id = keyset_added_info
-            .to_compression_keyset_id
-            .ok_or(anyhow::anyhow!(
-                "missing to key ID for the keyset that contains the compression secret key share"
-            ))?;
+        let to_key_id =
+            keyset_added_info
+                .to_keyset_id_decompression_only
+                .ok_or(anyhow::anyhow!(
+                    "missing to key ID for the keyset that contains the glwe secret key share"
+                ))?;
 
-        let private_compression_key = {
+        let private_compression_share = {
             let threshold_keys = crypto_storage
                 .read_guarded_threshold_fhe_keys_from_cache(&from_key_id)
                 .await?;
@@ -1994,7 +2010,7 @@ impl<
                 CompressionPrivateKeySharesEnum::Z128(share) => share,
             }
         };
-        let private_glwe_compute_key = {
+        let private_glwe_compute_share = {
             let threshold_keys = crypto_storage
                 .read_guarded_threshold_fhe_keys_from_cache(&to_key_id)
                 .await?;
@@ -2009,11 +2025,168 @@ impl<
             base_session,
             preprocessing,
             params,
-            &private_glwe_compute_key,
-            &private_compression_key,
+            &private_glwe_compute_share,
+            &private_compression_share,
         )
         .await?;
         Ok(DecompressionKey::from_raw_parts(shortint_decompression_key))
+    }
+
+    #[cfg(feature = "insecure")]
+    async fn get_glwe_and_compression_key_shares(
+        keyset_added_info: KeySetAddedInfo,
+        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
+    ) -> anyhow::Result<(
+        GlweSecretKeyShare<Z128, 4>,
+        CompressionPrivateKeyShares<Z128, 4>,
+    )> {
+        let compression_req_id =
+            keyset_added_info
+                .from_keyset_id_decompression_only
+                .ok_or(anyhow::anyhow!(
+                "missing from key ID for the keyset that contains the compression secret key share"
+            ))?;
+        let glwe_req_id =
+            keyset_added_info
+                .to_keyset_id_decompression_only
+                .ok_or(anyhow::anyhow!(
+                    "missing to key ID for the keyset that contains the glwe secret key share"
+                ))?;
+
+        crypto_storage
+            .refresh_threshold_fhe_keys(&glwe_req_id)
+            .await?;
+        let glwe_shares = {
+            let guard = crypto_storage
+                .read_guarded_threshold_fhe_keys_from_cache(&glwe_req_id)
+                .await?;
+            match &guard.private_keys.glwe_secret_key_share {
+                GlweSecretKeyShareEnum::Z64(_) => anyhow::bail!("expected glwe shares to be z128"),
+                GlweSecretKeyShareEnum::Z128(inner) => inner.clone(),
+            }
+        };
+
+        crypto_storage
+            .refresh_threshold_fhe_keys(&compression_req_id)
+            .await?;
+        let compression_shares = {
+            let guard = crypto_storage
+                .read_guarded_threshold_fhe_keys_from_cache(&compression_req_id)
+                .await?;
+            match &guard.private_keys.glwe_secret_key_share_compression {
+                Some(compression_enum) => match compression_enum {
+                    CompressionPrivateKeySharesEnum::Z64(_) => {
+                        anyhow::bail!("expected compression shares to be z128")
+                    }
+                    CompressionPrivateKeySharesEnum::Z128(inner) => inner.clone(),
+                },
+                None => anyhow::bail!("expected compression shares to exist"),
+            }
+        };
+        Ok((glwe_shares, compression_shares))
+    }
+
+    #[cfg(feature = "insecure")]
+    async fn reconstruct_glwe_and_compression_key_shares(
+        base_session: &BaseSessionStruct<AesRng, SessionParameters>,
+        params: DKGParams,
+        glwe_shares: GlweSecretKeyShare<Z128, 4>,
+        compression_shares: CompressionPrivateKeyShares<Z128, 4>,
+    ) -> anyhow::Result<DecompressionKey> {
+        let output_party = Role::indexed_by_one(INPUT_PARTY_ID);
+
+        // we need Vec<ResiduePoly> but we're given Vec<Share<ResiduePoly>>
+        // so we need to call collect_vec()
+        let opt_glwe_secret_key = robust_opens_to(
+            base_session,
+            &glwe_shares.data.iter().map(|x| x.value()).collect_vec(),
+            base_session.parameters.threshold as usize,
+            &output_party,
+        )
+        .await?;
+        let opt_compression_secret_key = robust_opens_to(
+            base_session,
+            &compression_shares
+                .post_packing_ks_key
+                .data
+                .iter()
+                .map(|x| x.value())
+                .collect_vec(),
+            base_session.parameters.threshold as usize,
+            &output_party,
+        )
+        .await?;
+
+        let convert_to_bit = |input: Vec<ResiduePoly<Z128, 4>>| -> anyhow::Result<Vec<u64>> {
+            let mut out = Vec::with_capacity(input.len());
+            for i in input {
+                let bit = i.coefs[0].0 as u64;
+                if bit > 1 {
+                    anyhow::bail!("reconstructed failed, expected a bit but found {}", bit)
+                }
+                out.push(bit);
+            }
+            Ok(out)
+        };
+
+        let params_handle = params.get_params_basics_handle();
+        let compression_params = params_handle
+            .get_compression_decompression_params()
+            .ok_or(anyhow::anyhow!("missing compression parameters"))?
+            .raw_compression_parameters;
+        let opt_decompression_key = match (opt_glwe_secret_key, opt_compression_secret_key) {
+            (Some(glwe_secret_key), Some(compression_secret_key)) => {
+                let bit_glwe_secret_key = GlweSecretKeyOwned::from_container(
+                    convert_to_bit(glwe_secret_key)?,
+                    params_handle.polynomial_size(),
+                );
+                let bit_compression_secret_key =
+                    tfhe::integer::compression_keys::CompressionPrivateKeys::from_raw_parts(
+                        tfhe::shortint::list_compression::CompressionPrivateKeys {
+                            post_packing_ks_key: GlweSecretKeyOwned::from_container(
+                                convert_to_bit(compression_secret_key)?,
+                                compression_params.packing_ks_polynomial_size,
+                            ),
+                            params: compression_params,
+                        },
+                    );
+
+                let dummy_lwe_secret_key =
+                    LweSecretKeyOwned::from_container(vec![0u64; params_handle.lwe_dimension().0]);
+
+                let regular_params = match params {
+                    DKGParams::WithSnS(p) => p.regular_params,
+                    DKGParams::WithoutSnS(p) => p,
+                };
+                let (client_key, _, _, _) = to_hl_client_key(
+                    &regular_params,
+                    dummy_lwe_secret_key,
+                    bit_glwe_secret_key,
+                    None,
+                    None,
+                )
+                .into_raw_parts();
+
+                let (_, decompression_key) =
+                    client_key.new_compression_decompression_keys(&bit_compression_secret_key);
+                Some(decompression_key)
+            }
+            (None, None) => {
+                // I'm not party 1, so I don't get to open the shares
+                None
+            }
+            _ => {
+                anyhow::bail!("failed to open the glwe and/or the compression secret key")
+            }
+        };
+
+        // now party 1 sends the decompression key to everyone
+        transfer_decompression_key(
+            base_session,
+            opt_decompression_key,
+            output_party.one_based(),
+        )
+        .await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2033,17 +2206,35 @@ impl<
         let start = Instant::now();
         let dkg_res = match preproc_handle_w_mode {
             PreprocHandleWithMode::Insecure => {
-                // TODO implement insecure decompression keygen
-                let mut guarded_meta_storage = meta_store.write().await;
-                let _ = guarded_meta_storage.update(
-                    req_id,
-                    Err("Insecure decompression keygen is not supported".to_string()),
-                );
-                return;
+                // sanity check to make sure we're using the insecure feature
+                #[cfg(not(feature = "insecure"))]
+                {
+                    panic!("attempting to call insecure compression keygen when the insecure feature is not set");
+                }
+                #[cfg(feature = "insecure")]
+                {
+                    match Self::get_glwe_and_compression_key_shares(
+                        keyset_added_info,
+                        crypto_storage.clone(),
+                    )
+                    .await
+                    {
+                        Ok((glwe_shares, compression_shares)) => {
+                            Self::reconstruct_glwe_and_compression_key_shares(
+                                &base_session,
+                                params,
+                                glwe_shares,
+                                compression_shares,
+                            )
+                            .await
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
             }
             PreprocHandleWithMode::Secure(preproc_handle) => {
                 let mut preproc_handle = preproc_handle.lock().await;
-                Self::decompression_key_gen_background_closure(
+                Self::decompression_key_gen_closure(
                     &mut base_session,
                     crypto_storage.clone(),
                     params,
@@ -2149,25 +2340,35 @@ impl<
         let start = Instant::now();
         let dkg_res = match preproc_handle_w_mode {
             PreprocHandleWithMode::Insecure => {
-                match (
-                    keyset_config.compression_config,
-                    keyset_config.computation_key_type,
-                ) {
-                    (
-                        ddec_keyset_config::KeySetCompressionConfig::Generate,
-                        ddec_keyset_config::ComputeKeyType::Cpu,
-                    ) => initialize_key_material(&mut base_session, params).await,
-                    _ => {
-                        // TODO insecure keygen from existing compression key is not supported
-                        let mut guarded_meta_storage = meta_store.write().await;
-                        let _ = guarded_meta_storage.update(
+                // sanity check to make sure we're using the insecure feature
+                #[cfg(not(feature = "insecure"))]
+                {
+                    panic!(
+                        "attempting to call insecure keygen when the insecure feature is not set"
+                    );
+                }
+                #[cfg(feature = "insecure")]
+                {
+                    match (
+                        keyset_config.compression_config,
+                        keyset_config.computation_key_type,
+                    ) {
+                        (
+                            ddec_keyset_config::KeySetCompressionConfig::Generate,
+                            ddec_keyset_config::ComputeKeyType::Cpu,
+                        ) => initialize_key_material(&mut base_session, params).await,
+                        _ => {
+                            // TODO insecure keygen from existing compression key is not supported
+                            let mut guarded_meta_storage = meta_store.write().await;
+                            let _ = guarded_meta_storage.update(
                             req_id,
                             Err(
                                 "insecure keygen from existing compression key is not supported"
                                     .to_string(),
                             ),
                         );
-                        return;
+                            return;
+                        }
                     }
                 }
             }
@@ -2702,31 +2903,40 @@ impl<
         );
         let _permit = permit;
         let crs_start_timer = Instant::now();
-        let my_role = base_session
-            .my_role()
-            .map_err(|e| tracing::error!("Error getting role: {e}"))
-            .expect("No role found in the session");
         let pke_params = params
             .get_params_basics_handle()
             .get_compact_pk_enc_params();
         let pp = if insecure {
-            // We let the first party sample the seed (we are using 1-based party IDs)
-            let input_party_id = 1;
-            if my_role.one_based() == input_party_id {
-                let crs_res =
-                    async_generate_crs(&sk, rng, params, max_num_bits, eip712_domain.as_ref())
-                        .await;
-                let crs = match crs_res {
-                    Ok((crs, _)) => crs,
-                    Err(e) => {
-                        let mut guarded_meta_store = meta_store.write().await;
-                        let _ = guarded_meta_store.update(req_id, Err(e.to_string()));
-                        return;
-                    }
-                };
-                transfer_crs(&base_session, Some(crs), input_party_id).await
-            } else {
-                transfer_crs(&base_session, None, input_party_id).await
+            // sanity check to make sure we're using the insecure feature
+            #[cfg(not(feature = "insecure"))]
+            {
+                let _ = rng; // stop clippy from complaining
+                panic!("attempting to call insecure crsgen when the insecure feature is not set");
+            }
+            #[cfg(feature = "insecure")]
+            {
+                let my_role = base_session
+                    .my_role()
+                    .map_err(|e| tracing::error!("Error getting role: {e}"))
+                    .expect("No role found in the session");
+                // We let the first party sample the seed (we are using 1-based party IDs)
+                let input_party_id = 1;
+                if my_role.one_based() == input_party_id {
+                    let crs_res =
+                        async_generate_crs(&sk, rng, params, max_num_bits, eip712_domain.as_ref())
+                            .await;
+                    let crs = match crs_res {
+                        Ok((crs, _)) => crs,
+                        Err(e) => {
+                            let mut guarded_meta_store = meta_store.write().await;
+                            let _ = guarded_meta_store.update(req_id, Err(e.to_string()));
+                            return;
+                        }
+                    };
+                    transfer_crs(&base_session, Some(crs), input_party_id).await
+                } else {
+                    transfer_crs(&base_session, None, input_party_id).await
+                }
             }
         } else {
             // real, secure ceremony (insecure = false)

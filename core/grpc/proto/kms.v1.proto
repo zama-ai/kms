@@ -78,10 +78,10 @@ message KeySetAddedInfo {
   RequestId compression_keyset_id = 1;
 
   // Must be set if KeySetType::DecompressionOnly is used
-  RequestId from_compression_keyset_id = 2;
+  RequestId from_keyset_id_decompression_only = 2;
 
   // Must be set if KeySetType::DecompressionOnly is used
-  RequestId to_compression_keyset_id = 3;
+  RequestId to_keyset_id_decompression_only = 3;
 }
 
 // The keyset configuration message.
