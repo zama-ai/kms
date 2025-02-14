@@ -12,16 +12,16 @@ use crate::{
 
 /// Adapter for decryption operations
 pub struct DecryptionAdapter<P: Provider + Clone> {
-    contract_address: Address,
+    decryption_address: Address,
     provider: Arc<P>,
     wallet: Arc<KmsWallet>,
 }
 
 impl<P: Provider + Clone> DecryptionAdapter<P> {
     /// Create a new decryption adapter
-    pub fn new(contract_address: Address, provider: Arc<P>, wallet: KmsWallet) -> Self {
+    pub fn new(decryption_address: Address, provider: Arc<P>, wallet: KmsWallet) -> Self {
         Self {
-            contract_address,
+            decryption_address,
             provider,
             wallet: Arc::new(wallet),
         }
@@ -34,7 +34,7 @@ impl<P: Provider + Clone> DecryptionAdapter<P> {
         result: Bytes,
         signature: Bytes,
     ) -> Result<()> {
-        let contract = IDecryptionManager::new(self.contract_address, self.provider.clone());
+        let contract = IDecryptionManager::new(self.decryption_address, self.provider.clone());
 
         // Create and send transaction
         let call = contract.publicDecryptionResponse(id, result, signature);
@@ -54,7 +54,7 @@ impl<P: Provider + Clone> DecryptionAdapter<P> {
         result: Bytes,
         signature: Bytes,
     ) -> Result<()> {
-        let contract = IDecryptionManager::new(self.contract_address, self.provider.clone());
+        let contract = IDecryptionManager::new(self.decryption_address, self.provider.clone());
 
         // Create and send transaction
         let call = contract.userDecryptionResponse(id, result, signature);

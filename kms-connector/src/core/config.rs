@@ -5,28 +5,43 @@ use serde::{Deserialize, Serialize};
 use std::{fs, path::Path, str::FromStr};
 
 /// Configuration for the KMS connector
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
-    /// WebSocket RPC URL for L2 connection
-    pub rpc_url: Option<String>,
-
-    /// Mnemonic phrase for wallet generation (BIP39)
+    /// Gateway L2 RPC endpoint
+    #[serde(default)]
+    pub gwl2_url: Option<String>,
+    /// KMS Core endpoint
+    #[serde(default)]
+    pub kms_core_endpoint: Option<String>,
+    /// Mnemonic phrase for the wallet
     pub mnemonic: String,
-
-    /// Optional passphrase for additional security
+    /// Optional passphrase for the wallet
+    #[serde(default)]
     pub passphrase: Option<String>,
-
-    /// Chain ID for the L2 network
+    /// Chain ID
     pub chain_id: u64,
-
-    /// Address of the DecryptionManager contract (in hex format with 0x prefix)
+    /// Decryption manager contract address
     pub decryption_manager_address: String,
-
-    /// Address of the HTTPZ contract (in hex format with 0x prefix)
+    /// HTTPZ contract address
     pub httpz_address: String,
-
-    /// Size of the event processing channel
+    /// Channel size for event processing
+    #[serde(default)]
     pub channel_size: Option<usize>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            gwl2_url: Some("ws://localhost:8545".to_string()),
+            kms_core_endpoint: Some("http://localhost:50052".to_string()),
+            mnemonic: "test test test test test test test test test test test junk".to_string(),
+            passphrase: None,
+            chain_id: 1,
+            decryption_manager_address: "0x0000000000000000000000000000000000000000".to_string(),
+            httpz_address: "0x0000000000000000000000000000000000000000".to_string(),
+            channel_size: None,
+        }
+    }
 }
 
 impl Config {
@@ -92,7 +107,8 @@ mod tests {
     #[test]
     fn test_load_valid_config() {
         let config = Config {
-            rpc_url: Some("ws://localhost:8545".to_string()),
+            gwl2_url: Some("ws://localhost:8545".to_string()),
+            kms_core_endpoint: Some("http://localhost:50052".to_string()),
             mnemonic: "test test test test test test test test test test test junk".to_string(),
             passphrase: None,
             chain_id: 1,
@@ -106,38 +122,52 @@ mod tests {
 
         let loaded_config = Config::from_file(temp_file.path()).unwrap();
 
-        assert_eq!(config.rpc_url, loaded_config.rpc_url);
+        // Compare fields
+        assert_eq!(config.gwl2_url, loaded_config.gwl2_url);
+        assert_eq!(config.kms_core_endpoint, loaded_config.kms_core_endpoint);
         assert_eq!(config.mnemonic, loaded_config.mnemonic);
+        assert_eq!(config.passphrase, loaded_config.passphrase);
         assert_eq!(config.chain_id, loaded_config.chain_id);
+        assert_eq!(
+            config.decryption_manager_address,
+            loaded_config.decryption_manager_address
+        );
+        assert_eq!(config.httpz_address, loaded_config.httpz_address);
         assert_eq!(config.channel_size, loaded_config.channel_size);
+        assert_eq!(config.kms_core_endpoint, loaded_config.kms_core_endpoint);
     }
 
     #[test]
     fn test_save_config() {
         let config = Config {
-            rpc_url: Some("ws://localhost:8545".to_string()),
+            gwl2_url: Some("ws://localhost:8545".to_string()),
+            kms_core_endpoint: Some("http://localhost:50052".to_string()),
             mnemonic: "test test test test test test test test test test test junk".to_string(),
             passphrase: None,
             chain_id: 1,
             decryption_manager_address: "0x0000000000000000000000000000000000000000".to_string(),
             httpz_address: "0x0000000000000000000000000000000000000000".to_string(),
-            channel_size: Some(100),
+            channel_size: None,
         };
 
-        let temp_file = NamedTempFile::new().unwrap();
-        assert!(config.to_file(temp_file.path()).is_ok());
+        config.to_file("test_config.toml").unwrap();
+        let loaded_config = Config::from_file("test_config.toml").unwrap();
+        assert_eq!(config.gwl2_url, loaded_config.gwl2_url);
+
+        fs::remove_file("test_config.toml").unwrap();
     }
 
     #[test]
     fn test_invalid_address() {
         let config = Config {
-            rpc_url: Some("ws://localhost:8545".to_string()),
+            gwl2_url: Some("ws://localhost:8545".to_string()),
+            kms_core_endpoint: Some("http://localhost:50052".to_string()),
             mnemonic: "test test test test test test test test test test test junk".to_string(),
             passphrase: None,
             chain_id: 1,
-            decryption_manager_address: "invalid".to_string(),
-            httpz_address: "0x0000000000000000000000000000000000000000".to_string(),
-            channel_size: Some(100),
+            decryption_manager_address: "0x0000".to_string(),
+            httpz_address: "0x000010".to_string(),
+            channel_size: None,
         };
 
         let temp_file = NamedTempFile::new().unwrap();

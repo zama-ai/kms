@@ -20,25 +20,24 @@ alloy = { version = "0.11", features = [
     "rpc-client",
     "rpc-types-debug",
     "rpc-types-trace",
-    "signer-aws",
-    "signer-gcp",
-    "signer-keystore",
-    "signer-ledger",
     "signer-mnemonic",
-    "signer-trezor",
-    "signer-yubihsm",
 ] }
 alloy-provider = { version = "0.11.0", features = ["ws"] }
 alloy-contract = "0.11.0"
 alloy-signer = "0.11.0"
 alloy-signer-local = { version = "0.11.0", features = ["mnemonic"] }
 alloy-transport = "0.11.0"
+alloy-rpc-types-eth = "0.11.1"
+prost = "0.13"
+prost-types = "0.13"
+tonic = { version = "0.12.3", features = ["transport","tls","tls-roots"] }
 tokio = { version = "1.43.0", features = ["full"] }
 toml = "0.8.20"
 futures = "0.3"
 thiserror = "2.0.11"
 anyhow = "1.0"
 tracing = "0.1"
+tower = "0.5.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio-stream = "0.1"
@@ -52,3 +51,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 tempfile = "=3.16.0"
+
+[build-dependencies]
+tonic-build = { version = "0.12.3", features = ["prost"] }

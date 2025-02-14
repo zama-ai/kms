@@ -1,4 +1,4 @@
-name: "[Blockchain-Connector-Merge Main] Pipeline Run"
+name: "[KMS-Connector-Merge Main] Pipeline Run"
 
 on:
   schedule:
@@ -7,24 +7,21 @@ on:
   push:
     branches: ['main']
     paths:
-      - 'blockchain/client/**'
-      - 'blockchain/connector/**'
-      - 'blockchain/events/**'
+      - 'kms-connector/**'
       - 'conf-trace/**'
       - 'core/grpc/**'
-      - '.github/workflows/blockchain-connector-main.yml'
+      - '.github/workflows/kms-connector-main.yml'
 
 concurrency:
-  group: blockchain-connector-${{ github.ref }}
+  group: kms-connector-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   build:
     uses: ./.github/workflows/common-build-big-instance.yml
     with:
-      working-directory: './blockchain/connector'
-      args-tests: '-F slow_tests'
-      package-name: 'kms-blockchain-connector'
+      working-directory: './kms-connector'
+      package-name: 'kms-connector'
     permissions:
       contents: 'write'
       id-token: 'write'
@@ -41,9 +38,9 @@ jobs:
       id-token: 'write'
       packages: 'write'
     with:
-      working-directory: "./blockchain/connector"
+      working-directory: "./kms-connector"
       push_image: true
-      image-name: 'kms-blockchain-connector'
+      image-name: 'kms-connector'
     needs:
       - build
     secrets:

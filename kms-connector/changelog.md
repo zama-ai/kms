@@ -1,6 +1,6 @@
 # KMS Connector Changelog
 
-## Implementation Status (as of 2025-02-12)
+## Implementation Status (as of 2025-02-14)
 
 ### 1. Core Infrastructure ⚙️
 
@@ -13,16 +13,20 @@
 - WebSocket-based event subscription system
 - Core connector implementation with MPSC orchestration
 - Basic configuration management
+- Reconnection and error recovery mechanisms
+- Keepalive mechanism implementation (10s interval)
+- Efficient event processing with fixed timeouts
+- Graceful shutdown coordination
+- Resource cleanup with proper Drop implementations
 
 #### 1.2. In Progress 🚧
 
+- Full event pub-sub system with KMS-core and Gateway L2 (!)
 - Full configuration management
-- Reconnection and error recovery mechanisms
-- Keepalive mechanism implementation (10s interval)
 
 #### 1.3. Not Started ❌
 
-- Metrics collection
+- Metrics collection system design
 - Full provider implementation with advanced contract calls
 - Performance optimization and monitoring
 
@@ -33,22 +37,23 @@
 - Basic adapter structure
 - Event type definitions for:
   - Public/User decryption requests
+  - FHE key generation
+  - CRS generation
 - Event filtering mechanisms
 - Decryption adapter implementation
 - HTTPZ adapter implementation
 - Event handling logic with Alloy integration
+- Advanced error recovery with retry mechanisms
+- Efficient task management and cleanup
 
 #### 2.2. In Progress 🚧
 
-- Full event subscription system with KMS-core io
-- Event type definitions for IHTTPZ (still in development by Roman and Isaac):
-  - FHE key generation
-  - CRS generation
+- Performance optimization for high-throughput scenarios
+- Event batching considerations
 
 #### 2.3. Not Started ❌
 
-- Advanced error recovery strategies
-- Performance optimization for high-throughput scenarios
+- Advanced monitoring and metrics collection
 
 ### 3. KMS Operations Layer 🛠️
 
@@ -57,18 +62,19 @@
 - Operation interface definitions
 - Basic operation flow structure
 - Event-driven operation orchestration
-
-#### 3.2. In Progress 🚧
-
 - Public decryption operations
 - User decryption operations
 - Key generation operations
 - CRS generation operations
 
-#### 3.3. Not Started ❌
+#### 3.2. In Progress 🚧
 
 - Advanced operation retry mechanisms
 - Operation monitoring and metrics
+
+#### 3.3. Not Started ❌
+
+- shifting to new types for grpc requests/responses with KMS Core (!)
 
 ### 4. Smart Contract Interfaces 📝
 
@@ -94,16 +100,17 @@
 - Basic unit test infrastructure
 - Event parsing tests
 - Contract interaction tests
+- WebSocket connection tests
+- Event subscription tests
 
 #### 5.2. In Progress 🚧
 
-#### 5.3. Not Started ❌
-
 - Integration tests
-- WebSocket connection tests
-- Event subscription tests
 - Transaction handling tests
 - Performance benchmarks
+
+#### 5.3. Not Started ❌
+
 - Load testing
 - Chaos testing
 - End-to-end system tests

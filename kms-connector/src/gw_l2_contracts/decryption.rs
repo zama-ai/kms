@@ -1,14 +1,42 @@
-use alloy_primitives::{Address, U256};
 use alloy_sol_types::sol;
 
 sol! {
     #[sol(rpc)]
     #[derive(Debug)]
+    interface IACLManager {
+        struct CtHandleCiphertext128Pair {
+            uint256 ctHandle;
+            bytes ciphertext128;
+        }
+
+        function allowUserDecrypt(uint256 chainId, uint256 ctHandle, address allowedAddress) external;
+        function allowPublicDecrypt(uint256 ctHandle) external;
+        function delegateAccount(
+            uint256 chainId,
+            address delegator,
+            address delegatee,
+            address[] calldata allowedContracts
+        ) external;
+        function getUserCiphertexts(
+            uint256 chainId,
+            address userAddress,
+            IDecryptionManager.CtHandleContractPair[] calldata ctHandleContractPairs
+        ) external view returns (CtHandleCiphertext128Pair[] calldata);
+        function getPublicCiphertexts(
+            uint256[] calldata ctHandles
+        ) external view returns (CtHandleCiphertext128Pair[] calldata);
+    }
+
+    #[sol(rpc)]
+    #[derive(Debug)]
     interface IDecryptionManager {
-        struct CiphertextContract {
+        struct CtHandleContractPair {
             uint256 ciphertextHandle;
             address contractAddress;
         }
+
+        error InvalidKmsSigner(address invalidSigner);
+        error KmsSignerAlreadySigned(uint256 publicDecryptionId, address signer);
 
         function publicDecryptionRequest(uint256[] calldata ciphertextHandles) external;
 
@@ -19,7 +47,7 @@ sol! {
         ) external;
 
         function userDecryptionRequest(
-            CiphertextContract[] calldata ciphertextContracts,
+            CtHandleContractPair[] calldata ctHandleContractPairs,
             address userAddress,
             bytes calldata publicKey,
             uint256 eip712ChainId,
@@ -35,7 +63,7 @@ sol! {
 
         event PublicDecryptionRequest(
             uint256 indexed publicDecryptionId,
-            uint256[] ciphertextHandles
+            IACLManager.CtHandleCiphertext128Pair[] ctHandleCiphertext128Pairs
         );
 
         event PublicDecryptionResponse(
@@ -46,7 +74,7 @@ sol! {
 
         event UserDecryptionRequest(
             uint256 indexed userDecryptionId,
-            CiphertextContract[] ciphertextContracts,
+            CtHandleContractPair[] ctHandleContractPairs,
             address userAddress
         );
 
@@ -59,37 +87,3 @@ sol! {
 }
 
 pub use IDecryptionManager::*;
-
-/// Represents a public decryption request data
-#[derive(Debug, Clone)]
-pub struct PublicDecryptionRequestData {
-    pub id: U256,
-    pub ciphertext_handles: Vec<U256>,
-}
-
-/// Represents a user decryption request data
-#[derive(Debug, Clone)]
-pub struct UserDecryptionRequestData {
-    pub id: U256,
-    pub ciphertext_contracts: Vec<CiphertextContract>,
-    pub user_address: Address,
-}
-
-impl From<PublicDecryptionRequest> for PublicDecryptionRequestData {
-    fn from(event: PublicDecryptionRequest) -> Self {
-        Self {
-            id: event.publicDecryptionId,
-            ciphertext_handles: event.ciphertextHandles,
-        }
-    }
-}
-
-impl From<UserDecryptionRequest> for UserDecryptionRequestData {
-    fn from(event: UserDecryptionRequest) -> Self {
-        Self {
-            id: event.userDecryptionId,
-            ciphertext_contracts: event.ciphertextContracts,
-            user_address: event.userAddress,
-        }
-    }
-}

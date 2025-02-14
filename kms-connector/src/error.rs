@@ -1,4 +1,5 @@
 use crate::core::wallet::WalletError;
+use alloy_sol_types::Error as SolError;
 use alloy_transport::RpcError;
 use thiserror::Error;
 use tokio::sync::mpsc::error::SendError;
@@ -53,6 +54,9 @@ pub enum Error {
 
     #[error(transparent)]
     Other(#[from] anyhow::Error),
+
+    #[error("Transport error: {0}")]
+    Transport(String),
 }
 
 impl<T> From<SendError<T>> for Error {
@@ -67,6 +71,18 @@ where
 {
     fn from(err: RpcError<T>) -> Self {
         Error::Rpc(err.to_string())
+    }
+}
+
+impl From<SolError> for Error {
+    fn from(err: SolError) -> Self {
+        Error::EventSubscription(err.to_string())
+    }
+}
+
+impl From<tonic::Status> for Error {
+    fn from(status: tonic::Status) -> Self {
+        Error::Other(anyhow::anyhow!("gRPC error: {}", status))
     }
 }
 

@@ -17,7 +17,7 @@ pub enum WalletError {
 pub type Result<T> = std::result::Result<T, WalletError>;
 
 /// KMS wallet for signing decryption responses
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct KmsWallet {
     pub signer: PrivateKeySigner,
 }
