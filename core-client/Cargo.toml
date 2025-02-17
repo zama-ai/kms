@@ -1,0 +1,61 @@
+[package]
+name = "kms-core-client"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+authors.workspace = true
+license.workspace = true
+readme = "README.md"
+# Inherited from repository root Cargo.toml
+
+[lib]
+name = "kms_core_client"
+path = "src/lib.rs"
+
+[[bin]]
+name = "kms-core-client"
+path = "src/bin.rs"
+
+[dependencies]
+aes-prng.workspace = true
+alloy-primitives = { workspace = true, features = ["k256"] }
+alloy-sol-types = { workspace = true, features = ["eip712-serde"] }
+alloy-signer.workspace = true
+alloy-signer-local.workspace = true
+bytes = "=1.10.0"
+reqwest = { workspace = true, features = ["json", "rustls-tls"] }
+thiserror.workspace = true
+typed-builder.workspace = true
+anyhow.workspace = true
+bincode.workspace = true
+clap = { workspace = true, features = ["derive"] }
+conf-trace.workspace = true
+events = { workspace = true, features = ["non-wasm"] }
+hex.workspace = true
+kms = { workspace = true, default-features = false, features = [
+    "non-wasm",
+    "testing",
+    "insecure",
+] }
+kms-common = { workspace = true }
+kms-blockchain-client.workspace = true
+kms-grpc.workspace = true
+rand = { workspace = true, features = ["std", "std_rng"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+strum.workspace = true
+strum_macros.workspace = true
+tfhe.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+tonic = { workspace = true}
+tracing = { workspace = true, features = ["log"] }
+tracing-appender.workspace = true
+tracing-subscriber = { workspace = true, features = ["fmt", "std"] }
+
+[dev-dependencies]
+test-context = "=0.3.0"
+cc-tests-utils = { path = "./tests-utils" }
+serial_test.workspace = true
+
+[build-dependencies]
+tonic-build.workspace = true

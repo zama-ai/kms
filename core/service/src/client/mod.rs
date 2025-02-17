@@ -538,6 +538,7 @@ impl Client {
         request_id: &RequestId,
         max_num_bits: Option<u32>,
         param: Option<FheParameter>,
+        eip712_domain: Option<Eip712Domain>,
     ) -> anyhow::Result<CrsGenRequest> {
         let parsed_param: i32 = match param {
             Some(parsed_param) => parsed_param.into(),
@@ -548,11 +549,17 @@ impl Client {
                 "The request id format is not valid {request_id}"
             )));
         }
+
+        let domain = match eip712_domain {
+            Some(eip712_domain) => Some(alloy_to_protobuf_domain(&eip712_domain)?),
+            None => None,
+        };
+
         Ok(CrsGenRequest {
             params: parsed_param,
             max_num_bits,
             request_id: Some(request_id.clone()),
-            domain: None,
+            domain,
         })
     }
 
@@ -710,7 +717,7 @@ impl Client {
             key_id: Some(key_id.clone()),
             domain: Some(domain_msg),
             request_id: Some(request_id.clone()),
-            acl_address: Some(hex::encode(acl_address)),
+            acl_address: Some(acl_address.to_string()),
         };
         Ok(req)
     }
@@ -3334,7 +3341,7 @@ pub(crate) mod tests {
         {
             let req_id = RequestId::derive("test rate limiter").unwrap();
             let req = internal_client
-                .crs_gen_request(&req_id, Some(1), Some(params))
+                .crs_gen_request(&req_id, Some(1), Some(params), None)
                 .unwrap();
             let e = kms_client.crs_gen(req).await.unwrap_err();
             assert_eq!(e.code(), tonic::Code::ResourceExhausted);
@@ -3447,7 +3454,7 @@ pub(crate) mod tests {
             Some(256)
         };
         let ceremony_req = internal_client
-            .crs_gen_request(request_id, max_num_bits, params)
+            .crs_gen_request(request_id, max_num_bits, params, None)
             .unwrap();
 
         let client_request_id = ceremony_req.request_id.clone().unwrap();
@@ -3553,7 +3560,7 @@ pub(crate) mod tests {
             Some(256)
         };
         let gen_req = internal_client
-            .crs_gen_request(crs_req_id, max_num_bits, params)
+            .crs_gen_request(crs_req_id, max_num_bits, params, None)
             .unwrap();
 
         tracing::debug!("making crs request, insecure? {insecure}");
@@ -3586,7 +3593,7 @@ pub(crate) mod tests {
         {
             let req_id = RequestId::derive("test rate limiter").unwrap();
             let req = internal_client
-                .crs_gen_request(&req_id, Some(1), Some(FheParameter::Test))
+                .crs_gen_request(&req_id, Some(1), Some(FheParameter::Test), None)
                 .unwrap();
             let e = kms_client.crs_gen(req).await.unwrap_err();
             assert_eq!(e.code(), tonic::Code::ResourceExhausted);
@@ -3938,7 +3945,7 @@ pub(crate) mod tests {
     ) {
         let dkg_param: WrappedDKGParams = parameter.into();
         let crs_req = internal_client
-            .crs_gen_request(crs_req_id, max_bits, Some(parameter))
+            .crs_gen_request(crs_req_id, max_bits, Some(parameter), None)
             .unwrap();
 
         let responses = launch_crs(&vec![crs_req.clone()], kms_clients, insecure).await;
@@ -6131,7 +6138,7 @@ pub(crate) mod tests {
         {
             let req_id = RequestId::derive("test rate limiter").unwrap();
             let req = internal_client
-                .crs_gen_request(&req_id, Some(1), Some(FheParameter::Test))
+                .crs_gen_request(&req_id, Some(1), Some(FheParameter::Test), None)
                 .unwrap();
             let mut cur_client = kms_clients.get(&1).unwrap().clone();
             let e = cur_client.crs_gen(req).await.unwrap_err();

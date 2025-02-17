@@ -1,0 +1,8 @@
+s3_endpoint = "http://localhost:9000/kms"
+object_folder = ["PUB-p1","PUB-p2","PUB-p3","PUB-p4"]
+
+# Decryption mode used in reencryption reconstruction.
+# Options are NoiseFloodSmall and BitDecSmall.
+# Must match the deployed core/service setting!
+# Only relevant for threshold.
+decryption_mode = "NoiseFloodSmall"

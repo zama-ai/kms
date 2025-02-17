@@ -21,6 +21,7 @@ members = [
     "core/service",
     "core/threshold",
     "core/utils",
+    "core-client",
     "blockchain/inclusion_proofs/ethereum",
     "blockchain/inclusion_proofs/ethereum-triedb",
     "blockchain/contracts/bsc",
@@ -92,7 +93,7 @@ prost-build = "=0.13.4"
 prost-types = "=0.13.4"
 rand = "=0.8.5"
 rayon = "=1.10.0"
-reqwest = { version = "=0.12.9", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "=0.12.12", default-features = false, features = ["json", "rustls-tls"] }
 schemars = "=0.8.21"
 secp256k1 = "=0.30.0"
 serde = { version = "=1.0.217", features = ["derive", "rc"] }

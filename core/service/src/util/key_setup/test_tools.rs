@@ -469,7 +469,7 @@ pub async fn get_server_key_from_storage(pub_path: Option<&Path>, key_id: &str) 
     let url = storage
         .compute_url(key_id, &PubDataType::ServerKey.to_string())
         .unwrap();
-    tracing::info!("🚧 Using key: {}", url);
+    tracing::info!("🚧 Reading server key: {}", url);
     if storage.data_exists(&url).await.unwrap() {
         tracing::info!("Trying centralized storage");
         storage.read_data(&url).await.unwrap()

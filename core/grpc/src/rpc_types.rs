@@ -6,6 +6,7 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::Eip712Domain;
 use anyhow::anyhow;
 use bincode::serialize;
+use rand::{CryptoRng, Rng};
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha3::{Digest, Sha3_256};
@@ -923,6 +924,15 @@ impl RequestId {
             return false;
         }
         true
+    }
+
+    /// create a new random RequestId
+    pub fn new_random<R: Rng + CryptoRng>(rng: &mut R) -> Self {
+        let mut bytes = [0u8; ID_LENGTH];
+        rng.fill_bytes(&mut bytes);
+        RequestId {
+            request_id: hex::encode(bytes),
+        }
     }
 }
 
