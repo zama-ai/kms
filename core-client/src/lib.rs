@@ -1222,7 +1222,7 @@ pub async fn execute_cmd(
             let ct = vec![TypedCiphertext {
                 ciphertext: cipher,
                 fhe_type: data_type as i32,
-                external_handle: Some(vec![23_u8; 32]),
+                external_handle: vec![23_u8; 32],
             }];
 
             // DECRYPTION REQUEST
@@ -1321,12 +1321,16 @@ pub async fn execute_cmd(
                 encrypt(to_encrypt, data_type, key_id, keys_folder, compressed).await?;
 
             internal_client.convert_to_addresses();
+            let typed_ciphertexts = vec![TypedCiphertext {
+                fhe_type: data_type as i32,
+                ciphertext: cipher,
+                external_handle: vec![1, 2, 3],
+            }];
 
             // REENCRYPTION REQUEST
             let reenc_req_tuple = internal_client.reencryption_request(
-                cipher,
                 &dummy_domain(),
-                data_type.try_into()?,
+                typed_ciphertexts,
                 &req_id,
                 &RequestId {
                     request_id: cipher_params.key_id.clone(),
@@ -1399,7 +1403,8 @@ pub async fn execute_cmd(
                 &enc_pk,
                 &enc_sk,
             ) {
-                Ok(plaintext) => {
+                Ok(plaintexts) => {
+                    let plaintext = plaintexts[0].clone();
                     assert_eq!(
                         TestingPlaintext::from(plaintext.clone()),
                         TestingPlaintext::from(ptxt.clone())

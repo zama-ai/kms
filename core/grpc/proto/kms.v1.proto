@@ -182,8 +182,8 @@ message TypedCiphertext {
   bytes ciphertext = 1;
   // The type of plaintext encrypted.
   FheType fhe_type = 2;
-  // The external handle of the ciphertext (the handle used in the fhevm).
-  optional bytes external_handle = 3;
+  // The external handle of the ciphertext (the handle used in the copro).
+  bytes external_handle = 3;
 }
 
 message DecryptionRequest {
@@ -244,18 +244,11 @@ message ReencryptionRequestPayload {
   // Encoding using the default encoding of libsodium, i.e. the 32 bytes of a
   // Montgomery point.
   bytes enc_key = 2;
-  // The type of plaintext encrypted.
-  FheType fhe_type = 3;
   // The key id to use for decryption. Will be the request_id used during key
   // generation
-  RequestId key_id = 4;
-  // The actual ciphertext to decrypt, taken directly from the fhevm.
-  // When creating the payload, this field may be empty,
-  // it is the responsibility of the gateway to fetch the
-  // ciphertext for the given digest below.
-  optional bytes ciphertext = 5;
-  // The SHA3 digest of the ciphertext above.
-  bytes ciphertext_digest = 6;
+  RequestId key_id = 3;
+  // The list of ciphertexts to reencrypt.
+  repeated TypedCiphertext typed_ciphertexts = 4;
 }
 
 // https://eips.ethereum.org/EIPS/eip-712#definition-of-domainseparator
@@ -295,16 +288,23 @@ message ReencryptionResponsePayload {
   // (eip712_signing_hash(pk, domain) || ciphertext digest).
   // This is needed to ensure the response corresponds to the request.
   bytes digest = 2;
-  // The type of plaintext encrypted.
-  FheType fhe_type = 3;
-  // The signcrypted payload, using a hybrid encryption approach in
-  // sign-then-encrypt.
-  bytes signcrypted_ciphertext = 4;
+  repeated TypedSigncryptedCiphertext signcrypted_ciphertexts = 3;
   // The ID of the MPC party doing the reencryption. Used for polynomial
   // reconstruction.
-  uint32 party_id = 5;
+  uint32 party_id = 4;
   // The degree of the sharing scheme used.
-  uint32 degree = 6;
+  uint32 degree = 5;
+}
+
+message TypedSigncryptedCiphertext {
+  // The type of plaintext encrypted.
+  FheType fhe_type = 1;
+  // The signcrypted payload, using a hybrid encryption approach in
+  // sign-then-encrypt.
+  bytes signcrypted_ciphertext = 2;
+  
+  // This will be added in a later PR
+  // bytes external_handle = 3;
 }
 
 message VerifyProvenCtRequest {

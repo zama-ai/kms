@@ -1,5 +1,3 @@
-use std::ops::Deref;
-
 use crate::error::BackendError;
 use crate::events::EventEmitStrategy;
 use crate::state::BackendStorage;
@@ -227,7 +225,9 @@ impl BackendContract {
         let key_access_allowed_event =
             self.check_key_access_is_allowed(&ctx, reencrypt.key_id().to_string())?;
 
-        let ciphertext_handle_vector: Vec<u8> = reencrypt.ciphertext_handle().deref().into();
+        // TODO we assume only ever one request is given
+        let ciphertext_handle_vector = &reencrypt.ciphertext_handles().0[0];
+        let ciphertext_handle_vector: Vec<u8> = ciphertext_handle_vector.into();
         Self::verify_sender_payment_capacity(&ctx, &[ciphertext_handle_vector])?;
 
         let response = self
@@ -1067,9 +1067,9 @@ mod tests {
             vec![4],
             FheType::Euint8,
             key_id.clone(),
-            dummy_external_ciphertext_handle.clone(),
-            ciphertext_handle.clone(),
-            vec![9],
+            vec![dummy_external_ciphertext_handle.clone()],
+            vec![ciphertext_handle.clone()],
+            vec![vec![9]],
             "dummy_acl_address".to_string(),
             "some proof".to_string(),
             "eip712name".to_string(),

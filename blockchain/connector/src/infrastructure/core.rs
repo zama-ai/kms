@@ -749,8 +749,11 @@ where
                 .await?;
             tracing::info!("FHE Type: {:?}", fhe_types[idx]);
 
-            // add external handle if it exists
-            let external_handle = external_handles.as_ref().map(|ehs| ehs.0[idx].0.clone());
+            // add external handle if it exists, otherwise use the empty handle
+            let external_handle = external_handles
+                .as_ref()
+                .map(|ehs| ehs.0[idx].0.clone())
+                .unwrap_or_default();
 
             ciphertexts.push(TypedCiphertext {
                 ciphertext,
@@ -885,24 +888,29 @@ where
         let mut setup = self.get_setup()?;
 
         let reencrypt = &self.reencrypt;
-        let ciphertext_handle: Vec<u8> = reencrypt.ciphertext_handle().deref().into();
+        let ciphertext_handle = &reencrypt.ciphertext_handles().0[0];
+        let ciphertext_handle: Vec<u8> = ciphertext_handle.into();
+        // reencrypt.ciphertext_digests is not used (deprecated)
         let ciphertext = self
             .operation_val
             .kms_client
             .storage
-            .get_ciphertext(ciphertext_handle)
+            .get_ciphertext(ciphertext_handle.clone())
             .await?;
+        let typed_ciphertexts = vec![TypedCiphertext {
+            ciphertext,
+            fhe_type: reencrypt.fhe_type() as i32,
+            external_handle: ciphertext_handle,
+        }];
         let req = ReencryptionRequest {
             signature: self.reencrypt.signature().into(),
             payload: Some(ReencryptionRequestPayload {
                 client_address: reencrypt.client_address().to_string(),
+                typed_ciphertexts,
                 enc_key: reencrypt.enc_key().deref().into(),
-                fhe_type: reencrypt.fhe_type() as i32,
                 key_id: Some(RequestId {
                     request_id: reencrypt.key_id().to_hex(),
                 }),
-                ciphertext: Some(ciphertext),
-                ciphertext_digest: reencrypt.ciphertext_digest().deref().into(),
             }),
             domain: Some(Eip712DomainMsg {
                 name: reencrypt.eip712_name().to_string(),

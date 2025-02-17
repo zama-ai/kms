@@ -19,14 +19,13 @@ use crate::vault::storage::crypto_material::CentralizedCryptoMaterialStorage;
 use crate::vault::storage::Storage;
 use crate::{tonic_handle_potential_err, tonic_some_or_err};
 use aes_prng::AesRng;
-use ahash::RandomState;
 use alloy_sol_types::Eip712Domain;
 use anyhow::Result;
 use conf_trace::metrics::METRICS;
 use conf_trace::metrics_names::{
     ERR_CRS_GEN_FAILED, ERR_DECRYPTION_FAILED, ERR_KEY_EXISTS, ERR_KEY_NOT_FOUND,
-    ERR_RATE_LIMIT_EXCEEDED, ERR_REENCRYPTION_FAILED, HASH_CIPHERTEXT_SEEDS, OP_CRS_GEN,
-    OP_DECRYPT, OP_KEYGEN, OP_REENCRYPT, OP_VERIFY_PROVEN_CT, TAG_CIPHERTEXT_ID, TAG_PARTY_ID,
+    ERR_RATE_LIMIT_EXCEEDED, ERR_REENCRYPTION_FAILED, OP_CRS_GEN, OP_DECRYPT, OP_KEYGEN,
+    OP_REENCRYPT, OP_VERIFY_PROVEN_CT, TAG_PARTY_ID,
 };
 use distributed_decryption::execution::keyset_config::KeySetConfig;
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
@@ -34,12 +33,11 @@ use kms_grpc::kms::v1::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenRequest, KeyGenResult,
     KeySetAddedInfo, ReencryptionRequest, ReencryptionResponse, ReencryptionResponsePayload,
-    RequestId, VerifyProvenCtRequest, VerifyProvenCtResponse,
+    RequestId, TypedSigncryptedCiphertext, VerifyProvenCtRequest, VerifyProvenCtResponse,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain_option, SignedPubDataHandleInternal};
 use std::collections::HashMap;
-use std::hash::{BuildHasher, Hasher};
 use std::sync::Arc;
 use tokio::sync::{OwnedSemaphorePermit, RwLock};
 use tonic::{Request, Response, Status};
@@ -231,28 +229,14 @@ impl<
 
         let inner = request.into_inner();
 
-        let (ciphertext, fhe_type, link, client_enc_key, client_address, key_id, request_id) =
+        let (typed_ciphertexts, link, client_enc_key, client_address, key_id, request_id) =
             tonic_handle_potential_err(
                 validate_reencrypt_req(&inner).await,
                 format!("Invalid key in request {:?}", inner),
             )?;
 
-        // Add ciphertext ID tag after validation and start timing
-        let _timer = if let Ok(timer) = timer {
-            // Calculate hash for the ciphertext
-            let (seed1, seed2, seed3, seed4) = HASH_CIPHERTEXT_SEEDS;
-            let mut hasher = RandomState::with_seeds(seed1, seed2, seed3, seed4).build_hasher();
-            hasher.write(&ciphertext);
-            let ciphertext_id = format!("{:06x}", hasher.finish() & 0xFFFFFF); // mask to use only 6 last hex chars
-
-            timer
-                .tag(TAG_CIPHERTEXT_ID, ciphertext_id)
-                .map(|b| b.start())
-                .map_err(|e| tracing::warn!("Failed to add tags: {}", e))
-        } else {
-            timer.map(|b| b.start())
-        }
-        .ok();
+        // Start the timer, it is stopped when it's dropped
+        let _timer = timer.map(|b| b.start());
 
         {
             let mut guarded_meta_store = self.reenc_meta_map.write().await;
@@ -306,8 +290,7 @@ impl<
                     &keys,
                     &sig_key,
                     &mut rng,
-                    &ciphertext,
-                    fhe_type,
+                    &typed_ciphertexts,
                     &link,
                     &client_enc_key,
                     &client_address,
@@ -316,8 +299,7 @@ impl<
                 {
                     Ok(raw_decryption) => {
                         let mut guarded_meta_store = meta_store.write().await;
-                        let _ = guarded_meta_store
-                            .update(&request_id, Ok((fhe_type, link, raw_decryption)));
+                        let _ = guarded_meta_store.update(&request_id, Ok((raw_decryption, link)));
                     }
                     Result::Err(e) => {
                         let mut guarded_meta_store = meta_store.write().await;
@@ -348,15 +330,22 @@ impl<
             let guarded_meta_store = self.reenc_meta_map.read().await;
             guarded_meta_store.retrieve(&request_id)
         };
-        let (fhe_type, req_digest, partial_dec) =
+
+        let (typed_partial_decryptions, link) =
             handle_res_mapping(status, &request_id, "Reencryption").await?;
+        let signcrypted_ciphertexts = typed_partial_decryptions
+            .into_iter()
+            .map(|(fhe_type, ct)| TypedSigncryptedCiphertext {
+                fhe_type: fhe_type.into(),
+                signcrypted_ciphertext: ct,
+            })
+            .collect::<Vec<_>>();
 
         let server_verf_key = self.get_serialized_verf_key();
 
         let payload = ReencryptionResponsePayload {
-            signcrypted_ciphertext: partial_dec,
-            fhe_type: fhe_type.into(),
-            digest: req_digest,
+            signcrypted_ciphertexts,
+            digest: link,
             verification_key: server_verf_key,
             party_id: 1, // In the centralized KMS, the server ID is always 1
             degree: 0, // In the centralized KMS, the degree is always 0 since result is a constant

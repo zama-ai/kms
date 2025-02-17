@@ -1,12 +1,6 @@
-#[cfg(any(test, feature = "testing"))]
-#[cfg(feature = "non-wasm")]
 use std::net::IpAddr;
-#[cfg(any(test, feature = "testing"))]
-#[cfg(feature = "non-wasm")]
 use tokio::net::TcpListener;
 
-#[cfg(any(test, feature = "testing"))]
-#[cfg(feature = "non-wasm")]
 /// Find [`n`] free ports in the range [from, to). Returns a vector (TcpListeners,port).
 pub(crate) async fn get_listeners_random_free_ports(
     host: &IpAddr,
@@ -22,8 +16,6 @@ pub(crate) async fn get_listeners_random_free_ports(
 }
 
 /// Uses port 0 to let the OS give us a free Tcp port
-#[cfg(any(test, feature = "testing"))]
-#[cfg(feature = "non-wasm")]
 async fn get_listener_free_tcp(host: &IpAddr) -> tokio::io::Result<TcpListener> {
     let socket_addr = std::net::SocketAddr::new(*host, 0);
     TcpListener::bind(socket_addr).await

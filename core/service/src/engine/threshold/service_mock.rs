@@ -15,7 +15,8 @@ use kms_grpc::kms::v1::{
     Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenPreprocStatusEnum,
     KeyGenRequest, KeyGenResult, ReencryptionRequest, ReencryptionResponse,
     ReencryptionResponsePayload, RequestId, SignedPubDataHandle, TypedPlaintext,
-    VerifyProvenCtRequest, VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
+    TypedSigncryptedCiphertext, VerifyProvenCtRequest, VerifyProvenCtResponse,
+    VerifyProvenCtResponsePayload,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use kms_grpc::rpc_types::PubDataType;
@@ -141,11 +142,14 @@ impl Reencryptor for DummyReencryptor {
         &self,
         _request: Request<RequestId>,
     ) -> Result<Response<ReencryptionResponse>, Status> {
+        let signcrypted_ciphertexts = vec![TypedSigncryptedCiphertext {
+            signcrypted_ciphertext: "signcrypted_ciphertexts".as_bytes().to_vec(),
+            fhe_type: kms_grpc::kms::v1::FheType::Euint8.into(),
+        }];
         let payload = ReencryptionResponsePayload {
             verification_key: vec![],
             digest: "dummy digest".as_bytes().to_vec(),
-            fhe_type: kms_grpc::kms::v1::FheType::Euint8.into(),
-            signcrypted_ciphertext: "signcrypted_ciphertext".as_bytes().to_vec(),
+            signcrypted_ciphertexts,
             party_id: self.degree + 1,
             degree: self.degree,
         };

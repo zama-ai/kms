@@ -28,12 +28,10 @@ use crate::vault::storage::{
 };
 use crate::{anyhow_error_and_log, get_exactly_one, tonic_handle_potential_err, tonic_some_or_err};
 use aes_prng::AesRng;
-use ahash::RandomState;
 use anyhow::anyhow;
 use conf_trace::metrics;
 use conf_trace::metrics_names::{
-    ERR_DECRYPTION_FAILED, ERR_RATE_LIMIT_EXCEEDED, HASH_CIPHERTEXT_SEEDS, OP_DECRYPT,
-    OP_REENCRYPT, TAG_CIPHERTEXT_ID, TAG_PARTY_ID,
+    ERR_DECRYPTION_FAILED, ERR_RATE_LIMIT_EXCEEDED, OP_DECRYPT, OP_REENCRYPT, TAG_PARTY_ID,
 };
 use distributed_decryption::algebra::base_ring::Z128;
 use distributed_decryption::algebra::galois_rings::common::pack_residue_poly;
@@ -82,8 +80,9 @@ use kms_grpc::kms::v1::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus,
     KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult, KeySetAddedInfo, ReencryptionRequest,
-    ReencryptionResponse, ReencryptionResponsePayload, RequestId, TypedPlaintext,
-    VerifyProvenCtRequest, VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
+    ReencryptionResponse, ReencryptionResponsePayload, RequestId, TypedCiphertext, TypedPlaintext,
+    TypedSigncryptedCiphertext, VerifyProvenCtRequest, VerifyProvenCtResponse,
+    VerifyProvenCtResponsePayload,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use kms_grpc::rpc_types::{
@@ -93,7 +92,6 @@ use kms_grpc::rpc_types::{
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::hash::{BuildHasher, Hasher};
 use std::sync::Arc;
 use tfhe::core_crypto::prelude::LweKeyswitchKey;
 use tfhe::integer::compression_keys::DecompressionKey;
@@ -952,131 +950,142 @@ impl<
         session_id: SessionId,
         session_prep: Arc<SessionPreparer>,
         rng: &mut (impl CryptoRng + RngCore),
-        ct: &[u8],
-        fhe_type: FheType,
+        typed_ciphertexts: &[TypedCiphertext],
         link: Vec<u8>,
         client_enc_key: &PublicEncKey,
         client_address: &alloy_primitives::Address,
         sig_key: Arc<PrivateSigKey>,
         fhe_keys: OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>,
         dec_mode: DecryptionMode,
-    ) -> anyhow::Result<Vec<u8>> {
+    ) -> anyhow::Result<Vec<(FheType, Vec<u8>)>> {
         let keys = fhe_keys;
 
-        let low_level_ct = deserialize_to_low_level(&fhe_type, ct, &keys.decompression_key)?;
+        let mut out = vec![];
+        for typed_ciphertext in typed_ciphertexts {
+            let fhe_type = typed_ciphertext.fhe_type();
+            let ct = &typed_ciphertext.ciphertext;
 
-        let pdec: Result<(Vec<u8>, std::time::Duration), anyhow::Error> = match dec_mode {
-            DecryptionMode::NoiseFloodSmall => {
-                let mut session = tonic_handle_potential_err(
-                    session_prep
-                        .prepare_ddec_data_from_sessionid_z128(session_id)
-                        .await,
-                    "Could not prepare ddec data for noiseflood decryption".to_string(),
-                )?;
-                let mut preparation = Small::new(session.clone());
+            let low_level_ct = deserialize_to_low_level(&fhe_type, ct, &keys.decompression_key)?;
 
-                let pdec = partial_decrypt_using_noiseflooding(
-                    &mut session,
-                    &mut preparation,
-                    &keys.sns_key,
-                    low_level_ct,
-                    &keys.private_keys,
-                    DecryptionMode::NoiseFloodSmall,
-                )
-                .await;
+            let pdec: Result<(Vec<u8>, std::time::Duration), anyhow::Error> = match dec_mode {
+                DecryptionMode::NoiseFloodSmall => {
+                    let mut session = tonic_handle_potential_err(
+                        session_prep
+                            .prepare_ddec_data_from_sessionid_z128(session_id)
+                            .await,
+                        "Could not prepare ddec data for noiseflood decryption".to_string(),
+                    )?;
+                    let mut preparation = Small::new(session.clone());
 
-                let res = match pdec {
-                    Ok((partial_dec_map, time)) => {
-                        let pdec_serialized = match partial_dec_map.get(&session_id.to_string()) {
-                            Some(partial_dec) => {
-                                let partial_dec = pack_residue_poly(partial_dec);
-                                bincode::serialize(&partial_dec)?
-                            }
-                            None => {
-                                return Err(anyhow!(
-                                    "Reencryption with session ID {} could not be retrived",
-                                    session_id.to_string()
-                                ))
-                            }
-                        };
+                    let pdec = partial_decrypt_using_noiseflooding(
+                        &mut session,
+                        &mut preparation,
+                        &keys.sns_key,
+                        low_level_ct,
+                        &keys.private_keys,
+                        DecryptionMode::NoiseFloodSmall,
+                    )
+                    .await;
 
-                        (pdec_serialized, time)
-                    }
-                    Err(e) => return Err(anyhow!("Failed reencryption with noiseflooding: {e}")),
-                };
-                Ok(res)
-            }
-            DecryptionMode::BitDecSmall => {
-                let mut session = tonic_handle_potential_err(
-                    session_prep
-                        .prepare_ddec_data_from_sessionid_z64(session_id)
-                        .await,
-                    "Could not prepare ddec data for bitdec decryption".to_string(),
-                )?;
+                    let res = match pdec {
+                        Ok((partial_dec_map, time)) => {
+                            let pdec_serialized = match partial_dec_map.get(&session_id.to_string())
+                            {
+                                Some(partial_dec) => {
+                                    let partial_dec = pack_residue_poly(partial_dec);
+                                    bincode::serialize(&partial_dec)?
+                                }
+                                None => {
+                                    return Err(anyhow!(
+                                        "Reencryption with session ID {} could not be retrived",
+                                        session_id.to_string()
+                                    ))
+                                }
+                            };
 
-                let pdec = partial_decrypt_using_bitdec(
-                    &mut session,
-                    low_level_ct,
-                    &keys.private_keys,
-                    &keys.ksk,
-                    DecryptionMode::BitDecSmall,
-                )
-                .await;
+                            (pdec_serialized, time)
+                        }
+                        Err(e) => {
+                            return Err(anyhow!("Failed reencryption with noiseflooding: {e}"))
+                        }
+                    };
+                    Ok(res)
+                }
+                DecryptionMode::BitDecSmall => {
+                    let mut session = tonic_handle_potential_err(
+                        session_prep
+                            .prepare_ddec_data_from_sessionid_z64(session_id)
+                            .await,
+                        "Could not prepare ddec data for bitdec decryption".to_string(),
+                    )?;
 
-                let res = match pdec {
-                    Ok((partial_dec_map, time)) => {
-                        let pdec_serialized = match partial_dec_map.get(&session_id.to_string()) {
-                            Some(partial_dec) => {
-                                // let partial_dec = pack_residue_poly(partial_dec); // TODO use more compact packing for bitdec?
-                                bincode::serialize(&partial_dec)?
-                            }
-                            None => {
-                                return Err(anyhow!(
-                                    "Reencryption with session ID {} could not be retrived",
-                                    session_id.to_string()
-                                ))
-                            }
-                        };
+                    let pdec = partial_decrypt_using_bitdec(
+                        &mut session,
+                        low_level_ct,
+                        &keys.private_keys,
+                        &keys.ksk,
+                        DecryptionMode::BitDecSmall,
+                    )
+                    .await;
 
-                        (pdec_serialized, time)
-                    }
-                    Err(e) => return Err(anyhow!("Failed reencryption with bitdec: {e}")),
-                };
-                Ok(res)
-            }
-            mode => {
-                return Err(anyhow_error_and_log(format!(
-                    "Unsupported Decryption Mode for reencrypt: {}",
-                    mode
-                )));
-            }
-        };
+                    let res = match pdec {
+                        Ok((partial_dec_map, time)) => {
+                            let pdec_serialized = match partial_dec_map.get(&session_id.to_string())
+                            {
+                                Some(partial_dec) => {
+                                    // let partial_dec = pack_residue_poly(partial_dec); // TODO use more compact packing for bitdec?
+                                    bincode::serialize(&partial_dec)?
+                                }
+                                None => {
+                                    return Err(anyhow!(
+                                        "Reencryption with session ID {} could not be retrived",
+                                        session_id.to_string()
+                                    ))
+                                }
+                            };
 
-        let partial_signcryption = match pdec {
-            Ok((pdec_serialized, time)) => {
-                let signcryption_msg = SigncryptionPayload {
-                    plaintext: TypedPlaintext::from_bytes(pdec_serialized, fhe_type),
-                    link,
-                };
-                let enc_res = signcrypt(
-                    rng,
-                    &bincode::serialize(&signcryption_msg)?,
-                    client_enc_key,
-                    client_address,
-                    &sig_key,
-                )?;
-                let res = bincode::serialize(&enc_res)?;
+                            (pdec_serialized, time)
+                        }
+                        Err(e) => return Err(anyhow!("Failed reencryption with bitdec: {e}")),
+                    };
+                    Ok(res)
+                }
+                mode => {
+                    return Err(anyhow_error_and_log(format!(
+                        "Unsupported Decryption Mode for reencrypt: {}",
+                        mode
+                    )));
+                }
+            };
 
-                tracing::info!(
-                    "Reencryption completed for type {}. Inner thread took {:?} ms",
-                    fhe_type.as_str_name(),
-                    time.as_millis()
-                );
-                res
-            }
-            Err(e) => return Err(anyhow!("Failed reencryption: {e}")),
-        };
-        Ok(partial_signcryption)
+            let partial_signcryption = match pdec {
+                Ok((pdec_serialized, time)) => {
+                    let signcryption_msg = SigncryptionPayload {
+                        plaintext: TypedPlaintext::from_bytes(pdec_serialized, fhe_type),
+                        link: link.clone(),
+                    };
+                    let enc_res = signcrypt(
+                        rng,
+                        &bincode::serialize(&signcryption_msg)?,
+                        client_enc_key,
+                        client_address,
+                        &sig_key,
+                    )?;
+                    let res = bincode::serialize(&enc_res)?;
+
+                    tracing::info!(
+                        "Reencryption completed for type {}. Inner thread took {:?} ms",
+                        fhe_type.as_str_name(),
+                        time.as_millis()
+                    );
+                    res
+                }
+                Err(e) => return Err(anyhow!("Failed reencryption: {e}")),
+            };
+            out.push((fhe_type, partial_signcryption));
+        }
+
+        Ok(out)
     }
 }
 
@@ -1115,28 +1124,14 @@ impl<
             self.session_preparer.own_identity(),
             inner.request_id
         );
-        let (ciphertext, fhe_type, link, client_enc_key, client_address, key_id, req_id) =
+        let (typed_ciphertexts, link, client_enc_key, client_address, key_id, req_id) =
             tonic_handle_potential_err(
                 validate_reencrypt_req(&inner).await,
                 format!("Invalid reencryption request {:?}", inner),
             )?;
 
-        // Add ciphertext ID tag after validation and start timing
-        let _timer = if let Ok(timer) = timer {
-            // Calculate hash for the ciphertextt
-            let (seed1, seed2, seed3, seed4) = HASH_CIPHERTEXT_SEEDS;
-            let mut hasher = RandomState::with_seeds(seed1, seed2, seed3, seed4).build_hasher();
-            hasher.write(&ciphertext);
-            let ciphertext_id = format!("{:06x}", hasher.finish() & 0xFFFFFF); // mask to use only 6 last hex chars
-
-            timer
-                .tag(TAG_CIPHERTEXT_ID, ciphertext_id)
-                .map(|b| b.start())
-                .map_err(|e| tracing::warn!("Failed to add tags: {}", e))
-        } else {
-            timer.map(|b| b.start())
-        }
-        .ok();
+        // Start the timer, it is stopped when it's dropped
+        let _timer = timer.map(|b| b.start());
 
         let meta_store = Arc::clone(&self.reenc_meta_store);
         let crypto_storage = self.crypto_storage.clone();
@@ -1186,8 +1181,7 @@ impl<
                             session_id,
                             prep,
                             &mut rng,
-                            &ciphertext,
-                            fhe_type,
+                            &typed_ciphertexts,
                             link.clone(),
                             &client_enc_key,
                             &client_address,
@@ -1203,8 +1197,7 @@ impl<
                 match tmp {
                     Ok(partial_dec) => {
                         // We cannot do much if updating the storage fails at this point...
-                        let _ =
-                            guarded_meta_store.update(&req_id, Ok((fhe_type, link, partial_dec)));
+                        let _ = guarded_meta_store.update(&req_id, Ok((partial_dec, link)));
                     }
                     Result::Err(e) => {
                         // We cannot do much if updating the storage fails at this point...
@@ -1239,12 +1232,18 @@ impl<
             let guarded_meta_store = self.reenc_meta_store.read().await;
             guarded_meta_store.retrieve(&request_id)
         };
-        let (fhe_type, link, signcrypted_ciphertext) =
+        let (typed_partial_decryptions, link) =
             handle_res_mapping(status, &request_id, "Reencryption").await?;
+        let signcrypted_ciphertexts = typed_partial_decryptions
+            .into_iter()
+            .map(|(fhe_type, ct)| TypedSigncryptedCiphertext {
+                fhe_type: fhe_type.into(),
+                signcrypted_ciphertext: ct,
+            })
+            .collect::<Vec<_>>();
         let server_verf_key = self.base_kms.get_serialized_verf_key();
         let payload = ReencryptionResponsePayload {
-            signcrypted_ciphertext,
-            fhe_type: fhe_type.into(),
+            signcrypted_ciphertexts,
             digest: link,
             verification_key: server_verf_key,
             party_id: self.session_preparer.my_id as u32,

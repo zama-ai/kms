@@ -193,8 +193,6 @@ impl PartyConf {
 mod tests {
     use conf_trace::conf::Settings;
     use std::env;
-    use std::process::Command;
-    use tempfile::tempdir;
 
     use super::*;
 
@@ -362,60 +360,5 @@ mod tests {
         env::remove_var("DDEC__NET_CONF__NETWORK_TIMEOUT_BK");
         env::remove_var("DDEC__NET_CONF__NETWORK_TIMEOUT_BK_SNS");
         env::remove_var("DDEC__NET_CONF__MAX_EN_DECODE_MESSAGE_SIZE");
-    }
-
-    #[test]
-    #[serial_test::parallel]
-    fn test_cert_paths() {
-        // make a temporary directory for the certificates
-        let temp_dir = tempdir().unwrap();
-        println!("temp_dir path: {:?}", temp_dir.path());
-        assert!(temp_dir.path().exists());
-
-        // NOTE: that this binary won't work if
-        // `core/threshold` is made independent from `core/service`.
-        Command::new("cargo")
-            .args([
-                "run",
-                "--manifest-path=../service/Cargo.toml",
-                "--bin=kms-gen-tls-certs",
-                "--",
-                "--ca-prefix=p",
-                "--ca-count=4",
-                "-o",
-                temp_dir.path().to_str().unwrap(),
-            ])
-            .output()
-            .expect("failed to execute process");
-
-        let cert_path = temp_dir.path().join("cert_p1.pem");
-        assert!(cert_path.exists());
-        let key_path = temp_dir.path().join("key_p1.pem");
-        assert!(key_path.exists());
-        let cert_paths = CertificatePaths {
-            cert: cert_path.to_str().unwrap().to_string(),
-            key: key_path.to_str().unwrap().to_string(),
-            calist: [
-                "cert_p1.pem,",
-                "cert_p2.pem,",
-                "cert_p3.pem,",
-                "cert_p4.pem",
-            ]
-            .map(|suffix| temp_dir.path().join(suffix).to_str().unwrap().to_string())
-            .concat(),
-        };
-
-        assert!(cert_paths.get_certificate().is_ok());
-        assert!(cert_paths.get_identity().is_ok());
-        assert!(cert_paths.get_flattened_ca_list().is_ok());
-        for i in 0..4 {
-            // note that party IDs start at 1
-            let pid = i + 1;
-            assert!(cert_paths.get_ca_by_name(&format!("p{pid}")).is_ok());
-        }
-        assert!(cert_paths.get_ca_by_name("p5").is_err());
-
-        // using localhost should fail too because it's not a part of the issuer
-        assert!(cert_paths.get_ca_by_name("localhost").is_err());
     }
 }

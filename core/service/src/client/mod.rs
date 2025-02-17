@@ -15,10 +15,9 @@ use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
 use bincode::{deserialize, serialize};
 use distributed_decryption::algebra::base_ring::{Z128, Z64};
-use distributed_decryption::algebra::galois_rings::degree_4::{
-    ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64,
-};
-use distributed_decryption::algebra::structure_traits::BaseRing;
+use distributed_decryption::algebra::error_correction::MemoizedExceptionals;
+use distributed_decryption::algebra::galois_rings::degree_4::ResiduePolyF4;
+use distributed_decryption::algebra::structure_traits::{BaseRing, ErrorCorrect};
 use distributed_decryption::execution::endpoints::reconstruct::{
     combine_decryptions, reconstruct_packed_message,
 };
@@ -29,13 +28,14 @@ use distributed_decryption::execution::sharing::shamir::{
 use distributed_decryption::execution::tfhe_internals::parameters::{
     AugmentedCiphertextParameters, DKGParams,
 };
+use itertools::Itertools;
 use kms_common::DecryptionMode;
 use kms_grpc::kms::v1::{
     FheType, ReencryptionRequest, ReencryptionRequestPayload, ReencryptionResponse,
-    ReencryptionResponsePayload, RequestId, TypedPlaintext,
+    ReencryptionResponsePayload, RequestId, TypedCiphertext, TypedPlaintext,
 };
 use kms_grpc::rpc_types::{
-    alloy_to_protobuf_domain, hash_element, FheTypeResponse, MetaResponse, Reencrypt,
+    alloy_to_protobuf_domain, serialize_hash_element, FheTypeResponse, MetaResponse, Reencrypt,
 };
 use rand::SeedableRng;
 use std::collections::HashSet;
@@ -56,7 +56,7 @@ cfg_if::cfg_if! {
         use kms_grpc::kms::v1::{
             KeySetAddedInfo, CrsGenRequest, CrsGenResult, DecryptionRequest,
             DecryptionResponse, DecryptionResponsePayload, FheParameter, KeyGenPreprocRequest,
-            KeyGenRequest, KeyGenResult, TypedCiphertext, VerifyProvenCtRequest,
+            KeyGenRequest, KeyGenResult, VerifyProvenCtRequest,
             VerifyProvenCtResponse, KeySetConfig,
         };
         use kms_grpc::rpc_types::{PubDataType, PublicKeyType, WrappedPublicKeyOwned};
@@ -163,15 +163,25 @@ pub struct TestingReencryptionTranscript {
     degree: u32,
     params: DKGParams,
     // example pt and ct
-    fhe_type: FheType,
-    pt: Vec<u8>,
-    ct: Vec<u8>,
+    fhe_types: Vec<FheType>,
+    pts: Vec<Vec<u8>>,
+    cts: Vec<Vec<u8>>,
     // request
     request: Option<ReencryptionRequest>,
     eph_sk: PrivateEncKey,
     eph_pk: PublicEncKey,
     // response
     agg_resp: Vec<ReencryptionResponse>,
+}
+
+#[wasm_bindgen]
+#[derive(serde::Serialize, Debug)]
+pub struct CiphertextHandle(Vec<u8>);
+
+impl CiphertextHandle {
+    pub fn new(handle: Vec<u8>) -> Self {
+        CiphertextHandle(handle)
+    }
 }
 
 /// Validity of this struct is not checked.
@@ -183,7 +193,7 @@ pub struct ParsedReencryptionRequest {
     #[allow(dead_code)]
     client_address: alloy_primitives::Address,
     enc_key: Vec<u8>,
-    ciphertext_digest: Vec<u8>,
+    ciphertext_handles: Vec<CiphertextHandle>,
     eip712_verifying_contract: alloy_primitives::Address,
 }
 
@@ -192,14 +202,14 @@ impl ParsedReencryptionRequest {
         signature: alloy_primitives::PrimitiveSignature,
         client_address: alloy_primitives::Address,
         enc_key: Vec<u8>,
-        ciphertext_digest: Vec<u8>,
+        ciphertext_handles: Vec<CiphertextHandle>,
         eip712_verifying_contract: alloy_primitives::Address,
     ) -> Self {
         Self {
             signature,
             client_address,
             enc_key,
-            ciphertext_digest,
+            ciphertext_handles,
             eip712_verifying_contract,
         }
     }
@@ -216,7 +226,7 @@ struct ParsedReencryptionRequestHex {
     signature: String,
     client_address: String,
     enc_key: String,
-    ciphertext_digest: String,
+    ciphertext_handles: Vec<String>,
     eip712_verifying_contract: String,
 }
 
@@ -237,7 +247,11 @@ impl TryFrom<&ParsedReencryptionRequestHex> for ParsedReencryptionRequest {
             signature,
             client_address,
             enc_key: hex_decode_js_err(&req_hex.enc_key)?,
-            ciphertext_digest: hex_decode_js_err(&req_hex.ciphertext_digest)?,
+            ciphertext_handles: req_hex
+                .ciphertext_handles
+                .iter()
+                .map(|hdl_str| hex_decode_js_err(hdl_str).map(CiphertextHandle))
+                .collect::<Result<Vec<_>, JsError>>()?,
             eip712_verifying_contract,
         };
         Ok(out)
@@ -263,7 +277,11 @@ impl From<&ParsedReencryptionRequest> for ParsedReencryptionRequestHex {
             signature: hex::encode(value.signature.as_bytes()),
             client_address: value.client_address.to_checksum(None),
             enc_key: hex::encode(&value.enc_key),
-            ciphertext_digest: hex::encode(&value.ciphertext_digest),
+            ciphertext_handles: value
+                .ciphertext_handles
+                .iter()
+                .map(|hdl| hex::encode(&hdl.0))
+                .collect::<Vec<_>>(),
             eip712_verifying_contract: value.eip712_verifying_contract.to_checksum(None),
         }
     }
@@ -290,18 +308,24 @@ impl TryFrom<&ReencryptionRequest> for ParsedReencryptionRequest {
         let eip712_verifying_contract =
             alloy_primitives::Address::parse_checksummed(domain.verifying_contract.clone(), None)?;
 
+        let ciphertext_handles = payload
+            .typed_ciphertexts
+            .iter()
+            .map(|ct| CiphertextHandle(ct.external_handle.clone()))
+            .collect::<Vec<_>>();
+
         let out = Self {
             signature,
             client_address,
             enc_key: payload.enc_key.clone(),
-            ciphertext_digest: payload.ciphertext_digest.clone(),
+            ciphertext_handles,
             eip712_verifying_contract,
         };
         Ok(out)
     }
 }
 
-/// Compute the link as (eip712_signing_hash(pk, domain) || ciphertext digest).
+/// Compute the link as (eip712_signing_hash(pk, domain) || hash(ciphertext handles)).
 pub fn compute_link(
     req: &ParsedReencryptionRequest,
     domain: &Eip712Domain,
@@ -323,8 +347,9 @@ pub fn compute_link(
     };
 
     let pk_digest = pk_sol.eip712_signing_hash(domain).to_vec();
+    let ct_handles_digest = serialize_hash_element(&req.ciphertext_handles)?;
 
-    Ok([pk_digest, req.ciphertext_digest.clone()].concat())
+    Ok([pk_digest, ct_handles_digest].concat())
 }
 
 /// Client data type
@@ -730,9 +755,8 @@ impl Client {
     /// reencryption key pair.
     pub fn reencryption_request(
         &mut self,
-        ciphertext: Vec<u8>,
         domain: &Eip712Domain,
-        fhe_type: FheType,
+        typed_ciphertexts: Vec<TypedCiphertext>,
         request_id: &RequestId,
         key_id: &RequestId,
     ) -> anyhow::Result<(ReencryptionRequest, PublicEncKey, PrivateEncKey)> {
@@ -746,15 +770,12 @@ impl Client {
             "missing client signing key".to_string(),
         )?;
 
-        let ciphertext_digest = hash_element(&ciphertext);
         let (enc_pk, enc_sk) = ephemeral_encryption_key_generation(&mut self.rng);
         let sig_payload = ReencryptionRequestPayload {
             enc_key: serialize(&enc_pk)?,
             client_address: self.client_address.to_checksum(None),
-            fhe_type: fhe_type as i32,
+            typed_ciphertexts,
             key_id: Some(key_id.clone()),
-            ciphertext: Some(ciphertext),
-            ciphertext_digest,
         };
         let message = Reencrypt {
             publicKey: Bytes::copy_from_slice(&sig_payload.enc_key),
@@ -1078,7 +1099,7 @@ impl Client {
         agg_resp: &[ReencryptionResponse],
         enc_pk: &PublicEncKey,
         enc_sk: &PrivateEncKey,
-    ) -> anyhow::Result<TypedPlaintext> {
+    ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let client_keys = SigncryptionPair {
             sk: SigncryptionPrivKey {
                 signing_key: self.client_sk.clone(),
@@ -1123,7 +1144,7 @@ impl Client {
         agg_resp: &[ReencryptionResponse],
         enc_pk: &PublicEncKey,
         enc_sk: &PrivateEncKey,
-    ) -> anyhow::Result<TypedPlaintext> {
+    ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let client_keys = SigncryptionPair {
             sk: SigncryptionPrivKey {
                 signing_key: self.client_sk.clone(),
@@ -1256,7 +1277,7 @@ impl Client {
         client_request: &ParsedReencryptionRequest,
         eip712_domain: &Eip712Domain,
         agg_resp: &[ReencryptionResponse],
-    ) -> anyhow::Result<Option<(FheType, Vec<ReencryptionResponsePayload>)>> {
+    ) -> anyhow::Result<Option<Vec<ReencryptionResponsePayload>>> {
         let resp_parsed = some_or_err(
             self.validate_reenc_resp(agg_resp)?,
             "Could not validate the aggregated responses".to_string(),
@@ -1268,8 +1289,7 @@ impl Client {
             return Ok(None);
         }
 
-        // resp_parsed is guaranteed to be non empty since [validate_reenc_resp] passed
-        Ok(Some((resp_parsed[0].fhe_type(), resp_parsed)))
+        Ok(Some(resp_parsed))
     }
 
     fn validate_reenc_resp(
@@ -1375,7 +1395,7 @@ impl Client {
         eip712_domain: &Eip712Domain,
         agg_resp: &[ReencryptionResponse],
         client_keys: &SigncryptionPair,
-    ) -> anyhow::Result<TypedPlaintext> {
+    ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let resp = some_or_err(agg_resp.last(), "Response does not exist".to_owned())?;
         let payload = some_or_err(resp.payload.clone(), "Payload does not exist".to_owned())?;
 
@@ -1421,12 +1441,18 @@ impl Client {
             |e| tracing::warn!("signature on received response is not valid ({})", e),
         )?;
 
-        decrypt_signcryption(
-            &payload.signcrypted_ciphertext,
-            &link,
-            client_keys,
-            &cur_verf_key,
-        )
+        payload
+            .signcrypted_ciphertexts
+            .into_iter()
+            .map(|ct| {
+                decrypt_signcryption(
+                    &ct.signcrypted_ciphertext,
+                    &link,
+                    client_keys,
+                    &cur_verf_key,
+                )
+            })
+            .collect()
     }
 
     /// Decrypt the reencryption response from the centralized KMS.
@@ -1436,14 +1462,20 @@ impl Client {
         &self,
         agg_resp: &[ReencryptionResponse],
         client_keys: &SigncryptionPair,
-    ) -> anyhow::Result<TypedPlaintext> {
+    ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let resp = some_or_err(agg_resp.last(), "Response does not exist".to_owned())?;
         let payload = some_or_err(resp.payload.clone(), "Payload does not exist".to_owned())?;
 
-        crate::cryptography::signcryption::insecure_decrypt_ignoring_signature(
-            &payload.signcrypted_ciphertext,
-            client_keys,
-        )
+        let mut out = vec![];
+        for ct in payload.signcrypted_ciphertexts {
+            out.push(
+                crate::cryptography::signcryption::insecure_decrypt_ignoring_signature(
+                    &ct.signcrypted_ciphertext,
+                    client_keys,
+                )?,
+            )
+        }
+        Ok(out)
     }
 
     /// Decrypt the reencryption responses from the threshold KMS and verify that the signatures are valid
@@ -1453,8 +1485,8 @@ impl Client {
         eip712_domain: &Eip712Domain,
         agg_resp: &[ReencryptionResponse],
         client_keys: &SigncryptionPair,
-    ) -> anyhow::Result<TypedPlaintext> {
-        let (fhe_type, validated_resps) = some_or_err(
+    ) -> anyhow::Result<Vec<TypedPlaintext>> {
+        let validated_resps = some_or_err(
             self.validate_reenc_req_resp(client_request, eip712_domain, agg_resp)?,
             "Could not validate request".to_owned(),
         )?;
@@ -1475,70 +1507,80 @@ impl Client {
 
         let res = match self.decryption_mode {
             DecryptionMode::BitDecSmall => {
-                let mut decrypted_blocks = Vec::new();
+                let all_sharings = self.recover_sharings::<Z64>(&validated_resps, client_keys)?;
 
-                let sharings =
-                    self.recover_sharings::<Z64>(&validated_resps, fhe_type, client_keys)?;
-
-                for cur_block_shares in sharings {
-                    // NOTE: this performs optimistic reconstruction
-                    if let Ok(Some(r)) = reconstruct_w_errors_sync(
-                        num_parties,
-                        degree,
-                        degree,
-                        num_parties - amount_shares,
-                        &cur_block_shares,
-                    ) {
-                        decrypted_blocks.push(r);
-                    } else {
-                        return Err(anyhow_error_and_log("Could not reconstruct all blocks"));
+                let mut out = vec![];
+                for (fhe_type, sharings) in all_sharings {
+                    let mut decrypted_blocks = Vec::new();
+                    for cur_block_shares in sharings {
+                        // NOTE: this performs optimistic reconstruction
+                        if let Ok(Some(r)) = reconstruct_w_errors_sync(
+                            num_parties,
+                            degree,
+                            degree,
+                            num_parties - amount_shares,
+                            &cur_block_shares,
+                        ) {
+                            decrypted_blocks.push(r);
+                        } else {
+                            return Err(anyhow_error_and_log("Could not reconstruct all blocks"));
+                        }
                     }
-                }
+                    // extract plaintexts from decrypted blocks
+                    let mut ptxts64 = Vec::new();
+                    for block in decrypted_blocks {
+                        let scalar = block.to_scalar()?;
+                        ptxts64.push(scalar);
+                    }
 
-                // extract plaintexts from decrypted blocks
-                let mut ptxts64 = Vec::new();
-                for block in decrypted_blocks {
-                    let scalar = block.to_scalar()?;
-                    ptxts64.push(scalar);
+                    // convert to Z128
+                    out.push((
+                        fhe_type,
+                        ptxts64
+                            .iter()
+                            .map(|ptxt| Wrapping(ptxt.0 as u128))
+                            .collect_vec(),
+                    ));
                 }
-
-                // convert to Z128
-                ptxts64
-                    .iter()
-                    .map(|ptxt| Wrapping(ptxt.0 as u128))
-                    .collect()
+                out
             }
             DecryptionMode::NoiseFloodSmall => {
-                let mut decrypted_blocks = Vec::new();
+                let all_sharings = self.recover_sharings::<Z128>(&validated_resps, client_keys)?;
 
-                let sharings =
-                    self.recover_sharings::<Z128>(&validated_resps, fhe_type, client_keys)?;
+                let mut out = vec![];
+                for (fhe_type, sharings) in all_sharings {
+                    let mut decrypted_blocks = Vec::new();
 
-                for cur_block_shares in sharings {
-                    // NOTE: this performs optimistic reconstruction
-                    if let Ok(Some(r)) = reconstruct_w_errors_sync(
-                        num_parties,
-                        degree,
-                        degree,
-                        num_parties - amount_shares,
-                        &cur_block_shares,
-                    ) {
-                        decrypted_blocks.push(r);
-                    } else {
-                        return Err(anyhow_error_and_log("Could not reconstruct all blocks"));
+                    for cur_block_shares in sharings {
+                        // NOTE: this performs optimistic reconstruction
+                        if let Ok(Some(r)) = reconstruct_w_errors_sync(
+                            num_parties,
+                            degree,
+                            degree,
+                            num_parties - amount_shares,
+                            &cur_block_shares,
+                        ) {
+                            decrypted_blocks.push(r);
+                        } else {
+                            return Err(anyhow_error_and_log("Could not reconstruct all blocks"));
+                        }
                     }
-                }
 
-                reconstruct_packed_message(
-                    Some(decrypted_blocks),
-                    &pbs_params,
-                    fhe_type.to_num_blocks(
-                        &self
-                            .params
-                            .get_params_basics_handle()
-                            .to_classic_pbs_parameters(),
-                    ),
-                )?
+                    out.push((
+                        fhe_type,
+                        reconstruct_packed_message(
+                            Some(decrypted_blocks),
+                            &pbs_params,
+                            fhe_type.to_num_blocks(
+                                &self
+                                    .params
+                                    .get_params_basics_handle()
+                                    .to_classic_pbs_parameters(),
+                            ),
+                        )?,
+                    ));
+                }
+                out
             }
             e => {
                 return Err(anyhow_error_and_log(format!(
@@ -1547,14 +1589,18 @@ impl Client {
             }
         };
 
-        decrypted_blocks_to_plaintext(&pbs_params, fhe_type, res)
+        let mut final_result = vec![];
+        for (fhe_type, res) in res {
+            final_result.push(decrypted_blocks_to_plaintext(&pbs_params, fhe_type, res)?);
+        }
+        Ok(final_result)
     }
 
     fn insecure_threshold_reencryption_resp(
         &self,
         agg_resp: &[ReencryptionResponse],
         client_keys: &SigncryptionPair,
-    ) -> anyhow::Result<TypedPlaintext> {
+    ) -> anyhow::Result<Vec<TypedPlaintext>> {
         match self.decryption_mode {
             DecryptionMode::BitDecSmall => {
                 self.insecure_threshold_reencryption_resp_z64(agg_resp, client_keys)
@@ -1568,92 +1614,130 @@ impl Client {
         }
     }
 
+    fn insecure_threshold_reencryption_resp_to_blocks<Z: BaseRing>(
+        agg_resp: &[ReencryptionResponse],
+        client_keys: &SigncryptionPair,
+    ) -> anyhow::Result<Vec<(FheType, Vec<ResiduePolyF4<Z>>)>>
+    where
+        ResiduePolyF4<Z>: ErrorCorrect + MemoizedExceptionals,
+    {
+        let batch_count = agg_resp
+            .first()
+            .ok_or(anyhow::anyhow!("agg_resp is empty"))?
+            .payload
+            .as_ref()
+            .ok_or(anyhow::anyhow!("payload is empty in reencryption response"))?
+            .signcrypted_ciphertexts
+            .len();
+
+        let mut out = vec![];
+        for batch_i in 0..batch_count {
+            // Recover sharings
+            let mut opt_sharings = None;
+            let degree = some_or_err(
+                some_or_err(agg_resp.first().as_ref(), "empty responses".to_owned())?
+                    .payload
+                    .as_ref(),
+                "empty payload".to_owned(),
+            )?
+            .degree as usize;
+            let fhe_type = agg_resp
+                .first()
+                .as_ref()
+                .ok_or(anyhow::anyhow!("agg_resp is empty"))?
+                .payload
+                .as_ref()
+                .ok_or(anyhow::anyhow!("payload is empty"))?
+                .signcrypted_ciphertexts[batch_i]
+                .fhe_type();
+
+            // Trust all responses have all expected blocks
+            for cur_resp in agg_resp {
+                let payload = some_or_err(
+                    cur_resp.payload.clone(),
+                    "Payload does not exist".to_owned(),
+                )?;
+                let shares = insecure_decrypt_ignoring_signature(
+                    &payload.signcrypted_ciphertexts[batch_i].signcrypted_ciphertext,
+                    client_keys,
+                )?;
+
+                let cipher_blocks_share: Vec<ResiduePolyF4<Z>> = deserialize(&shares.bytes)?;
+                let mut cur_blocks = Vec::with_capacity(cipher_blocks_share.len());
+                for cur_block_share in cipher_blocks_share {
+                    cur_blocks.push(cur_block_share);
+                }
+                if opt_sharings.is_none() {
+                    opt_sharings = Some(Vec::new());
+                    for _i in 0..cur_blocks.len() {
+                        (opt_sharings.as_mut()).unwrap().push(ShamirSharings::new());
+                    }
+                }
+                let num_values = cur_blocks.len();
+                fill_indexed_shares(
+                    opt_sharings.as_mut().unwrap(),
+                    cur_blocks,
+                    num_values,
+                    Role::indexed_by_one(payload.party_id as usize),
+                )?;
+            }
+            let sharings = opt_sharings.unwrap();
+            // TODO: in general this is not true, degree isn't a perfect proxy for num_parties
+            let num_parties = 3 * degree + 1;
+            let amount_shares = agg_resp.len();
+            let mut decrypted_blocks = Vec::new();
+            for cur_block_shares in sharings {
+                // NOTE: this performs optimistic reconstruction
+                if let Ok(Some(r)) = reconstruct_w_errors_sync(
+                    num_parties,
+                    degree,
+                    degree,
+                    num_parties - amount_shares,
+                    &cur_block_shares,
+                ) {
+                    decrypted_blocks.push(r);
+                } else {
+                    return Err(anyhow_error_and_log("Could not reconstruct all blocks"));
+                }
+            }
+            out.push((fhe_type, decrypted_blocks))
+        }
+        Ok(out)
+    }
+
     fn insecure_threshold_reencryption_resp_z128(
         &self,
         agg_resp: &[ReencryptionResponse],
         client_keys: &SigncryptionPair,
-    ) -> anyhow::Result<TypedPlaintext> {
-        // Recover sharings
-        let mut opt_sharings = None;
-        let degree = some_or_err(
-            some_or_err(agg_resp.first().as_ref(), "empty responses".to_owned())?
-                .payload
-                .as_ref(),
-            "empty payload".to_owned(),
-        )?
-        .degree as usize;
+    ) -> anyhow::Result<Vec<TypedPlaintext>> {
+        let all_decrypted_blocks =
+            Self::insecure_threshold_reencryption_resp_to_blocks::<Z128>(agg_resp, client_keys)?;
 
-        // Trust all responses have all expected blocks
-        for cur_resp in agg_resp {
-            let payload = some_or_err(
-                cur_resp.payload.clone(),
-                "Payload does not exist".to_owned(),
+        let mut out = vec![];
+        for (fhe_type, decrypted_blocks) in all_decrypted_blocks {
+            let pbs_params = self
+                .params
+                .get_params_basics_handle()
+                .to_classic_pbs_parameters();
+
+            let recon_blocks = reconstruct_packed_message(
+                Some(decrypted_blocks),
+                &pbs_params,
+                fhe_type.to_num_blocks(
+                    &self
+                        .params
+                        .get_params_basics_handle()
+                        .to_classic_pbs_parameters(),
+                ),
             )?;
-            let shares =
-                insecure_decrypt_ignoring_signature(&payload.signcrypted_ciphertext, client_keys)?;
 
-            let cipher_blocks_share: Vec<ResiduePolyF4Z128> = deserialize(&shares.bytes)?;
-            let mut cur_blocks = Vec::with_capacity(cipher_blocks_share.len());
-            for cur_block_share in cipher_blocks_share {
-                cur_blocks.push(cur_block_share);
-            }
-            if opt_sharings.is_none() {
-                opt_sharings = Some(Vec::new());
-                for _i in 0..cur_blocks.len() {
-                    (opt_sharings.as_mut()).unwrap().push(ShamirSharings::new());
-                }
-            }
-            let num_values = cur_blocks.len();
-            fill_indexed_shares(
-                opt_sharings.as_mut().unwrap(),
-                cur_blocks,
-                num_values,
-                Role::indexed_by_one(payload.party_id as usize),
-            )?;
+            out.push(decrypted_blocks_to_plaintext(
+                &pbs_params,
+                fhe_type,
+                recon_blocks,
+            )?);
         }
-        let sharings = opt_sharings.unwrap();
-        // TODO: in general this is not true, degree isn't a perfect proxy for num_parties
-        let num_parties = 3 * degree + 1;
-        let amount_shares = agg_resp.len();
-        let mut decrypted_blocks = Vec::new();
-        for cur_block_shares in sharings {
-            // NOTE: this performs optimistic reconstruction
-            if let Ok(Some(r)) = reconstruct_w_errors_sync(
-                num_parties,
-                degree,
-                degree,
-                num_parties - amount_shares,
-                &cur_block_shares,
-            ) {
-                decrypted_blocks.push(r);
-            } else {
-                return Err(anyhow_error_and_log("Could not reconstruct all blocks"));
-            }
-        }
-
-        let fhe_type = agg_resp[0]
-            .payload
-            .as_ref()
-            .ok_or(anyhow::anyhow!("Missing payload in reencryption response"))?
-            .fhe_type();
-
-        let pbs_params = self
-            .params
-            .get_params_basics_handle()
-            .to_classic_pbs_parameters();
-
-        let recon_blocks = reconstruct_packed_message(
-            Some(decrypted_blocks),
-            &pbs_params,
-            fhe_type.to_num_blocks(
-                &self
-                    .params
-                    .get_params_basics_handle()
-                    .to_classic_pbs_parameters(),
-            ),
-        )?;
-
-        decrypted_blocks_to_plaintext(&pbs_params, fhe_type, recon_blocks)
+        Ok(out)
     }
 
     /// Decrypt the reencryption response from the threshold KMS.
@@ -1663,151 +1747,110 @@ impl Client {
         &self,
         agg_resp: &[ReencryptionResponse],
         client_keys: &SigncryptionPair,
-    ) -> anyhow::Result<TypedPlaintext> {
-        // Recover sharings
-        let mut opt_sharings = None;
-        let degree = some_or_err(
-            some_or_err(agg_resp.first().as_ref(), "empty responses".to_owned())?
-                .payload
-                .as_ref(),
-            "empty payload".to_owned(),
-        )?
-        .degree as usize;
+    ) -> anyhow::Result<Vec<TypedPlaintext>> {
+        let all_decrypted_blocks =
+            Self::insecure_threshold_reencryption_resp_to_blocks::<Z64>(agg_resp, client_keys)?;
 
-        // Trust all responses have all expected blocks
-        for cur_resp in agg_resp {
-            let payload = some_or_err(
-                cur_resp.payload.clone(),
-                "Payload does not exist".to_owned(),
-            )?;
-            let shares =
-                insecure_decrypt_ignoring_signature(&payload.signcrypted_ciphertext, client_keys)?;
+        let mut out = vec![];
+        for (fhe_type, decrypted_blocks) in all_decrypted_blocks {
+            let pbs_params = self
+                .params
+                .get_params_basics_handle()
+                .to_classic_pbs_parameters();
 
-            let cipher_blocks_share: Vec<ResiduePolyF4Z64> = deserialize(&shares.bytes)?;
-            let mut cur_blocks = Vec::with_capacity(cipher_blocks_share.len());
-            for cur_block_share in cipher_blocks_share {
-                cur_blocks.push(cur_block_share);
+            let mut ptxts64 = Vec::new();
+
+            for opened in decrypted_blocks {
+                let v_scalar = opened.to_scalar()?;
+                ptxts64.push(v_scalar);
             }
-            if opt_sharings.is_none() {
-                opt_sharings = Some(Vec::new());
-                for _i in 0..cur_blocks.len() {
-                    (opt_sharings.as_mut()).unwrap().push(ShamirSharings::new());
-                }
-            }
-            let num_values = cur_blocks.len();
-            fill_indexed_shares(
-                opt_sharings.as_mut().unwrap(),
-                cur_blocks,
-                num_values,
-                Role::indexed_by_one(payload.party_id as usize),
-            )?;
+
+            let ptxts128: Vec<_> = ptxts64
+                .iter()
+                .map(|ptxt| Wrapping(ptxt.0 as u128))
+                .collect();
+
+            out.push(decrypted_blocks_to_plaintext(
+                &pbs_params,
+                fhe_type,
+                ptxts128,
+            )?);
         }
-        let sharings = opt_sharings.unwrap();
-        // TODO: in general this is not true, degree isn't a perfect proxy for num_parties
-        let num_parties = 3 * degree + 1;
-        let amount_shares = agg_resp.len();
-        let mut decrypted_blocks = Vec::new();
-        for cur_block_shares in sharings {
-            // NOTE: this performs optimistic reconstruction
-            if let Ok(Some(r)) = reconstruct_w_errors_sync(
-                num_parties,
-                degree,
-                degree,
-                num_parties - amount_shares,
-                &cur_block_shares,
-            ) {
-                decrypted_blocks.push(r);
-            } else {
-                return Err(anyhow_error_and_log("Could not reconstruct all blocks"));
-            }
-        }
-
-        let fhe_type = agg_resp[0]
-            .payload
-            .as_ref()
-            .ok_or(anyhow::anyhow!("Missing payload in reencryption response"))?
-            .fhe_type();
-
-        let pbs_params = self
-            .params
-            .get_params_basics_handle()
-            .to_classic_pbs_parameters();
-
-        let mut ptxts64 = Vec::new();
-
-        for opened in decrypted_blocks {
-            let v_scalar = opened.to_scalar()?;
-            ptxts64.push(v_scalar);
-        }
-
-        let ptxts128: Vec<_> = ptxts64
-            .iter()
-            .map(|ptxt| Wrapping(ptxt.0 as u128))
-            .collect();
-
-        decrypted_blocks_to_plaintext(&pbs_params, fhe_type, ptxts128)
+        Ok(out)
     }
 
     /// Decrypts the reencryption responses and decodes the responses onto the Shamir shares
     /// that the servers should have encrypted.
+    #[allow(clippy::type_complexity)]
     fn recover_sharings<Z: BaseRing>(
         &self,
         agg_resp: &[ReencryptionResponsePayload],
-        fhe_type: FheType,
         client_keys: &SigncryptionPair,
-    ) -> anyhow::Result<Vec<ShamirSharings<ResiduePolyF4<Z>>>> {
-        let num_blocks = fhe_type.to_num_blocks(
-            &self
-                .params
-                .get_params_basics_handle()
-                .to_classic_pbs_parameters(),
-        );
-        let mut sharings = Vec::new();
-        for _i in 0..num_blocks {
-            sharings.push(ShamirSharings::new());
-        }
-        for cur_resp in agg_resp {
-            // Observe that it has already been verified in [validate_meta_data] that server
-            // verification key is in the set of permissible keys
-            //
-            // Also it's ok to use [cur_resp.digest] as the link since we already checked
-            // that it matches with the original request
-            let cur_verf_key: PublicSigKey = deserialize(&cur_resp.verification_key)?;
-            match decrypt_signcryption(
-                &cur_resp.signcrypted_ciphertext,
-                &cur_resp.digest,
-                client_keys,
-                &cur_verf_key,
-            ) {
-                Ok(decryption_share) => {
-                    let cipher_blocks_share: Vec<ResiduePolyF4<Z>> =
-                        deserialize(&decryption_share.bytes)?;
-                    let mut cur_blocks = Vec::with_capacity(cipher_blocks_share.len());
-                    for cur_block_share in cipher_blocks_share {
-                        cur_blocks.push(cur_block_share);
+    ) -> anyhow::Result<Vec<(FheType, Vec<ShamirSharings<ResiduePolyF4<Z>>>)>> {
+        let batch_count = agg_resp
+            .first()
+            .ok_or(anyhow::anyhow!("response payloads is empty"))?
+            .signcrypted_ciphertexts
+            .len();
+
+        let mut out = vec![];
+        for batch_i in 0..batch_count {
+            // taking agg_resp[0] is safe since batch_count before exists
+            let fhe_type = agg_resp[0].signcrypted_ciphertexts[batch_i].fhe_type();
+            let num_blocks = fhe_type.to_num_blocks(
+                &self
+                    .params
+                    .get_params_basics_handle()
+                    .to_classic_pbs_parameters(),
+            );
+            let mut sharings = Vec::new();
+            for _i in 0..num_blocks {
+                sharings.push(ShamirSharings::new());
+            }
+            for cur_resp in agg_resp {
+                // Observe that it has already been verified in [validate_meta_data] that server
+                // verification key is in the set of permissible keys
+                //
+                // Also it's ok to use [cur_resp.digest] as the link since we already checked
+                // that it matches with the original request
+                let cur_verf_key: PublicSigKey = deserialize(&cur_resp.verification_key)?;
+                match decrypt_signcryption(
+                    &cur_resp.signcrypted_ciphertexts[batch_i].signcrypted_ciphertext,
+                    &cur_resp.digest,
+                    client_keys,
+                    &cur_verf_key,
+                ) {
+                    Ok(decryption_share) => {
+                        let cipher_blocks_share: Vec<ResiduePolyF4<Z>> =
+                            deserialize(&decryption_share.bytes)?;
+                        let mut cur_blocks = Vec::with_capacity(cipher_blocks_share.len());
+                        for cur_block_share in cipher_blocks_share {
+                            cur_blocks.push(cur_block_share);
+                        }
+                        fill_indexed_shares(
+                            &mut sharings,
+                            cur_blocks,
+                            num_blocks,
+                            Role::indexed_by_one(cur_resp.party_id as usize),
+                        )?;
                     }
-                    fill_indexed_shares(
-                        &mut sharings,
-                        cur_blocks,
-                        num_blocks,
-                        Role::indexed_by_one(cur_resp.party_id as usize),
-                    )?;
-                }
-                _ => {
-                    tracing::warn!(
-                        "Could not decrypt or validate signcrypted response from party {}.",
-                        cur_resp.party_id
-                    );
-                    fill_indexed_shares(
-                        &mut sharings,
-                        Vec::new(),
-                        num_blocks,
-                        Role::indexed_by_one(cur_resp.party_id as usize),
-                    )?;
-                }
-            };
+                    _ => {
+                        tracing::warn!(
+                            "Could not decrypt or validate signcrypted response from party {}.",
+                            cur_resp.party_id
+                        );
+                        fill_indexed_shares(
+                            &mut sharings,
+                            Vec::new(),
+                            num_blocks,
+                            Role::indexed_by_one(cur_resp.party_id as usize),
+                        )?;
+                    }
+                };
+            }
+            out.push((fhe_type, sharings));
         }
-        Ok(sharings)
+        Ok(out)
     }
 
     pub fn get_server_pks(&self) -> anyhow::Result<&Vec<PublicSigKey>> {
@@ -1872,15 +1915,23 @@ impl Client {
         other_resp: &T,
         signature: &[u8],
     ) -> anyhow::Result<bool> {
-        if pivot_resp.fhe_type()? != other_resp.fhe_type()? {
-            tracing::warn!(
+        let types_1 = pivot_resp.fhe_types()?;
+        let types_2 = other_resp.fhe_types()?;
+        if types_1.len() != types_2.len() || types_1.is_empty() || types_2.is_empty() {
+            tracing::warn!("incorrect lengths: {}, {}", types_1.len(), types_2.len());
+            return Ok(false);
+        }
+        for i in 0..types_1.len() {
+            if types_1[i] != types_2[i] {
+                tracing::warn!(
                     "Response from server with verification key {:?} gave fhe type {:?}, whereas the pivot server's fhe type is {:?} and its verification key is {:?}",
                     pivot_resp.verification_key(),
-                    pivot_resp.fhe_type(),
-                    other_resp.fhe_type(),
+                    types_1[i],
+                    types_2[i],
                     other_resp.verification_key()
                 );
-            return Ok(false);
+                return Ok(false);
+            }
         }
         if pivot_resp.digest() != other_resp.digest() {
             tracing::warn!(
@@ -3158,7 +3209,7 @@ pub(crate) mod tests {
             let ctt = TypedCiphertext {
                 ciphertext: ct,
                 fhe_type: fhe_type.into(),
-                external_handle: None,
+                external_handle: i.to_be_bytes().to_vec(),
             };
             cts.push(ctt);
         }
@@ -4494,7 +4545,7 @@ pub(crate) mod tests {
         let req_key_id = key_id.to_owned().try_into().unwrap();
 
         let mut cts = Vec::new();
-        for msg in msgs.clone() {
+        for (i, msg) in msgs.clone().into_iter().enumerate() {
             let (ct, fhe_type) = if compression {
                 compute_compressed_cipher_from_stored_key(None, msg, key_id).await
             } else {
@@ -4503,7 +4554,7 @@ pub(crate) mod tests {
             let ctt = TypedCiphertext {
                 ciphertext: ct,
                 fhe_type: fhe_type.into(),
-                external_handle: None,
+                external_handle: i.to_be_bytes().to_vec(),
             };
             cts.push(ctt);
         }
@@ -4755,12 +4806,16 @@ pub(crate) mod tests {
         // build parallel requests
         let reqs: Vec<_> = (0..parallelism)
             .map(|j| {
+                let typed_ciphertexts = vec![TypedCiphertext {
+                    ciphertext: ct.clone(),
+                    fhe_type: fhe_type.into(),
+                    external_handle: j.to_be_bytes().to_vec(),
+                }];
                 let request_id = RequestId::derive(&format!("TEST_REENC_ID_{j}")).unwrap();
                 internal_client
                     .reencryption_request(
-                        ct.clone(),
                         &dummy_domain(),
-                        fhe_type,
+                        typed_ciphertexts,
                         &request_id,
                         &req_key_id,
                     )
@@ -4846,9 +4901,17 @@ pub(crate) mod tests {
                     client_sk: internal_client.client_sk.clone(),
                     degree: 0,
                     params: internal_client.params,
-                    fhe_type: msg.into(),
-                    pt: TypedPlaintext::from(msg).bytes.clone(),
-                    ct: reqs[0].0.payload.as_ref().unwrap().ciphertext().to_vec(),
+                    fhe_types: vec![FheType::from(msg)],
+                    pts: vec![TypedPlaintext::from(msg).bytes.clone()],
+                    cts: reqs[0]
+                        .0
+                        .payload
+                        .as_ref()
+                        .unwrap()
+                        .typed_ciphertexts
+                        .iter()
+                        .map(|typed_ct| typed_ct.ciphertext.clone())
+                        .collect::<Vec<_>>(),
                     request: Some(reqs[0].clone().0),
                     eph_sk: reqs[0].clone().2,
                     eph_pk: reqs[0].clone().1,
@@ -4887,7 +4950,7 @@ pub(crate) mod tests {
 
             let eip712_domain = protobuf_to_alloy_domain(req.domain.as_ref().unwrap()).unwrap();
             let client_request = ParsedReencryptionRequest::try_from(req).unwrap();
-            let plaintext = if secure {
+            let plaintexts = if secure {
                 internal_client
                     .process_reencryption_resp(
                         &client_request,
@@ -4909,21 +4972,22 @@ pub(crate) mod tests {
                     .unwrap()
             };
 
-            assert_eq!(FheType::from(msg), plaintext.fhe_type());
-
-            match msg {
-                TestingPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
-                TestingPlaintext::U4(x) => assert_eq!(x, plaintext.as_u4()),
-                TestingPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
-                TestingPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
-                TestingPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
-                TestingPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
-                TestingPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
-                TestingPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
-                TestingPlaintext::U256(x) => assert_eq!(x, plaintext.as_u256()),
-                TestingPlaintext::U512(x) => assert_eq!(x, plaintext.as_u512()),
-                TestingPlaintext::U1024(x) => assert_eq!(x, plaintext.as_u1024()),
-                TestingPlaintext::U2048(x) => assert_eq!(x, plaintext.as_u2048()),
+            for plaintext in plaintexts {
+                assert_eq!(FheType::from(msg), plaintext.fhe_type());
+                match msg {
+                    TestingPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
+                    TestingPlaintext::U4(x) => assert_eq!(x, plaintext.as_u4()),
+                    TestingPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
+                    TestingPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
+                    TestingPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
+                    TestingPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
+                    TestingPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
+                    TestingPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
+                    TestingPlaintext::U256(x) => assert_eq!(x, plaintext.as_u256()),
+                    TestingPlaintext::U512(x) => assert_eq!(x, plaintext.as_u512()),
+                    TestingPlaintext::U1024(x) => assert_eq!(x, plaintext.as_u1024()),
+                    TestingPlaintext::U2048(x) => assert_eq!(x, plaintext.as_u2048()),
+                }
             }
         }
 
@@ -5073,7 +5137,7 @@ pub(crate) mod tests {
 
         let mut cts = Vec::new();
         let mut bits = 0;
-        for msg in msgs.clone() {
+        for (i, msg) in msgs.clone().into_iter().enumerate() {
             let (ct, fhe_type) = if compression {
                 compute_compressed_cipher_from_stored_key(None, msg, key_id).await
             } else {
@@ -5082,7 +5146,7 @@ pub(crate) mod tests {
             let ctt = TypedCiphertext {
                 ciphertext: ct,
                 fhe_type: fhe_type.into(),
-                external_handle: None,
+                external_handle: i.to_be_bytes().to_vec(),
             };
             cts.push(ctt);
             bits += msg.bits() as u64;
@@ -5412,11 +5476,15 @@ pub(crate) mod tests {
         let reqs: Vec<_> = (0..parallelism)
             .map(|j| {
                 let request_id = RequestId::derive(&format!("TEST_REENC_ID_{j}")).unwrap();
+                let typed_ciphertexts = vec![TypedCiphertext {
+                    ciphertext: ct.clone(),
+                    fhe_type: fhe_type.into(),
+                    external_handle: j.to_be_bytes().to_vec(),
+                }];
                 let (req, enc_pk, enc_sk) = internal_client
                     .reencryption_request(
-                        ct.clone(),
                         &dummy_domain(),
-                        fhe_type,
+                        typed_ciphertexts,
                         &request_id,
                         &key_id.to_string().try_into().unwrap(),
                     )
@@ -5535,9 +5603,17 @@ pub(crate) mod tests {
                     client_sk: internal_client.client_sk.clone(),
                     degree: threshold as u32,
                     params: internal_client.params,
-                    fhe_type: FheType::from(msg),
-                    pt: TypedPlaintext::from(msg).bytes.clone(),
-                    ct: reqs[0].0.payload.as_ref().unwrap().ciphertext().to_vec(),
+                    fhe_types: vec![FheType::from(msg)],
+                    pts: vec![TypedPlaintext::from(msg).bytes.clone()],
+                    cts: reqs[0]
+                        .0
+                        .payload
+                        .as_ref()
+                        .unwrap()
+                        .typed_ciphertexts
+                        .iter()
+                        .map(|typed_ct| typed_ct.ciphertext.clone())
+                        .collect::<Vec<_>>(),
                     request: Some(reqs[0].clone().0),
                     eph_sk: reqs[0].clone().2,
                     eph_pk: reqs[0].clone().1,
@@ -5560,7 +5636,7 @@ pub(crate) mod tests {
             let client_req = ParsedReencryptionRequest::try_from(req).unwrap();
             let threshold = responses.first().unwrap().payload.as_ref().unwrap().degree as usize;
             // NOTE: throw away one response and it should still work.
-            let plaintext = if secure {
+            let plaintexts = if secure {
                 // test with one fewer response if we haven't crashed too many parties already
                 if threshold > party_ids_to_crash.len() {
                     internal_client
@@ -5590,20 +5666,22 @@ pub(crate) mod tests {
                     .insecure_process_reencryption_resp(responses, enc_pk, enc_sk)
                     .unwrap()
             };
-            assert_eq!(FheType::from(msg), FheType::from(plaintext.clone()));
-            match msg {
-                TestingPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
-                TestingPlaintext::U4(x) => assert_eq!(x, plaintext.as_u4()),
-                TestingPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
-                TestingPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
-                TestingPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
-                TestingPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
-                TestingPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
-                TestingPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
-                TestingPlaintext::U256(x) => assert_eq!(x, plaintext.as_u256()),
-                TestingPlaintext::U512(x) => assert_eq!(x, plaintext.as_u512()),
-                TestingPlaintext::U1024(x) => assert_eq!(x, plaintext.as_u1024()),
-                TestingPlaintext::U2048(x) => assert_eq!(x, plaintext.as_u2048()),
+            for plaintext in plaintexts {
+                assert_eq!(FheType::from(msg), FheType::from(plaintext.clone()));
+                match msg {
+                    TestingPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
+                    TestingPlaintext::U4(x) => assert_eq!(x, plaintext.as_u4()),
+                    TestingPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
+                    TestingPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
+                    TestingPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
+                    TestingPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
+                    TestingPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
+                    TestingPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
+                    TestingPlaintext::U256(x) => assert_eq!(x, plaintext.as_u256()),
+                    TestingPlaintext::U512(x) => assert_eq!(x, plaintext.as_u512()),
+                    TestingPlaintext::U1024(x) => assert_eq!(x, plaintext.as_u1024()),
+                    TestingPlaintext::U2048(x) => assert_eq!(x, plaintext.as_u2048()),
+                }
             }
         }
     }
@@ -5649,11 +5727,15 @@ pub(crate) mod tests {
             None,
         );
         let request_id = RequestId::derive("TEST_REENC_ID_123").unwrap();
+        let typed_ciphertexts = vec![TypedCiphertext {
+            ciphertext: ct,
+            fhe_type: fhe_type.into(),
+            external_handle: vec![123],
+        }];
         let (req, _enc_pk, _enc_sk) = internal_client
             .reencryption_request(
-                ct,
                 &dummy_domain(),
-                fhe_type,
+                typed_ciphertexts,
                 &request_id,
                 &DEFAULT_CENTRAL_KEY_ID,
             )

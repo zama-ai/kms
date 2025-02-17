@@ -391,7 +391,7 @@ async fn central_requests(address: String) -> anyhow::Result<()> {
     let ct = vec![TypedCiphertext {
         ciphertext: ct,
         fhe_type: fhe_type.into(),
-        external_handle: Some(vec![99_u8; 32]),
+        external_handle: vec![99_u8; 32],
     }];
 
     // DECRYPTION REQUEST
@@ -432,9 +432,8 @@ async fn central_requests(address: String) -> anyhow::Result<()> {
 
     // REENCRYPTION REQUEST
     let (req, enc_pk, enc_sk) = internal_client.reencryption_request(
-        ct[0].ciphertext.clone(),
         &dummy_domain(),
-        fhe_type,
+        ct,
         &random_req_id,
         &DEFAULT_CENTRAL_KEY_ID,
     )?;
@@ -466,7 +465,8 @@ async fn central_requests(address: String) -> anyhow::Result<()> {
         &enc_pk,
         &enc_sk,
     ) {
-        Ok(plaintext) => {
+        Ok(plaintexts) => {
+            let plaintext = &plaintexts[0];
             tracing::info!(
                 "Reencryption response is ok: {:?} of type {:?}",
                 plaintext.as_u32(),
@@ -586,7 +586,7 @@ async fn do_threshold_decryption(
     let ct = vec![TypedCiphertext {
         ciphertext: ct,
         fhe_type: fhe_type.into(),
-        external_handle: Some(vec![88_u8; 32]),
+        external_handle: vec![88_u8; 32],
     }];
 
     // DECRYPTION REQUEST
@@ -686,6 +686,11 @@ async fn do_threshold_reencryption(
         &key_id.to_string(),
     )
     .await;
+    let typed_ciphertexts = vec![TypedCiphertext {
+        ciphertext: ct,
+        fhe_type: fhe_type.into(),
+        external_handle: vec![123],
+    }];
 
     let random_req_id = RequestId::from(rng.gen::<u128>());
 
@@ -693,13 +698,8 @@ async fn do_threshold_reencryption(
 
     // REENCRYPTION REQUEST
     let domain = dummy_domain();
-    let reenc_req_tuple = internal_client.reencryption_request(
-        ct.clone(),
-        &domain,
-        fhe_type,
-        &random_req_id,
-        key_id,
-    )?;
+    let reenc_req_tuple =
+        internal_client.reencryption_request(&domain, typed_ciphertexts, &random_req_id, key_id)?;
     let (reenc_req, enc_pk, enc_sk) = reenc_req_tuple;
 
     // make parallel requests by calling [decrypt] in a thread
@@ -764,7 +764,8 @@ async fn do_threshold_reencryption(
         &enc_pk,
         &enc_sk,
     ) {
-        Ok(plaintext) => {
+        Ok(plaintexts) => {
+            let plaintext = &plaintexts[0];
             tracing::info!(
                 "Reencryption response is ok: {:?} of type {:?}",
                 plaintext.as_u8(),

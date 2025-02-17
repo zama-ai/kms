@@ -233,12 +233,6 @@ pub fn transcript_to_enc_pk(transcript: &TestingReencryptionTranscript) -> Publi
 
 #[wasm_bindgen]
 #[cfg(feature = "wasm_tests")]
-pub fn transcript_to_pt_js(transcript: &TestingReencryptionTranscript) -> JsValue {
-    serde_wasm_bindgen::to_value(&transcript.pt).unwrap()
-}
-
-#[wasm_bindgen]
-#[cfg(feature = "wasm_tests")]
 pub fn transcript_to_client(transcript: &TestingReencryptionTranscript) -> Client {
     Client {
         rng: Box::new(AesRng::from_entropy()),
@@ -430,7 +424,7 @@ pub fn process_reencryption_resp_from_js(
     enc_pk: &PublicEncKey,
     enc_sk: &PrivateEncKey,
     verify: bool,
-) -> Result<Vec<u8>, JsError> {
+) -> Result<Vec<TypedPlaintext>, JsError> {
     let agg_resp = js_to_resp(agg_resp)
         .map_err(|e| JsError::new(&format!("response parsing failed with error {}", e)))?;
     let eip712_domain = if eip712_domain.is_null() || eip712_domain.is_undefined() {
@@ -456,7 +450,13 @@ pub fn process_reencryption_resp_from_js(
     );
     // Need to convert to BE for JS, evrerything is internally represented as LE
     match le_res {
-        Ok(le_res) => Ok(le_res.into_iter().rev().collect()),
+        Ok(le_res) => Ok(le_res
+            .into_iter()
+            .map(|x| TypedPlaintext {
+                bytes: x.bytes.into_iter().rev().collect(),
+                fhe_type: x.fhe_type,
+            })
+            .collect()),
         Err(e) => Err(e),
     }
 }
@@ -491,7 +491,7 @@ pub fn process_reencryption_resp(
     enc_pk: &PublicEncKey,
     enc_sk: &PrivateEncKey,
     verify: bool,
-) -> Result<Vec<u8>, JsError> {
+) -> Result<Vec<TypedPlaintext>, JsError> {
     // if verify is true, then request and eip712 domain must exist
     let reenc_resp = if verify {
         let request = request.ok_or(JsError::new("missing request"))?;
@@ -503,7 +503,7 @@ pub fn process_reencryption_resp(
         client.insecure_process_reencryption_resp(&agg_resp, enc_pk, enc_sk)
     };
     match reenc_resp {
-        Ok(resp) => Ok(resp.bytes),
+        Ok(resp) => Ok(resp),
         Err(e) => Err(JsError::new(&e.to_string())),
     }
 }

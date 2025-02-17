@@ -3,7 +3,7 @@ use alloy_primitives::{Address, B256};
 use alloy_sol_types::SolStruct;
 use anyhow::Context;
 use kms_grpc::{
-    kms::v1::{DecryptionRequest, FheType, ReencryptionRequest, RequestId, TypedCiphertext},
+    kms::v1::{DecryptionRequest, ReencryptionRequest, RequestId, TypedCiphertext},
     rpc_types::{protobuf_to_alloy_domain_option, Reencrypt},
 };
 use tonic::Status;
@@ -45,8 +45,7 @@ pub(crate) fn validate_request_id(request_id: &RequestId) -> Result<(), Status> 
 pub async fn validate_reencrypt_req(
     req: &ReencryptionRequest,
 ) -> anyhow::Result<(
-    Vec<u8>,
-    FheType,
+    Vec<TypedCiphertext>,
     Vec<u8>,
     PublicEncKey,
     alloy_primitives::Address,
@@ -82,11 +81,6 @@ pub async fn validate_reencrypt_req(
         }
     }
 
-    let ciphertext = payload
-        .ciphertext
-        .clone()
-        .ok_or_else(|| anyhow_error_and_log(format!("Missing ciphertext in request {:?}", req)))?;
-    let fhe_type = payload.fhe_type();
     let link = req.compute_link_checked()?;
     let client_enc_key: PublicEncKey = bincode::deserialize(&payload.enc_key)?;
     let key_id = tonic_some_or_err(
@@ -94,8 +88,7 @@ pub async fn validate_reencrypt_req(
         format!("The request {:?} does not have a key_id", req),
     )?;
     Ok((
-        ciphertext,
-        fhe_type,
+        payload.typed_ciphertexts.clone(),
         link,
         client_enc_key,
         client_verf_key,

@@ -30,6 +30,7 @@ fn default_builder() -> Builder {
         .type_attribute("StandardKeySetConfig", DERIVES)
         .type_attribute("ComputeKeyType", DERIVES)
         .type_attribute("KeySetAddedInfo", DERIVES)
+        .type_attribute("TypedSigncryptedCiphertext", DERIVES)
 }
 
 // This is the `main` for wasm builds, which does not include
@@ -63,6 +64,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .type_attribute(
             "Eip712DomainMsg",
+            "#[wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)]",
+        )
+        .type_attribute(
+            "TypedCiphertext",
+            "#[wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)]",
+        )
+        .type_attribute(
+            "TypedSigncryptedCiphertext",
+            "#[wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)]",
+        )
+        .type_attribute(
+            "TypedPlaintext",
             "#[wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)]",
         )
         .compile_protos(&["proto/kms.v1.proto"], &["proto"])?;

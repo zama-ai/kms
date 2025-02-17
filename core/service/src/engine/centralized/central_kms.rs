@@ -376,22 +376,28 @@ pub async fn async_reencrypt<
     keys: &KmsFheKeyHandles,
     sig_key: &PrivateSigKey,
     rng: &mut (impl CryptoRng + RngCore),
-    high_level_ct: &[u8],
-    fhe_type: FheType,
+    typed_ciphertexts: &[TypedCiphertext],
     req_digest: &[u8],
     client_enc_key: &PublicEncKey,
     client_address: &alloy_primitives::Address,
-) -> anyhow::Result<Vec<u8>> {
-    RealCentralizedKms::<PubS, PrivS, BackS>::reencrypt(
-        keys,
-        sig_key,
-        rng,
-        high_level_ct,
-        fhe_type,
-        req_digest,
-        client_enc_key,
-        client_address,
-    )
+) -> anyhow::Result<Vec<(FheType, Vec<u8>)>> {
+    let mut out = vec![];
+    for typed_ciphertext in typed_ciphertexts {
+        let high_level_ct = &typed_ciphertext.ciphertext;
+        let fhe_type = typed_ciphertext.fhe_type();
+        let res = RealCentralizedKms::<PubS, PrivS, BackS>::reencrypt(
+            keys,
+            sig_key,
+            rng,
+            high_level_ct,
+            fhe_type,
+            req_digest,
+            client_enc_key,
+            client_address,
+        )?;
+        out.push((fhe_type, res));
+    }
+    Ok(out)
 }
 
 // impl fmt::Debug for CentralizedKms, we don't want to include the decryption key in the debug output
@@ -735,9 +741,9 @@ pub(crate) mod tests {
     use alloy_sol_types::SolStruct;
     use distributed_decryption::execution::keyset_config::StandardKeySetConfig;
     use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
-    use kms_grpc::kms::v1::{FheType, RequestId};
+    use kms_grpc::kms::v1::{FheType, RequestId, TypedCiphertext};
     use kms_grpc::rpc_types::{
-        alloy_to_protobuf_domain, hash_element, PrivDataType, Reencrypt, WrappedPublicKey,
+        alloy_to_protobuf_domain, PrivDataType, Reencrypt, WrappedPublicKey,
     };
     use rand::{RngCore, SeedableRng};
     use serde::{Deserialize, Serialize};
@@ -1282,17 +1288,19 @@ pub(crate) mod tests {
         let client_address = alloy_primitives::Address::from_public_key(client_pk.pk());
         let signer = alloy_signer_local::PrivateKeySigner::from_signing_key(client_sk.sk().clone());
         let ciphertext = vec![1, 2, 3];
-        let ciphertext_digest = hash_element(&ciphertext);
         let (enc_pk, _) = ephemeral_encryption_key_generation(&mut rng);
         let key_id = DEFAULT_THRESHOLD_KEY_ID_4P.clone();
 
+        let typed_ciphertext = TypedCiphertext {
+            ciphertext,
+            fhe_type: 1,
+            external_handle: vec![123],
+        };
         let payload = kms_grpc::kms::v1::ReencryptionRequestPayload {
             enc_key: bincode::serialize(&enc_pk).unwrap(),
             client_address: client_address.to_checksum(None),
-            fhe_type: 1,
             key_id: Some(key_id),
-            ciphertext: Some(ciphertext),
-            ciphertext_digest,
+            typed_ciphertexts: vec![typed_ciphertext],
         };
         let message = Reencrypt {
             publicKey: alloy_primitives::Bytes::copy_from_slice(&payload.enc_key),

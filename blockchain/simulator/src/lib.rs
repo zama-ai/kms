@@ -34,7 +34,7 @@ use kms_grpc::kms::v1::{
 use kms_grpc::rpc_types::{
     hash_element, protobuf_to_alloy_domain, PubDataType, Reencrypt, SIGNING_KEY_ID,
 };
-use kms_lib::client::{assemble_metadata_alloy, ParsedReencryptionRequest};
+use kms_lib::client::{assemble_metadata_alloy, CiphertextHandle, ParsedReencryptionRequest};
 use kms_lib::consts::{DEFAULT_PARAM, TEST_PARAM};
 use kms_lib::cryptography::internal_crypto_types::{PrivateEncKey, PublicEncKey, PublicSigKey};
 use kms_lib::cryptography::signcryption::ephemeral_encryption_key_generation;
@@ -1190,9 +1190,9 @@ pub async fn execute_reencryption_contract(
         serialized_enc_key.clone(),
         ct_config.data_type,
         hex::decode(key_id)?,
-        dummy_external_ciphertext_handle,
-        handle_bytes,
-        ciphertext_digest.clone(),
+        vec![dummy_external_ciphertext_handle],
+        vec![handle_bytes.clone()],
+        vec![ciphertext_digest.clone()],
         acl_addres,
         "some_proof".to_string(),
         EIP712_NAME.to_string(),
@@ -1207,7 +1207,7 @@ pub async fn execute_reencryption_contract(
         signature,
         client_address,
         serialized_enc_key,
-        ciphertext_digest,
+        vec![CiphertextHandle::new(handle_bytes)],
         eip712_verifying_contract,
     );
 
@@ -1732,7 +1732,7 @@ fn check_ext_pt_signature(
         Some(hex_list) => hex_list
             .0
             .iter()
-            .map(|hex_vector| Some(hex_vector.0.clone())) // Convert each HexVector to Some(Vec<u8>)
+            .map(|hex_vector| hex_vector.0.clone()) // Convert each HexVector to Vec<u8>
             .collect(),
         None => Vec::new(), // If it's None, return an empty Vec
     };
@@ -1807,7 +1807,10 @@ fn process_reencrypt_responses(
     enc_pk: PublicEncKey,
     enc_sk: PrivateEncKey,
 ) -> anyhow::Result<()> {
-    tracing::info!("Found {} responses!", responses.len());
+    tracing::info!(
+        "Found {} responses while processing reencryption!",
+        responses.len()
+    );
     let mut reenc_responses: Vec<ReencryptionResponse> = Vec::new();
     for response in responses {
         if let OperationValue::ReencryptResponse(resp) = response {
@@ -1815,13 +1818,6 @@ fn process_reencrypt_responses(
                 <&HexVector as Into<Vec<u8>>>::into(resp.payload()).as_slice(),
             )?;
             let signature = resp.signature().0.clone();
-
-            // TODO(1968)
-            tracing::info!(
-                "[1968] found a response: ct: {}, fhe_type: {}",
-                hex::encode(&payload.signcrypted_ciphertext),
-                payload.fhe_type
-            );
 
             reenc_responses.push(ReencryptionResponse {
                 signature,
@@ -1838,11 +1834,9 @@ fn process_reencrypt_responses(
         &enc_sk,
     )?;
 
-    tracing::info!("Reconstructed {:?}", result);
-
     assert_eq!(
         TestingPlaintext::from(expected_answer),
-        TestingPlaintext::from(result)
+        TestingPlaintext::from(result[0].clone())
     );
 
     tracing::info!("Reencryption response processed successfully.");

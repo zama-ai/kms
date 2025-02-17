@@ -232,7 +232,7 @@ pub fn deserialize_to_low_level(
 /// take external handles and plaintext in the form of bytes, convert them to the required solidity types and sign them using EIP-712 for external verification (e.g. in the fhevm).
 pub(crate) fn compute_external_pt_signature(
     client_sk: &PrivateSigKey,
-    ext_handles_bytes: Vec<Option<Vec<u8>>>,
+    ext_handles_bytes: Vec<Vec<u8>>,
     pts: &[TypedPlaintext],
     eip712_domain: Eip712Domain,
     acl_address: Address,
@@ -505,7 +505,7 @@ fn abi_encode_plaintexts(ptxts: &[TypedPlaintext]) -> Bytes {
 }
 
 pub fn compute_pt_message_hash(
-    ext_handles_bytes: Vec<Option<Vec<u8>>>,
+    ext_handles_bytes: Vec<Vec<u8>>,
     pts: &[TypedPlaintext],
     eip712_domain: Eip712Domain,
     acl_address: Address,
@@ -513,7 +513,6 @@ pub fn compute_pt_message_hash(
     // convert external_handles back to U256 to be signed
     let external_handles: Vec<_> = ext_handles_bytes
         .into_iter()
-        .flatten()
         .map(|e| U256::from_be_slice(e.as_slice()))
         .collect();
 
@@ -567,9 +566,10 @@ pub type KeyGenCallValues = HashMap<PubDataType, SignedPubDataHandleInternal>;
 pub type DecCallValues = (Vec<u8>, Vec<TypedPlaintext>, Vec<u8>);
 
 // Values that need to be stored temporarily as part of an async reencryption call.
-// Represents the FHE type, the digest of the request and the partial decryption.
+// Represents a batch of FHE type with its corresponding partial decryption,
+// and the digest of the request.
 #[cfg(feature = "non-wasm")]
-pub type ReencCallValues = (FheType, Vec<u8>, Vec<u8>);
+pub type ReencCallValues = (Vec<(FheType, Vec<u8>)>, Vec<u8>);
 
 /// Helper method which takes a [HashMap<PubDataType, SignedPubDataHandle>] and returns
 /// [HashMap<String, SignedPubDataHandle>] by applying the [ToString] function on [PubDataType] for each element in the map.

@@ -40,6 +40,16 @@ pub static CRS_GEN_REQUEST_NAME: &str = "crs_gen_request";
 pub static DEC_REQUEST_NAME: &str = "dec_request";
 pub static REENC_REQUEST_NAME: &str = "reenc_request";
 
+// alloy_sol_types::sol! {
+//     struct UserDecryptionMessage {
+//         bytes publicKey;
+//         address[] contracts;
+//         uint256 contractsChainId;
+//         uint256 startTimestamp;
+//         uint256 durationDays;
+//     }
+// }
+
 // This type (and its fields) should not be renamed
 // since it needs to match what is in fhevmjs!
 alloy_sol_types::sol! {
@@ -428,15 +438,12 @@ impl crate::kms::v1::ReencryptionRequest {
 
         let req_digest = pk_sol.eip712_signing_hash(&domain).to_vec();
 
-        let mut actual_ct_digest = hash_element(
-            payload
-                .ciphertext
-                .as_ref()
-                .ok_or_else(|| anyhow!("missing ciphertext"))?,
-        );
-        if payload.ciphertext_digest != actual_ct_digest {
-            return Err(anyhow!("ciphertext digest mismatch"));
-        }
+        let handles = payload
+            .typed_ciphertexts
+            .iter()
+            .map(|x| x.external_handle.clone())
+            .collect::<Vec<_>>();
+        let mut actual_ct_digest = serialize_hash_element(&handles)?;
 
         let mut link = req_digest;
         link.append(&mut actual_ct_digest);
@@ -855,7 +862,7 @@ pub trait MetaResponse {
 }
 
 pub trait FheTypeResponse {
-    fn fhe_type(&self) -> anyhow::Result<FheType>;
+    fn fhe_types(&self) -> anyhow::Result<Vec<FheType>>;
 }
 
 impl MetaResponse for ReencryptionResponsePayload {
@@ -869,8 +876,12 @@ impl MetaResponse for ReencryptionResponsePayload {
 }
 
 impl FheTypeResponse for ReencryptionResponsePayload {
-    fn fhe_type(&self) -> anyhow::Result<FheType> {
-        Ok(self.fhe_type())
+    fn fhe_types(&self) -> anyhow::Result<Vec<FheType>> {
+        Ok(self
+            .signcrypted_ciphertexts
+            .iter()
+            .map(|x| x.fhe_type())
+            .collect())
     }
 }
 

@@ -35,7 +35,7 @@ use kms_blockchain_connector::infrastructure::metrics::OpenTelemetryMetrics;
 use kms_common::retry_loop;
 use kms_grpc::kms::v1::{
     DecryptionResponsePayload, ReencryptionResponse, ReencryptionResponsePayload, RequestId,
-    VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
+    TypedCiphertext, VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
 };
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain, SIGNING_KEY_ID};
 use kms_lib::client::assemble_metadata_alloy;
@@ -1003,12 +1003,27 @@ async fn reenc_sunshine(key_id: &RequestId, amount_parties: usize, slow: bool) {
     let request_id = RequestId {
         request_id: "1111000000000000000000000000000000001111".to_string(),
     };
+    let typed_ciphertexts = vec![TypedCiphertext {
+        ciphertext: ct.clone(),
+        fhe_type: fhe_type.into(),
+        external_handle: MOCK_CT_HANDLES[0].to_vec(),
+    }];
     let (kms_req, enc_pk, enc_sk) = kms_client
-        .reencryption_request(ct.clone(), &dummy_domain(), fhe_type, &request_id, key_id)
+        .reencryption_request(
+            &dummy_domain(),
+            typed_ciphertexts.clone(),
+            &request_id,
+            key_id,
+        )
         .unwrap();
     let payload = kms_req.payload.clone().unwrap();
     let eip712 = kms_req.domain.clone().unwrap();
     let dummy_external_ciphertext_handle = vec![0_u8, 32];
+    let dummy_digests = vec![vec![9]];
+    let ciphertext_handles = typed_ciphertexts
+        .into_iter()
+        .map(|ct| ct.external_handle)
+        .collect::<Vec<_>>();
     let op = OperationValue::Reencrypt(
         ReencryptValues::new(
             kms_req.signature.clone(),
@@ -1016,9 +1031,9 @@ async fn reenc_sunshine(key_id: &RequestId, amount_parties: usize, slow: bool) {
             payload.enc_key,
             events::kms::FheType::from(fhe_type as u8),
             HexVector::from_hex(payload.key_id.unwrap().request_id.as_str()).unwrap(),
-            dummy_external_ciphertext_handle,
-            MOCK_CT_HANDLES[0].to_vec(),
-            payload.ciphertext_digest,
+            vec![dummy_external_ciphertext_handle],
+            ciphertext_handles,
+            dummy_digests,
             "dummy_acl_address".to_string(),
             "some proof".to_string(),
             eip712.name,
@@ -1058,10 +1073,10 @@ async fn reenc_sunshine(key_id: &RequestId, amount_parties: usize, slow: bool) {
         let eip712_domain = protobuf_to_alloy_domain(kms_req.domain.as_ref().unwrap()).unwrap();
         let client_request = ParsedReencryptionRequest::try_from(&kms_req).unwrap();
         kms_client.convert_to_addresses();
-        let pt = kms_client
+        let pts = kms_client
             .process_reencryption_resp(&client_request, &eip712_domain, &agg_resp, &enc_pk, &enc_sk)
             .unwrap();
-        assert_eq!(pt.as_u8(), msg);
+        assert_eq!(pts[0].as_u8(), msg);
     } else {
         // otherwise just check that we're getting dummy values back
         for result in results {
@@ -1312,7 +1327,7 @@ async fn crs_sunshine(key_id: &RequestId, amount_parties: usize, slow: bool) {
 
 #[tokio::test]
 #[rstest::rstest]
-#[case(&TEST_THRESHOLD_KEY_ID_7P, 10)]
+#[case(&TEST_THRESHOLD_KEY_ID_7P, 7)]
 #[case(&TEST_THRESHOLD_KEY_ID_4P, 4)]
 #[serial_test::serial]
 #[tracing_test::traced_test]
@@ -1323,7 +1338,7 @@ async fn ddec_sunshine_mocked_core(#[case] key_id: &RequestId, #[case] amount_pa
 
 #[tokio::test]
 #[rstest::rstest]
-#[case(&TEST_THRESHOLD_KEY_ID_7P, 10)]
+#[case(&TEST_THRESHOLD_KEY_ID_7P, 7)]
 #[case(&TEST_THRESHOLD_KEY_ID_4P, 4)]
 #[serial_test::serial]
 #[tracing_test::traced_test]
@@ -1334,7 +1349,7 @@ async fn reenc_sunshine_mocked_core(#[case] key_id: &RequestId, #[case] amount_p
 
 #[tokio::test]
 #[rstest::rstest]
-#[case(&TEST_THRESHOLD_CRS_ID_7P, &TEST_THRESHOLD_KEY_ID_7P, 10)]
+#[case(&TEST_THRESHOLD_CRS_ID_7P, &TEST_THRESHOLD_KEY_ID_7P, 7)]
 #[case(&TEST_THRESHOLD_CRS_ID_4P, &TEST_THRESHOLD_KEY_ID_4P, 4)]
 #[serial_test::serial]
 #[tracing_test::traced_test]
@@ -1349,7 +1364,7 @@ async fn verify_proven_ct_sunshine_mocked_core(
 
 #[tokio::test]
 #[rstest::rstest]
-#[case(&TEST_THRESHOLD_KEY_ID_7P, 10)]
+#[case(&TEST_THRESHOLD_KEY_ID_7P, 7)]
 #[case(&TEST_THRESHOLD_KEY_ID_4P, 4)]
 #[serial_test::serial]
 #[tracing_test::traced_test]
@@ -1360,7 +1375,7 @@ async fn keygen_sunshine_mocked_core(#[case] key_id: &RequestId, #[case] amount_
 
 #[tokio::test]
 #[rstest::rstest]
-#[case(&TEST_THRESHOLD_KEY_ID_7P, 10)]
+#[case(&TEST_THRESHOLD_KEY_ID_7P, 7)]
 #[case(&TEST_THRESHOLD_KEY_ID_4P, 4)]
 #[serial_test::serial]
 #[tracing_test::traced_test]
@@ -1371,7 +1386,7 @@ async fn preproc_sunshine_mocked_core(#[case] key_id: &RequestId, #[case] amount
 
 #[tokio::test]
 #[rstest::rstest]
-#[case(&TEST_THRESHOLD_KEY_ID_7P, 10)]
+#[case(&TEST_THRESHOLD_KEY_ID_7P, 7)]
 #[case(&TEST_THRESHOLD_KEY_ID_4P, 4)]
 #[serial_test::serial]
 #[tracing_test::traced_test]
@@ -1392,6 +1407,7 @@ async fn ddec_sunshine_slow() {
 #[cfg(feature = "slow_tests")]
 #[tokio::test]
 #[serial_test::serial]
+#[tracing_test::traced_test]
 #[integration_test]
 async fn reenc_sunshine_slow() {
     reenc_sunshine(&TEST_THRESHOLD_KEY_ID_4P, 4, true).await
