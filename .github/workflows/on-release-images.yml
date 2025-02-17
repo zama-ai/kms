@@ -12,16 +12,16 @@ on:
         default: 'main'
 
 jobs:
-  docker-simulator:
+  docker-kms-core-client:
     uses: ./.github/workflows/common-docker.yml
     permissions:
       contents: 'read'
       id-token: 'write'
       packages: 'write'
     with:
-      working-directory: "./blockchain/simulator"
+      working-directory: "./core-client"
       push_image: true
-      image-name: 'kms-blockchain-simulator'
+      image-name: 'kms-core-client'
       ref: ${{ inputs.ref || '' }}
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -37,40 +37,6 @@ jobs:
       working-directory: "./kms-connector"
       push_image: true
       image-name: 'kms-connector'
-      ref: ${{ inputs.ref || '' }}
-    secrets:
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      GRAVITON_BUILDER_SSH_PRIVATE_KEY: ${{ secrets.GRAVITON_BUILDER_SSH_PRIVATE_KEY }}
-
-
-  docker-gateway:
-    uses: ./.github/workflows/common-docker-big-instance.yml
-    permissions:
-      contents: 'read'
-      id-token: 'write'
-      packages: 'write'
-    with:
-      working-directory: "./blockchain/gateway"
-      push_image: true
-      image-name: 'kms-blockchain-gateway'
-      ref: ${{ inputs.ref || '' }}
-    secrets:
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      GRAVITON_BUILDER_SSH_PRIVATE_KEY: ${{ secrets.GRAVITON_BUILDER_SSH_PRIVATE_KEY }}
-      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
-
-  docker-smart-contracts:
-    uses: ./.github/workflows/common-docker.yml
-    permissions:
-      contents: 'read'
-      id-token: 'write'
-      packages: 'write'
-    with:
-      working-directory: './blockchain/contracts'
-      push_image: true
-      image-name: 'kms-blockchain-asc'
       ref: ${{ inputs.ref || '' }}
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
