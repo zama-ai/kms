@@ -53,9 +53,7 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
             .expect("Invalid decryption manager address");
         let httpz = Address::from_str(&config.httpz_address).expect("Invalid HTTPZ address");
 
-        let rpc_url = config // TODO: consolidate all URLs in one place
-            .gwl2_url
-            .unwrap_or_else(|| "ws://localhost:8545".to_string());
+        let rpc_url = config.gwl2_url;
         let events = EventsAdapter::new(rpc_url, decryption_manager, httpz, event_tx);
         let decryption = DecryptionAdapter::new(decryption_manager, provider, wallet);
 

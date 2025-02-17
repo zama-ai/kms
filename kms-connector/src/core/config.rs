@@ -8,16 +8,11 @@ use std::{fs, path::Path, str::FromStr};
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
     /// Gateway L2 RPC endpoint
-    #[serde(default)]
-    pub gwl2_url: Option<String>,
+    pub gwl2_url: String,
     /// KMS Core endpoint
-    #[serde(default)]
-    pub kms_core_endpoint: Option<String>,
+    pub kms_core_endpoint: String,
     /// Mnemonic phrase for the wallet
     pub mnemonic: String,
-    /// Optional passphrase for the wallet
-    #[serde(default)]
-    pub passphrase: Option<String>,
     /// Chain ID
     pub chain_id: u64,
     /// Decryption manager contract address
@@ -25,23 +20,7 @@ pub struct Config {
     /// HTTPZ contract address
     pub httpz_address: String,
     /// Channel size for event processing
-    #[serde(default)]
     pub channel_size: Option<usize>,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            gwl2_url: Some("ws://localhost:8545".to_string()),
-            kms_core_endpoint: Some("http://localhost:50052".to_string()),
-            mnemonic: "test test test test test test test test test test test junk".to_string(),
-            passphrase: None,
-            chain_id: 1,
-            decryption_manager_address: "0x0000000000000000000000000000000000000000".to_string(),
-            httpz_address: "0x0000000000000000000000000000000000000000".to_string(),
-            channel_size: None,
-        }
-    }
 }
 
 impl Config {
@@ -107,10 +86,9 @@ mod tests {
     #[test]
     fn test_load_valid_config() {
         let config = Config {
-            gwl2_url: Some("ws://localhost:8545".to_string()),
-            kms_core_endpoint: Some("http://localhost:50052".to_string()),
+            gwl2_url: "ws://localhost:8545".to_string(),
+            kms_core_endpoint: "http://localhost:50052".to_string(),
             mnemonic: "test test test test test test test test test test test junk".to_string(),
-            passphrase: None,
             chain_id: 1,
             decryption_manager_address: "0x0000000000000000000000000000000000000000".to_string(),
             httpz_address: "0x0000000000000000000000000000000000000000".to_string(),
@@ -126,7 +104,6 @@ mod tests {
         assert_eq!(config.gwl2_url, loaded_config.gwl2_url);
         assert_eq!(config.kms_core_endpoint, loaded_config.kms_core_endpoint);
         assert_eq!(config.mnemonic, loaded_config.mnemonic);
-        assert_eq!(config.passphrase, loaded_config.passphrase);
         assert_eq!(config.chain_id, loaded_config.chain_id);
         assert_eq!(
             config.decryption_manager_address,
@@ -140,10 +117,9 @@ mod tests {
     #[test]
     fn test_save_config() {
         let config = Config {
-            gwl2_url: Some("ws://localhost:8545".to_string()),
-            kms_core_endpoint: Some("http://localhost:50052".to_string()),
+            gwl2_url: "ws://localhost:8545".to_string(),
+            kms_core_endpoint: "http://localhost:50052".to_string(),
             mnemonic: "test test test test test test test test test test test junk".to_string(),
-            passphrase: None,
             chain_id: 1,
             decryption_manager_address: "0x0000000000000000000000000000000000000000".to_string(),
             httpz_address: "0x0000000000000000000000000000000000000000".to_string(),
@@ -160,10 +136,9 @@ mod tests {
     #[test]
     fn test_invalid_address() {
         let config = Config {
-            gwl2_url: Some("ws://localhost:8545".to_string()),
-            kms_core_endpoint: Some("http://localhost:50052".to_string()),
+            gwl2_url: "ws://localhost:8545".to_string(),
+            kms_core_endpoint: "http://localhost:50052".to_string(),
             mnemonic: "test test test test test test test test test test test junk".to_string(),
-            passphrase: None,
             chain_id: 1,
             decryption_manager_address: "0x0000".to_string(),
             httpz_address: "0x000010".to_string(),

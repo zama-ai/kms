@@ -14,9 +14,6 @@ use tokio::{
 use tracing::{error, info};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-/// Default WebSocket connection URL
-const DEFAULT_GWL2_URL: &str = "ws://localhost:8545";
-const DEFAULT_KMS_CORE_URL: &str = "http://localhost:8080";
 const RETRY_DELAY: Duration = Duration::from_secs(5);
 
 /// Keep trying to connect to the RPC endpoint indefinitely
@@ -62,10 +59,7 @@ async fn run_connector(
     );
 
     // Initialize KMS service
-    let kms_core_endpoint = config
-        .kms_core_endpoint
-        .clone()
-        .unwrap_or_else(|| DEFAULT_KMS_CORE_URL.to_string());
+    let kms_core_endpoint = config.kms_core_endpoint.clone();
     info!("Connecting to KMS-core at {}", kms_core_endpoint);
     let kms_provider = Arc::new(KmsServiceImpl::new(&kms_core_endpoint));
 
@@ -102,10 +96,7 @@ async fn main() -> Result<()> {
     let config = Config::from_file("./kms-connector/config.toml")?;
 
     // Get RPC URL with default
-    let gw_endpoint = config
-        .gwl2_url
-        .clone()
-        .unwrap_or_else(|| DEFAULT_GWL2_URL.to_string());
+    let gw_endpoint = config.gwl2_url.clone();
 
     // Initialize WebSocket connection with retry
     let provider = connect_with_retry(&gw_endpoint).await;
