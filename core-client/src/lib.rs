@@ -1422,7 +1422,7 @@ pub async fn execute_cmd(
             (Some(req_id), res)
         }
         CCCommand::KeyGen(KeyGenParameters { preproc_id }) => {
-            tracing::info!("key generation with parameter {}.", param.as_str_name());
+            tracing::info!("Key generation with parameter {}.", param.as_str_name());
             let req_id = do_keygen(
                 &mut internal_client,
                 &mut core_endpoints,
