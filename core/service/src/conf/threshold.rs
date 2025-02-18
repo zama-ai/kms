@@ -6,6 +6,7 @@ use kms_common::DecryptionMode;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct ThresholdPartyConf {
     // endpoint for incoming peer requests
     pub listen_address: String,
@@ -46,6 +47,7 @@ impl ThresholdPartyConf {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct PeerConf {
     pub party_id: usize,
     pub address: String,

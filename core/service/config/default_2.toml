@@ -6,10 +6,6 @@ listen_port = 50200
 timeout_secs = 360
 grpc_max_message_size = 20971520 # 20 MiB
 
-[tracing]
-service_name = "kms-threshold-2"
-endpoint = "http://localhost:4317"
-
 [aws]
 region = "us-east-1"
 s3_endpoint = "http://dev-s3-mock:9000"

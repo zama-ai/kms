@@ -24,6 +24,7 @@ lazy_static::lazy_static! {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, TypedBuilder, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 #[serde(rename = "telemetry")]
 pub struct TelemetryConfig {
     /// Service name for tracing
@@ -96,6 +97,7 @@ impl TelemetryConfig {
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, TypedBuilder, Eq)]
+#[serde(deny_unknown_fields)]
 #[serde(rename_all = "lowercase")]
 pub struct Batch {
     /// The maximum number of spans that can be queued before they are exported.
@@ -182,6 +184,7 @@ impl Batch {
 }
 
 #[derive(Debug, Serialize, Clone, TypedBuilder, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct RetryConfig {
     /// Maximum number of retry attempts
     #[builder(default, setter(strip_option))]

@@ -10,6 +10,7 @@ pub mod threshold;
 
 /// Common configuration parameters that should be set in all scenarios
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct CoreConfig {
     pub service: ServiceEndpoint,
     pub telemetry: Option<TelemetryConfig>,
@@ -22,6 +23,7 @@ pub struct CoreConfig {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct ServiceEndpoint {
     // gRPC endpoint for incoming client requests
     pub listen_address: String,
@@ -45,8 +47,10 @@ impl ConfigTracing for CoreConfig {
 /// Override AWS configuration when running in Nitro enclaves or in test
 /// environments
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct AWSConfig {
     pub region: String,
+    pub role_arn: Option<String>,
     pub imds_endpoint: Option<Url>,
     pub sts_endpoint: Option<Url>,
     pub s3_endpoint: Option<Url>,
@@ -55,6 +59,7 @@ pub struct AWSConfig {
 
 /// Where and how to store the key material
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct Vault {
     pub storage: Url,
     pub storage_cache_size: Option<usize>,

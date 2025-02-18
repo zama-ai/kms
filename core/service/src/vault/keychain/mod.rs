@@ -95,7 +95,7 @@ pub async fn make_keychain(
 		    security_module,
 		    awskms::Asymm::new(awskms_client, root_key_id).await?,
 		)?),
-		_ => anyhow::bail!("Root key spec must be one of symm/asymm")
+		other => anyhow::bail!("Root key spec must be one of symm/asymm, but {} was specified in keychain {}", other, keychain_url)
 	    }
         }
         _ => anyhow::bail!("Only AWS KMS is currently supported, make sure to specify a keychain URL in the format awskms://root_key_spec/root_key_id"),

@@ -16,18 +16,6 @@ timeout_secs = 360
 # Maximum GRPC message size in bytes
 grpc_max_message_size = 20971520 # 20 MiB
 
-# Tracing configuration for logging and metrics.
-[tracing]
-
-# The service name. This is used to identify the service in the tracing system.
-# It is recommended to use the same service name across all instances of the
-# service.
-service_name = "kms-threshold-1"
-
-# The endpoint of the tracing system. If it is not set, tracing will be
-# redirected to stdout. This is an optional configuration.
-endpoint = "http://localhost:4317"
-
 # Set the AWS region and endpoint used by [public_vault.storage]
 # and/or [private_vault.storage], if the storage URL starts with "s3://"".
 # If the storage URL is file-based, this configuration is ignored.

@@ -18,10 +18,6 @@ max_concurrent_exports = 4
 scheduled_delay_ms = 500
 export_timeout_ms = 5000
 
-[tracing]
-service_name = "kms-centralized"
-endpoint = "http://localhost:4317"
-
 [aws]
 region = "eu-west-3"
 imds_endpoint = "http://localhost:5000"

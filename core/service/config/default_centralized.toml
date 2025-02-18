@@ -18,11 +18,6 @@ max_concurrent_exports = 4
 scheduled_delay_ms = 500
 export_timeout_ms = 5000
 
-# TODO: deprecate in future release
-[tracing]
-service_name = "kms-centralized"
-endpoint = "http://localhost:4317"
-
 [public_vault]
 storage = "file://./keys"
 

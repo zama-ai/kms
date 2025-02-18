@@ -5,7 +5,10 @@ set -o pipefail
 PARENT_CID=3
 LOG_PORT=3000
 CONFIG_PORT=4000
+TOKEN_PORT=4100
 KMS_SERVER_CONFIG_FILE="config.toml"
+AWS_WEB_IDENTITY_TOKEN_FILE="token"
+export AWS_WEB_IDENTITY_TOKEN_FILE
 
 logger() {
     socat -u STDIN VSOCK-CONNECT:$PARENT_CID:$LOG_PORT
@@ -67,7 +70,31 @@ route add -net 127.0.0.0 netmask 255.0.0.0 lo |& logger || fail "cannot add loop
 
 # receive kms-server configuration from the parent
 log "requesting kms-server config"
-socat -u VSOCK-CONNECT:$PARENT_CID:$CONFIG_PORT CREATE:$KMS_SERVER_CONFIG_FILE |& logger || fail "cannot receive kms-server config"
+socat -u VSOCK-CONNECT:$PARENT_CID:$CONFIG_PORT \
+      CREATE:$KMS_SERVER_CONFIG_FILE \
+    |& logger || fail "cannot receive kms-server config"
+
+# keep receiving fresh web identity tokens from the parent
+has_value "aws.role_arn" && \
+    {
+	AWS_ROLE_ARN="$(get_value "aws.role_arn")"
+	export AWS_ROLE_ARN
+	mkfifo $AWS_WEB_IDENTITY_TOKEN_FILE
+	while true;
+	do
+	    socat -U PIPE:$AWS_WEB_IDENTITY_TOKEN_FILE \
+		  VSOCK-CONNECT:$PARENT_CID:$TOKEN_PORT \
+		|& logger || fail "cannot receive web identity token"
+	done &
+    }
+
+# the `aws-config` crate doesn't have a simple way to configure AWS API
+# endpoints for credentials providers (except IMDS), so we set the STS endpoint
+# through the environment
+has_value "aws.sts_endpoint" && {
+    AWS_ENDPOINT_URL_STS="$(get_value "aws.sts_endpoint")"
+    export AWS_ENDPOINT_URL_STS
+}
 
 # (optional) telemetry and AWS API proxies
 has_value "telemetry.metrics_bind_address" && \

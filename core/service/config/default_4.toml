@@ -7,10 +7,6 @@ timeout_secs = 360
 grpc_max_message_size = 20971520 # 20 MiB
 decryption_mode = "NoiseFloodSmall"
 
-[tracing]
-service_name = "kms-threshold-4"
-endpoint = "http://localhost:4317"
-
 [aws]
 region = "us-east-1"
 s3_endpoint = "http://dev-s3-mock:9000"

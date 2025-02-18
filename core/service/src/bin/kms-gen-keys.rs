@@ -248,7 +248,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root_key_id = args
         .root_key_id
         .as_ref()
-        .map(|k| Url::parse(format!("awskms://{}", k).as_str()).unwrap());
+        .map(|k| Url::parse(k.as_str()).unwrap());
     // create storages
     let amount_storages = match args.mode {
         Mode::Centralized { write_privkey: _ } => 1,
