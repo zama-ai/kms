@@ -4,8 +4,7 @@
 /// This library also includes an associated CLI.
 use aes_prng::AesRng;
 use alloy_primitives::PrimitiveSignature;
-use alloy_signer::SignerSync;
-use alloy_sol_types::{Eip712Domain, SolStruct};
+use alloy_sol_types::Eip712Domain;
 use anyhow::anyhow;
 use bech32::{self, FromBase32};
 use bytes::Bytes;
@@ -31,9 +30,7 @@ use kms_grpc::kms::v1::{
     DecryptionResponsePayload, Eip712DomainMsg, ReencryptionResponse, ReencryptionResponsePayload,
     TypedPlaintext,
 };
-use kms_grpc::rpc_types::{
-    hash_element, protobuf_to_alloy_domain, PubDataType, Reencrypt, SIGNING_KEY_ID,
-};
+use kms_grpc::rpc_types::{hash_element, protobuf_to_alloy_domain, PubDataType, SIGNING_KEY_ID};
 use kms_lib::client::{assemble_metadata_alloy, CiphertextHandle, ParsedReencryptionRequest};
 use kms_lib::consts::{DEFAULT_PARAM, TEST_PARAM};
 use kms_lib::cryptography::internal_crypto_types::{PrivateEncKey, PublicEncKey, PublicSigKey};
@@ -1170,22 +1167,11 @@ pub async fn execute_reencryption_contract(
         Some(alloy_primitives::FixedBytes::from_slice(EIP712_SALT)),
     );
 
-    let message = Reencrypt {
-        publicKey: alloy_primitives::Bytes::copy_from_slice(&serialized_enc_key),
-    };
-
-    let message_hash = message.eip712_signing_hash(&domain);
-    let signer = alloy_signer_local::PrivateKeySigner::from_signing_key(sig_sk.sk().clone());
-
-    let signature = alloy_primitives::PrimitiveSignature::try_from(
-        signer.sign_hash_sync(&message_hash)?.as_bytes().as_slice(),
-    )?;
-
     //ciphertext digest is SHA3 of the ctxt
     let ciphertext_digest = hash_element(&cipher);
 
     let value = OperationValue::Reencrypt(ReencryptValues::new(
-        signature.as_bytes().to_vec(),
+        vec![], // signature is not needed anymore, it does not exist in the new connector
         client_address.to_checksum(None),
         serialized_enc_key.clone(),
         ct_config.data_type,
@@ -1204,7 +1190,7 @@ pub async fn execute_reencryption_contract(
 
     //Also create a copy of the request for reconstruction later on
     let parsed_request = ParsedReencryptionRequest::new(
-        signature,
+        None,
         client_address,
         serialized_enc_key,
         vec![CiphertextHandle::new(handle_bytes)],

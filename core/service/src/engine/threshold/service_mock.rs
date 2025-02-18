@@ -145,6 +145,7 @@ impl Reencryptor for DummyReencryptor {
         let signcrypted_ciphertexts = vec![TypedSigncryptedCiphertext {
             signcrypted_ciphertext: "signcrypted_ciphertexts".as_bytes().to_vec(),
             fhe_type: kms_grpc::kms::v1::FheType::Euint8.into(),
+            external_handle: vec![1, 2, 3],
         }];
         let payload = ReencryptionResponsePayload {
             verification_key: vec![],
@@ -152,6 +153,7 @@ impl Reencryptor for DummyReencryptor {
             signcrypted_ciphertexts,
             party_id: self.degree + 1,
             degree: self.degree,
+            external_signature: vec![1, 2, 3],
         };
         Ok(Response::new(ReencryptionResponse {
             signature: vec![1, 2],

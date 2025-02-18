@@ -23,6 +23,8 @@ use bincode::serialize;
 use distributed_decryption::execution::endpoints::keygen::FhePubKeySet;
 #[cfg(feature = "non-wasm")]
 use distributed_decryption::execution::keyset_config::KeySetCompressionConfig;
+#[cfg(feature = "non-wasm")]
+use distributed_decryption::execution::keyset_config::StandardKeySetConfig;
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 #[cfg(feature = "non-wasm")]
 use distributed_decryption::execution::zk::ceremony::make_centralized_public_parameters;
@@ -30,8 +32,12 @@ use k256::ecdsa::SigningKey;
 use kms_core_utils::thread_handles::ThreadHandleGroup;
 use kms_grpc::kms::v1::FheType;
 #[cfg(feature = "non-wasm")]
+use kms_grpc::kms::v1::KeySetAddedInfo;
+#[cfg(feature = "non-wasm")]
 use kms_grpc::kms::v1::RequestId;
 use kms_grpc::kms::v1::TypedPlaintext;
+#[cfg(feature = "non-wasm")]
+use kms_grpc::kms::v1::TypedSigncryptedCiphertext;
 use kms_grpc::kms::v1::{TypedCiphertext, VerifyProvenCtResponsePayload};
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
@@ -45,19 +51,12 @@ use std::sync::Arc;
 use std::{fmt, panic};
 use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::prelude::FheDecrypt;
+use tfhe::shortint::ClassicPBSParameters;
 #[cfg(feature = "non-wasm")]
 use tfhe::zk::CompactPkeCrs;
 #[cfg(feature = "non-wasm")]
 use tfhe::Seed;
 use tfhe::ServerKey;
-use tonic_health::pb::health_server::{Health, HealthServer};
-use tonic_health::server::HealthReporter;
-
-#[cfg(feature = "non-wasm")]
-use distributed_decryption::execution::keyset_config::StandardKeySetConfig;
-#[cfg(feature = "non-wasm")]
-use kms_grpc::kms::v1::KeySetAddedInfo;
-use tfhe::shortint::ClassicPBSParameters;
 use tfhe::{
     ClientKey, ConfigBuilder, FheBool, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048,
     FheUint256, FheUint32, FheUint4, FheUint512, FheUint64, FheUint8,
@@ -65,6 +64,8 @@ use tfhe::{
 use tokio::sync::RwLock;
 #[cfg(feature = "non-wasm")]
 use tokio_util::task::TaskTracker;
+use tonic_health::pb::health_server::{Health, HealthServer};
+use tonic_health::server::HealthReporter;
 
 #[cfg(feature = "non-wasm")]
 pub(crate) async fn async_generate_fhe_keys<PubS, PrivS, BackS>(
@@ -380,12 +381,16 @@ pub async fn async_reencrypt<
     req_digest: &[u8],
     client_enc_key: &PublicEncKey,
     client_address: &alloy_primitives::Address,
-) -> anyhow::Result<Vec<(FheType, Vec<u8>)>> {
-    let mut out = vec![];
+    domain: &alloy_sol_types::Eip712Domain,
+) -> anyhow::Result<(Vec<TypedSigncryptedCiphertext>, Vec<u8>)> {
+    use crate::engine::base::compute_external_reenc_signature;
+
+    let mut all_signcrypted_cts = vec![];
     for typed_ciphertext in typed_ciphertexts {
         let high_level_ct = &typed_ciphertext.ciphertext;
         let fhe_type = typed_ciphertext.fhe_type();
-        let res = RealCentralizedKms::<PubS, PrivS, BackS>::reencrypt(
+        let external_handle = typed_ciphertext.external_handle.clone();
+        let signcrypted_ciphertext = RealCentralizedKms::<PubS, PrivS, BackS>::reencrypt(
             keys,
             sig_key,
             rng,
@@ -395,9 +400,16 @@ pub async fn async_reencrypt<
             client_enc_key,
             client_address,
         )?;
-        out.push((fhe_type, res));
+        all_signcrypted_cts.push(TypedSigncryptedCiphertext {
+            fhe_type: fhe_type.into(),
+            signcrypted_ciphertext,
+            external_handle,
+        });
     }
-    Ok(out)
+
+    let external_signature =
+        compute_external_reenc_signature(sig_key, &all_signcrypted_cts, domain, client_enc_key)?;
+    Ok((all_signcrypted_cts, external_signature))
 }
 
 // impl fmt::Debug for CentralizedKms, we don't want to include the decryption key in the debug output
@@ -728,7 +740,6 @@ pub(crate) mod tests {
     use crate::engine::base::{compute_handle, compute_info, gen_sig_keys};
     use crate::engine::traits::Kms;
     use crate::engine::validation::verify_reencryption_eip712;
-    use crate::engine::validation::ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR;
     use crate::util::file_handling::read_element;
     use crate::util::file_handling::write_element;
     use crate::util::key_setup::test_tools::compute_cipher;
@@ -737,13 +748,11 @@ pub(crate) mod tests {
         store_pk_at_request_id, store_versioned_at_request_id, StorageReader, StorageType,
     };
     use aes_prng::AesRng;
-    use alloy_signer::SignerSync;
-    use alloy_sol_types::SolStruct;
     use distributed_decryption::execution::keyset_config::StandardKeySetConfig;
     use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
     use kms_grpc::kms::v1::{FheType, RequestId, TypedCiphertext};
     use kms_grpc::rpc_types::{
-        alloy_to_protobuf_domain, PrivDataType, Reencrypt, WrappedPublicKey,
+        alloy_to_protobuf_domain, PrivDataType, WrappedPublicKey, ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR,
     };
     use rand::{RngCore, SeedableRng};
     use serde::{Deserialize, Serialize};
@@ -1284,9 +1293,8 @@ pub(crate) mod tests {
     #[test]
     fn test_verify_reenc_eip712() {
         let mut rng = AesRng::seed_from_u64(1);
-        let (client_pk, client_sk) = gen_sig_keys(&mut rng);
+        let (client_pk, _client_sk) = gen_sig_keys(&mut rng);
         let client_address = alloy_primitives::Address::from_public_key(client_pk.pk());
-        let signer = alloy_signer_local::PrivateKeySigner::from_signing_key(client_sk.sk().clone());
         let ciphertext = vec![1, 2, 3];
         let (enc_pk, _) = ephemeral_encryption_key_generation(&mut rng);
         let key_id = DEFAULT_THRESHOLD_KEY_ID_4P.clone();
@@ -1302,22 +1310,15 @@ pub(crate) mod tests {
             key_id: Some(key_id),
             typed_ciphertexts: vec![typed_ciphertext],
         };
-        let message = Reencrypt {
-            publicKey: alloy_primitives::Bytes::copy_from_slice(&payload.enc_key),
-        };
         let domain = alloy_sol_types::eip712_domain!(
             name: "Authorization token",
             version: "1",
             chain_id: 8006,
             verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
         );
-
-        let message_hash = message.eip712_signing_hash(&domain);
-        let signature = signer.sign_hash_sync(&message_hash).unwrap();
         let domain_msg = alloy_to_protobuf_domain(&domain).unwrap();
 
         let req = kms_grpc::kms::v1::ReencryptionRequest {
-            signature: signature.into(),
             payload: Some(payload),
             domain: Some(domain_msg),
             request_id: Some(RequestId {
@@ -1357,17 +1358,6 @@ pub(crate) mod tests {
                 Ok(_) => panic!("expected failure"),
                 Err(e) => {
                     assert!(e.to_string().contains(ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR));
-                }
-            }
-        }
-        {
-            // bad signature
-            let mut bad_req = req.clone();
-            bad_req.signature[0] = req.signature[0] ^ 1;
-            match verify_reencryption_eip712(&bad_req) {
-                Ok(_) => panic!("expected failure"),
-                Err(e) => {
-                    assert_eq!(e.to_string(), "signature error");
                 }
             }
         }

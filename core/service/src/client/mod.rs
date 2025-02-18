@@ -1,3 +1,4 @@
+use crate::cryptography::internal_crypto_types::Signature;
 use crate::cryptography::internal_crypto_types::{
     PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, SigncryptionPair,
     SigncryptionPrivKey, SigncryptionPubKey,
@@ -6,11 +7,8 @@ use crate::cryptography::signcryption::{
     decrypt_signcryption, ephemeral_encryption_key_generation, insecure_decrypt_ignoring_signature,
     internal_verify_sig,
 };
-use crate::cryptography::{internal_crypto_types::Signature, signcryption::check_normalized};
 use crate::{anyhow_error_and_log, some_or_err};
 use aes_prng::AesRng;
-use alloy_primitives::Bytes;
-use alloy_signer::SignerSync;
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
 use bincode::{deserialize, serialize};
@@ -35,7 +33,7 @@ use kms_grpc::kms::v1::{
     ReencryptionResponsePayload, RequestId, TypedCiphertext, TypedPlaintext,
 };
 use kms_grpc::rpc_types::{
-    alloy_to_protobuf_domain, serialize_hash_element, FheTypeResponse, MetaResponse, Reencrypt,
+    alloy_to_protobuf_domain, FheTypeResponse, MetaResponse, UserDecryptionLinker,
 };
 use rand::SeedableRng;
 use std::collections::HashSet;
@@ -189,7 +187,7 @@ impl CiphertextHandle {
 pub struct ParsedReencryptionRequest {
     // We allow dead_code because these are required to parse from JSON
     #[allow(dead_code)]
-    signature: alloy_primitives::PrimitiveSignature,
+    signature: Option<alloy_primitives::PrimitiveSignature>,
     #[allow(dead_code)]
     client_address: alloy_primitives::Address,
     enc_key: Vec<u8>,
@@ -199,7 +197,7 @@ pub struct ParsedReencryptionRequest {
 
 impl ParsedReencryptionRequest {
     pub fn new(
-        signature: alloy_primitives::PrimitiveSignature,
+        signature: Option<alloy_primitives::PrimitiveSignature>,
         client_address: alloy_primitives::Address,
         enc_key: Vec<u8>,
         ciphertext_handles: Vec<CiphertextHandle>,
@@ -223,7 +221,7 @@ pub(crate) fn hex_decode_js_err(msg: &str) -> Result<Vec<u8>, JsError> {
 // which cannot be converted to Vec<u8> automatically.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct ParsedReencryptionRequestHex {
-    signature: String,
+    signature: Option<String>,
     client_address: String,
     enc_key: String,
     ciphertext_handles: Vec<String>,
@@ -234,8 +232,14 @@ impl TryFrom<&ParsedReencryptionRequestHex> for ParsedReencryptionRequest {
     type Error = JsError;
 
     fn try_from(req_hex: &ParsedReencryptionRequestHex) -> Result<Self, Self::Error> {
-        let signature_buf = hex_decode_js_err(&req_hex.signature)?;
-        let signature = alloy_primitives::PrimitiveSignature::try_from(signature_buf.as_slice())
+        let signature_buf = req_hex
+            .signature
+            .as_ref()
+            .map(|sig| hex_decode_js_err(sig))
+            .transpose()?;
+        let signature = signature_buf
+            .map(|buf| alloy_primitives::PrimitiveSignature::try_from(buf.as_slice()))
+            .transpose()
             .map_err(|e| JsError::new(&e.to_string()))?;
         let client_address =
             alloy_primitives::Address::parse_checksummed(&req_hex.client_address, None)
@@ -274,7 +278,10 @@ impl TryFrom<JsValue> for ParsedReencryptionRequest {
 impl From<&ParsedReencryptionRequest> for ParsedReencryptionRequestHex {
     fn from(value: &ParsedReencryptionRequest) -> Self {
         Self {
-            signature: hex::encode(value.signature.as_bytes()),
+            signature: value
+                .signature
+                .as_ref()
+                .map(|sig| hex::encode(sig.as_bytes())),
             client_address: value.client_address.to_checksum(None),
             enc_key: hex::encode(&value.enc_key),
             ciphertext_handles: value
@@ -300,8 +307,6 @@ impl TryFrom<&ReencryptionRequest> for ParsedReencryptionRequest {
             .as_ref()
             .ok_or(anyhow::anyhow!("Missing domain"))?;
 
-        let signature = alloy_primitives::PrimitiveSignature::try_from(value.signature.as_slice())?;
-
         let client_address =
             alloy_primitives::Address::parse_checksummed(&payload.client_address, None)?;
 
@@ -315,7 +320,7 @@ impl TryFrom<&ReencryptionRequest> for ParsedReencryptionRequest {
             .collect::<Vec<_>>();
 
         let out = Self {
-            signature,
+            signature: None,
             client_address,
             enc_key: payload.enc_key.clone(),
             ciphertext_handles,
@@ -326,30 +331,27 @@ impl TryFrom<&ReencryptionRequest> for ParsedReencryptionRequest {
 }
 
 /// Compute the link as (eip712_signing_hash(pk, domain) || hash(ciphertext handles)).
+/// TODO
 pub fn compute_link(
     req: &ParsedReencryptionRequest,
     domain: &Eip712Domain,
 ) -> anyhow::Result<Vec<u8>> {
     // check consistency
-    let verifying_contract = domain
-        .verifying_contract
-        .ok_or_else(|| anyhow_error_and_log("Empty verifying contract"))?;
+    let handles = req
+        .ciphertext_handles
+        .iter()
+        .map(|x| alloy_primitives::U256::from_be_slice(&x.0))
+        .collect::<Vec<_>>();
 
-    if req.eip712_verifying_contract != verifying_contract {
-        return Err(anyhow_error_and_log(format!(
-            "inconsistent verifying contract: {:?} != {:?}",
-            req.eip712_verifying_contract, verifying_contract,
-        )));
-    }
-
-    let pk_sol = Reencrypt {
-        publicKey: Bytes::copy_from_slice(&req.enc_key),
+    let linker = UserDecryptionLinker {
+        publicKey: req.enc_key.clone().into(),
+        handles,
+        userAddress: req.client_address,
     };
 
-    let pk_digest = pk_sol.eip712_signing_hash(domain).to_vec();
-    let ct_handles_digest = serialize_hash_element(&req.ciphertext_handles)?;
+    let link = linker.eip712_signing_hash(domain).to_vec();
 
-    Ok([pk_digest, ct_handles_digest].concat())
+    Ok(link)
 }
 
 /// Client data type
@@ -765,7 +767,7 @@ impl Client {
                 "The request id format is not valid {request_id}"
             )));
         }
-        let client_sk = some_or_err(
+        let _client_sk = some_or_err(
             self.client_sk.clone(),
             "missing client signing key".to_string(),
         )?;
@@ -777,20 +779,6 @@ impl Client {
             typed_ciphertexts,
             key_id: Some(key_id.clone()),
         };
-        let message = Reencrypt {
-            publicKey: Bytes::copy_from_slice(&sig_payload.enc_key),
-        };
-        // Derive the EIP-712 signing hash.
-        let message_hash = message.eip712_signing_hash(domain);
-        let signer = alloy_signer_local::PrivateKeySigner::from_signing_key(client_sk.sk().clone());
-        // sanity check
-        if signer.address() != self.client_address {
-            return Err(anyhow_error_and_log(
-                "Sanity check failed: derived address does not equal to client address",
-            ));
-        }
-
-        let signature = signer.sign_hash_sync(&message_hash)?;
 
         let domain_msg = alloy_to_protobuf_domain(domain)?;
         tracing::debug!(
@@ -802,7 +790,6 @@ impl Client {
         );
         Ok((
             ReencryptionRequest {
-                signature: signature.as_bytes().to_vec(),
                 payload: Some(sig_payload),
                 domain: Some(domain_msg),
                 request_id: Some(request_id.clone()),
@@ -2105,44 +2092,6 @@ pub fn assemble_metadata_req(req: &VerifyProvenCtRequest) -> anyhow::Result<[u8;
     ))
 }
 
-pub fn recover_ecdsa_public_key_from_signature(
-    sig: &[u8],
-    pub_enc_key: &[u8],
-    domain: &Eip712Domain,
-    target_address: &[u8],
-) -> anyhow::Result<PublicSigKey> {
-    tracing::info!("Recovering public key from signature");
-    // trace all inputs
-    tracing::debug!("Signature: {:?}", hex::encode(sig));
-    tracing::debug!("Public encryption key: {:?}", hex::encode(pub_enc_key));
-    tracing::debug!("EIP712: {:?}", domain);
-    tracing::debug!("Target address: {:?}", hex::encode(target_address));
-
-    let signature = alloy_primitives::PrimitiveSignature::try_from(sig)?;
-    check_normalized(&Signature {
-        sig: signature.to_k256()?,
-    })?;
-
-    // Define the EIP-712 domain
-    let message = Reencrypt {
-        publicKey: Bytes::copy_from_slice(pub_enc_key),
-    };
-
-    // Derive the EIP-712 signing hash.
-    let message_hash = message.eip712_signing_hash(domain);
-    tracing::debug!("Message hash: {:?}", message_hash);
-
-    let recovered_key = signature.recover_from_msg(message_hash)?;
-    tracing::debug!("Recovered key: {:?}", recovered_key);
-    tracing::debug!("Signature: {:?}", signature);
-
-    let recovered_address = signature.recover_address_from_prehash(&message_hash)?;
-    tracing::debug!("Recovered address: {:?}", recovered_address);
-    Ok(PublicSigKey::new(
-        signature.recover_from_prehash(&message_hash)?,
-    ))
-}
-
 /// Wait for a server to be ready for requests. I.e. wait until it enters the SERVING state.
 /// Note that this method may panic if the server does not become ready within a certain time frame.
 #[cfg(feature = "non-wasm")]
@@ -2666,7 +2615,7 @@ pub mod test_tools {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::test_tools::ServerHandle;
-    use super::{recover_ecdsa_public_key_from_signature, Client};
+    use super::Client;
     use crate::client::test_tools::check_port_is_closed;
     #[cfg(feature = "wasm_tests")]
     use crate::client::TestingReencryptionTranscript;
@@ -2694,7 +2643,7 @@ pub(crate) mod tests {
     use crate::cryptography::internal_crypto_types::Signature;
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     use crate::cryptography::internal_crypto_types::WrappedDKGParams;
-    use crate::engine::base::{compute_handle, gen_sig_keys, BaseKmsStruct, RequestIdGetter};
+    use crate::engine::base::{compute_handle, BaseKmsStruct, RequestIdGetter};
     #[cfg(feature = "slow_tests")]
     use crate::engine::centralized::central_kms::tests::get_default_keys;
     use crate::engine::centralized::central_kms::RealCentralizedKms;
@@ -2713,10 +2662,6 @@ pub(crate) mod tests {
     use crate::util::rate_limiter::RateLimiterConfig;
     use crate::vault::storage::StorageReader;
     use crate::vault::storage::{file::FileStorage, StorageType};
-    use alloy_primitives::Bytes;
-    use alloy_signer::Signer;
-    use alloy_signer_local::PrivateKeySigner;
-    use alloy_sol_types::SolStruct;
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     use distributed_decryption::execution::runtime::party::Role;
     use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
@@ -2738,8 +2683,7 @@ pub(crate) mod tests {
     use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
     use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
     use kms_grpc::rpc_types::PrivDataType;
-    use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType, Reencrypt};
-    use rand::SeedableRng;
+    use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
     use serial_test::serial;
     use std::collections::{hash_map::Entry, HashMap};
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
@@ -2813,37 +2757,6 @@ pub(crate) mod tests {
                 .await
                 .unwrap();
         (kms_servers, kms_clients, internal_client)
-    }
-
-    #[tokio::test]
-    async fn test_public_key_from_signature() {
-        let domain = dummy_domain();
-        let pub_enc_key = b"408d8cbaa51dece7f782fe04ba0b1c1d017b1088";
-        let message = Reencrypt {
-            publicKey: Bytes::from(pub_enc_key),
-        };
-        let mut rng = aes_prng::AesRng::seed_from_u64(12);
-        let (client_pk, client_sk) = gen_sig_keys(&mut rng);
-
-        let signer = PrivateKeySigner::from_signing_key(client_sk.sk().clone());
-        let target_address = signer.address();
-        println!("Signer address: {:?}", target_address);
-
-        let message_hash = message.eip712_signing_hash(&domain);
-        println!("Message hash: {:?}", message_hash);
-
-        // Sign the hash asynchronously with the wallet.
-        let signature = signer.sign_hash(&message_hash).await.unwrap().as_bytes();
-
-        println!("Signature: {:?}", hex::encode(signature));
-        let recovered_pk = recover_ecdsa_public_key_from_signature(
-            &signature,
-            pub_enc_key,
-            &domain,
-            target_address.as_ref(),
-        )
-        .unwrap();
-        assert_eq!(recovered_pk, client_pk);
     }
 
     /// Check that the centralized health service is serving as soons as boot is completed.

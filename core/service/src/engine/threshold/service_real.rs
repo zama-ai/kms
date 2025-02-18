@@ -5,10 +5,10 @@ use crate::cryptography::proven_ct_verifier::{
     get_verify_proven_ct_result, non_blocking_verify_proven_ct,
 };
 use crate::cryptography::signcryption::signcrypt;
-use crate::engine::base::BaseKmsStruct;
 use crate::engine::base::{
     compute_external_pt_signature, deserialize_to_low_level, retrieve_parameters,
 };
+use crate::engine::base::{compute_external_reenc_signature, BaseKmsStruct};
 use crate::engine::base::{compute_info, preproc_proto_to_keyset_config};
 use crate::engine::base::{convert_key_response, DecCallValues, KeyGenCallValues, ReencCallValues};
 use crate::engine::threshold::generic::GenericKms;
@@ -945,6 +945,7 @@ impl<
     /// flooding or bit-decomposition.
     ///
     /// This function does not perform reencryption in a background thread.
+    /// The return type should be [ReencCallValues] except the final item in the tuple
     #[allow(clippy::too_many_arguments)]
     async fn inner_reencrypt(
         session_id: SessionId,
@@ -957,13 +958,15 @@ impl<
         sig_key: Arc<PrivateSigKey>,
         fhe_keys: OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>,
         dec_mode: DecryptionMode,
-    ) -> anyhow::Result<Vec<(FheType, Vec<u8>)>> {
+        domain: &alloy_sol_types::Eip712Domain,
+    ) -> anyhow::Result<(Vec<TypedSigncryptedCiphertext>, Vec<u8>)> {
         let keys = fhe_keys;
 
-        let mut out = vec![];
+        let mut all_signcrypted_cts = vec![];
         for typed_ciphertext in typed_ciphertexts {
             let fhe_type = typed_ciphertext.fhe_type();
             let ct = &typed_ciphertext.ciphertext;
+            let external_handle = typed_ciphertext.external_handle.clone();
 
             let low_level_ct = deserialize_to_low_level(&fhe_type, ct, &keys.decompression_key)?;
 
@@ -1082,10 +1085,20 @@ impl<
                 }
                 Err(e) => return Err(anyhow!("Failed reencryption: {e}")),
             };
-            out.push((fhe_type, partial_signcryption));
+            all_signcrypted_cts.push(TypedSigncryptedCiphertext {
+                fhe_type: fhe_type.into(),
+                signcrypted_ciphertext: partial_signcryption,
+                external_handle,
+            });
         }
 
-        Ok(out)
+        let external_signature = compute_external_reenc_signature(
+            &sig_key,
+            &all_signcrypted_cts,
+            domain,
+            client_enc_key,
+        )?;
+        Ok((all_signcrypted_cts, external_signature))
     }
 }
 
@@ -1124,7 +1137,7 @@ impl<
             self.session_preparer.own_identity(),
             inner.request_id
         );
-        let (typed_ciphertexts, link, client_enc_key, client_address, key_id, req_id) =
+        let (typed_ciphertexts, link, client_enc_key, client_address, key_id, req_id, domain) =
             tonic_handle_potential_err(
                 validate_reencrypt_req(&inner).await,
                 format!("Invalid reencryption request {:?}", inner),
@@ -1188,6 +1201,7 @@ impl<
                             sig_key,
                             k,
                             dec_mode,
+                            &domain,
                         )
                         .await
                     }
@@ -1195,9 +1209,10 @@ impl<
                 };
                 let mut guarded_meta_store = meta_store.write().await;
                 match tmp {
-                    Ok(partial_dec) => {
+                    Ok((signcryption_res, sig)) => {
                         // We cannot do much if updating the storage fails at this point...
-                        let _ = guarded_meta_store.update(&req_id, Ok((partial_dec, link)));
+                        let _ =
+                            guarded_meta_store.update(&req_id, Ok((signcryption_res, sig, link)));
                     }
                     Result::Err(e) => {
                         // We cannot do much if updating the storage fails at this point...
@@ -1232,15 +1247,8 @@ impl<
             let guarded_meta_store = self.reenc_meta_store.read().await;
             guarded_meta_store.retrieve(&request_id)
         };
-        let (typed_partial_decryptions, link) =
+        let (signcrypted_ciphertexts, external_signature, link) =
             handle_res_mapping(status, &request_id, "Reencryption").await?;
-        let signcrypted_ciphertexts = typed_partial_decryptions
-            .into_iter()
-            .map(|(fhe_type, ct)| TypedSigncryptedCiphertext {
-                fhe_type: fhe_type.into(),
-                signcrypted_ciphertext: ct,
-            })
-            .collect::<Vec<_>>();
         let server_verf_key = self.base_kms.get_serialized_verf_key();
         let payload = ReencryptionResponsePayload {
             signcrypted_ciphertexts,
@@ -1248,6 +1256,7 @@ impl<
             verification_key: server_verf_key,
             party_id: self.session_preparer.my_id as u32,
             degree: self.session_preparer.threshold as u32,
+            external_signature,
         };
 
         let sig_payload_vec = tonic_handle_potential_err(

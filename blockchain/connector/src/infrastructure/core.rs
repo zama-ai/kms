@@ -903,7 +903,6 @@ where
             external_handle: ciphertext_handle,
         }];
         let req = ReencryptionRequest {
-            signature: self.reencrypt.signature().into(),
             payload: Some(ReencryptionRequestPayload {
                 client_address: reencrypt.client_address().to_string(),
                 typed_ciphertexts,

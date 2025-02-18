@@ -263,13 +263,11 @@ message Eip712DomainMsg {
 }
 
 message ReencryptionRequest {
-  // Signature of the serialization of [ReencryptionRequestPayload].
-  bytes signature = 1;
-  ReencryptionRequestPayload payload = 2;
-  Eip712DomainMsg domain = 3;
+  ReencryptionRequestPayload payload = 1;
+  Eip712DomainMsg domain = 2;
   // The ID that identifies this request.
   // Future queries for the result must use this request ID.
-  RequestId request_id = 4;
+  RequestId request_id = 3;
 }
 
 message ReencryptionResponse {
@@ -291,9 +289,17 @@ message ReencryptionResponsePayload {
   repeated TypedSigncryptedCiphertext signcrypted_ciphertexts = 3;
   // The ID of the MPC party doing the reencryption. Used for polynomial
   // reconstruction.
-  uint32 party_id = 4;
+  uint32 party_id = 5;
   // The degree of the sharing scheme used.
-  uint32 degree = 5;
+  uint32 degree = 6;
+  // This is the external signature created from the Eip712 domain
+  // on the structure, where reencryptedShare is bincode::serialize(&signcrypted_ciphertexts)
+  // struct UserDecryptionResult {
+  //       bytes publicKey;
+  //       uint256[] handles;
+  //       bytes reencryptedShare;
+  // }
+  bytes external_signature = 7;
 }
 
 message TypedSigncryptedCiphertext {
@@ -302,9 +308,8 @@ message TypedSigncryptedCiphertext {
   // The signcrypted payload, using a hybrid encryption approach in
   // sign-then-encrypt.
   bytes signcrypted_ciphertext = 2;
-  
-  // This will be added in a later PR
-  // bytes external_handle = 3;
+  // The external handles that were originally in the request.
+  bytes external_handle = 3;
 }
 
 message VerifyProvenCtRequest {

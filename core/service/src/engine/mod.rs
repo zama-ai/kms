@@ -1,4 +1,3 @@
-use crate::cryptography::signcryption::check_normalized;
 use crate::{anyhow_error_and_log, conf::ServiceEndpoint};
 
 use conf_trace::telemetry::make_span;

@@ -18,6 +18,10 @@ use tfhe::shortint::ClassicPBSParameters;
 use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
 
+// TODO: we should organize our code so that we can unit test our error messages
+pub const ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR: &str =
+    "client address is the same as verifying contract address";
+
 lazy_static::lazy_static! {
     // The static ID we will use for the signing key for each of the MPC parties.
     // We do so, since there is ever only one conceptual signing key per party (at least for now).
@@ -27,7 +31,6 @@ lazy_static::lazy_static! {
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
-        use alloy_primitives::Bytes;
         use alloy_sol_types::SolStruct;
     }
 }
@@ -40,21 +43,20 @@ pub static CRS_GEN_REQUEST_NAME: &str = "crs_gen_request";
 pub static DEC_REQUEST_NAME: &str = "dec_request";
 pub static REENC_REQUEST_NAME: &str = "reenc_request";
 
-// alloy_sol_types::sol! {
-//     struct UserDecryptionMessage {
-//         bytes publicKey;
-//         address[] contracts;
-//         uint256 contractsChainId;
-//         uint256 startTimestamp;
-//         uint256 durationDays;
-//     }
-// }
-
-// This type (and its fields) should not be renamed
-// since it needs to match what is in fhevmjs!
 alloy_sol_types::sol! {
-    struct Reencrypt {
+    struct UserDecryptionResult {
         bytes publicKey;
+        uint256[] handles;
+        bytes reencryptedShare;
+    }
+}
+
+// This is used internally to link a request and a response.
+alloy_sol_types::sol! {
+    struct UserDecryptionLinker {
+        bytes publicKey;
+        uint256[] handles;
+        address userAddress;
     }
 }
 
@@ -421,14 +423,15 @@ pub struct SigncryptionPayload {
 
 #[cfg(feature = "non-wasm")]
 impl crate::kms::v1::ReencryptionRequest {
-    pub fn compute_link_checked(&self) -> anyhow::Result<Vec<u8>> {
+    /// The only information we can use is userAddress, the handles and public key
+    /// because these are the only information available
+    /// to the user *and* to the KMS.
+    /// So we can only use these information to link the request and the response.
+    pub fn compute_link_checked(&self) -> anyhow::Result<(Vec<u8>, alloy_sol_types::Eip712Domain)> {
         let payload = self
             .payload
             .as_ref()
             .ok_or_else(|| anyhow!("payload not found"))?;
-        let pk_sol = Reencrypt {
-            publicKey: Bytes::copy_from_slice(&payload.enc_key),
-        };
 
         let domain = protobuf_to_alloy_domain(
             self.domain
@@ -436,18 +439,31 @@ impl crate::kms::v1::ReencryptionRequest {
                 .ok_or_else(|| anyhow!("domain not found"))?,
         )?;
 
-        let req_digest = pk_sol.eip712_signing_hash(&domain).to_vec();
-
         let handles = payload
             .typed_ciphertexts
             .iter()
-            .map(|x| x.external_handle.clone())
+            .map(|x| alloy_primitives::U256::from_be_slice(&x.external_handle))
             .collect::<Vec<_>>();
-        let mut actual_ct_digest = serialize_hash_element(&handles)?;
 
-        let mut link = req_digest;
-        link.append(&mut actual_ct_digest);
-        Ok(link)
+        let client_address =
+            alloy_primitives::Address::parse_checksummed(&payload.client_address, None)?;
+        let verifying_contract = domain
+            .verifying_contract
+            .ok_or(anyhow::anyhow!("missing verifying contract"))?;
+
+        if client_address == verifying_contract {
+            anyhow::bail!(ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR);
+        }
+
+        let linker = UserDecryptionLinker {
+            publicKey: payload.enc_key.clone().into(),
+            handles,
+            userAddress: client_address,
+        };
+
+        let link = linker.eip712_signing_hash(&domain).to_vec();
+
+        Ok((link, domain))
     }
 }
 

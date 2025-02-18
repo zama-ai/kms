@@ -33,7 +33,7 @@ use kms_grpc::kms::v1::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenRequest, KeyGenResult,
     KeySetAddedInfo, ReencryptionRequest, ReencryptionResponse, ReencryptionResponsePayload,
-    RequestId, TypedSigncryptedCiphertext, VerifyProvenCtRequest, VerifyProvenCtResponse,
+    RequestId, VerifyProvenCtRequest, VerifyProvenCtResponse,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain_option, SignedPubDataHandleInternal};
@@ -229,7 +229,7 @@ impl<
 
         let inner = request.into_inner();
 
-        let (typed_ciphertexts, link, client_enc_key, client_address, key_id, request_id) =
+        let (typed_ciphertexts, link, client_enc_key, client_address, key_id, request_id, domain) =
             tonic_handle_potential_err(
                 validate_reencrypt_req(&inner).await,
                 format!("Invalid key in request {:?}", inner),
@@ -294,12 +294,14 @@ impl<
                     &link,
                     &client_enc_key,
                     &client_address,
+                    &domain,
                 )
                 .await
                 {
-                    Ok(raw_decryption) => {
+                    Ok((raw_decryption, external_signature)) => {
                         let mut guarded_meta_store = meta_store.write().await;
-                        let _ = guarded_meta_store.update(&request_id, Ok((raw_decryption, link)));
+                        let _ = guarded_meta_store
+                            .update(&request_id, Ok((raw_decryption, external_signature, link)));
                     }
                     Result::Err(e) => {
                         let mut guarded_meta_store = meta_store.write().await;
@@ -331,15 +333,8 @@ impl<
             guarded_meta_store.retrieve(&request_id)
         };
 
-        let (typed_partial_decryptions, link) =
+        let (signcrypted_ciphertexts, external_signature, link) =
             handle_res_mapping(status, &request_id, "Reencryption").await?;
-        let signcrypted_ciphertexts = typed_partial_decryptions
-            .into_iter()
-            .map(|(fhe_type, ct)| TypedSigncryptedCiphertext {
-                fhe_type: fhe_type.into(),
-                signcrypted_ciphertext: ct,
-            })
-            .collect::<Vec<_>>();
 
         let server_verf_key = self.get_serialized_verf_key();
 
@@ -349,6 +344,7 @@ impl<
             verification_key: server_verf_key,
             party_id: 1, // In the centralized KMS, the server ID is always 1
             degree: 0, // In the centralized KMS, the degree is always 0 since result is a constant
+            external_signature,
         };
 
         // sign the response

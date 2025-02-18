@@ -1026,7 +1026,7 @@ async fn reenc_sunshine(key_id: &RequestId, amount_parties: usize, slow: bool) {
         .collect::<Vec<_>>();
     let op = OperationValue::Reencrypt(
         ReencryptValues::new(
-            kms_req.signature.clone(),
+            vec![],
             payload.client_address,
             payload.enc_key,
             events::kms::FheType::from(fhe_type as u8),

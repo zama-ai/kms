@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::anyhow_error_and_log;
 use crate::consts::ID_LENGTH;
 use crate::cryptography::decompression;
-use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
+use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey, PublicSigKey};
 use crate::cryptography::signcryption::internal_verify_sig;
 use crate::util::key_setup::FhePrivateKey;
 use aes_prng::AesRng;
@@ -21,11 +21,13 @@ use distributed_decryption::execution::keyset_config as ddec_keyset_config;
 use distributed_decryption::execution::tfhe_internals::parameters::{Ciphertext64, DKGParams};
 use k256::ecdsa::SigningKey;
 use kms_grpc::kms::v1::{
-    FheParameter, FheType, SignedPubDataHandle, TypedPlaintext, VerifyProvenCtRequest,
+    FheParameter, FheType, SignedPubDataHandle, TypedPlaintext, TypedSigncryptedCiphertext,
+    VerifyProvenCtRequest,
 };
 use kms_grpc::rpc_types::{
     hash_element, safe_serialize_hash_element_versioned, CiphertextVerificationForKMS,
-    DecryptionResult, FhePubKey, FheServerKey, PubDataType, SignedPubDataHandleInternal, CRS,
+    DecryptionResult, FhePubKey, FheServerKey, PubDataType, SignedPubDataHandleInternal,
+    UserDecryptionResult, CRS,
 };
 use rand::{CryptoRng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -229,9 +231,32 @@ pub fn deserialize_to_low_level(
     Ok(radix_ct)
 }
 
+pub(crate) fn compute_external_reenc_signature(
+    server_sk: &PrivateSigKey,
+    cts: &[TypedSigncryptedCiphertext],
+    eip712_domain: &Eip712Domain,
+    user_pk: &PublicEncKey,
+) -> anyhow::Result<Vec<u8>> {
+    let message_hash = compute_reenc_message_hash(cts, eip712_domain, user_pk)?;
+
+    let signer = PrivateKeySigner::from_signing_key(server_sk.sk().clone());
+    let signer_address = signer.address();
+    tracing::info!("Signer address: {:?}", signer_address);
+
+    // Sign the hash synchronously with the wallet.
+    let signature = signer.sign_hash_sync(&message_hash)?.as_bytes().to_vec();
+
+    tracing::info!(
+        "UserDecryptionResult Signature: {:?}",
+        hex::encode(signature.clone())
+    );
+
+    Ok(signature)
+}
+
 /// take external handles and plaintext in the form of bytes, convert them to the required solidity types and sign them using EIP-712 for external verification (e.g. in the fhevm).
 pub(crate) fn compute_external_pt_signature(
-    client_sk: &PrivateSigKey,
+    server_sk: &PrivateSigKey,
     ext_handles_bytes: Vec<Vec<u8>>,
     pts: &[TypedPlaintext],
     eip712_domain: Eip712Domain,
@@ -239,7 +264,7 @@ pub(crate) fn compute_external_pt_signature(
 ) -> Vec<u8> {
     let message_hash = compute_pt_message_hash(ext_handles_bytes, pts, eip712_domain, acl_address);
 
-    let signer = PrivateKeySigner::from_signing_key(client_sk.sk().clone());
+    let signer = PrivateKeySigner::from_signing_key(server_sk.sk().clone());
     let signer_address = signer.address();
     tracing::info!("Signer address: {:?}", signer_address);
 
@@ -288,11 +313,7 @@ pub fn compute_external_verify_proven_ct_signature(
     tracing::info!("ZKP Verf Message hash: {:?}", message_hash);
 
     // Sign the hash synchronously with the wallet.
-    let signature = signer
-        .sign_hash_sync(&message_hash)
-        .unwrap()
-        .as_bytes()
-        .to_vec();
+    let signature = signer.sign_hash_sync(&message_hash)?.as_bytes().to_vec();
 
     tracing::info!("ZKP Verf Signature: {:?}", hex::encode(signature.clone()));
 
@@ -348,11 +369,7 @@ pub fn compute_external_pubdata_signature<D: Serialize + Versionize + Named>(
     tracing::info!("Signer address: {:?}", signer_address);
 
     // Sign the hash synchronously with the wallet.
-    let signature = signer
-        .sign_hash_sync(&message_hash)
-        .unwrap()
-        .as_bytes()
-        .to_vec();
+    let signature = signer.sign_hash_sync(&message_hash)?.as_bytes().to_vec();
 
     tracing::info!(
         "Public Data EIP-712 Signature: {:?}",
@@ -530,6 +547,36 @@ pub fn compute_pt_message_hash(
     message_hash
 }
 
+pub fn compute_reenc_message_hash(
+    cts: &[TypedSigncryptedCiphertext],
+    eip712_domain: &Eip712Domain,
+    user_pk: &PublicEncKey,
+) -> anyhow::Result<B256> {
+    // convert external_handles back to U256 to be signed
+    let external_handles: Vec<_> = cts
+        .iter()
+        .map(|e| U256::from_be_slice(e.external_handle.as_slice()))
+        .collect();
+
+    let reencrypted_share_buf = bincode::serialize(cts)?;
+
+    // the solidity structure to sign with EIP-712
+    // note that the JS client must also use the same encoding to verify the result
+    let user_pk = bincode::serialize(user_pk)?;
+    let message = UserDecryptionResult {
+        publicKey: user_pk.into(),
+        handles: external_handles,
+        reencryptedShare: reencrypted_share_buf.into(),
+    };
+
+    let message_hash = message.eip712_signing_hash(eip712_domain);
+    tracing::info!(
+        "UserDecryptionResult EIP-712 Message hash: {:?}",
+        message_hash
+    );
+    Ok(message_hash)
+}
+
 pub(crate) fn retrieve_parameters(fhe_parameter: i32) -> anyhow::Result<DKGParams> {
     let fhe_parameter: crate::cryptography::internal_crypto_types::WrappedDKGParams =
         FheParameter::try_from(fhe_parameter)?.into();
@@ -566,10 +613,9 @@ pub type KeyGenCallValues = HashMap<PubDataType, SignedPubDataHandleInternal>;
 pub type DecCallValues = (Vec<u8>, Vec<TypedPlaintext>, Vec<u8>);
 
 // Values that need to be stored temporarily as part of an async reencryption call.
-// Represents a batch of FHE type with its corresponding partial decryption,
-// and the digest of the request.
+// Represents Vec<TypedSigncryptedCiphertext>, external_handles, external_signature, request digest/link.
 #[cfg(feature = "non-wasm")]
-pub type ReencCallValues = (Vec<(FheType, Vec<u8>)>, Vec<u8>);
+pub type ReencCallValues = (Vec<TypedSigncryptedCiphertext>, Vec<u8>, Vec<u8>);
 
 /// Helper method which takes a [HashMap<PubDataType, SignedPubDataHandle>] and returns
 /// [HashMap<String, SignedPubDataHandle>] by applying the [ToString] function on [PubDataType] for each element in the map.
