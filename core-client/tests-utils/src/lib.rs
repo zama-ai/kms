@@ -50,7 +50,7 @@ impl DockerComposeCmd {
 
     pub fn up(&self) {
         self.down(); // Make sure that no container is running
-        let build_docker = env::var("DOCKER_BUILD_TEST_SIMULATOR").unwrap_or("".to_string());
+        let build_docker = env::var("DOCKER_BUILD_TEST_CORE_CLIENT").unwrap_or("".to_string());
         if let KMSMode::ThresholdTestParameter = self.mode {
             env::set_var("FHE_PARAMETER", "test");
         }

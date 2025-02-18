@@ -35,10 +35,3 @@ uuid = { version = "=1.11.0", features = ["v4", "fast-rng"] }
 
 [features]
 default = []
-
-[dev-dependencies]
-reqwest = { workspace = true, features = ["json", "rustls-tls"] }
-tokio.workspace = true
-tokio-test = "0.4"
-test-log = { version = "0.2", features = ["trace"] }
-pretty_assertions = "1.0"

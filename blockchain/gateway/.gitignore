@@ -1,8 +1,0 @@
-node_modules/
-.last_height
-.wallet
-package-lock.json
-package.json
-.store
-.GW_STATE
-.GW_INTEGRATION_STATE

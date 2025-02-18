@@ -1,3 +1,0 @@
-[env]
-GATEWAY_CONFIG = "config/gateway_deployed.toml"
-CONNECTOR_CONFIG = "config/connector_deployed.toml"

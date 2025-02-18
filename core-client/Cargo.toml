@@ -30,7 +30,6 @@ anyhow.workspace = true
 bincode.workspace = true
 clap = { workspace = true, features = ["derive"] }
 conf-trace.workspace = true
-events = { workspace = true, features = ["non-wasm"] }
 hex.workspace = true
 kms = { workspace = true, default-features = false, features = [
     "non-wasm",
@@ -38,7 +37,6 @@ kms = { workspace = true, default-features = false, features = [
     "insecure",
 ] }
 kms-common = { workspace = true }
-kms-blockchain-client.workspace = true
 kms-grpc.workspace = true
 rand = { workspace = true, features = ["std", "std_rng"] }
 serde = { workspace = true, features = ["derive"] }
@@ -46,8 +44,9 @@ serde_json.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
 tfhe.workspace = true
+tfhe-versionable.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
-tonic = { workspace = true}
+tonic = { workspace = true }
 tracing = { workspace = true, features = ["log"] }
 tracing-appender.workspace = true
 tracing-subscriber = { workspace = true, features = ["fmt", "std"] }

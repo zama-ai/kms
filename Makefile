@@ -1,32 +1,33 @@
 build-compose-base:
-	docker compose -vvv -f docker-compose-kms-base.yml build
+	docker compose -vvv -f docker-compose-core-base.yml build
 
 build-compose-threshold:
-	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml -f docker-compose-kms-gateway-threshold.yml build
+	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml -f docker-compose-core-gateway-threshold.yml build
 
 start-compose-threshold:
-	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml up -d --wait
+	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml up -d --wait
 
 stop-compose-threshold:
-	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml down --volumes --remove-orphans
+	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml down --volumes --remove-orphans
 
 build-compose-centralized:
-	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-centralized.yml build
+	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized.yml build
 
 start-compose-centralized:
-	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-centralized.yml up -d --wait
+	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized.yml up -d --wait
 
 stop-compose-centralized:
-	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-centralized.yml down --volumes --remove-orphans
+	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized.yml down --volumes --remove-orphans
 
-start-compose-threshold-observability:
-	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml -f docker-compose-kms-observability.yml up -d --wait
+## TODO not sure what we do about these:
+# start-compose-threshold-observability:
+# 	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml -f docker-compose-core-observability.yml up -d --wait
 
-start-compose-threshold-observability-ghcr:
-	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml -f docker-compose-kms-observability.yml -f docker-compose-kms-threshold-ghcr.yml up -d --wait
+# start-compose-threshold-observability-ghcr:
+# 	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml -f docker-compose-core-observability.yml -f docker-compose-core-threshold-ghcr.yml up -d --wait
 
-stop-compose-threshold-observability:
-	docker compose -vvv -f docker-compose-kms-base.yml -f docker-compose-kms-threshold.yml -f docker-compose-kms-observability.yml down --volumes --remove-orphans
+# stop-compose-threshold-observability:
+# 	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml -f docker-compose-core-observability.yml down --volumes --remove-orphans
 
 test-backward-compatibility: pull-lfs-files
 	cargo test --test backward_compatibility_* -- --include-ignored
@@ -44,11 +45,11 @@ pull-lfs-files: check-git-lfs
 	git lfs pull
 
 linting-all:
-	RUSTFLAGS="-Aclippy::doc-lazy-continuation" cargo clippy --all-targets --all-features -- -D warnings
+	cargo clippy --all-targets --all-features -- -D warnings
 
 linting-package:
 	@if [ -z "$(PACKAGE)" ]; then \
 		echo "Error: PACKAGE is not set. Usage: make clippy-package PACKAGE=<package-name>"; \
 		exit 1; \
 	fi
-	RUSTFLAGS="-Aclippy::doc-lazy-continuation" cargo clippy --all-targets --all-features --package $(PACKAGE) -- -D warnings
+	cargo clippy --all-targets --all-features --package $(PACKAGE) -- -D warnings

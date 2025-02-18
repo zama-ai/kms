@@ -28,11 +28,6 @@ path = "src/bin/kms-server.rs"
 name = "kms-init"
 path = "src/bin/kms-init.rs"
 
-[[bin]] # An example client binary for interacting with KMS cores
-name = "kms-example-client"
-path = "src/bin/kms-example-client.rs"
-required-features = ["testing", "insecure"]
-
 [dependencies]
 aes.workspace = true
 aes-gcm-siv = "=0.11.1"
@@ -79,10 +74,6 @@ rasn = "=0.20.2"
 rasn-cms = "=0.20.2"
 rayon.workspace = true
 rcgen = { version = "=0.13.1", optional = true }
-reqwest = { workspace = true, default-features = false, features = [
-    "json",
-    "rustls-tls",
-] }
 rsa = { version = "=0.9.6", features = ["sha2"] }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_bytes = "=0.11.15"

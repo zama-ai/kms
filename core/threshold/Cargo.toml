@@ -58,9 +58,7 @@ tokio = { workspace = true, features = [
     "time",
 ], optional = true }
 tonic = { workspace = true, features = ["tls"], optional = true }
-tonic-health = { workspace = true, optional = true }
 tower = { workspace = true, features = ["retry", "timeout"], optional = true }
-tower-http = { workspace = true, features = ["trace"], optional = true }
 tfhe = { workspace = true, features = [
     "boolean",
     "shortint",
@@ -180,10 +178,8 @@ non-wasm = [
     "dep:conf-trace",
     "dep:tokio",
     "dep:tonic",
-    "dep:tonic-health",
     "dep:backoff",
     "dep:tower",
-    "dep:tower-http",
     "dep:opentelemetry",
     "dep:redis",
     "dep:tfhe-zk-pok",

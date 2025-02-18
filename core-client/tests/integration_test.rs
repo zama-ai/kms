@@ -1,5 +1,4 @@
 use cc_tests_utils::{DockerCompose, KMSMode};
-use events::kms::FheType;
 use kms_core_client::*;
 use serial_test::serial;
 use std::path::Path;

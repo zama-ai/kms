@@ -2,19 +2,6 @@
 resolver = "2"
 
 members = [
-    "blockchain/client",
-    "blockchain/connector",
-    "blockchain/connector/utilities",
-    "blockchain/contracts/aipsc",
-    "blockchain/contracts/asc",
-    "blockchain/contracts/tendermint-ipsc",
-    "blockchain/contracts/ethereum-ipsc",
-    "blockchain/contracts/csc",
-    "blockchain/cosmos-proto",
-    "blockchain/events",
-    "blockchain/gateway",
-    "blockchain/simulator",
-    "blockchain/contracts/common",
     "conf-trace",
     "core/backup",
     "core/grpc",
@@ -22,9 +9,6 @@ members = [
     "core/threshold",
     "core/utils",
     "core-client",
-    "blockchain/inclusion_proofs/ethereum",
-    "blockchain/inclusion_proofs/ethereum-triedb",
-    "blockchain/contracts/bsc",
     "test-utils",
     "kms-connector",
 ]
@@ -47,11 +31,8 @@ license = "BSD-3-Clause-Clear"
 version = "0.10.0-rc1"
 
 [workspace.dependencies]
-actix-cors = "=0.7.0"
-actix-web = { version = "=4.9.0", features = ["macros"] }
 aes = "=0.8.4"
 aes-prng = "=0.2.1"
-aipsc = { path = "./blockchain/contracts/aipsc" }
 anyhow = "=1.0.93"
 async-trait = "=0.1.83"
 backward-compatibility = { path = "./backward-compatibility" }
@@ -61,27 +42,14 @@ bincode = "=1.3.3"
 clap = { version = "=4.5.20", features = ["derive"] }
 cfg-if = "=1.0.0"
 conf-trace = { path = "./conf-trace" }
-cosmos-proto = { path = "./blockchain/cosmos-proto" }
-cosmwasm-schema = "=2.1.4"
-cosmwasm-std = "=2.1.4"
-cw-controllers = "=2.0.0"
-cw-storage-plus = "=2.0.0"
-cw-utils = "=2.0.0"
-cw2 = "=2.0.0"
 distributed-decryption = { path = "./core/threshold/", default-features = false }
-events = { path = "./blockchain/events" }
 futures = "=0.3.31"
 hex = "=0.4.3"
 http = "1.2.0"
 itertools = "=0.13.0"
 k256 = "=0.13.4"
-csc = { path = "./blockchain/contracts/csc" }
-bsc = { path = "./blockchain/contracts/bsc" }
-contracts-common = { path = "./blockchain/contracts/common" }
 kms = { path = "./core/service", default-features = false }
 kms-grpc = { path = "./core/grpc", default-features = false }
-kms-blockchain-client = { path = "./blockchain/client" }
-kms-blockchain-connector = { path = "./blockchain/connector" }
 kms-common = { path = "./common" }
 kms-core-utils = { path = "./core/utils" }
 lazy_static = "=1.5.0"
@@ -93,7 +61,10 @@ prost-build = "=0.13.4"
 prost-types = "=0.13.4"
 rand = "=0.8.5"
 rayon = "=1.10.0"
-reqwest = { version = "=0.12.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "=0.12.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+] }
 schemars = "=0.8.21"
 secp256k1 = "=0.30.0"
 serde = { version = "=1.0.217", features = ["derive", "rc"] }
@@ -103,11 +74,6 @@ sha2 = "=0.10.8"
 sha3 = "=0.10.8"
 strum = "=0.26.3"
 strum_macros = "=0.26.4"
-sylvia = "=1.1.0"
-sylvia-derive = "=1.1.0"
-tendermint = { version = "0.40.0", features = ["secp256k1"] }
-tendermint-proto = "=0.40.0"
-tendermint-rpc = { version = "=0.40.0", features = ["websocket-client"] }
 thiserror = "=2.0.11"
 tonic-health = "=0.12.3"
 tower = "=0.5.2"
@@ -123,7 +89,6 @@ tracing = { version = "=0.1.41", features = ["log"] }
 tracing-appender = "=0.2.3"
 tracing-opentelemetry = "=0.28.0"
 tracing-subscriber = { version = "=0.3.19", features = ["fmt", "std"] }
-tracing-actix-web = "=0.7.15"
 typed-builder = "=0.20.0"
 
 alloy-dyn-abi = "=0.8.20"

@@ -1,6 +1,6 @@
 /// Core Client library
 ///
-/// This library implements most functionnalities to interact with a KMS ASC.
+/// This library implements most functionnalities to interact with deployed KMS cores.
 /// This library also includes an associated CLI.
 use aes_prng::AesRng;
 use alloy_primitives::PrimitiveSignature;
@@ -10,7 +10,6 @@ use bytes::Bytes;
 use clap::Parser;
 use conf_trace::conf::Settings;
 use core::str;
-use events::kms::FheType;
 use kms_common::DecryptionMode;
 use kms_grpc::kms::v1::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, FheParameter,
@@ -104,6 +103,157 @@ impl<'de> Deserialize<'de> for CoreClientConfig {
             num_reconstruct: temp.num_reconstruct,
             core_addresses: temp.core_addresses,
         })
+    }
+}
+
+use kms_grpc::kms::v1::FheType as RPCFheType;
+
+#[derive(Copy, Clone, Default, EnumString, PartialEq, Display, Debug)]
+pub enum FheType {
+    #[default]
+    #[strum(serialize = "ebool")]
+    Ebool,
+    #[strum(serialize = "euint4")]
+    Euint4,
+    #[strum(serialize = "euint8")]
+    Euint8,
+    #[strum(serialize = "euint16")]
+    Euint16,
+    #[strum(serialize = "euint32")]
+    Euint32,
+    #[strum(serialize = "euint64")]
+    Euint64,
+    #[strum(serialize = "euint128")]
+    Euint128,
+    #[strum(serialize = "euint160")]
+    Euint160,
+    #[strum(serialize = "euint256")]
+    Euint256,
+    #[strum(serialize = "euint512")]
+    Euint512,
+    #[strum(serialize = "euint1024")]
+    Euint1024,
+    #[strum(serialize = "euint2048")]
+    Euint2048,
+    #[strum(serialize = "unknown")]
+    Unknown,
+}
+
+impl FheType {
+    // We don't use it for now, but useful to have
+    #[allow(dead_code)]
+    fn as_str_name(&self) -> &'static str {
+        match self {
+            FheType::Ebool => "Ebool",
+            FheType::Euint4 => "Euint4",
+            FheType::Euint8 => "Euint8",
+            FheType::Euint16 => "Euint16",
+            FheType::Euint32 => "Euint32",
+            FheType::Euint64 => "Euint64",
+            FheType::Euint128 => "Euint128",
+            FheType::Euint160 => "Euint160",
+            FheType::Euint256 => "Euint256",
+            FheType::Euint512 => "Euint512",
+            FheType::Euint1024 => "Euint1024",
+            FheType::Euint2048 => "Euint2048",
+            FheType::Unknown => "Unknown",
+        }
+    }
+
+    pub fn bits(&self) -> usize {
+        match self {
+            FheType::Ebool => 1,
+            FheType::Euint4 => 4,
+            FheType::Euint8 => 8,
+            FheType::Euint16 => 16,
+            FheType::Euint32 => 32,
+            FheType::Euint64 => 64,
+            FheType::Euint128 => 128,
+            FheType::Euint160 => 160,
+            FheType::Euint256 => 256,
+            FheType::Euint512 => 512,
+            FheType::Euint1024 => 1024,
+            FheType::Euint2048 => 2048,
+            FheType::Unknown => 0,
+        }
+    }
+
+    pub fn from_str_name(value: &str) -> FheType {
+        match value {
+            "Ebool" => Self::Ebool,
+            "Euint4" => Self::Euint4,
+            "Euint8" => Self::Euint8,
+            "Euint16" => Self::Euint16,
+            "Euint32" => Self::Euint32,
+            "Euint64" => Self::Euint64,
+            "Euint128" => Self::Euint128,
+            "Euint160" => Self::Euint160,
+            "Euint256" => Self::Euint256,
+            "Euint512" => Self::Euint512,
+            "Euint1024" => Self::Euint1024,
+            "Euint2048" => Self::Euint2048,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+impl From<u8> for FheType {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => FheType::Ebool,
+            1 => FheType::Euint4,
+            2 => FheType::Euint8,
+            3 => FheType::Euint16,
+            4 => FheType::Euint32,
+            5 => FheType::Euint64,
+            6 => FheType::Euint128,
+            7 => FheType::Euint160,
+            8 => FheType::Euint256,
+            9 => FheType::Euint512,
+            10 => FheType::Euint1024,
+            11 => FheType::Euint2048,
+            _ => FheType::Unknown,
+        }
+    }
+}
+
+impl From<RPCFheType> for FheType {
+    fn from(value: RPCFheType) -> Self {
+        match value {
+            RPCFheType::Ebool => FheType::Ebool,
+            RPCFheType::Euint4 => FheType::Euint4,
+            RPCFheType::Euint8 => FheType::Euint8,
+            RPCFheType::Euint16 => FheType::Euint16,
+            RPCFheType::Euint32 => FheType::Euint32,
+            RPCFheType::Euint64 => FheType::Euint64,
+            RPCFheType::Euint128 => FheType::Euint128,
+            RPCFheType::Euint160 => FheType::Euint160,
+            RPCFheType::Euint256 => FheType::Euint256,
+            RPCFheType::Euint512 => FheType::Euint512,
+            RPCFheType::Euint1024 => FheType::Euint1024,
+            RPCFheType::Euint2048 => FheType::Euint2048,
+        }
+    }
+}
+
+impl TryInto<RPCFheType> for FheType {
+    type Error = anyhow::Error;
+    fn try_into(self) -> Result<RPCFheType, Self::Error> {
+        match self {
+            FheType::Ebool => Ok(RPCFheType::Ebool),
+            FheType::Euint4 => Ok(RPCFheType::Euint4),
+            FheType::Euint8 => Ok(RPCFheType::Euint8),
+            FheType::Euint16 => Ok(RPCFheType::Euint16),
+            FheType::Euint32 => Ok(RPCFheType::Euint32),
+            FheType::Euint64 => Ok(RPCFheType::Euint64),
+            FheType::Euint128 => Ok(RPCFheType::Euint128),
+            FheType::Euint160 => Ok(RPCFheType::Euint160),
+            FheType::Euint256 => Ok(RPCFheType::Euint256),
+            FheType::Euint512 => Ok(RPCFheType::Euint512),
+            FheType::Euint1024 => Ok(RPCFheType::Euint1024),
+            FheType::Euint2048 => Ok(RPCFheType::Euint2048),
+            _ => Err(anyhow::anyhow!("Not supported")),
+        }
     }
 }
 

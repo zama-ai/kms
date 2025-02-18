@@ -9,6 +9,5 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 futures.workspace = true
-lazy_static.workspace = true
 tokio = { workspace = true, features = ["rt", "sync"] }
 tracing = { workspace = true, features = ["log"] }
