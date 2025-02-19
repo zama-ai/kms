@@ -1,3 +1,4 @@
+use dashmap::DashMap;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::str::FromStr;
@@ -59,25 +60,30 @@ pub trait SendingService: Send + Sync {
     ) -> anyhow::Result<HashMap<Identity, UnboundedSender<SendValueRequest>>>;
 }
 
-/// NOTE: This sending service spawns one channel per session per party,
-/// If we fear we may even exhaust the total number of ports available,
-/// this behaviour should be changed to spawning a fixed number of channels
-/// and load balance the sessions accross these.
 #[derive(Debug, Clone)]
 pub struct GrpcSendingService {
     /// Contains all the information needed by the sync network
     pub(crate) config: OptionConfigWrapper,
     /// Contains the certificate bundles
     pub(crate) certificate_bundle: Option<CertificatePaths>,
+    /// Keep in memory channels we already have available
+    channel_map:
+        DashMap<Identity, GnetworkingClient<InterceptedService<Channel, ContextPropagator>>>,
     thread_handles: Arc<RwLock<ThreadHandleGroup>>,
 }
 
 impl GrpcSendingService {
     /// Create the network channel between self and the grpc server of the other party
+    /// or retrieve it if one already exists
     fn connect_to_party(
         &self,
         receiver: Identity,
     ) -> anyhow::Result<GnetworkingClient<InterceptedService<Channel, ContextPropagator>>> {
+        if let Some(channel) = self.channel_map.get(&receiver) {
+            tracing::debug!("Channel to {:?} already existed, retrieving it.", receiver);
+            return Ok(channel.clone());
+        }
+
         let proto = match self.certificate_bundle {
             Some(_) => "https",
             None => "http",
@@ -89,6 +95,7 @@ impl GrpcSendingService {
                 receiver
             ))
         })?;
+
         let channel = match self.certificate_bundle {
             Some(ref cert_bundle) => {
                 // If the host is an IP address then we abort
@@ -137,6 +144,7 @@ impl GrpcSendingService {
         let client = GnetworkingClient::with_interceptor(channel, ContextPropagator)
             .max_decoding_message_size(self.config.get_max_en_decode_message_size())
             .max_encoding_message_size(self.config.get_max_en_decode_message_size());
+        self.channel_map.insert(receiver, client.clone());
         Ok(client)
     }
 
@@ -225,6 +233,7 @@ impl SendingService for GrpcSendingService {
             config: OptionConfigWrapper { conf: config },
             certificate_bundle,
             thread_handles: Arc::new(RwLock::new(ThreadHandleGroup::new())),
+            channel_map: DashMap::new(),
         }
     }
 
