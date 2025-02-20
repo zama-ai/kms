@@ -18,6 +18,11 @@ services:
       - DDEC__PROTOCOL__HOST__CHOREOPORT=60000
       - DDEC__TELEMETRY__TRACING_SERVICE_NAME=moby-party-{{ i+1 }}
       - DDEC__TELEMETRY__TRACING_ENDPOINT=http://otel-collector:4317
+      - DDEC__TELEMETRY__BATCH__MAX_QUEUE_SIZE=8192
+      - DDEC__TELEMETRY__BATCH__MAX_EXPORT_BATCH_SIZE=2048
+      - DDEC__TELEMETRY__BATCH__MAX_CONCURRENT_EXPORTS=2
+      - DDEC__TELEMETRY__BATCH__SCHEDULED_DELAY_MS=100
+      - DDEC__TELEMETRY__BATCH__EXPORT_TIMEOUT_MS=5000
       - DDEC__REDIS__HOST=redis://redis-p{{ i+1 }}:6379
       - DDEC__CERTPATHS__CERT=/app/ddec/certs/cert_p{{ i+1 }}.pem
       - DDEC__CERTPATHS__KEY=/app/ddec/certs/key_p{{ i+1 }}.pem

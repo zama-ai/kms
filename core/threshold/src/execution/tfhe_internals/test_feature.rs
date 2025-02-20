@@ -1,4 +1,5 @@
 use aligned_vec::ABox;
+use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::{num::Wrapping, sync::Arc};
@@ -357,90 +358,82 @@ where
         }
     };
 
-    // iterate through sk and share each element
-    let mut lwe_key_shares64 = Vec::new();
-    // iterate through sk and share each element
-    // TODO(Dragos) this sharing can be done in a single round
     tracing::debug!(
         "I'm {:?}, Sharing key64 to be sent: len {}",
         session.my_role(),
         lwe_sk_container64.len()
     );
-    for cur in lwe_sk_container64 {
-        let secret = match own_role.one_based() {
-            INPUT_PARTY_ID => Some(ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping::<
-                u64,
-            >(
-                cur
-            ))),
-            _ => None,
-        };
-        let share = robust_input(session, &secret, &own_role, INPUT_PARTY_ID).await?; //TODO(Daniel) batch this for all big_ell
+    let secrets = if INPUT_PARTY_ID == own_role.one_based() {
+        Some(
+            lwe_sk_container64
+                .iter()
+                .map(|cur| ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping::<u64>(*cur)))
+                .collect_vec(),
+        )
+    } else {
+        None
+    };
 
-        lwe_key_shares64.push(Share::new(own_role, share));
-    }
+    let lwe_key_shares64 = robust_input(session, &secrets, &own_role, INPUT_PARTY_ID).await?;
 
-    let mut lwe_encryption_key_shares64 = Vec::new();
     tracing::debug!(
         "I'm {:?}, Sharing encryption key64 to be sent: len {}",
         session.my_role(),
         lwe_encryption_sk_container64.len()
     );
-    for cur in lwe_encryption_sk_container64 {
-        let secret = match own_role.one_based() {
-            INPUT_PARTY_ID => Some(ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping::<
-                u64,
-            >(
-                cur
-            ))),
-            _ => None,
-        };
-        let share = robust_input(session, &secret, &own_role, INPUT_PARTY_ID).await?; //TODO(Daniel) batch this for all big_ell
+    let secrets = if INPUT_PARTY_ID == own_role.one_based() {
+        Some(
+            lwe_encryption_sk_container64
+                .iter()
+                .map(|cur| ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping::<u64>(*cur)))
+                .collect_vec(),
+        )
+    } else {
+        None
+    };
+    let lwe_encryption_key_shares64 =
+        robust_input(session, &secrets, &own_role, INPUT_PARTY_ID).await?;
 
-        lwe_encryption_key_shares64.push(Share::new(own_role, share));
-    }
-
-    let mut glwe_key_shares128 = Vec::new();
     tracing::debug!(
         "I'm {:?}, Sharing glwe client key 64 to be sent: len {}",
         session.my_role(),
         glwe_sk_container64.len(),
     );
-    for cur in glwe_sk_container64 {
-        let secret = match own_role.one_based() {
-            INPUT_PARTY_ID => Some(ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping::<
-                u128,
-            >(
-                cur as u128, /* casting like this is ok as long as it's not shares */
-            ))),
-            _ => None,
-        };
-        let share = robust_input(session, &secret, &own_role, INPUT_PARTY_ID).await?; //TODO(Daniel) batch this for all big_ell
-        glwe_key_shares128.push(Share::new(own_role, share));
-    }
+
+    let secrets = if INPUT_PARTY_ID == own_role.one_based() {
+        Some(
+            glwe_sk_container64
+                .iter()
+                .map(|cur| {
+                    ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping::<u128>((*cur).into()))
+                })
+                .collect_vec(),
+        )
+    } else {
+        None
+    };
+    let glwe_key_shares128 = robust_input(session, &secrets, &own_role, INPUT_PARTY_ID).await?;
 
     let sns_key_shares128 = if let Some(sns_sk_container128) = sns_sk_container128 {
-        let mut sns_key_shares128 = Vec::new();
-        // TODO(Dragos) this sharing can be done in a single round
         tracing::debug!(
             "I'm {:?}, Sharing key128 to be sent: len {}",
             session.my_role(),
             sns_sk_container128.len()
         );
-        for cur in sns_sk_container128 {
-            let secret = match own_role.one_based() {
-                INPUT_PARTY_ID => {
-                    Some(ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping::<
-                        u128,
-                    >(
-                        cur
-                    )))
-                }
-                _ => None,
-            };
-            let share = robust_input(session, &secret, &own_role, INPUT_PARTY_ID).await?; //TODO(Daniel) batch this for all big_ell
-            sns_key_shares128.push(Share::new(own_role, share));
-        }
+        let secrets = if INPUT_PARTY_ID == own_role.one_based() {
+            Some(
+                sns_sk_container128
+                    .iter()
+                    .map(|cur| {
+                        ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping::<u128>(*cur))
+                    })
+                    .collect_vec(),
+            )
+        } else {
+            None
+        };
+        let sns_key_shares128 = robust_input(session, &secrets, &own_role, INPUT_PARTY_ID).await?;
+
         Some(LweSecretKeyShare {
             data: sns_key_shares128,
         })
@@ -453,23 +446,26 @@ where
         session.my_role(),
         compression_sk_container64.as_ref().map(|x| x.len()),
     );
+
     // there doesn't seem to be a way to get the compression key as a reference
     let mut glwe_compression_key_shares128 = Vec::new();
     if let Some(compression_container) = compression_sk_container64 {
-        for cur in compression_container {
-            let secret = match own_role.one_based() {
-                INPUT_PARTY_ID => {
-                    Some(ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping::<
-                        u128,
-                    >(
-                        cur as u128, /* casting like this is ok as long as it's not shares */
-                    )))
-                }
-                _ => None,
-            };
-            let share = robust_input(session, &secret, &own_role, INPUT_PARTY_ID).await?; //TODO(Daniel) batch this for all big_ell
-            glwe_compression_key_shares128.push(Share::new(own_role, share));
-        }
+        let secrets = if INPUT_PARTY_ID == own_role.one_based() {
+            Some(
+                compression_container
+                    .iter()
+                    .map(|cur| {
+                        ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping::<u128>(
+                            (*cur).into(),
+                        ))
+                    })
+                    .collect_vec(),
+            )
+        } else {
+            None
+        };
+        glwe_compression_key_shares128 =
+            robust_input(session, &secrets, &own_role, INPUT_PARTY_ID).await?;
     };
     tracing::debug!("I'm {:?}, private keys are all sent", session.my_role());
 

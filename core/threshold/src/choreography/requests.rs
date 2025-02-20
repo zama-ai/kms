@@ -24,6 +24,7 @@ pub struct PreprocKeyGenParams {
     pub session_id: SessionId,
     pub dkg_params: DKGParams,
     pub num_sessions: u32,
+    pub percentage_offline: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -42,8 +43,18 @@ pub struct ThresholdKeyGenResultParams {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PreprocDecryptParams {
     pub session_id: SessionId,
+    pub key_sid: SessionId,
     pub decryption_mode: DecryptionMode,
-    pub num_blocks: u128,
+    pub num_ctxts: u128,
+    pub ctxt_type: TfheType,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThroughtputParams {
+    /// Defines the num of copies of each ctxt we will decrypt
+    pub num_copies: usize,
+    /// Defines the num of sessions to run in parallel
+    pub num_sessions: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -54,6 +65,9 @@ pub struct ThresholdDecryptParams {
     pub preproc_sid: Option<SessionId>,
     pub ctxts: Vec<Ciphertext64>,
     pub tfhe_type: TfheType,
+    // If Some, copies each ctxts the given
+    // number of times and spawns
+    pub throughput: Option<ThroughtputParams>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -81,4 +95,21 @@ pub enum TfheType {
     U160,
     U256,
     U2048,
+}
+
+impl TfheType {
+    pub fn get_num_bits_rep(&self) -> usize {
+        match self {
+            TfheType::Bool => 1,
+            TfheType::U4 => 4,
+            TfheType::U8 => 8,
+            TfheType::U16 => 16,
+            TfheType::U32 => 32,
+            TfheType::U64 => 64,
+            TfheType::U128 => 128,
+            TfheType::U160 => 160,
+            TfheType::U256 => 256,
+            TfheType::U2048 => 2048,
+        }
+    }
 }

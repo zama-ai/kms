@@ -208,6 +208,12 @@ pub fn fill_indexed_shares<Z: Ring>(
         .try_for_each(|(v, sharing)| sharing.add_share(Share::new(party_id, v)))?;
 
     if values_len < num_values {
+        tracing::warn!(
+            "Received {} shares from {} but expected {}. Filling with 0s",
+            values_len,
+            num_values,
+            party_id
+        );
         for sharing in sharings.iter_mut().skip(values_len) {
             sharing.add_share(Share::new(party_id, Z::ZERO))?;
         }

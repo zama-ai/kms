@@ -10,7 +10,7 @@ use distributed_decryption::{
     choreography::{
         choreographer::ChoreoRuntime,
         grpc::SupportedRing,
-        requests::{SessionType, TfheType},
+        requests::{SessionType, TfheType, ThroughtputParams},
     },
     conf::choreo::ChoreoConf,
     execution::{
@@ -49,6 +49,10 @@ struct PreprocKeyGenArgs {
     /// Number of sessions to run in parallel to produce the correlated randomness.
     #[clap(long = "num-sessions")]
     num_sessions_preproc: u32,
+
+    /// Percentage of the offline phase we actually want to run (default to 100)
+    #[clap(long = "percentage-offline", default_value = "100")]
+    percentage_offline: u32,
 
     /// Session type either Large or Small
     #[clap(long, value_enum)]
@@ -98,9 +102,18 @@ struct PreprocDecryptArgs {
     #[clap(long, value_enum)]
     decryption_mode: DecryptionMode,
 
-    /// Number of blocks of Ciphertext to prepare preprocessing for
-    #[clap(long)]
-    num_blocks: u128,
+    /// Path to the public key file (used to retrieve the key sid needed to derive correct parameters)
+    #[clap(long = "path-pubkey", default_value = "./temp/pk.bin")]
+    pub_key_file: String,
+
+    /// TFHE-rs type to use. Must match with preprocessing if one is given
+    #[clap(long = "tfhe-type", value_enum)]
+    tfhe_type: TfheType,
+
+    /// Number of Ciphertext to prepare preprocessing for (default to 1).
+    /// Must match with preprocessing if one is given.
+    #[clap(long = "num-ctxts", default_value = "1")]
+    num_ctxts: usize,
 
     /// Optional argument to force the session ID to be used. (Sampled at random if nothing is given)
     #[clap(long = "sid")]
@@ -117,17 +130,27 @@ struct ThresholdDecryptArgs {
     #[clap(long = "path-pubkey", default_value = "./temp/pk.bin")]
     pub_key_file: String,
 
-    /// TFHE-rs type to use, must match with number of blocks of the preprocessing
+    /// TFHE-rs type to use, must match with the preprocessing
     #[clap(long = "tfhe-type", value_enum)]
     tfhe_type: TfheType,
 
-    /// Number of ciphertexts to create (default to 1)
+    /// Number of ciphertexts to create must match with the preprocessing (default to 1)
     #[clap(long = "num-ctxts", default_value = "1")]
     num_ctxts: usize,
 
     /// Optional argument to force the session ID to be used. (Sampled at random if nothing is given)
     #[clap(long = "sid")]
     session_id: Option<u128>,
+
+    /// Optional argument to perform throughput tests,
+    /// tells how many ctxt we try to decrypt in parallel
+    #[clap(long = "throughput-copies")]
+    throughput_copies: Option<usize>,
+
+    /// Optional argument to perform throughput tests,
+    /// telling how many sessions we use in parallel
+    #[clap(long = "throughput-sessions", requires_all=["throughput_copies"])]
+    throughput_sessions: Option<usize>,
 
     /// Session ID that corresponds to the correlated randomness to be consumed during the Distributed Decryption
     /// (If no ID is given, we use dummy preprocessing)
@@ -287,6 +310,7 @@ async fn preproc_keygen_command(
             params.session_type,
             params.dkg_params,
             params.num_sessions_preproc,
+            params.percentage_offline,
             choreo_conf.threshold_topology.threshold,
         )
         .await?;
@@ -338,12 +362,18 @@ async fn preproc_decrypt_command(
     choreo_conf: ChoreoConf,
     params: PreprocDecryptArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let pk_serialized = std::fs::read(params.pub_key_file)?;
+    let (key_sid, _): (SessionId, FhePubKeySet) = bincode::deserialize(&pk_serialized)?;
     let session_id = params.session_id.unwrap_or(random());
+    let num_ctxts = params.num_ctxts;
+    let ctxt_type = params.tfhe_type;
     let session_id = runtime
         .initiate_preproc_decrypt(
             SessionId(session_id),
+            key_sid,
             params.decryption_mode,
-            params.num_blocks,
+            num_ctxts as u128,
+            ctxt_type,
             choreo_conf.threshold_topology.threshold,
         )
         .await?;
@@ -517,6 +547,15 @@ async fn threshold_decrypt_command(
     println!("Encrypted the following message : {:?}", messages);
 
     let session_id = params.session_id.unwrap_or(random());
+    let throughput = if let Some(num_copies) = params.throughput_copies {
+        let num_sessions = params.throughput_sessions.unwrap_or(1);
+        Some(ThroughtputParams {
+            num_copies,
+            num_sessions,
+        })
+    } else {
+        None
+    };
     let session_id = runtime
         .initiate_threshold_decrypt(
             SessionId(session_id),
@@ -526,6 +565,7 @@ async fn threshold_decrypt_command(
                 .session_id_preproc
                 .map_or_else(|| None, |id| Some(SessionId(id))),
             ctxts,
+            throughput,
             tfhe_type,
             choreo_conf.threshold_topology.threshold,
         )

@@ -10,7 +10,7 @@ CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
 #into production.
 [tasks.tfhe-docker-image]
 command = "docker"
-args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,choreographer", "-t", "tfhe-core", "../../"]
+args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,choreographer,default", "-t", "tfhe-core", "../../"]
 
 [tasks.tfhe-docker-image-degree-3]
 command = "docker"
@@ -145,7 +145,9 @@ args = ["test_scripts/bgv_test_script_real_dkg.sh", "temp/${EXPERIMENT_NAME}.tom
 command = "sh"
 args = ["test_scripts/bgv_test_script_fake_dkg.sh", "temp/${EXPERIMENT_NAME}.toml"]
 
-
+[tasks.tfhe-bench-run]
+env = {"NUM_PARTIES" = "4", THRESHOLD = "1", EXPERIMENT_NAME="tfhe-bench-run"}
+run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy"], fork = true}
 
 ##For TFHE we set NUM_PARTIES to 5 to be able to test both small and large sessions
 [tasks.tfhe-bench-fake-dkg]

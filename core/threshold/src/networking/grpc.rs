@@ -238,6 +238,7 @@ lazy_static::lazy_static! {
         DashMap::new();
 }
 
+const NUM_RETRIES_FETCH_MESSAGE_QUEUE: usize = 50;
 #[async_trait]
 impl Gnetworking for NetworkingImpl {
     async fn send_value(
@@ -298,38 +299,43 @@ impl Gnetworking for NetworkingImpl {
         }
         tracing::debug!("passed sender verification, tag is {:?}", tag);
 
-        if self.message_queues.contains_key(&tag.session_id) {
-            let tx = self
-                .message_queues
-                .get(&tag.session_id)
-                .ok_or_else(|| {
-                    anyhow_error_and_log("couldn't retrieve session store from message stores")
-                })
-                .map(|s| {
-                    s.get(&tag.sender)
-                        .ok_or_else(|| {
-                            anyhow_error_and_log("couldn't retrieve channels from session store")
-                        })
-                        .map(|s| s.value().0.clone())
-                        .map_err(|e| tonic::Status::new(tonic::Code::NotFound, e.to_string()))
-                })
-                .map_err(|e| tonic::Status::new(tonic::Code::NotFound, e.to_string()))??;
+        for _ in 0..NUM_RETRIES_FETCH_MESSAGE_QUEUE {
+            if self.message_queues.contains_key(&tag.session_id) {
+                let tx = self
+                    .message_queues
+                    .get(&tag.session_id)
+                    .ok_or_else(|| {
+                        anyhow_error_and_log("couldn't retrieve session store from message stores")
+                    })
+                    .map(|s| {
+                        s.get(&tag.sender)
+                            .ok_or_else(|| {
+                                anyhow_error_and_log(
+                                    "couldn't retrieve channels from session store",
+                                )
+                            })
+                            .map(|s| s.value().0.clone())
+                            .map_err(|e| tonic::Status::new(tonic::Code::NotFound, e.to_string()))
+                    })
+                    .map_err(|e| tonic::Status::new(tonic::Code::NotFound, e.to_string()))??;
 
-            let _ = tx
-                .send(NetworkRoundValue {
-                    value: request.value,
-                    round_counter: tag.round_counter,
-                })
-                .await;
-            Ok(tonic::Response::new(SendValueResponse::default()))
-        } else {
-            let msg = format!(
-                "unknown session id {:?} for from sender {:?} (round {})",
-                tag.session_id, tag.sender, tag.round_counter
-            );
-            tracing::error!(msg);
-            Err(tonic::Status::new(tonic::Code::NotFound, msg))
+                let _ = tx
+                    .send(NetworkRoundValue {
+                        value: request.value,
+                        round_counter: tag.round_counter,
+                    })
+                    .await;
+                return Ok(tonic::Response::new(SendValueResponse::default()));
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
         }
+
+        let msg = format!(
+            "unknown session id {:?} for from sender {:?} (round {})",
+            tag.session_id, tag.sender, tag.round_counter
+        );
+        tracing::error!(msg);
+        Err(tonic::Status::new(tonic::Code::NotFound, msg))
     }
 }
 

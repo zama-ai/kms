@@ -48,6 +48,10 @@ pub struct PreprocessingOrchestrator<Z> {
     params: DKGParams,
     keyset_config: KeySetConfig,
     dkg_preproc: Arc<RwLock<Box<dyn DKGPreprocessing<Z>>>>,
+    // For testing purposes, can set the percentage of offline phase
+    // we actually want to run
+    #[cfg(feature = "choreographer")]
+    percentage_offline: usize,
 }
 
 impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z64, EXTENSION_DEGREE>> {
@@ -70,6 +74,29 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z64, E
             params,
             keyset_config,
             dkg_preproc: Arc::new(RwLock::new(factory.create_dkg_preprocessing_no_sns())),
+            #[cfg(feature = "choreographer")]
+            percentage_offline: 100,
+        })
+    }
+
+    #[cfg(feature = "choreographer")]
+    pub fn new_partial<F: PreprocessorFactory<EXTENSION_DEGREE> + ?Sized>(
+        factory: &mut F,
+        params: DKGParams,
+        keyset_config: KeySetConfig,
+        #[cfg(feature = "choreographer")] percentage_offline: usize,
+    ) -> anyhow::Result<Self> {
+        if let DKGParams::WithSnS(_) = params {
+            return Err(anyhow_error_and_log("Cant have SnS with ResiduePolyF8Z64"));
+        }
+
+        assert!(percentage_offline <= 100);
+
+        Ok(Self {
+            params,
+            keyset_config,
+            dkg_preproc: Arc::new(RwLock::new(factory.create_dkg_preprocessing_no_sns())),
+            percentage_offline,
         })
     }
 }
@@ -96,6 +123,31 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z128, 
             params,
             keyset_config,
             dkg_preproc: Arc::new(RwLock::new(factory.create_dkg_preprocessing_with_sns())),
+            #[cfg(feature = "choreographer")]
+            percentage_offline: 100,
+        })
+    }
+
+    #[cfg(feature = "choreographer")]
+    pub fn new_partial<F: PreprocessorFactory<EXTENSION_DEGREE> + ?Sized>(
+        factory: &mut F,
+        params: DKGParams,
+        keyset_config: KeySetConfig,
+        percentage_offline: usize,
+    ) -> anyhow::Result<Self> {
+        if let DKGParams::WithoutSnS(_) = params {
+            return Err(anyhow_error_and_log(
+                "Should not have no SNS with ResiduePolyF8Z128",
+            ));
+        }
+
+        assert!(percentage_offline <= 100);
+
+        Ok(Self {
+            params,
+            keyset_config,
+            dkg_preproc: Arc::new(RwLock::new(factory.create_dkg_preprocessing_with_sns())),
+            percentage_offline,
         })
     }
 }
@@ -161,11 +213,14 @@ where
     ///
     ///__NOTE__ For now we dedicate 1 in 20 sessions
     /// to raw triple and randomness generation and the rest to bit generation
-    #[instrument(name="Preprocessing",skip(self,sessions),fields(num_sessions=?sessions.len()))]
+    #[instrument(name="Preprocessing",skip(self,sessions),fields(num_sessions=?sessions.len(), percentage_offline))]
     pub async fn orchestrate_small_session_dkg_processing(
         self,
         mut sessions: Vec<SmallSession<R>>,
     ) -> SmallSessionDkgResult<R> {
+        #[cfg(feature = "choreographer")]
+        tracing::Span::current().record("percentage_offline", self.percentage_offline);
+
         let party_id = sessions[0].own_identity();
         for session in sessions.iter() {
             assert_eq!(party_id, session.own_identity());
@@ -288,10 +343,14 @@ where
     ///
     ///__NOTE__ For now we dedicate 1 in 20 sessions
     /// to raw triple and randomness generation and the rest to bit generation
+    #[instrument(name="Preprocessing",skip(self,sessions),fields(num_sessions=?sessions.len(), percentage_offline))]
     pub async fn orchestrate_large_session_dkg_processing(
         self,
         mut sessions: Vec<LargeSession>,
     ) -> anyhow::Result<(Vec<LargeSession>, Box<dyn DKGPreprocessing<R>>)> {
+        #[cfg(feature = "choreographer")]
+        tracing::Span::current().record("percentage_offline", self.percentage_offline);
+
         let party_id = sessions[0].own_identity();
         for session in sessions.iter() {
             assert_eq!(party_id, session.own_identity());
@@ -851,7 +910,31 @@ where
         let num_randomness =
             params_basics_handle.total_randomness_required(self.keyset_config) - num_bits;
 
-        (num_bits, num_triples, num_randomness)
+        #[cfg(feature = "choreographer")]
+        {
+            let (num_bits, num_triples, num_randomness) = (
+                (num_bits * self.percentage_offline).div_ceil(100),
+                (num_triples * self.percentage_offline).div_ceil(100),
+                (num_randomness * self.percentage_offline).div_ceil(100),
+            );
+            tracing::info!(
+                "About to create {} bits, {} triples and {} randomness",
+                num_bits,
+                num_triples,
+                num_randomness
+            );
+            (num_bits, num_triples, num_randomness)
+        }
+        #[cfg(not(feature = "choreographer"))]
+        {
+            tracing::info!(
+                "About to create {} bits, {} triples and {} randomness",
+                num_bits,
+                num_triples,
+                num_randomness
+            );
+            (num_bits, num_triples, num_randomness)
+        }
     }
 
     ///Returns the numbers of TUniform required as well as the number of raw bits
@@ -875,7 +958,31 @@ where
 
         //Required number of _raw_ bits
         let num_bits_required = params_basics_handle.num_raw_bits(self.keyset_config);
-        (tuniform_productions, num_bits_required)
+        #[cfg(feature = "choreographer")]
+        {
+            // div_floor is unstable and we don't really care being super precise
+            // so just do div_ceil - 1
+            let num_bits_required = (num_bits_required * self.percentage_offline).div_ceil(100) - 1;
+            for tuniform_production in tuniform_productions.iter_mut() {
+                tuniform_production.amount =
+                    (tuniform_production.amount * self.percentage_offline).div_ceil(100) - 1;
+            }
+            tracing::info!(
+                "Bits will be split into {:?}, and {} raw bits.",
+                tuniform_productions,
+                num_bits_required
+            );
+            (tuniform_productions, num_bits_required)
+        }
+        #[cfg(not(feature = "choreographer"))]
+        {
+            tracing::info!(
+                "Bits will be split into {:?}, and {} raw bits.",
+                tuniform_productions,
+                num_bits_required
+            );
+            (tuniform_productions, num_bits_required)
+        }
     }
 }
 

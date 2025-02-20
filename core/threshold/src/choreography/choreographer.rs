@@ -36,7 +36,7 @@ use super::grpc::gen::{
 use super::grpc::SupportedRing;
 use super::requests::{
     PreprocDecryptParams, PreprocKeyGenParams, PrssInitParams, SessionType, Status, TfheType,
-    ThresholdDecryptParams, ThresholdKeyGenParams, ThresholdKeyGenResultParams,
+    ThresholdDecryptParams, ThresholdKeyGenParams, ThresholdKeyGenResultParams, ThroughtputParams,
 };
 
 pub struct ChoreoRuntime {
@@ -135,12 +135,14 @@ impl ChoreoRuntime {
         session_type: SessionType,
         dkg_params: DkgParamsAvailable,
         num_sessions: u32,
+        percentage_offline: u32,
         threshold: u32,
     ) -> anyhow::Result<SessionId> {
         let role_assignment = bincode::serialize(&self.role_assignments)?;
         let preproc_kg_params = bincode::serialize(&PreprocKeyGenParams {
             session_type,
             session_id,
+            percentage_offline,
             dkg_params: dkg_params.to_param(),
             num_sessions,
         })?;
@@ -260,19 +262,23 @@ impl ChoreoRuntime {
         Ok(pub_key)
     }
 
-    #[instrument(name = "DDec-Preproc Request", skip(self,session_id), fields(num_blocks=?num_blocks, sid = ?session_id))]
+    #[instrument(name = "DDec-Preproc Request", skip(self,session_id), fields(num_ctxts=?num_ctxts, ctxt_type=?ctxt_type, sid = ?session_id))]
     pub async fn initiate_preproc_decrypt(
         &self,
         session_id: SessionId,
+        key_sid: SessionId,
         decryption_mode: DecryptionMode,
-        num_blocks: u128,
+        num_ctxts: u128,
+        ctxt_type: TfheType,
         threshold: u32,
     ) -> anyhow::Result<SessionId> {
         let role_assignment = bincode::serialize(&self.role_assignments)?;
         let preproc_decrypt_params = bincode::serialize(&PreprocDecryptParams {
             session_id,
+            key_sid,
             decryption_mode,
-            num_blocks,
+            num_ctxts,
+            ctxt_type,
         })?;
 
         let mut join_set = JoinSet::new();
@@ -303,7 +309,7 @@ impl ChoreoRuntime {
         Ok(*ref_response)
     }
 
-    #[instrument(name = "DDec Request", skip(self, session_id, ctxts), fields(num_ctxts = ?ctxts.len(), sid = ?session_id))]
+    #[instrument(name = "DDec Request", skip(self, session_id, ctxts), fields(num_ctxts = ?ctxts.len(), ctxt_type=?tfhe_type, sid = ?session_id))]
     #[allow(clippy::too_many_arguments)]
     pub async fn initiate_threshold_decrypt(
         &self,
@@ -312,6 +318,7 @@ impl ChoreoRuntime {
         decryption_mode: DecryptionMode,
         preproc_sid: Option<SessionId>,
         ctxts: Vec<Ciphertext64>,
+        throughput: Option<ThroughtputParams>,
         tfhe_type: TfheType,
         threshold: u32,
     ) -> anyhow::Result<SessionId> {
@@ -321,6 +328,7 @@ impl ChoreoRuntime {
             decryption_mode,
             key_sid,
             preproc_sid,
+            throughput,
             ctxts,
             tfhe_type,
         })?;

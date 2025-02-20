@@ -48,7 +48,7 @@ async fn try_reconstruct_from_shares<
     session: &B,
     sharings: &mut [ShamirSharings<Z>],
     degree: usize,
-    jobs: &mut JoinSet<Result<JobResultType<Z>, Elapsed>>,
+    mut jobs: JoinSet<Result<JobResultType<Z>, Elapsed>>,
     reconstruct_fn: ReconsFunc<Z>,
 ) -> anyhow::Result<Option<Vec<Z>>> {
     let num_parties = session.num_parties();
@@ -187,7 +187,7 @@ pub async fn robust_opens_to_all<
             crate::networking::NetworkMode::Async => reconstruct_w_errors_async,
         };
 
-        match try_reconstruct_from_shares(session, &mut sharings, degree, &mut jobs, reconstruct_fn)
+        match try_reconstruct_from_shares(session, &mut sharings, degree, jobs, reconstruct_fn)
             .await?
         {
             Some(res) => result.extend(res),
@@ -287,8 +287,7 @@ pub async fn multi_robust_opens_to<
             crate::networking::NetworkMode::Sync => reconstruct_w_errors_sync,
             crate::networking::NetworkMode::Async => reconstruct_w_errors_async,
         };
-        try_reconstruct_from_shares(session, &mut sharings, degree, &mut set, reconstruct_fn)
-            .await?
+        try_reconstruct_from_shares(session, &mut sharings, degree, set, reconstruct_fn).await?
     } else {
         None
     };

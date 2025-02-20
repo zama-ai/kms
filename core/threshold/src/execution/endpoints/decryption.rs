@@ -502,6 +502,11 @@ where
 }
 
 /// compute preprocessing information for a bit-decomposition decryption for the given session and number of ciphertexts for the nSmall protocol variant.
+#[instrument(
+name = "TFHE.Threshold-Dec-2.Preprocessing",
+skip_all,
+fields(batch_size=?num_ctxts)
+)]
 pub async fn init_prep_bitdec_small<const EXTENSION_DEGREE: usize>(
     session: &mut SmallSession64<EXTENSION_DEGREE>,
     num_ctxts: usize,
@@ -813,11 +818,6 @@ where
     combine_plaintext_blocks(usable_message_bits, partial_decrypted)
 }
 
-#[instrument(
-    name = "TFHE.Threshold-Dec-1",
-    skip(session, preprocessing, keyshares, ciphertext)
-    fields(sid=?session.session_id(),batch_size=?ciphertext.len())
-)]
 pub async fn run_decryption_noiseflood_64<
     const EXTENSION_DEGREE: usize,
     R: Rng + CryptoRng,

@@ -177,7 +177,8 @@ impl GrpcSendingService {
             if let Err(err) = res {
                 incorrectly_sent += 1;
                 tracing::error!(
-                    "Error sending, {err}, after {:?} timeout and {nb_retry} retries, and {incorrectly_sent} errors so far",
+                    "Error sending, {:?}, after {:?} timeout and {nb_retry} retries, and {incorrectly_sent} errors so far",
+                    err,
                     exponential_backoff.max_elapsed_time
                 );
             }
