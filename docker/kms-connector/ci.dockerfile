@@ -59,7 +59,7 @@ ENV PATH="$PATH:/app/kms-connector/bin"
 
 # Copy binaries and config
 COPY --from=base /app/kms-connector/kms-connector/bin/ /app/kms-connector/bin/
-COPY ./kms-connector/config.toml /app/kms-connector/config.toml
+COPY ./kms-connector/config/environments/config-base.toml /app/kms-connector/config/environments/config-base.toml
 
 # Change user to limit root access
 RUN groupadd -g 10002 kms && \

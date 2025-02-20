@@ -32,6 +32,7 @@ prost = "0.13"
 prost-types = "0.13"
 tonic = { version = "0.12.3", features = ["transport","tls","tls-roots"] }
 tokio = { version = "1.43.0", features = ["full"] }
+clap = { version = "4.5.30", features = ["derive"] }
 toml = "0.8.20"
 futures = "0.3"
 thiserror = "2.0.11"

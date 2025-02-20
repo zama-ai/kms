@@ -1,0 +1,30 @@
+# Example configuration for KMS Connector
+
+# Service name for tracing (optional, defaults to "kms-connector")
+service_name = "kms-connector"
+
+# BIP39 mnemonic phrase for wallet generation (required)
+# This is used to derive the private key for signing responses
+# IMPORTANT: Keep this secure and never share it!
+mnemonic = "test test test test test test test test test test test junk"
+
+# Chain ID for the L2 network (required)
+chain_id = 654321
+
+# Address of the DecryptionManager contract (required)
+# Format: hex string with 0x prefix
+decryption_manager_address = "0x0000000000000000000000000000000000000000"
+
+# Address of the HTTPZ contract (required)
+# Format: hex string with 0x prefix
+httpz_address = "0x0000000000000000000000000000000000000001"
+
+# KMS-core gRPC endpoint (required)
+# Format: http://host:port
+kms_core_endpoint = "http://localhost:50052"
+
+# GateWay L2 WebSocket RPC URL endpoint (required)
+gwl2_url = "ws://localhost:8757"
+
+# Size of the event processing channel (optional)
+channel_size = 1000

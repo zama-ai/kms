@@ -1,8 +1,14 @@
 use alloy::providers::Provider;
 use alloy_provider::{ProviderBuilder, WsConnect};
+use clap::Parser;
 use kms_connector::{
-    core::{config::Config, connector::KmsCoreConnector, wallet::KmsWallet},
-    error::Result,
+    core::{
+        cli::{Cli, Commands},
+        config::Config,
+        connector::KmsCoreConnector,
+        wallet::KmsWallet,
+    },
+    error::{Error, Result},
     kms_core_adapter::service::KmsServiceImpl,
 };
 use std::sync::Arc;
@@ -10,14 +16,20 @@ use std::time::Duration;
 use tokio::{
     signal::unix::{signal, SignalKind},
     sync::broadcast,
+    task::JoinHandle,
+    time::sleep,
 };
 use tracing::{error, info};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 const RETRY_DELAY: Duration = Duration::from_secs(5);
+const DEFAULT_CHANNEL_SIZE: usize = 1000;
 
-/// Keep trying to connect to the RPC endpoint indefinitely
-async fn connect_with_retry(rpc_url: &str) -> Arc<impl Provider + Clone + 'static> {
+/// Keep trying to connect to the RPC endpoint until successful or shutdown signal
+async fn connect_with_retry(
+    rpc_url: &str,
+    mut shutdown_rx: broadcast::Receiver<()>,
+) -> Result<Option<Arc<impl Provider + Clone + 'static>>> {
     loop {
         info!(
             "Attempting to connect to Gateway L2 RPC endpoint: {}",
@@ -27,14 +39,23 @@ async fn connect_with_retry(rpc_url: &str) -> Arc<impl Provider + Clone + 'stati
         match ProviderBuilder::new().on_ws(ws).await {
             Ok(provider) => {
                 info!("Connected to Gateway L2 RPC endpoint");
-                return Arc::new(provider);
+                return Ok(Some(Arc::new(provider)));
             }
             Err(e) => {
                 error!(
-                    "Failed to connect to Gateway L2 RPC endpoint: {}, retrying in {:?}...",
-                    e, RETRY_DELAY
+                    "Failed to connect to Gateway L2 RPC endpoint: {}, retrying in {}s...",
+                    e,
+                    RETRY_DELAY.as_secs()
                 );
-                tokio::time::sleep(RETRY_DELAY).await;
+
+                // Wait for either the retry delay or shutdown signal
+                tokio::select! {
+                    _ = sleep(RETRY_DELAY) => continue,
+                    _ = shutdown_rx.recv() => {
+                        info!("Received shutdown signal during connection retry");
+                        return Ok(None);
+                    }
+                }
             }
         }
     }
@@ -54,7 +75,7 @@ async fn run_connector(
     );
 
     info!(
-        "Using contracts:\n\tIDecryptionManager: {}\n\tIHttpz: {}",
+        "Using contracts for events subscription:\n\tIDecryptionManager: {}\n\tIHttpz: {}",
         config.decryption_manager_address, config.httpz_address
     );
 
@@ -81,35 +102,11 @@ async fn run_connector(
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    // TODO: substitute with existing KMS-Core implementation
-    // Initialize logging
-    tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(EnvFilter::from_default_env())
-        .init();
-
-    info!("Starting KMS Connector...");
-
-    // Load config
-    let config = Config::from_file("./kms-connector/config.toml")?;
-
-    // Get RPC URL with default
-    let gw_endpoint = config.gwl2_url.clone();
-
-    // Initialize WebSocket connection with retry
-    let provider = connect_with_retry(&gw_endpoint).await;
-
-    // Create shutdown channel
-    let (shutdown_tx, shutdown_rx) = broadcast::channel(16);
-
-    // Spawn signal handlers
+async fn setup_signal_handlers(shutdown_tx: broadcast::Sender<()>) -> Result<JoinHandle<()>> {
     let mut sigterm = signal(SignalKind::terminate())?;
     let mut sigint = signal(SignalKind::interrupt())?;
-    let shutdown_tx_sig = shutdown_tx.clone();
 
-    tokio::spawn(async move {
+    Ok(tokio::spawn(async move {
         tokio::select! {
             _ = sigterm.recv() => {
                 info!("Received SIGTERM signal");
@@ -118,19 +115,91 @@ async fn main() -> Result<()> {
                 info!("Received SIGINT signal");
             }
         }
-        let _ = shutdown_tx_sig.send(());
-    });
+        info!("Initiating graceful shutdown...");
+        let _ = shutdown_tx.send(());
+    }))
+}
 
-    // Run the connector with automatic reconnection
-    let connector_handle = tokio::spawn(run_connector(config, provider, shutdown_rx));
+#[tokio::main]
+async fn main() -> Result<()> {
+    let cli = Cli::parse();
 
-    // Wait for connector to finish
-    match connector_handle.await {
-        Ok(Ok(())) => info!("Connector shutdown successfully"),
-        Ok(Err(e)) => error!("Connector error during shutdown: {}", e),
-        Err(e) => error!("Failed to join connector task: {}", e),
+    // Setup logging
+    tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(EnvFilter::from_default_env())
+        .init();
+
+    match cli.command {
+        Commands::Start { config, name } => {
+            info!("Starting KMS connector with config file");
+
+            // Load config and potentially override service name
+            let mut config = Config::from_file(&config)?;
+            if let Some(name) = name {
+                config.service_name = name;
+                info!("Using custom service name: {}", config.service_name);
+            }
+
+            // Create shutdown channel
+            let (shutdown_tx, shutdown_rx) =
+                broadcast::channel(config.channel_size.unwrap_or(DEFAULT_CHANNEL_SIZE));
+
+            // Setup signal handlers for graceful shutdown
+            let signal_handle = setup_signal_handlers(shutdown_tx.clone()).await?;
+
+            // Connect to L2 gateway with shutdown handling
+            let provider =
+                match connect_with_retry(&config.gwl2_url, shutdown_tx.subscribe()).await? {
+                    Some(provider) => provider,
+                    None => {
+                        info!("Shutting down during connection attempt");
+                        return Ok(());
+                    }
+                };
+
+            // Run the connector
+            let connector_handle = tokio::spawn(run_connector(config, provider, shutdown_rx));
+
+            // Wait for either the connector to finish or a shutdown signal
+            tokio::select! {
+                connector_result = connector_handle => {
+                    match connector_result {
+                        Ok(Ok(())) => info!("Connector finished successfully"),
+                        Ok(Err(e)) => {
+                            error!("Connector error: {}", e);
+                            return Err(e);
+                        }
+                        Err(e) => {
+                            error!("Connector task failed: {}", e);
+                            return Err(Error::Channel(format!("Task join error: {}", e)));
+                        }
+                    }
+                }
+                _ = signal_handle => {
+                    info!("Received shutdown signal");
+                }
+            }
+
+            // Initiate shutdown
+            let _ = shutdown_tx.send(());
+
+            info!("KMS Connector stopped successfully");
+        }
+        Commands::List { full_path } => match Commands::list_configs(full_path) {
+            Ok(configs) => {
+                info!("Available configurations:");
+                for config in configs {
+                    info!("  {}", config.display());
+                }
+            }
+            Err(e) => error!("Error listing configs: {}", e),
+        },
+        Commands::Validate { config } => match Commands::validate_config(&config) {
+            Ok(()) => info!("Configuration is valid: {}", config.display()),
+            Err(e) => error!("Configuration validation failed: {}", e),
+        },
     }
 
-    info!("KMS Connector stopped successfully");
     Ok(())
 }

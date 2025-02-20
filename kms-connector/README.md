@@ -10,6 +10,72 @@ KMS Connector is a Rust-based service that connects the KMS Core with Gateway L2
 - CRS generation and management
 - Operation status notifications
 - Arbitrum-specific finality rules
+- CLI interface for configuration management and validation
+
+## CLI Usage
+
+The KMS Connector provides a command-line interface with the following commands:
+
+### Start a Connector Instance
+
+```bash
+# Start with a specific config file
+kms-connector start -c config/environments/config-1.toml
+
+# Start with a custom service name
+kms-connector start -c config/environments/config-1.toml -n "my-connector"
+
+# Use custom config directory (via environment variable)
+KMS_CONNECTOR_CONFIG_DIR=/path/to/configs kms-connector start -c config-1.toml
+```
+
+### List Available Configurations
+
+```bash
+# List configuration filenames
+kms-connector list
+
+# List full configuration paths
+kms-connector list --full-path
+```
+
+### Validate Configuration
+
+```bash
+# Validate a specific configuration file
+kms-connector validate -c config/environments/config-1.toml
+```
+
+### Environment Variables
+
+- `KMS_CONNECTOR_CONFIG_DIR`: Override the default config directory location
+
+### Configuration Structure
+
+Configuration files use TOML format with the following structure:
+
+```toml
+# Service name for tracing (optional, default: "kms-connector")
+service_name = "my-connector"
+
+# KMS Core endpoint (required)
+kms_core_endpoint = "http://localhost:50052"
+
+# GateWay L2 WebSocket RPC URL endpoint (required)
+gwl2_url = "ws://localhost:8757"
+
+# Chain ID (required)
+chain_id = 1337
+
+# Decryption manager contract address (required)
+decryption_manager_address = "0x..."
+
+# HTTPZ contract address (required)
+httpz_address = "0x..."
+
+# Size of the event processing channel (optional)
+channel_size = 1000
+```
 
 ## Architecture: Adapter-Provider Pattern
 
@@ -84,9 +150,8 @@ impl<P: Provider> DecryptionAdapter<P> {
             .await
     }
 }
-```
 
-### Key Points
+## Key Points
 
 1. **Provider**
    - Single responsibility: L2 communication

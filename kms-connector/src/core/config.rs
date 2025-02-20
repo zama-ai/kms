@@ -3,6 +3,7 @@ use alloy::primitives::Address;
 use bip39::Mnemonic;
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path, str::FromStr};
+use tracing::{info, warn};
 
 /// Configuration for the KMS connector
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -21,20 +22,47 @@ pub struct Config {
     pub httpz_address: String,
     /// Channel size for event processing
     pub channel_size: Option<usize>,
+    /// Service name for tracing
+    #[serde(default = "default_service_name")]
+    pub service_name: String,
+}
+
+fn default_service_name() -> String {
+    "kms-connector".to_string()
 }
 
 impl Config {
     /// Load configuration from a TOML file
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+        info!("Loading configuration from: {}", path.as_ref().display());
+
         let content = fs::read_to_string(path)
             .map_err(|e| Error::Config(format!("Failed to read config file: {}", e)))?;
 
         let config: Self = toml::from_str(&content)
             .map_err(|e| Error::Config(format!("Failed to parse config file: {}", e)))?;
 
+        // Validate and log configuration
+        info!("Configuration loaded successfully:");
+        info!("  Service Name: {}", config.service_name);
+        info!("  KMS Core Endpoint: {}", config.kms_core_endpoint);
+        info!("  Gateway L2 URL: {}", config.gwl2_url);
+        info!("  Chain ID: {}", config.chain_id);
+        info!(
+            "  Decryption Manager: {}",
+            config.decryption_manager_address
+        );
+        info!("  HTTPZ Address: {}", config.httpz_address);
+        if let Some(size) = config.channel_size {
+            info!("  Channel Size: {}", size);
+        } else {
+            warn!("  Channel Size: not specified, using default");
+        }
+
         // Validate mnemonic
         Mnemonic::parse_normalized(&config.mnemonic)
             .map_err(|e| Error::Config(format!("Invalid mnemonic: {}", e)))?;
+        info!("  Mnemonic: validated successfully");
 
         // Validate addresses
         if !config.decryption_manager_address.starts_with("0x") {
@@ -93,6 +121,7 @@ mod tests {
             decryption_manager_address: "0x0000000000000000000000000000000000000000".to_string(),
             httpz_address: "0x0000000000000000000000000000000000000000".to_string(),
             channel_size: Some(100),
+            service_name: "kms-connector".to_string(),
         };
 
         let temp_file = NamedTempFile::new().unwrap();
@@ -112,6 +141,7 @@ mod tests {
         assert_eq!(config.httpz_address, loaded_config.httpz_address);
         assert_eq!(config.channel_size, loaded_config.channel_size);
         assert_eq!(config.kms_core_endpoint, loaded_config.kms_core_endpoint);
+        assert_eq!(config.service_name, loaded_config.service_name);
     }
 
     #[test]
@@ -124,6 +154,7 @@ mod tests {
             decryption_manager_address: "0x0000000000000000000000000000000000000000".to_string(),
             httpz_address: "0x0000000000000000000000000000000000000000".to_string(),
             channel_size: None,
+            service_name: "kms-connector".to_string(),
         };
 
         config.to_file("test_config.toml").unwrap();
@@ -143,6 +174,7 @@ mod tests {
             decryption_manager_address: "0x0000".to_string(),
             httpz_address: "0x000010".to_string(),
             channel_size: None,
+            service_name: "kms-connector".to_string(),
         };
 
         let temp_file = NamedTempFile::new().unwrap();
