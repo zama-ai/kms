@@ -2623,8 +2623,6 @@ pub(crate) mod tests {
         assemble_metadata_alloy, await_server_ready, get_health_client, get_status,
     };
     use crate::client::{ParsedReencryptionRequest, ServerIdentities};
-    #[cfg(feature = "insecure")]
-    use crate::consts::DEFAULT_PARAM;
     use crate::consts::DEFAULT_THRESHOLD;
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     use crate::consts::MAX_TRIES;
@@ -3336,6 +3334,10 @@ pub(crate) mod tests {
                         .await
                         .unwrap();
                     assert!(server_key.is_some());
+
+                    if params == FheParameter::Default {
+                        assert_mod_switch_key_exists(server_key.unwrap());
+                    }
                 }
                 KeySetType::DecompressionOnly => {
                     // setup storage
@@ -5747,16 +5749,19 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn default_insecure_dkg(#[case] amount_parties: usize) {
+        let param = FheParameter::Default;
+        let dkg_param: WrappedDKGParams = param.into();
+
         let key_id: RequestId = RequestId::derive(&format!(
             "default_insecure_dkg_key_{amount_parties}_{:?}",
-            DEFAULT_PARAM
+            param,
         ))
         .unwrap();
         purge(None, None, &key_id.to_string(), amount_parties).await;
         let (_kms_servers, kms_clients, internal_client) =
-            threshold_handles(DEFAULT_PARAM, amount_parties, true, None, None).await;
+            threshold_handles(*dkg_param, amount_parties, true, None, None).await;
         let keys = run_keygen(
-            FheParameter::Default,
+            param,
             &kms_clients,
             &internal_client,
             None,
@@ -5765,10 +5770,27 @@ pub(crate) mod tests {
             true,
         )
         .await;
-        _ = keys.clone().get_standard();
+
+        // check that we have the new mod switch key
+        let (_, _, server_key) = keys.clone().get_standard();
+        assert_mod_switch_key_exists(server_key);
 
         let panic_res = std::panic::catch_unwind(|| keys.get_decompression_only());
         assert!(panic_res.is_err());
+    }
+
+    fn assert_mod_switch_key_exists(server_key: tfhe::ServerKey) {
+        let (server_key, _, _, _, _) = server_key.into_raw_parts();
+        let server_key = server_key.into_raw_parts();
+        match server_key.bootstrapping_key {
+            tfhe::shortint::server_key::ShortintBootstrappingKey::Classic {
+                bsk: _bsk,
+                modulus_switch_noise_reduction_key,
+            } => {
+                assert!(modulus_switch_noise_reduction_key.is_some());
+            }
+            _ => panic!("expected classic bsk"),
+        }
     }
 
     #[cfg(all(feature = "slow_tests", feature = "insecure"))]

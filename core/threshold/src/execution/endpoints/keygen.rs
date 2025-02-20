@@ -132,9 +132,13 @@ impl RawPubKeySet {
         );
 
         // Conversion to fourier domain
+        // TODO add `modulus_switch_noise_reduction_key` to RawPubKeySet
         par_convert_standard_lwe_bootstrap_key_to_fourier(&self.bk, &mut fourier_bsk);
 
-        let pk_bk = ShortintBootstrappingKey::Classic(fourier_bsk);
+        let pk_bk = ShortintBootstrappingKey::Classic {
+            bsk: fourier_bsk,
+            modulus_switch_noise_reduction_key: None,
+        };
 
         let max_noise_level = MaxNoiseLevel::from_msg_carry_modulus(
             regular_params.get_message_modulus(),
@@ -678,7 +682,11 @@ where
     // Conversion to fourier domain
     par_convert_standard_lwe_bootstrap_key_to_fourier(&blind_rotate_key, &mut fourier_bsk);
 
-    let blind_rotate_key = ShortintBootstrappingKey::Classic(fourier_bsk);
+    // TODO implement `modulus_switch_noise_reduction_key` keygen
+    let blind_rotate_key = ShortintBootstrappingKey::Classic {
+        bsk: fourier_bsk,
+        modulus_switch_noise_reduction_key: None,
+    };
 
     let decompression_key = DecompressionKey {
         blind_rotate_key,

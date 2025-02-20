@@ -32,6 +32,7 @@ pub const NIST_PARAM_1_CARRY_1_COMPACT_PK_PBS_KS_TUNIFORM_2M128: ClassicPBSParam
         log2_p_fail: -128.788,
         ciphertext_modulus: CiphertextModulus::new_native(),
         encryption_key_choice: EncryptionKeyChoice::Small,
+        modulus_switch_noise_reduction_params: None,
     };
 
 // Parameters for the PKE operation
@@ -75,6 +76,7 @@ pub const NIST_PARAM_2_CARRY_2_COMPACT_PK_PBS_KS_TUNIFORM_2M128: ClassicPBSParam
         log2_p_fail: -128.788,
         ciphertext_modulus: CiphertextModulus::new_native(),
         encryption_key_choice: EncryptionKeyChoice::Small,
+        modulus_switch_noise_reduction_params: None,
     };
 
 // Parameters for the PKE operation
@@ -118,6 +120,7 @@ pub const NIST_PARAM_1_CARRY_1_COMPACT_PK_KS_PBS_TUNIFORM_2M128: ClassicPBSParam
         log2_p_fail: -128.788,
         ciphertext_modulus: CiphertextModulus::new_native(),
         encryption_key_choice: EncryptionKeyChoice::Big,
+        modulus_switch_noise_reduction_params: None,
     };
 
 // Parameters for the PKE operation
@@ -161,6 +164,7 @@ pub const NIST_PARAM_2_CARRY_2_COMPACT_PK_KS_PBS_TUNIFORM_2M128: ClassicPBSParam
         log2_p_fail: -128.788,
         ciphertext_modulus: CiphertextModulus::new_native(),
         encryption_key_choice: EncryptionKeyChoice::Big,
+        modulus_switch_noise_reduction_params: None,
     };
 
 // Parameters for the PKE operation

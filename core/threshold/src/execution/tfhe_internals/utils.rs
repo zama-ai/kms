@@ -4,9 +4,10 @@ use std::collections::HashMap;
 //I put them there as they may not be needed anymore when/if
 //part of this code is integrated in tfhe-rs
 use itertools::{EitherOrBoth, Itertools};
+use tfhe::HlCompactable;
 use tfhe::{
-    core_crypto::prelude::Numeric, integer::ciphertext::Compactable, prelude::Tagged,
-    CompactCiphertextList, CompactPublicKey, HlExpandable,
+    core_crypto::prelude::Numeric, prelude::Tagged, CompactCiphertextList, CompactPublicKey,
+    HlExpandable,
 };
 
 use crate::execution::sharing::shamir::RevealOp;
@@ -171,7 +172,7 @@ pub fn slice_wrapping_scalar_mul_assign<Z: BaseRing, const EXTENSION_DEGREE: usi
 }
 
 // NOTE: This may require the server key to be set to be able to expand
-pub fn compact_encrypt_helper<M: Compactable + Numeric>(
+pub fn compact_encrypt_helper<M: HlCompactable + Numeric>(
     pk: &CompactPublicKey,
     msg: M,
     num_bits: usize,
@@ -185,7 +186,7 @@ pub fn compact_encrypt_helper<M: Compactable + Numeric>(
     Ok(compact_list_builder.build())
 }
 
-pub fn expanded_encrypt<M: Compactable + Numeric, T: HlExpandable + Tagged>(
+pub fn expanded_encrypt<M: HlCompactable + Numeric, T: HlExpandable + Tagged>(
     pk: &CompactPublicKey,
     msg: M,
     num_bits: usize,

@@ -13,7 +13,6 @@ use tfhe::{
     integer::{ciphertext::BaseRadixCiphertext, parameters::DynamicDistribution},
     shortint::{
         parameters::{
-            list_compression::COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
             CompactCiphertextListExpansionKind, CompactPublicKeyEncryptionParameters,
             CompressionParameters, DecompositionBaseLog, DecompositionLevelCount, GlweDimension,
             LweDimension, PolynomialSize, ShortintKeySwitchingParameters,
@@ -1151,16 +1150,19 @@ impl DkgParamsAvailable {
     }
 }
 
-/// Blokchain Parameters (with pfail `2^-64`), using parameters in tfhe-rs codebase
-const BC_PARAMS_SAM : DKGParamsRegular = DKGParamsRegular {
+/// Blokchain Parameters (with pfail `2^-128`), using parameters in tfhe-rs codebase
+const BC_PARAMS_SAM: DKGParamsRegular = DKGParamsRegular {
     sec: 128,
-    ciphertext_parameters: tfhe::shortint::parameters::PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
+    ciphertext_parameters:
+        tfhe::shortint::parameters::v1_0::V1_0_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
     dedicated_compact_public_key_parameters: Some((
-        tfhe::shortint::parameters::compact_public_key_only::p_fail_2_minus_64::ks_pbs::V0_11_PARAM_PKE_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
-        tfhe::shortint::parameters::key_switching::p_fail_2_minus_64::ks_pbs::V0_11_PARAM_KEYSWITCH_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64
+        tfhe::shortint::parameters::v1_0::V1_0_PARAM_PKE_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
+        tfhe::shortint::parameters::v1_0::V1_0_PARAM_KEYSWITCH_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
     )),
-    compression_decompression_parameters: Some(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64),
-    flag: true
+    compression_decompression_parameters: Some(
+        tfhe::shortint::parameters::v1_0::V1_0_COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128
+    ),
+    flag: true,
 };
 
 /// Blokchain Parameters without SnS (with pfail `2^-64`), using parameters in tfhe-rs codebase
@@ -1200,6 +1202,7 @@ const BC_PARAMS_NIGEL: DKGParamsRegular = DKGParamsRegular {
         log2_p_fail: -64.0629,
         ciphertext_modulus: CiphertextModulus::new_native(),
         encryption_key_choice: EncryptionKeyChoice::Big,
+        modulus_switch_noise_reduction_params: None,
     },
     dedicated_compact_public_key_parameters: Some((
         CompactPublicKeyEncryptionParameters {
@@ -1259,6 +1262,7 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
             log2_p_fail: -49.5137,
             ciphertext_modulus: CiphertextModulus::new_native(),
             encryption_key_choice: EncryptionKeyChoice::Big,
+            modulus_switch_noise_reduction_params: None, // TODO set this to test mod switch keygen
         },
         compression_decompression_parameters: Some(CompressionParameters {
             br_level: DecompositionLevelCount(1),
@@ -1322,6 +1326,7 @@ pub const OLD_PARAMS_P32_REAL_WITH_SNS: DKGParams = DKGParams::WithSnS(DKGParams
             log2_p_fail: -80., //most likely not true, but these should be deprecated anyway
             ciphertext_modulus: CiphertextModulus::new_native(),
             encryption_key_choice: EncryptionKeyChoice::Small,
+            modulus_switch_noise_reduction_params: None,
         },
         compression_decompression_parameters: None,
         dedicated_compact_public_key_parameters: None,

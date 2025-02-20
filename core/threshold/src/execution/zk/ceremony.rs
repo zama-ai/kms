@@ -797,9 +797,12 @@ mod tests {
     use super::*;
     use crate::{
         algebra::galois_rings::degree_4::ResiduePolyF4Z64,
-        execution::runtime::{
-            session::{LargeSession, ParameterHandles},
-            test_runtime::{generate_fixed_identities, DistributedTestRuntime},
+        execution::{
+            runtime::{
+                session::{LargeSession, ParameterHandles},
+                test_runtime::{generate_fixed_identities, DistributedTestRuntime},
+            },
+            tfhe_internals::parameters::BC_PARAMS_SAM_NO_SNS,
         },
         networking::NetworkMode,
         session_id::SessionId,
@@ -1333,10 +1336,26 @@ mod tests {
         // }
         // ```
 
-        let param_v1 = tfhe::shortint::parameters::compact_public_key_only::p_fail_2_minus_64::ks_pbs::V0_11_PARAM_PKE_TO_SMALL_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64_ZKV1;
-        assert_eq!(58289, compute_witness_dim(&param_v1, Some(64)).unwrap());
+        let max_bit_size = 64;
 
-        let param_v2 = tfhe::shortint::parameters::compact_public_key_only::p_fail_2_minus_64::ks_pbs::V0_11_PARAM_PKE_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64;
-        assert_eq!(5952, compute_witness_dim(&param_v2, Some(64)).unwrap());
+        let param_v0_11_zkv1 = tfhe::shortint::parameters::v0_11::compact_public_key_only::p_fail_2_minus_64::ks_pbs::V0_11_PARAM_PKE_TO_SMALL_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64_ZKV1;
+        assert_eq!(
+            58289,
+            compute_witness_dim(&param_v0_11_zkv1, Some(max_bit_size)).unwrap()
+        );
+
+        let param_v0_11_zkv2 = tfhe::shortint::parameters::v0_11::compact_public_key_only::p_fail_2_minus_64::ks_pbs::V0_11_PARAM_PKE_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64;
+        assert_eq!(
+            5952,
+            compute_witness_dim(&param_v0_11_zkv2, Some(max_bit_size)).unwrap()
+        );
+
+        let param_v1_zkv2 = BC_PARAMS_SAM_NO_SNS
+            .get_params_basics_handle()
+            .get_compact_pk_enc_params();
+        assert_eq!(
+            5952,
+            compute_witness_dim(&param_v1_zkv2, Some(max_bit_size)).unwrap()
+        );
     }
 }

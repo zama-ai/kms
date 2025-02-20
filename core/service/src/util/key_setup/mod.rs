@@ -371,22 +371,22 @@ where
             );
         }
     }
-    for (req_id, cur_keys) in &pub_fhe_map {
+    for (req_id, cur_keys) in pub_fhe_map {
         store_pk_at_request_id(
             pub_storage,
-            req_id,
+            &req_id,
             WrappedPublicKey::Compact(&cur_keys.public_key),
         )
         .await
         .unwrap();
         tracing::info!(
             "Successfully stored public key under the handle {} in storage {}",
-            req_id,
+            &req_id,
             pub_storage.info()
         );
         store_versioned_at_request_id(
             pub_storage,
-            req_id,
+            &req_id,
             &cur_keys.server_key,
             &PubDataType::ServerKey.to_string(),
         )
@@ -394,7 +394,7 @@ where
         .unwrap();
         tracing::info!(
             "Successfully stored public server key under the handle {} in storage {}",
-            req_id,
+            &req_id,
             pub_storage.info()
         );
     }

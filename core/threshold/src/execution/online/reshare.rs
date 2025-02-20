@@ -724,6 +724,7 @@ mod tests {
             log2_p_fail: -80.,
             ciphertext_modulus: params.ciphertext_modulus(),
             encryption_key_choice: params.encryption_key_choice(),
+            modulus_switch_noise_reduction_params: None,
         };
         let new_params = ShortintParameterSet::new_pbs_param_set(
             tfhe::shortint::PBSParameters::PBS(new_pbs_params),
