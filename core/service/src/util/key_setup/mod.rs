@@ -12,6 +12,7 @@ use crate::vault::storage::{
 use aes_prng::AesRng;
 use distributed_decryption::execution::keyset_config::StandardKeySetConfig;
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
+use distributed_decryption::execution::zk::ceremony::max_num_messages;
 use distributed_decryption::execution::{
     tfhe_internals::test_feature::{gen_key_set, keygen_all_party_shares},
     zk::ceremony::make_centralized_public_parameters,
@@ -216,7 +217,30 @@ where
     }
     let sk = get_signing_key(priv_storage).await;
     let mut rng = get_rng(deterministic, Some(0));
-    let (pp, crs_info) = gen_centralized_crs(&sk, &dkg_params, None, &mut rng, None).unwrap();
+
+    // workaround for testing parameters
+    let max_num_bits = if dkg_params.get_params_basics_handle().lwe_dimension().0
+        < max_num_messages(
+            &dkg_params
+                .get_params_basics_handle()
+                .get_compact_pk_enc_params(),
+            distributed_decryption::execution::zk::constants::ZK_DEFAULT_MAX_NUM_BITS,
+        )
+        .unwrap()
+        .0
+    {
+        let max_num_bits = 16;
+        tracing::warn!(
+            "lwe dimension is too small, using max num bits: {}",
+            max_num_bits
+        );
+        Some(max_num_bits)
+    } else {
+        Some(distributed_decryption::execution::zk::constants::ZK_DEFAULT_MAX_NUM_BITS as u32)
+    };
+
+    let (pp, crs_info) =
+        gen_centralized_crs(&sk, &dkg_params, max_num_bits, &mut rng, None).unwrap();
 
     store_versioned_at_request_id(
         priv_storage,
@@ -664,13 +688,33 @@ where
         signing_keys.push(get_signing_key(cur_storage).await);
     }
 
+    let max_num_bits = if dkg_params.get_params_basics_handle().lwe_dimension().0
+        < max_num_messages(
+            &dkg_params
+                .get_params_basics_handle()
+                .get_compact_pk_enc_params(),
+            distributed_decryption::execution::zk::constants::ZK_DEFAULT_MAX_NUM_BITS,
+        )
+        .unwrap()
+        .0
+    {
+        let max_num_bits = 16;
+        tracing::warn!(
+            "lwe dimension is too small, using max num bits: {}",
+            max_num_bits
+        );
+        Some(max_num_bits)
+    } else {
+        Some(distributed_decryption::execution::zk::constants::ZK_DEFAULT_MAX_NUM_BITS)
+    };
+
     let mut rng = get_rng(deterministic, Some(amount_parties as u64));
 
     let internal_pp = make_centralized_public_parameters(
         &dkg_params
             .get_params_basics_handle()
             .get_compact_pk_enc_params(),
-        None,
+        max_num_bits,
         &mut rng,
     )
     .unwrap();

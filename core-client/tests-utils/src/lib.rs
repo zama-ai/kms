@@ -53,6 +53,8 @@ impl DockerComposeCmd {
         let build_docker = env::var("DOCKER_BUILD_TEST_CORE_CLIENT").unwrap_or("".to_string());
         if let KMSMode::ThresholdTestParameter = self.mode {
             env::set_var("FHE_PARAMETER", "test");
+        } else {
+            env::set_var("FHE_PARAMETER", "default");
         }
 
         let mut build = Command::new("docker");

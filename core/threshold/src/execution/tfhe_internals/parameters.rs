@@ -1155,7 +1155,10 @@ impl DkgParamsAvailable {
 const BC_PARAMS_SAM : DKGParamsRegular = DKGParamsRegular {
     sec: 128,
     ciphertext_parameters: tfhe::shortint::parameters::PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
-    dedicated_compact_public_key_parameters: Some((tfhe::shortint::parameters::compact_public_key_only::p_fail_2_minus_64::ks_pbs::V0_11_PARAM_PKE_TO_SMALL_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64_ZKV1,tfhe::shortint::parameters::key_switching::p_fail_2_minus_64::ks_pbs::V0_11_PARAM_KEYSWITCH_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64)),
+    dedicated_compact_public_key_parameters: Some((
+        tfhe::shortint::parameters::compact_public_key_only::p_fail_2_minus_64::ks_pbs::V0_11_PARAM_PKE_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
+        tfhe::shortint::parameters::key_switching::p_fail_2_minus_64::ks_pbs::V0_11_PARAM_KEYSWITCH_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64
+    )),
     compression_decompression_parameters: Some(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64),
     flag: true
 };
@@ -1236,6 +1239,7 @@ pub const BC_PARAMS_NIGEL_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
 });
 
 /// __INSECURE__ Used for testing only
+/// Note that this parameter set uses the V1 proofs.
 pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
     regular_params: DKGParamsRegular {
         sec: 128,

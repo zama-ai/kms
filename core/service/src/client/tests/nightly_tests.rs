@@ -244,25 +244,13 @@ async fn default_reencryption_threshold(
 // We test for both insecure and secure since these are distinct endpoints, although inner computation is the same
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
-#[rstest::rstest]
-#[case(4)]
-#[case(10)]
 #[serial]
-async fn default_insecure_crs_gen_centralized(#[case] amount_parties: usize) {
-    let crs_req_id = RequestId::derive(&format!(
-        "default_insecure_crs_gen_centralized_{amount_parties}"
-    ))
-    .unwrap();
+async fn default_insecure_crs_gen_centralized() {
+    let crs_req_id = RequestId::derive("default_insecure_crs_gen_centralized").unwrap();
     // Delete potentially old data
     purge(None, None, &crs_req_id.to_string(), 1).await;
 
-    crs_gen_centralized(
-        &crate::consts::DEFAULT_PARAM,
-        &crs_req_id,
-        Some(FheParameter::Default),
-        true,
-    )
-    .await;
+    crs_gen_centralized(&crs_req_id, FheParameter::Default, true).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -276,13 +264,7 @@ async fn default_crs_gen_centralized(#[case] amount_parties: usize) {
     // Delete potentially old data
     purge(None, None, &crs_req_id.to_string(), 1).await;
     // We test for both insecure and secure since these are distinct endpoints, although inner computation is the same
-    crs_gen_centralized(
-        &crate::consts::DEFAULT_PARAM,
-        &crs_req_id,
-        Some(FheParameter::Default),
-        false,
-    )
-    .await;
+    crs_gen_centralized(&crs_req_id, FheParameter::Default, false).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

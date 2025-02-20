@@ -14,16 +14,20 @@ use serde::{Deserialize, Serialize};
 use std::ops::{Add, Mul, Neg};
 use tfhe::{
     core_crypto::prelude::LweCiphertextCount,
-    shortint::parameters::CompactPublicKeyEncryptionParameters,
-    zk::{CompactPkeCrs, CompactPkeZkScheme, ZkCompactPkeV1PublicParams},
+    prelude::CastInto,
+    shortint::parameters::{CompactPublicKeyEncryptionParameters, SupportedCompactPkeZkScheme},
+    zk::{
+        CompactPkeCrs, CompactPkeZkScheme, ZkCompactPkeV1PublicParams, ZkCompactPkeV2PublicParams,
+    },
 };
 use tfhe_zk_pok::curve_api::{bls12_446 as curve, CurveGroupOps};
 use tracing::instrument;
 use zeroize::Zeroize;
 
 use super::constants::{
-    ZK_DEFAULT_MAX_NUM_BITS, ZK_DSEP_HASH_AGG_PADDED, ZK_DSEP_HASH_LMAP_PADDED,
-    ZK_DSEP_HASH_PADDED, ZK_DSEP_HASH_T_PADDED, ZK_DSEP_HASH_W_PADDED, ZK_DSEP_HASH_Z_PADDED,
+    ZK_DEFAULT_MAX_NUM_BITS, ZK_DSEP_HASH_AGG_PADDED, ZK_DSEP_HASH_CHI_PADDED,
+    ZK_DSEP_HASH_LMAP_PADDED, ZK_DSEP_HASH_PADDED, ZK_DSEP_HASH_PHI_PADDED, ZK_DSEP_HASH_R_PADDED,
+    ZK_DSEP_HASH_T_PADDED, ZK_DSEP_HASH_W_PADDED, ZK_DSEP_HASH_XI_PADDED, ZK_DSEP_HASH_Z_PADDED,
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
@@ -58,7 +62,29 @@ impl PartialProof {
     }
 }
 
-struct MetaParameter {
+enum MetaParameter {
+    V1(MetaParameterV1),
+    V2(MetaParameterV2),
+}
+
+impl MetaParameter {
+    fn n(&self) -> usize {
+        match self {
+            MetaParameter::V1(inner) => inner.n,
+            MetaParameter::V2(inner) => inner.n,
+        }
+    }
+
+    fn max_num_bits(&self) -> usize {
+        match self {
+            MetaParameter::V1(inner) => inner.max_num_bits,
+            MetaParameter::V2(inner) => inner.max_num_bits,
+        }
+    }
+}
+
+/// These are the parameters except the g_list in ZkCompactPkeV1PublicParams.
+struct MetaParameterV1 {
     big_d: usize,
     n: usize,
     d: usize,
@@ -67,9 +93,60 @@ struct MetaParameter {
     b_r: u64,
     q: u64,
     t: u64,
+    msbs_zero_padding_bit_count: u64,
     max_num_bits: usize,
 }
 
+/// These are the parameters except the g_list in ZkCompactPkeV2PublicParams.
+// we allow non_snake_case to be unified with tfhe-rs
+#[allow(non_snake_case)]
+struct MetaParameterV2 {
+    n: usize,
+    d: usize,
+    k: usize,
+    // We store the square of the bound to avoid rounding on sqrt operations
+    B_inf: u64,
+    q: u64,
+    t: u64,
+    msbs_zero_padding_bit_count: u64,
+    bound_type: tfhe_zk_pok::proofs::pke_v2::Bound,
+    max_num_bits: usize,
+}
+
+fn checked_sqr(x: u128) -> Option<u128> {
+    x.checked_mul(x)
+}
+
+// we allow non_snake_case to be unified with tfhe-rs
+#[allow(non_snake_case)]
+fn inf_norm_bound_to_euclidean_squared(B_inf: u64, dim: usize) -> u128 {
+    checked_sqr(B_inf as u128)
+        .and_then(|norm_squared| norm_squared.checked_mul(dim as u128))
+        .unwrap_or_else(|| panic!("Invalid parameters for zk_pok, B_inf: {B_inf}, d+k: {dim}"))
+}
+
+pub fn max_num_messages(
+    compact_encryption_parameters: &CompactPublicKeyEncryptionParameters,
+    max_bit_size: usize,
+) -> anyhow::Result<LweCiphertextCount> {
+    if compact_encryption_parameters.carry_modulus.0
+        < compact_encryption_parameters.message_modulus.0
+    {
+        anyhow::bail!(
+            "In order to build a ZK-CRS for packed compact ciphertext list encryption, \
+            parameters must have CarryModulus >= MessageModulus"
+        );
+    }
+
+    let carry_and_message_bit_capacity = (compact_encryption_parameters.carry_modulus.0
+        * compact_encryption_parameters.message_modulus.0)
+        .ilog2() as usize;
+    let max_num_message = max_bit_size.div_ceil(carry_and_message_bit_capacity);
+    Ok(LweCiphertextCount(max_num_message))
+}
+
+// we allow non_snake_case to be unified with tfhe-rs
+#[allow(non_snake_case)]
 fn compute_meta_parameter(
     params: &CompactPublicKeyEncryptionParameters,
     max_num_bits: Option<usize>,
@@ -81,24 +158,13 @@ fn compute_meta_parameter(
     plaintext_modulus *= 2;
 
     let max_bit_size = max_num_bits.unwrap_or(ZK_DEFAULT_MAX_NUM_BITS);
-    let max_num_cleartext = LweCiphertextCount({
-        if params.carry_modulus.0 < params.message_modulus.0 {
-            return Err(anyhow_error_and_log(
-                "parameters must have CarryModulus >= MessageModulus".to_string(),
-            ));
-        }
+    let max_num_cleartext = max_num_messages(params, max_bit_size)?;
 
-        let carry_and_message_bit_capacity =
-            (params.carry_modulus.0 * params.message_modulus.0).ilog2() as usize;
-        let out = max_bit_size.div_ceil(carry_and_message_bit_capacity);
-
-        // If our lwe_dim is low, we need to reduce the max_num_cleartext appropriately,
-        // otherwise there will be an error when preparing the zk parameters.
-        // Alternatively, we can remove ZK_DEFAULT_MAX_NUM_BITS and everytime
-        // the max_num_bits is not given we'll use the lwe_dim,
-        // but this requires more refactoring.
-        out.min(lwe_dim.0)
-    });
+    let zk_scheme = match params.zk_scheme {
+        SupportedCompactPkeZkScheme::ZkNotSupported => anyhow::bail!("zk is unsupported"),
+        SupportedCompactPkeZkScheme::V1 => CompactPkeZkScheme::V1,
+        SupportedCompactPkeZkScheme::V2 => CompactPkeZkScheme::V2,
+    };
 
     let (d, k, b, q, t) = tfhe::zk::CompactPkeCrs::prepare_crs_parameters(
         lwe_dim,
@@ -106,29 +172,60 @@ fn compute_meta_parameter(
         noise_distribution,
         params.ciphertext_modulus,
         plaintext_modulus,
-        CompactPkeZkScheme::V1,
+        zk_scheme,
     )?;
-    let (n, big_d, b_r) = tfhe_zk_pok::proofs::pke::compute_crs_params(d.0, k.0, b, q, t, 1);
 
-    debug_assert_eq!(k, max_num_cleartext);
-    Ok(MetaParameter {
-        big_d,
-        n,
-        d: d.0,
-        k: k.0,
-        b,
-        b_r,
-        q,
-        t,
-        max_num_bits: max_bit_size,
-    })
+    let msbs_zero_padding_bit_count = 1u64;
+    let meta_param = match zk_scheme {
+        CompactPkeZkScheme::V1 => {
+            let (n, big_d, b_r) =
+                tfhe_zk_pok::proofs::pke::compute_crs_params(d.0, k.0, b, q, t, 1);
+            debug_assert_eq!(k, max_num_cleartext);
+            MetaParameter::V1(MetaParameterV1 {
+                big_d,
+                n,
+                d: d.0,
+                k: k.0,
+                b,
+                b_r,
+                q,
+                t,
+                msbs_zero_padding_bit_count,
+                max_num_bits: max_bit_size,
+            })
+        }
+        CompactPkeZkScheme::V2 => {
+            let bound_type = tfhe_zk_pok::proofs::pke_v2::Bound::CS;
+            let B_inf = b.cast_into();
+            let B_squared = inf_norm_bound_to_euclidean_squared(B_inf, d.0 + k.0);
+            let (n, _D, _B_bound_squared, _) = tfhe_zk_pok::proofs::pke_v2::compute_crs_params(
+                d.0, k.0, B_squared, t, 1, bound_type,
+            );
+            // useful for debugging
+            // println!("d {}, k {}, B_inf {}, t {}, bound_type {:?}", d.0, k.0, B_inf, t, bound_type);
+            MetaParameter::V2(MetaParameterV2 {
+                n,
+                d: d.0,
+                k: k.0,
+                B_inf,
+                q,
+                t,
+                msbs_zero_padding_bit_count,
+                bound_type,
+                max_num_bits: max_bit_size,
+            })
+        }
+    };
+
+    Ok(meta_param)
 }
 
 pub fn compute_witness_dim(
     params: &CompactPublicKeyEncryptionParameters,
     max_num_bits: Option<usize>,
 ) -> anyhow::Result<usize> {
-    Ok(compute_meta_parameter(params, max_num_bits)?.n)
+    let meta_params = compute_meta_parameter(params, max_num_bits)?;
+    Ok(meta_params.n())
 }
 
 // TODO consider making this a wrapper around GroupElements,
@@ -138,6 +235,8 @@ pub struct InternalPublicParameter {
     round: usize,
     max_num_bits: usize,
     inner: WrappedG1G2s,
+    // we do not include the version number here because
+    // players might cheat and change the version number
 }
 
 impl Default for InternalPublicParameter {
@@ -168,18 +267,6 @@ impl InternalPublicParameter {
         &self,
         params: &CompactPublicKeyEncryptionParameters,
     ) -> anyhow::Result<CompactPkeCrs> {
-        let MetaParameter {
-            big_d,
-            n,
-            d,
-            k,
-            b,
-            b_r,
-            q,
-            t,
-            max_num_bits: _,
-        } = compute_meta_parameter(params, Some(self.max_num_bits))?;
-
         let g_list = self
             .inner
             .g1s
@@ -194,25 +281,71 @@ impl InternalPublicParameter {
             .into_iter()
             .map(|x| x.normalize())
             .collect_vec();
-        Ok(CompactPkeCrs::PkeV1(ZkCompactPkeV1PublicParams::from_vec(
-            g_list,
-            g_hat_list,
-            big_d,
-            n,
-            d,
-            k,
-            b,
-            b_r,
-            q,
-            t,
-            1,
-            *ZK_DSEP_HASH_PADDED,
-            *ZK_DSEP_HASH_T_PADDED,
-            *ZK_DSEP_HASH_AGG_PADDED,
-            *ZK_DSEP_HASH_LMAP_PADDED,
-            *ZK_DSEP_HASH_Z_PADDED,
-            *ZK_DSEP_HASH_W_PADDED,
-        )))
+
+        let crs = match compute_meta_parameter(params, Some(self.max_num_bits))? {
+            MetaParameter::V1(inner_v1) => {
+                if g_list.len() != 2 * inner_v1.n || g_hat_list.len() != inner_v1.n {
+                    anyhow::bail!(
+                        "V1 InternalPublicParameter length does not match n in parameter g_list={}, h_hat_list={}, expected={}",
+                        g_list.len(),
+                        g_hat_list.len(),
+                        inner_v1.n
+                    );
+                }
+                CompactPkeCrs::PkeV1(ZkCompactPkeV1PublicParams::from_vec(
+                    g_list,
+                    g_hat_list,
+                    inner_v1.big_d,
+                    inner_v1.n,
+                    inner_v1.d,
+                    inner_v1.k,
+                    inner_v1.b,
+                    inner_v1.b_r,
+                    inner_v1.q,
+                    inner_v1.t,
+                    inner_v1.msbs_zero_padding_bit_count,
+                    *ZK_DSEP_HASH_PADDED,
+                    *ZK_DSEP_HASH_T_PADDED,
+                    *ZK_DSEP_HASH_AGG_PADDED,
+                    *ZK_DSEP_HASH_LMAP_PADDED,
+                    *ZK_DSEP_HASH_Z_PADDED,
+                    *ZK_DSEP_HASH_W_PADDED,
+                ))
+            }
+            MetaParameter::V2(inner_v2) => {
+                if g_list.len() != 2 * inner_v2.n || g_hat_list.len() != inner_v2.n {
+                    anyhow::bail!(
+                        "V2 InternalPublicParameter length does not match n in parameter g_list={}, h_hat_list={}, expected={}",
+                        g_list.len(),
+                        g_hat_list.len(),
+                        inner_v2.n
+                    );
+                }
+                CompactPkeCrs::PkeV2(ZkCompactPkeV2PublicParams::from_vec(
+                    g_list,
+                    g_hat_list,
+                    inner_v2.d,
+                    inner_v2.k,
+                    inner_v2.B_inf,
+                    inner_v2.q,
+                    inner_v2.t,
+                    inner_v2.msbs_zero_padding_bit_count,
+                    inner_v2.bound_type,
+                    *ZK_DSEP_HASH_PADDED,
+                    *ZK_DSEP_HASH_R_PADDED,
+                    *ZK_DSEP_HASH_T_PADDED,
+                    *ZK_DSEP_HASH_W_PADDED,
+                    *ZK_DSEP_HASH_AGG_PADDED,
+                    *ZK_DSEP_HASH_LMAP_PADDED,
+                    *ZK_DSEP_HASH_PHI_PADDED,
+                    *ZK_DSEP_HASH_XI_PADDED,
+                    *ZK_DSEP_HASH_Z_PADDED,
+                    *ZK_DSEP_HASH_CHI_PADDED,
+                ))
+            }
+        };
+
+        Ok(crs)
     }
 
     /// Create new PublicParameter for given witness dimension containing the generators
@@ -233,8 +366,8 @@ impl InternalPublicParameter {
         max_num_bits: Option<usize>,
     ) -> anyhow::Result<Self> {
         let meta_param = compute_meta_parameter(params, max_num_bits)?;
-        let witness_dim = meta_param.n;
-        let max_num_bits = meta_param.max_num_bits;
+        let witness_dim = meta_param.n();
+        let max_num_bits = meta_param.max_num_bits();
         Ok(InternalPublicParameter {
             round: 0,
             max_num_bits,
@@ -1174,5 +1307,36 @@ mod tests {
                 .to_string()
                 .contains("well-formedness check failed (2)"));
         }
+    }
+
+    #[test]
+    fn test_param_computation() {
+        // need number need to be consistent with what tfhe-rs gives us
+        // a simple script can be used to obtain these numbers such as
+        // ```
+        // let params = tfhe::shortint::parameters::PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64;
+        // let cpk_params = tfhe::shortint::parameters::v0_11::compact_public_key_only::p_fail_2_minus_64::ks_pbs::V0_11_PARAM_PKE_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64;
+        // let casting_params = tfhe::shortint::parameters::v0_11::key_switching::p_fail_2_minus_64::ks_pbs::V0_11_PARAM_KEYSWITCH_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64;
+        // let config = tfhe::ConfigBuilder::with_custom_parameters(params)
+        //     .use_dedicated_compact_public_key_parameters((cpk_params, casting_params))
+        //     .build();
+
+        // let max_bit_size = 64;
+        // let crs = CompactPkeCrs::from_config(config, max_bit_size).unwrap();
+        // match crs {
+        //     CompactPkeCrs::PkeV1(ref public_params) => {
+        //         println!("v1 n: {}", public_params.n);
+        //     }
+        //     CompactPkeCrs::PkeV2(ref public_params) => {
+        //         println!("v2 n: {}", public_params.n);
+        //     }
+        // }
+        // ```
+
+        let param_v1 = tfhe::shortint::parameters::compact_public_key_only::p_fail_2_minus_64::ks_pbs::V0_11_PARAM_PKE_TO_SMALL_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64_ZKV1;
+        assert_eq!(58289, compute_witness_dim(&param_v1, Some(64)).unwrap());
+
+        let param_v2 = tfhe::shortint::parameters::compact_public_key_only::p_fail_2_minus_64::ks_pbs::V0_11_PARAM_PKE_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64;
+        assert_eq!(5952, compute_witness_dim(&param_v2, Some(64)).unwrap());
     }
 }

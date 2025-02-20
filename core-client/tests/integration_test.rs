@@ -338,7 +338,6 @@ async fn test_threshold_sequential_preproc_keygen(ctx: &DockerComposeThresholdCo
     assert_ne!(key_id_1, key_id_2);
 }
 
-// https://github.com/zama-ai/kms-core/issues/1941
 #[test_context(DockerComposeThresholdContextTest)]
 #[tokio::test]
 #[serial(docker)]
@@ -352,21 +351,20 @@ async fn test_threshold_concurrent_preproc_keygen(ctx: &DockerComposeThresholdCo
     .await;
 }
 
-#[test_context(DockerComposeThresholdContextTest)]
+#[test_context(DockerComposeThresholdContextDefault)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_threshold_sequential_crs(ctx: &DockerComposeThresholdContextTest) {
+async fn test_threshold_sequential_crs(ctx: &DockerComposeThresholdContextDefault) {
     init_testing();
     let crs_id_1 = crs_gen(ctx, false).await;
     let crs_id_2 = crs_gen(ctx, false).await;
     assert_ne!(crs_id_1, crs_id_2);
 }
 
-// https://github.com/zama-ai/kms-core/issues/1941
-#[test_context(DockerComposeThresholdContextTest)]
+#[test_context(DockerComposeThresholdContextDefault)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_threshold_concurrent_crs(ctx: &DockerComposeThresholdContextTest) {
+async fn test_threshold_concurrent_crs(ctx: &DockerComposeThresholdContextDefault) {
     init_testing();
     let res = join_all([crs_gen(ctx, false), crs_gen(ctx, false)]).await;
     assert_ne!(res[0], res[1]);

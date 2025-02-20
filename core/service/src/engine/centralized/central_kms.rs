@@ -51,6 +51,7 @@ use std::sync::Arc;
 use std::{fmt, panic};
 use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::prelude::FheDecrypt;
+#[cfg(feature = "non-wasm")]
 use tfhe::shortint::ClassicPBSParameters;
 #[cfg(feature = "non-wasm")]
 use tfhe::zk::CompactPkeCrs;

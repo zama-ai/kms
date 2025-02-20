@@ -782,6 +782,7 @@ impl From<TypedPlaintext> for FheType {
         value.fhe_type()
     }
 }
+
 impl From<TypedPlaintext> for Vec<u8> {
     fn from(value: TypedPlaintext) -> Self {
         match value.fhe_type() {

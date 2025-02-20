@@ -2763,13 +2763,13 @@ impl<
             .await
             .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
 
-        let req = request.into_inner();
+        let inner = request.into_inner();
         tracing::info!(
             "Starting crs generation on kms for request ID {:?}",
-            req.request_id
+            inner.request_id
         );
 
-        let dkg_params = retrieve_parameters(req.params).map_err(|e| {
+        let dkg_params = retrieve_parameters(inner.params).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::NotFound,
                 format!("Can not retrieve fhe parameters with error {e}"),
@@ -2779,23 +2779,23 @@ impl<
             .get_params_basics_handle()
             .get_compact_pk_enc_params();
         let witness_dim = tonic_handle_potential_err(
-            compute_witness_dim(&crs_params, req.max_num_bits.map(|x| x as usize)),
+            compute_witness_dim(&crs_params, inner.max_num_bits.map(|x| x as usize)),
             "witness dimension computation failed".to_string(),
         )?;
 
-        let req_id = req.request_id.ok_or_else(|| {
+        let req_id = inner.request_id.ok_or_else(|| {
             tonic::Status::new(
                 tonic::Code::InvalidArgument,
                 "missing request ID in CRS generation",
             )
         })?;
 
-        let eip712_domain = protobuf_to_alloy_domain_option(req.domain.as_ref());
+        let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref());
 
         self.inner_crs_gen(
             req_id,
             witness_dim,
-            req.max_num_bits,
+            inner.max_num_bits,
             dkg_params,
             eip712_domain.as_ref(),
             permit,

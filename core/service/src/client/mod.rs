@@ -2641,7 +2641,6 @@ pub(crate) mod tests {
         DEFAULT_THRESHOLD_KEY_ID_4P, DEFAULT_THRESHOLD_KEY_ID_7P,
     };
     use crate::cryptography::internal_crypto_types::Signature;
-    #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     use crate::cryptography::internal_crypto_types::WrappedDKGParams;
     use crate::engine::base::{compute_handle, BaseKmsStruct, RequestIdGetter};
     #[cfg(feature = "slow_tests")]
@@ -3267,8 +3266,7 @@ pub(crate) mod tests {
         keyset_config: Option<KeySetConfig>,
         keyset_added_info: Option<KeySetAddedInfo>,
     ) {
-        let dkg_params: crate::cryptography::internal_crypto_types::WrappedDKGParams =
-            params.into();
+        let dkg_params: WrappedDKGParams = params.into();
 
         let rate_limiter_conf = RateLimiterConfig {
             bucket_size: 100,
@@ -3398,6 +3396,7 @@ pub(crate) mod tests {
         let crs_req_id = RequestId::derive("test_crs_gen_manual").unwrap();
         // Delete potentially old data
         purge(None, None, &crs_req_id.to_string(), 1).await;
+        // TEST_PARAM uses V1 CRS
         crs_gen_centralized_manual(&TEST_PARAM, &crs_req_id, Some(FheParameter::Test)).await;
     }
 
@@ -3484,7 +3483,8 @@ pub(crate) mod tests {
         let crs_req_id = RequestId::derive("test_crs_gen_centralized").unwrap();
         // Delete potentially old data
         purge(None, None, &crs_req_id.to_string(), 1).await;
-        crs_gen_centralized(&TEST_PARAM, &crs_req_id, Some(FheParameter::Test), false).await;
+        // TEST_PARAM uses V1 CRS
+        crs_gen_centralized(&crs_req_id, FheParameter::Test, false).await;
     }
 
     #[cfg(feature = "insecure")]
@@ -3494,16 +3494,13 @@ pub(crate) mod tests {
         let crs_req_id = RequestId::derive("test_insecure_crs_gen_centralized").unwrap();
         // Delete potentially old data
         purge(None, None, &crs_req_id.to_string(), 1).await;
-        crs_gen_centralized(&TEST_PARAM, &crs_req_id, Some(FheParameter::Test), true).await;
+        // TEST_PARAM uses V1 CRS
+        crs_gen_centralized(&crs_req_id, FheParameter::Test, true).await;
     }
 
     /// test centralized crs generation via client interface
-    async fn crs_gen_centralized(
-        dkg_params: &DKGParams,
-        crs_req_id: &RequestId,
-        params: Option<FheParameter>,
-        insecure: bool,
-    ) {
+    async fn crs_gen_centralized(crs_req_id: &RequestId, params: FheParameter, insecure: bool) {
+        let dkg_param: WrappedDKGParams = params.into();
         let rate_limiter_conf = RateLimiterConfig {
             bucket_size: 100,
             dec: 1,
@@ -3515,16 +3512,16 @@ pub(crate) mod tests {
         };
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (kms_server, mut kms_client, internal_client) =
-            super::test_tools::centralized_handles(dkg_params, Some(rate_limiter_conf)).await;
+            super::test_tools::centralized_handles(&dkg_param, Some(rate_limiter_conf)).await;
 
-        let max_num_bits = if params.unwrap() == FheParameter::Test {
+        let max_num_bits = if params == FheParameter::Test {
             Some(1)
         } else {
             // The default is 2048 which is too slow for tests, so we switch to 256
             Some(256)
         };
         let gen_req = internal_client
-            .crs_gen_request(crs_req_id, max_num_bits, params, None)
+            .crs_gen_request(crs_req_id, max_num_bits, Some(params), None)
             .unwrap();
 
         tracing::debug!("making crs request, insecure? {insecure}");
@@ -3580,7 +3577,7 @@ pub(crate) mod tests {
             .unwrap();
 
         // Validate the CRS as a sanity check
-        verify_pp(dkg_params, &pp).await;
+        verify_pp(&dkg_param, &pp).await;
 
         kms_server.assert_shutdown().await;
     }
@@ -3738,12 +3735,11 @@ pub(crate) mod tests {
 
     #[cfg(feature = "insecure")]
     #[tokio::test(flavor = "multi_thread")]
-    #[rstest::rstest]
-    #[case(4)]
     #[serial]
-    async fn test_insecure_crs_gen_threshold(#[case] amount_parties: usize) {
+    async fn test_insecure_crs_gen_threshold() {
+        // Test parameters use V1 CRS
         crs_gen(
-            amount_parties,
+            4,
             FheParameter::Test,
             Some(16),
             true, // insecure
@@ -3898,6 +3894,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
+    #[allow(clippy::too_many_arguments)]
     async fn run_crs(
         parameter: FheParameter,
         kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
@@ -4167,6 +4164,13 @@ pub(crate) mod tests {
         }
     }
 
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn test_crs_gen_threshold() {
+        crs_gen(4, FheParameter::Test, Some(1), false, 1, false).await;
+    }
+
     /////////////////////////////////
     //
     //        END OF CRS SECTION
@@ -4267,7 +4271,7 @@ pub(crate) mod tests {
             .get_crs(crs_handle, &pub_storage)
             .await
             .unwrap();
-        // Sanity check the pp
+        // Sanity check the pp, the CRS from storage are all V2
         verify_pp(&dkg_params, &pp).await;
 
         let dummy_contract_address =
