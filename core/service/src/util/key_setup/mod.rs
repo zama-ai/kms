@@ -67,7 +67,7 @@ pub async fn ensure_client_keys_exist(
             .unwrap();
     if !temp.is_empty() {
         // If signing keys already exit, then do nothing
-        tracing::warn!(
+        tracing::info!(
             "Client signing keys already exist at {}, skipping generation",
             client_storage.root_dir().to_str().unwrap()
         );
@@ -123,7 +123,7 @@ where
             .unwrap();
     if !temp.is_empty() {
         // If signing keys already exit, then do nothing
-        tracing::warn!(
+        tracing::info!(
             "Server signing keys already exist for private storage \"{}\", skipping generation",
             priv_storage.info()
         );
@@ -209,7 +209,7 @@ where
             .await
             .unwrap()
     {
-        tracing::warn!(
+        tracing::info!(
             "CRS already exist for private storage \"{}\" and public storage \"{}\" for ID {}, skipping generation",
             priv_storage.info(), pub_storage.info(), crs_handle
         );
@@ -301,7 +301,7 @@ where
             .await
             .unwrap()
     {
-        tracing::warn!(
+        tracing::info!(
             "FHE keys already exist for private storage \"{}\" and public storage \"{}\" with ID {}, skipping generation",
             priv_storage.info(), pub_storage.info(), key_id
         );
@@ -433,7 +433,7 @@ where
                 .unwrap();
         if !temp.is_empty() {
             // If signing keys already exit, then do nothing
-            tracing::warn!(
+            tracing::info!(
                 "Threshold server signing keys already exist for private storage \"{}\", skipping generation",
                 priv_storages[i-1].info()
             );
@@ -540,7 +540,7 @@ where
             .await
             .unwrap()
     {
-        tracing::warn!(
+        tracing::info!(
             "Threshold FHE keys already exist for private storage \"{}\" and public storage \"{}\" with ID {}, skipping generation",
             priv_storages.last().unwrap().info(), pub_storages.last().unwrap().info(), key_id
         );
@@ -677,7 +677,7 @@ where
             .await
             .unwrap()
     {
-        tracing::warn!(
+        tracing::info!(
             "Threshold CRS already exist for private storage \"{}\" and public storage \"{}\" for ID {}, skipping generation",
             priv_storages.last().unwrap().info(), pub_storages.last().unwrap().info(), crs_handle
         );

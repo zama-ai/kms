@@ -640,6 +640,7 @@ impl Client {
             )));
         }
 
+        let res_len = results.len();
         for (result, storage) in results.into_iter().zip(storage_readers) {
             let (pp_w_id, info) = if let Some(info) = result.crs_results {
                 let url =
@@ -675,6 +676,7 @@ impl Client {
                     verifying_pks.insert(pk);
                 }
                 None => {
+                    tracing::warn!("Signature could not be verified for a CRS");
                     // do not insert
                 }
             }
@@ -691,6 +693,11 @@ impl Client {
             pp_map.insert(hex_digest, pp_w_id);
         }
 
+        tracing::info!(
+            "CRS map contains {} entries, should contain {} entries",
+            pp_map.len(),
+            res_len
+        );
         // find the digest that has the most votes
         let (h, c) = hash_counter_map
             .into_iter()
@@ -3267,7 +3274,7 @@ pub(crate) mod tests {
         let dkg_params: WrappedDKGParams = params.into();
 
         let rate_limiter_conf = RateLimiterConfig {
-            bucket_size: 100,
+            bucket_size: 100 * 3, // Multiply by 3 to account for the decompression key generation case
             dec: 1,
             reenc: 1,
             crsgen: 1,
@@ -3295,18 +3302,6 @@ pub(crate) mod tests {
             .await
             .unwrap();
         assert_eq!(gen_response.into_inner(), Empty {});
-
-        // Try to do another request during keygen,
-        // the request should be rejected due to rate limiter
-        {
-            let req_id = RequestId::derive("test rate limiter").unwrap();
-            let req = internal_client
-                .crs_gen_request(&req_id, Some(1), Some(params), None)
-                .unwrap();
-            let e = kms_client.crs_gen(req).await.unwrap_err();
-            assert_eq!(e.code(), tonic::Code::ResourceExhausted);
-        }
-
         let mut response = kms_client
             .get_key_gen_result(tonic::Request::new(req_id.clone()))
             .await;
@@ -3551,17 +3546,6 @@ pub(crate) mod tests {
             }
         };
 
-        // Try to do another request during crs,
-        // the request should be rejected due to rate limiter
-        {
-            let req_id = RequestId::derive("test rate limiter").unwrap();
-            let req = internal_client
-                .crs_gen_request(&req_id, Some(1), Some(FheParameter::Test), None)
-                .unwrap();
-            let e = kms_client.crs_gen(req).await.unwrap_err();
-            assert_eq!(e.code(), tonic::Code::ResourceExhausted);
-        }
-
         let mut response = Err(tonic::Status::not_found(""));
         let mut ctr = 0;
         while response.is_err() && ctr < 5 {
@@ -3751,17 +3735,25 @@ pub(crate) mod tests {
         .await;
     }
 
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn secure_threshold_crs() {
+        crs_gen(4, FheParameter::Default, Some(16), false, 1, false).await;
+    }
+
     // Poll the client method function `f_to_poll` until there is a result
     // or error out until some timeout.
     // The requests from the `reqs` argument need to implement `RequestIdGetter`.
     #[macro_export]
     macro_rules! par_poll_responses {
-        ($parallelism:expr,$kms_clients:expr,$reqs:expr,$f_to_poll:ident,$amount_parties:expr) => {{
+        ($kms_clients:expr,$reqs:expr,$f_to_poll:ident,$amount_parties:expr) => {{
             use $crate::consts::MAX_TRIES;
             let mut joined_responses = vec![];
             for count in 0..MAX_TRIES {
+                // Reset the list every time since we get all old results as well
                 joined_responses = vec![];
-                tokio::time::sleep(tokio::time::Duration::from_secs(5 * $parallelism as u64)).await;
+                tokio::time::sleep(tokio::time::Duration::from_secs(30 * $reqs.len() as u64)).await;
 
                 let mut tasks_get = JoinSet::new();
                 for req in $reqs {
@@ -3783,20 +3775,31 @@ pub(crate) mod tests {
                         }
                     }
                 }
-                let mut responses_get = Vec::new();
-                while let Some(Ok((j, req_id, Ok(resp)))) = tasks_get.join_next().await {
-                    responses_get.push((j, req_id, resp.into_inner()));
+
+                while let Some(res) = tasks_get.join_next().await {
+                    match res {
+                        Ok(inner) => {
+                            // Validate if the result returned is ok, if not we ignore, since it likely means that the process is still running on the server
+                            if let (j, req_id, Ok(resp)) = inner {
+                                joined_responses.push((j, req_id, resp.into_inner()));
+                            } else {
+                                let (j, req_id, inner_resp) = inner;
+                                tracing::info!("Response in iteration {count} for server {j} and req_id {req_id} is: {:?}", inner_resp);
+                            }
+                        }
+                        _ => {
+                            panic!("Something went wrong while polling for responses");
+                        }
+                    }
                 }
 
-                // add the responses in this iteration to the bigger vector
-                joined_responses.append(&mut responses_get);
-                if joined_responses.len() == $kms_clients.len() * $parallelism {
+                if joined_responses.len() >= $kms_clients.len() * $reqs.len() {
                     break;
                 }
 
                 // fail if we can't find a response
-                if count == MAX_TRIES - 1 {
-                    panic!("could not get crs after {} tries", count);
+                if count >= MAX_TRIES - 1 {
+                    panic!("could not get response after {} tries", count);
                 }
             }
 
@@ -3826,24 +3829,8 @@ pub(crate) mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         // The threshold handle should only be started after the storage is purged
         // since the threshold parties will load the CRS from private storage
-        let rate_limiter_conf = RateLimiterConfig {
-            bucket_size: 100 * iterations,
-            dec: 1,
-            reenc: 1,
-            crsgen: 100,
-            preproc: 1,
-            keygen: 1,
-            verify_proven_ct: 1,
-        };
-
-        let (_kms_servers, kms_clients, internal_client) = threshold_handles(
-            *dkg_param,
-            amount_parties,
-            true,
-            Some(rate_limiter_conf),
-            None,
-        )
-        .await;
+        let (_kms_servers, kms_clients, internal_client) =
+            threshold_handles(*dkg_param, amount_parties, true, None, None).await;
 
         if concurrent {
             let arc_clients = Arc::new(kms_clients);
@@ -3855,8 +3842,6 @@ pub(crate) mod tests {
                     max_bits, parameter
                 ))
                 .unwrap();
-                // let parameter_clone = parameter.clone();
-                // let max_bits = max_bits.clone();
                 crs_set.spawn({
                     let clients_clone = Arc::clone(&arc_clients);
                     let internalclient_clone = Arc::clone(&arc_internalclient);
@@ -3868,12 +3853,13 @@ pub(crate) mod tests {
                             insecure,
                             &cur_id,
                             max_bits,
-                            iterations,
                         )
                         .await
                     }
                 });
             }
+            let res = crs_set.join_all().await;
+            assert_eq!(res.len(), iterations);
         } else {
             for i in 0..iterations {
                 let cur_id: RequestId = RequestId::derive(&format!(
@@ -3888,7 +3874,6 @@ pub(crate) mod tests {
                     insecure,
                     &cur_id,
                     max_bits,
-                    iterations,
                 )
                 .await;
             }
@@ -3904,7 +3889,6 @@ pub(crate) mod tests {
         insecure: bool,
         crs_req_id: &RequestId,
         max_bits: Option<u32>,
-        parallelism: usize,
     ) {
         let dkg_param: WrappedDKGParams = parameter.into();
         let crs_req = internal_client
@@ -3915,14 +3899,7 @@ pub(crate) mod tests {
         for response in responses {
             assert!(response.is_ok());
         }
-        wait_for_crsgen_result(
-            &vec![crs_req],
-            kms_clients,
-            internal_client,
-            &dkg_param,
-            parallelism,
-        )
-        .await;
+        wait_for_crsgen_result(&vec![crs_req], kms_clients, internal_client, &dkg_param).await;
     }
 
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
@@ -3970,17 +3947,11 @@ pub(crate) mod tests {
         kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
         internal_client: &Client,
         param: &DKGParams,
-        parallelism: usize,
     ) {
         let amount_parties = kms_clients.len();
         // wait a bit for the crs generation to finish
-        let joined_responses = par_poll_responses!(
-            parallelism,
-            kms_clients,
-            reqs,
-            get_crs_gen_result,
-            amount_parties
-        );
+        let joined_responses =
+            par_poll_responses!(kms_clients, reqs, get_crs_gen_result, amount_parties);
 
         // first check the happy path
         // the public parameter is checked in ddec tests, so we don't specifically check _pp
@@ -4073,7 +4044,7 @@ pub(crate) mod tests {
             let _pp = internal_client
                 .process_distributed_crs_result(
                     &req_id,
-                    final_responses_with_bad_sig.clone(),
+                    final_responses_with_bad_sig,
                     &storage_readers,
                     min_count_agree,
                 )
@@ -4081,6 +4052,7 @@ pub(crate) mod tests {
                 .unwrap();
 
             // having [amount_parties-threshold] wrong signatures won't work
+            let mut final_responses_with_bad_sig = final_responses.clone();
             set_signatures(
                 &mut final_responses_with_bad_sig,
                 amount_parties - threshold,
@@ -4106,7 +4078,7 @@ pub(crate) mod tests {
             let _pp = internal_client
                 .process_distributed_crs_result(
                     &req_id,
-                    final_responses_with_bad_digest.clone(),
+                    final_responses_with_bad_digest,
                     &storage_readers,
                     min_count_agree,
                 )
@@ -4114,6 +4086,7 @@ pub(crate) mod tests {
                 .unwrap();
 
             // having [amount_parties-threshold] wrong digests will fail
+            let mut final_responses_with_bad_digest = final_responses.clone();
             set_digests(
                 &mut final_responses_with_bad_digest,
                 amount_parties - threshold,
@@ -4356,7 +4329,6 @@ pub(crate) mod tests {
 
         // wait a bit for the validation to finish
         let joined_responses = par_poll_responses!(
-            parallelism,
             kms_clients,
             &reqs,
             get_verify_proven_ct_result,
@@ -5711,6 +5683,45 @@ pub(crate) mod tests {
         assert_eq!(FheType::Euint160.to_num_blocks(params), 80);
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    #[cfg(feature = "slow_tests")]
+    #[tracing_test::traced_test]
+    #[serial]
+    async fn test_ratelimiter() {
+        let req_id: RequestId = RequestId::derive("test_ratelimiter").unwrap();
+        purge(None, None, &req_id.to_string(), 4).await;
+        let rate_limiter_conf = RateLimiterConfig {
+            bucket_size: 100,
+            dec: 1,
+            reenc: 1,
+            crsgen: 100,
+            preproc: 1,
+            keygen: 1,
+            verify_proven_ct: 1,
+        };
+        let (_kms_servers, kms_clients, internal_client) =
+            threshold_handles(TEST_PARAM, 4, true, Some(rate_limiter_conf), None).await;
+
+        let req_id = RequestId::derive("test rate limiter 1").unwrap();
+        let req = internal_client
+            .crs_gen_request(&req_id, Some(16), Some(FheParameter::Test), None)
+            .unwrap();
+        let mut cur_client = kms_clients.get(&1).unwrap().clone();
+        let res = cur_client.crs_gen(req).await;
+        // Check that first request is ok and accepted
+        assert!(res.is_ok());
+        // Try to do another request during preproc,
+        // the request should be rejected due to rate limiter.
+        // This should be done after the requests above start being
+        // processed in the kms.
+        let req_id_2 = RequestId::derive("test rate limiter2").unwrap();
+        let req_2 = internal_client
+            .crs_gen_request(&req_id_2, Some(1), Some(FheParameter::Test), None)
+            .unwrap();
+        let res = cur_client.crs_gen(req_2).await;
+        assert_eq!(res.unwrap_err().code(), tonic::Code::ResourceExhausted);
+    }
+
     #[cfg(feature = "insecure")]
     #[rstest::rstest]
     #[case(4)]
@@ -5804,6 +5815,7 @@ pub(crate) mod tests {
 
     /// Note that the insecure flag means that the first two key gens will be insecure, but the last WILL still be secure
     #[cfg(feature = "slow_tests")]
+    #[allow(dead_code)]
     async fn run_threshold_decompression_keygen(
         amount_parties: usize,
         parameter: FheParameter,
@@ -5841,33 +5853,22 @@ pub(crate) mod tests {
                 .unwrap();
         purge(None, None, &key_id_2.to_string(), amount_parties).await;
 
+        let preproc_id_3 = Some(
+            RequestId::derive(&format!(
+                "decom_dkg_preproc_{amount_parties}_{:?}_3",
+                parameter
+            ))
+            .unwrap(),
+        );
         let key_id_3: RequestId =
             RequestId::derive(&format!("decom_dkg_key_{amount_parties}_{:?}_3", parameter))
                 .unwrap();
         purge(None, None, &key_id_3.to_string(), amount_parties).await;
 
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-        // Preproc should use all the tokens in the bucket,
-        // then they're returned to the bucket before keygen starts.
-        // If something is wrong with the rate limiter logic
-        // then the keygen step should fail since there are not enough tokens.
-        let rate_limiter_conf = RateLimiterConfig {
-            bucket_size: 100,
-            dec: 1,
-            reenc: 1,
-            crsgen: 1,
-            preproc: 100,
-            keygen: 100,
-            verify_proven_ct: 1,
-        };
-        let (kms_servers, kms_clients, internal_client) = threshold_handles(
-            TEST_PARAM,
-            amount_parties,
-            true,
-            Some(rate_limiter_conf),
-            None,
-        )
-        .await;
+        let dkg_param: WrappedDKGParams = parameter.into();
+        let (kms_servers, kms_clients, internal_client) =
+            threshold_handles(*dkg_param, amount_parties, true, None, None).await;
 
         if !insecure {
             run_preproc(
@@ -5917,12 +5918,23 @@ pub(crate) mod tests {
         .await;
         let (client_key_2, _public_key_2, _server_key_2) = keys2.get_standard();
 
+        // We always need to run preproc for the last keygen
+        run_preproc(
+            amount_parties,
+            parameter,
+            &kms_clients,
+            &internal_client,
+            &preproc_id_3.clone().unwrap(),
+            None,
+        )
+        .await;
+
         // finally do the decompression keygen between the first and second keysets
         let decompression_key = run_keygen(
             parameter,
             &kms_clients,
             &internal_client,
-            None,
+            preproc_id_3,
             &key_id_3,
             Some((key_id_1, key_id_2)),
             insecure,
@@ -5970,6 +5982,13 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn secure_threshold_keygen_test() {
+        preproc_and_keygen(4, FheParameter::Test, false, 1, false).await;
+    }
+
+    #[cfg(feature = "slow_tests")]
     async fn preproc_and_keygen(
         amount_parties: usize,
         parameter: FheParameter,
@@ -5998,7 +6017,7 @@ pub(crate) mod tests {
         // If something is wrong with the rate limiter logic
         // then the keygen step should fail since there are not enough tokens.
         let rate_limiter_conf = RateLimiterConfig {
-            bucket_size: 100,
+            bucket_size: 100 * 2 * iterations, // Ensure the bucket is big enough to carry out the concurrent requests
             dec: 1,
             reenc: 1,
             crsgen: 1,
@@ -6045,6 +6064,8 @@ pub(crate) mod tests {
                     }
                 });
             }
+            // Ensure preprocessing is done, otherwise we risk getting blocked by the rate limiter in keygen
+            preprocset.join_all().await;
             let mut keyset = JoinSet::new();
             for i in 0..iterations {
                 let key_id: RequestId = RequestId::derive(&format!(
@@ -6071,7 +6092,6 @@ pub(crate) mod tests {
                     }
                 });
             }
-            preprocset.join_all().await;
             keyset.join_all().await;
             tracing::info!("Finished concurrent preproc and keygen");
         } else {
@@ -6150,21 +6170,10 @@ pub(crate) mod tests {
             });
         }
         let preproc_res = tasks_gen.join_all().await;
+        preproc_res.iter().for_each(|x| {
+            assert!(x.is_ok());
+        });
         assert_eq!(preproc_res.len(), amount_parties);
-
-        // Try to do another request during preproc,
-        // the request should be rejected due to rate limiter.
-        // This should be done after the requests above start being
-        // processed in the kms.
-        {
-            let req_id = RequestId::derive("test rate limiter").unwrap();
-            let req = internal_client
-                .crs_gen_request(&req_id, Some(1), Some(FheParameter::Test), None)
-                .unwrap();
-            let mut cur_client = kms_clients.get(&1).unwrap().clone();
-            let e = cur_client.crs_gen(req).await.unwrap_err();
-            assert_eq!(e.code(), tonic::Code::ResourceExhausted);
-        }
 
         // Wait for preprocessing to be done
         for _i in 0..MAX_TRIES {

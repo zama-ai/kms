@@ -65,6 +65,7 @@ env:
 
 jobs:
   compile-rust-unit-tests:
+    timeout-minutes: 500
     runs-on: ${{ inputs.runs-on }}
     services:
       redis:
