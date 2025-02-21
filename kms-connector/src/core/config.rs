@@ -2,7 +2,7 @@ use crate::error::{Error, Result};
 use alloy::primitives::Address;
 use bip39::Mnemonic;
 use serde::{Deserialize, Serialize};
-use std::{fs, path::Path, str::FromStr};
+use std::{fs, path::Path, str::FromStr, time::Duration};
 use tracing::{info, warn};
 
 /// Configuration for the KMS connector
@@ -25,10 +25,31 @@ pub struct Config {
     /// Service name for tracing
     #[serde(default = "default_service_name")]
     pub service_name: String,
+    /// Timeout for decryption requests in seconds (default: 300s / 5min)
+    #[serde(default = "default_decryption_timeout")]
+    pub decryption_timeout_secs: u64,
+    /// Timeout for reencryption requests in seconds (default: 300s / 5min)
+    #[serde(default = "default_reencryption_timeout")]
+    pub reencryption_timeout_secs: u64,
+    /// Retry interval in seconds (default: 5s)
+    #[serde(default = "default_retry_interval")]
+    pub retry_interval_secs: u64,
 }
 
 fn default_service_name() -> String {
     "kms-connector".to_string()
+}
+
+fn default_decryption_timeout() -> u64 {
+    300 // 5 minutes
+}
+
+fn default_reencryption_timeout() -> u64 {
+    300 // 5 minutes
+}
+
+fn default_retry_interval() -> u64 {
+    5 // 5 seconds
 }
 
 impl Config {
@@ -58,6 +79,12 @@ impl Config {
         } else {
             warn!("  Channel Size: not specified, using default");
         }
+        info!("  Decryption Timeout: {}s", config.decryption_timeout_secs);
+        info!(
+            "  Reencryption Timeout: {}s",
+            config.reencryption_timeout_secs
+        );
+        info!("  Retry Interval: {}s", config.retry_interval_secs);
 
         // Validate mnemonic
         Mnemonic::parse_normalized(&config.mnemonic)
@@ -104,6 +131,21 @@ impl Config {
         Address::from_str(&self.httpz_address)
             .map_err(|e| Error::Config(format!("Invalid HTTPZ address: {}", e)))
     }
+
+    /// Get decryption timeout as Duration
+    pub fn decryption_timeout(&self) -> Duration {
+        Duration::from_secs(self.decryption_timeout_secs)
+    }
+
+    /// Get reencryption timeout as Duration
+    pub fn reencryption_timeout(&self) -> Duration {
+        Duration::from_secs(self.reencryption_timeout_secs)
+    }
+
+    /// Get retry interval as Duration
+    pub fn retry_interval(&self) -> Duration {
+        Duration::from_secs(self.retry_interval_secs)
+    }
 }
 
 #[cfg(test)]
@@ -122,6 +164,9 @@ mod tests {
             httpz_address: "0x0000000000000000000000000000000000000000".to_string(),
             channel_size: Some(100),
             service_name: "kms-connector".to_string(),
+            decryption_timeout_secs: 300,
+            reencryption_timeout_secs: 300,
+            retry_interval_secs: 5,
         };
 
         let temp_file = NamedTempFile::new().unwrap();
@@ -142,6 +187,18 @@ mod tests {
         assert_eq!(config.channel_size, loaded_config.channel_size);
         assert_eq!(config.kms_core_endpoint, loaded_config.kms_core_endpoint);
         assert_eq!(config.service_name, loaded_config.service_name);
+        assert_eq!(
+            config.decryption_timeout_secs,
+            loaded_config.decryption_timeout_secs
+        );
+        assert_eq!(
+            config.reencryption_timeout_secs,
+            loaded_config.reencryption_timeout_secs
+        );
+        assert_eq!(
+            config.retry_interval_secs,
+            loaded_config.retry_interval_secs
+        );
     }
 
     #[test]
@@ -155,6 +212,9 @@ mod tests {
             httpz_address: "0x0000000000000000000000000000000000000000".to_string(),
             channel_size: None,
             service_name: "kms-connector".to_string(),
+            decryption_timeout_secs: 300,
+            reencryption_timeout_secs: 300,
+            retry_interval_secs: 5,
         };
 
         config.to_file("test_config.toml").unwrap();
@@ -175,6 +235,9 @@ mod tests {
             httpz_address: "0x000010".to_string(),
             channel_size: None,
             service_name: "kms-connector".to_string(),
+            decryption_timeout_secs: 300,
+            reencryption_timeout_secs: 300,
+            retry_interval_secs: 5,
         };
 
         let temp_file = NamedTempFile::new().unwrap();

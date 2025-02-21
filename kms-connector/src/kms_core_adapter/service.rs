@@ -1,20 +1,18 @@
+use kms_grpc::{
+    kms::v1::{DecryptionRequest, DecryptionResponse, ReencryptionRequest, ReencryptionResponse},
+    kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
+};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
-use std::time::Duration;
-use tonic::{transport::Channel, Request, Response, Status};
+use std::time::{Duration, Instant};
+use tokio::time::sleep;
+use tonic::{transport::Channel, Code, Request, Response, Status};
 use tracing::{error, info};
 
+use crate::core::config::Config;
 use crate::error::Result;
-
-pub mod kms {
-    pub mod v1 {
-        tonic::include_proto!("kms.v1");
-    }
-}
-
-use kms::v1::{DecryptionRequest, DecryptionResponse, ReencryptionRequest, ReencryptionResponse};
 
 #[tonic::async_trait]
 pub trait KmsService {
@@ -29,22 +27,22 @@ pub trait KmsService {
     ) -> std::result::Result<Response<ReencryptionResponse>, Status>;
 }
 
-const RETRY_DELAY: Duration = Duration::from_secs(5);
-
 #[derive(Debug)]
 pub struct KmsServiceImpl {
     kms_core_endpoint: String,
     running: Arc<AtomicBool>,
-    client: Arc<tokio::sync::Mutex<Option<kms::v1::kms_service_client::KmsServiceClient<Channel>>>>,
+    client: Arc<tokio::sync::Mutex<Option<CoreServiceEndpointClient<Channel>>>>,
+    config: Config,
 }
 
 impl KmsServiceImpl {
     /// Create a new KMS service instance
-    pub fn new(kms_core_endpoint: &str) -> Self {
+    pub fn new(kms_core_endpoint: &str, config: Config) -> Self {
         Self {
             kms_core_endpoint: kms_core_endpoint.to_string(),
             running: Arc::new(AtomicBool::new(true)),
             client: Arc::new(tokio::sync::Mutex::new(None)),
+            config,
         }
     }
 
@@ -57,13 +55,13 @@ impl KmsServiceImpl {
             .map_err(|e| crate::error::Error::Transport(e.to_string()))?;
 
         let mut client_guard = self.client.lock().await;
-        *client_guard = Some(kms::v1::kms_service_client::KmsServiceClient::new(channel));
+        *client_guard = Some(CoreServiceEndpointClient::new(channel));
         info!("Connected to KMS-core at {}", self.kms_core_endpoint);
         Ok(())
     }
 
     /// Get a client, attempting to reconnect if necessary
-    async fn get_client(&self) -> Result<kms::v1::kms_service_client::KmsServiceClient<Channel>> {
+    async fn get_client(&self) -> Result<CoreServiceEndpointClient<Channel>> {
         loop {
             {
                 let client_guard = self.client.lock().await;
@@ -77,14 +75,44 @@ impl KmsServiceImpl {
                 Ok(_) => continue, // Client is now initialized, try to get it
                 Err(e) => {
                     error!("Failed to connect to KMS-core: {}, retrying...", e);
-                    tokio::time::sleep(RETRY_DELAY).await;
+                    sleep(self.config.retry_interval()).await;
                 }
             }
+        }
+    }
 
-            if !self.running.load(Ordering::SeqCst) {
-                return Err(crate::error::Error::Transport(
-                    "KMS service is shutting down".to_string(),
-                ));
+    /// Poll for result with timeout
+    async fn poll_for_result<T, F, Fut>(
+        &self,
+        timeout: Duration,
+        mut poll_fn: F,
+    ) -> std::result::Result<Response<T>, Status>
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = std::result::Result<Response<T>, Status>>,
+    {
+        let start = Instant::now();
+        let retry_interval = self.config.retry_interval();
+
+        loop {
+            match poll_fn().await {
+                Ok(response) => return Ok(response),
+                Err(status) => {
+                    if status.code() == Code::NotFound {
+                        // Check if we've exceeded the timeout
+                        if start.elapsed() >= timeout {
+                            return Err(Status::deadline_exceeded(format!(
+                                "Operation timed out after {:?}",
+                                timeout
+                            )));
+                        }
+                        // Result not ready yet, wait and retry
+                        sleep(retry_interval).await;
+                        continue;
+                    }
+                    // Any other error is returned immediately
+                    return Err(status);
+                }
             }
         }
     }
@@ -96,68 +124,76 @@ impl KmsService for KmsServiceImpl {
         &self,
         request: Request<DecryptionRequest>,
     ) -> std::result::Result<Response<DecryptionResponse>, Status> {
-        // Extract the inner request data
-        let inner_request = request.into_inner();
-
-        loop {
-            match self.get_client().await {
-                Ok(mut client) => {
-                    // Create a new request with the cloned inner data
-                    let new_request = Request::new(inner_request.clone());
-                    match client.request_decryption(new_request).await {
-                        Ok(response) => return Ok(response),
-                        Err(e) => {
-                            error!("Failed to process decryption request: {}, retrying...", e);
-                            // Clear the client so we'll try to reconnect
-                            *self.client.lock().await = None;
-                            tokio::time::sleep(RETRY_DELAY).await;
-                        }
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to get KMS client: {}, retrying...", e);
-                    tokio::time::sleep(RETRY_DELAY).await;
-                }
-            }
-
-            if !self.running.load(Ordering::SeqCst) {
-                return Err(Status::unavailable("KMS service is shutting down"));
-            }
+        if !self.running.load(Ordering::SeqCst) {
+            return Err(Status::cancelled("Service is shutting down"));
         }
+
+        let request_id = request
+            .get_ref()
+            .request_id
+            .clone()
+            .ok_or_else(|| Status::invalid_argument("Missing request ID"))?;
+
+        let mut client = self
+            .get_client()
+            .await
+            .map_err(|e| Status::unavailable(format!("Failed to get KMS client: {}", e)))?;
+
+        // Send initial request
+        client.decrypt(request).await?;
+
+        // Poll for result with timeout
+        let timeout = self.config.decryption_timeout();
+
+        self.poll_for_result(timeout, || {
+            let request = Request::new(request_id.clone());
+            async move {
+                let mut client = self
+                    .get_client()
+                    .await
+                    .map_err(|e| Status::unavailable(format!("Failed to get KMS client: {}", e)))?;
+                client.get_decrypt_result(request).await
+            }
+        })
+        .await
     }
 
     async fn request_reencryption(
         &self,
         request: Request<ReencryptionRequest>,
     ) -> std::result::Result<Response<ReencryptionResponse>, Status> {
-        // Extract the inner request data
-        let inner_request = request.into_inner();
-
-        loop {
-            match self.get_client().await {
-                Ok(mut client) => {
-                    // Create a new request with the cloned inner data
-                    let new_request = Request::new(inner_request.clone());
-                    match client.request_reencryption(new_request).await {
-                        Ok(response) => return Ok(response),
-                        Err(e) => {
-                            error!("Failed to process reencryption request: {}, retrying...", e);
-                            // Clear the client so we'll try to reconnect
-                            *self.client.lock().await = None;
-                            tokio::time::sleep(RETRY_DELAY).await;
-                        }
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to get KMS client: {}, retrying...", e);
-                    tokio::time::sleep(RETRY_DELAY).await;
-                }
-            }
-
-            if !self.running.load(Ordering::SeqCst) {
-                return Err(Status::unavailable("KMS service is shutting down"));
-            }
+        if !self.running.load(Ordering::SeqCst) {
+            return Err(Status::cancelled("Service is shutting down"));
         }
+
+        let request_id = request
+            .get_ref()
+            .request_id
+            .clone()
+            .ok_or_else(|| Status::invalid_argument("Missing request ID"))?;
+
+        let mut client = self
+            .get_client()
+            .await
+            .map_err(|e| Status::unavailable(format!("Failed to get KMS client: {}", e)))?;
+
+        // Send initial request
+        client.reencrypt(request).await?;
+
+        // Poll for result with timeout
+        let timeout = self.config.reencryption_timeout();
+
+        self.poll_for_result(timeout, || {
+            let request = Request::new(request_id.clone());
+            async move {
+                let mut client = self
+                    .get_client()
+                    .await
+                    .map_err(|e| Status::unavailable(format!("Failed to get KMS client: {}", e)))?;
+                client.get_reencrypt_result(request).await
+            }
+        })
+        .await
     }
 }
 

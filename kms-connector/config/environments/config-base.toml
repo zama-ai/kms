@@ -9,7 +9,7 @@ service_name = "kms-connector"
 mnemonic = "test test test test test test test test test test test junk"
 
 # Chain ID for the L2 network (required)
-chain_id = 654321
+chain_id = 31337
 
 # Address of the DecryptionManager contract (required)
 # Format: hex string with 0x prefix
@@ -21,10 +21,10 @@ httpz_address = "0x0000000000000000000000000000000000000001"
 
 # KMS-core gRPC endpoint (required)
 # Format: http://host:port
-kms_core_endpoint = "http://localhost:50052"
+kms_core_endpoint = "http://[::1]:50052"
 
 # GateWay L2 WebSocket RPC URL endpoint (required)
-gwl2_url = "ws://localhost:8757"
+gwl2_url = "ws://localhost:8545"
 
 # Size of the event processing channel (optional)
 channel_size = 1000

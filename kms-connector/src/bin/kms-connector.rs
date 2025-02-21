@@ -75,14 +75,14 @@ async fn run_connector(
     );
 
     info!(
-        "Using contracts for events subscription:\n\tIDecryptionManager: {}\n\tIHttpz: {}",
+        "Using contracts for EVENTS subscription:\n\tIDecryptionManager: {}\n\tIHttpz: {}",
         config.decryption_manager_address, config.httpz_address
     );
 
     // Initialize KMS service
     let kms_core_endpoint = config.kms_core_endpoint.clone();
-    info!("Connecting to KMS-core at {}", kms_core_endpoint);
-    let kms_provider = Arc::new(KmsServiceImpl::new(&kms_core_endpoint));
+    info!("Connecting to KMS-Core at {}", kms_core_endpoint);
+    let kms_provider = Arc::new(KmsServiceImpl::new(&kms_core_endpoint, config.clone()));
 
     // Create and start connector
     let (mut connector, event_rx) = KmsCoreConnector::new(
