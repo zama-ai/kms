@@ -1895,5 +1895,9 @@ async fn local_initialize_key_material<const EXTENSION_DEGREE: usize>(
 /// Fills up the 96 MSBs with randomness and fills the 32 LSBs with the given sid
 /// (so it's easier to find "real" sid by looking at bin rep)
 pub fn gen_random_sid(rng: &mut AesRng, current_sid: u128) -> SessionId {
-    SessionId((rng.next_u64() as u128) << 64 | (rng.next_u32() as u128) << 32 | current_sid)
+    SessionId(
+        ((rng.next_u64() as u128) << 64)
+            | ((rng.next_u32() as u128) << 32)
+            | (current_sid & 0xFFFF_FFFF),
+    )
 }
