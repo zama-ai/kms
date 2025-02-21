@@ -2132,7 +2132,7 @@ dependencies = [
 
 [[package]]
 name = "cc-tests-utils"
-version = "0.10.0-rc1"
+version = "0.11.0-rc3"
 
 [[package]]
 name = "cexpr"
@@ -2331,7 +2331,7 @@ dependencies = [
 
 [[package]]
 name = "conf-trace"
-version = "0.10.0-rc1"
+version = "0.11.0-rc3"
 dependencies = [
  "anyhow",
  "axum",
@@ -2882,7 +2882,7 @@ dependencies = [
 
 [[package]]
 name = "distributed-decryption"
-version = "0.10.0-rc1"
+version = "0.11.0-rc3"
 dependencies = [
  "aes",
  "aes-prng",
@@ -4194,7 +4194,7 @@ dependencies = [
 
 [[package]]
 name = "kms"
-version = "0.10.0-rc1"
+version = "0.11.0-rc3"
 dependencies = [
  "aes",
  "aes-gcm-siv",
@@ -4277,7 +4277,7 @@ dependencies = [
 
 [[package]]
 name = "kms-backup"
-version = "0.10.0-rc1"
+version = "0.11.0-rc3"
 dependencies = [
  "aes-prng",
  "aws-lc-rs",
@@ -4290,7 +4290,7 @@ dependencies = [
 
 [[package]]
 name = "kms-common"
-version = "0.10.0-rc1"
+version = "0.11.0-rc3"
 dependencies = [
  "anyhow",
  "backward-compatibility",
@@ -4304,7 +4304,7 @@ dependencies = [
 
 [[package]]
 name = "kms-connector"
-version = "0.10.0-rc1"
+version = "0.11.0-rc3"
 dependencies = [
  "alloy",
  "alloy-contract",
@@ -4341,7 +4341,7 @@ dependencies = [
 
 [[package]]
 name = "kms-core-client"
-version = "0.10.0-rc1"
+version = "0.11.0-rc3"
 dependencies = [
  "aes-prng",
  "alloy-primitives",
@@ -4380,7 +4380,7 @@ dependencies = [
 
 [[package]]
 name = "kms-core-utils"
-version = "0.10.0-rc1"
+version = "0.11.0-rc3"
 dependencies = [
  "anyhow",
  "futures",
@@ -4390,7 +4390,7 @@ dependencies = [
 
 [[package]]
 name = "kms-grpc"
-version = "0.10.0-rc1"
+version = "0.11.0-rc3"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -7046,7 +7046,7 @@ dependencies = [
 
 [[package]]
 name = "test-utils"
-version = "0.10.0-rc1"
+version = "0.11.0-rc3"
 dependencies = [
  "proc-macro2",
  "quote",
