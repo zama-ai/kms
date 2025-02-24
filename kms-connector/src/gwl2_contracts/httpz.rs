@@ -14,11 +14,14 @@ sol! {
             address connectorAddress;
             bytes identity;
             string ipAddress;
+            bytes[] signedNodes;
+            address daAddress;
         }
 
         struct Coprocessor {
             address connectorAddress;
             bytes identity;
+            address daAddress;
         }
 
         struct Network {
@@ -60,8 +63,15 @@ sol! {
         error ActivateKeyNotOngoing();
         error ActivateKeyCoprocessorAlreadyResponded(uint256 keyId);
         error ActivateKeyRequiresKskgen();
+        error KmsThresholdTooHigh(uint256 threshold, uint256 nParties);
 
-        event Initialization(ProtocolMetadata protocolMetadata, address[] admins);
+        event Initialization(
+            ProtocolMetadata metadata,
+            address[] admins,
+            uint256 kmsThreshold,
+            KmsNode[] kmsNodes,
+            Coprocessor[] coprocessors
+        );
         event KmsNodesInit(bytes[] identities);
         event KmsServiceReady(bytes[] identities);
         event CoprocessorsInit(bytes[] identities);
@@ -80,6 +90,25 @@ sol! {
         event ActivateKeyRequest(uint256 keyId);
         event ActivateKeyResponse(uint256 keyId);
         event UpdateFheParams(FheParams newFheParams);
+        event UpdateKmsThreshold(uint256 newKmsThreshold);
+
+        function initialize(
+            ProtocolMetadata calldata initialMetadata,
+            address[] calldata initialAdmins,
+            uint256 initialKmsThreshold,
+            KmsNode[] calldata initialKmsNodes,
+            Coprocessor[] calldata initialCoprocessors
+        ) external;
+
+        function addNetwork(Network calldata network) external;
+        function updateKmsThreshold(uint256 newKmsThreshold) external;
+        function isAdmin(address adminAddress) external view returns (bool);
+        function isKmsNode(address kmsNodeAddress) external view returns (bool);
+        function isCoprocessor(address coprocessorAddress) external view returns (bool);
+        function isNetwork(uint256 chainId) external view returns (bool);
+        function getKmsMajorityThreshold() external view returns (uint256);
+        function getKmsReconstructionThreshold() external view returns (uint256);
+        function getCoprocessorMajorityThreshold() external view returns (uint256);
     }
 }
 

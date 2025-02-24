@@ -34,7 +34,11 @@ impl MockKmsService {
 #[tonic::async_trait]
 impl CoreServiceEndpoint for MockKmsService {
     async fn init(&self, request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
-        info!("Received init request: {:?}", request);
+        info!(
+            operation = "init",
+            request_id = ?request.get_ref().config,
+            "Processing initialization request"
+        );
         Ok(Response::new(Empty {}))
     }
 
@@ -42,7 +46,11 @@ impl CoreServiceEndpoint for MockKmsService {
         &self,
         request: Request<KeyGenPreprocRequest>,
     ) -> Result<Response<Empty>, Status> {
-        info!("Received key_gen_preproc request: {:?}", request);
+        info!(
+            operation = "key_gen_preproc",
+            request_id = ?request.get_ref().request_id,
+            "Processing key generation preprocessing request"
+        );
         Ok(Response::new(Empty {}))
     }
 
@@ -50,14 +58,22 @@ impl CoreServiceEndpoint for MockKmsService {
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<KeyGenPreprocStatus>, Status> {
-        info!("Received get_preproc_status request: {:?}", request);
+        info!(
+            operation = "get_preproc_status",
+            request_id = ?request.get_ref().request_id,
+            "Checking preprocessing status"
+        );
         Ok(Response::new(KeyGenPreprocStatus {
             result: KeyGenPreprocStatusEnum::Finished.into(),
         }))
     }
 
     async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
-        info!("Received key_gen request: {:?}", request);
+        info!(
+            operation = "key_gen",
+            request_id = ?request.get_ref().request_id,
+            "Processing key generation request"
+        );
         Ok(Response::new(Empty {}))
     }
 
@@ -65,7 +81,11 @@ impl CoreServiceEndpoint for MockKmsService {
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<KeyGenResult>, Status> {
-        info!("Received get_key_gen_result request: {:?}", request);
+        info!(
+            operation = "get_key_gen_result",
+            request_id = ?request.get_ref().request_id,
+            "Retrieving key generation results"
+        );
         Ok(Response::new(KeyGenResult {
             request_id: Some(RequestId {
                 request_id: request.into_inner().request_id,
@@ -78,7 +98,11 @@ impl CoreServiceEndpoint for MockKmsService {
         &self,
         request: Request<KeyGenRequest>,
     ) -> Result<Response<Empty>, Status> {
-        info!("Received insecure_key_gen request: {:?}", request);
+        info!(
+            operation = "insecure_key_gen",
+            request_id = ?request.get_ref().request_id,
+            "Processing insecure key generation request"
+        );
         Ok(Response::new(Empty {}))
     }
 
@@ -87,8 +111,9 @@ impl CoreServiceEndpoint for MockKmsService {
         request: Request<RequestId>,
     ) -> Result<Response<KeyGenResult>, Status> {
         info!(
-            "Received get_insecure_key_gen_result request: {:?}",
-            request
+            operation = "get_insecure_key_gen_result",
+            request_id = ?request.get_ref().request_id,
+            "Retrieving insecure key generation results"
         );
         Ok(Response::new(KeyGenResult {
             request_id: Some(RequestId {
@@ -99,7 +124,11 @@ impl CoreServiceEndpoint for MockKmsService {
     }
 
     async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
-        info!("Received crs_gen request: {:?}", request);
+        info!(
+            operation = "crs_gen",
+            request_id = ?request.get_ref().request_id,
+            "Processing CRS generation request"
+        );
         Ok(Response::new(Empty {}))
     }
 
@@ -107,7 +136,11 @@ impl CoreServiceEndpoint for MockKmsService {
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<CrsGenResult>, Status> {
-        info!("Received get_crs_gen_result request: {:?}", request);
+        info!(
+            operation = "get_crs_gen_result",
+            request_id = ?request.get_ref().request_id,
+            "Retrieving CRS generation results"
+        );
         Ok(Response::new(CrsGenResult {
             request_id: Some(RequestId {
                 request_id: request.into_inner().request_id,
@@ -120,7 +153,11 @@ impl CoreServiceEndpoint for MockKmsService {
         &self,
         request: Request<CrsGenRequest>,
     ) -> Result<Response<Empty>, Status> {
-        info!("Received insecure_crs_gen request: {:?}", request);
+        info!(
+            operation = "insecure_crs_gen",
+            request_id = ?request.get_ref().request_id,
+            "Processing insecure CRS generation request"
+        );
         Ok(Response::new(Empty {}))
     }
 
@@ -129,8 +166,9 @@ impl CoreServiceEndpoint for MockKmsService {
         request: Request<RequestId>,
     ) -> Result<Response<CrsGenResult>, Status> {
         info!(
-            "Received get_insecure_crs_gen_result request: {:?}",
-            request
+            operation = "get_insecure_crs_gen_result",
+            request_id = ?request.get_ref().request_id,
+            "Retrieving insecure CRS generation results"
         );
         Ok(Response::new(CrsGenResult {
             request_id: Some(RequestId {
@@ -144,7 +182,12 @@ impl CoreServiceEndpoint for MockKmsService {
         &self,
         request: Request<DecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
-        info!("Received decrypt request: {:?}", request);
+        info!(
+            operation = "decrypt",
+            request_id = ?request.get_ref().request_id,
+            num_ciphertexts = request.get_ref().ciphertexts.len(),
+            "Processing decryption request"
+        );
         Ok(Response::new(Empty {}))
     }
 
@@ -152,21 +195,31 @@ impl CoreServiceEndpoint for MockKmsService {
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<DecryptionResponse>, Status> {
-        info!("Received get_decrypt_result request: {:?}", request);
-        let _request_id = request.into_inner().request_id;
+        info!(
+            operation = "get_decrypt_result",
+            request_id = ?request.get_ref().request_id,
+            "Retrieving decryption results"
+        );
 
-        let mock_handle = Self::create_mock_handle(1, FheType::Euint8);
+        let result_bytes = vec![1, 2, 3, 4]; // Simple mock result
+
+        // Mock Core's signature on the payload (256 bytes to simulate a strong cryptographic signature)
+        let payload_signature = vec![0x42; 256];
+
+        // Mock EIP-712 signature for blockchain (65 bytes: r[32] + s[32] + v[1])
+        let mut eip712_signature = vec![0x19; 65];
+        eip712_signature[64] = 27; // v value is either 27 or 28
 
         Ok(Response::new(DecryptionResponse {
-            signature: vec![1, 2, 3, 4], // Mock signature
+            signature: payload_signature, // Core's signature on the payload
             payload: Some(DecryptionResponsePayload {
-                verification_key: vec![5, 6, 7, 8], // Mock verification key
-                digest: mock_handle.clone(),        // Using handle format for digest
+                verification_key: vec![],
+                digest: result_bytes.clone(),
                 plaintexts: vec![TypedPlaintext {
-                    bytes: mock_handle.clone(), // Using handle format for data
+                    bytes: result_bytes,
                     fhe_type: FheType::Euint8 as i32,
                 }],
-                external_signature: Some(vec![13, 14, 15, 16]), // Mock external signature
+                external_signature: Some(eip712_signature), // EIP-712 signature for blockchain
             }),
         }))
     }
@@ -175,7 +228,11 @@ impl CoreServiceEndpoint for MockKmsService {
         &self,
         request: Request<ReencryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
-        info!("Received reencrypt request: {:?}", request);
+        info!(
+            operation = "reencrypt",
+            request_id = ?request.get_ref().request_id,
+            "Processing reencryption request"
+        );
         Ok(Response::new(Empty {}))
     }
 
@@ -183,24 +240,34 @@ impl CoreServiceEndpoint for MockKmsService {
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<ReencryptionResponse>, Status> {
-        info!("Received get_reencrypt_result request: {:?}", request);
-        let _request_id = request.into_inner().request_id;
+        info!(
+            operation = "get_reencrypt_result",
+            request_id = ?request.get_ref().request_id,
+            "Retrieving reencryption results"
+        );
 
-        let mock_handle = Self::create_mock_handle(2, FheType::Euint8);
+        let result_bytes = vec![9, 10, 11, 12]; // Simple mock result
+
+        // Mock Core's signature on the payload (256 bytes to simulate a strong cryptographic signature)
+        let payload_signature = vec![0x42; 256];
+
+        // Mock EIP-712 signature for blockchain (65 bytes: r[32] + s[32] + v[1])
+        let mut eip712_signature = vec![0x19; 65];
+        eip712_signature[64] = 28; // v value is either 27 or 28
 
         Ok(Response::new(ReencryptionResponse {
-            signature: vec![1, 2, 3, 4], // Mock signature
+            signature: payload_signature, // Core's signature on the payload
             payload: Some(ReencryptionResponsePayload {
-                verification_key: vec![5, 6, 7, 8], // Mock verification key
-                digest: mock_handle.clone(),        // Using handle format for digest
+                verification_key: vec![],
+                digest: result_bytes.clone(),
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
+                    signcrypted_ciphertext: result_bytes.clone(),
+                    external_handle: result_bytes,
                     fhe_type: FheType::Euint8 as i32,
-                    signcrypted_ciphertext: mock_handle.clone(), // Using handle format
-                    external_handle: mock_handle.clone(),        // Using handle format
                 }],
                 party_id: 1,
-                degree: 2,
-                external_signature: vec![13, 14, 15, 16], // Mock external signature
+                degree: 1,
+                external_signature: eip712_signature, // EIP-712 signature for blockchain (not optional for reencryption)
             }),
         }))
     }
@@ -209,7 +276,11 @@ impl CoreServiceEndpoint for MockKmsService {
         &self,
         request: Request<VerifyProvenCtRequest>,
     ) -> Result<Response<Empty>, Status> {
-        info!("Received verify_proven_ct request: {:?}", request);
+        info!(
+            operation = "verify_proven_ct",
+            request_id = ?request.get_ref().request_id,
+            "Processing proven ciphertext verification request"
+        );
         Ok(Response::new(Empty {}))
     }
 
@@ -218,8 +289,9 @@ impl CoreServiceEndpoint for MockKmsService {
         request: Request<RequestId>,
     ) -> Result<Response<VerifyProvenCtResponse>, Status> {
         info!(
-            "Received get_verify_proven_ct_result request: {:?}",
-            request
+            operation = "get_verify_proven_ct_result",
+            request_id = ?request.get_ref().request_id,
+            "Retrieving proven ciphertext verification results"
         );
         let request_id = request.into_inner().request_id;
 

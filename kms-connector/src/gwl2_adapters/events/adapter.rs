@@ -4,7 +4,7 @@ use alloy::{
     providers::{Provider, ProviderBuilder},
     transports::ws::WsConnect,
 };
-use alloy_rpc_types_eth::Log;
+use alloy_rpc_types_eth::Log as EthLog;
 use anyhow::{anyhow, Result};
 use std::{
     sync::{
@@ -17,7 +17,7 @@ use tokio::{sync::mpsc, task::JoinHandle, time::sleep};
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
 
-use crate::gw_l2_contracts::{decryption::IDecryptionManager, httpz::IHTTPZ};
+use crate::gwl2_contracts::{decryption::IDecryptionManager, httpz::IHTTPZ};
 
 /// Maximum number of reconnection attempts before backing off
 const MAX_QUICK_RETRIES: u32 = 3;
@@ -364,27 +364,59 @@ impl EventsAdapter {
     }
 
     /// Helper function to handle event stream results
-    async fn handle_event<T>(
-        result: Option<Result<(T, Log), alloy_sol_types::Error>>,
+    async fn handle_event<T: std::fmt::Debug>(
+        result: Option<Result<(T, EthLog), alloy_sol_types::Error>>,
         event_tx: mpsc::Sender<KmsCoreEvent>,
         event_constructor: fn(T) -> KmsCoreEvent,
         event_name: String,
     ) -> Result<()> {
         let event = match result {
-            Some(Ok((event, _))) => event_constructor(event),
+            Some(Ok((event, log))) => {
+                info!("Received {} event:", event_name);
+                info!(
+                    "  Block: {}, Tx: {}, LogIdx: {}",
+                    log.block_number
+                        .map(|n| n.to_string())
+                        .unwrap_or_else(|| "N/A".to_string()),
+                    log.transaction_hash
+                        .map(|h| format!("0x{h}"))
+                        .unwrap_or_else(|| "N/A".to_string()),
+                    log.log_index
+                        .map(|i| i.to_string())
+                        .unwrap_or_else(|| "N/A".to_string())
+                );
+                info!("  Topics: {:?}", log.topics());
+                info!("  Raw Data: {:?}", log.data());
+                info!("  Decoded Event: {:#?}", event);
+
+                let core_event = event_constructor(event);
+                debug!("Event processed: {:#?}", core_event);
+                core_event
+            }
             Some(Err(e)) => {
+                error!("Failed to decode {}: {}", event_name, e);
                 return Err(anyhow!("Failed to decode {}: {}", event_name, e));
             }
             None => {
+                warn!("Event stream ended for {}", event_name);
                 return Err(anyhow!("Event stream ended for {}", event_name));
             }
         };
 
         // Simple timeout for event sending
         match tokio::time::timeout(EVENT_TIMEOUT, event_tx.send(event)).await {
-            Ok(Ok(_)) => Ok(()),
-            Ok(Err(e)) => Err(anyhow!("Failed to send {}: {}", event_name, e)),
-            Err(_) => Err(anyhow!("Event send timeout for {}", event_name)),
+            Ok(Ok(_)) => {
+                debug!("Successfully sent {} event", event_name);
+                Ok(())
+            }
+            Ok(Err(e)) => {
+                error!("Failed to send {}: {}", event_name, e);
+                Err(anyhow!("Failed to send {}: {}", event_name, e))
+            }
+            Err(_) => {
+                error!("Event send timeout for {}", event_name);
+                Err(anyhow!("Event send timeout for {}", event_name))
+            }
         }
     }
 }

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use crate::{
     core::wallet::KmsWallet,
     error::{Error, Result},
-    gw_l2_contracts::httpz::IHTTPZ,
+    gwl2_contracts::httpz::IHTTPZ,
 };
 
 /// Adapter for HTTPZ key management operations

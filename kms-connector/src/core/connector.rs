@@ -20,7 +20,7 @@ const DEFAULT_CHANNEL_SIZE: usize = 1000;
 use crate::{
     core::wallet::KmsWallet,
     error::Result,
-    gw_l2_adapters::{
+    gwl2_adapters::{
         decryption::DecryptionAdapter,
         events::{EventsAdapter, KmsCoreEvent},
     },
@@ -207,7 +207,11 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
                         .unwrap_or_default();
 
                     // Get the external signature
-                    let signature = payload.external_signature.map_or(Bytes::new(), Bytes::from);
+                    let signature = payload.external_signature.ok_or_else(|| {
+                        crate::error::Error::Contract(
+                            "KMS Core did not provide required EIP-712 signature".into(),
+                        )
+                    })?;
 
                     // Send response back to L2
                     info!(
@@ -217,7 +221,7 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
                     );
                     self.decryption
                         .send_public_decryption_response(
-                            request_id.parse().unwrap(),
+                            request_id.parse().expect("Invalid request ID"),
                             result,
                             signature,
                         )
@@ -283,7 +287,7 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
                     }
 
                     // Get the external signature (non-optional in ReencryptionResponsePayload)
-                    let signature = Bytes::from(payload.external_signature);
+                    let signature = payload.external_signature;
 
                     // Send response back to L2
                     info!(
@@ -293,7 +297,7 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
                     );
                     self.decryption
                         .send_user_decryption_response(
-                            request_id.parse().unwrap(),
+                            request_id.parse().expect("Invalid request ID"),
                             Bytes::from(reencrypted_share_buf),
                             signature,
                         )
@@ -327,7 +331,7 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
                             );
                             self.handle_decryption(
                                 req.publicDecryptionId.to_string(),
-                                req.ctHandleCiphertext128Pairs
+                                req.ctMaterials
                                     .into_iter()
                                     .map(|pair| {
                                         let handle = pair.ctHandle.to_be_bytes::<32>().to_vec();
@@ -347,7 +351,7 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
                             let (handle, ciphertext) = req.ctHandleContractPairs
                                 .first()
                                 .map(|pair| {
-                                    let handle = pair.ciphertextHandle.to_be_bytes::<32>().to_vec();
+                                    let handle = pair.ctHandle.to_be_bytes::<32>().to_vec();
                                     // TODO: Get actual ciphertext from contract using handle and contractAddress
                                     (handle, vec![])
                                 })

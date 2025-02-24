@@ -524,7 +524,7 @@ kms-connector/
     │   ├── key_generation.rs
     │   └── crs_generation.rs
     │
-    ├── gw_l2_adapters/
+    ├── gwl2_adapters/
     │   ├── mod.rs
     │   ├── decryption/
     │   │   ├── mod.rs
@@ -533,7 +533,7 @@ kms-connector/
     │       ├── mod.rs
     │       └── httpz.rs        // HTTPZAdapter (keys + CRS)
     │
-    ├── gw_l2_contracts/        // Alloy bindings
+    ├── gwl2_contracts/        // Alloy bindings
     │   ├── mod.rs
     │   ├── decryption.rs       // IDecryptionManager
     │   └── httpz.rs            // IHTTPZ

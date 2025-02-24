@@ -1,6 +1,6 @@
 # KMS Connector Changelog
 
-## Implementation Status (as of 2025-02-14)
+## Implementation Status (as of 2025-02-24)
 
 ### 1. Core Infrastructure ⚙️
 
@@ -18,6 +18,9 @@
 - Efficient event processing with fixed timeouts
 - Graceful shutdown coordination
 - Resource cleanup with proper Drop implementations
+- EIP-712 signature support for secure message signing
+- Gateway L2 integration as git submodule
+- Comprehensive emulation environment for testing
 
 #### 1.2. In Progress 🚧
 
@@ -45,6 +48,7 @@
 - Event handling logic with Alloy integration
 - Advanced error recovery with retry mechanisms
 - Efficient task management and cleanup
+- Restructured adapters for better modularity
 
 #### 2.2. In Progress 🚧
 
@@ -66,6 +70,7 @@
 - User decryption operations
 - Key generation operations
 - CRS generation operations
+- shifting to updated types for grpc requests/responses with KMS Core
 
 #### 3.2. In Progress 🚧
 
@@ -73,8 +78,6 @@
 - Operation monitoring and metrics
 
 #### 3.3. Not Started ❌
-
-- shifting to new types for grpc requests/responses with KMS Core (!)
 
 ### 4. Smart Contract Interfaces 📝
 
@@ -86,6 +89,8 @@
 - Contract method bindings using Alloy
 - Event subscription infrastructure
 - Transaction building and submission
+- Smart contract interface compatibility checks
+- Updated smart contract bytecode references
 
 #### 4.2. In Progress 🚧
 
@@ -102,15 +107,22 @@
 - Contract interaction tests
 - WebSocket connection tests
 - Event subscription tests
+- Mock Events Generator for contract testing
+- Mock KMS Core service simulation
+- Arbitrum-like L2 environment simulation (0.25s block time)
+- Enhanced logging for mock-core and events
+- Automated test execution infrastructure
+- Interface compatibility testing suite
+- Load testing
 
 #### 5.2. In Progress 🚧
 
 - Integration tests
 - Transaction handling tests
 - Performance benchmarks
+- CI/CD pipeline enhancements
 
 #### 5.3. Not Started ❌
 
-- Load testing
 - Chaos testing
 - End-to-end system tests

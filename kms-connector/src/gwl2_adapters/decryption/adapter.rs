@@ -3,11 +3,12 @@ use alloy::{
     providers::Provider,
 };
 use std::sync::Arc;
+use tracing::{debug, info};
 
 use crate::{
     core::wallet::KmsWallet,
     error::{Error, Result},
-    gw_l2_contracts::decryption::IDecryptionManager,
+    gwl2_contracts::decryption::IDecryptionManager,
 };
 
 /// Adapter for decryption operations
@@ -32,18 +33,39 @@ impl<P: Provider + Clone> DecryptionAdapter<P> {
         &self,
         id: U256,
         result: Bytes,
-        signature: Bytes,
+        signature: Vec<u8>,
     ) -> Result<()> {
+        if signature.len() != 65 {
+            return Err(Error::Contract(format!(
+                "Invalid EIP-712 signature length: {}, expected 65 bytes",
+                signature.len()
+            )));
+        }
+
+        info!(
+            decryption_id = ?id,
+            signature = ?signature,
+            "Using Core's EIP-712 signature for public decryption"
+        );
+
+        debug!(
+            decryption_id = ?id,
+            result_len = result.len(),
+            signature = ?signature,
+            "Sending public decryption response"
+        );
+
         let contract = IDecryptionManager::new(self.decryption_address, self.provider.clone());
 
         // Create and send transaction
-        let call = contract.publicDecryptionResponse(id, result, signature);
+        let call = contract.publicDecryptionResponse(id, result, signature.into());
         let _ = call
             .from(self.wallet.address())
             .send()
             .await
             .map_err(|e| Error::Contract(e.to_string()))?;
 
+        info!(decryption_id = ?id, "Public decryption response sent");
         Ok(())
     }
 
@@ -52,18 +74,39 @@ impl<P: Provider + Clone> DecryptionAdapter<P> {
         &self,
         id: U256,
         result: Bytes,
-        signature: Bytes,
+        signature: Vec<u8>,
     ) -> Result<()> {
+        if signature.len() != 65 {
+            return Err(Error::Contract(format!(
+                "Invalid EIP-712 signature length: {}, expected 65 bytes",
+                signature.len()
+            )));
+        }
+
+        info!(
+            decryption_id = ?id,
+            signature = ?signature,
+            "Using Core's EIP-712 signature for user decryption"
+        );
+
+        debug!(
+            decryption_id = ?id,
+            result_len = result.len(),
+            signature = ?signature,
+            "Sending user decryption response"
+        );
+
         let contract = IDecryptionManager::new(self.decryption_address, self.provider.clone());
 
         // Create and send transaction
-        let call = contract.userDecryptionResponse(id, result, signature);
+        let call = contract.userDecryptionResponse(id, result, signature.into());
         let _ = call
             .from(self.wallet.address())
             .send()
             .await
             .map_err(|e| Error::Contract(e.to_string()))?;
 
+        info!(decryption_id = ?id, "User decryption response sent");
         Ok(())
     }
 }

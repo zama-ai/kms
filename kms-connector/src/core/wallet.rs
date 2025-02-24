@@ -58,7 +58,9 @@ impl KmsWallet {
 
     /// Sign a hash
     pub fn sign_hash(&self, hash: &B256) -> Result<Vec<u8>> {
-        Ok(self.signer.sign_hash_sync(hash)?.as_bytes().to_vec())
+        // Get signature
+        let sig = self.signer.sign_hash_sync(hash)?;
+        Ok(Vec::from(&sig))
     }
 
     /// Sign a decryption response

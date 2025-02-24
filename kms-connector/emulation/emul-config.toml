@@ -13,7 +13,7 @@ chain_id = 31337
 
 # Address of the DecryptionManager contract (required)
 # Format: hex string with 0x prefix
-decryption_manager_address = "0x5fbdb2315678afecb367f032d93f642f64180aa3"
+decryption_manager_address = "0x5FbDB2315678afecb367f032d93F642f64180aa3"
 
 # Address of the HTTPZ contract (required)
 # Format: hex string with 0x prefix
@@ -24,7 +24,7 @@ httpz_address = "0x0000000000000000000000000000000000000001"
 kms_core_endpoint = "http://[::1]:50052"
 
 # GateWay L2 WebSocket RPC URL endpoint (required)
-gwl2_url = "ws://localhost:8545"
+gwl2_url = "ws://0.0.0.0:8545"
 
 # Size of the event processing channel (optional)
-channel_size = 1000
+channel_size = 2000

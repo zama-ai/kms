@@ -27,10 +27,12 @@ alloy-contract = "0.11.0"
 alloy-signer = "0.11.0"
 alloy-signer-local = { version = "0.11.0", features = ["mnemonic"] }
 alloy-transport = "0.11.0"
+alloy-rpc-types = "0.11.0"
 alloy-rpc-types-eth = "0.11.1"
 bincode = "1.3.3"
 prost = "0.13"
 prost-types = "0.13"
+sha2 = "=0.10.8"
 tonic = { version = "0.12.3", features = ["transport","tls","tls-roots"] }
 tokio = { version = "1.43.0", features = ["full"] }
 clap = { version = "4.5.30", features = ["derive"] }
@@ -54,3 +56,18 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 tempfile = "=3.16.0"
+anyhow = "1.0"
+serde_json = "1.0"
+alloy-contract = "0.11.0"
+
+[[bin]]
+name = "kms-connector"
+path = "src/bin/kms-connector.rs"
+
+[[bin]]
+name = "mock-core"
+path = "emulation/bin/mock-core.rs"
+
+[[bin]]
+name = "mock-events"
+path = "emulation/bin/mock-events.rs"

@@ -3,36 +3,16 @@ use alloy_sol_types::sol;
 sol! {
     #[sol(rpc)]
     #[derive(Debug)]
-    interface IACLManager {
-        struct CtHandleCiphertext128Pair {
-            uint256 ctHandle;
-            bytes ciphertext128;
-        }
-
-        function allowUserDecrypt(uint256 chainId, uint256 ctHandle, address allowedAddress) external;
-        function allowPublicDecrypt(uint256 ctHandle) external;
-        function delegateAccount(
-            uint256 chainId,
-            address delegator,
-            address delegatee,
-            address[] calldata allowedContracts
-        ) external;
-        function getUserCiphertexts(
-            uint256 chainId,
-            address userAddress,
-            IDecryptionManager.CtHandleContractPair[] calldata ctHandleContractPairs
-        ) external view returns (CtHandleCiphertext128Pair[] calldata);
-        function getPublicCiphertexts(
-            uint256[] calldata ctHandles
-        ) external view returns (CtHandleCiphertext128Pair[] calldata);
-    }
-
-    #[sol(rpc)]
-    #[derive(Debug)]
     interface IDecryptionManager {
         struct CtHandleContractPair {
-            uint256 ciphertextHandle;
+            uint256 ctHandle;
             address contractAddress;
+        }
+
+        struct CiphertextMaterial {
+            uint256 ctHandle;
+            uint256 keyId;
+            bytes ciphertext128;
         }
 
         error InvalidKmsSigner(address invalidSigner);
@@ -61,9 +41,11 @@ sol! {
             bytes calldata signature
         ) external;
 
+        function isPublicDecryptionDone(uint256 publicDecryptionId) external view returns (bool);
+
         event PublicDecryptionRequest(
             uint256 indexed publicDecryptionId,
-            IACLManager.CtHandleCiphertext128Pair[] ctHandleCiphertext128Pairs
+            CiphertextMaterial[] ctMaterials
         );
 
         event PublicDecryptionResponse(
