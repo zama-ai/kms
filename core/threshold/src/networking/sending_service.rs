@@ -133,11 +133,13 @@ impl GrpcSendingService {
                     .ca_certificate(cert_bundle.get_ca_by_name(domain_name)?)
                     .identity(cert_bundle.get_identity()?);
                 tracing::debug!("Building TLS channel with {domain_name}");
-                Channel::builder(endpoint).tls_config(tls_config)?
+                Channel::builder(endpoint)
+                    .http2_adaptive_window(true)
+                    .tls_config(tls_config)?
             }
             None => {
                 tracing::warn!("Building channel to {:?} without TLS", endpoint.host());
-                Channel::builder(endpoint)
+                Channel::builder(endpoint).http2_adaptive_window(true)
             }
         };
         let channel = channel.connect_lazy();

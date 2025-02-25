@@ -283,35 +283,39 @@ pub trait DKGParamsBasics: Sync {
 
 fn combine_noise_info(target_bound: NoiseBounds, list: &[NoiseInfo]) -> NoiseInfo {
     let mut total = 0;
-    let mut bound = target_bound;
     for noise_info in list {
         match (noise_info.bound, target_bound) {
-            (NoiseBounds::LweNoise(_), NoiseBounds::LweNoise(_)) => {
+            (NoiseBounds::LweNoise(_left), NoiseBounds::LweNoise(_right)) => {
                 total += noise_info.amount;
-                bound = noise_info.bound;
+                #[cfg(test)]
+                assert_eq!(_left.0, _right.0);
             }
-            (NoiseBounds::LweHatNoise(_), NoiseBounds::LweHatNoise(_)) => {
+            (NoiseBounds::LweHatNoise(_left), NoiseBounds::LweHatNoise(_right)) => {
                 total += noise_info.amount;
-                bound = noise_info.bound;
+                #[cfg(test)]
+                assert_eq!(_left.0, _right.0);
             }
-            (NoiseBounds::GlweNoise(_), NoiseBounds::GlweNoise(_)) => {
+            (NoiseBounds::GlweNoise(_left), NoiseBounds::GlweNoise(_right)) => {
                 total += noise_info.amount;
-                bound = noise_info.bound;
+                #[cfg(test)]
+                assert_eq!(_left.0, _right.0);
             }
-            (NoiseBounds::GlweNoiseSnS(_), NoiseBounds::GlweNoiseSnS(_)) => {
+            (NoiseBounds::GlweNoiseSnS(_left), NoiseBounds::GlweNoiseSnS(_right)) => {
                 total += noise_info.amount;
-                bound = noise_info.bound;
+                #[cfg(test)]
+                assert_eq!(_left.0, _right.0);
             }
-            (NoiseBounds::CompressionKSKNoise(_), NoiseBounds::CompressionKSKNoise(_)) => {
+            (NoiseBounds::CompressionKSKNoise(_left), NoiseBounds::CompressionKSKNoise(_right)) => {
                 total += noise_info.amount;
-                bound = noise_info.bound;
+                #[cfg(test)]
+                assert_eq!(_left.0, _right.0);
             }
             _ => { /* do nothing */ }
         }
     }
     NoiseInfo {
         amount: total,
-        bound,
+        bound: target_bound,
     }
 }
 
@@ -631,7 +635,7 @@ impl DKGParamsBasics for DKGParamsRegular {
                 // use a dummy bound
                 NoiseInfo {
                     amount: 0,
-                    bound: NoiseBounds::LweNoise(self.lwe_tuniform_bound()),
+                    bound: NoiseBounds::CompressionKSKNoise(TUniformBound::default()),
                 }
             }
         }
@@ -657,7 +661,7 @@ impl DKGParamsBasics for DKGParamsRegular {
                 // use a dummy bound
                 NoiseInfo {
                     amount: 0,
-                    bound: NoiseBounds::LweNoise(self.lwe_tuniform_bound()),
+                    bound: NoiseBounds::GlweNoise(self.glwe_tuniform_bound()),
                 }
             }
         }
@@ -714,7 +718,7 @@ impl DKGParamsBasics for DKGParamsRegular {
             }
             KeySetConfig::DecompressionOnly => NoiseInfo {
                 amount: 0,
-                bound: NoiseBounds::LweNoise(self.lwe_tuniform_bound()),
+                bound: NoiseBounds::LweHatNoise(self.lwe_hat_tuniform_bound()),
             },
         }
     }
@@ -761,7 +765,7 @@ impl DKGParamsBasics for DKGParamsRegular {
             }
             KeySetConfig::DecompressionOnly => NoiseInfo {
                 amount: 0,
-                bound: NoiseBounds::LweNoise(self.lwe_tuniform_bound()),
+                bound: NoiseBounds::CompressionKSKNoise(TUniformBound::default()),
             },
         }
     }

@@ -17,6 +17,7 @@ use self::gen::{
 use crate::algebra::base_ring::{Z128, Z64};
 use crate::algebra::galois_rings::common::ResiduePoly;
 use crate::algebra::structure_traits::{Derive, ErrorCorrect, FromU128, Invert, RingEmbed, Solve};
+#[cfg(feature = "measure_memory")]
 use crate::allocator::MEM_ALLOCATOR;
 use crate::choreography::requests::{
     CrsGenParams, PreprocDecryptParams, PreprocKeyGenParams, PrssInitParams, SessionType, Status,
@@ -185,7 +186,9 @@ where
         &self,
         request: tonic::Request<PrssInitRequest>,
     ) -> Result<tonic::Response<PrssInitResponse>, tonic::Status> {
+        #[cfg(feature = "measure_memory")]
         MEM_ALLOCATOR.get().unwrap().reset_peak_usage();
+
         let request = request.into_inner();
 
         let threshold: u8 = request.threshold.try_into().map_err(|_e| {
@@ -294,7 +297,11 @@ where
     }
 
     //TODO: FILL NETWORK INFO FROM ALL THE SESSONS
-    #[instrument(name = "DKG-PREPROC", skip_all)]
+    #[instrument(
+        name = "DKG-PREPROC",
+        skip_all,
+        fields(network_round, network_sent, network_received, peak_mem)
+    )]
     async fn preproc_key_gen(
         &self,
         request: tonic::Request<PreprocKeyGenRequest>,
@@ -549,7 +556,9 @@ where
         &self,
         request: tonic::Request<ThresholdKeyGenRequest>,
     ) -> Result<tonic::Response<ThresholdKeyGenResponse>, tonic::Status> {
+        #[cfg(feature = "measure_memory")]
         MEM_ALLOCATOR.get().unwrap().reset_peak_usage();
+
         let request = request.into_inner();
 
         let threshold: u8 = request.threshold.try_into().map_err(|_e| {
@@ -820,7 +829,9 @@ where
         &self,
         request: tonic::Request<PreprocDecryptRequest>,
     ) -> Result<tonic::Response<PreprocDecryptResponse>, tonic::Status> {
+        #[cfg(feature = "measure_memory")]
         MEM_ALLOCATOR.get().unwrap().reset_peak_usage();
+
         let request = request.into_inner();
 
         let threshold: u8 = request.threshold.try_into().map_err(|_e| {
@@ -1068,7 +1079,9 @@ where
         &self,
         request: tonic::Request<ThresholdDecryptRequest>,
     ) -> Result<tonic::Response<ThresholdDecryptResponse>, tonic::Status> {
+        #[cfg(feature = "measure_memory")]
         MEM_ALLOCATOR.get().unwrap().reset_peak_usage();
+
         let request = request.into_inner();
 
         let threshold: u8 = request.threshold.try_into().map_err(|_e| {
@@ -1655,7 +1668,9 @@ where
         &self,
         request: tonic::Request<CrsGenRequest>,
     ) -> Result<tonic::Response<CrsGenResponse>, tonic::Status> {
+        #[cfg(feature = "measure_memory")]
         MEM_ALLOCATOR.get().unwrap().reset_peak_usage();
+
         let request = request.into_inner();
 
         let threshold: u8 = request.threshold.try_into().map_err(|_e| {
@@ -1861,6 +1876,8 @@ fn fill_network_memory_info_multiple_sessions<R: Rng + CryptoRng, B: BaseSession
 
     span.record("network_sent", total_num_byte_sent);
     span.record("network_received", total_num_byte_received);
+
+    #[cfg(feature = "measure_memory")]
     span.record("peak_mem", MEM_ALLOCATOR.get().unwrap().peak_usage());
 }
 

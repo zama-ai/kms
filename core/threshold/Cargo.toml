@@ -172,7 +172,8 @@ slow_tests = ["testing", "all_extension_degrees"]
 sequential_sns = []
 experimental = ["dep:crypto-bigint", "choreographer"]
 templating = ["minijinja"]
-choreographer = ["dep:peak_alloc"]
+choreographer = []
+measure_memory = ["dep:peak_alloc", "choreographer"]
 # put all the dependencies that does not work well with wasm
 # namely libraries that doesn't work on 32-bit architectures
 # or uses tokio

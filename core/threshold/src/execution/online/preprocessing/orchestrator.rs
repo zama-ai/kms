@@ -90,7 +90,7 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z64, E
             return Err(anyhow_error_and_log("Cant have SnS with ResiduePolyF8Z64"));
         }
 
-        assert!(percentage_offline <= 100);
+        assert!(percentage_offline <= 100 && percentage_offline > 0);
 
         Ok(Self {
             params,
@@ -141,7 +141,7 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z128, 
             ));
         }
 
-        assert!(percentage_offline <= 100);
+        assert!(percentage_offline <= 100 && percentage_offline > 0);
 
         Ok(Self {
             params,
@@ -962,10 +962,16 @@ where
         {
             // div_floor is unstable and we don't really care being super precise
             // so just do div_ceil - 1
-            let num_bits_required = (num_bits_required * self.percentage_offline).div_ceil(100) - 1;
+            let num_bits_required = if num_bits_required == 0 {
+                0
+            } else {
+                (num_bits_required * self.percentage_offline).div_ceil(100) - 1
+            };
             for tuniform_production in tuniform_productions.iter_mut() {
-                tuniform_production.amount =
-                    (tuniform_production.amount * self.percentage_offline).div_ceil(100) - 1;
+                if tuniform_production.amount > 0 {
+                    tuniform_production.amount =
+                        (tuniform_production.amount * self.percentage_offline).div_ceil(100) - 1;
+                }
             }
             tracing::info!(
                 "Bits will be split into {:?}, and {} raw bits.",

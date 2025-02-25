@@ -3,8 +3,10 @@ use conf_trace::conf::{Settings, TelemetryConfig};
 use conf_trace::telemetry::init_tracing;
 use distributed_decryption::conf::party::PartyConf;
 use distributed_decryption::grpc;
+#[cfg(feature = "measure_memory")]
 use peak_alloc::PeakAlloc;
 
+#[cfg(feature = "measure_memory")]
 #[global_allocator]
 pub static PEAK_ALLOC: PeakAlloc = PeakAlloc;
 
@@ -63,7 +65,9 @@ const EXTENSION_DEGREE: usize = 8;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(feature = "measure_memory")]
     distributed_decryption::allocator::MEM_ALLOCATOR.get_or_init(|| PEAK_ALLOC);
+
     println!("STARTING MOBY BINARY WITH EXTENSION DEGREE {EXTENSION_DEGREE}");
     let args = Cli::parse();
 

@@ -139,6 +139,7 @@ where
 
     let core_router = make_server(true)?
         .layer(core_grpc_layer)
+        .http2_adaptive_window(Some(true))
         .add_service(core_health_service)
         .add_service(networking_server);
 

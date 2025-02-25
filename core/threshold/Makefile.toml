@@ -36,6 +36,30 @@ args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-
 command = "docker"
 args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,choreographer,extension_degree_8", "-t", "tfhe-core-degree-8", "../../"]
 
+[tasks.tfhe-docker-image-degree-3-mem]
+command = "docker"
+args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,measure_memory,extension_degree_3", "-t", "tfhe-core-degree-3-mem", "../../"]
+
+[tasks.tfhe-docker-image-degree-4-mem]
+command = "docker"
+args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,measure_memory,extension_degree_4", "-t", "tfhe-core-degree-4-mem", "../../"]
+
+[tasks.tfhe-docker-image-degree-5-mem]
+command = "docker"
+args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,measure_memory,extension_degree_5", "-t", "tfhe-core-degree-5-mem", "../../"]
+
+[tasks.tfhe-docker-image-degree-6-mem]
+command = "docker"
+args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,measure_memory,extension_degree_6", "-t", "tfhe-core-degree-6-mem", "../../"]
+
+[tasks.tfhe-docker-image-degree-7-mem]
+command = "docker"
+args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,measure_memory,extension_degree_7", "-t", "tfhe-core-degree-7-mem", "../../"]
+
+[tasks.tfhe-docker-image-degree-8-mem]
+command = "docker"
+args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,measure_memory,extension_degree_8", "-t", "tfhe-core-degree-8-mem", "../../"]
+
 #Build the image for BGV parties (with centralized DKG available)
 [tasks.bgv-docker-image]
 command = "docker"

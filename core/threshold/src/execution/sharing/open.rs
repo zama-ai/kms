@@ -90,7 +90,7 @@ async fn try_reconstruct_from_shares<
             // For DKG preproc, the prallelization happens through spawning lots of sessions,
             // which are more likely to distribute workload similarly across the parties
             // as network call acts as a sync points across parties
-            .with_min_len(BATCH_SIZE_BITS)
+            .with_min_len(2 * BATCH_SIZE_BITS)
             .map(|sharing| {
                 reconstruct_fn(num_parties, degree, threshold as usize, num_bots, sharing)
                     .unwrap_or_default()
