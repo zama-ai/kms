@@ -4,7 +4,7 @@
 listen_address = "0.0.0.0"
 listen_port = 50400
 timeout_secs = 360
-grpc_max_message_size = 20971520 # 20 MiB
+grpc_max_message_size = 104857600 # 100 MiB
 decryption_mode = "NoiseFloodSmall"
 
 [aws]

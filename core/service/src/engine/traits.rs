@@ -1,3 +1,4 @@
+use kms_grpc::kms::v1::CiphertextFormat;
 use kms_grpc::kms::v1::FheType;
 use kms_grpc::kms::v1::TypedPlaintext;
 use rand::CryptoRng;
@@ -27,6 +28,7 @@ pub trait Kms: BaseKms {
         keys: &KmsFheKeyHandles,
         ct: &[u8],
         fhe_type: FheType,
+        ct_format: CiphertextFormat,
     ) -> anyhow::Result<TypedPlaintext>;
     #[allow(clippy::too_many_arguments)]
     fn reencrypt(
@@ -35,6 +37,7 @@ pub trait Kms: BaseKms {
         rng: &mut (impl CryptoRng + RngCore),
         ct: &[u8],
         ct_type: FheType,
+        ct_format: CiphertextFormat,
         digest_link: &[u8],
         enc_key: &PublicEncKey,
         client_address: &alloy_primitives::Address,

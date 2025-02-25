@@ -89,7 +89,7 @@ impl SwitchAndSquashKey {
             .iter()
             .map(|current_block| self.to_large_ciphertext_block(current_block))
             .collect::<anyhow::Result<Vec<Ciphertext128Block>>>()?;
-        Ok(res)
+        Ok(Ciphertext128::new(res))
     }
 
     /// Converts a ciphertext over a 64 bit domain to a ciphertext over a 128 bit domain (which is needed for secure threshold decryption).
@@ -108,7 +108,7 @@ impl SwitchAndSquashKey {
             .par_iter()
             .map(|current_block| self.to_large_ciphertext_block(current_block))
             .collect::<anyhow::Result<Vec<Ciphertext128Block>>>()?;
-        Ok(res)
+        Ok(Ciphertext128::new(res))
     }
 
     /// Converts a single ciphertext block over a 64 bit domain to a ciphertext block over a 128 bit domain (which is needed for secure threshold decryption).

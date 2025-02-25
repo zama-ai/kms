@@ -5,159 +5,254 @@ use crate::vault::storage::{
     delete_all_at_request_id, read_versioned_at_request_id, StorageReader,
 };
 use crate::vault::storage::{read_pk_at_request_id, StorageType};
+use distributed_decryption::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
 use distributed_decryption::execution::tfhe_internals::utils::expanded_encrypt;
-use kms_grpc::kms::v1::{FheType, RequestId, TypedPlaintext};
+use kms_grpc::kms::v1::{CiphertextFormat, FheType, RequestId, TypedPlaintext};
 use kms_grpc::rpc_types::{PubDataType, WrappedPublicKeyOwned};
+use serde::de::DeserializeOwned;
 use std::path::Path;
+use tfhe::core_crypto::prelude::Numeric;
+use tfhe::integer::ciphertext::BaseRadixCiphertext;
+use tfhe::integer::IntegerCiphertext;
+use tfhe::named::Named;
+use tfhe::prelude::Tagged;
 use tfhe::safe_serialization::safe_serialize;
 use tfhe::zk::CompactPkeCrs;
 use tfhe::{
-    set_server_key, FheBool, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048,
-    FheUint256, FheUint32, FheUint4, FheUint512, FheUint64, FheUint8, ProvenCompactCiphertextList,
-    ServerKey,
+    FheBool, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32,
+    FheUint4, FheUint512, FheUint64, FheUint8, HlCompactable, HlCompressible, HlExpandable,
+    ProvenCompactCiphertextList, ServerKey, Unversionize, Versionize,
 };
 
-macro_rules! serialize_ctxt {
-    ($t:ty,$msg:expr,$pk:expr,$server_key:expr,$num_bits:expr,$compression:expr) => {{
-        let ct: $t = expanded_encrypt($pk, $msg, $num_bits).unwrap();
-        let compression_key = $server_key.and_then(|k| k.clone().into_raw_parts().2);
-        // here we just check that it exists
-        if let Some(_compression_key) = compression_key {
-            if $compression {
-                crate::cryptography::decompression::test_tools::compress_serialize_versioned(ct)
-            } else {
-                // NOTE: we have to copy this chunk of code because we can't write
-                // if let Some(x) = y && z
-                let mut serialized_ct = Vec::new();
-                safe_serialize(&ct, &mut serialized_ct, crate::consts::SAFE_SER_SIZE_LIMIT)
-                    .unwrap();
-                serialized_ct
+trait IntoRawParts {
+    fn into_raw_parts(self) -> BaseRadixCiphertext<tfhe::shortint::Ciphertext>;
+}
+
+impl IntoRawParts for FheBool {
+    fn into_raw_parts(self) -> BaseRadixCiphertext<tfhe::shortint::Ciphertext> {
+        BaseRadixCiphertext::from_blocks(vec![self.into_raw_parts()])
+    }
+}
+
+macro_rules! impl_into_raw_parts {
+    ($t:ty) => {
+        impl IntoRawParts for $t {
+            fn into_raw_parts(self) -> BaseRadixCiphertext<tfhe::shortint::Ciphertext> {
+                let (radix_ct, _, _) = self.into_raw_parts();
+                radix_ct
             }
-        } else {
+        }
+    };
+}
+
+impl_into_raw_parts!(FheUint4);
+impl_into_raw_parts!(FheUint8);
+impl_into_raw_parts!(FheUint16);
+impl_into_raw_parts!(FheUint32);
+impl_into_raw_parts!(FheUint64);
+impl_into_raw_parts!(FheUint128);
+impl_into_raw_parts!(FheUint160);
+impl_into_raw_parts!(FheUint256);
+impl_into_raw_parts!(FheUint512);
+impl_into_raw_parts!(FheUint1024);
+impl_into_raw_parts!(FheUint2048);
+
+fn enc_and_serialize_ctxt<M, T>(
+    msg: M,
+    num_bits: usize,
+    pk: &FhePublicKey,
+    server_key: Option<&ServerKey>,
+    sns_key: Option<&SwitchAndSquashKey>,
+    enc_config: EncryptionConfig,
+) -> (Vec<u8>, CiphertextFormat)
+where
+    M: HlCompactable + Numeric,
+    T: HlExpandable
+        + HlCompressible
+        + Tagged
+        + IntoRawParts
+        + Versionize
+        + Named
+        + serde::Serialize,
+{
+    let ct: T = expanded_encrypt(pk, msg, num_bits).unwrap();
+    let ct_format = enc_config
+        .try_into_ciphertext_format(server_key, sns_key)
+        .unwrap();
+    match ct_format {
+        CiphertextFormat::SmallCompressed => (
+            crate::cryptography::decompression::test_tools::compress_serialize_versioned(ct),
+            ct_format,
+        ),
+        CiphertextFormat::SmallExpanded => {
             let mut serialized_ct = Vec::new();
             safe_serialize(&ct, &mut serialized_ct, crate::consts::SAFE_SER_SIZE_LIMIT).unwrap();
-            serialized_ct
+            (serialized_ct, ct_format)
         }
-    }};
+        CiphertextFormat::BigCompressed => {
+            panic!("cannot compress 128-bit ciphertext")
+        }
+        CiphertextFormat::BigExpanded => {
+            let sns_key = sns_key.expect("expected to find sns key");
+            // .into_raw_parts is not from any trait, so we have to write this as a macro
+            let radix_ct = ct.into_raw_parts();
+            let large_ct = sns_key.to_large_ciphertext(&radix_ct).unwrap();
+            let mut serialized_ct = Vec::new();
+            safe_serialize(
+                &large_ct,
+                &mut serialized_ct,
+                crate::consts::SAFE_SER_SIZE_LIMIT,
+            )
+            .unwrap();
+            (serialized_ct, ct_format)
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct EncryptionConfig {
+    pub compression: bool,
+    pub precompute_sns: bool,
+}
+
+impl EncryptionConfig {
+    pub fn try_into_ciphertext_format(
+        self,
+        server_key: Option<&ServerKey>,
+        sns_key: Option<&SwitchAndSquashKey>,
+    ) -> anyhow::Result<CiphertextFormat> {
+        match (self.compression, self.precompute_sns) {
+            (true, true) => anyhow::bail!("compression is not supported with sns precompute"),
+            (true, false) => {
+                if server_key.is_none() {
+                    anyhow::bail!("compression is enabled but server key is missing");
+                }
+                Ok(CiphertextFormat::SmallCompressed)
+            }
+            (false, true) => {
+                if sns_key.is_none() {
+                    anyhow::bail!("sns precompute is enabled but sns key is missing");
+                }
+                Ok(CiphertextFormat::BigExpanded)
+            }
+            (false, false) => Ok(CiphertextFormat::SmallExpanded),
+        }
+    }
 }
 
 pub fn compute_cipher(
     msg: TestingPlaintext,
     pk: &FhePublicKey,
     server_key: Option<&ServerKey>,
-    compression: bool,
-) -> (Vec<u8>, FheType) {
+    sns_key: Option<&SwitchAndSquashKey>,
+    enc_config: EncryptionConfig,
+) -> (Vec<u8>, CiphertextFormat, FheType) {
     if let Some(s) = server_key {
         // TODO is there a way to do this without cloning?
         // wait until context is ready and use that instead
         tfhe::set_server_key(s.clone());
     }
+
     let fhe_type = msg.into();
-    (
-        match msg {
-            TestingPlaintext::Bool(x) => serialize_ctxt!(
-                FheBool,
-                x as u8,
-                pk,
-                server_key,
-                FheBool::num_bits(),
-                compression
-            ),
-            TestingPlaintext::U4(x) => {
-                serialize_ctxt!(
-                    FheUint4,
-                    x,
-                    pk,
-                    server_key,
-                    FheUint4::num_bits(),
-                    compression
-                )
-            }
-            TestingPlaintext::U8(x) => {
-                serialize_ctxt!(
-                    FheUint8,
-                    x,
-                    pk,
-                    server_key,
-                    FheUint8::num_bits(),
-                    compression
-                )
-            }
-            TestingPlaintext::U16(x) => serialize_ctxt!(
-                FheUint16,
-                x,
-                pk,
-                server_key,
-                FheUint16::num_bits(),
-                compression
-            ),
-            TestingPlaintext::U32(x) => serialize_ctxt!(
-                FheUint32,
-                x,
-                pk,
-                server_key,
-                FheUint32::num_bits(),
-                compression
-            ),
-            TestingPlaintext::U64(x) => serialize_ctxt!(
-                FheUint64,
-                x,
-                pk,
-                server_key,
-                FheUint64::num_bits(),
-                compression
-            ),
-            TestingPlaintext::U128(x) => serialize_ctxt!(
-                FheUint128,
-                x,
-                pk,
-                server_key,
-                FheUint128::num_bits(),
-                compression
-            ),
-            TestingPlaintext::U160(x) => serialize_ctxt!(
-                FheUint160,
-                x,
-                pk,
-                server_key,
-                FheUint160::num_bits(),
-                compression
-            ),
-            TestingPlaintext::U256(x) => serialize_ctxt!(
-                FheUint256,
-                x,
-                pk,
-                server_key,
-                FheUint256::num_bits(),
-                compression
-            ),
-            TestingPlaintext::U512(x) => serialize_ctxt!(
-                FheUint512,
-                x,
-                pk,
-                server_key,
-                FheUint512::num_bits(),
-                compression
-            ),
-            TestingPlaintext::U1024(x) => serialize_ctxt!(
-                FheUint1024,
-                x,
-                pk,
-                server_key,
-                FheUint1024::num_bits(),
-                compression
-            ),
-            TestingPlaintext::U2048(x) => serialize_ctxt!(
-                FheUint2048,
-                x,
-                pk,
-                server_key,
-                FheUint2048::num_bits(),
-                compression
-            ),
-        },
-        fhe_type,
-    )
+    let (ct_buf, ct_format) = match msg {
+        TestingPlaintext::Bool(x) => enc_and_serialize_ctxt::<_, FheBool>(
+            x as u8,
+            FheBool::num_bits(),
+            pk,
+            server_key,
+            sns_key,
+            enc_config,
+        ),
+        TestingPlaintext::U4(x) => enc_and_serialize_ctxt::<_, FheUint4>(
+            x,
+            FheUint4::num_bits(),
+            pk,
+            server_key,
+            sns_key,
+            enc_config,
+        ),
+        TestingPlaintext::U8(x) => enc_and_serialize_ctxt::<_, FheUint8>(
+            x,
+            FheUint8::num_bits(),
+            pk,
+            server_key,
+            sns_key,
+            enc_config,
+        ),
+        TestingPlaintext::U16(x) => enc_and_serialize_ctxt::<_, FheUint16>(
+            x,
+            FheUint16::num_bits(),
+            pk,
+            server_key,
+            sns_key,
+            enc_config,
+        ),
+        TestingPlaintext::U32(x) => enc_and_serialize_ctxt::<_, FheUint32>(
+            x,
+            FheUint32::num_bits(),
+            pk,
+            server_key,
+            sns_key,
+            enc_config,
+        ),
+        TestingPlaintext::U64(x) => enc_and_serialize_ctxt::<_, FheUint64>(
+            x,
+            FheUint64::num_bits(),
+            pk,
+            server_key,
+            sns_key,
+            enc_config,
+        ),
+        TestingPlaintext::U128(x) => enc_and_serialize_ctxt::<_, FheUint128>(
+            x,
+            FheUint128::num_bits(),
+            pk,
+            server_key,
+            sns_key,
+            enc_config,
+        ),
+        TestingPlaintext::U160(x) => enc_and_serialize_ctxt::<_, FheUint160>(
+            x,
+            FheUint160::num_bits(),
+            pk,
+            server_key,
+            sns_key,
+            enc_config,
+        ),
+        TestingPlaintext::U256(x) => enc_and_serialize_ctxt::<_, FheUint256>(
+            x,
+            FheUint256::num_bits(),
+            pk,
+            server_key,
+            sns_key,
+            enc_config,
+        ),
+        TestingPlaintext::U512(x) => enc_and_serialize_ctxt::<_, FheUint512>(
+            x,
+            FheUint512::num_bits(),
+            pk,
+            server_key,
+            sns_key,
+            enc_config,
+        ),
+        TestingPlaintext::U1024(x) => enc_and_serialize_ctxt::<_, FheUint1024>(
+            x,
+            FheUint1024::num_bits(),
+            pk,
+            server_key,
+            sns_key,
+            enc_config,
+        ),
+        TestingPlaintext::U2048(x) => enc_and_serialize_ctxt::<_, FheUint2048>(
+            x,
+            FheUint2048::num_bits(),
+            pk,
+            server_key,
+            sns_key,
+            enc_config,
+        ),
+    };
+    (ct_buf, ct_format, fhe_type)
 }
 
 /// This is a plaintext type that's exclusive for testing purposes
@@ -324,30 +419,52 @@ async fn get_storage(pub_path: Option<&Path>, data_id: &str, data_type: &str) ->
     let mut storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
     let url = storage.compute_url(data_id, data_type).unwrap();
     if storage.data_exists(&url).await.unwrap() {
-        tracing::info!("Trying centralized storage at url {}", url);
+        tracing::info!("Using centralized storage at url {}", url);
     } else {
         // Try with the threshold storage
-        tracing::info!("Fallback to threshold file storage with url {}", url);
         storage = FileStorage::new(pub_path, StorageType::PUB, Some(1)).unwrap();
+        tracing::info!(
+            "Fallback to threshold file storage with path {:?}",
+            storage.root_dir()
+        );
     }
     storage
+}
+
+async fn load_material_from_storage<T>(
+    pub_path: Option<&Path>,
+    key_id: &str,
+    data_type: PubDataType,
+) -> T
+where
+    T: DeserializeOwned + Unversionize + Named + Send,
+    <T as tfhe_versionable::VersionizeOwned>::VersionedOwned: Send,
+{
+    let storage = get_storage(pub_path, key_id, &data_type.to_string()).await;
+    let material: T = read_versioned_at_request_id(
+        &storage,
+        &RequestId {
+            request_id: key_id.to_string(),
+        },
+        &data_type.to_string(),
+    )
+    .await
+    .unwrap();
+    material
 }
 
 pub async fn load_server_key_from_storage(
     pub_path: Option<&Path>,
     key_id: &str,
 ) -> tfhe::ServerKey {
-    let storage = get_storage(pub_path, key_id, &PubDataType::ServerKey.to_string()).await;
-    let sk: tfhe::ServerKey = read_versioned_at_request_id(
-        &storage,
-        &RequestId {
-            request_id: key_id.to_string(),
-        },
-        &PubDataType::ServerKey.to_string(),
-    )
-    .await
-    .unwrap();
-    sk
+    load_material_from_storage(pub_path, key_id, PubDataType::ServerKey).await
+}
+
+pub async fn load_sns_key_from_storage(
+    pub_path: Option<&Path>,
+    key_id: &str,
+) -> SwitchAndSquashKey {
+    load_material_from_storage(pub_path, key_id, PubDataType::SnsKey).await
 }
 
 pub async fn load_pk_from_storage(pub_path: Option<&Path>, key_id: &str) -> FhePublicKey {
@@ -365,17 +482,7 @@ pub async fn load_pk_from_storage(pub_path: Option<&Path>, key_id: &str) -> FheP
 }
 
 pub async fn load_crs_from_storage(pub_path: Option<&Path>, crs_id: &str) -> CompactPkeCrs {
-    let storage = get_storage(pub_path, crs_id, &PubDataType::CRS.to_string()).await;
-    let crs: CompactPkeCrs = read_versioned_at_request_id(
-        &storage,
-        &RequestId {
-            request_id: crs_id.to_string(),
-        },
-        &PubDataType::CRS.to_string(),
-    )
-    .await
-    .unwrap();
-    crs
+    load_material_from_storage(pub_path, crs_id, PubDataType::CRS).await
 }
 
 pub async fn compute_proven_ct_from_stored_key_and_serialize(
@@ -464,54 +571,85 @@ pub async fn compute_proven_ct_from_stored_key(
         .unwrap()
 }
 
-pub async fn get_server_key_from_storage(pub_path: Option<&Path>, key_id: &str) -> ServerKey {
+async fn load_material_from_any_pub_storage<T>(
+    pub_path: Option<&Path>,
+    key_id: &str,
+    data_type: PubDataType,
+) -> T
+where
+    T: DeserializeOwned + Unversionize + Named + Send,
+{
     let storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
-    let url = storage
-        .compute_url(key_id, &PubDataType::ServerKey.to_string())
-        .unwrap();
-    tracing::info!("🚧 Reading server key: {}", url);
+    let url = storage.compute_url(key_id, &data_type.to_string()).unwrap();
     if storage.data_exists(&url).await.unwrap() {
-        tracing::info!("Trying centralized storage");
+        tracing::info!(
+            "Server key exists at {} for type {}",
+            url,
+            data_type.to_string()
+        );
         storage.read_data(&url).await.unwrap()
     } else {
         // Try with the threshold storage
-        tracing::info!("Fallback to threshold file storage");
         let storage = FileStorage::new(pub_path, StorageType::PUB, Some(1)).unwrap();
-        let url = storage
-            .compute_url(key_id, &PubDataType::ServerKey.to_string())
-            .unwrap();
+        let url = storage.compute_url(key_id, &data_type.to_string()).unwrap();
+        tracing::info!(
+            "Fallback to threshold file storage for server key at {} for data type {}",
+            url,
+            data_type.to_string()
+        );
         storage.read_data(&url).await.unwrap()
     }
 }
 
-/// This function should be used for testing only and it can panic.
-async fn compute_generic_cipher_from_stored_key(
-    pub_path: Option<&Path>,
-    msg: TestingPlaintext,
-    key_id: &str,
-    compression: bool,
-) -> (Vec<u8>, FheType) {
-    let pk = load_pk_from_storage(pub_path, key_id).await;
-    //Setting the server key as we may need id to expand the ciphertext during compute_cipher
-    let server_key = get_server_key_from_storage(pub_path, key_id).await;
-    set_server_key(server_key.clone());
-    compute_cipher(msg, &pk, Some(&server_key), compression)
+async fn load_server_key_from_any_pub_storage(pub_path: Option<&Path>, key_id: &str) -> ServerKey {
+    load_material_from_any_pub_storage(pub_path, key_id, PubDataType::ServerKey).await
 }
 
+async fn load_sns_key_from_any_pub_storage(
+    pub_path: Option<&Path>,
+    key_id: &str,
+) -> SwitchAndSquashKey {
+    load_material_from_any_pub_storage(pub_path, key_id, PubDataType::SnsKey).await
+}
+
+/// This function should be used for testing only and it can panic.
 pub async fn compute_cipher_from_stored_key(
     pub_path: Option<&Path>,
     msg: TestingPlaintext,
     key_id: &str,
-) -> (Vec<u8>, FheType) {
-    compute_generic_cipher_from_stored_key(pub_path, msg, key_id, false).await
-}
+    enc_config: EncryptionConfig,
+) -> (Vec<u8>, CiphertextFormat, FheType) {
+    let pk = load_pk_from_storage(pub_path, key_id).await;
+    //Setting the server key as we may need id to expand the ciphertext during compute_cipher
+    let server_key = load_server_key_from_any_pub_storage(pub_path, key_id).await;
 
-pub async fn compute_compressed_cipher_from_stored_key(
-    pub_path: Option<&Path>,
-    msg: TestingPlaintext,
-    key_id: &str,
-) -> (Vec<u8>, FheType) {
-    compute_generic_cipher_from_stored_key(pub_path, msg, key_id, true).await
+    // compute_cipher can take a long time since it may do SnS
+    if enc_config.precompute_sns {
+        let sns_key = load_sns_key_from_any_pub_storage(pub_path, key_id).await;
+        let (send, recv) = tokio::sync::oneshot::channel();
+        rayon::spawn_fifo(move || {
+            let _ = send.send(compute_cipher(
+                msg,
+                &pk,
+                Some(&server_key),
+                Some(&sns_key),
+                enc_config,
+            ));
+        });
+        recv.await.unwrap()
+    } else {
+        let (send, recv) = tokio::sync::oneshot::channel();
+        rayon::spawn_fifo(move || {
+            let _ = send.send(compute_cipher(
+                msg,
+                &pk,
+                Some(&server_key),
+                None,
+                enc_config,
+            ));
+        });
+        recv.await.unwrap()
+    }
 }
 
 /// Purge any kind of data, regardless of type, for a specific request ID.

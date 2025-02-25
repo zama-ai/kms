@@ -30,7 +30,6 @@ use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 use distributed_decryption::execution::zk::ceremony::make_centralized_public_parameters;
 use k256::ecdsa::SigningKey;
 use kms_core_utils::thread_handles::ThreadHandleGroup;
-use kms_grpc::kms::v1::FheType;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms::v1::KeySetAddedInfo;
 #[cfg(feature = "non-wasm")]
@@ -38,6 +37,7 @@ use kms_grpc::kms::v1::RequestId;
 use kms_grpc::kms::v1::TypedPlaintext;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms::v1::TypedSigncryptedCiphertext;
+use kms_grpc::kms::v1::{CiphertextFormat, FheType};
 use kms_grpc::kms::v1::{TypedCiphertext, VerifyProvenCtResponsePayload};
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
@@ -361,7 +361,8 @@ pub fn central_decrypt<
             RealCentralizedKms::<PubS, PrivS, BackS>::decrypt(
                 keys,
                 &ct.ciphertext,
-                FheType::try_from(ct.fhe_type)?,
+                ct.fhe_type(),
+                ct.ciphertext_format(),
             )
         })
         .collect::<Result<Vec<_>, _>>()
@@ -390,6 +391,7 @@ pub async fn async_reencrypt<
     for typed_ciphertext in typed_ciphertexts {
         let high_level_ct = &typed_ciphertext.ciphertext;
         let fhe_type = typed_ciphertext.fhe_type();
+        let ct_format = typed_ciphertext.ciphertext_format();
         let external_handle = typed_ciphertext.external_handle.clone();
         let signcrypted_ciphertext = RealCentralizedKms::<PubS, PrivS, BackS>::reencrypt(
             keys,
@@ -397,6 +399,7 @@ pub async fn async_reencrypt<
             rng,
             high_level_ct,
             fhe_type,
+            ct_format,
             req_digest,
             client_enc_key,
             client_address,
@@ -459,59 +462,145 @@ impl<
     }
 }
 
+enum CentralCiphertextFormat {
+    SmallCompressed,
+    SmallExpanded,
+}
+
+impl TryFrom<CiphertextFormat> for CentralCiphertextFormat {
+    type Error = anyhow::Error;
+
+    fn try_from(value: CiphertextFormat) -> Result<Self, Self::Error> {
+        match value {
+            CiphertextFormat::SmallCompressed => Ok(CentralCiphertextFormat::SmallCompressed),
+            CiphertextFormat::SmallExpanded => Ok(CentralCiphertextFormat::SmallExpanded),
+            _ => anyhow::bail!("large ciphertext is not supported by centralized KMS"),
+        }
+    }
+}
+
+macro_rules! deserialize_to_low_level_helper {
+    ($rust_type:ty,$ct_format:expr,$serialized_high_level:expr,$decompression_key:expr) => {{
+        match $ct_format {
+            CentralCiphertextFormat::SmallCompressed => {
+                let hl_ct: $rust_type =
+                    decompression::tfhe_safe_deserialize_and_uncompress::<$rust_type>(
+                        $decompression_key
+                            .as_ref()
+                            .ok_or(anyhow::anyhow!("missing decompression key"))?,
+                        $serialized_high_level,
+                    )?;
+                hl_ct
+            }
+            CentralCiphertextFormat::SmallExpanded => {
+                let hl_ct: $rust_type =
+                    decompression::tfhe_safe_deserialize::<$rust_type>($serialized_high_level)?;
+                hl_ct
+            }
+        }
+    }};
+}
+
 fn unsafe_decrypt(
     keys: &KmsFheKeyHandles,
     bytes_ct: &[u8],
     fhe_type: FheType,
+    ct_format: CiphertextFormat,
 ) -> anyhow::Result<TypedPlaintext> {
+    let ct_format: CentralCiphertextFormat = ct_format.try_into()?;
     Ok(match fhe_type {
         FheType::Ebool => TypedPlaintext::from_bool(
-            decompression::from_bytes::<FheBool>(&keys.decompression_key, bytes_ct)?
+            deserialize_to_low_level_helper!(FheBool, ct_format, bytes_ct, keys.decompression_key)
                 .decrypt(&keys.client_key),
         ),
         FheType::Euint4 => TypedPlaintext::from_u4(
-            decompression::from_bytes::<FheUint4>(&keys.decompression_key, bytes_ct)?
+            deserialize_to_low_level_helper!(FheUint4, ct_format, bytes_ct, keys.decompression_key)
                 .decrypt(&keys.client_key),
         ),
         FheType::Euint8 => TypedPlaintext::from_u8(
-            decompression::from_bytes::<FheUint8>(&keys.decompression_key, bytes_ct)?
+            deserialize_to_low_level_helper!(FheUint8, ct_format, bytes_ct, keys.decompression_key)
                 .decrypt(&keys.client_key),
         ),
         FheType::Euint16 => TypedPlaintext::from_u16(
-            decompression::from_bytes::<FheUint16>(&keys.decompression_key, bytes_ct)?
-                .decrypt(&keys.client_key),
+            deserialize_to_low_level_helper!(
+                FheUint16,
+                ct_format,
+                bytes_ct,
+                keys.decompression_key
+            )
+            .decrypt(&keys.client_key),
         ),
         FheType::Euint32 => TypedPlaintext::from_u32(
-            decompression::from_bytes::<FheUint32>(&keys.decompression_key, bytes_ct)?
-                .decrypt(&keys.client_key),
+            deserialize_to_low_level_helper!(
+                FheUint32,
+                ct_format,
+                bytes_ct,
+                keys.decompression_key
+            )
+            .decrypt(&keys.client_key),
         ),
         FheType::Euint64 => TypedPlaintext::from_u64(
-            decompression::from_bytes::<FheUint64>(&keys.decompression_key, bytes_ct)?
-                .decrypt(&keys.client_key),
+            deserialize_to_low_level_helper!(
+                FheUint64,
+                ct_format,
+                bytes_ct,
+                keys.decompression_key
+            )
+            .decrypt(&keys.client_key),
         ),
         FheType::Euint128 => TypedPlaintext::from_u128(
-            decompression::from_bytes::<FheUint128>(&keys.decompression_key, bytes_ct)?
-                .decrypt(&keys.client_key),
+            deserialize_to_low_level_helper!(
+                FheUint128,
+                ct_format,
+                bytes_ct,
+                keys.decompression_key
+            )
+            .decrypt(&keys.client_key),
         ),
         FheType::Euint160 => TypedPlaintext::from_u160(
-            decompression::from_bytes::<FheUint160>(&keys.decompression_key, bytes_ct)?
-                .decrypt(&keys.client_key),
+            deserialize_to_low_level_helper!(
+                FheUint160,
+                ct_format,
+                bytes_ct,
+                keys.decompression_key
+            )
+            .decrypt(&keys.client_key),
         ),
         FheType::Euint256 => TypedPlaintext::from_u256(
-            decompression::from_bytes::<FheUint256>(&keys.decompression_key, bytes_ct)?
-                .decrypt(&keys.client_key),
+            deserialize_to_low_level_helper!(
+                FheUint256,
+                ct_format,
+                bytes_ct,
+                keys.decompression_key
+            )
+            .decrypt(&keys.client_key),
         ),
         FheType::Euint512 => TypedPlaintext::from_u512(
-            decompression::from_bytes::<FheUint512>(&keys.decompression_key, bytes_ct)?
-                .decrypt(&keys.client_key),
+            deserialize_to_low_level_helper!(
+                FheUint512,
+                ct_format,
+                bytes_ct,
+                keys.decompression_key
+            )
+            .decrypt(&keys.client_key),
         ),
         FheType::Euint1024 => TypedPlaintext::from_u1024(
-            decompression::from_bytes::<FheUint1024>(&keys.decompression_key, bytes_ct)?
-                .decrypt(&keys.client_key),
+            deserialize_to_low_level_helper!(
+                FheUint1024,
+                ct_format,
+                bytes_ct,
+                keys.decompression_key
+            )
+            .decrypt(&keys.client_key),
         ),
         FheType::Euint2048 => TypedPlaintext::from_u2048(
-            decompression::from_bytes::<FheUint2048>(&keys.decompression_key, bytes_ct)?
-                .decrypt(&keys.client_key),
+            deserialize_to_low_level_helper!(
+                FheUint2048,
+                ct_format,
+                bytes_ct,
+                keys.decompression_key
+            )
+            .decrypt(&keys.client_key),
         ),
     })
 }
@@ -527,8 +616,9 @@ impl<
         keys: &KmsFheKeyHandles,
         high_level_ct: &[u8],
         fhe_type: FheType,
+        ct_format: CiphertextFormat,
     ) -> anyhow::Result<TypedPlaintext> {
-        match panic::catch_unwind(|| unsafe_decrypt(keys, high_level_ct, fhe_type)) {
+        match panic::catch_unwind(|| unsafe_decrypt(keys, high_level_ct, fhe_type, ct_format)) {
             Ok(x) => x,
             Err(_) => Err(anyhow_error_and_log("decryption panicked".to_string())),
         }
@@ -540,6 +630,7 @@ impl<
         rng: &mut (impl CryptoRng + RngCore),
         ct: &[u8],
         fhe_type: FheType,
+        ct_format: CiphertextFormat,
         link: &[u8],
         client_enc_key: &PublicEncKey,
         client_address: &alloy_primitives::Address,
@@ -552,7 +643,7 @@ impl<
             fhe_type
         );
 
-        let plaintext = Self::decrypt(keys, ct, fhe_type)?;
+        let plaintext = Self::decrypt(keys, ct, fhe_type, ct_format)?;
         // Observe that we encrypt the plaintext itself, this is different from the threshold case
         // where it is first mapped to a Vec<ResiduePolyF4Z128> element
 
@@ -743,7 +834,7 @@ pub(crate) mod tests {
     use crate::engine::validation::verify_reencryption_eip712;
     use crate::util::file_handling::read_element;
     use crate::util::file_handling::write_element;
-    use crate::util::key_setup::test_tools::compute_cipher;
+    use crate::util::key_setup::test_tools::{compute_cipher, EncryptionConfig};
     use crate::vault::storage::{file::FileStorage, ram::RamStorage};
     use crate::vault::storage::{
         store_pk_at_request_id, store_versioned_at_request_id, StorageReader, StorageType,
@@ -1005,10 +1096,19 @@ pub(crate) mod tests {
         key_id: &RequestId,
     ) {
         let msg = 523u64;
-        let (ct, fhe_type) = {
+        let (ct, ct_format, fhe_type) = {
             let pub_keys = keys.pub_fhe_keys.get(key_id).unwrap();
             set_server_key(pub_keys.server_key.clone());
-            compute_cipher(msg.into(), &pub_keys.public_key, None, false)
+            compute_cipher(
+                msg.into(),
+                &pub_keys.public_key,
+                None,
+                None,
+                EncryptionConfig {
+                    compression: false,
+                    precompute_sns: false,
+                },
+            )
         };
         let kms = {
             let (inner, _health_service) = RealCentralizedKms::new(
@@ -1037,6 +1137,7 @@ pub(crate) mod tests {
             &key_handle,
             &ct,
             fhe_type,
+            ct_format,
         );
         // if bad FHE key is used, then it *might* panic
         let plaintext = if sim_type == SimulationType::BadFheKey {
@@ -1159,10 +1260,19 @@ pub(crate) mod tests {
     ) {
         let msg = 42305u64;
         let mut rng = AesRng::seed_from_u64(1);
-        let (ct, fhe_type) = {
+        let (ct, ct_format, fhe_type) = {
             let pub_keys = keys.pub_fhe_keys.get(key_handle).unwrap();
             set_server_key(pub_keys.server_key.clone());
-            compute_cipher(msg.into(), &pub_keys.public_key, None, false)
+            compute_cipher(
+                msg.into(),
+                &pub_keys.public_key,
+                None,
+                None,
+                EncryptionConfig {
+                    compression: false,
+                    precompute_sns: false,
+                },
+            )
         };
 
         let kms = {
@@ -1206,6 +1316,7 @@ pub(crate) mod tests {
             &mut rng,
             &ct,
             fhe_type,
+            ct_format,
             &link,
             &client_keys.pk.enc_key,
             &client_keys.pk.client_address,
@@ -1303,6 +1414,7 @@ pub(crate) mod tests {
         let typed_ciphertext = TypedCiphertext {
             ciphertext,
             fhe_type: 1,
+            ciphertext_format: 0,
             external_handle: vec![123],
         };
         let payload = kms_grpc::kms::v1::ReencryptionRequestPayload {

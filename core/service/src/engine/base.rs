@@ -18,11 +18,13 @@ use alloy_sol_types::SolStruct;
 use distributed_decryption::execution::endpoints::keygen::FhePubKeySet;
 #[cfg(feature = "non-wasm")]
 use distributed_decryption::execution::keyset_config as ddec_keyset_config;
-use distributed_decryption::execution::tfhe_internals::parameters::{Ciphertext64, DKGParams};
+use distributed_decryption::execution::tfhe_internals::parameters::{
+    Ciphertext128, DKGParams, LowLevelCiphertext,
+};
 use k256::ecdsa::SigningKey;
 use kms_grpc::kms::v1::{
-    FheParameter, FheType, SignedPubDataHandle, TypedPlaintext, TypedSigncryptedCiphertext,
-    VerifyProvenCtRequest,
+    CiphertextFormat, FheParameter, FheType, SignedPubDataHandle, TypedPlaintext,
+    TypedSigncryptedCiphertext, VerifyProvenCtRequest,
 };
 use kms_grpc::rpc_types::{
     hash_element, safe_serialize_hash_element_versioned, CiphertextVerificationForKMS,
@@ -35,6 +37,7 @@ use tfhe::integer::ciphertext::BaseRadixCiphertext;
 use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::integer::IntegerCiphertext;
 use tfhe::named::Named;
+use tfhe::safe_serialization::safe_deserialize;
 use tfhe::Versionize;
 use tfhe::{
     FheBool, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32,
@@ -149,83 +152,164 @@ pub fn gen_sig_keys<R: CryptoRng + rand::Rng>(rng: &mut R) -> (PublicSigKey, Pri
     (PublicSigKey::new(*pk), PrivateSigKey::new(sk))
 }
 
+macro_rules! deserialize_to_low_level_helper {
+    ($rust_type:ty,$ct_format:expr,$serialized_high_level:expr,$decompression_key:expr) => {{
+        match $ct_format {
+            CiphertextFormat::SmallCompressed => {
+                let hl_ct: $rust_type =
+                    decompression::tfhe_safe_deserialize_and_uncompress::<$rust_type>(
+                        $decompression_key
+                            .as_ref()
+                            .ok_or(anyhow::anyhow!("missing decompression key"))?,
+                        $serialized_high_level,
+                    )?;
+                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
+                LowLevelCiphertext::Small(radix_ct)
+            }
+            CiphertextFormat::SmallExpanded => {
+                let hl_ct: $rust_type =
+                    decompression::tfhe_safe_deserialize::<$rust_type>($serialized_high_level)?;
+                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
+                LowLevelCiphertext::Small(radix_ct)
+            }
+            CiphertextFormat::BigCompressed => {
+                anyhow::bail!("big compressed ciphertexts are not supported yet");
+            }
+            CiphertextFormat::BigExpanded => {
+                let r = safe_deserialize::<Ciphertext128>(
+                    std::io::Cursor::new($serialized_high_level),
+                    kms_grpc::rpc_types::SAFE_SER_SIZE_LIMIT,
+                )
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                LowLevelCiphertext::Big(r)
+            }
+        }
+    }};
+}
+
 pub fn deserialize_to_low_level(
     fhe_type: &FheType,
+    ct_format: CiphertextFormat,
     serialized_high_level: &[u8],
     decompression_key: &Option<DecompressionKey>,
-) -> anyhow::Result<Ciphertext64> {
+) -> anyhow::Result<LowLevelCiphertext> {
     let radix_ct = match fhe_type {
-        FheType::Ebool => {
-            let hl_ct: FheBool =
-                decompression::from_bytes::<FheBool>(decompression_key, serialized_high_level)?;
-            let radix_ct = hl_ct.into_raw_parts();
-            BaseRadixCiphertext::from_blocks(vec![radix_ct])
-        }
+        FheType::Ebool => match ct_format {
+            CiphertextFormat::SmallCompressed => {
+                let hl_ct: FheBool = decompression::tfhe_safe_deserialize_and_uncompress::<FheBool>(
+                    decompression_key
+                        .as_ref()
+                        .ok_or(anyhow::anyhow!("missing decompression key"))?,
+                    serialized_high_level,
+                )?;
+                let radix_ct = hl_ct.into_raw_parts();
+                LowLevelCiphertext::Small(BaseRadixCiphertext::from_blocks(vec![radix_ct]))
+            }
+            CiphertextFormat::SmallExpanded => {
+                let hl_ct: FheBool =
+                    decompression::tfhe_safe_deserialize::<FheBool>(serialized_high_level)?;
+                let radix_ct = hl_ct.into_raw_parts();
+                LowLevelCiphertext::Small(BaseRadixCiphertext::from_blocks(vec![radix_ct]))
+            }
+            CiphertextFormat::BigCompressed => {
+                anyhow::bail!("big compressed ciphertexts are not supported yet");
+            }
+            CiphertextFormat::BigExpanded => {
+                let r = safe_deserialize::<Ciphertext128>(
+                    std::io::Cursor::new(serialized_high_level),
+                    kms_grpc::rpc_types::SAFE_SER_SIZE_LIMIT,
+                )
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                LowLevelCiphertext::Big(r)
+            }
+        },
         FheType::Euint4 => {
-            let hl_ct: FheUint4 =
-                decompression::from_bytes::<FheUint4>(decompression_key, serialized_high_level)?;
-            let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
-            radix_ct
+            deserialize_to_low_level_helper!(
+                FheUint4,
+                ct_format,
+                serialized_high_level,
+                decompression_key
+            )
         }
         FheType::Euint8 => {
-            let hl_ct: FheUint8 =
-                decompression::from_bytes::<FheUint8>(decompression_key, serialized_high_level)?;
-            let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
-            radix_ct
+            deserialize_to_low_level_helper!(
+                FheUint8,
+                ct_format,
+                serialized_high_level,
+                decompression_key
+            )
         }
         FheType::Euint16 => {
-            let hl_ct: FheUint16 =
-                decompression::from_bytes::<FheUint16>(decompression_key, serialized_high_level)?;
-            let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
-            radix_ct
+            deserialize_to_low_level_helper!(
+                FheUint16,
+                ct_format,
+                serialized_high_level,
+                decompression_key
+            )
         }
         FheType::Euint32 => {
-            let hl_ct: FheUint32 =
-                decompression::from_bytes::<FheUint32>(decompression_key, serialized_high_level)?;
-            let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
-            radix_ct
+            deserialize_to_low_level_helper!(
+                FheUint32,
+                ct_format,
+                serialized_high_level,
+                decompression_key
+            )
         }
         FheType::Euint64 => {
-            let hl_ct: FheUint64 =
-                decompression::from_bytes::<FheUint64>(decompression_key, serialized_high_level)?;
-            let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
-            radix_ct
+            deserialize_to_low_level_helper!(
+                FheUint64,
+                ct_format,
+                serialized_high_level,
+                decompression_key
+            )
         }
         FheType::Euint128 => {
-            let hl_ct: FheUint128 =
-                decompression::from_bytes::<FheUint128>(decompression_key, serialized_high_level)?;
-            let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
-            radix_ct
+            deserialize_to_low_level_helper!(
+                FheUint128,
+                ct_format,
+                serialized_high_level,
+                decompression_key
+            )
         }
         FheType::Euint160 => {
-            let hl_ct: FheUint160 =
-                decompression::from_bytes::<FheUint160>(decompression_key, serialized_high_level)?;
-            let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
-            radix_ct
+            deserialize_to_low_level_helper!(
+                FheUint160,
+                ct_format,
+                serialized_high_level,
+                decompression_key
+            )
         }
         FheType::Euint256 => {
-            let hl_ct: FheUint256 =
-                decompression::from_bytes::<FheUint256>(decompression_key, serialized_high_level)?;
-            let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
-            radix_ct
+            deserialize_to_low_level_helper!(
+                FheUint256,
+                ct_format,
+                serialized_high_level,
+                decompression_key
+            )
         }
         FheType::Euint512 => {
-            let hl_ct: FheUint512 =
-                decompression::from_bytes::<FheUint512>(decompression_key, serialized_high_level)?;
-            let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
-            radix_ct
+            deserialize_to_low_level_helper!(
+                FheUint512,
+                ct_format,
+                serialized_high_level,
+                decompression_key
+            )
         }
         FheType::Euint1024 => {
-            let hl_ct: FheUint1024 =
-                decompression::from_bytes::<FheUint1024>(decompression_key, serialized_high_level)?;
-            let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
-            radix_ct
+            deserialize_to_low_level_helper!(
+                FheUint1024,
+                ct_format,
+                serialized_high_level,
+                decompression_key
+            )
         }
         FheType::Euint2048 => {
-            let hl_ct: FheUint2048 =
-                decompression::from_bytes::<FheUint2048>(decompression_key, serialized_high_level)?;
-            let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
-            radix_ct
+            deserialize_to_low_level_helper!(
+                FheUint2048,
+                ct_format,
+                serialized_high_level,
+                decompression_key
+            )
         }
     };
     Ok(radix_ct)

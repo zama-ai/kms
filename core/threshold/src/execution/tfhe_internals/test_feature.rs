@@ -622,7 +622,7 @@ impl SnsClientKey {
         let bits_in_block = self.params.message_modulus_log();
         let mut recomposer = BlockRecomposer::<u128>::new(bits_in_block);
 
-        for encrypted_block in ct {
+        for encrypted_block in &ct.inner {
             let decrypted_block = self.decrypt_block_128(encrypted_block);
             if !recomposer.add_unmasked(decrypted_block.0) {
                 // End of T::BITS reached no need to try more

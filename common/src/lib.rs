@@ -41,9 +41,10 @@ macro_rules! impl_generic_versionize {
     };
 }
 
-#[derive(Copy, Clone, Serialize, Deserialize, Display, Debug, ValueEnum)]
+#[derive(Copy, Clone, Default, Serialize, Deserialize, Display, Debug, ValueEnum)]
 pub enum DecryptionMode {
-    /// nSmall Noise Flooding
+    /// nSmall Noise Flooding, this is the default
+    #[default]
     NoiseFloodSmall,
     /// nLarge Noise Flooding
     NoiseFloodLarge,

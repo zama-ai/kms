@@ -9,36 +9,26 @@ use tfhe::{CompressedCiphertextList as HLCompressedCiphertextList, Unversionize,
 use crate::anyhow_error_and_log;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 
-pub fn deserialize<T: Named + Versionize + Unversionize + DeserializeOwned>(
+pub fn tfhe_safe_deserialize<T: Named + Versionize + Unversionize + DeserializeOwned>(
     bytes: &[u8],
 ) -> anyhow::Result<T> {
     let r = safe_deserialize::<T>(std::io::Cursor::new(bytes), SAFE_SER_SIZE_LIMIT);
     r.map_err(|err| anyhow!("{}", err))
 }
 
-pub fn from_bytes<T>(key: &Option<DecompressionKey>, bytes: &[u8]) -> anyhow::Result<T>
+pub fn tfhe_safe_deserialize_and_uncompress<T>(
+    key: &DecompressionKey,
+    bytes: &[u8],
+) -> anyhow::Result<T>
 where
     T: Expandable + Named + Versionize + Unversionize + DeserializeOwned,
 {
-    // see https://github.com/zama-ai/fhevm-backend/blob/main/fhevm-engine/fhevm-engine-common/src/types.rs
-    let list = match deserialize::<HLCompressedCiphertextList>(bytes) {
-        Ok(list) => list,
-        Err(err) => {
-            tracing::info!(
-                "Cannot deserialized compressed ciphertext due to: {}, fallback to non compressed.",
-                err
-            );
-            return deserialize::<T>(bytes);
-        }
-    };
+    let list = tfhe_safe_deserialize::<HLCompressedCiphertextList>(bytes)?;
     let (list, _tag) = list.into_raw_parts();
     if list.len() != 1 {
         let msg = format!("Unexpected size of compressed list: {}.", list.len());
         return Err(anyhow_error_and_log(msg));
     }
-    let Some(key) = key else {
-        return Err(anyhow_error_and_log("Decompression key is not configured."));
-    };
     let uncompressed = match list.get::<T>(0, key) {
         Ok(Some(uncompressed)) => uncompressed,
         Ok(None) => {
@@ -88,9 +78,10 @@ pub mod test_tools {
 #[cfg(test)]
 mod test {
     use crate::consts::SAFE_SER_SIZE_LIMIT;
+    use crate::cryptography::decompression::tfhe_safe_deserialize;
 
-    use super::from_bytes;
     use super::test_tools::{compress_serialize_versioned, safe_serialize_versioned};
+    use super::tfhe_safe_deserialize_and_uncompress;
     use distributed_decryption::execution::tfhe_internals::parameters::{
         DKGParams, PARAMS_TEST_BK_SNS,
     };
@@ -126,7 +117,6 @@ mod test {
         .build();
         let (client_key, server_key) = generate_keys(config);
         set_server_key(server_key);
-        let decompression_key = None;
         let not_compressed = FheUint4::encrypt(0_u32, &client_key);
         let hl_compressed = CompressedCiphertextListBuilder::new()
             .push(not_compressed.clone())
@@ -137,7 +127,7 @@ mod test {
         let mut bytes = Vec::new();
         tfhe::safe_serialization::safe_serialize(&hl_compressed, &mut bytes, SAFE_SER_SIZE_LIMIT)
             .unwrap();
-        let result = from_bytes::<FheUint4>(&decompression_key, &bytes);
+        let result = tfhe_safe_deserialize::<FheUint4>(&bytes);
         assert!(result.is_err());
     }
 
@@ -149,31 +139,14 @@ mod test {
         .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64)
         .build();
         let (client_key, server_key) = generate_keys(config);
-        let decompression_key = server_key.clone().into_raw_parts().3;
+        let decompression_key = server_key.clone().into_raw_parts().3.unwrap();
         let not_compressed = FheUint4::encrypt(0_u32, &client_key);
 
         set_server_key(server_key);
         let compressed = compress_serialize_versioned(not_compressed);
 
-        let result = from_bytes::<FheUint8>(&decompression_key, &compressed);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_no_decomp_key() {
-        let config = tfhe::ConfigBuilder::with_custom_parameters(
-            PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
-        )
-        .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64)
-        .build();
-        let (client_key, server_key) = generate_keys(config);
-        let decompression_key = None;
-        let not_compressed = FheUint4::encrypt(0_u32, &client_key);
-
-        set_server_key(server_key);
-        let compressed = compress_serialize_versioned(not_compressed);
-
-        let result = from_bytes::<FheUint4>(&decompression_key, &compressed);
+        let result =
+            tfhe_safe_deserialize_and_uncompress::<FheUint8>(&decompression_key, &compressed);
         assert!(result.is_err());
     }
 
@@ -187,7 +160,7 @@ mod test {
         let mut bytes = Vec::new();
         tfhe::safe_serialization::safe_serialize(&not_compressed, &mut bytes, SAFE_SER_SIZE_LIMIT)
             .unwrap();
-        let result = from_bytes::<FheUint4>(&None, &bytes);
+        let result = tfhe_safe_deserialize::<FheUint4>(&bytes);
         assert!(result.is_ok());
 
         let mut bytes2 = Vec::new();
@@ -285,7 +258,8 @@ mod test {
         set_server_key(server_key);
         let compressed = compress_serialize_versioned(not_compressed);
 
-        let result = from_bytes::<T>(&decompression_key, &compressed);
+        let result =
+            tfhe_safe_deserialize_and_uncompress::<T>(&decompression_key.unwrap(), &compressed);
         let result = match result {
             Ok(result) => result,
             Err(err) => panic!("{:?}", err),
@@ -312,7 +286,10 @@ mod test {
         set_server_key(server_key);
         let compressed = compress_serialize_versioned(not_compressed);
 
-        let result = from_bytes::<FheBool>(&decompression_key, &compressed);
+        let result = tfhe_safe_deserialize_and_uncompress::<FheBool>(
+            &decompression_key.unwrap(),
+            &compressed,
+        );
         let result = match result {
             Ok(result) => result,
             Err(err) => panic!("{:?}", err),
@@ -374,7 +351,10 @@ mod test {
         let compressed = safe_serialize_versioned(&compressed);
 
         // KMS like part
-        let result = from_bytes::<FheUint8>(&decompression_key, &compressed);
+        let result = tfhe_safe_deserialize_and_uncompress::<FheUint8>(
+            &decompression_key.unwrap(),
+            &compressed,
+        );
         let result = match result {
             Ok(result) => result,
             Err(err) => panic!("{:?}", err),

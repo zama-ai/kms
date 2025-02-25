@@ -177,6 +177,24 @@ message CrsGenResult {
   SignedPubDataHandle crs_results = 2;
 }
 
+// This enum tells the KMS how to deserialize ciphertexts.
+enum CiphertextFormat {
+  // Small (64-bit) compressed ciphertexts, this needs to be
+  // decompressed first before we can run distributed decryption.
+  SmallCompressed = 0;
+  // Small (64-bit) expanded ciphertexts,
+  // we can directly decrypt this ciphertext.
+  SmallExpanded = 1;
+  // Big (128-bit) compressed ciphertexts.
+  // WARNING! currently not supported.
+  BigCompressed = 2;
+  // Big (128-bit) expanded ciphertexts.
+  // This is only useful when doing the second half of
+  // of the noise-flooding decryption method,
+  // it allows us to bypass the big PBS.
+  BigExpanded = 3;
+}
+
 message TypedCiphertext {
   // The actual ciphertext to decrypt, taken directly from the fhevm.
   bytes ciphertext = 1;
@@ -184,6 +202,9 @@ message TypedCiphertext {
   FheType fhe_type = 2;
   // The external handle of the ciphertext (the handle used in the copro).
   bytes external_handle = 3;
+  // The ciphertext format, see CiphertextFormat documentation for details.
+  // CiphertextFormat::default() is used if unspecified.
+  CiphertextFormat ciphertext_format = 4;
 }
 
 message DecryptionRequest {
@@ -277,15 +298,17 @@ message ReencryptionResponse {
 }
 
 message ReencryptionResponsePayload {
-  // The server's signature verification key.
-  // Encoded using SEC1.
+  // The server's signature verification key, Encoded using SEC1.
   // Needed to validate the response, but MUST also be linked to a list of
   // trusted keys.
   bytes verification_key = 1;
-  // The concatenation of two digests:
-  // (eip712_signing_hash(pk, domain) || ciphertext digest).
   // This is needed to ensure the response corresponds to the request.
+  // It is the digest of UserDecryptionLinker hashed using EIP712
+  // under the given domain in the request.
   bytes digest = 2;
+  // The resulting signcrypted ciphertexts, each ciphertext
+  // must be decrypted and then reconstructed with the other shares
+  // to produce the final plaintext.
   repeated TypedSigncryptedCiphertext signcrypted_ciphertexts = 3;
   // The ID of the MPC party doing the reencryption. Used for polynomial
   // reconstruction.

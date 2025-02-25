@@ -11,6 +11,7 @@ use crate::consts::{
     DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_CRS_ID_10P, DEFAULT_THRESHOLD_KEY_ID_10P,
     DEFAULT_THRESHOLD_KEY_ID_4P,
 };
+use crate::util::key_setup::test_tools::EncryptionConfig;
 use crate::util::key_setup::test_tools::{purge, TestingPlaintext};
 use kms_grpc::kms::v1::FheParameter;
 use kms_grpc::kms::v1::RequestId;
@@ -36,6 +37,43 @@ async fn default_verify_proven_ct_centralized(#[case] msgs: Vec<TestingPlaintext
 }
 
 #[rstest::rstest]
+#[case(vec![TestingPlaintext::Bool(true)], 2, 4, true, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+#[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 10, true, &DEFAULT_THRESHOLD_KEY_ID_10P.to_string())]
+#[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4, true, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+#[case(vec![TestingPlaintext::U16(u16::MAX)], 1, 4, true, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+#[case(vec![TestingPlaintext::U32(u32::MAX)], 1, 4, true, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+#[case(vec![TestingPlaintext::U64(u64::MAX)], 1, 4, true, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+#[case(vec![TestingPlaintext::U128(u128::MAX)], 1, 4, true, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+#[case(vec![TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128)))], 1, 4, true, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+#[case(vec![TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX)))], 1, 4, true, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+#[case(vec![TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1, 4, true, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+#[tracing_test::traced_test]
+async fn default_decryption_threshold(
+    #[case] msg: Vec<TestingPlaintext>,
+    #[case] parallelism: usize,
+    #[case] amount_parties: usize,
+    #[case] compression: bool,
+    #[case] key_id: &str,
+) {
+    decryption_threshold(
+        DEFAULT_PARAM,
+        key_id,
+        msg,
+        EncryptionConfig {
+            compression,
+            precompute_sns: false,
+        },
+        parallelism,
+        amount_parties,
+        None,
+        None,
+    )
+    .await;
+}
+
+#[rstest::rstest]
 #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 10, &DEFAULT_THRESHOLD_KEY_ID_10P.to_string())]
 #[case(vec![TestingPlaintext::Bool(true)], 2, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
 #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
@@ -49,7 +87,7 @@ async fn default_verify_proven_ct_centralized(#[case] msgs: Vec<TestingPlaintext
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 #[tracing_test::traced_test]
-async fn default_decryption_threshold(
+async fn default_decryption_threshold_with_sns_preprocessing(
     #[case] msg: Vec<TestingPlaintext>,
     #[case] parallelism: usize,
     #[case] amount_parties: usize,
@@ -59,8 +97,11 @@ async fn default_decryption_threshold(
         DEFAULT_PARAM,
         key_id,
         msg,
+        EncryptionConfig {
+            compression: false, // in the future we will have precompute_sns with compression
+            precompute_sns: true,
+        },
         parallelism,
-        true,
         amount_parties,
         None,
         None,
@@ -183,8 +224,11 @@ async fn default_decryption_threshold_with_crash(
         DEFAULT_PARAM,
         key_id,
         msg,
+        EncryptionConfig {
+            compression: true,
+            precompute_sns: false,
+        },
         parallelism,
-        true,
         amount_parties,
         party_ids_to_crash,
         None,
@@ -220,10 +264,56 @@ async fn default_reencryption_threshold(
         key_id,
         false,
         msg,
+        EncryptionConfig {
+            compression: true,
+            precompute_sns: false,
+        },
         parallelism,
         secure,
         amount_parties,
         None,
+        None,
+    )
+    .await;
+}
+
+#[cfg(feature = "slow_tests")]
+#[rstest::rstest]
+#[case(TestingPlaintext::U8(u8::MAX), 1, 10, Some(vec![2,6,7]), &DEFAULT_THRESHOLD_KEY_ID_10P.to_string())]
+#[case(TestingPlaintext::Bool(true), 4, 4, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+#[case(TestingPlaintext::U8(u8::MAX), 1, 4,Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+#[case(TestingPlaintext::U16(u16::MAX), 1, 4,Some(vec![3]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+#[case(TestingPlaintext::U32(u32::MAX), 1, 4,Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+#[case(TestingPlaintext::U64(u64::MAX), 1, 4,Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+#[case(TestingPlaintext::U128(u128::MAX), 1, 4,Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+#[case(TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1, 4,Some(vec![3]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+#[case(TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1, 4,Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+#[case(TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1, 4, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[serial]
+async fn default_reencryption_threshold_with_crash(
+    #[case] msg: TestingPlaintext,
+    #[case] parallelism: usize,
+    #[case] amount_parties: usize,
+    #[case] party_ids_to_crash: Option<Vec<usize>>,
+    #[case] key_id: &str,
+    #[values(true, false)] secure: bool,
+) {
+    use crate::consts::DEFAULT_PARAM;
+
+    reencryption_threshold(
+        DEFAULT_PARAM,
+        key_id,
+        false,
+        msg,
+        EncryptionConfig {
+            compression: true,
+            precompute_sns: false,
+        },
+        parallelism,
+        secure,
+        amount_parties,
+        party_ids_to_crash,
         None,
     )
     .await;

@@ -14,7 +14,7 @@ listen_port = 50100
 timeout_secs = 360
 
 # Maximum GRPC message size in bytes
-grpc_max_message_size = 20971520 # 20 MiB
+grpc_max_message_size = 104857600 # 100 MiB
 
 # Set the AWS region and endpoint used by [public_vault.storage]
 # and/or [private_vault.storage], if the storage URL starts with "s3://"".

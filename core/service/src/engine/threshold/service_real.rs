@@ -77,12 +77,12 @@ use k256::ecdsa::SigningKey;
 use kms_common::DecryptionMode;
 use kms_core_utils::thread_handles::ThreadHandleGroup;
 use kms_grpc::kms::v1::{
-    CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
-    Empty, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus,
-    KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult, KeySetAddedInfo, ReencryptionRequest,
-    ReencryptionResponse, ReencryptionResponsePayload, RequestId, TypedCiphertext, TypedPlaintext,
-    TypedSigncryptedCiphertext, VerifyProvenCtRequest, VerifyProvenCtResponse,
-    VerifyProvenCtResponsePayload,
+    CiphertextFormat, CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse,
+    DecryptionResponsePayload, Empty, FheType, InitRequest, KeyGenPreprocRequest,
+    KeyGenPreprocStatus, KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult, KeySetAddedInfo,
+    ReencryptionRequest, ReencryptionResponse, ReencryptionResponsePayload, RequestId,
+    TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext, VerifyProvenCtRequest,
+    VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use kms_grpc::rpc_types::{
@@ -965,10 +965,12 @@ impl<
         let mut all_signcrypted_cts = vec![];
         for typed_ciphertext in typed_ciphertexts {
             let fhe_type = typed_ciphertext.fhe_type();
+            let ct_format = typed_ciphertext.ciphertext_format();
             let ct = &typed_ciphertext.ciphertext;
             let external_handle = typed_ciphertext.external_handle.clone();
 
-            let low_level_ct = deserialize_to_low_level(&fhe_type, ct, &keys.decompression_key)?;
+            let low_level_ct =
+                deserialize_to_low_level(&fhe_type, ct_format, ct, &keys.decompression_key)?;
 
             let pdec: Result<(Vec<u8>, std::time::Duration), anyhow::Error> = match dec_mode {
                 DecryptionMode::NoiseFloodSmall => {
@@ -1024,7 +1026,7 @@ impl<
 
                     let pdec = partial_decrypt_using_bitdec(
                         &mut session,
-                        low_level_ct,
+                        low_level_ct.try_get_small_ct()?,
                         &keys.private_keys,
                         &keys.ksk,
                         DecryptionMode::BitDecSmall,
@@ -1302,6 +1304,7 @@ impl<
         session_prep: Arc<SessionPreparer>,
         ct: &[u8],
         fhe_type: FheType,
+        ct_format: CiphertextFormat,
         fhe_keys: OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>,
         dec_mode: DecryptionMode,
     ) -> anyhow::Result<T>
@@ -1309,10 +1312,15 @@ impl<
         T: tfhe::integer::block_decomposition::Recomposable
             + tfhe::core_crypto::commons::traits::CastFrom<u128>,
     {
-        tracing::info!("{:?} started inner_decrypt", session_prep.own_identity());
+        tracing::info!(
+            "{:?} started inner_decrypt with mode {:?}",
+            session_prep.own_identity(),
+            dec_mode
+        );
 
         let keys = fhe_keys;
-        let low_level_ct = deserialize_to_low_level(&fhe_type, ct, &keys.decompression_key)?;
+        let low_level_ct =
+            deserialize_to_low_level(&fhe_type, ct_format, ct, &keys.decompression_key)?;
 
         let dec = match dec_mode {
             DecryptionMode::NoiseFloodSmall => {
@@ -1345,7 +1353,7 @@ impl<
 
                 decrypt_using_bitdec(
                     &mut session,
-                    low_level_ct,
+                    low_level_ct.try_get_small_ct()?,
                     &keys.private_keys,
                     &keys.ksk,
                     dec_mode,
@@ -1486,7 +1494,7 @@ impl<
         let dec_mode = self.decryption_mode;
 
         // iterate over ciphertexts in this batch and decrypt each in their own session (so that it happens in parallel)
-        for (idx, ct) in ciphertexts.into_iter().enumerate() {
+        for (idx, typed_ciphertext) in ciphertexts.into_iter().enumerate() {
             let internal_sid = SessionId::from(internal_sid + idx as u128);
             let key_id = key_id.clone();
             let crypto_storage = self.crypto_storage.clone();
@@ -1495,16 +1503,17 @@ impl<
             // we do not need to hold the handle,
             // the result of the computation is tracked by the dec_meta_store
             let decrypt_future = || async move {
-                let fhe_type = if let Ok(f) = FheType::try_from(ct.fhe_type) {
+                let fhe_type = if let Ok(f) = FheType::try_from(typed_ciphertext.fhe_type) {
                     f
                 } else {
                     return Err(anyhow_error_and_log(format!(
                         "Threshold decryption failed due to wrong fhe type: {}",
-                        ct.fhe_type
+                        typed_ciphertext.fhe_type
                     )));
                 };
 
-                let ciphertext = &ct.ciphertext;
+                let ciphertext = &typed_ciphertext.ciphertext;
+                let ct_format = typed_ciphertext.ciphertext_format();
                 let fhe_keys_rlock = crypto_storage
                     .read_guarded_threshold_fhe_keys_from_cache(&key_id)
                     .await?;
@@ -1515,6 +1524,7 @@ impl<
                         prep,
                         ciphertext,
                         fhe_type,
+                        ct_format,
                         fhe_keys_rlock,
                         dec_mode,
                     )
@@ -1525,6 +1535,7 @@ impl<
                         prep,
                         ciphertext,
                         fhe_type,
+                        ct_format,
                         fhe_keys_rlock,
                         dec_mode,
                     )
@@ -1535,6 +1546,7 @@ impl<
                         prep,
                         ciphertext,
                         fhe_type,
+                        ct_format,
                         fhe_keys_rlock,
                         dec_mode,
                     )
@@ -1545,6 +1557,7 @@ impl<
                         prep,
                         ciphertext,
                         fhe_type,
+                        ct_format,
                         fhe_keys_rlock,
                         dec_mode,
                     )
@@ -1555,6 +1568,7 @@ impl<
                         prep,
                         ciphertext,
                         fhe_type,
+                        ct_format,
                         fhe_keys_rlock,
                         dec_mode,
                     )
@@ -1565,6 +1579,7 @@ impl<
                         prep,
                         ciphertext,
                         fhe_type,
+                        ct_format,
                         fhe_keys_rlock,
                         dec_mode,
                     )
@@ -1580,6 +1595,7 @@ impl<
                         prep,
                         ciphertext,
                         fhe_type,
+                        ct_format,
                         fhe_keys_rlock,
                         dec_mode,
                     )
@@ -1611,10 +1627,19 @@ impl<
                     Ok(Ok((idx, plaintext))) => {
                         decs.insert(idx, plaintext);
                     }
-                    _ => {
+                    Ok(Err(e)) => {
+                        let msg = format!("Failed decryption with err: {:?}", e);
+                        tracing::error!(msg);
                         let mut guarded_meta_store = meta_store.write().await;
-                        let _ = guarded_meta_store
-                            .update(&req_id, Err("Failed decryption.".to_string()));
+                        let _ = guarded_meta_store.update(&req_id, Err(msg));
+                        // exit mgmt task early in case of error
+                        return;
+                    }
+                    Err(e) => {
+                        let msg = format!("Failed decryption with JoinError: {:?}", e);
+                        tracing::error!(msg);
+                        let mut guarded_meta_store = meta_store.write().await;
+                        let _ = guarded_meta_store.update(&req_id, Err(msg));
                         // exit mgmt task early in case of error
                         return;
                     }

@@ -4,9 +4,9 @@ use alloy::{
     providers::Provider,
 };
 use bincode;
-use kms_grpc::kms::v1::TypedCiphertext;
 use kms_grpc::kms::v1::{
-    DecryptionRequest, FheType, ReencryptionRequest, ReencryptionRequestPayload, RequestId,
+    CiphertextFormat, DecryptionRequest, FheType, ReencryptionRequest, ReencryptionRequestPayload,
+    RequestId, TypedCiphertext,
 };
 use std::str::FromStr;
 use std::sync::Arc;
@@ -177,6 +177,7 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
                                 ciphertext,
                                 external_handle: handle,
                                 fhe_type,
+                                ciphertext_format: CiphertextFormat::BigExpanded.into(), // TODO need to be updated/configured
                             }
                         })
                         .collect(),
@@ -252,6 +253,7 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
                                     ciphertext,
                                     external_handle: handle,
                                     fhe_type,
+                                    ciphertext_format: CiphertextFormat::BigExpanded.into(), // TODO need to be updated/configured
                                 }
                             })
                             .collect(),

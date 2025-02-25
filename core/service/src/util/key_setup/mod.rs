@@ -602,6 +602,7 @@ where
             key_id,
             pub_storages[i - 1].info()
         );
+
         store_versioned_at_request_id(
             &mut pub_storages[i - 1],
             key_id,
@@ -615,6 +616,30 @@ where
             key_id,
             pub_storages[i-1].info()
         );
+
+        match &key_set.public_keys.sns_key {
+            Some(sns_key) => {
+                store_versioned_at_request_id(
+                    &mut pub_storages[i - 1],
+                    key_id,
+                    sns_key,
+                    &PubDataType::SnsKey.to_string(),
+                )
+                .await
+                .unwrap();
+                tracing::info!(
+            "Successfully stored public sns server key data under the handle {} in storage {}",
+            key_id,
+            pub_storages[i-1].info()
+        );
+            }
+            None => tracing::warn!(
+                "No sns key to store for handle {} in storage {}",
+                key_id,
+                pub_storages[i - 1].info()
+            ),
+        }
+
         store_versioned_at_request_id(
             &mut priv_storages[i - 1],
             key_id,

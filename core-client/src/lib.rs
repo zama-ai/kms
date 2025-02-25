@@ -12,8 +12,8 @@ use conf_trace::conf::Settings;
 use core::str;
 use kms_common::DecryptionMode;
 use kms_grpc::kms::v1::{
-    CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, FheParameter,
-    KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult, RequestId, TypedCiphertext,
+    CiphertextFormat, CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse,
+    FheParameter, KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult, RequestId, TypedCiphertext,
     TypedPlaintext,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
@@ -23,9 +23,9 @@ use kms_lib::consts::DEFAULT_PARAM;
 use kms_lib::engine::base::{compute_external_pubdata_message_hash, compute_pt_message_hash};
 use kms_lib::util::key_setup::ensure_client_keys_exist;
 use kms_lib::util::key_setup::test_tools::{
-    compute_cipher_from_stored_key, compute_compressed_cipher_from_stored_key,
-    compute_proven_ct_from_stored_key_and_serialize, load_crs_from_storage, load_pk_from_storage,
-    load_server_key_from_storage, TestingPlaintext,
+    compute_cipher_from_stored_key, compute_proven_ct_from_stored_key_and_serialize,
+    load_crs_from_storage, load_pk_from_storage, load_server_key_from_storage,
+    load_sns_key_from_storage, EncryptionConfig, TestingPlaintext,
 };
 use kms_lib::vault::storage::{file::FileStorage, StorageType};
 use rand::SeedableRng;
@@ -282,7 +282,7 @@ impl U4 {
 }
 
 // CLI arguments
-#[derive(Debug, Parser)]
+#[derive(Debug, Parser, Clone)]
 pub struct NoParameters {}
 
 /// Parse a string as hex string. The string can optionally start with "0x". Odd-length strings will be padded with a leading zero.
@@ -301,7 +301,7 @@ pub fn parse_hex(arg: &str) -> anyhow::Result<Vec<u8>> {
     Ok(hex::decode(hex_str)?)
 }
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Parser, Clone)]
 pub struct CipherParameters {
     /// Value that we want to encrypt and request a decryption/re-encryption.
     /// The value will be converted from a little endian hex string to a `Vec<u8>`.
@@ -313,7 +313,12 @@ pub struct CipherParameters {
     pub data_type: FheType,
     /// Boolean to activate ciphertext compression or not.
     #[clap(long, short = 'p', default_value_t = false)]
-    pub compressed: bool,
+    pub compression: bool,
+    /// Boolean to do SnS preprocessing on the ciphertext or not.
+    /// SnS preprocessing performs a PBS to convert 64-bit ciphertexts to 128-bit ones.
+    /// At the moment it cannot be used in combination with compression.
+    #[clap(long, default_value_t = true)]
+    pub precompute_sns: bool,
     /// CRS identifier to use
     #[clap(long, short = 'c')]
     pub crs_id: String,
@@ -322,19 +327,19 @@ pub struct CipherParameters {
     pub key_id: String,
 }
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Parser, Clone)]
 pub struct KeyGenParameters {
     #[clap(long, short = 'i')]
     pub preproc_id: String,
 }
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Parser, Clone)]
 pub struct CrsParameters {
     #[clap(long, short = 'm')]
     pub max_num_bits: u32,
 }
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Parser, Clone)]
 pub enum CCCommand {
     PreprocKeyGen(NoParameters),
     KeyGen(KeyGenParameters),
@@ -430,8 +435,9 @@ pub async fn encrypt(
     fhe_type: FheType,
     key_id: &str,
     keys_folder: &Path,
-    compressed: Option<bool>,
-) -> Result<(Vec<u8>, TypedPlaintext), Box<dyn std::error::Error + 'static>> {
+    compression: bool,
+    precompute_sns: bool,
+) -> Result<(Vec<u8>, CiphertextFormat, TypedPlaintext), Box<dyn std::error::Error + 'static>> {
     if to_encrypt.len() != fhe_type.bits().div_ceil(8) {
         tracing::warn!("Byte length of value to encrypt ({}) does not match FHE type ({}) and will be padded/truncated.", to_encrypt.len(), fhe_type);
     }
@@ -455,17 +461,18 @@ pub async fn encrypt(
         keys_folder
     );
 
-    let cipher: Vec<u8>;
-    if compressed.unwrap_or(false) {
-        (cipher, _) =
-            compute_compressed_cipher_from_stored_key(Some(keys_folder), typed_to_encrypt, key_id)
-                .await;
-    } else {
-        (cipher, _) =
-            compute_cipher_from_stored_key(Some(keys_folder), typed_to_encrypt, key_id).await;
-    }
+    let (cipher, ct_format, _) = compute_cipher_from_stored_key(
+        Some(keys_folder),
+        typed_to_encrypt,
+        key_id,
+        EncryptionConfig {
+            compression,
+            precompute_sns,
+        },
+    )
+    .await;
 
-    Ok((cipher, ptxt))
+    Ok((cipher, ct_format, ptxt))
 }
 
 pub async fn store_cipher(
@@ -844,8 +851,22 @@ async fn fetch_key(
     sim_conf: &CoreClientConfig,
     destination_prefix: &Path,
 ) -> anyhow::Result<()> {
-    tracing::info!("Fetching public key and server key with id {key_id}");
-    for object_name in ["PublicKey", "PublicKeyMetadata", "ServerKey"] {
+    let object_names = if sim_conf.core_addresses.len() == 1 {
+        vec![
+            PubDataType::PublicKey,
+            PubDataType::PublicKeyMetadata,
+            PubDataType::ServerKey,
+        ]
+    } else {
+        vec![
+            PubDataType::PublicKey,
+            PubDataType::PublicKeyMetadata,
+            PubDataType::ServerKey,
+            PubDataType::SnsKey,
+        ]
+    };
+    tracing::info!("Fetching public key, server key and sns key with id {key_id}");
+    for object_name in object_names {
         fetch_global_pub_object_and_write_to_file(
             destination_prefix,
             sim_conf
@@ -854,7 +875,7 @@ async fn fetch_key(
                 .expect("S3 endpoint should be provided")
                 .as_str(),
             key_id,
-            object_name,
+            &object_name.to_string(),
             sim_conf.object_folder.first().unwrap(),
         )
         .await?;
@@ -1221,7 +1242,7 @@ pub async fn execute_cmd(
     let expect_all_responses = cmd_config.expect_all_responses;
 
     tracing::info!("Path to config: {:?}", &path_to_config);
-    tracing::info!("starting command: {:?}", command);
+    tracing::info!("Starting command: {:?}", command);
     let cc_conf: CoreClientConfig = Settings::builder()
         .path(&path_to_config)
         .env_prefix("CORE_CLIENT")
@@ -1357,7 +1378,6 @@ pub async fn execute_cmd(
             let data_type = cipher_params.data_type;
             let key_id = &cipher_params.key_id;
             let keys_folder = destination_prefix;
-            let compressed = Some(cipher_params.compressed);
 
             let num_expected_responses = if expect_all_responses {
                 num_parties
@@ -1365,14 +1385,22 @@ pub async fn execute_cmd(
                 cc_conf.num_majority
             };
 
-            let (cipher, ptxt) =
-                encrypt(to_encrypt, data_type, key_id, keys_folder, compressed).await?;
+            let (cipher, ct_format, ptxt) = encrypt(
+                to_encrypt,
+                data_type,
+                key_id,
+                keys_folder,
+                cipher_params.compression,
+                cipher_params.precompute_sns,
+            )
+            .await?;
 
             // this is currently a batch of size 1
             let ct = vec![TypedCiphertext {
                 ciphertext: cipher,
                 fhe_type: data_type as i32,
                 external_handle: vec![23_u8; 32],
+                ciphertext_format: ct_format.into(),
             }];
 
             // DECRYPTION REQUEST
@@ -1459,7 +1487,6 @@ pub async fn execute_cmd(
             let data_type = cipher_params.data_type;
             let key_id = &cipher_params.key_id;
             let keys_folder = destination_prefix;
-            let compressed = Some(cipher_params.compressed);
 
             let num_expected_responses = if expect_all_responses {
                 num_parties
@@ -1467,14 +1494,22 @@ pub async fn execute_cmd(
                 cc_conf.num_reconstruct
             };
 
-            let (cipher, ptxt) =
-                encrypt(to_encrypt, data_type, key_id, keys_folder, compressed).await?;
+            let (cipher, ct_format, ptxt) = encrypt(
+                to_encrypt,
+                data_type,
+                key_id,
+                keys_folder,
+                cipher_params.compression,
+                cipher_params.precompute_sns,
+            )
+            .await?;
 
             internal_client.convert_to_addresses();
             let typed_ciphertexts = vec![TypedCiphertext {
                 fhe_type: data_type as i32,
                 ciphertext: cipher,
                 external_handle: vec![1, 2, 3],
+                ciphertext_format: ct_format.into(),
             }];
 
             // REENCRYPTION REQUEST
@@ -1701,6 +1736,11 @@ async fn fetch_and_check_keygen(
     fetch_key(&req_id, cc_conf, destination_prefix).await?;
     let pk = load_pk_from_storage(Some(destination_prefix), &req_id).await;
     let sk = load_server_key_from_storage(Some(destination_prefix), &req_id).await;
+
+    if kms_addrs.len() != 1 {
+        // TODO at the moment there's no EIP712 signature on the SnS key
+        let _sns_key = load_sns_key_from_storage(Some(destination_prefix), &req_id).await;
+    }
 
     for response in responses {
         let resp_req_id = &response.request_id.unwrap().to_string();

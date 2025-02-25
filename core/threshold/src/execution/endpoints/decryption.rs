@@ -22,6 +22,7 @@ use crate::execution::tfhe_internals::parameters::Ciphertext128;
 use crate::execution::tfhe_internals::parameters::Ciphertext128Block;
 use crate::execution::tfhe_internals::parameters::Ciphertext64;
 use crate::execution::tfhe_internals::parameters::Ciphertext64Block;
+use crate::execution::tfhe_internals::parameters::LowLevelCiphertext;
 use crate::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
 use crate::execution::{
     online::bit_manipulation::{bit_dec_batch, BatchedBits},
@@ -201,7 +202,7 @@ pub async fn decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, S, P, R,
     session: &mut S,
     preparation: &mut P,
     ck: &SwitchAndSquashKey,
-    ct: Ciphertext64,
+    ct: LowLevelCiphertext,
     secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
     _mode: DecryptionMode,
     _own_identity: Identity,
@@ -215,7 +216,11 @@ where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let execution_start_timer = Instant::now();
-    let ct_large = ck.to_large_ciphertext(&ct)?;
+    let ct_large = match ct {
+        LowLevelCiphertext::Big(ct128) => ct128,
+        LowLevelCiphertext::Small(ct64) => ck.to_large_ciphertext(&ct64)?,
+    };
+
     let mut results = HashMap::with_capacity(1);
     let len = ct_large.len();
     let mut preprocessing = preparation.init_prep_noiseflooding(len).await?;
@@ -273,7 +278,7 @@ pub async fn partial_decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, 
     session: &mut S,
     preparation: &mut P,
     ck: &SwitchAndSquashKey,
-    ct: Ciphertext64,
+    ct: LowLevelCiphertext,
     secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
     _mode: DecryptionMode,
 ) -> anyhow::Result<(
@@ -287,14 +292,17 @@ where
     ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
 {
     let execution_start_timer = Instant::now();
-    let ct_large = ck.to_large_ciphertext(&ct)?;
+    let ct_large = match ct {
+        LowLevelCiphertext::Big(ct128) => ct128,
+        LowLevelCiphertext::Small(ct64) => ck.to_large_ciphertext(&ct64)?,
+    };
     let mut results = HashMap::with_capacity(1);
     let len = ct_large.len();
     let mut preparation = preparation.init_prep_noiseflooding(len).await?;
     let preparation = preparation.as_mut();
     let mut shared_masked_ptxts = Vec::with_capacity(ct_large.len());
-    for current_ct_block in ct_large {
-        let partial_decrypt = partial_decrypt128(secret_key_share, &current_ct_block)?;
+    for current_ct_block in &ct_large.inner {
+        let partial_decrypt = partial_decrypt128(secret_key_share, current_ct_block)?;
         let res = partial_decrypt + preparation.next_mask()?;
 
         shared_masked_ptxts.push(res);
@@ -807,7 +815,7 @@ where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let mut shared_masked_ptxts = Vec::with_capacity(ciphertext.len());
-    for current_ct_block in ciphertext {
+    for current_ct_block in ciphertext.inner {
         let partial_decrypt = partial_decrypt128(keyshares, &current_ct_block)?;
         let res = partial_decrypt + preprocessing.next_mask()?;
 

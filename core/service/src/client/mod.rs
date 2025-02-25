@@ -41,9 +41,6 @@ use std::num::Wrapping;
 use tfhe::shortint::ClassicPBSParameters;
 use wasm_bindgen::prelude::*;
 
-// The default decryption mode to use in the client, when no other mode is specified explicitly. Currentlt Noise Flooding in the nSmall variant.
-const DEFAULT_DECRYPTION_MODE: DecryptionMode = DecryptionMode::NoiseFloodSmall;
-
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
         use crate::engine::base::{compute_handle};
@@ -388,7 +385,8 @@ impl Client {
     ///   in a secure location, e.g., hardware wallet or web extension.
     ///   Calling functions that requires `client_sk` when it is None will return an error.
     /// * `params` - the FHE parameters.
-    /// * `decryption_mode` - the decryption mode to use. Currently available modes are: NoiseFloodSmall and BitDecSmall. If set to none, the default mode in `DEFAULT_DECRYPTION_MODE` is used.
+    /// * `decryption_mode` - the decryption mode to use. Currently available modes are: NoiseFloodSmall and BitDecSmall.
+    ///   If set to none, DecryptionMode::default() is used.
     pub fn new(
         server_pks: Vec<PublicSigKey>,
         client_address: alloy_primitives::Address,
@@ -396,7 +394,7 @@ impl Client {
         params: DKGParams,
         decryption_mode: Option<DecryptionMode>,
     ) -> Self {
-        let decryption_mode = decryption_mode.unwrap_or(DEFAULT_DECRYPTION_MODE);
+        let decryption_mode = decryption_mode.unwrap_or_default();
         Client {
             rng: Box::new(AesRng::from_entropy()), // todo should be argument
             server_identities: ServerIdentities::Pks(server_pks),
@@ -414,7 +412,8 @@ impl Client {
     /// * `client_storage` - the storage where the client's keys (for signing and verifying) are stored.
     /// * `pub_storages` - the storages where the public verification keys of the servers are stored. These must be unique.
     /// * `params` - the FHE parameters
-    /// * `decryption_mode` - the decryption mode to use. Currently available modes are: NoiseFloodSmall and BitDecSmall. If set to none, the default mode in `DEFAULT_DECRYPTION_MODE` is used.
+    /// * `decryption_mode` - the decryption mode to use. Currently available modes are: NoiseFloodSmall and BitDecSmall.
+    ///   If set to none, DecryptionMode::default() is used.
     #[cfg(feature = "non-wasm")]
     pub async fn new_client<ClientS: Storage, PubS: StorageReader>(
         client_storage: ClientS,
@@ -2190,6 +2189,10 @@ pub mod test_tools {
     #[cfg(feature = "slow_tests")]
     use crate::util::key_setup::test_tools::setup::ensure_default_material_exists;
 
+    // Put gRPC size limit to 100 MB.
+    // We need a high limit because ciphertexts may be large after SnS.
+    const GRPC_MAX_MESSAGE_SIZE: usize = 100 * 1024 * 1024;
+
     pub async fn setup_threshold_no_client<
         PubS: Storage + Clone + Sync + Send + 'static,
         PrivS: Storage + Clone + Sync + Send + 'static,
@@ -2239,7 +2242,7 @@ pub mod test_tools {
             .collect_vec();
 
         // use NoiseFloodSmall unless some other DecryptionMode was set as parameter
-        let decryption_mode = decryption_mode.unwrap_or(DEFAULT_DECRYPTION_MODE);
+        let decryption_mode = decryption_mode.unwrap_or_default();
 
         // a vector of sender that will trigger shutdown of core/threshold servers
         let mut mpc_shutdown_txs = Vec::new();
@@ -2251,7 +2254,7 @@ pub mod test_tools {
                 listen_address: ip_addr.to_string(),
                 listen_port: service_ports[i - 1],
                 timeout_secs: 60u64,
-                grpc_max_message_size: 2 * 10 * 1024 * 1024, // 20 MiB
+                grpc_max_message_size: GRPC_MAX_MESSAGE_SIZE,
             };
             let mpc_conf = mpc_confs.clone();
 
@@ -2562,7 +2565,7 @@ pub mod test_tools {
                 listen_address: ip_addr.to_string(),
                 listen_port,
                 timeout_secs: 360,
-                grpc_max_message_size: 2 * 10 * 1024 * 1024, // 20 MiB to allow for 2048 bit encryptions
+                grpc_max_message_size: GRPC_MAX_MESSAGE_SIZE,
             };
 
             run_server(config, listener, arc_kms, health_service, rx.map(drop))
@@ -2660,8 +2663,8 @@ pub(crate) mod tests {
     use crate::util::file_handling::write_element;
     use crate::util::key_setup::max_threshold;
     use crate::util::key_setup::test_tools::{
-        compute_cipher_from_stored_key, compute_compressed_cipher_from_stored_key,
-        compute_proven_ct_from_stored_key, load_pk_from_storage, purge, TestingPlaintext,
+        compute_cipher_from_stored_key, compute_proven_ct_from_stored_key, load_pk_from_storage,
+        purge, EncryptionConfig, TestingPlaintext,
     };
     use crate::util::rate_limiter::RateLimiterConfig;
     use crate::vault::storage::StorageReader;
@@ -3121,11 +3124,20 @@ pub(crate) mod tests {
         let mut cts = Vec::new();
         for i in 0..amount_cts {
             let msg = TestingPlaintext::U32(i as u32);
-            let (ct, fhe_type) =
-                compute_compressed_cipher_from_stored_key(None, msg, &key_id.to_string()).await;
+            let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
+                None,
+                msg,
+                &key_id.to_string(),
+                EncryptionConfig {
+                    compression: true,
+                    precompute_sns: false,
+                },
+            )
+            .await;
             let ctt = TypedCiphertext {
                 ciphertext: ct,
                 fhe_type: fhe_type.into(),
+                ciphertext_format: ct_format.into(),
                 external_handle: i.to_be_bytes().to_vec(),
             };
             cts.push(ctt);
@@ -4437,14 +4449,20 @@ pub(crate) mod tests {
 
         let mut cts = Vec::new();
         for (i, msg) in msgs.clone().into_iter().enumerate() {
-            let (ct, fhe_type) = if compression {
-                compute_compressed_cipher_from_stored_key(None, msg, key_id).await
-            } else {
-                compute_cipher_from_stored_key(None, msg, key_id).await
-            };
+            let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
+                None,
+                msg,
+                key_id,
+                EncryptionConfig {
+                    compression,
+                    precompute_sns: false,
+                },
+            )
+            .await;
             let ctt = TypedCiphertext {
                 ciphertext: ct,
                 fhe_type: fhe_type.into(),
+                ciphertext_format: ct_format.into(),
                 external_handle: i.to_be_bytes().to_vec(),
             };
             cts.push(ctt);
@@ -4680,7 +4698,16 @@ pub(crate) mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (kms_server, kms_client, mut internal_client) =
             super::test_tools::centralized_handles(dkg_params, None).await;
-        let (ct, fhe_type) = compute_compressed_cipher_from_stored_key(None, msg, key_id).await;
+        let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
+            None,
+            msg,
+            key_id,
+            EncryptionConfig {
+                compression: true,
+                precompute_sns: false,
+            },
+        )
+        .await;
         let req_key_id = key_id.to_owned().try_into().unwrap();
 
         internal_client.convert_to_addresses();
@@ -4700,6 +4727,7 @@ pub(crate) mod tests {
                 let typed_ciphertexts = vec![TypedCiphertext {
                     ciphertext: ct.clone(),
                     fhe_type: fhe_type.into(),
+                    ciphertext_format: ct_format.into(),
                     external_handle: j.to_be_bytes().to_vec(),
                 }];
                 let request_id = RequestId::derive(&format!("TEST_REENC_ID_{j}")).unwrap();
@@ -4904,8 +4932,11 @@ pub(crate) mod tests {
                 TestingPlaintext::U8(2),
                 TestingPlaintext::U16(444),
             ],
-            2,
-            false,
+            EncryptionConfig {
+                compression: false,
+                precompute_sns: false,
+            },
+            1,
             amount_parties,
             None,
             Some(decryption_mode),
@@ -4919,7 +4950,7 @@ pub(crate) mod tests {
     #[case(4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
     #[case(4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::BitDecSmall)]
     #[serial]
-    async fn test_decryption_threshold_with_decompression(
+    async fn test_decryption_threshold(
         #[case] amount_parties: usize,
         #[case] key_id: &str,
         #[case] decryption_mode: DecryptionMode,
@@ -4932,8 +4963,40 @@ pub(crate) mod tests {
                 TestingPlaintext::U8(2),
                 TestingPlaintext::U16(444),
             ],
+            EncryptionConfig {
+                compression: true,
+                precompute_sns: false,
+            },
             2,
-            true,
+            amount_parties,
+            None,
+            Some(decryption_mode),
+        )
+        .await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[rstest::rstest]
+    #[case(4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
+    #[serial]
+    async fn test_decryption_threshold_with_sns_preprocessing(
+        #[case] amount_parties: usize,
+        #[case] key_id: &str,
+        #[case] decryption_mode: DecryptionMode,
+    ) {
+        decryption_threshold(
+            TEST_PARAM,
+            key_id,
+            vec![
+                TestingPlaintext::U8(u8::MAX),
+                TestingPlaintext::U8(2),
+                TestingPlaintext::U16(444),
+            ],
+            EncryptionConfig {
+                compression: false,
+                precompute_sns: true,
+            },
+            2,
             amount_parties,
             None,
             Some(decryption_mode),
@@ -4943,7 +5006,7 @@ pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 7, &DEFAULT_THRESHOLD_KEY_ID_7P.to_string())]
+    #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn default_decryption_threshold(
@@ -4958,8 +5021,40 @@ pub(crate) mod tests {
             DEFAULT_PARAM,
             key_id,
             msg,
+            EncryptionConfig {
+                compression: true,
+                precompute_sns: false,
+            },
             parallelism,
-            true,
+            amount_parties,
+            None,
+            None,
+        )
+        .await;
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[rstest::rstest]
+    #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn default_decryption_threshold_with_sns_preprocessing(
+        #[case] msg: Vec<TestingPlaintext>,
+        #[case] parallelism: usize,
+        #[case] amount_parties: usize,
+        #[case] key_id: &str,
+    ) {
+        use crate::consts::DEFAULT_PARAM;
+
+        decryption_threshold(
+            DEFAULT_PARAM,
+            key_id,
+            msg,
+            EncryptionConfig {
+                compression: false,
+                precompute_sns: true,
+            },
+            parallelism,
             amount_parties,
             None,
             None,
@@ -4985,8 +5080,11 @@ pub(crate) mod tests {
             DEFAULT_PARAM,
             key_id,
             msg,
+            EncryptionConfig {
+                compression: true,
+                precompute_sns: false,
+            },
             parallelism,
-            true,
             amount_parties,
             party_ids_to_crash,
             None,
@@ -4999,8 +5097,8 @@ pub(crate) mod tests {
         dkg_params: DKGParams,
         key_id: &str,
         msgs: Vec<TestingPlaintext>,
+        enc_config: EncryptionConfig,
         parallelism: usize,
-        compression: bool,
         amount_parties: usize,
         party_ids_to_crash: Option<Vec<usize>>,
         decryption_mode: Option<DecryptionMode>,
@@ -5029,14 +5127,12 @@ pub(crate) mod tests {
         let mut cts = Vec::new();
         let mut bits = 0;
         for (i, msg) in msgs.clone().into_iter().enumerate() {
-            let (ct, fhe_type) = if compression {
-                compute_compressed_cipher_from_stored_key(None, msg, key_id).await
-            } else {
-                compute_cipher_from_stored_key(None, msg, key_id).await
-            };
+            let (ct, ct_format, fhe_type) =
+                compute_cipher_from_stored_key(None, msg, key_id, enc_config).await;
             let ctt = TypedCiphertext {
                 ciphertext: ct,
                 fhe_type: fhe_type.into(),
+                ciphertext_format: ct_format.into(),
                 external_handle: i.to_be_bytes().to_vec(),
             };
             cts.push(ctt);
@@ -5202,6 +5298,39 @@ pub(crate) mod tests {
             key_id,
             false,
             TestingPlaintext::U8(42),
+            EncryptionConfig {
+                compression: true,
+                precompute_sns: false,
+            },
+            4,
+            secure,
+            amount_parties,
+            None,
+            Some(decryption_mode),
+        )
+        .await;
+    }
+
+    #[rstest::rstest]
+    #[case(true, 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
+    #[case(false, 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn test_reencryption_threshold_with_sns_preprocessing(
+        #[case] secure: bool,
+        #[case] amount_parties: usize,
+        #[case] key_id: &str,
+        #[case] decryption_mode: DecryptionMode,
+    ) {
+        reencryption_threshold(
+            TEST_PARAM,
+            key_id,
+            false,
+            TestingPlaintext::U8(42),
+            EncryptionConfig {
+                compression: false,
+                precompute_sns: true,
+            },
             4,
             secure,
             amount_parties,
@@ -5228,6 +5357,10 @@ pub(crate) mod tests {
             key_id,
             true,
             TestingPlaintext::U8(42),
+            EncryptionConfig {
+                compression: true,
+                precompute_sns: false,
+            },
             1,
             secure,
             amount_parties,
@@ -5265,6 +5398,10 @@ pub(crate) mod tests {
             key_id,
             true,
             msg,
+            EncryptionConfig {
+                compression: true,
+                precompute_sns: false,
+            },
             1, // wasm tests are single-threaded
             secure,
             amount_parties,
@@ -5293,6 +5430,10 @@ pub(crate) mod tests {
             key_id,
             false,
             msg,
+            EncryptionConfig {
+                compression: true,
+                precompute_sns: false,
+            },
             parallelism,
             secure,
             amount_parties,
@@ -5304,17 +5445,39 @@ pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(TestingPlaintext::U8(u8::MAX), 1, 7, Some(vec![2,6]), &DEFAULT_THRESHOLD_KEY_ID_7P.to_string())]
-    #[case(TestingPlaintext::Bool(true), 4, 4, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(TestingPlaintext::U8(u8::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn default_reencryption_threshold_with_sns_preprocessing(
+        #[case] msg: TestingPlaintext,
+        #[case] parallelism: usize,
+        #[case] amount_parties: usize,
+        #[case] key_id: &str,
+        #[values(true)] secure: bool,
+    ) {
+        use crate::consts::DEFAULT_PARAM;
+
+        reencryption_threshold(
+            DEFAULT_PARAM,
+            key_id,
+            false,
+            msg,
+            EncryptionConfig {
+                compression: false,
+                precompute_sns: true,
+            },
+            parallelism,
+            secure,
+            amount_parties,
+            None,
+            None,
+        )
+        .await;
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[rstest::rstest]
     #[case(TestingPlaintext::U8(u8::MAX), 1, 4,Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TestingPlaintext::U16(u16::MAX), 1, 4,Some(vec![3]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TestingPlaintext::U32(u32::MAX), 1, 4,Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TestingPlaintext::U64(u64::MAX), 1, 4,Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TestingPlaintext::U128(u128::MAX), 1, 4,Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1, 4,Some(vec![3]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1, 4,Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    // TODO: this takes approx. 300 secs locally.
-    // #[case(TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1, 4, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn default_reencryption_threshold_with_crash(
@@ -5332,6 +5495,10 @@ pub(crate) mod tests {
             key_id,
             false,
             msg,
+            EncryptionConfig {
+                compression: true,
+                precompute_sns: false,
+            },
             parallelism,
             secure,
             amount_parties,
@@ -5347,6 +5514,7 @@ pub(crate) mod tests {
         key_id: &str,
         write_transcript: bool,
         msg: TestingPlaintext,
+        enc_config: EncryptionConfig,
         parallelism: usize,
         secure: bool,
         amount_parties: usize,
@@ -5359,7 +5527,8 @@ pub(crate) mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (mut kms_servers, mut kms_clients, mut internal_client) =
             threshold_handles(dkg_params, amount_parties, true, None, decryption_mode).await;
-        let (ct, fhe_type) = compute_cipher_from_stored_key(None, msg, key_id).await;
+        let (ct, ct_format, fhe_type) =
+            compute_cipher_from_stored_key(None, msg, key_id, enc_config).await;
 
         internal_client.convert_to_addresses();
 
@@ -5370,6 +5539,7 @@ pub(crate) mod tests {
                 let typed_ciphertexts = vec![TypedCiphertext {
                     ciphertext: ct.clone(),
                     fhe_type: fhe_type.into(),
+                    ciphertext_format: ct_format.into(),
                     external_handle: j.to_be_bytes().to_vec(),
                 }];
                 let (req, enc_pk, enc_sk) = internal_client
@@ -5609,6 +5779,7 @@ pub(crate) mod tests {
         .await;
         let ct = Vec::from([1_u8; 100000]);
         let fhe_type = FheType::Euint32;
+        let ct_format = kms_grpc::kms::v1::CiphertextFormat::default();
         let client_address = alloy_primitives::Address::from_public_key(keys.client_pk.pk());
         let mut internal_client = Client::new(
             keys.server_keys.clone(),
@@ -5621,6 +5792,7 @@ pub(crate) mod tests {
         let typed_ciphertexts = vec![TypedCiphertext {
             ciphertext: ct,
             fhe_type: fhe_type.into(),
+            ciphertext_format: ct_format.into(),
             external_handle: vec![123],
         }];
         let (req, _enc_pk, _enc_sk) = internal_client

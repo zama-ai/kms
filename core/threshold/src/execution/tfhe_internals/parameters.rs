@@ -11,6 +11,7 @@ use tfhe::{
         entities::LweCiphertextOwned,
     },
     integer::{ciphertext::BaseRadixCiphertext, parameters::DynamicDistribution},
+    named::Named,
     shortint::{
         parameters::{
             CompactCiphertextListExpansionKind, CompactPublicKeyEncryptionParameters,
@@ -21,7 +22,9 @@ use tfhe::{
         CarryModulus, ClassicPBSParameters, EncryptionKeyChoice, MaxNoiseLevel, MessageModulus,
         PBSOrder, PBSParameters,
     },
+    Versionize,
 };
+use tfhe_versionable::VersionsDispatch;
 
 use crate::{
     execution::keyset_config::KeySetConfig,
@@ -30,14 +33,67 @@ use crate::{
 
 pub type Ciphertext64 = BaseRadixCiphertext<tfhe::shortint::Ciphertext>;
 pub type Ciphertext64Block = tfhe::shortint::Ciphertext;
+
+#[derive(VersionsDispatch)]
+pub enum Ciphertext128Versioned {
+    V0(Ciphertext128),
+}
+
 // Observe that tfhe-rs is hard-coded to use u64, hence we require custom types for the 128 bit versions for now.
-pub type Ciphertext128 = Vec<Ciphertext128Block>;
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, Versionize)]
+#[versionize(Ciphertext128Versioned)]
+pub struct Ciphertext128 {
+    pub inner: Vec<Ciphertext128Block>,
+}
+
+impl Named for Ciphertext128 {
+    const NAME: &'static str = "Ciphertext128";
+}
+
+impl Ciphertext128 {
+    pub fn new(inner: Vec<Ciphertext128Block>) -> Self {
+        Self { inner }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+}
+
 pub type Ciphertext128Block = LweCiphertextOwned<u128>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EncryptionType {
     Bits64,
     Bits128,
+}
+
+pub enum LowLevelCiphertext {
+    Big(Ciphertext128),
+    Small(Ciphertext64),
+}
+
+impl LowLevelCiphertext {
+    pub fn try_get_big_ct(self) -> anyhow::Result<Ciphertext128> {
+        match self {
+            LowLevelCiphertext::Big(ct128) => Ok(ct128),
+            LowLevelCiphertext::Small(_) => {
+                anyhow::bail!("expected big ciphertext but got a small one")
+            }
+        }
+    }
+    pub fn try_get_small_ct(self) -> anyhow::Result<Ciphertext64> {
+        match self {
+            LowLevelCiphertext::Big(_) => {
+                anyhow::bail!("expected small ciphertext but got a big one")
+            }
+            LowLevelCiphertext::Small(ct64) => Ok(ct64),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Debug, Default)]
