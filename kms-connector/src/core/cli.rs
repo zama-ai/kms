@@ -18,9 +18,9 @@ pub struct Cli {
 pub enum Commands {
     /// Start a KMS connector instance
     Start {
-        /// Configuration file path
+        /// Configuration file path (optional if using environment variables)
         #[arg(short, long, value_name = "FILE")]
-        config: PathBuf,
+        config: Option<PathBuf>,
 
         /// Optional instance name (overrides service_name in config)
         #[arg(short, long)]

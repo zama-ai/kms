@@ -77,6 +77,101 @@ httpz_address = "0x..."
 channel_size = 1000
 ```
 
+## Configuration
+
+The KMS Connector supports flexible configuration through both TOML files and environment variables. You can use either method or combine them, with environment variables taking precedence over file-based configuration.
+
+### Configuration Methods
+
+1. **Environment Variables Only**
+
+   ```bash
+   # Set required configuration
+   export KMS_CONNECTOR_GWL2_URL="ws://localhost:8547"
+   export KMS_CONNECTOR_KMS_CORE_ENDPOINT="http://localhost:50052"
+   export KMS_CONNECTOR_MNEMONIC="your mnemonic here"
+   export KMS_CONNECTOR_CHAIN_ID="31337"
+   export KMS_CONNECTOR_DECRYPTION_MANAGER_ADDRESS="0x..."
+   export KMS_CONNECTOR_HTTPZ_ADDRESS="0x..."
+   
+   # Optional configuration with defaults
+   export KMS_CONNECTOR_CHANNEL_SIZE="1000"
+   export KMS_CONNECTOR_SERVICE_NAME="kms-connector"
+   export KMS_CONNECTOR_DECRYPTION_TIMEOUT_SECS="300"
+   export KMS_CONNECTOR_REENCRYPTION_TIMEOUT_SECS="300"
+   export KMS_CONNECTOR_RETRY_INTERVAL_SECS="5"
+
+   # Start the connector without a config file
+   cargo run --bin kms-connector start
+   ```
+
+2. **Config File Only**
+
+   ```bash
+   # Use a TOML config file
+   cargo run --bin kms-connector start --config ./config/environments/config-base.toml
+   ```
+
+3. **Combined Configuration**
+
+   ```bash
+   # Set specific overrides
+   export KMS_CONNECTOR_GWL2_URL="ws://localhost:8547"
+   export KMS_CONNECTOR_CHAIN_ID="31337"
+
+   # Use config file for other values
+   cargo run --bin kms-connector start --config ./config/environments/config-base.toml
+   ```
+
+### Configuration Precedence
+
+The configuration values are loaded in the following order, with later sources overriding earlier ones:
+
+1. Default values (lowest priority)
+2. TOML config file (if provided)
+3. Environment variables (highest priority)
+
+### Default Values
+
+When neither environment variables nor config file values are provided, the following defaults are used:
+
+```toml
+gwl2_url = "ws://localhost:8545"
+kms_core_endpoint = "http://[::1]:50052"
+chain_id = 31337
+decryption_manager_address = "0x5fbdb2315678afecb367f032d93f642f64180aa3"
+httpz_address = "0x0000000000000000000000000000000000000001"
+channel_size = 1000
+service_name = "kms-connector"
+decryption_timeout_secs = 300
+reencryption_timeout_secs = 300
+retry_interval_secs = 5
+```
+
+### List Of Environment Variables
+
+All environment variables are prefixed with `KMS_CONNECTOR_`. Here's the complete list:
+
+| Environment Variable | Description | Default |
+|---------------------|-------------|---------|
+| `KMS_CONNECTOR_GWL2_URL` | Gateway L2 WebSocket URL | ws://localhost:8545 |
+| `KMS_CONNECTOR_KMS_CORE_ENDPOINT` | KMS Core service endpoint | http://[::1]:50052 |
+| `KMS_CONNECTOR_MNEMONIC` | Wallet mnemonic phrase | (required) |
+| `KMS_CONNECTOR_CHAIN_ID` | Blockchain network chain ID | 31337 |
+| `KMS_CONNECTOR_DECRYPTION_MANAGER_ADDRESS` | Address of the Decryption Manager contract | 0x5fbdb2315678afecb367f032d93f642f64180aa3 |
+| `KMS_CONNECTOR_HTTPZ_ADDRESS` | Address of the HTTPZ contract | 0x0000000000000000000000000000000000000001 |
+| `KMS_CONNECTOR_CHANNEL_SIZE` | Size of the event processing channel | 1000 |
+| `KMS_CONNECTOR_SERVICE_NAME` | Name of the KMS connector instance | kms-connector |
+| `KMS_CONNECTOR_DECRYPTION_TIMEOUT_SECS` | Timeout for decryption operations | 300 |
+| `KMS_CONNECTOR_REENCRYPTION_TIMEOUT_SECS` | Timeout for re-encryption operations | 300 |
+| `KMS_CONNECTOR_RETRY_INTERVAL_SECS` | Interval between retry attempts | 5 |
+
+### Best Practices
+
+1. Use a config file for development and testing environments where values change infrequently
+2. Use environment variables for production deployments and when values need to be changed dynamically
+3. Store sensitive information (like mnemonics) as environment variables rather than in config files
+
 ## Architecture: Adapter-Provider Pattern
 
 The connector uses a two-layer architecture to separate L2 chain interaction from business logic:

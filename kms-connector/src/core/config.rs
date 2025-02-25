@@ -1,6 +1,7 @@
 use crate::error::{Error, Result};
 use alloy::primitives::Address;
 use bip39::Mnemonic;
+use config::{Config as ConfigBuilder, Environment, File, FileFormat};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path, str::FromStr, time::Duration};
 use tracing::{info, warn};
@@ -50,6 +51,25 @@ fn default_reencryption_timeout() -> u64 {
 
 fn default_retry_interval() -> u64 {
     5 // 5 seconds
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            gwl2_url: "ws://localhost:8545".to_string(),
+            kms_core_endpoint: "http://[::1]:50052".to_string(),
+            // Use a valid mnemonic with correct checksum
+            mnemonic: "test test test test test test test test test test test junk".to_string(),
+            chain_id: 31337,
+            decryption_manager_address: "0x5fbdb2315678afecb367f032d93f642f64180aa3".to_string(),
+            httpz_address: "0x0000000000000000000000000000000000000001".to_string(),
+            channel_size: Some(1000),
+            service_name: default_service_name(),
+            decryption_timeout_secs: default_decryption_timeout(),
+            reencryption_timeout_secs: default_reencryption_timeout(),
+            retry_interval_secs: default_retry_interval(),
+        }
+    }
 }
 
 impl Config {
@@ -109,6 +129,90 @@ impl Config {
         Ok(config)
     }
 
+    /// Load configuration from environment variables and optionally from a TOML file
+    /// Environment variables take precedence over file configuration
+    /// Environment variables are prefixed with KMS_CONNECTOR_
+    pub fn from_env_and_file<P: AsRef<Path>>(path: Option<P>) -> Result<Self> {
+        let mut builder = ConfigBuilder::builder();
+
+        // Start with default values
+        let default_config = Self::default();
+        builder = builder.add_source(config::File::from_str(
+            &toml::to_string(&default_config)
+                .map_err(|e| Error::Config(format!("Failed to serialize default config: {}", e)))?,
+            config::FileFormat::Toml,
+        ));
+
+        // If path is provided, add it as a config source
+        if let Some(path) = path {
+            info!(
+                "Loading configuration from file: {}",
+                path.as_ref().display()
+            );
+            builder = builder.add_source(
+                File::with_name(path.as_ref().to_str().unwrap()).format(FileFormat::Toml),
+            );
+        }
+
+        // Add environment variables last so they take precedence
+        info!("Adding environment variables with prefix KMS_CONNECTOR_");
+        builder = builder.add_source(Environment::with_prefix("KMS_CONNECTOR"));
+
+        let settings = builder
+            .build()
+            .map_err(|e| Error::Config(format!("Failed to build config: {}", e)))?;
+
+        let config: Self = settings
+            .try_deserialize()
+            .map_err(|e| Error::Config(format!("Failed to deserialize config: {}", e)))?;
+
+        // Log configuration
+        info!("Configuration loaded successfully:");
+        info!("  Service Name: {}", config.service_name);
+        info!("  Gateway L2 URL: {}", config.gwl2_url);
+        info!("  KMS Core Endpoint: {}", config.kms_core_endpoint);
+        info!("  Chain ID: {}", config.chain_id);
+        info!(
+            "  DecryptionManager Address: {}",
+            config.decryption_manager_address
+        );
+        info!("  HTTPZ Address: {}", config.httpz_address);
+        if let Some(size) = config.channel_size {
+            info!("  Channel Size: {}", size);
+        } else {
+            info!("  Channel Size: default");
+        }
+        info!("  Decryption Timeout: {}s", config.decryption_timeout_secs);
+        info!(
+            "  Reencryption Timeout: {}s",
+            config.reencryption_timeout_secs
+        );
+        info!("  Retry Interval: {}s", config.retry_interval_secs);
+
+        // Validate the configuration using existing validation logic
+        if !config.decryption_manager_address.starts_with("0x") {
+            return Err(Error::Config(
+                "DecryptionManager address must start with 0x".into(),
+            ));
+        }
+        Address::from_str(&config.decryption_manager_address)
+            .map_err(|e| Error::Config(format!("Invalid DecryptionManager address: {}", e)))?;
+
+        if !config.httpz_address.starts_with("0x") {
+            return Err(Error::Config("HTTPZ address must start with 0x".into()));
+        }
+        Address::from_str(&config.httpz_address)
+            .map_err(|e| Error::Config(format!("Invalid HTTPZ address: {}", e)))?;
+
+        // Validate mnemonic
+        info!("Validating mnemonic...");
+        Mnemonic::parse_normalized(&config.mnemonic)
+            .map_err(|e| Error::Config(format!("Invalid mnemonic: {}", e)))?;
+        info!("Mnemonic validated successfully");
+
+        Ok(config)
+    }
+
     /// Save configuration to a TOML file
     pub fn to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let content = toml::to_string_pretty(self)
@@ -151,14 +255,36 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
+    use std::env;
     use tempfile::NamedTempFile;
 
+    fn get_test_mnemonic() -> String {
+        // Use a valid test mnemonic with correct checksum
+        "test test test test test test test test test test test junk".to_string()
+    }
+
+    fn cleanup_env_vars() {
+        env::remove_var("KMS_CONNECTOR_GWL2_URL");
+        env::remove_var("KMS_CONNECTOR_KMS_CORE_ENDPOINT");
+        env::remove_var("KMS_CONNECTOR_MNEMONIC");
+        env::remove_var("KMS_CONNECTOR_CHAIN_ID");
+        env::remove_var("KMS_CONNECTOR_DECRYPTION_MANAGER_ADDRESS");
+        env::remove_var("KMS_CONNECTOR_HTTPZ_ADDRESS");
+        env::remove_var("KMS_CONNECTOR_CHANNEL_SIZE");
+        env::remove_var("KMS_CONNECTOR_SERVICE_NAME");
+        env::remove_var("KMS_CONNECTOR_DECRYPTION_TIMEOUT_SECS");
+        env::remove_var("KMS_CONNECTOR_REENCRYPTION_TIMEOUT_SECS");
+        env::remove_var("KMS_CONNECTOR_RETRY_INTERVAL_SECS");
+    }
+
     #[test]
+    #[serial]
     fn test_load_valid_config() {
         let config = Config {
             gwl2_url: "ws://localhost:8545".to_string(),
             kms_core_endpoint: "http://localhost:50052".to_string(),
-            mnemonic: "test test test test test test test test test test test junk".to_string(),
+            mnemonic: get_test_mnemonic(),
             chain_id: 1,
             decryption_manager_address: "0x0000000000000000000000000000000000000000".to_string(),
             httpz_address: "0x0000000000000000000000000000000000000000".to_string(),
@@ -202,11 +328,12 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_save_config() {
         let config = Config {
             gwl2_url: "ws://localhost:8545".to_string(),
             kms_core_endpoint: "http://localhost:50052".to_string(),
-            mnemonic: "test test test test test test test test test test test junk".to_string(),
+            mnemonic: get_test_mnemonic(),
             chain_id: 1,
             decryption_manager_address: "0x0000000000000000000000000000000000000000".to_string(),
             httpz_address: "0x0000000000000000000000000000000000000000".to_string(),
@@ -225,11 +352,12 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_invalid_address() {
         let config = Config {
             gwl2_url: "ws://localhost:8545".to_string(),
             kms_core_endpoint: "http://localhost:50052".to_string(),
-            mnemonic: "test test test test test test test test test test test junk".to_string(),
+            mnemonic: get_test_mnemonic(),
             chain_id: 1,
             decryption_manager_address: "0x0000".to_string(),
             httpz_address: "0x000010".to_string(),
@@ -244,5 +372,93 @@ mod tests {
         config.to_file(temp_file.path()).unwrap();
 
         assert!(Config::from_file(temp_file.path()).is_err());
+    }
+
+    #[test]
+    #[serial]
+    fn test_load_from_env() {
+        cleanup_env_vars();
+
+        // Set environment variables
+        env::set_var("KMS_CONNECTOR_GWL2_URL", "ws://localhost:9545");
+        env::set_var("KMS_CONNECTOR_KMS_CORE_ENDPOINT", "http://localhost:50053");
+        env::set_var("KMS_CONNECTOR_MNEMONIC", get_test_mnemonic());
+        env::set_var("KMS_CONNECTOR_CHAIN_ID", "31888");
+        env::set_var(
+            "KMS_CONNECTOR_DECRYPTION_MANAGER_ADDRESS",
+            "0x5fbdb2315678afecb367f032d93f642f64180aa3",
+        );
+        env::set_var(
+            "KMS_CONNECTOR_HTTPZ_ADDRESS",
+            "0x0000000000000000000000000000000000000001",
+        );
+        env::set_var("KMS_CONNECTOR_CHANNEL_SIZE", "2000");
+        env::set_var("KMS_CONNECTOR_SERVICE_NAME", "kms-connector-test");
+        env::set_var("KMS_CONNECTOR_DECRYPTION_TIMEOUT_SECS", "600");
+        env::set_var("KMS_CONNECTOR_REENCRYPTION_TIMEOUT_SECS", "600");
+        env::set_var("KMS_CONNECTOR_RETRY_INTERVAL_SECS", "10");
+
+        // Load config from environment
+        let config = Config::from_env_and_file::<&str>(None).unwrap();
+
+        // Verify values
+        assert_eq!(config.gwl2_url, "ws://localhost:9545");
+        assert_eq!(config.kms_core_endpoint, "http://localhost:50053");
+        assert_eq!(config.mnemonic, get_test_mnemonic());
+        assert_eq!(config.chain_id, 31888);
+        assert_eq!(
+            config.decryption_manager_address,
+            "0x5fbdb2315678afecb367f032d93f642f64180aa3"
+        );
+        assert_eq!(
+            config.httpz_address,
+            "0x0000000000000000000000000000000000000001"
+        );
+        assert_eq!(config.channel_size, Some(2000));
+        assert_eq!(config.service_name, "kms-connector-test");
+        assert_eq!(config.decryption_timeout_secs, 600);
+        assert_eq!(config.reencryption_timeout_secs, 600);
+        assert_eq!(config.retry_interval_secs, 10);
+
+        cleanup_env_vars();
+    }
+
+    #[test]
+    #[serial]
+    fn test_env_overrides_file() {
+        cleanup_env_vars();
+
+        // Create a temp config file
+        let config = Config {
+            gwl2_url: "ws://localhost:8545".to_string(),
+            kms_core_endpoint: "http://localhost:50052".to_string(),
+            mnemonic: get_test_mnemonic(),
+            chain_id: 1,
+            decryption_manager_address: "0x0000000000000000000000000000000000000000".to_string(),
+            httpz_address: "0x0000000000000000000000000000000000000000".to_string(),
+            channel_size: Some(100),
+            service_name: "kms-connector".to_string(),
+            decryption_timeout_secs: 300,
+            reencryption_timeout_secs: 300,
+            retry_interval_secs: 5,
+        };
+
+        let temp_file = NamedTempFile::new().unwrap();
+        config.to_file(temp_file.path()).unwrap();
+
+        // Set an environment variable to override the file
+        env::set_var("KMS_CONNECTOR_CHAIN_ID", "77737");
+        env::set_var("KMS_CONNECTOR_SERVICE_NAME", "kms-connector-override");
+
+        // Load config from both sources
+        let loaded_config = Config::from_env_and_file(Some(temp_file.path())).unwrap();
+
+        // Verify that environment variables take precedence
+        assert_eq!(loaded_config.chain_id, 77737);
+        assert_eq!(loaded_config.service_name, "kms-connector-override");
+        // File values should be used for non-overridden fields
+        assert_eq!(loaded_config.gwl2_url, "ws://localhost:8545");
+
+        cleanup_env_vars();
     }
 }

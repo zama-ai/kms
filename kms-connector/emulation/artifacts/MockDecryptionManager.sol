@@ -2,10 +2,16 @@
 pragma solidity ^0.8.28;
 
 contract MockDecryptionManager {
+    struct SnsCiphertextMaterial {
+        uint256 ctHandle;
+        uint256 keyId;
+        bytes snsCiphertext;
+    }
+
     struct CiphertextMaterial {
         uint256 ctHandle;
         uint256 keyId;
-        bytes ciphertext128;
+        bytes ciphertext;
     }
 
     struct CtHandleContractPair {
@@ -13,7 +19,7 @@ contract MockDecryptionManager {
         address contractAddress;
     }
 
-    event PublicDecryptionRequest(uint256 indexed publicDecryptionId, CiphertextMaterial[] ctMaterials);
+    event PublicDecryptionRequest(uint256 indexed publicDecryptionId, SnsCiphertextMaterial[] snsCtMaterials);
     event UserDecryptionRequest(
         uint256 indexed userDecryptionId,
         CtHandleContractPair[] ctHandleContractPairs,
@@ -30,13 +36,13 @@ contract MockDecryptionManager {
 
     function emitEvents() public {
         // Emit public decryption request
-        CiphertextMaterial[] memory ctMaterials = new CiphertextMaterial[](1);
-        ctMaterials[0] = CiphertextMaterial({
+        SnsCiphertextMaterial[] memory snsCtMaterials = new SnsCiphertextMaterial[](1);
+        snsCtMaterials[0] = SnsCiphertextMaterial({
             ctHandle: nextId,
             keyId: 1,
-            ciphertext128: hex"0102030405060708090a0b0c0d0e0f10"
+            snsCiphertext: hex"0102030405060708090a0b0c0d0e0f10"  // Example SNS ciphertext
         });
-        emit PublicDecryptionRequest(nextId, ctMaterials);
+        emit PublicDecryptionRequest(nextId, snsCtMaterials);
 
         // Emit user decryption request
         CtHandleContractPair[] memory ctHandleContractPairs = new CtHandleContractPair[](1);

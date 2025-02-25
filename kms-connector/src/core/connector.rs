@@ -331,11 +331,11 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
                             );
                             self.handle_decryption(
                                 req.publicDecryptionId.to_string(),
-                                req.ctMaterials
+                                req.snsCtMaterials
                                     .into_iter()
                                     .map(|pair| {
                                         let handle = pair.ctHandle.to_be_bytes::<32>().to_vec();
-                                        (handle, pair.ciphertext128.to_vec())
+                                        (handle, pair.snsCiphertext.to_vec())
                                     })
                                     .collect(),
                                 None,

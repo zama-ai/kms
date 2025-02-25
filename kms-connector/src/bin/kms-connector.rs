@@ -127,15 +127,22 @@ async fn main() -> Result<()> {
     // Setup logging
     tracing_subscriber::registry()
         .with(fmt::layer())
-        .with(EnvFilter::from_default_env())
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
         .init();
 
     match cli.command {
         Commands::Start { config, name } => {
-            info!("Starting KMS connector with config file");
+            if let Some(config_path) = &config {
+                info!(
+                    "Starting KMS connector with config file: {}",
+                    config_path.display()
+                );
+            } else {
+                info!("Starting KMS connector using only environment variables");
+            }
 
             // Load config and potentially override service name
-            let mut config = Config::from_file(&config)?;
+            let mut config = Config::from_env_and_file(config.as_ref())?;
             if let Some(name) = name {
                 config.service_name = name;
                 info!("Using custom service name: {}", config.service_name);

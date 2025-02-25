@@ -9,16 +9,22 @@ sol! {
             address contractAddress;
         }
 
+        struct SnsCiphertextMaterial {
+            uint256 ctHandle;
+            uint256 keyId;
+            bytes snsCiphertext;
+        }
+
         struct CiphertextMaterial {
             uint256 ctHandle;
             uint256 keyId;
-            bytes ciphertext128;
+            bytes ciphertext;
         }
 
         error InvalidKmsSigner(address invalidSigner);
         error KmsSignerAlreadySigned(uint256 publicDecryptionId, address signer);
 
-        function publicDecryptionRequest(uint256[] calldata ciphertextHandles) external;
+        function publicDecryptionRequest(uint256[] calldata ctHandles) external;
 
         function publicDecryptionResponse(
             uint256 publicDecryptionId,
@@ -45,7 +51,7 @@ sol! {
 
         event PublicDecryptionRequest(
             uint256 indexed publicDecryptionId,
-            CiphertextMaterial[] ctMaterials
+            SnsCiphertextMaterial[] snsCtMaterials
         );
 
         event PublicDecryptionResponse(
