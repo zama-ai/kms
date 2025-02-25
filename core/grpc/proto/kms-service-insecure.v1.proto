@@ -46,7 +46,7 @@ service CoreServiceEndpoint {
   // This query fails if the result is not available yet.
   rpc GetReencryptResult(kms.v1.RequestId) returns (kms.v1.ReencryptionResponse);
 
-  // Start the CRS generatioin protocol asynchronously.
+  // Start the CRS generation protocol asynchronously.
   rpc CrsGen(kms.v1.CrsGenRequest) returns (kms.v1.Empty);
 
   // Get a reference to the CRS.
