@@ -123,6 +123,7 @@ pub async fn run_server<
             ),
     );
     let server = Server::builder()
+        .http2_adaptive_window(Some(true))
         .layer(trace_request)
         // Make sure we never abort because we spent too much time on the blocking part of the get result
         // as we mean to do it.

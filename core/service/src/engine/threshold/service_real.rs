@@ -368,7 +368,7 @@ where
         "Could not find my own identity".to_string(),
     )?;
 
-    let mut server = match &cert_paths {
+    let server = match &cert_paths {
         Some(cert_bundle) => {
             tracing::info!(
                 "Creating server with TLS enabled with certificate: {:?}.",
@@ -429,6 +429,7 @@ where
     let manager_clone = Arc::clone(&networking_manager);
     let networking_server = networking_manager.write().await.new_server();
     let router = server
+        .http2_adaptive_window(Some(true))
         .add_service(networking_server)
         .add_service(threshold_health_service);
 
