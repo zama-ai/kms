@@ -266,6 +266,7 @@ async fn integration_test_commands<T: DockerComposeContext>(
             precompute_sns: false,
             crs_id: crs_id.clone(),
             key_id: key_id.clone(),
+            ciphertext_output_path: None,
         }),
         CCCommand::ReEncrypt(CipherParameters {
             to_encrypt: "0x1".to_string(),
@@ -274,6 +275,7 @@ async fn integration_test_commands<T: DockerComposeContext>(
             precompute_sns: false,
             crs_id: crs_id.clone(),
             key_id: key_id.clone(),
+            ciphertext_output_path: None,
         }),
         CCCommand::Decrypt(CipherParameters {
             to_encrypt: "0x6F".to_string(),
@@ -282,6 +284,7 @@ async fn integration_test_commands<T: DockerComposeContext>(
             precompute_sns: false,
             crs_id: crs_id.clone(),
             key_id: key_id.clone(),
+            ciphertext_output_path: None,
         }),
         CCCommand::Decrypt(CipherParameters {
             to_encrypt: "0xFFFF".to_string(),
@@ -290,6 +293,7 @@ async fn integration_test_commands<T: DockerComposeContext>(
             precompute_sns: false,
             crs_id: crs_id.clone(),
             key_id: key_id.clone(),
+            ciphertext_output_path: None,
         }),
         CCCommand::Decrypt(CipherParameters {
             to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF03956822D0D186F78D196BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC45921".to_string(),
@@ -298,6 +302,7 @@ async fn integration_test_commands<T: DockerComposeContext>(
             precompute_sns: false,
             crs_id: crs_id.clone(),
             key_id: key_id.clone(),
+            ciphertext_output_path: None,
         }),
         CCCommand::ReEncrypt(CipherParameters {
             to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF03956822D0D186F78D196BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC45921".to_string(),
@@ -306,6 +311,7 @@ async fn integration_test_commands<T: DockerComposeContext>(
             precompute_sns: false,
             crs_id: crs_id.clone(),
             key_id: key_id.clone(),
+            ciphertext_output_path: None,
         }),
     ];
 
@@ -318,6 +324,7 @@ async fn integration_test_commands<T: DockerComposeContext>(
                 precompute_sns: true,
                 crs_id: crs_id.clone(),
                 key_id: key_id.clone(),
+            ciphertext_output_path: None,
             }),
             CCCommand::ReEncrypt(CipherParameters {
                 to_encrypt: "0x1".to_string(),
@@ -326,6 +333,7 @@ async fn integration_test_commands<T: DockerComposeContext>(
                 precompute_sns: true,
                 crs_id: crs_id.clone(),
                 key_id: key_id.clone(),
+                ciphertext_output_path: None,
             }),
             CCCommand::Decrypt(CipherParameters {
                 to_encrypt: "0x6F".to_string(),
@@ -334,6 +342,7 @@ async fn integration_test_commands<T: DockerComposeContext>(
                 precompute_sns: true,
                 crs_id: crs_id.clone(),
                 key_id: key_id.clone(),
+                ciphertext_output_path: None,
             }),
             CCCommand::Decrypt(CipherParameters {
                 to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF03956822D0D186F78D196BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC45921".to_string(),
@@ -342,6 +351,7 @@ async fn integration_test_commands<T: DockerComposeContext>(
                 precompute_sns: true,
                 crs_id: crs_id.clone(),
                 key_id: key_id.clone(),
+                ciphertext_output_path: None,
             }),
             CCCommand::ReEncrypt(CipherParameters {
                 to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF03956822D0D186F78D196BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC45921".to_string(),
@@ -350,6 +360,7 @@ async fn integration_test_commands<T: DockerComposeContext>(
                 precompute_sns: true,
                 crs_id: crs_id.clone(),
                 key_id: key_id.clone(),
+                ciphertext_output_path: None,
             }),
         ]
     } else {

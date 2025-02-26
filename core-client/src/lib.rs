@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs::File;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Once;
 use strum_macros::{Display, EnumString};
 use tfhe::named::Named;
@@ -325,6 +325,9 @@ pub struct CipherParameters {
     /// Key identifier to use for decryption/re-encryption purposes
     #[clap(long, short = 'k')]
     pub key_id: String,
+    /// Optionally dump the ciphertext to a file.
+    #[clap(long)]
+    pub ciphertext_output_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -437,6 +440,7 @@ pub async fn encrypt(
     keys_folder: &Path,
     compression: bool,
     precompute_sns: bool,
+    dump_ciphertext: Option<PathBuf>,
 ) -> Result<(Vec<u8>, CiphertextFormat, TypedPlaintext), Box<dyn std::error::Error + 'static>> {
     if to_encrypt.len() != fhe_type.bits().div_ceil(8) {
         tracing::warn!("Byte length of value to encrypt ({}) does not match FHE type ({}) and will be padded/truncated.", to_encrypt.len(), fhe_type);
@@ -471,6 +475,11 @@ pub async fn encrypt(
         },
     )
     .await;
+
+    if let Some(path) = dump_ciphertext {
+        let mut file = File::create(path)?;
+        file.write_all(&cipher)?;
+    }
 
     Ok((cipher, ct_format, ptxt))
 }
@@ -1392,6 +1401,7 @@ pub async fn execute_cmd(
                 keys_folder,
                 cipher_params.compression,
                 cipher_params.precompute_sns,
+                cipher_params.ciphertext_output_path.clone(),
             )
             .await?;
 
@@ -1501,6 +1511,7 @@ pub async fn execute_cmd(
                 keys_folder,
                 cipher_params.compression,
                 cipher_params.precompute_sns,
+                cipher_params.ciphertext_output_path.clone(),
             )
             .await?;
 
