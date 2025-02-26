@@ -43,7 +43,6 @@ on:
 env:
   RUST_IMAGE_VERSION: '1.85.0'
 
-
 jobs:
   build-and-push-enclave:
     runs-on: 'ubuntu-latest'

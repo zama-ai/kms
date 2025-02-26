@@ -1,6 +1,9 @@
+# RUST_IMAGE_VERSION arg can be used to override the default version
+ARG RUST_IMAGE_VERSION=latest
+
 # Multistage build to reduce image size
 # First stage builds the binary
-FROM rust:1.85-slim-bookworm AS base
+FROM rust:${RUST_IMAGE_VERSION}-slim-bookworm AS base
 
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt apt update && \
     apt install -y make protobuf-compiler iproute2 iputils-ping iperf net-tools dnsutils ssh git gcc libssl-dev libprotobuf-dev pkg-config libssl-dev

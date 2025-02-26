@@ -93,7 +93,7 @@ The KMS Connector supports flexible configuration through both TOML files and en
    export KMS_CONNECTOR_CHAIN_ID="31337"
    export KMS_CONNECTOR_DECRYPTION_MANAGER_ADDRESS="0x..."
    export KMS_CONNECTOR_HTTPZ_ADDRESS="0x..."
-   
+
    # Optional configuration with defaults
    export KMS_CONNECTOR_CHANNEL_SIZE="1000"
    export KMS_CONNECTOR_SERVICE_NAME="kms-connector"
@@ -181,23 +181,23 @@ The connector uses a two-layer architecture to separate L2 chain interaction fro
 │  DecryptionAdapter │     │  HTTPZAdapter  │
 │    <Domain Logic>  │     │ <Domain Logic> │
 └────────┬───────────┘     └───────┬────────┘
-         │                         │         
-         │      implements         │         
-         │          ▼              │         
-         │    ┌──────────┐         │         
-         └────┤ Provider ◄─────────┘         
+         │                         │
+         │      implements         │
+         │          ▼              │
+         │    ┌──────────┐         │
+         └────┤ Provider ◄─────────┘
               │ Interface│
-              └────┬─────┘                
-                   │      implements                 
-                   ▼                      
-         ┌─────────────────────┐            
-         │  ArbitrumProvider   │            
-         │ <L2 Communication>  │            
-         └─────────┬───────────┘            
-                   │                      
-                   ▼                      
+              └────┬─────┘
+                   │      implements
+                   ▼
+         ┌─────────────────────┐
+         │  ArbitrumProvider   │
+         │ <L2 Communication>  │
+         └─────────┬───────────┘
+                   │
+                   ▼
         [Arbitrum L2 Contracts]
-        DecryptionManager, HTTPZ                
+        DecryptionManager, HTTPZ
 ```
 
 ### 1. Provider (Infrastructure Layer)
@@ -222,24 +222,24 @@ struct DecryptionAdapter<P: Provider> {
 
 impl<P: Provider> DecryptionAdapter<P> {
     async fn handle_public_decryption(
-        &self, 
-        id: U256, 
+        &self,
+        id: U256,
         result: Vec<u8>
     ) -> Result<()> {
         // 1. Prepare contract data
-        let response = PublicDecryptionResponse { 
-            id, 
-            result: result.into() 
+        let response = PublicDecryptionResponse {
+            id,
+            result: result.into()
         };
-        
+
         // 2. Encode for L2
         let mut data = Vec::new();
         response.encode_data_to(&mut data);
-        
+
         // 3. Send via provider
         self.provider
             .send_transaction(
-                self.provider.decryption_manager_address(), 
+                self.provider.decryption_manager_address(),
                 data
             )
             .await
@@ -274,7 +274,7 @@ See [CHANGELOG.md](./changelog.md) for current implementation status.
 
 ### Prerequisites
 
-- Rust 1.84+
+- Rust 1.85+
 - Access to Arbitrum L2 node
 - KMS Core instance
 

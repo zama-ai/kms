@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1.4
 
-FROM rust:1.82-slim-bookworm AS builder
+# RUST_IMAGE_VERSION arg can be used to override the default version
+ARG RUST_IMAGE_VERSION=latest
+
+FROM rust:${RUST_IMAGE_VERSION}-slim-bookworm AS builder
 
 # Install only necessary build dependencies
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \

@@ -145,9 +145,9 @@ services:
       retries: 5
       start_period: 1s
     volumes:
+      - ./core/service/config/:/app/kms/core/service/config
       - certs:/app/kms/core/service/certs
       - minio_secrets:/minio_secrets
-      - ./core/service/config/:/app/kms/core/service/config
     env_file:
       - "docker-compose-kms-core.env"
     environment:
