@@ -20,8 +20,6 @@ pub mod cryptography {
     pub mod attestation;
     pub mod decompression;
     pub mod internal_crypto_types;
-    #[cfg(feature = "non-wasm")]
-    pub mod proven_ct_verifier;
     pub mod signcryption;
 }
 #[cfg(feature = "non-wasm")]

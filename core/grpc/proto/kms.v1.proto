@@ -214,10 +214,9 @@ message DecryptionRequest {
   // generation
   RequestId key_id = 2;
   Eip712DomainMsg domain = 3;
-  optional string acl_address = 4;
   // The ID of the decryption request. Will be the hash digest the other fields
   // of this message object.
-  RequestId request_id = 5;
+  RequestId request_id = 4;
 }
 
 // The typed plaintext type, which is the result of decryption.
@@ -333,33 +332,4 @@ message TypedSigncryptedCiphertext {
   bytes signcrypted_ciphertext = 2;
   // The external handles that were originally in the request.
   bytes external_handle = 3;
-}
-
-message VerifyProvenCtRequest {
-  RequestId crs_handle = 1;
-  RequestId key_handle = 2;
-  string contract_address = 3;
-  string client_address = 4;
-  bytes ct_bytes = 5;
-  string acl_address = 6;
-  Eip712DomainMsg domain = 7;
-  RequestId request_id = 8;
-}
-
-// The response of an input verification request.
-message VerifyProvenCtResponse {
-  VerifyProvenCtResponsePayload payload = 1;
-  bytes signature = 2;
-}
-
-// The response payload of an input verification request.
-// This payload is signed and the signature is stored in `VerifyProvenCtResponse`.
-message VerifyProvenCtResponsePayload {
-  RequestId request_id = 1;
-  string contract_address = 2;
-  string client_address = 3;
-  // The digest is a keccak256 hash of the original input ciphertext.
-  bytes ct_digest = 4;
-  // the signature for the external recipient (e.g. the fhevm)
-  bytes external_signature = 5;
 }

@@ -4,8 +4,7 @@ use kms_grpc::{
         DecryptionResponsePayload, Empty, FheType, InitRequest, KeyGenPreprocRequest,
         KeyGenPreprocStatus, KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult,
         ReencryptionRequest, ReencryptionResponse, ReencryptionResponsePayload, RequestId,
-        TypedPlaintext, TypedSigncryptedCiphertext, VerifyProvenCtRequest, VerifyProvenCtResponse,
-        VerifyProvenCtResponsePayload,
+        TypedPlaintext, TypedSigncryptedCiphertext,
     },
     kms_service::v1::core_service_endpoint_server::{
         CoreServiceEndpoint, CoreServiceEndpointServer,
@@ -18,18 +17,6 @@ use tracing_subscriber::FmtSubscriber;
 
 #[derive(Default)]
 pub struct MockKmsService {}
-
-impl MockKmsService {
-    fn create_mock_handle(handle_index: u8, fhe_type: FheType) -> Vec<u8> {
-        // Create a mock keccak256 hash (32 bytes)
-        let mut prehandle = vec![0; 32];
-        prehandle[..29].copy_from_slice(&[1; 29]); // First 29 bytes of hash
-        prehandle[29] = handle_index; // Handle index
-        prehandle[30] = fhe_type as u8; // FHE type
-        prehandle[31] = 0; // Version (constant 0 for now)
-        prehandle
-    }
-}
 
 #[tonic::async_trait]
 impl CoreServiceEndpoint for MockKmsService {
@@ -269,43 +256,6 @@ impl CoreServiceEndpoint for MockKmsService {
                 degree: 1,
                 external_signature: eip712_signature, // EIP-712 signature for blockchain (not optional for reencryption)
             }),
-        }))
-    }
-
-    async fn verify_proven_ct(
-        &self,
-        request: Request<VerifyProvenCtRequest>,
-    ) -> Result<Response<Empty>, Status> {
-        info!(
-            operation = "verify_proven_ct",
-            request_id = ?request.get_ref().request_id,
-            "Processing proven ciphertext verification request"
-        );
-        Ok(Response::new(Empty {}))
-    }
-
-    async fn get_verify_proven_ct_result(
-        &self,
-        request: Request<RequestId>,
-    ) -> Result<Response<VerifyProvenCtResponse>, Status> {
-        info!(
-            operation = "get_verify_proven_ct_result",
-            request_id = ?request.get_ref().request_id,
-            "Retrieving proven ciphertext verification results"
-        );
-        let request_id = request.into_inner().request_id;
-
-        let mock_handle = Self::create_mock_handle(3, FheType::Euint8);
-
-        Ok(Response::new(VerifyProvenCtResponse {
-            payload: Some(VerifyProvenCtResponsePayload {
-                request_id: Some(RequestId { request_id }),
-                contract_address: "0x1234567890123456789012345678901234567890".to_string(),
-                client_address: "0x0987654321098765432109876543210987654321".to_string(),
-                ct_digest: mock_handle.clone(), // Using handle format
-                external_signature: vec![13, 14, 15, 16], // Mock external signature
-            }),
-            signature: vec![1, 2, 3, 4], // Using same signature format
         }))
     }
 }

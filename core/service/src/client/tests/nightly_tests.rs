@@ -1,6 +1,5 @@
 use super::{
     decryption_centralized, decryption_threshold, reencryption_centralized, reencryption_threshold,
-    verify_proven_ct_centralized, verify_proven_ct_threshold,
 };
 use crate::client::tests::crs_gen;
 use crate::client::tests::{
@@ -8,70 +7,13 @@ use crate::client::tests::{
 };
 use crate::consts::DEFAULT_PARAM;
 use crate::consts::{
-    DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_CRS_ID_10P, DEFAULT_THRESHOLD_KEY_ID_10P,
-    DEFAULT_THRESHOLD_KEY_ID_4P,
+    DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_KEY_ID_10P, DEFAULT_THRESHOLD_KEY_ID_4P,
 };
 use crate::util::key_setup::test_tools::EncryptionConfig;
 use crate::util::key_setup::test_tools::{purge, TestingPlaintext};
 use kms_grpc::kms::v1::FheParameter;
 use kms_grpc::kms::v1::RequestId;
 use serial_test::serial;
-
-#[rstest::rstest]
-#[case(vec![TestingPlaintext::Bool(true)])]
-#[case(vec![TestingPlaintext::U4(12)])]
-#[case(vec![TestingPlaintext::U8(u8::MAX)])]
-#[case(vec![TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))])]
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn default_verify_proven_ct_centralized(#[case] msgs: Vec<TestingPlaintext>) {
-    let proven_ct_id = RequestId::derive("default_verify_proven_ct_centralized").unwrap();
-    verify_proven_ct_centralized(
-        msgs,
-        &crate::consts::DEFAULT_PARAM,
-        &proven_ct_id,
-        &crate::consts::DEFAULT_CENTRAL_CRS_ID,
-        &DEFAULT_CENTRAL_KEY_ID.to_string(),
-    )
-    .await;
-}
-
-#[rstest::rstest]
-#[case(vec![TestingPlaintext::Bool(true)], 2, 4, true, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 10, true, &DEFAULT_THRESHOLD_KEY_ID_10P.to_string())]
-#[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4, true, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(vec![TestingPlaintext::U16(u16::MAX)], 1, 4, true, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(vec![TestingPlaintext::U32(u32::MAX)], 1, 4, true, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(vec![TestingPlaintext::U64(u64::MAX)], 1, 4, true, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(vec![TestingPlaintext::U128(u128::MAX)], 1, 4, true, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(vec![TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128)))], 1, 4, true, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(vec![TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX)))], 1, 4, true, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(vec![TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1, 4, true, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-#[tracing_test::traced_test]
-async fn default_decryption_threshold(
-    #[case] msg: Vec<TestingPlaintext>,
-    #[case] parallelism: usize,
-    #[case] amount_parties: usize,
-    #[case] compression: bool,
-    #[case] key_id: &str,
-) {
-    decryption_threshold(
-        DEFAULT_PARAM,
-        key_id,
-        msg,
-        EncryptionConfig {
-            compression,
-            precompute_sns: false,
-        },
-        parallelism,
-        amount_parties,
-        None,
-        None,
-    )
-    .await;
-}
 
 #[rstest::rstest]
 #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 10, &DEFAULT_THRESHOLD_KEY_ID_10P.to_string())]
@@ -107,32 +49,6 @@ async fn default_decryption_threshold_with_sns_preprocessing(
         None,
     )
     .await;
-}
-
-#[rstest::rstest]
-#[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 10, &DEFAULT_THRESHOLD_KEY_ID_10P, &DEFAULT_THRESHOLD_CRS_ID_10P)]
-#[case(vec![TestingPlaintext::U128(u128::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_10P)]
-#[case(vec![TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_10P)]
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-#[tracing_test::traced_test]
-async fn default_verify_proven_ct_threshold(
-    #[case] msgs: Vec<TestingPlaintext>,
-    #[case] parallelism: usize,
-    #[case] amount_parties: usize,
-    #[case] key_id: &RequestId,
-    #[case] crs_id: &RequestId,
-) {
-    verify_proven_ct_threshold(
-        msgs,
-        parallelism,
-        crs_id,
-        key_id,
-        DEFAULT_PARAM,
-        amount_parties,
-        None,
-    )
-    .await
 }
 
 #[cfg(feature = "slow_tests")]

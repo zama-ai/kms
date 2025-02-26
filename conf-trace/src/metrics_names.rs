@@ -9,9 +9,6 @@ pub const OP_KEYGEN_PREPROC: &str = "keygen_preproc";
 pub const OP_DECRYPT: &str = "decrypt";
 pub const OP_REENCRYPT: &str = "reencrypt";
 
-// Verification Operations
-pub const OP_VERIFY_PROVEN_CT: &str = "verify_proven_ct";
-
 // CRS Operations
 pub const OP_CRS_GEN: &str = "crs_gen";
 

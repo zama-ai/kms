@@ -1,7 +1,4 @@
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
-use crate::cryptography::proven_ct_verifier::{
-    get_verify_proven_ct_result, non_blocking_verify_proven_ct,
-};
 use crate::engine::base::{
     compute_external_pt_signature, convert_key_response, preproc_proto_to_keyset_config,
     retrieve_parameters, KeyGenCallValues,
@@ -25,7 +22,7 @@ use conf_trace::metrics::METRICS;
 use conf_trace::metrics_names::{
     ERR_CRS_GEN_FAILED, ERR_DECRYPTION_FAILED, ERR_KEY_EXISTS, ERR_KEY_NOT_FOUND,
     ERR_RATE_LIMIT_EXCEEDED, ERR_REENCRYPTION_FAILED, OP_CRS_GEN, OP_DECRYPT, OP_KEYGEN,
-    OP_REENCRYPT, OP_VERIFY_PROVEN_CT, TAG_PARTY_ID,
+    OP_REENCRYPT, TAG_PARTY_ID,
 };
 use distributed_decryption::execution::keyset_config::KeySetConfig;
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
@@ -33,7 +30,7 @@ use kms_grpc::kms::v1::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenRequest, KeyGenResult,
     KeySetAddedInfo, ReencryptionRequest, ReencryptionResponse, ReencryptionResponsePayload,
-    RequestId, VerifyProvenCtRequest, VerifyProvenCtResponse,
+    RequestId,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain_option, SignedPubDataHandleInternal};
@@ -387,7 +384,7 @@ impl<
         let start = tokio::time::Instant::now();
         let inner = request.into_inner();
 
-        let (ciphertexts, req_digest, key_id, request_id, eip712_domain, acl_address) =
+        let (ciphertexts, req_digest, key_id, request_id, eip712_domain) =
             tonic_handle_potential_err(
                 validate_decrypt_req(&inner),
                 format!("Invalid key in request {:?}", inner),
@@ -422,18 +419,21 @@ impl<
         let _handle = tokio::spawn(
             async move {
                 let _permit = permit;
-                let keys = match crypto_storage.read_cloned_centralized_fhe_keys_from_cache(&key_id).await {
+                let keys = match crypto_storage
+                    .read_cloned_centralized_fhe_keys_from_cache(&key_id)
+                    .await
+                {
                     Ok(k) => k,
                     Err(e) => {
                         let mut guarded_meta_store = meta_store.write().await;
-                        if let Err(e) = METRICS.increment_error_counter(OP_DECRYPT, ERR_KEY_NOT_FOUND) {
+                        if let Err(e) =
+                            METRICS.increment_error_counter(OP_DECRYPT, ERR_KEY_NOT_FOUND)
+                        {
                             tracing::warn!("Failed to increment error counter: {:?}", e);
                         }
                         let _ = guarded_meta_store.update(
                             &request_id,
-                            Err(format!(
-                                "Failed to get key ID {key_id} with error {e:?}"
-                            )),
+                            Err(format!("Failed to get key ID {key_id} with error {e:?}")),
                         );
                         return;
                     }
@@ -460,26 +460,18 @@ impl<
                 match decryptions {
                     Ok(Ok(pts)) => {
                         // sign the plaintexts and handles for external verification (in the fhevm)
-                        let external_sig = if let (Some(domain), Some(acl_address)) =
-                            (eip712_domain, acl_address)
-                        {
-                            compute_external_pt_signature(
-                                &sigkey,
-                                ext_handles_bytes,
-                                &pts,
-                                domain,
-                                acl_address,
-                            )
+                        let external_sig = if let Some(domain) = eip712_domain {
+                            compute_external_pt_signature(&sigkey, ext_handles_bytes, &pts, domain)
                         } else {
-                            tracing::warn!("Skipping external signature computation due to missing domain or acl address");
+                            tracing::warn!(
+                                "Skipping external signature computation due to missing domain"
+                            );
                             vec![]
                         };
 
                         let mut guarded_meta_store = meta_store.write().await;
-                        let _ = guarded_meta_store.update(
-                            &request_id,
-                            Ok((req_digest.clone(), pts, external_sig)),
-                        );
+                        let _ = guarded_meta_store
+                            .update(&request_id, Ok((req_digest.clone(), pts, external_sig)));
                         tracing::info!(
                             "⏱️ Core Event Time for decryption computation: {:?}",
                             start.elapsed()
@@ -494,7 +486,9 @@ impl<
                     }
                     Ok(Err(e)) => {
                         let mut guarded_meta_store = meta_store.write().await;
-                        if let Err(e) = METRICS.increment_error_counter(OP_DECRYPT, ERR_DECRYPTION_FAILED) {
+                        if let Err(e) =
+                            METRICS.increment_error_counter(OP_DECRYPT, ERR_DECRYPTION_FAILED)
+                        {
                             tracing::warn!("Failed to increment error counter: {:?}", e);
                         }
                         let _ = guarded_meta_store.update(
@@ -668,69 +662,6 @@ impl<
         request: Request<RequestId>,
     ) -> Result<Response<CrsGenResult>, Status> {
         self.get_crs_gen_result(request).await
-    }
-
-    #[tracing::instrument(skip(self, request))]
-    async fn verify_proven_ct(
-        &self,
-        request: Request<VerifyProvenCtRequest>,
-    ) -> Result<Response<Empty>, Status> {
-        let _timer = METRICS
-            .time_operation(OP_VERIFY_PROVEN_CT)
-            .map_err(|e| Status::internal(format!("Failed to start metrics: {}", e)))?
-            .start();
-        METRICS
-            .increment_request_counter(OP_VERIFY_PROVEN_CT)
-            .map_err(|e| Status::internal(format!("Failed to increment counter: {}", e)))?;
-
-        let permit = self
-            .rate_limiter
-            .start_verify_proven_ct()
-            .await
-            .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
-
-        let meta_store = Arc::clone(&self.proven_ct_payload_meta_map);
-        let sigkey = Arc::clone(&self.base_kms.sig_key);
-
-        // Check well-formedness of the request and return an error early if there's an error
-        let request_id = request
-            .get_ref()
-            .request_id
-            .as_ref()
-            .ok_or_else(|| {
-                tonic::Status::new(
-                    tonic::Code::InvalidArgument,
-                    "missing request ID".to_string(),
-                )
-            })?
-            .clone();
-        validate_request_id(&request_id)?;
-        non_blocking_verify_proven_ct(
-            (&self.crypto_storage).into(),
-            meta_store,
-            request_id.clone(),
-            request.into_inner(),
-            sigkey,
-            permit,
-            Arc::clone(&self.thread_handles),
-        )
-        .await
-        .map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Internal,
-                format!("non_blocking_verify_proven_ct failed for request_id {request_id} ({e})"),
-            )
-        })?;
-
-        Ok(Response::new(Empty {}))
-    }
-
-    async fn get_verify_proven_ct_result(
-        &self,
-        request: Request<RequestId>,
-    ) -> Result<Response<VerifyProvenCtResponse>, Status> {
-        let meta_store = Arc::clone(&self.proven_ct_payload_meta_map);
-        get_verify_proven_ct_result(self, meta_store, request).await
     }
 }
 

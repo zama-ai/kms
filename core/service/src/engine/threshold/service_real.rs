@@ -1,9 +1,6 @@
 use crate::conf::threshold::{PeerConf, ThresholdPartyConf};
 use crate::consts::{MINIMUM_SESSIONS_PREPROC, PRSS_EPOCH_ID};
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey};
-use crate::cryptography::proven_ct_verifier::{
-    get_verify_proven_ct_result, non_blocking_verify_proven_ct,
-};
 use crate::cryptography::signcryption::signcrypt;
 use crate::engine::base::{
     compute_external_pt_signature, deserialize_to_low_level, retrieve_parameters,
@@ -13,8 +10,7 @@ use crate::engine::base::{compute_info, preproc_proto_to_keyset_config};
 use crate::engine::base::{convert_key_response, DecCallValues, KeyGenCallValues, ReencCallValues};
 use crate::engine::threshold::generic::GenericKms;
 use crate::engine::threshold::traits::{
-    CrsGenerator, Decryptor, Initiator, KeyGenPreprocessor, KeyGenerator, ProvenCtVerifier,
-    Reencryptor,
+    CrsGenerator, Decryptor, Initiator, KeyGenPreprocessor, KeyGenerator, Reencryptor,
 };
 use crate::engine::validation::{
     validate_decrypt_req, validate_reencrypt_req, validate_request_id,
@@ -75,14 +71,12 @@ use distributed_decryption::{algebra::base_ring::Z64, execution::endpoints::keyg
 use itertools::Itertools;
 use k256::ecdsa::SigningKey;
 use kms_common::DecryptionMode;
-use kms_core_utils::thread_handles::ThreadHandleGroup;
 use kms_grpc::kms::v1::{
     CiphertextFormat, CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse,
     DecryptionResponsePayload, Empty, FheType, InitRequest, KeyGenPreprocRequest,
     KeyGenPreprocStatus, KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult, KeySetAddedInfo,
     ReencryptionRequest, ReencryptionResponse, ReencryptionResponsePayload, RequestId,
-    TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext, VerifyProvenCtRequest,
-    VerifyProvenCtResponse, VerifyProvenCtResponsePayload,
+    TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use kms_grpc::rpc_types::{
@@ -96,7 +90,6 @@ use std::sync::Arc;
 use tfhe::core_crypto::prelude::LweKeyswitchKey;
 use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::named::Named;
-use tfhe::zk::CompactPkeCrs;
 use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
 use tokio::net::TcpListener;
@@ -264,7 +257,6 @@ pub type RealThresholdKms<PubS, PrivS, BackS> = GenericKms<
     RealKeyGenerator<PubS, PrivS, BackS>,
     RealPreprocessor,
     RealCrsGenerator<PubS, PrivS, BackS>,
-    RealProvenCtVerifier<PubS, PrivS, BackS>,
 >;
 
 #[cfg(feature = "insecure")]
@@ -277,7 +269,6 @@ pub type RealThresholdKms<PubS, PrivS, BackS> = GenericKms<
     RealPreprocessor,
     RealCrsGenerator<PubS, PrivS, BackS>,
     RealInsecureCrsGenerator<PubS, PrivS, BackS>,
-    RealProvenCtVerifier<PubS, PrivS, BackS>,
 >;
 
 #[derive(Debug)]
@@ -353,10 +344,6 @@ where
     // load crs_info (roughly hashes of CRS) from storage
     let crs_info: HashMap<RequestId, SignedPubDataHandleInternal> =
         read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
-
-    // load crs from storage
-    let crs_map: HashMap<RequestId, CompactPkeCrs> =
-        read_all_data_versioned(&public_storage, &PubDataType::CRS.to_string()).await?;
 
     let role_assignments: RoleAssignment = peer_configs
         .into_iter()
@@ -500,14 +487,11 @@ where
     let dkg_pubinfo_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(public_key_info)));
     let dec_meta_store = Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache)));
     let reenc_meta_store = Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache)));
-    let ct_verifier_payload_meta_store =
-        Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache)));
     let crypto_storage = ThresholdCryptoMaterialStorage::new(
         public_storage,
         private_storage,
         backup_storage,
         pk_map,
-        crs_map,
         key_info_versioned,
     );
 
@@ -618,15 +602,6 @@ where
 
     #[cfg(feature = "insecure")]
     let insecure_crs_generator = RealInsecureCrsGenerator::from_real_crsgen(&crs_generator).await;
-    let thread_handles = Arc::new(RwLock::new(ThreadHandleGroup::default()));
-
-    let proven_ct_verifier = RealProvenCtVerifier {
-        crypto_storage: crypto_storage.clone(),
-        base_kms,
-        ct_verifier_payload_meta_store,
-        rate_limiter: rate_limiter.clone(),
-        thread_handles: Arc::clone(&thread_handles),
-    };
 
     let kms = GenericKms::new(
         initiator,
@@ -639,7 +614,6 @@ where
         crs_generator,
         #[cfg(feature = "insecure")]
         insecure_crs_generator,
-        proven_ct_verifier,
         Arc::clone(&tracker),
         Arc::clone(&thread_core_health_reporter),
         abort_handle,
@@ -1434,20 +1408,19 @@ impl<
             "Received new decryption request"
         );
 
-        let (ciphertexts, req_digest, key_id, req_id, eip712_domain, acl_address) =
-            tonic_handle_potential_err(
-                validate_decrypt_req(&inner),
-                format!("Invalid key in request {:?}", inner),
-            )
-            .map_err(|e| {
-                tracing::error!(
-                    error = ?e,
-                    request_id = ?inner.request_id,
-                    "Failed to validate decrypt request"
-                );
-                let _ = metrics::METRICS.increment_error_counter(OP_DECRYPT, ERR_DECRYPTION_FAILED);
-                e
-            })?;
+        let (ciphertexts, req_digest, key_id, req_id, eip712_domain) = tonic_handle_potential_err(
+            validate_decrypt_req(&inner),
+            format!("Invalid key in request {:?}", inner),
+        )
+        .map_err(|e| {
+            tracing::error!(
+                error = ?e,
+                request_id = ?inner.request_id,
+                "Failed to validate decrypt request"
+            );
+            let _ = metrics::METRICS.increment_error_counter(OP_DECRYPT, ERR_DECRYPTION_FAILED);
+            e
+        })?;
 
         let _timer = timer
             .map(|b| b.start())
@@ -1654,14 +1627,10 @@ impl<
                 .collect();
 
             // sign the plaintexts and handles for external verification (in the fhevm)
-            let external_sig = if let (Some(domain), Some(acl_address)) =
-                (eip712_domain, acl_address)
-            {
-                compute_external_pt_signature(&sigkey, ext_handles_bytes, &pts, domain, acl_address)
+            let external_sig = if let Some(domain) = eip712_domain {
+                compute_external_pt_signature(&sigkey, ext_handles_bytes, &pts, domain)
             } else {
-                tracing::warn!(
-                    "Skipping external signature computation due to missing domain or acl address"
-                );
+                tracing::warn!("Skipping external signature computation due to missing domain");
                 vec![]
             };
 
@@ -3080,82 +3049,6 @@ impl<
         request: Request<RequestId>,
     ) -> Result<Response<CrsGenResult>, Status> {
         self.real_crs_generator.inner_get_result(request).await
-    }
-}
-
-pub struct RealProvenCtVerifier<
-    PubS: Storage + Send + Sync + 'static,
-    PrivS: Storage + Send + Sync + 'static,
-    BackS: Storage + Send + Sync + 'static,
-> {
-    base_kms: BaseKmsStruct,
-    crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
-    ct_verifier_payload_meta_store: Arc<RwLock<MetaStore<VerifyProvenCtResponsePayload>>>,
-    rate_limiter: RateLimiter,
-    thread_handles: Arc<RwLock<ThreadHandleGroup>>,
-}
-
-#[tonic::async_trait]
-impl<
-        PubS: Storage + Send + Sync + 'static,
-        PrivS: Storage + Send + Sync + 'static,
-        BackS: Storage + Send + Sync + 'static,
-    > ProvenCtVerifier for RealProvenCtVerifier<PubS, PrivS, BackS>
-{
-    async fn verify(
-        &self,
-        request: Request<VerifyProvenCtRequest>,
-    ) -> Result<Response<Empty>, Status> {
-        let permit = self
-            .rate_limiter
-            .start_verify_proven_ct()
-            .await
-            .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
-
-        let meta_store = Arc::clone(&self.ct_verifier_payload_meta_store);
-        let sigkey = Arc::clone(&self.base_kms.sig_key);
-        let crypto_storage = self.crypto_storage.clone();
-
-        // Check well-formedness of the request and return an error early if there's an error
-        let request_id = request
-            .get_ref()
-            .request_id
-            .as_ref()
-            .ok_or_else(|| {
-                tonic::Status::new(
-                    tonic::Code::InvalidArgument,
-                    "missing request ID".to_string(),
-                )
-            })?
-            .clone();
-        validate_request_id(&request_id)?;
-
-        non_blocking_verify_proven_ct(
-            (&crypto_storage).into(),
-            meta_store,
-            request_id.clone(),
-            request.into_inner(),
-            sigkey,
-            permit,
-            Arc::clone(&self.thread_handles),
-        )
-        .await
-        .map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Internal,
-                format!("non_blocking_verify_proven_ct failed for request_id {request_id} ({e})"),
-            )
-        })?;
-
-        Ok(Response::new(Empty {}))
-    }
-
-    async fn get_result(
-        &self,
-        request: Request<RequestId>,
-    ) -> Result<Response<VerifyProvenCtResponse>, Status> {
-        let meta_store = Arc::clone(&self.ct_verifier_payload_meta_store);
-        get_verify_proven_ct_result(&self.base_kms, meta_store, request).await
     }
 }
 

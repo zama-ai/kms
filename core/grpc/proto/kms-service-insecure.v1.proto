@@ -59,11 +59,4 @@ service CoreServiceEndpoint {
   // Get a reference to the insecure CRS.
   // This query fails if the result is not available yet.
   rpc GetInsecureCrsGenResult(kms.v1.RequestId) returns (kms.v1.CrsGenResult);
-
-  // Start a zero-knowledge proof verification
-  // on a ProvenCompactCiphertextList.
-  rpc VerifyProvenCt(kms.v1.VerifyProvenCtRequest) returns (kms.v1.Empty);
-
-  // Get the zero-knowledge verification result.
-  rpc GetVerifyProvenCtResult(kms.v1.RequestId) returns (kms.v1.VerifyProvenCtResponse);
 }

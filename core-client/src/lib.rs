@@ -18,14 +18,13 @@ use kms_grpc::kms::v1::{
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType, SIGNING_KEY_ID};
-use kms_lib::client::{assemble_metadata_alloy, Client, ParsedReencryptionRequest};
+use kms_lib::client::{Client, ParsedReencryptionRequest};
 use kms_lib::consts::{DEFAULT_PARAM, TEST_PARAM};
 use kms_lib::engine::base::{compute_external_pubdata_message_hash, compute_pt_message_hash};
 use kms_lib::util::key_setup::ensure_client_keys_exist;
 use kms_lib::util::key_setup::test_tools::{
-    compute_cipher_from_stored_key, compute_proven_ct_from_stored_key_and_serialize,
-    load_crs_from_storage, load_pk_from_storage, load_server_key_from_storage,
-    load_sns_key_from_storage, EncryptionConfig, TestingPlaintext,
+    compute_cipher_from_stored_key, load_crs_from_storage, load_pk_from_storage,
+    load_server_key_from_storage, load_sns_key_from_storage, EncryptionConfig, TestingPlaintext,
 };
 use kms_lib::vault::storage::{file::FileStorage, StorageType};
 use rand::SeedableRng;
@@ -372,50 +371,6 @@ fn dummy_domain() -> alloy_sol_types::Eip712Domain {
     )
 }
 
-/// a dummy ACL address for testing
-fn dummy_acl_address() -> alloy_primitives::Address {
-    alloy_primitives::address!("EEdA6bf26964aF9D7Eed9e03e53415D37aa960EE")
-}
-
-#[allow(clippy::too_many_arguments)]
-pub async fn encrypt_and_prove(
-    to_encrypt: Vec<u8>,
-    data_type: FheType,
-    domain: &Eip712Domain,
-    contract_address: &alloy_primitives::Address,
-    acl_address: &alloy_primitives::Address,
-    client_address: &alloy_primitives::Address,
-    crs_id: &str,
-    key_id: &str,
-    keys_folder: &Path,
-) -> Result<Vec<u8>, Box<dyn std::error::Error + 'static>> {
-    let metadata = assemble_metadata_alloy(
-        contract_address,
-        client_address,
-        acl_address,
-        &domain.chain_id.unwrap(),
-    );
-
-    tracing::info!(
-        "attempting to create proven ct using materials from {:?}",
-        keys_folder
-    );
-
-    let msgs = vec![TestingPlaintext::from(TypedPlaintext {
-        bytes: to_encrypt,
-        fhe_type: data_type as i32,
-    })];
-
-    Ok(compute_proven_ct_from_stored_key_and_serialize(
-        Some(keys_folder),
-        msgs,
-        key_id,
-        crs_id,
-        &metadata,
-    )
-    .await)
-}
-
 /// encrypt a given value and return the ciphertext
 /// parameters:
 /// - `to_encrypt`: the value to encrypt in little endian byte order
@@ -721,9 +676,6 @@ fn check_ext_pt_signature(
     let domain_msg = decrypt_req.domain.as_ref().unwrap();
     let domain = protobuf_to_alloy_domain(domain_msg)?;
 
-    let acl_address =
-        alloy_primitives::Address::parse_checksummed(decrypt_req.acl_address(), None)?;
-
     // retrieve external handles from request
     let external_handles: Vec<_> = decrypt_req
         .ciphertexts
@@ -734,11 +686,10 @@ fn check_ext_pt_signature(
     tracing::debug!("ext. signature bytes: {:x?}", external_sig);
     tracing::debug!("ext. signature: {:?}", sig);
     tracing::debug!("EIP-712 domain: {:?}", domain_msg);
-    tracing::debug!("ACL addres: {:?}", acl_address);
     tracing::debug!("PTs: {:?}", plaintexts);
     tracing::debug!("ext. handles: {:?}", external_handles);
 
-    let hash = compute_pt_message_hash(external_handles, plaintexts, domain, acl_address);
+    let hash = compute_pt_message_hash(external_handles, plaintexts, domain);
 
     let addr = sig.recover_address_from_prehash(&hash)?;
     tracing::info!("recovered address: {}", addr);
@@ -1390,7 +1341,6 @@ pub async fn execute_cmd(
                 ct_batch,
                 &dummy_domain(),
                 &req_id,
-                &dummy_acl_address(),
                 &RequestId {
                     request_id: cipher_params.key_id.clone(),
                 },

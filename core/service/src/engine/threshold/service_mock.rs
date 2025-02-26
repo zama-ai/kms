@@ -3,8 +3,7 @@ use crate::client::test_tools::ServerHandle;
 use crate::consts::DEFAULT_URL;
 use crate::engine::threshold::generic::GenericKms;
 use crate::engine::threshold::traits::{
-    CrsGenerator, Decryptor, Initiator, KeyGenPreprocessor, KeyGenerator, ProvenCtVerifier,
-    Reencryptor,
+    CrsGenerator, Decryptor, Initiator, KeyGenPreprocessor, KeyGenerator, Reencryptor,
 };
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
@@ -15,8 +14,7 @@ use kms_grpc::kms::v1::{
     Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenPreprocStatusEnum,
     KeyGenRequest, KeyGenResult, ReencryptionRequest, ReencryptionResponse,
     ReencryptionResponsePayload, RequestId, SignedPubDataHandle, TypedPlaintext,
-    TypedSigncryptedCiphertext, VerifyProvenCtRequest, VerifyProvenCtResponse,
-    VerifyProvenCtResponsePayload,
+    TypedSigncryptedCiphertext,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use kms_grpc::rpc_types::PubDataType;
@@ -72,7 +70,6 @@ type DummyThresholdKms = GenericKms<
     DummyKeyGenerator,
     DummyPreprocessor,
     DummyCrsGenerator,
-    DummyProvenCtVerifier,
 >;
 
 #[cfg(feature = "insecure")]
@@ -85,7 +82,6 @@ type DummyThresholdKms = GenericKms<
     DummyPreprocessor,
     DummyCrsGenerator,
     DummyCrsGenerator, // the insecure one is the same as the dummy one
-    DummyProvenCtVerifier,
 >;
 
 async fn new_dummy_threshold_kms() -> (DummyThresholdKms, HealthServer<impl Health>) {
@@ -107,7 +103,6 @@ async fn new_dummy_threshold_kms() -> (DummyThresholdKms, HealthServer<impl Heal
             DummyCrsGenerator {},
             #[cfg(feature = "insecure")]
             DummyCrsGenerator {},
-            DummyProvenCtVerifier {},
             Arc::new(TaskTracker::new()),
             Arc::new(RwLock::new(threshold_health_reporter)),
             handle,
@@ -306,36 +301,6 @@ impl InsecureCrsGenerator for DummyCrsGenerator {
         Ok(Response::new(CrsGenResult {
             request_id: Some(request.into_inner()),
             crs_results: Some(SignedPubDataHandle::default()),
-        }))
-    }
-}
-
-struct DummyProvenCtVerifier;
-
-#[tonic::async_trait]
-impl ProvenCtVerifier for DummyProvenCtVerifier {
-    async fn verify(
-        &self,
-        _request: Request<VerifyProvenCtRequest>,
-    ) -> Result<Response<Empty>, Status> {
-        Ok(Response::new(Empty {}))
-    }
-
-    async fn get_result(
-        &self,
-        request: Request<RequestId>,
-    ) -> Result<Response<VerifyProvenCtResponse>, Status> {
-        let inner = request.into_inner();
-        let payload = Some(VerifyProvenCtResponsePayload {
-            request_id: Some(inner),
-            contract_address: "0xEe344eeDA74E25D746dd1853Bb65C800D1674264".to_string(),
-            client_address: "0x355d755538C0310D725b589eA45fB17F320f707B".to_string(),
-            ct_digest: "dummy digest".as_bytes().to_vec(),
-            external_signature: vec![23_u8; 65],
-        });
-        Ok(Response::new(VerifyProvenCtResponse {
-            payload,
-            signature: vec![1, 2],
         }))
     }
 }

@@ -1,4 +1,3 @@
-use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::util::key_setup::FhePublicKey;
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{
@@ -21,7 +20,7 @@ use tfhe::zk::CompactPkeCrs;
 use tfhe::{
     FheBool, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32,
     FheUint4, FheUint512, FheUint64, FheUint8, HlCompactable, HlCompressible, HlExpandable,
-    ProvenCompactCiphertextList, ServerKey, Unversionize, Versionize,
+    ServerKey, Unversionize, Versionize,
 };
 
 trait IntoRawParts {
@@ -483,92 +482,6 @@ pub async fn load_pk_from_storage(pub_path: Option<&Path>, key_id: &str) -> FheP
 
 pub async fn load_crs_from_storage(pub_path: Option<&Path>, crs_id: &str) -> CompactPkeCrs {
     load_material_from_storage(pub_path, crs_id, PubDataType::CRS).await
-}
-
-pub async fn compute_proven_ct_from_stored_key_and_serialize(
-    pub_path: Option<&Path>,
-    msgs: Vec<TestingPlaintext>,
-    key_id: &str,
-    crs_id: &str,
-    metadata: &[u8],
-) -> Vec<u8> {
-    let ctlist = compute_proven_ct_from_stored_key(pub_path, msgs, key_id, crs_id, metadata).await;
-    let mut out = Vec::new();
-    safe_serialize(&ctlist, &mut out, SAFE_SER_SIZE_LIMIT).unwrap();
-    out
-}
-
-/// This function should be used for testing only and it can panic.
-pub async fn compute_proven_ct_from_stored_key(
-    pub_path: Option<&Path>,
-    msgs: Vec<TestingPlaintext>,
-    key_id: &str,
-    crs_id: &str,
-    metadata: &[u8],
-) -> ProvenCompactCiphertextList {
-    // Try first with centralized storage
-    let storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
-    let key_url = storage
-        .compute_url(key_id, &PubDataType::PublicKey.to_string())
-        .unwrap();
-    let crs_url = storage
-        .compute_url(crs_id, &PubDataType::CRS.to_string())
-        .unwrap();
-    let (pk, pp) = if storage.data_exists(&key_url).await.unwrap() {
-        let wrapped_pk = read_pk_at_request_id(
-            &storage,
-            &RequestId {
-                request_id: key_id.to_owned(),
-            },
-        )
-        .await
-        .unwrap();
-        let WrappedPublicKeyOwned::Compact(pk) = wrapped_pk;
-        let pp: CompactPkeCrs = storage.read_data(&crs_url).await.unwrap();
-        (pk, pp)
-    } else {
-        // Try with the threshold storage
-        let storage = FileStorage::new(pub_path, StorageType::PUB, Some(1)).unwrap();
-        let crs_url = storage
-            .compute_url(crs_id, &PubDataType::CRS.to_string())
-            .unwrap();
-        let wrapped_pk = read_pk_at_request_id(
-            &storage,
-            &RequestId {
-                request_id: key_id.to_owned(),
-            },
-        )
-        .await
-        .unwrap();
-        let WrappedPublicKeyOwned::Compact(pk) = wrapped_pk;
-        let pp: CompactPkeCrs = storage.read_data(&crs_url).await.unwrap();
-        (pk, pp)
-    };
-
-    let mut compact_list_builder = ProvenCompactCiphertextList::builder(&pk);
-    for msg in msgs {
-        let msg_as_ptx: TypedPlaintext = msg.into();
-        match msg_as_ptx.fhe_type() {
-            FheType::Ebool => compact_list_builder.push(msg_as_ptx.as_bool()),
-            // there's no specific type for u4, so we need to use `push_with_num_bits`
-            FheType::Euint4 => compact_list_builder
-                .push_with_num_bits(msg_as_ptx.as_u4(), msg.bits())
-                .unwrap(),
-            FheType::Euint8 => compact_list_builder.push(msg_as_ptx.as_u8()),
-            FheType::Euint16 => compact_list_builder.push(msg_as_ptx.as_u16()),
-            FheType::Euint32 => compact_list_builder.push(msg_as_ptx.as_u32()),
-            FheType::Euint64 => compact_list_builder.push(msg_as_ptx.as_u64()),
-            FheType::Euint128 => compact_list_builder.push(msg_as_ptx.as_u128()),
-            FheType::Euint160 => compact_list_builder.push(msg_as_ptx.as_u160()),
-            FheType::Euint256 => compact_list_builder.push(msg_as_ptx.as_u256()),
-            FheType::Euint512 => compact_list_builder.push(msg_as_ptx.as_u512()),
-            FheType::Euint1024 => compact_list_builder.push(msg_as_ptx.as_u1024()),
-            FheType::Euint2048 => compact_list_builder.push(msg_as_ptx.as_u2048()),
-        };
-    }
-    compact_list_builder
-        .build_with_proof_packed(&pp, metadata, tfhe::zk::ZkComputeLoad::Proof)
-        .unwrap()
 }
 
 async fn load_material_from_any_pub_storage<T>(

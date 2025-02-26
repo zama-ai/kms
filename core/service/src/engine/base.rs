@@ -10,7 +10,7 @@ use crate::util::key_setup::FhePrivateKey;
 use aes_prng::AesRng;
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::Bytes;
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{B256, U256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::Eip712Domain;
@@ -24,12 +24,11 @@ use distributed_decryption::execution::tfhe_internals::parameters::{
 use k256::ecdsa::SigningKey;
 use kms_grpc::kms::v1::{
     CiphertextFormat, FheParameter, FheType, SignedPubDataHandle, TypedPlaintext,
-    TypedSigncryptedCiphertext, VerifyProvenCtRequest,
+    TypedSigncryptedCiphertext,
 };
 use kms_grpc::rpc_types::{
-    hash_element, safe_serialize_hash_element_versioned, CiphertextVerificationForKMS,
-    DecryptionResult, FhePubKey, FheServerKey, PubDataType, SignedPubDataHandleInternal,
-    UserDecryptionResult, CRS,
+    hash_element, safe_serialize_hash_element_versioned, EIP712PublicDecrypt, FhePubKey,
+    FheServerKey, PubDataType, SignedPubDataHandleInternal, UserDecryptionResult, CRS,
 };
 use rand::{CryptoRng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -344,9 +343,8 @@ pub(crate) fn compute_external_pt_signature(
     ext_handles_bytes: Vec<Vec<u8>>,
     pts: &[TypedPlaintext],
     eip712_domain: Eip712Domain,
-    acl_address: Address,
 ) -> Vec<u8> {
-    let message_hash = compute_pt_message_hash(ext_handles_bytes, pts, eip712_domain, acl_address);
+    let message_hash = compute_pt_message_hash(ext_handles_bytes, pts, eip712_domain);
 
     let signer = PrivateKeySigner::from_signing_key(server_sk.sk().clone());
     let signer_address = signer.address();
@@ -362,46 +360,6 @@ pub(crate) fn compute_external_pt_signature(
     tracing::info!("PT Signature: {:?}", hex::encode(signature.clone()));
 
     signature
-}
-
-/// Take the ZK proof verification metadata, convert it to the required solidity types and sign them using EIP-712 for external verification (e.g. in the fhevm).
-#[tracing::instrument(level = "info", skip(client_sk, ct_digest))]
-pub fn compute_external_verify_proven_ct_signature(
-    client_sk: &PrivateSigKey,
-    ct_digest: &Vec<u8>,
-    req: &VerifyProvenCtRequest,
-) -> anyhow::Result<Vec<u8>> {
-    let eip712_domain = match req.domain.as_ref() {
-        Some(domain) => kms_grpc::rpc_types::protobuf_to_alloy_domain(domain)?,
-        None => {
-            return Err(anyhow::anyhow!(
-                "EIP-712 domain is not set for ZK verification signature!"
-            ));
-        }
-    };
-
-    // the solidity structure to sign with EIP-712
-    let message = CiphertextVerificationForKMS {
-        aclAddress: alloy_primitives::Address::parse_checksummed(&req.acl_address, None)?,
-        hashOfCiphertext: ct_digest.as_slice().try_into()?,
-        userAddress: alloy_primitives::Address::parse_checksummed(&req.client_address, None)?,
-        contractAddress: alloy_primitives::Address::parse_checksummed(&req.contract_address, None)?,
-    };
-
-    let signer = PrivateKeySigner::from_signing_key(client_sk.sk().clone());
-    let signer_address = signer.address();
-
-    tracing::info!("Signer address: {:?}", signer_address);
-
-    let message_hash = message.eip712_signing_hash(&eip712_domain);
-    tracing::info!("ZKP Verf Message hash: {:?}", message_hash);
-
-    // Sign the hash synchronously with the wallet.
-    let signature = signer.sign_hash_sync(&message_hash)?.as_bytes().to_vec();
-
-    tracing::info!("ZKP Verf Signature: {:?}", hex::encode(signature.clone()));
-
-    Ok(signature)
 }
 
 /// Safely serialize some public data, convert it to a solidity type byte array and compute the EIP-712 message hash for external verification (e.g. in the fhevm).
@@ -609,7 +567,6 @@ pub fn compute_pt_message_hash(
     ext_handles_bytes: Vec<Vec<u8>>,
     pts: &[TypedPlaintext],
     eip712_domain: Eip712Domain,
-    acl_address: Address,
 ) -> B256 {
     // convert external_handles back to U256 to be signed
     let external_handles: Vec<_> = ext_handles_bytes
@@ -620,8 +577,7 @@ pub fn compute_pt_message_hash(
     let pt_bytes = abi_encode_plaintexts(pts);
 
     // the solidity structure to sign with EIP-712
-    let message = DecryptionResult {
-        aclAddress: acl_address,
+    let message = EIP712PublicDecrypt {
         handlesList: external_handles,
         decryptedResult: pt_bytes,
     };
@@ -665,25 +621,6 @@ pub(crate) fn retrieve_parameters(fhe_parameter: i32) -> anyhow::Result<DKGParam
     let fhe_parameter: crate::cryptography::internal_crypto_types::WrappedDKGParams =
         FheParameter::try_from(fhe_parameter)?.into();
     Ok(*fhe_parameter)
-}
-
-#[cfg(test)]
-pub(crate) trait RequestIdGetter {
-    fn request_id(&self) -> Option<kms_grpc::kms::v1::RequestId>;
-}
-
-#[cfg(test)]
-impl RequestIdGetter for kms_grpc::kms::v1::CrsGenRequest {
-    fn request_id(&self) -> Option<kms_grpc::kms::v1::RequestId> {
-        self.request_id.clone()
-    }
-}
-
-#[cfg(test)]
-impl RequestIdGetter for VerifyProvenCtRequest {
-    fn request_id(&self) -> Option<kms_grpc::kms::v1::RequestId> {
-        self.request_id.clone()
-    }
 }
 
 // Values that need to be stored temporarily as part of an async key generation call.

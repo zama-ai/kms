@@ -100,7 +100,6 @@ impl<
         private_storage: PrivS,
         backup_storage: Option<BackS>,
         pk_cache: HashMap<RequestId, WrappedPublicKeyOwned>,
-        crs_cache: HashMap<RequestId, CompactPkeCrs>,
         fhe_keys: HashMap<RequestId, ThresholdFheKeys>,
     ) -> Self {
         Self {
@@ -109,7 +108,6 @@ impl<
                 private_storage: Arc::new(Mutex::new(private_storage)),
                 backup_storage: backup_storage.map(|x| Arc::new(Mutex::new(x))),
                 pk_cache: Arc::new(RwLock::new(pk_cache)),
-                crs_cache: Arc::new(RwLock::new(crs_cache)),
             },
             fhe_keys: Arc::new(RwLock::new(fhe_keys)),
         }
@@ -369,7 +367,6 @@ impl<
         private_storage: PrivS,
         backup_storage: Option<BackS>,
         pk_cache: HashMap<RequestId, WrappedPublicKeyOwned>,
-        crs_cache: HashMap<RequestId, CompactPkeCrs>,
         fhe_keys: HashMap<RequestId, KmsFheKeyHandles>,
     ) -> Self {
         Self {
@@ -378,7 +375,6 @@ impl<
                 private_storage: Arc::new(Mutex::new(private_storage)),
                 backup_storage: backup_storage.map(|x| Arc::new(Mutex::new(x))),
                 pk_cache: Arc::new(RwLock::new(pk_cache)),
-                crs_cache: Arc::new(RwLock::new(crs_cache)),
             },
             fhe_keys: Arc::new(RwLock::new(fhe_keys)),
         }
@@ -601,8 +597,6 @@ pub(crate) struct CryptoMaterialStorage<
     backup_storage: Option<Arc<Mutex<BackS>>>,
     // Map storing the already generated public keys.
     pk_cache: Arc<RwLock<HashMap<RequestId, WrappedPublicKeyOwned>>>,
-    // Map storing the already generated CRS.
-    crs_cache: Arc<RwLock<HashMap<RequestId, CompactPkeCrs>>>,
 }
 
 impl<
@@ -693,25 +687,6 @@ impl<
         }
     }
 
-    /// Read the CRS from cache. If it does not exist,
-    /// attempt to read it from the storage backend and update the cache.
-    pub(crate) async fn read_guarded_crs_from_cache(
-        &self,
-        req_id: &RequestId,
-    ) -> anyhow::Result<OwnedRwLockReadGuard<HashMap<RequestId, CompactPkeCrs>, CompactPkeCrs>>
-    {
-        Self::read_guarded_crypto_material_from_cache(req_id, self.crs_cache.clone()).await
-    }
-
-    pub(crate) async fn refresh_crs(&self, req_id: &RequestId) -> anyhow::Result<()> {
-        Self::refresh_crypto_material::<CompactPkeCrs, _>(
-            self.crs_cache.clone(),
-            req_id,
-            self.public_storage.clone(),
-        )
-        .await
-    }
-
     /// Write the CRS to the storage backend as well as the cache,
     /// and update the [meta_store] to "Done" if the procedure is successful.
     ///
@@ -763,12 +738,7 @@ impl<
                 })
                 .is_ok()
         {
-            // updating the cache is not critical to system functionality,
-            // so we do not consider it as an error
-            let mut crs_cache_guard = self.crs_cache.write().await;
-            if crs_cache_guard.insert(req_id.clone(), pp).is_some() {
-                tracing::warn!("CRS already exists in crs_cache for {}", req_id);
-            }
+            // everything is ok, there's no cache to update
         } else {
             // Try to delete stored data to avoid anything dangling
             // Ignore any failure to delete something since it might
@@ -820,9 +790,7 @@ impl<
 
         // We cannot do much if updating CRS cache fails at this point,
         // so just log an error.
-        let mut crs_cache_guard = self.crs_cache.write().await;
-        let r4 = crs_cache_guard.remove(req_id).is_none();
-        if r3 || r4 {
+        if r3 {
             tracing::error!("Failed to remove crs cached data for request {}", req_id);
         } else {
             tracing::info!("Removed all crs cached data for request {}", req_id);
@@ -884,10 +852,8 @@ impl<
 
     /// Read the public key from a cache, if it does not exist,
     /// attempt to read it from the public storage backend.
-    pub(crate) async fn read_cloned_pk(
-        &self,
-        req_id: &RequestId,
-    ) -> anyhow::Result<WrappedPublicKeyOwned> {
+    #[cfg(test)]
+    async fn read_cloned_pk(&self, req_id: &RequestId) -> anyhow::Result<WrappedPublicKeyOwned> {
         Self::read_cloned_crypto_material::<WrappedPublicKeyOwned, _>(
             self.pk_cache.clone(),
             req_id,
@@ -896,6 +862,7 @@ impl<
         .await
     }
 
+    #[cfg(test)]
     async fn read_cloned_crypto_material<T, S>(
         cache: Arc<RwLock<HashMap<RequestId, T>>>,
         req_id: &RequestId,
@@ -994,7 +961,6 @@ impl<
             private_storage: Arc::clone(&self.private_storage),
             backup_storage: self.backup_storage.as_ref().map(Arc::clone),
             pk_cache: Arc::clone(&self.pk_cache),
-            crs_cache: Arc::clone(&self.crs_cache),
         }
     }
 }
@@ -1061,7 +1027,7 @@ mod tests {
         tfhe_internals::test_feature::{gen_key_set, keygen_all_party_shares},
     };
     use kms_grpc::kms::v1::RequestId;
-    use kms_grpc::rpc_types::{PubDataType, WrappedPublicKey};
+    use kms_grpc::rpc_types::WrappedPublicKey;
     use rand::SeedableRng;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -1080,59 +1046,9 @@ mod tests {
                 ThresholdCryptoMaterialStorage,
             },
             ram::{FailingRamStorage, RamStorage},
-            store_pk_at_request_id, store_versioned_at_request_id, StorageType,
+            store_pk_at_request_id, StorageType,
         },
     };
-
-    #[tokio::test]
-    async fn read_crs() {
-        // create a CRS in public_storage and not in cache
-        // loading it should be successful
-        let mut rng = AesRng::seed_from_u64(100);
-        let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
-        let (pp, _crs_info) = async_generate_crs(&sig_sk, rng, TEST_PARAM, Some(1), None)
-            .await
-            .unwrap();
-
-        let req_id = RequestId::derive("read_crs").unwrap();
-        let mut pub_storage = RamStorage::new(StorageType::PUB);
-        store_versioned_at_request_id(
-            &mut pub_storage,
-            &req_id,
-            &pp,
-            &PubDataType::CRS.to_string(),
-        )
-        .await
-        .unwrap();
-
-        let crs_cache = Arc::new(RwLock::new(HashMap::new()));
-        let crypto_storage = CryptoMaterialStorage {
-            public_storage: Arc::new(Mutex::new(pub_storage)),
-            private_storage: Arc::new(Mutex::new(RamStorage::new(StorageType::PRIV))),
-            backup_storage: None as Option<Arc<Mutex<RamStorage>>>,
-            pk_cache: Arc::new(RwLock::new(HashMap::new())),
-            crs_cache: crs_cache.clone(),
-        };
-
-        // we should not find the pp without a refresh
-        crypto_storage
-            .read_guarded_crs_from_cache(&req_id)
-            .await
-            .unwrap_err();
-
-        // after refreshing we should find it
-        crypto_storage.refresh_crs(&req_id).await.unwrap();
-        {
-            let _guard = crypto_storage
-                .read_guarded_crs_from_cache(&req_id)
-                .await
-                .unwrap();
-        }
-
-        // we should also see it in the cache
-        let cache = crs_cache.read().await;
-        assert!(cache.get(&req_id).is_some());
-    }
 
     #[tokio::test]
     #[tracing_test::traced_test]
@@ -1140,13 +1056,11 @@ mod tests {
         // write the CRS, first try with storage that are functional
         // then try to write into a failing storage and expect an error
         let pub_storage = Arc::new(Mutex::new(FailingRamStorage::new(StorageType::PUB, 100)));
-        let crs_cache = Arc::new(RwLock::new(HashMap::new()));
         let crypto_storage = CryptoMaterialStorage {
             public_storage: pub_storage.clone(),
             private_storage: Arc::new(Mutex::new(RamStorage::new(StorageType::PRIV))),
             backup_storage: None as Option<Arc<Mutex<RamStorage>>>,
             pk_cache: Arc::new(RwLock::new(HashMap::new())),
-            crs_cache: crs_cache.clone(),
         };
 
         let mut rng = AesRng::seed_from_u64(100);
@@ -1208,7 +1122,6 @@ mod tests {
             None as Option<RamStorage>,
             HashMap::new(),
             HashMap::new(),
-            HashMap::new(),
         );
 
         let pub_storage = crypto_storage.inner.public_storage.clone();
@@ -1245,7 +1158,6 @@ mod tests {
             FailingRamStorage::new(StorageType::PUB, 100),
             RamStorage::new(StorageType::PUB),
             None as Option<RamStorage>,
-            HashMap::new(),
             HashMap::new(),
             HashMap::new(),
         );
@@ -1530,7 +1442,6 @@ mod tests {
             FailingRamStorage::new(StorageType::PUB, 100),
             RamStorage::new(StorageType::PUB),
             None as Option<RamStorage>,
-            HashMap::new(),
             HashMap::new(),
             HashMap::new(),
         );

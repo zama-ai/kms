@@ -1,6 +1,5 @@
 use crate::engine::threshold::traits::{
-    CrsGenerator, Decryptor, Initiator, KeyGenPreprocessor, KeyGenerator, ProvenCtVerifier,
-    Reencryptor,
+    CrsGenerator, Decryptor, Initiator, KeyGenPreprocessor, KeyGenerator, Reencryptor,
 };
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
@@ -25,7 +24,6 @@ pub struct GenericKms<
     PP: Sync,
     CG: Sync,
     #[cfg(feature = "insecure")] ICG: Sync,
-    ZV: Sync,
 > {
     initiator: IN,
     reencryptor: RE,
@@ -37,7 +35,6 @@ pub struct GenericKms<
     crs_generator: CG,
     #[cfg(feature = "insecure")]
     insecure_crs_generator: ICG,
-    proven_ct_verifier: ZV,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
     tracker: Arc<TaskTracker>,
     health_reporter: Arc<RwLock<HealthReporter>>,
@@ -45,17 +42,8 @@ pub struct GenericKms<
 }
 
 #[cfg(feature = "insecure")]
-impl<
-        IN: Sync,
-        RE: Sync,
-        DE: Sync,
-        KG: Sync,
-        IKG: Sync,
-        PP: Sync,
-        CG: Sync,
-        ICG: Sync,
-        ZV: Sync,
-    > GenericKms<IN, RE, DE, KG, IKG, PP, CG, ICG, ZV>
+impl<IN: Sync, RE: Sync, DE: Sync, KG: Sync, IKG: Sync, PP: Sync, CG: Sync, ICG: Sync>
+    GenericKms<IN, RE, DE, KG, IKG, PP, CG, ICG>
 {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -67,7 +55,6 @@ impl<
         keygen_preprocessor: PP,
         crs_generator: CG,
         insecure_crs_generator: ICG,
-        proven_ct_verifier: ZV,
         tracker: Arc<TaskTracker>,
         health_reporter: Arc<RwLock<HealthReporter>>,
         mpc_abort_handle: JoinHandle<Result<(), anyhow::Error>>,
@@ -81,7 +68,6 @@ impl<
             keygen_preprocessor,
             crs_generator,
             insecure_crs_generator,
-            proven_ct_verifier,
             tracker,
             health_reporter,
             mpc_abort_handle,
@@ -91,17 +77,8 @@ impl<
 
 #[cfg(feature = "insecure")]
 #[tonic::async_trait]
-impl<
-        IN: Sync,
-        RE: Sync,
-        DE: Sync,
-        KG: Sync,
-        IKG: Sync,
-        PP: Sync,
-        CG: Sync,
-        ICG: Sync,
-        ZV: Sync,
-    > Shutdown for GenericKms<IN, RE, DE, KG, IKG, PP, CG, ICG, ZV>
+impl<IN: Sync, RE: Sync, DE: Sync, KG: Sync, IKG: Sync, PP: Sync, CG: Sync, ICG: Sync> Shutdown
+    for GenericKms<IN, RE, DE, KG, IKG, PP, CG, ICG>
 {
     async fn shutdown(&self) -> anyhow::Result<()> {
         self.health_reporter
@@ -135,17 +112,8 @@ impl<
 
 #[cfg(feature = "insecure")]
 #[allow(clippy::let_underscore_future)]
-impl<
-        IN: Sync,
-        RE: Sync,
-        DE: Sync,
-        KG: Sync,
-        IKG: Sync,
-        PP: Sync,
-        CG: Sync,
-        ICG: Sync,
-        ZV: Sync,
-    > Drop for GenericKms<IN, RE, DE, KG, IKG, PP, CG, ICG, ZV>
+impl<IN: Sync, RE: Sync, DE: Sync, KG: Sync, IKG: Sync, PP: Sync, CG: Sync, ICG: Sync> Drop
+    for GenericKms<IN, RE, DE, KG, IKG, PP, CG, ICG>
 {
     fn drop(&mut self) {
         // Let the shutdown run in the background
@@ -154,8 +122,8 @@ impl<
 }
 
 #[cfg(not(feature = "insecure"))]
-impl<IN: Sync, RE: Sync, DE: Sync, KG: Sync, PP: Sync, CG: Sync, ZV: Sync>
-    GenericKms<IN, RE, DE, KG, PP, CG, ZV>
+impl<IN: Sync, RE: Sync, DE: Sync, KG: Sync, PP: Sync, CG: Sync>
+    GenericKms<IN, RE, DE, KG, PP, CG>
 {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -165,7 +133,6 @@ impl<IN: Sync, RE: Sync, DE: Sync, KG: Sync, PP: Sync, CG: Sync, ZV: Sync>
         key_generator: KG,
         keygen_preprocessor: PP,
         crs_generator: CG,
-        proven_ct_verifier: ZV,
         tracker: Arc<TaskTracker>,
         health_reporter: Arc<RwLock<HealthReporter>>,
         mpc_abort_handle: JoinHandle<Result<(), anyhow::Error>>,
@@ -177,7 +144,6 @@ impl<IN: Sync, RE: Sync, DE: Sync, KG: Sync, PP: Sync, CG: Sync, ZV: Sync>
             key_generator,
             keygen_preprocessor,
             crs_generator,
-            proven_ct_verifier,
             tracker,
             health_reporter,
             mpc_abort_handle,
@@ -187,8 +153,8 @@ impl<IN: Sync, RE: Sync, DE: Sync, KG: Sync, PP: Sync, CG: Sync, ZV: Sync>
 
 #[tonic::async_trait]
 #[cfg(not(feature = "insecure"))]
-impl<IN: Sync, RE: Sync, DE: Sync, KG: Sync, PP: Sync, CG: Sync, ZV: Sync> Shutdown
-    for GenericKms<IN, RE, DE, KG, PP, CG, ZV>
+impl<IN: Sync, RE: Sync, DE: Sync, KG: Sync, PP: Sync, CG: Sync> Shutdown
+    for GenericKms<IN, RE, DE, KG, PP, CG>
 {
     async fn shutdown(&self) -> anyhow::Result<()> {
         self.health_reporter
@@ -222,8 +188,8 @@ impl<IN: Sync, RE: Sync, DE: Sync, KG: Sync, PP: Sync, CG: Sync, ZV: Sync> Shutd
 
 #[cfg(not(feature = "insecure"))]
 #[allow(clippy::let_underscore_future)]
-impl<IN: Sync, RE: Sync, DE: Sync, KG: Sync, PP: Sync, CG: Sync, ZV: Sync> Drop
-    for GenericKms<IN, RE, DE, KG, PP, CG, ZV>
+impl<IN: Sync, RE: Sync, DE: Sync, KG: Sync, PP: Sync, CG: Sync> Drop
+    for GenericKms<IN, RE, DE, KG, PP, CG>
 {
     fn drop(&mut self) {
         // Let the shutdown run in the background
@@ -242,8 +208,7 @@ macro_rules! impl_endpoint {
                 KG: KeyGenerator + Sync + Send + 'static,
                 PP: KeyGenPreprocessor + Sync + Send + 'static,
                 CG: CrsGenerator + Sync + Send + 'static,
-                ZV: ProvenCtVerifier + Sync + Send + 'static,
-            > CoreServiceEndpoint for GenericKms<IN, RE, DE, KG, PP, CG, ZV> $implementations
+            > CoreServiceEndpoint for GenericKms<IN, RE, DE, KG, PP, CG> $implementations
 
         #[cfg(feature="insecure")]
         #[tonic::async_trait]
@@ -256,8 +221,7 @@ macro_rules! impl_endpoint {
                 PP: KeyGenPreprocessor + Sync + Send + 'static,
                 CG: CrsGenerator + Sync + Send + 'static,
                 ICG: InsecureCrsGenerator + Sync + Send + 'static,
-                ZV: ProvenCtVerifier + Sync + Send + 'static,
-            > CoreServiceEndpoint for GenericKms<IN, RE, DE, KG, IKG, PP, CG, ICG, ZV> $implementations
+            > CoreServiceEndpoint for GenericKms<IN, RE, DE, KG, IKG, PP, CG, ICG> $implementations
     }
 }
 
@@ -339,22 +303,6 @@ impl_endpoint! {
             request: Request<RequestId>,
         ) -> Result<Response<CrsGenResult>, Status> {
             self.crs_generator.get_result(request).await
-        }
-
-        #[tracing::instrument(skip(self, request))]
-        async fn verify_proven_ct(
-            &self,
-            request: Request<VerifyProvenCtRequest>,
-        ) -> Result<Response<Empty>, Status> {
-            self.proven_ct_verifier.verify(request).await
-        }
-
-        #[tracing::instrument(skip(self, request))]
-        async fn get_verify_proven_ct_result(
-            &self,
-            request: Request<RequestId>,
-        ) -> Result<Response<VerifyProvenCtResponse>, Status> {
-            self.proven_ct_verifier.get_result(request).await
         }
 
         #[cfg(feature = "insecure")]

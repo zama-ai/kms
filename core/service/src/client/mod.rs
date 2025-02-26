@@ -51,14 +51,12 @@ cfg_if::cfg_if! {
         use kms_grpc::kms::v1::{
             KeySetAddedInfo, CrsGenRequest, CrsGenResult, DecryptionRequest,
             DecryptionResponse, DecryptionResponsePayload, FheParameter, KeyGenPreprocRequest,
-            KeyGenRequest, KeyGenResult, VerifyProvenCtRequest,
-            VerifyProvenCtResponse, KeySetConfig,
+            KeyGenRequest, KeyGenResult, KeySetConfig,
         };
         use kms_grpc::rpc_types::{PubDataType, PublicKeyType, WrappedPublicKeyOwned};
         use std::collections::HashMap;
         use std::fmt;
         use tfhe::zk::CompactPkeCrs;
-        use tfhe::ProvenCompactCiphertextList;
         use tfhe::ServerKey;
         use tfhe_versionable::{Unversionize, Versionize};
         use tonic::transport::Channel;
@@ -734,7 +732,6 @@ impl Client {
         ciphertexts: Vec<TypedCiphertext>,
         domain: &Eip712Domain,
         request_id: &RequestId,
-        acl_address: &alloy_primitives::Address,
         key_id: &RequestId,
     ) -> anyhow::Result<DecryptionRequest> {
         if !request_id.is_valid() {
@@ -750,7 +747,6 @@ impl Client {
             key_id: Some(key_id.clone()),
             domain: Some(domain_msg),
             request_id: Some(request_id.clone()),
-            acl_address: Some(acl_address.to_string()),
         };
         Ok(req)
     }
@@ -1962,145 +1958,6 @@ impl Client {
         }
         Ok(true)
     }
-
-    /// Make a verification request for the given `proven_ct` with some metadata.
-    /// NOTE: eventually we want to integrate the metadata into the proven ciphertext.
-    #[cfg(feature = "non-wasm")]
-    #[expect(clippy::too_many_arguments)]
-    pub fn verify_proven_ct_request(
-        &self,
-        crs_handle: &RequestId,
-        key_handle: &RequestId,
-        contract_address: &alloy_primitives::Address,
-        proven_ct: &ProvenCompactCiphertextList,
-        domain: &Eip712Domain,
-        acl_address: &alloy_primitives::Address,
-        request_id: &RequestId,
-    ) -> anyhow::Result<VerifyProvenCtRequest> {
-        let mut ct_buf = Vec::new();
-        tfhe::safe_serialization::safe_serialize(
-            proven_ct,
-            &mut ct_buf,
-            crate::consts::SAFE_SER_SIZE_LIMIT,
-        )
-        .map_err(|e| anyhow::anyhow!(e))?;
-
-        let domain_msg = alloy_to_protobuf_domain(domain)?;
-
-        Ok(VerifyProvenCtRequest {
-            crs_handle: Some(crs_handle.to_owned()),
-            key_handle: Some(key_handle.to_owned()),
-            contract_address: contract_address.to_string(),
-            client_address: self.client_address.to_string(),
-            ct_bytes: ct_buf,
-            acl_address: acl_address.to_string(),
-            request_id: Some(request_id.to_owned()),
-            domain: Some(domain_msg),
-        })
-    }
-
-    /// Process a set of ciphertext verification responses
-    /// by attempting to find a one-to-one match between the signature and the server public key.
-    /// The output is the set of verified signatures along with their corresponding public key.
-    #[cfg(feature = "non-wasm")]
-    pub fn process_verify_proven_ct_resp(
-        &self,
-        responses: &[VerifyProvenCtResponse],
-        min_agree_count: u32,
-    ) -> anyhow::Result<Vec<(Signature, PublicSigKey)>> {
-        let server_pks = self.get_server_pks()?;
-        let mut remaining_pk_idx: HashSet<usize> = HashSet::from_iter(0..server_pks.len());
-        let mut out = Vec::new();
-
-        for response in responses {
-            let payload = response
-                .payload
-                .as_ref()
-                .ok_or_else(|| anyhow_error_and_log("empty verify response payload"))?;
-
-            let payload_serialized = bincode::serialize(payload)?;
-
-            let verify_proven_ct_sig = Signature {
-                sig: k256::ecdsa::Signature::from_slice(&response.signature)?,
-            };
-
-            let to_remove = (|| -> Option<usize> {
-                for pk_idx in &remaining_pk_idx {
-                    let pk = &server_pks[*pk_idx];
-                    match internal_verify_sig(&payload_serialized, &verify_proven_ct_sig, pk) {
-                        Ok(()) => {
-                            return Some(*pk_idx);
-                        }
-                        Err(_) => {
-                            // verification failed, we try with another public key
-                            // in the next iteration
-                        }
-                    }
-                }
-                None
-            })();
-            if let Some(i) = to_remove {
-                out.push((verify_proven_ct_sig, server_pks[i].clone()));
-                remaining_pk_idx.remove(&i);
-            };
-        }
-
-        if out.len() < min_agree_count as usize {
-            Err(anyhow_error_and_log(
-                "Not enough correct responses to process proof verification",
-            ))
-        } else {
-            Ok(out)
-        }
-    }
-}
-
-/// creates the metadata (auxiliary data) for proving/verifying the input ZKPs from the individual inputs
-///
-/// metadata is `contract_addr || user_addr || acl_addr || chain_id` i.e. 92 bytes since chain ID is encoded as a 32 byte big endian integer
-pub fn assemble_metadata_alloy(
-    contract_address: &alloy_primitives::Address,
-    client_address: &alloy_primitives::Address,
-    acl_address: &alloy_primitives::Address,
-    chain_id: &alloy_primitives::U256,
-) -> [u8; 92] {
-    let mut metadata = [0_u8; 92];
-
-    let contract_bytes = contract_address.into_array();
-    let client_bytes = client_address.into_array();
-    let acl_bytes = acl_address.into_array();
-    let chain_id_bytes: [u8; 32] = chain_id.to_be_bytes();
-    let front = [contract_bytes, client_bytes, acl_bytes].concat();
-    metadata[..60].copy_from_slice(front.as_slice());
-    metadata[60..].copy_from_slice(&chain_id_bytes);
-
-    metadata
-}
-
-/// creates the metadata (auxiliary data) for proving/verifying the input ZKPs from a `VerifyProvenCtRequest`
-///
-/// metadata is `contract_addr || user_addr || acl_addr || chain_id` i.e. 92 bytes since chain ID is encoded as a 32 byte big endian integer
-#[cfg(feature = "non-wasm")]
-pub fn assemble_metadata_req(req: &VerifyProvenCtRequest) -> anyhow::Result<[u8; 92]> {
-    let contract_address =
-        alloy_primitives::Address::parse_checksummed(&req.contract_address, None)?;
-    let client_address = alloy_primitives::Address::parse_checksummed(&req.client_address, None)?;
-    let acl_address = alloy_primitives::Address::parse_checksummed(&req.acl_address, None)?;
-
-    let domain = req
-        .domain
-        .as_ref()
-        .ok_or_else(|| anyhow_error_and_log("empty domain"))?;
-
-    let chain_id = alloy_primitives::U256::try_from_be_slice(&domain.chain_id)
-        .ok_or_else(|| anyhow_error_and_log("invalid chain ID"))?;
-
-    Ok(assemble_metadata_alloy(
-        &contract_address,
-        &client_address,
-        &acl_address,
-        &chain_id,
-    ))
 }
 
 /// Wait for a server to be ready for requests. I.e. wait until it enters the SERVING state.
@@ -2634,28 +2491,21 @@ pub(crate) mod tests {
     use crate::client::test_tools::check_port_is_closed;
     #[cfg(feature = "wasm_tests")]
     use crate::client::TestingReencryptionTranscript;
-    use crate::client::{
-        assemble_metadata_alloy, await_server_ready, get_health_client, get_status,
-    };
+    use crate::client::{await_server_ready, get_health_client, get_status};
     use crate::client::{ParsedReencryptionRequest, ServerIdentities};
     use crate::consts::DEFAULT_THRESHOLD;
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     use crate::consts::MAX_TRIES;
     use crate::consts::PRSS_EPOCH_ID;
     use crate::consts::TEST_PARAM;
-    use crate::consts::TEST_THRESHOLD_CRS_ID_4P;
-    use crate::consts::TEST_THRESHOLD_CRS_ID_7P;
     use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
     use crate::consts::TEST_THRESHOLD_KEY_ID_7P;
     use crate::consts::{DEFAULT_AMOUNT_PARTIES, TEST_CENTRAL_KEY_ID};
     #[cfg(feature = "slow_tests")]
-    use crate::consts::{
-        DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_CRS_ID_7P,
-        DEFAULT_THRESHOLD_KEY_ID_4P, DEFAULT_THRESHOLD_KEY_ID_7P,
-    };
+    use crate::consts::{DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_KEY_ID_4P};
     use crate::cryptography::internal_crypto_types::Signature;
     use crate::cryptography::internal_crypto_types::WrappedDKGParams;
-    use crate::engine::base::{compute_handle, BaseKmsStruct, RequestIdGetter};
+    use crate::engine::base::{compute_handle, BaseKmsStruct};
     #[cfg(feature = "slow_tests")]
     use crate::engine::centralized::central_kms::tests::get_default_keys;
     use crate::engine::centralized::central_kms::RealCentralizedKms;
@@ -2668,8 +2518,7 @@ pub(crate) mod tests {
     use crate::util::file_handling::write_element;
     use crate::util::key_setup::max_threshold;
     use crate::util::key_setup::test_tools::{
-        compute_cipher_from_stored_key, compute_proven_ct_from_stored_key, load_pk_from_storage,
-        purge, EncryptionConfig, TestingPlaintext,
+        compute_cipher_from_stored_key, purge, EncryptionConfig, TestingPlaintext,
     };
     use crate::util::rate_limiter::RateLimiterConfig;
     use crate::vault::storage::StorageReader;
@@ -3148,19 +2997,10 @@ pub(crate) mod tests {
             cts.push(ctt);
         }
 
-        let dummy_acl_address =
-            alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
-
         // make parallel requests by calling [decrypt] in a thread
         let request_id = RequestId::derive("TEST_DEC_ID").unwrap();
         let req = internal_client
-            .decryption_request(
-                cts.clone(),
-                &dummy_domain(),
-                &request_id,
-                &dummy_acl_address,
-                &key_id_req,
-            )
+            .decryption_request(cts.clone(), &dummy_domain(), &request_id, &key_id_req)
             .unwrap();
         let mut join_set = JoinSet::new();
         for i in 1..=kms_clients.len() as u32 {
@@ -3573,112 +3413,6 @@ pub(crate) mod tests {
         kms_server.assert_shutdown().await;
     }
 
-    #[rstest::rstest]
-    #[case(vec![TestingPlaintext::Bool(true)])]
-    #[case(vec![TestingPlaintext::U4(12)])]
-    #[case(vec![TestingPlaintext::U8(u8::MAX)])]
-    #[tokio::test(flavor = "multi_thread")]
-    #[serial]
-    async fn test_verify_proven_ct_centralized(#[case] msgs: Vec<TestingPlaintext>) {
-        let proven_ct_id = RequestId::derive("test_verify_proven_ct_centralized").unwrap();
-        verify_proven_ct_centralized(
-            msgs,
-            &TEST_PARAM,
-            &proven_ct_id,
-            &crate::consts::TEST_CENTRAL_CRS_ID,
-            &crate::consts::TEST_CENTRAL_KEY_ID.to_string(),
-        )
-        .await;
-    }
-
-    /// test centralized ZK probing via client interface
-    pub(crate) async fn verify_proven_ct_centralized(
-        msgs: Vec<TestingPlaintext>,
-        dkg_params: &DKGParams,
-        proven_ct_id: &RequestId,
-        crs_req_id: &RequestId,
-        key_handle: &str,
-    ) {
-        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-        let (kms_server, mut kms_client, internal_client) =
-            super::test_tools::centralized_handles(dkg_params, None).await;
-
-        // next use the verify endpoint to check the proof
-        // for this we need to read the key
-        tracing::info!("Starting zk verification");
-        let key_id = RequestId {
-            request_id: key_handle.to_owned(),
-        };
-        let pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
-
-        // try to make a proof and check that it works
-        let dummy_contract_address =
-            alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
-
-        let dummy_acl_address =
-            alloy_primitives::address!("01da6bf26964af9d7eed9e03e53415d37aa960ff");
-
-        let metadata = assemble_metadata_alloy(
-            &dummy_contract_address,
-            &internal_client.get_client_address(),
-            &dummy_acl_address,
-            &dummy_domain().chain_id.unwrap(),
-        );
-
-        let proven_ct = compute_proven_ct_from_stored_key(
-            None,
-            msgs,
-            key_handle,
-            &crs_req_id.request_id,
-            &metadata,
-        )
-        .await;
-        // Sanity check that the proof is valid
-        let pk = load_pk_from_storage(None, key_handle).await;
-        let pp = internal_client
-            .get_crs(crs_req_id, &pub_storage)
-            .await
-            .unwrap();
-        assert!(tfhe::zk::ZkVerificationOutcome::Valid == proven_ct.verify(&pp, &pk, &metadata));
-
-        let verify_proven_ct_req = internal_client
-            .verify_proven_ct_request(
-                crs_req_id,
-                &key_id,
-                &dummy_contract_address,
-                &proven_ct,
-                &dummy_domain(),
-                &dummy_acl_address,
-                proven_ct_id,
-            )
-            .unwrap();
-
-        let _ = kms_client
-            .verify_proven_ct(tonic::Request::new(verify_proven_ct_req))
-            .await
-            .unwrap();
-
-        let mut ctr = 0;
-        let mut verify_proven_ct_response = kms_client
-            .get_verify_proven_ct_result(proven_ct_id.clone())
-            .await;
-        while verify_proven_ct_response.is_err() && ctr < 1000 {
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-            verify_proven_ct_response = kms_client
-                .get_verify_proven_ct_result(tonic::Request::new(proven_ct_id.clone()))
-                .await;
-            ctr += 1;
-        }
-
-        let verify_proven_ct_response_inner = verify_proven_ct_response.unwrap().into_inner();
-        let sigs = internal_client
-            .process_verify_proven_ct_resp(&[verify_proven_ct_response_inner], 1)
-            .unwrap();
-        assert_eq!(sigs.len(), 1);
-
-        kms_server.assert_shutdown().await;
-    }
-
     async fn verify_pp(dkg_params: &DKGParams, pp: &CompactPkeCrs) {
         let dkg_params_handle = dkg_params.get_params_basics_handle();
 
@@ -3767,7 +3501,7 @@ pub(crate) mod tests {
                         // we haven't killed the corresponding server
                         if let Some(cur_client) = $kms_clients.get(&i) {
                             let mut cur_client = cur_client.clone();
-                            let req_id_cloned = req.request_id().unwrap();
+                            let req_id_cloned = req.request_id.clone().unwrap();
                             tasks_get.spawn(async move {
                                 (
                                     i,
@@ -4157,219 +3891,6 @@ pub(crate) mod tests {
     //
     /////////////////////////////////
 
-    #[tokio::test(flavor = "multi_thread")]
-    #[rstest::rstest]
-    #[case(vec![TestingPlaintext::U8(u8::MAX)], 7, &TEST_THRESHOLD_KEY_ID_7P, &TEST_THRESHOLD_CRS_ID_7P)]
-    #[case(vec![TestingPlaintext::U8(u8::MAX)], 4, &TEST_THRESHOLD_KEY_ID_4P, &TEST_THRESHOLD_CRS_ID_4P)]
-    #[case(vec![TestingPlaintext::Bool(true)], 4, &TEST_THRESHOLD_KEY_ID_4P, &TEST_THRESHOLD_CRS_ID_4P)]
-    #[serial]
-    async fn test_verify_proven_ct_threshold(
-        #[case] msgs: Vec<TestingPlaintext>,
-        #[case] amount_parties: usize,
-        #[case] key_id: &RequestId,
-        #[case] crs_id: &RequestId,
-    ) {
-        verify_proven_ct_threshold(msgs, 1, crs_id, key_id, TEST_PARAM, amount_parties, None).await
-    }
-
-    #[cfg(feature = "slow_tests")]
-    #[rstest::rstest]
-    #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 7, &DEFAULT_THRESHOLD_KEY_ID_7P, &DEFAULT_THRESHOLD_CRS_ID_7P)]
-    #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
-    #[case(vec![TestingPlaintext::Bool(true)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
-    #[case(vec![TestingPlaintext::U8(u8::MAX)], 4, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
-    #[case(vec![TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
-    #[tokio::test(flavor = "multi_thread")]
-    #[serial]
-    async fn default_verify_proven_ct_threshold(
-        #[case] msgs: Vec<TestingPlaintext>,
-        #[case] parallelism: usize,
-        #[case] amount_parties: usize,
-        #[case] key_id: &RequestId,
-        #[case] crs_id: &RequestId,
-    ) {
-        verify_proven_ct_threshold(
-            msgs,
-            parallelism,
-            crs_id,
-            key_id,
-            crate::consts::DEFAULT_PARAM,
-            amount_parties,
-            None,
-        )
-        .await
-    }
-
-    #[cfg(feature = "slow_tests")]
-    #[rstest::rstest]
-    #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 7,Some(vec![3,6]), &DEFAULT_THRESHOLD_KEY_ID_7P, &DEFAULT_THRESHOLD_CRS_ID_7P)]
-    #[case(vec![TestingPlaintext::U8(u8::MAX)],1, 4, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
-    #[case(vec![TestingPlaintext::Bool(true)],1, 4, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
-    #[case(vec![TestingPlaintext::U8(u8::MAX)],4, 4,Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
-    #[case(vec![TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))],1, 4, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P, &DEFAULT_THRESHOLD_CRS_ID_4P)]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-    #[serial]
-    async fn default_verify_proven_ct_threshold_with_crash(
-        #[case] msgs: Vec<TestingPlaintext>,
-        #[case] parallelism: usize,
-        #[case] amount_parties: usize,
-        #[case] party_ids_to_crash: Option<Vec<usize>>,
-        #[case] key_id: &RequestId,
-        #[case] crs_id: &RequestId,
-    ) {
-        verify_proven_ct_threshold(
-            msgs,
-            parallelism,
-            crs_id,
-            key_id,
-            crate::consts::DEFAULT_PARAM,
-            amount_parties,
-            party_ids_to_crash,
-        )
-        .await
-    }
-
-    pub(crate) async fn verify_proven_ct_threshold(
-        msgs: Vec<TestingPlaintext>,
-        parallelism: usize,
-        crs_handle: &RequestId,
-        key_handle: &RequestId,
-        dkg_params: DKGParams,
-        amount_parties: usize,
-        party_ids_to_crash: Option<Vec<usize>>,
-    ) {
-        assert!(parallelism > 0);
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-        // The threshold handle should only be started after the storage is purged
-        // since the threshold parties will load the CRS from private storage
-        let (mut kms_servers, mut kms_clients, internal_client) =
-            threshold_handles(dkg_params, amount_parties, true, None, None).await;
-
-        let pub_storage = FileStorage::new(None, StorageType::PUB, Some(1)).unwrap();
-        let pp = internal_client
-            .get_crs(crs_handle, &pub_storage)
-            .await
-            .unwrap();
-        // Sanity check the pp, the CRS from storage are all V2
-        verify_pp(&dkg_params, &pp).await;
-
-        let dummy_contract_address =
-            alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
-
-        let dummy_acl_address =
-            alloy_primitives::address!("EEdA6bf26964aF9D7Eed9e03e53415D37aa960EE");
-
-        let metadata = assemble_metadata_alloy(
-            &dummy_contract_address,
-            &internal_client.get_client_address(),
-            &dummy_acl_address,
-            &dummy_domain().chain_id.unwrap(),
-        );
-
-        let proven_ct = compute_proven_ct_from_stored_key(
-            None,
-            msgs,
-            &key_handle.to_string(),
-            &crs_handle.request_id,
-            &metadata,
-        )
-        .await;
-        // Sanity check that the proof is valid
-        let pk = load_pk_from_storage(None, &key_handle.to_string()).await;
-        assert!(tfhe::zk::ZkVerificationOutcome::Valid == proven_ct.verify(&pp, &pk, &metadata));
-
-        let reqs: Vec<_> = (0..parallelism)
-            .map(|j| {
-                let request_id =
-                    RequestId::derive(&format!("verify_proven_ct_threshold_{amount_parties}_{j}"))
-                        .unwrap();
-                internal_client
-                    .verify_proven_ct_request(
-                        crs_handle,
-                        key_handle,
-                        &dummy_contract_address,
-                        &proven_ct,
-                        &dummy_domain(),
-                        &dummy_acl_address,
-                        &request_id,
-                    )
-                    .unwrap()
-            })
-            .collect();
-
-        // Either send the request, or crash the party if it's in
-        // party_ids_to_crash
-        let mut tasks_gen = JoinSet::new();
-        let party_ids_to_crash = party_ids_to_crash.unwrap_or_default();
-        for req in &reqs {
-            for i in 1..=amount_parties as u32 {
-                if party_ids_to_crash.contains(&(i as usize)) {
-                    // After the first "parallel" iteration the party is already crashed
-                    if let Some(server_handle) = kms_servers.remove(&i) {
-                        server_handle.server.shutdown().await.unwrap();
-                        check_port_is_closed(server_handle.service_port).await;
-                        let _kms_client = kms_clients.remove(&i).unwrap();
-                    }
-                } else {
-                    let mut cur_client = kms_clients.get(&i).unwrap().clone();
-                    let req_clone = req.clone();
-                    tasks_gen.spawn(async move {
-                        cur_client
-                            .verify_proven_ct(tonic::Request::new(req_clone))
-                            .await
-                    });
-                }
-            }
-        }
-        let mut responses_gen = Vec::new();
-        while let Some(inner) = tasks_gen.join_next().await {
-            let resp = inner.unwrap().unwrap();
-            responses_gen.push(resp.into_inner());
-        }
-        assert_eq!(
-            responses_gen.len(),
-            (amount_parties - party_ids_to_crash.len()) * parallelism
-        );
-
-        // wait a bit for the validation to finish
-        let joined_responses = par_poll_responses!(
-            kms_clients,
-            &reqs,
-            get_verify_proven_ct_result,
-            amount_parties
-        );
-
-        for req in reqs {
-            let req_id = req.request_id.unwrap();
-            let joined_responses: Vec<_> = joined_responses
-                .iter()
-                .cloned()
-                .filter_map(
-                    |(_i, rid, resp)| {
-                        if rid == req_id {
-                            Some(resp)
-                        } else {
-                            None
-                        }
-                    },
-                )
-                .collect();
-            // Compute threshold < amount_parties/3
-            let threshold = max_threshold(amount_parties);
-            let min_count_agree = (threshold + 1) as u32;
-
-            let verify_proven_ct_sigs = internal_client
-                .process_verify_proven_ct_resp(&joined_responses, min_count_agree)
-                .unwrap();
-
-            assert_eq!(
-                verify_proven_ct_sigs.len(),
-                (amount_parties - party_ids_to_crash.len())
-            );
-        }
-    }
-
     #[tokio::test]
     #[serial]
     async fn test_decryption_central() {
@@ -4461,22 +3982,13 @@ pub(crate) mod tests {
             cts.push(ctt);
         }
 
-        let dummy_acl_address =
-            alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
-
         // build parallel requests
         let reqs: Vec<_> = (0..parallelism)
             .map(|j: usize| {
                 let request_id = RequestId::derive(&format!("TEST_DEC_ID_{j}")).unwrap();
 
                 internal_client
-                    .decryption_request(
-                        cts.clone(),
-                        &dummy_domain(),
-                        &request_id,
-                        &dummy_acl_address,
-                        &req_key_id,
-                    )
+                    .decryption_request(cts.clone(), &dummy_domain(), &request_id, &req_key_id)
                     .unwrap()
             })
             .collect();
@@ -4608,6 +4120,7 @@ pub(crate) mod tests {
         .await;
     }
 
+    // The transcripts only need to be 4 parties, it's used for js tests
     #[cfg(feature = "wasm_tests")]
     #[rstest::rstest]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
@@ -4626,17 +4139,10 @@ pub(crate) mod tests {
         .await;
     }
 
+    // Only need to run once for the transcript
     #[cfg(all(feature = "wasm_tests", feature = "slow_tests"))]
     #[rstest::rstest]
-    #[case(TestingPlaintext::Bool(true))]
     #[case(TestingPlaintext::U8(u8::MAX))]
-    #[case(TestingPlaintext::U16(u16::MAX))]
-    #[case(TestingPlaintext::U32(u32::MAX))]
-    #[case(TestingPlaintext::U64(u64::MAX))]
-    // #[case(TestingPlaintext::U128(u128::MAX))]
-    // #[case(TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))))]
-    // #[case(TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))))]
-    // #[case(TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])))]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn default_reencryption_centralized_and_write_transcript(
@@ -5132,9 +4638,6 @@ pub(crate) mod tests {
             bits += msg.bits() as u64;
         }
 
-        let dummy_acl_address =
-            alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
-
         // make parallel requests by calling [decrypt] in a thread
         let mut req_tasks = JoinSet::new();
         let reqs: Vec<_> = (0..parallelism)
@@ -5142,13 +4645,7 @@ pub(crate) mod tests {
                 let request_id = RequestId::derive(&format!("TEST_DEC_ID_{j}")).unwrap();
 
                 internal_client
-                    .decryption_request(
-                        cts.clone(),
-                        &dummy_domain(),
-                        &request_id,
-                        &dummy_acl_address,
-                        &key_id_req,
-                    )
+                    .decryption_request(cts.clone(), &dummy_domain(), &request_id, &key_id_req)
                     .unwrap()
             })
             .collect();
@@ -5335,7 +4832,6 @@ pub(crate) mod tests {
 
     #[cfg(feature = "wasm_tests")]
     #[rstest::rstest]
-    #[case(true, 7, &TEST_THRESHOLD_KEY_ID_7P.to_string())]
     #[case(true, 4, &TEST_THRESHOLD_KEY_ID_4P.to_string())]
     #[case(false, 4, &TEST_THRESHOLD_KEY_ID_4P.to_string())]
     #[tokio::test(flavor = "multi_thread")]
@@ -5363,19 +4859,10 @@ pub(crate) mod tests {
         .await;
     }
 
+    // The transcripts only need to be 4 parties, it's used for js tests
     #[cfg(all(feature = "wasm_tests", feature = "slow_tests"))]
     #[rstest::rstest]
-    #[case(TestingPlaintext::U8(u8::MAX), 7, &DEFAULT_THRESHOLD_KEY_ID_7P.to_string())]
-    #[case(TestingPlaintext::Bool(true), 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     #[case(TestingPlaintext::U8(u8::MAX), 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TestingPlaintext::U16(u16::MAX), 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TestingPlaintext::U32(u32::MAX), 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    #[case(TestingPlaintext::U64(u64::MAX), 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-    // #[case(TestingPlaintext::U128(u128::MAX))]
-    // #[case(TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))))]
-    // #[case(TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))))]
-    // #[case(TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])))]
-    #[ignore]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn default_reencryption_threshold_and_write_transcript(

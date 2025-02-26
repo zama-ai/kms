@@ -187,7 +187,6 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
                     }),
                     // TODO: to understand how to populate this
                     domain: None,
-                    acl_address: None,
                     request_id: Some(RequestId {
                         request_id: request_id.clone(),
                     }),

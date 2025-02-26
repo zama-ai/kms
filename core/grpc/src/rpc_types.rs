@@ -60,9 +60,11 @@ alloy_sol_types::sol! {
 }
 
 // Solidity struct for decryption result signature
+// Struct needs to match what is in
+// https://github.com/zama-ai/gateway-l2/blob/main/contracts/DecryptionManager.sol#L18
+// and the name must be what is defined under `EIP712_PUBLIC_DECRYPT_TYPE`
 alloy_sol_types::sol! {
-    struct DecryptionResult {
-        address aclAddress;
+    struct EIP712PublicDecrypt {
         uint256[] handlesList;
         bytes decryptedResult;
     }
@@ -86,16 +88,6 @@ alloy_sol_types::sol! {
 alloy_sol_types::sol! {
     struct CRS {
         bytes crs;
-    }
-}
-
-// Solidity struct for ZK proof verification result signature
-alloy_sol_types::sol! {
-    struct CiphertextVerificationForKMS {
-        address aclAddress;
-        bytes32 hashOfCiphertext;
-        address userAddress;
-        address contractAddress;
     }
 }
 

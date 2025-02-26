@@ -83,16 +83,3 @@ pub trait InsecureCrsGenerator {
         request: Request<RequestId>,
     ) -> Result<Response<CrsGenResult>, Status>;
 }
-
-#[tonic::async_trait]
-pub trait ProvenCtVerifier {
-    async fn verify(
-        &self,
-        request: Request<VerifyProvenCtRequest>,
-    ) -> Result<Response<Empty>, Status>;
-
-    async fn get_result(
-        &self,
-        request: Request<RequestId>,
-    ) -> Result<Response<VerifyProvenCtResponse>, Status>;
-}

@@ -1,5 +1,4 @@
 use alloy_dyn_abi::Eip712Domain;
-use alloy_primitives::Address;
 use kms_grpc::{
     kms::v1::{DecryptionRequest, ReencryptionRequest, RequestId, TypedCiphertext},
     rpc_types::protobuf_to_alloy_domain_option,
@@ -106,7 +105,6 @@ pub(crate) fn validate_decrypt_req(
     RequestId,
     RequestId,
     Option<Eip712Domain>,
-    Option<Address>,
 )> {
     let key_id = tonic_some_or_err(
         req.key_id.clone(),
@@ -133,29 +131,12 @@ pub(crate) fn validate_decrypt_req(
 
     let eip712_domain = protobuf_to_alloy_domain_option(req.domain.as_ref());
 
-    let acl_address = if let Some(address) = req.acl_address.as_ref() {
-        match Address::parse_checksummed(address, None) {
-            Ok(address) => Some(address),
-            Err(e) => {
-                tracing::warn!(
-                    "Could not parse ACL address: {:?}. Error: {:?}. Returning None.",
-                    address,
-                    e
-                );
-                None
-            }
-        }
-    } else {
-        None
-    };
-
     Ok((
         req.ciphertexts.clone(),
         req_digest,
         key_id,
         request_id,
         eip712_domain,
-        acl_address,
     ))
 }
 

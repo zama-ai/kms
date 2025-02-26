@@ -34,16 +34,14 @@ use kms_core_utils::thread_handles::ThreadHandleGroup;
 use kms_grpc::kms::v1::KeySetAddedInfo;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms::v1::RequestId;
-use kms_grpc::kms::v1::TypedPlaintext;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms::v1::TypedSigncryptedCiphertext;
-use kms_grpc::kms::v1::{CiphertextFormat, FheType};
-use kms_grpc::kms::v1::{TypedCiphertext, VerifyProvenCtResponsePayload};
+use kms_grpc::kms::v1::{CiphertextFormat, FheType, TypedCiphertext, TypedPlaintext};
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::rpc_types::SignedPubDataHandleInternal;
-use kms_grpc::rpc_types::{PrivDataType, PubDataType, SigncryptionPayload};
+use kms_grpc::rpc_types::{PrivDataType, SigncryptionPayload};
 use rand::{CryptoRng, Rng, RngCore};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -331,8 +329,6 @@ pub struct RealCentralizedKms<
     pub(crate) reenc_meta_map: Arc<RwLock<MetaStore<ReencCallValues>>>,
     // Map storing ongoing CRS generation requests.
     pub(crate) crs_meta_map: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
-    // Map storing the completed proven ciphertext verification tasks.
-    pub(crate) proven_ct_payload_meta_map: Arc<RwLock<MetaStore<VerifyProvenCtResponsePayload>>>,
     // Rate limiting
     pub(crate) rate_limiter: RateLimiter,
     // Health reporter for the the grpc server
@@ -706,16 +702,11 @@ impl<
         let crs_info: HashMap<RequestId, SignedPubDataHandleInternal> =
             read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
 
-        // read the CRS
-        let crs: HashMap<RequestId, CompactPkeCrs> =
-            read_all_data_versioned(&public_storage, &PubDataType::CRS.to_string()).await?;
-
         let crypto_storage = CentralizedCryptoMaterialStorage::new(
             public_storage,
             private_storage,
             backup_storage,
             pk_map,
-            crs,
             key_info,
         );
 
@@ -732,10 +723,6 @@ impl<
                 dec_meta_store: Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE))),
                 reenc_meta_map: Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE))),
                 crs_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(crs_info))),
-                proven_ct_payload_meta_map: Arc::new(RwLock::new(MetaStore::new(
-                    DEC_CAPACITY,
-                    MIN_DEC_CACHE,
-                ))),
                 rate_limiter: RateLimiter::new(rate_limiter_conf.unwrap_or_default()),
                 health_reporter: Arc::new(RwLock::new(health_reporter)),
                 tracker: Arc::new(TaskTracker::new()),
