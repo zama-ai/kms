@@ -9,3 +9,5 @@ num_reconstruct = 3
 # Must match the deployed core/service setting!
 # Only relevant for threshold.
 decryption_mode = "NoiseFloodSmall"
+
+fhe_params = "Test"

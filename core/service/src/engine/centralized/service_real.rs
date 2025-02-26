@@ -777,7 +777,7 @@ async fn key_gen_background<
     }
     match keyset_config {
         KeySetConfig::Standard(standard_key_set_config) => {
-            let (fhe_key_set, key_info) = async_generate_fhe_keys(
+            let (fhe_key_set, key_info) = match async_generate_fhe_keys(
                 &sk,
                 crypto_storage.clone(),
                 params,
@@ -787,16 +787,19 @@ async fn key_gen_background<
                 eip712_domain.as_ref(),
             )
             .await
-            .map_err(|e| {
-                let mut guarded_meta_store = meta_store.blocking_write();
-                let _ = guarded_meta_store.update(
-                    req_id,
-                    Err(format!(
-                        "Failed key generation for key with ID {req_id}: {e}"
-                    )),
-                );
-                anyhow::anyhow!("Failed key generation: {}", e)
-            })?;
+            {
+                Ok((fhe_key_set, key_info)) => (fhe_key_set, key_info),
+                Err(e) => {
+                    let mut guarded_meta_store = meta_store.write().await;
+                    let _ = guarded_meta_store.update(
+                        req_id,
+                        Err(format!(
+                            "Failed key generation for key with ID {req_id}: {e}"
+                        )),
+                    );
+                    return Err(anyhow::anyhow!("Failed key generation: {}", e));
+                }
+            };
 
             crypto_storage
                 .write_centralized_keys_with_meta_store(req_id, key_info, fhe_key_set, meta_store)
@@ -878,11 +881,11 @@ async fn crs_gen_background<
     let start = tokio::time::Instant::now();
 
     let (pp, crs_info) =
-        async_generate_crs(&sk, rng, params, max_number_bits, eip712_domain.as_ref())
-            .await
-            .map_err(|e| {
+        match async_generate_crs(&sk, rng, params, max_number_bits, eip712_domain.as_ref()).await {
+            Ok((pp, crs_info)) => (pp, crs_info),
+            Err(e) => {
                 tracing::error!("Error in inner CRS generation: {}", e);
-                let mut guarded_meta_store = meta_store.blocking_write();
+                let mut guarded_meta_store = meta_store.write().await;
                 let _ = guarded_meta_store.update(
                     req_id,
                     Err(format!(
@@ -892,8 +895,9 @@ async fn crs_gen_background<
                 METRICS
                     .increment_error_counter(OP_CRS_GEN, ERR_CRS_GEN_FAILED)
                     .ok();
-                anyhow::anyhow!("Failed CRS generation: {}", e)
-            })?;
+                return Err(anyhow::anyhow!("Failed CRS generation: {}", e));
+            }
+        };
 
     crypto_storage
         .write_crs_with_meta_store(req_id, pp, crs_info, meta_store)

@@ -7,8 +7,7 @@ use alloy_sol_types::Eip712Domain;
 use anyhow::anyhow;
 use bincode::serialize;
 use rand::{CryptoRng, Rng};
-use serde::de::Visitor;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
 use std::fmt;
 use strum_macros::EnumIter;
@@ -838,41 +837,6 @@ impl From<bool> for TypedPlaintext {
     }
 }
 
-impl serde::Serialize for FheType {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        // Use i32 as this is what protobuf automates to
-        serializer.serialize_bytes(&(*self as i32).to_le_bytes())
-    }
-}
-impl<'de> Deserialize<'de> for FheType {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        deserializer.deserialize_bytes(FheTypeVisitor)
-    }
-}
-
-struct FheTypeVisitor;
-impl Visitor<'_> for FheTypeVisitor {
-    type Value = FheType;
-
-    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-        formatter.write_str("A type of fhe ciphertext")
-    }
-
-    fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
-    where
-        E: serde::de::Error,
-    {
-        let res_array: [u8; 4] = v.try_into().map_err(serde::de::Error::custom)?;
-        let res: i32 = i32::from_le_bytes(res_array);
-        FheType::try_from(res).map_err(|_| E::custom("Error in converting i32 to FheType"))
-    }
-}
 pub trait MetaResponse {
     fn verification_key(&self) -> Vec<u8>;
     fn digest(&self) -> Vec<u8>;

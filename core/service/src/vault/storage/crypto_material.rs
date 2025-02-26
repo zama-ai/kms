@@ -8,22 +8,21 @@
 //! and if it does not exist, it will try to read from the persistent storage.
 //! Not all functions are implemented for all operations, they're implemented as needed
 //! but not difficult to add.
+use super::{
+    read_pk_at_request_id, read_versioned_at_request_id, store_pk_at_request_id,
+    store_versioned_at_request_id, Storage,
+};
 use crate::{
-    engine::base::KmsFheKeyHandles,
-    engine::threshold::service_real::ThresholdFheKeys,
+    anyhow_error_and_warn_log,
+    engine::{base::KmsFheKeyHandles, threshold::service_real::ThresholdFheKeys},
     util::meta_store::MetaStore,
     vault::storage::{delete_at_request_id, delete_pk_at_request_id},
 };
+use distributed_decryption::execution::endpoints::keygen::FhePubKeySet;
 use kms_grpc::kms::v1::RequestId;
 use kms_grpc::rpc_types::{
     PrivDataType, PubDataType, SignedPubDataHandleInternal, WrappedPublicKey, WrappedPublicKeyOwned,
 };
-
-use super::{
-    anyhow_error_and_log, read_pk_at_request_id, read_versioned_at_request_id,
-    store_pk_at_request_id, store_versioned_at_request_id, Storage,
-};
-use distributed_decryption::execution::endpoints::keygen::FhePubKeySet;
 use std::{collections::HashMap, sync::Arc};
 use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
@@ -948,8 +947,8 @@ impl<
             let guard = cache.read().await;
             guard.get(req_id).cloned()
         };
-        out.ok_or(anyhow_error_and_log(format!(
-            "Key handles are missing for ID {}",
+        out.ok_or(anyhow_error_and_warn_log(format!(
+            "Key handles are not in the cache for ID {}",
             req_id
         )))
     }

@@ -1498,6 +1498,11 @@ impl Client {
             .get_params_basics_handle()
             .to_classic_pbs_parameters();
 
+        tracing::info!(
+            "Reencryption response reconstruction with mode: {:?}",
+            self.decryption_mode
+        );
+
         let res = match self.decryption_mode {
             DecryptionMode::BitDecSmall => {
                 let all_sharings = self.recover_sharings::<Z64>(&validated_resps, client_keys)?;
@@ -3183,18 +3188,6 @@ pub(crate) mod tests {
             });
         }
         join_set
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn double_tcp_bind() {
-        // this is a serial test because another test might randomly select port 50050
-        // double tcp bind should fail
-        let addr = std::net::SocketAddr::new(crate::consts::DEFAULT_URL.parse().unwrap(), 50050);
-        let _zz = tokio::net::TcpListener::bind(addr).await.unwrap();
-
-        // try to bind again and it should fail
-        let _yy = tokio::net::TcpListener::bind(addr).await.unwrap_err();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]

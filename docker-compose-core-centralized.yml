@@ -1,9 +1,5 @@
 name: zama-core-centralized
 
-
-env_file:
-  - docker-compose-kms-core.env
-
 services:
 
   # KMS-Core-centralized

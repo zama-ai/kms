@@ -45,11 +45,15 @@ The core client currently ships with the following pre-defined configurations:
 3. Build the project using `cargo build`.
 4. Run the tool with the desired command with the appropriate configuration file. (See below for details on commands.)
 
-An example of configuration file for the central setup can be found ![here](./config/client_local_centralized.toml).
+An example configuration file for the centralized setup can be found ![here](./config/client_local_centralized.toml).
 
-You can provide additional configuration options via a configuration file (if needed).
 Use the `-f` flag to specify the path to the configuration file.
 
+Other command line options are:
+ - `-l`/`--logs`: print debug logs
+ - `--max-iter`: the maximum number of retries for retrieving a computation result from the KMS
+ - `-a`/`--expect-all-responses`: if set, waits for a response from all KMS cores. If not set, continue once we have enough responses, depending on the operation.
+ - `-h`/`--help`: show the CLI help
 
 ### Insecure key-generation
 
@@ -72,11 +76,19 @@ $ cargo run -- -f <path-to-toml-config-file> insecure-crs-gen --max-num-bits <ma
 To encrypt a value using the public key from the configuration file and request a decryption from the KMS Blockchain.
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> decrypt --to-encrypt <hex-value-encrypt> --data-type <euint-value> --key-id <public-key-id> --crs-id <crs-id>
+$ cargo run -- -f <path-to-toml-config-file> decrypt --to-encrypt <hex-value-encrypt> --data-type <euint-value> --key-id <public-key-id>
 ```
+
+Optional command line options for this commad are:
+ - `-b`/`--batch-size`: the batch size of values to decrypt (default: 1)
+ - `-c`/`--compressed`: the sent values are compressed ciphertexts (default: false)
 
 ### Re-Encrypt
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> re-encrypt --to-encrypt <hex-value-encrypt> --data-type <euint-value> --key-id <public-key-id> --crs-id <crs-id>
+$ cargo run -- -f <path-to-toml-config-file> re-encrypt --to-encrypt <hex-value-encrypt> --data-type <euint-value> --key-id <public-key-id>
 ```
+
+Optional command line options for this commad are:
+ - `-b`/`--batch-size`: the batch size of values to decrypt (default: 1)
+ - `-c`/`--compressed`: the sent values are compressed ciphertexts (default: false)

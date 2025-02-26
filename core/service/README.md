@@ -115,8 +115,8 @@ This enum is used as metadata that accompanies a ciphertext to specify its under
 #### Definition
 ```proto
 enum FheParameter {
-  test = 0;
-  default = 1;
+  default = 0;
+  test = 1;
 }
 ```
 

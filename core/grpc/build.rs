@@ -27,6 +27,8 @@ fn default_builder() -> Builder {
         .type_attribute("TypedPlaintext", EXTENDED_DERIVES)
         .type_attribute("KeySetConfig", DERIVES)
         .type_attribute("KeySetType", DERIVES)
+        .type_attribute("FheParameter", DERIVES)
+        .type_attribute("FheType", DERIVES)
         .type_attribute("StandardKeySetConfig", DERIVES)
         .type_attribute("ComputeKeyType", DERIVES)
         .type_attribute("KeySetAddedInfo", DERIVES)

@@ -19,7 +19,7 @@ use kms_grpc::kms::v1::{
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType, SIGNING_KEY_ID};
 use kms_lib::client::{assemble_metadata_alloy, Client, ParsedReencryptionRequest};
-use kms_lib::consts::DEFAULT_PARAM;
+use kms_lib::consts::{DEFAULT_PARAM, TEST_PARAM};
 use kms_lib::engine::base::{compute_external_pubdata_message_hash, compute_pt_message_hash};
 use kms_lib::util::key_setup::ensure_client_keys_exist;
 use kms_lib::util::key_setup::test_tools::{
@@ -30,7 +30,6 @@ use kms_lib::util::key_setup::test_tools::{
 use kms_lib::vault::storage::{file::FileStorage, StorageType};
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
-use std::env;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -76,6 +75,7 @@ pub struct CoreClientConfig {
     pub num_majority: usize,
     pub num_reconstruct: usize,
     pub core_addresses: Vec<String>,
+    pub fhe_params: Option<FheParameter>,
 }
 
 impl<'de> Deserialize<'de> for CoreClientConfig {
@@ -91,6 +91,7 @@ impl<'de> Deserialize<'de> for CoreClientConfig {
             pub num_majority: usize,
             pub num_reconstruct: usize,
             pub core_addresses: Vec<String>,
+            pub fhe_params: Option<FheParameter>,
         }
 
         let temp = CoreClientConfigBuffer::deserialize(deserializer)?;
@@ -102,6 +103,7 @@ impl<'de> Deserialize<'de> for CoreClientConfig {
             num_majority: temp.num_majority,
             num_reconstruct: temp.num_reconstruct,
             core_addresses: temp.core_addresses,
+            fhe_params: temp.fhe_params,
         })
     }
 }
@@ -257,41 +259,17 @@ impl TryInto<RPCFheType> for FheType {
     }
 }
 
-pub struct CiphertextConfig {
-    pub clear_value: Vec<u8>,
-    pub data_type: FheType,
-    pub compressed: Option<bool>,
-}
-
-// Define the custom Uint4 type
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct U4(u8);
-
-impl U4 {
-    pub fn new(value: u8) -> Result<Self, &'static str> {
-        if value <= 0x0F {
-            Ok(U4(value))
-        } else {
-            Err("Value exceeds 4 bits")
-        }
-    }
-
-    pub fn value(self) -> u8 {
-        self.0
-    }
-}
-
 // CLI arguments
 #[derive(Debug, Parser, Clone)]
 pub struct NoParameters {}
 
-/// Parse a string as hex string. The string can optionally start with "0x". Odd-length strings will be padded with a leading zero.
+/// Parse a string as hex string. The string can optionally start with "0x". Odd-length strings will be padded with a single leading zero.
 pub fn parse_hex(arg: &str) -> anyhow::Result<Vec<u8>> {
     // Remove "0x" or "0X" prefix if present
     let arg = arg.strip_prefix("0x").unwrap_or(arg);
     let hex_str = arg.strip_prefix("0X").unwrap_or(arg);
 
-    // Handle odd-length hex strings by padding with leading zero
+    // Handle odd-length hex strings by padding with a single leading zero
     let hex_str = if hex_str.len() % 2 == 1 {
         format!("0{}", hex_str)
     } else {
@@ -303,8 +281,9 @@ pub fn parse_hex(arg: &str) -> anyhow::Result<Vec<u8>> {
 
 #[derive(Debug, Parser, Clone)]
 pub struct CipherParameters {
-    /// Value that we want to encrypt and request a decryption/re-encryption.
+    /// Hex value that we want to encrypt and request a decryption/re-encryption.
     /// The value will be converted from a little endian hex string to a `Vec<u8>`.
+    /// Can optionally have a "0x" prefix.
     #[clap(long, short = 'e')]
     pub to_encrypt: String,
     /// Data type of `to_encrypt`.
@@ -312,19 +291,19 @@ pub struct CipherParameters {
     #[clap(long, short = 'd')]
     pub data_type: FheType,
     /// Boolean to activate ciphertext compression or not.
-    #[clap(long, short = 'p', default_value_t = false)]
+    #[clap(long, short = 'c', default_value_t = false)]
     pub compression: bool,
     /// Boolean to do SnS preprocessing on the ciphertext or not.
     /// SnS preprocessing performs a PBS to convert 64-bit ciphertexts to 128-bit ones.
     /// At the moment it cannot be used in combination with compression.
     #[clap(long, default_value_t = true)]
     pub precompute_sns: bool,
-    /// CRS identifier to use
-    #[clap(long, short = 'c')]
-    pub crs_id: String,
     /// Key identifier to use for decryption/re-encryption purposes
     #[clap(long, short = 'k')]
     pub key_id: String,
+    /// Number of ciphertexts to process in a batch
+    #[clap(long, short = 'b', default_value_t = 1)]
+    pub batch_size: usize,
     /// Optionally dump the ciphertext to a file.
     #[clap(long)]
     pub ciphertext_output_path: Option<PathBuf>,
@@ -356,15 +335,19 @@ pub enum CCCommand {
 
 #[derive(Debug, Parser)]
 pub struct CmdConfig {
+    /// Path to the configuration file
     #[clap(long, short = 'f')]
     pub file_conf: Option<String>,
+    /// The command to execute
     #[clap(subcommand)]
     pub command: CCCommand,
-    // TODO: expose a log-level instead
+    /// Whether to print logs or not
     #[clap(long, short = 'l')]
     pub logs: bool,
-    #[clap(long, default_value = "200")]
+    /// Max number of iterations to query the KMS for a response
+    #[clap(long, default_value = "20")]
     pub max_iter: usize,
+    /// Should we expect a response from every KMS core or not
     #[clap(long, short = 'a', default_value_t = false)]
     pub expect_all_responses: bool,
 }
@@ -433,6 +416,13 @@ pub async fn encrypt_and_prove(
     .await)
 }
 
+/// encrypt a given value and return the ciphertext
+/// parameters:
+/// - `to_encrypt`: the value to encrypt in little endian byte order
+/// - `fhe_type`: the type of the value to encrypt
+/// - `key_id`: the key identifier to use for encryption
+/// - `keys_folder`: the folder where the keys are stored
+/// - `compressed`: whether to compress the ciphertext or not
 pub async fn encrypt(
     to_encrypt: Vec<u8>,
     fhe_type: FheType,
@@ -450,7 +440,6 @@ pub async fn encrypt(
         bytes: to_encrypt,
         fhe_type: fhe_type as i32,
     };
-
     let typed_to_encrypt = TestingPlaintext::from(ptxt.clone());
 
     tracing::info!(
@@ -461,7 +450,7 @@ pub async fn encrypt(
     );
 
     tracing::debug!(
-        "attempting to create ct using materials from {:?}",
+        "Attempting to create ct using key material from {:?}",
         keys_folder
     );
 
@@ -532,7 +521,7 @@ pub async fn fetch_object(endpoint: &str, folder: &str, object_id: &str) -> anyh
 
         if response.status().is_success() {
             let bytes = response.bytes().await?;
-            tracing::info!("Successfully downloaded {} bytes", bytes.len());
+            tracing::info!("Successfully downloaded {} bytes for object {object_id} from endpoint {endpoint}/{folder}", bytes.len());
             // Here you can process the bytes as needed
             Ok(bytes)
         } else {
@@ -541,7 +530,7 @@ pub async fn fetch_object(endpoint: &str, folder: &str, object_id: &str) -> anyh
             tracing::error!("Error: {}", response_status);
             tracing::error!("Response: {}", response_content);
             Err(anyhow::anyhow!(format!(
-                "Couldn't fetch key from endpoint\nStatus: {}\nResponse: {}",
+                "Couldn't fetch object {object_id} from endpoint {endpoint}/{folder}\nStatus: {}\nResponse: {}",
                 response_status, response_content
             ),))
         }
@@ -550,7 +539,7 @@ pub async fn fetch_object(endpoint: &str, folder: &str, object_id: &str) -> anyh
         match tokio::fs::read(&key_path).await {
             Ok(content) => Ok(Bytes::from(content)),
             Err(error) => Err(anyhow::anyhow!(format!(
-                "Couldn't fetch key from file {:?} from error: {:?}",
+                "Couldn't fetch object from file {:?} from error: {:?}",
                 key_path, error
             ),)),
         }
@@ -579,7 +568,7 @@ pub fn setup_logging() {
         .with_ansi(false)
         .json()
         .finish();
-    tracing::subscriber::set_global_default(subscriber).expect("Failed to set subscriber");
+    tracing::subscriber::set_global_default(subscriber).expect("Failed to set logging subscriber");
 }
 
 /// This fetches material which is global
@@ -642,40 +631,21 @@ async fn fetch_local_key_and_write_to_file(
 /// This fetches the kms ethereum address from local storage
 async fn fetch_kms_addresses(
     sim_conf: &CoreClientConfig,
-    is_centralized: bool,
 ) -> Result<Vec<alloy_primitives::Address>, Box<dyn std::error::Error + 'static>> {
-    // TODO: handle local file
     let key_id = &SIGNING_KEY_ID.to_string();
+    let mut addr_bytes = Vec::with_capacity(sim_conf.object_folder.len());
 
-    let mut addr_bytes = Vec::new();
-    if is_centralized {
+    for folder_name in sim_conf.object_folder.iter() {
         let content = fetch_object(
             &sim_conf
                 .s3_endpoint
                 .clone()
                 .expect("s3 endpoint should be provided"),
-            &format!(
-                "{}/{}",
-                sim_conf.object_folder.first().unwrap(),
-                "VerfAddress"
-            ),
+            &format!("{}/{}", folder_name, "VerfAddress"),
             key_id,
         )
         .await?;
         addr_bytes.push(content);
-    } else {
-        for folder_name in sim_conf.object_folder.iter() {
-            let content = fetch_object(
-                &sim_conf
-                    .s3_endpoint
-                    .clone()
-                    .expect("s3 endpoint should be provided"),
-                &format!("{}/{}", folder_name, "VerfAddress"),
-                key_id,
-            )
-            .await?;
-            addr_bytes.push(content);
-        }
     }
 
     // turn bytes read into Address type
@@ -754,7 +724,7 @@ fn check_ext_pt_signature(
     let acl_address =
         alloy_primitives::Address::parse_checksummed(decrypt_req.acl_address(), None)?;
 
-    // unpack the HexVectorList
+    // retrieve external handles from request
     let external_handles: Vec<_> = decrypt_req
         .ciphertexts
         .iter()
@@ -771,7 +741,7 @@ fn check_ext_pt_signature(
     let hash = compute_pt_message_hash(external_handles, plaintexts, domain, acl_address);
 
     let addr = sig.recover_address_from_prehash(&hash)?;
-    tracing::info!("reconstructed address: {}", addr);
+    tracing::info!("recovered address: {}", addr);
 
     // check that the address is in the list of known KMS addresses
     if kms_addrs.contains(&addr) {
@@ -799,9 +769,9 @@ fn check_external_decryption_signature(
 
         for (idx, pt) in payload.plaintexts.iter().enumerate() {
             tracing::info!(
-                "Decrypt Result #{idx}: Plaintext: {} ({:?}).",
+                "Decrypt Result #{idx}: Plaintext: {:?} (Bytes: {}).",
+                pt,
                 hex::encode(pt.bytes.as_slice()),
-                pt.fhe_type()
             );
             results.push(pt.clone());
         }
@@ -813,19 +783,6 @@ fn check_external_decryption_signature(
     }
 
     tracing::info!("Decryption response successfully processed.");
-    Ok(())
-}
-
-async fn fetch_all_public_data(
-    key_id: &str,
-    crs_id: &str,
-    cc_conf: &CoreClientConfig,
-    destination_prefix: &Path,
-) -> anyhow::Result<()> {
-    fetch_verf_keys(cc_conf, destination_prefix).await?;
-    fetch_key(key_id, cc_conf, destination_prefix).await?;
-    fetch_crs(crs_id, cc_conf, destination_prefix).await?;
-
     Ok(())
 }
 
@@ -961,7 +918,7 @@ async fn do_keygen(
     while let Some(inner) = req_tasks.join_next().await {
         req_response_vec.push(inner.unwrap().unwrap().into_inner());
     }
-    assert_eq!(req_response_vec.len(), num_parties);
+    assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
 
     // get all responses
     let mut resp_tasks = JoinSet::new();
@@ -1014,16 +971,20 @@ async fn do_keygen(
         });
     }
 
-    let mut resp_response_vec = Vec::new();
-    while let Some(resp) = resp_tasks.join_next().await {
-        resp_response_vec.push(resp.unwrap().1);
-    }
-
     let num_expected_responses = if cmd_conf.expect_all_responses {
         num_parties
     } else {
         cc_conf.num_majority
     };
+
+    let mut resp_response_vec = Vec::new();
+    while let Some(resp) = resp_tasks.join_next().await {
+        resp_response_vec.push(resp.unwrap().1);
+        // break this loop and continue with the rest of the processing if we have enough responses
+        if resp_response_vec.len() >= num_expected_responses {
+            break;
+        }
+    }
 
     fetch_and_check_keygen(
         num_expected_responses,
@@ -1083,7 +1044,7 @@ async fn do_crsgen(
     while let Some(inner) = req_tasks.join_next().await {
         req_response_vec.push(inner.unwrap().unwrap().into_inner());
     }
-    assert_eq!(req_response_vec.len(), num_parties); //TODO
+    assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
 
     // get all responses
     let mut resp_tasks = JoinSet::new();
@@ -1131,15 +1092,20 @@ async fn do_crsgen(
         });
     }
 
-    let mut resp_response_vec = Vec::new();
-    while let Some(resp) = resp_tasks.join_next().await {
-        resp_response_vec.push(resp.unwrap().1);
-    }
     let num_expected_responses = if cmd_conf.expect_all_responses {
         num_parties
     } else {
         cc_conf.num_majority
     };
+
+    let mut resp_response_vec = Vec::new();
+    while let Some(resp) = resp_tasks.join_next().await {
+        resp_response_vec.push(resp.unwrap().1);
+        // break this loop and continue with the rest of the processing if we have enough responses
+        if resp_response_vec.len() >= num_expected_responses {
+            break;
+        }
+    }
 
     fetch_and_check_crsgen(
         num_expected_responses,
@@ -1185,7 +1151,7 @@ async fn do_preproc(
     while let Some(inner) = req_tasks.join_next().await {
         req_response_vec.push(inner.unwrap().unwrap().into_inner());
     }
-    assert_eq!(req_response_vec.len(), num_parties); //TODO
+    assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
 
     // Wait for preprocessing to be done
     for _i in 0..max_iter {
@@ -1245,6 +1211,8 @@ pub async fn execute_cmd(
     cmd_config: &CmdConfig,
     destination_prefix: &Path,
 ) -> Result<(Option<RequestId>, String), Box<dyn std::error::Error + 'static>> {
+    let cmd_timer_start = tokio::time::Instant::now();
+
     let path_to_config = cmd_config.file_conf.clone().unwrap();
     let command = &cmd_config.command;
     let max_iter = cmd_config.max_iter;
@@ -1263,8 +1231,6 @@ pub async fn execute_cmd(
     let mut rng = AesRng::from_entropy();
 
     let num_parties = cc_conf.core_addresses.len();
-    // Check if the KMS is centralized (ie, there is only one party)
-    let is_centralized = num_parties == 1;
 
     ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
 
@@ -1275,6 +1241,12 @@ pub async fn execute_cmd(
     let mut internal_client: Client;
     let mut core_endpoints = Vec::with_capacity(num_parties);
 
+    let param = cc_conf.fhe_params.unwrap_or(FheParameter::Test);
+    let client_param = match param {
+        FheParameter::Test => TEST_PARAM,
+        _ => DEFAULT_PARAM,
+    };
+
     if num_parties == 1 {
         // central cores
 
@@ -1284,7 +1256,7 @@ pub async fn execute_cmd(
             .expect("No core address provided")
             .clone();
 
-        tracing::info!("Centralized CClient - connecting to: {}", address);
+        tracing::info!("Centralized Core Client - connecting to: {}", address);
 
         // make sure address starts with http://
         let url = if address.starts_with("http://") {
@@ -1302,15 +1274,20 @@ pub async fn execute_cmd(
 
         pub_storage
             .push(FileStorage::new(Some(destination_prefix), StorageType::PUB, None).unwrap());
-        internal_client = Client::new_client(client_storage, pub_storage, &DEFAULT_PARAM, None)
-            .await
-            .unwrap();
+        internal_client = Client::new_client(
+            client_storage,
+            pub_storage,
+            &client_param,
+            cc_conf.decryption_mode,
+        )
+        .await
+        .unwrap();
         tracing::info!("Centralized Client setup done.");
     } else {
         // threshold cores
         let addresses = cc_conf.core_addresses.clone();
 
-        tracing::info!("Threshold Client - connecting to: {:?}", addresses);
+        tracing::info!("Threshold Core Client - connecting to: {:?}", addresses);
 
         for (i, address) in addresses.iter().enumerate() {
             // make sure address starts with http://
@@ -1334,9 +1311,14 @@ pub async fn execute_cmd(
             );
         }
 
-        internal_client = Client::new_client(client_storage, pub_storage, &DEFAULT_PARAM, None)
-            .await
-            .unwrap();
+        internal_client = Client::new_client(
+            client_storage,
+            pub_storage,
+            &client_param,
+            cc_conf.decryption_mode,
+        )
+        .await
+        .unwrap();
 
         tracing::info!("Threshold Client setup done.");
     }
@@ -1344,39 +1326,27 @@ pub async fn execute_cmd(
     // if it's a de- or reencryption, fetch the key and crs
     match command {
         CCCommand::Decrypt(cipher_params) | CCCommand::ReEncrypt(cipher_params) => {
-            tracing::info!("Fetching Verification keys, Public Key and CRS. ({command:?})");
+            tracing::info!("Fetching verification keys and public key. ({command:?})");
+            fetch_verf_keys(&cc_conf, destination_prefix).await?;
+            fetch_key(cipher_params.key_id.as_str(), &cc_conf, destination_prefix).await?;
 
-            fetch_all_public_data(
-                cipher_params.key_id.as_str(),
-                cipher_params.crs_id.as_str(),
-                &cc_conf,
-                destination_prefix,
-            )
-            .await?;
+            //TODO remove this check once we can compress big ciphertexts with tfhe-rs v1.2
+            if cipher_params.compression && cipher_params.precompute_sns {
+                panic!("Compression on big ciphertexts is not supported yet!");
+            }
         }
         _ => {
             tracing::info!("No need to fetch key and CRS. ({command:?})");
         }
     }
 
-    // read FHE_PARAMETER
-    let param = match env::var("FHE_PARAMETER") {
-        Ok(val) => match val.to_lowercase().as_str() {
-            "test" => FheParameter::Test,
-            "default" => FheParameter::Default,
-            _ => FheParameter::Test,
-        },
-        Err(_) => FheParameter::Test,
-    };
-
     tracing::info!(
-        "Parties: {}. (Centralized: {}). FHE Parameters: {}",
+        "Parties: {}. FHE Parameters: {}",
         num_parties,
-        is_centralized,
         param.as_str_name()
     );
 
-    let kms_addrs = fetch_kms_addresses(&cc_conf, is_centralized).await?;
+    let kms_addrs = fetch_kms_addresses(&cc_conf).await?;
 
     let req_id = RequestId::new_random(&mut rng);
 
@@ -1394,7 +1364,7 @@ pub async fn execute_cmd(
                 cc_conf.num_majority
             };
 
-            let (cipher, ct_format, ptxt) = encrypt(
+            let (ciphertext, ct_format, ptxt) = encrypt(
                 to_encrypt,
                 data_type,
                 key_id,
@@ -1405,17 +1375,19 @@ pub async fn execute_cmd(
             )
             .await?;
 
-            // this is currently a batch of size 1
-            let ct = vec![TypedCiphertext {
-                ciphertext: cipher,
-                fhe_type: data_type as i32,
-                external_handle: vec![23_u8; 32],
-                ciphertext_format: ct_format.into(),
-            }];
+            let ct_batch = vec![
+                TypedCiphertext {
+                    ciphertext,
+                    fhe_type: data_type as i32,
+                    external_handle: vec![23_u8; 32],
+                    ciphertext_format: ct_format.into(),
+                };
+                cipher_params.batch_size
+            ];
 
             // DECRYPTION REQUEST
             let dec_req = internal_client.decryption_request(
-                ct,
+                ct_batch,
                 &dummy_domain(),
                 &req_id,
                 &dummy_acl_address(),
@@ -1439,8 +1411,7 @@ pub async fn execute_cmd(
             while let Some(inner) = req_tasks.join_next().await {
                 req_response_vec.push(inner.unwrap().unwrap().into_inner());
             }
-
-            assert!(req_response_vec.len() >= num_expected_responses); // TODO stop after expected num responses
+            assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
 
             // get all responses
             let mut resp_tasks = JoinSet::new();
@@ -1476,6 +1447,10 @@ pub async fn execute_cmd(
             let mut resp_response_vec = Vec::new();
             while let Some(resp) = resp_tasks.join_next().await {
                 resp_response_vec.push(resp.unwrap().1);
+                // break this loop and continue with the rest of the processing if we have enough responses
+                if resp_response_vec.len() >= num_expected_responses {
+                    break;
+                }
             }
 
             // check the internal signatures
@@ -1489,7 +1464,7 @@ pub async fn execute_cmd(
             check_external_decryption_signature(&resp_response_vec, ptxt, &dec_req, &kms_addrs)
                 .unwrap();
 
-            let res = format!("{:?}", resp_response_vec);
+            let res = format!("{:x?}", resp_response_vec);
             (Some(req_id), res)
         }
         CCCommand::ReEncrypt(cipher_params) => {
@@ -1504,7 +1479,7 @@ pub async fn execute_cmd(
                 cc_conf.num_reconstruct
             };
 
-            let (cipher, ct_format, ptxt) = encrypt(
+            let (ciphertext, ct_format, ptxt) = encrypt(
                 to_encrypt,
                 data_type,
                 key_id,
@@ -1516,17 +1491,20 @@ pub async fn execute_cmd(
             .await?;
 
             internal_client.convert_to_addresses();
-            let typed_ciphertexts = vec![TypedCiphertext {
-                fhe_type: data_type as i32,
-                ciphertext: cipher,
-                external_handle: vec![1, 2, 3],
-                ciphertext_format: ct_format.into(),
-            }];
+            let ct_batch = vec![
+                TypedCiphertext {
+                    fhe_type: data_type as i32,
+                    ciphertext,
+                    external_handle: vec![1, 2, 3, 4],
+                    ciphertext_format: ct_format.into(),
+                };
+                cipher_params.batch_size
+            ];
 
             // REENCRYPTION REQUEST
             let reenc_req_tuple = internal_client.reencryption_request(
                 &dummy_domain(),
-                typed_ciphertexts,
+                ct_batch,
                 &req_id,
                 &RequestId {
                     request_id: cipher_params.key_id.clone(),
@@ -1550,8 +1528,7 @@ pub async fn execute_cmd(
             while let Some(inner) = req_tasks.join_next().await {
                 req_response_vec.push(inner.unwrap().unwrap().into_inner());
             }
-
-            assert!(req_response_vec.len() >= num_expected_responses);
+            assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
 
             // get all responses
             let mut resp_tasks = JoinSet::new();
@@ -1587,6 +1564,10 @@ pub async fn execute_cmd(
             let mut resp_response_vec = Vec::new();
             while let Some(resp) = resp_tasks.join_next().await {
                 resp_response_vec.push(resp.unwrap().1);
+                // break this loop and continue with the rest of the processing if we have enough responses
+                if resp_response_vec.len() >= num_expected_responses {
+                    break;
+                }
             }
 
             let client_request = ParsedReencryptionRequest::try_from(&reenc_req).unwrap();
@@ -1611,7 +1592,7 @@ pub async fn execute_cmd(
                         TestingPlaintext::from(plaintext),
                     );
                 }
-                Err(e) => tracing::warn!("Reencryption response is NOT valid! Reason: {}", e),
+                Err(e) => tracing::error!("Reencryption response is NOT valid! Reason: {}", e),
             };
 
             let res = format!("Reencrypted Plaintext {:?}", TestingPlaintext::from(ptxt));
@@ -1722,6 +1703,9 @@ pub async fn execute_cmd(
     };
 
     tracing::info!("Core Client terminated successfully.");
+    let duration = cmd_timer_start.elapsed();
+    tracing::info!("Core Client command {command:?} took {duration:?}.");
+
     Ok(res)
 }
 
@@ -1734,8 +1718,8 @@ async fn fetch_and_check_keygen(
     responses: Vec<KeyGenResult>,
 ) -> anyhow::Result<()> {
     assert!(
-        num_expected_responses <= responses.len(),
-        "Expected at least {} responses, but got {}",
+        responses.len() >= num_expected_responses,
+        "Expected at least {} responses, but got only {}",
         num_expected_responses,
         responses.len()
     );
@@ -1802,8 +1786,8 @@ async fn fetch_and_check_crsgen(
     responses: Vec<CrsGenResult>,
 ) -> anyhow::Result<()> {
     assert!(
-        num_expected_responses <= responses.len(),
-        "Expected at least {} responses, but got {}",
+        responses.len() >= num_expected_responses,
+        "Expected at least {} responses, but got only {}",
         num_expected_responses,
         responses.len()
     );
@@ -1854,6 +1838,7 @@ mod tests {
         util::key_setup::{ensure_central_crs_exists, ensure_central_server_signing_keys_exist},
         vault::storage::{ram::RamStorage, read_versioned_at_request_id},
     };
+    use std::env;
     use tfhe::zk::CompactPkeCrs;
 
     #[test]
@@ -1875,6 +1860,35 @@ mod tests {
         assert!(parse_hex("0x1234g").is_err());
         assert!(parse_hex("0x12345g").is_err());
         assert!(parse_hex("Ox01").is_err()); // leading O instead of 0
+    }
+
+    #[test]
+    fn test_core_client_config() {
+        let path_to_config = "config/client_local_centralized.toml".to_string();
+        tracing::info!("Path to config: {:?}", &path_to_config);
+        let cc_conf_test: CoreClientConfig = Settings::builder()
+            .path(&path_to_config)
+            .env_prefix("CORE_CLIENT")
+            .build()
+            .init_conf()
+            .unwrap();
+
+        tracing::info!("Core Client Config: {:?}", cc_conf_test);
+        // check that the fhe_params value from the config toml ("Test") is read correctly
+        assert_eq!(cc_conf_test.fhe_params, Some(FheParameter::Test));
+
+        // now set the env variable that overwrites fhe_params with "Default"
+        env::set_var("CORE_CLIENT__FHE_PARAMS", "Default");
+
+        let cc_conf_default: CoreClientConfig = Settings::builder()
+            .path(&path_to_config)
+            .env_prefix("CORE_CLIENT")
+            .build()
+            .init_conf()
+            .unwrap();
+
+        // check that the fhe_params value from the env var ("Default") is read correctly, even if the toml contains "Test"
+        assert_eq!(cc_conf_default.fhe_params, Some(FheParameter::Default));
     }
 
     #[tokio::test]
