@@ -13,7 +13,8 @@ services:
       cache_from:
         - ghcr.io/zama-ai/kms-service:latest
       args:
-        LTO_RELEASE: release-lto-off
+        LTO_RELEASE: ${LTO_RELEASE}
+        RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
     env_file:
       - "docker-compose-kms-core.env"
     entrypoint: >
@@ -35,7 +36,8 @@ services:
       cache_from:
         - ghcr.io/zama-ai/kms-service:latest
       args:
-        LTO_RELEASE: release-lto-off
+        LTO_RELEASE: ${LTO_RELEASE}
+        RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
     ports:
       - "50051:50051"
       - "50100:50100"
@@ -89,7 +91,8 @@ services:
       cache_from:
         - ghcr.io/zama-ai/kms-service:latest
       args:
-        LTO_RELEASE: release-lto-off
+        LTO_RELEASE: ${LTO_RELEASE}
+        RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
     ports:
       - "50052:50052"
       - "50200:50200"
@@ -130,7 +133,8 @@ services:
       cache_from:
         - ghcr.io/zama-ai/kms-service:latest
       args:
-        LTO_RELEASE: release-lto-off
+        LTO_RELEASE: ${LTO_RELEASE}
+        RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
     ports:
       - "50053:50053"
       - "50300:50300"
@@ -171,7 +175,8 @@ services:
       cache_from:
         - ghcr.io/zama-ai/kms-service:latest
       args:
-        LTO_RELEASE: release-lto-off
+        LTO_RELEASE: ${LTO_RELEASE}
+        RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
     ports:
       - "50054:50054"
       - "50400:50400"
@@ -213,7 +218,8 @@ services:
       cache_from:
         - ghcr.io/zama-ai/kms-service:latest
       args:
-        LTO_RELEASE: release-lto-off
+        LTO_RELEASE: ${LTO_RELEASE}
+        RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
     depends_on:
       dev-kms-core-1:
         condition: service_healthy

@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1
 
 # RUST_IMAGE_VERSION arg can be used to override the default version
+ARG RUST_IMAGE_VERSION=latest
+
+# RUST_IMAGE_VERSION arg can be used to override the default version
 ARG RUST_IMAGE_VERSION
 
 ### Multistage build to reduce image size

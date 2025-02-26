@@ -7,6 +7,7 @@ name: zama-core-base
 # TODO: create a overload version of this docker compose to use only ghcr main images
 # TODO: create a overload version of this docker compose to use only ghcr released images
 # TODO: add minio to simulate s3 + some config file for the endpoint
+
 services:
 
   # S3 mock

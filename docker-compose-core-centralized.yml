@@ -1,4 +1,9 @@
 name: zama-core-centralized
+
+
+env_file:
+  - docker-compose-kms-core.env
+
 services:
 
   # KMS-Core-centralized
@@ -8,14 +13,16 @@ services:
     image: ghcr.io/zama-ai/kms-service:latest
     environment:
       - DOCKER_BUILDKIT=1
-      - RUST_LOG=info,tonic=info,h2=info
     build:
       context: .
       dockerfile: ./docker/core/service/ci.dockerfile
       cache_from:
         - ghcr.io/zama-ai/kms-service:latest
       args:
-        LTO_RELEASE: release-lto-off
+        LTO_RELEASE: ${LTO_RELEASE}
+        RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
+    env_file:
+      - "docker-compose-kms-core.env"
     ports:
       - "50051:50051"
     healthcheck:

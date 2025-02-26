@@ -39,6 +39,11 @@ on:
         required: false
         default: 'type=gha,mode=max'
 
+
+env:
+  RUST_IMAGE_VERSION: '1.85.0'
+
+
 jobs:
   build-and-push-enclave:
     runs-on: 'ubuntu-latest'
@@ -114,6 +119,7 @@ jobs:
           build-args: |
             IMAGE_NAME=ghcr.io/zama-ai/${{ inputs.image-name }}
             IMAGE_TAG=${{ env.DOCKER_TAG_IMAGE }}
+            RUST_IMAGE_VERSION=${{ env.RUST_IMAGE_VERSION }}
           build-contexts: eif=${{ env.EIF_OUTPUT_DIR }}
           file: ./docker/${{ inputs.working-directory}}/${{ inputs.docker-file-enclave }}
           push: ${{ inputs.push_image }}

@@ -1,8 +1,9 @@
 ARG IMAGE_NAME=kms-service
 ARG IMAGE_TAG=latest
+ARG RUST_IMAGE_VERSION=latest
 
 # Build nitro-cli (used to start enclaves only)
-FROM --platform=$BUILDPLATFORM rust:1.81-slim-bookworm AS nitro-cli
+FROM --platform=$BUILDPLATFORM rust:${RUST_IMAGE_VERSION}-slim-bookworm AS nitro-cli
 
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt apt update && \
     apt install -y make git libssl-dev pkg-config
