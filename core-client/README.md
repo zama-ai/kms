@@ -71,7 +71,7 @@ A CRS can be created using the following command, where `<max-num-bits>` is the 
 $ cargo run -- -f <path-to-toml-config-file> insecure-crs-gen --max-num-bits <max-num-bits>
 ```
 
-### Decrypt
+### Decrypt (public decryption) and reencryption (user decryption)
 
 To encrypt a value using the public key from the configuration file and request a decryption from the KMS Blockchain.
 
@@ -79,11 +79,7 @@ To encrypt a value using the public key from the configuration file and request 
 $ cargo run -- -f <path-to-toml-config-file> decrypt --to-encrypt <hex-value-encrypt> --data-type <euint-value> --key-id <public-key-id>
 ```
 
-Optional command line options for this commad are:
- - `-b`/`--batch-size`: the batch size of values to decrypt (default: 1)
- - `-c`/`--compressed`: the sent values are compressed ciphertexts (default: false)
-
-### Re-Encrypt
+Similar to decryption, reencryption can be done as follows.
 
 ```{bash}
 $ cargo run -- -f <path-to-toml-config-file> re-encrypt --to-encrypt <hex-value-encrypt> --data-type <euint-value> --key-id <public-key-id>
@@ -92,3 +88,7 @@ $ cargo run -- -f <path-to-toml-config-file> re-encrypt --to-encrypt <hex-value-
 Optional command line options for this commad are:
  - `-b`/`--batch-size`: the batch size of values to decrypt (default: 1)
  - `-c`/`--compressed`: the sent values are compressed ciphertexts (default: false)
+ - `--precompute-sns`: whether SNS (switch and squash) should be done prior to sending the request to the TKMS,
+    this cannot be used in combination with `---compression`.
+ - `--ciphertext-output-path <filename>`: optionally write the ciphertext to file
+

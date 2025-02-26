@@ -296,7 +296,7 @@ pub struct CipherParameters {
     /// Boolean to do SnS preprocessing on the ciphertext or not.
     /// SnS preprocessing performs a PBS to convert 64-bit ciphertexts to 128-bit ones.
     /// At the moment it cannot be used in combination with compression.
-    #[clap(long, default_value_t = true)]
+    #[clap(long, default_value_t = false)]
     pub precompute_sns: bool,
     /// Key identifier to use for decryption/re-encryption purposes
     #[clap(long, short = 'k')]
