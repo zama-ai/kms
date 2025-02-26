@@ -1,7 +1,13 @@
 # syntax=docker/dockerfile:1
-# Multistage build to reduce image size
-#change for test
-FROM rust:1.84-slim-bookworm AS base
+
+
+# RUST_IMAGE_VERSION arg can be used to override the default version
+ARG RUST_IMAGE_VERSION
+
+### Multistage build to reduce image size
+## First stage sets up basic Rust build environment
+FROM rust:${RUST_IMAGE_VERSION}-slim-bookworm AS binaries
+
 
 ARG LTO_RELEASE=release
 

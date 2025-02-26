@@ -1,9 +1,10 @@
 name: "[Workflow-PR-Dockerfile] Pipeline Run"
 
 on:
-  pull_request:
-    paths:
-      - '**.dockerfile'
+  workflow_dispatch:
+  # pull_request:
+  #   paths:
+  #     - '**.dockerfile'
 
 jobs:
     prepare-batch:
@@ -54,5 +55,5 @@ jobs:
                 done
 
     docker-scanning:
-        uses: zama-ai/security-hub/.github/workflows/03-sca-trivy-docker-kms-callable-wf.yml@41b2d1dfe6074e0e4db0a74ecdc7fd3eb4936db2
+        uses: zama-ai/security-hub/.github/workflows/03-sca-trivy-docker-kms-callable-wf.yml@02bb7555d72a76dc9d6ae253a79fccbb76b038f2
         secrets: inherit

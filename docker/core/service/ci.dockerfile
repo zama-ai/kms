@@ -1,8 +1,11 @@
 # syntax=docker/dockerfile:1
 
+# RUST_IMAGE_VERSION arg can be used to override the default version
+ARG RUST_IMAGE_VERSION
+
 ### Multistage build to reduce image size
 ## First stage sets up basic Rust build environment
-FROM rust:1.84-slim-bookworm AS base
+FROM rust:${RUST_IMAGE_VERSION}-slim-bookworm AS base
 
 # Added memory usage optimization through `--no-install-recommends`
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
