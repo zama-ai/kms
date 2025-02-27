@@ -160,7 +160,7 @@ scheduled_delay_ms = 500
 export_timeout_ms = 5000
 
 # Optional rate limiting configuration. All parties **must** use the same
-# configuration, even on different hardware, to avoid diverging behaviour which
+# configuration, even on different hardware, to avoid diverging behavior which
 # could lead to uncontrolled issues the MPC protocol. The `bucket_size`
 # represents the total amount of tokens available for processing in the core.
 # The fields other fields represents the price of each operation in the core.
@@ -174,4 +174,3 @@ reenc = 1
 crsgen = 100
 preproc = 5000
 keygen = 1000
-verify_proven_ct = 1

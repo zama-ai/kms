@@ -828,56 +828,6 @@ impl EventsV0_9 {
         TestMetadataEvents::ReencryptResponseValues(REENCRYPT_RESPONSE_VALUES_TEST)
     }
 
-    // TODO: rename `zkp` to `verify_proven_ct`
-    fn gen_zkp_values(dir: &PathBuf) -> TestMetadataEvents {
-        let zkp_values = ZkpValues::builder()
-            .crs_id(ZKP_VALUES_TEST.crs_id.to_vec().into())
-            .key_id(ZKP_VALUES_TEST.key_id.to_vec().into())
-            .contract_address(ZKP_VALUES_TEST.contract_address.to_string())
-            .client_address(ZKP_VALUES_TEST.client_address.to_string())
-            .ct_proof_handle(ZKP_VALUES_TEST.ct_proof_handle.to_vec().into())
-            .acl_address(ZKP_VALUES_TEST.acl_address.to_string())
-            .eip712_name(ZKP_VALUES_TEST.eip712_name.to_string())
-            .eip712_version(ZKP_VALUES_TEST.eip712_version.to_string())
-            .eip712_chain_id(ZKP_VALUES_TEST.eip712_chain_id.to_vec().into())
-            .eip712_verifying_contract(ZKP_VALUES_TEST.eip712_verifying_contract.to_string())
-            .eip712_salt(
-                ZKP_VALUES_TEST
-                    .eip712_salt
-                    .map(|salt| salt.to_vec().into())
-                    .expect("could not convert salt format"),
-            )
-            .build();
-
-        let transaction = Transaction::new(
-            ZKP_VALUES_TEST.block_height,
-            ZKP_VALUES_TEST.transaction_index,
-            vec![OperationValue::from(zkp_values)],
-        );
-
-        store_versioned_test!(&transaction, dir, &ZKP_VALUES_TEST.test_filename);
-
-        TestMetadataEvents::ZkpValues(ZKP_VALUES_TEST)
-    }
-
-    // TODO: rename `zkp_response_values` to `verify_proven_ct_response_values`
-    fn gen_zkp_response_values(dir: &PathBuf) -> TestMetadataEvents {
-        let zkp_response_values = ZkpResponseValues::builder()
-            .signature(ZKP_RESPONSE_VALUES_TEST.signature.to_vec().into())
-            .payload(ZKP_RESPONSE_VALUES_TEST.payload.to_vec().into())
-            .build();
-
-        let transaction = Transaction::new(
-            ZKP_RESPONSE_VALUES_TEST.block_height,
-            ZKP_RESPONSE_VALUES_TEST.transaction_index,
-            vec![OperationValue::from(zkp_response_values)],
-        );
-
-        store_versioned_test!(&transaction, dir, &ZKP_RESPONSE_VALUES_TEST.test_filename);
-
-        TestMetadataEvents::ZkpResponseValues(ZKP_RESPONSE_VALUES_TEST)
-    }
-
     fn gen_key_url_values(dir: &PathBuf) -> TestMetadataEvents {
         let key_url_values = KeyUrlValues::builder()
             .data_id(KEY_URL_VALUES_TEST.data_id.to_vec().into())

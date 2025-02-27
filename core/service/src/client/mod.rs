@@ -3125,7 +3125,6 @@ pub(crate) mod tests {
             crsgen: 1,
             preproc: 1,
             keygen: 100,
-            verify_proven_ct: 1,
         };
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (kms_server, mut kms_client, internal_client) =
@@ -3350,7 +3349,6 @@ pub(crate) mod tests {
             crsgen: 100,
             preproc: 1,
             keygen: 1,
-            verify_proven_ct: 1,
         };
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (kms_server, mut kms_client, internal_client) =
@@ -4611,7 +4609,6 @@ pub(crate) mod tests {
             crsgen: 1,
             preproc: 1,
             keygen: 1,
-            verify_proven_ct: 1,
         };
         let (mut kms_servers, mut kms_clients, mut internal_client) = threshold_handles(
             dkg_params,
@@ -5244,7 +5241,6 @@ pub(crate) mod tests {
             crsgen: 1,
             preproc: 1,
             keygen: 1,
-            verify_proven_ct: 1,
         };
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (kms_server, mut kms_client) = super::test_tools::setup_centralized(
@@ -5349,7 +5345,6 @@ pub(crate) mod tests {
             crsgen: 100,
             preproc: 1,
             keygen: 1,
-            verify_proven_ct: 1,
         };
         let (_kms_servers, kms_clients, internal_client) =
             threshold_handles(TEST_PARAM, 4, true, Some(rate_limiter_conf), None).await;
@@ -5675,7 +5670,6 @@ pub(crate) mod tests {
             crsgen: 1,
             preproc: 100,
             keygen: 100,
-            verify_proven_ct: 1,
         };
 
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;

@@ -89,4 +89,3 @@ reenc = 1
 crsgen = 100
 preproc = 5000
 keygen = 1000
-verify_proven_ct = 1

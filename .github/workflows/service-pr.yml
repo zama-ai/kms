@@ -25,7 +25,7 @@ jobs:
         if [[ "${{ github.event_name }}" == "schedule" ]]; then
           MATRIX="${MATRIX}{\"args-tests\":\"--release -F slow_tests -F s3_tests -F insecure nightly_tests\"}"
         else
-          MATRIX="${MATRIX}{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure default_reencryption_threshold -- --skip nightly_tests --test-threads=1\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure default_verify_proven_ct_threshold -- --skip nightly_tests --test-threads=1\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure threshold -- --skip default_reencryption_threshold --skip default_verify_proven_ct_threshold --skip nightly_tests --test-threads=1\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly_tests --test-threads=1 --nocapture\"}"
+          MATRIX="${MATRIX}{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure default_reencryption_threshold -- --skip nightly_tests --test-threads=1\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure threshold -- --skip default_reencryption_threshold --skip nightly_tests --test-threads=1\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly_tests --test-threads=1 --nocapture\"}"
         fi
         MATRIX="${MATRIX%,}]}"
         echo "$MATRIX" >> "$GITHUB_OUTPUT"

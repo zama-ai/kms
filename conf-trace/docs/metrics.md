@@ -13,7 +13,6 @@ OP_KEYGEN           // "keygen"
 OP_KEYGEN_PREPROC   // "keygen_preproc"
 OP_DECRYPT          // "decrypt"
 OP_REENCRYPT        // "reencrypt"
-OP_VERIFY_PROVEN_CT // "verify_proven_ct"
 OP_CRS_GEN          // "crs_gen"
 ```
 
@@ -75,10 +74,10 @@ Track instantaneous values that can increase or decrease:
   ```rust
   // Record current number of active connections
   metrics.gauge("active_connections", 42)?;  // {prefix}_gauge{operation="active_connections"}
-  
+
   // Record current memory usage
   metrics.gauge("memory_usage_mb", memory_mb)?;  // {prefix}_gauge{operation="memory_usage_mb"}
-  
+
   // Record queue depth
   metrics.gauge("queue_depth", queue.len() as i64)?;  // {prefix}_gauge{operation="queue_depth"}
   ```
@@ -136,7 +135,7 @@ fn process_key(key_id: &str, algorithm: &str) -> Result<(), Error> {
         .tag("key_id", key_id)?
         .tag("algorithm", algorithm)?
         .start();  // kms_operation_duration_ms{operation="keygen",key_id="...",algorithm="..."}
-    
+
     // Timer automatically records duration when dropped
     process_data()?;
     Ok(())
@@ -150,7 +149,7 @@ fn handle_key_operation(key_id: &str) -> Result<(), Error> {
         .tag("key_id", key_id)?
         .tag("operation_type", "encryption")?
         .start();  // kms_operation_duration_ms{operation="keygen",key_id="...",operation_type="encryption"}
-    
+
     process_key()?;
     Ok(())
 }
@@ -162,9 +161,9 @@ fn explicit_timing() -> Result<(), Error> {
     let guard = METRICS.time_operation(OP_KEYGEN)?
         .tag("mode", "manual")?
         .start();  // kms_operation_duration_ms{operation="keygen",mode="manual"}
-    
+
     do_work()?;
-    
+
     // Get duration and force recording
     let duration = guard.record_now();
     log::info!("Operation took {:?}", duration);
@@ -183,7 +182,7 @@ fn handle_request(data: &[u8]) -> Result<(), Error> {
     let _timer = metrics.time_operation(OP_KEYGEN)?
         .tag("size", data.len().to_string())?
         .start();  // kms_operation_duration_ms{operation="keygen",size="..."}
-    
+
     match validate_data(data) {
         Ok(()) => {
             metrics.increment_request_counter(OP_KEYGEN)?;
@@ -205,10 +204,10 @@ fn handle_request(data: &[u8]) -> Result<(), Error> {
 ## Best Practices
 
 ### 1. Operation Naming
-- Use operation names that match gRPC method names (e.g., "keygen", "encrypt", "verify_proven_ct")
+- Use operation names that match gRPC method names (e.g., "keygen", "encrypt")
 - Keep names short but meaningful
 - Follow the same naming pattern as the gRPC API for consistency
-- Examples: "keygen", "encrypt", "decrypt", "verify_proven_ct", "reencrypt"
+- Examples: "keygen", "encrypt", "decrypt", "reencrypt"
 
 ### 2. Error Recording
 - Use predefined error type constants from `metrics_names` module
@@ -243,10 +242,10 @@ When adding new metrics:
    ```rust
    // Operation names
    pub const OP_NEW_OPERATION: &str = "new_operation";
-   
+
    // Error types
    pub const ERR_NEW_ERROR: &str = "new_error_type";
-   
+
    // Tag keys
    pub const TAG_NEW_TAG: &str = "new_tag";
    ```
@@ -254,7 +253,7 @@ When adding new metrics:
 2. Use the new constants in your code:
    ```rust
    use conf_trace::metrics_names::{OP_NEW_OPERATION, TAG_NEW_TAG};
-   
+
    METRICS.observe_duration_with_tags(
        OP_NEW_OPERATION,
        duration,

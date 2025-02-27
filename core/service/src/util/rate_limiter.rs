@@ -16,7 +16,6 @@ pub struct RateLimiterConfig {
     pub crsgen: u32,
     pub preproc: u32,
     pub keygen: u32,
-    pub verify_proven_ct: u32,
 }
 
 impl Default for RateLimiterConfig {
@@ -28,7 +27,6 @@ impl Default for RateLimiterConfig {
             crsgen: 100,
             preproc: 5000,
             keygen: 1000,
-            verify_proven_ct: 1,
         }
     }
 }
@@ -107,7 +105,6 @@ impl RateLimiter {
     impl_rate_limiter_for!(start_crsgen, crsgen, "crsgen");
     impl_rate_limiter_for!(start_preproc, preproc, "preproc");
     impl_rate_limiter_for!(start_keygen, keygen, "keygen");
-    impl_rate_limiter_for!(start_verify_proven_ct, verify_proven_ct, "verify_proven_ct");
 }
 
 #[cfg(test)]
@@ -164,7 +161,6 @@ mod tests {
             crsgen: 1,
             preproc: 1,
             keygen: 1,
-            verify_proven_ct: 1,
         });
 
         // first decryption is ok, but uses all tokens

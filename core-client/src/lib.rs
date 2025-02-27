@@ -1,6 +1,6 @@
 /// Core Client library
 ///
-/// This library implements most functionnalities to interact with deployed KMS cores.
+/// This library implements most functionalities to interact with deployed KMS cores.
 /// This library also includes an associated CLI.
 use aes_prng::AesRng;
 use alloy_primitives::PrimitiveSignature;
@@ -426,31 +426,6 @@ pub async fn encrypt(
     }
 
     Ok((cipher, ct_format, ptxt))
-}
-
-pub async fn store_cipher(
-    cipher: &Vec<u8>,
-    kv_store_address: &String,
-) -> Result<String, anyhow::Error> {
-    let response = reqwest::Client::new()
-        .post(format!("{}/store", kv_store_address))
-        .body(hex::encode(cipher))
-        .send()
-        .await;
-
-    match response {
-        Ok(result) => {
-            if result.status() != 200 {
-                return Err(anyhow!(
-                    "Failed to store ciphertext {}",
-                    result.text().await?
-                ));
-            }
-            let handle = result.text().await?;
-            Ok(handle)
-        }
-        Err(error) => Err(anyhow!("Failed to store ciphertext: {}", error)),
-    }
 }
 
 fn join_vars(args: &[&str]) -> String {
