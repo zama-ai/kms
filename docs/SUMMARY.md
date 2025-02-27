@@ -13,7 +13,7 @@
 ## Guides
 
 - [Using KMS as a SaaS](guides/saas_usage.md)
-- [Installing KMS On-prem](guides/on_prem_installation.md)
+- [On-Premises Installation Guide](guides/on_prem_installation.md)
 - [Calling KMS main entry points](guides/entry_points.md)
 - [Using KMS blockchain](guides/blockchain.md)
 - [Common errors](guides/common_errors.md)
