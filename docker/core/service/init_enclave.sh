@@ -137,6 +137,7 @@ has_value "threshold" && \
 	    --aws-kms-endpoint "$(get_value "aws.awskms_endpoint")" \
 	    --cmd signing-keys \
 	    threshold \
+            --signing-key-party-id "$(get_value "threshold.my_id")" \
 	    |& logger || fail "cannot generate keys"
     }
 
