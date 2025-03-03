@@ -1,13 +1,17 @@
 use std::path::Path;
 
 use crate::algebra::base_ring::{Z128, Z64};
+use crate::algebra::structure_traits::Zero;
 use crate::execution::online::preprocessing::{DKGPreprocessing, RandomPreprocessing};
 use crate::execution::sharing::share::Share;
 use crate::execution::tfhe_internals::compression_decompression_key::CompressionPrivateKeyShares;
+use crate::execution::tfhe_internals::lwe_ciphertext::{
+    encrypt_lwe_ciphertext_list, LweCiphertextShare,
+};
 use crate::execution::tfhe_internals::lwe_key::LweCompactPublicKeyShare;
 use crate::execution::tfhe_internals::lwe_packing_keyswitch_key_generation::allocate_and_generate_lwe_packing_keyswitch_key;
 use crate::execution::tfhe_internals::parameters::{
-    BKParams, DKGParams, DistributedCompressionParameters, KSKParams, NoiseInfo,
+    BKParams, DKGParams, DistributedCompressionParameters, KSKParams, MSNRKParams, NoiseInfo,
 };
 use crate::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
 use crate::{
@@ -40,6 +44,7 @@ use tfhe::core_crypto::algorithms::convert_standard_lwe_bootstrap_key_to_fourier
 use tfhe::core_crypto::commons::traits::UnsignedInteger;
 use tfhe::core_crypto::entities::Fourier128LweBootstrapKey;
 use tfhe::shortint::list_compression::{CompressionKey, DecompressionKey};
+use tfhe::shortint::server_key::ModulusSwitchNoiseReductionKey;
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::Versionize;
 use tfhe::{
@@ -82,6 +87,7 @@ struct RawPubKeySet {
     pub bk: LweBootstrapKey<Vec<u64>>,
     pub bk_sns: Option<LweBootstrapKey<Vec<u128>>>,
     pub compression_keys: Option<(CompressionKey, DecompressionKey)>,
+    pub msnrk: Option<ModulusSwitchNoiseReductionKey>,
 }
 
 impl Eq for RawPubKeySet {}
@@ -137,7 +143,7 @@ impl RawPubKeySet {
 
         let pk_bk = ShortintBootstrappingKey::Classic {
             bsk: fourier_bsk,
-            modulus_switch_noise_reduction_key: None,
+            modulus_switch_noise_reduction_key: self.msnrk.clone(),
         };
 
         let max_noise_level = MaxNoiseLevel::from_msg_carry_modulus(
@@ -539,6 +545,54 @@ where
         lwe_secret_key_share,
         lwe_public_key_shared.open_to_tfhers_type(session).await?,
     ))
+}
+
+/// Generate the modulus switching noise reduction key from the small LWE key.
+/// This key is essentially encryptions of zeros, and it's used as a part of
+/// the bootstrap algorithm if it exists, right before modulus switching.
+#[instrument(name="Gen MSNRK",skip(input_lwe_sk, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+async fn generate_mod_switch_noise_reduction_key<
+    Z: BaseRing,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+    R: Rng + CryptoRng,
+    S: BaseSessionHandles<R>,
+    Gen: ByteRandomGenerator,
+    const EXTENSION_DEGREE: usize,
+>(
+    input_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    params: &MSNRKParams,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
+    session: &mut S,
+    preprocessing: &mut P,
+) -> anyhow::Result<ModulusSwitchNoiseReductionKey>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let my_role = session.my_role()?;
+    tracing::info!("(Party {my_role}) Generating MSNRK...Start");
+    let vec_tuniform_noise = preprocessing
+        .next_noise_vec(params.num_needed_noise, params.noise_bound)?
+        .iter()
+        .map(|share| share.value())
+        .collect_vec();
+
+    mpc_encryption_rng.fill_noise(vec_tuniform_noise);
+
+    let zeros_count = params.params.modulus_switch_zeros_count.0;
+    let lwe_size = input_lwe_sk.lwe_dimension().to_lwe_size();
+    let mut output = vec![LweCiphertextShare::new(lwe_size); zeros_count];
+    let encoded = vec![ResiduePoly::<Z, EXTENSION_DEGREE>::ZERO; zeros_count];
+    encrypt_lwe_ciphertext_list(input_lwe_sk, &mut output, &encoded, mpc_encryption_rng)?;
+
+    use crate::execution::tfhe_internals::lwe_ciphertext;
+    let opened_ciphertext_list = lwe_ciphertext::open_to_tfhers_type(output, session).await?;
+
+    Ok(ModulusSwitchNoiseReductionKey {
+        modulus_switch_zeros: opened_ciphertext_list,
+        ms_bound: params.params.ms_bound,
+        ms_r_sigma_factor: params.params.ms_r_sigma_factor,
+        ms_input_variance: params.params.ms_input_variance,
+    })
 }
 
 ///Generate the Key Switch Key from a Glwe key given in Lwe format,
@@ -1039,6 +1093,22 @@ where
         }
     };
 
+    // If needed, compute the mod switch noise reduction key
+    let msnrk = if let Some(msnrk_param) = params_basics_handle.get_msnrk_params() {
+        Some(
+            generate_mod_switch_noise_reduction_key(
+                &lwe_secret_key_share,
+                &msnrk_param,
+                &mut mpc_encryption_rng,
+                session,
+                preprocessing,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+
     // note that glwe_secret_key_share_compression may be None even if compression_keys is Some
     // this is because we might have generated the compression keys from an existing compression sk share
     let (glwe_secret_key_share_compression, compression_keys) = compression_material;
@@ -1050,6 +1120,7 @@ where
         bk,
         bk_sns,
         compression_keys,
+        msnrk,
     };
 
     let priv_key_set = GenericPrivateKeySet {
@@ -1524,7 +1595,6 @@ pub mod tests {
     }
 
     #[test]
-    #[ignore]
     fn keygen_params_bk_sns_f4() {
         keygen_params_bk_sns::<4>()
     }

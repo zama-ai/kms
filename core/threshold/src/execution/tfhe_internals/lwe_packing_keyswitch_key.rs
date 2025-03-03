@@ -156,6 +156,7 @@ where
                             "Not enough bodies to cast the compression key to tfhe-rs type",
                         ));
                     };
+                    // Below we perform recomposition to convert Vec<u8> to u64
                     tmp.iter().rev().fold(0_u64, |acc, byte| {
                         acc.wrapping_shl(8).wrapping_add(*byte as u64)
                     })

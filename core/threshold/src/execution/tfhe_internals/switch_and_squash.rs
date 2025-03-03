@@ -47,6 +47,7 @@ pub enum SwitchAndSquashKeyVersioned {
 }
 
 /// Key used for switch-and-squash to convert a ciphertext over u64 to one over u128
+// TODO we should switch to the tfhe-rs types for SnS parameters when tfhe-rs v1.1 is out
 #[derive(Serialize, Deserialize, Clone, PartialEq, Versionize)]
 #[versionize(SwitchAndSquashKeyVersioned)]
 pub struct SwitchAndSquashKey {

@@ -1,15 +1,28 @@
 use itertools::{EitherOrBoth, Itertools};
-use tfhe::core_crypto::commons::{
-    parameters::{LweCiphertextCount, LweSize},
-    traits::ByteRandomGenerator,
+use rand::{CryptoRng, Rng};
+use tfhe::{
+    boolean::prelude::LweDimension,
+    core_crypto::{
+        commons::{
+            parameters::{LweCiphertextCount, LweSize},
+            traits::ByteRandomGenerator,
+        },
+        prelude::{
+            CiphertextModulus, ContiguousEntityContainerMut, LweCiphertextList,
+            LweCiphertextListOwned,
+        },
+    },
 };
 
 use crate::{
     algebra::{
         galois_rings::common::ResiduePoly,
-        structure_traits::{BaseRing, Ring},
+        structure_traits::{BaseRing, ErrorCorrect, Ring},
     },
     error::error_handler::anyhow_error_and_log,
+    execution::{
+        online::triple::open_list, runtime::session::BaseSessionHandles, sharing::share::Share,
+    },
 };
 
 use super::{
@@ -24,6 +37,93 @@ use super::{
 pub struct LweCiphertextShare<Z: BaseRing, const EXTENSION_DEGREE: usize> {
     pub mask: Vec<Z>,
     pub body: ResiduePoly<Z, EXTENSION_DEGREE>,
+}
+
+pub(crate) fn opened_lwe_masks_bodies_to_tfhers_u64<Z: BaseRing>(
+    masks: Vec<Vec<Z>>,
+    bodies: Vec<Z>,
+    output_container: &mut LweCiphertextList<&mut [u64]>,
+) -> anyhow::Result<()> {
+    for (idx, mut ct) in output_container.iter_mut().enumerate() {
+        let (mut mask, body) = ct.get_mut_mask_and_body();
+        let underlying_container = mask.as_mut();
+        for c_m in underlying_container
+            .iter_mut()
+            .zip_longest(masks.get(idx).ok_or_else(|| {
+                anyhow_error_and_log(format!(
+                    "Mask of incorrect size, failed trying to access idx {idx}"
+                ))
+            })?)
+        {
+            if let EitherOrBoth::Both(c, m) = c_m {
+                let m_byte_vec = m.to_byte_vec();
+                let m = m_byte_vec.iter().rev().fold(0_u64, |acc, byte| {
+                    acc.wrapping_shl(8).wrapping_add(*byte as u64)
+                });
+                *c = m;
+            } else {
+                return Err(anyhow_error_and_log("zip error"));
+            }
+        }
+
+        let body_data = {
+            let tmp = bodies
+                .get(idx)
+                .ok_or_else(|| {
+                    anyhow_error_and_log(format!(
+                        "Body of incorrect size, failed trying to access idx {idx}"
+                    ))
+                })?
+                .to_byte_vec();
+            tmp.iter().rev().fold(0_u64, |acc, byte| {
+                acc.wrapping_shl(8).wrapping_add(*byte as u64)
+            })
+        };
+        *body.data = body_data;
+    }
+
+    Ok(())
+}
+
+pub(crate) async fn open_to_tfhers_type<
+    Z: BaseRing,
+    const EXTENSION_DEGREE: usize,
+    R: Rng + CryptoRng,
+    S: BaseSessionHandles<R>,
+>(
+    ciphertext_share_list: Vec<LweCiphertextShare<Z, EXTENSION_DEGREE>>,
+    session: &S,
+) -> anyhow::Result<LweCiphertextList<Vec<u64>>>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let my_role = session.my_role()?;
+
+    // Split the body and the mask, so that we can open the body which are initially secret shared
+    let (masks, shared_bodies): (Vec<Vec<Z>>, Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>) =
+        ciphertext_share_list
+            .into_iter()
+            .map(|x| (x.mask, Share::new(my_role, x.body)))
+            .unzip();
+
+    // Open the body
+    let opened_bodies: Vec<Z> = open_list(&shared_bodies, session)
+        .await?
+        .into_iter()
+        .map(|x| x.to_scalar())
+        .try_collect()?;
+
+    let lwe_dim = LweDimension(masks[0].len());
+    let ciphertext_count = masks.len();
+    let container = vec![0u64; lwe_dim.to_lwe_size().0 * ciphertext_count];
+    let mut output = LweCiphertextListOwned::from_container(
+        container,
+        lwe_dim.to_lwe_size(),
+        CiphertextModulus::new_native(),
+    );
+
+    opened_lwe_masks_bodies_to_tfhers_u64(masks, opened_bodies, &mut output.as_mut_view())?;
+    Ok(output)
 }
 
 impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LweCiphertextShare<Z, EXTENSION_DEGREE> {

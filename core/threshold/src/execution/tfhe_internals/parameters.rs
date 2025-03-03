@@ -16,8 +16,9 @@ use tfhe::{
         parameters::{
             CompactCiphertextListExpansionKind, CompactPublicKeyEncryptionParameters,
             CompressionParameters, DecompositionBaseLog, DecompositionLevelCount, GlweDimension,
-            LweDimension, PolynomialSize, ShortintKeySwitchingParameters,
-            SupportedCompactPkeZkScheme,
+            LweCiphertextCount, LweDimension, ModulusSwitchNoiseReductionParams,
+            NoiseEstimationMeasureBound, PolynomialSize, RSigmaFactor,
+            ShortintKeySwitchingParameters, SupportedCompactPkeZkScheme, Variance,
         },
         CarryModulus, ClassicPBSParameters, EncryptionKeyChoice, MaxNoiseLevel, MessageModulus,
         PBSOrder, PBSParameters,
@@ -120,6 +121,7 @@ impl NoiseBounds {
     }
 }
 
+// TODO we should switch to the tfhe-rs types for SnS parameters when tfhe-rs v1.1 is out
 #[derive(Serialize, Copy, Clone, Deserialize, Debug, PartialEq)]
 pub struct SwitchAndSquashParameters {
     pub glwe_dimension: GlweDimension,
@@ -145,6 +147,14 @@ pub struct BKParams {
     pub decomposition_base_log: DecompositionBaseLog,
     pub decomposition_level_count: DecompositionLevelCount,
     pub enc_type: EncryptionType,
+}
+
+/// Modulus switch noise reduction key parameters
+#[derive(Debug)]
+pub struct MSNRKParams {
+    pub num_needed_noise: usize,
+    pub noise_bound: NoiseBounds,
+    pub params: ModulusSwitchNoiseReductionParams,
 }
 
 #[derive(Debug)]
@@ -312,6 +322,8 @@ pub trait DKGParamsBasics: Sync {
     fn num_needed_noise_bk(&self) -> NoiseInfo;
     fn num_needed_noise_compression_key(&self) -> NoiseInfo;
     fn num_needed_noise_decompression_key(&self) -> NoiseInfo;
+    // msnrk: modulus switch noise reduction key
+    fn num_needed_noise_msnrk(&self) -> NoiseInfo;
 
     fn num_raw_bits(&self, keyset_config: KeySetConfig) -> usize;
     fn encryption_key_choice(&self) -> EncryptionKeyChoice;
@@ -329,6 +341,8 @@ pub trait DKGParamsBasics: Sync {
     fn get_ksk_params(&self) -> KSKParams;
     fn get_pksk_params(&self) -> Option<KSKParams>;
     fn get_bk_params(&self) -> BKParams;
+    // msnrk: modulus switch noise reduction key
+    fn get_msnrk_params(&self) -> Option<MSNRKParams>;
     fn get_compression_decompression_params(&self) -> Option<DistributedCompressionParameters>;
 
     fn all_lwe_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo;
@@ -444,6 +458,9 @@ impl DKGParamsBasics for DKGParamsRegular {
 
             //For compression keys
             num_bits_needed += self.num_needed_noise_compression_key().num_bits_needed();
+
+            // for msnrk
+            num_bits_needed += self.num_needed_noise_msnrk().num_bits_needed();
         }
         //For decompression keys
         num_bits_needed += self.num_needed_noise_decompression_key().num_bits_needed();
@@ -597,6 +614,18 @@ impl DKGParamsBasics for DKGParamsRegular {
         NoiseInfo { amount, bound }
     }
 
+    fn num_needed_noise_msnrk(&self) -> NoiseInfo {
+        let amount = match self
+            .ciphertext_parameters
+            .modulus_switch_noise_reduction_params
+        {
+            Some(param) => param.modulus_switch_zeros_count.0,
+            None => 0,
+        };
+        let bound = NoiseBounds::LweNoise(self.lwe_tuniform_bound());
+        NoiseInfo { amount, bound }
+    }
+
     fn to_dkg_params(&self) -> DKGParams {
         DKGParams::WithoutSnS(*self)
     }
@@ -661,6 +690,17 @@ impl DKGParamsBasics for DKGParamsRegular {
             decomposition_level_count: self.decomposition_level_count_bk(),
             enc_type: EncryptionType::Bits64,
         }
+    }
+
+    fn get_msnrk_params(&self) -> Option<MSNRKParams> {
+        let NoiseInfo { amount, bound } = self.num_needed_noise_msnrk();
+        self.ciphertext_parameters
+            .modulus_switch_noise_reduction_params
+            .map(|params| MSNRKParams {
+                num_needed_noise: amount,
+                noise_bound: bound,
+                params,
+            })
     }
 
     fn compression_sk_num_bits(&self) -> usize {
@@ -743,7 +783,11 @@ impl DKGParamsBasics for DKGParamsRegular {
         match keyset_config {
             KeySetConfig::Standard(_inner_config) => {
                 let target_bound = self.num_needed_noise_ksk().bound;
-                let noises = &[self.num_needed_noise_ksk(), self.num_needed_noise_pksk()];
+                let noises = &[
+                    self.num_needed_noise_ksk(),
+                    self.num_needed_noise_pksk(),
+                    self.num_needed_noise_msnrk(),
+                ];
 
                 #[cfg(test)]
                 {
@@ -1031,6 +1075,10 @@ impl DKGParamsBasics for DKGParamsSnS {
         self.regular_params.num_needed_noise_bk()
     }
 
+    fn num_needed_noise_msnrk(&self) -> NoiseInfo {
+        self.regular_params.num_needed_noise_msnrk()
+    }
+
     fn to_dkg_params(&self) -> DKGParams {
         DKGParams::WithSnS(*self)
     }
@@ -1062,8 +1110,13 @@ impl DKGParamsBasics for DKGParamsSnS {
     fn get_pksk_params(&self) -> Option<KSKParams> {
         self.regular_params.get_pksk_params()
     }
+
     fn get_bk_params(&self) -> BKParams {
         self.regular_params.get_bk_params()
+    }
+
+    fn get_msnrk_params(&self) -> Option<MSNRKParams> {
+        self.regular_params.get_msnrk_params()
     }
 
     fn get_compression_decompression_params(&self) -> Option<DistributedCompressionParameters> {
@@ -1322,7 +1375,13 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
             log2_p_fail: -49.5137,
             ciphertext_modulus: CiphertextModulus::new_native(),
             encryption_key_choice: EncryptionKeyChoice::Big,
-            modulus_switch_noise_reduction_params: None, // TODO set this to test mod switch keygen
+            modulus_switch_noise_reduction_params: Some(ModulusSwitchNoiseReductionParams {
+                // TODO wait for Sam for better parameters
+                modulus_switch_zeros_count: LweCiphertextCount(100),
+                ms_bound: NoiseEstimationMeasureBound(288230376151711744f64),
+                ms_r_sigma_factor: RSigmaFactor(13.179852282053789f64),
+                ms_input_variance: Variance(2.63039184094559E-7f64),
+            }),
         },
         compression_decompression_parameters: Some(CompressionParameters {
             br_level: DecompositionLevelCount(1),

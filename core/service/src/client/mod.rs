@@ -2549,8 +2549,10 @@ pub(crate) mod tests {
     use std::collections::{hash_map::Entry, HashMap};
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     use std::sync::Arc;
+    use tfhe::core_crypto::prelude::{ContiguousEntityContainer, LweCiphertextOwned};
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     use tfhe::integer::compression_keys::DecompressionKey;
+    use tfhe::prelude::ParameterSetConformant;
     use tfhe::zk::CompactPkeCrs;
     use tfhe::ProvenCompactCiphertextList;
     use tfhe::Tag;
@@ -3159,72 +3161,82 @@ pub(crate) mod tests {
         }
         let inner_resp = response.unwrap().into_inner();
         let pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
-        if let Some(inner_config) = keyset_config {
-            let keyset_type = KeySetType::try_from(inner_config.keyset_type).unwrap();
-            match keyset_type {
-                KeySetType::Standard => {
-                    let pk = internal_client
-                        .retrieve_public_key(&inner_resp, &pub_storage)
-                        .await
-                        .unwrap();
-                    assert!(pk.is_some());
-                    let server_key: Option<tfhe::ServerKey> = internal_client
-                        .retrieve_server_key(&inner_resp, &pub_storage)
-                        .await
-                        .unwrap();
-                    assert!(server_key.is_some());
+        let priv_storage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
 
-                    if params == FheParameter::Default {
-                        assert_mod_switch_key_exists(server_key.unwrap());
-                    }
-                }
-                KeySetType::DecompressionOnly => {
-                    // setup storage
-                    let keyid_1 = keyset_added_info
-                        .clone()
-                        .unwrap()
-                        .from_keyset_id_decompression_only
-                        .unwrap();
-                    let keyid_2 = keyset_added_info
-                        .unwrap()
-                        .to_keyset_id_decompression_only
-                        .unwrap();
-                    let priv_storage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
-                    let sk_urls = priv_storage
-                        .all_urls(&PrivDataType::FheKeyInfo.to_string())
-                        .await
-                        .unwrap();
-                    let sk_url_1 = sk_urls.get(&keyid_1.request_id).unwrap();
-                    let sk_url_2 = sk_urls.get(&keyid_2.request_id).unwrap();
-                    let handles_1: crate::engine::base::KmsFheKeyHandles =
-                        priv_storage.read_data(sk_url_1).await.unwrap();
-                    let handles_2: crate::engine::base::KmsFheKeyHandles =
-                        priv_storage.read_data(sk_url_2).await.unwrap();
+        let inner_config = keyset_config.unwrap_or_default();
+        let keyset_type = KeySetType::try_from(inner_config.keyset_type).unwrap();
+        match keyset_type {
+            KeySetType::Standard => {
+                let pk = internal_client
+                    .retrieve_public_key(&inner_resp, &pub_storage)
+                    .await
+                    .unwrap();
+                assert!(pk.is_some());
+                let server_key: Option<tfhe::ServerKey> = internal_client
+                    .retrieve_server_key(&inner_resp, &pub_storage)
+                    .await
+                    .unwrap();
+                assert!(server_key.is_some());
 
-                    // get the client key 1 and client key 2
-                    let client_key_1 = handles_1.client_key;
-                    let client_key_2 = handles_2.client_key;
+                // read the client key
+                let sk_urls = priv_storage
+                    .all_urls(&PrivDataType::FheKeyInfo.to_string())
+                    .await
+                    .unwrap();
+                let sk_url = sk_urls
+                    .get(&inner_resp.request_id.unwrap().request_id)
+                    .unwrap();
+                let handle: crate::engine::base::KmsFheKeyHandles =
+                    priv_storage.read_data(sk_url).await.unwrap();
+                let client_key = handle.client_key;
 
-                    // get the server key 1
-                    let server_key_1: tfhe::ServerKey = internal_client
-                        .get_key(&keyid_1, PubDataType::ServerKey, &pub_storage)
-                        .await
-                        .unwrap();
+                check_conformance(server_key.unwrap(), client_key);
+            }
+            KeySetType::DecompressionOnly => {
+                // setup storage
+                let keyid_1 = keyset_added_info
+                    .clone()
+                    .unwrap()
+                    .from_keyset_id_decompression_only
+                    .unwrap();
+                let keyid_2 = keyset_added_info
+                    .unwrap()
+                    .to_keyset_id_decompression_only
+                    .unwrap();
+                let sk_urls = priv_storage
+                    .all_urls(&PrivDataType::FheKeyInfo.to_string())
+                    .await
+                    .unwrap();
+                let sk_url_1 = sk_urls.get(&keyid_1.request_id).unwrap();
+                let sk_url_2 = sk_urls.get(&keyid_2.request_id).unwrap();
+                let handles_1: crate::engine::base::KmsFheKeyHandles =
+                    priv_storage.read_data(sk_url_1).await.unwrap();
+                let handles_2: crate::engine::base::KmsFheKeyHandles =
+                    priv_storage.read_data(sk_url_2).await.unwrap();
 
-                    // get decompression key
-                    let decompression_key = internal_client
-                        .retrieve_decompression_key(&inner_resp, &pub_storage)
-                        .await
-                        .unwrap()
-                        .unwrap()
-                        .into_raw_parts();
-                    run_decompression_test(
-                        &client_key_1,
-                        &client_key_2,
-                        Some(&server_key_1),
-                        decompression_key,
-                    );
-                }
+                // get the client key 1 and client key 2
+                let client_key_1 = handles_1.client_key;
+                let client_key_2 = handles_2.client_key;
+
+                // get the server key 1
+                let server_key_1: tfhe::ServerKey = internal_client
+                    .get_key(&keyid_1, PubDataType::ServerKey, &pub_storage)
+                    .await
+                    .unwrap();
+
+                // get decompression key
+                let decompression_key = internal_client
+                    .retrieve_decompression_key(&inner_resp, &pub_storage)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .into_raw_parts();
+                run_decompression_test(
+                    &client_key_1,
+                    &client_key_2,
+                    Some(&server_key_1),
+                    decompression_key,
+                );
             }
         }
 
@@ -5430,22 +5442,52 @@ pub(crate) mod tests {
         .await;
 
         // check that we have the new mod switch key
-        let (_, _, server_key) = keys.clone().get_standard();
-        assert_mod_switch_key_exists(server_key);
+        let (client_key, _, server_key) = keys.clone().get_standard();
+        check_conformance(server_key, client_key);
 
         let panic_res = std::panic::catch_unwind(|| keys.get_decompression_only());
         assert!(panic_res.is_err());
     }
 
-    fn assert_mod_switch_key_exists(server_key: tfhe::ServerKey) {
+    fn check_conformance(server_key: tfhe::ServerKey, client_key: tfhe::ClientKey) {
+        let pbs_params = client_key.computation_parameters();
         let (server_key, _, _, _, _) = server_key.into_raw_parts();
         let server_key = server_key.into_raw_parts();
+        let max_degree = server_key.max_degree; // we don't really check the max degree
+        assert!(server_key.is_conformant(&(pbs_params, max_degree)));
+
         match server_key.bootstrapping_key {
             tfhe::shortint::server_key::ShortintBootstrappingKey::Classic {
                 bsk: _bsk,
                 modulus_switch_noise_reduction_key,
             } => {
                 assert!(modulus_switch_noise_reduction_key.is_some());
+
+                // Check that we can decrypt this key to 0
+                let zeros_ct = modulus_switch_noise_reduction_key
+                    .unwrap()
+                    .modulus_switch_zeros;
+                let (client_key, _compact_client_key, _compression_key, _tag) =
+                    client_key.into_raw_parts();
+
+                // We need to make a reference ciphertext to convert
+                // the zero ciphertexts into a Ciphertext Type
+                let ct_reference = client_key.encrypt_one_block(0);
+                for ct in zeros_ct.iter() {
+                    let ctt = tfhe::shortint::Ciphertext::new(
+                        LweCiphertextOwned::from_container(
+                            ct.into_container().to_vec(),
+                            ct.ciphertext_modulus(),
+                        ),
+                        ct_reference.degree,
+                        ct_reference.noise_level(),
+                        ct_reference.message_modulus,
+                        ct_reference.carry_modulus,
+                        tfhe::shortint::PBSOrder::BootstrapKeyswitch,
+                    );
+                    let pt = client_key.decrypt_one_block(&ctt);
+                    assert_eq!(pt, 0);
+                }
             }
             _ => panic!("expected classic bsk"),
         }
@@ -5460,9 +5502,7 @@ pub(crate) mod tests {
         run_threshold_decompression_keygen(4, FheParameter::Test, true).await;
     }
 
-    /// Note that the insecure flag means that the first two key gens will be insecure, but the last WILL still be secure
     #[cfg(feature = "slow_tests")]
-    #[allow(dead_code)]
     async fn run_threshold_decompression_keygen(
         amount_parties: usize,
         parameter: FheParameter,
@@ -5738,7 +5778,12 @@ pub(crate) mod tests {
                     }
                 });
             }
-            keyset.join_all().await;
+            let all_key_sets = keyset.join_all().await;
+            for keyset in all_key_sets {
+                // blockchain parameters always have mod switch noise reduction key
+                let (client_key, _, server_key) = keyset.get_standard();
+                check_conformance(server_key, client_key);
+            }
             tracing::info!("Finished concurrent preproc and keygen");
         } else {
             let mut preproc_ids = HashMap::new();
@@ -5765,7 +5810,7 @@ pub(crate) mod tests {
                     parameter
                 ))
                 .unwrap();
-                run_keygen(
+                let keyset = run_keygen(
                     parameter,
                     &kms_clients,
                     &internal_client,
@@ -5775,6 +5820,9 @@ pub(crate) mod tests {
                     insecure,
                 )
                 .await;
+                // blockchain parameters always have mod switch noise reduction key
+                let (client_key, _, server_key) = keyset.get_standard();
+                check_conformance(server_key, client_key);
             }
             tracing::info!("Finished sequential preproc and keygen");
         }
