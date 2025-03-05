@@ -24,6 +24,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     ssh \
     && rm -rf /var/lib/apt/lists/*
 
+RUN cargo install sccache --version ^0.7
+ENV RUSTC_WRAPPER=sccache SCCACHE_DIR=/sccache
+
 WORKDIR /app/kms-connector
 COPY . .
 
@@ -37,9 +40,7 @@ RUN --mount=type=secret,id=BLOCKCHAIN_ACTIONS_TOKEN,env=BLOCKCHAIN_ACTIONS_TOKEN
     git config --global url."https://$BLOCKCHAIN_ACTIONS_TOKEN@github.com".insteadOf ssh://git@github.com
 
 # Build with improved caching
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/kms-connector/target,sharing=locked \
+RUN --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
     cargo install --profile=${LTO_RELEASE} --path kms-connector --root kms-connector --bins
 
 # Dependencies stage

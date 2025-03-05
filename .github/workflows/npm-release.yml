@@ -6,13 +6,14 @@ on:
 
 jobs:
   start-runner:
-    uses: ./.github/workflows/common-build-big-instance.yml
+    uses: ./.github/workflows/common-testing-big-instance.yml
     with:
       working-directory: './core/service'
       args-tests: '--lib'
       run-wasm: true
       package-name: 'kms'
       npm-release: true
+      app-cache-dir: 'kms'
     permissions:
       contents: 'read'
       id-token: 'write'
@@ -22,3 +23,5 @@ jobs:
       SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
       JOB_SECRET: ${{ secrets.JOB_SECRET }}
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}

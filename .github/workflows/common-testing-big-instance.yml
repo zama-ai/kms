@@ -1,4 +1,4 @@
-name: Run Docker On Big Instance
+name: Run Testing On Big Instance
 on:
   workflow_call:
     inputs:
@@ -48,6 +48,9 @@ on:
         type: string
         required: false
         default: 'big-instance'
+      app-cache-dir:
+        type: string
+        required: true
     secrets:
       SLAB_ACTION_TOKEN:
         required: true
@@ -59,6 +62,10 @@ on:
         required: true
       NPM_TOKEN:
         required: false
+      AWS_ACCESS_KEY_S3_USER:
+        required: true
+      AWS_SECRET_KEY_S3_USER:
+        required: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -83,10 +90,12 @@ jobs:
 
   run-build:
     needs: start-runner
-    uses: ./.github/workflows/common-build.yml
+    uses: ./.github/workflows/common-testing.yml
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
     with:
       runs-on: ${{ needs.start-runner.outputs.label }}
       build-publish-docs: ${{ inputs.build-publish-docs }}
@@ -99,6 +108,7 @@ jobs:
       wasm-test-feature: ${{ inputs.wasm-test-feature }}
       test-coverage: ${{ inputs.test-coverage }}
       npm-release: ${{ inputs.npm-release }}
+      app-cache-dir: ${{ inputs.app-cache-dir }}
 
   stop-runner:
     name: Stops self-hosted EC2 runner

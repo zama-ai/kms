@@ -50,16 +50,23 @@ on:
         type: boolean
         required: false
         default: false
+      app-cache-dir:
+        type: string
+        required: true
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
       NPM_TOKEN:
         required: false
+      AWS_ACCESS_KEY_S3_USER:
+        required: true
+      AWS_SECRET_KEY_S3_USER:
+        required: true
 
 env:
   CARGO_TERM_COLOR: always
-  DOCKER_BUILD_TEST_CORE_CLIENT: 1
-  CARGO_INCREMENTAL: 1
+  DOCKER_BUILD_TEST_SIMULATOR: 1
+  CARGO_INCREMENTAL: 0
   DOCKER_BUILDKIT: 1
   NPM_TAG: ""
 
@@ -105,6 +112,13 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
 
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+          aws-region: eu-west-3
+
       ############################################################################
       # Initialize Docker Buildx for multi-platform builds.
       - name: Set up Docker Buildx
@@ -113,34 +127,6 @@ jobs:
         with:
           platforms: linux/amd64,linux/arm64
           buildkitd-flags: --debug
-
-
-      ############################################################################
-      # Setup cache for dockerfile and inject in docker
-      #
-      - name: Setup Cache
-        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57  # v4.2.0
-        id: cache
-        with:
-          path: |
-            usr-local-cargo-registry
-            usr-local-cargo-git
-            var-cache-apt
-            var-lib-apt
-          key: |
-            "key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}"
-
-      - name: inject cache into docker
-        uses: reproducible-containers/buildkit-cache-dance@5b6db76d1da5c8b307d5d2e0706d266521b710de # v3.1.2
-        with:
-          cache-map: |
-            {
-              "var-cache-apt": "/var/cache/apt",
-              "var-lib-apt": "/var/lib/apt",
-              "usr-local-cargo-registry": "/usr/local/cargo/registry",
-              "usr-local-cargo-git": "/usr/local/cargo/git"
-            }
-          skip-extraction: ${{ steps.cache.outputs.cache-hit }}
 
 
       ############################################################################
@@ -153,10 +139,50 @@ jobs:
           components: rustfmt, clippy, llvm-tools-preview
           cache: false
 
-
-      - uses: Swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3  #  v2.7.7
+      ############################################################################
+      # Setup cache for dockerfile and inject in docker
+      #
+      - name: Setup Cache
+        uses: runs-on/cache@197b09d6da1bf42f673fee18769c794b789a0c7d # v4
+        id: cache
+        env:
+          RUNS_ON_S3_BUCKET_CACHE: gh-actions-cache-eu-west-3
+          RUNS_ON_AWS_REGION: eu-west-3
         with:
-          cache-targets: true
+          path: |
+            var-cache-apt
+            var-lib-apt
+            usr-local-cargo-registry
+            usr-local-cargo-git
+            usr-local-cargo-bin
+            usr-local-cargo-registry-index
+            usr-local-cargo-registry-cache
+            usr-local-cargo-git-db
+            app-${{ inputs.app-cache-dir }}-target
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: |
+            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: inject cache into docker
+        uses: reproducible-containers/buildkit-cache-dance@5b6db76d1da5c8b307d5d2e0706d266521b710de # v3.1.2
+        with:
+          cache-map: |
+            {
+              "var-cache-apt": "/var/cache/apt",
+              "var-lib-apt": "/var/lib/apt",
+              "usr-local-cargo-registry": "/usr/local/cargo/registry",
+              "usr-local-cargo-git": "/usr/local/cargo/git",
+              "usr-local-cargo-bin": "/usr/local/cargo/bin",
+              "usr-local-cargo-registry-index": "/usr/local/cargo/registry/index",
+              "usr-local-cargo-registry-cache": "/usr/local/cargo/registry/cache",
+              "usr-local-cargo-git-db": "/usr/local/cargo/git/db",
+              "app-${{ inputs.app-cache-dir }}-target": "/app/${{ inputs.app-cache-dir }}/target"
+            }
+          skip-extraction: ${{ steps.cache.outputs.cache-hit }}
 
 
       - name: Install Protoc
@@ -187,6 +213,7 @@ jobs:
           MINIO_BUCKET: ci-kms-key-test
           MINIO_ACCESS_KEY: minioadmin
           MINIO_SECRET_KEY: minioadmin
+          MINIO_REGION: eu-north-1
         run: |
           curl https://dl.min.io/client/mc/release/linux-amd64/mc \
             --create-dirs \
@@ -212,7 +239,6 @@ jobs:
           # some integration tests run docker compose
           # which builds images which need git access
           # building images in every integration test run is bad
-          # We pass aws creds for minio
           AWS_ACCESS_KEY_ID: "minioadmin"
           AWS_SECRET_ACCESS_KEY: "minioadmin"
           AWS_DEFAULT_REGION: "eu-north-1"
@@ -354,3 +380,7 @@ jobs:
           dry-run: false
           provenance: false # change to true when repo is public (see #1048)
           tag: ${{ env.NPM_TAG }}
+
+      - name: Remove aws credentials file
+        run: |
+          rm -rf ~/.aws

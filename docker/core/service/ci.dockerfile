@@ -27,6 +27,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         ssh \
     && rm -rf /var/lib/apt/lists/*
 
+RUN cargo install sccache --version ^0.7
+ENV RUSTC_WRAPPER=sccache SCCACHE_DIR=/sccache
+
 # Add github.com to the list of known hosts. .ssh folder needs to be created first to avoid permission errors
 RUN mkdir -p -m 0600 /root/.ssh
 RUN ssh-keyscan -H github.com >> ~/.ssh/known_hosts
@@ -45,13 +48,9 @@ WORKDIR /app/kms
 COPY . .
 RUN mkdir -p /app/kms/core/service/bin
 
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/kms/target,sharing=locked \
+RUN --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
     cargo fetch --locked
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/kms/target,sharing=locked \
+RUN --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
     cargo build --locked --profile=${LTO_RELEASE} -p kms --bin kms-server --bin kms-gen-tls-certs --bin kms-init -F insecure && \
     cargo build --locked --profile=${LTO_RELEASE} -p kms --bin kms-gen-keys -F testing -F insecure && \
     cp /app/kms/target/${LTO_RELEASE}/kms-server \
