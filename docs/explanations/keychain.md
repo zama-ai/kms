@@ -1,0 +1,5 @@
+# Keychain DA
+Each KMS Core will be responsible for providing a Data Availability (DA) layer for public material that it constructs. This includes public keys and CRS', but will eventually also include other things such as encrypted backups of secret key shares, and files with parameter specifications.
+
+Currently the DA can be hosted either on a local file system (in which case the KMS Core operation likely will have to run a webserver as well to make the material accessible), or using an S3 bucket.
+The Keychain DA is hosted by each of the cores to ensure availability and also to prevent corruption. More specifically each element in the Keychain DA is named after its own hash digest. When using the Zama KMS with the ZWS deployment these hash digests will be persisted on the HTTPZ Gateway with signatures from each of the KMS Core nodes. Thus, any user accessing a key on any Keychain DA can hash it and validate the the signature on this hash against the information on the HTTPZ Gateway.

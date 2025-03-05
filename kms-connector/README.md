@@ -1,6 +1,6 @@
 # KMS Connector
 
-KMS Connector is a Rust-based service that connects the KMS Core with Gateway L2 (Arbitrum) smart contracts, handling decryption requests and key management operations.
+KMS Connector is a Rust-based service that connects the KMS Core with the HTTPZ Gateway  (Arbitrum) smart contracts, handling decryption requests and key management operations.
 
 ## Features
 

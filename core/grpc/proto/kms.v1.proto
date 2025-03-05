@@ -25,7 +25,6 @@ enum KeyGenPreprocStatusEnum {
   InProgress = 1;
   Finished = 2;
   Error = 3;
-  WrongRequest = 4;
 }
 
 // The plaintext types that can be encrypted in a fhevm ciphertext.
@@ -311,9 +310,9 @@ message ReencryptionResponsePayload {
   repeated TypedSigncryptedCiphertext signcrypted_ciphertexts = 3;
   // The ID of the MPC party doing the reencryption. Used for polynomial
   // reconstruction.
-  uint32 party_id = 5;
+  uint32 party_id = 4;
   // The degree of the sharing scheme used.
-  uint32 degree = 6;
+  uint32 degree = 5;
   // This is the external signature created from the Eip712 domain
   // on the structure, where reencryptedShare is bincode::serialize(&signcrypted_ciphertexts)
   // struct UserDecryptionResult {
@@ -321,7 +320,7 @@ message ReencryptionResponsePayload {
   //       uint256[] handles;
   //       bytes reencryptedShare;
   // }
-  bytes external_signature = 7;
+  bytes external_signature = 6;
 }
 
 message TypedSigncryptedCiphertext {

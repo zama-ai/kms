@@ -1,7 +1,10 @@
 # Threshold cryptography concepts
 
-Threshold cryptography is a part of Multi Party Computation (MPC). The idea is to set up a group of $$n$$ parties, and within this group of parties, to generate a secret key $$sk$$. None of the parties knows $$sk$$, they just individually know a piece of the key $$sk_i$$. With some advanced protocols, $$k$$ parties can collaborate to decrypt a ciphertext (which was previously encrypted with the public key $$pk$$ corresponding to $$sk$$) using their key splits.
+Threshold cryptography is a specific part of secure Multi Party Computation (MPC), where public or private key cryptography systems are developed s.t. the secret key can be cryptographically shared between multiple parties, s.t. a threshold of these parties need to collaborate to use the key, or gain any information about the true value of the secret key.
+Concretely, in a group of $n$ parties collaborate to create a public and private key pair $pk, sk$ where each party has a share of $sk$ denoted $sk_i$ s.t. $sk$ never exists in plain at any party. Furthermore, the system is specified by a parameter $t<n$ denoted the _threshold_, s.t. more than $t$ parties are required to use their shares in order to decrypt.
 
-Here, $$k$$ is a chosen security parameter, called the threshold: having $$k = n$$ is the most secure choice: all the parties must collaborate to decrypt. However, if one of the parties is offline and do not want to collaborate, the protocol is blocked. So, one often chose a small $$k$$. Obviously, chosing $$k=1$$ is also a very bad choice, since any party can decrypt alone.
+While there exists multiple flavours of threshold cryptography and MPC in general, the flavour we employ in the Zama KMS offers very high security and _robustness_ guarantees. More specifically, key generation and decryption will succeed even if at most $t$ of the parties are offline or chose to act _malicious_, by running malicious code and hence not follow the prescribed protocol.
 
-More information about MPC are given in [this section](../explanations/threshold_cryptography.md) or in our [Whitepaper](https://github.com/zama-ai/kms-whitepaper/releases/download/2024-09-11_06-45-46/main.pdf).
+Still, to achieve such strong security the Zama KMS requires $t<n/3$, hence the smallest amount of servers requires to achieve $t>0$ is 4, that is the protocols requires a _strong honest majority_.
+
+More information about MPC is given in our [Whitepaper](https://github.com/zama-ai/kms-whitepaper/), whereas the theoretical and academic details on our protocols can be found in the paper [Noah's Ark: Efficient Threshold-FHE Using Noise Flooding](https://eprint.iacr.org/2023/815) published at WAHC 2023.

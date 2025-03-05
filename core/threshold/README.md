@@ -1,4 +1,23 @@
-# Core threshold protocols 
+# Core threshold protocols
+
+## Directory overview
+- `benches`
+    - Code needed for benchmarking the threshold protocols.
+- `config`
+    - Default and example configurations needed when benchmarking and testing the threshold protocols.
+- [`doc`](./doc/ci.md)
+    - Documentation for running the threshold protocols in a CI.
+- `experiments`
+    - Other configuration files for benchmarks.
+- `protos`
+    - Protobuf files, both for testing/benchmarking and for Core to Core communication.
+- `src`
+    - Source code for the actual server and actual MPC protocols.
+- `test_scripts`
+    - Bash scripts used for testing.
+- `tests`
+    - Integration tests.
+
 ## Profiling
 
 To profile various protocols, see the `benches/` folder.
@@ -29,7 +48,7 @@ Check documentation [here](./doc/ci.md)
 ## Benchmarks with real network
 Benchmarking with a real network requires to set up said network inside a docker compose orchestrator. This prevents integrating this kind of benchmarks with `Criterion` inside `cargo bench` running command.
 
-In order to bypass this limitation we have automated this `gRPC` benchmarks using `cargo-make` utility. 
+In order to bypass this limitation we have automated this `gRPC` benchmarks using `cargo-make` utility.
 
 ### Prerequisites for running benchmarks
 
@@ -49,12 +68,12 @@ We thus have two possible docker images which we can be build, one for `TFHE` an
 
 TFHE image can be built via
 ```sh
-cargo make tfhe-docker-image 
+cargo make tfhe-docker-image
 ```
 
 BGV image can be built via
 ```sh
-cargo make bgv-docker-image 
+cargo make bgv-docker-image
 ```
 
 ### Choreographer
@@ -63,52 +82,52 @@ To interact with the MPC parties, we use a choreographer called `moby` from `src
 In both cases, the choreographer allows to :
 - Initiate the PRSSs
 - Create preprocessing (for Distributed Key Generation in both cases and Distributed Decryption for `TFHE`)
-- Initiate Distributed Key Generation 
+- Initiate Distributed Key Generation
 - Initiate Distributed Decryption
 - Initiate CRS Ceremony (for `TFHE` only)
 - Retrieve results for the above
 - Check status of a task
 
-For a list of the available commands, run: 
+For a list of the available commands, run:
 ```sh
-./moby --help 
+./moby --help
 ```
 
 And for information on a specific command, run:
 ```sh
-./moby command --help 
+./moby command --help
 ```
 
 (Works also with `stairwayctl`)
 
-### Pre-defined commands 
-With `cargo make` we have pre-defined commands to run experiments for both `TFHE` and `BGV`. 
+### Pre-defined commands
+With `cargo make` we have pre-defined commands to run experiments for both `TFHE` and `BGV`.
 
 NOTE: Commands prefixed with `tfhe-` can be replaced by `bgv-`to execute experiment for `BGV` instead of `TFHE`
 
 First generate the certificates, say for 5 MPC parties:
 ```sh
-cargo make --env NUM_PARTIES=5 gen-test-certs 
+cargo make --env NUM_PARTIES=5 gen-test-certs
 ```
 
 Then create the `.yml` and `.toml` files for the experiment:
 ```sh
-cargo make --env NUM_PARTIES=5 --env THRESHOLD=1 --env EXPERIMENT_NAME=my_experiment tfhe-gen-experiment 
+cargo make --env NUM_PARTIES=5 --env THRESHOLD=1 --env EXPERIMENT_NAME=my_experiment tfhe-gen-experiment
 ```
 
 Finally, run the parties:
 ```sh
-cargo make --env EXPERIMENT_NAME=my_experiment start-parties 
+cargo make --env EXPERIMENT_NAME=my_experiment start-parties
 ```
 
 It is now possible to interact with the cluster of parties with the `mobygo` choreographer by using the generated `.toml` file:
 ```sh
-./mobygo -c temp/my_experiment.toml my-command 
+./mobygo -c temp/my_experiment.toml my-command
 ```
 
 Once done, we can shut down the parties with:
 ```sh
-cargo make --env EXPERIMENT_NAME=my_experiment stop-parties 
+cargo make --env EXPERIMENT_NAME=my_experiment stop-parties
 ```
 
 
@@ -116,11 +135,11 @@ We also provide one-liner benches, which can be run directly after the certifica
 
 Either with a *fake* centralised key generation
 ```sh
-cargo make tfhe-bench-fake-dkg 
+cargo make tfhe-bench-fake-dkg
 ```
 Or with a real key generation (which takes much longer)
 ```sh
-cargo make tfhe-bench-real-dkg 
+cargo make tfhe-bench-real-dkg
 ```
 
 These benchmarks run the scripts located in the `test_scripts` folder.

@@ -1,7 +1,7 @@
 ---
 description: >-
   KMS-core is an open-source framework for Key Management System, to be used with
-  fhEVM for a privacy-oriented blockchain using Fully Homomorphic Encryption (FHE).
+  HTTPZ for a privacy-oriented blockchain using Fully Homomorphic Encryption (FHE).
 layout:
   title:
     visible: true

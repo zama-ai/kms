@@ -8,14 +8,13 @@
 - [Installation](getting-started/installing.md)
 - [Benchmarks](getting-started/benchmarks.md)
 - [Threshold cryptography concepts](getting-started/concepts.md)
-- [Whitepaper](https://github.com/zama-ai/kms-whitepaper/releases/download/2024-09-11_06-45-46/main.pdf)
+- [Whitepaper](https://github.com/zama-ai/kms-whitepaper)
 
 ## Guides
 
 - [Using KMS as a SaaS](guides/saas_usage.md)
 - [On-Premises Installation Guide](guides/on_prem_installation.md)
 - [Calling KMS main entry points](guides/entry_points.md)
-- [Using KMS blockchain](guides/blockchain.md)
 - [Common errors](guides/common_errors.md)
 
 ## Tutorials
@@ -29,10 +28,9 @@
 ## Explanations
 
 - [What are KMS blockchain blocks](explanations/blockchain_blocks.md)
-    - [Smart contracts](explanations/smart_contract.md)
     - [KMS connector](explanations/connector.md)
     - [KMS node](explanations/node.md)
-- [What is Threshold cryptography](explanations/threshold_cryptography.md)
+    - [Keychain DA](explanations/keychain.md)
 
 ## Developers
 
