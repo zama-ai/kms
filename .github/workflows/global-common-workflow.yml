@@ -123,11 +123,11 @@ jobs:
   # Only runs on main/release branches after successful tests
   docker-connector:
     needs: test-connector
-    if: ${{ contains(fromJSON('["release/", "main"]'),github.ref) || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')) }}
+    if: contains(fromJSON('["release/", "main"]'),github.ref) || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
     uses: ./.github/workflows/common-docker.yml
     with:
       working-directory: "./kms-connector"
-      push_image: false
+      push_image: true
       image-name: 'kms-connector'
       app-cache-dir: 'kms-connector'
     secrets:
@@ -163,11 +163,11 @@ jobs:
   # Only runs on main/release branches after successful tests
   docker-core-client:
     needs: test-core-client
-    if: ${{ contains(fromJSON('["release/", "main"]'),github.ref) || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')) }}
+    if:  contains(fromJSON('["release/", "main"]'),github.ref) || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
     uses: ./.github/workflows/common-docker.yml
     with:
       working-directory: "./core-client"
-      push_image: false
+      push_image: true
       image-name: 'kms-core-client'
       app-cache-dir: 'kms-core-client'
     secrets:
@@ -272,11 +272,11 @@ jobs:
   docker-core-service:
     needs:
       - test-core-service
-    if: ${{ contains(fromJSON('["release/", "main"]'),github.ref) || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')) }}
+    if:  contains(fromJSON('["release/", "main"]'),github.ref) || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
     uses: ./.github/workflows/common-docker-big-instance.yml
     with:
       working-directory: "./core/service"
-      push_image: false
+      push_image: true
       image-name: 'kms-service'
       docker-file: 'ci.dockerfile'
       app-cache-dir: 'kms'
@@ -294,11 +294,11 @@ jobs:
   docker-nitro-enclave:
     needs:
       - docker-core-service
-    if: ${{ contains(fromJSON('["release/", "main"]'),github.ref) || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')) }}
+    if:  contains(fromJSON('["release/", "main"]'),github.ref) || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
     uses: ./.github/workflows/common-nitro-enclave.yml
     with:
       working-directory: "./core/service"
-      push_image: false
+      push_image: true
       image-name: 'kms-service'
       image-enclave-name: 'kms-service-enclave'
       docker-file-enclave: 'enclave.dockerfile'
