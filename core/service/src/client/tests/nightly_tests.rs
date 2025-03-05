@@ -5,10 +5,8 @@ use crate::client::tests::crs_gen;
 use crate::client::tests::{
     crs_gen_centralized, preproc_and_keygen, run_threshold_decompression_keygen,
 };
-use crate::consts::DEFAULT_PARAM;
-use crate::consts::{
-    DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_KEY_ID_10P, DEFAULT_THRESHOLD_KEY_ID_4P,
-};
+use crate::consts::{DEFAULT_AMOUNT_PARTIES, DEFAULT_PARAM};
+use crate::consts::{DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_KEY_ID};
 use crate::util::key_setup::test_tools::EncryptionConfig;
 use crate::util::key_setup::test_tools::{purge, TestingPlaintext};
 use kms_grpc::kms::v1::FheParameter;
@@ -16,16 +14,15 @@ use kms_grpc::kms::v1::RequestId;
 use serial_test::serial;
 
 #[rstest::rstest]
-#[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 10, &DEFAULT_THRESHOLD_KEY_ID_10P.to_string())]
-#[case(vec![TestingPlaintext::Bool(true)], 2, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(vec![TestingPlaintext::U16(u16::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(vec![TestingPlaintext::U32(u32::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(vec![TestingPlaintext::U64(u64::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(vec![TestingPlaintext::U128(u128::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(vec![TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128)))], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(vec![TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX)))], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(vec![TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+#[case(vec![TestingPlaintext::Bool(true)], 2, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(vec![TestingPlaintext::U8(u8::MAX)], 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(vec![TestingPlaintext::U16(u16::MAX)], 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(vec![TestingPlaintext::U32(u32::MAX)], 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(vec![TestingPlaintext::U64(u64::MAX)], 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(vec![TestingPlaintext::U128(u128::MAX)], 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(vec![TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128)))], 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(vec![TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX)))], 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(vec![TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID.to_string())]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 #[tracing_test::traced_test]
@@ -120,13 +117,13 @@ async fn default_reencryption_centralized(
 
 #[cfg(feature = "slow_tests")]
 #[rstest::rstest]
-#[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 10, Some(vec![7,4]), &DEFAULT_THRESHOLD_KEY_ID_10P.to_string())]
-#[case(vec![TestingPlaintext::Bool(true)], 4, 4, Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4,Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(vec![TestingPlaintext::U32(u32::MAX)], 1, 4,Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(vec![TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX)))], 1, 4,Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+#[case(vec![TestingPlaintext::U8(u8::MAX)], 1, DEFAULT_AMOUNT_PARTIES, Some(vec![7,4]), &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(vec![TestingPlaintext::Bool(true)], 4, DEFAULT_AMOUNT_PARTIES, Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(vec![TestingPlaintext::U8(u8::MAX)], 1, DEFAULT_AMOUNT_PARTIES,Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(vec![TestingPlaintext::U32(u32::MAX)], 1, DEFAULT_AMOUNT_PARTIES, Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(vec![TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX)))], 1, DEFAULT_AMOUNT_PARTIES, Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID.to_string())]
 // Note: this takes approx. 138 secs locally.
-#[case(vec![TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1, 4,Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+#[case(vec![TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1, DEFAULT_AMOUNT_PARTIES,Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID.to_string())]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[serial]
 async fn default_decryption_threshold_with_crash(
@@ -155,17 +152,17 @@ async fn default_decryption_threshold_with_crash(
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
-#[case(TestingPlaintext::U8(u8::MAX), 1, 10, &DEFAULT_THRESHOLD_KEY_ID_10P.to_string())]
-#[case(TestingPlaintext::Bool(true), 2, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(TestingPlaintext::U8(u8::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(TestingPlaintext::U16(u16::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(TestingPlaintext::U32(u32::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(TestingPlaintext::U64(u64::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(TestingPlaintext::U128(u128::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+#[case(TestingPlaintext::U8(u8::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(TestingPlaintext::Bool(true), 2, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(TestingPlaintext::U8(u8::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(TestingPlaintext::U16(u16::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(TestingPlaintext::U32(u32::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(TestingPlaintext::U64(u64::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(TestingPlaintext::U128(u128::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID.to_string())]
 // Note: this takes approx. 300 secs locally.
-#[case(TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+#[case(TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID.to_string())]
 #[serial]
 #[tracing_test::traced_test]
 async fn default_reencryption_threshold(
@@ -195,16 +192,16 @@ async fn default_reencryption_threshold(
 
 #[cfg(feature = "slow_tests")]
 #[rstest::rstest]
-#[case(TestingPlaintext::U8(u8::MAX), 1, 10, Some(vec![2,6,7]), &DEFAULT_THRESHOLD_KEY_ID_10P.to_string())]
-#[case(TestingPlaintext::Bool(true), 4, 4, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(TestingPlaintext::U8(u8::MAX), 1, 4,Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(TestingPlaintext::U16(u16::MAX), 1, 4,Some(vec![3]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(TestingPlaintext::U32(u32::MAX), 1, 4,Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(TestingPlaintext::U64(u64::MAX), 1, 4,Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(TestingPlaintext::U128(u128::MAX), 1, 4,Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1, 4,Some(vec![3]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1, 4,Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
-#[case(TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1, 4, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+#[case(TestingPlaintext::U8(u8::MAX), 1, DEFAULT_AMOUNT_PARTIES, Some(vec![2,6,7]), &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(TestingPlaintext::Bool(true), 4, DEFAULT_AMOUNT_PARTIES, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(TestingPlaintext::U8(u8::MAX), 1, DEFAULT_AMOUNT_PARTIES, Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(TestingPlaintext::U16(u16::MAX), 1, DEFAULT_AMOUNT_PARTIES, Some(vec![3]), &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(TestingPlaintext::U32(u32::MAX), 1, DEFAULT_AMOUNT_PARTIES, Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(TestingPlaintext::U64(u64::MAX), 1, DEFAULT_AMOUNT_PARTIES, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(TestingPlaintext::U128(u128::MAX), 1, DEFAULT_AMOUNT_PARTIES, Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1, DEFAULT_AMOUNT_PARTIES ,Some(vec![3]), &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1, DEFAULT_AMOUNT_PARTIES, Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID.to_string())]
+#[case(TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1, DEFAULT_AMOUNT_PARTIES, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID.to_string())]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[serial]
 async fn default_reencryption_threshold_with_crash(
@@ -238,15 +235,9 @@ async fn default_reencryption_threshold_with_crash(
 // We test for both insecure and secure since these are distinct endpoints, although inner computation is the same
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
-#[rstest::rstest]
-#[case(4)]
-#[case(10)]
 #[serial]
-async fn default_insecure_crs_gen_centralized(#[case] amount_parties: usize) {
-    let crs_req_id = RequestId::derive(&format!(
-        "default_insecure_crs_gen_centralized_{amount_parties}"
-    ))
-    .unwrap();
+async fn default_insecure_crs_gen_centralized() {
+    let crs_req_id = RequestId::derive("default_insecure_crs_gen_centralized").unwrap();
     // Delete potentially old data
     purge(None, None, &crs_req_id.to_string(), 1).await;
 
@@ -254,13 +245,9 @@ async fn default_insecure_crs_gen_centralized(#[case] amount_parties: usize) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[rstest::rstest]
-#[case(4)]
-#[case(10)]
 #[serial]
-async fn default_crs_gen_centralized(#[case] amount_parties: usize) {
-    let crs_req_id =
-        RequestId::derive(&format!("default_crs_gen_centralized_{amount_parties}")).unwrap();
+async fn default_crs_gen_centralized() {
+    let crs_req_id = RequestId::derive("default_crs_gen_centralized").unwrap();
     // Delete potentially old data
     purge(None, None, &crs_req_id.to_string(), 1).await;
     // We test for both insecure and secure since these are distinct endpoints, although inner computation is the same
@@ -271,7 +258,7 @@ async fn default_crs_gen_centralized(#[case] amount_parties: usize) {
 #[rstest::rstest]
 #[tracing_test::traced_test]
 #[case(4)]
-#[case(10)]
+#[case(DEFAULT_AMOUNT_PARTIES)]
 #[serial]
 async fn secure_threshold_sequential_crs_test(#[case] amount_parties: usize) {
     // NOTE: When using tests parameters for CRS gen the maximum amount of bits supported is 512
@@ -290,8 +277,7 @@ async fn secure_threshold_sequential_crs_test(#[case] amount_parties: usize) {
 #[tracing_test::traced_test]
 #[rstest::rstest]
 #[case(4)]
-#[case(7)]
-#[case(10)]
+#[case(DEFAULT_AMOUNT_PARTIES)]
 #[serial]
 async fn secure_threshold_concurrent_crs_test(#[case] amount_parties: usize) {
     // NOTE: When using tests parameters for CRS gen the maximum amount of bits supported is 512
@@ -309,7 +295,7 @@ async fn secure_threshold_concurrent_crs_test(#[case] amount_parties: usize) {
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
 #[case(4)]
-#[case(10)]
+#[case(DEFAULT_AMOUNT_PARTIES)]
 #[serial]
 async fn secure_threshold_sequential_crs_default(#[case] amount_parties: usize) {
     crs_gen(
@@ -327,7 +313,7 @@ async fn secure_threshold_sequential_crs_default(#[case] amount_parties: usize) 
 #[tracing_test::traced_test]
 #[rstest::rstest]
 #[case(4)]
-#[case(10)]
+#[case(DEFAULT_AMOUNT_PARTIES)]
 #[serial]
 async fn secure_threshold_concurrent_crs_default(#[case] amount_parties: usize) {
     crs_gen(
@@ -344,7 +330,7 @@ async fn secure_threshold_concurrent_crs_default(#[case] amount_parties: usize) 
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
 #[case(4)]
-#[case(10)]
+#[case(DEFAULT_AMOUNT_PARTIES)]
 #[serial]
 async fn secure_threshold_sequential_keygen_test(#[case] amount_parties: usize) {
     preproc_and_keygen(amount_parties, FheParameter::Test, false, 2, false).await;
@@ -354,7 +340,7 @@ async fn secure_threshold_sequential_keygen_test(#[case] amount_parties: usize) 
 #[tracing_test::traced_test]
 #[rstest::rstest]
 #[case(4)]
-#[case(10)]
+#[case(DEFAULT_AMOUNT_PARTIES)]
 #[serial]
 async fn secure_threshold_concurrent_keygen_test(#[case] amount_parties: usize) {
     preproc_and_keygen(amount_parties, FheParameter::Test, false, 2, true).await;
@@ -365,7 +351,7 @@ async fn secure_threshold_concurrent_keygen_test(#[case] amount_parties: usize) 
 #[tracing_test::traced_test]
 #[rstest::rstest]
 #[case(4)]
-#[case(10)]
+#[case(DEFAULT_AMOUNT_PARTIES)]
 #[serial]
 async fn secure_threshold_decompression_keygen(#[case] amount_parties: usize) {
     run_threshold_decompression_keygen(amount_parties, FheParameter::Test, false).await;

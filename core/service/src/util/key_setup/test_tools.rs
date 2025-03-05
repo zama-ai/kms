@@ -590,7 +590,10 @@ pub async fn purge(
 
 #[cfg(any(test, feature = "testing"))]
 pub(crate) mod setup {
-    use crate::consts::TEST_THRESHOLD_KEY_ID_7P;
+    use crate::consts::{
+        TEST_THRESHOLD_CRS_ID_10P, TEST_THRESHOLD_CRS_ID_13P, TEST_THRESHOLD_KEY_ID_10P,
+        TEST_THRESHOLD_KEY_ID_13P,
+    };
     use crate::util::key_setup::{
         ensure_central_crs_exists, ensure_central_keys_exist, ensure_client_keys_exist,
         ThresholdSigningKeyConfig,
@@ -598,8 +601,7 @@ pub(crate) mod setup {
     use crate::{
         consts::{
             KEY_PATH_PREFIX, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_CRS_ID, TEST_CENTRAL_KEY_ID,
-            TEST_PARAM, TEST_THRESHOLD_CRS_ID_4P, TEST_THRESHOLD_CRS_ID_7P,
-            TEST_THRESHOLD_KEY_ID_4P, TMP_PATH_PREFIX,
+            TEST_PARAM, TEST_THRESHOLD_CRS_ID_4P, TEST_THRESHOLD_KEY_ID_4P, TMP_PATH_PREFIX,
         },
         util::key_setup::ensure_central_server_signing_keys_exist,
     };
@@ -636,12 +638,18 @@ pub(crate) mod setup {
             4,
         )
         .await;
-        // Generate for 10 parties with a different key ID
         threshold_material(
             &TEST_PARAM,
-            &TEST_THRESHOLD_KEY_ID_7P,
-            &TEST_THRESHOLD_CRS_ID_7P,
-            7,
+            &TEST_THRESHOLD_KEY_ID_10P,
+            &TEST_THRESHOLD_CRS_ID_10P,
+            10,
+        )
+        .await;
+        threshold_material(
+            &TEST_PARAM,
+            &TEST_THRESHOLD_KEY_ID_13P,
+            &TEST_THRESHOLD_CRS_ID_13P,
+            13,
         )
         .await;
     }
@@ -654,9 +662,9 @@ pub(crate) mod setup {
     async fn default_material() {
         use crate::consts::{
             DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM,
-            DEFAULT_THRESHOLD_CRS_ID_10P, DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_CRS_ID_7P,
-            DEFAULT_THRESHOLD_KEY_ID_10P, DEFAULT_THRESHOLD_KEY_ID_4P, DEFAULT_THRESHOLD_KEY_ID_7P,
-            OTHER_CENTRAL_DEFAULT_ID,
+            DEFAULT_THRESHOLD_CRS_ID_10P, DEFAULT_THRESHOLD_CRS_ID_13P,
+            DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_KEY_ID_10P,
+            DEFAULT_THRESHOLD_KEY_ID_13P, DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_DEFAULT_ID,
         };
         ensure_dir_exist().await;
         ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
@@ -676,16 +684,16 @@ pub(crate) mod setup {
         .await;
         threshold_material(
             &DEFAULT_PARAM,
-            &DEFAULT_THRESHOLD_KEY_ID_7P,
-            &DEFAULT_THRESHOLD_CRS_ID_7P,
-            7,
+            &DEFAULT_THRESHOLD_KEY_ID_10P,
+            &DEFAULT_THRESHOLD_CRS_ID_10P,
+            10,
         )
         .await;
         threshold_material(
             &DEFAULT_PARAM,
-            &DEFAULT_THRESHOLD_KEY_ID_10P,
-            &DEFAULT_THRESHOLD_CRS_ID_10P,
-            10,
+            &DEFAULT_THRESHOLD_KEY_ID_13P,
+            &DEFAULT_THRESHOLD_CRS_ID_13P,
+            13,
         )
         .await;
     }

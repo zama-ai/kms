@@ -2493,16 +2493,15 @@ pub(crate) mod tests {
     use crate::client::TestingReencryptionTranscript;
     use crate::client::{await_server_ready, get_health_client, get_status};
     use crate::client::{ParsedReencryptionRequest, ServerIdentities};
-    use crate::consts::DEFAULT_THRESHOLD;
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     use crate::consts::MAX_TRIES;
-    use crate::consts::PRSS_EPOCH_ID;
     use crate::consts::TEST_PARAM;
     use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
-    use crate::consts::TEST_THRESHOLD_KEY_ID_7P;
     use crate::consts::{DEFAULT_AMOUNT_PARTIES, TEST_CENTRAL_KEY_ID};
     #[cfg(feature = "slow_tests")]
     use crate::consts::{DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_KEY_ID_4P};
+    use crate::consts::{DEFAULT_THRESHOLD, TEST_THRESHOLD_KEY_ID_10P};
+    use crate::consts::{PRSS_EPOCH_ID, TEST_THRESHOLD_KEY_ID};
     use crate::cryptography::internal_crypto_types::Signature;
     use crate::cryptography::internal_crypto_types::WrappedDKGParams;
     use crate::engine::base::{compute_handle, BaseKmsStruct};
@@ -2678,7 +2677,7 @@ pub(crate) mod tests {
         // Validate that the core server is not ready
         let (dec_tasks, req_id) = send_dec_reqs(
             1,
-            &TEST_THRESHOLD_KEY_ID_4P,
+            &TEST_THRESHOLD_KEY_ID,
             &kms_clients,
             &mut internal_client,
         )
@@ -2835,9 +2834,8 @@ pub(crate) mod tests {
     #[serial]
     async fn test_threshold_close_after_drop() {
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-        // If PRSS is not already present, then let us retry and include prss initialization
         let (mut kms_servers, _kms_clients, _internal_client) =
-            threshold_handles(TEST_PARAM, DEFAULT_AMOUNT_PARTIES, false, None, None).await;
+            threshold_handles(TEST_PARAM, DEFAULT_AMOUNT_PARTIES, true, None, None).await;
 
         // Get health client for main server 1
         let mut core_health_client = get_health_client(kms_servers.get(&1).unwrap().service_port)
@@ -2936,7 +2934,7 @@ pub(crate) mod tests {
         // Keep the server occupied so it won't shut down immidiately after dropping the handle
         let (tasks, _req_id) = send_dec_reqs(
             3,
-            &TEST_THRESHOLD_KEY_ID_4P,
+            &TEST_THRESHOLD_KEY_ID,
             &kms_clients,
             &mut internal_client,
         )
@@ -4424,7 +4422,7 @@ pub(crate) mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     #[rstest::rstest]
-    #[case(7, &TEST_THRESHOLD_KEY_ID_7P.to_string(), DecryptionMode::NoiseFloodSmall)]
+    #[case(10, &TEST_THRESHOLD_KEY_ID_10P.to_string(), DecryptionMode::NoiseFloodSmall)]
     #[case(4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
     #[case(4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::BitDecSmall)]
     #[serial]
@@ -4455,7 +4453,7 @@ pub(crate) mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     #[rstest::rstest]
-    #[case(7, &TEST_THRESHOLD_KEY_ID_7P.to_string(), DecryptionMode::NoiseFloodSmall)]
+    #[case(10, &TEST_THRESHOLD_KEY_ID_10P.to_string(), DecryptionMode::NoiseFloodSmall)]
     #[case(4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
     #[case(4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::BitDecSmall)]
     #[serial]
@@ -4779,7 +4777,7 @@ pub(crate) mod tests {
     }
 
     #[rstest::rstest]
-    #[case(true, 7, &TEST_THRESHOLD_KEY_ID_7P.to_string(), DecryptionMode::NoiseFloodSmall)]
+    #[case(true, 10, &TEST_THRESHOLD_KEY_ID_10P.to_string(), DecryptionMode::NoiseFloodSmall)]
     #[case(true, 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
     #[case(false, 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
     #[case(true, 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::BitDecSmall)]
