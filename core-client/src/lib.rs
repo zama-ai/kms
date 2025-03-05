@@ -743,20 +743,12 @@ async fn fetch_key(
     sim_conf: &CoreClientConfig,
     destination_prefix: &Path,
 ) -> anyhow::Result<()> {
-    let object_names = if sim_conf.core_addresses.len() == 1 {
-        vec![
-            PubDataType::PublicKey,
-            PubDataType::PublicKeyMetadata,
-            PubDataType::ServerKey,
-        ]
-    } else {
-        vec![
-            PubDataType::PublicKey,
-            PubDataType::PublicKeyMetadata,
-            PubDataType::ServerKey,
-            PubDataType::SnsKey,
-        ]
-    };
+    let object_names = vec![
+        PubDataType::PublicKey,
+        PubDataType::PublicKeyMetadata,
+        PubDataType::ServerKey,
+        PubDataType::SnsKey,
+    ];
     tracing::info!("Fetching public key, server key and sns key with id {key_id}");
     for object_name in object_names {
         fetch_global_pub_object_and_write_to_file(
@@ -1656,11 +1648,7 @@ async fn fetch_and_check_keygen(
     fetch_key(&req_id, cc_conf, destination_prefix).await?;
     let pk = load_pk_from_storage(Some(destination_prefix), &req_id).await;
     let sk = load_server_key_from_storage(Some(destination_prefix), &req_id).await;
-
-    if kms_addrs.len() != 1 {
-        // TODO at the moment there's no EIP712 signature on the SnS key
-        let _sns_key = load_sns_key_from_storage(Some(destination_prefix), &req_id).await;
-    }
+    let sns_key = load_sns_key_from_storage(Some(destination_prefix), &req_id).await;
 
     for response in responses {
         let resp_req_id = &response.request_id.unwrap().to_string();
@@ -1696,6 +1684,14 @@ async fn fetch_and_check_keygen(
             return Err(anyhow!("No external pubkey signature in response"));
         };
         check_ext_pubdata_signature(&sk, extsksig, &domain, kms_addrs)?;
+
+        let extsnssig =
+            if let Some(spdh) = response.key_results.get(&PubDataType::SnsKey.to_string()) {
+                &spdh.external_signature
+            } else {
+                return Err(anyhow!("No external sns key signature in response"));
+            };
+        check_ext_pubdata_signature(&sns_key, extsnssig, &domain, kms_addrs)?;
 
         tracing::info!("EIP712 verification of Public Key and Server Key successful.");
     }

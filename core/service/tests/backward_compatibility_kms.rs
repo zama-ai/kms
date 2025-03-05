@@ -13,7 +13,8 @@ use backward_compatibility::{
     TestMetadataKMS, TestType, Testcase, ThresholdFheKeysTest,
 };
 use distributed_decryption::execution::{
-    endpoints::keygen::FhePubKeySet, tfhe_internals::switch_and_squash::SwitchAndSquashKey,
+    endpoints::keygen::FhePubKeySet,
+    tfhe_internals::{switch_and_squash::SwitchAndSquashKey, test_feature::SnsClientKey},
 };
 use kms_common::{load_and_unversionize, load_and_unversionize_auxiliary};
 use kms_grpc::rpc_types::{PubDataType, SignedPubDataHandleInternal};
@@ -129,6 +130,10 @@ fn test_kms_fhe_key_handles(
         sns_key: None,
     };
 
+    // TODO this is not the right file to load the key, will be handled by #1089
+    let sns_client_key: SnsClientKey =
+        load_and_unversionize_auxiliary(dir, test, &test.public_key_filename, format)?;
+
     let decompression_key: Option<DecompressionKey> =
         load_and_unversionize_auxiliary(dir, test, &test.decompression_key_filename, format)?;
 
@@ -136,6 +141,7 @@ fn test_kms_fhe_key_handles(
     let new_versionized = KmsFheKeyHandles::new(
         &private_sig_key,
         client_key,
+        sns_client_key,
         &fhe_pub_key_set,
         decompression_key,
         None,

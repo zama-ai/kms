@@ -76,8 +76,48 @@ async fn default_decryption_centralized(
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID.to_string(),
         msgs,
+        EncryptionConfig {
+            compression: true,
+            precompute_sns: false,
+        },
         parallelism,
-        false,
+    )
+    .await;
+}
+
+#[cfg(feature = "slow_tests")]
+#[rstest::rstest]
+#[case(vec![TestingPlaintext::Bool(true)], 5)]
+#[case(vec![TestingPlaintext::U8(u8::MAX)], 4)]
+#[case(vec![TestingPlaintext::U8(0)], 4)]
+#[case(vec![TestingPlaintext::U16(u16::MAX)], 2)]
+#[case(vec![TestingPlaintext::U16(0)], 1)]
+#[case(vec![TestingPlaintext::U32(u32::MAX)], 1)]
+#[case(vec![TestingPlaintext::U32(1234567)], 1)]
+#[case(vec![TestingPlaintext::U64(u64::MAX)], 1)]
+#[case(vec![TestingPlaintext::U128(u128::MAX)], 1)]
+#[case(vec![TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128)))], 1)]
+#[case(vec![TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX)))], 1)]
+#[case(vec![TestingPlaintext::U512(tfhe::integer::bigint::U512::from([512_u64; 8]))], 1)]
+#[case(vec![TestingPlaintext::U1024(tfhe::integer::bigint::U1024::from([1024_u64; 16]))], 1)]
+#[case(vec![TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1)]
+#[case(vec![TestingPlaintext::U8(0), TestingPlaintext::U64(999), TestingPlaintext::U32(32),TestingPlaintext::U128(99887766)], 1)] // test mixed types in batch
+#[case(vec![TestingPlaintext::U8(0), TestingPlaintext::U64(999), TestingPlaintext::U32(32)], 3)] // test mixed types in batch and in parallel
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn default_decryption_centralized_precompute_sns(
+    #[case] msgs: Vec<TestingPlaintext>,
+    #[case] parallelism: usize,
+) {
+    decryption_centralized(
+        &DEFAULT_PARAM,
+        &DEFAULT_CENTRAL_KEY_ID.to_string(),
+        msgs,
+        EncryptionConfig {
+            compression: false,
+            precompute_sns: true,
+        },
+        parallelism,
     )
     .await;
 }
@@ -109,6 +149,47 @@ async fn default_reencryption_centralized(
         &DEFAULT_CENTRAL_KEY_ID.to_string(),
         false,
         msg,
+        EncryptionConfig {
+            compression: true,
+            precompute_sns: false,
+        },
+        parallelism,
+        secure,
+    )
+    .await;
+}
+
+#[cfg(feature = "slow_tests")]
+#[rstest::rstest]
+#[case(TestingPlaintext::Bool(true), 2)]
+#[case(TestingPlaintext::U8(u8::MAX), 1)]
+#[case(TestingPlaintext::U8(0), 1)]
+#[case(TestingPlaintext::U16(u16::MAX), 1)]
+#[case(TestingPlaintext::U16(0), 1)]
+#[case(TestingPlaintext::U32(u32::MAX), 1)]
+#[case(TestingPlaintext::U32(1234567), 1)]
+#[case(TestingPlaintext::U64(u64::MAX), 1)]
+#[case(TestingPlaintext::U128(u128::MAX), 1)]
+#[case(TestingPlaintext::U128(0), 1)]
+#[case(TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1)]
+#[case(TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1)]
+#[case(TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1)]
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn default_reencryption_centralized_precompute_sns(
+    #[case] msg: TestingPlaintext,
+    #[case] parallelism: usize,
+    #[values(true, false)] secure: bool,
+) {
+    reencryption_centralized(
+        &DEFAULT_PARAM,
+        &DEFAULT_CENTRAL_KEY_ID.to_string(),
+        false,
+        msg,
+        EncryptionConfig {
+            compression: false,
+            precompute_sns: true,
+        },
         parallelism,
         secure,
     )

@@ -1,6 +1,7 @@
+use aes_prng::AesRng;
 use aligned_vec::ABox;
 use itertools::Itertools;
-use rand::{CryptoRng, Rng};
+use rand::{CryptoRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::{num::Wrapping, sync::Arc};
 use tfhe::{
@@ -28,8 +29,9 @@ use tfhe::{
         self, list_compression::CompressionPrivateKeys, ClassicPBSParameters, ShortintParameterSet,
     },
     zk::CompactPkeCrs,
-    ClientKey,
+    ClientKey, Seed, Versionize,
 };
+use tfhe_versionable::VersionsDispatch;
 use tokio::{task::JoinSet, time::timeout_at};
 
 use crate::{
@@ -169,7 +171,7 @@ pub fn gen_key_set<R: Rng + CryptoRng>(parameters: DKGParams, rng: &mut R) -> Ke
 
     let public_key = tfhe::CompactPublicKey::new(&client_key);
     let server_key = tfhe::ServerKey::new(&client_key);
-    let (sns_secret_key, fbsk_out) = generate_large_keys(parameters, client_key.clone(), rng);
+    let (sns_secret_key, fbsk_out) = generate_large_keys(parameters, &client_key, rng).unwrap();
 
     let sns_key = SwitchAndSquashKey::new(
         fbsk_out,
@@ -601,7 +603,13 @@ async fn transfer_network_value<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum SnsClientKeyVersioned {
+    V0(SnsClientKey),
+}
+
+#[derive(Serialize, Deserialize, Clone, Versionize)]
+#[versionize(SnsClientKeyVersioned)]
 pub struct SnsClientKey {
     pub key: LweSecretKeyOwned<u128>,
     pub params: ClassicPBSParameters,
@@ -612,6 +620,31 @@ impl SnsClientKey {
             key: sns_secret_key,
             params,
         }
+    }
+
+    pub fn decrypt<T: tfhe::integer::block_decomposition::Recomposable>(
+        &self,
+        ct: &Ciphertext128,
+    ) -> T {
+        if ct.is_empty() {
+            return T::ZERO;
+        }
+
+        let bits_in_block = self.params.message_modulus_log();
+        let mut recomposer = BlockRecomposer::<T>::new(bits_in_block);
+
+        for encrypted_block in &ct.inner {
+            let decrypted_block = self.decrypt_block_128(encrypted_block);
+            // Note that `as` just keeps the lower bits
+            // and each block should not contain more than 32 bits of plaintext
+            if !recomposer.add_unmasked(decrypted_block.0 as u32) {
+                // End of T::BITS reached no need to try more
+                // recomposition
+                break;
+            };
+        }
+
+        recomposer.value()
     }
 
     pub fn decrypt_128(&self, ct: &Ciphertext128) -> u128 {
@@ -641,19 +674,34 @@ impl SnsClientKey {
     }
 }
 
+pub fn generate_large_keys_from_seed(
+    params: DKGParams,
+    input_sk: &ClientKey,
+    seed: Option<Seed>,
+) -> anyhow::Result<(SnsClientKey, Fourier128LweBootstrapKey<ABox<[f64]>>)> {
+    let mut rng = match seed {
+        Some(inner) => {
+            let seed_bytes = inner.0.to_be_bytes();
+            AesRng::from_seed(seed_bytes)
+        }
+        None => AesRng::from_random_seed(),
+    };
+    generate_large_keys(params, input_sk, &mut rng)
+}
+
 /// Function for generating a pair of keys for the noise drowning algorithms.
 /// That is, the method takes a client key working over u64 and generates a random client key working over u128.
 /// Then, the method constructs a key switching key to convert ciphertext encrypted with the key over u64,
 /// to ciphertexts encrypted over u128.
 pub fn generate_large_keys<R: Rng + CryptoRng>(
     params: DKGParams,
-    input_sk: ClientKey,
+    input_sk: &ClientKey,
     rng: &mut R,
-) -> (SnsClientKey, Fourier128LweBootstrapKey<ABox<[f64]>>) {
+) -> anyhow::Result<(SnsClientKey, Fourier128LweBootstrapKey<ABox<[f64]>>)> {
     let params = if let DKGParams::WithSnS(params) = params {
         params
     } else {
-        panic!("Can not generate large keys without SnS params")
+        anyhow::bail!("Can not generate large keys without SnS params")
     };
 
     let output_param = params.sns_params;
@@ -677,7 +725,8 @@ pub fn generate_large_keys<R: Rng + CryptoRng>(
     let client_output_key = SnsClientKey::new(input_param, output_lwe_secret_key_out);
 
     // Generate conversion key
-    let (short_sk, _compact_privkey, _compression_privkey, _tag) = input_sk.into_raw_parts();
+    let (short_sk, _compact_privkey, _compression_privkey, _tag) =
+        input_sk.clone().into_raw_parts();
     let (_raw_input_glwe_secret_key, raw_input_lwe_secret_key, _short_param) =
         short_sk.into_raw_parts().into_raw_parts();
     let mut input_lwe_secret_key_out =
@@ -718,7 +767,7 @@ pub fn generate_large_keys<R: Rng + CryptoRng>(
     convert_standard_lwe_bootstrap_key_to_fourier_128(&bsk_out, &mut fbsk_out);
     drop(bsk_out);
 
-    (client_output_key, fbsk_out)
+    Ok((client_output_key, fbsk_out))
 }
 
 /// Keygen that generates secret key shares for many parties

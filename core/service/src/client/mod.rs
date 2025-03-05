@@ -3911,8 +3911,11 @@ pub(crate) mod tests {
                 TestingPlaintext::U16(420),
                 TestingPlaintext::Bool(true),
             ],
+            EncryptionConfig {
+                compression: true,
+                precompute_sns: false,
+            },
             3, // 3 parallel requests
-            true,
         )
         .await;
     }
@@ -3929,8 +3932,32 @@ pub(crate) mod tests {
                 TestingPlaintext::U16(420),
                 TestingPlaintext::Bool(true),
             ],
+            EncryptionConfig {
+                compression: false,
+                precompute_sns: false,
+            },
             3, // 3 parallel requests
-            false,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_decryption_central_precompute_sns() {
+        decryption_centralized(
+            &TEST_PARAM,
+            &crate::consts::TEST_CENTRAL_KEY_ID.to_string(),
+            vec![
+                TestingPlaintext::U8(42),
+                TestingPlaintext::U32(9876),
+                TestingPlaintext::U16(420),
+                TestingPlaintext::Bool(true),
+            ],
+            EncryptionConfig {
+                compression: false,
+                precompute_sns: true,
+            },
+            3, // 3 parallel requests
         )
         .await;
     }
@@ -3950,8 +3977,35 @@ pub(crate) mod tests {
             &DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID.to_string(),
             msgs,
+            EncryptionConfig {
+                compression: true,
+                precompute_sns: false,
+            },
             parallelism,
-            false,
+        )
+        .await;
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[rstest::rstest]
+    #[case(vec![TestingPlaintext::U8(u8::MAX)], 4)]
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn default_decryption_centralized_precompute_sns(
+        #[case] msgs: Vec<TestingPlaintext>,
+        #[case] parallelism: usize,
+    ) {
+        use crate::consts::DEFAULT_PARAM;
+
+        decryption_centralized(
+            &DEFAULT_PARAM,
+            &DEFAULT_CENTRAL_KEY_ID.to_string(),
+            msgs,
+            EncryptionConfig {
+                compression: false,
+                precompute_sns: true,
+            },
+            parallelism,
         )
         .await;
     }
@@ -3960,8 +4014,8 @@ pub(crate) mod tests {
         dkg_params: &DKGParams,
         key_id: &str,
         msgs: Vec<TestingPlaintext>,
+        encryption_config: EncryptionConfig,
         parallelism: usize,
-        compression: bool,
     ) {
         assert!(parallelism > 0);
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
@@ -3971,16 +4025,8 @@ pub(crate) mod tests {
 
         let mut cts = Vec::new();
         for (i, msg) in msgs.clone().into_iter().enumerate() {
-            let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
-                None,
-                msg,
-                key_id,
-                EncryptionConfig {
-                    compression,
-                    precompute_sns: false,
-                },
-            )
-            .await;
+            let (ct, ct_format, fhe_type) =
+                compute_cipher_from_stored_key(None, msg, key_id, encryption_config).await;
             let ctt = TypedCiphertext {
                 ciphertext: ct,
                 fhe_type: fhe_type.into(),
@@ -4122,6 +4168,29 @@ pub(crate) mod tests {
             &crate::consts::TEST_CENTRAL_KEY_ID.to_string(),
             false,
             TestingPlaintext::U8(48),
+            EncryptionConfig {
+                compression: true,
+                precompute_sns: false,
+            },
+            4,
+            secure,
+        )
+        .await;
+    }
+
+    #[rstest::rstest]
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn test_reencryption_centralized_precompute_sns(#[values(true, false)] secure: bool) {
+        reencryption_centralized(
+            &TEST_PARAM,
+            &crate::consts::TEST_CENTRAL_KEY_ID.to_string(),
+            false,
+            TestingPlaintext::U8(48),
+            EncryptionConfig {
+                compression: false,
+                precompute_sns: true,
+            },
             4,
             secure,
         )
@@ -4130,41 +4199,66 @@ pub(crate) mod tests {
 
     // The transcripts only need to be 4 parties, it's used for js tests
     #[cfg(feature = "wasm_tests")]
-    #[rstest::rstest]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    async fn test_reencryption_centralized_and_write_transcript(
-        #[values(true, false)] secure: bool,
-    ) {
+    async fn test_reencryption_centralized_and_write_transcript() {
         reencryption_centralized(
             &TEST_PARAM,
             &TEST_CENTRAL_KEY_ID.to_string(),
             true,
             TestingPlaintext::U8(48),
+            EncryptionConfig {
+                compression: true,
+                precompute_sns: false,
+            },
             1, // wasm tests are single-threaded
-            secure,
+            true,
         )
         .await;
     }
 
     // Only need to run once for the transcript
     #[cfg(all(feature = "wasm_tests", feature = "slow_tests"))]
-    #[rstest::rstest]
-    #[case(TestingPlaintext::U8(u8::MAX))]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    async fn default_reencryption_centralized_and_write_transcript(
-        #[case] msg: TestingPlaintext,
-        #[values(true, false)] secure: bool,
-    ) {
+    async fn default_reencryption_centralized_and_write_transcript() {
         use crate::consts::DEFAULT_PARAM;
 
+        let msg = TestingPlaintext::U8(u8::MAX);
         reencryption_centralized(
             &DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID.to_string(),
             true,
             msg,
+            EncryptionConfig {
+                compression: true,
+                precompute_sns: false,
+            },
             1, // wasm tests are single-threaded
+            true,
+        )
+        .await;
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[rstest::rstest]
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn default_reencryption_centralized(#[values(true, false)] secure: bool) {
+        use crate::consts::DEFAULT_PARAM;
+
+        let msg = TestingPlaintext::U8(u8::MAX);
+        let parallelism = 1;
+        reencryption_centralized(
+            &DEFAULT_PARAM,
+            &DEFAULT_CENTRAL_KEY_ID.to_string(),
+            false,
+            msg,
+            EncryptionConfig {
+                compression: true,
+                precompute_sns: false,
+            },
+            parallelism,
             secure,
         )
         .await;
@@ -4172,21 +4266,46 @@ pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(TestingPlaintext::U8(u8::MAX), 1)]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    async fn default_reencryption_centralized(
-        #[case] msg: TestingPlaintext,
-        #[case] parallelism: usize,
-        #[values(true, false)] secure: bool,
-    ) {
+    async fn default_reencryption_centralized_no_compression(#[values(true, false)] secure: bool) {
         use crate::consts::DEFAULT_PARAM;
 
+        let msg = TestingPlaintext::U8(u8::MAX);
+        let parallelism = 1;
         reencryption_centralized(
             &DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID.to_string(),
             false,
             msg,
+            EncryptionConfig {
+                compression: false,
+                precompute_sns: false,
+            },
+            parallelism,
+            secure,
+        )
+        .await;
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[rstest::rstest]
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn default_reencryption_centralized_precompute_sns(#[values(true, false)] secure: bool) {
+        use crate::consts::DEFAULT_PARAM;
+
+        let msg = TestingPlaintext::U8(u8::MAX);
+        let parallelism = 1;
+        reencryption_centralized(
+            &DEFAULT_PARAM,
+            &DEFAULT_CENTRAL_KEY_ID.to_string(),
+            false,
+            msg,
+            EncryptionConfig {
+                compression: false,
+                precompute_sns: true,
+            },
             parallelism,
             secure,
         )
@@ -4198,6 +4317,7 @@ pub(crate) mod tests {
         key_id: &str,
         _write_transcript: bool,
         msg: TestingPlaintext,
+        enc_config: EncryptionConfig,
         parallelism: usize,
         secure: bool,
     ) {
@@ -4205,16 +4325,8 @@ pub(crate) mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (kms_server, kms_client, mut internal_client) =
             super::test_tools::centralized_handles(dkg_params, None).await;
-        let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
-            None,
-            msg,
-            key_id,
-            EncryptionConfig {
-                compression: true,
-                precompute_sns: false,
-            },
-        )
-        .await;
+        let (ct, ct_format, fhe_type) =
+            compute_cipher_from_stored_key(None, msg, key_id, enc_config).await;
         let req_key_id = key_id.to_owned().try_into().unwrap();
 
         internal_client.convert_to_addresses();
@@ -4486,7 +4598,7 @@ pub(crate) mod tests {
     #[rstest::rstest]
     #[case(4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
     #[serial]
-    async fn test_decryption_threshold_with_sns_preprocessing(
+    async fn test_decryption_threshold_precompute_sns(
         #[case] amount_parties: usize,
         #[case] key_id: &str,
         #[case] decryption_mode: DecryptionMode,
@@ -4545,7 +4657,7 @@ pub(crate) mod tests {
     #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    async fn default_decryption_threshold_with_sns_preprocessing(
+    async fn default_decryption_threshold_precompute_sns(
         #[case] msg: Vec<TestingPlaintext>,
         #[case] parallelism: usize,
         #[case] amount_parties: usize,
@@ -4813,7 +4925,7 @@ pub(crate) mod tests {
     #[case(false, 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    async fn test_reencryption_threshold_with_sns_preprocessing(
+    async fn test_reencryption_threshold_precompute_sns(
         #[case] secure: bool,
         #[case] amount_parties: usize,
         #[case] key_id: &str,
@@ -4935,7 +5047,7 @@ pub(crate) mod tests {
     #[case(TestingPlaintext::U8(u8::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    async fn default_reencryption_threshold_with_sns_preprocessing(
+    async fn default_reencryption_threshold_precompute_sns(
         #[case] msg: TestingPlaintext,
         #[case] parallelism: usize,
         #[case] amount_parties: usize,

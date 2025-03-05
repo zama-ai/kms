@@ -290,8 +290,9 @@ mod tests {
     use num_traits::AsPrimitive;
     use tfhe::{
         core_crypto::{commons::traits::UnsignedInteger, entities::Plaintext},
+        integer::bigint::U2048,
         prelude::{CiphertextList, FheDecrypt, FheEncrypt},
-        set_server_key, CompactCiphertextList, FheUint8,
+        set_server_key, CompactCiphertextList, FheUint2048, FheUint8,
     };
 
     use crate::{
@@ -341,6 +342,35 @@ mod tests {
         let res_large = keyset.sns_secret_key.decrypt_128(&large_ct);
         assert_eq!(message, res_small);
         assert_eq!(message as u128, res_large);
+    }
+
+    #[test]
+    fn sunshine_domain_switching_large() {
+        let msg1 = {
+            let mut tmp = [u64::MAX; 32];
+            tmp[0] = 1;
+            tmp
+        };
+        let msg2 = {
+            let mut tmp = [u64::MAX; 32];
+            tmp[31] = 1;
+            tmp
+        };
+        for message in [msg1, msg2] {
+            let message = U2048::from(message);
+            let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
+            let small_ct = FheUint2048::encrypt(message, &keyset.client_key);
+            let large_ct = keyset
+                .public_keys
+                .sns_key
+                .unwrap()
+                .to_large_ciphertext(&small_ct.clone().into_raw_parts().0)
+                .unwrap();
+            let res_small: U2048 = small_ct.decrypt(&keyset.client_key);
+            let res_large: U2048 = keyset.sns_secret_key.decrypt(&large_ct);
+            assert_eq!(message, res_small);
+            assert_eq!(message, res_large);
+        }
     }
 
     #[test]

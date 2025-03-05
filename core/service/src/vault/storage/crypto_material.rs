@@ -485,10 +485,26 @@ impl<
             .await
             .is_ok()
         };
-        let (r1, r2, r3) = tokio::join!(f1, f2, f3);
+        let f4 = async {
+            if let Some(sns_key) = fhe_key_set.sns_key {
+                let mut pub_storage = self.inner.public_storage.lock().await;
+                store_versioned_at_request_id(
+                    &mut (*pub_storage),
+                    req_id,
+                    &sns_key,
+                    &PubDataType::SnsKey.to_string(),
+                )
+                .await
+                .is_ok()
+            } else {
+                true
+            }
+        };
+        let (r1, r2, r3, r4) = tokio::join!(f1, f2, f3, f4);
         if r1
             && r2
             && r3
+            && r4
             && guarded_meta_store
                 .update(req_id, Ok(key_info.public_key_info.to_owned()))
                 .inspect_err(|e| {
@@ -571,7 +587,8 @@ impl<
         let x: &mut KmsFheKeyHandles = key_info.get_mut(key_handle).unwrap();
         let wrong_handles = KmsFheKeyHandles {
             client_key: wrong_client_key,
-            decompression_key: None,
+            sns_client_key: x.sns_client_key.clone(),
+            decompression_key: x.decompression_key.clone(),
             public_key_info: x.public_key_info.clone(),
         };
         *x = wrong_handles;
@@ -1024,7 +1041,10 @@ mod tests {
     use aes_prng::AesRng;
     use distributed_decryption::execution::{
         endpoints::keygen::FhePubKeySet,
-        tfhe_internals::test_feature::{gen_key_set, keygen_all_party_shares},
+        tfhe_internals::{
+            switch_and_squash::SwitchAndSquashKey,
+            test_feature::{gen_key_set, generate_large_keys_from_seed, keygen_all_party_shares},
+        },
     };
     use kms_grpc::kms::v1::RequestId;
     use kms_grpc::rpc_types::WrappedPublicKey;
@@ -1154,6 +1174,7 @@ mod tests {
     #[tokio::test]
     #[tracing_test::traced_test]
     async fn write_central_keys() {
+        let param = TEST_PARAM;
         let crypto_storage = CentralizedCryptoMaterialStorage::new(
             FailingRamStorage::new(StorageType::PUB, 100),
             RamStorage::new(StorageType::PUB),
@@ -1165,22 +1186,25 @@ mod tests {
 
         let req_id = RequestId::derive("write_central_keys").unwrap();
 
-        let pbs_params: ClassicPBSParameters = TEST_PARAM
-            .get_params_basics_handle()
-            .to_classic_pbs_parameters();
+        let pbs_params: ClassicPBSParameters =
+            param.get_params_basics_handle().to_classic_pbs_parameters();
         let config = ConfigBuilder::with_custom_parameters(pbs_params);
         let client_key = tfhe::ClientKey::generate(config);
         let public_key = CompactPublicKey::new(&client_key);
+        let (sns_client_key, fbsk_out) =
+            generate_large_keys_from_seed(param, &client_key, None).unwrap();
         let server_key = ServerKey::new(&client_key);
+        let ksk = server_key.as_ref().as_ref().key_switching_key.clone();
         let key_info = KmsFheKeyHandles {
             client_key,
+            sns_client_key,
             decompression_key: None,
             public_key_info: HashMap::new(),
         };
         let fhe_key_set = FhePubKeySet {
             public_key,
             server_key,
-            sns_key: None,
+            sns_key: Some(SwitchAndSquashKey { fbsk_out, ksk }),
         };
 
         let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));

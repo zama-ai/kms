@@ -181,6 +181,7 @@ where
 /// This involves both generating the public CRS and storing the private CRS.
 ///
 /// Returns true if the keys were generated and false if they already existed and hence were not generated.
+// TODO refactor this to use CryptoMaterialStorage
 pub async fn ensure_central_crs_exists<PubS, PrivS>(
     pub_storage: &mut PubS,
     priv_storage: &mut PrivS,
@@ -271,6 +272,7 @@ where
 /// More specifically this method does so for two distinct sets of keys under [key_id] and [other_key_id].
 ///
 /// Returns true if the keys were generated and false if they already existed and hence were not generated.
+// TODO refactor this to use CryptoMaterialStorage
 pub async fn ensure_central_keys_exist<PubS, PrivS>(
     pub_storage: &mut PubS,
     priv_storage: &mut PrivS,
@@ -292,6 +294,14 @@ where
         )
         .await
         .unwrap()
+        && pub_storage
+            .data_exists(
+                &pub_storage
+                    .compute_url(&key_id.to_string(), &PubDataType::SnsKey.to_string())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
         && priv_storage
             .data_exists(
                 &priv_storage
@@ -397,6 +407,22 @@ where
             &req_id,
             pub_storage.info()
         );
+
+        if let Some(sns_key) = cur_keys.sns_key {
+            store_versioned_at_request_id(
+                pub_storage,
+                &req_id,
+                &sns_key,
+                &PubDataType::SnsKey.to_string(),
+            )
+            .await
+            .unwrap();
+            tracing::info!(
+                "Successfully stored public sns key under the handle {} in storage {}",
+                &req_id,
+                pub_storage.info()
+            );
+        }
     }
     true
 }
@@ -495,6 +521,7 @@ where
 /// and stores them in the storages if they don't already exist under [key_id].
 ///
 /// Returns true if the keys were generated and false if they already existed and hence were not generated.
+// TODO refactor this to use CryptoMaterialStorage
 pub async fn ensure_threshold_keys_exist<PubS, PrivS>(
     pub_storages: &mut [PubS],
     priv_storages: &mut [PrivS],
@@ -661,6 +688,7 @@ where
 /// and stores the information in the storage if CRS does not already exist for [crs_handle].
 ///
 /// Returns true if the keys were generated and false if they already existed and hence were not generated.
+// TODO refactor this to use CryptoMaterialStorage
 pub async fn ensure_threshold_crs_exists<PubS, PrivS>(
     pub_storages: &mut [PubS],
     priv_storages: &mut [PrivS],

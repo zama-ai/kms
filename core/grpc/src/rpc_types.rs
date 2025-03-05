@@ -91,6 +91,13 @@ alloy_sol_types::sol! {
     }
 }
 
+// Solidity struct for signing the SnsKey
+alloy_sol_types::sol! {
+    struct SnsKey {
+        bytes sns_key;
+    }
+}
+
 pub fn protobuf_to_alloy_domain_option(
     domain_ref: Option<&Eip712DomainMsg>,
 ) -> Option<Eip712Domain> {

@@ -25,7 +25,7 @@ use distributed_decryption::execution::endpoints::keygen::FhePubKeySet;
 use distributed_decryption::execution::keyset_config::KeySetCompressionConfig;
 #[cfg(feature = "non-wasm")]
 use distributed_decryption::execution::keyset_config::StandardKeySetConfig;
-use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
+use distributed_decryption::execution::tfhe_internals::parameters::{Ciphertext128, DKGParams};
 #[cfg(feature = "non-wasm")]
 use distributed_decryption::execution::zk::ceremony::make_centralized_public_parameters;
 use k256::ecdsa::SigningKey;
@@ -49,6 +49,7 @@ use std::sync::Arc;
 use std::{fmt, panic};
 use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::prelude::FheDecrypt;
+use tfhe::safe_serialization::safe_deserialize;
 #[cfg(feature = "non-wasm")]
 use tfhe::shortint::ClassicPBSParameters;
 #[cfg(feature = "non-wasm")]
@@ -190,6 +191,10 @@ pub fn generate_fhe_keys(
     seed: Option<Seed>,
     eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
+    use distributed_decryption::execution::tfhe_internals::{
+        switch_and_squash::SwitchAndSquashKey, test_feature::generate_large_keys_from_seed,
+    };
+
     let f = || -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
         let client_key = match keyset_config.compression_config {
             KeySetCompressionConfig::Generate => generate_client_fhe_key(params, seed),
@@ -219,13 +224,21 @@ pub fn generate_fhe_keys(
             server_key.4,
         );
         let public_key = FhePublicKey::new(&client_key);
+        let (sns_client_key, fbsk_out) = generate_large_keys_from_seed(params, &client_key, seed)?;
+        let ksk = server_key.as_ref().as_ref().key_switching_key.clone();
         let pks = FhePubKeySet {
             public_key,
             server_key,
-            sns_key: None,
+            sns_key: Some(SwitchAndSquashKey { fbsk_out, ksk }),
         };
-        let handles =
-            KmsFheKeyHandles::new(sk, client_key, &pks, decompression_key, eip712_domain)?;
+        let handles = KmsFheKeyHandles::new(
+            sk,
+            client_key,
+            sns_client_key,
+            &pks,
+            decompression_key,
+            eip712_domain,
+        )?;
         Ok((pks, handles))
     };
     match panic::catch_unwind(f) {
@@ -458,40 +471,36 @@ impl<
     }
 }
 
-enum CentralCiphertextFormat {
-    SmallCompressed,
-    SmallExpanded,
-}
-
-impl TryFrom<CiphertextFormat> for CentralCiphertextFormat {
-    type Error = anyhow::Error;
-
-    fn try_from(value: CiphertextFormat) -> Result<Self, Self::Error> {
-        match value {
-            CiphertextFormat::SmallCompressed => Ok(CentralCiphertextFormat::SmallCompressed),
-            CiphertextFormat::SmallExpanded => Ok(CentralCiphertextFormat::SmallExpanded),
-            _ => anyhow::bail!("large ciphertext is not supported by centralized KMS"),
-        }
-    }
-}
-
-macro_rules! deserialize_to_low_level_helper {
-    ($rust_type:ty,$ct_format:expr,$serialized_high_level:expr,$decompression_key:expr) => {{
+macro_rules! deserialize_to_low_level_and_decrypt_helper {
+    ($rust_type:ty,$fout:expr,$ct_format:expr,$serialized_high_level:expr,$keys:expr) => {{
         match $ct_format {
-            CentralCiphertextFormat::SmallCompressed => {
+            CiphertextFormat::SmallCompressed => {
                 let hl_ct: $rust_type =
                     decompression::tfhe_safe_deserialize_and_uncompress::<$rust_type>(
-                        $decompression_key
+                        $keys
+                            .decompression_key
                             .as_ref()
                             .ok_or(anyhow::anyhow!("missing decompression key"))?,
                         $serialized_high_level,
                     )?;
-                hl_ct
+                $fout(hl_ct.decrypt(&$keys.client_key))
             }
-            CentralCiphertextFormat::SmallExpanded => {
+            CiphertextFormat::SmallExpanded => {
                 let hl_ct: $rust_type =
                     decompression::tfhe_safe_deserialize::<$rust_type>($serialized_high_level)?;
-                hl_ct
+                $fout(hl_ct.decrypt(&$keys.client_key))
+            }
+            CiphertextFormat::BigCompressed => {
+                anyhow::bail!("big compressed ciphertexts are not supported yet");
+            }
+            CiphertextFormat::BigExpanded => {
+                let r = safe_deserialize::<Ciphertext128>(
+                    std::io::Cursor::new($serialized_high_level),
+                    kms_grpc::rpc_types::SAFE_SER_SIZE_LIMIT,
+                )
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                let raw_res = $keys.sns_client_key.decrypt(&r);
+                $fout(raw_res)
             }
         }
     }};
@@ -499,106 +508,146 @@ macro_rules! deserialize_to_low_level_helper {
 
 fn unsafe_decrypt(
     keys: &KmsFheKeyHandles,
-    bytes_ct: &[u8],
+    serialized_high_level: &[u8],
     fhe_type: FheType,
     ct_format: CiphertextFormat,
 ) -> anyhow::Result<TypedPlaintext> {
-    let ct_format: CentralCiphertextFormat = ct_format.try_into()?;
-    Ok(match fhe_type {
-        FheType::Ebool => TypedPlaintext::from_bool(
-            deserialize_to_low_level_helper!(FheBool, ct_format, bytes_ct, keys.decompression_key)
-                .decrypt(&keys.client_key),
-        ),
-        FheType::Euint4 => TypedPlaintext::from_u4(
-            deserialize_to_low_level_helper!(FheUint4, ct_format, bytes_ct, keys.decompression_key)
-                .decrypt(&keys.client_key),
-        ),
-        FheType::Euint8 => TypedPlaintext::from_u8(
-            deserialize_to_low_level_helper!(FheUint8, ct_format, bytes_ct, keys.decompression_key)
-                .decrypt(&keys.client_key),
-        ),
-        FheType::Euint16 => TypedPlaintext::from_u16(
-            deserialize_to_low_level_helper!(
+    let res = match fhe_type {
+        FheType::Ebool => match ct_format {
+            CiphertextFormat::SmallCompressed => {
+                let hl_ct: FheBool = decompression::tfhe_safe_deserialize_and_uncompress::<FheBool>(
+                    keys.decompression_key
+                        .as_ref()
+                        .ok_or(anyhow::anyhow!("missing decompression key"))?,
+                    serialized_high_level,
+                )?;
+                TypedPlaintext::from_bool(hl_ct.decrypt(&keys.client_key))
+            }
+            CiphertextFormat::SmallExpanded => {
+                let hl_ct: FheBool =
+                    decompression::tfhe_safe_deserialize::<FheBool>(serialized_high_level)?;
+                TypedPlaintext::from_bool(hl_ct.decrypt(&keys.client_key))
+            }
+            CiphertextFormat::BigCompressed => {
+                anyhow::bail!("big compressed ciphertexts are not supported yet");
+            }
+            CiphertextFormat::BigExpanded => {
+                let r = safe_deserialize::<Ciphertext128>(
+                    std::io::Cursor::new(serialized_high_level),
+                    kms_grpc::rpc_types::SAFE_SER_SIZE_LIMIT,
+                )
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                let raw_res = keys.sns_client_key.decrypt_128(&r);
+                TypedPlaintext::from_bool(if raw_res == 0 {
+                    false
+                } else if raw_res == 1 {
+                    true
+                } else {
+                    anyhow::bail!("decrypted result is not boolean")
+                })
+            }
+        },
+        FheType::Euint4 => {
+            deserialize_to_low_level_and_decrypt_helper!(
+                FheUint4,
+                TypedPlaintext::from_u4,
+                ct_format,
+                serialized_high_level,
+                keys
+            )
+        }
+        FheType::Euint8 => {
+            deserialize_to_low_level_and_decrypt_helper!(
+                FheUint8,
+                TypedPlaintext::from_u8,
+                ct_format,
+                serialized_high_level,
+                keys
+            )
+        }
+        FheType::Euint16 => {
+            deserialize_to_low_level_and_decrypt_helper!(
                 FheUint16,
+                TypedPlaintext::from_u16,
                 ct_format,
-                bytes_ct,
-                keys.decompression_key
+                serialized_high_level,
+                keys
             )
-            .decrypt(&keys.client_key),
-        ),
-        FheType::Euint32 => TypedPlaintext::from_u32(
-            deserialize_to_low_level_helper!(
+        }
+        FheType::Euint32 => {
+            deserialize_to_low_level_and_decrypt_helper!(
                 FheUint32,
+                TypedPlaintext::from_u32,
                 ct_format,
-                bytes_ct,
-                keys.decompression_key
+                serialized_high_level,
+                keys
             )
-            .decrypt(&keys.client_key),
-        ),
-        FheType::Euint64 => TypedPlaintext::from_u64(
-            deserialize_to_low_level_helper!(
+        }
+        FheType::Euint64 => {
+            deserialize_to_low_level_and_decrypt_helper!(
                 FheUint64,
+                TypedPlaintext::from_u64,
                 ct_format,
-                bytes_ct,
-                keys.decompression_key
+                serialized_high_level,
+                keys
             )
-            .decrypt(&keys.client_key),
-        ),
-        FheType::Euint128 => TypedPlaintext::from_u128(
-            deserialize_to_low_level_helper!(
+        }
+        FheType::Euint128 => {
+            deserialize_to_low_level_and_decrypt_helper!(
                 FheUint128,
+                TypedPlaintext::from_u128,
                 ct_format,
-                bytes_ct,
-                keys.decompression_key
+                serialized_high_level,
+                keys
             )
-            .decrypt(&keys.client_key),
-        ),
-        FheType::Euint160 => TypedPlaintext::from_u160(
-            deserialize_to_low_level_helper!(
+        }
+        FheType::Euint160 => {
+            deserialize_to_low_level_and_decrypt_helper!(
                 FheUint160,
+                TypedPlaintext::from_u160,
                 ct_format,
-                bytes_ct,
-                keys.decompression_key
+                serialized_high_level,
+                keys
             )
-            .decrypt(&keys.client_key),
-        ),
-        FheType::Euint256 => TypedPlaintext::from_u256(
-            deserialize_to_low_level_helper!(
+        }
+        FheType::Euint256 => {
+            deserialize_to_low_level_and_decrypt_helper!(
                 FheUint256,
+                TypedPlaintext::from_u256,
                 ct_format,
-                bytes_ct,
-                keys.decompression_key
+                serialized_high_level,
+                keys
             )
-            .decrypt(&keys.client_key),
-        ),
-        FheType::Euint512 => TypedPlaintext::from_u512(
-            deserialize_to_low_level_helper!(
+        }
+        FheType::Euint512 => {
+            deserialize_to_low_level_and_decrypt_helper!(
                 FheUint512,
+                TypedPlaintext::from_u512,
                 ct_format,
-                bytes_ct,
-                keys.decompression_key
+                serialized_high_level,
+                keys
             )
-            .decrypt(&keys.client_key),
-        ),
-        FheType::Euint1024 => TypedPlaintext::from_u1024(
-            deserialize_to_low_level_helper!(
+        }
+        FheType::Euint1024 => {
+            deserialize_to_low_level_and_decrypt_helper!(
                 FheUint1024,
+                TypedPlaintext::from_u1024,
                 ct_format,
-                bytes_ct,
-                keys.decompression_key
+                serialized_high_level,
+                keys
             )
-            .decrypt(&keys.client_key),
-        ),
-        FheType::Euint2048 => TypedPlaintext::from_u2048(
-            deserialize_to_low_level_helper!(
+        }
+        FheType::Euint2048 => {
+            deserialize_to_low_level_and_decrypt_helper!(
                 FheUint2048,
+                TypedPlaintext::from_u2048,
                 ct_format,
-                bytes_ct,
-                keys.decompression_key
+                serialized_high_level,
+                keys
             )
-            .decrypt(&keys.client_key),
-        ),
-    })
+        }
+    };
+    Ok(res)
 }
 
 #[cfg(feature = "non-wasm")]
@@ -926,6 +975,8 @@ pub(crate) mod tests {
             None,
         )
         .unwrap();
+        assert!(pub_fhe_keys.sns_key.is_some());
+        // check that key_info contains
         let mut key_info_map = HashMap::from([(key_id.to_string().try_into().unwrap(), key_info)]);
 
         let (other_pub_fhe_keys, other_key_info) = generate_fhe_keys(
@@ -937,6 +988,7 @@ pub(crate) mod tests {
             None,
         )
         .unwrap();
+        assert!(other_pub_fhe_keys.sns_key.is_some());
 
         // Insert a key with another handle to setup a KMS with multiple keys
         key_info_map.insert(other_key_id.to_string().try_into().unwrap(), other_key_info);

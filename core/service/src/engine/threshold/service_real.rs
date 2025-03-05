@@ -232,6 +232,11 @@ pub fn compute_all_info(
     //Compute all the info required for storing
     let pub_key_info = compute_info(sig_key, &fhe_key_set.public_key, domain);
     let serv_key_info = compute_info(sig_key, &fhe_key_set.server_key, domain);
+    let sns_key_info = if let Some(sns_key) = &fhe_key_set.sns_key {
+        Some(compute_info(sig_key, sns_key, domain)?)
+    } else {
+        None
+    };
 
     //Make sure we did manage to compute the info
     Ok(match (pub_key_info, serv_key_info) {
@@ -239,6 +244,9 @@ pub fn compute_all_info(
             let mut info = HashMap::new();
             info.insert(PubDataType::PublicKey, pub_key_info);
             info.insert(PubDataType::ServerKey, serv_key_info);
+            if let Some(inner) = sns_key_info {
+                info.insert(PubDataType::SnsKey, inner);
+            }
             info
         }
         _ => {

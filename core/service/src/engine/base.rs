@@ -21,6 +21,7 @@ use distributed_decryption::execution::keyset_config as ddec_keyset_config;
 use distributed_decryption::execution::tfhe_internals::parameters::{
     Ciphertext128, DKGParams, LowLevelCiphertext,
 };
+use distributed_decryption::execution::tfhe_internals::test_feature::SnsClientKey;
 use k256::ecdsa::SigningKey;
 use kms_grpc::kms::v1::{
     CiphertextFormat, FheParameter, FheType, SignedPubDataHandle, TypedPlaintext,
@@ -28,7 +29,7 @@ use kms_grpc::kms::v1::{
 };
 use kms_grpc::rpc_types::{
     hash_element, safe_serialize_hash_element_versioned, EIP712PublicDecrypt, FhePubKey,
-    FheServerKey, PubDataType, SignedPubDataHandleInternal, UserDecryptionResult, CRS,
+    FheServerKey, PubDataType, SignedPubDataHandleInternal, SnsKey, UserDecryptionResult, CRS,
 };
 use rand::{CryptoRng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -56,10 +57,11 @@ pub enum KmsFheKeyHandlesVersioned {
 /// This is a data structure that holds the private key material
 /// of the centralized KMS.
 #[cfg(feature = "non-wasm")]
-#[derive(Clone, Serialize, Deserialize, Versionize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Versionize)]
 #[versionize(KmsFheKeyHandlesVersioned)]
 pub struct KmsFheKeyHandles {
     pub client_key: FhePrivateKey,
+    pub sns_client_key: SnsClientKey,
     pub decompression_key: Option<DecompressionKey>,
     /// Mapping key type to information
     pub public_key_info: HashMap<PubDataType, SignedPubDataHandleInternal>,
@@ -76,6 +78,7 @@ impl KmsFheKeyHandles {
     pub fn new(
         sig_key: &PrivateSigKey,
         client_key: FhePrivateKey,
+        sns_client_key: SnsClientKey,
         public_keys: &FhePubKeySet,
         decompression_key: Option<DecompressionKey>,
         eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
@@ -97,6 +100,7 @@ impl KmsFheKeyHandles {
         }
         Ok(KmsFheKeyHandles {
             client_key,
+            sns_client_key,
             decompression_key,
             public_key_info,
         })
@@ -384,6 +388,13 @@ pub fn compute_external_pubdata_message_hash<D: Serialize + Versionize + Named>(
         "high_level_api::ServerKey" => {
             let message = FheServerKey {
                 server_key: bytes.into(),
+            };
+            message.eip712_signing_hash(eip712_domain)
+        }
+        "SwitchAndSquashKey" => {
+            // TODO name might change after we have the struct from tfhe-rs
+            let message = SnsKey {
+                sns_key: bytes.into(),
             };
             message.eip712_signing_hash(eip712_domain)
         }
