@@ -27,6 +27,8 @@ permissions:
   id-token: 'write'
   pull-requests: 'write'
   pages: 'write'
+  packages: 'write'
+
 
 jobs:
   # Initial job that determines which components have changed
@@ -123,7 +125,7 @@ jobs:
   # Only runs on main/release branches after successful tests
   docker-connector:
     needs: test-connector
-    if: contains(fromJSON('["release/", "main"]'),github.ref) || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
+    if: startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
     uses: ./.github/workflows/common-docker.yml
     with:
       working-directory: "./kms-connector"
@@ -163,7 +165,7 @@ jobs:
   # Only runs on main/release branches after successful tests
   docker-core-client:
     needs: test-core-client
-    if:  contains(fromJSON('["release/", "main"]'),github.ref) || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
+    if: startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
     uses: ./.github/workflows/common-docker.yml
     with:
       working-directory: "./core-client"
@@ -272,7 +274,7 @@ jobs:
   docker-core-service:
     needs:
       - test-core-service
-    if:  contains(fromJSON('["release/", "main"]'),github.ref) || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
+    if: startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
     uses: ./.github/workflows/common-docker-big-instance.yml
     with:
       working-directory: "./core/service"
@@ -294,8 +296,12 @@ jobs:
   docker-nitro-enclave:
     needs:
       - docker-core-service
-    if:  contains(fromJSON('["release/", "main"]'),github.ref) || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
+    if: startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
     uses: ./.github/workflows/common-nitro-enclave.yml
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+      packages: 'write'
     with:
       working-directory: "./core/service"
       push_image: true

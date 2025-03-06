@@ -191,7 +191,7 @@ jobs:
 
   create-manifest:
     needs: [determine-tag, build-and-push-docker]
-    if: inputs.push_image == 'true'
+    if: inputs.push_image
     runs-on: ${{ inputs.runs-on-amd }}
     outputs:
       image_name: ${{ steps.export-image.outputs.image }}
