@@ -50,6 +50,7 @@ use crate::{
 };
 #[cfg(any(test, feature = "testing"))]
 use aes_prng::AesRng;
+use anyhow::Context;
 use async_trait::async_trait;
 use kms_common::DecryptionMode;
 #[cfg(any(test, feature = "testing"))]
@@ -62,6 +63,7 @@ use std::num::Wrapping;
 use std::sync::Arc;
 use tfhe::core_crypto::prelude::{keyswitch_lwe_ciphertext, LweCiphertext, LweKeyswitchKey};
 use tfhe::integer::IntegerCiphertext;
+use tfhe::shortint::Ciphertext;
 use tfhe::shortint::PBSOrder;
 #[cfg(any(test, feature = "testing"))]
 use tokio::task::JoinSet;
@@ -464,18 +466,29 @@ where
     Ok((results, elapsed_time))
 }
 
+/// Represent the blocks (decryptions of the LWE ciphertext)
+/// of a partial decryption
+/// before we combine them to output the integer
+/// message
+#[derive(Default)]
+pub struct BlocksPartialDecrypt {
+    pub bits_in_block: u32,
+    pub partial_decryptions: Vec<Z128>,
+}
 /// Takes as input plaintexts blocks m1, ..., mN revealed to all parties
 /// which we call partial decryptions each of B bits
 /// and uses tfhe block recomposer to get back the u64 plaintext.
-fn combine_plaintext_blocks<T>(
-    bits_in_block: usize,
-    partial_decrypted: Vec<Z128>,
+pub fn combine_plaintext_blocks<T>(
+    shared_partial_decrypt: BlocksPartialDecrypt,
 ) -> anyhow::Result<T>
 where
     T: tfhe::integer::block_decomposition::Recomposable
         + tfhe::core_crypto::commons::traits::CastFrom<u128>,
 {
-    let res = match combine_decryptions::<T>(bits_in_block as u32, partial_decrypted) {
+    let res = match combine_decryptions::<T>(
+        shared_partial_decrypt.bits_in_block,
+        shared_partial_decrypt.partial_decryptions,
+    ) {
         Ok(res) => res,
         Err(error) => {
             return Err(anyhow_error_and_log(format!(
@@ -548,6 +561,11 @@ where
 }
 
 /// compute preprocessing information for a bit-decomposition decryption for the given session and number of ciphertexts for the nLarge protocol variant.
+#[instrument(
+name = "TFHE.Threshold-Dec-2.Preprocessing",
+skip_all,
+fields(batch_size=?num_ctxts)
+)]
 pub async fn init_prep_bitdec_large<const EXTENSION_DEGREE: usize>(
     session: &mut LargeSession,
     num_ctxts: usize,
@@ -823,7 +841,11 @@ where
     }
     let partial_decrypted = open_masked_ptxts(session, shared_masked_ptxts, keyshares).await?;
     let usable_message_bits = keyshares.parameters.message_modulus_log() as usize;
-    combine_plaintext_blocks(usable_message_bits, partial_decrypted)
+    let shared_partial_decrypt = BlocksPartialDecrypt {
+        bits_in_block: usable_message_bits as u32,
+        partial_decryptions: partial_decrypted,
+    };
+    combine_plaintext_blocks(shared_partial_decrypt)
 }
 
 pub async fn run_decryption_noiseflood_64<
@@ -917,8 +939,101 @@ where
 
     let usable_message_bits = keyshares.parameters.message_modulus_log() as usize;
 
+    let shared_partial_decrypt = BlocksPartialDecrypt {
+        bits_in_block: usable_message_bits as u32,
+        partial_decryptions: ptxts128,
+    };
     // combine outputs to form the decrypted integer on party 0
-    combine_plaintext_blocks(usable_message_bits, ptxts128)
+    combine_plaintext_blocks(shared_partial_decrypt)
+}
+
+/// A block
+/// of [`BlocksPartialDecrypt`]
+/// which is created by aggregating all the blocks
+/// ensuring each have the same bit_in_block
+/// for sanity
+pub struct BlockPartialDecrypt {
+    pub bits_in_block: u32,
+    pub partial_decryption: Z128,
+}
+
+/// This is used as a task that is joined on to finish the
+/// whole decryption process.
+/// Run decryption with bit-decomposition at the raw ctxt level
+/// - ciphertexts: a vector or blocks, each block may
+/// belong to a different FheType ciphertext.
+/// - preprocessings a vector of preprocessings,
+/// each may have been created in a separate session
+///
+/// Returns a vector of decrypted raw ctxt,
+/// each needs to be recombined with their other
+/// blocks to finish the reconstruction
+#[instrument(
+    name = "TFHE.Threshold-Dec-2-task",
+    skip(session, preprocessings, keyshares, ksk, ciphertexts),
+    fields(sid=?session.session_id(),num_ctxts=?ciphertexts.len())
+)]
+pub async fn task_decryption_bitdec_par<
+    const EXTENSION_DEGREE: usize,
+    P: BitDecPreprocessing<EXTENSION_DEGREE> + Send,
+    Rnd: Rng + CryptoRng,
+    Ses: BaseSessionHandles<Rnd>,
+    T,
+>(
+    session: &mut Ses,
+    preprocessings: &mut [P],
+    keyshares: &PrivateKeySet<EXTENSION_DEGREE>,
+    ksk: &LweKeyswitchKey<Vec<u64>>,
+    ciphertexts: Vec<Ciphertext>,
+) -> anyhow::Result<Vec<BlockPartialDecrypt>>
+where
+    T: tfhe::integer::block_decomposition::Recomposable
+        + tfhe::core_crypto::commons::traits::CastFrom<u128>,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Solve,
+{
+    let role = session.my_role()?;
+    // This vec will be joined on "main" task and all results recombined there
+    let mut vec_partial_decryptions = Vec::new();
+    for (block, preprocessing) in ciphertexts.iter().zip(preprocessings.iter_mut()) {
+        //We create a batch of size 1
+        let partial_decrypt = vec![Share::new(
+            role,
+            partial_decrypt64(keyshares, ksk, block).unwrap(),
+        )];
+        let bits = bit_dec_batch::<Z64, EXTENSION_DEGREE, _, _, _>(
+            session,
+            preprocessing,
+            partial_decrypt,
+        )
+        .await?;
+
+        let total_bits = keyshares.parameters.total_block_bits() as usize;
+
+        // bit-compose the plaintext
+        let ptxt_sums =
+            BatchedBits::extract_ptxts(bits, total_bits, preprocessing, session).await?;
+        let ptxt_sums: Vec<_> = ptxt_sums.iter().map(|ptxt_sum| ptxt_sum.value()).collect();
+
+        // output result
+        let ptxts64 = open_bit_composed_ptxts(session, ptxt_sums).await?;
+        let ptxts128: Vec<_> = ptxts64
+            .iter()
+            .map(|ptxt| Wrapping(ptxt.0 as u128))
+            .collect();
+        let usable_message_bits = keyshares.parameters.message_modulus_log() as usize;
+
+        //We collect the only result in our batch of size 1
+        let ptxt128 = ptxts128.first().context(format!(
+            "Expected batch of size 1, got batch of size {}",
+            ptxts128.len()
+        ))?;
+        let shared_partial_decrypt = BlockPartialDecrypt {
+            bits_in_block: usable_message_bits as u32,
+            partial_decryption: *ptxt128,
+        };
+        vec_partial_decryptions.push(shared_partial_decrypt);
+    }
+    Ok(vec_partial_decryptions)
 }
 
 /// computes b - <a, s> with no rounding of the noise. This is used for noise flooding decryption

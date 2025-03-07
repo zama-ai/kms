@@ -4,7 +4,7 @@
 ARG RUST_IMAGE_VERSION=latest
 
 # Build Stage - Rust binary
-FROM rust:${RUST_IMAGE_VERSION}-slim-bookworm AS builder
+FROM rust:slim-bookworm AS builder
 
 # Install minimal build dependencies, alphabetically sorted
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \

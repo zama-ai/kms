@@ -1,6 +1,7 @@
 use super::BitDecPreprocessing;
 use super::BitPreprocessing;
 use super::DKGPreprocessing;
+use super::InMemoryBitDecPreprocessing;
 use super::NoiseBounds;
 use super::NoiseFloodPreprocessing;
 use crate::algebra::base_ring::Z128;
@@ -261,6 +262,19 @@ where
         _num_ctxts: usize,
     ) -> anyhow::Result<()> {
         unimplemented!("We do not implement filling for DummyPreprocessing")
+    }
+
+    fn cast_to_in_memory_impl(
+        &mut self,
+        num_ctxts: usize,
+    ) -> anyhow::Result<InMemoryBitDecPreprocessing<EXTENSION_DEGREE>> {
+        let bits = self.next_bit_vec(self.num_required_bits(num_ctxts))?;
+        let triples = self.next_triple_vec(self.num_required_bits(num_ctxts))?;
+
+        Ok(InMemoryBitDecPreprocessing::<EXTENSION_DEGREE> {
+            available_triples: triples,
+            available_bits: bits,
+        })
     }
 }
 

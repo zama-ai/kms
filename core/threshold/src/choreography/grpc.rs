@@ -25,8 +25,9 @@ use crate::choreography::requests::{
 };
 use crate::execution::communication::broadcast::broadcast_from_all;
 use crate::execution::endpoints::decryption::{
-    init_prep_bitdec_large, init_prep_bitdec_small, run_decryption_bitdec_64,
-    run_decryption_noiseflood_64, NoiseFloodPreparation,
+    combine_plaintext_blocks, init_prep_bitdec_large, init_prep_bitdec_small,
+    run_decryption_noiseflood_64, task_decryption_bitdec_par, BlocksPartialDecrypt,
+    NoiseFloodPreparation,
 };
 use crate::execution::endpoints::decryption::{Large, Small};
 use crate::execution::endpoints::keygen::FhePubKeySet;
@@ -61,8 +62,9 @@ use kms_common::DecryptionMode;
 use rand::{CryptoRng, Rng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::num::Wrapping;
 use std::sync::{Arc, Mutex};
-use tfhe::integer::IntegerRadixCiphertext;
+use tfhe::integer::{IntegerCiphertext, IntegerRadixCiphertext};
 use tokio::task::{JoinHandle, JoinSet};
 use tracing::{instrument, Instrument};
 
@@ -120,7 +122,7 @@ type KeyStore<const EXTENSION_DEGREE: usize> =
 type DDecPreprocNFStore<const EXTENSION_DEGREE: usize> =
     DashMap<SessionId, Vec<Box<dyn NoiseFloodPreprocessing<EXTENSION_DEGREE>>>>;
 type DDecPreprocBitDecStore<const EXTENSION_DEGREE: usize> =
-    DashMap<SessionId, Vec<Box<dyn BitDecPreprocessing<EXTENSION_DEGREE>>>>;
+    DashMap<SessionId, Vec<Vec<Box<dyn BitDecPreprocessing<EXTENSION_DEGREE>>>>>;
 type DDecResultStore = DashMap<SessionId, Vec<Z64>>;
 type CrsStore = DashMap<SessionId, InternalPublicParameter>;
 type StatusStore = DashMap<SessionId, JoinHandle<()>>;
@@ -169,6 +171,67 @@ where
             .max_decoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE)
             .max_encoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE)
     }
+
+    async fn create_base_session(
+        &self,
+        request_sid: SessionId,
+        threshold: u8,
+        role_assignments: HashMap<Role, Identity>,
+    ) -> anyhow::Result<BaseSessionStruct<AesRng, SessionParameters>> {
+        Ok(self
+            .create_base_sessions(request_sid, 1, threshold, role_assignments)
+            .await?
+            .pop()
+            .map_or_else(
+                || {
+                    Err(tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("Failed to create session for {:?}", request_sid),
+                    ))
+                },
+                Ok,
+            )?)
+    }
+
+    //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
+    async fn create_base_sessions(
+        &self,
+        request_sid: SessionId,
+        num_sessions: usize,
+        threshold: u8,
+        role_assignments: HashMap<Role, Identity>,
+    ) -> anyhow::Result<Vec<BaseSessionStruct<AesRng, SessionParameters>>> {
+        let mut session_id_generator = AesRng::from_seed(request_sid.0.to_be_bytes());
+        let sids = (0..num_sessions)
+            .map(|_| gen_random_sid(&mut session_id_generator, request_sid.0))
+            .collect_vec();
+
+        let mut base_sessions = Vec::new();
+        for session_id in sids {
+            let params = SessionParameters::new(
+                threshold,
+                session_id,
+                self.own_identity.clone(),
+                role_assignments.clone(),
+            )
+            .unwrap();
+            //We are executing offline phase, so requires Sync network
+            let networking =
+                (self.networking_strategy)(session_id, role_assignments.clone(), NetworkMode::Sync)
+                    .await
+                    .map_err(|e| {
+                        tonic::Status::new(
+                            tonic::Code::Aborted,
+                            format!("Failed to create networking: {:?}", e),
+                        )
+                    })?;
+            base_sessions.push(
+                BaseSessionStruct::new(params.clone(), networking, AesRng::from_entropy())
+                    .expect("Failed to create Base Session"),
+            );
+        }
+        Ok(base_sessions)
+    }
 }
 
 #[async_trait]
@@ -216,38 +279,15 @@ where
         let session_id = prss_params.session_id;
         let ring = prss_params.ring;
 
-        let params = SessionParameters::new(
-            threshold,
-            session_id,
-            self.own_identity.clone(),
-            role_assignments.clone(),
-        )
-        .map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("Failed to create a base session parameters: {:?}", e),
-            )
-        })?;
-
-        //Requires Sync network because PRSS robust init relies on bcast
-        let networking =
-            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Sync)
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Aborted,
-                        format!("Failed to create networking: {:?}", e),
-                    )
-                })?;
-
-        //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
-        let mut base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
+        let mut base_session = self
+            .create_base_session(session_id, threshold, role_assignments.clone())
+            .await
             .map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("Failed to create Base Session: {:?}", e),
-            )
-        })?;
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("Failed to create Base Session: {:?}", e),
+                )
+            })?;
 
         let store = self.data.prss_setup.clone();
         match ring {
@@ -296,7 +336,6 @@ where
         Ok(tonic::Response::new(PrssInitResponse {}))
     }
 
-    //TODO: FILL NETWORK INFO FROM ALL THE SESSONS
     #[instrument(
         name = "DKG-PREPROC",
         skip_all,
@@ -337,58 +376,22 @@ where
         let dkg_params = preproc_params.dkg_params;
         let session_type = preproc_params.session_type;
 
-        fn create_small_sessions<Z: ErrorCorrect + Invert + RingEmbed>(
-            base_sessions: Vec<BaseSessionStruct<AesRng, SessionParameters>>,
-            prss_setup: &PRSSSetup<Z>,
-        ) -> Vec<SmallSession<Z>> {
-            base_sessions
-                .into_iter()
-                .map(|base_session| {
-                    let prss_state = prss_setup.new_prss_session_state(base_session.session_id());
-                    SmallSession::new_from_prss_state(base_session, prss_state).unwrap()
-                })
-                .collect_vec()
-        }
-
-        fn create_large_sessions(
-            base_sessions: Vec<BaseSessionStruct<AesRng, SessionParameters>>,
-        ) -> Vec<LargeSession> {
-            base_sessions
-                .into_iter()
-                .map(LargeSession::new)
-                .collect_vec()
-        }
-
-        let own_identity = self.own_identity.clone();
         let factory = self.factory.clone();
-        let mut base_sessions = Vec::new();
-        let mut session_id_generator = AesRng::seed_from_u64(start_sid.0 as u64);
-        let sids = (0..num_sessions)
-            .map(|_| gen_random_sid(&mut session_id_generator, start_sid.0))
-            .collect_vec();
-        for session_id in sids {
-            let params = SessionParameters::new(
+
+        let base_sessions = self
+            .create_base_sessions(
+                start_sid,
+                num_sessions as usize,
                 threshold,
-                session_id,
-                own_identity.clone(),
                 role_assignments.clone(),
             )
-            .unwrap();
-            //We are executing offline phase, so requires Sync network
-            let networking =
-                (self.networking_strategy)(session_id, role_assignments.clone(), NetworkMode::Sync)
-                    .await
-                    .map_err(|e| {
-                        tonic::Status::new(
-                            tonic::Code::Aborted,
-                            format!("Failed to create networking: {:?}", e),
-                        )
-                    })?;
-            base_sessions.push(
-                BaseSessionStruct::new(params.clone(), networking, AesRng::from_entropy())
-                    .expect("Failed to create Base Session"),
-            );
-        }
+            .await
+            .map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("Failed to create Base Session: {:?}", e),
+                )
+            })?;
 
         match (dkg_params, session_type) {
             (DKGParams::WithoutSnS(_), SessionType::Small) => {
@@ -588,38 +591,15 @@ where
         let dkg_params = kg_params.dkg_params;
         let preproc_sid = kg_params.session_id_preproc;
 
-        let params = SessionParameters::new(
-            threshold,
-            session_id,
-            self.own_identity.clone(),
-            role_assignments.clone(),
-        )
-        .map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("Failed to create a base session parameters: {:?}", e),
-            )
-        })?;
-
-        //This is online phase of DKG, so can work in Async network
-        let networking =
-            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Async)
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Aborted,
-                        format!("Failed to create networking: {:?}", e),
-                    )
-                })?;
-
-        //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
-        let mut base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
+        let mut base_session = self
+            .create_base_session(session_id, threshold, role_assignments.clone())
+            .await
             .map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("Failed to create Base Session: {:?}", e),
-            )
-        })?;
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("Failed to create Base Session: {:?}", e),
+                )
+            })?;
 
         let key_store = self.data.key_store.clone();
         match (dkg_params, preproc_sid) {
@@ -747,40 +727,17 @@ where
                         format!("Failed to parse role assignment: {:?}", e),
                     )
                 })?;
-            let params = SessionParameters::new(
-                0,
-                session_id,
-                self.own_identity.clone(),
-                role_assignments.clone(),
-            )
-            .map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Aborted,
-                    format!("Failed to create a base session parameters: {:?}", e),
-                )
-            })?;
 
-            //We are running a fake dkg, network mode doesn't matter here
-            let networking =
-                (self.networking_strategy)(session_id, role_assignments, NetworkMode::Async)
-                    .await
-                    .map_err(|e| {
-                        tonic::Status::new(
-                            tonic::Code::Aborted,
-                            format!("Failed to create networking: {:?}", e),
-                        )
-                    })?;
+            let mut base_session = self
+                .create_base_session(session_id, 0, role_assignments.clone())
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("Failed to create Base Session: {:?}", e),
+                    )
+                })?;
 
-            //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
-            let mut base_session =
-                BaseSessionStruct::new(params, networking, AesRng::from_entropy()).map_err(
-                    |e| {
-                        tonic::Status::new(
-                            tonic::Code::Aborted,
-                            format!("Failed to create Base Session: {:?}", e),
-                        )
-                    },
-                )?;
             let keys = local_initialize_key_material(&mut base_session, dkg_params)
                 .await
                 .map_err(|e| {
@@ -878,71 +835,92 @@ where
         let num_blocks_per_ctxt = num_bits_message.div_ceil(log_message_modulus as usize);
         let decryption_mode = preproc_params.decryption_mode;
 
-        let params = SessionParameters::new(
-            threshold,
-            session_id,
-            self.own_identity.clone(),
-            role_assignments.clone(),
-        )
-        .map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("Failed to create a base session parameters: {:?}", e),
-            )
-        })?;
-
-        //This is running offline phase for ddec, so requires Sync network
-        let networking =
-            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Sync)
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Aborted,
-                        format!("Failed to create networking: {:?}", e),
-                    )
-                })?;
-
-        //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
-        let base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
-            .map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Aborted,
-                    format!("Failed to create Base Session: {:?}", e),
-                )
-            })?;
-
         match decryption_mode {
+            //For BitDec we do parallelisation by spawning one session per "raw" ctxt
             DecryptionMode::BitDecLarge => {
-                let mut large_session = LargeSession::new(base_session);
+                let num_sessions = num_blocks_per_ctxt;
+                let base_sessions = self
+                    .create_base_sessions(
+                        session_id,
+                        num_sessions,
+                        threshold,
+                        role_assignments.clone(),
+                    )
+                    .await
+                    .map_err(|e| {
+                        tonic::Status::new(
+                            tonic::Code::Aborted,
+                            format!("Failed to create Base Session: {:?}", e),
+                        )
+                    })?;
+                let large_sessions = create_large_sessions(base_sessions);
+
                 let store = self.data.ddec_preproc_store_bd.clone();
                 let my_future = || async move {
-                    for _ in 0..num_ctxt {
-                        match init_prep_bitdec_large(&mut large_session, num_blocks_per_ctxt).await
-                        {
-                            Ok(preproc) => {
-                                if let Some(mut entry) = store.get_mut(&session_id) {
-                                    (*entry).push(preproc);
-                                } else {
-                                    store.insert(session_id, vec![preproc]);
+                    let mut tasks = JoinSet::new();
+                    for (session_num, mut large_session) in large_sessions.into_iter().enumerate() {
+                        tasks.spawn(
+                            async move {
+                                let mut res = Vec::new();
+                                for _ in 0..num_ctxt {
+                                    //We need to generate preprocessing for one block as we parallelised it
+                                    match init_prep_bitdec_large(&mut large_session, 1).await {
+                                        Ok(preproc) => res.push(preproc),
+                                        Err(_e) => {
+                                            tracing::error!(
+                                                "Failed to init preprocessing of noise flooding material"
+                                            );
+                                        }
+                                    };
                                 }
+                                (res, session_num, large_session)
                             }
-                            Err(_e) => {
-                                tracing::error!(
-                                    "Failed to init preprocessing of noise flooding material"
-                                );
-                            }
-                        };
+                            .instrument(tracing::Span::current()),
+                        );
                     }
 
-                    fill_network_memory_info_single_session(large_session);
+                    //Join on all those tasks
+                    let mut preprocessings = Vec::new();
+                    let mut sessions = Vec::new();
+                    while let Some(Ok((res, session_num, large_session))) = tasks.join_next().await
+                    {
+                        preprocessings.push((session_num, res));
+                        sessions.push(large_session);
+                    }
+
+                    // At this points preprocessings is a Vec of Vec of preprocessings
+                    // such that preprocessings[i][j] is the preprocessing to decrypt the ith block
+                    // of the jth "extended" Ctxt (FheType)
+                    //Push the preprocessing to the store sorted by block
+                    preprocessings.sort_by_key(|p| p.0);
+                    let preprocessings = preprocessings.into_iter().map(|p| p.1).collect_vec();
+                    let _ = store.insert(session_id, preprocessings);
+
+                    fill_network_memory_info_multiple_sessions(sessions);
                 };
                 self.data.status_store.insert(
                     session_id,
                     tokio::spawn(my_future().instrument(tracing::Span::current())),
                 );
             }
+            //For BitDec we do parallelisation by spawning one session per ctxt
             DecryptionMode::BitDecSmall => {
-                let prss_state = self
+                let num_sessions = num_blocks_per_ctxt;
+                let base_sessions = self
+                    .create_base_sessions(
+                        session_id,
+                        num_sessions,
+                        threshold,
+                        role_assignments.clone(),
+                    )
+                    .await
+                    .map_err(|e| {
+                        tonic::Status::new(
+                            tonic::Code::Aborted,
+                            format!("Failed to create Base Session: {:?}", e),
+                        )
+                    })?;
+                let prss_setup = self
                     .data
                     .prss_setup
                     .get(&SupportedRing::ResiduePolyZ64)
@@ -952,38 +930,63 @@ where
                             "Failed to retrieve prss_setup, try init it first".to_string(),
                         )
                     })?
-                    .get_poly64()?
-                    .new_prss_session_state(session_id);
-                let mut small_session =
-                    SmallSession::new_from_prss_state(base_session, prss_state).unwrap();
+                    .get_poly64()?;
+                let small_sessions = create_small_sessions(base_sessions, &prss_setup);
                 let store = self.data.ddec_preproc_store_bd.clone();
                 let my_future = || async move {
-                    for _ in 0..num_ctxt {
-                        match init_prep_bitdec_small(&mut small_session, num_blocks_per_ctxt).await
-                        {
-                            Ok(preproc) => {
-                                if let Some(mut entry) = store.get_mut(&session_id) {
-                                    (*entry).push(preproc);
-                                } else {
-                                    store.insert(session_id, vec![preproc]);
+                    let mut tasks = JoinSet::new();
+                    for (session_num, mut small_session) in small_sessions.into_iter().enumerate() {
+                        tasks.spawn(
+                            async move {
+                                let mut res = Vec::new();
+                                for _ in 0..num_ctxt {
+                                    match init_prep_bitdec_small(
+                                        &mut small_session,
+                                        1, //We need to generate preprocessing for one block as we parallelised it
+                                    )
+                                    .await
+                                    {
+                                        Ok(preproc) => res.push(preproc),
+                                        Err(_e) => {
+                                            tracing::error!(
+                                                "Failed to init preprocessing of noise flooding material"
+                                            );
+                                        }
+                                    };
                                 }
+                                (res, session_num, small_session)
                             }
-                            Err(_e) => {
-                                tracing::error!(
-                                    "Failed to init preprocessing of noise flooding material"
-                                );
-                            }
-                        };
+                            .instrument(tracing::Span::current()),
+                        );
                     }
-                    fill_network_memory_info_single_session(small_session);
+
+                    //Join on all those tasks
+                    let mut preprocessings = Vec::new();
+                    let mut sessions = Vec::new();
+                    while let Some(Ok((res, session_num, small_session))) = tasks.join_next().await
+                    {
+                        preprocessings.push((session_num, res));
+                        sessions.push(small_session);
+                    }
+
+                    // At this points preprocessings is a Vec of Vec of preprocessings
+                    // such that preprocessings[i][j] is the preprocessing to decrypt the ith block
+                    // of the jth "extended" Ctxt (FheType)
+                    //Push the preprocessing to the store sorted by block
+                    preprocessings.sort_by_key(|p| p.0);
+                    let preprocessings = preprocessings.into_iter().map(|p| p.1).collect_vec();
+                    let _ = store.insert(session_id, preprocessings);
+
+                    fill_network_memory_info_multiple_sessions(sessions);
                 };
                 self.data.status_store.insert(
                     session_id,
                     tokio::spawn(my_future().instrument(tracing::Span::current())),
                 );
             }
+            // NoiseFlood Preproc is so tiny that we just do everything in one go
             DecryptionMode::NoiseFloodSmall => {
-                let prss_state = self
+                let prss_setup = self
                     .data
                     .prss_setup
                     .get(&SupportedRing::ResiduePolyZ128)
@@ -993,11 +996,17 @@ where
                             "Failed to retrieve prss_setup, try init it first".to_string(),
                         )
                     })?
-                    .get_poly128()?
-                    .new_prss_session_state(session_id);
-                let mut small_session = Small::new(
-                    SmallSession::new_from_prss_state(base_session, prss_state).unwrap(),
-                );
+                    .get_poly128()?;
+                let base_session = self
+                    .create_base_session(session_id, threshold, role_assignments.clone())
+                    .await
+                    .map_err(|e| {
+                        tonic::Status::new(
+                            tonic::Code::Aborted,
+                            format!("Failed to create Base Session: {:?}", e),
+                        )
+                    })?;
+                let mut small_session = Small::new(create_small_session(base_session, &prss_setup));
                 let store = self.data.ddec_preproc_store_nf.clone();
                 let my_future = || async move {
                     for _ in 0..num_ctxt {
@@ -1026,8 +1035,18 @@ where
                     tokio::spawn(my_future().instrument(tracing::Span::current())),
                 );
             }
+            // NoiseFlood Preproc is so tiny that we just do everything in one go
             DecryptionMode::NoiseFloodLarge => {
-                let mut large_session = Large::new(LargeSession::new(base_session));
+                let base_session = self
+                    .create_base_session(session_id, threshold, role_assignments.clone())
+                    .await
+                    .map_err(|e| {
+                        tonic::Status::new(
+                            tonic::Code::Aborted,
+                            format!("Failed to create Base Session: {:?}", e),
+                        )
+                    })?;
+                let mut large_session = Large::new(create_large_session(base_session));
                 let store = self.data.ddec_preproc_store_nf.clone();
                 let my_future = || async move {
                     for _ in 0..num_ctxt {
@@ -1129,17 +1148,17 @@ where
             .clone();
 
         let res_store = self.data.ddec_result_store.clone();
-        //Good enough for benchmarking purposes
-        let mut session_id_generator = AesRng::seed_from_u64(session_id.0 as u64);
-        //This is throughput testing
+        // This is throughput testing we thus will use a single ciphertext and copy
+        // it the expected number of times (num_copies).
+        // - For Noiseflood technique we first do the SnS before copying the ctxt as we do
+        //   not want to benchmark SnS here
+        // - For BitDec it is not yet parallelised at the block level
         if let Some(throughput) = throughput {
             let num_sessions = throughput.num_sessions;
             let num_copies = throughput.num_copies;
             let chunk_size = num_copies.div_ceil(num_sessions);
-            let own_identity = self.own_identity.clone();
             let role_assignments = role_assignments.clone();
             let prss_setup = self.data.prss_setup.clone();
-            let networking_strategy = self.networking_strategy.clone();
             let sns_key = Arc::new(key_ref.0.sns_key.clone().unwrap());
             let ks = Arc::new(
                 key_ref
@@ -1150,30 +1169,40 @@ where
                     .key_switching_key
                     .clone(),
             );
+            //Throughput number of ctxts is dictated by num_sessions*num_copies
+            //we thus only take the 1st ctxt here
             let num_blocks = ctxts[0].clone().into_blocks().len();
+            let ctxt = ctxts[0].clone();
 
-            //Prepare for bcast
-            let bcast_sid = gen_random_sid(&mut session_id_generator, session_id.0);
-            let params = SessionParameters::new(
-                threshold,
-                bcast_sid,
-                own_identity.clone(),
-                role_assignments.clone(),
-            )
-            .unwrap();
-            let networking =
-                (networking_strategy)(bcast_sid, role_assignments.clone(), NetworkMode::Async)
-                    .await
-                    .unwrap();
-            let bcast_session =
-                BaseSessionStruct::new(params.clone(), networking, AesRng::from_entropy()).unwrap();
+            //Create one session for bcast
+            let bcast_session = self
+                .create_base_session(session_id, threshold, role_assignments.clone())
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("Failed to create Base Session: {:?}", e),
+                    )
+                })?;
+            let new_session_id = bcast_session.session_id();
 
             match decryption_mode {
                 DecryptionMode::NoiseFloodSmall => {
-                    let ctxts_large = ctxts
-                        .iter()
-                        .map(|ctxt| sns_key.to_large_ciphertext(ctxt).unwrap())
-                        .collect_vec();
+                    let base_sessions = self
+                        .create_base_sessions(
+                            new_session_id,
+                            num_sessions,
+                            threshold,
+                            role_assignments.clone(),
+                        )
+                        .await
+                        .map_err(|e| {
+                            tonic::Status::new(
+                                tonic::Code::Aborted,
+                                format!("Failed to create Base Session: {:?}", e),
+                            )
+                        })?;
+                    let ct_large = sns_key.to_large_ciphertext(&ctxt).unwrap();
                     //Do bcast after the Sns to sync parties
                     let _ = broadcast_from_all(
                         &bcast_session,
@@ -1181,127 +1210,81 @@ where
                     )
                     .await;
                     let my_future = || async move {
+                        let num_blocks = ct_large.len();
+
+                        // Copy the ctxt
+                        let ctxt_chunked = vec![vec![ct_large; chunk_size]; num_sessions];
+
+                        // Derive all the prss states (1 per session)
+                        let prss_setup = prss_setup
+                            .get(&SupportedRing::ResiduePolyZ128)
+                            .ok_or_else(|| {
+                                tonic::Status::new(
+                                    tonic::Code::Aborted,
+                                    "Failed to retrieve prss_setup, try init it first".to_string(),
+                                )
+                            })
+                            .unwrap()
+                            .get_poly128()
+                            .unwrap();
+
+                        // Instantiate required number of small sessions
+                        let small_sessions = create_small_sessions(base_sessions, &prss_setup)
+                            .into_iter()
+                            .map(Small::new)
+                            .collect_vec();
+
+                        // Spawn a tokio task for each session
+                        let mut decryption_tasks = JoinSet::new();
+                        for (mut small_session, ctxts) in
+                            small_sessions.into_iter().zip(ctxt_chunked.into_iter())
+                        {
+                            let decrypt_span = tracing::info_span!("Online-NoiseFloodSmall");
+                            let key_ref = key_ref.clone();
+                            tracing::info!(
+                                "Starting session with id {} to decrypt {} ctxts",
+                                small_session.session.borrow().session_id(),
+                                ctxts.len()
+                            );
+                            decryption_tasks.spawn(
+                                async move {
+                                    let mut noiseflood_preprocessing = small_session
+                                        .init_prep_noiseflooding(ctxts.len() * num_blocks)
+                                        .await
+                                        .unwrap();
+
+                                    let mut base_session =
+                                        small_session.session.into_inner().base_session;
+
+                                    let mut res = Vec::new();
+                                    for ctxt in ctxts.into_iter() {
+                                        res.push(
+                                            run_decryption_noiseflood_64(
+                                                &mut base_session,
+                                                noiseflood_preprocessing.as_mut(),
+                                                &key_ref.1,
+                                                ctxt,
+                                            )
+                                            .await
+                                            .unwrap(),
+                                        );
+                                    }
+                                    (res, base_session)
+                                }
+                                .instrument(decrypt_span),
+                            );
+                        }
+                        //Retrieve info from this batch
                         let mut vec_res = Vec::new();
                         let mut vec_base_sessions = Vec::new();
-                        for ct_large in ctxts_large.into_iter() {
-                            let num_blocks = ct_large.len();
-
-                            // Copy the ctxt
-                            let ctxt_chunked = vec![vec![ct_large; chunk_size]; num_sessions];
-
-                            let sids = (0..num_sessions)
-                                .map(|_| gen_random_sid(&mut session_id_generator, session_id.0))
-                                .collect_vec();
-
-                            // Derive all the prss states (1 per session)
-                            let prss_states = sids
-                                .iter()
-                                .map(|sid| {
-                                    prss_setup
-                                        .get(&SupportedRing::ResiduePolyZ128)
-                                        .ok_or_else(|| {
-                                            tonic::Status::new(
-                                                tonic::Code::Aborted,
-                                                "Failed to retrieve prss_setup, try init it first"
-                                                    .to_string(),
-                                            )
-                                        })
-                                        .unwrap()
-                                        .get_poly128()
-                                        .unwrap()
-                                        .new_prss_session_state(*sid)
-                                })
-                                .collect_vec();
-
-                            // Instantiate required number of base sessions
-                            let mut base_sessions = Vec::new();
-                            for session_id in sids {
-                                let params = SessionParameters::new(
-                                    threshold,
-                                    session_id,
-                                    own_identity.clone(),
-                                    role_assignments.clone(),
-                                )
-                                .unwrap();
-                                let networking = (networking_strategy)(
-                                    session_id,
-                                    role_assignments.clone(),
-                                    NetworkMode::Async,
-                                )
-                                .await
-                                .unwrap();
-                                base_sessions.push(
-                                    BaseSessionStruct::new(
-                                        params.clone(),
-                                        networking,
-                                        AesRng::from_entropy(),
-                                    )
-                                    .unwrap(),
-                                );
-                            }
-
-                            // Crate required number of small sessions from base sessions and prss_states
-                            let small_sessions = base_sessions
-                                .into_iter()
-                                .zip(prss_states.into_iter())
-                                .map(|(base_session, prss_state)| {
-                                    Small::new(
-                                        SmallSession::new_from_prss_state(base_session, prss_state)
-                                            .unwrap(),
-                                    )
-                                })
-                                .collect_vec();
-
-                            // Spawn a tokio task for each session
-                            let mut decryption_tasks = JoinSet::new();
-                            for (mut small_session, ctxts) in
-                                small_sessions.into_iter().zip(ctxt_chunked.into_iter())
-                            {
-                                let decrypt_span = tracing::info_span!("Online-NoiseFloodSmall");
-                                let key_ref = key_ref.clone();
-                                tracing::info!(
-                                    "Starting session with id {} to decrypt {} ctxts",
-                                    small_session.session.borrow().session_id(),
-                                    ctxts.len()
-                                );
-                                decryption_tasks.spawn(
-                                    async move {
-                                        let mut noiseflood_preprocessing = small_session
-                                            .init_prep_noiseflooding(ctxts.len() * num_blocks)
-                                            .await
-                                            .unwrap();
-
-                                        let mut base_session =
-                                            small_session.session.into_inner().base_session;
-
-                                        let mut res = Vec::new();
-                                        for ctxt in ctxts.into_iter() {
-                                            res.push(
-                                                run_decryption_noiseflood_64(
-                                                    &mut base_session,
-                                                    noiseflood_preprocessing.as_mut(),
-                                                    &key_ref.1,
-                                                    ctxt,
-                                                )
-                                                .await
-                                                .unwrap(),
-                                            );
-                                        }
-                                        (res, base_session)
-                                    }
-                                    .instrument(decrypt_span),
-                                );
-                            }
-                            //Retrieve info from this batch
-                            let mut all_res = Vec::new();
-                            while let Some(Ok((res, base_session))) =
-                                decryption_tasks.join_next().await
-                            {
-                                vec_base_sessions.push(base_session);
-                                all_res.push(res[0]);
-                            }
-                            vec_res.push(all_res[0]);
+                        let mut all_res = Vec::new();
+                        while let Some(Ok((res, base_session))) = decryption_tasks.join_next().await
+                        {
+                            vec_base_sessions.push(base_session);
+                            all_res.push(res[0]);
                         }
+                        vec_res.push(all_res[0]);
+
                         res_store.insert(session_id, vec_res);
                         fill_network_memory_info_multiple_sessions(vec_base_sessions);
                     };
@@ -1320,6 +1303,21 @@ where
                     );
                 }
                 DecryptionMode::BitDecSmall => {
+                    // Create enough sessions to enable parallelism for TDecTwo
+                    let base_sessions = self
+                        .create_base_sessions(
+                            new_session_id,
+                            num_sessions * num_blocks,
+                            threshold,
+                            role_assignments.clone(),
+                        )
+                        .await
+                        .map_err(|e| {
+                            tonic::Status::new(
+                                tonic::Code::Aborted,
+                                format!("Failed to create Base Session: {:?}", e),
+                            )
+                        })?;
                     //Do bcast to sync parties
                     let _ = broadcast_from_all(
                         &bcast_session,
@@ -1327,125 +1325,149 @@ where
                     )
                     .await;
                     let my_future = || async move {
-                        let mut vec_res = Vec::new();
-                        let mut vec_base_sessions = Vec::new();
-                        for ctxt in ctxts.into_iter() {
-                            // Copy the ctxt
-                            let ctxt_chunked = vec![vec![ctxt; chunk_size]; num_sessions];
+                        // Copy the ctxt
+                        let ctxt_chunked = vec![vec![ctxt.clone(); chunk_size]; num_sessions];
 
-                            let sids = (0..num_sessions)
-                                .map(|_| gen_random_sid(&mut session_id_generator, session_id.0))
-                                .collect_vec();
-
-                            // Derive all the prss states (1 per session)
-                            let prss_states = sids
-                                .iter()
-                                .map(|sid| {
-                                    prss_setup
-                                        .get(&SupportedRing::ResiduePolyZ64)
-                                        .ok_or_else(|| {
-                                            tonic::Status::new(
-                                                tonic::Code::Aborted,
-                                                "Failed to retrieve prss_setup, try init it first"
-                                                    .to_string(),
-                                            )
-                                        })
-                                        .unwrap()
-                                        .get_poly64()
-                                        .unwrap()
-                                        .new_prss_session_state(*sid)
-                                })
-                                .collect_vec();
-
-                            // Instantiate required number of base sessions
-                            let mut base_sessions = Vec::new();
-                            for session_id in sids {
-                                let params = SessionParameters::new(
-                                    threshold,
-                                    session_id,
-                                    own_identity.clone(),
-                                    role_assignments.clone(),
+                        // Derive all the prss states (1 per session)
+                        let prss_setup = prss_setup
+                            .get(&SupportedRing::ResiduePolyZ64)
+                            .ok_or_else(|| {
+                                tonic::Status::new(
+                                    tonic::Code::Aborted,
+                                    "Failed to retrieve prss_setup, try init it first".to_string(),
                                 )
-                                .unwrap();
-                                let networking = (networking_strategy)(
-                                    session_id,
-                                    role_assignments.clone(),
-                                    NetworkMode::Sync,
-                                )
-                                .await
-                                .unwrap();
-                                base_sessions.push(
-                                    BaseSessionStruct::new(
-                                        params.clone(),
-                                        networking,
-                                        AesRng::from_entropy(),
-                                    )
-                                    .unwrap(),
-                                );
-                            }
+                            })
+                            .unwrap()
+                            .get_poly64()
+                            .unwrap();
 
-                            // Create required number of small sessions from base sessions and prss_states
-                            let small_sessions = base_sessions
-                                .into_iter()
-                                .zip(prss_states.into_iter())
-                                .map(|(base_session, prss_state)| {
-                                    SmallSession::new_from_prss_state(base_session, prss_state)
-                                        .unwrap()
-                                })
-                                .collect_vec();
+                        // Create required number of small sessions from base sessions and prss_states
+                        let small_sessions = create_small_sessions(base_sessions, &prss_setup);
+                        let small_sessions = small_sessions.into_iter().chunks(num_blocks);
 
-                            // Spawn a tokio task for each session
-                            let mut decryption_tasks = JoinSet::new();
-                            for (mut small_session, ctxts) in
-                                small_sessions.into_iter().zip(ctxt_chunked.into_iter())
-                            {
-                                let key_ref = key_ref.clone();
-                                tracing::info!(
-                                    "Starting session with id {} to decrypt {} ctxts",
-                                    small_session.session_id(),
-                                    ctxts.len()
-                                );
-                                let ks = ks.clone();
-                                decryption_tasks.spawn(
-                                    async move {
-                                        let mut bitdec_preprocessing = init_prep_bitdec_small(
-                                            &mut small_session,
-                                            ctxts.len() * num_blocks,
-                                        )
-                                        .await
-                                        .unwrap();
+                        // Spawn a tokio task for each session
+                        let mut decryption_tasks = JoinSet::new();
+                        for (small_session_chunk, ctxts) in
+                            small_sessions.into_iter().zip(ctxt_chunked.into_iter())
+                        {
+                            let key_ref = key_ref.clone();
+                            let ks = ks.clone();
+                            let small_session_chunk = small_session_chunk.collect_vec();
 
-                                        let mut base_session = small_session.base_session;
+                            decryption_tasks.spawn(
+                                async move {
+                                    //First, rework the ctxt layout to match sessions'
+                                    let mut ctxts_w_session_layout = vec![Vec::new(); num_blocks];
+                                    ctxts.into_iter().for_each(|ctxt| {
+                                        ctxt.into_blocks()
+                                            .into_iter()
+                                            .zip(ctxts_w_session_layout.iter_mut())
+                                            .for_each(|(block, ctxts)| ctxts.push(block));
+                                    });
 
-                                        let mut res = Vec::new();
-                                        for ctxt in ctxts.into_iter() {
-                                            res.push(
-                                                run_decryption_bitdec_64(
+                                    //Give block i of each ctxt to session i
+                                    let mut tasks = JoinSet::new();
+                                    for (block_idx, (mut small_session, inner_blocks_ctxt)) in
+                                        small_session_chunk
+                                            .into_iter()
+                                            .zip(ctxts_w_session_layout.into_iter())
+                                            .enumerate()
+                                    {
+                                        let key_ref = Arc::clone(&key_ref);
+                                        let ks = Arc::clone(&ks);
+                                        tasks.spawn(
+                                            async move {
+                                                let mut bitdec_preprocessing =
+                                                    init_prep_bitdec_small(
+                                                        &mut small_session,
+                                                        inner_blocks_ctxt.len(),
+                                                    )
+                                                    .await
+                                                    .unwrap();
+                                                //Split preprocessing into chunks for each ctxt
+                                                let mut inner_preprocessings = (0
+                                                    ..inner_blocks_ctxt.len())
+                                                    .map(|_| {
+                                                        bitdec_preprocessing
+                                                            .cast_to_in_memory_impl(1)
+                                                            .unwrap()
+                                                    })
+                                                    .collect_vec();
+                                                let mut base_session = small_session.base_session;
+                                                let res = task_decryption_bitdec_par::<
+                                                    EXTENSION_DEGREE,
+                                                    _,
+                                                    _,
+                                                    _,
+                                                    u64,
+                                                >(
                                                     &mut base_session,
-                                                    bitdec_preprocessing.as_mut(),
+                                                    &mut inner_preprocessings,
                                                     &key_ref.1,
                                                     &ks,
-                                                    ctxt,
+                                                    inner_blocks_ctxt,
                                                 )
-                                                .await
-                                                .unwrap(),
-                                            );
-                                        }
-                                        (res, base_session)
+                                                .await;
+                                                (block_idx, res, base_session)
+                                            }
+                                            .instrument(tracing::Span::current()),
+                                        );
                                     }
-                                    .instrument(tracing::Span::current()),
-                                );
-                            }
-                            //Retrieve info from this batch
-                            let mut all_res = Vec::new();
-                            while let Some(Ok((res, base_session))) =
-                                decryption_tasks.join_next().await
-                            {
-                                vec_base_sessions.push(base_session);
-                                all_res.push(res[0]);
-                            }
-                            vec_res.push(all_res[0]);
+
+                                    //Join on task of block-wise decryptions
+                                    //Re-assemble the partial resuts coming from all the tasks
+                                    let mut indexed_blocks_accumulator = Vec::new();
+                                    let mut sessions = Vec::new();
+                                    while let Some(partial_decrypts) = tasks.join_next().await {
+                                        let (block_idx, partial_decrypts, session) =
+                                            partial_decrypts.unwrap();
+                                        indexed_blocks_accumulator
+                                            .push((block_idx, partial_decrypts.unwrap()));
+                                        sessions.push(session);
+                                    }
+
+                                    indexed_blocks_accumulator
+                                        .sort_by_key(|(index, _blocks)| *index);
+
+                                    let mut blocks_partial_decrypts = Vec::new();
+                                    for _ in 0..num_ctxts {
+                                        let mut rearranged_blocks = BlocksPartialDecrypt::default();
+                                        for (_, blocks) in indexed_blocks_accumulator.iter_mut() {
+                                            //If this fails the task did not compute num_ctxts
+                                            //which should not happen
+                                            let block = blocks.pop().unwrap();
+                                            rearranged_blocks.bits_in_block = block.bits_in_block;
+                                            rearranged_blocks
+                                                .partial_decryptions
+                                                .push(block.partial_decryption);
+                                        }
+                                        blocks_partial_decrypts.push(rearranged_blocks);
+                                    }
+
+                                    let res = blocks_partial_decrypts
+                                        .into_iter()
+                                        .map(|blocks| {
+                                            Wrapping(combine_plaintext_blocks(blocks).unwrap())
+                                        })
+                                        .rev() //Add a rev because with push and pop we reversed ctxt order
+                                        .collect_vec();
+
+                                    (res, sessions)
+                                }
+                                .instrument(tracing::Span::current()),
+                            );
                         }
+                        //Retrieve info from this batch
+                        let mut vec_res = Vec::new();
+                        let mut vec_base_sessions = Vec::new();
+                        let mut all_res = Vec::new();
+                        while let Some(Ok((res, base_session))) = decryption_tasks.join_next().await
+                        {
+                            vec_base_sessions.extend(base_session);
+                            all_res.push(res[0]);
+                        }
+                        vec_res.push(all_res[0]);
+
                         res_store.insert(session_id, vec_res);
                         fill_network_memory_info_multiple_sessions(vec_base_sessions);
                     };
@@ -1500,7 +1522,11 @@ where
                     },
                 )?;
             match decryption_mode {
+                // For BitDec we do parallelization by spawning one session per "raw" ctxt
                 DecryptionMode::BitDecLarge | DecryptionMode::BitDecSmall => {
+                    //We assume all ctxt are same TFHEType
+                    let num_sessions = ctxts.first().unwrap().blocks().len();
+                    //let base_sessions = self.create_base_sessions(session_id,)
                     let preprocessings = if let Some(preproc_sid) = preproc_sid {
                         self.data.ddec_preproc_store_bd.remove(&preproc_sid).ok_or_else(|| {
                         tonic::Status::new(
@@ -1509,44 +1535,136 @@ where
                         )
                     })?.1
                     } else {
-                        (0..num_ctxts)
+                        (0..num_sessions)
                             .map(|_| {
-                                let my_box: Box<dyn BitDecPreprocessing<EXTENSION_DEGREE>> =
-                                    Box::new(DummyPreprocessing::new(
-                                        session_id.0 as u64,
-                                        base_session.clone(),
-                                    ));
-                                my_box
+                                (0..num_ctxts)
+                                    .map(|_| {
+                                        let my_box: Box<dyn BitDecPreprocessing<EXTENSION_DEGREE>> =
+                                            Box::new(DummyPreprocessing::new(
+                                                session_id.0 as u64,
+                                                base_session.clone(),
+                                            ));
+                                        my_box
+                                    })
+                                    .collect_vec()
                             })
                             .collect_vec()
                     };
-                    let mut res = Vec::new();
+
+                    //Sanity checking
+                    if num_sessions != preprocessings.len() {
+                        return Err(tonic::Status::new(
+                            tonic::Code::Aborted,
+                            format!(
+                                "Expected {} blocks of preprocessing, found only {}",
+                                num_sessions,
+                                preprocessings.len()
+                            ),
+                        ));
+                    }
+
+                    let base_sessions = self
+                        .create_base_sessions(
+                            session_id,
+                            num_sessions,
+                            threshold,
+                            role_assignments.clone(),
+                        )
+                        .await
+                        .unwrap();
+
+                    //NOTE: Inline the decryption process to parallelize it more easily without side effects on
+                    //rest of codebase for now
+
+                    //First, rework the ctxt layout to match sessions'
+                    let mut ctxts_w_session_layout = vec![Vec::new(); num_sessions];
+                    ctxts.into_iter().for_each(|ctxt| {
+                        ctxt.into_blocks()
+                            .into_iter()
+                            .zip(ctxts_w_session_layout.iter_mut())
+                            .for_each(|(block, ctxts)| ctxts.push(block));
+                    });
 
                     let my_future = || async move {
-                        let ks = &key_ref.0.server_key.as_ref().as_ref().key_switching_key;
-                        for (ctxt, mut preprocessing) in
-                            ctxts.into_iter().zip(preprocessings.into_iter())
+                        let ks = Arc::new(
+                            key_ref
+                                .0
+                                .server_key
+                                .as_ref()
+                                .as_ref()
+                                .key_switching_key
+                                .clone(),
+                        );
+                        let mut tasks = JoinSet::new();
+                        for (block_idx, (ctxts_blocks, (mut session, inner_preprocessings))) in
+                            ctxts_w_session_layout
+                                .into_iter()
+                                .zip(base_sessions.into_iter().zip(preprocessings.into_iter()))
+                                .enumerate()
                         {
-                            res.push(
-                                run_decryption_bitdec_64(
-                                    &mut base_session,
-                                    preprocessing.as_mut(),
-                                    &key_ref.1,
-                                    ks,
-                                    ctxt,
-                                )
-                                .await
-                                .map_err(|e| {
-                                    tonic::Status::new(
-                                        tonic::Code::Aborted,
-                                        format!("Error while running bitdec ddec {e}"),
+                            let ksk = ks.clone();
+                            let key_share = key_ref.clone();
+                            //Each task decrypts the ith block of all ciphertexts
+                            //At this point the inner_preprocessings needs to be in memory
+
+                            tasks.spawn(
+                                async move {
+                                    let mut in_mem_prep = Vec::new();
+                                    for mut inner_preprocessing in inner_preprocessings.into_iter()
+                                    {
+                                        //NOTE: Ensures here we have enough material in RAM to decrypt
+                                        // ideally you'd want to do that sooner so request to Redis
+                                        // are batched (see here we only cast material for 1 ctxt)
+                                        in_mem_prep
+                                            .push(inner_preprocessing.cast_to_in_memory_impl(1).unwrap());
+                                    }
+                                    (block_idx,task_decryption_bitdec_par::<EXTENSION_DEGREE, _, _, _, u64>(
+                                        &mut session,
+                                        &mut in_mem_prep,
+                                        &key_share.1,
+                                        &ksk,
+                                        ctxts_blocks,
                                     )
-                                })
-                                .unwrap(),
-                            )
+                                    .await,session)
+                                }
+                                .instrument(tracing::Span::current()),
+                            );
                         }
+
+                        //Re-assemble the partial resuts coming from all the tasks
+                        let mut indexed_blocks_accumulator = Vec::new();
+                        let mut sessions = Vec::new();
+                        while let Some(partial_decrypts) = tasks.join_next().await {
+                            let (block_idx, partial_decrypts, session) = partial_decrypts.unwrap();
+                            indexed_blocks_accumulator.push((block_idx, partial_decrypts.unwrap()));
+                            sessions.push(session);
+                        }
+
+                        indexed_blocks_accumulator.sort_by_key(|(index, _blocks)| *index);
+
+                        let mut blocks_partial_decrypts = Vec::new();
+                        for _ in 0..num_ctxts {
+                            let mut rearranged_blocks = BlocksPartialDecrypt::default();
+                            for (_, blocks) in indexed_blocks_accumulator.iter_mut() {
+                                //If this fails the task did not compute num_ctxts
+                                //which should not happen
+                                let block = blocks.pop().unwrap();
+                                rearranged_blocks.bits_in_block = block.bits_in_block;
+                                rearranged_blocks
+                                    .partial_decryptions
+                                    .push(block.partial_decryption);
+                            }
+                            blocks_partial_decrypts.push(rearranged_blocks);
+                        }
+
+                        let res = blocks_partial_decrypts
+                            .into_iter()
+                            .map(|blocks| Wrapping(combine_plaintext_blocks(blocks).unwrap()))
+                            .rev() //Add a rev because with push and pop we reversed ctxt order
+                            .collect_vec();
+
                         res_store.insert(session_id, res);
-                        fill_network_memory_info_single_session(base_session);
+                        fill_network_memory_info_multiple_sessions(sessions);
                     };
                     self.data.status_store.insert(
                         session_id,
@@ -1917,4 +2035,41 @@ pub fn gen_random_sid(rng: &mut AesRng, current_sid: u128) -> SessionId {
             | ((rng.next_u32() as u128) << 32)
             | (current_sid & 0xFFFF_FFFF),
     )
+}
+
+fn create_small_session<Z: ErrorCorrect + Invert + RingEmbed>(
+    base_session: BaseSessionStruct<AesRng, SessionParameters>,
+    prss_setup: &PRSSSetup<Z>,
+) -> SmallSession<Z> {
+    create_small_sessions(vec![base_session], prss_setup)
+        .pop()
+        .unwrap()
+}
+
+fn create_small_sessions<Z: ErrorCorrect + Invert + RingEmbed>(
+    base_sessions: Vec<BaseSessionStruct<AesRng, SessionParameters>>,
+    prss_setup: &PRSSSetup<Z>,
+) -> Vec<SmallSession<Z>> {
+    base_sessions
+        .into_iter()
+        .map(|base_session| {
+            let prss_state = prss_setup.new_prss_session_state(base_session.session_id());
+            SmallSession::new_from_prss_state(base_session, prss_state).unwrap()
+        })
+        .collect_vec()
+}
+
+fn create_large_session(
+    base_session: BaseSessionStruct<AesRng, SessionParameters>,
+) -> LargeSession {
+    create_large_sessions(vec![base_session]).pop().unwrap()
+}
+
+fn create_large_sessions(
+    base_sessions: Vec<BaseSessionStruct<AesRng, SessionParameters>>,
+) -> Vec<LargeSession> {
+    base_sessions
+        .into_iter()
+        .map(LargeSession::new)
+        .collect_vec()
 }

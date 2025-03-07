@@ -85,6 +85,15 @@ pub trait BitPreprocessing<Z: Clone>: Send + Sync {
     fn bits_len(&self) -> usize;
 }
 
+/// InMemory type that implement the [`BitDecPreprocessing`]
+/// Trait. Put here because the trait requires being able to
+/// cast to this struct
+#[derive(Default)]
+pub struct InMemoryBitDecPreprocessing<const EXTENSION_DEGREE: usize> {
+    available_triples: Vec<Triple<ResiduePoly<Z64, EXTENSION_DEGREE>>>,
+    available_bits: Vec<Share<ResiduePoly<Z64, EXTENSION_DEGREE>>>,
+}
+
 #[async_trait]
 /// Trait that a __store__ for correlated randomness related to the bit
 /// decomposition distributed decryption needs to implement.
@@ -110,6 +119,13 @@ pub trait BitDecPreprocessing<const EXTENSION_DEGREE: usize>:
         session: &mut BaseSession,
         num_ctxts: usize,
     ) -> anyhow::Result<()>;
+
+    /// Load the correlated randomness from where
+    /// it is stored (e.g. redis) into RAM.
+    fn cast_to_in_memory_impl(
+        &mut self,
+        num_ctxts: usize,
+    ) -> anyhow::Result<InMemoryBitDecPreprocessing<EXTENSION_DEGREE>>;
 }
 
 /// Trait that a __store__ for correlated randomness related to the

@@ -3,7 +3,6 @@ use crate::algebra::galois_rings::common::ResiduePoly;
 use crate::algebra::structure_traits::Ring;
 use crate::algebra::structure_traits::{ErrorCorrect, Invert, Solve};
 use crate::error::error_handler::anyhow_error_and_log;
-use crate::execution::online::preprocessing::memory::bitdec::InMemoryBitDecPreprocessing;
 use crate::execution::online::preprocessing::memory::noiseflood::InMemoryNoiseFloodPreprocessing;
 use crate::execution::online::preprocessing::BasePreprocessing;
 use crate::execution::online::preprocessing::BitPreprocessing;
@@ -16,7 +15,7 @@ use crate::execution::sharing::share::Share;
 
 use self::dkg::InMemoryDKGPreprocessing;
 
-use super::BitDecPreprocessing;
+use super::{BitDecPreprocessing, InMemoryBitDecPreprocessing};
 
 #[derive(Default)]
 struct InMemoryPreprocessorFactory<const EXTENSION_DEGREE: usize>;

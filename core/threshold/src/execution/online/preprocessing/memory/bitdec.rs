@@ -8,17 +8,11 @@ use crate::{
 use super::{BasePreprocessing, TriplePreprocessing};
 use crate::execution::online::gen_bits::BitGenEven;
 use crate::execution::online::gen_bits::RealBitGenEven;
-use crate::execution::online::preprocessing::BitDecPreprocessing;
 use crate::execution::online::preprocessing::BitPreprocessing;
+use crate::execution::online::preprocessing::{BitDecPreprocessing, InMemoryBitDecPreprocessing};
 use crate::execution::online::triple::Triple;
 use crate::execution::runtime::session::BaseSession;
 use async_trait::async_trait;
-
-#[derive(Default)]
-pub struct InMemoryBitDecPreprocessing<const EXTENSION_DEGREE: usize> {
-    available_triples: Vec<Triple<ResiduePoly<Z64, EXTENSION_DEGREE>>>,
-    available_bits: Vec<Share<ResiduePoly<Z64, EXTENSION_DEGREE>>>,
-}
 
 impl<const EXTENSION_DEGREE: usize> TriplePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>
     for InMemoryBitDecPreprocessing<EXTENSION_DEGREE>
@@ -109,5 +103,12 @@ where
         self.append_triples(triple_vec);
 
         Ok(())
+    }
+
+    fn cast_to_in_memory_impl(&mut self, num_ctxts: usize) -> anyhow::Result<Self> {
+        Ok(Self {
+            available_triples: self.next_triple_vec(self.num_required_triples(num_ctxts))?,
+            available_bits: self.next_bit_vec(self.num_required_bits(num_ctxts))?,
+        })
     }
 }
