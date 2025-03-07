@@ -33,9 +33,9 @@ pub struct ClassicPBSParametersTest {
     pub pbs_level: usize,
     pub ks_base_log: usize,
     pub ks_level: usize,
-    pub message_modulus: usize,
-    pub carry_modulus: usize,
-    pub max_noise_level: usize,
+    pub message_modulus: u64,
+    pub carry_modulus: u64,
+    pub max_noise_level: u64,
     pub log2_p_fail: f64,
     pub encryption_key_choice: Cow<'static, str>,
 }

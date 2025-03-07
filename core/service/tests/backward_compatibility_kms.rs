@@ -4,13 +4,12 @@
 //! what to test for each message.
 
 use aes_prng::AesRng;
-
 use backward_compatibility::{
     data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{run_all_tests, TestedModule},
-    KmsFheKeyHandlesTest, PrivateSigKeyTest, PublicSigKeyTest, SignedPubDataHandleInternalTest,
-    TestMetadataKMS, TestType, Testcase, ThresholdFheKeysTest,
+    AppKeyBlobTest, KmsFheKeyHandlesTest, PrivateSigKeyTest, PublicSigKeyTest, TestMetadataKMS,
+    TestType, Testcase, ThresholdFheKeysTest,
 };
 use distributed_decryption::execution::{
     endpoints::keygen::FhePubKeySet,
@@ -20,9 +19,12 @@ use kms_common::{load_and_unversionize, load_and_unversionize_auxiliary};
 use kms_grpc::rpc_types::{PubDataType, SignedPubDataHandleInternal};
 use kms_lib::{
     cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey},
-    engine::base::{gen_sig_keys, KmsFheKeyHandles},
-    engine::threshold::service_real::ThresholdFheKeys,
+    engine::{
+        base::{gen_sig_keys, KmsFheKeyHandles},
+        threshold::service_real::ThresholdFheKeys,
+    },
     util::key_setup::FhePublicKey,
+    vault::keychain::AppKeyBlob,
 };
 use rand::SeedableRng;
 use std::{collections::HashMap, env, path::Path};
@@ -42,6 +44,34 @@ fn test_private_sig_key(
         Err(test.failure(
             format!(
                 "Invalid private sig key:\n Expected :\n{:?}\nGot:\n{:?}",
+                original_versionized, new_versionized
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_app_key_blob(
+    dir: &Path,
+    test: &AppKeyBlobTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: AppKeyBlob = load_and_unversionize(dir, test, format)?;
+
+    let new_versionized = AppKeyBlob {
+        root_key_id: test.root_key_id.to_string(),
+        data_key_blob: test.data_key_blob.clone().into_owned().into(),
+        ciphertext: test.ciphertext.clone().into_owned().into(),
+        iv: test.iv.clone().into_owned().into(),
+        auth_tag: test.auth_tag.clone().into_owned().into(),
+    };
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid app key blob:\n Expected :\n{:?}\nGot:\n{:?}",
                 original_versionized, new_versionized
             ),
             format,
@@ -74,33 +104,6 @@ fn test_public_sig_key(
     }
 }
 
-fn test_signed_pub_data_handle_internal(
-    dir: &Path,
-    test: &SignedPubDataHandleInternalTest,
-    format: DataFormat,
-) -> Result<TestSuccess, TestFailure> {
-    let original_versionized: SignedPubDataHandleInternal =
-        load_and_unversionize(dir, test, format)?;
-
-    let new_versionized = SignedPubDataHandleInternal::new(
-        test.key_handle.to_string(),
-        test.signature.to_vec(),
-        test.external_signature.to_vec(),
-    );
-
-    if original_versionized != new_versionized {
-        Err(test.failure(
-            format!(
-                "Invalid signed pub data handle (internal):\n Expected :\n{:?}\nGot:\n{:?}",
-                original_versionized, new_versionized
-            ),
-            format,
-        ))
-    } else {
-        Ok(test.success(format))
-    }
-}
-
 fn test_kms_fhe_key_handles(
     dir: &Path,
     test: &KmsFheKeyHandlesTest,
@@ -124,15 +127,17 @@ fn test_kms_fhe_key_handles(
     let public_key: FhePublicKey =
         load_and_unversionize_auxiliary(dir, test, &test.public_key_filename, format)?;
 
+    let sns_key: SwitchAndSquashKey =
+        load_and_unversionize_auxiliary(dir, test, &test.sns_key_filename, format)?;
+
     let fhe_pub_key_set = FhePubKeySet {
         public_key,
         server_key,
-        sns_key: None,
+        sns_key: Some(sns_key),
     };
 
-    // TODO this is not the right file to load the key, will be handled by #1089
     let sns_client_key: SnsClientKey =
-        load_and_unversionize_auxiliary(dir, test, &test.public_key_filename, format)?;
+        load_and_unversionize_auxiliary(dir, test, &test.sns_client_key_filename, format)?;
 
     let decompression_key: Option<DecompressionKey> =
         load_and_unversionize_auxiliary(dir, test, &test.decompression_key_filename, format)?;
@@ -252,22 +257,20 @@ impl TestedModule for KMS {
             Self::Metadata::PrivateSigKey(test) => {
                 test_private_sig_key(test_dir.as_ref(), test, format).into()
             }
-            Self::Metadata::SignedPubDataHandleInternal(test) => {
-                test_signed_pub_data_handle_internal(test_dir.as_ref(), test, format).into()
-            }
             Self::Metadata::KmsFheKeyHandles(test) => {
                 test_kms_fhe_key_handles(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::ThresholdFheKeys(test) => {
                 test_threshold_fhe_keys(test_dir.as_ref(), test, format).into()
             }
+            Self::Metadata::AppKeyBlob(test) => {
+                test_app_key_blob(test_dir.as_ref(), test, format).into()
+            }
         }
     }
 }
 
-// Backward compatibility tests are skipped until we have a proper stable version
 #[test]
-#[ignore]
 fn test_backward_compatibility_kms() {
     let pkg_version = env!("CARGO_PKG_VERSION");
 
@@ -275,7 +278,12 @@ fn test_backward_compatibility_kms() {
 
     let results = run_all_tests::<KMS>(&base_data_dir, pkg_version);
 
-    if results.iter().any(|r| r.is_failure()) {
-        panic!("Backward compatibility tests for the KMS module failed")
+    for r in results.iter() {
+        if r.is_failure() {
+            panic!(
+                "Backward compatibility tests for the KMS module failed: {:?}",
+                r
+            )
+        }
     }
 }

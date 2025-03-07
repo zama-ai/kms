@@ -14,7 +14,7 @@ pub enum AppKeyBlobVersioned {
 }
 
 /// Container type for encrypted application keys (such as FHE private keys)
-#[derive(Serialize, Deserialize, Versionize)]
+#[derive(Serialize, Deserialize, Versionize, PartialEq, Debug)]
 #[versionize(AppKeyBlobVersioned)]
 pub struct AppKeyBlob {
     pub root_key_id: String,

@@ -1,4 +1,5 @@
 # kms-core backwards compatibility
+
 This repo is heavily inspired by the work done in the [tfhe-backward-compat-data](https://github.com/zama-ai/tfhe-backward-compat-data) project and was adapted to kms-core.
 It contains various objects that have been versioned and serialized.
 The goal is to detect in the CI when the version of a type should be updated because a breaking change has been added.
@@ -7,42 +8,50 @@ The objects are serialized using bincode only because it supports large arrays a
 
 For any additional documentation, feel free to take a look at the [tfhe-backward-compat-data](https://github.com/zama-ai/tfhe-backward-compat-data) project.
 
-# Usage
+## Usage
+
 At the repo's root, run the following command
+
 ```shell
 make test_backward_compatibility
 ```
+
 This will load the objects versioned with the versions set in this module and check if they can be loaded correctly with the current state of kms-core.
 
-# Versioning this module
+## Versioning this module
+
 The tests in this module are by definition forward compatible (they should run on any future kms-core release). They are also backward compatible (allowing tests to be run on past kms-core versions, for example to bisect a bug), mostly because the kms-core test driver will simply ignore any unknown test types and only load tests for versions inferior to its own.
 
 However, this does not allow changes to be made to the test metadata scheme itself. In such a case, new data should be generated.
 
-# Data generation
-To re-generate the data, run the binary target within this module (not at the kms-core's root, because it is not included in the workspace): 
+## Data generation
+
+To re-generate the data, run the binary target within this module (not at the kms-core's root, because it is not included in the workspace):
 
 ```shell
 cargo run --features="generate" --release
-``` 
+```
 
 TFHE-rs' prng is seeded with a fixed seed, so the data should be identical at each generation. However, the actual serialized objects might be different because bincode does not serialize HashMap in a deterministic way (see: [this issue](https://github.com/TyOverby/bincode/issues/514)).
 
-# Adding a test for an existing type
-To add a new test for a type that is already tested, you need to: 
+## Adding a test for an existing type
+
+To add a new test for a type that is already tested, you need to:
+
 - go to the `data_x_y.rs` file (where "x.y" is the kms-core version of the tested data)
 - create a const global variable with the metadata for that test
 - create a `gen_...` method in the appropriate struct (ex: `KmsV0_9` for KMS objects)
-- instantiate the object you want to test in it. 
-    - If some private functions are needed to do so, the simplest solution is to copy paste them in a `helper_x_y.rs` file (you might need to create this file). Else, make them public or available under the "testing" feature and update the target commit of kms-core in this module. Be aware that is this requires updating the version, you need to add it instead and keep the old one as well.
-    - If some auxiliary data is needed for the test, make sure to serialize it using `store_versioned_auxiliary` macro
+- instantiate the object you want to test in it.
+  - If some private functions are needed to do so, the simplest solution is to copy paste them in a `helper_x_y.rs` file (you might need to create this file). Else, make them public or available under the "testing" feature and update the target commit of kms-core in this module. Be aware that is this requires updating the version, you need to add it instead and keep the old one as well.
+  - If some auxiliary data is needed for the test, make sure to serialize it using `store_versioned_auxiliary` macro
 - serialize it using the `store_versioned_test` macro
 - return the metadata of your test
 - update the `gen_vvv_data` method (where "vvv" is the module where your new type is defined) for the main struct (ex: `V0_9`) by calling your new method within the returned vector
 
 The test will then be automatically selected when running `make test_backward_compatibility`.
 
-## Example
+### Example
+
 ```rust
 // 1. Define the metadata associated with the test
 const PRIVATE_SIG_KEY_TEST: PrivateSigKeyTest = PrivateSigKeyTest {
@@ -91,21 +100,24 @@ impl KMSCoreVersion for V0_9 {
 }
 ```
 
-# Adding a test for a new type
+## Adding a test for a new type
 
-## In this module
+### In this module
+
 To add a test for a type that has not yet been tested, you should:
+
 - got to `libs.rs`:
-    - create a new struct that implements the `TestType` trait. Only the `test_filename` field is required, the others are metadata used to instantiate and check the new type. However, they should not use any kms-core internal type
-    - add it to the `TestMetadataZzz` enum, where `Zzz` is the name of the module to test
+  - create a new struct that implements the `TestType` trait. Only the `test_filename` field is required, the others are metadata used to instantiate and check the new type. However, they should not use any kms-core internal type
+  - add it to the `TestMetadataZzz` enum, where `Zzz` is the name of the module to test
 - add a new testcase using the procedure in the previous paragraph. If the type comes from a new module, you should also:
-    - go to `lib.rs` and create a new `TestMetadataZzz` module  
-    - go to `data_x_y.rs` and create a new `gen_vvv_data` method
-    - go to `main.rs`:
-        - modify `gen_all_data` to include and return the new tests
-        - retrieve the new tests in `main()` and store them using `store_metadata` along a different and related file name
+  - go to `lib.rs` and create a new `TestMetadataZzz` module  
+  - go to `data_x_y.rs` and create a new `gen_vvv_data` method
+  - go to `main.rs`:
+    - modify `gen_all_data` to include and return the new tests
+    - retrieve the new tests in `main()` and store them using `store_metadata` along a different and related file name
 
 ### Example
+
 ```rust
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PrivateSigKeyTest {
@@ -137,10 +149,12 @@ pub enum TestMetadataKMS {
 }
 ```
 
-## In the tests
+### In the tests
+
 In the tested module, you should update the test (ex: `kms-core/core/threshold/tests/backward_compatibility_kms.rs`) to handle your new test type. To do this, create a function that first loads and unversionizes the serialized object, and then checks its value against a new instantiated object generated thanks to the provided metadata:
 
 ### Example
+
 ```rust
 fn test_private_sig_key(
     dir: &Path,
@@ -192,14 +206,17 @@ impl TestedModule for KMS {
 
 ```
 
-# Adding a new kms-core release
+## Adding a new kms-core release
+
 To add data for a new released version of kms-core, you should:
+
 - add a dependency to that version in the `Cargo.toml` of this module. This dependency should only be enabled with the `generate` feature to avoid conflicts during testing
 - create a new `data_x_y.rs` file
 - implement the `KMSCoreVersion` trait for the new version. You can use the code in `data_0_9.rs` as an example
 - go to `main.rs`, call `gen_all_data` within the `main()` function using the new version and then extend the different `zzz_testcases`
 
 In `data_x_y.rs`:
+
 ```rust
 pub struct V0_X;
 
@@ -213,6 +230,7 @@ impl KMSCoreVersion for V0_X {
 ```
 
 In `main.rs`:
+
 ```rust
 fn main() {
     let (kms_testcases, dd_testcases) = gen_all_data::<V0_9>();
@@ -225,12 +243,14 @@ fn main() {
 }
 ```
 
-# Using the test data
+## Using the test data
+
 The data is stored using git-lfs, so be sure to clone the kms-core repo with lfs first. To be able to parse the metadata and check if the loaded data is valid, you should add this module (`backward-compatibility`) as a dependency with the `load` and `tests` features enabled.
 
+## Adding a new version to a versionized type
 
-# Adding a new version to a versionized type
 When some breaking changes are added to a versionized type, you should update several things. Let's say that the type only had a `V0` version, then you should:
+
 - add a new version `v1` to the `XXXVersioned` enum associated to the type `XXX` (ex: `PrivateSigKeyVersioned` for `PrivateSigKey`)
 - **keep** the `PrivateSigKey` old definition and rename it to `PrivateSigKeyV0`
 - replace the `Versionize` derive trait with the `Version` one (import if from `tfhe-versionable` if needed)
@@ -241,6 +261,7 @@ When some breaking changes are added to a versionized type, you should update se
 It is import to understand that the old definition **must not** be changed whenever there's a breaking change. Also, only the latest definition should be annotated with both versionize macros.
 
 It should look like the following:
+
 ```rust
 #[derive(..., VersionsDispatch)]
 pub enum PrivateSigKeyVersioned {

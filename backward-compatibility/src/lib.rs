@@ -14,7 +14,7 @@ use strum::Display;
 pub mod parameters;
 
 #[cfg(feature = "generate")]
-pub mod data_0_9;
+pub mod data_0_11;
 #[cfg(feature = "generate")]
 pub mod generate;
 #[cfg(feature = "load")]
@@ -28,7 +28,7 @@ const DATA_DIR: &str = "data";
 
 pub const KMS_MODULE_NAME: &str = "kms";
 pub const DISTRIBUTED_DECRYPTION_MODULE_NAME: &str = "distributed_decryption";
-pub const EVENTS_MODULE_NAME: &str = "events";
+pub const KMS_GRPC_MODULE_NAME: &str = "kms-grpc";
 
 pub fn dir_for_version<P: AsRef<Path>>(data_dir: P, version: &str) -> PathBuf {
     let mut path = data_dir.as_ref().to_path_buf();
@@ -120,7 +120,7 @@ impl TestType for PublicSigKeyTest {
     }
 }
 
-// KMS test
+// KMS-grpc test
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SignedPubDataHandleInternalTest {
     pub test_filename: Cow<'static, str>,
@@ -132,11 +132,49 @@ pub struct SignedPubDataHandleInternalTest {
 
 impl TestType for SignedPubDataHandleInternalTest {
     fn module(&self) -> String {
-        KMS_MODULE_NAME.to_string()
+        KMS_GRPC_MODULE_NAME.to_string()
     }
 
     fn target_type(&self) -> String {
         "SignedPubDataHandleInternal".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PublicKeyTypeTest {
+    pub test_filename: Cow<'static, str>,
+}
+
+impl TestType for PublicKeyTypeTest {
+    fn module(&self) -> String {
+        KMS_GRPC_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "PublicKeyType".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PubDataTypeTest {
+    pub test_filename: Cow<'static, str>,
+}
+
+impl TestType for PubDataTypeTest {
+    fn module(&self) -> String {
+        KMS_GRPC_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "PubDataType".to_string()
     }
 
     fn test_filename(&self) -> String {
@@ -153,6 +191,8 @@ pub struct KmsFheKeyHandlesTest {
     pub server_key_filename: Cow<'static, str>,
     pub sig_key_filename: Cow<'static, str>,
     pub decompression_key_filename: Cow<'static, str>,
+    pub sns_client_key_filename: Cow<'static, str>,
+    pub sns_key_filename: Cow<'static, str>,
     pub state: u64,
     pub seed: u128,
     pub element: Cow<'static, str>,
@@ -166,6 +206,30 @@ impl TestType for KmsFheKeyHandlesTest {
 
     fn target_type(&self) -> String {
         "KmsFheKeyHandles".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct AppKeyBlobTest {
+    pub test_filename: Cow<'static, str>,
+    pub root_key_id: Cow<'static, str>,
+    pub data_key_blob: Cow<'static, str>,
+    pub ciphertext: Cow<'static, str>,
+    pub iv: Cow<'static, str>,
+    pub auth_tag: Cow<'static, str>,
+}
+
+impl TestType for AppKeyBlobTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "AppKeyBlob".to_string()
     }
 
     fn test_filename(&self) -> String {
@@ -196,6 +260,27 @@ impl TestType for PRSSSetupTest {
         self.test_filename.to_string()
     }
 }
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PrfKeyTest {
+    pub test_filename: Cow<'static, str>,
+    pub seed: u128,
+}
+
+impl TestType for PrfKeyTest {
+    fn module(&self) -> String {
+        DISTRIBUTED_DECRYPTION_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "PrfKey".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
 // Distributed Decryption test
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ThresholdFheKeysTest {
@@ -227,507 +312,29 @@ impl TestType for ThresholdFheKeysTest {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct DecryptValuesTest {
-    pub test_filename: Cow<'static, str>,
-    pub key_id: [u8; 3],
-    pub ciphertext_handles: [[u8; 3]; 2],
-    pub fhe_type_names: [Cow<'static, str>; 2],
-    pub external_handles: [[u8; 3]; 2],
-    pub acl_address: Cow<'static, str>,
-    pub proof: Cow<'static, str>,
-    pub eip712_name: Cow<'static, str>,
-    pub eip712_version: Cow<'static, str>,
-    pub eip712_chain_id: [u8; 32],
-    pub eip712_verifying_contract: Cow<'static, str>,
-    pub eip712_salt: Option<[u8; 32]>,
-    pub block_height: u64,
-    pub transaction_index: u32,
-}
-
-impl TestType for DecryptValuesTest {
-    fn module(&self) -> String {
-        EVENTS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "DecryptValues".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct DecryptResponseValuesTest {
-    pub test_filename: Cow<'static, str>,
-    pub signature: [u8; 3],
-    pub payload: [u8; 3],
-    pub block_height: u64,
-    pub transaction_index: u32,
-}
-
-impl TestType for DecryptResponseValuesTest {
-    fn module(&self) -> String {
-        EVENTS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "DecryptResponseValues".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ReencryptValuesTest {
-    pub test_filename: Cow<'static, str>,
-    pub signature: [u8; 3],
-    pub client_address: Cow<'static, str>,
-    pub enc_key: [u8; 3],
-    pub fhe_type_name: Cow<'static, str>,
-    pub key_id: [u8; 3],
-    pub ciphertext_handle: [u8; 3],
-    pub ciphertext_digest: [u8; 3],
-    pub acl_address: Cow<'static, str>,
-    pub proof: Cow<'static, str>,
-    pub eip712_name: Cow<'static, str>,
-    pub eip712_version: Cow<'static, str>,
-    pub eip712_chain_id: [u8; 32],
-    pub eip712_verifying_contract: Cow<'static, str>,
-    pub eip712_salt: Option<[u8; 32]>,
-    pub block_height: u64,
-    pub transaction_index: u32,
-}
-
-impl TestType for ReencryptValuesTest {
-    fn module(&self) -> String {
-        EVENTS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "ReencryptValues".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ReencryptResponseValuesTest {
-    pub test_filename: Cow<'static, str>,
-    pub signature: [u8; 3],
-    pub payload: [u8; 3],
-    pub block_height: u64,
-    pub transaction_index: u32,
-}
-
-impl TestType for ReencryptResponseValuesTest {
-    fn module(&self) -> String {
-        EVENTS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "ReencryptResponseValues".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ZkpValuesTest {
-    pub test_filename: Cow<'static, str>,
-    pub crs_id: [u8; 3],
-    pub key_id: [u8; 3],
-    pub contract_address: Cow<'static, str>,
-    pub client_address: Cow<'static, str>,
-    pub ct_proof_handle: [u8; 3],
-    pub acl_address: Cow<'static, str>,
-    pub eip712_name: Cow<'static, str>,
-    pub eip712_version: Cow<'static, str>,
-    pub eip712_chain_id: [u8; 32],
-    pub eip712_verifying_contract: Cow<'static, str>,
-    pub eip712_salt: Option<[u8; 32]>,
-    pub block_height: u64,
-    pub transaction_index: u32,
-}
-
-impl TestType for ZkpValuesTest {
-    fn module(&self) -> String {
-        EVENTS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "VerifyProvenCtValues".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ZkpResponseValuesTest {
-    pub test_filename: Cow<'static, str>,
-    pub signature: [u8; 3],
-    pub payload: [u8; 3],
-    pub block_height: u64,
-    pub transaction_index: u32,
-}
-
-impl TestType for ZkpResponseValuesTest {
-    fn module(&self) -> String {
-        EVENTS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "VerifyProvenCtResponseValues".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct KeyGenValuesTest {
-    pub test_filename: Cow<'static, str>,
-    pub preproc_id: [u8; 3],
-    pub eip712_name: Cow<'static, str>,
-    pub eip712_version: Cow<'static, str>,
-    pub eip712_chain_id: [u8; 32],
-    pub eip712_verifying_contract: Cow<'static, str>,
-    pub eip712_salt: Option<[u8; 32]>,
-    pub block_height: u64,
-    pub transaction_index: u32,
-}
-
-impl TestType for KeyGenValuesTest {
-    fn module(&self) -> String {
-        EVENTS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "KeyGenValues".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct KeyGenResponseValuesTest {
-    pub test_filename: Cow<'static, str>,
-    pub request_id: [u8; 3],
-    pub public_key_digest: Cow<'static, str>,
-    pub public_key_signature: [u8; 3],
-    pub public_key_external_signature: [u8; 3],
-    pub server_key_digest: Cow<'static, str>,
-    pub server_key_signature: [u8; 3],
-    pub server_key_external_signature: [u8; 3],
-    pub param: i32,
-    pub block_height: u64,
-    pub transaction_index: u32,
-}
-
-impl TestType for KeyGenResponseValuesTest {
-    fn module(&self) -> String {
-        EVENTS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "KeyGenResponseValues".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct KeyGenPreprocValuesTest {
-    pub test_filename: Cow<'static, str>,
-    pub block_height: u64,
-    pub transaction_index: u32,
-}
-
-impl TestType for KeyGenPreprocValuesTest {
-    fn module(&self) -> String {
-        EVENTS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "KeyGenPreprocValues".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct KeyGenPreprocResponseValuesTest {
-    pub test_filename: Cow<'static, str>,
-    pub block_height: u64,
-    pub transaction_index: u32,
-}
-
-impl TestType for KeyGenPreprocResponseValuesTest {
-    fn module(&self) -> String {
-        EVENTS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "KeyGenPreprocResponseValues".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct InsecureKeyGenValuesTest {
-    pub test_filename: Cow<'static, str>,
-    pub eip712_name: Cow<'static, str>,
-    pub eip712_version: Cow<'static, str>,
-    pub eip712_chain_id: [u8; 32],
-    pub eip712_verifying_contract: Cow<'static, str>,
-    pub eip712_salt: Option<[u8; 32]>,
-    pub block_height: u64,
-    pub transaction_index: u32,
-}
-
-impl TestType for InsecureKeyGenValuesTest {
-    fn module(&self) -> String {
-        EVENTS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "InsecureKeyGenValues".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct CrsGenValuesTest {
-    pub test_filename: Cow<'static, str>,
-    pub max_num_bits: u32,
-    pub eip712_name: Cow<'static, str>,
-    pub eip712_version: Cow<'static, str>,
-    pub eip712_chain_id: [u8; 32],
-    pub eip712_verifying_contract: Cow<'static, str>,
-    pub eip712_salt: Option<[u8; 32]>,
-    pub block_height: u64,
-    pub transaction_index: u32,
-}
-
-impl TestType for CrsGenValuesTest {
-    fn module(&self) -> String {
-        EVENTS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "CrsGenValues".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct CrsGenResponseValuesTest {
-    pub test_filename: Cow<'static, str>,
-    pub request_id: Cow<'static, str>,
-    pub digest: Cow<'static, str>,
-    pub signature: [u8; 3],
-    pub external_signature: [u8; 3],
-    pub max_num_bits: u32,
-    pub param: i32,
-    pub block_height: u64,
-    pub transaction_index: u32,
-}
-
-impl TestType for CrsGenResponseValuesTest {
-    fn module(&self) -> String {
-        EVENTS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "CrsGenResponseValues".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct KeyUrlValuesTest {
-    pub test_filename: Cow<'static, str>,
-    pub block_height: u64,
-    pub transaction_index: u32,
-    pub data_id: [u8; 3],
-}
-
-impl TestType for KeyUrlValuesTest {
-    fn module(&self) -> String {
-        EVENTS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "KeyUrlValues".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-// TODO this might need adjustments
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct KeyUrlResponseValuesTest {
-    pub test_filename: Cow<'static, str>,
-    pub fhe_key_info_fhe_public_key_data_id: [u8; 3],
-    pub fhe_key_info_fhe_public_key_fhe_parameter: i32,
-    pub fhe_key_info_fhe_public_key_urls: [Cow<'static, str>; 1],
-    pub fhe_key_info_fhe_public_key_signatures: [[u8; 3]; 1],
-    pub fhe_key_info_fhe_server_key_data_id: [u8; 3],
-    pub fhe_key_info_fhe_server_key_fhe_parameter: i32,
-    pub fhe_key_info_fhe_server_key_urls: [Cow<'static, str>; 1],
-    pub fhe_key_info_fhe_server_key_signatures: [[u8; 3]; 1],
-    pub crs_ids: [u8; 1],
-    pub crs_data_ids: [[u8; 3]; 3],
-    pub crs_fhe_parameters: [u32; 1],
-    pub crs_urls: [Cow<'static, str>; 1],
-    pub crs_signatures: [[[u8; 3]; 1]; 1],
-    pub verf_public_key_key_id: [u8; 3],
-    pub verf_public_key_server_id: i32,
-    pub verf_public_key_url: Cow<'static, str>,
-    pub verf_public_key_address: Cow<'static, str>,
-    pub block_height: u64,
-    pub transaction_index: u32,
-}
-
-impl TestType for KeyUrlResponseValuesTest {
-    fn module(&self) -> String {
-        EVENTS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "KeyUrlResponseValues".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct InsecureCrsGenValuesTest {
-    pub test_filename: Cow<'static, str>,
-    pub max_num_bits: u32,
-    pub eip712_name: Cow<'static, str>,
-    pub eip712_version: Cow<'static, str>,
-    pub eip712_chain_id: [u8; 32],
-    pub eip712_verifying_contract: Cow<'static, str>,
-    pub eip712_salt: Option<[u8; 32]>,
-    pub block_height: u64,
-    pub transaction_index: u32,
-}
-
-impl TestType for InsecureCrsGenValuesTest {
-    fn module(&self) -> String {
-        EVENTS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "InsecureCrsGenValues".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-// TODO: rename to KmsConfigTest once we enable backward compatibility tests :
-// https://github.com/zama-ai/kms-core/issues/1089
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct KmsCoreConfTest {
-    pub test_filename: Cow<'static, str>,
-    pub parties_party_id: [u8; 3],
-    pub parties_public_key: [u8; 3],
-    pub parties_address: Cow<'static, str>,
-    pub parties_tls_pub_key: [u8; 3],
-    pub response_count_for_majority_vote: usize,
-    pub response_count_for_reconstruction: usize,
-    pub degree_for_reconstruction: usize,
-    pub fhe_parameter: Cow<'static, str>,
-}
-
-impl TestType for KmsCoreConfTest {
-    fn module(&self) -> String {
-        EVENTS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "KmsCoreConf".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-// KMS metadata
+/// KMS metadata
 #[derive(Serialize, Deserialize, Clone, Debug, Display)]
 pub enum TestMetadataKMS {
     PrivateSigKey(PrivateSigKeyTest),
     PublicSigKey(PublicSigKeyTest),
-    SignedPubDataHandleInternal(SignedPubDataHandleInternalTest),
     KmsFheKeyHandles(KmsFheKeyHandlesTest),
     ThresholdFheKeys(ThresholdFheKeysTest),
+    AppKeyBlob(AppKeyBlobTest),
 }
 
-// Distributed Decryption metadata
+/// KMS-grpc metadata
+#[derive(Serialize, Deserialize, Clone, Debug, Display)]
+pub enum TestMetadataKmsGrpc {
+    SignedPubDataHandleInternal(SignedPubDataHandleInternalTest),
+    PublicKeyType(PublicKeyTypeTest),
+    PubDataType(PubDataTypeTest),
+}
+
+/// Distributed Decryption metadata
 #[derive(Serialize, Deserialize, Clone, Debug, Display)]
 pub enum TestMetadataDD {
     PRSSSetup(PRSSSetupTest),
-}
-
-// TODO: rename to KmsCoreConf to KmsConfig once we enable backward compatibility tests :
-// https://github.com/zama-ai/kms-core/issues/1089
-//Events blockchain metadata
-// All these tests first build a operation value, and then uses it to build a transaction object
-// before versionizing and serializing it
-#[derive(Serialize, Deserialize, Clone, Debug, Display)]
-pub enum TestMetadataEvents {
-    DecryptValues(DecryptValuesTest),
-    DecryptResponseValues(DecryptResponseValuesTest),
-    ReencryptValues(ReencryptValuesTest),
-    ReencryptResponseValues(ReencryptResponseValuesTest),
-    ZkpValues(ZkpValuesTest),
-    ZkpResponseValues(ZkpResponseValuesTest),
-    KeyGenValues(KeyGenValuesTest),
-    KeyGenResponseValues(KeyGenResponseValuesTest),
-    KeyGenPreprocValues(KeyGenPreprocValuesTest),
-    KeyGenPreprocResponseValues(KeyGenPreprocResponseValuesTest),
-    InsecureKeyGenValues(InsecureKeyGenValuesTest),
-    CrsGenValues(CrsGenValuesTest),
-    CrsGenResponseValues(CrsGenResponseValuesTest),
-    InsecureCrsGenValues(InsecureCrsGenValuesTest),
-    KmsCoreConf(KmsCoreConfTest),
+    PrfKey(PrfKeyTest),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

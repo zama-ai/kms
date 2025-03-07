@@ -1822,7 +1822,7 @@ dependencies = [
 
 [[package]]
 name = "backward-compatibility"
-version = "0.10.0-rc1"
+version = "0.11.0-rc3"
 dependencies = [
  "aes-prng",
  "bincode",
@@ -4417,9 +4417,11 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "anyhow",
+ "backward-compatibility",
  "bincode",
  "cfg-if",
  "hex",
+ "kms-common",
  "lazy_static",
  "prost",
  "rand 0.8.5",

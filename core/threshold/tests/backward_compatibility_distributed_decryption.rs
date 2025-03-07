@@ -3,21 +3,26 @@
 //! file. The ron file stores some metadata that are parsed in this test. These metadata tells
 //! what to test for each message.
 
+use aes_prng::AesRng;
 use backward_compatibility::{
     data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{run_all_tests, TestedModule},
-    PRSSSetupTest, TestMetadataDD, TestType, Testcase,
+    PRSSSetupTest, PrfKeyTest, TestMetadataDD, TestType, Testcase,
 };
 use distributed_decryption::{
     algebra::{
         galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
         structure_traits::{Invert, Ring, RingEmbed},
     },
-    execution::{runtime::party::Role, small_execution::prss::PRSSSetup},
+    execution::{
+        runtime::party::Role,
+        small_execution::{prf::PrfKey, prss::PRSSSetup},
+    },
     tests::helper::testing::{get_dummy_prss_setup, get_networkless_base_session_for_parties},
 };
 use kms_common::load_and_unversionize;
+use rand::{RngCore, SeedableRng};
 use serde::Serialize;
 use std::{env, path::Path};
 use tfhe_versionable::Unversionize;
@@ -67,6 +72,30 @@ fn test_prss_setup(
     }
 }
 
+fn test_prf_key(
+    dir: &Path,
+    test: &PrfKeyTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: PrfKey = load_and_unversionize(dir, test, format)?;
+    let mut buf = [0u8; 16];
+    let mut rng = AesRng::from_seed(test.seed.to_le_bytes());
+    rng.fill_bytes(&mut buf);
+
+    let new_versionized = PrfKey(buf);
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid prf key:\n Expected :\n{:?}\nGot:\n{:?}",
+                original_versionized, new_versionized
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
 struct DistributedDecryption;
 impl TestedModule for DistributedDecryption {
     type Metadata = TestMetadataDD;
@@ -81,13 +110,13 @@ impl TestedModule for DistributedDecryption {
             Self::Metadata::PRSSSetup(test) => {
                 test_prss_setup(test_dir.as_ref(), test, format).into()
             }
+            Self::Metadata::PrfKey(test) => test_prf_key(test_dir.as_ref(), test, format).into(),
         }
     }
 }
 
 // Backward compatibility tests are skipped until we have a proper stable version
 #[test]
-#[ignore]
 fn test_backward_compatibility_distributed_decryption() {
     let pkg_version = env!("CARGO_PKG_VERSION");
 

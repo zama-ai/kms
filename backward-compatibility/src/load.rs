@@ -65,6 +65,7 @@ impl DataFormat {
     }
 }
 
+#[derive(Debug)]
 pub enum TestResult {
     Success(TestSuccess),
     Failure(TestFailure),
@@ -89,6 +90,7 @@ impl TestResult {
     }
 }
 
+#[derive(Debug)]
 pub struct TestFailure {
     pub(crate) module: String,
     pub(crate) target_type: String,
@@ -111,6 +113,7 @@ impl Display for TestFailure {
     }
 }
 
+#[derive(Debug)]
 pub struct TestSuccess {
     pub(crate) module: String,
     pub(crate) target_type: String,
@@ -138,6 +141,7 @@ impl Display for TestSuccess {
     }
 }
 
+#[derive(Debug)]
 pub struct TestSkipped {
     pub(crate) module: String,
     pub(crate) test_name: String,

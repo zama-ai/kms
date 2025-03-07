@@ -1,6 +1,6 @@
 [package]
 name = "backward-compatibility"
-version = "0.10.0-rc1"
+version = "0.11.0-rc3"
 publish = false
 authors = ["Zama"]
 edition = "2021"
@@ -9,17 +9,17 @@ license = "BSD-3-Clause-Clear"
 [dependencies]
 # This is a list of kms-core versions we will generate data for. This list will grow over time.
 # They are only activated when generating data, with the binary target and the "generate" feature.
-kms_0_9 = { git = "ssh://git@github.com/zama-ai/kms-core.git", package = "kms", rev = "00e4bd81b84a7dc20a161d3c76dbda2511d20bca", optional = true }
-distributed_decryption_0_9 = { git = "ssh://git@github.com/zama-ai/kms-core.git", package = "distributed-decryption", rev = "00e4bd81b84a7dc20a161d3c76dbda2511d20bca", optional = true, features = [
+kms_0_11 = { git = "ssh://git@github.com/zama-ai/kms-core.git", package = "kms", rev = "225675257889e4fd050fe41288db8645ee41f5fe", optional = true }
+kms_grpc_0_11 = { git = "ssh://git@github.com/zama-ai/kms-core.git", package = "kms-grpc", rev = "225675257889e4fd050fe41288db8645ee41f5fe", optional = true }
+distributed_decryption_0_11 = { git = "ssh://git@github.com/zama-ai/kms-core.git", package = "distributed-decryption", rev = "225675257889e4fd050fe41288db8645ee41f5fe", optional = true, features = [
     "testing",
 ] }
-events_0_9 = { git = "ssh://git@github.com/zama-ai/kms-core.git", package = "events", rev = "00e4bd81b84a7dc20a161d3c76dbda2511d20bca", optional = true }
 
-# Dependencies for the 0.9 version
+# Dependencies for the 0.11 version
 # Note: these dependencies should match the versions used by the KMS and distributed decryption
 # modules as much as possible to avoid serialization differences
-tfhe_versionable_0_3 = { package = "tfhe-versionable", version = "0.3.1", optional = true }
-tfhe_0_8 = { package = "tfhe", version = "0.8.2", optional = true, features = [
+tfhe_versionable_0_5 = { package = "tfhe-versionable", version = "0.5.0", optional = true }
+tfhe_1_0 = { package = "tfhe", version = "1.0.0", optional = true, features = [
     "shortint",
 ] }
 serde = { version = "=1.0.217", features = ["derive"] }
@@ -38,11 +38,11 @@ required-features = ["generate"]
 # Note: The `generate` feature should not be put by default to avoid dependency conflicts.
 [features]
 generate = [
-    "dep:kms_0_9",
-    "dep:distributed_decryption_0_9",
-    "dep:events_0_9",
-    "dep:tfhe_versionable_0_3",
-    "dep:tfhe_0_8",
+    "dep:kms_0_11",
+    "dep:kms_grpc_0_11",
+    "dep:distributed_decryption_0_11",
+    "dep:tfhe_versionable_0_5",
+    "dep:tfhe_1_0",
 ]
 load = ["dep:semver"]
 tests = []

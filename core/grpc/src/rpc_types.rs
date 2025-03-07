@@ -971,7 +971,7 @@ pub enum PublicKeyTypeVersioned {
     V0(PublicKeyType),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Versionize)]
+#[derive(Serialize, Deserialize, Debug, Clone, Versionize, PartialEq)]
 #[versionize(PublicKeyTypeVersioned)]
 pub enum PublicKeyType {
     Compact,

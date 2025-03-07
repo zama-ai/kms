@@ -1,6 +1,6 @@
 [
     (
-        kms_core_version_min: "0.9",
+        kms_core_version_min: "0.11",
         kms_core_module: "kms",
         metadata: PrivateSigKey((
             test_filename: "private_sig_key",
@@ -8,7 +8,7 @@
         )),
     ),
     (
-        kms_core_version_min: "0.9",
+        kms_core_version_min: "0.11",
         kms_core_module: "kms",
         metadata: PublicSigKey((
             test_filename: "public_sig_key",
@@ -16,18 +16,7 @@
         )),
     ),
     (
-        kms_core_version_min: "0.9",
-        kms_core_module: "kms",
-        metadata: SignedPubDataHandleInternal((
-            test_filename: "signed_pub_data_handle_internal",
-            state: 100,
-            key_handle: "key_handle",
-            signature: (1, 2, 3),
-            external_signature: (4, 5, 6),
-        )),
-    ),
-    (
-        kms_core_version_min: "0.9",
+        kms_core_version_min: "0.11",
         kms_core_module: "kms",
         metadata: KmsFheKeyHandles((
             test_filename: "kms_fhe_key_handles",
@@ -36,6 +25,8 @@
             server_key_filename: "server_key_handle",
             sig_key_filename: "sig_key_handle",
             decompression_key_filename: "decompression_key",
+            sns_client_key_filename: "sns_client_key",
+            sns_key_filename: "sns_key",
             state: 100,
             seed: 100,
             element: "element",
@@ -71,7 +62,7 @@
         )),
     ),
     (
-        kms_core_version_min: "0.9",
+        kms_core_version_min: "0.11",
         kms_core_module: "kms",
         metadata: ThresholdFheKeys((
             test_filename: "threshold_fhe_keys",
@@ -79,6 +70,7 @@
             sns_key_filename: "sns_key",
             info_filename: "info",
             decompression_key_filename: "decompression_key",
+            keyswitch_key_filename: "keyswitching_key",
             state: 100,
             amount: 2,
             threshold: 1,
@@ -113,6 +105,18 @@
                     pbs_level: 2,
                 ),
             ),
+        )),
+    ),
+    (
+        kms_core_version_min: "0.11",
+        kms_core_module: "kms",
+        metadata: AppKeyBlob((
+            test_filename: "app_key_blob",
+            root_key_id: "root_key_id",
+            data_key_blob: "data_key_blob",
+            ciphertext: "ciphertext",
+            iv: "iv",
+            auth_tag: "auth_tag",
         )),
     ),
 ]

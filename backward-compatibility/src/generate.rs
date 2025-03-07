@@ -8,7 +8,7 @@ use std::{
 
 use bincode::Options;
 use serde::Serialize;
-use tfhe_versionable_0_3::Versionize as Versionize02;
+use tfhe_versionable_0_5::Versionize as Versionize_0_5;
 
 use crate::{
     data_dir, dir_for_version,
@@ -16,7 +16,7 @@ use crate::{
         ClassicPBSParametersTest, DKGParamsRegularTest, DKGParamsSnSTest,
         SwitchAndSquashParametersTest,
     },
-    TestMetadataDD, TestMetadataEvents, TestMetadataKMS,
+    TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc,
 };
 
 // Parameters set for tests in kms-core 0.9, found in `PARAMS_TEST_BK_SNS`. However, for stability
@@ -76,7 +76,7 @@ macro_rules! define_store_versioned_test_fn {
         }
     };
 }
-define_store_versioned_test_fn!(store_versioned_test_02, Versionize02);
+define_store_versioned_test_fn!(store_versioned_test_05, Versionize_0_5);
 
 /// Stores the auxiliary data in `dir`, encoded in bincode, using the right tfhe-versionable version
 macro_rules! define_store_versioned_auxiliary_fn {
@@ -101,7 +101,7 @@ macro_rules! define_store_versioned_auxiliary_fn {
         }
     };
 }
-define_store_versioned_auxiliary_fn!(store_versioned_auxiliary_02, Versionize02);
+define_store_versioned_auxiliary_fn!(store_versioned_auxiliary_05, Versionize_0_5);
 
 pub fn store_metadata<Meta: Serialize, P: AsRef<Path>>(value: &Meta, path: P) {
     let serialized = ron::ser::to_string_pretty(value, ron::ser::PrettyConfig::default()).unwrap();
@@ -124,13 +124,15 @@ pub trait KMSCoreVersion {
     /// The metadata for the generated tests should be returned in the same order that the tests will be run.
     fn gen_kms_data() -> Vec<TestMetadataKMS>;
 
+    /// Generates data for the KMG grpc module for this version.
+    /// This should create types from kms-grpc,
+    /// versionize them and store them into the version specific directory.
+    /// The metadata for the generated tests should be returned in the same order that the tests will be run.
+    fn gen_kms_grpc_data() -> Vec<TestMetadataKmsGrpc>;
+
     /// Generates data for the distributed decryption module for this version.
-    /// This should create KMS-core types, versionize them and store them into the version specific directory.
+    /// This should create types from distributed decryption,
+    /// versionize them and store them into the version specific directory.
     /// The metadata for the generated tests should be returned in the same order that the tests will be run.
     fn gen_distributed_decryption_data() -> Vec<TestMetadataDD>;
-
-    /// Generates data for the blockchain events module for this version.
-    /// This should create blockchain KMS types for the events module, versionize them and store them into the version specific directory.
-    /// The metadata for the generated tests should be returned in the same order that the tests will be run.
-    fn gen_events_data() -> Vec<TestMetadataEvents>;
 }
