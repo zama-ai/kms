@@ -2,7 +2,10 @@
 /// These match the gRPC method names for better correlation
 //
 // Key Generation Operations
+pub const OP_INSECURE_KEYGEN: &str = "insecure_keygen";
+pub const OP_INSECURE_DECOMPRESSION_KEYGEN: &str = "insecure_decompression_keygen";
 pub const OP_KEYGEN: &str = "keygen";
+pub const OP_DECOMPRESSION_KEYGEN: &str = "decompression_keygen";
 pub const OP_KEYGEN_PREPROC: &str = "keygen_preproc";
 
 // Decryption/Reencryption Operations
@@ -11,6 +14,7 @@ pub const OP_REENCRYPT: &str = "reencrypt";
 
 // CRS Operations
 pub const OP_CRS_GEN: &str = "crs_gen";
+pub const OP_INSECURE_CRS_GEN: &str = "insecure_crs_gen";
 
 // Common metric tag keys
 pub const TAG_OPERATION: &str = "operation";

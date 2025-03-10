@@ -27,7 +27,9 @@ use aes_prng::AesRng;
 use anyhow::anyhow;
 use conf_trace::metrics;
 use conf_trace::metrics_names::{
-    ERR_DECRYPTION_FAILED, ERR_RATE_LIMIT_EXCEEDED, OP_DECRYPT, OP_REENCRYPT, TAG_PARTY_ID,
+    ERR_DECRYPTION_FAILED, ERR_RATE_LIMIT_EXCEEDED, OP_CRS_GEN, OP_DECOMPRESSION_KEYGEN,
+    OP_DECRYPT, OP_INSECURE_CRS_GEN, OP_INSECURE_DECOMPRESSION_KEYGEN, OP_INSECURE_KEYGEN,
+    OP_KEYGEN, OP_KEYGEN_PREPROC, OP_REENCRYPT, TAG_PARTY_ID,
 };
 use distributed_decryption::algebra::base_ring::Z128;
 use distributed_decryption::algebra::galois_rings::common::pack_residue_poly;
@@ -1128,9 +1130,6 @@ impl<
                 format!("Invalid reencryption request {:?}", inner),
             )?;
 
-        // Start the timer, it is stopped when it's dropped
-        let _timer = timer.map(|b| b.start());
-
         let meta_store = Arc::clone(&self.reenc_meta_store);
         let crypto_storage = self.crypto_storage.clone();
         let mut rng = self.base_kms.new_rng().await;
@@ -1165,6 +1164,8 @@ impl<
         // the result of the computation is tracked the tracker
         self.tracker.spawn(
             async move {
+                // Start the timer, it is stopped when it's dropped
+                let _timer = timer.map(|b| b.start());
                 // explicitly move the rate limiter context
                 let _permit = permit;
                 // Note that we'll hold a read lock for some time
@@ -1602,6 +1603,9 @@ impl<
         let meta_store = Arc::clone(&self.dec_meta_store);
         let sigkey = Arc::clone(&self.base_kms.sig_key);
         let dec_sig_future = |_permit| async move {
+            // Move the timer to the management task's context, so as to drop
+            // it when decryptions are available
+            let _timer = _timer;
             // NOTE: _permit should be dropped at the end of this function
             let mut decs = HashMap::new();
             while let Some(resp) = dec_tasks.pop() {
@@ -1790,6 +1794,37 @@ impl<
         eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
         permit: OwnedSemaphorePermit,
     ) -> anyhow::Result<()> {
+        //Retrieve the right metric tag
+        let op_tag = match (&preproc_handle_w_mode, keyset_config) {
+            (PreprocHandleWithMode::Secure(_), ddec_keyset_config::KeySetConfig::Standard(_)) => {
+                OP_KEYGEN
+            }
+            (
+                PreprocHandleWithMode::Secure(_),
+                ddec_keyset_config::KeySetConfig::DecompressionOnly,
+            ) => OP_DECOMPRESSION_KEYGEN,
+            (PreprocHandleWithMode::Insecure, ddec_keyset_config::KeySetConfig::Standard(_)) => {
+                OP_INSECURE_KEYGEN
+            }
+            (
+                PreprocHandleWithMode::Insecure,
+                ddec_keyset_config::KeySetConfig::DecompressionOnly,
+            ) => OP_INSECURE_DECOMPRESSION_KEYGEN,
+        };
+
+        let _request_counter = metrics::METRICS
+            .increment_request_counter(op_tag)
+            .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
+
+        // Prepare the timer before giving it to the tokio task
+        // that runs the computation
+        let timer = metrics::METRICS
+            .time_operation(op_tag)
+            .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
+            .and_then(|b| {
+                b.tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
+                    .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
+            });
         // Update status
         {
             let mut guarded_meta_store = self.dkg_pubinfo_meta_store.write().await;
@@ -1860,6 +1895,8 @@ impl<
         };
         self.tracker
             .spawn(async move {
+                //Start the metric timer, it will end on drop
+                let _timer = timer.map(|b| b.start());
                 tokio::select! {
                     () = keygen_background => {
                         // Remove cancellation token since generation is now done.
@@ -2528,6 +2565,19 @@ impl RealPreprocessor {
         request_id: RequestId,
         permit: OwnedSemaphorePermit,
     ) -> anyhow::Result<()> {
+        let _request_counter = metrics::METRICS
+            .increment_request_counter(OP_KEYGEN_PREPROC)
+            .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
+
+        // Prepare the timer before giving it to the tokio task
+        // that runs the computation
+        let timer = metrics::METRICS
+            .time_operation(OP_KEYGEN_PREPROC)
+            .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
+            .and_then(|b| {
+                b.tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
+                    .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
+            });
         {
             let mut guarded_meta_store = self.preproc_buckets.write().await;
             guarded_meta_store.insert(&request_id)?;
@@ -2567,6 +2617,8 @@ impl RealPreprocessor {
         let ongoing = Arc::clone(&self.ongoing);
         self.tracker.spawn(
             async move {
+                //Start the metric timer, it will end on drop
+                let _timer = timer.map(|b| b.start());
                  tokio::select! {
                     () = Self::preprocessing_background(&request_id, base_sessions, bucket_store, prss_setup, own_identity, dkg_params, keyset_config, factory, permit) => {
                         // Remove cancellation token since generation is now done.
@@ -2820,6 +2872,26 @@ impl<
         permit: OwnedSemaphorePermit,
         insecure: bool,
     ) -> anyhow::Result<()> {
+        //Retrieve the correct tag
+        let op_tag = if insecure {
+            OP_INSECURE_CRS_GEN
+        } else {
+            OP_CRS_GEN
+        };
+
+        let _request_counter = metrics::METRICS
+            .increment_request_counter(op_tag)
+            .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
+
+        // Prepare the timer before giving it to the tokio task
+        // that runs the computation
+        let timer = metrics::METRICS
+            .time_operation(op_tag)
+            .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
+            .and_then(|b| {
+                b.tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
+                    .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
+            });
         {
             let mut guarded_meta_store = self.crs_meta_store.write().await;
             guarded_meta_store.insert(&req_id).map_err(|e| {
@@ -2860,6 +2932,8 @@ impl<
         let ongoing = Arc::clone(&self.ongoing);
         self.tracker
             .spawn(async move {
+                //Start the metric timer, it will end on drop
+                let _timer = timer.map(|b| b.start());
                 tokio::select! {
                     () = Self::crs_gen_background(&req_id, witness_dim, max_num_bits, session, rng, meta_store, crypto_storage, sk, dkg_params.to_owned(), eip712_domain_copy, permit, insecure) => {
                         // Remove cancellation token since generation is now done.
