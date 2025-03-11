@@ -1,18 +1,20 @@
+// TODO: refactor once ciphertext S3 extraction is clarified.
+// For now it contains trivial ciphertext extraction from SC for the public decrypt demo to work
 use alloy::{
     hex,
-    primitives::{Address, Bytes},
+    primitives::{Address, Bytes, U256},
     providers::Provider,
 };
-use bincode;
+use alloy_primitives::keccak256;
 use kms_grpc::kms::v1::{
-    CiphertextFormat, DecryptionRequest, FheType, ReencryptionRequest, ReencryptionRequestPayload,
-    RequestId, TypedCiphertext,
+    CiphertextFormat, DecryptionRequest, Eip712DomainMsg, FheType, ReencryptionRequest,
+    ReencryptionRequestPayload, RequestId, TypedCiphertext,
 };
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use tonic::Request;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 /// Default channel size for event processing
 const DEFAULT_CHANNEL_SIZE: usize = 1000;
@@ -131,18 +133,96 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
     ) where
         T: AsRef<[u8]>,
     {
+        let fhe_type_str = Self::fhe_type_to_string(fhe_type);
+
         match user_addr {
             Some(addr) => info!(
                 "Reencrypted result type: {} for request {} (user: 0x{})",
-                Self::fhe_type_to_string(fhe_type),
+                fhe_type_str,
                 request_id,
                 hex::encode(addr)
             ),
             None => info!(
                 "Decrypted result type: {} for request {}",
-                Self::fhe_type_to_string(fhe_type),
-                request_id
+                fhe_type_str, request_id
             ),
+        }
+    }
+
+    /// Convert a U256 key ID to Ethereum address format (20 bytes hex without 0x prefix)
+    fn format_key_id_as_eth_address(key_id: U256) -> String {
+        // Get the bytes representation - Ethereum address is in the last 20 bytes
+        let bytes = key_id.to_be_bytes::<32>();
+        let eth_addr_bytes = &bytes[12..32]; // Last 20 bytes
+        hex::encode(eth_addr_bytes)
+    }
+
+    // TODO: refactor as U256 is used by KMS-Core for constructing requests
+    /// Convert a string request ID to a valid hex format that KMS Core expects
+    /// Returns an error if the request ID cannot be properly formatted
+    fn format_request_id(request_id: &str) -> Result<String> {
+        // Fast path: Check if it's already a valid hex string of correct length
+        if request_id.len() == 40 && request_id.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Ok(request_id.to_string());
+        }
+
+        // TODO: strip all these paddings and truncations during the real testing by
+        // converting deviations to errors. For now it's needed for debuging and extended visibility
+        match U256::from_str(request_id) {
+            Ok(u256_val) => {
+                let bytes: [u8; 32] = u256_val.to_be_bytes::<32>();
+
+                if bytes[0..12] != [0; 12] {
+                    let hash = keccak256(bytes);
+
+                    // Use first 20 bytes of the hash (40 hex chars)
+                    let formatted_id = hex::encode(&hash[..20]);
+                    info!(
+                        "Request ID conversion: original='{}', method=keccak256, result='{}'",
+                        request_id, formatted_id
+                    );
+                    return Ok(formatted_id);
+                }
+
+                let hex = hex::encode(bytes);
+
+                // Ensure exactly 40 characters (20 bytes) as required by KMS Core
+                match hex.len().cmp(&40) {
+                    std::cmp::Ordering::Greater => {
+                        // Need to truncate - log a warning but continue
+                        let formatted_id = hex[hex.len() - 40..].to_string();
+                        warn!(
+                            "Request ID conversion: original='{}', method=truncation, from={} to=40 characters, result='{}'",
+                            request_id, hex.len(), formatted_id
+                        );
+                        Ok(formatted_id)
+                    }
+                    std::cmp::Ordering::Less => {
+                        // Need to pad - log a warning but continue
+                        let formatted_id = format!("{:0>40}", hex);
+                        warn!(
+                            "Request ID conversion: original='{}', method=padding, from={} to=40 characters, result='{}'",
+                            request_id, hex.len(), formatted_id
+                        );
+                        Ok(formatted_id)
+                    }
+                    std::cmp::Ordering::Equal => {
+                        // Exactly 40 characters - no furger action is needed
+                        info!(
+                            "Request ID conversion: original='{}', method=direct, result='{}'",
+                            request_id, hex
+                        );
+                        Ok(hex)
+                    }
+                }
+            }
+            Err(_) => {
+                error!("Invalid request ID format: {}", request_id);
+                Err(crate::error::Error::InvalidRequestId(format!(
+                    "Request ID '{}' is not a valid hex string or convertible number",
+                    request_id
+                )))
+            }
         }
     }
 
@@ -150,51 +230,98 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
     async fn handle_decryption(
         &self,
         request_id: String,
+        key_id: U256,
         ciphertext_data: Vec<(Vec<u8>, Vec<u8>)>, // (handle, ciphertext) pairs
         user_address: Option<Vec<u8>>,
     ) -> Result<()> {
+        // Format key ID as Ethereum address (20 bytes hex string without 0x prefix)
+        let key_id_hex = Self::format_key_id_as_eth_address(key_id);
+
+        // Format request ID as 40-character hex string
+        let request_id_hex = Self::format_request_id(&request_id)?;
+
+        // Log request details with FHE type information
+        let request_type = if user_address.is_some() {
+            "user"
+        } else {
+            "public"
+        };
+
+        // Extract and log FHE types for all ciphertexts
+        let fhe_types: Vec<String> = ciphertext_data
+            .iter()
+            .map(|(handle, _)| {
+                let fhe_type = Self::extract_fhe_type_from_handle(handle);
+                Self::fhe_type_to_string(fhe_type).to_string()
+            })
+            .collect();
+
         info!(
-            "Processing {} decryption request {} with {} ciphertexts",
-            if user_address.is_some() {
-                "user"
-            } else {
-                "public"
-            },
+            "Processing {} decryption request {} with {} ciphertexts, key_id: {}, FHE types: [{}]",
+            request_type,
             request_id,
-            ciphertext_data.len()
+            ciphertext_data.len(),
+            key_id_hex,
+            fhe_types.join(", ")
         );
 
+        // Create request ID objects for the KMS Core API
+        let request_id_obj = RequestId {
+            request_id: request_id_hex.clone(),
+        };
+
+        let key_id_obj = RequestId {
+            request_id: key_id_hex.clone(),
+        };
+
+        info!("Using request_id in hex format: {}", request_id_hex);
+
+        // Create domain message from config - same for both public and user decryption
+        let domain = Some(Eip712DomainMsg {
+            name: self
+                .kms_client
+                .config()
+                .decryption_manager_domain_name
+                .clone(),
+            version: self
+                .kms_client
+                .config()
+                .decryption_manager_domain_version
+                .clone(),
+            chain_id: vec![self.kms_client.config().chain_id as u8],
+            verifying_contract: self.kms_client.config().decryption_manager_address.clone(),
+            salt: None,
+        });
+
         match user_address {
-            // TODO: adjust logic as per #2079
-            // Public decryption aka decryption
+            // Public decryption
             None => {
+                // Prepare ciphertexts for the decryption request
+                let ciphertexts = ciphertext_data
+                    .iter()
+                    .map(|(handle, ciphertext)| {
+                        let fhe_type = Self::extract_fhe_type_from_handle(handle);
+                        TypedCiphertext {
+                            ciphertext: ciphertext.clone(),
+                            fhe_type,
+                            external_handle: handle.clone(),
+                            ciphertext_format: CiphertextFormat::BigExpanded.into(),
+                        }
+                    })
+                    .collect();
+
                 let request = Request::new(DecryptionRequest {
-                    ciphertexts: ciphertext_data
-                        .into_iter()
-                        .map(|(handle, ciphertext)| {
-                            let fhe_type = Self::extract_fhe_type_from_handle(&handle);
-                            TypedCiphertext {
-                                ciphertext,
-                                external_handle: handle,
-                                fhe_type,
-                                ciphertext_format: CiphertextFormat::BigExpanded.into(), // TODO need to be updated/configured
-                            }
-                        })
-                        .collect(),
-                    // TODO: change to actual key id once SC interface is updated
-                    key_id: Some(RequestId {
-                        request_id: request_id.clone(),
-                    }),
-                    // TODO: to understand how to populate this
-                    domain: None,
-                    request_id: Some(RequestId {
-                        request_id: request_id.clone(),
-                    }),
+                    ciphertexts,
+                    key_id: Some(key_id_obj),
+                    domain,
+                    request_id: Some(request_id_obj.clone()),
                 });
 
                 let response = self.kms_client.request_decryption(request).await?;
+                info!("[IN] PublicDecryptionResponse({}) received", request_id_hex);
                 let decryption_response = response.into_inner();
 
+                // Check if we have a valid payload
                 if let Some(payload) = decryption_response.payload {
                     // Get the first plaintext result
                     let result = payload
@@ -204,7 +331,11 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
                             Self::log_and_extract_result(&pt.bytes, pt.fhe_type, &request_id, None);
                             Bytes::from(pt.bytes.clone())
                         })
-                        .unwrap_or_default();
+                        .ok_or_else(|| {
+                            crate::error::Error::InvalidResponse(
+                                "KMS Core did not provide any plaintext results".into(),
+                            )
+                        })?;
 
                     // Get the external signature
                     let signature = payload.external_signature.ok_or_else(|| {
@@ -215,9 +346,8 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
 
                     // Send response back to L2
                     info!(
-                        "Sending public decryption response for request {} (result size: {} bytes)",
-                        request_id,
-                        result.len()
+                        "Sending public decryption response for request {}",
+                        request_id
                     );
                     self.decryption
                         .send_public_decryption_response(
@@ -231,37 +361,38 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
                         "Received empty payload for decryption request {}",
                         request_id
                     );
+                    return Err(crate::error::Error::Contract(
+                        "Empty payload received from KMS Core".into(),
+                    ));
                 }
+
+                Ok(())
             }
-            // TODO: adjust logic as per #2079
             // User decryption aka reencryption
             Some(user_addr) => {
+                // Prepare typed ciphertexts for the reencryption request
+                let typed_ciphertexts = ciphertext_data
+                    .iter()
+                    .map(|(handle, ciphertext)| {
+                        let fhe_type = Self::extract_fhe_type_from_handle(handle);
+                        TypedCiphertext {
+                            ciphertext: ciphertext.clone(),
+                            external_handle: handle.clone(),
+                            fhe_type,
+                            ciphertext_format: CiphertextFormat::BigExpanded.into(),
+                        }
+                    })
+                    .collect();
+
                 let request = Request::new(ReencryptionRequest {
                     payload: Some(ReencryptionRequestPayload {
                         client_address: Address::from_slice(&user_addr).to_string(),
                         enc_key: user_addr.clone(),
-                        // TODO: change to actual key id once SC interface is updated
-                        key_id: Some(RequestId {
-                            request_id: request_id.clone(),
-                        }),
-                        typed_ciphertexts: ciphertext_data
-                            .into_iter()
-                            .map(|(handle, ciphertext)| {
-                                let fhe_type = Self::extract_fhe_type_from_handle(&handle);
-                                TypedCiphertext {
-                                    ciphertext,
-                                    external_handle: handle,
-                                    fhe_type,
-                                    ciphertext_format: CiphertextFormat::BigExpanded.into(), // TODO need to be updated/configured
-                                }
-                            })
-                            .collect(),
+                        key_id: Some(key_id_obj),
+                        typed_ciphertexts,
                     }),
-                    // TODO: to understand how to populate this
-                    domain: None,
-                    request_id: Some(RequestId {
-                        request_id: request_id.clone(),
-                    }),
+                    domain,
+                    request_id: Some(request_id_obj),
                 });
 
                 let response = self.kms_client.request_reencryption(request).await?;
@@ -292,9 +423,8 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
 
                     // Send response back to L2
                     info!(
-                        "Sending user decryption response for request {} (result size: {} bytes)",
-                        request_id,
-                        reencrypted_share_buf.len()
+                        "Sending user decryption response for request {}",
+                        request_id
                     );
                     self.decryption
                         .send_user_decryption_response(
@@ -308,11 +438,14 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
                         "Received empty payload for reencryption request {}",
                         request_id
                     );
+                    return Err(crate::error::Error::Contract(
+                        "Empty payload received from KMS Core".into(),
+                    ));
                 }
+
+                Ok(())
             }
         }
-
-        Ok(())
     }
 
     /// Process events from L2
@@ -330,36 +463,80 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
                                 "Processing public decryption request {}",
                                 req.publicDecryptionId
                             );
+
+                            // Extract keyId from the first SNS ciphertext material if available
+                            let key_id = if !req.snsCtMaterials.is_empty() {
+                                let extracted_key_id = req.snsCtMaterials[0].keyId;
+                                info!(
+                                    "Extracted key_id {:?} from snsCtMaterials[0] for public decryption request {}",
+                                    extracted_key_id, req.publicDecryptionId
+                                );
+                                extracted_key_id
+                            } else {
+                                // Fail the request if no materials available
+                                error!(
+                                    "No snsCtMaterials found for public decryption request {}, cannot proceed without a valid key_id",
+                                    req.publicDecryptionId
+                                );
+                                continue;
+                            };
+
+                            // Convert ciphertext materials to handle/ciphertext pairs
+                            let ciphertext_pairs = req.snsCtMaterials
+                                .into_iter()
+                                .map(|pair| {
+                                    let handle = pair.ctHandle.to_be_bytes::<32>().to_vec();
+                                    (handle, pair.snsCiphertext.to_vec())
+                                })
+                                .collect();
+
                             self.handle_decryption(
                                 req.publicDecryptionId.to_string(),
-                                req.snsCtMaterials
-                                    .into_iter()
-                                    .map(|pair| {
-                                        let handle = pair.ctHandle.to_be_bytes::<32>().to_vec();
-                                        (handle, pair.snsCiphertext.to_vec())
-                                    })
-                                    .collect(),
+                                key_id,
+                                ciphertext_pairs,
                                 None,
                             )
                             .await
                         }
+                        // TODO: properly handle user decryption request
                         KmsCoreEvent::UserDecryptionRequest(req) => {
                             info!(
                                 "Processing user decryption request {}",
                                 req.userDecryptionId
                             );
+
                             // Extract first ciphertext handle from pairs
-                            let (handle, ciphertext) = req.ctHandleContractPairs
-                                .first()
-                                .map(|pair| {
-                                    let handle = pair.ctHandle.to_be_bytes::<32>().to_vec();
-                                    // TODO: Get actual ciphertext from contract using handle and contractAddress
-                                    (handle, vec![])
-                                })
-                                .unwrap_or_default();
+                            let first_pair = req.ctHandleContractPairs.first();
+
+                            if first_pair.is_none() {
+                                error!(
+                                    "No ctHandleContractPairs found for user decryption request {}, cannot proceed without a valid key_id",
+                                    req.userDecryptionId
+                                );
+                                continue;
+                            }
+
+                            let pair = first_pair.unwrap();
+                            let handle = pair.ctHandle.to_be_bytes::<32>().to_vec();
+
+                            // Extract key_id from handle similar to public decryption
+                            // This is a temporary solution until proper contract interaction is implemented
+                            let key_id = pair.ctHandle;
+                            info!(
+                                "Using ctHandle {:?} as key_id for user decryption request {} (contract: {})",
+                                key_id, req.userDecryptionId, pair.contractAddress
+                            );
+
+                            // TODO: Get actual ciphertext and key_id from contract
+                            // using contractAddress:
+                            // 1. Use provider to call the contract at pair.contractAddress
+                            // 2. Retrieve the ciphertext and key_id for the given handle
+                            // 3. Use that information for decryption
+                            let ciphertext = vec![];
 
                             self.handle_decryption(
                                 req.userDecryptionId.to_string(),
+                                key_id,
                                 vec![(handle, ciphertext)],
                                 Some(req.userAddress.to_vec()),
                             )

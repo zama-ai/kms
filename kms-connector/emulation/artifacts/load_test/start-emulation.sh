@@ -18,10 +18,10 @@ if ! command_exists anvil; then
 fi
 
 # Change to the project root directory
-cd "$(dirname "$0")/.." || exit 1
+cd "$(dirname "$0")/../.." || exit 1
 
 # Check if config file exists
-if [ ! -f "emulation/emul-config.toml" ]; then
+if [ ! -f "artifacts/load_test/emul-config.toml" ]; then
     echo "Error: emul-config.toml not found in emulation directory"
     exit 1
 fi
@@ -49,7 +49,7 @@ echo "Waiting for Anvil to start..."
 sleep 5
 
 echo "Starting Mock Events..."
-create_terminal "Mock Events" "RUST_LOG=info cargo run --bin mock-events"
+create_terminal "Mock Events" "RUST_LOG=info cargo run --bin mock-load"
 
 # Wait for contract deployment
 echo "Waiting for contract deployment..."
@@ -63,6 +63,6 @@ echo "Waiting for Mock Core to initialize..."
 sleep 3
 
 echo "Starting KMS Connector..."
-create_terminal "KMS Connector" 'RUST_LOG=info cargo run --bin kms-connector start -c emulation/emul-config.toml'
+create_terminal "KMS Connector" 'RUST_LOG=info cargo run --bin kms-connector start -c artifacts/load_test/emul-config.toml'
 
 echo "All components started. Check the terminal windows for output."

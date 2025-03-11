@@ -134,6 +134,19 @@ impl KmsService for KmsServiceImpl {
             .clone()
             .ok_or_else(|| Status::invalid_argument("Missing request ID"))?;
 
+        // Log the FHE types being processed in this request
+        if let Some(ciphertexts) = request.get_ref().ciphertexts.as_slice().first() {
+            info!(
+                "[OUT] Sending PublicDecryptionRequest({}) with FHE type: {}",
+                request_id.request_id, ciphertexts.fhe_type
+            );
+        } else {
+            info!(
+                "[OUT] Sending PublicDecryptionRequest({}) with no ciphertexts",
+                request_id.request_id
+            );
+        }
+
         let mut client = self
             .get_client()
             .await
@@ -172,6 +185,26 @@ impl KmsService for KmsServiceImpl {
             .clone()
             .ok_or_else(|| Status::invalid_argument("Missing request ID"))?;
 
+        // Log the client address and FHE types being processed
+        if let Some(payload) = &request.get_ref().payload {
+            let fhe_types = payload
+                .typed_ciphertexts
+                .iter()
+                .map(|ct| ct.fhe_type.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            info!(
+                "[OUT] Sending ReencryptionRequest({}) for client {} with FHE types: [{}]",
+                request_id.request_id, payload.client_address, fhe_types
+            );
+        } else {
+            info!(
+                "[OUT] Sending ReencryptionRequest({}) with no payload",
+                request_id.request_id
+            );
+        }
+
         let mut client = self
             .get_client()
             .await
@@ -202,5 +235,10 @@ impl KmsServiceImpl {
     pub fn stop(&self) {
         info!("Stopping KMS service...");
         self.running.store(false, Ordering::SeqCst);
+    }
+
+    /// Get the config object
+    pub fn config(&self) -> &Config {
+        &self.config
     }
 }

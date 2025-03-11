@@ -25,8 +25,20 @@ pub struct KmsWallet {
 impl KmsWallet {
     /// Create a new wallet from a mnemonic phrase
     pub fn from_mnemonic(phrase: &str, chain_id: Option<ChainId>) -> Result<Self> {
+        Self::from_mnemonic_with_index(phrase, 0, chain_id)
+    }
+
+    /// Create a new wallet from a mnemonic phrase with a specific account index
+    pub fn from_mnemonic_with_index(
+        phrase: &str,
+        account_index: u32,
+        chain_id: Option<ChainId>,
+    ) -> Result<Self> {
+        let derivation_path = format!("m/44'/60'/0'/0/{}", account_index);
+
         let signer = MnemonicBuilder::<English>::default()
             .phrase(phrase)
+            .derivation_path(&derivation_path)?
             .build()?
             .with_chain_id(chain_id);
 

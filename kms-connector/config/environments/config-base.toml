@@ -13,7 +13,7 @@ chain_id = 31337
 
 # Address of the DecryptionManager contract (required)
 # Format: hex string with 0x prefix
-decryption_manager_address = "0x5fbdb2315678afecb367f032d93f642f64180aa3"
+decryption_manager_address = "0x0000000000000000000000000000000000000000"
 
 # Address of the HTTPZ contract (required)
 # Format: hex string with 0x prefix

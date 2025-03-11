@@ -372,7 +372,7 @@ impl EventsAdapter {
     ) -> Result<()> {
         let event = match result {
             Some(Ok((event, log))) => {
-                info!("Received {} event:", event_name);
+                info!("[EVENT] 🔒 Received {} event:", event_name);
                 info!(
                     "  Block: {}, Tx: {}, LogIdx: {}",
                     log.block_number
@@ -386,11 +386,11 @@ impl EventsAdapter {
                         .unwrap_or_else(|| "N/A".to_string())
                 );
                 info!("  Topics: {:?}", log.topics());
-                info!("  Raw Data: {:?}", log.data());
-                info!("  Decoded Event: {:#?}", event);
+                debug!("  Raw Data: {:?}", log.data());
+                debug!("  Decoded Event: {:#?}", event);
 
                 let core_event = event_constructor(event);
-                debug!("Event processed: {:#?}", core_event);
+                debug!("🔎 Event processed: {:#?}", core_event);
                 core_event
             }
             Some(Err(e)) => {

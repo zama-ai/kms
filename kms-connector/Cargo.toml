@@ -51,6 +51,7 @@ futures-util = "0.3"
 url = "2.5.0"
 bip39 = "2.1.0"
 config = { version = "0.15.8", features = ["toml"] }
+rand.workspace = true
 
 # TODO: substitute with existing KMS-Core implementation
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -71,5 +72,9 @@ name = "mock-core"
 path = "emulation/bin/mock-core.rs"
 
 [[bin]]
-name = "mock-events"
-path = "emulation/bin/mock-events.rs"
+name = "mock-load"
+path = "emulation/bin/mock-load.rs"
+
+[[bin]]
+name = "mock-decrypt"
+path = "emulation/bin/mock-decrypt.rs"

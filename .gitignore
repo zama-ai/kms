@@ -24,3 +24,4 @@ kms-core.sublime-workspace
 .idea/
 *.orig
 **/tests/data
+/core-client/artifacts

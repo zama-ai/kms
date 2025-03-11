@@ -1,24 +1,15 @@
-# Configuration for KMS Connector Instance 1
-
 service_name = "kms-connector-1"
 
-# BIP39 mnemonic phrase for wallet generation (required)
 mnemonic = "test test test test test test test test test test test junk"
 
-# Chain ID for the L2 network (required)
-chain_id = 654321
+chain_id = 31337
 
-# Address of the DecryptionManager contract (required)
-decryption_manager_address = "0x0000000000000000000000000000000000000000"
+decryption_manager_address = "0x5FbDB2315678afecb367f032d93F642f64180aa3"
 
-# Address of the HTTPZ contract (required)
 httpz_address = "0x0000000000000000000000000000000000000001"
 
-# KMS-core gRPC endpoint (required)
-kms_core_endpoint = "http://localhost:50052"
+kms_core_endpoint = "http://[::1]:50200"
 
-# GateWay L2 WebSocket RPC URL endpoint (required)
-gwl2_url = "ws://localhost:8757"
+gwl2_url = "ws://0.0.0.0:8545"
 
-# Size of the event processing channel (optional)
-channel_size = 1000
+channel_size = 2000

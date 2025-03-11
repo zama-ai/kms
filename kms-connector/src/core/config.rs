@@ -35,6 +35,20 @@ pub struct Config {
     /// Retry interval in seconds (default: 5s)
     #[serde(default = "default_retry_interval")]
     pub retry_interval_secs: u64,
+    /// Account index for wallet derivation (optional)
+    pub account_index: Option<u32>,
+    /// EIP-712 domain name for IDecryptionManager contract
+    #[serde(default = "default_decryption_manager_domain_name")]
+    pub decryption_manager_domain_name: String,
+    /// EIP-712 domain version for IDecryptionManager contract
+    #[serde(default = "default_decryption_manager_domain_version")]
+    pub decryption_manager_domain_version: String,
+    /// EIP-712 domain name for IHTTPZ contract
+    #[serde(default = "default_httpz_domain_name")]
+    pub httpz_domain_name: String,
+    /// EIP-712 domain version for IHTTPZ contract
+    #[serde(default = "default_httpz_domain_version")]
+    pub httpz_domain_version: String,
 }
 
 fn default_service_name() -> String {
@@ -53,6 +67,22 @@ fn default_retry_interval() -> u64 {
     5 // 5 seconds
 }
 
+fn default_decryption_manager_domain_name() -> String {
+    "IDecryptionManager".to_string()
+}
+
+fn default_decryption_manager_domain_version() -> String {
+    "1".to_string()
+}
+
+fn default_httpz_domain_name() -> String {
+    "IHTTPZ".to_string()
+}
+
+fn default_httpz_domain_version() -> String {
+    "1".to_string()
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -68,6 +98,11 @@ impl Default for Config {
             decryption_timeout_secs: default_decryption_timeout(),
             reencryption_timeout_secs: default_reencryption_timeout(),
             retry_interval_secs: default_retry_interval(),
+            account_index: None,
+            decryption_manager_domain_name: default_decryption_manager_domain_name(),
+            decryption_manager_domain_version: default_decryption_manager_domain_version(),
+            httpz_domain_name: default_httpz_domain_name(),
+            httpz_domain_version: default_httpz_domain_version(),
         }
     }
 }
@@ -250,6 +285,29 @@ impl Config {
     pub fn retry_interval(&self) -> Duration {
         Duration::from_secs(self.retry_interval_secs)
     }
+
+    /// Get the account index for wallet derivation
+    /// If explicitly set in config, use that value
+    /// Otherwise, extract it from the service name (e.g., "kms-connector-2" -> 2)
+    pub fn get_account_index(&self) -> u32 {
+        if let Some(index) = self.account_index {
+            return index;
+        }
+
+        // Try to extract index from service name (e.g., "kms-connector-2" -> 2)
+        let parts: Vec<&str> = self.service_name.split('-').collect();
+        if parts.len() >= 2 {
+            // Try to get the last part and parse it as a number
+            if let Some(last) = parts.last() {
+                if let Ok(index) = last.parse::<u32>() {
+                    return index;
+                }
+            }
+        }
+
+        // Default to 0 if service name doesn't contain a number
+        0
+    }
 }
 
 #[cfg(test)]
@@ -293,6 +351,11 @@ mod tests {
             decryption_timeout_secs: 300,
             reencryption_timeout_secs: 300,
             retry_interval_secs: 5,
+            account_index: None,
+            decryption_manager_domain_name: "IDecryptionManager".to_string(),
+            decryption_manager_domain_version: "1".to_string(),
+            httpz_domain_name: "IHTTPZ".to_string(),
+            httpz_domain_version: "1".to_string(),
         };
 
         let temp_file = NamedTempFile::new().unwrap();
@@ -325,6 +388,19 @@ mod tests {
             config.retry_interval_secs,
             loaded_config.retry_interval_secs
         );
+        assert_eq!(
+            config.decryption_manager_domain_name,
+            loaded_config.decryption_manager_domain_name
+        );
+        assert_eq!(
+            config.decryption_manager_domain_version,
+            loaded_config.decryption_manager_domain_version
+        );
+        assert_eq!(config.httpz_domain_name, loaded_config.httpz_domain_name);
+        assert_eq!(
+            config.httpz_domain_version,
+            loaded_config.httpz_domain_version
+        );
     }
 
     #[test]
@@ -342,6 +418,11 @@ mod tests {
             decryption_timeout_secs: 300,
             reencryption_timeout_secs: 300,
             retry_interval_secs: 5,
+            account_index: None,
+            decryption_manager_domain_name: "IDecryptionManager".to_string(),
+            decryption_manager_domain_version: "1".to_string(),
+            httpz_domain_name: "IHTTPZ".to_string(),
+            httpz_domain_version: "1".to_string(),
         };
 
         config.to_file("test_config.toml").unwrap();
@@ -366,6 +447,11 @@ mod tests {
             decryption_timeout_secs: 300,
             reencryption_timeout_secs: 300,
             retry_interval_secs: 5,
+            account_index: None,
+            decryption_manager_domain_name: "IDecryptionManager".to_string(),
+            decryption_manager_domain_version: "1".to_string(),
+            httpz_domain_name: "IHTTPZ".to_string(),
+            httpz_domain_version: "1".to_string(),
         };
 
         let temp_file = NamedTempFile::new().unwrap();
@@ -441,6 +527,11 @@ mod tests {
             decryption_timeout_secs: 300,
             reencryption_timeout_secs: 300,
             retry_interval_secs: 5,
+            account_index: None,
+            decryption_manager_domain_name: "IDecryptionManager".to_string(),
+            decryption_manager_domain_version: "1".to_string(),
+            httpz_domain_name: "IHTTPZ".to_string(),
+            httpz_domain_version: "1".to_string(),
         };
 
         let temp_file = NamedTempFile::new().unwrap();

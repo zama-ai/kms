@@ -1,6 +1,6 @@
 # KMS Connector Changelog
 
-## Implementation Status (as of 2025-02-25)
+## Implementation Status (as of 2025-03-10)
 
 ### 1. Core Infrastructure ⚙️
 
@@ -22,6 +22,9 @@
 - Gateway L2 integration as git submodule
 - Comprehensive emulation environment for testing
 - Full configuration management
+- Enhanced error handling with exponential backoff for reconnections
+- Improved logging for better observability
+- Secure wallet implementation with mnemonic-based key derivation
 
 #### 1.2. In Progress 🚧
 
@@ -70,7 +73,9 @@
 - User decryption operations
 - Key generation operations
 - CRS generation operations
-- shifting to updated types for grpc requests/responses with KMS Core
+- Updated types for gRPC requests/responses with KMS Core
+- Advanced operation retry mechanisms with configurable timeouts
+- Proper FHE type handling and extraction from ciphertext handles
 
 #### 3.2. In Progress 🚧
 
@@ -114,6 +119,7 @@
 - Automated test execution infrastructure
 - Interface compatibility testing suite
 - Load testing
+- Public decryption integration test
 
 #### 5.2. In Progress 🚧
 

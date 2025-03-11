@@ -1,0 +1,17 @@
+global:
+  scrape_interval: 3s
+  evaluation_interval: 3s
+
+scrape_configs:
+  - job_name: 'zama-core-threshold-dev-kms-core'
+    static_configs:
+      - targets: 
+        - 'host.docker.internal:9646'
+
+  - job_name: 'zama-core-threshold-dev-kms-core-internal'
+    static_configs:
+      - targets: 
+        - 'zama-core-threshold-dev-kms-core-1-1:9646'  # Using Docker DNS names
+        - 'zama-core-threshold-dev-kms-core-2-1:9646'
+        - 'zama-core-threshold-dev-kms-core-3-1:9646'
+        - 'zama-core-threshold-dev-kms-core-4-1:9646'

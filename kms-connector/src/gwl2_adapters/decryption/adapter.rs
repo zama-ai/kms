@@ -59,13 +59,17 @@ impl<P: Provider + Clone> DecryptionAdapter<P> {
 
         // Create and send transaction
         let call = contract.publicDecryptionResponse(id, result, signature.into());
-        let _ = call
+        let tx = call
             .from(self.wallet.address())
             .send()
             .await
             .map_err(|e| Error::Contract(e.to_string()))?;
-
-        info!(decryption_id = ?id, "Public decryption response sent");
+        // TODO: optimize for low latency
+        let receipt = tx
+            .get_receipt()
+            .await
+            .map_err(|e| Error::Contract(e.to_string()))?;
+        info!(decryption_id = ?id, "🎯 Public Decryption response sent with tx receipt: {:?}", receipt);
         Ok(())
     }
 
@@ -100,13 +104,17 @@ impl<P: Provider + Clone> DecryptionAdapter<P> {
 
         // Create and send transaction
         let call = contract.userDecryptionResponse(id, result, signature.into());
-        let _ = call
+        let tx = call
             .from(self.wallet.address())
             .send()
             .await
             .map_err(|e| Error::Contract(e.to_string()))?;
-
-        info!(decryption_id = ?id, "User decryption response sent");
+        // TODO: optimize for low latency
+        let receipt = tx
+            .get_receipt()
+            .await
+            .map_err(|e| Error::Contract(e.to_string()))?;
+        info!(decryption_id = ?id, "🎯 User Decryption response sent with tx receipt: {:?}", receipt);
         Ok(())
     }
 }

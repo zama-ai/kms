@@ -19,7 +19,7 @@ sol!(
     )]
     #[derive(Debug)]
     MockDecryptionManager,
-    "emulation/artifacts/MockDecryptionManager.abi"
+    "emulation/artifacts/load_test/MockDecryptionManager.abi"
 );
 
 const PRIVATE_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";

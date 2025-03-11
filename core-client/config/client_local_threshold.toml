@@ -10,4 +10,5 @@ num_reconstruct = 3
 # Only relevant for threshold.
 decryption_mode = "NoiseFloodSmall"
 
-fhe_params = "Test"
+# fhe_params = "Test" # Uncomment for testing purposes
+fhe_params = "Default"
