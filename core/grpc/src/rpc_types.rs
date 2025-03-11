@@ -938,6 +938,15 @@ impl TryFrom<RequestId> for u128 {
 
     // Convert a RequestId to a u128 through truncation of the first bytes.
     fn try_from(value: RequestId) -> Result<Self, Self::Error> {
+        TryFrom::<&RequestId>::try_from(&value)
+    }
+}
+
+impl TryFrom<&RequestId> for u128 {
+    type Error = anyhow::Error;
+
+    // Convert a RequestId to a u128 through truncation of the first bytes.
+    fn try_from(value: &RequestId) -> Result<Self, Self::Error> {
         let hex = hex::decode(value.to_string())?;
         let hex_truncated: [u8; 16] = hex[4..20].try_into()?;
         Ok(u128::from_be_bytes(hex_truncated))

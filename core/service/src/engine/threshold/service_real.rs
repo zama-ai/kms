@@ -87,6 +87,7 @@ use kms_grpc::rpc_types::{
 };
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
+use sha3::{Digest, Sha3_256};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tfhe::core_crypto::prelude::LweKeyswitchKey;
@@ -104,6 +105,33 @@ use tonic::{Request, Response, Status};
 use tonic_health::pb::health_server::{Health, HealthServer};
 use tonic_health::server::HealthReporter;
 use tracing::Instrument;
+
+const DSEP_SESSION_DECRYPTION: &[u8; 18] = b"SESSION_DECRYPTION";
+const DSEP_SESSION_REENCRYPTION: &[u8; 20] = b"SESSION_REENCRYPTION";
+const DSEP_SESSION_PREPROCESSING: &[u8; 21] = b"SESSION_PREPROCESSING";
+
+fn derive_session_id_from_ctr(
+    ctr: u64,
+    domain_separator: &[u8],
+    req_id: &RequestId,
+) -> anyhow::Result<SessionId> {
+    if !req_id.is_valid() {
+        anyhow::bail!("invalid request ID: {}", req_id.request_id);
+    }
+    let req_id_buf = hex::decode(&req_id.request_id)?;
+
+    // H(domain_separator || req_id (160 bits) || counter (64 bits))
+    let mut hasher = Sha3_256::new();
+    hasher.update(domain_separator);
+    hasher.update(req_id_buf);
+    hasher.update(ctr.to_le_bytes());
+    let digest = hasher.finalize();
+
+    let mut sid_buf = [0u8; 16];
+    sid_buf.copy_from_slice(&digest);
+
+    Ok(SessionId(u128::from_le_bytes(sid_buf)))
+}
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "insecure")] {
@@ -933,7 +961,7 @@ impl<
     /// The return type should be [ReencCallValues] except the final item in the tuple
     #[allow(clippy::too_many_arguments)]
     async fn inner_reencrypt(
-        session_id: SessionId,
+        req_id: &RequestId,
         session_prep: Arc<SessionPreparer>,
         rng: &mut (impl CryptoRng + RngCore),
         typed_ciphertexts: &[TypedCiphertext],
@@ -948,11 +976,13 @@ impl<
         let keys = fhe_keys;
 
         let mut all_signcrypted_cts = vec![];
-        for typed_ciphertext in typed_ciphertexts {
+        for (ctr, typed_ciphertext) in typed_ciphertexts.iter().enumerate() {
             let fhe_type = typed_ciphertext.fhe_type();
             let ct_format = typed_ciphertext.ciphertext_format();
             let ct = &typed_ciphertext.ciphertext;
             let external_handle = typed_ciphertext.external_handle.clone();
+            let session_id =
+                derive_session_id_from_ctr(ctr as u64, DSEP_SESSION_REENCRYPTION, req_id)?;
 
             let low_level_ct =
                 deserialize_to_low_level(&fhe_type, ct_format, ct, &keys.decompression_key)?;
@@ -1153,11 +1183,6 @@ impl<
             "Cannot find threshold keys".to_string(),
         )?;
 
-        let session_id = SessionId(tonic_handle_potential_err(
-            req_id.clone().try_into(),
-            "Could not turn request id to session id".to_string(),
-        )?);
-
         let prep = Arc::clone(&self.session_preparer);
         let dec_mode = self.decryption_mode;
 
@@ -1177,7 +1202,7 @@ impl<
                 let tmp = match fhe_keys_rlock {
                     Ok(k) => {
                         Self::inner_reencrypt(
-                            session_id,
+                            &req_id,
                             prep,
                             &mut rng,
                             &typed_ciphertexts,
@@ -1442,11 +1467,6 @@ impl<
             ciphertexts_count = ciphertexts.len(),
             "Starting decryption process"
         );
-        // the session id that is used between the threshold engines to identify the decryption session, derived from the request id
-        let internal_sid = tonic_handle_potential_err(
-            u128::try_from(req_id.clone()),
-            format!("Invalid request id {:?}", inner),
-        )?;
 
         // Below we write to the meta-store.
         // After writing, the the meta-store on this [req_id] will be in the "Started" state
@@ -1477,8 +1497,11 @@ impl<
         let dec_mode = self.decryption_mode;
 
         // iterate over ciphertexts in this batch and decrypt each in their own session (so that it happens in parallel)
-        for (idx, typed_ciphertext) in ciphertexts.into_iter().enumerate() {
-            let internal_sid = SessionId::from(internal_sid + idx as u128);
+        for (ctr, typed_ciphertext) in ciphertexts.into_iter().enumerate() {
+            let internal_sid = tonic_handle_potential_err(
+                derive_session_id_from_ctr(ctr as u64, DSEP_SESSION_DECRYPTION, &req_id),
+                "failed to derive session ID from counter".to_string(),
+            )?;
             let key_id = key_id.clone();
             let crypto_storage = self.crypto_storage.clone();
             let prep = Arc::clone(&self.session_preparer);
@@ -1586,7 +1609,7 @@ impl<
                     .map(|x| TypedPlaintext::new(x as u128, fhe_type)),
                 };
                 match res_plaintext {
-                    Ok(plaintext) => Ok((idx, plaintext)),
+                    Ok(plaintext) => Ok((ctr, plaintext)),
                     Result::Err(e) => Err(anyhow_error_and_log(format!(
                         "Threshold decryption failed:{}",
                         e
@@ -2583,16 +2606,19 @@ impl RealPreprocessor {
             guarded_meta_store.insert(&request_id)?;
         }
         // Derive a sequence of sessionId from request_id
-        let session_id: u128 = request_id.clone().try_into()?;
         let own_identity = self.session_preparer.own_identity()?;
 
-        let sids: Vec<_> = (session_id..session_id + self.num_sessions_preproc as u128).collect();
+        let sids = (0..self.num_sessions_preproc)
+            .map(|ctr| {
+                derive_session_id_from_ctr(ctr as u64, DSEP_SESSION_PREPROCESSING, &request_id)
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
         let base_sessions = {
             let mut res = Vec::with_capacity(sids.len());
             for sid in sids {
                 let base_session = self
                     .session_preparer
-                    .make_base_session(SessionId(sid), NetworkMode::Sync)
+                    .make_base_session(sid, NetworkMode::Sync)
                     .await?;
                 res.push(base_session)
             }
