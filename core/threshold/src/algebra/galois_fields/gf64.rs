@@ -9,7 +9,6 @@ use crate::algebra::{
 use g2p::{g2p, GaloisField};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
-use std::ops::Neg;
 use std::sync::RwLock;
 
 g2p!(
@@ -58,18 +57,6 @@ impl<'de> Deserialize<'de> for GF64 {
     }
 }
 
-impl std::hash::Hash for GF64 {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.0.hash(state);
-    }
-}
-
-impl std::iter::Sum for GF64 {
-    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
-        iter.fold(<GF64 as Zero>::ZERO, |acc, x| acc + x)
-    }
-}
-
 impl FromU128 for GF64 {
     fn from_u128(value: u128) -> Self {
         GF64::from(value as u8)
@@ -84,15 +71,6 @@ impl Ring for GF64 {
 
     fn to_byte_vec(&self) -> Vec<u8> {
         self.0.to_le_bytes().to_vec()
-    }
-}
-
-impl Neg for GF64 {
-    type Output = Self;
-    fn neg(self) -> Self::Output {
-        // Subtraction and addition in GF64 are identical and just an XOR.
-        // That means we can just return the element itself when we want the additive inverse.
-        self
     }
 }
 
