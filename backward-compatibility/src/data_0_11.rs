@@ -13,7 +13,6 @@ use distributed_decryption_0_11::execution::small_execution::prf::PrfKey;
 use distributed_decryption_0_11::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
 use distributed_decryption_0_11::execution::tfhe_internals::test_feature::generate_large_keys_from_seed;
 use distributed_decryption_0_11::{
-    // algebra::residue_poly::{ResiduePolyF8Z128, ResiduePolyF8Z64},
     execution::{
         runtime::party::Role,
         tfhe_internals::{
@@ -245,6 +244,15 @@ const APP_KEY_BLOB_TEST: AppKeyBlobTest = AppKeyBlobTest {
     auth_tag: Cow::Borrowed("auth_tag"),
 };
 
+fn dummy_domain() -> alloy_sol_types_0_8_22::Eip712Domain {
+    alloy_sol_types_0_8_22::eip712_domain!(
+        name: "Authorization token",
+        version: "1",
+        chain_id: 8006,
+        verifying_contract: alloy_primitives_0_8_22::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+    )
+}
+
 pub struct V0_11;
 
 struct KmsV0_11;
@@ -364,14 +372,15 @@ impl KmsV0_11 {
             sns_key: Some(sns_key),
         };
 
-        // TODO: include eip712_domain parameter
+        // NOTE: kms_fhe_key_handles.public_key_info is HashMap
+        // so generation is not deterministic
         let kms_fhe_key_handles = KmsFheKeyHandles::new(
             &private_sig_key,
             client_key,
             sns_client_key,
             &public_key_set,
             decompression_key,
-            None,
+            Some(&dummy_domain()),
         )
         .unwrap();
 
@@ -418,8 +427,9 @@ impl KmsV0_11 {
         let mut rng = AesRng::seed_from_u64(THRESHOLD_FHE_KEYS_TEST.state);
         let (_, private_sig_key) = gen_sig_keys(&mut rng);
 
-        // TODO: include domain parameter
-        let info = compute_all_info(&private_sig_key, &fhe_pub_key_set, None).unwrap();
+        // NOTE: this is not deterministic since the result is a HashMap
+        let info =
+            compute_all_info(&private_sig_key, &fhe_pub_key_set, Some(&dummy_domain())).unwrap();
         store_versioned_auxiliary!(
             &info,
             dir,

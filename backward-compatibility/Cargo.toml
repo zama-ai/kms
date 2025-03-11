@@ -22,6 +22,8 @@ tfhe_versionable_0_5 = { package = "tfhe-versionable", version = "0.5.0", option
 tfhe_1_0 = { package = "tfhe", version = "1.0.0", optional = true, features = [
     "shortint",
 ] }
+alloy-sol-types-0_8_22 = { package = "alloy-sol-types", version = "=0.8.20", optional = true }
+alloy-primitives-0_8_22 = { package = "alloy-primitives", version = "=0.8.20", optional = true }
 serde = { version = "=1.0.217", features = ["derive"] }
 strum = { version = "=0.26.3", features = ["derive"] }
 semver = { version = "=1.0.23", optional = true }
@@ -43,6 +45,8 @@ generate = [
     "dep:distributed_decryption_0_11",
     "dep:tfhe_versionable_0_5",
     "dep:tfhe_1_0",
+    "dep:alloy-sol-types-0_8_22",
+    "dep:alloy-primitives-0_8_22",
 ]
 load = ["dep:semver"]
 tests = []

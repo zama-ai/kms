@@ -30,6 +30,16 @@ use rand::SeedableRng;
 use std::{collections::HashMap, env, path::Path};
 use tfhe::{core_crypto::prelude::LweKeyswitchKey, integer::compression_keys::DecompressionKey};
 
+// This domain should match what is in the data_XX.rs file in backward compatibility.
+fn dummy_domain() -> alloy_sol_types::Eip712Domain {
+    alloy_sol_types::eip712_domain!(
+        name: "Authorization token",
+        version: "1",
+        chain_id: 8006,
+        verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+    )
+}
+
 fn test_private_sig_key(
     dir: &Path,
     test: &PrivateSigKeyTest,
@@ -142,14 +152,13 @@ fn test_kms_fhe_key_handles(
     let decompression_key: Option<DecompressionKey> =
         load_and_unversionize_auxiliary(dir, test, &test.decompression_key_filename, format)?;
 
-    // TODO: include eip712_domain parameter when generating the versioned data
     let new_versionized = KmsFheKeyHandles::new(
         &private_sig_key,
         client_key,
         sns_client_key,
         &fhe_pub_key_set,
         decompression_key,
-        None,
+        Some(&dummy_domain()),
     )
     .unwrap();
 

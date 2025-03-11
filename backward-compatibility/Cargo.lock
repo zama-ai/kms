@@ -1406,6 +1406,8 @@ name = "backward-compatibility"
 version = "0.11.0-rc3"
 dependencies = [
  "aes-prng",
+ "alloy-primitives",
+ "alloy-sol-types",
  "bincode",
  "distributed-decryption",
  "kms",
