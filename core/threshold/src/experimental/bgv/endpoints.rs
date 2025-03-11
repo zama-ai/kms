@@ -17,7 +17,7 @@ use crate::experimental::bgv::runtime::BGVTestRuntime;
 use crate::experimental::{
     algebra::levels::LevelOne, bgv::basics::LevelledCiphertext, bgv::ddec::noise_flood_decryption,
 };
-use crate::session_id::{SessionId, TAG_BYTES};
+use crate::session_id::{SessionId, SESSION_ID_BYTES};
 use aes_prng::AesRng;
 use itertools::Itertools;
 use rand::SeedableRng;
@@ -32,8 +32,8 @@ impl SessionId {
     ) -> anyhow::Result<SessionId> {
         let serialized_ct = bincode::serialize(ciphertext)?;
 
-        // hash the serialized ct data into a 128-bit (TAG_BYTES) digest and convert to u128
-        let mut hash = [0_u8; TAG_BYTES];
+        // hash the serialized ct data into a 128-bit (SESSION_ID_BYTES) digest and convert to u128
+        let mut hash = [0_u8; SESSION_ID_BYTES];
         Shake128::digest_xof(serialized_ct, &mut hash);
         Ok(SessionId(u128::from_le_bytes(hash)))
     }

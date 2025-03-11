@@ -68,7 +68,7 @@ use distributed_decryption::networking::grpc::{
 };
 use distributed_decryption::networking::NetworkingStrategy;
 use distributed_decryption::networking::{NetworkMode, Networking};
-use distributed_decryption::session_id::SessionId;
+use distributed_decryption::session_id::{SessionId, SESSION_ID_BYTES};
 use distributed_decryption::{algebra::base_ring::Z64, execution::endpoints::keygen::FhePubKeySet};
 use itertools::Itertools;
 use k256::ecdsa::SigningKey;
@@ -120,15 +120,15 @@ fn derive_session_id_from_ctr(
     }
     let req_id_buf = hex::decode(&req_id.request_id)?;
 
-    // H(domain_separator || req_id (160 bits) || counter (64 bits))
+    // H(domain_separator || req_id (256 bits) || counter (64 bits))
     let mut hasher = Sha3_256::new();
     hasher.update(domain_separator);
     hasher.update(req_id_buf);
     hasher.update(ctr.to_le_bytes());
     let digest = hasher.finalize();
 
-    let mut sid_buf = [0u8; 16];
-    sid_buf.copy_from_slice(&digest);
+    let mut sid_buf = [0u8; SESSION_ID_BYTES];
+    sid_buf.copy_from_slice(&digest[0..SESSION_ID_BYTES]);
 
     Ok(SessionId(u128::from_le_bytes(sid_buf)))
 }

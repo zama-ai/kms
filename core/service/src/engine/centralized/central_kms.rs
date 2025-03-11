@@ -285,8 +285,6 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     mut rng: R,
     eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
 ) -> anyhow::Result<(CompactPkeCrs, SignedPubDataHandleInternal)> {
-    use crate::engine::base::compute_info;
-
     let internal_pp = make_centralized_public_parameters(
         &params
             .get_params_basics_handle()
@@ -298,7 +296,7 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
         .get_params_basics_handle()
         .get_compact_pk_enc_params();
     let pp = internal_pp.try_into_tfhe_zk_pok_pp(&pke_params)?;
-    let crs_info = compute_info(sk, &pp, eip712_domain)?;
+    let crs_info = crate::engine::base::compute_info(sk, &pp, eip712_domain)?;
     Ok((pp, crs_info))
 }
 

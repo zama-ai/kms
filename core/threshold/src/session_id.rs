@@ -4,7 +4,7 @@ use crate::execution::tfhe_internals::parameters::Ciphertext64;
 use serde::{Deserialize, Serialize};
 use sha3::{digest::ExtendableOutput, Shake128};
 
-pub const TAG_BYTES: usize = 128 / 8;
+pub const SESSION_ID_BYTES: usize = 128 / 8;
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SessionId(pub u128);
@@ -15,8 +15,8 @@ impl SessionId {
     pub fn new(ciphertext: &Ciphertext64) -> anyhow::Result<SessionId> {
         let serialized_ct = bincode::serialize(ciphertext)?;
 
-        // hash the serialized ct data into a 128-bit (TAG_BYTES) digest and convert to u128
-        let mut hash = [0_u8; TAG_BYTES];
+        // hash the serialized ct data into a 128-bit (SESSION_ID_BYTES) digest and convert to u128
+        let mut hash = [0_u8; SESSION_ID_BYTES];
         Shake128::digest_xof(serialized_ct, &mut hash);
         Ok(SessionId(u128::from_le_bytes(hash)))
     }
@@ -26,7 +26,7 @@ impl FromStr for SessionId {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut hash = [0_u8; TAG_BYTES];
+        let mut hash = [0_u8; SESSION_ID_BYTES];
         Shake128::digest_xof(s, &mut hash);
         Ok(SessionId(u128::from_le_bytes(hash)))
     }

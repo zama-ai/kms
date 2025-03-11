@@ -372,7 +372,7 @@ impl KmsV0_11 {
             sns_key: Some(sns_key),
         };
 
-        // NOTE: kms_fhe_key_handles.public_key_info is HashMap
+        // NOTE: kms_fhe_key_handles.public_key_info is a HashMap
         // so generation is not deterministic
         let kms_fhe_key_handles = KmsFheKeyHandles::new(
             &private_sig_key,

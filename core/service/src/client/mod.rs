@@ -3876,8 +3876,8 @@ pub(crate) mod tests {
         for crs_gen_result in crs_gen_results.iter_mut().take(count) {
             match &mut crs_gen_result.crs_results {
                 Some(info) => {
-                    // each hex-digit is 4 bits, 160 bits is 40 characters
-                    assert_eq!(40, info.key_handle.len());
+                    // each hex-digit is 4 bits, 256 bits is 64 characters
+                    assert_eq!(64, info.key_handle.len());
                     // it's unlikely that we generate the same signature more than once
                     info.key_handle = digest.to_string();
                 }

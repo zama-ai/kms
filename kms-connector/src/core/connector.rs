@@ -5,7 +5,6 @@ use alloy::{
     primitives::{Address, Bytes, U256},
     providers::Provider,
 };
-use alloy_primitives::keccak256;
 use kms_grpc::kms::v1::{
     CiphertextFormat, DecryptionRequest, Eip712DomainMsg, FheType, ReencryptionRequest,
     ReencryptionRequestPayload, RequestId, TypedCiphertext,
@@ -14,7 +13,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use tonic::Request;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 /// Default channel size for event processing
 const DEFAULT_CHANNEL_SIZE: usize = 1000;
@@ -128,7 +127,7 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
     fn log_and_extract_result<T>(
         _result: &T,
         fhe_type: i32,
-        request_id: &str,
+        request_id: U256,
         user_addr: Option<&[u8]>,
     ) where
         T: AsRef<[u8]>,
@@ -149,96 +148,25 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
         }
     }
 
-    /// Convert a U256 key ID to Ethereum address format (20 bytes hex without 0x prefix)
-    fn format_key_id_as_eth_address(key_id: U256) -> String {
-        // Get the bytes representation - Ethereum address is in the last 20 bytes
-        let bytes = key_id.to_be_bytes::<32>();
-        let eth_addr_bytes = &bytes[12..32]; // Last 20 bytes
-        hex::encode(eth_addr_bytes)
-    }
-
-    // TODO: refactor as U256 is used by KMS-Core for constructing requests
     /// Convert a string request ID to a valid hex format that KMS Core expects
     /// Returns an error if the request ID cannot be properly formatted
-    fn format_request_id(request_id: &str) -> Result<String> {
-        // Fast path: Check if it's already a valid hex string of correct length
-        if request_id.len() == 40 && request_id.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Ok(request_id.to_string());
-        }
-
-        // TODO: strip all these paddings and truncations during the real testing by
-        // converting deviations to errors. For now it's needed for debuging and extended visibility
-        match U256::from_str(request_id) {
-            Ok(u256_val) => {
-                let bytes: [u8; 32] = u256_val.to_be_bytes::<32>();
-
-                if bytes[0..12] != [0; 12] {
-                    let hash = keccak256(bytes);
-
-                    // Use first 20 bytes of the hash (40 hex chars)
-                    let formatted_id = hex::encode(&hash[..20]);
-                    info!(
-                        "Request ID conversion: original='{}', method=keccak256, result='{}'",
-                        request_id, formatted_id
-                    );
-                    return Ok(formatted_id);
-                }
-
-                let hex = hex::encode(bytes);
-
-                // Ensure exactly 40 characters (20 bytes) as required by KMS Core
-                match hex.len().cmp(&40) {
-                    std::cmp::Ordering::Greater => {
-                        // Need to truncate - log a warning but continue
-                        let formatted_id = hex[hex.len() - 40..].to_string();
-                        warn!(
-                            "Request ID conversion: original='{}', method=truncation, from={} to=40 characters, result='{}'",
-                            request_id, hex.len(), formatted_id
-                        );
-                        Ok(formatted_id)
-                    }
-                    std::cmp::Ordering::Less => {
-                        // Need to pad - log a warning but continue
-                        let formatted_id = format!("{:0>40}", hex);
-                        warn!(
-                            "Request ID conversion: original='{}', method=padding, from={} to=40 characters, result='{}'",
-                            request_id, hex.len(), formatted_id
-                        );
-                        Ok(formatted_id)
-                    }
-                    std::cmp::Ordering::Equal => {
-                        // Exactly 40 characters - no furger action is needed
-                        info!(
-                            "Request ID conversion: original='{}', method=direct, result='{}'",
-                            request_id, hex
-                        );
-                        Ok(hex)
-                    }
-                }
-            }
-            Err(_) => {
-                error!("Invalid request ID format: {}", request_id);
-                Err(crate::error::Error::InvalidRequestId(format!(
-                    "Request ID '{}' is not a valid hex string or convertible number",
-                    request_id
-                )))
-            }
-        }
+    fn format_request_id(request_id: U256) -> String {
+        let bytes = request_id.to_be_bytes::<32>();
+        hex::encode(bytes)
     }
 
     /// Handle a decryption request (both public and user)
     async fn handle_decryption(
         &self,
-        request_id: String,
+        request_id: U256,
         key_id: U256,
         ciphertext_data: Vec<(Vec<u8>, Vec<u8>)>, // (handle, ciphertext) pairs
         user_address: Option<Vec<u8>>,
     ) -> Result<()> {
-        // Format key ID as Ethereum address (20 bytes hex string without 0x prefix)
-        let key_id_hex = Self::format_key_id_as_eth_address(key_id);
-
-        // Format request ID as 40-character hex string
-        let request_id_hex = Self::format_request_id(&request_id)?;
+        // key_id is also a request_id (from a previous keygen request),
+        // so they should be formatted in the same way.
+        let key_id_hex = Self::format_request_id(key_id);
+        let request_id_hex = Self::format_request_id(request_id);
 
         // Log request details with FHE type information
         let request_type = if user_address.is_some() {
@@ -328,7 +256,7 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
                         .plaintexts
                         .first()
                         .map(|pt| {
-                            Self::log_and_extract_result(&pt.bytes, pt.fhe_type, &request_id, None);
+                            Self::log_and_extract_result(&pt.bytes, pt.fhe_type, request_id, None);
                             Bytes::from(pt.bytes.clone())
                         })
                         .ok_or_else(|| {
@@ -350,11 +278,7 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
                         request_id
                     );
                     self.decryption
-                        .send_public_decryption_response(
-                            request_id.parse().expect("Invalid request ID"),
-                            result,
-                            signature,
-                        )
+                        .send_public_decryption_response(request_id, result, signature)
                         .await?;
                 } else {
                     error!(
@@ -413,7 +337,7 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
                         Self::log_and_extract_result(
                             &ct.signcrypted_ciphertext,
                             ct.fhe_type,
-                            &request_id,
+                            request_id,
                             Some(&user_addr),
                         );
                     }
@@ -428,7 +352,7 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
                     );
                     self.decryption
                         .send_user_decryption_response(
-                            request_id.parse().expect("Invalid request ID"),
+                            request_id,
                             Bytes::from(reencrypted_share_buf),
                             signature,
                         )
@@ -491,7 +415,7 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
                                 .collect();
 
                             self.handle_decryption(
-                                req.publicDecryptionId.to_string(),
+                                req.publicDecryptionId,
                                 key_id,
                                 ciphertext_pairs,
                                 None,
@@ -535,7 +459,7 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
                             let ciphertext = vec![];
 
                             self.handle_decryption(
-                                req.userDecryptionId.to_string(),
+                                req.userDecryptionId,
                                 key_id,
                                 vec![(handle, ciphertext)],
                                 Some(req.userAddress.to_vec()),

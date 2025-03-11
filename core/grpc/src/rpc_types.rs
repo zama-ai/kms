@@ -34,7 +34,7 @@ cfg_if::cfg_if! {
     }
 }
 
-pub const ID_LENGTH: usize = 20;
+pub const ID_LENGTH: usize = 32;
 pub const SAFE_SER_SIZE_LIMIT: u64 = 1024 * 1024 * 1024 * 2;
 
 pub static KEY_GEN_REQUEST_NAME: &str = "key_gen_request";
@@ -223,7 +223,7 @@ pub enum SignedPubDataHandleInternalVersioned {
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(SignedPubDataHandleInternalVersioned)]
 pub struct SignedPubDataHandleInternal {
-    // Digest (the 160-bit hex-encoded value, computed using compute_info/handle)
+    // Digest (the 256-bit hex-encoded value, computed using compute_info/handle)
     pub key_handle: String,
     // The signature on the handle
     pub signature: Vec<u8>,
@@ -885,10 +885,16 @@ impl RequestId {
     /// Method for deterministically deriving a request ID from an arbitrary string.
     /// Is currently only used for testing purposes, since deriving is the responsibility of the smart contract.
     pub fn derive(name: &str) -> anyhow::Result<Self> {
-        let mut hashed_name = serialize_hash_element(&name.to_string())?;
+        let mut digest = serialize_hash_element(&name.to_string())?;
+        if digest.len() < ID_LENGTH {
+            anyhow::bail!(
+                "derived request ID should have at least length {ID_LENGTH}, but only got {}",
+                digest.len()
+            )
+        }
         // Truncate and convert to hex
-        hashed_name.truncate(ID_LENGTH);
-        let res_hash = hex::encode(hashed_name);
+        digest.truncate(ID_LENGTH);
+        let res_hash = hex::encode(digest);
         Ok(RequestId {
             request_id: res_hash,
         })
@@ -899,18 +905,18 @@ impl RequestId {
     /// part of a valid path, without risk of path-traversal attacks in case the key request
     /// call is publicly accessible.
     pub fn is_valid(&self) -> bool {
-        let hex = match hex::decode(self.to_string()) {
+        let decoded = match hex::decode(self.to_string()) {
             Ok(hex) => hex,
             Err(_e) => {
                 tracing::warn!("Input {} is not a hex string", &self.to_string());
                 return false;
             }
         };
-        if hex.len() != ID_LENGTH {
+        if decoded.len() != ID_LENGTH {
             tracing::warn!(
-                "Hex value length is {}, but {} characters were expected",
-                hex.len(),
-                2 * ID_LENGTH
+                "Decoded value length is {}, but {} is expected",
+                decoded.len(),
+                ID_LENGTH
             );
             return false;
         }
@@ -962,16 +968,6 @@ impl TryFrom<String> for RequestId {
             return Err(anyhow!("The string is not valid as request ID"));
         }
         Ok(request_id)
-    }
-}
-
-impl From<u128> for RequestId {
-    fn from(value: u128) -> Self {
-        let bytes = value.to_be_bytes();
-        let hex_string = hex::encode(bytes); // 128 bits / 32 bytes
-        RequestId {
-            request_id: "00000000".to_string() + hex_string.as_str(), // fill up to 160 bits / 40 bytes with 8 leading hex zeros
-        }
     }
 }
 
@@ -1085,14 +1081,12 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_request_id_convert() {
+    fn test_request_id_raw_string() {
         let request_id = RequestId {
-            request_id: "0000000000000000000000000000000000000001".to_owned(),
+            request_id: "0000000000000000000000000000000000000000000000000000000000000001"
+                .to_owned(),
         };
         assert!(request_id.is_valid());
-        let x: u128 = request_id.clone().try_into().unwrap();
-        let req_id2 = RequestId::from(x);
-        assert_eq!(request_id, req_id2);
     }
 
     #[test]
