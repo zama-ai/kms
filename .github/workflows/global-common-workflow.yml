@@ -82,7 +82,7 @@ jobs:
   ############################################################################
   test-backup:
     needs: check-changes
-    if: (needs.check-changes.outputs.changes-backup || needs.check-changes.outputs.changes-ci) && always()
+    if: (needs.check-changes.outputs.changes-backup || needs.check-changes.outputs.changes-ci)
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
       working-directory: './core/backup'
@@ -107,7 +107,7 @@ jobs:
   ############################################################################
   test-connector:
     needs: check-changes
-    if: (needs.check-changes.outputs.changes-connector || needs.check-changes.outputs.changes-ci) && always()
+    if: (needs.check-changes.outputs.changes-connector || needs.check-changes.outputs.changes-ci)
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
       working-directory: './kms-connector'
@@ -146,7 +146,7 @@ jobs:
   ############################################################################
   test-core-client:
     needs: check-changes
-    if: (needs.check-changes.outputs.changes-core-client || needs.check-changes.outputs.changes-ci) && always()
+    if: (needs.check-changes.outputs.changes-core-client || needs.check-changes.outputs.changes-ci)
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
       working-directory: './core-client'
@@ -185,7 +185,7 @@ jobs:
   ############################################################################
   test-grpc:
     needs: check-changes
-    if: (needs.check-changes.outputs.changes-core-grpc || needs.check-changes.outputs.changes-ci) && always()
+    if: (needs.check-changes.outputs.changes-core-grpc || needs.check-changes.outputs.changes-ci)
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
       working-directory: './core/grpc'
@@ -221,7 +221,7 @@ jobs:
   # - For other events: Runs multiple test suites in parallel with specific features
   prepare-matrix:
     needs: check-changes
-    if: (needs.check-changes.outputs.changes-core-service || needs.check-changes.outputs.changes-ci) && always()
+    if: (needs.check-changes.outputs.changes-core-service || needs.check-changes.outputs.changes-ci)
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
@@ -248,7 +248,7 @@ jobs:
     needs:
       - check-changes
       - prepare-matrix
-    if: (needs.check-changes.outputs.changes-core-service || needs.check-changes.outputs.changes-ci) && always()
+    if: (needs.check-changes.outputs.changes-core-service || needs.check-changes.outputs.changes-ci)
     strategy:
       matrix: ${{fromJson(needs.prepare-matrix.outputs.matrix)}}
     uses: ./.github/workflows/common-testing-big-instance.yml
@@ -346,7 +346,7 @@ jobs:
   # Includes slow tests but runs only library tests
   test-core-threshold-pr:
     needs: check-changes
-    if: (needs.check-changes.outputs.changes-core-threshold || needs.check-changes.outputs.changes-ci) && always()
+    if: (needs.check-changes.outputs.changes-core-threshold || needs.check-changes.outputs.changes-ci)
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
       working-directory: './core/threshold'
@@ -366,7 +366,7 @@ jobs:
   # Only runs when threshold-related changes are detected
   test-core-threshold-main:
     needs: check-changes
-    if: needs.check-changes.outputs.changes-core-threshold && contains(fromJSON('["release/", "main"]'), github.ref) && always()
+    if: needs.check-changes.outputs.changes-core-threshold && contains(fromJSON('["release/", "main"]'), github.ref)
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
       working-directory: './core/threshold'
@@ -387,7 +387,7 @@ jobs:
   # Helps validate dependency updates quickly
   build-dependabot:
     needs: check-changes
-    if: needs.check-changes.outputs.changes-core-threshold && startsWith(github.head_ref, 'dependabot/') && always()
+    if: needs.check-changes.outputs.changes-core-threshold && startsWith(github.head_ref, 'dependabot/')
     uses: ./.github/workflows/common-testing.yml
     with:
       working-directory: './core/threshold'
