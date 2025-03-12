@@ -280,7 +280,6 @@ impl TestedModule for KMS {
 }
 
 #[test]
-#[ignore]
 fn test_backward_compatibility_kms() {
     let pkg_version = env!("CARGO_PKG_VERSION");
 

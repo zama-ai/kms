@@ -342,7 +342,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-serde",
  "alloy-sol-types",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "serde",
  "serde_json",
  "thiserror 2.0.11",
@@ -1714,7 +1714,7 @@ dependencies = [
 [[package]]
 name = "conf-trace"
 version = "0.11.0-rc3"
-source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=225675257889e4fd050fe41288db8645ee41f5fe#225675257889e4fd050fe41288db8645ee41f5fe"
+source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=7cf81a2aa56ccd409b6f26a37598b00845389734#7cf81a2aa56ccd409b6f26a37598b00845389734"
 dependencies = [
  "anyhow",
  "axum",
@@ -2165,7 +2165,7 @@ dependencies = [
 [[package]]
 name = "distributed-decryption"
 version = "0.11.0-rc3"
-source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=225675257889e4fd050fe41288db8645ee41f5fe#225675257889e4fd050fe41288db8645ee41f5fe"
+source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=7cf81a2aa56ccd409b6f26a37598b00845389734#7cf81a2aa56ccd409b6f26a37598b00845389734"
 dependencies = [
  "aes",
  "aes-prng",
@@ -2609,9 +2609,9 @@ dependencies = [
 
 [[package]]
 name = "g2p"
-version = "1.1.0"
+version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a9afa6efed9af3a5a68ba066429c1497c299d4eafbd948fe630df47a8f2d29f"
+checksum = "5bce512b75277aca7d5e1a9efa4d2966b29b5da602af3e29a65e14dc210274ae"
 dependencies = [
  "g2gen",
  "g2poly",
@@ -3259,7 +3259,7 @@ dependencies = [
 [[package]]
 name = "kms"
 version = "0.11.0-rc3"
-source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=225675257889e4fd050fe41288db8645ee41f5fe#225675257889e4fd050fe41288db8645ee41f5fe"
+source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=7cf81a2aa56ccd409b6f26a37598b00845389734#7cf81a2aa56ccd409b6f26a37598b00845389734"
 dependencies = [
  "aes",
  "aes-gcm-siv",
@@ -3333,7 +3333,7 @@ dependencies = [
 [[package]]
 name = "kms-common"
 version = "0.11.0-rc3"
-source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=225675257889e4fd050fe41288db8645ee41f5fe#225675257889e4fd050fe41288db8645ee41f5fe"
+source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=7cf81a2aa56ccd409b6f26a37598b00845389734#7cf81a2aa56ccd409b6f26a37598b00845389734"
 dependencies = [
  "anyhow",
  "clap",
@@ -3345,7 +3345,7 @@ dependencies = [
 [[package]]
 name = "kms-core-utils"
 version = "0.11.0-rc3"
-source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=225675257889e4fd050fe41288db8645ee41f5fe#225675257889e4fd050fe41288db8645ee41f5fe"
+source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=7cf81a2aa56ccd409b6f26a37598b00845389734#7cf81a2aa56ccd409b6f26a37598b00845389734"
 dependencies = [
  "anyhow",
  "futures",
@@ -3356,7 +3356,7 @@ dependencies = [
 [[package]]
 name = "kms-grpc"
 version = "0.11.0-rc3"
-source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=225675257889e4fd050fe41288db8645ee41f5fe#225675257889e4fd050fe41288db8645ee41f5fe"
+source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=7cf81a2aa56ccd409b6f26a37598b00845389734#7cf81a2aa56ccd409b6f26a37598b00845389734"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -4332,9 +4332,9 @@ dependencies = [
 
 [[package]]
 name = "prost"
-version = "0.13.4"
+version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c0fef6c4230e4ccf618a35c59d7ede15dea37de8427500f50aff708806e42ec"
+checksum = "2796faa41db3ec313a31f7624d9286acf277b52de526150b7e69f3debf891ee5"
 dependencies = [
  "bytes",
  "prost-derive",
@@ -4367,7 +4367,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "syn 2.0.100",
