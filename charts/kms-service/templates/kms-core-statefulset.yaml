@@ -222,11 +222,9 @@ spec:
               {{- end }}
               {{ include "kmsCoreMode" . }} \
               {{- if .Values.kmsCore.thresholdMode.enabled }}
-              threshold \
               --signing-key-party-id ${KMS_CORE__THRESHOLD__MY_ID}
               {{- else }}
-              --write-privkey \
-              centralized
+              --write-privkey
               {{- end }}
           env:
             - name: KMS_CORE__THRESHOLD__MY_ID
