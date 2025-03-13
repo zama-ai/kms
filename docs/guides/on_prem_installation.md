@@ -136,7 +136,7 @@ To install the chart in your cluster, run the command below from your machine.
 Be sure to target the cluster and the right context.
 
 ```bash
-# From the helm-charts directory
+# From the kms-core directory
 helm install kms-service ./charts/kms-service -f my-values.yaml -n <namespace>
 ```
 
