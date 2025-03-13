@@ -2,9 +2,9 @@ use kms_grpc::{
     kms::v1::{
         CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse,
         DecryptionResponsePayload, Empty, FheType, InitRequest, KeyGenPreprocRequest,
-        KeyGenPreprocStatus, KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult,
-        ReencryptionRequest, ReencryptionResponse, ReencryptionResponsePayload, RequestId,
-        TypedPlaintext, TypedSigncryptedCiphertext,
+        KeyGenPreprocResult, KeyGenRequest, KeyGenResult, ReencryptionRequest,
+        ReencryptionResponse, ReencryptionResponsePayload, RequestId, TypedPlaintext,
+        TypedSigncryptedCiphertext,
     },
     kms_service::v1::core_service_endpoint_server::{
         CoreServiceEndpoint, CoreServiceEndpointServer,
@@ -41,18 +41,16 @@ impl CoreServiceEndpoint for MockKmsService {
         Ok(Response::new(Empty {}))
     }
 
-    async fn get_preproc_status(
+    async fn get_key_gen_preproc_result(
         &self,
         request: Request<RequestId>,
-    ) -> Result<Response<KeyGenPreprocStatus>, Status> {
+    ) -> Result<Response<KeyGenPreprocResult>, Status> {
         info!(
-            operation = "get_preproc_status",
+            operation = "get_key_gen_preproc_result",
             request_id = ?request.get_ref().request_id,
             "Checking preprocessing status"
         );
-        Ok(Response::new(KeyGenPreprocStatus {
-            result: KeyGenPreprocStatusEnum::Finished.into(),
-        }))
+        Ok(Response::new(KeyGenPreprocResult {}))
     }
 
     async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {

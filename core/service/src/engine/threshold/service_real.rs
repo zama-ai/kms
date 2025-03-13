@@ -76,9 +76,9 @@ use kms_common::DecryptionMode;
 use kms_grpc::kms::v1::{
     CiphertextFormat, CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse,
     DecryptionResponsePayload, Empty, FheType, InitRequest, KeyGenPreprocRequest,
-    KeyGenPreprocStatus, KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult, KeySetAddedInfo,
-    ReencryptionRequest, ReencryptionResponse, ReencryptionResponsePayload, RequestId,
-    TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
+    KeyGenPreprocResult, KeyGenRequest, KeyGenResult, KeySetAddedInfo, ReencryptionRequest,
+    ReencryptionResponse, ReencryptionResponsePayload, RequestId, TypedCiphertext, TypedPlaintext,
+    TypedSigncryptedCiphertext,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use kms_grpc::rpc_types::{
@@ -2773,41 +2773,19 @@ impl KeyGenPreprocessor for RealPreprocessor {
     async fn get_result(
         &self,
         request: Request<RequestId>,
-    ) -> Result<Response<KeyGenPreprocStatus>, Status> {
+    ) -> Result<Response<KeyGenPreprocResult>, Status> {
         let request_id = request.into_inner();
-        let response = {
-            let map = self.preproc_buckets.read().await;
-            //TODO(#1792): For now we do not wait here as we do for other get_result
-            //In any case, we may want to refactor this bit as it is the sole one
-            //using a custom enum for status instead of the tonic ones
-            match map.retrieve(&request_id) {
-                None => {
-                    tracing::warn!(
-                        "Requesting status for request id that does not exist {request_id}"
-                    );
-                    KeyGenPreprocStatusEnum::Missing
-                }
-                Some(cell) => {
-                    if cell.is_set() {
-                        let result = cell.get().await;
-                        if let Err(e) = result {
-                            tracing::warn!(
-                        "Error while generating keygen preproc for request id {request_id} : {e}"
-                    );
-                            KeyGenPreprocStatusEnum::Error
-                        } else {
-                            KeyGenPreprocStatusEnum::Finished
-                        }
-                    } else {
-                        tracing::info!("Preproc for request id {request_id} is in progress.");
-                        KeyGenPreprocStatusEnum::InProgress
-                    }
-                }
-            }
+        validate_request_id(&request_id)?;
+
+        let status = {
+            let guarded_meta_store = self.preproc_buckets.read().await;
+            guarded_meta_store.retrieve(&request_id)
         };
-        Ok(Response::new(KeyGenPreprocStatus {
-            result: response.into(),
-        }))
+
+        // if we got the result it means the preprocessing is done
+        let _preproc_data = handle_res_mapping(status, &request_id, "Preprocessing").await?;
+
+        Ok(Response::new(KeyGenPreprocResult {}))
     }
 }
 

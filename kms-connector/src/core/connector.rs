@@ -6,8 +6,8 @@ use alloy::{
     providers::Provider,
 };
 use kms_grpc::kms::v1::{
-    CiphertextFormat, DecryptionRequest, Eip712DomainMsg, FheType, ReencryptionRequest,
-    ReencryptionRequestPayload, RequestId, TypedCiphertext,
+    CiphertextFormat, DecryptionRequest, Eip712DomainMsg, FheType, ReencryptionRequest, RequestId,
+    TypedCiphertext,
 };
 use std::str::FromStr;
 use std::sync::Arc;
@@ -309,14 +309,12 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
                     .collect();
 
                 let request = Request::new(ReencryptionRequest {
-                    payload: Some(ReencryptionRequestPayload {
-                        client_address: Address::from_slice(&user_addr).to_string(),
-                        enc_key: user_addr.clone(),
-                        key_id: Some(key_id_obj),
-                        typed_ciphertexts,
-                    }),
-                    domain,
                     request_id: Some(request_id_obj),
+                    client_address: Address::from_slice(&user_addr).to_string(),
+                    enc_key: user_addr.clone(),
+                    key_id: Some(key_id_obj),
+                    typed_ciphertexts,
+                    domain,
                 });
 
                 let response = self.kms_client.request_reencryption(request).await?;

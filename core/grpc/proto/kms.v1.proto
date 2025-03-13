@@ -19,14 +19,6 @@ message Empty {}
 // later on.
 message RequestId { string request_id = 1; }
 
-// Status for Keygen Preproc
-enum KeyGenPreprocStatusEnum {
-  Missing = 0;
-  InProgress = 1;
-  Finished = 2;
-  Error = 3;
-}
-
 // The plaintext types that can be encrypted in a fhevm ciphertext.
 enum FheType {
   Ebool = 0;
@@ -95,9 +87,9 @@ message KeySetConfig {
 }
 
 message KeyGenPreprocRequest {
-  FheParameter params = 1;
-  KeySetConfig keyset_config = 2;
-  RequestId request_id = 3;
+  RequestId request_id = 1;
+  FheParameter params = 2;
+  KeySetConfig keyset_config = 3;
 }
 
 enum KeySetCompressionConfig {
@@ -106,20 +98,23 @@ enum KeySetCompressionConfig {
   UseExisting = 1;
 }
 
-message KeyGenPreprocStatus { KeyGenPreprocStatusEnum result = 1; }
+// This message is returned if keygen has completed.
+// It is intentionally left empty,
+// we may extend it later with a signature on the preproc request ID potentially.
+message KeyGenPreprocResult { }
 
 // Request for generating new keys under a certain handle and return a URI where
 // they can be accessed.
 message KeyGenRequest {
+  // The request ID of this request.
+  RequestId request_id = 1;
+
   // The FHE parameters for key generation. This must match
   // what was used in the preprocessing step.
-  FheParameter params = 1;
+  FheParameter params = 2;
 
   // The request ID that generated the preprocessing materials.
-  RequestId preproc_id = 2;
-
-  // The request ID of this request.
-  RequestId request_id = 3;
+  RequestId preproc_id = 3;
 
   // The EIP712 domain used for signing the response.
   Eip712DomainMsg domain = 4;
@@ -160,12 +155,12 @@ enum FheParameter {
 }
 
 message CrsGenRequest {
-  FheParameter params = 1;
+  RequestId request_id = 1;
+  FheParameter params = 2;
   // This is the maximum number of bits that can be proven,
   // e.g. 64 for a single FheUint64 or 8 x FheUint8 values.
   // If this is not provided, then it defaults to ZK_DEFAULT_MAX_NUM_CLEARTEXT.
-  optional uint32 max_num_bits = 2;
-  RequestId request_id = 3;
+  optional uint32 max_num_bits = 3;
   Eip712DomainMsg domain = 4;
 }
 
@@ -207,15 +202,15 @@ message TypedCiphertext {
 }
 
 message DecryptionRequest {
-  // The one or many ciphertexts and corresponding types to decrypt
-  repeated TypedCiphertext ciphertexts = 1;
-  // The key id to use for decryption, will be the request_id used for key
-  // generation
-  RequestId key_id = 2;
-  Eip712DomainMsg domain = 3;
   // The ID of the decryption request. Will be the hash digest the other fields
   // of this message object.
-  RequestId request_id = 4;
+  RequestId request_id = 1;
+  // The one or many ciphertexts and corresponding types to decrypt
+  repeated TypedCiphertext ciphertexts = 2;
+  // The key id to use for decryption, will be the request_id used for key
+  // generation
+  RequestId key_id = 3;
+  Eip712DomainMsg domain = 4;
 }
 
 // The typed plaintext type, which is the result of decryption.
@@ -255,21 +250,6 @@ message DecryptionResponse {
   DecryptionResponsePayload payload = 2;
 }
 
-message ReencryptionRequestPayload {
-  // The client's (blockchain wallet) address,
-  // encoded using EIP-55.
-  string client_address = 1;
-  // Encoding of the user's public encryption key for this request.
-  // Encoding using the default encoding of libsodium, i.e. the 32 bytes of a
-  // Montgomery point.
-  bytes enc_key = 2;
-  // The key id to use for decryption. Will be the request_id used during key
-  // generation
-  RequestId key_id = 3;
-  // The list of ciphertexts to reencrypt.
-  repeated TypedCiphertext typed_ciphertexts = 4;
-}
-
 // https://eips.ethereum.org/EIPS/eip-712#definition-of-domainseparator
 // eventually chain_id, verifying_contract and salt will be parsed in to
 // solidity types
@@ -282,11 +262,27 @@ message Eip712DomainMsg {
 }
 
 message ReencryptionRequest {
-  ReencryptionRequestPayload payload = 1;
-  Eip712DomainMsg domain = 2;
   // The ID that identifies this request.
   // Future queries for the result must use this request ID.
-  RequestId request_id = 3;
+  RequestId request_id = 1;
+
+  // The list of ciphertexts to reencrypt.
+  repeated TypedCiphertext typed_ciphertexts = 2;
+
+  // The key id to use for decryption. Will be the request_id used during key
+  // generation
+  RequestId key_id = 3;
+
+  // The client's (blockchain wallet) address,
+  // encoded using EIP-55.
+  string client_address = 4;
+
+  // Encoding of the user's public encryption key for this request.
+  // Encoding using the default encoding of libsodium, i.e. the 32 bytes of a
+  // Montgomery point.
+  bytes enc_key = 5;
+
+  Eip712DomainMsg domain = 6;
 }
 
 message ReencryptionResponse {

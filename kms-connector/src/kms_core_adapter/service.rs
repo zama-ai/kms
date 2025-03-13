@@ -186,24 +186,20 @@ impl KmsService for KmsServiceImpl {
             .ok_or_else(|| Status::invalid_argument("Missing request ID"))?;
 
         // Log the client address and FHE types being processed
-        if let Some(payload) = &request.get_ref().payload {
-            let fhe_types = payload
-                .typed_ciphertexts
-                .iter()
-                .map(|ct| ct.fhe_type.to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
+        let fhe_types = request
+            .get_ref()
+            .typed_ciphertexts
+            .iter()
+            .map(|ct| ct.fhe_type.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
 
-            info!(
-                "[OUT] Sending ReencryptionRequest({}) for client {} with FHE types: [{}]",
-                request_id.request_id, payload.client_address, fhe_types
-            );
-        } else {
-            info!(
-                "[OUT] Sending ReencryptionRequest({}) with no payload",
-                request_id.request_id
-            );
-        }
+        info!(
+            "[OUT] Sending ReencryptionRequest({}) for client {} with FHE types: [{}]",
+            request_id.request_id,
+            request.get_ref().client_address,
+            fhe_types
+        );
 
         let mut client = self
             .get_client()

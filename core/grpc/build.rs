@@ -10,7 +10,6 @@ fn default_builder() -> Builder {
         .type_attribute("DecryptionResponsePayload", DERIVES)
         .type_attribute("ExternalDecryptionResult", DERIVES)
         .type_attribute("ReencryptionRequest", DERIVES)
-        .type_attribute("ReencryptionRequestPayload", DERIVES)
         .type_attribute("ReencryptionResponse", DERIVES)
         .type_attribute("ReencryptionResponsePayload", DERIVES)
         .type_attribute("Eip712DomainMsg", DERIVES)
@@ -50,10 +49,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .type_attribute(
             "ReencryptionRequest",
-            "#[wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)]",
-        )
-        .type_attribute(
-            "ReencryptionRequestPayload",
             "#[wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)]",
         )
         .type_attribute(

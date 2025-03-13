@@ -11,10 +11,9 @@ use crate::util::random_free_port::get_listeners_random_free_ports;
 use futures_util::FutureExt;
 use kms_grpc::kms::v1::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
-    Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenPreprocStatusEnum,
-    KeyGenRequest, KeyGenResult, ReencryptionRequest, ReencryptionResponse,
-    ReencryptionResponsePayload, RequestId, SignedPubDataHandle, TypedPlaintext,
-    TypedSigncryptedCiphertext,
+    Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocResult, KeyGenRequest, KeyGenResult,
+    ReencryptionRequest, ReencryptionResponse, ReencryptionResponsePayload, RequestId,
+    SignedPubDataHandle, TypedPlaintext, TypedSigncryptedCiphertext,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use kms_grpc::rpc_types::PubDataType;
@@ -258,10 +257,8 @@ impl KeyGenPreprocessor for DummyPreprocessor {
     async fn get_result(
         &self,
         _request: Request<RequestId>,
-    ) -> Result<Response<KeyGenPreprocStatus>, Status> {
-        Ok(Response::new(KeyGenPreprocStatus {
-            result: KeyGenPreprocStatusEnum::Finished as i32,
-        }))
+    ) -> Result<Response<KeyGenPreprocResult>, Status> {
+        Ok(Response::new(KeyGenPreprocResult {}))
     }
 }
 

@@ -1429,12 +1429,6 @@ pub(crate) mod tests {
             ciphertext_format: 0,
             external_handle: vec![123],
         };
-        let payload = kms_grpc::kms::v1::ReencryptionRequestPayload {
-            enc_key: bincode::serialize(&enc_pk).unwrap(),
-            client_address: client_address.to_checksum(None),
-            key_id: Some(key_id),
-            typed_ciphertexts: vec![typed_ciphertext],
-        };
         let domain = alloy_sol_types::eip712_domain!(
             name: "Authorization token",
             version: "1",
@@ -1444,11 +1438,14 @@ pub(crate) mod tests {
         let domain_msg = alloy_to_protobuf_domain(&domain).unwrap();
 
         let req = kms_grpc::kms::v1::ReencryptionRequest {
-            payload: Some(payload),
-            domain: Some(domain_msg),
             request_id: Some(RequestId {
                 request_id: "dummy request ID".to_owned(),
             }),
+            enc_key: bincode::serialize(&enc_pk).unwrap(),
+            client_address: client_address.to_checksum(None),
+            key_id: Some(key_id),
+            typed_ciphertexts: vec![typed_ciphertext],
+            domain: Some(domain_msg),
         };
 
         {
@@ -1457,10 +1454,8 @@ pub(crate) mod tests {
         }
         {
             // use a wrong client address (invalid string length)
-            let mut bad_payload = req.payload.as_ref().cloned().unwrap();
-            bad_payload.client_address = "66f9664f97F2b50F62D13eA064982f936dE76657".to_string();
             let mut bad_req = req.clone();
-            bad_req.payload = Some(bad_payload);
+            bad_req.client_address = "66f9664f97F2b50F62D13eA064982f936dE76657".to_string();
             match verify_reencryption_eip712(&bad_req) {
                 Ok(_) => panic!("expected failure"),
                 Err(e) => {
@@ -1470,15 +1465,10 @@ pub(crate) mod tests {
         }
         {
             // use the same address for verifying contract and client address should fail
-            let mut bad_payload = req.payload.as_ref().cloned().unwrap();
-            bad_payload.client_address = domain
-                .verifying_contract
-                .as_ref()
-                .cloned()
-                .unwrap()
-                .to_string();
+            let mut bad_domain = domain.clone();
+            bad_domain.verifying_contract = Some(client_address);
             let mut bad_req = req.clone();
-            bad_req.payload = Some(bad_payload);
+            bad_req.domain = Some(alloy_to_protobuf_domain(&bad_domain).unwrap());
             match verify_reencryption_eip712(&bad_req) {
                 Ok(_) => panic!("expected failure"),
                 Err(e) => {

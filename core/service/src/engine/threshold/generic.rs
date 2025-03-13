@@ -240,10 +240,10 @@ impl_endpoint! {
         }
 
         #[tracing::instrument(skip(self, request))]
-        async fn get_preproc_status(
+        async fn get_key_gen_preproc_result(
             &self,
             request: Request<RequestId>,
-        ) -> Result<Response<KeyGenPreprocStatus>, Status> {
+        ) -> Result<Response<KeyGenPreprocResult>, Status> {
             self.keygen_preprocessor.get_result(request).await
         }
 

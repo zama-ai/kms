@@ -8,7 +8,7 @@ use tonic::Status;
 use crate::{
     anyhow_error_and_log, anyhow_error_and_warn_log,
     cryptography::internal_crypto_types::PublicEncKey, engine::base::BaseKmsStruct,
-    engine::traits::BaseKms, tonic_handle_potential_err, tonic_some_or_err, tonic_some_ref_or_err,
+    engine::traits::BaseKms, tonic_handle_potential_err, tonic_some_or_err,
 };
 
 /// Validates a request ID and returns an appropriate tonic error if it is invalid.
@@ -43,10 +43,6 @@ pub async fn validate_reencrypt_req(
     RequestId,
     alloy_sol_types::Eip712Domain,
 )> {
-    let payload = tonic_some_ref_or_err(
-        req.payload.as_ref(),
-        format!("The request {:?} does not have a payload", req),
-    )?;
     let request_id = tonic_some_or_err(
         req.request_id.clone(),
         "Request ID is not set (validate reencrypt req)".to_string(),
@@ -58,8 +54,7 @@ pub async fn validate_reencrypt_req(
         )));
     }
 
-    let client_verf_key =
-        alloy_primitives::Address::parse_checksummed(&payload.client_address, None)?;
+    let client_verf_key = alloy_primitives::Address::parse_checksummed(&req.client_address, None)?;
 
     let domain = match verify_reencryption_eip712(req) {
         Ok(domain) => {
@@ -74,13 +69,13 @@ pub async fn validate_reencrypt_req(
     };
 
     let (link, _) = req.compute_link_checked()?;
-    let client_enc_key: PublicEncKey = bincode::deserialize(&payload.enc_key)?;
+    let client_enc_key: PublicEncKey = bincode::deserialize(&req.enc_key)?;
     let key_id = tonic_some_or_err(
-        payload.key_id.clone(),
+        req.key_id.clone(),
         format!("The request {:?} does not have a key_id", req),
     )?;
     Ok((
-        payload.typed_ciphertexts.clone(),
+        req.typed_ciphertexts.clone(),
         link,
         client_enc_key,
         client_verf_key,

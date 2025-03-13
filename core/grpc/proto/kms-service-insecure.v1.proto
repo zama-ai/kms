@@ -13,7 +13,7 @@ service CoreServiceEndpoint {
   rpc KeyGenPreproc(kms.v1.KeyGenPreprocRequest) returns (kms.v1.Empty);
 
   // This call returns an error on the centralized KMS.
-  rpc GetPreprocStatus(kms.v1.RequestId) returns (kms.v1.KeyGenPreprocStatus);
+  rpc GetKeyGenPreprocResult(kms.v1.RequestId) returns (kms.v1.KeyGenPreprocResult);
 
   // Generate new keys asynchronously.
   rpc KeyGen(kms.v1.KeyGenRequest) returns (kms.v1.Empty);

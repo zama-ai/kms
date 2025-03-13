@@ -59,7 +59,7 @@ pub trait KeyGenPreprocessor {
     async fn get_result(
         &self,
         request: Request<RequestId>,
-    ) -> Result<Response<KeyGenPreprocStatus>, Status>;
+    ) -> Result<Response<KeyGenPreprocResult>, Status>;
 }
 
 #[tonic::async_trait]

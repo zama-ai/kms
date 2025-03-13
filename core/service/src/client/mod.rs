@@ -29,8 +29,8 @@ use distributed_decryption::execution::tfhe_internals::parameters::{
 use itertools::Itertools;
 use kms_common::DecryptionMode;
 use kms_grpc::kms::v1::{
-    FheType, ReencryptionRequest, ReencryptionRequestPayload, ReencryptionResponse,
-    ReencryptionResponsePayload, RequestId, TypedCiphertext, TypedPlaintext,
+    FheType, ReencryptionRequest, ReencryptionResponse, ReencryptionResponsePayload, RequestId,
+    TypedCiphertext, TypedPlaintext,
 };
 use kms_grpc::rpc_types::{
     alloy_to_protobuf_domain, FheTypeResponse, MetaResponse, UserDecryptionLinker,
@@ -293,22 +293,18 @@ impl TryFrom<&ReencryptionRequest> for ParsedReencryptionRequest {
     type Error = anyhow::Error;
 
     fn try_from(value: &ReencryptionRequest) -> Result<Self, Self::Error> {
-        let payload = value
-            .payload
-            .as_ref()
-            .ok_or(anyhow::anyhow!("Missing payload"))?;
         let domain = value
             .domain
             .as_ref()
             .ok_or(anyhow::anyhow!("Missing domain"))?;
 
         let client_address =
-            alloy_primitives::Address::parse_checksummed(&payload.client_address, None)?;
+            alloy_primitives::Address::parse_checksummed(&value.client_address, None)?;
 
         let eip712_verifying_contract =
             alloy_primitives::Address::parse_checksummed(domain.verifying_contract.clone(), None)?;
 
-        let ciphertext_handles = payload
+        let ciphertext_handles = value
             .typed_ciphertexts
             .iter()
             .map(|ct| CiphertextHandle(ct.external_handle.clone()))
@@ -317,7 +313,7 @@ impl TryFrom<&ReencryptionRequest> for ParsedReencryptionRequest {
         let out = Self {
             signature: None,
             client_address,
-            enc_key: payload.enc_key.clone(),
+            enc_key: value.enc_key.clone(),
             ciphertext_handles,
             eip712_verifying_contract,
         };
@@ -775,26 +771,16 @@ impl Client {
         )?;
 
         let (enc_pk, enc_sk) = ephemeral_encryption_key_generation(&mut self.rng);
-        let sig_payload = ReencryptionRequestPayload {
-            enc_key: serialize(&enc_pk)?,
-            client_address: self.client_address.to_checksum(None),
-            typed_ciphertexts,
-            key_id: Some(key_id.clone()),
-        };
 
         let domain_msg = alloy_to_protobuf_domain(domain)?;
-        tracing::debug!(
-            "reencryption request payload - \
-            address: {:?} \
-            domain: {:?}",
-            sig_payload.client_address,
-            domain
-        );
         Ok((
             ReencryptionRequest {
-                payload: Some(sig_payload),
-                domain: Some(domain_msg),
                 request_id: Some(request_id.clone()),
+                enc_key: serialize(&enc_pk)?,
+                client_address: self.client_address.to_checksum(None),
+                typed_ciphertexts,
+                key_id: Some(key_id.clone()),
+                domain: Some(domain_msg),
             },
             enc_pk,
             enc_sk,
@@ -2532,8 +2518,6 @@ pub(crate) mod tests {
     use kms_common::DecryptionMode;
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     use kms_grpc::kms::v1::CrsGenRequest;
-    #[cfg(feature = "slow_tests")]
-    use kms_grpc::kms::v1::KeyGenPreprocStatusEnum;
     #[cfg(feature = "wasm_tests")]
     use kms_grpc::kms::v1::TypedPlaintext;
     use kms_grpc::kms::v1::{
@@ -4443,9 +4427,6 @@ pub(crate) mod tests {
                     pts: vec![TypedPlaintext::from(msg).bytes.clone()],
                     cts: reqs[0]
                         .0
-                        .payload
-                        .as_ref()
-                        .unwrap()
                         .typed_ciphertexts
                         .iter()
                         .map(|typed_ct| typed_ct.ciphertext.clone())
@@ -5267,9 +5248,6 @@ pub(crate) mod tests {
                     pts: vec![TypedPlaintext::from(msg).bytes.clone()],
                     cts: reqs[0]
                         .0
-                        .payload
-                        .as_ref()
-                        .unwrap()
                         .typed_ciphertexts
                         .iter()
                         .map(|typed_ct| typed_ct.ciphertext.clone())
@@ -5979,60 +5957,53 @@ pub(crate) mod tests {
         });
         assert_eq!(preproc_res.len(), amount_parties);
 
-        // Wait for preprocessing to be done
-        for _i in 0..MAX_TRIES {
-            tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
-            let preproc_status = get_preproc_status(preproc_request.clone(), kms_clients).await;
-
-            // Panic if we see an error
-            if preproc_status.iter().any(|x| {
-                KeyGenPreprocStatusEnum::try_from(x.result).unwrap()
-                    != KeyGenPreprocStatusEnum::InProgress
-                    && KeyGenPreprocStatusEnum::try_from(x.result).unwrap()
-                        != KeyGenPreprocStatusEnum::Finished
-            }) {
-                panic!("Preprocessing failed with error: {:?}", preproc_status);
-            }
-            // Stop the loop if there is no longer a party that is still preprocessing
-            if !preproc_status.iter().any(|x| {
-                KeyGenPreprocStatusEnum::try_from(x.result).unwrap()
-                    == KeyGenPreprocStatusEnum::InProgress
-            }) {
-                // All parties are finished so we check the result
-                preproc_status.iter().for_each(|x| {
-                    assert_eq!(
-                        KeyGenPreprocStatusEnum::try_from(x.result).unwrap(),
-                        KeyGenPreprocStatusEnum::Finished
-                    );
-                });
-                return;
-            }
-        }
-        panic!("Preprocessing did not finish in time");
+        // the responses should be empty
+        let _responses = poll_key_gen_preproc_result(preproc_request, kms_clients, MAX_TRIES).await;
     }
 
     //Check status of preproc request
     #[cfg(feature = "slow_tests")]
-    async fn get_preproc_status(
+    async fn poll_key_gen_preproc_result(
         request: kms_grpc::kms::v1::KeyGenPreprocRequest,
         kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    ) -> Vec<kms_grpc::kms::v1::KeyGenPreprocStatus> {
-        let mut tasks = JoinSet::new();
-        for i in 1..=kms_clients.len() as u32 {
-            let req_id = request.request_id.clone().unwrap();
-            let mut cur_client = kms_clients.get(&i).unwrap().clone();
-            tasks.spawn(async move {
-                cur_client
-                    .get_preproc_status(tonic::Request::new(req_id))
-                    .await
+        max_iter: usize,
+    ) -> Vec<kms_grpc::kms::v1::KeyGenPreprocResult> {
+        let mut resp_tasks = JoinSet::new();
+        for (_, client) in kms_clients.iter() {
+            let mut client = client.clone();
+            let req_id_clone = request.request_id.as_ref().unwrap().clone();
+
+            resp_tasks.spawn(async move {
+                // Sleep to give the server some time to complete preprocessing
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+                let mut response = client
+                    .get_key_gen_preproc_result(tonic::Request::new(req_id_clone.clone()))
+                    .await;
+                let mut ctr = 0_usize;
+                while response.is_err()
+                    && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+                {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                    if ctr >= max_iter {
+                        panic!("timeout while waiting for preprocessing after {max_iter} retries");
+                    }
+                    ctr += 1;
+                    response = client
+                        .get_key_gen_preproc_result(tonic::Request::new(req_id_clone.clone()))
+                        .await;
+                }
+
+                (req_id_clone, response.unwrap().into_inner())
             });
         }
-        let mut responses = Vec::new();
-        while let Some(resp) = tasks.join_next().await {
-            responses.push(resp.unwrap().unwrap().into_inner());
-        }
 
-        responses
+        let mut resp_response_vec = Vec::new();
+        while let Some(resp) = resp_tasks.join_next().await {
+            // any failures that happen will panic here
+            resp_response_vec.push(resp.unwrap().1);
+        }
+        resp_response_vec
     }
 
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]

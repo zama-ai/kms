@@ -426,25 +426,20 @@ impl crate::kms::v1::ReencryptionRequest {
     /// to the user *and* to the KMS.
     /// So we can only use these information to link the request and the response.
     pub fn compute_link_checked(&self) -> anyhow::Result<(Vec<u8>, alloy_sol_types::Eip712Domain)> {
-        let payload = self
-            .payload
-            .as_ref()
-            .ok_or_else(|| anyhow!("payload not found"))?;
-
         let domain = protobuf_to_alloy_domain(
             self.domain
                 .as_ref()
                 .ok_or_else(|| anyhow!("domain not found"))?,
         )?;
 
-        let handles = payload
+        let handles = self
             .typed_ciphertexts
             .iter()
             .map(|x| alloy_primitives::U256::from_be_slice(&x.external_handle))
             .collect::<Vec<_>>();
 
         let client_address =
-            alloy_primitives::Address::parse_checksummed(&payload.client_address, None)?;
+            alloy_primitives::Address::parse_checksummed(&self.client_address, None)?;
         let verifying_contract = domain
             .verifying_contract
             .ok_or(anyhow::anyhow!("missing verifying contract"))?;
@@ -454,7 +449,7 @@ impl crate::kms::v1::ReencryptionRequest {
         }
 
         let linker = UserDecryptionLinker {
-            publicKey: payload.enc_key.clone().into(),
+            publicKey: self.enc_key.clone().into(),
             handles,
             userAddress: client_address,
         };

@@ -13,8 +13,7 @@ use core::str;
 use kms_common::DecryptionMode;
 use kms_grpc::kms::v1::{
     CiphertextFormat, CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse,
-    FheParameter, KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult, RequestId, TypedCiphertext,
-    TypedPlaintext,
+    FheParameter, KeyGenRequest, KeyGenResult, RequestId, TypedCiphertext, TypedPlaintext,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType, SIGNING_KEY_ID};
@@ -1071,58 +1070,44 @@ async fn do_preproc(
     }
     assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
 
-    // Wait for preprocessing to be done
-    for _i in 0..max_iter {
-        tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+    let mut resp_tasks = JoinSet::new();
+    for client in core_endpoints.iter_mut() {
+        let mut client = client.clone();
+        let req_id_clone = pp_req.request_id.as_ref().unwrap().clone();
 
-        // get all responses
-        let mut resp_tasks = JoinSet::new();
-        for ce in core_endpoints.iter_mut() {
-            let mut cur_client = ce.clone();
-            let req_id_clone = pp_req.request_id.as_ref().unwrap().clone();
+        resp_tasks.spawn(async move {
+            // Sleep to give the server some time to complete preprocessing
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-            resp_tasks.spawn(async move {
-                // Sleep to give the server some time to complete decryption
+            let mut response = client
+                .get_key_gen_preproc_result(tonic::Request::new(req_id_clone.clone()))
+                .await;
+            let mut ctr = 0_usize;
+            while response.is_err()
+                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+            {
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-                let response = cur_client
-                    .get_preproc_status(tonic::Request::new(req_id_clone.clone()))
+                // do at most max_iter retries (stop after max. 50 secs)
+                if ctr >= max_iter {
+                    panic!("timeout while waiting for preprocessing after {max_iter} retries");
+                }
+                ctr += 1;
+                response = client
+                    .get_key_gen_preproc_result(tonic::Request::new(req_id_clone.clone()))
                     .await;
+            }
 
-                (req_id_clone, response.unwrap().into_inner())
-            });
-        }
-        let mut resp_response_vec = Vec::new();
-        while let Some(resp) = resp_tasks.join_next().await {
-            resp_response_vec.push(resp.unwrap().1);
-        }
-
-        // Panic if we see an error
-        if resp_response_vec.iter().any(|x| {
-            KeyGenPreprocStatusEnum::try_from(x.result).unwrap()
-                != KeyGenPreprocStatusEnum::InProgress
-                && KeyGenPreprocStatusEnum::try_from(x.result).unwrap()
-                    != KeyGenPreprocStatusEnum::Finished
-        }) {
-            panic!("Preprocessing failed with error: {:?}", resp_response_vec);
-        }
-        // Stop the loop if there is no longer a party that is still preprocessing
-        if !resp_response_vec.iter().any(|x| {
-            KeyGenPreprocStatusEnum::try_from(x.result).unwrap()
-                == KeyGenPreprocStatusEnum::InProgress
-        }) {
-            // All parties are finished so we check the result
-            resp_response_vec.iter().for_each(|x| {
-                assert_eq!(
-                    KeyGenPreprocStatusEnum::try_from(x.result).unwrap(),
-                    KeyGenPreprocStatusEnum::Finished
-                );
-            });
-            return Ok(req_id);
-        }
+            (req_id_clone, response.unwrap().into_inner())
+        });
     }
 
-    Err(anyhow!("Preprocessing failed"))
+    let mut resp_response_vec = Vec::new();
+    while let Some(resp) = resp_tasks.join_next().await {
+        // any failures that happen will panic here
+        resp_response_vec.push(resp.unwrap().1);
+    }
+
+    Ok(req_id)
 }
 
 pub async fn execute_cmd(

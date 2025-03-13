@@ -28,7 +28,7 @@ use distributed_decryption::execution::keyset_config::KeySetConfig;
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 use kms_grpc::kms::v1::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
-    Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenRequest, KeyGenResult,
+    Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocResult, KeyGenRequest, KeyGenResult,
     KeySetAddedInfo, ReencryptionRequest, ReencryptionResponse, ReencryptionResponsePayload,
     RequestId,
 };
@@ -68,10 +68,10 @@ impl<
     }
 
     #[tracing::instrument(skip(self, _request))]
-    async fn get_preproc_status(
+    async fn get_key_gen_preproc_result(
         &self,
         _request: Request<RequestId>,
-    ) -> Result<Response<KeyGenPreprocStatus>, Status> {
+    ) -> Result<Response<KeyGenPreprocResult>, Status> {
         tonic_some_or_err(
             None,
             "Requesting preproc status on centralized kms is not suported".to_string(),
