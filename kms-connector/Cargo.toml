@@ -52,6 +52,9 @@ url = "2.5.0"
 bip39 = "2.1.0"
 config = { version = "0.15.8", features = ["toml"] }
 rand.workspace = true
+tfhe-versionable.workspace = true
+tfhe.workspace = true
+kms-common.workspace = true
 
 # TODO: substitute with existing KMS-Core implementation
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

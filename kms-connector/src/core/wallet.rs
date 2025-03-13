@@ -1,8 +1,84 @@
 use alloy_primitives::{Address, ChainId, B256};
 use alloy_signer::{Signer, SignerSync};
 use alloy_signer_local::{coins_bip39::English, MnemonicBuilder, PrivateKeySigner};
-use std::path::PathBuf;
+use std::fs::File;
+use std::path::{Path, PathBuf};
+use tfhe::safe_serialization::safe_deserialize;
 use thiserror::Error;
+use tracing::{debug, info};
+
+// Private signing key module to avoid Result type conflicts
+mod private_sig_key {
+    use alloy::signers::k256;
+    use serde::{de::Visitor, Deserialize, Serialize};
+    use tfhe::named::Named;
+    use tfhe_versionable::{Versionize, VersionsDispatch};
+
+    #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
+    pub enum PrivateSigKeyVersioned {
+        V0(PrivateSigKey),
+    }
+
+    #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Versionize)]
+    #[versionize(PrivateSigKeyVersioned)]
+    pub struct PrivateSigKey {
+        sk: WrappedSigningKey,
+    }
+
+    impl Named for PrivateSigKey {
+        const NAME: &'static str = "PrivateSigKey";
+    }
+
+    impl PrivateSigKey {
+        pub fn sk(&self) -> &k256::ecdsa::SigningKey {
+            &self.sk.0
+        }
+    }
+
+    #[derive(Clone, PartialEq, Eq, Debug)]
+    pub struct WrappedSigningKey(pub(crate) k256::ecdsa::SigningKey);
+    kms_common::impl_generic_versionize!(WrappedSigningKey);
+
+    impl Serialize for WrappedSigningKey {
+        fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            serializer.serialize_bytes(&self.0.to_bytes())
+        }
+    }
+
+    impl<'de> Deserialize<'de> for WrappedSigningKey {
+        fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            deserializer.deserialize_bytes(PrivateSigKeyVisitor)
+        }
+    }
+
+    struct PrivateSigKeyVisitor;
+    impl Visitor<'_> for PrivateSigKeyVisitor {
+        type Value = WrappedSigningKey;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("A signing key for ECDSA signatures using secp256k1")
+        }
+
+        fn visit_bytes<E>(self, v: &[u8]) -> std::result::Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            match k256::ecdsa::SigningKey::from_bytes(v.into()) {
+                Ok(sk) => Ok(WrappedSigningKey(sk)),
+                Err(e) => Err(E::custom(format!("Could not decode signing key: {:?}", e))),
+            }
+        }
+    }
+}
+
+// Re-export the PrivateSigKey for use in this module
+use private_sig_key::PrivateSigKey;
 
 #[derive(Debug, Error)]
 pub enum WalletError {
@@ -12,11 +88,24 @@ pub enum WalletError {
     LocalSignerError(#[from] alloy_signer_local::LocalSignerError),
     #[error("Failed to load wallet: {0}")]
     LoadError(String),
+    #[error("Failed to load signing key: {0}")]
+    SigningKeyError(String),
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
 }
 
 pub type Result<T> = std::result::Result<T, WalletError>;
 
 /// KMS wallet for signing decryption responses
+///
+/// This wallet implementation provides functionality for:
+/// - Creating wallets from mnemonic phrases or files
+/// - Creating wallets from signing key files
+/// - Generating random wallets
+/// - Signing messages, hashes, and decryption responses
+///
+/// It serves as a critical security component in the KMS Connector,
+/// handling all cryptographic operations for blockchain interactions.
 #[derive(Clone, Debug)]
 pub struct KmsWallet {
     pub signer: PrivateKeySigner,
@@ -42,35 +131,85 @@ impl KmsWallet {
             .build()?
             .with_chain_id(chain_id);
 
+        info!("Created wallet from mnemonic phrase");
         Ok(Self { signer })
     }
 
     /// Create a new wallet from a mnemonic file
     pub fn from_mnemonic_file(path: PathBuf, chain_id: Option<ChainId>) -> Result<Self> {
-        let phrase = std::fs::read_to_string(&path)
-            .map_err(|e| WalletError::LoadError(format!("Failed to read mnemonic file: {}", e)))?;
+        debug!("Loading mnemonic from file: {}", path.display());
+        let phrase = std::fs::read_to_string(&path).map_err(|e| {
+            WalletError::LoadError(format!(
+                "Failed to read mnemonic file at {}: {}",
+                path.display(),
+                e
+            ))
+        })?;
+
+        info!("Successfully read mnemonic file");
         Self::from_mnemonic(phrase.trim(), chain_id)
+    }
+
+    /// Create a new wallet from a signing key file
+    pub fn from_signing_key_file<P: AsRef<Path>>(
+        path: Option<P>,
+        chain_id: Option<ChainId>,
+    ) -> Result<Self> {
+        // Default path relative to the project
+        // In production, this should be configured via environment variables or config files
+        let default_path = "../keys/CLIENT/SigningKey/e164d9de0bec6656928726433cc56bef6ee8417ad5a4f8c82fbcc2d3e5f220fd";
+
+        // Use provided path or default
+        let file_path = match path {
+            Some(p) => p.as_ref().to_path_buf(),
+            None => PathBuf::from(default_path),
+        };
+
+        // Open the file
+        let f = File::open(&file_path).map_err(|e| {
+            WalletError::LoadError(format!(
+                "Failed to open signing key file at {}: {}",
+                file_path.display(),
+                e
+            ))
+        })?;
+
+        // Deserialize the private signing key
+        const SIZE_LIMIT: u64 = 1024;
+        let sk: PrivateSigKey = safe_deserialize(f, SIZE_LIMIT).map_err(|e| {
+            WalletError::SigningKeyError(format!("Failed to deserialize signing key: {:?}", e))
+        })?;
+
+        // Create signer from the signing key
+        let signer = PrivateKeySigner::from_signing_key(sk.sk().clone()).with_chain_id(chain_id);
+
+        info!("Created wallet from signing key file");
+        Ok(Self { signer })
     }
 
     /// Create a new random wallet
     pub fn random(chain_id: Option<ChainId>) -> Result<Self> {
         let signer = PrivateKeySigner::random().with_chain_id(chain_id);
+        info!("Created random wallet");
         Ok(Self { signer })
     }
 
     /// Get the wallet's address
     pub fn address(&self) -> Address {
+        debug!("Getting wallet address");
         self.signer.address()
     }
 
     /// Sign a message
     pub fn sign_message(&self, message: &[u8]) -> Result<Vec<u8>> {
+        debug!("Signing message");
         Ok(self.signer.sign_message_sync(message)?.as_bytes().to_vec())
     }
 
     /// Sign a hash
     pub fn sign_hash(&self, hash: &B256) -> Result<Vec<u8>> {
         // Get signature
+        debug!("Signing hash");
         let sig = self.signer.sign_hash_sync(hash)?;
         Ok(Vec::from(&sig))
     }
@@ -78,6 +217,7 @@ impl KmsWallet {
     /// Sign a decryption response
     pub fn sign_decryption_response(&self, id: &[u8], result: &[u8]) -> Result<Vec<u8>> {
         // Create message to sign: keccak256(abi.encodePacked(id, result))
+        debug!("Signing decryption response");
         let mut message = Vec::with_capacity(id.len() + result.len());
         message.extend_from_slice(id);
         message.extend_from_slice(result);
@@ -106,5 +246,15 @@ mod tests {
         let signature = wallet.sign_decryption_response(id, result).unwrap();
 
         assert!(!signature.is_empty());
+    }
+
+    #[test]
+    #[ignore] // Ignore by default as it requires the actual file to exist
+    fn test_wallet_from_signing_key_file() {
+        // This test assumes the signing key file exists at the default path
+        // Run with: cargo test -- --ignored
+        let wallet = KmsWallet::from_signing_key_file::<PathBuf>(None, Some(TEST_CHAIN_ID));
+        assert!(wallet.is_ok(), "Failed to load wallet: {:?}", wallet.err());
+        assert!(wallet.unwrap().address() != Address::ZERO);
     }
 }

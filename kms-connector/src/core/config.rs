@@ -49,6 +49,9 @@ pub struct Config {
     /// EIP-712 domain version for IHTTPZ contract
     #[serde(default = "default_httpz_domain_version")]
     pub httpz_domain_version: String,
+    /// Path to the signing key file (optional)
+    #[serde(default = "default_signing_key_path")]
+    pub signing_key_path: Option<String>,
 }
 
 fn default_service_name() -> String {
@@ -83,6 +86,10 @@ fn default_httpz_domain_version() -> String {
     "1".to_string()
 }
 
+fn default_signing_key_path() -> Option<String> {
+    None
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -103,6 +110,7 @@ impl Default for Config {
             decryption_manager_domain_version: default_decryption_manager_domain_version(),
             httpz_domain_name: default_httpz_domain_name(),
             httpz_domain_version: default_httpz_domain_version(),
+            signing_key_path: default_signing_key_path(),
         }
     }
 }
@@ -356,6 +364,7 @@ mod tests {
             decryption_manager_domain_version: "1".to_string(),
             httpz_domain_name: "IHTTPZ".to_string(),
             httpz_domain_version: "1".to_string(),
+            signing_key_path: None,
         };
 
         let temp_file = NamedTempFile::new().unwrap();
@@ -401,6 +410,7 @@ mod tests {
             config.httpz_domain_version,
             loaded_config.httpz_domain_version
         );
+        assert_eq!(config.signing_key_path, loaded_config.signing_key_path);
     }
 
     #[test]
@@ -423,6 +433,7 @@ mod tests {
             decryption_manager_domain_version: "1".to_string(),
             httpz_domain_name: "IHTTPZ".to_string(),
             httpz_domain_version: "1".to_string(),
+            signing_key_path: None,
         };
 
         config.to_file("test_config.toml").unwrap();
@@ -452,6 +463,7 @@ mod tests {
             decryption_manager_domain_version: "1".to_string(),
             httpz_domain_name: "IHTTPZ".to_string(),
             httpz_domain_version: "1".to_string(),
+            signing_key_path: None,
         };
 
         let temp_file = NamedTempFile::new().unwrap();
@@ -532,6 +544,7 @@ mod tests {
             decryption_manager_domain_version: "1".to_string(),
             httpz_domain_name: "IHTTPZ".to_string(),
             httpz_domain_version: "1".to_string(),
+            signing_key_path: None,
         };
 
         let temp_file = NamedTempFile::new().unwrap();

@@ -58,6 +58,13 @@ Configuration files use TOML format with the following structure:
 # Service name for tracing (optional, default: "kms-connector")
 service_name = "my-connector"
 
+# Wallet configuration - either mnemonic or signing_key_path must be provided
+# BIP39 mnemonic phrase for wallet generation
+mnemonic = "test test test test test test test test test test test junk"
+
+# OR path to a serialized signing key file (relative to execution directory)
+signing_key_path = "../keys/CLIENT/SigningKey/e164d9de0bec6656928726433cc56bef6ee8417ad5a4f8c82fbcc2d3e5f220fd"
+
 # KMS Core endpoint (required)
 kms_core_endpoint = "http://localhost:50052"
 
@@ -156,7 +163,8 @@ All environment variables are prefixed with `KMS_CONNECTOR_`. Here's the complet
 |---------------------|-------------|---------|
 | `KMS_CONNECTOR_GWL2_URL` | Gateway L2 WebSocket URL | ws://localhost:8545 |
 | `KMS_CONNECTOR_KMS_CORE_ENDPOINT` | KMS Core service endpoint | http://[::1]:50052 |
-| `KMS_CONNECTOR_MNEMONIC` | Wallet mnemonic phrase | (required) |
+| `KMS_CONNECTOR_MNEMONIC` | Wallet mnemonic phrase | (required if signing_key_path not provided) |
+| `KMS_CONNECTOR_SIGNING_KEY_PATH` | Path to a serialized signing key file | (required if mnemonic not provided) |
 | `KMS_CONNECTOR_CHAIN_ID` | Blockchain network chain ID | 31337 |
 | `KMS_CONNECTOR_DECRYPTION_MANAGER_ADDRESS` | Address of the Decryption Manager contract | 0x5fbdb2315678afecb367f032d93f642f64180aa3 |
 | `KMS_CONNECTOR_HTTPZ_ADDRESS` | Address of the HTTPZ contract | 0x0000000000000000000000000000000000000001 |
@@ -171,6 +179,46 @@ All environment variables are prefixed with `KMS_CONNECTOR_`. Here's the complet
 1. Use a config file for development and testing environments where values change infrequently
 2. Use environment variables for production deployments and when values need to be changed dynamically
 3. Store sensitive information (like mnemonics) as environment variables rather than in config files
+
+## Wallet Configuration
+
+The KMS Connector supports two methods for configuring the wallet used for signing decryption responses:
+
+### 1. Mnemonic-based Wallet
+
+You can provide a BIP39 mnemonic phrase to generate a deterministic wallet:
+
+```toml
+# In config file
+mnemonic = "test test test test test test test test test test test junk"
+```
+
+```bash
+# Or as environment variable
+export KMS_CONNECTOR_MNEMONIC="test test test test test test test test test test test junk"
+```
+
+### 2. Signing Key File
+
+Alternatively, you can load a serialized signing key from a file:
+
+```toml
+# In config file
+signing_key_path = "../keys/CLIENT/SigningKey/e164d9de0bec6656928726433cc56bef6ee8417ad5a4f8c82fbcc2d3e5f220fd"
+```
+
+```bash
+# Or as environment variable
+export KMS_CONNECTOR_SIGNING_KEY_PATH="../keys/CLIENT/SigningKey/e164d9de0bec6656928726433cc56bef6ee8417ad5a4f8c82fbcc2d3e5f220fd"
+```
+
+The path is relative to the execution directory of the application. At least one of these two options must be provided.
+
+### Security Considerations
+
+- For production environments, it's recommended to use the signing key file approach with proper file permissions
+- The signing key file should be securely stored and accessible only to the KMS Connector process
+- In development environments, the mnemonic approach can be more convenient
 
 ## Architecture: Adapter-Provider Pattern
 
@@ -288,3 +336,5 @@ cargo build
 
 ```bash
 cargo test
+
+```

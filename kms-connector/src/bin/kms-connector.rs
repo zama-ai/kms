@@ -67,17 +67,20 @@ async fn run_connector(
     gw_provider: Arc<impl Provider + Clone + 'static>,
     shutdown_rx: broadcast::Receiver<()>,
 ) -> Result<()> {
-    // Initialize wallet with account index derived from service name
-    let account_index = config.get_account_index();
-    let wallet = KmsWallet::from_mnemonic_with_index(
-        &config.mnemonic,
-        account_index,
-        Some(config.chain_id),
-    )?;
+    // Initialize wallet based on configuration
+    let wallet = if let Some(signing_key_path) = &config.signing_key_path {
+        info!("Using signing key from file: {}", signing_key_path);
+        KmsWallet::from_signing_key_file(Some(signing_key_path), Some(config.chain_id))?
+    } else {
+        // Initialize wallet with account index derived from service name
+        let account_index = config.get_account_index();
+        info!("Using mnemonic with account index: {}", account_index);
+        KmsWallet::from_mnemonic_with_index(&config.mnemonic, account_index, Some(config.chain_id))?
+    };
+
     info!(
-        "Wallet created successfully with address: {:#x} (derived from account index: {})",
-        wallet.address(),
-        account_index
+        "Wallet created successfully with address: {:#x}",
+        wallet.address()
     );
 
     info!(

@@ -6,7 +6,7 @@ service_name = "kms-connector"
 # BIP39 mnemonic phrase for wallet generation (required)
 # This is used to derive the private key for signing responses
 # IMPORTANT: Keep this secure and never share it!
-mnemonic = "test test test test test test test test test test test junk"
+# mnemonic = "test test test test test test test test test test test junk"
 
 # Chain ID for the L2 network (required)
 chain_id = 31337
@@ -28,3 +28,7 @@ gwl2_url = "ws://localhost:8545"
 
 # Size of the event processing channel (optional)
 channel_size = 1000
+
+# Path to the signing key file (optional)
+# If provided, the connector will use this signing key instead of the mnemonic
+signing_key_path = "./keys/CLIENT/SigningKey/e164d9de0bec6656928726433cc56bef6ee8417ad5a4f8c82fbcc2d3e5f220fd"
