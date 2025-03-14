@@ -1,18 +1,70 @@
 #!/bin/bash
 
 # Default key ID if not provided
-DEFAULT_KEY_ID="cedede762b38dd11f72eed5e48f1cec79539e700"
+DEFAULT_KEY_ID="d329c261a95fd2ee4ee69a7f3910cd550de97885d5ec512304f707268624a408"
+DEFAULT_MODE="threshold"
 
+# Create artifacts directory if it doesn't exist
 mkdir -p ./core-client/artifacts
 
-# Parse command-line arguments
-KEY_ID=${1:-$DEFAULT_KEY_ID}
+# Display usage information
+usage() {
+  echo "Usage: $0 [OPTIONS]"
+  echo
+  echo "Options:"
+  echo "  -k, --key-id KEY_ID    Specify the key ID (default: $DEFAULT_KEY_ID)"
+  echo "  -m, --mode MODE        Specify the mode: 'threshold' or 'centralized' (default: $DEFAULT_MODE)"
+  echo "  -h, --help             Display this help message and exit"
+  echo
+  exit 1
+}
 
-echo "Generating test ciphertexts with key ID: $KEY_ID"
+# Parse command-line arguments
+KEY_ID=$DEFAULT_KEY_ID
+MODE=$DEFAULT_MODE
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -k|--key-id)
+      KEY_ID="$2"
+      shift 2
+      ;;
+    -m|--mode)
+      MODE="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      ;;
+    *)
+      echo "Unknown option: $1"
+      usage
+      ;;
+  esac
+done
+
+# Validate mode
+if [[ "$MODE" != "threshold" && "$MODE" != "centralized" ]]; then
+  echo "Error: Mode must be either 'threshold' or 'centralized'"
+  usage
+fi
+
+# Set the configuration file based on the mode
+if [[ "$MODE" == "threshold" ]]; then
+  CONFIG_FILE="core-client/config/client_local_threshold.toml"
+else
+  CONFIG_FILE="core-client/config/client_local_centralized.toml"
+fi
+
+echo "Generating test ciphertexts with:"
+echo "  - Key ID: $KEY_ID"
+echo "  - Mode: $MODE"
+echo "  - Config file: $CONFIG_FILE"
+echo
 
 # Generate EBOOL (value 1)
 echo "Generating EBOOL ciphertext (value: 1)"
-cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml decrypt \
+cargo run --bin kms-core-client -- -f $CONFIG_FILE decrypt \
   --to-encrypt 1 \
   --data-type ebool \
   --key-id $KEY_ID \
@@ -21,7 +73,7 @@ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.
 
 # Generate EUINT4 (value 3)
 echo "Generating EUINT4 ciphertext (value: 3)"
-cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml decrypt \
+cargo run --bin kms-core-client -- -f $CONFIG_FILE decrypt \
   --to-encrypt 3 \
   --data-type euint4 \
   --key-id $KEY_ID \
@@ -30,7 +82,7 @@ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.
 
 # Generate EUINT8 (value 6)
 echo "Generating EUINT8 ciphertext (value: 6)"
-cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml decrypt \
+cargo run --bin kms-core-client -- -f $CONFIG_FILE decrypt \
   --to-encrypt 6 \
   --data-type euint8 \
   --key-id $KEY_ID \
@@ -39,7 +91,7 @@ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.
 
 # Generate EUINT16 (value 9)
 echo "Generating EUINT16 ciphertext (value: 9)"
-cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml decrypt \
+cargo run --bin kms-core-client -- -f $CONFIG_FILE decrypt \
   --to-encrypt 9 \
   --data-type euint16 \
   --key-id $KEY_ID \
@@ -48,7 +100,7 @@ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.
 
 # Generate EUINT32 (value 13)
 echo "Generating EUINT32 ciphertext (value: 13)"
-cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml decrypt \
+cargo run --bin kms-core-client -- -f $CONFIG_FILE decrypt \
   --to-encrypt 13 \
   --data-type euint32 \
   --key-id $KEY_ID \

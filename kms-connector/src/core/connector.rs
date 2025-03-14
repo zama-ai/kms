@@ -246,7 +246,10 @@ impl<P: Provider + Clone + 'static> KmsCoreConnector<P> {
                 });
 
                 let response = self.kms_client.request_decryption(request).await?;
-                info!("[IN] PublicDecryptionResponse({}) received", request_id_hex);
+                info!(
+                    "[IN] 📡 PublicDecryptionResponse({}) received",
+                    request_id_hex
+                );
                 let decryption_response = response.into_inner();
 
                 // Check if we have a valid payload

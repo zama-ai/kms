@@ -42,22 +42,22 @@ const OUTPUT_FILE_PATHS: [&str; 5] = [
 // FHE type names corresponding to the output files
 const FHE_TYPE_NAMES: [&str; 5] = ["ebool", "euint4", "euint8", "euint16", "euint32"];
 
-// Default key ID (this exact key ID was working in the logs)
-// IMPORTANT: This should be a valid 20-byte Ethereum address (without 0x prefix)
-const DEFAULT_KEY_ID: &str = "c359f12c8e0f5bd1ceba66577796e8cecb1b5930";
+// Default key ID (64-character hex string without 0x prefix)
+// This matches the format seen in the KMS Core logs
+const DEFAULT_KEY_ID: &str = "92cbc7f4279a09607e8985c67bb1f20da1bb9c4d821be0b5b670e5f0c02ed872";
 
-// Precomputed static request IDs that KMS Core expects in decimal format
+// Precomputed static request IDs as 256-bit hex strings (64 characters)
 const STATIC_REQUEST_IDS: [&str; 5] = [
-    // Decimal request ID for ebool
-    "123456789012345678901",
-    // Decimal request ID for euint4
-    "223456789012345678902",
-    // Decimal request ID for euint8
-    "323456789012345678903",
-    // Decimal request ID for euint16
-    "423456789012345678904",
-    // Decimal request ID for euint32
-    "523456789012345678905",
+    // 256-bit request ID for ebool (with type encoded in first byte)
+    "0100000000000000000000000000000000000000000000000000000000000000",
+    // 256-bit request ID for euint4 (with type encoded in first byte)
+    "0200000000000000000000000000000000000000000000000000000000000000",
+    // 256-bit request ID for euint8 (with type encoded in first byte)
+    "0300000000000000000000000000000000000000000000000000000000000000",
+    // 256-bit request ID for euint16 (with type encoded in first byte)
+    "0400000000000000000000000000000000000000000000000000000000000000",
+    // 256-bit request ID for euint32 (with type encoded in first byte)
+    "0500000000000000000000000000000000000000000000000000000000000000",
 ];
 
 /// Parse a hex string into a U256
@@ -70,20 +70,20 @@ fn parse_hex_to_u256(hex_str: &str) -> Result<U256> {
         return Err(anyhow!("Invalid hex string: {}", hex_str));
     }
 
-    // For 20-byte addresses, pad with leading zeros for compatibility with KMS
-    let value = if cleaned_hex.len() == 40 {
-        // This is a 20-byte address - prepend with 12 bytes of zeroes (24 hex chars)
-        let padded_hex = format!("000000000000000000000000{}", cleaned_hex);
+    // Always use the full 32-byte (64 hex chars) format for U256
+    let value = if cleaned_hex.len() < 64 {
+        // Pad with leading zeros to ensure 32 bytes
+        let padded_hex = format!("{:0>64}", cleaned_hex);
         U256::from_str(&format!("0x{}", padded_hex))?
     } else {
-        // Normal parsing for other cases
+        // Normal parsing for 32-byte values
         U256::from_str(&format!("0x{}", cleaned_hex))?
     };
 
     Ok(value)
 }
 
-/// Validate and format a key ID as an Ethereum address (20 bytes, hex encoded without 0x prefix)
+/// Validate and format a key ID as a 32-byte hex string (64 characters without 0x prefix)
 fn validate_key_id(key_id: &str) -> Result<String> {
     // Remove 0x prefix if present
     let clean_key_id = key_id.trim_start_matches("0x");
@@ -93,9 +93,9 @@ fn validate_key_id(key_id: &str) -> Result<String> {
         return Err(anyhow!("Key ID must be a hex string"));
     }
 
-    // Check if it's the right length (20 bytes = 40 hex chars)
-    if clean_key_id.len() != 40 {
-        return Err(anyhow!("Key ID must be exactly 20 bytes (40 hex chars)"));
+    // Check if it's the right length (32 bytes = 64 hex chars)
+    if clean_key_id.len() != 64 {
+        return Err(anyhow!("Key ID must be exactly 32 bytes (64 hex chars)"));
     }
 
     Ok(clean_key_id.to_string())
@@ -113,33 +113,34 @@ fn print_key_id_info(label: &str, hex_id: &str) {
     println!("╚═══════════════════════════════════════════════════════════════════════════");
 }
 
-/// Print request ID information in a formatted way
-fn print_request_id_info(decimal_id: &str, hex_id: U256) {
+/// Print request ID information (now in hex format)
+fn print_request_id_info(request_id_hex: &str, request_id: U256) {
     println!("╔═══════════════════════════════════════════════════════════════════════════");
     println!("║ Request ID Information:");
     println!("╠═══════════════════════════════════════════════════════════════════════════");
-    println!("║ Decimal (what KMS Core expects): {}", decimal_id);
-    println!("║ Hex (for blockchain): {:x}", hex_id);
+    println!("║ Hex (what KMS Core expects): {}", request_id_hex);
+    println!("║ U256 value: {}", request_id);
     println!("╚═══════════════════════════════════════════════════════════════════════════");
 }
 
 /// Generate a properly formatted handle U256 value for the given FHE type
-/// When this U256 is converted to a 32-byte array, byte 30 will contain the FHE type
+/// This creates a full 256-bit (32-byte) handle with the FHE type encoded
 fn generate_fhe_handle_u256(fhe_type: u8) -> U256 {
     // Create a 32-byte handle
     let mut handle = [0u8; 32];
 
-    // Fill the first 29 bytes with some random data to simulate hash
-    thread_rng().fill(&mut handle[0..29]);
+    // Set the FHE type in the first byte
+    handle[0] = fhe_type;
 
-    // Set the index byte (position 29)
-    handle[29] = 0; // Use index 0 for simplicity
+    // Fill the rest with random data to create a unique ID
+    thread_rng().fill(&mut handle[1..30]);
 
-    // Set the FHE type byte (position 30)
-    handle[30] = fhe_type; // This is the critical byte for FHE type detection
+    // Keep the last two bytes for special purposes
+    // Set the index byte (position 30)
+    handle[30] = fhe_type; // Also encode FHE type here for backward compatibility
 
     // Set the version byte (position 31)
-    handle[31] = 0; // Version 0
+    handle[31] = 1; // Version 1 for new format
 
     // Convert the 32-byte array to a U256
     U256::from_be_bytes(handle)
@@ -211,18 +212,18 @@ async fn main() -> Result<()> {
         EMISSION_INTERVAL.as_secs()
     );
 
-    for ((output_file_path, fhe_type_name), request_id_decimal) in OUTPUT_FILE_PATHS
+    for ((output_file_path, fhe_type_name), request_id_hex) in OUTPUT_FILE_PATHS
         .iter()
         .zip(FHE_TYPE_NAMES.iter())
         .zip(STATIC_REQUEST_IDS.iter())
     {
         let start_time = std::time::Instant::now();
 
-        // Convert decimal request ID to U256 for the contract call
-        let request_id = U256::from_str(request_id_decimal)?;
+        // Convert hex request ID to U256 for the contract call
+        let request_id = U256::from_str(&format!("0x{}", request_id_hex))?;
 
         // Print request ID information
-        print_request_id_info(request_id_decimal, request_id);
+        print_request_id_info(request_id_hex, request_id);
 
         // Load the ciphertext from the output file
         println!("Reading ciphertext from: {}", output_file_path);
@@ -253,7 +254,6 @@ async fn main() -> Result<()> {
         // in the contract, request_id becomes ctHandle in the emitted event
         let request_id = ct_handle;
 
-        println!("║ Request ID / ctHandle (decimal for KMS): {}", request_id);
         println!("║ Request ID / ctHandle (hex): {:x}", request_id);
         println!("║ Key ID (hex): {}", key_id_hex);
         println!("║ Ciphertext size: {} bytes", cipher_text.len());
@@ -268,7 +268,6 @@ async fn main() -> Result<()> {
         println!("╔═══════════════════════════════════════════════════════════════════════════");
         println!("║ Emitting Event");
         println!("╠═══════════════════════════════════════════════════════════════════════════");
-        println!("║ Request ID / ctHandle (decimal for KMS): {}", request_id);
         println!("║ Request ID / ctHandle (hex): {:x}", request_id);
         println!("║ Key ID (hex): {}", key_id_hex);
         println!("║ Ciphertext size: {} bytes", cipher_text.len());

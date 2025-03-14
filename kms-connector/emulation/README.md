@@ -5,7 +5,8 @@ This guide describes the procedures for testing the KMS Connector using the emul
 ## Currently Supported Tests
 
 - Load Test
-- Decrypt Test
+- Threshold Public Decrypt Test
+- Centralized Public Decrypt Test
 
 ## Load Test
 
@@ -94,7 +95,7 @@ When all components are running:
 - The 500ms event interval is chosen to balance between testing throughput and system stability given current implementation specifics.
 - The 0.25s block time simulates Arbitrum's environment for more realistic testing
 
-## Decrypt Test
+## Threshold Public Decrypt Test
 
 This test focuses on evaluating the decryption functionality with a threshold setup using real KMS Core instances.
 
@@ -144,10 +145,10 @@ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.
 Create test ciphertexts using the keyID obtained in the previous step:
 
 ```bash
-./core-client/generate_test_ciphertexts.sh [keyID]
+./core-client/generate_test_ciphertexts_unified.sh -k [keyID] -m threshold
 ```
 
-Replace `[keyID]` with the actual keyID identifier from Step 5.
+Replace `[keyID]` with the actual keyID identifier from Step 5. You can also use `-m centralized` if you're running in centralized mode.
 
 #### Step 7: Initiate Decryption Events
 
@@ -168,7 +169,7 @@ Examine the logs of various running components to observe:
 3. Decryption results being retrieved from KMS Core
 4. Results being embedded as Layer 2 transactions
 
-### Expected Behavior
+### Threshold Test Expected Behavior
 
 When all components are running properly:
 
@@ -178,7 +179,92 @@ When all components are running properly:
 4. Decryption results will be returned to KMS Connectors
 5. KMS Connectors will submit the results as transactions to the Layer 2 blockchain
 
-### Notes
+### Threshold Test Notes
 
 - The threshold setup requires at least 3 out of 4 KMS Core instances to be operational for successful decryption
 - This test validates the end-to-end decryption flow in a distributed environment
+
+## Centralized Public Decrypt Test
+
+This test focuses on evaluating the decryption functionality with a centralized setup using a single KMS Core instance.
+
+### Centralized Test Procedure
+
+#### Step 1: Start KMS Connector
+
+Launch the KMS Connector in a separate terminal:
+
+```bash
+RUST_LOG=info cargo run --bin kms-connector start -c kms-connector/config/environments/config-base.toml
+```
+
+#### Step 2: Start Local Blockchain
+
+Launch Anvil to simulate the Layer 2 blockchain in a separate terminal:
+
+```bash
+anvil
+```
+
+#### Step 3: Start KMS Core Instance
+
+Launch a single KMS Core instance in centralized mode using Docker Compose in a separate terminal:
+
+```bash
+docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized.yml up
+```
+
+#### Step 4: Generate Insecure Keys
+
+Generate the necessary cryptographic materials and obtain a keyID in a separate terminal:
+
+```bash
+cargo run --bin kms-core-client -- -f core-client/config/client_local_centralized.toml insecure-key-gen
+```
+
+Note the keyID that is generated, as you'll need it for the next steps.
+
+#### Step 5: Generate Ciphertext Samples
+
+Create test ciphertexts using the keyID obtained in the previous step:
+
+```bash
+./core-client/generate_test_ciphertexts.sh ${keyID}
+```
+
+Replace `${keyID}` with the actual keyID identifier from Step 4.
+
+#### Step 6: Initiate Decryption Events
+
+Start issuing smart contract events for the KMS Connector to process:
+
+```bash
+cargo run --bin mock-decrypt [keyID]
+```
+
+Replace `[keyID]` with the same key identifier used in Step 5.
+
+#### Step 7: Monitor System Behavior
+
+Examine the logs of various running components to observe:
+
+1. KMS Connector listening for blockchain events
+2. Events being sent to KMS Core for processing
+3. Decryption results being retrieved from KMS Core
+4. Results being embedded as Layer 2 transactions
+
+### Centralized Test Expected Behavior
+
+When all components are running properly:
+
+1. The mock-decrypt tool will issue smart contract events
+2. KMS Connector will detect these events and forward decryption requests to KMS Core
+3. KMS Core will process the decryption requests in centralized mode
+4. Decryption results will be returned to KMS Connector
+5. KMS Connector will submit the results as transactions to the Layer 2 blockchain
+
+### Centralized Test Notes
+
+- The centralized setup uses a single KMS Core instance for all operations
+- This test validates the end-to-end decryption flow in a centralized environment
+- The centralized mode is simpler to set up but lacks the security benefits of the threshold setup

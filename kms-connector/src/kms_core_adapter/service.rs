@@ -137,7 +137,7 @@ impl KmsService for KmsServiceImpl {
         // Log the FHE types being processed in this request
         if let Some(ciphertexts) = request.get_ref().ciphertexts.as_slice().first() {
             info!(
-                "[OUT] Sending PublicDecryptionRequest({}) with FHE type: {}",
+                "[OUT] 🔑 Sending PublicDecryptionRequest({}) with FHE type: {}",
                 request_id.request_id, ciphertexts.fhe_type
             );
         } else {
@@ -195,7 +195,7 @@ impl KmsService for KmsServiceImpl {
             .join(", ");
 
         info!(
-            "[OUT] Sending ReencryptionRequest({}) for client {} with FHE types: [{}]",
+            "[OUT] 🔑 Sending ReencryptionRequest({}) for client {} with FHE types: [{}]",
             request_id.request_id,
             request.get_ref().client_address,
             fhe_types
