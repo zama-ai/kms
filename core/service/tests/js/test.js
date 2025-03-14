@@ -96,6 +96,7 @@ test('centralized reencryption response with js', (_t) => {
 
     // test reenc using js objects
     // these logs display the format of the request and response.
+    console.log("centralized reencryption response")
     console.log(request_js);
     console.log(eip712_domain_js);
     console.log(response_js);
@@ -118,6 +119,10 @@ test('threshold reencryption response', (_t) => {
     const enc_sk = transcript_to_enc_sk(transcript);
 
     // test reenc using wasm objects
+    console.log("threshold reencryption response")
+    console.log(request_js);
+    console.log(eip712_domain_js);
+    console.log(response_js);
     const pt = process_reencryption_resp_from_js(client, request_js, eip712_domain_js, response_js, enc_pk, enc_sk, true)[0].bytes;
     assert.deepEqual(42, pt.at(-1));
 
@@ -162,14 +167,3 @@ test('new client', (_t) => {
     // we only need to test the constructor, no need to test is further
     // as they are handled by the other tests
 });
-
-async function postData(url = "", data = "") {
-    const response = await fetch(url, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-        },
-        body: data,
-    });
-    return response.json();
-}

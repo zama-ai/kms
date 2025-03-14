@@ -368,12 +368,13 @@ fn js_to_resp(json: JsValue) -> anyhow::Result<Vec<ReencryptionResponse>> {
 /// It can be set to null if `verify` is false.
 /// Otherwise the caller needs to give the following JS object.
 /// Note that `client_address` and `eip712_verifying_contract` follow EIP-55.
+/// The signature field is not needed.
 /// ```
 /// {
-///   signature: '15a4f9a8eb61459cfba7d103d8f911fb04ce91ecf841b34c49c0d56a70b896d20cbc31986188f91efc3842b7df215cee8acb40178daedb8b63d0ba5d199bce121c',
+///   signature: undefined,
 ///   client_address: '0x17853A630aAe15AED549B2B874de08B73C0F59c5',
 ///   enc_key: '2000000000000000df2fcacb774f03187f3802a27259f45c06d33cefa68d9c53426b15ad531aa822',
-///   ciphertext_handle: '0748b542afe2353c86cb707e3d21044b0be1fd18efc7cbaa6a415af055bfb358',
+///   ciphertext_handles: [ '0748b542afe2353c86cb707e3d21044b0be1fd18efc7cbaa6a415af055bfb358' ]
 ///   eip712_verifying_contract: '0x66f9664f97F2b50F62D13eA064982f936dE76657'
 /// }
 /// ```
