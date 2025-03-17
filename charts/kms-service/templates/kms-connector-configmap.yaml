@@ -9,7 +9,11 @@ metadata:
 data:
   config.toml: |
     # Service name for tracing (optional, default: "kms-connector")
-    service_name = "my-connector"
+    service_name = "kms-connector"
+
+    # mnemonic for anvil
+    # this one is for testing purpose
+    mnemonic = "test test test test test test test test test test test junk"
 
     # KMS Core GRPC endpoint required, overriden by env vars
     #kms_core_endpoint =

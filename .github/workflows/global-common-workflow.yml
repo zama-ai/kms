@@ -108,7 +108,7 @@ jobs:
   ############################################################################
   test-backup:
     needs: check-changes
-    if: (needs.check-changes.outputs.changes-backup || needs.check-changes.outputs.changes-ci)
+    if: needs.check-changes.outputs.changes-backup
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
       working-directory: './core/backup'
@@ -133,7 +133,7 @@ jobs:
   ############################################################################
   test-connector:
     needs: check-changes
-    if: (needs.check-changes.outputs.changes-connector || needs.check-changes.outputs.changes-ci)
+    if: needs.check-changes.outputs.changes-connector
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
       working-directory: './kms-connector'
@@ -172,7 +172,7 @@ jobs:
   ############################################################################
   test-core-client:
     needs: check-changes
-    if: (needs.check-changes.outputs.changes-core-client || needs.check-changes.outputs.changes-ci)
+    if: needs.check-changes.outputs.changes-core-client
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
       working-directory: './core-client'
@@ -211,7 +211,7 @@ jobs:
   ############################################################################
   test-grpc:
     needs: check-changes
-    if: (needs.check-changes.outputs.changes-core-grpc || needs.check-changes.outputs.changes-ci)
+    if: needs.check-changes.outputs.changes-core-grpc
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
       working-directory: './core/grpc'
@@ -247,7 +247,7 @@ jobs:
   # - For other events: Runs multiple test suites in parallel with specific features
   prepare-matrix:
     needs: check-changes
-    if: (needs.check-changes.outputs.changes-core-service || needs.check-changes.outputs.changes-ci)
+    if: needs.check-changes.outputs.changes-core-service
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
@@ -274,7 +274,7 @@ jobs:
     needs:
       - check-changes
       - prepare-matrix
-    if: (needs.check-changes.outputs.changes-core-service || needs.check-changes.outputs.changes-ci)
+    if: needs.check-changes.outputs.changes-core-service
     strategy:
       matrix: ${{fromJson(needs.prepare-matrix.outputs.matrix)}}
     uses: ./.github/workflows/common-testing-big-instance.yml
@@ -372,7 +372,7 @@ jobs:
   # Includes slow tests but runs only library tests
   test-core-threshold-pr:
     needs: check-changes
-    if: (needs.check-changes.outputs.changes-core-threshold || needs.check-changes.outputs.changes-ci)
+    if: needs.check-changes.outputs.changes-core-threshold
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
       working-directory: './core/threshold'

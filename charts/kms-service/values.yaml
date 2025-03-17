@@ -22,9 +22,10 @@ kmsConnector:
   storage:
     # storageClassName: gp3
     capacity: 5Gi
-  wallet:
-    secret:
-      name: kms-connector-keys
+  # Comment
+  # wallet:
+  #   secret:
+  #     name: kms-connector-keys
   nodeSelector:
   affinity:
   tolerations:

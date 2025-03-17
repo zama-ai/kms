@@ -71,9 +71,6 @@ spec:
             - mountPath: /var/lib/kms-connector/config.toml
               subPath: config.toml
               name: config-files
-            - mountPath: /connector-wallets
-              name:  connector-wallet
-              readOnly: true
             - mountPath: /data
               name: data
       restartPolicy: Always
@@ -89,9 +86,6 @@ spec:
             items:
             - key: "config.toml"
               path: "config.toml"
-        - name: connector-wallet
-          secret:
-            secretName: {{ .Values.kmsConnector.wallet.secret.name }}
       {{- with .Values.kmsConnector.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
