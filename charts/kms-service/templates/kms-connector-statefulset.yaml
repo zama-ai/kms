@@ -49,18 +49,18 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.labels['apps.kubernetes.io/pod-index']
-            - name: KMS_CONNECTOR__KMS_CORE_ENDPOINT
+            - name: KMS_CONNECTOR_KMS_CORE_ENDPOINT
               value: {{ printf "http://%s-$(POD_INDEX):%d" $kmsCoreName (int $.Values.kmsCore.ports.client) | quote }}
             - name: RUN_MODE
               value: {{ .Values.runMode }}
             - name: PROBE
               value: "true"
-            - name: KMS_CONNECTOR__DECRYPTION_MANAGER_ADDRESS
+            - name: KMS_CONNECTOR_DECRYPTION_MANAGER_ADDRESS
               valueFrom:
                 configMapKeyRef:
                   name: {{ .Values.kmsConnector.contractAddress.configmap.name }}
                   key: {{ .Values.kmsConnector.contractAddress.configmap.httpzAddressKey }}
-            - name: KMS_CONNECTOR__HTTPZ_ADDRESS
+            - name: KMS_CONNECTOR_HTTPZ_ADDRESS
               valueFrom:
                 configMapKeyRef:
                   name: {{ .Values.kmsConnector.contractAddress.configmap.name }}
