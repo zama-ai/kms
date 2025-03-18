@@ -20,7 +20,7 @@ kmsConnector:
       httpzAddressKey: HTTPZ_CONTRACT_ADDRESS
       decryptionManagerAddressKey: DECRYPTION_MANAGER_CONTRACT_ADDRESS
   storage:
-    # storageClassName: gp3
+    storageClassName: gp3
     capacity: 5Gi
   # Comment
   # wallet:
@@ -203,4 +203,7 @@ kyverno:
 # Cronjob kubernetes
 kmsCoreClientTesting:
   enabled: false
-  schedule: "30 0 * * *"
+  schedule: "*/5 * * * *"
+  storage:
+    storageClassName: gp3
+    capacity: 1Gi

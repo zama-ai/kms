@@ -70,7 +70,8 @@ spec:
                   - key: load-core-client-testing-config.sh
                     path: load-core-client-testing-config.sh
             - name: key-files
-              emptyDir: {}
+              persistentVolumeClaim:
+                claimName: kms-core-client-key-files
           {{- with .Values.kmsCoreClient.nodeSelector }}
           nodeSelector:
             {{- toYaml . | nindent 12 }}
@@ -83,4 +84,20 @@ spec:
           tolerations:
             {{- toYaml . | nindent 12 }}
           {{- end -}}
+
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "kmsCoreClientTestingName" . }}-pvc
+  labels:
+    app: kms-core-client-testing
+    app.kubernetes.io/name: {{ include "kmsCoreClientTestingName" . }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.kmsCoreClientTesting.storage.capacity }}
+  storageClassName: {{ .Values.kmsCoreClientTesting.storage.storageClassName }}
 {{- end -}}
