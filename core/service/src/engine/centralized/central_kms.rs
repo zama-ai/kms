@@ -358,17 +358,35 @@ pub fn central_decrypt<
 >(
     keys: &KmsFheKeyHandles,
     cts: &Vec<TypedCiphertext>,
+    metric_tags: Vec<(&'static str, String)>,
 ) -> anyhow::Result<Vec<TypedPlaintext>> {
+    use conf_trace::{
+        metrics,
+        metrics_names::{OP_DECRYPT_INNER, TAG_TFHE_TYPE},
+    };
     use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
     tracing::info!("Decrypting list of cipher-texts");
     // run the decryption of each ct in the batch in parallel
     cts.par_iter()
         .map(|ct| {
+            let inner_timer = metrics::METRICS
+                .time_operation(OP_DECRYPT_INNER)
+                .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
+                .and_then(|b| {
+                    b.tags(metric_tags.clone()).map_err(|e| {
+                        tracing::warn!("Failed to a tag in party_id, key_id or request_id : {}", e)
+                    })
+                })
+                .map(|b| b.start())
+                .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
+                .ok();
+            let fhe_type = ct.fhe_type();
+            inner_timer.map(|mut b| b.tag(TAG_TFHE_TYPE, fhe_type.as_str_name()));
             RealCentralizedKms::<PubS, PrivS, BackS>::decrypt(
                 keys,
                 &ct.ciphertext,
-                ct.fhe_type(),
+                fhe_type,
                 ct.ciphertext_format(),
             )
         })
@@ -391,13 +409,31 @@ pub async fn async_reencrypt<
     client_enc_key: &PublicEncKey,
     client_address: &alloy_primitives::Address,
     domain: &alloy_sol_types::Eip712Domain,
+    metric_tags: Vec<(&'static str, String)>,
 ) -> anyhow::Result<(Vec<TypedSigncryptedCiphertext>, Vec<u8>)> {
+    use conf_trace::{
+        metrics,
+        metrics_names::{OP_REENCRYPT_INNER, TAG_TFHE_TYPE},
+    };
+
     use crate::engine::base::compute_external_reenc_signature;
 
     let mut all_signcrypted_cts = vec![];
     for typed_ciphertext in typed_ciphertexts {
+        let inner_timer = metrics::METRICS
+            .time_operation(OP_REENCRYPT_INNER)
+            .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
+            .and_then(|b| {
+                b.tags(metric_tags.clone()).map_err(|e| {
+                    tracing::warn!("Failed to a tag in party_id, key_id or request_id : {}", e)
+                })
+            })
+            .map(|b| b.start())
+            .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
+            .ok();
         let high_level_ct = &typed_ciphertext.ciphertext;
         let fhe_type = typed_ciphertext.fhe_type();
+        inner_timer.map(|mut b| b.tag(TAG_TFHE_TYPE, fhe_type.as_str_name()));
         let ct_format = typed_ciphertext.ciphertext_format();
         let external_handle = typed_ciphertext.external_handle.clone();
         let signcrypted_ciphertext = RealCentralizedKms::<PubS, PrivS, BackS>::reencrypt(

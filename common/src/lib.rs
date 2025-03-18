@@ -54,6 +54,17 @@ pub enum DecryptionMode {
     BitDecLarge,
 }
 
+impl DecryptionMode {
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            DecryptionMode::NoiseFloodSmall => "NoiseFloodSmall",
+            DecryptionMode::NoiseFloodLarge => "NoiseFloodLarge",
+            DecryptionMode::BitDecSmall => "BitDecSmall",
+            DecryptionMode::BitDecLarge => "BitDecLarge",
+        }
+    }
+}
+
 #[cfg(feature = "testing")]
 pub fn load_and_unversionize<Data: Unversionize, P: AsRef<Path>, T: TestType>(
     dir: P,

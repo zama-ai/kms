@@ -28,8 +28,9 @@ use anyhow::anyhow;
 use conf_trace::metrics;
 use conf_trace::metrics_names::{
     ERR_DECRYPTION_FAILED, ERR_RATE_LIMIT_EXCEEDED, OP_CRS_GEN, OP_DECOMPRESSION_KEYGEN,
-    OP_DECRYPT, OP_INSECURE_CRS_GEN, OP_INSECURE_DECOMPRESSION_KEYGEN, OP_INSECURE_KEYGEN,
-    OP_KEYGEN, OP_KEYGEN_PREPROC, OP_REENCRYPT, TAG_PARTY_ID,
+    OP_DECRYPT_INNER, OP_DECRYPT_REQUEST, OP_INSECURE_CRS_GEN, OP_INSECURE_DECOMPRESSION_KEYGEN,
+    OP_INSECURE_KEYGEN, OP_KEYGEN, OP_KEYGEN_PREPROC, OP_REENCRYPT_INNER, OP_REENCRYPT_REQUEST,
+    TAG_DECRYPTION_KIND, TAG_KEY_ID, TAG_PARTY_ID, TAG_TFHE_TYPE,
 };
 use distributed_decryption::algebra::base_ring::Z128;
 use distributed_decryption::algebra::galois_rings::common::pack_residue_poly;
@@ -972,12 +973,30 @@ impl<
         fhe_keys: OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>,
         dec_mode: DecryptionMode,
         domain: &alloy_sol_types::Eip712Domain,
+        metric_tags: Vec<(&'static str, String)>,
     ) -> anyhow::Result<(Vec<TypedSigncryptedCiphertext>, Vec<u8>)> {
         let keys = fhe_keys;
 
         let mut all_signcrypted_cts = vec![];
+
+        //TODO: Each iteration of this loop should probably happen
+        // inside its own tokio task
         for (ctr, typed_ciphertext) in typed_ciphertexts.iter().enumerate() {
+            // Create and start a the timer, it'll be dropped and thus
+            // exported at the end of the iteration
+            let inner_timer = metrics::METRICS
+                .time_operation(OP_REENCRYPT_INNER)
+                .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
+                .and_then(|b| {
+                    b.tags(metric_tags.clone()).map_err(|e| {
+                        tracing::warn!("Failed to a tag in party_id, key_id or request_id : {}", e)
+                    })
+                })
+                .map(|b| b.start())
+                .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
+                .ok();
             let fhe_type = typed_ciphertext.fhe_type();
+            inner_timer.map(|mut b| b.tag(TAG_TFHE_TYPE, fhe_type.as_str_name()));
             let ct_format = typed_ciphertext.ciphertext_format();
             let ct = &typed_ciphertext.ciphertext;
             let external_handle = typed_ciphertext.external_handle.clone();
@@ -1131,20 +1150,24 @@ impl<
         request: Request<ReencryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
         // Start timing and counting before any operations
-        let timer = metrics::METRICS
-            .time_operation(OP_REENCRYPT)
+        let mut timer = metrics::METRICS
+            .time_operation(OP_REENCRYPT_REQUEST)
             .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
             .and_then(|b| {
                 b.tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
                     .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
-            });
+            })
+            .map(|b| b.start())
+            .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
+            .ok();
 
         let _request_counter = metrics::METRICS
-            .increment_request_counter(OP_REENCRYPT)
+            .increment_request_counter(OP_REENCRYPT_REQUEST)
             .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
 
         let permit = self.rate_limiter.start_reenc().await.map_err(|e| {
-            let _ = metrics::METRICS.increment_error_counter(OP_REENCRYPT, ERR_RATE_LIMIT_EXCEEDED);
+            let _ = metrics::METRICS
+                .increment_error_counter(OP_REENCRYPT_REQUEST, ERR_RATE_LIMIT_EXCEEDED);
             Status::resource_exhausted(e.to_string())
         })?;
 
@@ -1159,6 +1182,13 @@ impl<
                 validate_reencrypt_req(&inner).await,
                 format!("Invalid reencryption request {:?}", inner),
             )?;
+
+        if let Some(b) = timer.as_mut() {
+            //We log but we don't want to return early because timer failed
+            let _ = b
+                .tags([(TAG_KEY_ID, key_id.request_id.clone())])
+                .map_err(|e| tracing::warn!("Failed to add tag key_id or request_id: {}", e));
+        }
 
         let meta_store = Arc::clone(&self.reenc_meta_store);
         let crypto_storage = self.crypto_storage.clone();
@@ -1186,11 +1216,17 @@ impl<
         let prep = Arc::clone(&self.session_preparer);
         let dec_mode = self.decryption_mode;
 
+        let metric_tags = vec![
+            (TAG_PARTY_ID, prep.my_id.to_string()),
+            (TAG_KEY_ID, key_id.request_id.clone()),
+            (TAG_DECRYPTION_KIND, dec_mode.as_str_name().to_string()),
+        ];
+
         // the result of the computation is tracked the tracker
         self.tracker.spawn(
             async move {
-                // Start the timer, it is stopped when it's dropped
-                let _timer = timer.map(|b| b.start());
+                // Capture the timer, it is stopped when it's dropped
+                let _timer = timer;
                 // explicitly move the rate limiter context
                 let _permit = permit;
                 // Note that we'll hold a read lock for some time
@@ -1213,6 +1249,7 @@ impl<
                             k,
                             dec_mode,
                             &domain,
+                            metric_tags,
                         )
                         .await
                     }
@@ -1418,16 +1455,19 @@ impl<
         request: Request<DecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
         // Start timing and counting before any operations
-        let timer = metrics::METRICS
-            .time_operation(OP_DECRYPT)
+        let mut timer = metrics::METRICS
+            .time_operation(OP_DECRYPT_REQUEST)
             .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
             .and_then(|b| {
                 b.tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
                     .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
-            });
+            })
+            .map(|b| b.start())
+            .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
+            .ok();
 
         let _request_counter = metrics::METRICS
-            .increment_request_counter(OP_DECRYPT)
+            .increment_request_counter(OP_DECRYPT_REQUEST)
             .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
 
         let permit = self
@@ -1452,15 +1492,17 @@ impl<
                 request_id = ?inner.request_id,
                 "Failed to validate decrypt request"
             );
-            let _ = metrics::METRICS.increment_error_counter(OP_DECRYPT, ERR_DECRYPTION_FAILED);
+            let _ =
+                metrics::METRICS.increment_error_counter(OP_DECRYPT_REQUEST, ERR_DECRYPTION_FAILED);
             e
         })?;
 
-        let _timer = timer
-            .map(|b| b.start())
-            .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
-            .ok();
-
+        if let Some(b) = timer.as_mut() {
+            //We log but we don't want to return early because timer failed
+            let _ = b
+                .tags([(TAG_KEY_ID, key_id.request_id.clone())])
+                .map_err(|e| tracing::warn!("Failed to add tag key_id or request_id: {}", e));
+        }
         tracing::debug!(
             request_id = ?req_id,
             key_id = ?key_id,
@@ -1498,6 +1540,22 @@ impl<
 
         // iterate over ciphertexts in this batch and decrypt each in their own session (so that it happens in parallel)
         for (ctr, typed_ciphertext) in ciphertexts.into_iter().enumerate() {
+            let inner_timer = metrics::METRICS
+                .time_operation(OP_DECRYPT_INNER)
+                .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
+                .and_then(|b| {
+                    b.tags([
+                        (TAG_PARTY_ID, self.session_preparer.my_id.to_string()),
+                        (TAG_KEY_ID, key_id.request_id.clone()),
+                        (TAG_DECRYPTION_KIND, dec_mode.as_str_name().to_string()),
+                    ])
+                    .map_err(|e| {
+                        tracing::warn!("Failed to a tag in party_id, key_id or request_id : {}", e)
+                    })
+                })
+                .map(|b| b.start())
+                .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
+                .ok();
             let internal_sid = tonic_handle_potential_err(
                 derive_session_id_from_ctr(ctr as u64, DSEP_SESSION_DECRYPTION, &req_id),
                 "failed to derive session ID from counter".to_string(),
@@ -1517,6 +1575,12 @@ impl<
                         typed_ciphertext.fhe_type
                     )));
                 };
+                // Capture the inner_timer inside the decryption tasks, such that when the task
+                // exits, the timer is dropped and thus exported
+                let mut inner_timer = inner_timer;
+                inner_timer
+                    .as_mut()
+                    .map(|b| b.tag(TAG_TFHE_TYPE, fhe_type.as_str_name()));
 
                 let ciphertext = &typed_ciphertext.ciphertext;
                 let ct_format = typed_ciphertext.ciphertext_format();
@@ -1628,7 +1692,7 @@ impl<
         let dec_sig_future = |_permit| async move {
             // Move the timer to the management task's context, so as to drop
             // it when decryptions are available
-            let _timer = _timer;
+            let _timer = timer;
             // NOTE: _permit should be dropped at the end of this function
             let mut decs = HashMap::new();
             while let Some(resp) = dec_tasks.pop() {

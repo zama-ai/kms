@@ -21,8 +21,8 @@ use anyhow::Result;
 use conf_trace::metrics::METRICS;
 use conf_trace::metrics_names::{
     ERR_CRS_GEN_FAILED, ERR_DECRYPTION_FAILED, ERR_KEY_EXISTS, ERR_KEY_NOT_FOUND,
-    ERR_RATE_LIMIT_EXCEEDED, ERR_REENCRYPTION_FAILED, OP_CRS_GEN, OP_DECRYPT, OP_KEYGEN,
-    OP_REENCRYPT, TAG_PARTY_ID,
+    ERR_RATE_LIMIT_EXCEEDED, ERR_REENCRYPTION_FAILED, OP_CRS_GEN, OP_DECRYPT_REQUEST, OP_KEYGEN,
+    OP_REENCRYPT_REQUEST, TAG_DECRYPTION_KIND, TAG_KEY_ID, TAG_PARTY_ID,
 };
 use distributed_decryption::execution::keyset_config::KeySetConfig;
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
@@ -149,6 +149,7 @@ impl<
         let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref());
         let handle = self.tracker.spawn(
             async move {
+                let _timer = _timer;
                 if let Err(e) = key_gen_background(
                     &req_id,
                     meta_store,
@@ -204,21 +205,26 @@ impl<
         request: Request<ReencryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
         // Start timing and counting before any operations
-        let timer = METRICS
-            .time_operation(OP_REENCRYPT)
+        let mut timer = METRICS
+            .time_operation(OP_REENCRYPT_REQUEST)
             .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
             .and_then(|b| {
                 // Use a constant party ID since this is the central KMS
                 b.tag(TAG_PARTY_ID, "central")
                     .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
-            });
+            })
+            .map(|b| b.start())
+            .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
+            .ok();
 
         let _request_counter = METRICS
-            .increment_request_counter(OP_REENCRYPT)
+            .increment_request_counter(OP_REENCRYPT_REQUEST)
             .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
 
         let permit = self.rate_limiter.start_reenc().await.map_err(|e| {
-            if let Err(e) = METRICS.increment_error_counter(OP_REENCRYPT, ERR_RATE_LIMIT_EXCEEDED) {
+            if let Err(e) =
+                METRICS.increment_error_counter(OP_REENCRYPT_REQUEST, ERR_RATE_LIMIT_EXCEEDED)
+            {
                 tracing::warn!("Failed to increment error counter: {:?}", e);
             }
             Status::resource_exhausted(e.to_string())
@@ -232,8 +238,12 @@ impl<
                 format!("Invalid key in request {:?}", inner),
             )?;
 
-        // Start the timer, it is stopped when it's dropped
-        let _timer = timer.map(|b| b.start());
+        if let Some(b) = timer.as_mut() {
+            //We log but we don't want to return early because timer failed
+            let _ = b
+                .tags([(TAG_KEY_ID, key_id.request_id.clone())])
+                .map_err(|e| tracing::warn!("Failed to add tag key_id or request_id: {}", e));
+        }
 
         {
             let mut guarded_meta_store = self.reenc_meta_map.write().await;
@@ -255,8 +265,14 @@ impl<
 
         let mut handles = self.thread_handles.write().await;
 
+        let metric_tags = vec![
+            (TAG_KEY_ID, key_id.request_id.clone()),
+            (TAG_DECRYPTION_KIND, "centralized".to_string()),
+        ];
+
         let handle = tokio::spawn(
             async move {
+                let _timer = timer;
                 let _permit = permit;
                 let keys = match crypto_storage
                     .read_cloned_centralized_fhe_keys_from_cache(&key_id)
@@ -266,7 +282,7 @@ impl<
                     Err(e) => {
                         let mut guarded_meta_store = meta_store.write().await;
                         if let Err(e) =
-                            METRICS.increment_error_counter(OP_REENCRYPT, ERR_KEY_NOT_FOUND)
+                            METRICS.increment_error_counter(OP_REENCRYPT_REQUEST, ERR_KEY_NOT_FOUND)
                         {
                             tracing::warn!("Failed to increment error counter: {:?}", e);
                         }
@@ -292,6 +308,7 @@ impl<
                     &client_enc_key,
                     &client_address,
                     &domain,
+                    metric_tags,
                 )
                 .await
                 {
@@ -305,7 +322,7 @@ impl<
                         let _ = guarded_meta_store
                             .update(&request_id, Err(format!("Failed reencryption: {e}")));
                         METRICS
-                            .increment_error_counter(OP_REENCRYPT, ERR_REENCRYPTION_FAILED)
+                            .increment_error_counter(OP_REENCRYPT_REQUEST, ERR_REENCRYPTION_FAILED)
                             .ok();
                     }
                 }
@@ -366,16 +383,27 @@ impl<
         &self,
         request: Request<DecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
-        let _timer = METRICS
-            .time_operation(OP_DECRYPT)
-            .map_err(|e| Status::internal(e.to_string()))?
-            .start();
+        // Start timing and counting before any operations
+        let mut timer = METRICS
+            .time_operation(OP_DECRYPT_REQUEST)
+            .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
+            .and_then(|b| {
+                // Use a constant party ID since this is the central KMS
+                b.tag(TAG_PARTY_ID, "central")
+                    .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
+            })
+            .map(|b| b.start())
+            .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
+            .ok();
+
         METRICS
-            .increment_request_counter(OP_DECRYPT)
+            .increment_request_counter(OP_DECRYPT_REQUEST)
             .map_err(|e| Status::internal(e.to_string()))?;
 
         let permit = self.rate_limiter.start_dec().await.map_err(|e| {
-            if let Err(e) = METRICS.increment_error_counter(OP_DECRYPT, ERR_RATE_LIMIT_EXCEEDED) {
+            if let Err(e) =
+                METRICS.increment_error_counter(OP_DECRYPT_REQUEST, ERR_RATE_LIMIT_EXCEEDED)
+            {
                 tracing::warn!("Failed to increment error counter: {:?}", e);
             }
             tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string())
@@ -389,6 +417,13 @@ impl<
                 validate_decrypt_req(&inner),
                 format!("Invalid key in request {:?}", inner),
             )?;
+
+        if let Some(b) = timer.as_mut() {
+            //We log but we don't want to return early because timer failed
+            let _ = b
+                .tags([(TAG_KEY_ID, key_id.request_id.clone())])
+                .map_err(|e| tracing::warn!("Failed to add tag key_id or request_id: {}", e));
+        }
 
         tracing::info!(
             "Decrypting {:?} ciphertexts using key {:?} with request id {:?}",
@@ -414,10 +449,15 @@ impl<
             "Cannot find centralized keys".to_string(),
         )?;
 
+        let metric_tags = vec![
+            (TAG_KEY_ID, key_id.request_id.clone()),
+            (TAG_DECRYPTION_KIND, "centralized".to_string()),
+        ];
         // we do not need to hold the handle,
         // the result of the computation is tracked by the dec_meta_store
         let _handle = tokio::spawn(
             async move {
+                let _timer = timer;
                 let _permit = permit;
                 let keys = match crypto_storage
                     .read_cloned_centralized_fhe_keys_from_cache(&key_id)
@@ -427,7 +467,7 @@ impl<
                     Err(e) => {
                         let mut guarded_meta_store = meta_store.write().await;
                         if let Err(e) =
-                            METRICS.increment_error_counter(OP_DECRYPT, ERR_KEY_NOT_FOUND)
+                            METRICS.increment_error_counter(OP_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND)
                         {
                             tracing::warn!("Failed to increment error counter: {:?}", e);
                         }
@@ -452,7 +492,8 @@ impl<
                 // run the computation in a separate rayon thread to avoid blocking the tokio runtime
                 let (send, recv) = tokio::sync::oneshot::channel();
                 rayon::spawn_fifo(move || {
-                    let decryptions = central_decrypt::<PubS, PrivS, BackS>(&keys, &ciphertexts);
+                    let decryptions =
+                        central_decrypt::<PubS, PrivS, BackS>(&keys, &ciphertexts, metric_tags);
                     let _ = send.send(decryptions);
                 });
                 let decryptions = recv.await;
@@ -486,8 +527,8 @@ impl<
                     }
                     Ok(Err(e)) => {
                         let mut guarded_meta_store = meta_store.write().await;
-                        if let Err(e) =
-                            METRICS.increment_error_counter(OP_DECRYPT, ERR_DECRYPTION_FAILED)
+                        if let Err(e) = METRICS
+                            .increment_error_counter(OP_DECRYPT_REQUEST, ERR_DECRYPTION_FAILED)
                         {
                             tracing::warn!("Failed to increment error counter: {:?}", e);
                         }
@@ -597,6 +638,7 @@ impl<
         let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref());
         let handle = self.tracker.spawn(
             async move {
+                let _timer = _timer;
                 if let Err(e) = crs_gen_background(
                     &req_id,
                     rng,

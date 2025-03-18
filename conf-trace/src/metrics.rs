@@ -291,6 +291,28 @@ impl DurationGuard<'_> {
         self.record_on_drop = false;
         duration
     }
+
+    /// Add a single tag
+    pub fn tag(&mut self, key: &'static str, value: impl Into<String>) -> Result<(), MetricError> {
+        let value = value.into();
+        // Validate tag before adding
+        MetricTag::new(key, value.clone())?;
+        self.tags.push((key, value));
+        Ok(())
+    }
+
+    /// Add multiple tags at once
+    pub fn tags(
+        &mut self,
+        tags: impl IntoIterator<Item = (&'static str, String)>,
+    ) -> Result<(), MetricError> {
+        for (key, value) in tags {
+            // Validate each tag before adding
+            MetricTag::new(key, value.clone())?;
+            self.tags.push((key, value));
+        }
+        Ok(())
+    }
 }
 
 impl Drop for DurationGuard<'_> {

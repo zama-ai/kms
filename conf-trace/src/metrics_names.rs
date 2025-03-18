@@ -9,8 +9,13 @@ pub const OP_DECOMPRESSION_KEYGEN: &str = "decompression_keygen";
 pub const OP_KEYGEN_PREPROC: &str = "keygen_preproc";
 
 // Decryption/Reencryption Operations
-pub const OP_DECRYPT: &str = "decrypt";
-pub const OP_REENCRYPT: &str = "reencrypt";
+// Corresponds to a request, a request may contain several ciphertexts
+pub const OP_DECRYPT_REQUEST: &str = "decrypt_request";
+pub const OP_REENCRYPT_REQUEST: &str = "reencrypt_request";
+// Inner variants of the OP
+// Corresponds to a single ciphertext
+pub const OP_DECRYPT_INNER: &str = "decrypt_inner";
+pub const OP_REENCRYPT_INNER: &str = "reencrypt_inner";
 
 // CRS Operations
 pub const OP_CRS_GEN: &str = "crs_gen";
@@ -24,6 +29,8 @@ pub const TAG_ALGORITHM: &str = "algorithm";
 pub const TAG_OPERATION_TYPE: &str = "operation_type";
 pub const TAG_PARTY_ID: &str = "party_id";
 pub const TAG_REQUEST_ID: &str = "request_id";
+pub const TAG_TFHE_TYPE: &str = "tfhe_type";
+pub const TAG_DECRYPTION_KIND: &str = "decryption_mode";
 
 // Common error values
 pub const ERR_RATE_LIMIT_EXCEEDED: &str = "rate_limit_exceeded";
