@@ -204,6 +204,7 @@ kyverno:
 kmsCoreClientTesting:
   enabled: false
   schedule: "*/5 * * * *"
+  shell_command:
   storage:
     storageClassName: gp3
     capacity: 1Gi
