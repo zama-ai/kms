@@ -97,7 +97,7 @@ jobs:
 
   release-helm-chart:
     needs: check-changes
-    if: ${{ github.ref == 'refs/heads/main' }}
+    if: github.ref == 'refs/heads/main' && needs.check-changes.outputs.changes-helm-chart
     uses: ./.github/workflows/helm-release.yml
 
   ############################################################################

@@ -1,4 +1,4 @@
-{{- if .Values.kmsCoreClientTesting.enabled -}}
+{{- if .Values.kmsCoreClientTesting.enabled }}
 {{- $kmsCoreName := include "kmsCoreName" . }}
 {{- $peersIDList := untilStep (default 1 .Values.kmsPeers.id | int) (.Values.kmsPeers.count | add1 | int) 1  }}
 apiVersion: batch/v1
@@ -71,7 +71,7 @@ spec:
                     path: load-core-client-testing-config.sh
             - name: key-files
               persistentVolumeClaim:
-                claimName: kms-core-client-key-files
+                claimName: {{ include "kmsCoreClientTestingName" . }}-pvc
           {{- with .Values.kmsCoreClient.nodeSelector }}
           nodeSelector:
             {{- toYaml . | nindent 12 }}
@@ -83,9 +83,11 @@ spec:
           {{- with .Values.kmsCoreClient.tolerations }}
           tolerations:
             {{- toYaml . | nindent 12 }}
-          {{- end -}}
+          {{- end }}
+{{- end }}
 
-
+---
+{{- if .Values.kmsCoreClientTesting.enabled }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -100,4 +102,4 @@ spec:
     requests:
       storage: {{ .Values.kmsCoreClientTesting.storage.capacity }}
   storageClassName: {{ .Values.kmsCoreClientTesting.storage.storageClassName }}
-{{- end -}}
+{{- end }}
