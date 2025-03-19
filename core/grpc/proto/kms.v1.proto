@@ -311,10 +311,10 @@ message ReencryptionResponsePayload {
   uint32 degree = 5;
   // This is the external signature created from the Eip712 domain
   // on the structure, where reencryptedShare is bincode::serialize(&signcrypted_ciphertexts)
-  // struct UserDecryptionResult {
-  //       bytes publicKey;
-  //       uint256[] handles;
-  //       bytes reencryptedShare;
+  // struct UserDecryptResponseVerification {
+  //     bytes publicKey;
+  //     uint256[] ctHandles;
+  //     bytes reencryptedShare;
   // }
   bytes external_signature = 6;
 }

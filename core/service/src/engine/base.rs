@@ -29,7 +29,8 @@ use kms_grpc::kms::v1::{
 };
 use kms_grpc::rpc_types::{
     hash_element, safe_serialize_hash_element_versioned, EIP712PublicDecrypt, FhePubKey,
-    FheServerKey, PubDataType, SignedPubDataHandleInternal, SnsKey, UserDecryptionResult, CRS,
+    FheServerKey, PubDataType, SignedPubDataHandleInternal, SnsKey,
+    UserDecryptResponseVerification, CRS,
 };
 use rand::{CryptoRng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -334,7 +335,7 @@ pub(crate) fn compute_external_reenc_signature(
     let signature = signer.sign_hash_sync(&message_hash)?.as_bytes().to_vec();
 
     tracing::info!(
-        "UserDecryptionResult Signature: {:?}",
+        "UserDecryptResponseVerification Signature: {:?}",
         hex::encode(signature.clone())
     );
 
@@ -614,15 +615,15 @@ pub fn compute_reenc_message_hash(
     // the solidity structure to sign with EIP-712
     // note that the JS client must also use the same encoding to verify the result
     let user_pk = bincode::serialize(user_pk)?;
-    let message = UserDecryptionResult {
+    let message = UserDecryptResponseVerification {
         publicKey: user_pk.into(),
-        handles: external_handles,
+        ctHandles: external_handles,
         reencryptedShare: reencrypted_share_buf.into(),
     };
 
     let message_hash = message.eip712_signing_hash(eip712_domain);
     tracing::info!(
-        "UserDecryptionResult EIP-712 Message hash: {:?}",
+        "UserDecryptResponseVerification EIP-712 Message hash: {:?}",
         message_hash
     );
     Ok(message_hash)

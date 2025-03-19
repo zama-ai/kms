@@ -45,9 +45,9 @@ pub static DEC_REQUEST_NAME: &str = "dec_request";
 pub static REENC_REQUEST_NAME: &str = "reenc_request";
 
 alloy_sol_types::sol! {
-    struct UserDecryptionResult {
+    struct UserDecryptResponseVerification {
         bytes publicKey;
-        uint256[] handles;
+        uint256[] ctHandles;
         bytes reencryptedShare;
     }
 }
