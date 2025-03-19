@@ -44,6 +44,7 @@ jobs:
       changes-core-grpc: ${{ steps.filter.outputs.core-grpc }}
       changes-core-service: ${{ steps.filter.outputs.core-service }}
       changes-core-threshold: ${{ steps.filter.outputs.core-threshold }}
+      changes-docs: ${{ steps.filter.outputs.docs }}
       changes-helm-chart: ${{ steps.filter.outputs.helm-chart }}
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -74,6 +75,8 @@ jobs:
           core-threshold:
             - 'core/threshold/**'
             - 'conf-trace/**'
+          docs:
+            - 'docs/**'
           helm-chart:
             - 'charts/**'
             - '.github/workflows/helm-test.yml'
@@ -87,18 +90,36 @@ jobs:
   ############################################################################
   test-helm-chart:
     needs: check-changes
-    if: (needs.check-changes.outputs.changes-helm-chart || needs.check-changes.outputs.changes-ci) && always()
+    if: needs.check-changes.outputs.changes-helm-chart
     uses: ./.github/workflows/helm-test.yml
 
   lint-helm-chart:
     needs: check-changes
-    if: (needs.check-changes.outputs.changes-helm-chart || needs.check-changes.outputs.changes-ci) && always()
+    if: needs.check-changes.outputs.changes-helm-chart
     uses: ./.github/workflows/helm-lint.yml
 
   release-helm-chart:
     needs: check-changes
     if: github.ref == 'refs/heads/main' && needs.check-changes.outputs.changes-helm-chart
     uses: ./.github/workflows/helm-release.yml
+
+  ############################################################################
+  # KMS Local Docs Link Check
+  # Triggered by:
+  # - Changes to docs/**
+  # - Changes to workflow file itself
+  ############################################################################
+  check-docs:
+    needs: check-changes
+    if: needs.check-changes.outputs.changes-docs
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.10
+    steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+    - run: python3 -m pip install linkcheckmd
+    - name: Check dead-link
+      run: python3 ci/script/local_docs_link_check.py
 
   ############################################################################
   # KMS Backup Testing
