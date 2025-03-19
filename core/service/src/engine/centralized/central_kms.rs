@@ -865,18 +865,14 @@ pub(crate) mod tests {
     use crate::consts::{
         DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_KEY_ID, OTHER_CENTRAL_DEFAULT_ID,
     };
-    use crate::consts::{
-        DEFAULT_PARAM, DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID,
-    };
+    use crate::consts::{DEFAULT_PARAM, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID};
     use crate::consts::{TEST_CENTRAL_KEYS_PATH, TEST_PARAM};
     use crate::cryptography::internal_crypto_types::PrivateSigKey;
     use crate::cryptography::signcryption::{
-        decrypt_signcryption, ephemeral_encryption_key_generation,
-        ephemeral_signcryption_key_generation,
+        decrypt_signcryption, ephemeral_signcryption_key_generation,
     };
     use crate::engine::base::{compute_handle, compute_info, gen_sig_keys};
     use crate::engine::traits::Kms;
-    use crate::engine::validation::verify_reencryption_eip712;
     use crate::util::file_handling::read_element;
     use crate::util::file_handling::write_element;
     use crate::util::key_setup::test_tools::{compute_cipher, EncryptionConfig};
@@ -887,10 +883,8 @@ pub(crate) mod tests {
     use aes_prng::AesRng;
     use distributed_decryption::execution::keyset_config::StandardKeySetConfig;
     use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
-    use kms_grpc::kms::v1::{FheType, RequestId, TypedCiphertext};
-    use kms_grpc::rpc_types::{
-        alloy_to_protobuf_domain, PrivDataType, WrappedPublicKey, ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR,
-    };
+    use kms_grpc::kms::v1::{FheType, RequestId};
+    use kms_grpc::rpc_types::{PrivDataType, WrappedPublicKey};
     use rand::{RngCore, SeedableRng};
     use serde::{Deserialize, Serialize};
     use serial_test::serial;
@@ -1448,69 +1442,5 @@ pub(crate) mod tests {
         let expected = compute_info(&kms.base_kms.sig_key, &value, None).unwrap();
         let actual = compute_info(&kms.base_kms.sig_key, &value, None).unwrap();
         assert_eq!(expected, actual);
-    }
-
-    #[test]
-    fn test_verify_reenc_eip712() {
-        let mut rng = AesRng::seed_from_u64(1);
-        let (client_pk, _client_sk) = gen_sig_keys(&mut rng);
-        let client_address = alloy_primitives::Address::from_public_key(client_pk.pk());
-        let ciphertext = vec![1, 2, 3];
-        let (enc_pk, _) = ephemeral_encryption_key_generation(&mut rng);
-        let key_id = DEFAULT_THRESHOLD_KEY_ID_4P.clone();
-
-        let typed_ciphertext = TypedCiphertext {
-            ciphertext,
-            fhe_type: 1,
-            ciphertext_format: 0,
-            external_handle: vec![123],
-        };
-        let domain = alloy_sol_types::eip712_domain!(
-            name: "Authorization token",
-            version: "1",
-            chain_id: 8006,
-            verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
-        );
-        let domain_msg = alloy_to_protobuf_domain(&domain).unwrap();
-
-        let req = kms_grpc::kms::v1::ReencryptionRequest {
-            request_id: Some(RequestId {
-                request_id: "dummy request ID".to_owned(),
-            }),
-            enc_key: bincode::serialize(&enc_pk).unwrap(),
-            client_address: client_address.to_checksum(None),
-            key_id: Some(key_id),
-            typed_ciphertexts: vec![typed_ciphertext],
-            domain: Some(domain_msg),
-        };
-
-        {
-            // happy path
-            verify_reencryption_eip712(&req).unwrap();
-        }
-        {
-            // use a wrong client address (invalid string length)
-            let mut bad_req = req.clone();
-            bad_req.client_address = "66f9664f97F2b50F62D13eA064982f936dE76657".to_string();
-            match verify_reencryption_eip712(&bad_req) {
-                Ok(_) => panic!("expected failure"),
-                Err(e) => {
-                    assert_eq!(e.to_string(), "invalid string length");
-                }
-            }
-        }
-        {
-            // use the same address for verifying contract and client address should fail
-            let mut bad_domain = domain.clone();
-            bad_domain.verifying_contract = Some(client_address);
-            let mut bad_req = req.clone();
-            bad_req.domain = Some(alloy_to_protobuf_domain(&bad_domain).unwrap());
-            match verify_reencryption_eip712(&bad_req) {
-                Ok(_) => panic!("expected failure"),
-                Err(e) => {
-                    assert!(e.to_string().contains(ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR));
-                }
-            }
-        }
     }
 }

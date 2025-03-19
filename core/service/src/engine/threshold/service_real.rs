@@ -1179,7 +1179,7 @@ impl<
         );
         let (typed_ciphertexts, link, client_enc_key, client_address, key_id, req_id, domain) =
             tonic_handle_potential_err(
-                validate_reencrypt_req(&inner).await,
+                validate_reencrypt_req(&inner),
                 format!("Invalid reencryption request {:?}", inner),
             )?;
 

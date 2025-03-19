@@ -17,10 +17,6 @@ use tfhe::shortint::ClassicPBSParameters;
 use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
 
-// TODO: we should organize our code so that we can unit test our error messages
-pub const ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR: &str =
-    "client address is the same as verifying contract address";
-
 lazy_static::lazy_static! {
     // The static ID we will use for the signing key for each of the MPC parties.
     // We do so, since there is ever only one conceptual signing key per party (at least for now).
@@ -31,6 +27,12 @@ lazy_static::lazy_static! {
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
         use alloy_sol_types::SolStruct;
+
+        const ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR: &str =
+            "client address is the same as verifying contract address";
+        const ERR_DOMAIN_NOT_FOUND: &str = "domain not found";
+        const ERR_VERIFYING_CONTRACT_NOT_FOUND: &str = "verifying contract not found";
+        const ERR_THERE_ARE_NO_HANDLES: &str = "there are no handles";
     }
 }
 
@@ -429,7 +431,7 @@ impl crate::kms::v1::ReencryptionRequest {
         let domain = protobuf_to_alloy_domain(
             self.domain
                 .as_ref()
-                .ok_or_else(|| anyhow!("domain not found"))?,
+                .ok_or_else(|| anyhow!(ERR_DOMAIN_NOT_FOUND))?,
         )?;
 
         let handles = self
@@ -438,11 +440,15 @@ impl crate::kms::v1::ReencryptionRequest {
             .map(|x| alloy_primitives::U256::from_be_slice(&x.external_handle))
             .collect::<Vec<_>>();
 
+        if handles.is_empty() {
+            anyhow::bail!(ERR_THERE_ARE_NO_HANDLES);
+        }
+
         let client_address =
             alloy_primitives::Address::parse_checksummed(&self.client_address, None)?;
         let verifying_contract = domain
             .verifying_contract
-            .ok_or(anyhow::anyhow!("missing verifying contract"))?;
+            .ok_or(anyhow::anyhow!(ERR_VERIFYING_CONTRACT_NOT_FOUND))?;
 
         if client_address == verifying_contract {
             anyhow::bail!(ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR);
@@ -1022,8 +1028,15 @@ impl From<(String, FheType)> for TypedPlaintext {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::TypedPlaintext;
-    use crate::kms::v1::{ComputeKeyType, FheParameter, KeySetCompressionConfig, RequestId};
+    use super::{alloy_to_protobuf_domain, TypedPlaintext};
+    use crate::{
+        kms::v1::{
+            ComputeKeyType, FheParameter, KeySetCompressionConfig, RequestId, TypedCiphertext,
+        },
+        rpc_types::{
+            ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR, ERR_DOMAIN_NOT_FOUND, ERR_THERE_ARE_NO_HANDLES,
+        },
+    };
 
     #[test]
     fn idempotent_plaintext() {
@@ -1092,5 +1105,94 @@ pub(crate) mod tests {
             KeySetCompressionConfig::default(),
             KeySetCompressionConfig::Generate
         );
+    }
+
+    #[test]
+    fn test_eip712_verification() {
+        let alloy_domain = alloy_sol_types::eip712_domain!(
+            name: "Authorization token",
+            version: "1",
+            chain_id: 8006,
+            verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+        );
+        let domain = alloy_to_protobuf_domain(&alloy_domain).unwrap();
+        let request_id = RequestId::derive("request_id").unwrap();
+        let key_id = RequestId::derive("key_id").unwrap();
+
+        let ciphertexts = vec![TypedCiphertext {
+            ciphertext: vec![],
+            fhe_type: 0,
+            external_handle: vec![],
+            ciphertext_format: 0,
+        }];
+        let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
+
+        // empty domain
+        {
+            let req = crate::kms::v1::ReencryptionRequest {
+                request_id: Some(request_id.clone()),
+                typed_ciphertexts: ciphertexts.clone(),
+                key_id: Some(key_id.clone()),
+                client_address: client_address.to_checksum(None),
+                enc_key: vec![],
+                domain: None,
+            };
+            assert!(req
+                .compute_link_checked()
+                .unwrap_err()
+                .to_string()
+                .contains(ERR_DOMAIN_NOT_FOUND));
+        }
+
+        // empty ciphertexts
+        {
+            let req = crate::kms::v1::ReencryptionRequest {
+                request_id: Some(request_id.clone()),
+                typed_ciphertexts: vec![],
+                key_id: Some(key_id.clone()),
+                client_address: client_address.to_checksum(None),
+                enc_key: vec![],
+                domain: Some(domain.clone()),
+            };
+            assert!(req
+                .compute_link_checked()
+                .unwrap_err()
+                .to_string()
+                .contains(ERR_THERE_ARE_NO_HANDLES));
+        }
+
+        // use the same address for verifying contract and client address should fail
+        {
+            let mut bad_domain = domain.clone();
+            bad_domain.verifying_contract = client_address.to_checksum(None);
+
+            let req = crate::kms::v1::ReencryptionRequest {
+                request_id: Some(request_id.clone()),
+                typed_ciphertexts: ciphertexts.clone(),
+                key_id: Some(key_id.clone()),
+                client_address: client_address.to_checksum(None),
+                enc_key: vec![],
+                domain: Some(bad_domain),
+            };
+
+            assert!(req
+                .compute_link_checked()
+                .unwrap_err()
+                .to_string()
+                .contains(ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR));
+        }
+
+        // everything is ok
+        {
+            let req = crate::kms::v1::ReencryptionRequest {
+                request_id: Some(request_id.clone()),
+                typed_ciphertexts: ciphertexts.clone(),
+                key_id: Some(key_id.clone()),
+                client_address: client_address.to_checksum(None),
+                enc_key: vec![],
+                domain: Some(domain.clone()),
+            };
+            assert!(req.compute_link_checked().is_ok());
+        }
     }
 }
