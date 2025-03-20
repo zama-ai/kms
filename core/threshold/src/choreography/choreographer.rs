@@ -102,6 +102,7 @@ impl ChoreoRuntime {
         session_id: SessionId,
         ring: SupportedRing,
         threshold: u32,
+        seed: Option<u64>,
     ) -> anyhow::Result<()> {
         let role_assignment = bincode::serialize(&self.role_assignments)?;
 
@@ -115,6 +116,7 @@ impl ChoreoRuntime {
                 role_assignment: role_assignment.to_vec(),
                 threshold,
                 params: prss_params.to_vec(),
+                seed,
             };
 
             join_set.spawn(
@@ -137,6 +139,7 @@ impl ChoreoRuntime {
         num_sessions: u32,
         percentage_offline: u32,
         threshold: u32,
+        seed: Option<u64>,
     ) -> anyhow::Result<SessionId> {
         let role_assignment = bincode::serialize(&self.role_assignments)?;
         let preproc_kg_params = bincode::serialize(&PreprocKeyGenParams {
@@ -154,6 +157,7 @@ impl ChoreoRuntime {
                 role_assignment: role_assignment.to_vec(),
                 threshold,
                 params: preproc_kg_params.to_vec(),
+                seed,
             };
 
             join_set.spawn(
@@ -182,6 +186,7 @@ impl ChoreoRuntime {
         dkg_params: DkgParamsAvailable,
         session_id_preproc: Option<SessionId>,
         threshold: u32,
+        seed: Option<u64>,
     ) -> anyhow::Result<SessionId> {
         let role_assignment = bincode::serialize(&self.role_assignments)?;
         let threshold_keygen_params = bincode::serialize(&ThresholdKeyGenParams {
@@ -197,6 +202,7 @@ impl ChoreoRuntime {
                 role_assignment: role_assignment.to_vec(),
                 threshold,
                 params: threshold_keygen_params.to_vec(),
+                seed,
             };
 
             join_set.spawn(
@@ -225,6 +231,7 @@ impl ChoreoRuntime {
         &self,
         session_id: SessionId,
         dkg_params: Option<DkgParamsAvailable>,
+        seed: Option<u64>,
     ) -> anyhow::Result<FhePubKeySet> {
         let role_assignment = bincode::serialize(&self.role_assignments)?;
 
@@ -239,6 +246,7 @@ impl ChoreoRuntime {
             let request = ThresholdKeyGenResultRequest {
                 role_assignment: role_assignment.to_vec(),
                 params: threshold_keygen_result_params.to_vec(),
+                seed,
             };
             join_set.spawn(
                 async move { client.threshold_key_gen_result(request).await }
@@ -271,6 +279,7 @@ impl ChoreoRuntime {
         num_ctxts: u128,
         ctxt_type: TfheType,
         threshold: u32,
+        seed: Option<u64>,
     ) -> anyhow::Result<SessionId> {
         let role_assignment = bincode::serialize(&self.role_assignments)?;
         let preproc_decrypt_params = bincode::serialize(&PreprocDecryptParams {
@@ -288,6 +297,7 @@ impl ChoreoRuntime {
                 role_assignment: role_assignment.to_vec(),
                 threshold,
                 params: preproc_decrypt_params.to_vec(),
+                seed,
             };
 
             join_set.spawn(
@@ -321,6 +331,7 @@ impl ChoreoRuntime {
         throughput: Option<ThroughtputParams>,
         tfhe_type: TfheType,
         threshold: u32,
+        seed: Option<u64>,
     ) -> anyhow::Result<SessionId> {
         let role_assignment = bincode::serialize(&self.role_assignments)?;
         let threshold_decrypt_params = bincode::serialize(&ThresholdDecryptParams {
@@ -340,6 +351,7 @@ impl ChoreoRuntime {
                 role_assignment: role_assignment.to_vec(),
                 threshold,
                 params: threshold_decrypt_params.to_vec(),
+                seed,
             };
 
             join_set.spawn(
@@ -399,6 +411,7 @@ impl ChoreoRuntime {
         session_id: SessionId,
         dkg_params: DkgParamsAvailable,
         threshold: u32,
+        seed: Option<u64>,
     ) -> anyhow::Result<SessionId> {
         let role_assignment = bincode::serialize(&self.role_assignments)?;
         let witness_dim = compute_witness_dim(
@@ -422,6 +435,7 @@ impl ChoreoRuntime {
                 threshold,
                 params: crs_gen_params.to_vec(),
                 max_num_bits: None,
+                seed,
             };
 
             join_set.spawn(

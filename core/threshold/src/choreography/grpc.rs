@@ -177,9 +177,18 @@ where
         request_sid: SessionId,
         threshold: u8,
         role_assignments: HashMap<Role, Identity>,
+        network_mode: NetworkMode,
+        seed: Option<u64>,
     ) -> anyhow::Result<BaseSessionStruct<AesRng, SessionParameters>> {
         Ok(self
-            .create_base_sessions(request_sid, 1, threshold, role_assignments)
+            .create_base_sessions(
+                request_sid,
+                1,
+                threshold,
+                role_assignments,
+                network_mode,
+                seed,
+            )
             .await?
             .pop()
             .map_or_else(
@@ -200,14 +209,23 @@ where
         num_sessions: usize,
         threshold: u8,
         role_assignments: HashMap<Role, Identity>,
+        network_mode: NetworkMode,
+        seed: Option<u64>,
     ) -> anyhow::Result<Vec<BaseSessionStruct<AesRng, SessionParameters>>> {
         let mut session_id_generator = AesRng::from_seed(request_sid.0.to_be_bytes());
         let sids = (0..num_sessions)
             .map(|_| gen_random_sid(&mut session_id_generator, request_sid.0))
             .collect_vec();
 
+        //Fetch my Role for the role_assignment
+        let mut my_role_idx = 0;
+        for (role, identity) in role_assignments.iter() {
+            if *identity == self.own_identity {
+                my_role_idx = role.one_based() as u64;
+            }
+        }
         let mut base_sessions = Vec::new();
-        for session_id in sids {
+        for (idx, session_id) in sids.into_iter().enumerate() {
             let params = SessionParameters::new(
                 threshold,
                 session_id,
@@ -217,7 +235,7 @@ where
             .unwrap();
             //We are executing offline phase, so requires Sync network
             let networking =
-                (self.networking_strategy)(session_id, role_assignments.clone(), NetworkMode::Sync)
+                (self.networking_strategy)(session_id, role_assignments.clone(), network_mode)
                     .await
                     .map_err(|e| {
                         tonic::Status::new(
@@ -225,8 +243,13 @@ where
                             format!("Failed to create networking: {:?}", e),
                         )
                     })?;
+            let aes_rng = if let Some(seed) = seed {
+                AesRng::seed_from_u64(seed + my_role_idx + (idx as u64))
+            } else {
+                AesRng::from_entropy()
+            };
             base_sessions.push(
-                BaseSessionStruct::new(params.clone(), networking, AesRng::from_entropy())
+                BaseSessionStruct::new(params.clone(), networking, aes_rng)
                     .expect("Failed to create Base Session"),
             );
         }
@@ -280,7 +303,13 @@ where
         let ring = prss_params.ring;
 
         let mut base_session = self
-            .create_base_session(session_id, threshold, role_assignments.clone())
+            .create_base_session(
+                session_id,
+                threshold,
+                role_assignments.clone(),
+                NetworkMode::Sync,
+                request.seed,
+            )
             .await
             .map_err(|e| {
                 tonic::Status::new(
@@ -384,6 +413,8 @@ where
                 num_sessions as usize,
                 threshold,
                 role_assignments.clone(),
+                NetworkMode::Sync,
+                request.seed,
             )
             .await
             .map_err(|e| {
@@ -592,7 +623,13 @@ where
         let preproc_sid = kg_params.session_id_preproc;
 
         let mut base_session = self
-            .create_base_session(session_id, threshold, role_assignments.clone())
+            .create_base_session(
+                session_id,
+                threshold,
+                role_assignments.clone(),
+                NetworkMode::Async,
+                request.seed,
+            )
             .await
             .map_err(|e| {
                 tonic::Status::new(
@@ -729,7 +766,13 @@ where
                 })?;
 
             let mut base_session = self
-                .create_base_session(session_id, 0, role_assignments.clone())
+                .create_base_session(
+                    session_id,
+                    0,
+                    role_assignments.clone(),
+                    NetworkMode::Sync,
+                    request.seed,
+                )
                 .await
                 .map_err(|e| {
                     tonic::Status::new(
@@ -845,6 +888,8 @@ where
                         num_sessions,
                         threshold,
                         role_assignments.clone(),
+                        NetworkMode::Sync,
+                        request.seed,
                     )
                     .await
                     .map_err(|e| {
@@ -912,6 +957,8 @@ where
                         num_sessions,
                         threshold,
                         role_assignments.clone(),
+                        NetworkMode::Sync,
+                        request.seed,
                     )
                     .await
                     .map_err(|e| {
@@ -998,7 +1045,13 @@ where
                     })?
                     .get_poly128()?;
                 let base_session = self
-                    .create_base_session(session_id, threshold, role_assignments.clone())
+                    .create_base_session(
+                        session_id,
+                        threshold,
+                        role_assignments.clone(),
+                        NetworkMode::Sync,
+                        request.seed,
+                    )
                     .await
                     .map_err(|e| {
                         tonic::Status::new(
@@ -1038,7 +1091,13 @@ where
             // NoiseFlood Preproc is so tiny that we just do everything in one go
             DecryptionMode::NoiseFloodLarge => {
                 let base_session = self
-                    .create_base_session(session_id, threshold, role_assignments.clone())
+                    .create_base_session(
+                        session_id,
+                        threshold,
+                        role_assignments.clone(),
+                        NetworkMode::Sync,
+                        request.seed,
+                    )
                     .await
                     .map_err(|e| {
                         tonic::Status::new(
@@ -1176,7 +1235,13 @@ where
 
             //Create one session for bcast
             let bcast_session = self
-                .create_base_session(session_id, threshold, role_assignments.clone())
+                .create_base_session(
+                    session_id,
+                    threshold,
+                    role_assignments.clone(),
+                    NetworkMode::Sync,
+                    None,
+                )
                 .await
                 .map_err(|e| {
                     tonic::Status::new(
@@ -1194,6 +1259,8 @@ where
                             num_sessions,
                             threshold,
                             role_assignments.clone(),
+                            NetworkMode::Async,
+                            request.seed,
                         )
                         .await
                         .map_err(|e| {
@@ -1310,6 +1377,8 @@ where
                             num_sessions * num_blocks,
                             threshold,
                             role_assignments.clone(),
+                            NetworkMode::Async,
+                            request.seed,
                         )
                         .await
                         .map_err(|e| {
@@ -1569,6 +1638,8 @@ where
                             num_sessions,
                             threshold,
                             role_assignments.clone(),
+                            NetworkMode::Async,
+                            request.seed,
                         )
                         .await
                         .unwrap();
@@ -1816,37 +1887,21 @@ where
         let session_id = crs_params.session_id;
         let witness_dim = crs_params.witness_dim;
 
-        let params = SessionParameters::new(
-            threshold,
-            session_id,
-            self.own_identity.clone(),
-            role_assignments.clone(),
-        )
-        .map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("Failed to create a base session parameters: {:?}", e),
+        let mut base_session = self
+            .create_base_session(
+                session_id,
+                threshold,
+                role_assignments.clone(),
+                NetworkMode::Sync,
+                request.seed,
             )
-        })?;
-
-        //CRS gen is a round robin, so requires a Sync network
-        let networking =
-            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Sync)
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Aborted,
-                        format!("Failed to create networking: {:?}", e),
-                    )
-                })?;
-
-        let mut base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
+            .await
             .map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("Failed to create Base Session: {:?}", e),
-            )
-        })?;
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("Failed to create Base Session: {:?}", e),
+                )
+            })?;
 
         let crs_store = self.data.crs_store.clone();
         let my_future = || async move {

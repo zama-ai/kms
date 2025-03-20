@@ -43,6 +43,7 @@ impl ChoreoRuntime {
                 role_assignment: role_assignment.to_vec(),
                 threshold,
                 params: prss_params.to_vec(),
+                seed: None,
             };
 
             join_set.spawn(
@@ -72,6 +73,7 @@ impl ChoreoRuntime {
                 role_assignment: role_assignment.to_vec(),
                 threshold,
                 params: preproc_kg_params.to_vec(),
+                seed: None,
             };
 
             join_set.spawn(
@@ -113,6 +115,7 @@ impl ChoreoRuntime {
                 role_assignment: role_assignment.to_vec(),
                 threshold,
                 params: threshold_keygen_params.to_vec(),
+                seed: None,
             };
 
             join_set.spawn(
@@ -155,6 +158,7 @@ impl ChoreoRuntime {
             let request = ThresholdKeyGenResultRequest {
                 role_assignment: role_assignment.to_vec(),
                 params: threshold_keygen_result_params.to_vec(),
+                seed: None,
             };
             join_set.spawn(
                 async move { client.threshold_key_gen_result(request).await }
@@ -200,6 +204,7 @@ impl ChoreoRuntime {
                 role_assignment: role_assignment.to_vec(),
                 threshold,
                 params: threshold_decrypt_params.to_vec(),
+                seed: None,
             };
 
             join_set.spawn(

@@ -21,6 +21,7 @@ message PrssInitRequest {
     bytes role_assignment = 1;
     uint32 threshold = 2;
     bytes params = 3;
+    optional uint64 seed = 4;
 }
 
 message PrssInitResponse {}
@@ -30,6 +31,7 @@ message PreprocKeyGenRequest {
     bytes role_assignment = 1;
     uint32 threshold = 2;
     bytes params = 3;
+    optional uint64 seed = 4;
 }
 
 message PreprocKeyGenResponse {
@@ -40,7 +42,8 @@ message PreprocKeyGenResponse {
 message  ThresholdKeyGenRequest{
     bytes role_assignment = 1;
     uint32 threshold = 2;
-    bytes params = 4;
+    bytes params = 3;
+    optional uint64 seed = 4;
 }
 
 message ThresholdKeyGenResponse {
@@ -50,6 +53,7 @@ message ThresholdKeyGenResponse {
 message ThresholdKeyGenResultRequest {
     bytes role_assignment = 1;
     bytes params = 2;
+    optional uint64 seed = 3;
 }
 
 message ThresholdKeyGenResultResponse {
@@ -61,6 +65,7 @@ message PreprocDecryptRequest {
     bytes role_assignment = 1;
     uint32 threshold = 2;
     bytes params = 3;
+    optional uint64 seed = 4;
 }
 
 message PreprocDecryptResponse {
@@ -72,6 +77,7 @@ message ThresholdDecryptRequest {
     bytes role_assignment = 1;
     uint32 threshold = 2;
     bytes params = 3;
+    optional uint64 seed = 4;
 }
 
 message ThresholdDecryptResponse {
@@ -92,6 +98,7 @@ message CrsGenRequest {
     uint32 threshold = 2;
     bytes params = 3;
     optional uint32 max_num_bits = 4;
+    optional uint64 seed = 5;
 }
 
 message CrsGenResponse {

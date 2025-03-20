@@ -38,6 +38,12 @@ struct PrssInitArgs {
     /// Optional argument to force the session ID to be used. (Sampled at random if nothing is given)
     #[clap(long = "sid")]
     session_id: Option<u128>,
+
+    /// Optional argument to set the master seed used by the parties.
+    /// Parties will then add their party index to the see.
+    /// Sampled at random if nothing is given
+    #[clap(long = "seed")]
+    seed: Option<u64>,
 }
 
 #[derive(Args, Debug)]
@@ -61,6 +67,12 @@ struct PreprocKeyGenArgs {
     /// Optional argument to force the session ID to be used. (Sampled at random if nothing is given)
     #[clap(long = "sid")]
     session_id: Option<u128>,
+
+    /// Optional argument to set the master seed used by the parties.
+    /// Parties will then add their party index to the see.
+    /// Sampled at random if nothing is given
+    #[clap(long = "seed")]
+    seed: Option<u64>,
 }
 
 #[derive(Args, Debug)]
@@ -77,6 +89,12 @@ struct ThresholdKeyGenArgs {
     /// (If no ID is given, we use dummy preprocessing)
     #[clap(long = "preproc-sid")]
     session_id_preproc: Option<u128>,
+
+    /// Optional argument to set the master seed used by the parties.
+    /// Parties will then add their party index to the see.
+    /// Sampled at random if nothing is given
+    #[clap(long = "seed")]
+    seed: Option<u64>,
 }
 
 #[derive(Args, Debug)]
@@ -94,6 +112,12 @@ struct ThresholdKeyGenResultArgs {
     /// (The moby cluster will then refer to this new key using the provided session ID)
     #[clap(long = "generate-params")]
     params: Option<DkgParamsAvailable>,
+
+    /// Optional argument to set the master seed used by the parties.
+    /// Parties will then add their party index to the see.
+    /// Sampled at random if nothing is given
+    #[clap(long = "seed")]
+    seed: Option<u64>,
 }
 
 #[derive(Args, Debug)]
@@ -118,6 +142,12 @@ struct PreprocDecryptArgs {
     /// Optional argument to force the session ID to be used. (Sampled at random if nothing is given)
     #[clap(long = "sid")]
     session_id: Option<u128>,
+
+    /// Optional argument to set the master seed used by the parties.
+    /// Parties will then add their party index to the see.
+    /// Sampled at random if nothing is given
+    #[clap(long = "seed")]
+    seed: Option<u64>,
 }
 
 #[derive(Args, Debug)]
@@ -156,6 +186,12 @@ struct ThresholdDecryptArgs {
     /// (If no ID is given, we use dummy preprocessing)
     #[clap(long = "preproc-sid")]
     session_id_preproc: Option<u128>,
+
+    /// Optional argument to set the master seed used by the parties.
+    /// Parties will then add their party index to the see.
+    /// Sampled at random if nothing is given
+    #[clap(long = "seed")]
+    seed: Option<u64>,
 }
 
 #[derive(Args, Debug)]
@@ -175,6 +211,12 @@ struct CrsGenArgs {
     /// Optional argument to force the session ID to be used. (Sampled at random if nothing is given)
     #[clap(long = "sid")]
     session_id: Option<u128>,
+
+    /// Optional argument to set the master seed used by the parties.
+    /// Parties will then add their party index to the see.
+    /// Sampled at random if nothing is given
+    #[clap(long = "seed")]
+    seed: Option<u64>,
 }
 
 #[derive(Args, Debug)]
@@ -254,6 +296,7 @@ async fn crs_gen_command(
             SessionId(session_id),
             params.params,
             choreo_conf.threshold_topology.threshold,
+            params.seed,
         )
         .await?;
 
@@ -289,6 +332,7 @@ async fn prss_init_command(
             SessionId(session_id),
             params.ring,
             choreo_conf.threshold_topology.threshold,
+            params.seed,
         )
         .await?;
 
@@ -312,6 +356,7 @@ async fn preproc_keygen_command(
             params.num_sessions_preproc,
             params.percentage_offline,
             choreo_conf.threshold_topology.threshold,
+            params.seed,
         )
         .await?;
 
@@ -335,6 +380,7 @@ async fn threshold_keygen_command(
                 .session_id_preproc
                 .map_or_else(|| None, |id| Some(SessionId(id))),
             choreo_conf.threshold_topology.threshold,
+            params.seed,
         )
         .await?;
 
@@ -348,7 +394,7 @@ async fn threshold_keygen_result_command(
     params: ThresholdKeyGenResultArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let keys = runtime
-        .initiate_threshold_keygen_result(SessionId(params.session_id), params.params)
+        .initiate_threshold_keygen_result(SessionId(params.session_id), params.params, params.seed)
         .await?;
 
     let serialized_pk = bincode::serialize(&(params.session_id, keys))?;
@@ -375,6 +421,7 @@ async fn preproc_decrypt_command(
             num_ctxts as u128,
             ctxt_type,
             choreo_conf.threshold_topology.threshold,
+            params.seed,
         )
         .await?;
     println!("Preprocessing for Distributed Decryption started.\n  The correlated randomness will be stored under session ID: {session_id}");
@@ -568,6 +615,7 @@ async fn threshold_decrypt_command(
             throughput,
             tfhe_type,
             choreo_conf.threshold_topology.threshold,
+            params.seed,
         )
         .await?;
 
