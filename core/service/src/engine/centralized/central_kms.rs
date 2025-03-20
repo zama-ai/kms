@@ -28,8 +28,9 @@ use distributed_decryption::execution::keyset_config::StandardKeySetConfig;
 use distributed_decryption::execution::tfhe_internals::parameters::{Ciphertext128, DKGParams};
 #[cfg(feature = "non-wasm")]
 use distributed_decryption::execution::zk::ceremony::make_centralized_public_parameters;
+#[cfg(feature = "non-wasm")]
+use distributed_decryption::thread_handles::ThreadHandleGroup;
 use k256::ecdsa::SigningKey;
-use kms_core_utils::thread_handles::ThreadHandleGroup;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms::v1::KeySetAddedInfo;
 #[cfg(feature = "non-wasm")]

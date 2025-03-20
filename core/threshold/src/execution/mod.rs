@@ -21,8 +21,10 @@ pub mod small_execution {
 }
 pub mod random;
 pub mod endpoints {
-    #[cfg(feature = "non-wasm")]
     pub mod decryption;
+    // We keep decryption_non_wasm a private module and reexport it in decryption.
+    #[cfg(feature = "non-wasm")]
+    mod decryption_non_wasm;
     #[cfg(feature = "non-wasm")]
     pub mod keygen;
     pub mod reconstruct;

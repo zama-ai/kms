@@ -26,7 +26,7 @@ use crate::choreography::requests::{
 use crate::execution::communication::broadcast::broadcast_from_all;
 use crate::execution::endpoints::decryption::{
     combine_plaintext_blocks, init_prep_bitdec_large, init_prep_bitdec_small,
-    run_decryption_noiseflood_64, task_decryption_bitdec_par, BlocksPartialDecrypt,
+    run_decryption_noiseflood_64, task_decryption_bitdec_par, BlocksPartialDecrypt, DecryptionMode,
     NoiseFloodPreparation,
 };
 use crate::execution::endpoints::decryption::{Large, Small};
@@ -58,7 +58,6 @@ use clap::ValueEnum;
 use dashmap::DashMap;
 use gen::{CrsGenRequest, CrsGenResponse};
 use itertools::Itertools;
-use kms_common::DecryptionMode;
 use rand::{CryptoRng, Rng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

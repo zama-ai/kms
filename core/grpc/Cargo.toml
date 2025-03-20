@@ -41,10 +41,6 @@ tfhe-versionable.workspace = true
 tracing = { workspace = true, features = ["log"] }
 wasm-bindgen = { version = "=0.2.99", features = ["serde-serialize"] }
 
-[dev-dependencies]
-backward-compatibility = { workspace = true, features = ["load", "tests"] }
-kms-common = { workspace = true, features = ["testing"] }
-
 [build-dependencies]
 tonic-build.workspace = true
 

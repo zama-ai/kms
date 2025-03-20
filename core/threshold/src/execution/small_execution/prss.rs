@@ -736,7 +736,7 @@ mod tests {
         execution::tfhe_internals::test_feature::keygen_all_party_shares,
         execution::{
             constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, SMALL_TEST_KEY_PATH, STATSEC},
-            endpoints::decryption::threshold_decrypt64,
+            endpoints::decryption::{threshold_decrypt64, DecryptionMode},
             large_execution::vss::RealVss,
             runtime::party::{Identity, Role},
             runtime::{
@@ -756,7 +756,6 @@ mod tests {
         },
     };
     use aes_prng::AesRng;
-    use kms_common::DecryptionMode;
     use rand::SeedableRng;
     use rstest::rstest;
     use sha3::digest::{ExtendableOutput, Update, XofReader};

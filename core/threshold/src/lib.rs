@@ -21,3 +21,5 @@ pub mod error;
 pub mod experimental;
 #[cfg(feature = "non-wasm")]
 pub mod grpc;
+#[cfg(feature = "non-wasm")]
+pub mod thread_handles;

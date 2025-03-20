@@ -41,7 +41,7 @@ use distributed_decryption::algebra::structure_traits::Ring;
 use distributed_decryption::conf::party::CertificatePaths;
 use distributed_decryption::execution::endpoints::decryption::{
     decrypt_using_bitdec, decrypt_using_noiseflooding, partial_decrypt_using_bitdec,
-    partial_decrypt_using_noiseflooding, Small,
+    partial_decrypt_using_noiseflooding, DecryptionMode, Small,
 };
 use distributed_decryption::execution::endpoints::keygen::{
     distributed_decompression_keygen_z128, distributed_keygen_from_optional_compression_sk_z128,
@@ -73,7 +73,6 @@ use distributed_decryption::session_id::{SessionId, SESSION_ID_BYTES};
 use distributed_decryption::{algebra::base_ring::Z64, execution::endpoints::keygen::FhePubKeySet};
 use itertools::Itertools;
 use k256::ecdsa::SigningKey;
-use kms_common::DecryptionMode;
 use kms_grpc::kms::v1::{
     CiphertextFormat, CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse,
     DecryptionResponsePayload, Empty, FheType, InitRequest, KeyGenPreprocRequest,

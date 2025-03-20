@@ -14,6 +14,35 @@ mod private_sig_key {
     use tfhe::named::Named;
     use tfhe_versionable::{Versionize, VersionsDispatch};
 
+    macro_rules! impl_generic_versionize {
+        ($t:ty) => {
+            impl tfhe_versionable::Versionize for $t {
+                type Versioned<'vers> = &'vers $t;
+
+                fn versionize(&self) -> Self::Versioned<'_> {
+                    self
+                }
+            }
+
+            impl tfhe_versionable::VersionizeOwned for $t {
+                type VersionedOwned = $t;
+                fn versionize_owned(self) -> Self::VersionedOwned {
+                    self
+                }
+            }
+
+            impl tfhe_versionable::Unversionize for $t {
+                fn unversionize(
+                    versioned: Self::VersionedOwned,
+                ) -> Result<Self, tfhe_versionable::UnversionizeError> {
+                    Ok(versioned)
+                }
+            }
+
+            impl tfhe_versionable::NotVersioned for $t {}
+        };
+    }
+
     #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
     pub enum PrivateSigKeyVersioned {
         V0(PrivateSigKey),
@@ -37,7 +66,7 @@ mod private_sig_key {
 
     #[derive(Clone, PartialEq, Eq, Debug)]
     pub struct WrappedSigningKey(pub(crate) k256::ecdsa::SigningKey);
-    kms_common::impl_generic_versionize!(WrappedSigningKey);
+    impl_generic_versionize!(WrappedSigningKey);
 
     impl Serialize for WrappedSigningKey {
         fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>

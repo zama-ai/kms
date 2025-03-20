@@ -10,7 +10,6 @@ use bytes::Bytes;
 use clap::Parser;
 use conf_trace::conf::Settings;
 use core::str;
-use kms_common::DecryptionMode;
 use kms_grpc::kms::v1::{
     CiphertextFormat, CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse,
     FheParameter, KeyGenRequest, KeyGenResult, RequestId, TypedCiphertext, TypedPlaintext,
@@ -26,6 +25,7 @@ use kms_lib::util::key_setup::test_tools::{
     load_server_key_from_storage, load_sns_key_from_storage, EncryptionConfig, TestingPlaintext,
 };
 use kms_lib::vault::storage::{file::FileStorage, StorageType};
+use kms_lib::DecryptionMode;
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use std::fs::File;

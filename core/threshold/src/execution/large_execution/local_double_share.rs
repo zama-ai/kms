@@ -15,11 +15,12 @@ use crate::{
 };
 use async_trait::async_trait;
 use itertools::Itertools;
-use kms_common::retry::MAX_ITER;
 use num_integer::div_ceil;
 use rand::{CryptoRng, Rng};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use tracing::instrument;
+
+const LOCAL_DOUBLE_MAX_ITER: usize = 30;
 
 pub struct DoubleShares<Z> {
     pub(crate) share_t: Vec<Z>,
@@ -70,7 +71,7 @@ impl<C: Coinflip, S: ShareDispute> LocalDoubleShare for RealLocalDoubleShare<C, 
             ));
         }
         //Keeps executing til verification passes
-        for _ in 0..MAX_ITER {
+        for _ in 0..LOCAL_DOUBLE_MAX_ITER {
             let mut shared_secrets_double;
             let mut x;
             let mut shared_pads_double;
@@ -104,7 +105,7 @@ impl<C: Coinflip, S: ShareDispute> LocalDoubleShare for RealLocalDoubleShare<C, 
             }
         }
         Err(anyhow_error_and_log(
-            "Failed to verify sharing after {MAX_ITER} iterations for `RealLocalDoubleShare`",
+            "Failed to verify sharing after {LOCAL_DOUBLE_MAX_ITER} iterations for `RealLocalDoubleShare`",
         ))
     }
 }
@@ -348,7 +349,8 @@ async fn verify_sharing<
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{
-        anyhow_error_and_log, format_output, send_receive_pads_double, verify_sharing, DoubleShares,
+        anyhow_error_and_log, format_output, send_receive_pads_double, verify_sharing,
+        DoubleShares, LOCAL_DOUBLE_MAX_ITER,
     };
     #[cfg(feature = "slow_tests")]
     use crate::execution::large_execution::{
@@ -389,7 +391,6 @@ pub(crate) mod tests {
     use aes_prng::AesRng;
     use async_trait::async_trait;
     use itertools::Itertools;
-    use kms_common::retry::MAX_ITER;
     use rand::SeedableRng;
     use rand::{CryptoRng, Rng};
     use rstest::rstest;
@@ -461,7 +462,7 @@ pub(crate) mod tests {
             secrets: &[Z],
         ) -> anyhow::Result<HashMap<Role, DoubleShares<Z>>> {
             //Keeps executing til verification passes
-            for _ in 0..MAX_ITER {
+            for _ in 0..LOCAL_DOUBLE_MAX_ITER {
                 let mut shared_secrets_double;
                 let mut x;
                 let mut shared_pads;
@@ -524,7 +525,7 @@ pub(crate) mod tests {
                 }
             }
             Err(anyhow_error_and_log(
-                "Failed to verify sharing after {MAX_ITER} iterations for `MaliciousSenderLocalDoubleShare`",
+                "Failed to verify sharing after {LOCAL_DOUBLE_MAX_ITER} iterations for `MaliciousSenderLocalDoubleShare`",
             ))
         }
     }
@@ -545,7 +546,7 @@ pub(crate) mod tests {
             let mut shared_pads;
 
             //Keeps executing til verification passes
-            for _ in 0..MAX_ITER {
+            for _ in 0..LOCAL_DOUBLE_MAX_ITER {
                 loop {
                     let corrupt_start = session.corrupt_roles().clone();
 
@@ -600,7 +601,7 @@ pub(crate) mod tests {
                 }
             }
             Err(anyhow_error_and_log(
-                "Failed to verify sharing after {MAX_ITER} iterations for `MaliciousReceiverLocalDoubleShare`",
+                "Failed to verify sharing after {LOCAL_DOUBLE_MAX_ITER} iterations for `MaliciousReceiverLocalDoubleShare`",
             ))
         }
     }

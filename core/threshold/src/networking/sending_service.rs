@@ -26,7 +26,7 @@ use crate::{execution::runtime::party::Identity, session_id::SessionId};
 use super::grpc::NETWORK_RECEIVED_MEASUREMENT;
 use super::grpc::{CoreToCoreNetworkConfig, MessageQueueStore, OptionConfigWrapper};
 use super::{NetworkMode, Networking};
-use kms_core_utils::thread_handles::ThreadHandleGroup;
+use crate::thread_handles::ThreadHandleGroup;
 
 mod gen {
     #![allow(clippy::derive_partial_eq_without_eq)]
@@ -535,12 +535,12 @@ fn hostname_is_valid(hostname: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use crate::thread_handles::OsThreadGroup;
     use crate::{
         execution::runtime::party::{Identity, Role, RoleAssignment},
         networking::{grpc::GrpcNetworkingManager, sending_service::hostname_is_valid, Networking},
         session_id::SessionId,
     };
-    use kms_core_utils::thread_handles::OsThreadGroup;
     use std::time::Duration;
 
     #[test]

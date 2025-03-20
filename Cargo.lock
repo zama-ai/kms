@@ -2892,7 +2892,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "backoff",
- "backward-compatibility",
  "bincode",
  "cfg-if",
  "clap",
@@ -2908,8 +2907,6 @@ dependencies = [
  "g2p",
  "getrandom 0.2.15",
  "itertools 0.13.0",
- "kms-common",
- "kms-core-utils",
  "lazy_static",
  "minijinja",
  "mockall",
@@ -4248,8 +4245,6 @@ dependencies = [
  "hyper-rustls 0.24.2",
  "itertools 0.13.0",
  "k256",
- "kms-common",
- "kms-core-utils",
  "kms-grpc",
  "lazy_static",
  "nom",
@@ -4306,20 +4301,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kms-common"
-version = "0.11.0-rc3"
-dependencies = [
- "anyhow",
- "backward-compatibility",
- "clap",
- "derive_more",
- "serde",
- "tfhe-versionable",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "kms-connector"
 version = "0.11.0-rc3"
 dependencies = [
@@ -4345,7 +4326,6 @@ dependencies = [
  "dashmap",
  "futures",
  "futures-util",
- "kms-common",
  "kms-grpc",
  "once_cell",
  "prost",
@@ -4388,7 +4368,6 @@ dependencies = [
  "conf-trace",
  "hex",
  "kms",
- "kms-common",
  "kms-grpc",
  "rand 0.8.5",
  "reqwest",
@@ -4411,27 +4390,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "kms-core-utils"
-version = "0.11.0-rc3"
-dependencies = [
- "anyhow",
- "futures",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "kms-grpc"
 version = "0.11.0-rc3"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "anyhow",
- "backward-compatibility",
  "bincode",
  "cfg-if",
  "hex",
- "kms-common",
  "lazy_static",
  "prost",
  "rand 0.8.5",

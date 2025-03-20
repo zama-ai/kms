@@ -5,17 +5,18 @@ use distributed_decryption::{
         galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
         structure_traits::Ring,
     },
-    execution::tfhe_internals::utils::expanded_encrypt,
     execution::{
         constants::REAL_KEY_PATH,
-        endpoints::decryption::threshold_decrypt64,
+        endpoints::decryption::{threshold_decrypt64, DecryptionMode},
         runtime::test_runtime::{generate_fixed_identities, DistributedTestRuntime},
-        tfhe_internals::test_feature::{keygen_all_party_shares, KeySet},
+        tfhe_internals::{
+            test_feature::{keygen_all_party_shares, KeySet},
+            utils::expanded_encrypt,
+        },
     },
     file_handling::read_element,
     networking::NetworkMode,
 };
-use kms_common::DecryptionMode;
 use pprof::criterion::{Output, PProfProfiler};
 use rand::{Rng, SeedableRng};
 use std::sync::Arc;

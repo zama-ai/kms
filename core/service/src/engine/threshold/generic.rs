@@ -4,7 +4,7 @@ use crate::engine::threshold::traits::{
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
 use crate::engine::Shutdown;
-use kms_common::retry_loop;
+use crate::retry_loop;
 use kms_grpc::kms::v1::*;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;

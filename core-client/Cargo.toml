@@ -36,7 +36,6 @@ kms = { workspace = true, default-features = false, features = [
     "testing",
     "insecure",
 ] }
-kms-common = { workspace = true }
 kms-grpc.workspace = true
 rand = { workspace = true, features = ["std", "std_rng"] }
 serde = { workspace = true, features = ["derive"] }

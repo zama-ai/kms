@@ -19,8 +19,6 @@ backoff = { workspace = true, features = ["tokio"], optional = true }
 bincode.workspace = true
 cfg-if.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
-kms-common.workspace = true
-kms-core-utils = { workspace = true, optional = true }
 conf-trace = { workspace = true, optional = true }
 const_format = "=0.2.34"
 crypto-bigint = { version = "=0.6.0-rc.6", features = [
@@ -91,8 +89,6 @@ serial_test.workspace = true
 tempfile = "=3.16.0"
 test-log = { version = "=0.2.16", features = ["trace"] }
 tracing-test = "=0.2.5"
-kms-common = { workspace = true, features = ["testing"] }
-backward-compatibility = { workspace = true, features = ["load", "tests"] }
 # "self-import" needed for integration test
 distributed-decryption = { workspace = true, features = ["testing"] }
 
@@ -188,7 +184,6 @@ non-wasm = [
     "dep:opentelemetry",
     "dep:redis",
     "dep:tfhe-zk-pok",
-    "dep:kms-core-utils",
 ]
 all_extension_degrees = [
     "extension_degree_3",

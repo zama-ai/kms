@@ -994,7 +994,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use kms_core_utils::thread_handles::OsThreadGroup;
     use std::{collections::HashMap, sync::Arc, thread};
 
     use itertools::Itertools;
@@ -1028,6 +1027,7 @@ mod tests {
         },
         networking::NetworkMode,
         session_id::SessionId,
+        thread_handles::OsThreadGroup,
     };
 
     use super::PreprocessingOrchestrator;

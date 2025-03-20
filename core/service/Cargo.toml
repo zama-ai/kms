@@ -48,7 +48,6 @@ aws-smithy-runtime = { version = "=1.7.3", features = [
 ], optional = true }
 aws-smithy-runtime-api = { version = "=1.7.3", optional = true }
 aws-smithy-types = { version = "=1.2.9", optional = true }
-kms-common.workspace = true
 backoff = { workspace = true, features = ["tokio"], optional = true }
 bincode.workspace = true
 bytes = "=1.10.0"
@@ -61,7 +60,6 @@ distributed-decryption = { workspace = true, default-features = false, features 
     "extension_degree_4",
 ] }
 kms-grpc = { workspace = true, default-features = false }
-kms-core-utils = { workspace = true, optional = true }
 hex.workspace = true
 http = "=0.2.12"
 hyper-rustls = { version = "=0.24.2", optional = true }
@@ -127,7 +125,6 @@ rstest = "=0.23.0"
 distributed-decryption = { workspace = true, default-features = false, features = [
     "testing",
 ] }
-kms-common = { workspace = true, features = ["testing"] }
 backward-compatibility = { workspace = true, features = ["load", "tests"] }
 test-utils = { path = "../../test-utils" }
 
@@ -160,7 +157,6 @@ non-wasm = [
     "dep:tfhe-zk-pok",
     "dep:tower",
     "dep:tower-http",
-    "dep:kms-core-utils",
 ]
 slow_tests = ["testing"]
 sequential_sns = ["distributed-decryption/sequential_sns"]

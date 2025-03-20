@@ -1,3 +1,6 @@
+mod common;
+use common::load_and_unversionize;
+
 use backward_compatibility::{
     data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
@@ -5,7 +8,6 @@ use backward_compatibility::{
     PubDataTypeTest, PublicKeyTypeTest, SignedPubDataHandleInternalTest, TestMetadataKmsGrpc,
     TestType, Testcase,
 };
-use kms_common::load_and_unversionize;
 use kms_grpc::rpc_types::{PubDataType, PublicKeyType, SignedPubDataHandleInternal};
 use std::path::Path;
 

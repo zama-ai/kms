@@ -16,6 +16,7 @@ use distributed_decryption::algebra::base_ring::{Z128, Z64};
 use distributed_decryption::algebra::error_correction::MemoizedExceptionals;
 use distributed_decryption::algebra::galois_rings::degree_4::ResiduePolyF4;
 use distributed_decryption::algebra::structure_traits::{BaseRing, ErrorCorrect};
+use distributed_decryption::execution::endpoints::decryption::DecryptionMode;
 use distributed_decryption::execution::endpoints::reconstruct::{
     combine_decryptions, reconstruct_packed_message,
 };
@@ -27,7 +28,6 @@ use distributed_decryption::execution::tfhe_internals::parameters::{
     AugmentedCiphertextParameters, DKGParams,
 };
 use itertools::Itertools;
-use kms_common::DecryptionMode;
 use kms_grpc::kms::v1::{
     FheType, ReencryptionRequest, ReencryptionResponse, ReencryptionResponsePayload, RequestId,
     TypedCiphertext, TypedPlaintext,
@@ -2026,7 +2026,6 @@ pub mod test_tools {
     use distributed_decryption::networking::grpc::GrpcServer;
     use futures_util::FutureExt;
     use itertools::Itertools;
-    use kms_common::DecryptionMode;
     use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
     use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
     use std::str::FromStr;
@@ -2508,6 +2507,7 @@ pub(crate) mod tests {
     use crate::util::rate_limiter::RateLimiterConfig;
     use crate::vault::storage::StorageReader;
     use crate::vault::storage::{file::FileStorage, StorageType};
+    use distributed_decryption::execution::endpoints::decryption::DecryptionMode;
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     use distributed_decryption::execution::runtime::party::Role;
     use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
@@ -2515,7 +2515,6 @@ pub(crate) mod tests {
     use distributed_decryption::execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
     use distributed_decryption::execution::tfhe_internals::test_feature::run_decompression_test;
     use distributed_decryption::networking::grpc::GrpcServer;
-    use kms_common::DecryptionMode;
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     use kms_grpc::kms::v1::CrsGenRequest;
     #[cfg(feature = "wasm_tests")]

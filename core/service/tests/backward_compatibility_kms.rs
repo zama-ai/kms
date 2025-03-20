@@ -2,6 +2,10 @@
 //! For each kms-core module, there is a folder with some serialized messages and a [ron](https://github.com/ron-rs/ron)
 //! file. The ron file stores some metadata that are parsed in this test. These metadata tells
 //! what to test for each message.
+//!
+
+mod common;
+use common::{load_and_unversionize, load_and_unversionize_auxiliary};
 
 use aes_prng::AesRng;
 use backward_compatibility::{
@@ -15,7 +19,6 @@ use distributed_decryption::execution::{
     endpoints::keygen::FhePubKeySet,
     tfhe_internals::{switch_and_squash::SwitchAndSquashKey, test_feature::SnsClientKey},
 };
-use kms_common::{load_and_unversionize, load_and_unversionize_auxiliary};
 use kms_grpc::rpc_types::{PubDataType, SignedPubDataHandleInternal};
 use kms_lib::{
     cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey},

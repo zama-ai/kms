@@ -7,7 +7,6 @@ members = [
     "core/grpc",
     "core/service",
     "core/threshold",
-    "core/utils",
     "core-client",
     "test-utils",
     "kms-connector",
@@ -50,8 +49,6 @@ itertools = "=0.13.0"
 k256 = "=0.13.4"
 kms = { path = "./core/service", default-features = false }
 kms-grpc = { path = "./core/grpc", default-features = false }
-kms-common = { path = "./common" }
-kms-core-utils = { path = "./core/utils" }
 lazy_static = "=1.5.0"
 mockall = "=0.13.0"
 opentelemetry = "=0.27.1"

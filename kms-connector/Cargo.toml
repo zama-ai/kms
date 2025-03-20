@@ -55,7 +55,6 @@ config = { version = "0.15.8", features = ["toml"] }
 rand.workspace = true
 tfhe-versionable.workspace = true
 tfhe.workspace = true
-kms-common.workspace = true
 dashmap = "6.1.0"
 once_cell = "1.21.1"
 regex = "1.11.1"

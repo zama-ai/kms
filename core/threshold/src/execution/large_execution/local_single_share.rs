@@ -18,12 +18,13 @@ use crate::{
 };
 use async_trait::async_trait;
 use itertools::Itertools;
-use kms_common::retry::MAX_ITER;
 use num_integer::div_ceil;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use tracing::instrument;
+
+const LOCAL_SINGLE_MAX_ITER: usize = 30;
 
 #[async_trait]
 pub trait LocalSingleShare: Send + Sync + Default + Clone {
@@ -83,7 +84,7 @@ impl<C: Coinflip, S: ShareDispute> LocalSingleShare for RealLocalSingleShare<C, 
         }
 
         // Keeps executing until verification passes, excluding malicious players every time it does not
-        for _ in 0..MAX_ITER {
+        for _ in 0..LOCAL_SINGLE_MAX_ITER {
             let mut shared_secrets;
             let mut x;
             let mut shared_pads;
@@ -124,7 +125,7 @@ impl<C: Coinflip, S: ShareDispute> LocalSingleShare for RealLocalSingleShare<C, 
             }
         }
         Err(anyhow_error_and_log(
-            "Failed to verify sharing after {MAX_ITER} iterations for `RealLocalSingleShare`",
+            "Failed to verify sharing after {LOCAL_SINGLE_MAX_ITER} iterations for `RealLocalSingleShare`",
         ))
     }
 }
@@ -408,7 +409,7 @@ pub(crate) fn look_for_disputes<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHand
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::anyhow_error_and_log;
+    use super::{anyhow_error_and_log, LOCAL_SINGLE_MAX_ITER};
     use super::{
         send_receive_pads, verify_sharing, Derive, LocalSingleShare, RealLocalSingleShare,
     };
@@ -450,7 +451,6 @@ pub(crate) mod tests {
     use aes_prng::AesRng;
     use async_trait::async_trait;
     use itertools::Itertools;
-    use kms_common::retry::MAX_ITER;
     use rand::SeedableRng;
     use rand::{CryptoRng, Rng};
     use rstest::rstest;
@@ -524,7 +524,7 @@ pub(crate) mod tests {
             secrets: &[Z],
         ) -> anyhow::Result<HashMap<Role, Vec<Z>>> {
             //Keeps executing til verification passes
-            for _ in 0..MAX_ITER {
+            for _ in 0..LOCAL_SINGLE_MAX_ITER {
                 let mut shared_secrets;
                 let mut x;
                 let mut shared_pads;
@@ -571,7 +571,7 @@ pub(crate) mod tests {
                 }
             }
             Err(anyhow_error_and_log(
-            "Failed to verify sharing after {MAX_ITER} iterations for `MaliciousSenderLocalSingleShare`",
+            "Failed to verify sharing after {LOCAL_SINGLE_MAX_ITER} iterations for `MaliciousSenderLocalSingleShare`",
         ))
         }
     }
@@ -587,7 +587,7 @@ pub(crate) mod tests {
             session: &mut L,
             secrets: &[Z],
         ) -> anyhow::Result<HashMap<Role, Vec<Z>>> {
-            for _ in 0..MAX_ITER {
+            for _ in 0..LOCAL_SINGLE_MAX_ITER {
                 let mut shared_secrets;
                 let mut x;
                 let mut shared_pads;
@@ -633,7 +633,7 @@ pub(crate) mod tests {
                 }
             }
             Err(anyhow_error_and_log(
-            "Failed to verify sharing after {MAX_ITER} iterations for `MaliciousReceiverLocalSingleShare`",
+                "Failed to verify sharing after {LOCAL_SINGLE_MAX_ITER} iterations for `MaliciousReceiverLocalSingleShare`",
         ))
         }
     }

@@ -177,10 +177,9 @@ fn test_dkg_orchestrator_large(
     use distributed_decryption::{
         algebra::galois_rings::degree_4::ResiduePolyF4Z64, algebra::structure_traits::Ring,
         execution::keyset_config::KeySetConfig, execution::runtime::session::ParameterHandles,
-        networking::NetworkMode,
+        networking::NetworkMode, thread_handles::OsThreadGroup,
     };
     use itertools::Itertools;
-    use kms_core_utils::thread_handles::OsThreadGroup;
 
     let params_basics_handles = params.get_params_basics_handle();
     params_basics_handles

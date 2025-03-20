@@ -1,8 +1,8 @@
 use distributed_decryption::conf::party::CertificatePaths;
+use distributed_decryption::execution::endpoints::decryption::DecryptionMode;
 use distributed_decryption::execution::online::preprocessing::redis::RedisConf;
 use distributed_decryption::execution::runtime::party::{Identity, Role};
 use distributed_decryption::networking::grpc::CoreToCoreNetworkConfig;
-use kms_common::DecryptionMode;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

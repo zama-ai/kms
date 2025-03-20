@@ -1,7 +1,7 @@
 [
     (
         kms_core_version_min: "0.11",
-        kms_core_module: "distributed_decryption",
+        kms_core_module: "distributed-decryption",
         metadata: PRSSSetup((
             test_filename: "prss_setup_rpoly_64",
             amount: 10,
@@ -12,7 +12,7 @@
     ),
     (
         kms_core_version_min: "0.11",
-        kms_core_module: "distributed_decryption",
+        kms_core_module: "distributed-decryption",
         metadata: PRSSSetup((
             test_filename: "prss_setup_rpoly_128",
             amount: 10,
@@ -23,7 +23,7 @@
     ),
     (
         kms_core_version_min: "0.11",
-        kms_core_module: "distributed_decryption",
+        kms_core_module: "distributed-decryption",
         metadata: PrfKey((
             test_filename: "prf_key",
             seed: 100,

@@ -3,6 +3,9 @@
 //! file. The ron file stores some metadata that are parsed in this test. These metadata tells
 //! what to test for each message.
 
+mod common;
+use common::load_and_unversionize;
+
 use aes_prng::AesRng;
 use backward_compatibility::{
     data_dir,
@@ -21,7 +24,6 @@ use distributed_decryption::{
     },
     tests::helper::testing::{get_dummy_prss_setup, get_networkless_base_session_for_parties},
 };
-use kms_common::load_and_unversionize;
 use rand::{RngCore, SeedableRng};
 use serde::Serialize;
 use std::{env, path::Path};
@@ -99,7 +101,7 @@ fn test_prf_key(
 struct DistributedDecryption;
 impl TestedModule for DistributedDecryption {
     type Metadata = TestMetadataDD;
-    const METADATA_FILE: &'static str = "distributed_decryption.ron";
+    const METADATA_FILE: &'static str = "distributed-decryption.ron";
 
     fn run_test<P: AsRef<Path>>(
         test_dir: P,

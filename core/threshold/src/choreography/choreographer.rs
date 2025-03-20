@@ -7,6 +7,7 @@ use crate::choreography::grpc::gen::{
 };
 use crate::choreography::requests::CrsGenParams;
 use crate::conf::choreo::ChoreoConf;
+use crate::execution::endpoints::decryption::DecryptionMode;
 use crate::execution::endpoints::keygen::FhePubKeySet;
 use crate::execution::runtime::party::RoleAssignment;
 use crate::execution::tfhe_internals::parameters::{Ciphertext64, DkgParamsAvailable};
@@ -22,7 +23,6 @@ use crate::{
     session_id::SessionId,
 };
 use conf_trace::telemetry::ContextPropagator;
-use kms_common::DecryptionMode;
 use std::collections::HashMap;
 use tokio::{task::JoinSet, time::Duration};
 use tonic::service::interceptor::InterceptedService;

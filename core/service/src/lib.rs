@@ -14,6 +14,7 @@ pub mod util {
     #[cfg(any(test, feature = "testing", feature = "insecure"))]
     pub mod random_free_port;
     pub mod rate_limiter;
+    pub mod retry;
 }
 pub mod cryptography {
     #[cfg(feature = "non-wasm")]
@@ -119,3 +120,6 @@ pub fn tonic_handle_potential_err<T, E: ToString>(
         tonic::Status::new(tonic::Code::Aborted, top_n_chars(msg))
     })
 }
+
+// ree-export DecryptionMode
+pub use distributed_decryption::execution::endpoints::decryption::DecryptionMode;

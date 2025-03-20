@@ -2,7 +2,6 @@ use crate::consts::{DEFAULT_PARAM, SIG_SIZE, TEST_PARAM};
 use crypto_box::SecretKey;
 use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 use k256::ecdsa::{SigningKey, VerifyingKey};
-use kms_common::impl_generic_versionize;
 use kms_grpc::kms::v1::FheParameter;
 use nom::AsBytes;
 use serde::de::Visitor;
@@ -10,6 +9,35 @@ use serde::{Deserialize, Deserializer, Serialize};
 use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use wasm_bindgen::prelude::wasm_bindgen;
+
+macro_rules! impl_generic_versionize {
+    ($t:ty) => {
+        impl tfhe_versionable::Versionize for $t {
+            type Versioned<'vers> = &'vers $t;
+
+            fn versionize(&self) -> Self::Versioned<'_> {
+                self
+            }
+        }
+
+        impl tfhe_versionable::VersionizeOwned for $t {
+            type VersionedOwned = $t;
+            fn versionize_owned(self) -> Self::VersionedOwned {
+                self
+            }
+        }
+
+        impl tfhe_versionable::Unversionize for $t {
+            fn unversionize(
+                versioned: Self::VersionedOwned,
+            ) -> Result<Self, tfhe_versionable::UnversionizeError> {
+                Ok(versioned)
+            }
+        }
+
+        impl tfhe_versionable::NotVersioned for $t {}
+    };
+}
 
 // Alias wrapping the ephemeral public encryption key the user's wallet constructs and the server
 // uses to encrypt its payload

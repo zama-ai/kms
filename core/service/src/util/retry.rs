@@ -1,9 +1,9 @@
 use std::{error::Error, fmt};
 
 /// The maximum number of iterations before terminating a loop that is expected to only iterate a couple of times.
-pub const MAX_ITER: u64 = 30;
+pub const RETRY_MAX_ITER: u64 = 30;
 /// The number of milliseconds to sleep between iterations of a loop.
-pub const SLEEP_MS: u64 = 1000;
+pub const RETRY_SLEEP_MS: u64 = 1000;
 
 pub enum TimeoutStrategy {
     /// The timeout is constant for each iteration.
@@ -22,7 +22,8 @@ pub enum TimeoutStrategy {
 /// * `$func` - The asynchronous function to be retried. It should return a `Result`.
 /// * `$ms_sleep` - The initial sleep time in milliseconds between retries.
 /// * `$max_iter` - The maximum number of retry attempts.
-/// * `$timeout_strategy` - The strategy to use for timeout between retries. It can be either `TimeoutStrategy::Constant` or `TimeoutStrategy::Exponential`.
+/// * `$timeout_strategy` - The strategy to use for timeout between retries.
+///   It can be either `TimeoutStrategy::Constant` or `TimeoutStrategy::Exponential`.
 ///
 /// # Usage
 ///
@@ -39,7 +40,7 @@ pub enum TimeoutStrategy {
 /// If the function fails after the maximum number of retries, it returns an error with the last encountered error message.
 macro_rules! retry_loop {
     ($func:expr,$ms_sleep:expr,$max_iter:expr,$timeout_strategy:expr) => {{
-        use $crate::retry::TimeoutStrategy;
+        use $crate::util::retry::TimeoutStrategy;
 
         let mut ctr = 0;
         let mut sleep_time = $ms_sleep;
@@ -78,9 +79,15 @@ macro_rules! retry_loop {
         retry_loop!($func, $ms_sleep, $max_iter, TimeoutStrategy::Constant)
     }};
     ($func:expr) => {{
-        retry_loop!($func, $crate::retry::SLEEP_MS, $crate::retry::MAX_ITER)
+        retry_loop!(
+            $func,
+            $crate::retry::RETRY_SLEEP_MS,
+            $crate::retry::RETRY_MAX_ITER
+        )
     }};
 }
+
+// TODO Termination and Transient are never used in our code.
 #[derive(Debug)]
 pub enum LoopErr<E> {
     Termination(anyhow::Error),
@@ -151,8 +158,8 @@ impl<E> LoopErr<E> {
 /// The macro returns an error if the maximum number of retry attempts is reached or if a fatal error occurs.
 macro_rules! retry_fatal_loop {
     ($func:expr,$ms_sleep:expr,$max_iter:expr,$timeout_strategy:expr) => {{
-        use $crate::retry::LoopErr;
-        use $crate::retry::TimeoutStrategy;
+        use $crate::util::retry::LoopErr;
+        use $crate::util::retry::TimeoutStrategy;
 
         let mut ctr = 0;
         let mut sleep_time = $ms_sleep;
@@ -200,16 +207,17 @@ macro_rules! retry_fatal_loop {
         retry_fatal_loop!($func, $ms_sleep, $max_iter, TimeoutStrategy::Constant)
     }};
     ($func:expr) => {{
-        use $crate::{MAX_ITER, SLEEP_MS};
-        retry_fatal_loop!($func, SLEEP_MS, MAX_ITER)
+        use $crate::{RETRY_MAX_ITER, RETRY_SLEEP_MS};
+        retry_fatal_loop!($func, RETRY_SLEEP_MS, RETRY_MAX_ITER)
     }};
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
-    use crate::retry::LoopErr;
+mod tests {
     use std::sync::Arc;
     use tokio::sync::Mutex;
+
+    use crate::util::retry::LoopErr;
 
     #[tokio::test]
     async fn sunshine_retry_loop() {
