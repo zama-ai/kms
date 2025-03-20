@@ -65,6 +65,12 @@ spec:
                 configMapKeyRef:
                   name: {{ .Values.kmsConnector.contractAddress.configmap.name }}
                   key: {{ .Values.kmsConnector.contractAddress.configmap.decryptionManagerAddressKey }}
+            - name: KMS_CONNECTOR_S3_CONFIG__REGION
+              value: {{ .Values.kmsConnector.s3Config.region }}
+            - name: KMS_CONNECTOR_S3_CONFIG__BUCKET
+              value: {{ .Values.kmsConnector.s3Config.bucket }}
+            - name: KMS_CONNECTOR_S3_CONFIG__ENDPOINT
+              value: {{ .Values.kmsConnector.s3Config.endpoint }}
             - name: RUST_LOG
               value: {{ .Values.rustLog }}
           volumeMounts:

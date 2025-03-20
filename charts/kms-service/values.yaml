@@ -22,6 +22,10 @@ kmsConnector:
   storage:
     storageClassName: gp3
     capacity: 5Gi
+  s3Config:
+    region: us-east-1
+    bucket: my-ciphertext-bucket
+    endpoint: http://localhost:9876
   # Comment
   # wallet:
   #   secret:
