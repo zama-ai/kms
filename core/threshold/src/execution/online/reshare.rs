@@ -707,10 +707,13 @@ mod tests {
         //We update the parameters to match with our truncated keys.
         //In particular we truncate the lwe_key by picking a new lwe_dimension
         //and the glwe_key by picking a new GlweDimension and PolynomialSize
+        let test_lwe_dim = params.lwe_dimension().0.min(8);
+        let test_glwe_dim = params.glwe_dimension().0.min(1);
+        let test_poly_size = params.polynomial_size().0.min(10);
         let new_pbs_params = ClassicPBSParameters {
-            lwe_dimension: tfhe::integer::parameters::LweDimension(8),
-            glwe_dimension: tfhe::integer::parameters::GlweDimension(1),
-            polynomial_size: tfhe::integer::parameters::PolynomialSize(10),
+            lwe_dimension: tfhe::integer::parameters::LweDimension(test_lwe_dim),
+            glwe_dimension: tfhe::integer::parameters::GlweDimension(test_glwe_dim),
+            polynomial_size: tfhe::integer::parameters::PolynomialSize(test_poly_size),
             lwe_noise_distribution: params.lwe_noise_distribution(),
             glwe_noise_distribution: params.glwe_noise_distribution(),
             pbs_base_log: params.pbs_base_log(),
@@ -721,6 +724,7 @@ mod tests {
             carry_modulus: params.carry_modulus(),
             max_noise_level: params.max_noise_level(),
             // currently there's no getter for log2_p_fail, so we set it manually
+            // doesn't matter what it is
             log2_p_fail: -80.,
             ciphertext_modulus: params.ciphertext_modulus(),
             encryption_key_choice: params.encryption_key_choice(),
@@ -730,13 +734,15 @@ mod tests {
             tfhe::shortint::PBSParameters::PBS(new_pbs_params),
         );
         keyset.sns_secret_key.params = new_pbs_params;
-        let con: Vec<u64> = lwe_raw.into_container();
-        let con = con[..8].to_vec();
+        let lwe_cont: Vec<u64> = lwe_raw.into_container();
+        let con = lwe_cont[..test_lwe_dim].to_vec();
         let new_lwe_raw = LweSecretKey::from_container(con);
-        let con = glwe_raw.into_container();
-        let con = con[..10].to_vec();
-        let new_glwe_raw =
-            GlweSecretKey::from_container(con, tfhe::integer::parameters::PolynomialSize(10));
+        let glwe_cont = glwe_raw.into_container();
+        let con = glwe_cont[..test_poly_size * test_glwe_dim].to_vec();
+        let new_glwe_raw = GlweSecretKey::from_container(
+            con,
+            tfhe::integer::parameters::PolynomialSize(test_poly_size),
+        );
         let ck = tfhe::ClientKey::from_raw_parts(
             tfhe::integer::ClientKey::from_raw_parts(tfhe::shortint::ClientKey::from_raw_parts(
                 new_glwe_raw,

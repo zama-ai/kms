@@ -1356,47 +1356,52 @@ pub const BC_PARAMS_NIGEL_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
 
 /// __INSECURE__ Used for testing only
 /// Note that this parameter set uses the V1 proofs.
+///
+/// Normally the bound_log2 value in the tuniform distribution is set to 3.
+/// But we change it to 0 because it's much ligher on the preprocessing
+/// and maintains correctness. But this may be inconsistent with the ms_*
+/// values under modulus_switch_noise_reduction_params. Since these parameters
+/// are for testing, we're fine with this inconsistency.
 pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
     regular_params: DKGParamsRegular {
         sec: 128,
         ciphertext_parameters: ClassicPBSParameters {
-            lwe_dimension: LweDimension(10),
+            lwe_dimension: LweDimension(1),
             glwe_dimension: GlweDimension(1),
             polynomial_size: PolynomialSize(256),
             lwe_noise_distribution: DynamicDistribution::new_t_uniform(0),
             glwe_noise_distribution: DynamicDistribution::new_t_uniform(0),
-            pbs_base_log: DecompositionBaseLog(16),
+            pbs_base_log: DecompositionBaseLog(24),
             pbs_level: DecompositionLevelCount(1),
-            ks_base_log: DecompositionBaseLog(14),
+            ks_base_log: DecompositionBaseLog(37),
             ks_level: DecompositionLevelCount(1),
             message_modulus: MessageModulus(4),
             carry_modulus: CarryModulus(4),
             max_noise_level: MaxNoiseLevel::new(5),
-            log2_p_fail: -49.5137,
+            log2_p_fail: -64f64,
             ciphertext_modulus: CiphertextModulus::new_native(),
             encryption_key_choice: EncryptionKeyChoice::Big,
             modulus_switch_noise_reduction_params: Some(ModulusSwitchNoiseReductionParams {
-                // TODO wait for Sam for better parameters
-                modulus_switch_zeros_count: LweCiphertextCount(100),
+                modulus_switch_zeros_count: LweCiphertextCount(10),
                 ms_bound: NoiseEstimationMeasureBound(288230376151711744f64),
-                ms_r_sigma_factor: RSigmaFactor(13.179852282053789f64),
-                ms_input_variance: Variance(2.63039184094559E-7f64),
+                ms_r_sigma_factor: RSigmaFactor(9.75539320076416),
+                ms_input_variance: Variance(1.92631390716519e-10),
             }),
         },
         compression_decompression_parameters: Some(CompressionParameters {
             br_level: DecompositionLevelCount(1),
-            br_base_log: DecompositionBaseLog(25),
+            br_base_log: DecompositionBaseLog(24),
             packing_ks_level: DecompositionLevelCount(1),
-            packing_ks_base_log: DecompositionBaseLog(13),
-            packing_ks_polynomial_size: PolynomialSize(64),
-            packing_ks_glwe_dimension: GlweDimension(2),
-            lwe_per_glwe: tfhe::core_crypto::prelude::LweCiphertextCount(32),
+            packing_ks_base_log: DecompositionBaseLog(27),
+            packing_ks_polynomial_size: PolynomialSize(256),
+            packing_ks_glwe_dimension: GlweDimension(1),
+            lwe_per_glwe: LweCiphertextCount(256),
             storage_log_modulus: tfhe::core_crypto::prelude::CiphertextModulusLog(9),
             packing_ks_key_noise_distribution: DynamicDistribution::new_t_uniform(0),
         }),
         dedicated_compact_public_key_parameters: Some((
             CompactPublicKeyEncryptionParameters {
-                encryption_lwe_dimension: LweDimension(128),
+                encryption_lwe_dimension: LweDimension(256),
                 encryption_noise_distribution: DynamicDistribution::new_t_uniform(0),
                 message_modulus: MessageModulus(4),
                 carry_modulus: CarryModulus(4),
@@ -1406,7 +1411,7 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
             },
             ShortintKeySwitchingParameters {
                 ks_level: DecompositionLevelCount(1),
-                ks_base_log: DecompositionBaseLog(14),
+                ks_base_log: DecompositionBaseLog(37),
                 destination_key: EncryptionKeyChoice::Small,
             },
         )),
@@ -1416,9 +1421,16 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
         glwe_dimension: GlweDimension(1),
         glwe_noise_distribution: TUniform::new(0),
         polynomial_size: PolynomialSize(256),
-        pbs_base_log: DecompositionBaseLog(32),
+        pbs_base_log: DecompositionBaseLog(33),
         pbs_level: DecompositionLevelCount(2),
         ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
+        // TODO use the following when we switch to tfhe-rs v1.1
+        // modulus_switch_noise_reduction_params: Some(ModulusSwitchNoiseReductionParams {
+        //     modulus_switch_zeros_count: LweCiphertextCount(8),
+        //     ms_bound: NoiseEstimationMeasureBound(288230376151711744),
+        //     ms_r_sigma_factor: RSigmaFactor(9.2),
+        //     ms_input_variance: Variance(2.182718682903484e-224),
+        // }),
     },
 });
 
