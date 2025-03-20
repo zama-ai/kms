@@ -1,8 +1,9 @@
-use crate::core::wallet::WalletError;
 use alloy_sol_types::Error as SolError;
 use alloy_transport::RpcError;
 use thiserror::Error;
 use tokio::sync::mpsc::error::SendError;
+
+use crate::core::utils::wallet::WalletError;
 
 /// Error type for the KMS connector
 #[derive(Debug, Error)]
@@ -51,6 +52,9 @@ pub enum Error {
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("S3 error: {0}")]
+    S3Error(String),
 
     #[error(transparent)]
     Other(#[from] anyhow::Error),

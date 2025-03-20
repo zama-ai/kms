@@ -1,6 +1,6 @@
 service_name = "kms-connector-4"
 
-# mnemonic = "test test test test test test test test test test test junk"
+mnemonic = "test test test test test test test test test test test junk"
 
 chain_id = 31337
 
@@ -14,4 +14,11 @@ gwl2_url = "ws://0.0.0.0:8545"
 
 channel_size = 2000
 
-signing_key_path = "./keys/PRIV-p4/SigningKey/e164d9de0bec6656928726433cc56bef6ee8417ad5a4f8c82fbcc2d3e5f220fd"
+# signing_key_path = "./keys/PRIV-p4/SigningKey/e164d9de0bec6656928726433cc56bef6ee8417ad5a4f8c82fbcc2d3e5f220fd"
+
+# [s3_config]
+# region = "us-east-1"
+# bucket = "my-ciphertext-bucket"
+# endpoint = "http://localhost:9876"
+
+# verify_coprocessors = true

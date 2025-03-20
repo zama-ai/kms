@@ -6,6 +6,17 @@ use serde::{Deserialize, Serialize};
 use std::{fs, path::Path, str::FromStr, time::Duration};
 use tracing::{info, warn};
 
+/// Configuration for S3 ciphertext storage
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct S3Config {
+    /// AWS S3 region for ciphertext storage
+    pub region: String,
+    /// AWS S3 bucket for ciphertext storage
+    pub bucket: String,
+    /// AWS S3 endpoint URL for ciphertext storage
+    pub endpoint: Option<String>,
+}
+
 /// Configuration for the KMS connector
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
@@ -52,6 +63,13 @@ pub struct Config {
     /// Path to the signing key file (optional)
     #[serde(default = "default_signing_key_path")]
     pub signing_key_path: Option<String>,
+    /// S3 configuration for ciphertext storage (optional)
+    #[serde(default)]
+    pub s3_config: Option<S3Config>,
+    // TODO: implement to increase security
+    /// Whether to verify coprocessors against the HTTPZ contract (optional, defaults to true)
+    #[serde(default = "default_verify_coprocessors")]
+    pub verify_coprocessors: Option<bool>,
 }
 
 fn default_service_name() -> String {
@@ -90,6 +108,10 @@ fn default_signing_key_path() -> Option<String> {
     None
 }
 
+fn default_verify_coprocessors() -> Option<bool> {
+    Some(false)
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -111,6 +133,8 @@ impl Default for Config {
             httpz_domain_name: default_httpz_domain_name(),
             httpz_domain_version: default_httpz_domain_version(),
             signing_key_path: default_signing_key_path(),
+            s3_config: None,
+            verify_coprocessors: default_verify_coprocessors(),
         }
     }
 }
@@ -365,6 +389,8 @@ mod tests {
             httpz_domain_name: "IHTTPZ".to_string(),
             httpz_domain_version: "1".to_string(),
             signing_key_path: None,
+            s3_config: None,
+            verify_coprocessors: Some(true),
         };
 
         let temp_file = NamedTempFile::new().unwrap();
@@ -411,6 +437,11 @@ mod tests {
             loaded_config.httpz_domain_version
         );
         assert_eq!(config.signing_key_path, loaded_config.signing_key_path);
+        assert_eq!(config.s3_config, loaded_config.s3_config);
+        assert_eq!(
+            config.verify_coprocessors,
+            loaded_config.verify_coprocessors
+        );
     }
 
     #[test]
@@ -434,6 +465,8 @@ mod tests {
             httpz_domain_name: "IHTTPZ".to_string(),
             httpz_domain_version: "1".to_string(),
             signing_key_path: None,
+            s3_config: None,
+            verify_coprocessors: Some(true),
         };
 
         config.to_file("test_config.toml").unwrap();
@@ -464,6 +497,8 @@ mod tests {
             httpz_domain_name: "IHTTPZ".to_string(),
             httpz_domain_version: "1".to_string(),
             signing_key_path: None,
+            s3_config: None,
+            verify_coprocessors: Some(true),
         };
 
         let temp_file = NamedTempFile::new().unwrap();
@@ -545,6 +580,8 @@ mod tests {
             httpz_domain_name: "IHTTPZ".to_string(),
             httpz_domain_version: "1".to_string(),
             signing_key_path: None,
+            s3_config: None,
+            verify_coprocessors: Some(true),
         };
 
         let temp_file = NamedTempFile::new().unwrap();

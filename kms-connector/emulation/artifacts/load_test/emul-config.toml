@@ -28,3 +28,12 @@ gwl2_url = "ws://0.0.0.0:8545"
 
 # Size of the event processing channel (optional)
 channel_size = 2000
+
+# AWS S3 region for ciphertext storage (optional)
+# s3_region = "us-east-1"
+
+# AWS S3 bucket for ciphertext storage (optional)
+# s3_bucket = "my-ciphertext-bucket"
+
+# Whether to verify coprocessors against the HTTPZ contract (optional, defaults to true)
+verify_coprocessors = false

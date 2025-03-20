@@ -6,10 +6,10 @@ use kms_connector::{
         cli::{Cli, Commands},
         config::Config,
         connector::KmsCoreConnector,
-        wallet::KmsWallet,
+        utils::wallet::KmsWallet,
     },
     error::{Error, Result},
-    kms_core_adapter::service::KmsServiceImpl,
+    kms_core_adapters::service::KmsServiceImpl,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,7 +29,7 @@ const DEFAULT_CHANNEL_SIZE: usize = 1000;
 async fn connect_with_retry(
     rpc_url: &str,
     mut shutdown_rx: broadcast::Receiver<()>,
-) -> Result<Option<Arc<impl Provider + Clone + 'static>>> {
+) -> Result<Option<Arc<impl Provider + Clone + std::fmt::Debug + 'static>>> {
     loop {
         info!(
             "Attempting to connect to Gateway L2 RPC endpoint: {}",
@@ -64,7 +64,7 @@ async fn connect_with_retry(
 /// Run the connector with automatic reconnection
 async fn run_connector(
     config: Config,
-    gw_provider: Arc<impl Provider + Clone + 'static>,
+    gw_provider: Arc<impl Provider + Clone + std::fmt::Debug + 'static>,
     shutdown_rx: broadcast::Receiver<()>,
 ) -> Result<()> {
     // Initialize wallet based on configuration

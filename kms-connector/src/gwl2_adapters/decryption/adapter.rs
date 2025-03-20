@@ -1,3 +1,4 @@
+use crate::{core::utils::wallet::KmsWallet, gwl2_contracts::IDecryptionManager};
 use alloy::{
     primitives::{Address, Bytes, U256},
     providers::Provider,
@@ -5,13 +6,10 @@ use alloy::{
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::{
-    core::wallet::KmsWallet,
-    error::{Error, Result},
-    gwl2_contracts::decryption::IDecryptionManager,
-};
+use crate::error::{Error, Result};
 
 /// Adapter for decryption operations
+#[derive(Clone)]
 pub struct DecryptionAdapter<P: Provider + Clone> {
     decryption_address: Address,
     provider: Arc<P>,
@@ -26,6 +24,11 @@ impl<P: Provider + Clone> DecryptionAdapter<P> {
             provider,
             wallet: Arc::new(wallet),
         }
+    }
+
+    /// Get the provider
+    pub fn provider(&self) -> &Arc<P> {
+        &self.provider
     }
 
     /// Send a public decryption response

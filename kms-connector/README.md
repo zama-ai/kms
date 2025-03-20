@@ -11,6 +11,9 @@ KMS Connector is a Rust-based service that connects the KMS Core with the HTTPZ 
 - Operation status notifications
 - Arbitrum-specific finality rules
 - CLI interface for configuration management and validation
+- S3 ciphertext retrieval with configurable endpoint support
+- Non-failable S3 URL processing with graceful fallbacks
+- Optional S3 configuration for flexible deployment scenarios
 
 ## CLI Usage
 
@@ -82,6 +85,17 @@ httpz_address = "0x..."
 
 # Size of the event processing channel (optional)
 channel_size = 1000
+
+# S3 configuration for ciphertext storage (optional)
+[s3_config]
+# AWS S3 region for ciphertext storage
+region = "us-east-1"
+
+# AWS S3 bucket name for ciphertext storage
+bucket = "my-ciphertext-bucket"
+
+# AWS S3 endpoint URL for ciphertext storage
+endpoint = "http://localhost:9876"
 ```
 
 ## Configuration
@@ -107,6 +121,14 @@ The KMS Connector supports flexible configuration through both TOML files and en
    export KMS_CONNECTOR_DECRYPTION_TIMEOUT_SECS="300"
    export KMS_CONNECTOR_REENCRYPTION_TIMEOUT_SECS="300"
    export KMS_CONNECTOR_RETRY_INTERVAL_SECS="5"
+
+   # S3 configuration (optional)
+   # Note the double underscore (__) for nested configuration
+   export KMS_CONNECTOR_S3_CONFIG__REGION="us-east-1"
+   export KMS_CONNECTOR_S3_CONFIG__BUCKET="my-ciphertext-bucket"
+   export KMS_CONNECTOR_S3_CONFIG__ENDPOINT="http://localhost:9876"
+
+   > **Note on Nested Configuration**: For nested configuration structures like `s3_config`, use double underscores (`__`) in environment variables to represent the nesting. For example, `s3_config.region` in TOML becomes `KMS_CONNECTOR_S3_CONFIG__REGION` as an environment variable.
 
    # Start the connector without a config file
    cargo run --bin kms-connector start
@@ -173,12 +195,60 @@ All environment variables are prefixed with `KMS_CONNECTOR_`. Here's the complet
 | `KMS_CONNECTOR_DECRYPTION_TIMEOUT_SECS` | Timeout for decryption operations | 300 |
 | `KMS_CONNECTOR_REENCRYPTION_TIMEOUT_SECS` | Timeout for re-encryption operations | 300 |
 | `KMS_CONNECTOR_RETRY_INTERVAL_SECS` | Interval between retry attempts | 5 |
+| `KMS_CONNECTOR_S3_CONFIG__REGION` | AWS S3 region for ciphertext storage | (optional) |
+| `KMS_CONNECTOR_S3_CONFIG__BUCKET` | AWS S3 bucket name for ciphertext storage | (optional) |
+| `KMS_CONNECTOR_S3_CONFIG__ENDPOINT` | AWS S3 endpoint URL for ciphertext storage | (optional) |
+| `KMS_CONNECTOR_VERIFY_COPROCESSORS` | Whether to verify coprocessors against HTTPZ contract | false |
 
 ### Best Practices
 
 1. Use a config file for development and testing environments where values change infrequently
 2. Use environment variables for production deployments and when values need to be changed dynamically
 3. Store sensitive information (like mnemonics) as environment variables rather than in config files
+
+## S3 Configuration
+
+The KMS Connector supports retrieving ciphertexts from S3-compatible storage. This functionality is optimized for high-frequency operation (500ms processing cycle).
+
+### Configuration Options
+
+```toml
+# S3 configuration for ciphertext storage (optional)
+[s3_config]
+# AWS S3 region for ciphertext storage
+region = "us-east-1"
+
+# AWS S3 bucket name for ciphertext storage
+bucket = "my-ciphertext-bucket"
+
+# AWS S3 endpoint URL for ciphertext storage
+endpoint = "http://localhost:9876"
+```
+
+### S3 URL Processing
+
+The connector supports multiple S3 URL formats:
+
+1. **Virtual-hosted style**: `bucket-name.s3.region.amazonaws.com`
+2. **Path-style**: `s3.region.amazonaws.com/bucket-name`
+3. **Custom endpoints**: with region and bucket in path segments
+
+The system will extract the region, endpoint URL, and bucket name directly from the URL when possible. If URL parsing fails, it will gracefully fall back to the configured values.
+
+### Non-Failable Design
+
+The S3 URL processing is designed to be non-failable:
+
+- Returns `Option<(String, String, String)>` instead of `Result`
+- Uses warning logs instead of errors for non-critical issues
+- Gracefully falls back to provided configuration values
+- Continues processing other URLs even when one fails
+
+This approach ensures that temporary issues with S3 URL formats don't disrupt the high-frequency operation of the KMS Connector.
+
+### Optional Configuration
+
+S3 configuration is optional. If not provided, the connector will log warnings but continue operating with limited functionality. This allows for flexible deployment scenarios where S3 retrieval might not be required.
 
 ## Wallet Configuration
 
@@ -336,5 +406,4 @@ cargo build
 
 ```bash
 cargo test
-
 ```

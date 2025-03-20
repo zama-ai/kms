@@ -32,3 +32,12 @@ channel_size = 1000
 # Path to the signing key file (optional)
 # If provided, the connector will use this signing key instead of the mnemonic
 # signing_key_path = "./keys/CLIENT/SigningKey/e164d9de0bec6656928726433cc56bef6ee8417ad5a4f8c82fbcc2d3e5f220fd"
+
+# Whether to verify coprocessors against the HTTPZ contract (optional, defaults to false)
+# verify_coprocessors = true
+
+# S3 configuration for ciphertext storage (optional)
+# [s3_config]
+# region = "us-east-1"
+# bucket = "my-ciphertext-bucket"
+# endpoint = "http://localhost:9876"

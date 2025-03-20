@@ -1,6 +1,6 @@
 # KMS Connector Changelog
 
-## Implementation Status (as of 2025-03-10)
+## Implementation Status (as of 2025-03-20)
 
 ### 1. Core Infrastructure ⚙️
 
@@ -25,13 +25,19 @@
 - Enhanced error handling with exponential backoff for reconnections
 - Improved logging for better observability
 - Secure wallet implementation with mnemonic-based key derivation
+- S3 ciphertext retrieval with configurable endpoint support
+- Non-failable S3 URL processing with graceful fallbacks
+- Optional S3 configuration with appropriate warnings
+- User and public decryption operations with proper error handling
+- S3 retrived ciphertext digest validation
 
 #### 1.2. In Progress 🚧
 
-- Full event pub-sub system with KMS-core and Gateway L2 (!)
+- ...
 
 #### 1.3. Not Started ❌
 
+- Full event pub-sub system with KMS-core and Gateway L2 (!)
 - Metrics collection system design
 - Full provider implementation with advanced contract calls
 - Performance optimization and monitoring
@@ -55,11 +61,12 @@
 
 #### 2.2. In Progress 🚧
 
-- Performance optimization for high-throughput scenarios
-- Event batching considerations
+- ...
 
 #### 2.3. Not Started ❌
 
+- Performance optimization for high-throughput scenarios
+- Event batching considerations
 - Advanced monitoring and metrics collection
 
 ### 3. KMS Operations Layer 🛠️
@@ -79,10 +86,12 @@
 
 #### 3.2. In Progress 🚧
 
-- Advanced operation retry mechanisms
-- Operation monitoring and metrics
+- ...
 
 #### 3.3. Not Started ❌
+
+- Advanced operation retry mechanisms
+- Operation monitoring and metrics
 
 ### 4. Smart Contract Interfaces 📝
 
@@ -98,6 +107,10 @@
 - Updated smart contract bytecode references
 
 #### 4.2. In Progress 🚧
+
+- ...
+
+#### 4.3. Not Started ❌
 
 - Gas optimization strategies
 - Transaction receipt handling
@@ -118,17 +131,18 @@
 - Enhanced logging for mock-core and events
 - Automated test execution infrastructure
 - Interface compatibility testing suite
-- Load testing
-- Public decryption integration test
+- Localhost Load testing
+- Localhost Public decryption integration test (threshold & centralized)
 
 #### 5.2. In Progress 🚧
 
-- Integration tests
-- Transaction handling tests
-- Performance benchmarks
-- CI/CD pipeline enhancements
+- User Decryption Integration test
+- Fix new SC interface compatibility with Load testing and Public decryption integration test (threshold & centralized)
 
 #### 5.3. Not Started ❌
 
+- Transaction handling tests
+- Performance benchmarks
+- CI/CD pipeline enhancements
 - Chaos testing
 - End-to-end system tests

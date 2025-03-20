@@ -17,7 +17,7 @@ use tokio::{sync::mpsc, task::JoinHandle, time::sleep};
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
 
-use crate::gwl2_contracts::{decryption::IDecryptionManager, httpz::IHTTPZ};
+use crate::gwl2_contracts::{IDecryptionManager, IKeyManager};
 
 /// Maximum number of reconnection attempts before backing off
 const MAX_QUICK_RETRIES: u32 = 3;
@@ -40,25 +40,25 @@ pub enum KmsCoreEvent {
     /// User decryption response
     UserDecryptionResponse(IDecryptionManager::UserDecryptionResponse),
     /// Preprocess keygen request
-    PreprocessKeygenRequest(IHTTPZ::PreprocessKeygenRequest),
+    PreprocessKeygenRequest(IKeyManager::PreprocessKeygenRequest),
     /// Preprocess keygen response
-    PreprocessKeygenResponse(IHTTPZ::PreprocessKeygenResponse),
+    PreprocessKeygenResponse(IKeyManager::PreprocessKeygenResponse),
     /// Preprocess kskgen request
-    PreprocessKskgenRequest(IHTTPZ::PreprocessKskgenRequest),
+    PreprocessKskgenRequest(IKeyManager::PreprocessKskgenRequest),
     /// Preprocess kskgen response
-    PreprocessKskgenResponse(IHTTPZ::PreprocessKskgenResponse),
+    PreprocessKskgenResponse(IKeyManager::PreprocessKskgenResponse),
     /// Keygen request
-    KeygenRequest(IHTTPZ::KeygenRequest),
+    KeygenRequest(IKeyManager::KeygenRequest),
     /// Keygen response
-    KeygenResponse(IHTTPZ::KeygenResponse),
+    KeygenResponse(IKeyManager::KeygenResponse),
     /// CRS generation request
-    CrsgenRequest(IHTTPZ::CrsgenRequest),
+    CrsgenRequest(IKeyManager::CrsgenRequest),
     /// CRS generation response
-    CrsgenResponse(IHTTPZ::CrsgenResponse),
+    CrsgenResponse(IKeyManager::CrsgenResponse),
     /// KSK generation request
-    KskgenRequest(IHTTPZ::KskgenRequest),
+    KskgenRequest(IKeyManager::KskgenRequest),
     /// KSK generation response
-    KskgenResponse(IHTTPZ::KskgenResponse),
+    KskgenResponse(IKeyManager::KskgenResponse),
 }
 
 /// Adapter for handling L2 events
@@ -160,14 +160,14 @@ impl EventsAdapter {
 
         let mut tasks = vec![
             tokio::spawn(Self::subscribe_to_decryption_events(
-                provider.clone(),
                 decryption_manager,
+                provider.clone(),
                 event_tx.clone(),
                 running.clone(),
             )),
             tokio::spawn(Self::subscribe_to_httpz_events(
-                provider,
                 httpz,
+                provider,
                 event_tx,
                 running.clone(),
             )),
@@ -273,12 +273,12 @@ impl EventsAdapter {
 
     /// Subscribe to decryption events
     async fn subscribe_to_decryption_events<P: Provider<Ethereum>>(
+        decryption_manager: Address,
         provider: Arc<P>,
-        address: Address,
         event_tx: mpsc::Sender<KmsCoreEvent>,
         running: Arc<AtomicBool>,
     ) -> Result<()> {
-        let contract = IDecryptionManager::new(address, provider);
+        let contract = IDecryptionManager::new(decryption_manager, provider);
 
         info!("Starting IDecryptionManager event subscriptions...");
 
@@ -309,32 +309,32 @@ impl EventsAdapter {
     }
 
     /// Subscribe to HTTPZ events
-    async fn subscribe_to_httpz_events<P: Provider<Ethereum>>(
-        provider: Arc<P>,
+    async fn subscribe_to_httpz_events<P: Provider + Clone>(
         address: Address,
+        provider: Arc<P>,
         event_tx: mpsc::Sender<KmsCoreEvent>,
         running: Arc<AtomicBool>,
     ) -> Result<()> {
-        let contract = IHTTPZ::new(address, provider);
+        let contract = IKeyManager::new(address, provider);
 
-        info!("Starting IHttpz event subscriptions...");
+        info!("Starting IKeyManager event subscriptions...");
 
         let preprocess_keygen_request_filter =
             contract.PreprocessKeygenRequest_filter().watch().await?;
-        info!("✓ Subscribed to PreprocessKeygenRequest event");
+        info!("✓ Subscribed to PreprocessKeygenRequest events");
 
         let preprocess_kskgen_request_filter =
             contract.PreprocessKskgenRequest_filter().watch().await?;
-        info!("✓ Subscribed to PreprocessKskgenRequest event");
+        info!("✓ Subscribed to PreprocessKskgenRequest events");
 
         let keygen_request_filter = contract.KeygenRequest_filter().watch().await?;
-        info!("✓ Subscribed to KeygenRequest event");
+        info!("✓ Subscribed to KeygenRequest events");
 
         let crsgen_request_filter = contract.CrsgenRequest_filter().watch().await?;
-        info!("✓ Subscribed to CrsgenRequest event");
+        info!("✓ Subscribed to CrsgenRequest events");
 
         let kskgen_request_filter = contract.KskgenRequest_filter().watch().await?;
-        info!("✓ Subscribed to KskgenRequest event");
+        info!("✓ Subscribed to KskgenRequest events");
 
         // Convert filters to streams
         let mut preprocess_keygen_request_stream = preprocess_keygen_request_filter.into_stream();
@@ -343,11 +343,11 @@ impl EventsAdapter {
         let mut crsgen_request_stream = crsgen_request_filter.into_stream();
         let mut kskgen_request_stream = kskgen_request_filter.into_stream();
 
-        info!("Successfully subscribed to all IHttpz events");
+        info!("Successfully subscribed to all IKeyManager events");
 
         loop {
             if !running.load(Ordering::SeqCst) {
-                info!("HTTPZ event subscription stopping due to shutdown signal");
+                info!("IKeyManager event subscription stopping due to shutdown signal");
                 break;
             }
 

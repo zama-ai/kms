@@ -723,9 +723,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-sol-type-parser"
-version = "0.8.22"
+version = "0.8.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c649acc6c9d3893e392c737faeadce30b4a1751eed148ae43bc2f27f29c4480c"
+checksum = "488a747fdcefeec5c1ed5aa9e08becd775106777fdeae2a35730729fc8a95910"
 dependencies = [
  "serde",
  "winnow",
@@ -4336,21 +4336,27 @@ dependencies = [
  "alloy-transport",
  "anyhow",
  "async-trait",
+ "aws-config",
+ "aws-sdk-s3",
  "bincode",
  "bip39",
  "clap",
  "config",
+ "dashmap",
  "futures",
  "futures-util",
  "kms-common",
  "kms-grpc",
+ "once_cell",
  "prost",
  "prost-types",
  "rand 0.8.5",
+ "regex",
  "serde",
  "serde_json",
  "serial_test",
  "sha2",
+ "sha3",
  "tempfile",
  "tfhe",
  "tfhe-versionable",
@@ -4907,9 +4913,9 @@ dependencies = [
 
 [[package]]
 name = "once_cell"
-version = "1.21.0"
+version = "1.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cde51589ab56b20a6f686b2c68f7a0bd6add753d697abf720d63f8db3ab7b1ad"
+checksum = "d75b0bedcc4fe52caa0e03d9f1151a323e4aa5e2d78ba3580400cd3c9e2bc4bc"
 
 [[package]]
 name = "oorandom"
@@ -7037,9 +7043,9 @@ dependencies = [
 
 [[package]]
 name = "syn-solidity"
-version = "0.8.22"
+version = "0.8.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac9f9798a84bca5cd4d1760db691075fda8f2c3a5d9647e8bfd29eb9b3fabb87"
+checksum = "d975606bae72d8aad5b07d9342465e123a2cccf53a5a735aedf81ca92a709ecb"
 dependencies = [
  "paste",
  "proc-macro2",

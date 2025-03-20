@@ -6,9 +6,8 @@ use alloy::{
 use std::sync::Arc;
 
 use crate::{
-    core::wallet::KmsWallet,
+    core::utils::wallet::KmsWallet,
     error::{Error, Result},
-    gwl2_contracts::httpz::IHTTPZ,
 };
 
 /// Adapter for HTTPZ key management operations

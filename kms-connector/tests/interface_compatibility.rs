@@ -4,8 +4,8 @@ use std::path::Path;
 
 // EXPECTED_HASH values are computed from the interface files
 const IDECRYPTION_MANAGER_HASH: &str =
-    "1e81e72a57d6d8e3a81a5daee9d0e9b414e53cd062423a8449160299f1bd5ef5";
-const IHTTPZ_HASH: &str = "31ff607fe56a6b0cffdf3448f1c8ffe6a6e42597b5b835b65c48aff7dabd05fe";
+    "9124db335d203a7bf93e536258e4e2984e2b7d00f70b622de75fc44510bf0a2a";
+const IHTTPZ_HASH: &str = "c2f1140fc650f687a68605b46de58eb916380651a525e30dbcec615cda0e56a8";
 
 /// Interface file definition with its path and expected hash
 struct InterfaceFile {
