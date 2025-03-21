@@ -59,12 +59,12 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   name: {{ .Values.kmsConnector.contractAddress.configmap.name }}
-                  key: {{ .Values.kmsConnector.contractAddress.configmap.httpzAddressKey }}
+                  key: {{ .Values.kmsConnector.contractAddress.configmap.decryptionManagerAddressKey }}
             - name: KMS_CONNECTOR_HTTPZ_ADDRESS
               valueFrom:
                 configMapKeyRef:
                   name: {{ .Values.kmsConnector.contractAddress.configmap.name }}
-                  key: {{ .Values.kmsConnector.contractAddress.configmap.decryptionManagerAddressKey }}
+                  key: {{ .Values.kmsConnector.contractAddress.configmap.httpzAddressKey }}
             - name: KMS_CONNECTOR_S3_CONFIG__REGION
               value: {{ .Values.kmsConnector.s3Config.region }}
             - name: KMS_CONNECTOR_S3_CONFIG__BUCKET
