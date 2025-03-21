@@ -2,7 +2,9 @@
 unstable_features = ["CTRL_C_HANDLING"]
 
 [env]
-CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
+CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true # Remove this if it's not in a workspace
+THRESHOLD_FHE_DOCKER_FOLDER = "docker/local.dockerfile"
+THRESHOLD_FHE_DOCKER_ROOT = "../../" # use "../../" when in a workspace, "." otherwise.
 
 ###Generic commands to be used for local deployment with docker
 #Build the image for TFHE parties, with testing feature to allow centralized DKG
@@ -10,60 +12,60 @@ CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
 #into production.
 [tasks.tfhe-docker-image]
 command = "docker"
-args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,choreographer,default", "-t", "tfhe-core", "../../"]
+args = ["build", "-f", "${THRESHOLD_FHE_DOCKER_FOLDER}", "--build-arg", "FEATURES=testing,choreographer,default", "-t", "tfhe-core", "${THRESHOLD_FHE_DOCKER_ROOT}"]
 
 [tasks.tfhe-docker-image-degree-3]
 command = "docker"
-args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,choreographer,extension_degree_3", "-t", "tfhe-core-degree-3", "../../"]
+args = ["build", "-f", "${THRESHOLD_FHE_DOCKER_FOLDER}", "--build-arg", "FEATURES=testing,choreographer,extension_degree_3", "-t", "tfhe-core-degree-3", "${THRESHOLD_FHE_DOCKER_ROOT}"]
 
 [tasks.tfhe-docker-image-degree-4]
 command = "docker"
-args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,choreographer,extension_degree_4", "-t", "tfhe-core-degree-4", "../../"]
+args = ["build", "-f", "${THRESHOLD_FHE_DOCKER_FOLDER}", "--build-arg", "FEATURES=testing,choreographer,extension_degree_4", "-t", "tfhe-core-degree-4", "${THRESHOLD_FHE_DOCKER_ROOT}"]
 
 [tasks.tfhe-docker-image-degree-5]
 command = "docker"
-args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,choreographer,extension_degree_5", "-t", "tfhe-core-degree-5", "../../"]
+args = ["build", "-f", "${THRESHOLD_FHE_DOCKER_FOLDER}", "--build-arg", "FEATURES=testing,choreographer,extension_degree_5", "-t", "tfhe-core-degree-5", "${THRESHOLD_FHE_DOCKER_ROOT}"]
 
 [tasks.tfhe-docker-image-degree-6]
 command = "docker"
-args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,choreographer,extension_degree_6", "-t", "tfhe-core-degree-6", "../../"]
+args = ["build", "-f", "${THRESHOLD_FHE_DOCKER_FOLDER}", "--build-arg", "FEATURES=testing,choreographer,extension_degree_6", "-t", "tfhe-core-degree-6", "${THRESHOLD_FHE_DOCKER_ROOT}"]
 
 [tasks.tfhe-docker-image-degree-7]
 command = "docker"
-args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,choreographer,extension_degree_7", "-t", "tfhe-core-degree-7", "../../"]
+args = ["build", "-f", "${THRESHOLD_FHE_DOCKER_FOLDER}", "--build-arg", "FEATURES=testing,choreographer,extension_degree_7", "-t", "tfhe-core-degree-7", "${THRESHOLD_FHE_DOCKER_ROOT}"]
 
 [tasks.tfhe-docker-image-degree-8]
 command = "docker"
-args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,choreographer,extension_degree_8", "-t", "tfhe-core-degree-8", "../../"]
+args = ["build", "-f", "${THRESHOLD_FHE_DOCKER_FOLDER}", "--build-arg", "FEATURES=testing,choreographer,extension_degree_8", "-t", "tfhe-core-degree-8", "${THRESHOLD_FHE_DOCKER_ROOT}"]
 
 [tasks.tfhe-docker-image-degree-3-mem]
 command = "docker"
-args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,measure_memory,extension_degree_3", "-t", "tfhe-core-degree-3-mem", "../../"]
+args = ["build", "-f", "${THRESHOLD_FHE_DOCKER_FOLDER}", "--build-arg", "FEATURES=testing,measure_memory,extension_degree_3", "-t", "tfhe-core-degree-3-mem", "${THRESHOLD_FHE_DOCKER_ROOT}"]
 
 [tasks.tfhe-docker-image-degree-4-mem]
 command = "docker"
-args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,measure_memory,extension_degree_4", "-t", "tfhe-core-degree-4-mem", "../../"]
+args = ["build", "-f", "${THRESHOLD_FHE_DOCKER_FOLDER}", "--build-arg", "FEATURES=testing,measure_memory,extension_degree_4", "-t", "tfhe-core-degree-4-mem", "${THRESHOLD_FHE_DOCKER_ROOT}"]
 
 [tasks.tfhe-docker-image-degree-5-mem]
 command = "docker"
-args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,measure_memory,extension_degree_5", "-t", "tfhe-core-degree-5-mem", "../../"]
+args = ["build", "-f", "${THRESHOLD_FHE_DOCKER_FOLDER}", "--build-arg", "FEATURES=testing,measure_memory,extension_degree_5", "-t", "tfhe-core-degree-5-mem", "${THRESHOLD_FHE_DOCKER_ROOT}"]
 
 [tasks.tfhe-docker-image-degree-6-mem]
 command = "docker"
-args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,measure_memory,extension_degree_6", "-t", "tfhe-core-degree-6-mem", "../../"]
+args = ["build", "-f", "${THRESHOLD_FHE_DOCKER_FOLDER}", "--build-arg", "FEATURES=testing,measure_memory,extension_degree_6", "-t", "tfhe-core-degree-6-mem", "${THRESHOLD_FHE_DOCKER_ROOT}"]
 
 [tasks.tfhe-docker-image-degree-7-mem]
 command = "docker"
-args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,measure_memory,extension_degree_7", "-t", "tfhe-core-degree-7-mem", "../../"]
+args = ["build", "-f", "${THRESHOLD_FHE_DOCKER_FOLDER}", "--build-arg", "FEATURES=testing,measure_memory,extension_degree_7", "-t", "tfhe-core-degree-7-mem", "${THRESHOLD_FHE_DOCKER_ROOT}"]
 
 [tasks.tfhe-docker-image-degree-8-mem]
 command = "docker"
-args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=testing,measure_memory,extension_degree_8", "-t", "tfhe-core-degree-8-mem", "../../"]
+args = ["build", "-f", "${THRESHOLD_FHE_DOCKER_FOLDER}", "--build-arg", "FEATURES=testing,measure_memory,extension_degree_8", "-t", "tfhe-core-degree-8-mem", "${THRESHOLD_FHE_DOCKER_ROOT}"]
 
 #Build the image for BGV parties (with centralized DKG available)
 [tasks.bgv-docker-image]
 command = "docker"
-args = ["build", "-f", "../../docker/core/threshold/local.dockerfile", "--build-arg", "FEATURES=experimental,choreographer", "-t", "bgv-core", "../../"]
+args = ["build", "-f", "${THRESHOLD_FHE_DOCKER_FOLDER}", "--build-arg", "FEATURES=experimental,choreographer", "-t", "bgv-core", "${THRESHOLD_FHE_DOCKER_ROOT}"]
 
 #Generate the certificate for TLS communication of the parties
 [tasks.gen-test-certs]
@@ -190,13 +192,3 @@ run_task = { name = ["setup", "gen-test-certs", "bgv-gen-experiment", "experimen
 [tasks.bgv-bench-real-dkg]
 env = {"NUM_PARTIES" = "4", THRESHOLD = "1", EXPERIMENT_NAME="bgv-real-dkg-bench"}
 run_task = { name = ["setup", "gen-test-certs", "bgv-gen-experiment", "experiment-name", "start-parties-healthy", "bgv-test-real-dkg"], fork = true, cleanup_task = "shutdown" }
-
-
-###Commands used by the CI
-#Build the docker image based on bench.dockerfile (which has the testing feature for centralized dkg)
-[tasks.docker-image-ci]
-command = "docker"
-args = ["build", "--build-arg=CONCRETE_ACTIONS_TOKEN=${CONCRETE_ACTIONS_TOKEN}", "-f", "../../docker/core/threshold/bench.dockerfile", "-t", "tfhe-core", "../../"]
-
-[tasks.ci-test]
-run_task = { name = ["docker-image-ci", "grpc-bench"] }
