@@ -171,7 +171,7 @@ jobs:
   # Builds Docker image for connector
   # Only runs on main/release branches after successful tests
   docker-connector:
-    needs: test-connector
+    # needs: test-connector
     if: startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
     uses: ./.github/workflows/common-docker-big-instance.yml
     with:

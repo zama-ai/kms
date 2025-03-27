@@ -141,6 +141,7 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
+            /sccache
           key: |
             ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
@@ -157,7 +158,8 @@ jobs:
               "usr-local-cargo-registry-index": "/usr/local/cargo/registry/index",
               "usr-local-cargo-registry-cache": "/usr/local/cargo/registry/cache",
               "usr-local-cargo-git-db": "/usr/local/cargo/git/db",
-              "app-${{ inputs.app-cache-dir }}-target": "/app/${{ inputs.app-cache-dir }}/target"
+              "app-${{ inputs.app-cache-dir }}-target": "/app/${{ inputs.app-cache-dir }}/target",
+              "sccache": "/sccache"
             }
           skip-extraction: ${{ steps.cache.outputs.cache-hit }}
 
