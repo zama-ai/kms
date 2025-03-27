@@ -587,7 +587,7 @@ async fn fetch_kms_addresses(
                 }),
                 None,
             )
-            .unwrap_or_else(|_| panic!("invalid ethereum address: {:?}", x))
+            .unwrap_or_else(|e| panic!("invalid ethereum address: {:?} - {}", x, e))
         })
         .collect();
 

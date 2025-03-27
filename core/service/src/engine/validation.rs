@@ -80,7 +80,13 @@ pub fn validate_reencrypt_req(
         )));
     }
 
-    let client_verf_key = alloy_primitives::Address::parse_checksummed(&req.client_address, None)?;
+    let client_verf_key = alloy_primitives::Address::parse_checksummed(&req.client_address, None)
+        .map_err(|e| {
+        anyhow::anyhow!(
+            "Error parsing checksummed client address: {} - {e}",
+            &req.client_address,
+        )
+    })?;
 
     let domain = match verify_reencryption_eip712(req) {
         Ok(domain) => {
@@ -397,7 +403,7 @@ mod tests {
                 enc_key: enc_pk_buf.clone(),
             };
             assert_eq!(
-                "Bad address checksum",
+                "Error parsing checksummed client address: 0xD8Da6bf26964Af9d7EEd9e03e53415d37AA96045 - Bad address checksum",
                 validate_reencrypt_req(&req).unwrap_err().to_string()
             );
         }
@@ -499,7 +505,7 @@ mod tests {
             match verify_reencryption_eip712(&bad_req) {
                 Ok(_) => panic!("expected failure"),
                 Err(e) => {
-                    assert_eq!(e.to_string(), "invalid string length");
+                    assert_eq!(e.to_string(), "error parsing checksummed address: 66f9664f97F2b50F62D13eA064982f936dE76657 - invalid string length");
                 }
             }
         }

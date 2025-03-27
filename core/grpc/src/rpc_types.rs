@@ -36,6 +36,8 @@ cfg_if::cfg_if! {
     }
 }
 
+const ERR_PARSE_CHECKSUMMED: &str = "error parsing checksummed address";
+
 pub const ID_LENGTH: usize = 32;
 pub const SAFE_SER_SIZE_LIMIT: u64 = 1024 * 1024 * 1024 * 2;
 
@@ -134,10 +136,16 @@ pub fn protobuf_to_alloy_domain(pb_domain: &Eip712DomainMsg) -> anyhow::Result<E
             U256::try_from_be_slice(&pb_domain.chain_id)
                 .ok_or_else(|| anyhow::anyhow!("invalid chain ID"))?,
         ),
-        Some(Address::parse_checksummed(
-            pb_domain.verifying_contract.clone(),
-            None,
-        )?),
+        Some(
+            Address::parse_checksummed(pb_domain.verifying_contract.clone(), None).map_err(
+                |e| {
+                    anyhow::anyhow!(
+                        "{ERR_PARSE_CHECKSUMMED}: {} - {e}",
+                        pb_domain.verifying_contract,
+                    )
+                },
+            )?,
+        ),
         salt,
     );
     Ok(out)
@@ -445,13 +453,15 @@ impl crate::kms::v1::ReencryptionRequest {
         }
 
         let client_address =
-            alloy_primitives::Address::parse_checksummed(&self.client_address, None)?;
+            alloy_primitives::Address::parse_checksummed(&self.client_address, None).map_err(
+                |e| anyhow::anyhow!("{ERR_PARSE_CHECKSUMMED}: {} - {e}", &self.client_address),
+            )?;
         let verifying_contract = domain
             .verifying_contract
             .ok_or(anyhow::anyhow!(ERR_VERIFYING_CONTRACT_NOT_FOUND))?;
 
         if client_address == verifying_contract {
-            anyhow::bail!(ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR);
+            anyhow::bail!("{ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR}: {client_address}");
         }
 
         let linker = UserDecryptionLinker {

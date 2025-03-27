@@ -235,7 +235,7 @@ impl<
         let (typed_ciphertexts, link, client_enc_key, client_address, key_id, request_id, domain) =
             tonic_handle_potential_err(
                 validate_reencrypt_req(&inner),
-                format!("Invalid key in request {:?}", inner),
+                format!("Failed to validate reencryption request: {:?}", inner),
             )?;
 
         if let Some(b) = timer.as_mut() {
@@ -415,7 +415,7 @@ impl<
         let (ciphertexts, req_digest, key_id, request_id, eip712_domain) =
             tonic_handle_potential_err(
                 validate_decrypt_req(&inner),
-                format!("Invalid key in request {:?}", inner),
+                format!("Failed to validate decrypt request {:?}", inner),
             )?;
 
         if let Some(b) = timer.as_mut() {
