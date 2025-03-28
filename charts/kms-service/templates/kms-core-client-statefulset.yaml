@@ -61,6 +61,13 @@ spec:
           - mountPath: /app/load-core-client-config.sh
             subPath: load-core-client-config.sh
             name: config
+        resources:
+          requests:
+            memory: {{ .Values.kmsCoreClient.resources.requests.memory }}
+            cpu: {{ .Values.kmsCoreClient.resources.requests.cpu }}
+          limits:
+            memory: {{ .Values.kmsCoreClient.resources.limits.memory }}
+            cpu: {{ .Values.kmsCoreClient.resources.limits.cpu }}
       imagePullSecrets:
         - name: registry-credentials
       volumes:

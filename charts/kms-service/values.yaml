@@ -136,6 +136,13 @@ kmsCoreClient:
   num_reconstruct: 3
   decryption_mode: "NoiseFloodSmall"
   fhe_parameter: Test
+  resources:
+    requests: {}
+      # memory: 1Gi
+      # cpu: 1
+    limits: {}
+      # memory: 30Gi
+      # cpu: 1
   nodeSelector:
   affinity:
   tolerations:
