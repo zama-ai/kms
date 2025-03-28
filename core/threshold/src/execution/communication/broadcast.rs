@@ -465,8 +465,8 @@ pub async fn reliable_broadcast<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandl
         ));
     }
 
-    let threshold = session.threshold();
-    if num_parties <= threshold.into() {
+    let threshold = session.threshold() as usize;
+    if num_parties <= threshold {
         return Err(anyhow_error_and_log(format!(
             "The number of parties {num_parties} is less or equal to the threshold {threshold}"
         )));
