@@ -1,14 +1,15 @@
 use alloy::{
+    hex,
     primitives::{Address, Bytes, U256},
     providers::Provider,
+    sol_types::Eip712Domain,
 };
 use kms_grpc::kms::v1::{
-    CiphertextFormat, DecryptionRequest, Eip712DomainMsg, ReencryptionRequest, RequestId,
-    TypedCiphertext,
+    CiphertextFormat, DecryptionRequest, ReencryptionRequest, RequestId, TypedCiphertext,
 };
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 use tonic::Request;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     core::{
@@ -17,6 +18,7 @@ use crate::{
             extract_fhe_type_from_handle, fhe_type_to_string, format_request_id,
             log_and_extract_result,
         },
+        utils::eip712::{alloy_to_protobuf_domain, verify_reencryption_eip712},
     },
     error::Result,
     gwl2_adapters::decryption::DecryptionAdapter,
@@ -50,14 +52,14 @@ impl<P: Provider + Clone + std::fmt::Debug + 'static> DecryptionHandler<P> {
     pub async fn handle_decryption_request_response(
         &self,
         request_id: U256,
-        key_id: U256,
+        key_id_hex: String,
         sns_ciphertext_materials: Vec<(Vec<u8>, Vec<u8>)>, // (handle, ciphertext) pairs
-        user_address: Option<Vec<u8>>,
+        client_addr: Option<Address>,
+        public_key: Option<Bytes>,
     ) -> Result<()> {
-        let key_id_hex = format_request_id(key_id);
         let request_id_hex = format_request_id(request_id);
 
-        let request_type = if user_address.is_some() {
+        let request_type = if client_addr.is_some() {
             "user"
         } else {
             "public"
@@ -75,13 +77,12 @@ impl<P: Provider + Clone + std::fmt::Debug + 'static> DecryptionHandler<P> {
         info!(
             "Processing {} decryption request {} with {} ciphertexts, key_id: {}, FHE types: [{}]",
             request_type,
-            request_id,
+            request_id_hex,
             sns_ciphertext_materials.len(),
             key_id_hex,
             fhe_types.join(", ")
         );
 
-        // Create request ID objects for the KMS Core API
         let request_id_obj = RequestId {
             request_id: request_id_hex.clone(),
         };
@@ -90,26 +91,49 @@ impl<P: Provider + Clone + std::fmt::Debug + 'static> DecryptionHandler<P> {
             request_id: key_id_hex.clone(),
         };
 
-        info!("Using request_id in hex format: {}", request_id_hex);
+        // Create EIP-712 domain using alloy primitives
+        let domain_name = self
+            .kms_client
+            .config()
+            .decryption_manager_domain_name
+            .clone();
+        let domain_version = self
+            .kms_client
+            .config()
+            .decryption_manager_domain_version
+            .clone();
+        let domain = Eip712Domain {
+            name: Some(Cow::Owned(domain_name)),
+            version: Some(Cow::Owned(domain_version)),
+            chain_id: Some(U256::from(self.kms_client.config().chain_id)),
+            verifying_contract: Some(
+                self.kms_client
+                    .config()
+                    .decryption_manager_address
+                    .parse()
+                    .map_err(|e| {
+                        crate::error::Error::Config(format!(
+                            "Invalid decryption manager address: {}",
+                            e
+                        ))
+                    })?,
+            ),
+            salt: None, // TODO: verify policy on this
+        };
 
-        // Create domain message from config - same for both public and user decryption
-        let domain = Some(Eip712DomainMsg {
-            name: self
-                .kms_client
-                .config()
-                .decryption_manager_domain_name
-                .clone(),
-            version: self
-                .kms_client
-                .config()
-                .decryption_manager_domain_version
-                .clone(),
-            chain_id: vec![self.kms_client.config().chain_id as u8],
-            verifying_contract: self.kms_client.config().decryption_manager_address.clone(),
-            salt: None,
-        });
+        // Convert alloy domain to protobuf domain
+        let domain_msg = alloy_to_protobuf_domain(&domain)
+            .map_err(|e| crate::error::Error::Config(format!("Failed to convert domain: {}", e)))?;
 
-        match user_address {
+        info!(
+            "Eip712Domain constructed: name={} version={} chain_id={} verifying_contract={} salt=None",
+            domain_msg.name,
+            domain_msg.version,
+            alloy_primitives::U256::from_be_slice(&domain_msg.chain_id).to_string(),
+            domain_msg.verifying_contract,
+        );
+
+        match client_addr {
             // Public decryption
             None => {
                 // Prepare ciphertexts for the decryption request
@@ -128,8 +152,8 @@ impl<P: Provider + Clone + std::fmt::Debug + 'static> DecryptionHandler<P> {
 
                 let request = Request::new(DecryptionRequest {
                     ciphertexts,
-                    key_id: Some(key_id_obj),
-                    domain,
+                    key_id: Some(key_id_obj.clone()),
+                    domain: Some(domain_msg),
                     request_id: Some(request_id_obj.clone()),
                 });
 
@@ -192,12 +216,19 @@ impl<P: Provider + Clone + std::fmt::Debug + 'static> DecryptionHandler<P> {
                 Ok(())
             }
             // User decryption aka reencryption
-            Some(user_addr) => {
+            Some(client_addr) => {
                 // Prepare typed ciphertexts for the reencryption request
                 let typed_ciphertexts = sns_ciphertext_materials
                     .iter()
                     .map(|(handle, ciphertext)| {
+                        let hexed_handle = hex::encode(handle);
                         let fhe_type = extract_fhe_type_from_handle(handle);
+                        info!(
+                            "Handle: {}\nRetrieved S3 ciphertext of length: {}, FHE Type: {}",
+                            hexed_handle,
+                            ciphertext.len(),
+                            fhe_type
+                        );
                         TypedCiphertext {
                             ciphertext: ciphertext.clone(),
                             external_handle: handle.clone(),
@@ -207,16 +238,78 @@ impl<P: Provider + Clone + std::fmt::Debug + 'static> DecryptionHandler<P> {
                     })
                     .collect();
 
-                let request = Request::new(ReencryptionRequest {
-                    request_id: Some(request_id_obj),
-                    client_address: Address::from_slice(&user_addr).to_string(),
-                    enc_key: user_addr.clone(),
-                    key_id: Some(key_id_obj),
+                // Convert user_addr to an Ethereum address
+                // The public key might not be a valid Ethereum address (it's 40 bytes instead of 20)
+                // We need to handle this gracefully to maintain the non-failable design
+                let client_address_str = if client_addr.len() == 20 {
+                    // If it's a valid 20-byte Ethereum address, convert it properly
+                    client_addr.to_checksum(None)
+                } else {
+                    // If it's not 20 bytes, we can't create a valid Ethereum address
+                    // Thus, we'll use its hex representation instead
+                    warn!(
+                        "Client address has invalid length for Ethereum address: {} bytes (expected 20), using hex representation",
+                        client_addr.len()
+                    );
+                    format!("0x{}", alloy::hex::encode(client_addr))
+                };
+
+                info!(
+                    "Proceeding with Client address: {} (length: {} bytes)",
+                    client_address_str,
+                    client_addr.len()
+                );
+
+                let reencryption_request = ReencryptionRequest {
+                    request_id: Some(request_id_obj.clone()),
+                    client_address: client_address_str.clone(),
+                    key_id: Some(key_id_obj.clone()),
+                    domain: Some(domain_msg),
+                    enc_key: public_key
+                        .expect("Couldn't parse public_key aka enc_key")
+                        .to_vec(),
                     typed_ciphertexts,
-                    domain,
-                });
+                };
+
+                verify_reencryption_eip712(&reencryption_request)?;
+
+                let request = Request::new(reencryption_request.clone());
+
+                // Log a more concise version of the request with hex representations
+                info!(
+                    "ReencryptionRequest constructed with: request_id={}, client_address={}, key_id={}, typed_ciphertexts.len={}, domain.chain_id={}",
+                    request.get_ref().request_id.as_ref().map(|id| id.request_id.to_string()).unwrap_or_else(|| "unknown".to_string()),
+                    request.get_ref().client_address,
+                    request.get_ref().key_id.as_ref().map(|id| id.request_id.to_string()).unwrap_or_else(|| "unknown".to_string()),
+                    request.get_ref().typed_ciphertexts.len(),
+                    request.get_ref().domain.as_ref().map(|x| {
+                        let chain_id_bytes = &x.chain_id;
+                        if !chain_id_bytes.is_empty() {
+                            // Parse bytes back to U256 and display as decimal
+                            let chain_id_u256 = alloy_primitives::U256::from_be_slice(chain_id_bytes);
+                            chain_id_u256.to_string()
+                        } else {
+                            "unknown".to_string()
+                        }
+                    }).unwrap_or_else(|| "unknown".to_string())
+                );
+
+                // TODO: revert to DEBUG
+                // Only log detailed ciphertext info at debug level
+                if tracing::enabled!(tracing::Level::DEBUG) {
+                    for (i, ct) in request.get_ref().typed_ciphertexts.iter().enumerate() {
+                        debug!(
+                            "Ciphertext[{}]: fhe_type={}, handle_len={}, ct_len={}",
+                            i,
+                            ct.fhe_type,
+                            ct.external_handle.len(),
+                            ct.ciphertext.len()
+                        );
+                    }
+                }
 
                 let response = self.kms_client.request_reencryption(request).await?;
+                info!("[IN] 📡 ReencryptionResponse({}) received", request_id_hex);
                 let reencryption_response = response.into_inner();
 
                 if let Some(payload) = reencryption_response.payload {
@@ -235,7 +328,7 @@ impl<P: Provider + Clone + std::fmt::Debug + 'static> DecryptionHandler<P> {
                             &ct.signcrypted_ciphertext,
                             ct.fhe_type,
                             request_id,
-                            Some(&user_addr),
+                            Some(client_addr),
                         );
                     }
 
@@ -243,10 +336,7 @@ impl<P: Provider + Clone + std::fmt::Debug + 'static> DecryptionHandler<P> {
                     let signature = payload.external_signature;
 
                     // Send response back to L2
-                    info!(
-                        "Sending user decryption response for request {}",
-                        request_id
-                    );
+                    info!("Sending userDecryptionResponse for request {}", request_id);
                     self.decryption
                         .send_user_decryption_response(
                             request_id,

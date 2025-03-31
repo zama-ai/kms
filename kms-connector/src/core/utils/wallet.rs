@@ -1,3 +1,4 @@
+use alloy::hex::decode;
 use alloy_primitives::{Address, ChainId, B256};
 use alloy_signer::{Signer, SignerSync};
 use alloy_signer_local::{coins_bip39::English, MnemonicBuilder, PrivateKeySigner};
@@ -121,6 +122,8 @@ pub enum WalletError {
     SigningKeyError(String),
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
+    #[error("Invalid private key: {0}")]
+    InvalidPrivateKey(String),
 }
 
 pub type Result<T> = std::result::Result<T, WalletError>;
@@ -216,6 +219,42 @@ impl KmsWallet {
         Ok(Self { signer })
     }
 
+    /// Create a new wallet from a private key string
+    ///
+    /// The private key string should be a hexadecimal string with or without '0x' prefix.
+    /// This method is particularly useful for testing or when the private key is stored
+    /// as a string in a secure environment variable or configuration.
+    pub fn from_private_key_str(private_key: &str, chain_id: Option<ChainId>) -> Result<Self> {
+        debug!("Creating wallet from private key string");
+
+        // Remove 0x prefix if present
+        let private_key = private_key.trim_start_matches("0x");
+
+        // Convert hex string to bytes
+        let bytes = decode(private_key)
+            .map_err(|e| WalletError::InvalidPrivateKey(format!("Invalid hex encoding: {}", e)))?;
+
+        // Ensure the key is the correct length
+        if bytes.len() != 32 {
+            return Err(WalletError::InvalidPrivateKey(format!(
+                "Private key must be 32 bytes, got {} bytes",
+                bytes.len()
+            )));
+        }
+
+        // Create a signing key from the bytes
+        let signing_key = alloy::signers::k256::ecdsa::SigningKey::from_bytes(
+            bytes.as_slice().into(),
+        )
+        .map_err(|e| WalletError::InvalidPrivateKey(format!("Invalid private key: {}", e)))?;
+
+        // Create signer from the signing key
+        let signer = PrivateKeySigner::from_signing_key(signing_key).with_chain_id(chain_id);
+
+        info!("Created wallet from private key string");
+        Ok(Self { signer })
+    }
+
     /// Create a new random wallet
     pub fn random(chain_id: Option<ChainId>) -> Result<Self> {
         let signer = PrivateKeySigner::random().with_chain_id(chain_id);
@@ -285,5 +324,43 @@ mod tests {
         let wallet = KmsWallet::from_signing_key_file::<PathBuf>(None, Some(TEST_CHAIN_ID));
         assert!(wallet.is_ok(), "Failed to load wallet: {:?}", wallet.err());
         assert!(wallet.unwrap().address() != Address::ZERO);
+    }
+
+    #[test]
+    fn test_wallet_from_private_key_str() {
+        // Test private key (this is a test key, never use in production)
+        let private_key = "8da4ef21b864d2cc526dbdb2a120bd2874c36c9d0a1fb7f8c63d7f7a8b41de8f";
+
+        // Create wallet from private key string
+        let wallet = KmsWallet::from_private_key_str(private_key, Some(TEST_CHAIN_ID)).unwrap();
+
+        // Expected address for this private key
+        let expected_address =
+            Address::parse_checksummed("0x63FaC9201494f0bd17B9892B9fae4d52fe3BD377", None).unwrap();
+
+        // Verify the address matches
+        assert_eq!(wallet.address(), expected_address);
+
+        // Test with 0x prefix
+        let wallet_with_prefix =
+            KmsWallet::from_private_key_str(&format!("0x{}", private_key), Some(TEST_CHAIN_ID))
+                .unwrap();
+        assert_eq!(wallet_with_prefix.address(), expected_address);
+
+        // Test signing
+        let message = b"test message";
+        let signature = wallet.sign_message(message).unwrap();
+        assert!(!signature.is_empty());
+    }
+
+    #[test]
+    fn test_wallet_from_private_key_str_invalid() {
+        // Test with invalid hex string
+        let result = KmsWallet::from_private_key_str("not a hex string", Some(TEST_CHAIN_ID));
+        assert!(result.is_err());
+
+        // Test with wrong length
+        let result = KmsWallet::from_private_key_str("deadbeef", Some(TEST_CHAIN_ID));
+        assert!(result.is_err());
     }
 }

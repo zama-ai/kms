@@ -7,6 +7,29 @@ This guide describes the procedures for testing the KMS Connector using the emul
 - Load Test
 - Threshold Public Decrypt Test
 - Centralized Public Decrypt Test
+- S3 Ciphertext Retrieval Test (using MinIO)
+
+## Components
+
+The emulation environment consists of several components:
+
+- **Mock Events**: Simulates blockchain events for testing
+- **Mock KMS Core**: Simulates the KMS Core service
+- **MinIO S3 Mock**: Simulates S3 storage for ciphertext retrieval testing
+- **Local Blockchain**: Uses Anvil to simulate a Layer 2 blockchain
+
+## MinIO S3 Mock
+
+The emulation environment includes a MinIO-based S3 mock service for testing the KMS Connector's ciphertext retrieval functionality. See the [minio-s3-mock README](./minio-s3-mock/README.md) for detailed usage instructions.
+
+```bash
+# Start the MinIO server and set up buckets
+cd minio-s3-mock
+./minio-test-helper.sh start
+
+# Test S3 URL formats
+./minio-test-helper.sh test-url us-east-1
+```
 
 ## Load Test
 

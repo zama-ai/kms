@@ -1,4 +1,4 @@
-use alloy::providers::Provider;
+use alloy::{hex, providers::Provider};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use tracing::{error, info, warn};
@@ -50,49 +50,65 @@ impl<P: Provider + Clone + std::fmt::Debug + 'static> EventProcessor<P> {
         for sns_material in sns_materials {
             let extracted_ct_handle = sns_material.ctHandle.to_be_bytes::<32>().to_vec();
             let extracted_sns_ciphertext_digest = sns_material.snsCiphertextDigest.to_vec();
-            let coprocessor_addresses = sns_material.coprocessorAddresses;
+            let coprocessor_addresses = sns_material.coprocessorTxSenderAddresses;
 
             // Get S3 URL and retrieve ciphertext
             // 1. For each SNS material, we try to retrieve its ciphertext from multiple possible S3 URLs
             // 2. Once we successfully retrieve a ciphertext from any of those URLs, we break out of the S3 URLs loop
             // 3. Then we continue processing the next SNS material in the outer loop
-            match s3::prefetch_coprocessor_buckets(
+            let s3_urls = s3::prefetch_coprocessor_buckets(
                 coprocessor_addresses,
                 httpz_address,
                 self.provider.clone(),
+                s3_config.as_ref(),
             )
-            .await
-            {
-                Ok(s3_urls) => {
-                    for s3_url in s3_urls {
-                        match s3::call_s3_ciphertext_retrieval(
-                            s3_url.clone(),
-                            extracted_sns_ciphertext_digest.clone(),
-                            s3_config.clone(),
-                        )
-                        .await
-                        {
-                            Ok(ciphertext) => {
-                                sns_ciphertext_materials
-                                    .push((extracted_ct_handle.clone(), ciphertext));
-                                break; // We want to stop as soon as ciphertext corresponding to extracted_sns_ciphertext_digest is retrieved
-                            }
-                            Err(e) => {
-                                // Log error but continue trying other URLs
-                                warn!(
-                                    "Failed to retrieve ciphertext for digest {} from S3 URL {}: {}",
-                                    alloy::hex::encode(&extracted_sns_ciphertext_digest),
-                                    s3_url,
-                                    e
-                                );
-                            }
-                        }
+            .await;
+
+            if s3_urls.is_empty() {
+                warn!(
+                    "No S3 URLs found for ciphertext digest {}",
+                    alloy::hex::encode(&extracted_sns_ciphertext_digest)
+                );
+                continue;
+            }
+
+            let mut ciphertext_retrieved = false;
+            for s3_url in s3_urls {
+                match s3::call_s3_ciphertext_retrieval(
+                    s3_url.clone(),
+                    extracted_sns_ciphertext_digest.clone(),
+                    s3_config.clone(),
+                )
+                .await
+                {
+                    Some(ciphertext) => {
+                        info!(
+                            "Successfully retrieved ciphertext for digest {} from S3 URL {}",
+                            alloy::hex::encode(&extracted_sns_ciphertext_digest),
+                            s3_url
+                        );
+                        sns_ciphertext_materials.push((extracted_ct_handle.clone(), ciphertext));
+                        ciphertext_retrieved = true;
+                        break; // We want to stop as soon as ciphertext corresponding to extracted_sns_ciphertext_digest is retrieved
+                    }
+                    None => {
+                        // Log warning but continue trying other URLs
+                        warn!(
+                            "Failed to retrieve ciphertext for digest {} from S3 URL {}",
+                            alloy::hex::encode(&extracted_sns_ciphertext_digest),
+                            s3_url
+                        );
+                        // Continue to the next URL
                     }
                 }
-                Err(e) => {
-                    error!("Failed to get S3 URL: {}", e);
-                    // Continue with other materials
-                }
+            }
+
+            if !ciphertext_retrieved {
+                warn!(
+                    "Failed to retrieve ciphertext for digest {} from any S3 URL",
+                    alloy::hex::encode(&extracted_sns_ciphertext_digest)
+                );
+                // Continue to the next SNS material
             }
         }
 
@@ -114,18 +130,19 @@ impl<P: Provider + Clone + std::fmt::Debug + 'static> EventProcessor<P> {
                     let result = match event {
                         KmsCoreEvent::PublicDecryptionRequest(req) => {
                             info!(
-                                "Processing public decryption request {}",
+                                "Processing PublicDecryptionRequest: {}",
                                 req.publicDecryptionId
                             );
 
                             // Extract keyId from the first SNS ciphertext material if available
                             let key_id = if !req.snsCtMaterials.is_empty() {
                                 let extracted_key_id = req.snsCtMaterials.first().unwrap().keyId;
+                                let key_id_hex = alloy::hex::encode(extracted_key_id.to_be_bytes::<32>());
                                 info!(
-                                    "Extracted key_id {:?} from snsCtMaterials[0] for public decryption request {}",
-                                    extracted_key_id, req.publicDecryptionId
+                                    "Extracted key_id {} from snsCtMaterials[0] for public decryption request {}",
+                                    key_id_hex, req.publicDecryptionId
                                 );
-                                extracted_key_id
+                                key_id_hex
                             } else {
                                 // Fail the request if no materials available
                                 error!(
@@ -152,24 +169,26 @@ impl<P: Provider + Clone + std::fmt::Debug + 'static> EventProcessor<P> {
                                 key_id,
                                 sns_ciphertext_materials,
                                 None,
+                                None,
                             )
                             .await
                         }
 
                         KmsCoreEvent::UserDecryptionRequest(req) => {
                             info!(
-                                "Processing user decryption request {}",
+                                "Processing UserDecryptionRequest: {}",
                                 req.userDecryptionId
                             );
 
                             // Extract keyId from the first SNS ciphertext material if available
                             let key_id = if !req.snsCtMaterials.is_empty() {
                                 let extracted_key_id = req.snsCtMaterials.first().unwrap().keyId;
+                                let key_id_hex = alloy::hex::encode(extracted_key_id.to_be_bytes::<32>());
                                 info!(
-                                    "Extracted key_id {:?} from snsCtMaterials[0] for user decryption request {} (contract: {})",
-                                    extracted_key_id, req.userDecryptionId, req.publicKey
+                                    "Extracted key_id {} from snsCtMaterials[0] for user decryption request {} (contract: {})",
+                                    key_id_hex, req.userDecryptionId, req.publicKey
                                 );
-                                extracted_key_id
+                                key_id_hex
                             } else {
                                 // Fail the request if no materials available
                                 error!(
@@ -191,13 +210,34 @@ impl<P: Provider + Clone + std::fmt::Debug + 'static> EventProcessor<P> {
                                 continue;
                             }
 
-                            self.decryption_handler.handle_decryption_request_response(
+                            let user_key_prefixed = hex::encode_prefixed(req.userAddress);
+                            let public_key_string = hex::encode_prefixed(&req.publicKey);
+
+                            info!(
+                                "UserDecryptionRequest {} was received with:\nuserAddress: {}\npublicKey: {}\nkeyId: {}",
+                                req.userDecryptionId,
+                                user_key_prefixed,
+                                public_key_string,
+                                key_id
+                            );
+
+                            match self.decryption_handler.handle_decryption_request_response(
                                 req.userDecryptionId,
                                 key_id,
                                 sns_ciphertext_materials,
-                                Some(req.publicKey.to_vec()),
-                            )
-                            .await
+                                Some(req.userAddress),
+                                Some(req.publicKey)
+                            ).await {
+                                Ok(_) => Ok(()),
+                                Err(e) => {
+                                    error!(
+                                        "Error processing user decryption request {}: {}",
+                                        req.userDecryptionId, e
+                                    );
+                                    // Log error but continue processing other events
+                                    Ok(())
+                                }
+                            }
                         }
                         _ => Ok(()), // Ignore other events for now
                     };

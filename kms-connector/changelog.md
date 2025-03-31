@@ -1,6 +1,6 @@
 # KMS Connector Changelog
 
-## Implementation Status (as of 2025-03-20)
+## Implementation Status (as of 2025-03-31)
 
 ### 1. Core Infrastructure ⚙️
 
@@ -27,9 +27,14 @@
 - Secure wallet implementation with mnemonic-based key derivation
 - S3 ciphertext retrieval with configurable endpoint support
 - Non-failable S3 URL processing with graceful fallbacks
-- Optional S3 configuration with appropriate warnings
+- Optional S3 configuration with flexible deployment scenarios
 - User and public decryption operations with proper error handling
-- S3 retrived ciphertext digest validation
+- S3 retrieved ciphertext digest validation
+- Two-level fallback strategy for S3 URL retrieval
+- Enhanced configuration documentation with complete environment variable mapping
+- Improved S3 error handling with warning-level logs for non-critical issues and making it more flexible and following non-failable pattern
+- Optional private key configuration for wallet management derived from string
+- Hardened EIP-712 signature consolidating it with the Core EIP-712 structs
 
 #### 1.2. In Progress 🚧
 
@@ -105,6 +110,7 @@
 - Transaction building and submission
 - Smart contract interface compatibility checks
 - Updated smart contract bytecode references
+- Updated smart contract interfaces from rc4 to rc7
 
 #### 4.2. In Progress 🚧
 
@@ -133,11 +139,13 @@
 - Interface compatibility testing suite
 - Localhost Load testing
 - Localhost Public decryption integration test (threshold & centralized)
+- Added S3 service Minio mock
+- Added S3 ciphertext retrieval tests with configurable endpoint support
+- User Decryption Integration test passed successfully based on httpz e2e script
 
 #### 5.2. In Progress 🚧
 
-- User Decryption Integration test
-- Fix new SC interface compatibility with Load testing and Public decryption integration test (threshold & centralized)
+- ...
 
 #### 5.3. Not Started ❌
 

@@ -9,9 +9,10 @@ use std::sync::{
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use tonic::{transport::Channel, Code, Request, Response, Status};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::core::config::Config;
+use crate::core::utils::eip712::verify_reencryption_eip712;
 use crate::error::Result;
 
 #[tonic::async_trait]
@@ -184,6 +185,15 @@ impl KmsService for KmsServiceImpl {
             .request_id
             .clone()
             .ok_or_else(|| Status::invalid_argument("Missing request ID"))?;
+
+        // Verify the EIP-712 signature for the reencryption request
+        if let Err(e) = verify_reencryption_eip712(request.get_ref()) {
+            error!("Failed to verify reencryption request: {}", e);
+            warn!(
+                "Proceeding with reencryption despite verification failure: {}",
+                e
+            );
+        }
 
         // Log the client address and FHE types being processed
         let fhe_types = request

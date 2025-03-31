@@ -24,13 +24,14 @@
 ## References
 
 - [API](references/api/README.md)
+- [KMS Connector](references/kms-connector.md)
 
 ## Explanations
 
 - [What are KMS blockchain blocks](explanations/blockchain_blocks.md)
-    - [KMS connector](explanations/connector.md)
-    - [KMS node](explanations/node.md)
-    - [Keychain DA](explanations/keychain.md)
+- [KMS connector](explanations/connector.md)
+- [KMS node](explanations/node.md)
+- [Keychain DA](explanations/keychain.md)
 
 ## Developers
 

@@ -1,4 +1,5 @@
 use alloy::{hex, primitives::U256};
+use alloy_primitives::Address;
 use kms_grpc::kms::v1::FheType;
 use tracing::{error, info};
 
@@ -62,7 +63,7 @@ pub fn log_and_extract_result<T>(
     _result: &T,
     fhe_type: i32,
     request_id: U256,
-    user_addr: Option<&[u8]>,
+    user_addr: Option<Address>,
 ) where
     T: AsRef<[u8]>,
 {
@@ -82,9 +83,11 @@ pub fn log_and_extract_result<T>(
     }
 }
 
-/// Convert a string request ID to a valid hex format that KMS Core expects
-/// Returns an error if the request ID cannot be properly formatted
+/// Convert a U256 request ID to a valid hex format that KMS Core expects
+/// The KMS Core expects a hex string that decodes to exactly 32 bytes
 pub fn format_request_id(request_id: U256) -> String {
+    // Convert U256 to big-endian bytes
     let bytes = request_id.to_be_bytes::<32>();
+    // Encode as hex string
     hex::encode(bytes)
 }

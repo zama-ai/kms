@@ -1,6 +1,5 @@
 # syntax=docker/dockerfile:1
 
-
 # RUST_IMAGE_VERSION arg can be used to override the default version
 ARG RUST_IMAGE_VERSION=latest
 
@@ -57,6 +56,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && \
     apt-get install -y --no-install-recommends \
+    ca-certificates \
     libssl3 \
     && rm -rf /var/lib/apt/lists/*
 

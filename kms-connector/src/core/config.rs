@@ -48,13 +48,13 @@ pub struct Config {
     pub retry_interval_secs: u64,
     /// Account index for wallet derivation (optional)
     pub account_index: Option<u32>,
-    /// EIP-712 domain name for IDecryptionManager contract
+    /// EIP-712 domain name for DecryptionManager contract
     #[serde(default = "default_decryption_manager_domain_name")]
     pub decryption_manager_domain_name: String,
-    /// EIP-712 domain version for IDecryptionManager contract
+    /// EIP-712 domain version for DecryptionManager contract
     #[serde(default = "default_decryption_manager_domain_version")]
     pub decryption_manager_domain_version: String,
-    /// EIP-712 domain name for IHTTPZ contract
+    /// EIP-712 domain name for HTTPZ contract
     #[serde(default = "default_httpz_domain_name")]
     pub httpz_domain_name: String,
     /// EIP-712 domain version for IHTTPZ contract
@@ -63,6 +63,9 @@ pub struct Config {
     /// Path to the signing key file (optional)
     #[serde(default = "default_signing_key_path")]
     pub signing_key_path: Option<String>,
+    /// Private key as a hex string (optional)
+    #[serde(default)]
+    pub private_key: Option<String>,
     /// S3 configuration for ciphertext storage (optional)
     #[serde(default)]
     pub s3_config: Option<S3Config>,
@@ -88,19 +91,19 @@ fn default_retry_interval() -> u64 {
     5 // 5 seconds
 }
 
-fn default_decryption_manager_domain_name() -> String {
-    "IDecryptionManager".to_string()
+pub fn default_decryption_manager_domain_name() -> String {
+    "DecryptionManager".to_string()
 }
 
-fn default_decryption_manager_domain_version() -> String {
+pub fn default_decryption_manager_domain_version() -> String {
     "1".to_string()
 }
 
-fn default_httpz_domain_name() -> String {
-    "IHTTPZ".to_string()
+pub fn default_httpz_domain_name() -> String {
+    "HTTPZ".to_string()
 }
 
-fn default_httpz_domain_version() -> String {
+pub fn default_httpz_domain_version() -> String {
     "1".to_string()
 }
 
@@ -133,6 +136,7 @@ impl Default for Config {
             httpz_domain_name: default_httpz_domain_name(),
             httpz_domain_version: default_httpz_domain_version(),
             signing_key_path: default_signing_key_path(),
+            private_key: None,
             s3_config: None,
             verify_coprocessors: default_verify_coprocessors(),
         }
@@ -172,6 +176,54 @@ impl Config {
             config.reencryption_timeout_secs
         );
         info!("  Retry Interval: {}s", config.retry_interval_secs);
+
+        // Log domain configuration
+        info!(
+            "  Decryption Manager Domain Name: {}",
+            config.decryption_manager_domain_name
+        );
+        info!(
+            "  Decryption Manager Domain Version: {}",
+            config.decryption_manager_domain_version
+        );
+        info!("  HTTPZ Domain Name: {}", config.httpz_domain_name);
+        info!("  HTTPZ Domain Version: {}", config.httpz_domain_version);
+
+        // Validate and log UTF-8 status of domain names
+        if config.decryption_manager_domain_name.is_empty() {
+            warn!("  Decryption Manager Domain Name is empty, will use default at runtime");
+        } else {
+            // Check for characters that might cause issues in EIP-712 domain messages
+            let has_control_chars = config
+                .decryption_manager_domain_name
+                .chars()
+                .any(|c| c.is_control());
+            let has_non_ascii = !config.decryption_manager_domain_name.is_ascii();
+
+            if has_control_chars {
+                warn!("  Decryption Manager Domain Name contains control characters, may cause EIP-712 encoding issues");
+            } else if has_non_ascii {
+                warn!("  Decryption Manager Domain Name contains non-ASCII characters, may cause EIP-712 compatibility issues");
+            } else {
+                info!("  Decryption Manager Domain Name EIP-712 compatibility check: OK");
+            }
+        }
+
+        if config.httpz_domain_name.is_empty() {
+            warn!("  HTTPZ Domain Name is empty, will use default at runtime");
+        } else {
+            // Check for characters that might cause issues in EIP-712 domain messages
+            let has_control_chars = config.httpz_domain_name.chars().any(|c| c.is_control());
+            let has_non_ascii = !config.httpz_domain_name.is_ascii();
+
+            if has_control_chars {
+                warn!("  HTTPZ Domain Name contains control characters, may cause EIP-712 encoding issues");
+            } else if has_non_ascii {
+                warn!("  HTTPZ Domain Name contains non-ASCII characters, may cause EIP-712 compatibility issues");
+            } else {
+                info!("  HTTPZ Domain Name EIP-712 compatibility check: OK");
+            }
+        }
 
         // Validate mnemonic
         Mnemonic::parse_normalized(&config.mnemonic)
@@ -256,6 +308,54 @@ impl Config {
         );
         info!("  Retry Interval: {}s", config.retry_interval_secs);
 
+        // Log domain configuration
+        info!(
+            "  Decryption Manager Domain Name: {}",
+            config.decryption_manager_domain_name
+        );
+        info!(
+            "  Decryption Manager Domain Version: {}",
+            config.decryption_manager_domain_version
+        );
+        info!("  HTTPZ Domain Name: {}", config.httpz_domain_name);
+        info!("  HTTPZ Domain Version: {}", config.httpz_domain_version);
+
+        // Validate and log UTF-8 status of domain names
+        if config.decryption_manager_domain_name.is_empty() {
+            warn!("  Decryption Manager Domain Name is empty, will use default at runtime");
+        } else {
+            // Check for characters that might cause issues in EIP-712 domain messages
+            let has_control_chars = config
+                .decryption_manager_domain_name
+                .chars()
+                .any(|c| c.is_control());
+            let has_non_ascii = !config.decryption_manager_domain_name.is_ascii();
+
+            if has_control_chars {
+                warn!("  Decryption Manager Domain Name contains control characters, may cause EIP-712 encoding issues");
+            } else if has_non_ascii {
+                warn!("  Decryption Manager Domain Name contains non-ASCII characters, may cause EIP-712 compatibility issues");
+            } else {
+                info!("  Decryption Manager Domain Name EIP-712 compatibility check: OK");
+            }
+        }
+
+        if config.httpz_domain_name.is_empty() {
+            warn!("  HTTPZ Domain Name is empty, will use default at runtime");
+        } else {
+            // Check for characters that might cause issues in EIP-712 domain messages
+            let has_control_chars = config.httpz_domain_name.chars().any(|c| c.is_control());
+            let has_non_ascii = !config.httpz_domain_name.is_ascii();
+
+            if has_control_chars {
+                warn!("  HTTPZ Domain Name contains control characters, may cause EIP-712 encoding issues");
+            } else if has_non_ascii {
+                warn!("  HTTPZ Domain Name contains non-ASCII characters, may cause EIP-712 compatibility issues");
+            } else {
+                info!("  HTTPZ Domain Name EIP-712 compatibility check: OK");
+            }
+        }
+
         // Validate the configuration using existing validation logic
         if !config.decryption_manager_address.starts_with("0x") {
             return Err(Error::Config(
@@ -276,6 +376,15 @@ impl Config {
         Mnemonic::parse_normalized(&config.mnemonic)
             .map_err(|e| Error::Config(format!("Invalid mnemonic: {}", e)))?;
         info!("Mnemonic validated successfully");
+
+        // Log wallet configuration
+        if config.signing_key_path.is_some() {
+            info!("  Wallet: Using signing key file");
+        } else if config.private_key.is_some() {
+            info!("  Wallet: Using private key string");
+        } else {
+            info!("  Wallet: Using mnemonic");
+        }
 
         Ok(config)
     }
@@ -389,6 +498,7 @@ mod tests {
             httpz_domain_name: "IHTTPZ".to_string(),
             httpz_domain_version: "1".to_string(),
             signing_key_path: None,
+            private_key: None,
             s3_config: None,
             verify_coprocessors: Some(true),
         };
@@ -460,11 +570,12 @@ mod tests {
             reencryption_timeout_secs: 300,
             retry_interval_secs: 5,
             account_index: None,
-            decryption_manager_domain_name: "IDecryptionManager".to_string(),
+            decryption_manager_domain_name: "DecryptionManager".to_string(),
             decryption_manager_domain_version: "1".to_string(),
-            httpz_domain_name: "IHTTPZ".to_string(),
+            httpz_domain_name: "HTTPZ".to_string(),
             httpz_domain_version: "1".to_string(),
             signing_key_path: None,
+            private_key: None,
             s3_config: None,
             verify_coprocessors: Some(true),
         };
@@ -492,11 +603,12 @@ mod tests {
             reencryption_timeout_secs: 300,
             retry_interval_secs: 5,
             account_index: None,
-            decryption_manager_domain_name: "IDecryptionManager".to_string(),
+            decryption_manager_domain_name: "DecryptionManager".to_string(),
             decryption_manager_domain_version: "1".to_string(),
-            httpz_domain_name: "IHTTPZ".to_string(),
+            httpz_domain_name: "HTTPZ".to_string(),
             httpz_domain_version: "1".to_string(),
             signing_key_path: None,
+            private_key: None,
             s3_config: None,
             verify_coprocessors: Some(true),
         };
@@ -575,11 +687,12 @@ mod tests {
             reencryption_timeout_secs: 300,
             retry_interval_secs: 5,
             account_index: None,
-            decryption_manager_domain_name: "IDecryptionManager".to_string(),
+            decryption_manager_domain_name: "DecryptionManager".to_string(),
             decryption_manager_domain_version: "1".to_string(),
-            httpz_domain_name: "IHTTPZ".to_string(),
+            httpz_domain_name: "HTTPZ".to_string(),
             httpz_domain_version: "1".to_string(),
             signing_key_path: None,
+            private_key: None,
             s3_config: None,
             verify_coprocessors: Some(true),
         };

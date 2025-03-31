@@ -71,6 +71,9 @@ async fn run_connector(
     let wallet = if let Some(signing_key_path) = &config.signing_key_path {
         info!("Using signing key from file: {}", signing_key_path);
         KmsWallet::from_signing_key_file(Some(signing_key_path), Some(config.chain_id))?
+    } else if let Some(private_key) = &config.private_key {
+        info!("Using private key from configuration");
+        KmsWallet::from_private_key_str(private_key, Some(config.chain_id))?
     } else {
         // Initialize wallet with account index derived from service name
         let account_index = config.get_account_index();
@@ -84,7 +87,7 @@ async fn run_connector(
     );
 
     info!(
-        "Using contracts for EVENTS subscription:\n\tIDecryptionManager: {}\n\tIHttpz: {}",
+        "Using contracts for EVENTS subscription:\n\tDecryptionManager: {}\n\tHttpz: {}",
         config.decryption_manager_address, config.httpz_address
     );
 

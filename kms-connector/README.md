@@ -183,6 +183,7 @@ All environment variables are prefixed with `KMS_CONNECTOR_`. Here's the complet
 
 | Environment Variable | Description | Default |
 |---------------------|-------------|---------|
+| `KMS_CONNECTOR_ACCOUNT_INDEX` | Account index for the wallet | 0 |
 | `KMS_CONNECTOR_GWL2_URL` | Gateway L2 WebSocket URL | ws://localhost:8545 |
 | `KMS_CONNECTOR_KMS_CORE_ENDPOINT` | KMS Core service endpoint | http://[::1]:50052 |
 | `KMS_CONNECTOR_MNEMONIC` | Wallet mnemonic phrase | (required if signing_key_path not provided) |
@@ -195,10 +196,17 @@ All environment variables are prefixed with `KMS_CONNECTOR_`. Here's the complet
 | `KMS_CONNECTOR_DECRYPTION_TIMEOUT_SECS` | Timeout for decryption operations | 300 |
 | `KMS_CONNECTOR_REENCRYPTION_TIMEOUT_SECS` | Timeout for re-encryption operations | 300 |
 | `KMS_CONNECTOR_RETRY_INTERVAL_SECS` | Interval between retry attempts | 5 |
+| `KMS_CONNECTOR_DECRYPTION_MANAGER_DOMAIN_NAME` | EIP-712 domain name for DecryptionManager contract | DecryptionManager |
+| `KMS_CONNECTOR_DECRYPTION_MANAGER_DOMAIN_VERSION` | EIP-712 domain version for DecryptionManager contract | 1 |
+| `KMS_CONNECTOR_HTTPZ_DOMAIN_NAME` | EIP-712 domain name for HTTPZ contract | HTTPZ |
+| `KMS_CONNECTOR_HTTPZ_DOMAIN_VERSION` | EIP-712 domain version for HTTPZ contract | 1 |
+| `KMS_CONNECTOR_PRIVATE_KEY` | Private key as a hex string | (optional) |
+| `KMS_CONNECTOR_VERIFY_COPROCESSORS` | Whether to verify coprocessors against HTTPZ contract | false |
 | `KMS_CONNECTOR_S3_CONFIG__REGION` | AWS S3 region for ciphertext storage | (optional) |
 | `KMS_CONNECTOR_S3_CONFIG__BUCKET` | AWS S3 bucket name for ciphertext storage | (optional) |
 | `KMS_CONNECTOR_S3_CONFIG__ENDPOINT` | AWS S3 endpoint URL for ciphertext storage | (optional) |
-| `KMS_CONNECTOR_VERIFY_COPROCESSORS` | Whether to verify coprocessors against HTTPZ contract | false |
+
+> **Note on Nested Configuration**: For nested configuration structures like `s3_config`, use double underscores (`__`) in environment variables to represent the nesting. For example, `s3_config.region` in TOML becomes `KMS_CONNECTOR_S3_CONFIG__REGION` as an environment variable.
 
 ### Best Practices
 
@@ -252,7 +260,7 @@ S3 configuration is optional. If not provided, the connector will log warnings b
 
 ## Wallet Configuration
 
-The KMS Connector supports two methods for configuring the wallet used for signing decryption responses:
+The KMS Connector supports three methods for configuring the wallet used for signing decryption responses:
 
 ### 1. Mnemonic-based Wallet
 
@@ -282,12 +290,39 @@ signing_key_path = "../keys/CLIENT/SigningKey/e164d9de0bec6656928726433cc56bef6e
 export KMS_CONNECTOR_SIGNING_KEY_PATH="../keys/CLIENT/SigningKey/e164d9de0bec6656928726433cc56bef6ee8417ad5a4f8c82fbcc2d3e5f220fd"
 ```
 
-The path is relative to the execution directory of the application. At least one of these two options must be provided.
+The path is relative to the execution directory of the application.
+
+### 3. Private Key String
+
+You can also provide a private key directly as a hex string:
+
+```toml
+# In config file
+private_key = "8da4ef21b864d2cc526dbdb2a120bd2874c36c9d0a1fb7f8c63d7f7a8b41de8f"
+```
+
+```bash
+# Or as environment variable
+export KMS_CONNECTOR_PRIVATE_KEY="8da4ef21b864d2cc526dbdb2a120bd2874c36c9d0a1fb7f8c63d7f7a8b41de8f"
+```
+
+The private key can be provided with or without the '0x' prefix.
+
+### Wallet Initialization Priority
+
+The connector will attempt to initialize the wallet in the following order:
+
+1. Signing key file (if provided)
+2. Private key string (if provided)
+3. Mnemonic (if provided)
+
+At least one of these three options must be provided.
 
 ### Security Considerations
 
 - For production environments, it's recommended to use the signing key file approach with proper file permissions
 - The signing key file should be securely stored and accessible only to the KMS Connector process
+- Private keys provided as strings should be handled with extreme caution to avoid exposure
 - In development environments, the mnemonic approach can be more convenient
 
 ## Architecture: Adapter-Provider Pattern
