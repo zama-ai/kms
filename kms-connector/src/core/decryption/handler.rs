@@ -314,13 +314,12 @@ impl<P: Provider + Clone + std::fmt::Debug + 'static> DecryptionHandler<P> {
 
                 if let Some(payload) = reencryption_response.payload {
                     // Serialize all signcrypted ciphertexts
-                    let reencrypted_share_buf =
-                        bincode::serialize(&payload.signcrypted_ciphertexts).map_err(|e| {
-                            crate::error::Error::InvalidResponse(format!(
-                                "Failed to serialize reencrypted shares: {}",
-                                e
-                            ))
-                        })?;
+                    let reencrypted_share_buf = bincode::serialize(&payload).map_err(|e| {
+                        crate::error::Error::InvalidResponse(format!(
+                            "Failed to serialize user decryption payload: {}",
+                            e
+                        ))
+                    })?;
 
                     // Log each ciphertext for debugging
                     for ct in &payload.signcrypted_ciphertexts {
