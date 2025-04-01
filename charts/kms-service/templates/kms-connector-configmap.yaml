@@ -19,10 +19,10 @@ data:
     #kms_core_endpoint =
 
     # GateWay L2 WebSocket RPC URL endpoint (required)
-    gwl2_url = {{ .Values.kmsConnector.config.gatewayL2RpcUrl | quote }}
+    gwl2_url =
 
     # Chain ID (required)
-    chain_id = {{ .Values.kmsConnector.config.chainId }}
+    chain_id =
 
     # Decryption manager contract address, required, overriden by env vars
     #decryption_manager_address = "0x..."
@@ -31,5 +31,5 @@ data:
     #httpz_address = "0x..."
 
     # Size of the event processing channel (optional)
-    channel_size = {{ .Values.kmsConnector.config.channelSize }}
+    channel_size =
 {{- end -}}

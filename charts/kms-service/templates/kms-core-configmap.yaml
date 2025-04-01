@@ -108,6 +108,24 @@ data:
     max_concurrent_exports = 4
     scheduled_delay_ms = 500
     export_timeout_ms = 5000
+
+    [threshold.core_to_core_net]
+    message_limit = 70
+    multiplier = 1.1
+    max_interval = 5
+    max_elapsed_time = 300
+    network_timeout = 10
+    network_timeout_bk = 300
+    network_timeout_bk_sns = 1200
+    max_en_decode_message_size = 2147483648
+
+    [rate_limiter_conf]
+    bucket_size = 50000
+    dec = 1
+    reenc = 1
+    crsgen = 100
+    preproc = 50000
+    keygen = 1000
     {{- end }}
 
     {{- if .Values.kmsCore.nitroEnclave.enabled }}

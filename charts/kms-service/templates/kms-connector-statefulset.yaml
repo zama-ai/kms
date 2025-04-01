@@ -49,30 +49,13 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.labels['apps.kubernetes.io/pod-index']
-            - name: KMS_CONNECTOR_KMS_CORE_ENDPOINT
-              value: {{ printf "http://%s-$(POD_INDEX):%d" $kmsCoreName (int $.Values.kmsCore.ports.client) | quote }}
             - name: RUN_MODE
               value: {{ .Values.runMode }}
-            - name: PROBE
-              value: "true"
-            - name: KMS_CONNECTOR_DECRYPTION_MANAGER_ADDRESS
-              valueFrom:
-                configMapKeyRef:
-                  name: {{ .Values.kmsConnector.contractAddress.configmap.name }}
-                  key: {{ .Values.kmsConnector.contractAddress.configmap.decryptionManagerAddressKey }}
-            - name: KMS_CONNECTOR_HTTPZ_ADDRESS
-              valueFrom:
-                configMapKeyRef:
-                  name: {{ .Values.kmsConnector.contractAddress.configmap.name }}
-                  key: {{ .Values.kmsConnector.contractAddress.configmap.httpzAddressKey }}
-            - name: KMS_CONNECTOR_S3_CONFIG__REGION
-              value: {{ .Values.kmsConnector.s3Config.region }}
-            - name: KMS_CONNECTOR_S3_CONFIG__BUCKET
-              value: {{ .Values.kmsConnector.s3Config.bucket }}
-            - name: KMS_CONNECTOR_S3_CONFIG__ENDPOINT
-              value: {{ .Values.kmsConnector.s3Config.endpoint }}
             - name: RUST_LOG
               value: {{ .Values.rustLog }}
+            - name: KMS_CONNECTOR_KMS_CORE_ENDPOINT
+              value: {{ printf "http://%s-$(POD_INDEX):%d" $kmsCoreName (int $.Values.kmsCore.ports.client) | quote }}
+{{- toYaml .Values.kmsConnector.env | nindent 12 }}
           volumeMounts:
             - mountPath: /var/lib/kms-connector/config.toml
               subPath: config.toml
