@@ -88,7 +88,8 @@ The rest of the communication is defined by existing standards and uses JSON-RPC
 Docker images that are ready for use can be found [here](https://github.com/zama-ai/kms-core/packages).
 
 ## Getting started
-The project requires the use of Docker and Rust. Ensure that these are installed on your system.
+The project requires [Docker](https://docs.docker.com/engine/install/) to be installed and running, along with [Rust](https://www.rust-lang.org/tools/install) with version >= 1.85, and the [protobuf compiler, `protoc`](https://protobuf.dev/installation/).
+Ensure that these are installed on your system.
 
 The project can be build with:
 ```bash
@@ -99,7 +100,7 @@ Typical testing can be done using
 ```bash
 cargo test
 ```
-Some integration tests may require the use of additional tools. Further details can be found in the READMEs in each sub project. To avoid them and only run unit tests, run the following command instead:
+Some integration tests may require the use of additional tools. In particular some tests require Redis to be running on the local system. Further details can be found in the READMEs in each sub project. To avoid them and only run unit tests, run the following command instead:
 ```bash
 cargo test --lib
 ```
