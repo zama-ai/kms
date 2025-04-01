@@ -28,8 +28,8 @@ use kms_grpc::kms::v1::{
     TypedSigncryptedCiphertext,
 };
 use kms_grpc::rpc_types::{
-    hash_element, safe_serialize_hash_element_versioned, EIP712PublicDecrypt, FhePubKey,
-    FheServerKey, PubDataType, SignedPubDataHandleInternal, SnsKey,
+    hash_element, safe_serialize_hash_element_versioned, FhePubKey, FheServerKey, PubDataType,
+    PublicDecryptVerification, SignedPubDataHandleInternal, SnsKey,
     UserDecryptResponseVerification, CRS,
 };
 use rand::{CryptoRng, RngCore, SeedableRng};
@@ -589,8 +589,8 @@ pub fn compute_pt_message_hash(
     let pt_bytes = abi_encode_plaintexts(pts);
 
     // the solidity structure to sign with EIP-712
-    let message = EIP712PublicDecrypt {
-        handlesList: external_handles,
+    let message = PublicDecryptVerification {
+        ctHandles: external_handles,
         decryptedResult: pt_bytes,
     };
 

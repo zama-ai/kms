@@ -68,8 +68,8 @@ alloy_sol_types::sol! {
 // https://github.com/zama-ai/gateway-l2/blob/main/contracts/DecryptionManager.sol#L18
 // and the name must be what is defined under `EIP712_PUBLIC_DECRYPT_TYPE`
 alloy_sol_types::sol! {
-    struct EIP712PublicDecrypt {
-        uint256[] handlesList;
+    struct PublicDecryptVerification {
+        uint256[] ctHandles;
         bytes decryptedResult;
     }
 }
