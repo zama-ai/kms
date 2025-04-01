@@ -864,7 +864,7 @@ async fn do_keygen(
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                 if ctr >= max_iter {
                     panic!(
-                        "timeout while waiting for keygen after {} retries (insecure {insecure})",
+                        "timeout while waiting for keygen after {} retries (insecure: {insecure})",
                         max_iter
                     );
                 }
@@ -880,7 +880,7 @@ async fn do_keygen(
                 };
 
                 tracing::info!(
-                    "Got response for insecure keygen: {:?} (insecure {insecure})",
+                    "Got response for insecure keygen: {:?} (insecure: {insecure})",
                     response
                 );
             }
@@ -990,7 +990,7 @@ async fn do_crsgen(
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                 // do at most max_iter retries
                 if ctr >= max_iter {
-                    panic!("timeout while waiting for crsgen after {max_iter} retries (insecure {insecure})");
+                    panic!("timeout while waiting for crsgen after {max_iter} retries (insecure: {insecure})");
                 }
                 ctr += 1;
                 response = if insecure {
@@ -1003,7 +1003,7 @@ async fn do_crsgen(
                         .await
                 };
 
-                println!("Got response for crsgen: {:?} (insecure {insecure})", response);
+                println!("Got response for crsgen: {:?} (insecure: {insecure})", response);
             }
             (req_id_clone, response.unwrap().into_inner())
         });
@@ -1545,7 +1545,7 @@ pub async fn execute_cmd(
         }
         CCCommand::CrsGen(CrsParameters { max_num_bits }) => {
             tracing::info!(
-                "Insecure CRS generation with parameter {}.",
+                "CRS generation with parameter {}.",
                 param.as_str_name()
             );
 
@@ -1563,10 +1563,10 @@ pub async fn execute_cmd(
                 destination_prefix,
             )
             .await?;
-            (Some(req_id), "insecure crsgen done".to_string())
+            (Some(req_id), "crsgen done".to_string())
         }
         CCCommand::InsecureCrsGen(CrsParameters { max_num_bits }) => {
-            tracing::info!("CRS generation with parameter {}.", param.as_str_name());
+            tracing::info!("Insecure CRS generation with parameter {}.", param.as_str_name());
 
             let req_id = do_crsgen(
                 &mut internal_client,
@@ -1582,7 +1582,7 @@ pub async fn execute_cmd(
                 destination_prefix,
             )
             .await?;
-            (Some(req_id), "crsgen done".to_string())
+            (Some(req_id), "insecure crsgen done".to_string())
         }
         CCCommand::PreprocKeyGen(NoParameters {}) => {
             tracing::info!("Preprocessing with parameter {}.", param.as_str_name());
