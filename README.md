@@ -9,7 +9,7 @@
 
 
 <p align="center">
-  <a href=""> 📒 White paper</a> | <a href="https://github.com/zama-ai/kms-whitepaper"> 📚 The KMS Whitepaper by Zama</a>
+  <a href="https://github.com/zama-ai/httpz-whitepaper"> 📒 HTTPZ White paper</a> | <a href="https://eprint.iacr.org/2023/815"> 📚 Noah's Ark (peer-reviewed academic paper)</a>
 </p>
 
 <p align="center">

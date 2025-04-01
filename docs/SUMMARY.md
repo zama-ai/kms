@@ -8,7 +8,6 @@
 - [Installation](getting-started/installing.md)
 - [Benchmarks](getting-started/benchmarks.md)
 - [Threshold cryptography concepts](getting-started/concepts.md)
-- [Whitepaper](https://github.com/zama-ai/kms-whitepaper)
 
 ## Guides
 

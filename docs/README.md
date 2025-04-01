@@ -41,10 +41,12 @@ Access to additional resources and join the Zama community.
 
 ### References & Explanations
 
-Refer to the API, review product architecture, and access additional resources for in-depth explanations while working with Concrete ML.
+Refer to the API, review product architecture, and access additional resources for in-depth explanations while working with the Zama TKMS.
 
-- [API](references/api/)
-- FIXME add more important markdown files
+- [API](references/api/): Specification of the gRPC end-points of the TKMS.
+- [HTTPZ Whitepaper](https://github.com/zama-ai/httpz-whitepaper): The whitepaper of the HTTPZ system and how the TKMS integrates into this.
+- [NIST specification](https://github.com/zama-ai/NIST-Threshold): The detailed technical specification of all the cryptography implemented in the TKMS.
+- [Noah's Ark paper](https://eprint.iacr.org/2023/815): The academic paper describing the protocols implemented in the TKMS.
 
 ### Support channels
 
