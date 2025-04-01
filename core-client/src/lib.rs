@@ -1544,10 +1544,7 @@ pub async fn execute_cmd(
             (Some(req_id), "insecure keygen done".to_string())
         }
         CCCommand::CrsGen(CrsParameters { max_num_bits }) => {
-            tracing::info!(
-                "CRS generation with parameter {}.",
-                param.as_str_name()
-            );
+            tracing::info!("CRS generation with parameter {}.", param.as_str_name());
 
             let req_id = do_crsgen(
                 &mut internal_client,
@@ -1566,7 +1563,10 @@ pub async fn execute_cmd(
             (Some(req_id), "crsgen done".to_string())
         }
         CCCommand::InsecureCrsGen(CrsParameters { max_num_bits }) => {
-            tracing::info!("Insecure CRS generation with parameter {}.", param.as_str_name());
+            tracing::info!(
+                "Insecure CRS generation with parameter {}.",
+                param.as_str_name()
+            );
 
             let req_id = do_crsgen(
                 &mut internal_client,
