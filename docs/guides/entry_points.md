@@ -49,7 +49,7 @@ Below we go through the commands that can be executed at the Zama KMS gRPC endpo
 
 ### Preprocessing
 Preprocessing is needed to generate correlated randomness which is used later, when you generate a FHE key set, or a Key Switching Key (KSK). Preprocessed material can only be used _once_ and hence needs to be generated every time you wish to generate an FHE key set.
-Calls to preprocessing requires key parameters, the specification of a unique `RequestId`, which is a 20-byte hex string. In case of the generation of a KSK the `RequestId` of the existing keys which the switching key needs to be from and to.
+Calls to preprocessing requires key parameters, the specification of a unique `RequestId`, which is a 32-byte hex string. In case of the generation of a KSK the `RequestId` of the existing keys which the switching key needs to be from and to.
 
 Observe the preprocessed material is stored in Redis database in a deployed situation (although running a test setup the data can be stored in RAM).
 
@@ -59,7 +59,7 @@ For non-test parameters this process is very slow. Even on strong machines it wi
 
 ### Key generation
 Key generation allows the generation of an FHE key set, or public KSK. To do key generation, preprocessing must have been done beforehand and not used before.
-The key generation requires a unique `RequestId`, which is a 20-byte hex string
+The key generation requires a unique `RequestId`, which is a 32-byte hex string
 request, the key parameters, EIP712 domain information (used by the servers for signing the response), the `RequestId` of the preprocessing to used, which _must_ be unused and already generated. Furthermore, it _must_ have been generated for the same parameters as used in the key generation call. Finally, the request _may_ also include the `RequestId`s of keys to generate a KSK from and to (again it is required the preprocessing has been carried out for this as well).
 
 The KMS Cores will post the result of the key generation to a public storage system, which may be the local file system or an S3 bucket. While a signed digests of the public key material is returned to the caller.
@@ -73,7 +73,7 @@ To support a fast setup in test situations, the Zama KMS supports an "insecure" 
 CRS generation allows the generation of a Common Reference String (CRS) in a distributed secure manner. The CRS is what is known as "powers-of-tau". Amongst other things, it can be used to do zero-knowledge proofs of plaintext knowledge for FHE encrypted messages. See [this paper](https://eprint.iacr.org/2023/800.pdf) for more information.
 While a CRS is not directly linked to a public key, it must be generated based on parameters of the public keys used to encrypt the messages for which is will be used for proof of knowledge.
 
-The CRS generation requires  a unique `RequestId`, which is a 20-byte hex string
+The CRS generation requires  a unique `RequestId`, which is a 32-byte hex string
 request, the key parameters for the public keys which it will be used with, the max amount of plaintext bits of the messages encrypted that it will be used with and finally EIP712 domain information (used by the servers for signing the response).
 
 The KMS Cores will post the result of the CRS generation to a public storage system, which may be the local file system or an S3 bucket. While a signed digest of the CRS is returned to the caller.
@@ -83,7 +83,7 @@ The CRS generation process is moderately slow. It may take several minutes to co
 ## Public Decryption
 Public decryption allows decryption of a vector of ciphertexts in such a manner that all KMS Core servers along with the caller of the request learns the decrypted value in plain, along with EIP712 signatures on the result from each of the $n$ KMS Cores servers.
 
-The decryption request requires a unique `RequestId`, which is a 20-byte hex string
+The decryption request requires a unique `RequestId`, which is a 32-byte hex string
 request, an ID of the key needed to decrypt (this will be the `RequestId` used to generate the key), the address of the smart contract used that may be used to validate the request, EIP712 domain information (used by the servers for signing the response) along with the vector of ciphertexts to be decrypted and meta information about each of these. The meta information incudes what kind of plain value they are encrypting (e.g. uint8 or uint32), along with an optional handle used to identify each ciphertext externally.
 
 The public decryption process is very fast and should be expected to be done within a few seconds at the most.
@@ -91,7 +91,7 @@ The public decryption process is very fast and should be expected to be done wit
 ## User Decryption
 User decryption allows decryption of a vector of ciphertexts in such a manner that _only_ a designated receiver can learn the decrypted value in plain. This means that neither the caller, nor the KMS Cores learn the decrypted value. This is achieved by each KMS Core only "partially" decrypted the ciphertext and then signcrypting it under the public encryption key of a designated receiver. This allows the receiving user to decrypt and validate all the $n$ partial decryptions and then combine the partial decryptions to the true plaintext.
 
-The user decryption request requires a unique `RequestId`, which is a 20-byte hex string
+The user decryption request requires a unique `RequestId`, which is a 32-byte hex string
 request, an ID of the key needed to decrypt (this will be the `RequestId` used to generate the key), EIP712 domain information (used by the servers for signing the response) along with the vector of ciphertexts to be decrypted and meta information about each of these. The meta information incudes what kind of plain value they are encrypting (e.g. uint8 or uint32).
 
 The user decryption process is very fast and should be expected to be done within a few seconds at the most.

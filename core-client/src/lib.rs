@@ -279,7 +279,7 @@ pub fn parse_hex(arg: &str) -> anyhow::Result<Vec<u8>> {
 
 #[derive(Debug, Parser, Clone)]
 pub struct CipherParameters {
-    /// Hex value that we want to encrypt and request a decryption/re-encryption.
+    /// Hex value to encrypt and request a public/user decryption.
     /// The value will be converted from a little endian hex string to a `Vec<u8>`.
     /// Can optionally have a "0x" prefix.
     #[clap(long, short = 'e')]
@@ -288,15 +288,15 @@ pub struct CipherParameters {
     /// Expected one of ebool, euint4, ..., euint2048
     #[clap(long, short = 'd')]
     pub data_type: FheType,
-    /// Boolean to activate ciphertext compression or not.
-    #[clap(long, short = 'c', default_value_t = false)]
+    /// Boolean to activate ciphertext compression or not. Default: False.
+    #[clap(long, short = 'c')]
     pub compression: bool,
     /// Boolean to do SnS preprocessing on the ciphertext or not.
     /// SnS preprocessing performs a PBS to convert 64-bit ciphertexts to 128-bit ones.
-    /// At the moment it cannot be used in combination with compression.
-    #[clap(long, default_value_t = false)]
+    /// At the moment it cannot be used in combination with compression. Default: False.
+    #[clap(long)]
     pub precompute_sns: bool,
-    /// Key identifier to use for decryption/re-encryption purposes
+    /// Key identifier to use for public/user decryption
     #[clap(long, short = 'k')]
     pub key_id: String,
     /// Number of ciphertexts to process in a batch

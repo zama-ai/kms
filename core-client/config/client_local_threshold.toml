@@ -1,7 +1,18 @@
-s3_endpoint = "http://localhost:9000/kms"
-object_folder = ["PUB-p1","PUB-p2","PUB-p3","PUB-p4"]
+# Config for a threshold deployment of n=4 cores with threshold t=1
+
+# List of core addresses and ports
 core_addresses = ["localhost:50100","localhost:50200","localhost:50300","localhost:50400"]
+
+# The S3 endpoint for public key material
+s3_endpoint = "http://localhost:9000/kms"
+
+# The list folders where public key material is stored, one per party.
+object_folder = ["PUB-p1","PUB-p2","PUB-p3","PUB-p4"]
+
+# The minimum number of matching responses required to have an honest majority
 num_majority = 2
+
+# The minumum number of responses required to reconstruct a value (e.g. in user decryption)
 num_reconstruct = 3
 
 # Decryption mode used in reencryption reconstruction.
@@ -10,5 +21,5 @@ num_reconstruct = 3
 # Only relevant for threshold.
 decryption_mode = "NoiseFloodSmall"
 
-# fhe_params = "Test" # Uncomment for testing purposes
-fhe_params = "Default"
+# fhe_params = "Test" # Small, insecure parameters for testing
+fhe_params = "Default" # Large, secure parameters

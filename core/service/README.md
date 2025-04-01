@@ -19,7 +19,7 @@ Optionally, the gRPC service can be run in an Amazon Nitro enclave and store sen
 - `src/client`
     - Example client code which is primarily used for testing the KMS Core.
 - `src/conf`
-    - Rust files capturing configuration information for the KMS Core.
+    - Configuration files for running the KMS Core(s).
 - `src/cryptography`
     - Folder containing PKE cryptography code, along with cryptography needed to interface with tfhe-rs.
 - `src/engine`

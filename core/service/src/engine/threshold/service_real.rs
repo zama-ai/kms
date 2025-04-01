@@ -1724,7 +1724,7 @@ impl<
                 .map(|idx| decs.get(idx).unwrap().clone()) // unwrap is fine here, since we iterate over all keys.
                 .collect();
 
-            // sign the plaintexts and handles for external verification (in the fhevm)
+            // sign the plaintexts and handles for external verification (in HTTPZ)
             let external_sig = if let Some(domain) = eip712_domain {
                 compute_external_pt_signature(&sigkey, ext_handles_bytes, &pts, domain)
             } else {

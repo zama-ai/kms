@@ -342,7 +342,7 @@ pub(crate) fn compute_external_reenc_signature(
     Ok(signature)
 }
 
-/// take external handles and plaintext in the form of bytes, convert them to the required solidity types and sign them using EIP-712 for external verification (e.g. in the fhevm).
+/// take external handles and plaintext in the form of bytes, convert them to the required solidity types and sign them using EIP-712 for external verification (e.g. in HTTPZ).
 pub(crate) fn compute_external_pt_signature(
     server_sk: &PrivateSigKey,
     ext_handles_bytes: Vec<Vec<u8>>,
@@ -367,7 +367,7 @@ pub(crate) fn compute_external_pt_signature(
     signature
 }
 
-/// Safely serialize some public data, convert it to a solidity type byte array and compute the EIP-712 message hash for external verification (e.g. in the fhevm).
+/// Safely serialize some public data, convert it to a solidity type byte array and compute the EIP-712 message hash for external verification (e.g. in HTTPZ).
 pub fn compute_external_pubdata_message_hash<D: Serialize + Versionize + Named>(
     data: &D,
     eip712_domain: &Eip712Domain,
@@ -410,7 +410,7 @@ pub fn compute_external_pubdata_message_hash<D: Serialize + Versionize + Named>(
     Ok(message_hash)
 }
 
-/// take some public data (e.g. public key or CRS) and sign it using EIP-712 for external verification (e.g. in the fhevm).
+/// take some public data (e.g. public key or CRS) and sign it using EIP-712 for external verification (e.g. in HTTPZ).
 pub fn compute_external_pubdata_signature<D: Serialize + Versionize + Named>(
     client_sk: &PrivateSigKey,
     data: &D,
@@ -775,7 +775,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_abi_encoding_fhevm() {
+    fn test_abi_encoding_httpz() {
         let u256_val = tfhe::integer::U256::from((1, 256));
         let u2048_val = tfhe::integer::bigint::U2048::from(257_u64);
 

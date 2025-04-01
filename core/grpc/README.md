@@ -18,7 +18,7 @@ message RequestId { string request_id = 1;}
 
 This is used as a unique identifier to each request.
 
-`request_id` must be a 20 bytes hex string.
+`request_id` must be a 32 bytes hex string, without a `0x` prefix
 
 If a request contains a malformed `request_id`, the response will be an error with `tonic::Code::InvalidArgument`.
 
@@ -109,7 +109,7 @@ message SignedPubDataHandle {
 
 This is the common structure for all public cryptographic material (i.e public TFHE keys and the CRS).
 
-- `key_handle`: a `SHA3-256` hash of the `tfhe::safe_serialization` of the underlying struct truncated to 20 bytes. This handle serves as the `URI` to locate the actual object in the `storage`.
+- `key_handle`: a `SHA3-256` hash of the `tfhe::safe_serialization` of the underlying struct. This handle serves as the `URI` to locate the actual object in the `storage`.
 - `signature`: a `bincode::serialize` of `Secp256k1` signature on the `key_handle`. With the `s` value normalized.
 - `external_signature`: a `EIP-712` signature on the _solidity-compatible_  `SHA3-256` hash of the `tfhe::safe_serialization` of the underlying struct. Observe the same signing key is used as for the above `signature`.
 

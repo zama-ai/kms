@@ -238,7 +238,7 @@ pub struct SignedPubDataHandleInternal {
     // The signature on the handle
     pub signature: Vec<u8>,
     // The signature on the key for the external recipient
-    // (e.g. using EIP712 for the fhevm)
+    // (e.g. using EIP712 for HTTPZ)
     pub external_signature: Vec<u8>,
 }
 
@@ -953,7 +953,7 @@ impl From<RequestId> for String {
 impl TryFrom<RequestId> for u128 {
     type Error = anyhow::Error;
 
-    // Convert a RequestId to a u128 through truncation of the first bytes.
+    // Convert a RequestId to a u128 through truncation of the first 16 bytes.
     fn try_from(value: RequestId) -> Result<Self, Self::Error> {
         TryFrom::<&RequestId>::try_from(&value)
     }
@@ -962,10 +962,10 @@ impl TryFrom<RequestId> for u128 {
 impl TryFrom<&RequestId> for u128 {
     type Error = anyhow::Error;
 
-    // Convert a RequestId to a u128 through truncation of the first bytes.
+    // Convert a RequestId to a u128 through truncation of the first 16 bytes.
     fn try_from(value: &RequestId) -> Result<Self, Self::Error> {
         let hex = hex::decode(value.to_string())?;
-        let hex_truncated: [u8; 16] = hex[4..20].try_into()?;
+        let hex_truncated: [u8; 16] = hex[16..32].try_into()?;
         Ok(u128::from_be_bytes(hex_truncated))
     }
 }
@@ -976,7 +976,9 @@ impl TryFrom<String> for RequestId {
     fn try_from(value: String) -> Result<Self, Self::Error> {
         let request_id = RequestId { request_id: value };
         if !request_id.is_valid() {
-            return Err(anyhow!("The string is not valid as request ID"));
+            return Err(anyhow!(
+                "The string {request_id} is not valid as request ID"
+            ));
         }
         Ok(request_id)
     }
