@@ -7,7 +7,7 @@ use crate::cryptography::signcryption::{
     decrypt_signcryption, ephemeral_encryption_key_generation, insecure_decrypt_ignoring_signature,
     internal_verify_sig,
 };
-use crate::{anyhow_error_and_log, some_or_err};
+use crate::{anyhow_error_and_log, compute_reenc_message_hash, some_or_err};
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
@@ -1254,7 +1254,7 @@ impl Client {
         agg_resp: &[ReencryptionResponse],
     ) -> anyhow::Result<Option<Vec<ReencryptionResponsePayload>>> {
         let resp_parsed = some_or_err(
-            self.validate_reenc_resp(agg_resp)?,
+            self.validate_reenc_resp(client_request, eip712_domain, agg_resp)?,
             "Could not validate the aggregated responses".to_string(),
         )?;
         let expected_link = compute_link(client_request, eip712_domain)?;
@@ -1269,6 +1269,8 @@ impl Client {
 
     fn validate_reenc_resp(
         &self,
+        client_request: &ParsedReencryptionRequest,
+        eip712_domain: &Eip712Domain,
         agg_resp: &[ReencryptionResponse],
     ) -> anyhow::Result<Option<Vec<ReencryptionResponsePayload>>> {
         if agg_resp.is_empty() {
@@ -1304,7 +1306,14 @@ impl Client {
 
             // Validate that all the responses agree with the pivot on the static parts of the
             // response
-            if !self.validate_reenc_meta_data(pivot_payload, cur_payload, &cur_resp.signature)? {
+            if !self.validate_reenc_meta_data_and_signature(
+                client_request,
+                pivot_payload,
+                cur_payload,
+                &cur_resp.signature,
+                &cur_resp.external_signature,
+                eip712_domain,
+            )? {
                 tracing::warn!(
                     "Server who gave ID {} did not provide the proper response!",
                     cur_payload.party_id
@@ -1363,6 +1372,43 @@ impl Client {
         Ok(Some(resp_parsed_payloads))
     }
 
+    /// check that the external signature on the decryption result(s) is valid, i.e. was made by one of the supplied addresses
+    fn check_ext_reencryption_signature(
+        external_sig: &[u8],
+        payload: &ReencryptionResponsePayload,
+        request: &ParsedReencryptionRequest,
+        eip712_domain: &Eip712Domain,
+        kms_addrs: &[alloy_primitives::Address],
+    ) -> anyhow::Result<()> {
+        // convert received data into proper format for EIP-712 verification
+        if external_sig.len() != 65 {
+            return Err(anyhow::anyhow!(
+                "Expected external signature of length 65 Bytes, but got {:?}",
+                external_sig.len()
+            ));
+        }
+        // this reverses the call to `signature.as_bytes()` that we use for serialization
+        let sig = alloy_signer::Signature::from_bytes_and_parity(
+            external_sig,
+            external_sig[64] & 0x01 == 0,
+        );
+
+        let user_pk: PublicEncKey = bincode::deserialize(&request.enc_key)?;
+        let hash = compute_reenc_message_hash(payload, eip712_domain, &user_pk)?;
+
+        let addr = sig.recover_address_from_prehash(&hash)?;
+        tracing::info!("recovered address: {}", addr);
+
+        // check that the address is in the list of known KMS addresses
+        if kms_addrs.contains(&addr) {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(
+                "External PT signature verification failed!"
+            ))
+        }
+    }
+
     /// Decrypt the reencryption response from the centralized KMS and verify that the signatures are valid
     fn centralized_reencryption_resp(
         &self,
@@ -1382,11 +1428,6 @@ impl Client {
                 hex::encode(&payload.digest),
                 eip712_domain,
             )));
-        }
-
-        // check signature
-        if resp.signature.is_empty() {
-            return Err(anyhow_error_and_log("empty signature"));
         }
 
         let stored_server_addrs = match &self.server_identities {
@@ -1409,12 +1450,35 @@ impl Client {
         if stored_server_addrs[0] != alloy_signer::utils::public_key_to_address(cur_verf_key.pk()) {
             return Err(anyhow_error_and_log("verification key is not consistent"));
         }
-        let sig = Signature {
-            sig: k256::ecdsa::Signature::from_slice(&resp.signature)?,
-        };
-        internal_verify_sig(&bincode::serialize(&payload)?, &sig, &cur_verf_key).inspect_err(
-            |e| tracing::warn!("signature on received response is not valid ({})", e),
-        )?;
+
+        // prefer the normal ECDSA verification over the EIP712 one
+        if resp.signature.is_empty() {
+            // we only consider the external signature in wasm
+            let eip712_signature = &resp.external_signature;
+
+            // check signature
+            if eip712_signature.is_empty() {
+                return Err(anyhow_error_and_log("empty signature"));
+            }
+
+            Self::check_ext_reencryption_signature(
+                eip712_signature,
+                &payload,
+                request,
+                eip712_domain,
+                stored_server_addrs,
+            )
+            .inspect_err(|e| {
+                tracing::warn!("signature on received response is not valid ({})", e)
+            })?;
+        } else {
+            let sig = Signature {
+                sig: k256::ecdsa::Signature::from_slice(&resp.signature)?,
+            };
+            internal_verify_sig(&bincode::serialize(&payload)?, &sig, &cur_verf_key).inspect_err(
+                |e| tracing::warn!("signature on received response is not valid ({})", e),
+            )?;
+        }
 
         payload
             .signcrypted_ciphertexts
@@ -1889,11 +1953,14 @@ impl Client {
         Ok(true)
     }
 
-    fn validate_reenc_meta_data<T: MetaResponse + FheTypeResponse + serde::Serialize>(
+    fn validate_reenc_meta_data_and_signature(
         &self,
-        pivot_resp: &T,
-        other_resp: &T,
+        client_request: &ParsedReencryptionRequest,
+        pivot_resp: &ReencryptionResponsePayload,
+        other_resp: &ReencryptionResponsePayload,
         signature: &[u8],
+        external_signature: &[u8],
+        eip712_domain: &Eip712Domain,
     ) -> anyhow::Result<bool> {
         let types_1 = pivot_resp.fhe_types()?;
         let types_2 = other_resp.fhe_types()?;
@@ -1933,15 +2000,36 @@ impl Client {
             return Ok(false);
         }
 
-        let sig = Signature {
-            sig: k256::ecdsa::Signature::from_slice(signature)?,
-        };
-        // NOTE that we cannot use `BaseKmsStruct::verify_sig`
-        // because `BaseKmsStruct` cannot be compiled for wasm (it has an async mutex).
-        if internal_verify_sig(&bincode::serialize(&other_resp)?, &sig, &resp_verf_key).is_err() {
-            tracing::warn!("Signature on received response is not valid!");
-            return Ok(false);
+        // Prefer ECDSA signature over the eip712 one
+        if signature.is_empty() {
+            // check signature
+            if external_signature.is_empty() {
+                return Err(anyhow_error_and_log("empty signature"));
+            }
+
+            Self::check_ext_reencryption_signature(
+                external_signature,
+                other_resp,
+                client_request,
+                eip712_domain,
+                stored_server_addrs,
+            )
+            .inspect_err(|e| {
+                tracing::warn!("signature on received response is not valid ({})", e)
+            })?;
+        } else {
+            let sig = Signature {
+                sig: k256::ecdsa::Signature::from_slice(signature)?,
+            };
+            // NOTE that we cannot use `BaseKmsStruct::verify_sig`
+            // because `BaseKmsStruct` cannot be compiled for wasm (it has an async mutex).
+            if internal_verify_sig(&bincode::serialize(&other_resp)?, &sig, &resp_verf_key).is_err()
+            {
+                tracing::warn!("Signature on received response is not valid!");
+                return Ok(false);
+            }
         }
+
         Ok(true)
     }
 }

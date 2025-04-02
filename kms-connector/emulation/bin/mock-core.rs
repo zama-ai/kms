@@ -241,7 +241,8 @@ impl CoreServiceEndpoint for MockKmsService {
         eip712_signature[64] = 28; // v value is either 27 or 28
 
         Ok(Response::new(ReencryptionResponse {
-            signature: payload_signature, // Core's signature on the payload
+            signature: payload_signature,         // Core's signature on the payload
+            external_signature: eip712_signature, // EIP-712 signature for blockchain (not optional for reencryption)
             payload: Some(ReencryptionResponsePayload {
                 verification_key: vec![],
                 digest: result_bytes.clone(),
@@ -252,7 +253,6 @@ impl CoreServiceEndpoint for MockKmsService {
                 }],
                 party_id: 1,
                 degree: 1,
-                external_signature: eip712_signature, // EIP-712 signature for blockchain (not optional for reencryption)
             }),
         }))
     }

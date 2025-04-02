@@ -970,10 +970,11 @@ impl<
         client_address: &alloy_primitives::Address,
         sig_key: Arc<PrivateSigKey>,
         fhe_keys: OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>,
+        server_verf_key: Vec<u8>,
         dec_mode: DecryptionMode,
         domain: &alloy_sol_types::Eip712Domain,
         metric_tags: Vec<(&'static str, String)>,
-    ) -> anyhow::Result<(Vec<TypedSigncryptedCiphertext>, Vec<u8>)> {
+    ) -> anyhow::Result<(ReencryptionResponsePayload, Vec<u8>)> {
         let keys = fhe_keys;
 
         let mut all_signcrypted_cts = vec![];
@@ -1127,13 +1128,17 @@ impl<
             });
         }
 
-        let external_signature = compute_external_reenc_signature(
-            &sig_key,
-            &all_signcrypted_cts,
-            domain,
-            client_enc_key,
-        )?;
-        Ok((all_signcrypted_cts, external_signature))
+        let payload = ReencryptionResponsePayload {
+            signcrypted_ciphertexts: all_signcrypted_cts,
+            digest: link,
+            verification_key: server_verf_key,
+            party_id: session_prep.my_id as u32,
+            degree: session_prep.threshold as u32,
+        };
+
+        let external_signature =
+            compute_external_reenc_signature(&sig_key, &payload, domain, client_enc_key)?;
+        Ok((payload, external_signature))
     }
 }
 
@@ -1221,6 +1226,8 @@ impl<
             (TAG_DECRYPTION_KIND, dec_mode.as_str_name().to_string()),
         ];
 
+        let server_verf_key = self.base_kms.get_serialized_verf_key();
+
         // the result of the computation is tracked the tracker
         self.tracker.spawn(
             async move {
@@ -1246,6 +1253,7 @@ impl<
                             &client_address,
                             sig_key,
                             k,
+                            server_verf_key,
                             dec_mode,
                             &domain,
                             metric_tags,
@@ -1256,10 +1264,9 @@ impl<
                 };
                 let mut guarded_meta_store = meta_store.write().await;
                 match tmp {
-                    Ok((signcryption_res, sig)) => {
+                    Ok((payload, sig)) => {
                         // We cannot do much if updating the storage fails at this point...
-                        let _ =
-                            guarded_meta_store.update(&req_id, Ok((signcryption_res, sig, link)));
+                        let _ = guarded_meta_store.update(&req_id, Ok((payload, sig)));
                     }
                     Result::Err(e) => {
                         // We cannot do much if updating the storage fails at this point...
@@ -1294,17 +1301,8 @@ impl<
             let guarded_meta_store = self.reenc_meta_store.read().await;
             guarded_meta_store.retrieve(&request_id)
         };
-        let (signcrypted_ciphertexts, external_signature, link) =
+        let (payload, external_signature) =
             handle_res_mapping(status, &request_id, "Reencryption").await?;
-        let server_verf_key = self.base_kms.get_serialized_verf_key();
-        let payload = ReencryptionResponsePayload {
-            signcrypted_ciphertexts,
-            digest: link,
-            verification_key: server_verf_key,
-            party_id: self.session_preparer.my_id as u32,
-            degree: self.session_preparer.threshold as u32,
-            external_signature,
-        };
 
         let sig_payload_vec = tonic_handle_potential_err(
             bincode::serialize(&payload),
@@ -1317,6 +1315,7 @@ impl<
         )?;
         Ok(Response::new(ReencryptionResponse {
             signature: sig.sig.to_vec(),
+            external_signature,
             payload: Some(payload),
         }))
     }

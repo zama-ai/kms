@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::anyhow_error_and_log;
 use crate::consts::ID_LENGTH;
 use crate::cryptography::decompression;
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey, PublicSigKey};
 use crate::cryptography::signcryption::internal_verify_sig;
 use crate::util::key_setup::FhePrivateKey;
+use crate::{anyhow_error_and_log, compute_reenc_message_hash};
 use aes_prng::AesRng;
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::Bytes;
@@ -24,13 +24,12 @@ use distributed_decryption::execution::tfhe_internals::parameters::{
 use distributed_decryption::execution::tfhe_internals::test_feature::SnsClientKey;
 use k256::ecdsa::SigningKey;
 use kms_grpc::kms::v1::{
-    CiphertextFormat, FheParameter, FheType, SignedPubDataHandle, TypedPlaintext,
-    TypedSigncryptedCiphertext,
+    CiphertextFormat, FheParameter, FheType, ReencryptionResponsePayload, SignedPubDataHandle,
+    TypedPlaintext,
 };
 use kms_grpc::rpc_types::{
     hash_element, safe_serialize_hash_element_versioned, FhePubKey, FheServerKey, PubDataType,
-    PublicDecryptVerification, SignedPubDataHandleInternal, SnsKey,
-    UserDecryptResponseVerification, CRS,
+    PublicDecryptVerification, SignedPubDataHandleInternal, SnsKey, CRS,
 };
 use rand::{CryptoRng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -321,11 +320,11 @@ pub fn deserialize_to_low_level(
 
 pub(crate) fn compute_external_reenc_signature(
     server_sk: &PrivateSigKey,
-    cts: &[TypedSigncryptedCiphertext],
+    payload: &ReencryptionResponsePayload,
     eip712_domain: &Eip712Domain,
     user_pk: &PublicEncKey,
 ) -> anyhow::Result<Vec<u8>> {
-    let message_hash = compute_reenc_message_hash(cts, eip712_domain, user_pk)?;
+    let message_hash = compute_reenc_message_hash(payload, eip712_domain, user_pk)?;
 
     let signer = PrivateKeySigner::from_signing_key(server_sk.sk().clone());
     let signer_address = signer.address();
@@ -335,10 +334,10 @@ pub(crate) fn compute_external_reenc_signature(
     let signature = signer.sign_hash_sync(&message_hash)?.as_bytes().to_vec();
 
     tracing::info!(
-        "UserDecryptResponseVerification Signature: {:?}",
-        hex::encode(signature.clone())
+        "UserDecryptResponseVerification Signature: {:?} with length {}",
+        hex::encode(signature.clone()),
+        signature.len(),
     );
-
     Ok(signature)
 }
 
@@ -599,36 +598,6 @@ pub fn compute_pt_message_hash(
     message_hash
 }
 
-pub fn compute_reenc_message_hash(
-    cts: &[TypedSigncryptedCiphertext],
-    eip712_domain: &Eip712Domain,
-    user_pk: &PublicEncKey,
-) -> anyhow::Result<B256> {
-    // convert external_handles back to U256 to be signed
-    let external_handles: Vec<_> = cts
-        .iter()
-        .map(|e| U256::from_be_slice(e.external_handle.as_slice()))
-        .collect();
-
-    let reencrypted_share_buf = bincode::serialize(cts)?;
-
-    // the solidity structure to sign with EIP-712
-    // note that the JS client must also use the same encoding to verify the result
-    let user_pk = bincode::serialize(user_pk)?;
-    let message = UserDecryptResponseVerification {
-        publicKey: user_pk.into(),
-        ctHandles: external_handles,
-        reencryptedShare: reencrypted_share_buf.into(),
-    };
-
-    let message_hash = message.eip712_signing_hash(eip712_domain);
-    tracing::info!(
-        "UserDecryptResponseVerification EIP-712 Message hash: {:?}",
-        message_hash
-    );
-    Ok(message_hash)
-}
-
 pub(crate) fn retrieve_parameters(fhe_parameter: i32) -> anyhow::Result<DKGParams> {
     let fhe_parameter: crate::cryptography::internal_crypto_types::WrappedDKGParams =
         FheParameter::try_from(fhe_parameter)?.into();
@@ -646,9 +615,9 @@ pub type KeyGenCallValues = HashMap<PubDataType, SignedPubDataHandleInternal>;
 pub type DecCallValues = (Vec<u8>, Vec<TypedPlaintext>, Vec<u8>);
 
 // Values that need to be stored temporarily as part of an async reencryption call.
-// Represents Vec<TypedSigncryptedCiphertext>, external_handles, external_signature, request digest/link.
+// Represents ReencryptionResponsePayload, external_handles, external_signature.
 #[cfg(feature = "non-wasm")]
-pub type ReencCallValues = (Vec<TypedSigncryptedCiphertext>, Vec<u8>, Vec<u8>);
+pub type ReencCallValues = (ReencryptionResponsePayload, Vec<u8>);
 
 /// Helper method which takes a [HashMap<PubDataType, SignedPubDataHandle>] and returns
 /// [HashMap<String, SignedPubDataHandle>] by applying the [ToString] function on [PubDataType] for each element in the map.

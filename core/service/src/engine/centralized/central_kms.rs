@@ -34,6 +34,8 @@ use k256::ecdsa::SigningKey;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms::v1::KeySetAddedInfo;
 #[cfg(feature = "non-wasm")]
+use kms_grpc::kms::v1::ReencryptionResponsePayload;
+#[cfg(feature = "non-wasm")]
 use kms_grpc::kms::v1::RequestId;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms::v1::TypedSigncryptedCiphertext;
@@ -409,9 +411,10 @@ pub async fn async_reencrypt<
     req_digest: &[u8],
     client_enc_key: &PublicEncKey,
     client_address: &alloy_primitives::Address,
+    server_verf_key: Vec<u8>,
     domain: &alloy_sol_types::Eip712Domain,
     metric_tags: Vec<(&'static str, String)>,
-) -> anyhow::Result<(Vec<TypedSigncryptedCiphertext>, Vec<u8>)> {
+) -> anyhow::Result<(ReencryptionResponsePayload, Vec<u8>)> {
     use conf_trace::{
         metrics,
         metrics_names::{OP_REENCRYPT_INNER, TAG_TFHE_TYPE},
@@ -455,9 +458,18 @@ pub async fn async_reencrypt<
         });
     }
 
+    let payload = ReencryptionResponsePayload {
+        signcrypted_ciphertexts: all_signcrypted_cts,
+        digest: req_digest.to_vec(),
+        verification_key: server_verf_key,
+        party_id: 1, // In the centralized KMS, the server ID is always 1
+        degree: 0,   // In the centralized KMS, the degree is always 0 since result is a constant
+    };
+
     let external_signature =
-        compute_external_reenc_signature(sig_key, &all_signcrypted_cts, domain, client_enc_key)?;
-    Ok((all_signcrypted_cts, external_signature))
+        compute_external_reenc_signature(sig_key, &payload, domain, client_enc_key)?;
+
+    Ok((payload, external_signature))
 }
 
 // impl fmt::Debug for CentralizedKms, we don't want to include the decryption key in the debug output

@@ -293,8 +293,16 @@ message ReencryptionRequest {
 
 message ReencryptionResponse {
   bytes signature = 1;
-  // Signature of the serialization of [ReencryptionResponsePayload].
-  ReencryptionResponsePayload payload = 2;
+  // This is the external signature created from the Eip712 domain
+  // on the structure, where reencryptedShare is bincode::serialize(&payload)
+  // struct UserDecryptResponseVerification {
+  //     bytes publicKey;
+  //     uint256[] ctHandles;
+  //     bytes reencryptedShare;
+  // }
+  bytes external_signature = 2;
+  // The actual [ReencryptionResponsePayload].
+  ReencryptionResponsePayload payload = 3;
 }
 
 message ReencryptionResponsePayload {
@@ -315,14 +323,6 @@ message ReencryptionResponsePayload {
   uint32 party_id = 4;
   // The degree of the sharing scheme used.
   uint32 degree = 5;
-  // This is the external signature created from the Eip712 domain
-  // on the structure, where reencryptedShare is bincode::serialize(&signcrypted_ciphertexts)
-  // struct UserDecryptResponseVerification {
-  //     bytes publicKey;
-  //     uint256[] ctHandles;
-  //     bytes reencryptedShare;
-  // }
-  bytes external_signature = 6;
 }
 
 message TypedSigncryptedCiphertext {

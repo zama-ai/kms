@@ -29,8 +29,7 @@ use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 use kms_grpc::kms::v1::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocResult, KeyGenRequest, KeyGenResult,
-    KeySetAddedInfo, ReencryptionRequest, ReencryptionResponse, ReencryptionResponsePayload,
-    RequestId,
+    KeySetAddedInfo, ReencryptionRequest, ReencryptionResponse, RequestId,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain_option, SignedPubDataHandleInternal};
@@ -270,6 +269,8 @@ impl<
             (TAG_DECRYPTION_KIND, "centralized".to_string()),
         ];
 
+        let server_verf_key = self.base_kms.get_serialized_verf_key();
+
         let handle = tokio::spawn(
             async move {
                 let _timer = timer;
@@ -307,15 +308,16 @@ impl<
                     &link,
                     &client_enc_key,
                     &client_address,
+                    server_verf_key,
                     &domain,
                     metric_tags,
                 )
                 .await
                 {
-                    Ok((raw_decryption, external_signature)) => {
+                    Ok((payload, external_signature)) => {
                         let mut guarded_meta_store = meta_store.write().await;
                         let _ = guarded_meta_store
-                            .update(&request_id, Ok((raw_decryption, external_signature, link)));
+                            .update(&request_id, Ok((payload, external_signature)));
                     }
                     Result::Err(e) => {
                         let mut guarded_meta_store = meta_store.write().await;
@@ -347,19 +349,8 @@ impl<
             guarded_meta_store.retrieve(&request_id)
         };
 
-        let (signcrypted_ciphertexts, external_signature, link) =
+        let (payload, external_signature) =
             handle_res_mapping(status, &request_id, "Reencryption").await?;
-
-        let server_verf_key = self.get_serialized_verf_key();
-
-        let payload = ReencryptionResponsePayload {
-            signcrypted_ciphertexts,
-            digest: link,
-            verification_key: server_verf_key,
-            party_id: 1, // In the centralized KMS, the server ID is always 1
-            degree: 0, // In the centralized KMS, the degree is always 0 since result is a constant
-            external_signature,
-        };
 
         // sign the response
         let sig_payload_vec = tonic_handle_potential_err(
@@ -374,6 +365,7 @@ impl<
 
         Ok(Response::new(ReencryptionResponse {
             signature: sig.sig.to_vec(),
+            external_signature,
             payload: Some(payload),
         }))
     }

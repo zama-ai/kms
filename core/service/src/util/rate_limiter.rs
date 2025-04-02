@@ -25,7 +25,7 @@ impl Default for RateLimiterConfig {
             dec: 1,
             reenc: 1,
             crsgen: 100,
-            preproc: 5000,
+            preproc: 25000,
             keygen: 1000,
         }
     }

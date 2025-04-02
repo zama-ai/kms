@@ -311,6 +311,7 @@ pub fn cryptobox_decrypt(
 
 #[derive(serde::Deserialize, serde::Serialize)]
 struct ReencryptionResponseHex {
+    // NOTE: this is the external signature
     signature: String,
     payload: Option<String>,
 }
@@ -320,7 +321,7 @@ fn resp_to_js(agg_resp: Vec<ReencryptionResponse>) -> JsValue {
     let mut out = vec![];
     for resp in agg_resp {
         let r = ReencryptionResponseHex {
-            signature: hex::encode(&resp.signature),
+            signature: hex::encode(&resp.external_signature),
             payload: match resp.payload {
                 Some(inner) => Some(hex::encode(serialize(&inner).unwrap())),
                 None => None,
@@ -345,7 +346,8 @@ fn js_to_resp(json: JsValue) -> anyhow::Result<Vec<ReencryptionResponse>> {
     let mut out = vec![];
     for hex_resp in hex_resps {
         out.push(ReencryptionResponse {
-            signature: hex::decode(&hex_resp.signature)?,
+            signature: vec![], // there is no ECDSA signature in the wasm use case
+            external_signature: hex::decode(&hex_resp.signature)?,
             payload: match hex_resp.payload {
                 Some(inner) => {
                     let buf = hex::decode(&inner)?;

@@ -312,6 +312,9 @@ impl<P: Provider + Clone + std::fmt::Debug + 'static> DecryptionHandler<P> {
                 info!("[IN] 📡 ReencryptionResponse({}) received", request_id_hex);
                 let reencryption_response = response.into_inner();
 
+                // Get the external signature (non-optional in ReencryptionResponsePayload)
+                let signature = reencryption_response.external_signature;
+
                 if let Some(payload) = reencryption_response.payload {
                     // Serialize all signcrypted ciphertexts
                     let reencrypted_share_buf = bincode::serialize(&payload).map_err(|e| {
@@ -330,9 +333,6 @@ impl<P: Provider + Clone + std::fmt::Debug + 'static> DecryptionHandler<P> {
                             Some(client_addr),
                         );
                     }
-
-                    // Get the external signature (non-optional in ReencryptionResponsePayload)
-                    let signature = payload.external_signature;
 
                     // Send response back to L2
                     info!("Sending userDecryptionResponse for request {}", request_id);

@@ -32,7 +32,7 @@ path = "src/bin/kms-init.rs"
 aes.workspace = true
 aes-gcm-siv = "=0.11.1"
 aes-prng.workspace = true
-alloy-dyn-abi = { workspace = true, optional = true }
+alloy-dyn-abi = { workspace = true }
 alloy-primitives = { workspace = true, features = ["k256"] }
 alloy-sol-types = { workspace = true, features = ["eip712-serde"] }
 alloy-signer.workspace = true
@@ -139,7 +139,6 @@ non-wasm = [
     # TODO we need a way to move "distributed-decryption/testing" to dev-dependencies
     "distributed-decryption/testing",
     "kms-grpc/non-wasm",
-    "dep:alloy-dyn-abi",
     "dep:aws-config",
     "dep:aws-nitro-enclaves-nsm-api",
     "dep:aws-sdk-kms",

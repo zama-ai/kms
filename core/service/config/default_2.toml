@@ -87,5 +87,5 @@ bucket_size = 50000
 dec = 1
 reenc = 1
 crsgen = 100
-preproc = 50000
+preproc = 25000
 keygen = 1000

@@ -147,10 +147,10 @@ impl Reencryptor for DummyReencryptor {
             signcrypted_ciphertexts,
             party_id: self.degree + 1,
             degree: self.degree,
-            external_signature: vec![1, 2, 3],
         };
         Ok(Response::new(ReencryptionResponse {
             signature: vec![1, 2],
+            external_signature: vec![1, 2, 3],
             payload: Some(payload),
         }))
     }
