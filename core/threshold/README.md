@@ -25,10 +25,10 @@
 This repository provides threshold multi-party computation protocols
 such as threshold key generation, threshold decryption
 and so on for TFHE, BFV and BGV.
-Our protocols are designed to be secure and robust when a fraction
+Our protocols are designed to be both secure and robust when a fraction
 of the parties are malicious.
 
-This is a snapshot of what is going to be a part of the submission
+This repository is an early sneak peak of what we aim to be part of the submission
 for the [NIST call for Multi-Party Threshold Cryptography](https://csrc.nist.gov/projects/threshold-cryptography).
 
 ### Main features
@@ -44,7 +44,7 @@ for the [NIST call for Multi-Party Threshold Cryptography](https://csrc.nist.gov
 
 - Blog post *TODO link*
 - The [Noah's ark](https://eprint.iacr.org/2023/815) paper contains the technical details of our protocols
-- The draft of our NIST submission contains the detailed specification (coming soon)
+- An [iniital preliminary version of our proposed NIST submission](https://github.com/zama-ai/threshold-fhe/blob/main/TechnicalDocumentation/CryptographicDocumentation.pdf), which contains the detailed specification
 
 ## Directory overview
 
@@ -64,6 +64,8 @@ for the [NIST call for Multi-Party Threshold Cryptography](https://csrc.nist.gov
   - Bash scripts used for testing.
 - `tests`
   - Integration tests.
+- `TechnicalDocumentation`
+  - Contains our preliminary draft NIST main submission document. 
 
 ## How to use this repository
 
