@@ -9,20 +9,20 @@ metadata:
 data:
   config.toml: |
     # Service name for tracing (optional, default: "kms-connector")
-    service_name = "kms-connector"
+    #service_name = "kms-connector"
 
     # mnemonic for anvil
     # this one is for testing purpose
-    mnemonic = "test test test test test test test test test test test junk"
+    #mnemonic = "test test test test test test test test test test test junk"
 
     # KMS Core GRPC endpoint required, overriden by env vars
     #kms_core_endpoint =
 
     # GateWay L2 WebSocket RPC URL endpoint (required)
-    gwl2_url =
+    #gwl2_url =
 
     # Chain ID (required)
-    chain_id =
+    #chain_id =
 
     # Decryption manager contract address, required, overriden by env vars
     #decryption_manager_address = "0x..."
@@ -31,5 +31,5 @@ data:
     #httpz_address = "0x..."
 
     # Size of the event processing channel (optional)
-    channel_size =
+    #channel_size =
 {{- end -}}
