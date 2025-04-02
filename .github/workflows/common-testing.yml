@@ -96,7 +96,7 @@ jobs:
       # need to do it right after and then manually pull LFS files
       - name: Install git-lfs
         run: |
-          sudo apt update && sudo apt -y install git-lfs
+          sudo apt-get update && sudo apt-get -y install git-lfs
           git lfs pull
 
       - name: Setup Home
