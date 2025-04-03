@@ -103,7 +103,7 @@ impl ProgressTracker {
     /// - `tracker_name` is the name used when logging progress via [`Progress::log`]
     /// - `total` is the total amount of _things_ we need to generate
     /// - `reporting_interval_in_percentage` defines the interval (rounded up) at which a new call to [`Self::increment`]
-    ///      triggers a [`Progress::log`] (must hold that 0 < `reporting_interval_in_percentage` <= 100)
+    ///   triggers a [`Progress::log`] (must hold that 0 < `reporting_interval_in_percentage` <= 100)
     pub fn new(tracker_name: &str, total: usize, reporting_interval_in_percentage: usize) -> Self {
         assert!(reporting_interval_in_percentage > 0 && reporting_interval_in_percentage <= 100);
         let reporting_step = (total * reporting_interval_in_percentage).div_ceil(100);

@@ -162,7 +162,7 @@ impl StorageReader for S3Storage {
                 let trimmed_key = key.trim();
                 // Find the elements with the right prefix
                 // Find the id of file which is always the last segment when splitting on "/"
-                if let Some(cur_id) = trimmed_key.split('/').last() {
+                if let Some(cur_id) = trimmed_key.split('/').next_back() {
                     urls.insert(cur_id.to_string(), self.compute_url(cur_id, data_type)?);
                 }
             }
@@ -369,7 +369,7 @@ cfg_if::cfg_if! {
 /// 3. Test S3 storage
 ///    a. Update the const's BUCKET_NAME and AWS_REGION below to reflect what you created.
 ///    b. Now you can run the tests :)
-///         cargo test --lib -F s3_tests s3_
+///    cargo test --lib -F s3_tests s3_
 #[cfg(test)]
 pub mod tests {
     use super::*;

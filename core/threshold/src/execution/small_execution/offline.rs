@@ -264,12 +264,9 @@ where
             .into_iter()
             .map(|cur_collection| {
                 let sharing = ShamirSharings::create(cur_collection);
-                if let Ok(r) = sharing.err_reconstruct(2 * session.threshold() as usize, max_errors)
-                {
-                    Some(r)
-                } else {
-                    None
-                }
+                sharing
+                    .err_reconstruct(2 * session.threshold() as usize, max_errors)
+                    .ok()
             })
             .collect_vec())
     }

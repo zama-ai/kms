@@ -139,7 +139,7 @@ impl<E> LoopErr<E> {
 /// # Arguments
 ///
 /// * `$func` - The asynchronous function to be retried. It should return a `Result` with a `LoopErr`.
-///             If LoopErr is `Fatal`, the loop will stop and return the error. If LoopErr is `Transient`, the loop will continue.
+///   If LoopErr is `Fatal`, the loop will stop and return the error. If LoopErr is `Transient`, the loop will continue.
 /// * `$ms_sleep` - The initial sleep duration in milliseconds between retries.
 /// * `$max_iter` - The maximum number of retry attempts.
 /// * `$timeout_strategy` - The strategy to use for increasing the sleep duration between retries.

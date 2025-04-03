@@ -11,7 +11,7 @@ use crate::experimental::constants::NEW_HOPE_BOUND;
 /// eg: if new_hope_bound = 1 then {-1, 0, 1} are selected with probabilities:
 /// Pr[0] = 1/2; Pr[1] = Pr[-1] = 1/4
 pub(crate) fn approximate_gaussian<R: Rng + CryptoRng>(rng: &mut R) -> TernaryEntry {
-    let bytes_amount = (2 * NEW_HOPE_BOUND + 7) / 8;
+    let bytes_amount = (2 * NEW_HOPE_BOUND).div_ceil(8);
     let mut ss = vec![0_u8; bytes_amount];
     rng.fill(ss.as_mut_slice());
 
