@@ -104,10 +104,10 @@ impl BGVPreprocessingOrchestrator {
         //Ensures sessions are sorted by session id
         sessions.sort_by_key(|session| session.session_id());
 
-        //Dedicate 1 in 20 sessions to raw triples, 1 in 20 sessions for randomness
+        //Dedicate 1 in 20 sessions to raw triples, 1 session for randomness
         //and the rest for bits
-        let num_basic_sessions = div_ceil(sessions.len(), 20);
-        let triple_sessions: Vec<_> = (0..num_basic_sessions)
+        let num_triples_sessions = div_ceil(sessions.len(), 20);
+        let triple_sessions: Vec<_> = (0..num_triples_sessions)
             .map(|_| {
                 sessions.pop().ok_or_else(|| {
                     anyhow_error_and_log("Fail to retrieve sessions for basic preprocessing")
@@ -115,7 +115,7 @@ impl BGVPreprocessingOrchestrator {
             })
             .try_collect()?;
 
-        let randomness_sessions: Vec<_> = (0..num_basic_sessions)
+        let randomness_sessions: Vec<_> = (0..1)
             .map(|_| {
                 sessions.pop().ok_or_else(|| {
                     anyhow_error_and_log("Fail to retrieve sessions for basic preprocessing")
@@ -128,7 +128,7 @@ impl BGVPreprocessingOrchestrator {
             (triple_sender_channels, triple_receiver_channels),
             (random_sender_channels, random_receiver_channels),
             (bit_sender_channels, bit_receiver_channels),
-        ) = create_channels::<LevelKsw>(num_basic_sessions, sessions.len());
+        ) = create_channels::<LevelKsw>(num_triples_sessions, 1, sessions.len());
 
         let current_span = tracing::Span::current();
         let mut joinset_processors = JoinSet::new();

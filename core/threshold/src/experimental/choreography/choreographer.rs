@@ -190,12 +190,13 @@ impl ChoreoRuntime {
         Ok(pub_key)
     }
 
-    #[instrument(name = "DDec Request (BGV)", skip(self, session_id, ctxts), fields(num_ctxts = ?ctxts.len(), sid= ?session_id))]
+    #[instrument(name = "DDec Request (BGV)", skip(self, session_id, ctxts), fields(num_sessions = ?ctxts.len(), sid= ?session_id))]
     pub async fn bgv_initiate_threshold_decrypt(
         &self,
         session_id: SessionId,
         key_sid: SessionId,
         ctxts: Vec<LevelEllCiphertext>,
+        num_ctxt_per_session: usize,
         threshold: u32,
         seed: Option<u64>,
     ) -> anyhow::Result<SessionId> {
@@ -204,6 +205,7 @@ impl ChoreoRuntime {
             session_id,
             key_sid,
             ctxts,
+            num_ctxt_per_session,
         })?;
 
         let mut join_set = JoinSet::new();

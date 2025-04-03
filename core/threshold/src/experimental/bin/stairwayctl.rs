@@ -105,9 +105,13 @@ struct ThresholdDecryptArgs {
     #[clap(long = "path-pubkey", default_value = "./temp/pk.bin")]
     pub_key_file: String,
 
-    /// Number of Ciphertexts to encrypt
-    #[clap(long)]
-    num_msgs: u128,
+    /// Number of Ciphertexts to decrypt per session
+    #[clap(long = "num-ctxt-per-session")]
+    num_ctxt_per_session: u128,
+
+    /// Number of session to spawn in parallel
+    #[clap(long = "num-parallel-sessions")]
+    num_parallel_sessions: u128,
 
     /// Optional argument to force the session ID to be used. (Sampled at random if nothing is given)
     #[clap(long = "sid")]
@@ -260,13 +264,19 @@ async fn threshold_decrypt_command(
     choreo_conf: ChoreoConf,
     params: ThresholdDecryptArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let num_msgs = params.num_msgs;
+    //Create a Vec<Ctxt> where each inner vec will be handled by
+    //a different session
+    //Each ctxt will be copied num_ctxt_per_session time on the
+    //server side (doing that to be able to run some throughput benches
+    //whilst avoiding http max size issue)
+    let num_ctxt_per_session = params.num_ctxt_per_session;
+    let num_sessions = params.num_parallel_sessions;
     let pk_serialized = std::fs::read(params.pub_key_file)?;
     let (key_sid, pk): (SessionId, PublicKey<LevelEll, LevelKsw, N65536>) =
         bincode::deserialize(&pk_serialized)?;
 
     let mut rng = AesRng::from_entropy();
-    let ms = (0..num_msgs)
+    let ms = (0..num_sessions)
         .map(|_| {
             let m: Vec<u32> = (0..N65536::VALUE)
                 .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u32)
@@ -274,7 +284,7 @@ async fn threshold_decrypt_command(
             m
         })
         .collect_vec();
-    let ciphertexts = (0..num_msgs as usize)
+    let ciphertexts = (0..num_sessions as usize)
         .map(|i| bgv_pk_encrypt(&mut rng, &ms[i], &pk))
         .collect_vec();
 
@@ -286,6 +296,7 @@ async fn threshold_decrypt_command(
             SessionId(session_id),
             key_sid,
             ciphertexts,
+            num_ctxt_per_session as usize,
             choreo_conf.threshold_topology.threshold,
             params.seed,
         )

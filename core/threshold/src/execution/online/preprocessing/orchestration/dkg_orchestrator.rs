@@ -281,12 +281,13 @@ type ShareChannels<R> = (
 ///- One set for Randomness
 ///- One set for Bits
 pub(crate) fn create_channels<R: Clone>(
-    num_basic_sessions: usize,
+    num_triple_sessions: usize,
+    num_random_sessions: usize,
     num_bits_sessions: usize,
 ) -> (TripleChannels<R>, ShareChannels<R>, ShareChannels<R>) {
     let mut triple_sender_channels = Vec::new();
     let mut triple_receiver_channels = Vec::new();
-    for _ in 0..num_basic_sessions {
+    for _ in 0..num_triple_sessions {
         let (tx, rx) = channel::<Vec<Triple<R>>>(CHANNEL_BUFFER_SIZE);
         triple_sender_channels.push(tx);
         triple_receiver_channels.push(Mutex::new(rx));
@@ -295,7 +296,7 @@ pub(crate) fn create_channels<R: Clone>(
     //Always have only one random producing thread as it's super fast to produce
     let mut random_sender_channels = Vec::new();
     let mut random_receiver_channels = Vec::new();
-    for _ in 0..1 {
+    for _ in 0..num_random_sessions {
         let (tx, rx) = channel::<Vec<Share<R>>>(CHANNEL_BUFFER_SIZE);
         random_sender_channels.push(tx);
         random_receiver_channels.push(Mutex::new(rx));
@@ -347,8 +348,8 @@ where
         sessions.sort_by_key(|session| session.session_id());
 
         //Dedicate 1 in 20 sessions to raw triples, the rest to bits
-        let num_basic_sessions = div_ceil(sessions.len(), 20);
-        let basic_sessions: Vec<_> = (0..num_basic_sessions)
+        let num_triples_sessions = div_ceil(sessions.len(), 20);
+        let triples_sessions: Vec<_> = (0..num_triples_sessions)
             .map(|_| {
                 sessions.pop().ok_or_else(|| {
                     anyhow_error_and_log("Fail to retrieve sessions for basic preprocessing")
@@ -361,7 +362,7 @@ where
             (triple_sender_channels, triple_receiver_channels),
             (random_sender_channels, random_receiver_channels),
             (bit_sender_channels, bit_receiver_channels),
-        ) = create_channels(num_basic_sessions, sessions.len());
+        ) = create_channels(num_triples_sessions, 1, sessions.len());
 
         let current_span = tracing::Span::current();
         //Start the processors
@@ -391,7 +392,7 @@ where
         let triple_producer = SmallSessionTripleProducer::new(
             BATCH_SIZE_TRIPLES,
             num_triples,
-            basic_sessions,
+            triples_sessions,
             triple_sender_channels,
             Some(self.triple_progress_tracker),
         )?;
@@ -421,7 +422,7 @@ where
 
         res_sessions.sort_by_key(|session| session.session_id());
 
-        //Start producers for randomness
+        //Start producers for randomness by re-using one of the session used for triple generation
         let randomness_session = res_sessions
             .pop()
             .ok_or_else(|| anyhow_error_and_log("Failed to pop a session for randomness"))?;
@@ -496,7 +497,7 @@ where
             (triple_sender_channels, triple_receiver_channels),
             (random_sender_channels, random_receiver_channels),
             (bit_sender_channels, bit_receiver_channels),
-        ) = create_channels(num_basic_sessions, sessions.len());
+        ) = create_channels(num_basic_sessions, 1, sessions.len());
 
         let current_span = tracing::Span::current();
         //Start the processors

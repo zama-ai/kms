@@ -39,10 +39,14 @@ CURR_SID=$(( CURR_SID + 1 ))
 
 ###DDEC
 #Perform NUM_CTXTS decryptions
-$STAIRWAYCTL_EXEC -c $1 threshold-decrypt --path-pubkey $KEY_PATH/pk.bin --num-msgs $NUM_CTXTS --sid $CURR_SID
-$STAIRWAYCTL_EXEC -c $1 status-check --sid $CURR_SID --keep-retry true
-##Get the result
-$STAIRWAYCTL_EXEC -c $1 threshold-decrypt-result --sid $CURR_SID
+for NUM_PARALLEL_SESSIONS in 1 2 4 #8 16 32 64 
+do
+    $STAIRWAYCTL_EXEC -c $1 threshold-decrypt --path-pubkey $KEY_PATH/pk.bin --num-ctxt-per-session $NUM_CTXTS --num-parallel-sessions $NUM_PARALLEL_SESSIONS --sid $CURR_SID
+    $STAIRWAYCTL_EXEC -c $1 status-check --sid $CURR_SID --keep-retry true
+    ##Get the result
+    $STAIRWAYCTL_EXEC -c $1 threshold-decrypt-result --sid $CURR_SID
+    CURR_SID=$(( CURR_SID + 1 ))
+done
 
 printf "Press enter to shutdown experiment\n"
 read _ 

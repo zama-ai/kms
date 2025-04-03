@@ -11,7 +11,7 @@ use crate::choreography::grpc::gen::{
     ThresholdKeyGenResultRequest, ThresholdKeyGenResultResponse,
 };
 use crate::choreography::grpc::{
-    create_small_session, create_small_sessions, fill_network_memory_info_multiple_sessions,
+    create_small_sessions, fill_network_memory_info_multiple_sessions,
     fill_network_memory_info_single_session, gen_random_sid,
 };
 use crate::choreography::requests::Status;
@@ -48,7 +48,7 @@ use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::task::JoinHandle;
+use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::Duration;
 use tracing::{instrument, Instrument};
 
@@ -679,7 +679,15 @@ impl Choreography for ExperimentalGrpcChoreography {
 
         let session_id = preproc_params.session_id;
         let key_sid = preproc_params.key_sid;
-        let ctxts = preproc_params.ctxts;
+        //We receive a Vec<Ctxt>, each ctxt is attributed to a session a copied
+        //num_ctxt_per_session time
+        //(trick to do throughput bench without having to deal with http max size)
+        let vec_ctxts = preproc_params
+            .ctxts
+            .into_iter()
+            .map(|ctxt| vec![ctxt; preproc_params.num_ctxt_per_session])
+            .collect_vec();
+        let num_parallel = vec_ctxts.len();
 
         let key_ref = self
             .data
@@ -705,9 +713,10 @@ impl Choreography for ExperimentalGrpcChoreography {
             })?
             .get_levelone()?;
 
-        let base_session = self
-            .create_base_session(
+        let base_sessions = self
+            .create_base_sessions(
                 session_id,
+                num_parallel,
                 threshold,
                 role_assignments.clone(),
                 NetworkMode::Async,
@@ -715,26 +724,58 @@ impl Choreography for ExperimentalGrpcChoreography {
             )
             .await
             .unwrap();
-        let mut small_session = create_small_session(base_session, &prss_setup);
+        let mut small_sessions = create_small_sessions(base_sessions, &prss_setup);
 
+        //Sort here, because we sort the result by sid to make sure all parties output same thing
+        small_sessions.sort_by_key(|s| s.session_id().0);
+        tracing::info!(
+            "Run decryption on {} sessions in parallel",
+            small_sessions.len()
+        );
         let res_store = self.data.ddec_result_store.clone();
         let my_future = || async move {
+            let mut join_set = JoinSet::new();
+            for (ctxts, mut session) in vec_ctxts.into_iter().zip(small_sessions.into_iter()) {
+                let key_ref = key_ref.clone();
+                join_set.spawn(
+                    async move {
+                        tracing::info!("Inside session, decrypt {} ctxts in sequence", ctxts.len());
+                        let mut vec_inner_res = Vec::new();
+                        for ctxt in ctxts.into_iter() {
+                            vec_inner_res.push(
+                                noise_flood_decryption(&mut session, &key_ref.1, &ctxt).await,
+                            );
+                        }
+                        (session, vec_inner_res)
+                    }
+                    .instrument(tracing::Span::current()),
+                );
+            }
+
+            let mut small_sessions = Vec::new();
             let mut res = Vec::new();
-            for ctxt in ctxts.iter() {
-                res.push(
-                    noise_flood_decryption(&mut small_session, &key_ref.1, ctxt)
-                        .await
+
+            while let Some(Ok((session, vec_inner_res))) = join_set.join_next().await {
+                let sid = session.session_id();
+                small_sessions.push(session);
+                for inner_res in vec_inner_res.into_iter() {
+                    let inner_res = inner_res
                         .map_err(|e| {
                             tonic::Status::new(
                                 tonic::Code::Aborted,
                                 format!("Error while running noiseflood ddec {e}"),
                             )
                         })
-                        .unwrap(),
-                );
+                        .unwrap();
+                    res.push((sid, inner_res));
+                }
             }
+
+            res.sort_by_key(|(sid, _)| sid.0);
+            let res = res.into_iter().map(|(_, r)| r).collect();
+
             res_store.insert(session_id, res);
-            fill_network_memory_info_single_session(small_session);
+            fill_network_memory_info_multiple_sessions(small_sessions);
         };
         self.data.status_store.insert(
             session_id,

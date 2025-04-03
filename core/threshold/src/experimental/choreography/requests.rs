@@ -38,4 +38,5 @@ pub struct ThresholdDecryptParams {
     pub session_id: SessionId,
     pub key_sid: SessionId,
     pub ctxts: Vec<LevelEllCiphertext>,
+    pub num_ctxt_per_session: usize,
 }
