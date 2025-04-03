@@ -40,7 +40,7 @@ struct PrssInitArgs {
     session_id: Option<u128>,
 
     /// Optional argument to set the master seed used by the parties.
-    /// Parties will then add their party index to the see.
+    /// Parties will then add their party index to the seed.
     /// Sampled at random if nothing is given
     #[clap(long = "seed")]
     seed: Option<u64>,
@@ -69,7 +69,7 @@ struct PreprocKeyGenArgs {
     session_id: Option<u128>,
 
     /// Optional argument to set the master seed used by the parties.
-    /// Parties will then add their party index to the see.
+    /// Parties will then add their party index to the seed.
     /// Sampled at random if nothing is given
     #[clap(long = "seed")]
     seed: Option<u64>,
@@ -91,7 +91,7 @@ struct ThresholdKeyGenArgs {
     session_id_preproc: Option<u128>,
 
     /// Optional argument to set the master seed used by the parties.
-    /// Parties will then add their party index to the see.
+    /// Parties will then add their party index to the seed.
     /// Sampled at random if nothing is given
     #[clap(long = "seed")]
     seed: Option<u64>,
@@ -114,7 +114,7 @@ struct ThresholdKeyGenResultArgs {
     params: Option<DkgParamsAvailable>,
 
     /// Optional argument to set the master seed used by the parties.
-    /// Parties will then add their party index to the see.
+    /// Parties will then add their party index to the seed.
     /// Sampled at random if nothing is given
     #[clap(long = "seed")]
     seed: Option<u64>,
@@ -144,7 +144,7 @@ struct PreprocDecryptArgs {
     session_id: Option<u128>,
 
     /// Optional argument to set the master seed used by the parties.
-    /// Parties will then add their party index to the see.
+    /// Parties will then add their party index to the seed.
     /// Sampled at random if nothing is given
     #[clap(long = "seed")]
     seed: Option<u64>,
@@ -188,7 +188,7 @@ struct ThresholdDecryptArgs {
     session_id_preproc: Option<u128>,
 
     /// Optional argument to set the master seed used by the parties.
-    /// Parties will then add their party index to the see.
+    /// Parties will then add their party index to the seed.
     /// Sampled at random if nothing is given
     #[clap(long = "seed")]
     seed: Option<u64>,
@@ -213,7 +213,7 @@ struct CrsGenArgs {
     session_id: Option<u128>,
 
     /// Optional argument to set the master seed used by the parties.
-    /// Parties will then add their party index to the see.
+    /// Parties will then add their party index to the seed.
     /// Sampled at random if nothing is given
     #[clap(long = "seed")]
     seed: Option<u64>,
@@ -715,6 +715,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             status_check_command(runtime, params).await?;
         }
     };
+
+    //Sleep to let some time for the process to export all the spans before exit
     time::sleep(tokio::time::Duration::from_secs(5)).await;
     opentelemetry::global::shutdown_tracer_provider();
     Ok(())

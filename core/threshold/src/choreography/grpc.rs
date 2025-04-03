@@ -37,7 +37,7 @@ use crate::execution::endpoints::keygen::{
 use crate::execution::keyset_config::KeySetConfig;
 use crate::execution::large_execution::vss::RealVss;
 use crate::execution::online::preprocessing::dummy::DummyPreprocessing;
-use crate::execution::online::preprocessing::orchestrator::PreprocessingOrchestrator;
+use crate::execution::online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator;
 use crate::execution::online::preprocessing::{
     BitDecPreprocessing, DKGPreprocessing, NoiseFloodPreprocessing, PreprocessorFactory,
 };
@@ -201,7 +201,6 @@ where
             )?)
     }
 
-    //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
     async fn create_base_sessions(
         &self,
         request_sid: SessionId,
@@ -2012,7 +2011,10 @@ where
 /// - total number of bytes sent across all sessions
 /// - total number of bytes received across all sessions
 /// - peak memory usage in bytes as given by the custom allocator
-fn fill_network_memory_info_multiple_sessions<R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+pub(crate) fn fill_network_memory_info_multiple_sessions<
+    R: Rng + CryptoRng,
+    B: BaseSessionHandles<R>,
+>(
     sessions: Vec<B>,
 ) {
     let span = tracing::Span::current();
@@ -2053,7 +2055,10 @@ fn fill_network_memory_info_multiple_sessions<R: Rng + CryptoRng, B: BaseSession
     span.record("peak_mem", MEM_ALLOCATOR.get().unwrap().peak_usage());
 }
 
-fn fill_network_memory_info_single_session<R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+pub(crate) fn fill_network_memory_info_single_session<
+    R: Rng + CryptoRng,
+    B: BaseSessionHandles<R>,
+>(
     session: B,
 ) {
     fill_network_memory_info_multiple_sessions(vec![session]);
@@ -2091,7 +2096,7 @@ pub fn gen_random_sid(rng: &mut AesRng, current_sid: u128) -> SessionId {
     )
 }
 
-fn create_small_session<Z: ErrorCorrect + Invert + RingEmbed>(
+pub fn create_small_session<Z: ErrorCorrect + Invert + RingEmbed>(
     base_session: BaseSessionStruct<AesRng, SessionParameters>,
     prss_setup: &PRSSSetup<Z>,
 ) -> SmallSession<Z> {
@@ -2100,7 +2105,7 @@ fn create_small_session<Z: ErrorCorrect + Invert + RingEmbed>(
         .unwrap()
 }
 
-fn create_small_sessions<Z: ErrorCorrect + Invert + RingEmbed>(
+pub fn create_small_sessions<Z: ErrorCorrect + Invert + RingEmbed>(
     base_sessions: Vec<BaseSessionStruct<AesRng, SessionParameters>>,
     prss_setup: &PRSSSetup<Z>,
 ) -> Vec<SmallSession<Z>> {
@@ -2113,13 +2118,13 @@ fn create_small_sessions<Z: ErrorCorrect + Invert + RingEmbed>(
         .collect_vec()
 }
 
-fn create_large_session(
+pub fn create_large_session(
     base_session: BaseSessionStruct<AesRng, SessionParameters>,
 ) -> LargeSession {
     create_large_sessions(vec![base_session]).pop().unwrap()
 }
 
-fn create_large_sessions(
+pub fn create_large_sessions(
     base_sessions: Vec<BaseSessionStruct<AesRng, SessionParameters>>,
 ) -> Vec<LargeSession> {
     base_sessions

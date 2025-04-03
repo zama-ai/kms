@@ -14,7 +14,6 @@ use std::num::Wrapping;
 use distributed_decryption::{
     execution::{
         endpoints::keygen::distributed_keygen_z64,
-        online::preprocessing::orchestrator::PreprocessingOrchestrator,
         runtime::test_runtime::{generate_fixed_identities, DistributedTestRuntime},
         tfhe_internals::parameters::DKGParams,
     },
@@ -175,9 +174,14 @@ fn test_dkg_orchestrator_large(
     params: DKGParams,
 ) {
     use distributed_decryption::{
-        algebra::galois_rings::degree_4::ResiduePolyF4Z64, algebra::structure_traits::Ring,
-        execution::keyset_config::KeySetConfig, execution::runtime::session::ParameterHandles,
-        networking::NetworkMode, thread_handles::OsThreadGroup,
+        algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring},
+        execution::{
+            keyset_config::KeySetConfig,
+            online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator,
+            runtime::session::ParameterHandles,
+        },
+        networking::NetworkMode,
+        thread_handles::OsThreadGroup,
     };
     use itertools::Itertools;
 

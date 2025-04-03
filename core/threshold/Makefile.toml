@@ -65,7 +65,7 @@ args = ["build", "-f", "${THRESHOLD_FHE_DOCKER_FOLDER}", "--build-arg", "FEATURE
 #Build the image for BGV parties (with centralized DKG available)
 [tasks.bgv-docker-image]
 command = "docker"
-args = ["build", "-f", "${THRESHOLD_FHE_DOCKER_FOLDER}", "--build-arg", "FEATURES=experimental,choreographer", "-t", "bgv-core", "${THRESHOLD_FHE_DOCKER_ROOT}"]
+args = ["build", "-f", "${THRESHOLD_FHE_DOCKER_FOLDER}", "--build-arg", "FEATURES=default,experimental", "-t", "bgv-core", "${THRESHOLD_FHE_DOCKER_ROOT}"]
 
 #Generate the certificate for TLS communication of the parties
 [tasks.gen-test-certs]
@@ -174,6 +174,10 @@ args = ["test_scripts/bgv_test_script_fake_dkg.sh", "temp/${EXPERIMENT_NAME}.tom
 [tasks.tfhe-bench-run]
 env = {"NUM_PARTIES" = "4", THRESHOLD = "1", EXPERIMENT_NAME="tfhe-bench-run"}
 run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy"], fork = true}
+
+[tasks.bgv-bench-run]
+env = {"NUM_PARTIES" = "4", THRESHOLD = "1", EXPERIMENT_NAME="bgv-bench-run"}
+run_task = { name = ["setup", "gen-test-certs", "bgv-gen-experiment", "experiment-name", "start-parties-healthy"], fork = true}
 
 ##For TFHE we set NUM_PARTIES to 5 to be able to test both small and large sessions
 [tasks.tfhe-bench-fake-dkg]

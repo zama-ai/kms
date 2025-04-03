@@ -18,7 +18,7 @@ use mockall::{automock, mock};
 
 #[automock]
 /// Trait that a __store__ for shares of multiplication triples ([`Triple`]) needs to implement.
-pub trait TriplePreprocessing<Z: Clone> {
+pub trait TriplePreprocessing<Z: Clone + Send + Sync>: Send + Sync {
     /// Outputs share of a random triple
     fn next_triple(&mut self) -> anyhow::Result<Triple<Z>> {
         self.next_triple_vec(1)?
@@ -53,7 +53,7 @@ pub trait RandomPreprocessing<Z: Clone> {
 }
 
 /// Trait for both [`RandomPreprocessing`] and [`TriplePreprocessing`]
-pub trait BasePreprocessing<Z: Clone>:
+pub trait BasePreprocessing<Z: Clone + Send + Sync>:
     TriplePreprocessing<Z> + RandomPreprocessing<Z> + Send + Sync
 {
 }
@@ -356,5 +356,98 @@ where
 pub(crate) mod constants;
 pub mod dummy;
 pub(crate) mod memory;
-pub mod orchestrator;
+pub mod orchestration;
 pub mod redis;
+
+impl<Z: Clone + Send + Sync> TriplePreprocessing<Z> for Box<dyn DKGPreprocessing<Z>> {
+    fn next_triple_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Triple<Z>>> {
+        self.as_mut().next_triple_vec(amount)
+    }
+
+    fn append_triples(&mut self, triples: Vec<Triple<Z>>) {
+        self.as_mut().append_triples(triples)
+    }
+
+    fn triples_len(&self) -> usize {
+        self.as_ref().triples_len()
+    }
+}
+
+impl<Z: Clone + Send + Sync> RandomPreprocessing<Z> for Box<dyn DKGPreprocessing<Z>> {
+    fn next_random_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>> {
+        self.as_mut().next_random_vec(amount)
+    }
+
+    fn append_randoms(&mut self, randoms: Vec<Share<Z>>) {
+        self.as_mut().append_randoms(randoms)
+    }
+
+    fn randoms_len(&self) -> usize {
+        self.as_ref().randoms_len()
+    }
+}
+
+impl<Z: Clone + Send + Sync> BasePreprocessing<Z> for Box<dyn DKGPreprocessing<Z>> {}
+
+impl<Z: Clone + Send + Sync> BitPreprocessing<Z> for Box<dyn DKGPreprocessing<Z>> {
+    fn append_bits(&mut self, bits: Vec<Share<Z>>) {
+        self.as_mut().append_bits(bits)
+    }
+    fn next_bit(&mut self) -> anyhow::Result<Share<Z>> {
+        self.as_mut().next_bit()
+    }
+    fn next_bit_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>> {
+        self.as_mut().next_bit_vec(amount)
+    }
+    fn bits_len(&self) -> usize {
+        self.as_ref().bits_len()
+    }
+}
+
+#[async_trait]
+impl<Z: Ring> DKGPreprocessing<Z> for Box<dyn DKGPreprocessing<Z>> {
+    fn append_noises(&mut self, noises: Vec<Share<Z>>, bound: NoiseBounds) {
+        self.as_mut().append_noises(noises, bound)
+    }
+
+    fn next_noise_vec(
+        &mut self,
+        amount: usize,
+        bound: NoiseBounds,
+    ) -> anyhow::Result<Vec<Share<Z>>> {
+        self.as_mut().next_noise_vec(amount, bound)
+    }
+
+    async fn fill_from_base_preproc(
+        &mut self,
+        params: DKGParams,
+        keyset_config: KeySetConfig,
+        session: &mut BaseSession,
+        preprocessing: &mut dyn BasePreprocessing<Z>,
+    ) -> anyhow::Result<()> {
+        self.as_mut()
+            .fill_from_base_preproc(params, keyset_config, session, preprocessing)
+            .await
+    }
+
+    fn fill_from_triples_and_bit_preproc(
+        &mut self,
+        params: DKGParams,
+        keyset_config: KeySetConfig,
+        session: &mut BaseSession,
+        preprocessing_triples: &mut dyn BasePreprocessing<Z>,
+        preprocessing_bits: &mut dyn BitPreprocessing<Z>,
+    ) -> anyhow::Result<()> {
+        self.as_mut().fill_from_triples_and_bit_preproc(
+            params,
+            keyset_config,
+            session,
+            preprocessing_triples,
+            preprocessing_bits,
+        )
+    }
+
+    fn noise_len(&self, bound: NoiseBounds) -> usize {
+        self.as_ref().noise_len(bound)
+    }
+}

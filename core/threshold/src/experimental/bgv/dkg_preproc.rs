@@ -42,6 +42,14 @@ impl BGVDkgPreprocessing for DummyPreprocessing<LevelKsw, AesRng, SmallSession<L
     fn next_noise_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<LevelKsw>>> {
         RealSecretDistributions::newhope(amount, NEW_HOPE_BOUND, self)
     }
+
+    fn append_ternary(&mut self, _ternary: Vec<Share<LevelKsw>>) {
+        unimplemented!("We do not implement filling for DummyPreprocessing")
+    }
+
+    fn append_noise(&mut self, _noise: Vec<Share<LevelKsw>>) {
+        unimplemented!("We do not implement filling for DummyPreprocessing")
+    }
 }
 
 #[async_trait]
@@ -61,6 +69,8 @@ pub trait BGVDkgPreprocessing: BasePreprocessing<LevelKsw> {
     ) -> anyhow::Result<()>;
     fn next_ternary_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<LevelKsw>>>;
     fn next_noise_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<LevelKsw>>>;
+    fn append_ternary(&mut self, ternary: Vec<Share<LevelKsw>>);
+    fn append_noise(&mut self, noise: Vec<Share<LevelKsw>>);
 }
 
 #[derive(Default)]
@@ -152,6 +162,14 @@ impl BGVDkgPreprocessing for InMemoryBGVDkgPreprocessing {
                 self.available_noise.len()
             )))
         }
+    }
+
+    fn append_ternary(&mut self, ternary: Vec<Share<LevelKsw>>) {
+        self.available_ternary.extend(ternary);
+    }
+
+    fn append_noise(&mut self, noise: Vec<Share<LevelKsw>>) {
+        self.available_noise.extend(noise);
     }
 }
 

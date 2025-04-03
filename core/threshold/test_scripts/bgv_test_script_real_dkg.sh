@@ -24,7 +24,7 @@ CURR_SID=$(( CURR_SID + 1 ))
 
 ##KEY GEN
 #Create preproc for dkg
-$STAIRWAYCTL_EXEC -c $1 preproc-key-gen --sid $CURR_SID
+$STAIRWAYCTL_EXEC -c $1 preproc-key-gen --num-sessions 5 --sid $CURR_SID
 #Checking every 10 min
 $STAIRWAYCTL_EXEC -c $1 status-check --sid $CURR_SID --keep-retry true --interval 600
 CURR_SID=$(( CURR_SID + 1 ))

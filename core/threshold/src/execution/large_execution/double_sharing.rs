@@ -25,7 +25,7 @@ pub struct DoubleShare<Z> {
 }
 
 #[async_trait]
-pub trait DoubleSharing<Z: Ring>: Send + Default + Clone {
+pub trait DoubleSharing<Z: Ring>: Send + Sync + Default + Clone {
     async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,

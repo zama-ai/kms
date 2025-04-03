@@ -31,7 +31,7 @@ use tracing::instrument;
 //An option to remedy this would be to add a share: Option<Vec<Z>> in the API below and
 //assert None for naive and w/ abort, and assert Some for robust
 #[async_trait]
-pub trait AgreeRandom {
+pub trait AgreeRandom: Send + Sync {
     /// Perform a batched version of Agree Random on all subsets of size n-t
     async fn agree_random<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         session: &mut S,

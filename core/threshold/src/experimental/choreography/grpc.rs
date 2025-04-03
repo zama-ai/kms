@@ -10,6 +10,10 @@ use crate::choreography::grpc::gen::{
     ThresholdDecryptResultResponse, ThresholdKeyGenRequest, ThresholdKeyGenResponse,
     ThresholdKeyGenResultRequest, ThresholdKeyGenResultResponse,
 };
+use crate::choreography::grpc::{
+    create_small_session, create_small_sessions, fill_network_memory_info_multiple_sessions,
+    fill_network_memory_info_single_session, gen_random_sid,
+};
 use crate::choreography::requests::Status;
 use crate::execution::large_execution::vss::RealVss;
 use crate::execution::online::preprocessing::dummy::DummyPreprocessing;
@@ -19,15 +23,14 @@ use crate::execution::runtime::session::ParameterHandles;
 use crate::execution::runtime::session::SessionParameters;
 use crate::execution::runtime::session::SmallSession;
 use crate::execution::runtime::session::{BaseSession, BaseSessionStruct};
-use crate::execution::small_execution::agree_random::RealAgreeRandom;
-use crate::execution::small_execution::offline::SmallPreprocessing;
 use crate::execution::small_execution::prss::PRSSSetup;
 use crate::experimental::algebra::levels::{LevelEll, LevelKsw, LevelOne};
 use crate::experimental::algebra::ntt::{Const, N65536};
 use crate::experimental::bgv::basics::{PrivateBgvKeySet, PublicBgvKeySet, PublicKey};
 use crate::experimental::bgv::ddec::noise_flood_decryption;
 use crate::experimental::bgv::dkg::bgv_distributed_keygen;
-use crate::experimental::bgv::dkg_preproc::{BGVDkgPreprocessing, InMemoryBGVDkgPreprocessing};
+use crate::experimental::bgv::dkg_orchestrator::BGVPreprocessingOrchestrator;
+use crate::experimental::bgv::dkg_preproc::InMemoryBGVDkgPreprocessing;
 use crate::experimental::bgv::utils::transfer_secret_key;
 use crate::experimental::bgv::utils::{gen_key_set, transfer_pub_key};
 use crate::experimental::choreography::requests::{PreprocKeyGenParams, ThresholdDecryptParams};
@@ -40,6 +43,7 @@ use crate::session_id::SessionId;
 use aes_prng::AesRng;
 use async_trait::async_trait;
 use dashmap::DashMap;
+use itertools::Itertools;
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -130,11 +134,98 @@ impl ExperimentalGrpcChoreography {
             .max_decoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE)
             .max_encoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE)
     }
+
+    async fn create_base_session(
+        &self,
+        request_sid: SessionId,
+        threshold: u8,
+        role_assignments: HashMap<Role, Identity>,
+        network_mode: NetworkMode,
+        seed: Option<u64>,
+    ) -> anyhow::Result<BaseSessionStruct<AesRng, SessionParameters>> {
+        Ok(self
+            .create_base_sessions(
+                request_sid,
+                1,
+                threshold,
+                role_assignments,
+                network_mode,
+                seed,
+            )
+            .await?
+            .pop()
+            .map_or_else(
+                || {
+                    Err(tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("Failed to create session for {:?}", request_sid),
+                    ))
+                },
+                Ok,
+            )?)
+    }
+
+    async fn create_base_sessions(
+        &self,
+        request_sid: SessionId,
+        num_sessions: usize,
+        threshold: u8,
+        role_assignments: HashMap<Role, Identity>,
+        network_mode: NetworkMode,
+        seed: Option<u64>,
+    ) -> anyhow::Result<Vec<BaseSessionStruct<AesRng, SessionParameters>>> {
+        let mut session_id_generator = AesRng::from_seed(request_sid.0.to_be_bytes());
+        let sids = (0..num_sessions)
+            .map(|_| gen_random_sid(&mut session_id_generator, request_sid.0))
+            .collect_vec();
+
+        //Fetch my Role for the role_assignment
+        let mut my_role_idx = 0;
+        for (role, identity) in role_assignments.iter() {
+            if *identity == self.own_identity {
+                my_role_idx = role.one_based() as u64;
+            }
+        }
+        let mut base_sessions = Vec::new();
+        for (idx, session_id) in sids.into_iter().enumerate() {
+            let params = SessionParameters::new(
+                threshold,
+                session_id,
+                self.own_identity.clone(),
+                role_assignments.clone(),
+            )
+            .unwrap();
+            //We are executing offline phase, so requires Sync network
+            let networking =
+                (self.networking_strategy)(session_id, role_assignments.clone(), network_mode)
+                    .await
+                    .map_err(|e| {
+                        tonic::Status::new(
+                            tonic::Code::Aborted,
+                            format!("Failed to create networking: {:?}", e),
+                        )
+                    })?;
+            let aes_rng = if let Some(seed) = seed {
+                AesRng::seed_from_u64(seed + my_role_idx + (idx as u64))
+            } else {
+                AesRng::from_entropy()
+            };
+            base_sessions.push(
+                BaseSessionStruct::new(params.clone(), networking, aes_rng)
+                    .expect("Failed to create Base Session"),
+            );
+        }
+        Ok(base_sessions)
+    }
 }
 
 #[async_trait]
 impl Choreography for ExperimentalGrpcChoreography {
-    #[instrument(name = "PRSS-INIT (BGV)", skip_all)]
+    #[instrument(
+        name = "PRSS-INIT (BGV)",
+        skip_all,
+        fields(network_round, network_sent, network_received, peak_mem)
+    )]
     async fn prss_init(
         &self,
         request: tonic::Request<PrssInitRequest>,
@@ -167,37 +258,21 @@ impl Choreography for ExperimentalGrpcChoreography {
         let session_id = prss_params.session_id;
         let ring = prss_params.ring;
 
-        let params = SessionParameters::new(
-            threshold,
-            session_id,
-            self.own_identity.clone(),
-            role_assignments.clone(),
-        )
-        .map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("Failed to create a base session parameters: {:?}", e),
+        let mut base_session = self
+            .create_base_session(
+                session_id,
+                threshold,
+                role_assignments.clone(),
+                NetworkMode::Sync,
+                request.seed,
             )
-        })?;
-
-        let networking =
-            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Sync)
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Aborted,
-                        format!("Failed to create networking: {:?}", e),
-                    )
-                })?;
-
-        //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
-        let mut base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
+            .await
             .map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("Failed to create Base Session: {:?}", e),
-            )
-        })?;
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("Failed to create Base Session: {:?}", e),
+                )
+            })?;
 
         let store = self.data.prss_setup.clone();
         match ring {
@@ -212,6 +287,7 @@ impl Choreography for ExperimentalGrpcChoreography {
                         SupportedPRSSSetup::LevelOne(prss_setup),
                     );
                     tracing::info!("PRSS Setup for LevelOne Done.");
+                    fill_network_memory_info_single_session(base_session);
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -229,6 +305,7 @@ impl Choreography for ExperimentalGrpcChoreography {
                         SupportedPRSSSetup::LevelKsw(prss_setup),
                     );
                     tracing::info!("PRSS Setup for LevelKsw Done.");
+                    fill_network_memory_info_single_session(base_session);
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -240,7 +317,11 @@ impl Choreography for ExperimentalGrpcChoreography {
         Ok(tonic::Response::new(PrssInitResponse {}))
     }
 
-    #[instrument(name = "DKG-PREPROC (BGV)", skip_all)]
+    #[instrument(
+        name = "DKG-PREPROC (BGV)",
+        skip_all,
+        fields(network_round, network_sent, network_received, peak_mem)
+    )]
     async fn preproc_key_gen(
         &self,
         request: tonic::Request<PreprocKeyGenRequest>,
@@ -271,32 +352,19 @@ impl Choreography for ExperimentalGrpcChoreography {
             })?;
 
         let session_id = preproc_params.session_id;
+        let start_sid = preproc_params.session_id;
+        let num_sessions = preproc_params.num_sessions;
 
-        let params = SessionParameters::new(
-            threshold,
-            session_id,
-            self.own_identity.clone(),
-            role_assignments.clone(),
-        )
-        .map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("Failed to create a base session parameters: {:?}", e),
+        let base_sessions = self
+            .create_base_sessions(
+                start_sid,
+                num_sessions as usize,
+                threshold,
+                role_assignments.clone(),
+                NetworkMode::Sync,
+                request.seed,
             )
-        })?;
-
-        let networking =
-            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Sync)
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Aborted,
-                        format!("Failed to create networking: {:?}", e),
-                    )
-                })?;
-
-        //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
-        let base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
+            .await
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
@@ -304,7 +372,7 @@ impl Choreography for ExperimentalGrpcChoreography {
                 )
             })?;
 
-        let prss_state = self
+        let prss_setup = self
             .data
             .prss_setup
             .get(&SupportedRing::LevelKsw)
@@ -314,27 +382,21 @@ impl Choreography for ExperimentalGrpcChoreography {
                     "Failed to retrieve prss_setup, try init it first".to_string(),
                 )
             })?
-            .get_levelksw()?
-            .new_prss_session_state(session_id);
-
-        let mut small_session =
-            SmallSession::new_from_prss_state(base_session, prss_state).unwrap();
+            .get_levelksw()?;
 
         let store = self.data.dkg_preproc_store.clone();
         let my_future = || async move {
-            //TODO: Double check new hope bound + make it a constant maybe ?
-            let batch = InMemoryBGVDkgPreprocessing::num_required_triples_randoms(N65536::VALUE);
+            let small_sessions = create_small_sessions(base_sessions, &prss_setup);
 
-            let mut small_preproc =
-                SmallPreprocessing::<_, RealAgreeRandom>::init(&mut small_session, batch)
-                    .await
-                    .unwrap();
-            let mut preproc = InMemoryBGVDkgPreprocessing::default();
-            preproc
-                .fill_from_base_preproc(N65536::VALUE, &mut small_session, &mut small_preproc)
+            let orchestrator = BGVPreprocessingOrchestrator::new(N65536::VALUE);
+
+            let (sessions, preproc) = orchestrator
+                .orchestrate_small_session_bgv_dkg_preprocessing(small_sessions)
+                .instrument(tracing::info_span!("orchestrate"))
                 .await
                 .unwrap();
-            store.insert(session_id, preproc);
+            fill_network_memory_info_multiple_sessions(sessions);
+            store.insert(start_sid, preproc);
         };
         self.data.status_store.insert(
             session_id,
@@ -352,7 +414,11 @@ impl Choreography for ExperimentalGrpcChoreography {
         }))
     }
 
-    #[instrument(name = "DKG (BGV)", skip_all)]
+    #[instrument(
+        name = "DKG (BGV)",
+        skip_all,
+        fields(network_round, network_sent, network_received, peak_mem)
+    )]
     async fn threshold_key_gen(
         &self,
         request: tonic::Request<ThresholdKeyGenRequest>,
@@ -385,37 +451,21 @@ impl Choreography for ExperimentalGrpcChoreography {
         let session_id = kg_params.session_id;
         let preproc_sid = kg_params.session_id_preproc;
 
-        let params = SessionParameters::new(
-            threshold,
-            session_id,
-            self.own_identity.clone(),
-            role_assignments.clone(),
-        )
-        .map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("Failed to create a base session parameters: {:?}", e),
+        let mut base_session = self
+            .create_base_session(
+                session_id,
+                threshold,
+                role_assignments.clone(),
+                NetworkMode::Async,
+                request.seed,
             )
-        })?;
-
-        let networking =
-            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Async)
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Aborted,
-                        format!("Failed to create networking: {:?}", e),
-                    )
-                })?;
-
-        //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
-        let mut base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
+            .await
             .map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("Failed to create Base Session: {:?}", e),
-            )
-        })?;
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("Failed to create Base Session: {:?}", e),
+                )
+            })?;
 
         let key_store = self.data.key_store.clone();
         if let Some(preproc_sid) = preproc_sid {
@@ -434,6 +484,7 @@ impl Choreography for ExperimentalGrpcChoreography {
                 .await
                 .unwrap();
                 key_store.insert(session_id, Arc::new(keys));
+                fill_network_memory_info_single_session(base_session);
             };
             self.data.status_store.insert(
                 session_id,
@@ -468,6 +519,7 @@ impl Choreography for ExperimentalGrpcChoreography {
                 .await
                 .unwrap();
                 key_store.insert(session_id, Arc::new(keys));
+                fill_network_memory_info_single_session(small_session);
             };
             self.data.status_store.insert(
                 session_id,
@@ -591,7 +643,11 @@ impl Choreography for ExperimentalGrpcChoreography {
         unimplemented!("No DDec preproc required for BGV Ddec");
     }
 
-    #[instrument(name = "DDEC (BGV)", skip_all)]
+    #[instrument(
+        name = "DDEC (BGV)",
+        skip_all,
+        fields(network_round, network_sent, network_received, peak_mem)
+    )]
     async fn threshold_decrypt(
         &self,
         request: tonic::Request<ThresholdDecryptRequest>,
@@ -637,7 +693,7 @@ impl Choreography for ExperimentalGrpcChoreography {
             })?
             .clone();
 
-        let prss_state = self
+        let prss_setup = self
             .data
             .prss_setup
             .get(&SupportedRing::LevelOne)
@@ -647,48 +703,20 @@ impl Choreography for ExperimentalGrpcChoreography {
                     "Failed to retrieve prss_setup, try init it first".to_string(),
                 )
             })?
-            .get_levelone()?
-            .new_prss_session_state(session_id);
+            .get_levelone()?;
 
-        let params = SessionParameters::new(
-            threshold,
-            session_id,
-            self.own_identity.clone(),
-            role_assignments.clone(),
-        )
-        .map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("Failed to create a base session parameters: {:?}", e),
+        let base_session = self
+            .create_base_session(
+                session_id,
+                threshold,
+                role_assignments.clone(),
+                NetworkMode::Async,
+                request.seed,
             )
-        })?;
+            .await
+            .unwrap();
+        let mut small_session = create_small_session(base_session, &prss_setup);
 
-        let networking =
-            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Async)
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Aborted,
-                        format!("Failed to create networking: {:?}", e),
-                    )
-                })?;
-
-        //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
-        let base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
-            .map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Aborted,
-                    format!("Failed to create Base Session: {:?}", e),
-                )
-            })?;
-
-        let mut small_session = SmallSession::new_from_prss_state(base_session, prss_state)
-            .map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Aborted,
-                    format!("Failed to create a Small Session: {:?}", e),
-                )
-            })?;
         let res_store = self.data.ddec_result_store.clone();
         let my_future = || async move {
             let mut res = Vec::new();
@@ -706,6 +734,7 @@ impl Choreography for ExperimentalGrpcChoreography {
                 );
             }
             res_store.insert(session_id, res);
+            fill_network_memory_info_single_session(small_session);
         };
         self.data.status_store.insert(
             session_id,

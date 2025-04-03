@@ -420,8 +420,8 @@ impl<Z, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>> DummyDebugPreprocess
         }
     }
 }
-impl<Z: Ring, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>> TriplePreprocessing<Z>
-    for DummyDebugPreprocessing<Z, Rnd, Ses>
+impl<Z: Ring, Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>>
+    TriplePreprocessing<Z> for DummyDebugPreprocessing<Z, Rnd, Ses>
 {
     /// Computes a dummy triple deterministically constructed from the seed in [DummyPreprocessing].
     fn next_triple(&mut self) -> anyhow::Result<Triple<Z>> {

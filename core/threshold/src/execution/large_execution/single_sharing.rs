@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use tracing::instrument;
 
 #[async_trait]
-pub trait SingleSharing<Z: Ring>: Send + Default + Clone {
+pub trait SingleSharing<Z: Ring>: Send + Sync + Default + Clone {
     async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,

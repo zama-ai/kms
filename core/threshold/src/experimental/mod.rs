@@ -12,6 +12,7 @@ pub mod bgv {
     pub mod basics;
     pub mod ddec;
     pub mod dkg;
+    pub mod dkg_orchestrator;
     pub mod dkg_preproc;
     pub mod endpoints;
     pub mod runtime;

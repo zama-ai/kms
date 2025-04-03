@@ -18,6 +18,7 @@ pub struct PrssInitParams {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PreprocKeyGenParams {
     pub session_id: SessionId,
+    pub num_sessions: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

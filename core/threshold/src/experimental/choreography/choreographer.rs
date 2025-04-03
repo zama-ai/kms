@@ -30,6 +30,7 @@ impl ChoreoRuntime {
         session_id: SessionId,
         ring: SupportedRing,
         threshold: u32,
+        seed: Option<u64>,
     ) -> anyhow::Result<()> {
         let role_assignment = bincode::serialize(&self.role_assignments)?;
 
@@ -43,7 +44,7 @@ impl ChoreoRuntime {
                 role_assignment: role_assignment.to_vec(),
                 threshold,
                 params: prss_params.to_vec(),
-                seed: None,
+                seed,
             };
 
             join_set.spawn(
@@ -61,10 +62,15 @@ impl ChoreoRuntime {
     pub async fn bgv_initiate_preproc_keygen(
         &self,
         session_id: SessionId,
+        num_sessions: u32,
         threshold: u32,
+        seed: Option<u64>,
     ) -> anyhow::Result<SessionId> {
         let role_assignment = bincode::serialize(&self.role_assignments)?;
-        let preproc_kg_params = bincode::serialize(&PreprocKeyGenParams { session_id })?;
+        let preproc_kg_params = bincode::serialize(&PreprocKeyGenParams {
+            session_id,
+            num_sessions,
+        })?;
 
         let mut join_set = JoinSet::new();
         self.channels.values().for_each(|channel| {
@@ -73,7 +79,7 @@ impl ChoreoRuntime {
                 role_assignment: role_assignment.to_vec(),
                 threshold,
                 params: preproc_kg_params.to_vec(),
-                seed: None,
+                seed,
             };
 
             join_set.spawn(
@@ -101,6 +107,7 @@ impl ChoreoRuntime {
         session_id: SessionId,
         session_id_preproc: Option<SessionId>,
         threshold: u32,
+        seed: Option<u64>,
     ) -> anyhow::Result<SessionId> {
         let role_assignment = bincode::serialize(&self.role_assignments)?;
         let threshold_keygen_params = bincode::serialize(&ThresholdKeyGenParams {
@@ -115,7 +122,7 @@ impl ChoreoRuntime {
                 role_assignment: role_assignment.to_vec(),
                 threshold,
                 params: threshold_keygen_params.to_vec(),
-                seed: None,
+                seed,
             };
 
             join_set.spawn(
@@ -144,6 +151,7 @@ impl ChoreoRuntime {
         &self,
         session_id: SessionId,
         gen_params: Option<bool>,
+        seed: Option<u64>,
     ) -> anyhow::Result<PublicKey<LevelEll, LevelKsw, N65536>> {
         let role_assignment = bincode::serialize(&self.role_assignments)?;
 
@@ -158,7 +166,7 @@ impl ChoreoRuntime {
             let request = ThresholdKeyGenResultRequest {
                 role_assignment: role_assignment.to_vec(),
                 params: threshold_keygen_result_params.to_vec(),
-                seed: None,
+                seed,
             };
             join_set.spawn(
                 async move { client.threshold_key_gen_result(request).await }
@@ -189,6 +197,7 @@ impl ChoreoRuntime {
         key_sid: SessionId,
         ctxts: Vec<LevelEllCiphertext>,
         threshold: u32,
+        seed: Option<u64>,
     ) -> anyhow::Result<SessionId> {
         let role_assignment = bincode::serialize(&self.role_assignments)?;
         let threshold_decrypt_params = bincode::serialize(&ThresholdDecryptParams {
@@ -204,7 +213,7 @@ impl ChoreoRuntime {
                 role_assignment: role_assignment.to_vec(),
                 threshold,
                 params: threshold_decrypt_params.to_vec(),
-                seed: None,
+                seed,
             };
 
             join_set.spawn(

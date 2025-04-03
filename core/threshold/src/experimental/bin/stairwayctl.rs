@@ -1,11 +1,11 @@
 //! CLI tool for interacting with a group of stairways
-use tokio::time::Duration;
+use tokio::time::{self, Duration};
 
 use aes_prng::AesRng;
 use clap::{Args, Parser, Subcommand};
 use conf_trace::{
     conf::{Settings, TelemetryConfig},
-    telemetry::init_telemetry,
+    telemetry::init_tracing,
 };
 use distributed_decryption::{
     choreography::choreographer::ChoreoRuntime,
@@ -33,6 +33,12 @@ struct PrssInitArgs {
     /// Optional argument to force the session ID to be used. (Sampled at random if nothing is given)
     #[clap(long = "sid")]
     session_id: Option<u128>,
+
+    /// Optional argument to set the master seed used by the parties.
+    /// Parties will then add their party index to the seed.
+    /// Sampled at random if nothing is given
+    #[clap(long = "seed")]
+    seed: Option<u64>,
 }
 
 #[derive(Args, Debug)]
@@ -40,6 +46,16 @@ struct PreprocKeyGenArgs {
     /// Optional argument to force the session ID to be used. (Sampled at random if nothing is given)
     #[clap(long = "sid")]
     session_id: Option<u128>,
+
+    /// Number of sessions to run in parallel to produce the correlated randomness.
+    #[clap(long = "num-sessions")]
+    num_sessions_preproc: u32,
+
+    /// Optional argument to set the master seed used by the parties.
+    /// Parties will then add their party index to the seed.
+    /// Sampled at random if nothing is given
+    #[clap(long = "seed")]
+    seed: Option<u64>,
 }
 
 #[derive(Args, Debug)]
@@ -52,6 +68,12 @@ struct ThresholdKeyGenArgs {
     /// (If no ID is given, we use dummy preprocessing)
     #[clap(long = "preproc-sid")]
     session_id_preproc: Option<u128>,
+
+    /// Optional argument to set the master seed used by the parties.
+    /// Parties will then add their party index to the seed.
+    /// Sampled at random if nothing is given
+    #[clap(long = "seed")]
+    seed: Option<u64>,
 }
 
 #[derive(Args, Debug)]
@@ -69,6 +91,12 @@ struct ThresholdKeyGenResultArgs {
     /// (The stairway cluster will then refer to this new key using the provided session ID)
     #[clap(long = "generate-params")]
     params: Option<bool>,
+
+    /// Optional argument to set the master seed used by the parties.
+    /// Parties will then add their party index to the seed.
+    /// Sampled at random if nothing is given
+    #[clap(long = "seed")]
+    seed: Option<u64>,
 }
 
 #[derive(Args, Debug)]
@@ -84,6 +112,12 @@ struct ThresholdDecryptArgs {
     /// Optional argument to force the session ID to be used. (Sampled at random if nothing is given)
     #[clap(long = "sid")]
     session_id: Option<u128>,
+
+    /// Optional argument to set the master seed used by the parties.
+    /// Parties will then add their party index to the seed.
+    /// Sampled at random if nothing is given
+    #[clap(long = "seed")]
+    seed: Option<u64>,
 }
 
 #[derive(Args, Debug)]
@@ -153,6 +187,7 @@ async fn prss_init_command(
             SessionId(session_id),
             params.ring,
             choreo_conf.threshold_topology.threshold,
+            params.seed,
         )
         .await?;
 
@@ -170,7 +205,9 @@ async fn preproc_keygen_command(
     let session_id = runtime
         .bgv_initiate_preproc_keygen(
             SessionId(session_id),
+            params.num_sessions_preproc,
             choreo_conf.threshold_topology.threshold,
+            params.seed,
         )
         .await?;
 
@@ -192,6 +229,7 @@ async fn threshold_keygen_command(
                 .session_id_preproc
                 .map_or_else(|| None, |id| Some(SessionId(id))),
             choreo_conf.threshold_topology.threshold,
+            params.seed,
         )
         .await?;
 
@@ -204,7 +242,11 @@ async fn threshold_keygen_result_command(
     params: ThresholdKeyGenResultArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let keys = runtime
-        .bgv_initiate_threshold_keygen_result(SessionId(params.session_id), params.params)
+        .bgv_initiate_threshold_keygen_result(
+            SessionId(params.session_id),
+            params.params,
+            params.seed,
+        )
         .await?;
 
     let serialized_pk = bincode::serialize(&(params.session_id, keys))?;
@@ -245,6 +287,7 @@ async fn threshold_decrypt_command(
             key_sid,
             ciphertexts,
             choreo_conf.threshold_topology.threshold,
+            params.seed,
         )
         .await?;
 
@@ -307,7 +350,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .build(),
     );
 
-    init_telemetry(&telemetry)?;
+    init_tracing(&telemetry)?;
 
     let runtime = ChoreoRuntime::new_from_conf(&conf)?;
     match args.command {
@@ -333,6 +376,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             status_check_command(runtime, params).await?;
         }
     };
+
+    //Sleep to let some time for the process to export all the spans before exit
+    time::sleep(tokio::time::Duration::from_secs(5)).await;
     opentelemetry::global::shutdown_tracer_provider();
     Ok(())
 }

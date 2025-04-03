@@ -50,7 +50,7 @@ use distributed_decryption::execution::endpoints::keygen::{
 };
 use distributed_decryption::execution::keyset_config as ddec_keyset_config;
 use distributed_decryption::execution::large_execution::vss::RealVss;
-use distributed_decryption::execution::online::preprocessing::orchestrator::PreprocessingOrchestrator;
+use distributed_decryption::execution::online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator;
 use distributed_decryption::execution::online::preprocessing::{
     create_memory_factory, create_redis_factory, DKGPreprocessing, PreprocessorFactory,
 };
