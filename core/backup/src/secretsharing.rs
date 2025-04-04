@@ -1,8 +1,8 @@
-use distributed_decryption::{
+use rand::{CryptoRng, Rng};
+use threshold_fhe::{
     algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring},
     execution::sharing::shamir::{InputOp, RevealOp, ShamirSharings},
 };
-use rand::{CryptoRng, Rng};
 
 use crate::error::BackupError;
 
@@ -146,11 +146,9 @@ pub(crate) fn reconstruct(
 #[cfg(test)]
 mod tests {
     use aes_prng::AesRng;
-    use distributed_decryption::{
-        algebra::structure_traits::One, execution::sharing::share::Share,
-    };
     use proptest::prelude::*;
     use rand::SeedableRng;
+    use threshold_fhe::{algebra::structure_traits::One, execution::sharing::share::Share};
 
     use super::*;
 

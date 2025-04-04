@@ -13,7 +13,11 @@ use backward_compatibility::{
     tests::{run_all_tests, TestedModule},
     PRSSSetupTest, PrfKeyTest, TestMetadataDD, TestType, Testcase,
 };
-use distributed_decryption::{
+use rand::{RngCore, SeedableRng};
+use serde::Serialize;
+use std::{env, path::Path};
+use tfhe_versionable::Unversionize;
+use threshold_fhe::{
     algebra::{
         galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
         structure_traits::{Invert, Ring, RingEmbed},
@@ -24,10 +28,6 @@ use distributed_decryption::{
     },
     tests::helper::testing::{get_dummy_prss_setup, get_networkless_base_session_for_parties},
 };
-use rand::{RngCore, SeedableRng};
-use serde::Serialize;
-use std::{env, path::Path};
-use tfhe_versionable::Unversionize;
 
 fn compare_prss_setup<Z>(
     dir: &Path,
@@ -98,8 +98,8 @@ fn test_prf_key(
     }
 }
 
-struct DistributedDecryption;
-impl TestedModule for DistributedDecryption {
+struct ThresholdFhe;
+impl TestedModule for ThresholdFhe {
     type Metadata = TestMetadataDD;
     const METADATA_FILE: &'static str = "distributed-decryption.ron";
 
@@ -117,16 +117,16 @@ impl TestedModule for DistributedDecryption {
     }
 }
 
-// Backward compatibility tests are skipped until we have a proper stable version
 #[test]
+#[ignore]
 fn test_backward_compatibility_distributed_decryption() {
     let pkg_version = env!("CARGO_PKG_VERSION");
 
     let base_data_dir = data_dir();
 
-    let results = run_all_tests::<DistributedDecryption>(&base_data_dir, pkg_version);
+    let results = run_all_tests::<ThresholdFhe>(&base_data_dir, pkg_version);
 
     if results.iter().any(|r| r.is_failure()) {
-        panic!("Backward compatibility tests for the distributed decryption module failed")
+        panic!("Backward compatibility tests for the threshold fhe module failed")
     }
 }

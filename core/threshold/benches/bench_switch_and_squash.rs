@@ -1,5 +1,6 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use distributed_decryption::execution::{
+use tfhe::{integer::IntegerCiphertext, set_server_key, FheUint16, FheUint8};
+use threshold_fhe::execution::{
     random::get_rng,
     tfhe_internals::{
         parameters::{DKGParams, BC_PARAMS_SAM_SNS},
@@ -7,7 +8,6 @@ use distributed_decryption::execution::{
         utils::expanded_encrypt,
     },
 };
-use tfhe::{integer::IntegerCiphertext, set_server_key, FheUint16, FheUint8};
 
 fn bench_switch_and_squash(c: &mut Criterion) {
     let mut group = c.benchmark_group("switch_and_squash");

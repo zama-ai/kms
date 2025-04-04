@@ -24,8 +24,6 @@ use conf_trace::metrics_names::{
     ERR_RATE_LIMIT_EXCEEDED, ERR_REENCRYPTION_FAILED, OP_CRS_GEN, OP_DECRYPT_REQUEST, OP_KEYGEN,
     OP_REENCRYPT_REQUEST, TAG_DECRYPTION_KIND, TAG_KEY_ID, TAG_PARTY_ID,
 };
-use distributed_decryption::execution::keyset_config::KeySetConfig;
-use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 use kms_grpc::kms::v1::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocResult, KeyGenRequest, KeyGenResult,
@@ -35,6 +33,8 @@ use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain_option, SignedPubDataHandleInternal};
 use std::collections::HashMap;
 use std::sync::Arc;
+use threshold_fhe::execution::keyset_config::KeySetConfig;
+use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use tokio::sync::{OwnedSemaphorePermit, RwLock};
 use tonic::{Request, Response, Status};
 use tracing::Instrument;

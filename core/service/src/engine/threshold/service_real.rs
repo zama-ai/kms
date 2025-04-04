@@ -32,45 +32,6 @@ use conf_trace::metrics_names::{
     OP_INSECURE_KEYGEN, OP_KEYGEN, OP_KEYGEN_PREPROC, OP_REENCRYPT_INNER, OP_REENCRYPT_REQUEST,
     TAG_DECRYPTION_KIND, TAG_KEY_ID, TAG_PARTY_ID, TAG_TFHE_TYPE,
 };
-use distributed_decryption::algebra::base_ring::Z128;
-use distributed_decryption::algebra::galois_rings::common::pack_residue_poly;
-use distributed_decryption::algebra::galois_rings::degree_4::{
-    ResiduePolyF4Z128, ResiduePolyF4Z64,
-};
-use distributed_decryption::algebra::structure_traits::Ring;
-use distributed_decryption::conf::party::CertificatePaths;
-use distributed_decryption::execution::endpoints::decryption::{
-    decrypt_using_bitdec, decrypt_using_noiseflooding, partial_decrypt_using_bitdec,
-    partial_decrypt_using_noiseflooding, DecryptionMode, Small,
-};
-use distributed_decryption::execution::endpoints::keygen::{
-    distributed_decompression_keygen_z128, distributed_keygen_from_optional_compression_sk_z128,
-    distributed_keygen_z128, CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum,
-    PrivateKeySet,
-};
-use distributed_decryption::execution::keyset_config as ddec_keyset_config;
-use distributed_decryption::execution::large_execution::vss::RealVss;
-use distributed_decryption::execution::online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator;
-use distributed_decryption::execution::online::preprocessing::{
-    create_memory_factory, create_redis_factory, DKGPreprocessing, PreprocessorFactory,
-};
-use distributed_decryption::execution::runtime::party::{Identity, Role, RoleAssignment};
-use distributed_decryption::execution::runtime::session::{
-    BaseSessionStruct, ParameterHandles, SessionParameters, SmallSession, ToBaseSession,
-};
-use distributed_decryption::execution::small_execution::prss::PRSSSetup;
-use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
-use distributed_decryption::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
-use distributed_decryption::execution::zk::ceremony::{
-    compute_witness_dim, Ceremony, RealCeremony,
-};
-use distributed_decryption::networking::grpc::{
-    CoreToCoreNetworkConfig, GrpcNetworkingManager, GrpcServer,
-};
-use distributed_decryption::networking::NetworkingStrategy;
-use distributed_decryption::networking::{NetworkMode, Networking};
-use distributed_decryption::session_id::{SessionId, SESSION_ID_BYTES};
-use distributed_decryption::{algebra::base_ring::Z64, execution::endpoints::keygen::FhePubKeySet};
 use itertools::Itertools;
 use k256::ecdsa::SigningKey;
 use kms_grpc::kms::v1::{
@@ -95,6 +56,39 @@ use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::named::Named;
 use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
+use threshold_fhe::algebra::base_ring::Z128;
+use threshold_fhe::algebra::galois_rings::common::pack_residue_poly;
+use threshold_fhe::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
+use threshold_fhe::algebra::structure_traits::Ring;
+use threshold_fhe::conf::party::CertificatePaths;
+use threshold_fhe::execution::endpoints::decryption::{
+    decrypt_using_bitdec, decrypt_using_noiseflooding, partial_decrypt_using_bitdec,
+    partial_decrypt_using_noiseflooding, DecryptionMode, Small,
+};
+use threshold_fhe::execution::endpoints::keygen::{
+    distributed_decompression_keygen_z128, distributed_keygen_from_optional_compression_sk_z128,
+    distributed_keygen_z128, CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum,
+    PrivateKeySet,
+};
+use threshold_fhe::execution::keyset_config as ddec_keyset_config;
+use threshold_fhe::execution::large_execution::vss::RealVss;
+use threshold_fhe::execution::online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator;
+use threshold_fhe::execution::online::preprocessing::{
+    create_memory_factory, create_redis_factory, DKGPreprocessing, PreprocessorFactory,
+};
+use threshold_fhe::execution::runtime::party::{Identity, Role, RoleAssignment};
+use threshold_fhe::execution::runtime::session::{
+    BaseSessionStruct, ParameterHandles, SessionParameters, SmallSession, ToBaseSession,
+};
+use threshold_fhe::execution::small_execution::prss::PRSSSetup;
+use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+use threshold_fhe::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
+use threshold_fhe::execution::zk::ceremony::{compute_witness_dim, Ceremony, RealCeremony};
+use threshold_fhe::networking::grpc::{CoreToCoreNetworkConfig, GrpcNetworkingManager, GrpcServer};
+use threshold_fhe::networking::NetworkingStrategy;
+use threshold_fhe::networking::{NetworkMode, Networking};
+use threshold_fhe::session_id::{SessionId, SESSION_ID_BYTES};
+use threshold_fhe::{algebra::base_ring::Z64, execution::endpoints::keygen::FhePubKeySet};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, OwnedSemaphorePermit, RwLock};
 use tokio::time::Instant;
@@ -137,11 +131,11 @@ cfg_if::cfg_if! {
     if #[cfg(feature = "insecure")] {
         use crate::engine::centralized::central_kms::async_generate_crs;
         use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
-        use distributed_decryption::algebra::galois_rings::common::{ResiduePoly};
-        use distributed_decryption::execution::sharing::open::robust_opens_to;
-        use distributed_decryption::execution::tfhe_internals::compression_decompression_key::CompressionPrivateKeyShares;
-        use distributed_decryption::execution::tfhe_internals::glwe_key::GlweSecretKeyShare;
-        use distributed_decryption::execution::tfhe_internals::test_feature::{
+        use threshold_fhe::algebra::galois_rings::common::{ResiduePoly};
+        use threshold_fhe::execution::sharing::open::robust_opens_to;
+        use threshold_fhe::execution::tfhe_internals::compression_decompression_key::CompressionPrivateKeyShares;
+        use threshold_fhe::execution::tfhe_internals::glwe_key::GlweSecretKeyShare;
+        use threshold_fhe::execution::tfhe_internals::test_feature::{
             initialize_key_material, to_hl_client_key, transfer_crs, transfer_decompression_key,
             INPUT_PARTY_ID,
         };
@@ -406,11 +400,9 @@ where
                     message: format!("Failed to open file '{}': {}", cert_bundle.cert, e),
                 })?;
             tracing::info!("Certificate key loaded");
-            let san_strings = distributed_decryption::networking::grpc::extract_san_from_certs(
-                &[certificate],
-                true,
-            )
-            .map_err(|e| anyhow!(e))?;
+            let san_strings =
+                threshold_fhe::networking::grpc::extract_san_from_certs(&[certificate], true)
+                    .map_err(|e| anyhow!(e))?;
             tracing::info!("San strings loaded");
             let host = own_identity
                 .0
@@ -686,7 +678,7 @@ impl SessionPreparer {
         &self,
         session_id: SessionId,
         network_mode: NetworkMode,
-    ) -> anyhow::Result<distributed_decryption::execution::runtime::session::NetworkingImpl> {
+    ) -> anyhow::Result<threshold_fhe::execution::runtime::session::NetworkingImpl> {
         let strat = self.networking_strategy.read().await;
         let networking = (strat)(session_id, self.role_assignments.clone(), network_mode).await?;
         Ok(networking)
@@ -2109,9 +2101,8 @@ impl<
         preprocessing: &mut P,
     ) -> anyhow::Result<DecompressionKey>
     where
-        P: DKGPreprocessing<
-                distributed_decryption::algebra::galois_rings::common::ResiduePoly<Z128, 4>,
-            > + Send
+        P: DKGPreprocessing<threshold_fhe::algebra::galois_rings::common::ResiduePoly<Z128, 4>>
+            + Send
             + ?Sized,
     {
         let from_key_id =
@@ -2420,9 +2411,8 @@ impl<
         preprocessing: &mut P,
     ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<4>)>
     where
-        P: DKGPreprocessing<
-                distributed_decryption::algebra::galois_rings::common::ResiduePoly<Z128, 4>,
-            > + Send
+        P: DKGPreprocessing<threshold_fhe::algebra::galois_rings::common::ResiduePoly<Z128, 4>>
+            + Send
             + ?Sized,
     {
         let key_id = keyset_added_info

@@ -158,4 +158,4 @@ pub fn compute_reenc_message_hash(
 }
 
 // ree-export DecryptionMode
-pub use distributed_decryption::execution::endpoints::decryption::DecryptionMode;
+pub use threshold_fhe::execution::endpoints::decryption::DecryptionMode;

@@ -1,9 +1,9 @@
-use distributed_decryption::conf::party::CertificatePaths;
-use distributed_decryption::execution::endpoints::decryption::DecryptionMode;
-use distributed_decryption::execution::online::preprocessing::redis::RedisConf;
-use distributed_decryption::execution::runtime::party::{Identity, Role};
-use distributed_decryption::networking::grpc::CoreToCoreNetworkConfig;
 use serde::{Deserialize, Serialize};
+use threshold_fhe::conf::party::CertificatePaths;
+use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
+use threshold_fhe::execution::online::preprocessing::redis::RedisConf;
+use threshold_fhe::execution::runtime::party::{Identity, Role};
+use threshold_fhe::networking::grpc::CoreToCoreNetworkConfig;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]

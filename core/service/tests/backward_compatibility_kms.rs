@@ -15,10 +15,6 @@ use backward_compatibility::{
     AppKeyBlobTest, KmsFheKeyHandlesTest, PrivateSigKeyTest, PublicSigKeyTest, TestMetadataKMS,
     TestType, Testcase, ThresholdFheKeysTest,
 };
-use distributed_decryption::execution::{
-    endpoints::keygen::FhePubKeySet,
-    tfhe_internals::{switch_and_squash::SwitchAndSquashKey, test_feature::SnsClientKey},
-};
 use kms_grpc::rpc_types::{PubDataType, SignedPubDataHandleInternal};
 use kms_lib::{
     cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey},
@@ -32,6 +28,10 @@ use kms_lib::{
 use rand::SeedableRng;
 use std::{collections::HashMap, env, path::Path};
 use tfhe::{core_crypto::prelude::LweKeyswitchKey, integer::compression_keys::DecompressionKey};
+use threshold_fhe::execution::{
+    endpoints::keygen::FhePubKeySet,
+    tfhe_internals::{switch_and_squash::SwitchAndSquashKey, test_feature::SnsClientKey},
+};
 
 // This domain should match what is in the data_XX.rs file in backward compatibility.
 fn dummy_domain() -> alloy_sol_types::Eip712Domain {

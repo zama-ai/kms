@@ -1,10 +1,16 @@
 use aes_prng::AesRng;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use distributed_decryption::algebra::structure_traits::{FromU128, Sample};
-use distributed_decryption::execution::sharing::shamir::ShamirSharing;
-use distributed_decryption::execution::sharing::shamir::{InputOp, RevealOp, ShamirFieldPoly};
-use distributed_decryption::experimental::algebra::levels::LevelOne;
-use distributed_decryption::{
+use itertools::Itertools;
+use pprof::criterion::Output;
+use pprof::criterion::PProfProfiler;
+use rand::SeedableRng;
+use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use std::num::Wrapping;
+use threshold_fhe::algebra::structure_traits::{FromU128, Sample};
+use threshold_fhe::execution::sharing::shamir::ShamirSharing;
+use threshold_fhe::execution::sharing::shamir::{InputOp, RevealOp, ShamirFieldPoly};
+use threshold_fhe::experimental::algebra::levels::LevelOne;
+use threshold_fhe::{
     algebra::{
         error_correction::error_correction,
         galois_fields::gf256::GF256,
@@ -12,12 +18,6 @@ use distributed_decryption::{
     },
     execution::sharing::shamir::ShamirSharings,
 };
-use itertools::Itertools;
-use pprof::criterion::Output;
-use pprof::criterion::PProfProfiler;
-use rand::SeedableRng;
-use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
-use std::num::Wrapping;
 
 fn bench_decode_z2(c: &mut Criterion) {
     let degrees = vec![2_usize, 4, 8, 16, 32, 64];

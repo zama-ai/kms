@@ -6,7 +6,14 @@ use conf_trace::{
     conf::{Settings, TelemetryConfig},
     telemetry::init_tracing,
 };
-use distributed_decryption::{
+use itertools::Itertools;
+use rand::{distributions::Uniform, random, Rng};
+use tfhe::{
+    integer::{ciphertext::BaseRadixCiphertext, IntegerCiphertext},
+    set_server_key, FheBool, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32,
+    FheUint4, FheUint64, FheUint8,
+};
+use threshold_fhe::{
     choreography::{
         choreographer::ChoreoRuntime,
         grpc::SupportedRing,
@@ -19,13 +26,6 @@ use distributed_decryption::{
         tfhe_internals::{parameters::DkgParamsAvailable, utils::expanded_encrypt},
     },
     session_id::SessionId,
-};
-use itertools::Itertools;
-use rand::{distributions::Uniform, random, Rng};
-use tfhe::{
-    integer::{ciphertext::BaseRadixCiphertext, IntegerCiphertext},
-    set_server_key, FheBool, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32,
-    FheUint4, FheUint64, FheUint8,
 };
 use tokio::time;
 

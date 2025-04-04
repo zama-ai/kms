@@ -10,13 +10,6 @@ use crate::vault::storage::{
     store_versioned_at_request_id, Storage, StorageForText, StorageReader, StorageType,
 };
 use aes_prng::AesRng;
-use distributed_decryption::execution::keyset_config::StandardKeySetConfig;
-use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
-use distributed_decryption::execution::zk::ceremony::max_num_messages;
-use distributed_decryption::execution::{
-    tfhe_internals::test_feature::{gen_key_set, keygen_all_party_shares},
-    zk::ceremony::make_centralized_public_parameters,
-};
 use itertools::Itertools;
 use kms_grpc::kms::v1::RequestId;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType, WrappedPublicKey};
@@ -24,6 +17,13 @@ use rand::SeedableRng;
 use std::collections::HashMap;
 use std::path::Path;
 use tfhe::Seed;
+use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
+use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+use threshold_fhe::execution::zk::ceremony::max_num_messages;
+use threshold_fhe::execution::{
+    tfhe_internals::test_feature::{gen_key_set, keygen_all_party_shares},
+    zk::ceremony::make_centralized_public_parameters,
+};
 
 pub type FhePublicKey = tfhe::CompactPublicKey;
 pub type FhePrivateKey = tfhe::ClientKey;
@@ -225,7 +225,7 @@ where
             &dkg_params
                 .get_params_basics_handle()
                 .get_compact_pk_enc_params(),
-            distributed_decryption::execution::zk::constants::ZK_DEFAULT_MAX_NUM_BITS,
+            threshold_fhe::execution::zk::constants::ZK_DEFAULT_MAX_NUM_BITS,
         )
         .unwrap()
         .0
@@ -237,7 +237,7 @@ where
         );
         Some(max_num_bits)
     } else {
-        Some(distributed_decryption::execution::zk::constants::ZK_DEFAULT_MAX_NUM_BITS as u32)
+        Some(threshold_fhe::execution::zk::constants::ZK_DEFAULT_MAX_NUM_BITS as u32)
     };
 
     let (pp, crs_info) =
@@ -746,7 +746,7 @@ where
             &dkg_params
                 .get_params_basics_handle()
                 .get_compact_pk_enc_params(),
-            distributed_decryption::execution::zk::constants::ZK_DEFAULT_MAX_NUM_BITS,
+            threshold_fhe::execution::zk::constants::ZK_DEFAULT_MAX_NUM_BITS,
         )
         .unwrap()
         .0
@@ -758,7 +758,7 @@ where
         );
         Some(max_num_bits)
     } else {
-        Some(distributed_decryption::execution::zk::constants::ZK_DEFAULT_MAX_NUM_BITS)
+        Some(threshold_fhe::execution::zk::constants::ZK_DEFAULT_MAX_NUM_BITS)
     };
 
     let mut rng = get_rng(deterministic, Some(amount_parties as u64));

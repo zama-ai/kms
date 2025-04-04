@@ -69,10 +69,10 @@
 //! ```
 use crypto_box::aead::{Aead, AeadCore};
 use crypto_box::{Nonce, SalsaBox};
-use distributed_decryption::execution::tfhe_internals::parameters::BC_PARAMS_SAM_SNS;
 use kms_grpc::kms::v1::Eip712DomainMsg;
 use kms_grpc::kms::v1::FheParameter;
 use kms_grpc::rpc_types::protobuf_to_alloy_domain;
+use threshold_fhe::execution::tfhe_internals::parameters::BC_PARAMS_SAM_SNS;
 
 use super::*;
 

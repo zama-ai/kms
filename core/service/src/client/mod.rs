@@ -12,21 +12,6 @@ use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
 use bincode::{deserialize, serialize};
-use distributed_decryption::algebra::base_ring::{Z128, Z64};
-use distributed_decryption::algebra::error_correction::MemoizedExceptionals;
-use distributed_decryption::algebra::galois_rings::degree_4::ResiduePolyF4;
-use distributed_decryption::algebra::structure_traits::{BaseRing, ErrorCorrect};
-use distributed_decryption::execution::endpoints::decryption::DecryptionMode;
-use distributed_decryption::execution::endpoints::reconstruct::{
-    combine_decryptions, reconstruct_packed_message,
-};
-use distributed_decryption::execution::runtime::party::Role;
-use distributed_decryption::execution::sharing::shamir::{
-    fill_indexed_shares, reconstruct_w_errors_sync, ShamirSharings,
-};
-use distributed_decryption::execution::tfhe_internals::parameters::{
-    AugmentedCiphertextParameters, DKGParams,
-};
 use itertools::Itertools;
 use kms_grpc::kms::v1::{
     FheType, ReencryptionRequest, ReencryptionResponse, ReencryptionResponsePayload, RequestId,
@@ -39,6 +24,21 @@ use rand::SeedableRng;
 use std::collections::HashSet;
 use std::num::Wrapping;
 use tfhe::shortint::ClassicPBSParameters;
+use threshold_fhe::algebra::base_ring::{Z128, Z64};
+use threshold_fhe::algebra::error_correction::MemoizedExceptionals;
+use threshold_fhe::algebra::galois_rings::degree_4::ResiduePolyF4;
+use threshold_fhe::algebra::structure_traits::{BaseRing, ErrorCorrect};
+use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
+use threshold_fhe::execution::endpoints::reconstruct::{
+    combine_decryptions, reconstruct_packed_message,
+};
+use threshold_fhe::execution::runtime::party::Role;
+use threshold_fhe::execution::sharing::shamir::{
+    fill_indexed_shares, reconstruct_w_errors_sync, ShamirSharings,
+};
+use threshold_fhe::execution::tfhe_internals::parameters::{
+    AugmentedCiphertextParameters, DKGParams,
+};
 use wasm_bindgen::prelude::*;
 
 cfg_if::cfg_if! {
@@ -2110,14 +2110,14 @@ pub mod test_tools {
         },
         util::random_free_port::get_listeners_random_free_ports,
     };
-    use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
-    use distributed_decryption::networking::grpc::GrpcServer;
     use futures_util::FutureExt;
     use itertools::Itertools;
     use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
     use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
     use std::str::FromStr;
     use std::sync::Arc;
+    use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+    use threshold_fhe::networking::grpc::GrpcServer;
     use tonic::server::NamedService;
     use tonic::transport::{Channel, Uri};
 
@@ -2595,14 +2595,6 @@ pub(crate) mod tests {
     use crate::util::rate_limiter::RateLimiterConfig;
     use crate::vault::storage::StorageReader;
     use crate::vault::storage::{file::FileStorage, StorageType};
-    use distributed_decryption::execution::endpoints::decryption::DecryptionMode;
-    #[cfg(any(feature = "slow_tests", feature = "insecure"))]
-    use distributed_decryption::execution::runtime::party::Role;
-    use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
-    #[cfg(feature = "wasm_tests")]
-    use distributed_decryption::execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
-    use distributed_decryption::execution::tfhe_internals::test_feature::run_decompression_test;
-    use distributed_decryption::networking::grpc::GrpcServer;
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     use kms_grpc::kms::v1::CrsGenRequest;
     #[cfg(feature = "wasm_tests")]
@@ -2626,6 +2618,14 @@ pub(crate) mod tests {
     use tfhe::zk::CompactPkeCrs;
     use tfhe::ProvenCompactCiphertextList;
     use tfhe::Tag;
+    use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
+    #[cfg(any(feature = "slow_tests", feature = "insecure"))]
+    use threshold_fhe::execution::runtime::party::Role;
+    use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+    #[cfg(feature = "wasm_tests")]
+    use threshold_fhe::execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
+    use threshold_fhe::execution::tfhe_internals::test_feature::run_decompression_test;
+    use threshold_fhe::networking::grpc::GrpcServer;
     use tokio::task::JoinSet;
     use tonic::server::NamedService;
     use tonic::transport::Channel;
@@ -6188,7 +6188,7 @@ pub(crate) mod tests {
         insecure: bool,
         decompression_keygen: bool,
     ) -> TestKeyGenResult {
-        use distributed_decryption::execution::{
+        use threshold_fhe::execution::{
             runtime::party::Role, tfhe_internals::test_feature::to_hl_client_key,
         };
 
@@ -6383,10 +6383,10 @@ pub(crate) mod tests {
         tfhe::core_crypto::prelude::LweSecretKeyOwned<u64>,
         tfhe::core_crypto::prelude::GlweSecretKeyOwned<u64>,
     ) {
-        use distributed_decryption::execution::{
+        use tfhe::core_crypto::prelude::GlweSecretKeyOwned;
+        use threshold_fhe::execution::{
             endpoints::keygen::GlweSecretKeyShareEnum, tfhe_internals::utils::reconstruct_bit_vec,
         };
-        use tfhe::core_crypto::prelude::GlweSecretKeyOwned;
 
         let param_handle = param.get_params_basics_handle();
         let lwe_shares = all_threshold_fhe_keys

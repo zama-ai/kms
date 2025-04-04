@@ -1,5 +1,4 @@
 use assert_cmd::{assert::OutputAssertExt, Command};
-use distributed_decryption::conf::party::CertificatePaths;
 use kms_lib::consts::KEY_PATH_PREFIX;
 use kms_lib::vault::storage::{file::FileStorage, StorageType};
 use std::os::unix::fs::PermissionsExt;
@@ -8,6 +7,7 @@ use std::str::FromStr;
 use std::{fs, thread, time::Duration};
 use sysinfo::System;
 use test_utils::integration_test;
+use threshold_fhe::conf::party::CertificatePaths;
 
 const KMS_SERVER: &str = "kms-server";
 const KMS_GEN_KEYS: &str = "kms-gen-keys";

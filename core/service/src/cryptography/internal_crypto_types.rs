@@ -1,6 +1,5 @@
 use crate::consts::{DEFAULT_PARAM, SIG_SIZE, TEST_PARAM};
 use crypto_box::SecretKey;
-use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
 use k256::ecdsa::{SigningKey, VerifyingKey};
 use kms_grpc::kms::v1::FheParameter;
 use nom::AsBytes;
@@ -8,6 +7,7 @@ use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
 use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
+use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use wasm_bindgen::prelude::wasm_bindgen;
 
 macro_rules! impl_generic_versionize {

@@ -7,7 +7,9 @@ use conf_trace::{
     conf::{Settings, TelemetryConfig},
     telemetry::init_tracing,
 };
-use distributed_decryption::{
+use itertools::Itertools;
+use rand::{random, RngCore, SeedableRng};
+use threshold_fhe::{
     choreography::choreographer::ChoreoRuntime,
     conf::choreo::ChoreoConf,
     experimental::{
@@ -21,8 +23,6 @@ use distributed_decryption::{
     },
     session_id::SessionId,
 };
-use itertools::Itertools;
-use rand::{random, RngCore, SeedableRng};
 
 #[derive(Args, Debug)]
 struct PrssInitArgs {

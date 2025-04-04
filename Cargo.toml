@@ -14,7 +14,7 @@ members = [
 
 # The backward-compatibility module is excluded from the workspace in order to avoid dependency
 # conflicts. This is related to the fact that it needs to import the different packages (kms,
-# distributed-decryption) to test with specific versions when generating the data. However, the
+# threshold-fhe) to test with specific versions when generating the data. However, the
 # workspace already has these dependencies by nature, creating a name conflict like described in
 # https://github.com/rust-lang/cargo/issues/12891
 # Note that it's not possible to only generate the lock file using specific features as the resolver
@@ -41,7 +41,7 @@ bincode = "=1.3.3"
 clap = { version = "=4.5.30", features = ["derive"] }
 cfg-if = "=1.0.0"
 conf-trace = { path = "./conf-trace" }
-distributed-decryption = { path = "./core/threshold/", default-features = false }
+threshold-fhe = { path = "./core/threshold/", default-features = false }
 futures = "=0.3.31"
 hex = "=0.4.3"
 http = "1.2.0"

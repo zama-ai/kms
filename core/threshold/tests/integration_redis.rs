@@ -1,17 +1,17 @@
 use ctor::ctor;
-use distributed_decryption::algebra::base_ring::{Z128, Z64};
-use distributed_decryption::algebra::galois_rings::degree_4::ResiduePolyF4;
-use distributed_decryption::execution::online::preprocessing::create_redis_factory;
-use distributed_decryption::execution::online::preprocessing::redis::RedisConf;
-use distributed_decryption::execution::online::triple::Triple;
-use distributed_decryption::execution::runtime::party::Role;
-use distributed_decryption::execution::sharing::share::Share;
 use paste::paste;
 use redis::{Cmd, ConnectionLike};
 use std::num::Wrapping;
+use threshold_fhe::algebra::base_ring::{Z128, Z64};
+use threshold_fhe::algebra::galois_rings::degree_4::ResiduePolyF4;
+use threshold_fhe::execution::online::preprocessing::create_redis_factory;
+use threshold_fhe::execution::online::preprocessing::redis::RedisConf;
+use threshold_fhe::execution::online::triple::Triple;
+use threshold_fhe::execution::runtime::party::Role;
+use threshold_fhe::execution::sharing::share::Share;
 
 #[cfg(feature = "testing")]
-use distributed_decryption::{
+use threshold_fhe::{
     execution::{
         endpoints::keygen::distributed_keygen_z64,
         runtime::test_runtime::{generate_fixed_identities, DistributedTestRuntime},
@@ -173,7 +173,8 @@ fn test_dkg_orchestrator_large(
     threshold: u8,
     params: DKGParams,
 ) {
-    use distributed_decryption::{
+    use itertools::Itertools;
+    use threshold_fhe::{
         algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring},
         execution::{
             keyset_config::KeySetConfig,
@@ -183,7 +184,6 @@ fn test_dkg_orchestrator_large(
         networking::NetworkMode,
         thread_handles::OsThreadGroup,
     };
-    use itertools::Itertools;
 
     let params_basics_handles = params.get_params_basics_handle();
     params_basics_handles
@@ -285,7 +285,7 @@ fn test_dkg_orchestrator_large(
 #[cfg(feature = "testing")]
 #[test]
 fn test_dkg_orchestrator_params8_small_no_sns() {
-    use distributed_decryption::execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
+    use threshold_fhe::execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
 
     let params = PARAMS_TEST_BK_SNS;
     let params = params.get_params_without_sns();

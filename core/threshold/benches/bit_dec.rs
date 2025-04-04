@@ -1,26 +1,26 @@
 use aes_prng::AesRng;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use distributed_decryption::algebra::base_ring::Z64;
-use distributed_decryption::algebra::galois_rings::degree_8::ResiduePolyF8Z64;
-use distributed_decryption::algebra::structure_traits::Ring;
-use distributed_decryption::execution::endpoints::decryption::{
-    init_prep_bitdec_large, init_prep_bitdec_small,
-};
-use distributed_decryption::execution::online::bit_manipulation::bit_dec_batch;
-use distributed_decryption::execution::online::preprocessing::dummy::DummyPreprocessing;
-use distributed_decryption::execution::online::preprocessing::BitDecPreprocessing;
-use distributed_decryption::execution::runtime::session::ParameterHandles;
-use distributed_decryption::execution::runtime::session::{LargeSession, SmallSession};
-use distributed_decryption::execution::sharing::shamir::InputOp;
-use distributed_decryption::execution::sharing::shamir::ShamirSharings;
-use distributed_decryption::execution::sharing::share::Share;
-use distributed_decryption::networking::NetworkMode;
-use distributed_decryption::tests::helper::tests_and_benches::{
-    execute_protocol_large, execute_protocol_small,
-};
 use pprof::criterion::{Output, PProfProfiler};
 use rand::SeedableRng;
 use std::num::Wrapping;
+use threshold_fhe::algebra::base_ring::Z64;
+use threshold_fhe::algebra::galois_rings::degree_8::ResiduePolyF8Z64;
+use threshold_fhe::algebra::structure_traits::Ring;
+use threshold_fhe::execution::endpoints::decryption::{
+    init_prep_bitdec_large, init_prep_bitdec_small,
+};
+use threshold_fhe::execution::online::bit_manipulation::bit_dec_batch;
+use threshold_fhe::execution::online::preprocessing::dummy::DummyPreprocessing;
+use threshold_fhe::execution::online::preprocessing::BitDecPreprocessing;
+use threshold_fhe::execution::runtime::session::ParameterHandles;
+use threshold_fhe::execution::runtime::session::{LargeSession, SmallSession};
+use threshold_fhe::execution::sharing::shamir::InputOp;
+use threshold_fhe::execution::sharing::shamir::ShamirSharings;
+use threshold_fhe::execution::sharing::share::Share;
+use threshold_fhe::networking::NetworkMode;
+use threshold_fhe::tests::helper::tests_and_benches::{
+    execute_protocol_large, execute_protocol_small,
+};
 
 #[derive(Debug, Clone, Copy)]
 struct OneShotConfig {

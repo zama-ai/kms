@@ -4,8 +4,6 @@ use crate::vault::storage::{
     delete_all_at_request_id, read_versioned_at_request_id, StorageReader,
 };
 use crate::vault::storage::{read_pk_at_request_id, StorageType};
-use distributed_decryption::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
-use distributed_decryption::execution::tfhe_internals::utils::expanded_encrypt;
 use kms_grpc::kms::v1::{CiphertextFormat, FheType, RequestId, TypedPlaintext};
 use kms_grpc::rpc_types::{PubDataType, WrappedPublicKeyOwned};
 use serde::de::DeserializeOwned;
@@ -22,6 +20,8 @@ use tfhe::{
     FheUint4, FheUint512, FheUint64, FheUint8, HlCompactable, HlCompressible, HlExpandable,
     ServerKey, Unversionize, Versionize,
 };
+use threshold_fhe::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
+use threshold_fhe::execution::tfhe_internals::utils::expanded_encrypt;
 
 trait IntoRawParts {
     fn into_raw_parts(self) -> BaseRadixCiphertext<tfhe::shortint::Ciphertext>;
@@ -612,9 +612,9 @@ pub(crate) mod setup {
         },
         vault::storage::{file::FileStorage, StorageType},
     };
-    use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
     use kms_grpc::kms::v1::RequestId;
     use kms_grpc::rpc_types::SIGNING_KEY_ID;
+    use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 
     pub async fn ensure_dir_exist() {
         tokio::fs::create_dir_all(TMP_PATH_PREFIX).await.unwrap();

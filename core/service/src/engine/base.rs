@@ -15,13 +15,6 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
-use distributed_decryption::execution::endpoints::keygen::FhePubKeySet;
-#[cfg(feature = "non-wasm")]
-use distributed_decryption::execution::keyset_config as ddec_keyset_config;
-use distributed_decryption::execution::tfhe_internals::parameters::{
-    Ciphertext128, DKGParams, LowLevelCiphertext,
-};
-use distributed_decryption::execution::tfhe_internals::test_feature::SnsClientKey;
 use k256::ecdsa::SigningKey;
 use kms_grpc::kms::v1::{
     CiphertextFormat, FheParameter, FheType, ReencryptionResponsePayload, SignedPubDataHandle,
@@ -44,6 +37,13 @@ use tfhe::{
     FheUint4, FheUint512, FheUint64, FheUint8,
 };
 use tfhe_versionable::VersionsDispatch;
+use threshold_fhe::execution::endpoints::keygen::FhePubKeySet;
+#[cfg(feature = "non-wasm")]
+use threshold_fhe::execution::keyset_config as ddec_keyset_config;
+use threshold_fhe::execution::tfhe_internals::parameters::{
+    Ciphertext128, DKGParams, LowLevelCiphertext,
+};
+use threshold_fhe::execution::tfhe_internals::test_feature::SnsClientKey;
 use tokio::sync::Mutex;
 
 use super::traits::BaseKms;

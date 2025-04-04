@@ -18,13 +18,13 @@ use crate::{
     util::meta_store::MetaStore,
     vault::storage::{delete_at_request_id, delete_pk_at_request_id},
 };
-use distributed_decryption::execution::endpoints::keygen::FhePubKeySet;
 use kms_grpc::kms::v1::RequestId;
 use kms_grpc::rpc_types::{
     PrivDataType, PubDataType, SignedPubDataHandleInternal, WrappedPublicKey, WrappedPublicKeyOwned,
 };
 use std::{collections::HashMap, sync::Arc};
 use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
+use threshold_fhe::execution::endpoints::keygen::FhePubKeySet;
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
 
 #[tonic::async_trait]
@@ -1039,19 +1039,19 @@ impl<
 #[cfg(test)]
 mod tests {
     use aes_prng::AesRng;
-    use distributed_decryption::execution::{
-        endpoints::keygen::FhePubKeySet,
-        tfhe_internals::{
-            switch_and_squash::SwitchAndSquashKey,
-            test_feature::{gen_key_set, generate_large_keys_from_seed, keygen_all_party_shares},
-        },
-    };
     use kms_grpc::kms::v1::RequestId;
     use kms_grpc::rpc_types::WrappedPublicKey;
     use rand::SeedableRng;
     use std::collections::HashMap;
     use std::sync::Arc;
     use tfhe::{shortint::ClassicPBSParameters, CompactPublicKey, ConfigBuilder, ServerKey};
+    use threshold_fhe::execution::{
+        endpoints::keygen::FhePubKeySet,
+        tfhe_internals::{
+            switch_and_squash::SwitchAndSquashKey,
+            test_feature::{gen_key_set, generate_large_keys_from_seed, keygen_all_party_shares},
+        },
+    };
     use tokio::sync::{Mutex, RwLock};
 
     use crate::{

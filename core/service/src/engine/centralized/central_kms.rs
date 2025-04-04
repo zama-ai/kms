@@ -19,17 +19,6 @@ use crate::vault::storage::{
 use crate::{anyhow_error_and_log, get_exactly_one};
 use aes_prng::AesRng;
 use bincode::serialize;
-#[cfg(feature = "non-wasm")]
-use distributed_decryption::execution::endpoints::keygen::FhePubKeySet;
-#[cfg(feature = "non-wasm")]
-use distributed_decryption::execution::keyset_config::KeySetCompressionConfig;
-#[cfg(feature = "non-wasm")]
-use distributed_decryption::execution::keyset_config::StandardKeySetConfig;
-use distributed_decryption::execution::tfhe_internals::parameters::{Ciphertext128, DKGParams};
-#[cfg(feature = "non-wasm")]
-use distributed_decryption::execution::zk::ceremony::make_centralized_public_parameters;
-#[cfg(feature = "non-wasm")]
-use distributed_decryption::thread_handles::ThreadHandleGroup;
 use k256::ecdsa::SigningKey;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms::v1::KeySetAddedInfo;
@@ -64,6 +53,17 @@ use tfhe::{
     ClientKey, ConfigBuilder, FheBool, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048,
     FheUint256, FheUint32, FheUint4, FheUint512, FheUint64, FheUint8,
 };
+#[cfg(feature = "non-wasm")]
+use threshold_fhe::execution::endpoints::keygen::FhePubKeySet;
+#[cfg(feature = "non-wasm")]
+use threshold_fhe::execution::keyset_config::KeySetCompressionConfig;
+#[cfg(feature = "non-wasm")]
+use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
+use threshold_fhe::execution::tfhe_internals::parameters::{Ciphertext128, DKGParams};
+#[cfg(feature = "non-wasm")]
+use threshold_fhe::execution::zk::ceremony::make_centralized_public_parameters;
+#[cfg(feature = "non-wasm")]
+use threshold_fhe::thread_handles::ThreadHandleGroup;
 use tokio::sync::RwLock;
 #[cfg(feature = "non-wasm")]
 use tokio_util::task::TaskTracker;
@@ -194,7 +194,7 @@ pub fn generate_fhe_keys(
     seed: Option<Seed>,
     eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
-    use distributed_decryption::execution::tfhe_internals::{
+    use threshold_fhe::execution::tfhe_internals::{
         switch_and_squash::SwitchAndSquashKey, test_feature::generate_large_keys_from_seed,
     };
 
@@ -894,8 +894,6 @@ pub(crate) mod tests {
         store_pk_at_request_id, store_versioned_at_request_id, StorageReader, StorageType,
     };
     use aes_prng::AesRng;
-    use distributed_decryption::execution::keyset_config::StandardKeySetConfig;
-    use distributed_decryption::execution::tfhe_internals::parameters::DKGParams;
     use kms_grpc::kms::v1::{FheType, RequestId};
     use kms_grpc::rpc_types::{PrivDataType, WrappedPublicKey};
     use rand::{RngCore, SeedableRng};
@@ -908,6 +906,8 @@ pub(crate) mod tests {
     use tfhe::Versionize;
     use tfhe::{shortint::ClassicPBSParameters, ConfigBuilder, Seed};
     use tfhe_versionable::VersionsDispatch;
+    use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
+    use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
     use tokio::sync::OnceCell;
 
     static ONCE_TEST_KEY: OnceCell<CentralizedTestingKeys> = OnceCell::const_new();
@@ -953,7 +953,7 @@ pub(crate) mod tests {
     pub(crate) async fn new_pub_ram_storage_from_existing_keys(
         keys: &HashMap<
             kms_grpc::kms::v1::RequestId,
-            distributed_decryption::execution::endpoints::keygen::FhePubKeySet,
+            threshold_fhe::execution::endpoints::keygen::FhePubKeySet,
         >,
     ) -> anyhow::Result<RamStorage> {
         let mut ram_storage = RamStorage::new(StorageType::PUB);

@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use distributed_decryption::{
+use itertools::Itertools;
+use threshold_fhe::{
     algebra::{galois_rings::degree_8::ResiduePolyF8Z64, structure_traits::Ring},
     execution::{
         runtime::{
@@ -13,7 +14,6 @@ use distributed_decryption::{
     networking::NetworkMode,
     session_id::SessionId,
 };
-use itertools::Itertools;
 use tokio::task::JoinSet;
 
 // This benchmark performs two-party CRS ceremony.

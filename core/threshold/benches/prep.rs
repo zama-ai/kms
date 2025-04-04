@@ -1,23 +1,21 @@
 use aes_prng::AesRng;
 use criterion::Throughput;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use distributed_decryption::algebra::galois_rings::degree_8::ResiduePolyF8Z128;
-use distributed_decryption::algebra::galois_rings::degree_8::ResiduePolyF8Z64;
-use distributed_decryption::algebra::structure_traits::Ring;
-use distributed_decryption::execution::config::BatchParams;
-use distributed_decryption::execution::large_execution::double_sharing::DoubleSharing;
-use distributed_decryption::execution::large_execution::offline::LargePreprocessing;
-use distributed_decryption::execution::large_execution::offline::{
-    TrueDoubleSharing, TrueSingleSharing,
-};
-use distributed_decryption::execution::online::gen_bits::{BitGenEven, RealBitGenEven};
-use distributed_decryption::execution::runtime::session::{LargeSession, SmallSession128};
-use distributed_decryption::execution::sharing::shamir::{InputOp, RevealOp};
-use distributed_decryption::execution::small_execution::agree_random::RealAgreeRandom;
-use distributed_decryption::execution::small_execution::offline::SmallPreprocessing;
-use distributed_decryption::networking::NetworkMode;
-use distributed_decryption::tests::helper::tests_and_benches::execute_protocol_large;
-use distributed_decryption::tests::helper::tests_and_benches::execute_protocol_small;
+use threshold_fhe::algebra::galois_rings::degree_8::ResiduePolyF8Z128;
+use threshold_fhe::algebra::galois_rings::degree_8::ResiduePolyF8Z64;
+use threshold_fhe::algebra::structure_traits::Ring;
+use threshold_fhe::execution::config::BatchParams;
+use threshold_fhe::execution::large_execution::double_sharing::DoubleSharing;
+use threshold_fhe::execution::large_execution::offline::LargePreprocessing;
+use threshold_fhe::execution::large_execution::offline::{TrueDoubleSharing, TrueSingleSharing};
+use threshold_fhe::execution::online::gen_bits::{BitGenEven, RealBitGenEven};
+use threshold_fhe::execution::runtime::session::{LargeSession, SmallSession128};
+use threshold_fhe::execution::sharing::shamir::{InputOp, RevealOp};
+use threshold_fhe::execution::small_execution::agree_random::RealAgreeRandom;
+use threshold_fhe::execution::small_execution::offline::SmallPreprocessing;
+use threshold_fhe::networking::NetworkMode;
+use threshold_fhe::tests::helper::tests_and_benches::execute_protocol_large;
+use threshold_fhe::tests::helper::tests_and_benches::execute_protocol_small;
 
 use pprof::criterion::{Output, PProfProfiler};
 use rand::SeedableRng;
@@ -414,8 +412,8 @@ fn bitgen_nlarge(c: &mut Criterion) {
 }
 
 fn batch_decode2t(c: &mut Criterion) {
-    use distributed_decryption::execution::sharing::shamir::ShamirSharings;
     use std::num::Wrapping;
+    use threshold_fhe::execution::sharing::shamir::ShamirSharings;
 
     let mut group = c.benchmark_group("batch_decode2t");
     group.sample_size(10);

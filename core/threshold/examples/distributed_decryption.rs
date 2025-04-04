@@ -2,12 +2,15 @@
 //! you first need to add it as a dependency in your `Cargo.toml`:
 //!
 //! ```
-//! distributed_decryption = { git = "https://github.com/zama-ai/threshold-fhe.git" }
+//! threshold_fhe = { git = "https://github.com/zama-ai/threshold-fhe.git" }
 //! ```
 //!
 //! This is an example where we setup a testing runtime that runs 4 parties on the same machine.
 use aes_prng::AesRng;
-use distributed_decryption::{
+use rand::{Rng, SeedableRng};
+use std::sync::Arc;
+use tfhe::{set_server_key, FheUint8};
+use threshold_fhe::{
     algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring},
     execution::{
         endpoints::decryption::{threshold_decrypt64, DecryptionMode},
@@ -20,9 +23,6 @@ use distributed_decryption::{
     },
     networking::NetworkMode,
 };
-use rand::{Rng, SeedableRng};
-use std::sync::Arc;
-use tfhe::{set_server_key, FheUint8};
 
 fn main() {
     let num_parties = 4;

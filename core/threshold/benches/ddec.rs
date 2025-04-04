@@ -1,6 +1,10 @@
 use aes_prng::AesRng;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use distributed_decryption::{
+use pprof::criterion::{Output, PProfProfiler};
+use rand::{Rng, SeedableRng};
+use std::sync::Arc;
+use tfhe::{set_server_key, FheUint8};
+use threshold_fhe::{
     algebra::{
         galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
         structure_traits::Ring,
@@ -17,10 +21,6 @@ use distributed_decryption::{
     file_handling::read_element,
     networking::NetworkMode,
 };
-use pprof::criterion::{Output, PProfProfiler};
-use rand::{Rng, SeedableRng};
-use std::sync::Arc;
-use tfhe::{set_server_key, FheUint8};
 
 #[derive(Debug, Clone, Copy)]
 struct OneShotConfig {

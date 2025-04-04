@@ -1,14 +1,14 @@
 use std::collections::BTreeMap;
 
 use aws_lc_rs::kem;
-use distributed_decryption::{
-    algebra::galois_rings::degree_4::ResiduePolyF4Z64,
-    execution::sharing::{shamir::ShamirSharings, share::Share},
-};
 use error::BackupError;
 use pke::{dec, enc, BackupCiphertext};
 use rand::{CryptoRng, Rng};
 use secretsharing::reconstruct;
+use threshold_fhe::{
+    algebra::galois_rings::degree_4::ResiduePolyF4Z64,
+    execution::sharing::{shamir::ShamirSharings, share::Share},
+};
 
 pub mod error;
 pub mod pke;
