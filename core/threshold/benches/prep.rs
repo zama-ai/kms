@@ -26,6 +26,7 @@ struct OneShotConfig {
     t: usize,
     batch_size: usize,
 }
+
 impl OneShotConfig {
     fn new(n: usize, t: usize, batch_size: usize) -> OneShotConfig {
         OneShotConfig { n, t, batch_size }

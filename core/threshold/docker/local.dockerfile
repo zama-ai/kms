@@ -76,6 +76,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         ca-certificates \
         libprotobuf-dev \
         libssl3 \
+        iproute2 \
+        iputils-ping \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app/ddec
@@ -93,6 +95,10 @@ RUN groupadd -g 10002 kms && \
     useradd -m -u 10004 -g kms kms
 RUN chown -R kms:kms /app/ddec
 USER kms
+
+# NOTE: when using tools such as tc to change the network configuration,
+# you need to run the container as root instead of the kms user as above.
+# USER root
 
 # Add health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \

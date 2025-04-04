@@ -30,6 +30,7 @@ services:
     volumes:
       - ../parameters:/app/ddec/parameters
       - ../test_certs:/app/ddec/certs
+      - ../docker/scripts:/app/ddec/scripts
     ports:
       - {{ 50000 + i+1 }}:50000
       - {{ 60000 + i+1 }}:60000
