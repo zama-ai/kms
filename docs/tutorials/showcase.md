@@ -43,7 +43,7 @@ in the config file used in the next step.
 
 4. To run a user decryption (reencryption) of the little-endian hex value `0x2342` of type `euint16` run the following command, where `key-id` is the value you reiceived in the output of step 2 (e.g. `948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06` above):
     ```{bash}
-    $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -a -l re-encrypt --to-encrypt 0x2342 --data-type euint16 --key-id <key-id>
+    $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -a -l re-encrypt from-args --to-encrypt 0x2342 --data-type euint16 --key-id <key-id>
     ```
     If everything goes well, you will see a message telling you that the user decryption was successful, along with several status logs. The `core-client` will also validate, that the result of the cores can be reconstructed correctly.
 

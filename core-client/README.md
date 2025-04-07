@@ -129,6 +129,16 @@ Note that this operation runs the secure distributed CRS generation protocol, wh
 #### Arguments
 `<max-num-bits>` refers to the maximum bit length of the FHE types to be used in the KMS and is set to `2048` by default since 2048 is the largest number that is needed with the current types.
 
+### Encryption
+
+We provide a way to perform an encryption without actually sending any request to the kms-core:
+
+```{bash}
+$ cargo run -- encrypt -f <path-to-toml-config-file> --to-encrypt <hex-value-encrypt> --data-type <euint-value> --key-id <public-key-id> --ciphertext-output-path <output-file-path>
+```
+
+This allows to store the encryption to file which can then be re-used in future commands.
+
 
 ### Decryption
 
@@ -138,11 +148,18 @@ The most common use case for the KMS is to request decryptions of ciphertexts. T
 
 #### Decryption / Public Decryption
 
-To decrypt a given value of the provided FHE type, using the specified public key and then request a public decryption from the KMS cores run the following command:
+To decrypt a given value of the provided FHE type, using the specified public key and then request a public decryption from the KMS cores run the following command.
 
+Either directly from arguments provided to the cli:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> decrypt --to-encrypt <hex-value-encrypt> --data-type <euint-value> --key-id <public-key-id>
+$ cargo run -- -f <path-to-toml-config-file> decrypt from-args --to-encrypt <hex-value-encrypt> --data-type <euint-value> --key-id <public-key-id>
 ```
+
+Or from a file generated via the _Encryption_ command described above:
+```{bash}
+$ cargo run -- -f <path-to-toml-config-file> decrypt from-file --input-path <input-file-path>
+```
+
 
 Note that the key must have been previously generated using the (secure or insecure) [keygen](#key-generation) above.
 
@@ -150,8 +167,14 @@ Note that the key must have been previously generated using the (secure or insec
 
 Similar to decryption, reencryption can be done as follows. To re-encrypt a given value of the provided FHE type, using the specified public key and then request a user decryption from the KMS cores run the following command:
 
+Either directly from arguments provided to the cli:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> re-encrypt --to-encrypt <hex-value-encrypt> --data-type <euint-value> --key-id <public-key-id>
+$ cargo run -- -f <path-to-toml-config-file> re-encrypt from-args --to-encrypt <hex-value-encrypt> --data-type <euint-value> --key-id <public-key-id>
+```
+
+Or from a file generated via the _Encryption_ command described above:
+```{bash}
+$ cargo run -- -f <path-to-toml-config-file> re-encrypt from-file --input-path <input-file-path>
 ```
 
 #### Arguments
@@ -166,6 +189,8 @@ Optional command line options for the public/user decryption command are:
  - `--precompute-sns`: whether SNS (switch and squash) should be done prior to sending the request to the KMS,
     this can currently not to be used in combination with `---compression`, i.e.  at most one of the  `--compression` and `--precompute-sns` options can be used.
  - `--ciphertext-output-path <FILENAME>`: optionally write the ciphertext (the encryption of `to-encrypt`) to file
+
+ __NOTE__: If the ciphertext is provided by file, then only the optional argument `-b`/`--batch-size <BATCH_SIZE>` is supported.
 
 
 ## Example Commands

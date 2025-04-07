@@ -64,7 +64,7 @@ echo
 
 # Generate EBOOL (value 1)
 echo "Generating EBOOL ciphertext (value: 1)"
-cargo run --bin kms-core-client -- -f $CONFIG_FILE decrypt \
+cargo run --bin kms-core-client -- -f $CONFIG_FILE decrypt from-args \
   --to-encrypt 1 \
   --data-type ebool \
   --key-id $KEY_ID \
@@ -73,7 +73,7 @@ cargo run --bin kms-core-client -- -f $CONFIG_FILE decrypt \
 
 # Generate EUINT4 (value 3)
 echo "Generating EUINT4 ciphertext (value: 3)"
-cargo run --bin kms-core-client -- -f $CONFIG_FILE decrypt \
+cargo run --bin kms-core-client -- -f $CONFIG_FILE decrypt from-args \
   --to-encrypt 3 \
   --data-type euint4 \
   --key-id $KEY_ID \
@@ -82,7 +82,7 @@ cargo run --bin kms-core-client -- -f $CONFIG_FILE decrypt \
 
 # Generate EUINT8 (value 6)
 echo "Generating EUINT8 ciphertext (value: 6)"
-cargo run --bin kms-core-client -- -f $CONFIG_FILE decrypt \
+cargo run --bin kms-core-client -- -f $CONFIG_FILE decrypt from-args \
   --to-encrypt 6 \
   --data-type euint8 \
   --key-id $KEY_ID \
@@ -91,7 +91,7 @@ cargo run --bin kms-core-client -- -f $CONFIG_FILE decrypt \
 
 # Generate EUINT16 (value 9)
 echo "Generating EUINT16 ciphertext (value: 9)"
-cargo run --bin kms-core-client -- -f $CONFIG_FILE decrypt \
+cargo run --bin kms-core-client -- -f $CONFIG_FILE decrypt from-args \
   --to-encrypt 9 \
   --data-type euint16 \
   --key-id $KEY_ID \
@@ -100,7 +100,7 @@ cargo run --bin kms-core-client -- -f $CONFIG_FILE decrypt \
 
 # Generate EUINT32 (value 13)
 echo "Generating EUINT32 ciphertext (value: 13)"
-cargo run --bin kms-core-client -- -f $CONFIG_FILE decrypt \
+cargo run --bin kms-core-client -- -f $CONFIG_FILE decrypt from-args \
   --to-encrypt 13 \
   --data-type euint32 \
   --key-id $KEY_ID \

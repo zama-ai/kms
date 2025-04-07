@@ -7,7 +7,7 @@ use alloy_primitives::PrimitiveSignature;
 use alloy_sol_types::Eip712Domain;
 use anyhow::anyhow;
 use bytes::Bytes;
-use clap::Parser;
+use clap::{Args, Parser, Subcommand};
 use conf_trace::conf::Settings;
 use core::str;
 use kms_grpc::kms::v1::{
@@ -29,7 +29,7 @@ use kms_lib::DecryptionMode;
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
-use std::io::Write;
+use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Once;
 use strum_macros::{Display, EnumString};
@@ -108,7 +108,7 @@ impl<'de> Deserialize<'de> for CoreClientConfig {
 
 use kms_grpc::kms::v1::FheType as RPCFheType;
 
-#[derive(Copy, Clone, Default, EnumString, PartialEq, Display, Debug)]
+#[derive(Copy, Clone, Default, EnumString, PartialEq, Display, Debug, Serialize, Deserialize)]
 pub enum FheType {
     #[default]
     #[strum(serialize = "ebool")]
@@ -277,7 +277,22 @@ pub fn parse_hex(arg: &str) -> anyhow::Result<Vec<u8>> {
     Ok(hex::decode(hex_str)?)
 }
 
-#[derive(Debug, Parser, Clone)]
+#[derive(Debug, Subcommand, Clone)]
+pub enum CipherArguments {
+    FromFile(CipherFile),
+    FromArgs(CipherParameters),
+}
+
+impl CipherArguments {
+    fn get_batch_size(&self) -> usize {
+        match self {
+            CipherArguments::FromFile(cipher_file) => cipher_file.batch_size,
+            CipherArguments::FromArgs(cipher_parameters) => cipher_parameters.batch_size,
+        }
+    }
+}
+
+#[derive(Debug, Args, Clone, Serialize, Deserialize)]
 pub struct CipherParameters {
     /// Hex value to encrypt and request a public/user decryption.
     /// The value will be converted from a little endian hex string to a `Vec<u8>`.
@@ -296,15 +311,35 @@ pub struct CipherParameters {
     /// At the moment it cannot be used in combination with compression. Default: False.
     #[clap(long)]
     pub precompute_sns: bool,
-    /// Key identifier to use for public/user decryption
+    /// Key identifier to use for public/user decryption.
     #[clap(long, short = 'k')]
     pub key_id: String,
-    /// Number of ciphertexts to process in a batch
+    /// Number of copies of the ciphertext to process in a batch.
+    /// This is ignored for the encryption command.
+    #[serde(skip_serializing, skip_deserializing)]
     #[clap(long, short = 'b', default_value_t = 1)]
     pub batch_size: usize,
     /// Optionally dump the ciphertext to a file.
+    #[serde(skip_serializing, skip_deserializing)]
     #[clap(long)]
     pub ciphertext_output_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct CipherFile {
+    /// Input file of the ciphertext.
+    #[clap(long)]
+    pub input_path: PathBuf,
+    /// Number of copies of the ciphertext to process in a batch.
+    #[clap(long, short = 'b', default_value_t = 1)]
+    pub batch_size: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct CipherWithParams {
+    params: CipherParameters,
+    ct_format: String,
+    cipher: Vec<u8>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -319,13 +354,16 @@ pub struct CrsParameters {
     pub max_num_bits: u32,
 }
 
-#[derive(Debug, Parser, Clone)]
+#[derive(Debug, Subcommand, Clone)]
 pub enum CCCommand {
     PreprocKeyGen(NoParameters),
     KeyGen(KeyGenParameters),
     InsecureKeyGen(NoParameters),
-    Decrypt(CipherParameters),
-    ReEncrypt(CipherParameters),
+    Encrypt(CipherParameters),
+    #[clap(subcommand)]
+    Decrypt(CipherArguments),
+    #[clap(subcommand)]
+    ReEncrypt(CipherArguments),
     CrsGen(CrsParameters),
     InsecureCrsGen(CrsParameters),
     DoNothing(NoParameters),
@@ -370,6 +408,52 @@ fn dummy_domain() -> alloy_sol_types::Eip712Domain {
     )
 }
 
+pub struct EncryptionResult {
+    pub cipher: Vec<u8>,
+    pub ct_format: CiphertextFormat,
+    pub plaintext: TypedPlaintext,
+    pub key_id: String,
+}
+
+impl EncryptionResult {
+    pub fn new(
+        cipher: Vec<u8>,
+        ct_format: CiphertextFormat,
+        plaintext: TypedPlaintext,
+        key_id: String,
+    ) -> Self {
+        Self {
+            cipher,
+            ct_format,
+            plaintext,
+            key_id,
+        }
+    }
+}
+
+pub fn fetch_ctxt_from_file(
+    input_path: PathBuf,
+) -> Result<EncryptionResult, Box<dyn std::error::Error + 'static>> {
+    let reader = BufReader::new(File::open(input_path)?);
+    let cipher_with_params: CipherWithParams = serde_json::from_reader(reader)?;
+
+    let ptxt = TypedPlaintext {
+        bytes: parse_hex(cipher_with_params.params.to_encrypt.as_str())?,
+        fhe_type: cipher_with_params.params.data_type as i32,
+    };
+
+    let ct_format = CiphertextFormat::from_str_name(&cipher_with_params.ct_format)
+        .ok_or_else(|| anyhow!("Failed to recover ct_format"))?;
+
+    let key_id = cipher_with_params.params.key_id;
+    Ok(EncryptionResult::new(
+        cipher_with_params.cipher,
+        ct_format,
+        ptxt,
+        key_id,
+    ))
+}
+
 /// encrypt a given value and return the ciphertext
 /// parameters:
 /// - `to_encrypt`: the value to encrypt in little endian byte order
@@ -378,28 +462,24 @@ fn dummy_domain() -> alloy_sol_types::Eip712Domain {
 /// - `keys_folder`: the folder where the keys are stored
 /// - `compressed`: whether to compress the ciphertext or not
 pub async fn encrypt(
-    to_encrypt: Vec<u8>,
-    fhe_type: FheType,
-    key_id: &str,
     keys_folder: &Path,
-    compression: bool,
-    precompute_sns: bool,
-    dump_ciphertext: Option<PathBuf>,
-) -> Result<(Vec<u8>, CiphertextFormat, TypedPlaintext), Box<dyn std::error::Error + 'static>> {
-    if to_encrypt.len() != fhe_type.bits().div_ceil(8) {
-        tracing::warn!("Byte length of value to encrypt ({}) does not match FHE type ({}) and will be padded/truncated.", to_encrypt.len(), fhe_type);
+    cipher_params: CipherParameters,
+) -> Result<EncryptionResult, Box<dyn std::error::Error + 'static>> {
+    let to_encrypt = parse_hex(cipher_params.to_encrypt.as_str())?;
+    if to_encrypt.len() != cipher_params.data_type.bits().div_ceil(8) {
+        tracing::warn!("Byte length of value to encrypt ({}) does not match FHE type ({}) and will be padded/truncated.", to_encrypt.len(), cipher_params.data_type);
     }
 
     let ptxt = TypedPlaintext {
         bytes: to_encrypt,
-        fhe_type: fhe_type as i32,
+        fhe_type: cipher_params.data_type as i32,
     };
     let typed_to_encrypt = TestingPlaintext::from(ptxt.clone());
 
     tracing::info!(
         "Encrypting plaintext: {:?}, {:?}, {:?}",
         ptxt,
-        fhe_type,
+        cipher_params.data_type,
         typed_to_encrypt
     );
 
@@ -411,20 +491,31 @@ pub async fn encrypt(
     let (cipher, ct_format, _) = compute_cipher_from_stored_key(
         Some(keys_folder),
         typed_to_encrypt,
-        key_id,
+        &cipher_params.key_id,
         EncryptionConfig {
-            compression,
-            precompute_sns,
+            compression: cipher_params.compression,
+            precompute_sns: cipher_params.precompute_sns,
         },
     )
     .await;
 
-    if let Some(path) = dump_ciphertext {
-        let mut file = File::create(path)?;
-        file.write_all(&cipher)?;
+    if let Some(path) = cipher_params.ciphertext_output_path.clone() {
+        let mut writer = BufWriter::new(File::create(path)?);
+        let to_write = CipherWithParams {
+            cipher: cipher.clone(),
+            params: cipher_params.clone(),
+            ct_format: ct_format.as_str_name().to_string(),
+        };
+        serde_json::to_writer_pretty(&mut writer, &to_write)?;
+        writer.flush()?;
     }
 
-    Ok((cipher, ct_format, ptxt))
+    Ok(EncryptionResult::new(
+        cipher,
+        ct_format,
+        ptxt,
+        cipher_params.key_id,
+    ))
 }
 
 fn join_vars(args: &[&str]) -> String {
@@ -480,6 +571,7 @@ pub fn write_bytes_to_file(folder_path: &Path, filename: &str, data: &[u8]) -> a
     let path = std::path::absolute(folder_path.join(filename))?;
     let mut file = File::create(path)?;
     file.write_all(data)?;
+    file.flush()?;
     Ok(())
 }
 
@@ -1131,17 +1223,45 @@ pub async fn execute_cmd(
 
     tracing::info!("Core Client Config: {:?}", cc_conf);
 
+    // if it's a de- or reencryption, fetch the key and crs
+    match command {
+        CCCommand::Decrypt(cipher_args) | CCCommand::ReEncrypt(cipher_args) => {
+            tracing::info!("Fetching verification keys. ({command:?})");
+            fetch_verf_keys(&cc_conf, destination_prefix).await?;
+
+            //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
+            if let CipherArguments::FromArgs(cipher_params) = cipher_args {
+                tracing::info!("Fetching tfhe keys. ({command:?})");
+                fetch_key(cipher_params.key_id.as_str(), &cc_conf, destination_prefix).await?;
+                //TODO remove this check once we can compress big ciphertexts with tfhe-rs v1.2
+                if cipher_params.compression && cipher_params.precompute_sns {
+                    panic!("Compression on big ciphertexts is not supported yet!");
+                }
+            }
+        }
+        CCCommand::Encrypt(cipher_params) => {
+            tracing::info!("Fetching tfhe keys. ({command:?})");
+            fetch_key(cipher_params.key_id.as_str(), &cc_conf, destination_prefix).await?;
+
+            //TODO remove this check once we can compress big ciphertexts with tfhe-rs v1.2
+            if cipher_params.compression && cipher_params.precompute_sns {
+                panic!("Compression on big ciphertexts is not supported yet!");
+            }
+        }
+        _ => {
+            tracing::info!("No need to fetch key and CRS. ({command:?})");
+        }
+    }
+
     let mut rng = AesRng::from_entropy();
 
     let num_parties = cc_conf.core_addresses.len();
 
     ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
 
-    fetch_verf_keys(&cc_conf, destination_prefix).await?;
-
     let mut pub_storage: Vec<FileStorage> = Vec::with_capacity(num_parties);
     let client_storage: FileStorage = FileStorage::new(None, StorageType::CLIENT, None).unwrap();
-    let mut internal_client: Client;
+    let mut internal_client: Option<Client> = None;
     let mut core_endpoints = Vec::with_capacity(num_parties);
 
     let param = cc_conf.fhe_params.unwrap_or(FheParameter::Test);
@@ -1150,7 +1270,9 @@ pub async fn execute_cmd(
         _ => DEFAULT_PARAM,
     };
 
-    if num_parties == 1 {
+    if let CCCommand::Encrypt(_) = command {
+        //Don't need to connect if we just do an encrypt
+    } else if num_parties == 1 {
         // central cores
 
         let address = cc_conf
@@ -1177,14 +1299,16 @@ pub async fn execute_cmd(
 
         pub_storage
             .push(FileStorage::new(Some(destination_prefix), StorageType::PUB, None).unwrap());
-        internal_client = Client::new_client(
-            client_storage,
-            pub_storage,
-            &client_param,
-            cc_conf.decryption_mode,
-        )
-        .await
-        .unwrap();
+        internal_client = Some(
+            Client::new_client(
+                client_storage,
+                pub_storage,
+                &client_param,
+                cc_conf.decryption_mode,
+            )
+            .await
+            .unwrap(),
+        );
         tracing::info!("Centralized Client setup done.");
     } else {
         // threshold cores
@@ -1214,33 +1338,18 @@ pub async fn execute_cmd(
             );
         }
 
-        internal_client = Client::new_client(
-            client_storage,
-            pub_storage,
-            &client_param,
-            cc_conf.decryption_mode,
-        )
-        .await
-        .unwrap();
+        internal_client = Some(
+            Client::new_client(
+                client_storage,
+                pub_storage,
+                &client_param,
+                cc_conf.decryption_mode,
+            )
+            .await
+            .unwrap(),
+        );
 
         tracing::info!("Threshold Client setup done.");
-    }
-
-    // if it's a de- or reencryption, fetch the key and crs
-    match command {
-        CCCommand::Decrypt(cipher_params) | CCCommand::ReEncrypt(cipher_params) => {
-            tracing::info!("Fetching verification keys and public key. ({command:?})");
-            fetch_verf_keys(&cc_conf, destination_prefix).await?;
-            fetch_key(cipher_params.key_id.as_str(), &cc_conf, destination_prefix).await?;
-
-            //TODO remove this check once we can compress big ciphertexts with tfhe-rs v1.2
-            if cipher_params.compression && cipher_params.precompute_sns {
-                panic!("Compression on big ciphertexts is not supported yet!");
-            }
-        }
-        _ => {
-            tracing::info!("No need to fetch key and CRS. ({command:?})");
-        }
     }
 
     tracing::info!(
@@ -1255,37 +1364,36 @@ pub async fn execute_cmd(
 
     // Execute the command
     let res = match command {
-        CCCommand::Decrypt(cipher_params) => {
-            let to_encrypt = parse_hex(cipher_params.to_encrypt.as_str())?;
-            let data_type = cipher_params.data_type;
-            let key_id = &cipher_params.key_id;
-            let keys_folder = destination_prefix;
-
+        CCCommand::Decrypt(cipher_args) => {
+            let mut internal_client = internal_client.unwrap();
             let num_expected_responses = if expect_all_responses {
                 num_parties
             } else {
                 cc_conf.num_majority
             };
 
-            let (ciphertext, ct_format, ptxt) = encrypt(
-                to_encrypt,
-                data_type,
+            let EncryptionResult {
+                cipher: ciphertext,
+                ct_format,
+                plaintext: ptxt,
                 key_id,
-                keys_folder,
-                cipher_params.compression,
-                cipher_params.precompute_sns,
-                cipher_params.ciphertext_output_path.clone(),
-            )
-            .await?;
+            } = match cipher_args {
+                CipherArguments::FromFile(cipher_file) => {
+                    fetch_ctxt_from_file(cipher_file.input_path.clone())?
+                }
+                CipherArguments::FromArgs(cipher_parameters) => {
+                    encrypt(destination_prefix, cipher_parameters.clone()).await?
+                }
+            };
 
             let ct_batch = vec![
                 TypedCiphertext {
                     ciphertext,
-                    fhe_type: data_type as i32,
+                    fhe_type: ptxt.fhe_type,
                     external_handle: vec![23_u8; 32],
                     ciphertext_format: ct_format.into(),
                 };
-                cipher_params.batch_size
+                cipher_args.get_batch_size()
             ];
 
             // DECRYPTION REQUEST
@@ -1294,7 +1402,7 @@ pub async fn execute_cmd(
                 &dummy_domain(),
                 &req_id,
                 &RequestId {
-                    request_id: cipher_params.key_id.clone(),
+                    request_id: key_id.clone(),
                 },
             )?;
 
@@ -1369,38 +1477,36 @@ pub async fn execute_cmd(
             let res = format!("{:x?}", resp_response_vec);
             (Some(req_id), res)
         }
-        CCCommand::ReEncrypt(cipher_params) => {
-            let to_encrypt = parse_hex(cipher_params.to_encrypt.as_str())?;
-            let data_type = cipher_params.data_type;
-            let key_id = &cipher_params.key_id;
-            let keys_folder = destination_prefix;
-
+        CCCommand::ReEncrypt(cipher_args) => {
+            let mut internal_client = internal_client.unwrap();
             let num_expected_responses = if expect_all_responses {
                 num_parties
             } else {
                 cc_conf.num_reconstruct
             };
 
-            let (ciphertext, ct_format, ptxt) = encrypt(
-                to_encrypt,
-                data_type,
+            let EncryptionResult {
+                cipher: ciphertext,
+                ct_format,
+                plaintext: ptxt,
                 key_id,
-                keys_folder,
-                cipher_params.compression,
-                cipher_params.precompute_sns,
-                cipher_params.ciphertext_output_path.clone(),
-            )
-            .await?;
+            } = match cipher_args {
+                CipherArguments::FromFile(cipher_file) => {
+                    fetch_ctxt_from_file(cipher_file.input_path.clone())?
+                }
+                CipherArguments::FromArgs(cipher_parameters) => {
+                    encrypt(destination_prefix, cipher_parameters.clone()).await?
+                }
+            };
 
-            internal_client.convert_to_addresses();
             let ct_batch = vec![
                 TypedCiphertext {
-                    fhe_type: data_type as i32,
                     ciphertext,
-                    external_handle: vec![1, 2, 3, 4],
+                    fhe_type: ptxt.fhe_type,
+                    external_handle: vec![23_u8; 32],
                     ciphertext_format: ct_format.into(),
                 };
-                cipher_params.batch_size
+                cipher_args.get_batch_size()
             ];
 
             // REENCRYPTION REQUEST
@@ -1409,7 +1515,7 @@ pub async fn execute_cmd(
                 ct_batch,
                 &req_id,
                 &RequestId {
-                    request_id: cipher_params.key_id.clone(),
+                    request_id: key_id.clone(),
                 },
             )?;
 
@@ -1501,6 +1607,7 @@ pub async fn execute_cmd(
             (Some(req_id), res)
         }
         CCCommand::KeyGen(KeyGenParameters { preproc_id }) => {
+            let mut internal_client = internal_client.unwrap();
             tracing::info!("Key generation with parameter {}.", param.as_str_name());
             let req_id = do_keygen(
                 &mut internal_client,
@@ -1522,6 +1629,7 @@ pub async fn execute_cmd(
             (Some(req_id), "keygen done".to_string())
         }
         CCCommand::InsecureKeyGen(NoParameters {}) => {
+            let mut internal_client = internal_client.unwrap();
             tracing::info!(
                 "Insecure key generation with parameter {}.",
                 param.as_str_name()
@@ -1544,6 +1652,7 @@ pub async fn execute_cmd(
             (Some(req_id), "insecure keygen done".to_string())
         }
         CCCommand::CrsGen(CrsParameters { max_num_bits }) => {
+            let mut internal_client = internal_client.unwrap();
             tracing::info!("CRS generation with parameter {}.", param.as_str_name());
 
             let req_id = do_crsgen(
@@ -1563,6 +1672,7 @@ pub async fn execute_cmd(
             (Some(req_id), "crsgen done".to_string())
         }
         CCCommand::InsecureCrsGen(CrsParameters { max_num_bits }) => {
+            let mut internal_client = internal_client.unwrap();
             tracing::info!(
                 "Insecure CRS generation with parameter {}.",
                 param.as_str_name()
@@ -1585,6 +1695,7 @@ pub async fn execute_cmd(
             (Some(req_id), "insecure crsgen done".to_string())
         }
         CCCommand::PreprocKeyGen(NoParameters {}) => {
+            let mut internal_client = internal_client.unwrap();
             tracing::info!("Preprocessing with parameter {}.", param.as_str_name());
 
             let req_id = do_preproc(
@@ -1601,6 +1712,10 @@ pub async fn execute_cmd(
         CCCommand::DoNothing(NoParameters {}) => {
             tracing::info!("Nothing to do.");
             (None, "".to_string())
+        }
+        CCCommand::Encrypt(cipher_parameters) => {
+            encrypt(destination_prefix, cipher_parameters.clone()).await?;
+            (None, "Encryption generated".to_string())
         }
     };
 

@@ -252,9 +252,12 @@ async fn test_threshold_insecure(ctx: &mut DockerComposeThresholdContextDefault)
 }
 
 async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id: String) {
+    let ctxt_path: &Path = Path::new("tests/data/test_encrypt_cipher.txt");
+    let ctxt_with_sns_path: &Path = Path::new("tests/data/test_encrypt_cipher_with_sns.txt");
     // some commands are tested twice to see the cache in action
     let commands = vec![
-        CCCommand::Decrypt(CipherParameters {
+        CCCommand::Decrypt(CipherArguments::FromArgs(
+            CipherParameters {
             to_encrypt: "0x1".to_string(),
             data_type: FheType::Ebool,
             compression: true,
@@ -262,8 +265,9 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             key_id: key_id.clone(),
             batch_size: 1,
             ciphertext_output_path: None,
-        }),
-        CCCommand::ReEncrypt(CipherParameters {
+        })),
+        CCCommand::ReEncrypt(CipherArguments::FromArgs(
+            CipherParameters{
             to_encrypt: "0x1".to_string(),
             data_type: FheType::Ebool,
             compression: true,
@@ -271,8 +275,9 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             key_id: key_id.clone(),
             batch_size: 1,
             ciphertext_output_path: None,
-        }),
-        CCCommand::Decrypt(CipherParameters {
+        })),
+        CCCommand::Decrypt(CipherArguments::FromArgs(
+            CipherParameters{
             to_encrypt: "0x6F".to_string(),
             data_type: FheType::Euint8,
             compression: false,
@@ -280,8 +285,9 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             key_id: key_id.clone(),
             batch_size: 3,
             ciphertext_output_path: None,
-        }),
-        CCCommand::Decrypt(CipherParameters {
+        })),
+        CCCommand::Decrypt(CipherArguments::FromArgs(
+            CipherParameters{
             to_encrypt: "0x6F".to_string(),
             data_type: FheType::Euint8,
             compression: true,
@@ -289,8 +295,9 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             key_id: key_id.clone(),
             batch_size: 3,
             ciphertext_output_path: None,
-        }),
-        CCCommand::Decrypt(CipherParameters {
+        })),
+        CCCommand::Decrypt(CipherArguments::FromArgs(
+            CipherParameters{
             to_encrypt: "0xFFFF".to_string(),
             data_type: FheType::Euint16,
             compression: true,
@@ -298,8 +305,9 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             key_id: key_id.clone(),
             batch_size: 1,
             ciphertext_output_path: None,
-        }),
-        CCCommand::Decrypt(CipherParameters {
+        })),
+        CCCommand::Decrypt(CipherArguments::FromArgs(
+            CipherParameters{
             to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF03956822D0D186F78D196BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC45921".to_string(),
             data_type: FheType::Euint1024,
             compression: true,
@@ -307,8 +315,9 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             key_id: key_id.clone(),
             batch_size: 1,
             ciphertext_output_path: None,
-        }),
-        CCCommand::ReEncrypt(CipherParameters {
+        })),
+        CCCommand::ReEncrypt(CipherArguments::FromArgs(
+            CipherParameters{
             to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF03956822D0D186F78D196BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC45921".to_string(),
             data_type: FheType::Euint1024,
             compression: true,
@@ -316,11 +325,33 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             key_id: key_id.clone(),
             batch_size: 1,
             ciphertext_output_path: None,
-        }),
+        })),
+        CCCommand::Encrypt(
+            CipherParameters{
+                to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF03956822D0D186F78D196BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC45921".to_string(),
+                data_type: FheType::Euint1024,
+                compression: true,
+                precompute_sns: false,
+                key_id: key_id.clone(),
+                batch_size: 1,
+                ciphertext_output_path: Some(ctxt_path.to_path_buf()),
+            }
+        ),
+        CCCommand::Decrypt(CipherArguments::FromFile(
+            CipherFile {
+                input_path: ctxt_path.to_path_buf(),
+                batch_size: 1
+        })),
+        CCCommand::ReEncrypt(CipherArguments::FromFile(
+            CipherFile {
+                input_path: ctxt_path.to_path_buf(),
+                batch_size: 1
+        })),
     ];
 
     let commands_for_sns_precompute = vec![
-            CCCommand::Decrypt(CipherParameters {
+            CCCommand::Decrypt(CipherArguments::FromArgs(
+            CipherParameters{
             to_encrypt: "0x1".to_string(),
             data_type: FheType::Ebool,
             compression: false,
@@ -328,8 +359,9 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             key_id: key_id.clone(),
             batch_size: 2,
             ciphertext_output_path: None,
-        }),
-        CCCommand::ReEncrypt(CipherParameters {
+        })),
+        CCCommand::ReEncrypt(CipherArguments::FromArgs(
+            CipherParameters{
             to_encrypt: "0x78".to_string(),
             data_type: FheType::Euint8,
             compression: false,
@@ -337,8 +369,9 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             key_id: key_id.clone(),
             batch_size: 2,
             ciphertext_output_path: None,
-        }),
-        CCCommand::ReEncrypt(CipherParameters {
+        })),
+        CCCommand::ReEncrypt(CipherArguments::FromArgs(
+            CipherParameters{
             to_encrypt: "0x1".to_string(),
             data_type: FheType::Ebool,
             compression: false,
@@ -346,8 +379,9 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             key_id: key_id.clone(),
             batch_size: 1,
             ciphertext_output_path: None,
-        }),
-        CCCommand::Decrypt(CipherParameters {
+        })),
+        CCCommand::Decrypt(CipherArguments::FromArgs(
+            CipherParameters{
             to_encrypt: "0x6F".to_string(),
             data_type: FheType::Euint8,
             compression: false,
@@ -355,8 +389,9 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             key_id: key_id.clone(),
             batch_size: 1,
             ciphertext_output_path: None,
-        }),
-        CCCommand::Decrypt(CipherParameters {
+        })),
+        CCCommand::Decrypt(CipherArguments::FromArgs(
+            CipherParameters{
             to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF03956822D0D186F78D196BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC45921".to_string(),
             data_type: FheType::Euint1024,
             compression: false,
@@ -364,8 +399,9 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             key_id: key_id.clone(),
             batch_size: 1,
             ciphertext_output_path: None,
-        }),
-        CCCommand::ReEncrypt(CipherParameters {
+        })),
+        CCCommand::ReEncrypt(CipherArguments::FromArgs(
+            CipherParameters{
             to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF03956822D0D186F78D196BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC45921".to_string(),
             data_type: FheType::Euint1024,
             compression: false,
@@ -373,7 +409,28 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             key_id: key_id.clone(),
             batch_size: 1,
             ciphertext_output_path: None,
-        }),
+        })),
+        CCCommand::Encrypt(
+            CipherParameters{
+                to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF03956822D0D186F78D196BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC45921".to_string(),
+                data_type: FheType::Euint1024,
+                compression: false,
+                precompute_sns: true,
+                key_id: key_id.clone(),
+                batch_size: 1,
+                ciphertext_output_path: Some(ctxt_with_sns_path.to_path_buf()),
+            }
+        ),
+        CCCommand::Decrypt(CipherArguments::FromFile(
+            CipherFile {
+                input_path: ctxt_with_sns_path.to_path_buf(),
+                batch_size: 1
+        })),
+        CCCommand::ReEncrypt(CipherArguments::FromFile(
+            CipherFile {
+                input_path: ctxt_with_sns_path.to_path_buf(),
+                batch_size: 1
+        })),
     ];
 
     test_template(ctx, [commands, commands_for_sns_precompute].concat()).await
