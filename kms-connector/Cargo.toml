@@ -11,6 +11,7 @@ license.workspace = true
 alloy-primitives = "0.8.20"
 alloy-sol-types = "0.8.20"
 alloy-json-abi = "0.8.20"
+alloy-dyn-abi = "0.8.20"
 alloy = { version = "0.11", features = [
     "eips",
     "full",

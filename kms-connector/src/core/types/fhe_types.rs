@@ -1,6 +1,8 @@
-use alloy::{hex, primitives::U256};
-use alloy_primitives::Address;
-use kms_grpc::kms::v1::FheType;
+use alloy::{
+    hex,
+    primitives::{Address, Bytes, U256},
+};
+use kms_grpc::kms::v1::{FheType, TypedPlaintext};
 use tracing::{error, info};
 
 /// Get string representation of FHE type
@@ -90,4 +92,76 @@ pub fn format_request_id(request_id: U256) -> String {
     let bytes = request_id.to_be_bytes::<32>();
     // Encode as hex string
     hex::encode(bytes)
+}
+
+/// ABI encode multiple plaintexts into a single Bytes object
+/// This follows the Solidity ABI encoding for dynamic arrays, matching the KMS Core implementation
+pub fn abi_encode_plaintexts(plaintexts: &[TypedPlaintext]) -> Bytes {
+    use alloy_dyn_abi::DynSolValue;
+
+    // This is a hack to get the offsets right for Byte types.
+    // Every offset needs to be shifted by 32 bytes (256 bits), so we prepend a U256 and delete it at the and, after encoding.
+    let mut data = vec![DynSolValue::Uint(U256::from(0), 256)];
+
+    // This is another hack to handle Euint512, Euint1024 and Euint2048 Bytes properly (alloy adds another all-zero 256 bytes to the beginning of the encoded bytes)
+    let mut offset_mul = 1;
+
+    for ptxt in plaintexts.iter() {
+        info!("Encoding Plaintext with FheType: {:#?}", ptxt.fhe_type());
+        let res = match ptxt.fhe_type() {
+            FheType::Ebool => {
+                let val = if ptxt.as_bool() { 1_u8 } else { 0 };
+                DynSolValue::Uint(U256::from(val), 256)
+            }
+            FheType::Euint4 => DynSolValue::Uint(U256::from(ptxt.as_u4()), 256),
+            FheType::Euint8 => DynSolValue::Uint(U256::from(ptxt.as_u8()), 256),
+            FheType::Euint16 => DynSolValue::Uint(U256::from(ptxt.as_u16()), 256),
+            FheType::Euint32 => DynSolValue::Uint(U256::from(ptxt.as_u32()), 256),
+            FheType::Euint64 => DynSolValue::Uint(U256::from(ptxt.as_u64()), 256),
+            FheType::Euint128 => DynSolValue::Uint(U256::from(ptxt.as_u128()), 256),
+            FheType::Euint160 => {
+                let mut cake = vec![0u8; 32];
+                ptxt.as_u160().copy_to_be_byte_slice(cake.as_mut_slice());
+                DynSolValue::Uint(U256::from_be_slice(&cake), 256)
+            }
+            FheType::Euint256 => {
+                let mut cake = vec![0u8; 32];
+                ptxt.as_u256().copy_to_be_byte_slice(cake.as_mut_slice());
+                DynSolValue::Uint(U256::from_be_slice(&cake), 256)
+            }
+            FheType::Euint512 => {
+                // if we have at least 1 Euint larger than 256 bits, we need to throw away 256 more bytes at the beginning of the encoding below, thus set offset_mul to 2
+                offset_mul = 2;
+                let mut cake = vec![0u8; 64];
+                ptxt.as_u512().copy_to_be_byte_slice(cake.as_mut_slice());
+                DynSolValue::Bytes(cake)
+            }
+            FheType::Euint1024 => {
+                // if we have at least 1 Euint larger than 256 bits, we need to throw away 256 more bytes at the beginning of the encoding below, thus set offset_mul to 2
+                offset_mul = 2;
+                let mut cake = vec![0u8; 128];
+                ptxt.as_u1024().copy_to_be_byte_slice(cake.as_mut_slice());
+                DynSolValue::Bytes(cake)
+            }
+            FheType::Euint2048 => {
+                // if we have at least 1 Euint larger than 256 bits, we need to throw away 256 more bytes at the beginning of the encoding below, thus set offset_mul to 2
+                offset_mul = 2;
+                let mut cake = vec![0u8; 256];
+                ptxt.as_u2048().copy_to_be_byte_slice(cake.as_mut_slice());
+                DynSolValue::Bytes(cake)
+            }
+        };
+        data.push(res);
+    }
+
+    // wrap data in a Tuple, so we can encode it with position information
+    let encoded = DynSolValue::Tuple(data).abi_encode();
+
+    // strip off the extra U256 at the beginning, and possibly also 256 bytes more zero bytes, when we encode one or more Euint2048s
+    let encoded_bytes: Vec<u8> = encoded[offset_mul * 32..].to_vec();
+
+    let hexbytes = hex::encode(encoded_bytes.clone());
+    info!("Encoded plaintext ABI {:?}", hexbytes);
+
+    Bytes::from(encoded_bytes)
 }

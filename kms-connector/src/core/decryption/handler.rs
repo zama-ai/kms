@@ -15,8 +15,8 @@ use crate::{
     core::{
         config::Config,
         types::fhe_types::{
-            extract_fhe_type_from_handle, fhe_type_to_string, format_request_id,
-            log_and_extract_result,
+            abi_encode_plaintexts, extract_fhe_type_from_handle, fhe_type_to_string,
+            format_request_id, log_and_extract_result,
         },
         utils::eip712::{alloy_to_protobuf_domain, verify_reencryption_eip712},
     },
@@ -166,27 +166,13 @@ impl<P: Provider + Clone + std::fmt::Debug + 'static> DecryptionHandler<P> {
 
                 // Check if we have a valid payload
                 if let Some(payload) = decryption_response.payload {
-                    // Get the first plaintext result
-                    let result = payload
-                        .plaintexts
-                        .first()
-                        .map(|pt| {
-                            log_and_extract_result(&pt.bytes, pt.fhe_type, request_id, None);
-                            Bytes::from(pt.bytes.clone())
-                        })
-                        .ok_or_else(|| {
-                            crate::error::Error::InvalidResponse(
-                                "KMS Core did not provide any plaintext results".into(),
-                            )
-                        })?;
-
-                    // Check if there are multiple plaintext results
-                    if payload.plaintexts.len() > 1 {
-                        warn!(
-                            "KMS Core returned {} plaintext results, but only the first one will be used",
-                            payload.plaintexts.len()
-                        );
+                    // Log all plaintexts for debugging
+                    for pt in &payload.plaintexts {
+                        log_and_extract_result(&pt.bytes, pt.fhe_type, request_id, None);
                     }
+
+                    // Encode all plaintexts using ABI encoding
+                    let result = abi_encode_plaintexts(&payload.plaintexts);
 
                     // Get the external signature
                     let signature = payload.external_signature.ok_or_else(|| {
@@ -197,8 +183,9 @@ impl<P: Provider + Clone + std::fmt::Debug + 'static> DecryptionHandler<P> {
 
                     // Send response back to L2
                     info!(
-                        "Sending public decryption response for request {}",
-                        request_id
+                        "Sending public decryption response for request {} with {} plaintexts",
+                        request_id,
+                        payload.plaintexts.len()
                     );
                     self.decryption
                         .send_public_decryption_response(request_id, result, signature)
