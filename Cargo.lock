@@ -4187,10 +4187,8 @@ dependencies = [
  "rasn",
  "rasn-cms",
  "rayon",
- "rcgen",
  "rsa",
  "rstest",
- "rustls 0.23.18",
  "serde",
  "serde-wasm-bindgen",
  "serde_bytes",
@@ -4219,7 +4217,6 @@ dependencies = [
  "tracing-test",
  "url",
  "wasm-bindgen",
- "webpki",
 ]
 
 [[package]]
@@ -7267,8 +7264,10 @@ dependencies = [
  "prost",
  "rand 0.8.5",
  "rayon",
+ "rcgen",
  "redis",
  "rstest",
+ "rustls 0.23.18",
  "serde",
  "serde_json",
  "serial_test",
@@ -7290,6 +7289,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-test",
+ "webpki",
  "x509-parser",
  "zeroize",
 ]

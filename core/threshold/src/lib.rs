@@ -23,3 +23,5 @@ pub mod experimental;
 pub mod grpc;
 #[cfg(feature = "non-wasm")]
 pub mod thread_handles;
+#[cfg(feature = "non-wasm")]
+pub mod tls_certs;

@@ -70,7 +70,7 @@ args = ["build", "-f", "${THRESHOLD_FHE_DOCKER_FOLDER}", "--build-arg", "FEATURE
 #Generate the certificate for TLS communication of the parties
 [tasks.gen-test-certs]
 command = "cargo"
-args = ["run", "--manifest-path=../service/Cargo.toml", "--release", "--bin", "kms-gen-tls-certs", "--", "--ca-prefix", "p", "--ca-count", "${NUM_PARTIES}", "-o", "test_certs"]
+args = ["run", "--release", "--bin", "threshold-gen-tls-certs", "--", "--ca-prefix", "p", "--ca-count", "${NUM_PARTIES}", "-o", "test_certs"]
 
 #Generate the toml config file for the choreographer for a cluster of parties accessible from localhost
 [tasks.gen-local-choreo]

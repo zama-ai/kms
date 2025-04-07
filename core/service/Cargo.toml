@@ -71,7 +71,6 @@ rand = { workspace = true, features = ["std", "std_rng"] }
 rasn = "=0.20.2"
 rasn-cms = "=0.20.2"
 rayon.workspace = true
-rcgen = { version = "=0.13.1", optional = true }
 rsa = { version = "=0.9.6", features = ["sha2"] }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_bytes = "=0.11.15"
@@ -118,8 +117,6 @@ serial_test.workspace = true
 sysinfo = "=0.32.1"
 tempfile = "=3.16.0"
 tracing-test = "=0.2.5"
-webpki = { version = "=0.22.4", features = ["std"] }
-rustls = { version = "=0.23.18", default-features = false, features = ["std"] }
 rstest = "=0.23.0"
 # The testing feature is only required for tests
 threshold-fhe = { workspace = true, default-features = false, features = [
@@ -150,7 +147,6 @@ non-wasm = [
     "dep:backoff",
     "dep:conf-trace",
     "dep:tokio",
-    "dep:rcgen",
     "dep:tonic",
     "dep:tonic-health",
     "dep:tfhe-zk-pok",
