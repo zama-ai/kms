@@ -1,4 +1,0 @@
-[submodule "kms-connector/gateway-l2"]
-	path = kms-connector/gateway-l2
-	url = git@github.com:zama-ai/gateway-l2.git
-	branch = main

@@ -48,7 +48,7 @@ impl<P: Provider + Clone + std::fmt::Debug + 'static> EventProcessor<P> {
         // Process all SNS ciphertext materials
         let mut sns_ciphertext_materials = Vec::new();
         for sns_material in sns_materials {
-            let extracted_ct_handle = sns_material.ctHandle.to_be_bytes::<32>().to_vec();
+            let extracted_ct_handle = sns_material.ctHandle.to_vec();
             let extracted_sns_ciphertext_digest = sns_material.snsCiphertextDigest.to_vec();
             let coprocessor_addresses = sns_material.coprocessorTxSenderAddresses;
 

@@ -8,7 +8,7 @@ sol! {
     #[sol(rpc)]
     #[derive(Debug, serde::Serialize, serde::Deserialize)]
     IDecryptionManager,
-    "./gateway-l2/httpz_gateway_rust_bindings/abi/IDecryptionManager.abi"
+    "./src/gwl2_contracts/abi/IDecryptionManager.abi"
 }
 
 sol! {
@@ -16,7 +16,7 @@ sol! {
     #[sol(rpc)]
     #[derive(Debug, serde::Serialize, serde::Deserialize)]
     HTTPZ,
-    "./gateway-l2/httpz_gateway_rust_bindings/abi/HTTPZ.abi"
+    "./src/gwl2_contracts/abi/HTTPZ.abi"
 }
 
 sol! {
@@ -24,5 +24,5 @@ sol! {
     #[sol(rpc)]
     #[derive(Debug, serde::Serialize, serde::Deserialize)]
     IKeyManager,
-    "./gateway-l2/httpz_gateway_rust_bindings/abi/IKeyManager.abi"
+    "./src/gwl2_contracts/abi/IKeyManager.abi"
 }
