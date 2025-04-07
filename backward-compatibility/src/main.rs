@@ -46,7 +46,7 @@ fn gen_all_data<Vers: KMSCoreVersion>() -> (KmsTestcases, KmsGrpcTestcases, DdTe
     );
 
     let dd_testcases = gen_testcases::<Vers, TestMetadataDD, _>(
-        Vers::gen_distributed_decryption_data,
+        Vers::gen_threshold_fhe_data,
         DISTRIBUTED_DECRYPTION_MODULE_NAME,
     );
 
@@ -59,5 +59,5 @@ fn main() {
     // Use module name as the filename prefix
     store_metadata(&kms_testcases, data_dir().join("kms.ron"));
     store_metadata(&kms_grpc_testcases, data_dir().join("kms-grpc.ron"));
-    store_metadata(&dd_testcases, data_dir().join("distributed-decryption.ron"));
+    store_metadata(&dd_testcases, data_dir().join("threshold-fhe.ron"));
 }

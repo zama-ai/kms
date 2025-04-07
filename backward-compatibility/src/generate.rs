@@ -134,5 +134,5 @@ pub trait KMSCoreVersion {
     /// This should create types from distributed decryption,
     /// versionize them and store them into the version specific directory.
     /// The metadata for the generated tests should be returned in the same order that the tests will be run.
-    fn gen_distributed_decryption_data() -> Vec<TestMetadataDD>;
+    fn gen_threshold_fhe_data() -> Vec<TestMetadataDD>;
 }

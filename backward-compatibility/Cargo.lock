@@ -1409,7 +1409,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "bincode",
- "distributed-decryption",
  "kms",
  "kms-grpc",
  "rand",
@@ -1419,6 +1418,7 @@ dependencies = [
  "strum",
  "tfhe",
  "tfhe-versionable",
+ "threshold-fhe",
  "tokio",
 ]
 
@@ -1713,8 +1713,8 @@ dependencies = [
 
 [[package]]
 name = "conf-trace"
-version = "0.11.0-rc3"
-source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=7cf81a2aa56ccd409b6f26a37598b00845389734#7cf81a2aa56ccd409b6f26a37598b00845389734"
+version = "0.11.0-rc5"
+source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=af3387d9c290a2770c5e137b83f1fe041c43a388#af3387d9c290a2770c5e137b83f1fe041c43a388"
 dependencies = [
  "anyhow",
  "axum",
@@ -2160,61 +2160,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.100",
-]
-
-[[package]]
-name = "distributed-decryption"
-version = "0.11.0-rc3"
-source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=7cf81a2aa56ccd409b6f26a37598b00845389734#7cf81a2aa56ccd409b6f26a37598b00845389734"
-dependencies = [
- "aes",
- "aes-prng",
- "aligned-vec",
- "anyhow",
- "async-trait",
- "backoff",
- "bincode",
- "cfg-if",
- "clap",
- "conf-trace",
- "const_format",
- "dashmap",
- "derive_more",
- "futures",
- "g2p",
- "getrandom 0.2.15",
- "itertools 0.13.0",
- "kms-common",
- "kms-core-utils",
- "lazy_static",
- "mockall",
- "ndarray",
- "num-integer",
- "num-traits",
- "opentelemetry",
- "paste",
- "prost",
- "rand",
- "rayon",
- "redis",
- "serde",
- "serde_json",
- "sha3",
- "strum",
- "strum_macros",
- "tfhe",
- "tfhe-csprng",
- "tfhe-versionable",
- "tfhe-zk-pok",
- "tokio",
- "tonic",
- "tonic-build",
- "tonic-health",
- "tower 0.5.2",
- "tower-http",
- "tracing",
- "x509-parser",
- "zeroize",
 ]
 
 [[package]]
@@ -3258,8 +3203,8 @@ dependencies = [
 
 [[package]]
 name = "kms"
-version = "0.11.0-rc3"
-source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=7cf81a2aa56ccd409b6f26a37598b00845389734#7cf81a2aa56ccd409b6f26a37598b00845389734"
+version = "0.11.0-rc5"
+source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=af3387d9c290a2770c5e137b83f1fe041c43a388#af3387d9c290a2770c5e137b83f1fe041c43a388"
 dependencies = [
  "aes",
  "aes-gcm-siv",
@@ -3287,15 +3232,12 @@ dependencies = [
  "conf-trace",
  "console_error_panic_hook",
  "crypto_box",
- "distributed-decryption",
  "futures-util",
  "hex",
  "http 0.2.12",
  "hyper-rustls",
  "itertools 0.13.0",
  "k256",
- "kms-common",
- "kms-core-utils",
  "kms-grpc",
  "lazy_static",
  "nom",
@@ -3317,6 +3259,7 @@ dependencies = [
  "tfhe",
  "tfhe-versionable",
  "tfhe-zk-pok",
+ "threshold-fhe",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -3331,32 +3274,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "kms-common"
-version = "0.11.0-rc3"
-source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=7cf81a2aa56ccd409b6f26a37598b00845389734#7cf81a2aa56ccd409b6f26a37598b00845389734"
-dependencies = [
- "anyhow",
- "clap",
- "derive_more",
- "serde",
- "tfhe-versionable",
-]
-
-[[package]]
-name = "kms-core-utils"
-version = "0.11.0-rc3"
-source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=7cf81a2aa56ccd409b6f26a37598b00845389734#7cf81a2aa56ccd409b6f26a37598b00845389734"
-dependencies = [
- "anyhow",
- "futures",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "kms-grpc"
-version = "0.11.0-rc3"
-source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=7cf81a2aa56ccd409b6f26a37598b00845389734#7cf81a2aa56ccd409b6f26a37598b00845389734"
+version = "0.11.0-rc5"
+source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=af3387d9c290a2770c5e137b83f1fe041c43a388#af3387d9c290a2770c5e137b83f1fe041c43a388"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -5606,6 +5526,59 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d050e60b33d41c19108b32cea32164033a9013fe3b46cbd4457559bfbf77afaa"
 dependencies = [
  "num_cpus",
+]
+
+[[package]]
+name = "threshold-fhe"
+version = "0.11.0-rc5"
+source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=af3387d9c290a2770c5e137b83f1fe041c43a388#af3387d9c290a2770c5e137b83f1fe041c43a388"
+dependencies = [
+ "aes",
+ "aes-prng",
+ "aligned-vec",
+ "anyhow",
+ "async-trait",
+ "backoff",
+ "bincode",
+ "cfg-if",
+ "clap",
+ "conf-trace",
+ "const_format",
+ "dashmap",
+ "derive_more",
+ "futures",
+ "g2p",
+ "getrandom 0.2.15",
+ "itertools 0.13.0",
+ "lazy_static",
+ "mockall",
+ "ndarray",
+ "num-integer",
+ "num-traits",
+ "opentelemetry",
+ "paste",
+ "prost",
+ "rand",
+ "rayon",
+ "redis",
+ "serde",
+ "serde_json",
+ "sha3",
+ "strum",
+ "strum_macros",
+ "tfhe",
+ "tfhe-csprng",
+ "tfhe-versionable",
+ "tfhe-zk-pok",
+ "tokio",
+ "tonic",
+ "tonic-build",
+ "tonic-health",
+ "tower 0.5.2",
+ "tower-http",
+ "tracing",
+ "x509-parser",
+ "zeroize",
 ]
 
 [[package]]

@@ -101,7 +101,7 @@ fn test_prf_key(
 struct ThresholdFhe;
 impl TestedModule for ThresholdFhe {
     type Metadata = TestMetadataDD;
-    const METADATA_FILE: &'static str = "distributed-decryption.ron";
+    const METADATA_FILE: &'static str = "threshold-fhe.ron";
 
     fn run_test<P: AsRef<Path>>(
         test_dir: P,
@@ -118,8 +118,7 @@ impl TestedModule for ThresholdFhe {
 }
 
 #[test]
-#[ignore]
-fn test_backward_compatibility_distributed_decryption() {
+fn test_backward_compatibility_threshold_fhe() {
     let pkg_version = env!("CARGO_PKG_VERSION");
 
     let base_data_dir = data_dir();

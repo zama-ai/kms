@@ -27,7 +27,7 @@ pub const PRNG_SEED: u128 = 0xdeadbeef;
 const DATA_DIR: &str = "data";
 
 pub const KMS_MODULE_NAME: &str = "kms";
-pub const DISTRIBUTED_DECRYPTION_MODULE_NAME: &str = "distributed-decryption";
+pub const DISTRIBUTED_DECRYPTION_MODULE_NAME: &str = "threshold-fhe";
 pub const KMS_GRPC_MODULE_NAME: &str = "kms-grpc";
 
 pub fn dir_for_version<P: AsRef<Path>>(data_dir: P, version: &str) -> PathBuf {

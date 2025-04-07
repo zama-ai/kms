@@ -5,14 +5,16 @@
 use std::{borrow::Cow, fs::create_dir_all, path::PathBuf};
 
 use aes_prng::AesRng;
-use distributed_decryption_0_11::algebra::galois_rings::degree_4::{
-    ResiduePolyF4Z128, ResiduePolyF4Z64,
-};
-use distributed_decryption_0_11::execution::endpoints::keygen::FhePubKeySet;
-use distributed_decryption_0_11::execution::small_execution::prf::PrfKey;
-use distributed_decryption_0_11::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
-use distributed_decryption_0_11::execution::tfhe_internals::test_feature::generate_large_keys_from_seed;
-use distributed_decryption_0_11::{
+use kms_0_11::engine::base::{gen_sig_keys, KmsFheKeyHandles};
+use kms_0_11::engine::centralized::central_kms::generate_client_fhe_key;
+use kms_0_11::engine::threshold::service_real::{compute_all_info, ThresholdFheKeys};
+use kms_0_11::util::key_setup::FhePublicKey;
+use threshold_fhe_0_11::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
+use threshold_fhe_0_11::execution::endpoints::keygen::FhePubKeySet;
+use threshold_fhe_0_11::execution::small_execution::prf::PrfKey;
+use threshold_fhe_0_11::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
+use threshold_fhe_0_11::execution::tfhe_internals::test_feature::generate_large_keys_from_seed;
+use threshold_fhe_0_11::{
     execution::{
         runtime::party::Role,
         tfhe_internals::{
@@ -22,10 +24,6 @@ use distributed_decryption_0_11::{
     },
     tests::helper::testing::{get_dummy_prss_setup, get_networkless_base_session_for_parties},
 };
-use kms_0_11::engine::base::{gen_sig_keys, KmsFheKeyHandles};
-use kms_0_11::engine::centralized::central_kms::generate_client_fhe_key;
-use kms_0_11::engine::threshold::service_real::{compute_all_info, ThresholdFheKeys};
-use kms_0_11::util::key_setup::FhePublicKey;
 
 use kms_0_11::vault::keychain::AppKeyBlob;
 use kms_grpc_0_11::rpc_types::{PubDataType, PublicKeyType, SignedPubDataHandleInternal};
@@ -582,7 +580,7 @@ impl KMSCoreVersion for V0_11 {
         ]
     }
 
-    fn gen_distributed_decryption_data() -> Vec<TestMetadataDD> {
+    fn gen_threshold_fhe_data() -> Vec<TestMetadataDD> {
         let dir = Self::data_dir().join(DISTRIBUTED_DECRYPTION_MODULE_NAME);
         create_dir_all(&dir).unwrap();
 
