@@ -582,7 +582,7 @@ pub fn compute_pt_message_hash(
     // convert external_handles back to U256 to be signed
     let external_handles: Vec<_> = ext_handles_bytes
         .into_iter()
-        .map(|e| U256::from_be_slice(e.as_slice()))
+        .map(|e| alloy_primitives::FixedBytes::<32>::left_padding_from(e.as_slice()))
         .collect();
 
     let pt_bytes = abi_encode_plaintexts(pts);

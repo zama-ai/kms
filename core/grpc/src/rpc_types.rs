@@ -49,7 +49,7 @@ pub static REENC_REQUEST_NAME: &str = "reenc_request";
 alloy_sol_types::sol! {
     struct UserDecryptResponseVerification {
         bytes publicKey;
-        uint256[] ctHandles;
+        bytes32[] ctHandles;
         bytes reencryptedShare;
     }
 }
@@ -58,7 +58,7 @@ alloy_sol_types::sol! {
 alloy_sol_types::sol! {
     struct UserDecryptionLinker {
         bytes publicKey;
-        uint256[] handles;
+        bytes32[] handles;
         address userAddress;
     }
 }
@@ -69,7 +69,7 @@ alloy_sol_types::sol! {
 // and the name must be what is defined under `EIP712_PUBLIC_DECRYPT_TYPE`
 alloy_sol_types::sol! {
     struct PublicDecryptVerification {
-        uint256[] ctHandles;
+        bytes32[] ctHandles;
         bytes decryptedResult;
     }
 }
@@ -445,7 +445,7 @@ impl crate::kms::v1::ReencryptionRequest {
         let handles = self
             .typed_ciphertexts
             .iter()
-            .map(|x| alloy_primitives::U256::from_be_slice(&x.external_handle))
+            .map(|x| alloy_primitives::FixedBytes::<32>::left_padding_from(&x.external_handle))
             .collect::<Vec<_>>();
 
         if handles.is_empty() {

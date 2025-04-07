@@ -331,7 +331,7 @@ pub fn compute_link(
     let handles = req
         .ciphertext_handles
         .iter()
-        .map(|x| alloy_primitives::U256::from_be_slice(&x.0))
+        .map(|x| alloy_primitives::FixedBytes::<32>::left_padding_from(&x.0))
         .collect::<Vec<_>>();
 
     let linker = UserDecryptionLinker {

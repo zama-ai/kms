@@ -1,5 +1,5 @@
 use alloy_dyn_abi::Eip712Domain;
-use alloy_primitives::{B256, U256};
+use alloy_primitives::B256;
 use anyhow::anyhow;
 use cryptography::internal_crypto_types::PublicEncKey;
 use kms_grpc::{kms::v1::ReencryptionResponsePayload, rpc_types::UserDecryptResponseVerification};
@@ -131,11 +131,13 @@ pub fn compute_reenc_message_hash(
     user_pk: &PublicEncKey,
 ) -> anyhow::Result<B256> {
     use alloy_sol_types::SolStruct;
-    // convert external_handles back to U256 to be signed
+    // convert external_handles back to bytes32 to be signed
     let external_handles: Vec<_> = payload
         .signcrypted_ciphertexts
         .iter()
-        .map(|e| U256::from_be_slice(e.external_handle.as_slice()))
+        .map(|e| {
+            alloy_primitives::FixedBytes::<32>::left_padding_from(e.external_handle.as_slice())
+        })
         .collect();
 
     let reencrypted_share_buf = bincode::serialize(payload)?;
