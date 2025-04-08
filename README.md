@@ -126,24 +126,27 @@ Read this [section](./docs/ci/release.md) for more information.
 
 ## External Resources
 
-### Theory
+### Theoretical Background
 - [Noah's Ark: Efficient Threshold-FHE Using Noise Flooding](https://eprint.iacr.org/2023/815)
-
-### Whitepaper
-- [KMS Whitepaper](https://github.com/zama-ai/kms-whitepaper)
+<!--
+- TODO: NIST main submission document, once it's public.
+-->
 
 ### Technical specification
 - [Tech spec](https://github.com/zama-ai/tech-spec/tree/main/architecture)
 
-### Docker images and high level usage
-- [HTTPZ integration](https://github.com/zama-ai/fhevm-devops)
+### HTTPZ Application Whitepaper
+- [HTTPZ Whitepaper](https://github.com/zama-ai/httpz-whitepaper)
 
-## Working with KMS
+### Docker images and high level usage
+- [HTTPZ Integration](https://github.com/zama-ai/httpz-test-suite)
+
+## Working with the KMS
 
 ### Disclaimers
 
 #### Audits
-The Zama KMS is not yet audited and should be considered in the alpha stage. Known bugs and security issues are present as reflected by issue tracking.
+The Zama KMS has not yet been audited and should be considered in the alpha stage. Known bugs and security issues are present as reflected by issue tracking.
 However, it is currently in the process of being audited.
 
 #### Parameters
@@ -159,7 +162,7 @@ To cite KMS in academic papers, please use the following entry:
 @Misc{zama-kms,
   title={{Zama KMS: A Pure Rust Implementation of a Threshold Key Management System for TFHE}},
   author={Zama},
-  year={2024},
+  year={2025},
   note={\url{https://github.com/zama-ai/kms-core}},
 }
 ```

@@ -1,7 +1,7 @@
 # Zama Key Management System
 
 This folder hosts the code for the KMS Core service, which provides externally facing gRPC endpoints to use the Zama KMs.
-Detailed information about the usage, along with sequence diagrams can be found [here](https://github.com/zama-ai/tech-spec/tree/main/architecture) and the whitepaper can be found [here](https://github.com/zama-ai/kms-whitepaper), while information about the MPC protocols utilized can be found in [this paper](https://eprint.iacr.org/2023/815).
+Detailed information about the usage, along with sequence diagrams can be found [here](https://github.com/zama-ai/tech-spec/tree/main/architecture), while information about the MPC protocols utilized can be found in [this paper](https://eprint.iacr.org/2023/815). The HTTPZ whitepaper, which is the main application using the KMS, can be found [here](https://github.com/zama-ai/httpz-whitepaper).
 
 ## Implementation
 
