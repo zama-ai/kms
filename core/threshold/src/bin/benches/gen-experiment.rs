@@ -100,6 +100,10 @@ fn main() {
         witness_dim => args.witness_dim,
         protocol => protocol,
     );
+
+    // Create the directory (if not exists) that will be used for experiment files
+    std::fs::create_dir_all(&args.output_folder).unwrap();
+
     templates.iter().for_each(|(ty, template)| {
         let output = template.render(context.clone()).unwrap();
         println!(

@@ -31,8 +31,10 @@ For the rest of this page, we assume the user is working under the `core/thresho
 - `tests`
   - Integration tests.
 <!--
-- `TechnicalDocumentation`
-  - Contains our preliminary draft NIST main submission document. 
+- `conf-trace`
+  - A small library for configuration and tracing functionality.
+- `docs`
+  - Documentation is stored here, notably it contains our preliminary draft NIST main submission document.
 -->
 
 ## Benchmarks with real network
@@ -214,5 +216,5 @@ cargo flamegraph --root --bench prep --features="testing extension_degree_8" -- 
 
 ## Testing
 
-Integration tests are located in the `tests` folder and require a `Redis` server to be running locally.
-Make sure to install `Redis`and run `redis-server` in a separate terminal before running these tests.
+Integration tests are located in the `tests` folder and require a `redis` server to be running locally.
+Make sure to install `redis`and run `redis-server` in a separate terminal before running these tests.

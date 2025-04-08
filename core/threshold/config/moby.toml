@@ -1,4 +1,4 @@
-# Moby is a GRPC service that runs only the core/threshold protocols.
+# Moby is a GRPC service that runs only the threshold protocols.
 # This is for experimental purposes only!
 # Below is an example config file for Party 1
 

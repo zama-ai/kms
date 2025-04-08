@@ -2,10 +2,11 @@
 //! you first need to add it as a dependency in your `Cargo.toml`:
 //!
 //! ```
-//! threshold_fhe = { git = "https://github.com/zama-ai/threshold-fhe.git" }
+//! threshold_fhe = { git = "https://github.com/zama-ai/kms-core.git" }
 //! ```
 //!
 //! This is an example where we setup a testing runtime that runs 4 parties on the same machine.
+//! You can run it with `cargo run -F testing --example distributed_decryption`.
 use aes_prng::AesRng;
 use rand::{Rng, SeedableRng};
 use std::sync::Arc;

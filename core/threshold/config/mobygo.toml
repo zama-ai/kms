@@ -1,5 +1,5 @@
 # This file holds the configuration for mobygo,
-# this is a binary that runs a grpc client for interacting with the core/threshold service (moby).
+# this is a binary that runs a grpc client for interacting with the threshold service (moby).
 
 # Parameters related to opentelemetry (otel) tracing.
 [tracing]
@@ -10,7 +10,7 @@ service_name = "choreographer"
 # Address of the otel exporter.
 endpoint = "http://localhost:4317"
 
-# Parameters related to the network topology of core/threshold nodes.
+# Parameters related to the network topology of threshold MPC nodes.
 [threshold_topology]
 
 # Maximum number of corrupted parties.
