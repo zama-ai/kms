@@ -1,15 +1,24 @@
+# Configuration for the KMS peers
+# This is used to define the number of peers and their IDs
 kmsPeers:
   # Defines either the peer ID when count=1 or the start ID of a set of peers when count>1
   id: 1
   # The number of peers managed by the StatefulSets
   count: 1
 
+# Configuration for the KMS connector
+# This is used to define the connector configuration
 kmsConnector:
+  # Add the following to enable the connector:
   enabled: true
+  # Override the name of the connector:
   nameOverride:
+  # Override the image of the connector:
   image:
     name: ghcr.io/zama-ai/kms-connector
+    # Override the tag of the connector:
     tag: latest
+  # Define all the environment variable needed for the connector:
   env:
     - name: PROBE
       value: "true"
@@ -49,25 +58,36 @@ kmsConnector:
       value: "true"
     - name: KMS_CONNECTOR_PRIVATE_KEY
       value: "0x3f45b129a7fd099146e9fe63851a71646231f7743c712695f3b2d2bf0e41c774"
+  # Define the storage for the connector:
   storage:
     storageClassName: gp3
     capacity: 5Gi
+  # Define the node selector for the connector:
   nodeSelector:
+  # Define the affinity for the connector:
   affinity:
+  # Define the tolerations for the connector:
   tolerations:
 
 kmsCore:
+  # Add the following to enable the core:
   enabled: true
+  # Override the name of the core:
   nameOverride:
+  # Override the address of the core:
   addressOverride:
+  # Override the image of the core:
   image:
     name: ghcr.io/zama-ai/kms-service
     tag: latest
     pullPolicy: Always
+  # Define the service account name for the core:
   serviceAccountName:
+  # Define the environment variables for the core:
   envFrom:
     configmap:
       name:
+  # Add the following to enable threshold mode:
   thresholdMode:
     enabled: false
     # If left unset, the chart will generate the list automatically based on pod replicas of the statefulset
@@ -82,6 +102,8 @@ kmsCore:
     min_dec_cache: 6000
     num_sessions_preproc: 2
     decryption_mode: "NoiseFloodSmall"
+  # Add the following to enable nitro enclave:
+  # Nitro enclave needs specific instance types
   nitroEnclave:
     enabled: false
     debug: true

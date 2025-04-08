@@ -11,6 +11,9 @@ kmsCoreClient:
   image:
     name: ghcr.io/zama-ai/kms-core-client
     tag: v0.11.0-rc2
+  envFrom:
+    configmap:
+      name: kms-core-client-threshold-staging-config
 
 kmsCore:
   nameOverride: kms-threshold-staging
@@ -49,7 +52,10 @@ kmsCore:
       memory: 4Gi
       ephemeralStorage: 1Gi
       grpcTimeout: 360
-      grpcMaxMessageSize: 2097520
+      grpcMaxMessageSize: 104857600
+
+kmsInit:
+  enabled: true
 
 environment: dev
 

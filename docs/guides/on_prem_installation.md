@@ -49,8 +49,9 @@ metadata:
   name: kms-threshold-staging-1
   namespace: kms-threshold-staging
 data:
-  KMS_CORE__PRIVATE_VAULT__STORAGE: s3://private-bucket-name
-  KMS_CORE__PUBLIC_VAULT__STORAGE: s3://public-bucket-name
+  CORE_CLIENT__S3_ENDPOINT: https://zama-public-bucket.s3.eu-west-1.amazonaws.com
+  KMS_CORE__PRIVATE_VAULT__STORAGE: s3://zama-private-bucket
+  KMS_CORE__PUBLIC_VAULT__STORAGE: s3://zama-public-bucket
 ```
 
 Example of a service account for one party:
@@ -132,15 +133,21 @@ kyverno:
 
 ### 3. Install the Chart
 
+If you clone the kms-core repository, you can use the command below to install the chart with the values-example-local.yaml file.
 To install the chart in your cluster, run the command below from your machine.
 Be sure to target the cluster and the right context.
 
 ```bash
 # From the kms-core directory
-helm install kms-service ./charts/kms-service -f my-values.yaml -n <namespace>
+helm install kms-service ./charts/kms-service -f ./charts/kms-service/values-example-local.yaml -n kms-threshold-staging
 ```
 
-Replace `<namespace>` with your desired Kubernetes namespace.
+If you want to use the chart from the registry you can log into ghcr.io and run the following with the **version** you want:
+
+```bash
+helm upgrade --install kms-core oci://ghcr.io/zama-ai/kms-core/kms-service --version <version> -f ./charts/kms-service/values-example-local.yaml -n kms-threshold-staging --create-namespace --dependency-update
+```
+
 
 ## Configuration Options
 
@@ -155,7 +162,7 @@ kmsCore:
     # Number of peers (must match kmsPeers.count)
     dec_capacity: 10000
     min_dec_cache: 6000
-    num_sessions_preproc: 2
+    num_sessions_preproc: 2 # Number of core of vCPU
 
 kmsPeers:
   count: 4  # Number of KMS peers for threshold setup
