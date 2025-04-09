@@ -18,9 +18,18 @@ pub struct Opening(pub [u8; KEY_BYTE_LEN]);
 pub(crate) const DSEP_COMM: &[u8; 4] = b"COMM";
 
 /// hash the given message and opening to compute the 256-bit commitment in the ROM
-fn commitment_inner_hash(msg: &[u8], o: &Opening) -> Commitment {
+fn commitment_inner_hash(
+    msg: &[u8],
+    party_id: u64,
+    session_id: u128,
+    round_id: u64,
+    o: &Opening,
+) -> Commitment {
     let mut hasher = Sha3_256::new();
     hasher.update(DSEP_COMM);
+    hasher.update(party_id.to_le_bytes());
+    hasher.update(session_id.to_le_bytes());
+    hasher.update(round_id.to_le_bytes());
     hasher.update(msg);
     hasher.update(o.0);
     let digest = hasher.finalize();
@@ -35,18 +44,31 @@ fn commitment_inner_hash(msg: &[u8], o: &Opening) -> Commitment {
 
 //NIST: Level Zero Operation
 /// commit to msg and return a 256-bit commitment and 128-bit opening value
-pub fn commit<R: Rng + CryptoRng>(msg: &[u8], rng: &mut R) -> (Commitment, Opening) {
+pub fn commit<R: Rng + CryptoRng>(
+    msg: &[u8],
+    party_id: u64,
+    session_id: u128,
+    round_id: u64,
+    rng: &mut R,
+) -> (Commitment, Opening) {
     let mut opening = [0u8; KEY_BYTE_LEN];
     rng.fill_bytes(&mut opening);
 
     let o = Opening(opening);
-    let com = commitment_inner_hash(msg, &o);
+    let com = commitment_inner_hash(msg, party_id, session_id, round_id, &o);
     (com, o)
 }
 
 /// verify that commitment c can be opened with o and that it matches msg
-pub fn verify(msg: &[u8], com_to_check: &Commitment, o: &Opening) -> anyhow::Result<()> {
-    let computed_commitment = commitment_inner_hash(msg, o);
+pub fn verify(
+    msg: &[u8],
+    party_id: u64,
+    session_id: u128,
+    round_id: u64,
+    com_to_check: &Commitment,
+    o: &Opening,
+) -> anyhow::Result<()> {
+    let computed_commitment = commitment_inner_hash(msg, party_id, session_id, round_id, o);
     if computed_commitment == *com_to_check {
         Ok(())
     } else {
@@ -62,27 +84,40 @@ mod tests {
 
     #[test]
     fn test_commit_verify() {
+        let party_id = 3;
+        let session_id = 10;
+        let round_id = 55;
         let msg = b"Let's commit to this message!";
         let mut rng = AesRng::seed_from_u64(0);
-        let (com, opening) = commit(msg, &mut rng);
-        assert!(verify(msg, &com, &opening).is_ok());
+        let (com, opening) = commit(msg, party_id, session_id, round_id, &mut rng);
+        assert!(verify(msg, party_id, session_id, round_id, &com, &opening).is_ok());
     }
 
     #[test]
     fn test_commit_verify_fail() {
+        let party_id = 3;
+        let session_id = 10;
+        let round_id = 55;
         let msg = b"Now commit to this other message";
         let mut rng = AesRng::seed_from_u64(1);
-        let (com, opening) = commit(msg, &mut rng);
+        let (com, opening) = commit(msg, party_id, session_id, round_id, &mut rng);
 
-        assert!(verify(msg, &com, &opening).is_ok());
+        assert!(verify(msg, party_id, session_id, round_id, &com, &opening).is_ok());
 
         // check that verification fails for wrong values.
         let msg_wrong = b"Wrong message here...";
         let com_wrong = Commitment([42u8; COMMITMENT_BYTE_LEN]);
         let opening_wrong = Opening([23u8; KEY_BYTE_LEN]);
 
-        assert!(verify(msg_wrong, &com, &opening).is_err());
-        assert!(verify(msg, &com_wrong, &opening).is_err());
-        assert!(verify(msg, &com, &opening_wrong).is_err());
+        assert!(verify(msg_wrong, party_id, session_id, round_id, &com, &opening).is_err());
+        assert!(verify(msg, party_id, session_id, round_id, &com_wrong, &opening).is_err());
+        assert!(verify(msg, party_id, session_id, round_id, &com, &opening_wrong).is_err());
+
+        let party_id_wrong = 2;
+        let session_id_wrong = 9;
+        let round_id_wrong = 54;
+        assert!(verify(msg, party_id_wrong, session_id, round_id, &com, &opening).is_err());
+        assert!(verify(msg, party_id, session_id_wrong, round_id, &com, &opening).is_err());
+        assert!(verify(msg, party_id, session_id, round_id_wrong, &com, &opening).is_err());
     }
 }

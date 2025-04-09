@@ -112,6 +112,8 @@ impl AgreeRandom for RealAgreeRandom {
     ) -> anyhow::Result<Vec<PrfKey>> {
         let num_parties = session.num_parties();
         let party_id = session.my_role()?.one_based();
+        let session_id = session.session_id().0;
+        let round_id = session.network().get_current_round()?;
 
         //Compute all the subsets of size n-t I am part of
         let mut party_sets = compute_party_sets(
@@ -129,7 +131,13 @@ impl AgreeRandom for RealAgreeRandom {
         // compute randomness s and commit to it, hold on to all values in vectors
         for set in &party_sets {
             session.rng().fill_bytes(&mut s);
-            let (c, o) = commit(&s, &mut session.rng());
+            let (c, o) = commit(
+                &s,
+                party_id as u64,
+                session_id,
+                round_id as u64,
+                &mut session.rng(),
+            );
             for p in set {
                 keys_opens[p - 1].push((PrfKey(s), o));
                 coms[p - 1].push(c);
@@ -142,6 +150,8 @@ impl AgreeRandom for RealAgreeRandom {
 
         let r_a_keys = verify_and_xor_keys(
             party_id,
+            session_id,
+            round_id as u64,
             &mut party_sets,
             &mut keys_opens,
             &mut rcv_keys_opens,
@@ -385,6 +395,8 @@ fn verify_keys_equal(
 /// Verifies the commitments on the received keys are valid and if so, xors the keys to compute agreed randomness
 fn verify_and_xor_keys(
     self_id: usize,
+    session_id: u128,
+    round_id: u64,
     party_sets: &mut Vec<Vec<usize>>,
     keys_opens: &mut [Vec<(PrfKey, Opening)>],
     rcv_keys_opens: &mut [Vec<(PrfKey, Opening)>],
@@ -422,7 +434,7 @@ fn verify_and_xor_keys(
                 })?;
 
                 // check that randomnes was properly committed to in the first round
-                match verify(&ko.0 .0, &com, &ko.1) {
+                match verify(&ko.0 .0, *p as u64, session_id, round_id, &com, &ko.1) {
                     Ok(_) => {}
                     Err(_) => {
                         return Err(anyhow_error_and_log(format!(
@@ -947,6 +959,8 @@ mod tests {
     #[test]
     fn test_verify_and_xor_keys() {
         let party_id = 2;
+        let session_id = 12u128;
+        let round_id = 66u64;
         let party_sets = vec![vec![1_usize, 2]];
 
         // received key and opening
@@ -958,6 +972,9 @@ mod tests {
         // compute commitment for received key
         let mut hasher = Sha3_256::new();
         hasher.update(DSEP_COMM);
+        hasher.update((party_sets[0][0] as u64).to_le_bytes());
+        hasher.update(session_id.to_le_bytes());
+        hasher.update(round_id.to_le_bytes());
         hasher.update(key1.0);
         hasher.update(opening1.0);
         let or = hasher.finalize();
@@ -973,6 +990,8 @@ mod tests {
         // test correctly working verification and key generation
         let res = verify_and_xor_keys(
             party_id,
+            session_id,
+            round_id,
             &mut party_sets.clone(),
             &mut keys_opens.clone(),
             &mut rcv_keys_opens.clone(),
@@ -983,23 +1002,59 @@ mod tests {
         // test that resulting key is the xor of the input keys 42 ^ 1 = 43
         assert_eq!(res, vec![PrfKey([43_u8; KEY_BYTE_LEN])]);
 
-        // test failing commitment verification
-        rcv_coms = vec![
-            vec![Commitment([0_u8; COMMITMENT_BYTE_LEN])],
-            Vec::<Commitment>::new(),
-        ];
+        // test failing commitment verification with wrong commitment
+        {
+            rcv_coms = vec![
+                vec![Commitment([0_u8; COMMITMENT_BYTE_LEN])],
+                Vec::<Commitment>::new(),
+            ];
 
-        let r = verify_and_xor_keys(
-            party_id,
-            &mut party_sets.clone(),
-            &mut keys_opens.clone(),
-            &mut rcv_keys_opens.clone(),
-            &mut rcv_coms.clone(),
-        )
-        .unwrap_err()
-        .to_string();
+            let r = verify_and_xor_keys(
+                party_id,
+                session_id,
+                round_id,
+                &mut party_sets.clone(),
+                &mut keys_opens.clone(),
+                &mut rcv_keys_opens.clone(),
+                &mut rcv_coms.clone(),
+            )
+            .unwrap_err()
+            .to_string();
 
-        assert!(r.contains("Commitment verification has failed for party 1!"));
+            assert!(r.contains("Commitment verification has failed for party 1!"));
+        }
+        // test wrong session ID
+        {
+            let r = verify_and_xor_keys(
+                party_id,
+                session_id + 1,
+                round_id,
+                &mut party_sets.clone(),
+                &mut keys_opens.clone(),
+                &mut rcv_keys_opens.clone(),
+                &mut rcv_coms.clone(),
+            )
+            .unwrap_err()
+            .to_string();
+
+            assert!(r.contains("Commitment verification has failed for party 1!"));
+        }
+        // test wrong round ID
+        {
+            let r = verify_and_xor_keys(
+                party_id,
+                session_id,
+                round_id + 1,
+                &mut party_sets.clone(),
+                &mut keys_opens.clone(),
+                &mut rcv_keys_opens.clone(),
+                &mut rcv_coms.clone(),
+            )
+            .unwrap_err()
+            .to_string();
+
+            assert!(r.contains("Commitment verification has failed for party 1!"));
+        }
     }
 
     #[test]
