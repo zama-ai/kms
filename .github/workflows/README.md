@@ -23,6 +23,54 @@ This document describes the CI/CD workflow structure for the KMS Core project. O
 
 ## 🏗️ Component-Specific Jobs
 
+### 📦 Helm Chart Component
+<details>
+<summary><b>View Component Details</b></summary>
+
+#### 🧪 Test Job [`test-helm-chart`](global-common-workflow.yml)
+| Trigger | Status | Condition |
+|---------|--------|-----------|
+| 🔍 PR | ✅ | On chart changes |
+| 🎯 Main | ✅ | On chart changes |
+
+#### 🔍 Lint Job [`lint-helm-chart`](global-common-workflow.yml)
+| Trigger | Status | Condition |
+|---------|--------|-----------|
+| 🔍 PR | ✅ | On chart changes |
+| 🎯 Main | ✅ | On chart changes |
+
+#### 📦 Release Job [`release-helm-chart`](global-common-workflow.yml)
+| Trigger | Status | Condition |
+|---------|--------|-----------|
+| 🎯 Main | ✅ | On chart changes |
+</details>
+
+### 📚 Documentation Component
+<details>
+<summary><b>View Component Details</b></summary>
+
+#### 🔍 Check Job [`check-docs`](global-common-workflow.yml)
+| Trigger | Status | Condition |
+|---------|--------|-----------|
+| 🔍 PR | ✅ | On docs changes |
+| 🎯 Main | ✅ | All changes |
+
+> Performs link checking and validation using Python's linkcheckmd
+</details>
+
+### 💾 Backup Component
+<details>
+<summary><b>View Component Details</b></summary>
+
+#### 🧪 Test Job [`test-backup`](global-common-workflow.yml)
+| Trigger | Status | Condition |
+|---------|--------|-----------|
+| 🔍 PR | ✅ | On backup changes |
+| 🎯 Main | ✅ | All changes |
+
+> Tests backup functionality with all features enabled
+</details>
+
 ### 🔌 Connector Component
 <details>
 <summary><b>View Component Details</b></summary>
@@ -30,15 +78,13 @@ This document describes the CI/CD workflow structure for the KMS Core project. O
 #### 🧪 Test Job [`test-connector`](global-common-workflow.yml)
 | Trigger | Status | Condition |
 |---------|--------|-----------|
-| 🌙 Nightly | ✅ | Always runs |
-| 🔍 PR | ✅ | On connector/CI changes |
-| 🎯 Main | ✅ | On connector/CI changes |
+| 🔍 PR | ✅ | On connector changes |
+| 🎯 Main | ✅ | Always |
 
 #### 🐳 Docker Job [`docker-connector`](global-common-workflow.yml)
 | Trigger | Status | Condition |
 |---------|--------|-----------|
-| 🌙 Nightly | ✅ | On main/release branch |
-| 🔍 PR | ✅ | When labeled with "docker" |
+| 🔍 PR | ✅ | With "docker" label |
 | 🎯 Main | ✅ | After successful tests |
 </details>
 
@@ -49,9 +95,8 @@ This document describes the CI/CD workflow structure for the KMS Core project. O
 #### 🧪 Test Job [`test-core-client`](global-common-workflow.yml)
 | Trigger | Status | Condition |
 |---------|--------|-----------|
-| 🌙 Nightly | ✅ | Always runs |
-| 🔍 PR | ✅ | On core-client/CI changes |
-| 🎯 Main | ✅ | On core-client/CI changes |
+| 🔍 PR | ✅ | On core-client/service/threshold/grpc changes |
+| 🎯 Main | ✅ | Always |
 
 #### 🐳 Docker Job [`docker-core-client`](global-common-workflow.yml)
 | Trigger | Status | Condition |
@@ -81,8 +126,8 @@ This document describes the CI/CD workflow structure for the KMS Core project. O
 | Trigger | Status | Condition |
 |---------|--------|-----------|
 | 🌙 Nightly | ✅ | Comprehensive suite |
-| 🔍 PR | ✅ | Parallel test suites |
-| 🎯 Main | ✅ | Parallel test suites |
+| 🔍 PR | ✅ | On service changes |
+| 🎯 Main | ✅ | Always |
 
 ##### Test Configuration Details
 - 🌙 **Nightly Tests**:
@@ -140,7 +185,7 @@ This document describes the CI/CD workflow structure for the KMS Core project. O
 | 🔍 PR | ❌ | Never runs |
 | 🎯 Main | ❌ | Never runs |
 
-> Updates staging environment with latest changes
+> Updates kms-threshold-staging namespace with latest changes
 </details>
 
 ---
