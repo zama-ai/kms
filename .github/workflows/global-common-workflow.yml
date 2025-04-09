@@ -90,17 +90,17 @@ jobs:
   ############################################################################
   test-helm-chart:
     needs: check-changes
-    if: needs.check-changes.outputs.changes-helm-chart
+    if: needs.check-changes.outputs.changes-helm-chart == 'true'
     uses: ./.github/workflows/helm-test.yml
 
   lint-helm-chart:
     needs: check-changes
-    if: needs.check-changes.outputs.changes-helm-chart
+    if: needs.check-changes.outputs.changes-helm-chart == 'true'
     uses: ./.github/workflows/helm-lint.yml
 
   release-helm-chart:
     needs: check-changes
-    if: github.ref == 'refs/heads/main' && needs.check-changes.outputs.changes-helm-chart
+    if: github.ref == 'refs/heads/main' && needs.check-changes.outputs.changes-helm-chart == 'true'
     uses: ./.github/workflows/helm-release.yml
 
   ############################################################################
@@ -111,7 +111,7 @@ jobs:
   ############################################################################
   check-docs:
     needs: check-changes
-    if: needs.check-changes.outputs.changes-docs
+    if: needs.check-changes.outputs.changes-docs == 'true'
     runs-on: ubuntu-latest
     container:
       image: python:3.10
@@ -129,7 +129,7 @@ jobs:
   ############################################################################
   test-backup:
     needs: check-changes
-    if: needs.check-changes.outputs.changes-backup
+    if: needs.check-changes.outputs.changes-backup == 'true'
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
       working-directory: './core/backup'
@@ -154,7 +154,7 @@ jobs:
   ############################################################################
   test-connector:
     needs: check-changes
-    if: needs.check-changes.outputs.changes-connector
+    if: needs.check-changes.outputs.changes-connector == 'true'
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
       working-directory: './kms-connector'
@@ -196,7 +196,7 @@ jobs:
   ############################################################################
   test-core-client:
     needs: check-changes
-    if: needs.check-changes.outputs.changes-core-client
+    if: needs.check-changes.outputs.changes-core-client == 'true' || needs.check-changes.outputs.changes-core-service == 'true' || needs.check-changes.outputs.changes-core-threshold == 'true' || needs.check-changes.outputs.changes-core-grpc == 'true'
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
       working-directory: './core-client'
@@ -235,7 +235,7 @@ jobs:
   ############################################################################
   test-grpc:
     needs: check-changes
-    if: needs.check-changes.outputs.changes-core-grpc
+    if: needs.check-changes.outputs.changes-core-grpc == 'true'
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
       working-directory: './core/grpc'
@@ -271,7 +271,7 @@ jobs:
   # - For other events: Runs multiple test suites in parallel with specific features
   prepare-matrix:
     needs: check-changes
-    if: needs.check-changes.outputs.changes-core-service
+    if: needs.check-changes.outputs.changes-core-service == 'true'
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
@@ -298,7 +298,7 @@ jobs:
     needs:
       - check-changes
       - prepare-matrix
-    if: needs.check-changes.outputs.changes-core-service
+    if: needs.check-changes.outputs.changes-core-service == 'true'
     strategy:
       matrix: ${{fromJson(needs.prepare-matrix.outputs.matrix)}}
     uses: ./.github/workflows/common-testing-big-instance.yml
@@ -396,7 +396,7 @@ jobs:
   # Includes slow tests but runs only library tests
   test-core-threshold-pr:
     needs: check-changes
-    if: needs.check-changes.outputs.changes-core-threshold
+    if: needs.check-changes.outputs.changes-core-threshold == 'true'
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
       working-directory: './core/threshold'
@@ -416,7 +416,7 @@ jobs:
   # Only runs when threshold-related changes are detected
   test-core-threshold-main:
     needs: check-changes
-    if: needs.check-changes.outputs.changes-core-threshold && contains(fromJSON('["release/", "main"]'), github.ref)
+    if: needs.check-changes.outputs.changes-core-threshold == 'true' && contains(fromJSON('["release/", "main"]'), github.ref)
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
       working-directory: './core/threshold'
@@ -437,7 +437,7 @@ jobs:
   # Helps validate dependency updates quickly
   build-dependabot:
     needs: check-changes
-    if: needs.check-changes.outputs.changes-core-threshold && startsWith(github.head_ref, 'dependabot/')
+    if: needs.check-changes.outputs.changes-core-threshold == 'true' && startsWith(github.head_ref, 'dependabot/')
     uses: ./.github/workflows/common-testing.yml
     with:
       working-directory: './core/threshold'
