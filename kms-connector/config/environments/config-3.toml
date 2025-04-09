@@ -41,3 +41,8 @@ channel_size = 2000
 # endpoint = "http://localhost:9876"
 
 # verify_coprocessors = true
+
+# [aws_kms_config]
+# key_id = "12345678-1234-1234-1234-123456789012"
+# region = "us-east-1"
+# endpoint = "https://kms.us-east-1.amazonaws.com"

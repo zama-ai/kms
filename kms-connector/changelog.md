@@ -35,6 +35,7 @@
 - Improved S3 error handling with warning-level logs for non-critical issues and making it more flexible and following non-failable pattern
 - Optional private key configuration for wallet management derived from string
 - Hardened EIP-712 signature consolidating it with the Core EIP-712 structs
+- AWS KMS integration
 
 #### 1.2. In Progress 🚧
 

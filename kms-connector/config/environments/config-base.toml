@@ -95,3 +95,15 @@ channel_size = 1000
 # bucket = "my-ciphertext-bucket"
 # ENV: KMS_CONNECTOR_S3_CONFIG__ENDPOINT
 # endpoint = "http://localhost:9876"
+
+# AWS KMS configuration
+# [aws_kms_config]
+# AWS KMS key ID for signing
+# ENV: KMS_CONNECTOR_AWS_KMS_CONFIG__KEY_ID
+# key_id = "12345678-1234-1234-1234-123456789012"
+# Optional: AWS region for KMS (if not using default from AWS credentials)
+# ENV: KMS_CONNECTOR_AWS_KMS_CONFIG__REGION
+# region = "us-east-1"
+# Optional: AWS endpoint URL for KMS (for testing or custom endpoints)
+# ENV: KMS_CONNECTOR_AWS_KMS_CONFIG__ENDPOINT
+# endpoint = "https://kms.us-east-1.amazonaws.com"

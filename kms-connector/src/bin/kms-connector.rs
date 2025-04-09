@@ -68,7 +68,19 @@ async fn run_connector(
     shutdown_rx: broadcast::Receiver<()>,
 ) -> Result<()> {
     // Initialize wallet based on configuration
-    let wallet = if let Some(signing_key_path) = &config.signing_key_path {
+    let wallet = if let Some(aws_kms_config) = &config.aws_kms_config {
+        info!(
+            "Using AWS KMS for signing with key ID: {}",
+            aws_kms_config.key_id
+        );
+        KmsWallet::from_aws_kms(
+            aws_kms_config.key_id.clone(),
+            aws_kms_config.region.clone(),
+            aws_kms_config.endpoint.clone(),
+            Some(config.chain_id),
+        )
+        .await?
+    } else if let Some(signing_key_path) = &config.signing_key_path {
         info!("Using signing key from file: {}", signing_key_path);
         KmsWallet::from_signing_key_file(Some(signing_key_path), Some(config.chain_id))?
     } else if let Some(private_key) = &config.private_key {

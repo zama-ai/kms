@@ -17,6 +17,17 @@ pub struct S3Config {
     pub endpoint: Option<String>,
 }
 
+/// Configuration for AWS KMS signer
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct AwsKmsConfig {
+    /// AWS KMS key ID for signing
+    pub key_id: String,
+    /// AWS region for KMS
+    pub region: Option<String>,
+    /// AWS endpoint URL for KMS
+    pub endpoint: Option<String>,
+}
+
 /// Configuration for the KMS connector
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
@@ -69,6 +80,9 @@ pub struct Config {
     /// S3 configuration for ciphertext storage (optional)
     #[serde(default)]
     pub s3_config: Option<S3Config>,
+    /// AWS KMS configuration for signer (optional)
+    #[serde(default)]
+    pub aws_kms_config: Option<AwsKmsConfig>,
     // TODO: implement to increase security
     /// Whether to verify coprocessors against the HTTPZ contract (optional, defaults to true)
     #[serde(default = "default_verify_coprocessors")]
@@ -138,6 +152,7 @@ impl Default for Config {
             signing_key_path: default_signing_key_path(),
             private_key: None,
             s3_config: None,
+            aws_kms_config: None,
             verify_coprocessors: default_verify_coprocessors(),
         }
     }
@@ -500,6 +515,7 @@ mod tests {
             signing_key_path: None,
             private_key: None,
             s3_config: None,
+            aws_kms_config: None,
             verify_coprocessors: Some(true),
         };
 
@@ -577,6 +593,7 @@ mod tests {
             signing_key_path: None,
             private_key: None,
             s3_config: None,
+            aws_kms_config: None,
             verify_coprocessors: Some(true),
         };
 
@@ -610,6 +627,7 @@ mod tests {
             signing_key_path: None,
             private_key: None,
             s3_config: None,
+            aws_kms_config: None,
             verify_coprocessors: Some(true),
         };
 
@@ -694,6 +712,7 @@ mod tests {
             signing_key_path: None,
             private_key: None,
             s3_config: None,
+            aws_kms_config: None,
             verify_coprocessors: Some(true),
         };
 

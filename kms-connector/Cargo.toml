@@ -8,6 +8,7 @@ license.workspace = true
 
 # TODO: use root Cargo.toml features, remove duplicates and shrink to bare minimum features
 [dependencies]
+aws-sdk-kms = "=1.50.0"
 alloy-primitives = "0.8.20"
 alloy-sol-types = "0.8.20"
 alloy-json-abi = "0.8.20"
@@ -63,6 +64,7 @@ regex = "1.11.1"
 # AWS S3 dependencies for ciphertext retrieval
 aws-config = "=1.5.9"
 aws-sdk-s3 = "=1.62.0"
+alloy-signer-aws = "0.11.0"
 
 # TODO: substitute with existing KMS-Core implementation
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
