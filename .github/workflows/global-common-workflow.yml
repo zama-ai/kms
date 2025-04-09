@@ -17,8 +17,8 @@ on:
 # - Groups runs by git ref
 # - Cancels in-progress runs for non-main/release branches
 concurrency:
-  group: global-common-workflow-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
 
 # Required permissions for workflow execution
 permissions:
