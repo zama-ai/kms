@@ -566,7 +566,14 @@ fn abi_encode_plaintexts(ptxts: &[TypedPlaintext]) -> Bytes {
     let encoded = DynSolValue::Tuple(data).abi_encode();
 
     // strip off the extra U256 at the beginning, and possibly also 256 bytes more zero bytes, when we encode one or more Euint2048s
-    let encoded_bytes: Vec<u8> = encoded[offset_mul * 32..].to_vec();
+    let mut encoded_bytes: Vec<u8> = encoded[offset_mul * 32..].to_vec();
+
+    // Ensure ABI encoding compatibility by adding a 32-byte padding at the end
+    // This matches the JavaScript implementation that includes these bytes
+    if !encoded_bytes.is_empty() {
+        let padding = vec![0x00; 32];
+        encoded_bytes.extend_from_slice(&padding);
+    }
 
     let hexbytes = hex::encode(encoded_bytes.clone());
     tracing::debug!("Encoded plaintext ABI {:?}", hexbytes);
@@ -807,7 +814,8 @@ pub(crate) mod tests {
                                0000000000000000000000000000000000000000000000000000000000000000\
                                0000000000000000000000000000000000000000000000000000000000000000\
                                0000000000000000000000000000000000000000000000000000000000000000\
-                               0000000000000000000000000000000000000000000000000000000000000101";
+                               0000000000000000000000000000000000000000000000000000000000000101\
+                               0000000000000000000000000000000000000000000000000000000000000000";
 
         assert_eq!(reference_2048, hexbytes_2048.as_str());
 
@@ -819,7 +827,8 @@ pub(crate) mod tests {
         let hexbytes_16 = hex::encode(bytes_16);
 
         // this is the encoding of the same list of plaintexts (pts_16) using the outdated `ethers` crate.
-        let reference_16 = "0000000000000000000000000000000000000000000000000000000000000010";
+        let reference_16 = "0000000000000000000000000000000000000000000000000000000000000010\
+        0000000000000000000000000000000000000000000000000000000000000000";
 
         assert_eq!(reference_16, hexbytes_16.as_str());
 
@@ -833,7 +842,8 @@ pub(crate) mod tests {
 
         // this is the encoding of the same list of plaintexts (pts_16_2) using the outdated `ethers` crate.
         let reference_16_2 = "0000000000000000000000000000000000000000000000000000000000000010\
-                                    0000000000000000000000000000000000000000000000000000000000000010";
+        0000000000000000000000000000000000000000000000000000000000000010\
+        0000000000000000000000000000000000000000000000000000000000000000";
 
         assert_eq!(reference_16_2, hexbytes_16_2.as_str());
     }

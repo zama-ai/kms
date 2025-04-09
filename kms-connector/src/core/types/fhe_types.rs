@@ -158,7 +158,14 @@ pub fn abi_encode_plaintexts(plaintexts: &[TypedPlaintext]) -> Bytes {
     let encoded = DynSolValue::Tuple(data).abi_encode();
 
     // strip off the extra U256 at the beginning, and possibly also 256 bytes more zero bytes, when we encode one or more Euint2048s
-    let encoded_bytes: Vec<u8> = encoded[offset_mul * 32..].to_vec();
+    let mut encoded_bytes: Vec<u8> = encoded[offset_mul * 32..].to_vec();
+
+    // Ensure ABI encoding compatibility by adding a 32-byte padding at the end
+    // This matches the JavaScript implementation that includes these bytes
+    if !encoded_bytes.is_empty() {
+        let padding = vec![0x00; 32];
+        encoded_bytes.extend_from_slice(&padding);
+    }
 
     let hexbytes = hex::encode(encoded_bytes.clone());
     info!("Encoded plaintext ABI {:?}", hexbytes);
