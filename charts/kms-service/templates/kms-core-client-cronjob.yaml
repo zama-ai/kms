@@ -59,6 +59,13 @@ spec:
                 name: config
               - name: key-files
                 mountPath: /app/key-files
+            resources:
+              requests:
+                memory: {{ .Values.kmsCoreClientTesting.resources.requests.memory }}
+                cpu: {{ .Values.kmsCoreClientTesting.resources.requests.cpu }}
+              limits:
+                memory: {{ .Values.kmsCoreClientTesting.resources.limits.memory }}
+                cpu: {{ .Values.kmsCoreClientTesting.resources.limits.cpu }}
           imagePullSecrets:
             - name: registry-credentials
           volumes:

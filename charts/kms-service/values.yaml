@@ -259,7 +259,14 @@ kyverno:
 kmsCoreClientTesting:
   enabled: false
   schedule: "*/5 * * * *"
+  resources:
+    requests: {}
+      # memory: 1Gi
+      # cpu: 1
+    limits: {}
+      # memory: 30Gi
+      # cpu: 1
   shell_command:
   storage:
     storageClassName: gp3
-    capacity: 1Gi
+    capacity: 5Gi
