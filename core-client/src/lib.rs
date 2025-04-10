@@ -11,8 +11,8 @@ use clap::{Args, Parser, Subcommand};
 use conf_trace::conf::Settings;
 use core::str;
 use kms_grpc::kms::v1::{
-    CiphertextFormat, CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse,
-    FheParameter, KeyGenRequest, KeyGenResult, RequestId, TypedCiphertext, TypedPlaintext,
+    CiphertextFormat, CrsGenResult, DecryptionRequest, DecryptionResponse, FheParameter,
+    KeyGenPreprocResult, KeyGenResult, RequestId, TypedCiphertext, TypedPlaintext,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType, SIGNING_KEY_ID};
@@ -31,14 +31,17 @@ use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Once;
+use std::sync::{Arc, Once};
 use strum_macros::{Display, EnumString};
 use tfhe::named::Named;
 use tfhe::Versionize;
+use tokio::sync::RwLock;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::writer::MakeWriterExt;
+
+const SLEEP_TIME_BETWEEN_REQUESTS_MS: u64 = 500;
 
 /// Retries a function a given number of times with a given interval between retries.
 macro_rules! retry {
@@ -284,10 +287,17 @@ pub enum CipherArguments {
 }
 
 impl CipherArguments {
-    fn get_batch_size(&self) -> usize {
+    pub fn get_batch_size(&self) -> usize {
         match self {
             CipherArguments::FromFile(cipher_file) => cipher_file.batch_size,
             CipherArguments::FromArgs(cipher_parameters) => cipher_parameters.batch_size,
+        }
+    }
+
+    pub fn get_load(&self) -> usize {
+        match self {
+            CipherArguments::FromFile(cipher_file) => cipher_file.num_requests,
+            CipherArguments::FromArgs(cipher_parameters) => cipher_parameters.num_requests,
         }
     }
 }
@@ -314,11 +324,16 @@ pub struct CipherParameters {
     /// Key identifier to use for public/user decryption.
     #[clap(long, short = 'k')]
     pub key_id: String,
-    /// Number of copies of the ciphertext to process in a batch.
+    /// Number of copies of the ciphertext to process in a request.
     /// This is ignored for the encryption command.
     #[serde(skip_serializing, skip_deserializing)]
     #[clap(long, short = 'b', default_value_t = 1)]
     pub batch_size: usize,
+    /// Numbers of requests to process at once.
+    /// Each request uses a copy of the same batch.
+    #[serde(skip_serializing, skip_deserializing)]
+    #[clap(long, short = 'n', default_value_t = 1)]
+    pub num_requests: usize,
     /// Optionally dump the ciphertext to a file.
     #[serde(skip_serializing, skip_deserializing)]
     #[clap(long)]
@@ -330,9 +345,13 @@ pub struct CipherFile {
     /// Input file of the ciphertext.
     #[clap(long)]
     pub input_path: PathBuf,
-    /// Number of copies of the ciphertext to process in a batch.
+    /// Number of copies of the ciphertext to process in a request.
     #[clap(long, short = 'b', default_value_t = 1)]
     pub batch_size: usize,
+    /// Numbers of requests to process at once.
+    /// Each request uses a copy of the same batch.
+    #[clap(long, short = 'n', default_value_t = 1)]
+    pub num_requests: usize,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -354,18 +373,30 @@ pub struct CrsParameters {
     pub max_num_bits: u32,
 }
 
+#[derive(Debug, Parser, Clone)]
+pub struct ResultParameters {
+    #[clap(long, short = 'i')]
+    pub request_id: String,
+}
+
 #[derive(Debug, Subcommand, Clone)]
 pub enum CCCommand {
     PreprocKeyGen(NoParameters),
+    PreprocKeyGenResult(ResultParameters),
     KeyGen(KeyGenParameters),
+    KeyGenResult(ResultParameters),
     InsecureKeyGen(NoParameters),
+    InsecureKeyGenResult(ResultParameters),
     Encrypt(CipherParameters),
     #[clap(subcommand)]
     Decrypt(CipherArguments),
+    DecryptResult(ResultParameters),
     #[clap(subcommand)]
     ReEncrypt(CipherArguments),
     CrsGen(CrsParameters),
+    CrsGenResult(ResultParameters),
     InsecureCrsGen(CrsParameters),
+    InsecureCrsGenResult(ResultParameters),
     DoNothing(NoParameters),
 }
 
@@ -406,6 +437,10 @@ fn dummy_domain() -> alloy_sol_types::Eip712Domain {
         chain_id: 8006,
         verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
     )
+}
+
+fn dummy_handle() -> Vec<u8> {
+    vec![23_u8; 32]
 }
 
 pub struct EncryptionResult {
@@ -726,7 +761,8 @@ fn check_ext_pubdata_signature<D: Serialize + Versionize + Named>(
 fn check_ext_pt_signature(
     external_sig: &[u8],
     plaintexts: &Vec<TypedPlaintext>,
-    decrypt_req: &DecryptionRequest,
+    external_handles: Vec<Vec<u8>>,
+    domain: Eip712Domain,
     kms_addrs: &[alloy_primitives::Address],
 ) -> anyhow::Result<()> {
     // convert received data into proper format for EIP-712 verification
@@ -739,19 +775,9 @@ fn check_ext_pt_signature(
     // this reverses the call to `signature.as_bytes()` that we use for serialization
     let sig = PrimitiveSignature::from_bytes_and_parity(external_sig, external_sig[64] & 0x01 == 0);
 
-    let domain_msg = decrypt_req.domain.as_ref().unwrap();
-    let domain = protobuf_to_alloy_domain(domain_msg)?;
-
-    // retrieve external handles from request
-    let external_handles: Vec<_> = decrypt_req
-        .ciphertexts
-        .iter()
-        .map(|ct| ct.external_handle.clone())
-        .collect();
-
     tracing::debug!("ext. signature bytes: {:x?}", external_sig);
     tracing::debug!("ext. signature: {:?}", sig);
-    tracing::debug!("EIP-712 domain: {:?}", domain_msg);
+    tracing::debug!("EIP-712 domain: {:?}", domain);
     tracing::debug!("PTs: {:?}", plaintexts);
     tracing::debug!("ext. handles: {:?}", external_handles);
 
@@ -771,7 +797,8 @@ fn check_ext_pt_signature(
 fn check_external_decryption_signature(
     responses: &[DecryptionResponse], // one response per party
     expected_answer: TypedPlaintext,
-    request: &DecryptionRequest,
+    external_handles: Vec<Vec<u8>>,
+    domain: Eip712Domain,
     kms_addrs: &[alloy_primitives::Address],
 ) -> anyhow::Result<()> {
     let mut results = Vec::new();
@@ -780,7 +807,8 @@ fn check_external_decryption_signature(
         check_ext_pt_signature(
             payload.external_signature(),
             &payload.plaintexts,
-            request,
+            external_handles.clone(),
+            domain.clone(),
             kms_addrs,
         )?;
 
@@ -897,6 +925,14 @@ async fn do_keygen(
     let req_id = RequestId::new_random(rng);
 
     let max_iter = cmd_conf.max_iter;
+    let num_expected_responses = if cmd_conf.expect_all_responses {
+        num_parties
+    } else {
+        cc_conf.num_majority
+    };
+
+    //NOTE: If we do not use dummy_domain here, then
+    //this needs changing too in the KeyGenResult command.
     let dkg_req = internal_client.key_gen_request(
         &req_id,
         preproc_id,
@@ -905,6 +941,14 @@ async fn do_keygen(
         None,
         Some(dummy_domain()),
     )?;
+
+    //NOTE: Extract domain from request for sanity, but if we don't use dummy_domain
+    //we have an issue in the (Insecure)KeyGenResult commands
+    let domain = if let Some(domain) = &dkg_req.domain {
+        protobuf_to_alloy_domain(domain)?
+    } else {
+        return Err(anyhow!("No domain provided in crsgen request"));
+    };
 
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
@@ -930,77 +974,22 @@ async fn do_keygen(
     assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
 
     // get all responses
-    let mut resp_tasks = JoinSet::new();
-    for ce in core_endpoints.iter_mut() {
-        let mut cur_client = ce.clone();
-        let req_id_clone = dkg_req.request_id.as_ref().unwrap().clone();
-
-        resp_tasks.spawn(async move {
-            // Sleep to give the server some time to complete decryption
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-            let mut response = if insecure {
-                cur_client
-                    .get_insecure_key_gen_result(tonic::Request::new(req_id_clone.clone()))
-                    .await
-            } else {
-                cur_client
-                    .get_key_gen_result(tonic::Request::new(req_id_clone.clone()))
-                    .await
-            };
-
-            let mut ctr = 0_usize;
-            while response.is_err()
-                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-            {
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                if ctr >= max_iter {
-                    panic!(
-                        "timeout while waiting for keygen after {} retries (insecure: {insecure})",
-                        max_iter
-                    );
-                }
-                ctr += 1;
-                response = if insecure {
-                    cur_client
-                        .get_insecure_key_gen_result(tonic::Request::new(req_id_clone.clone()))
-                        .await
-                } else {
-                    cur_client
-                        .get_key_gen_result(tonic::Request::new(req_id_clone.clone()))
-                        .await
-                };
-
-                tracing::info!(
-                    "Got response for insecure keygen: {:?} (insecure: {insecure})",
-                    response
-                );
-            }
-            (req_id_clone, response.unwrap().into_inner())
-        });
-    }
-
-    let num_expected_responses = if cmd_conf.expect_all_responses {
-        num_parties
-    } else {
-        cc_conf.num_majority
-    };
-
-    let mut resp_response_vec = Vec::new();
-    while let Some(resp) = resp_tasks.join_next().await {
-        resp_response_vec.push(resp.unwrap().1);
-        // break this loop and continue with the rest of the processing if we have enough responses
-        if resp_response_vec.len() >= num_expected_responses {
-            break;
-        }
-    }
+    let resp_response_vec = get_keygen_responses(
+        core_endpoints,
+        req_id.clone(),
+        max_iter,
+        insecure,
+        num_expected_responses,
+    )
+    .await?;
 
     fetch_and_check_keygen(
         num_expected_responses,
         cc_conf,
         kms_addrs,
         destination_prefix,
-        dkg_req,
+        req_id.clone(),
+        domain,
         resp_response_vec,
     )
     .await?;
@@ -1025,12 +1014,26 @@ async fn do_crsgen(
     let req_id = RequestId::new_random(rng);
 
     let max_iter = cmd_conf.max_iter;
+    let num_expected_responses = if cmd_conf.expect_all_responses {
+        num_parties
+    } else {
+        cc_conf.num_majority
+    };
+
     let crs_req = internal_client.crs_gen_request(
         &req_id,
         max_num_bits,
         Some(param),
         Some(dummy_domain()),
     )?;
+
+    //NOTE: Extract domain from request for sanity, but if we don't use dummy_domain
+    //we have an issue in the (Insecure)CrsGenResult commands
+    let domain = if let Some(domain) = &crs_req.domain {
+        protobuf_to_alloy_domain(domain)?
+    } else {
+        return Err(anyhow!("No domain provided in crsgen request"));
+    };
 
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
@@ -1056,72 +1059,22 @@ async fn do_crsgen(
     assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
 
     // get all responses
-    let mut resp_tasks = JoinSet::new();
-    for ce in core_endpoints.iter_mut() {
-        let mut cur_client = ce.clone();
-        let req_id_clone = crs_req.request_id.as_ref().unwrap().clone();
-
-        resp_tasks.spawn(async move {
-            // Sleep to give the server some time to complete decryption
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-            let mut response = if insecure {
-                cur_client
-                    .get_insecure_crs_gen_result(tonic::Request::new(req_id_clone.clone()))
-                    .await
-            } else {
-                cur_client
-                    .get_crs_gen_result(tonic::Request::new(req_id_clone.clone()))
-                    .await
-            };
-
-            let mut ctr = 0_usize;
-            while response.is_err()
-                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-            {
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                // do at most max_iter retries
-                if ctr >= max_iter {
-                    panic!("timeout while waiting for crsgen after {max_iter} retries (insecure: {insecure})");
-                }
-                ctr += 1;
-                response = if insecure {
-                    cur_client
-                        .get_insecure_crs_gen_result(tonic::Request::new(req_id_clone.clone()))
-                        .await
-                } else {
-                    cur_client
-                        .get_crs_gen_result(tonic::Request::new(req_id_clone.clone()))
-                        .await
-                };
-
-                println!("Got response for crsgen: {:?} (insecure: {insecure})", response);
-            }
-            (req_id_clone, response.unwrap().into_inner())
-        });
-    }
-
-    let num_expected_responses = if cmd_conf.expect_all_responses {
-        num_parties
-    } else {
-        cc_conf.num_majority
-    };
-
-    let mut resp_response_vec = Vec::new();
-    while let Some(resp) = resp_tasks.join_next().await {
-        resp_response_vec.push(resp.unwrap().1);
-        // break this loop and continue with the rest of the processing if we have enough responses
-        if resp_response_vec.len() >= num_expected_responses {
-            break;
-        }
-    }
+    let resp_response_vec = get_crsgen_responses(
+        core_endpoints,
+        req_id.clone(),
+        max_iter,
+        insecure,
+        num_expected_responses,
+    )
+    .await?;
 
     fetch_and_check_crsgen(
         num_expected_responses,
         cc_conf,
         kms_addrs,
         destination_prefix,
-        crs_req,
+        req_id.clone(),
+        domain,
         resp_response_vec,
     )
     .await?;
@@ -1162,42 +1115,7 @@ async fn do_preproc(
     }
     assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
 
-    let mut resp_tasks = JoinSet::new();
-    for client in core_endpoints.iter_mut() {
-        let mut client = client.clone();
-        let req_id_clone = pp_req.request_id.as_ref().unwrap().clone();
-
-        resp_tasks.spawn(async move {
-            // Sleep to give the server some time to complete preprocessing
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-            let mut response = client
-                .get_key_gen_preproc_result(tonic::Request::new(req_id_clone.clone()))
-                .await;
-            let mut ctr = 0_usize;
-            while response.is_err()
-                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-            {
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                // do at most max_iter retries (stop after max. 50 secs)
-                if ctr >= max_iter {
-                    panic!("timeout while waiting for preprocessing after {max_iter} retries");
-                }
-                ctr += 1;
-                response = client
-                    .get_key_gen_preproc_result(tonic::Request::new(req_id_clone.clone()))
-                    .await;
-            }
-
-            (req_id_clone, response.unwrap().into_inner())
-        });
-    }
-
-    let mut resp_response_vec = Vec::new();
-    while let Some(resp) = resp_tasks.join_next().await {
-        // any failures that happen will panic here
-        resp_response_vec.push(resp.unwrap().1);
-    }
+    let _ = get_preproc_keygen_responses(core_endpoints, req_id.clone(), max_iter).await?;
 
     Ok(req_id)
 }
@@ -1205,7 +1123,7 @@ async fn do_preproc(
 pub async fn execute_cmd(
     cmd_config: &CmdConfig,
     destination_prefix: &Path,
-) -> Result<(Option<RequestId>, String), Box<dyn std::error::Error + 'static>> {
+) -> Result<Vec<(Option<RequestId>, String)>, Box<dyn std::error::Error + 'static>> {
     let cmd_timer_start = tokio::time::Instant::now();
 
     let path_to_config = cmd_config.file_conf.clone().unwrap();
@@ -1358,14 +1276,12 @@ pub async fn execute_cmd(
         param.as_str_name()
     );
 
-    let kms_addrs = fetch_kms_addresses(&cc_conf).await?;
-
-    let req_id = RequestId::new_random(&mut rng);
+    let kms_addrs = Arc::new(fetch_kms_addresses(&cc_conf).await?);
 
     // Execute the command
     let res = match command {
         CCCommand::Decrypt(cipher_args) => {
-            let mut internal_client = internal_client.unwrap();
+            let internal_client = Arc::new(RwLock::new(internal_client.unwrap()));
             let num_expected_responses = if expect_all_responses {
                 num_parties
             } else {
@@ -1390,95 +1306,76 @@ pub async fn execute_cmd(
                 TypedCiphertext {
                     ciphertext,
                     fhe_type: ptxt.fhe_type,
-                    external_handle: vec![23_u8; 32],
+                    external_handle: dummy_handle(),
                     ciphertext_format: ct_format.into(),
                 };
                 cipher_args.get_batch_size()
             ];
 
-            // DECRYPTION REQUEST
-            let dec_req = internal_client.decryption_request(
-                ct_batch,
-                &dummy_domain(),
-                &req_id,
-                &RequestId {
-                    request_id: key_id.clone(),
-                },
-            )?;
+            let mut join_set: JoinSet<Result<_, anyhow::Error>> = JoinSet::new();
+            for _ in 0..cipher_args.get_load() {
+                let req_id = RequestId::new_random(&mut rng);
+                let internal_client = internal_client.clone();
+                let ct_batch = ct_batch.clone();
+                let key_id = key_id.clone();
+                let mut core_endpoints = core_endpoints.clone();
+                let ptxt = ptxt.clone();
+                let kms_addrs = kms_addrs.clone();
+                join_set.spawn(async move {
+                    // DECRYPTION REQUEST
+                    let dec_req = internal_client.write().await.decryption_request(
+                        ct_batch,
+                        &dummy_domain(),
+                        &req_id,
+                        &RequestId {
+                            request_id: key_id.clone(),
+                        },
+                    )?;
 
-            // make parallel requests by calling [decrypt] in a thread
-            let mut req_tasks = JoinSet::new();
+                    // make parallel requests by calling [decrypt] in a thread
+                    let mut req_tasks = JoinSet::new();
 
-            for ce in core_endpoints.iter_mut() {
-                let req_cloned = dec_req.clone();
-                let mut cur_client = ce.clone();
-                req_tasks.spawn(async move {
-                    cur_client.decrypt(tonic::Request::new(req_cloned)).await
-                });
-            }
-
-            let mut req_response_vec = Vec::new();
-            while let Some(inner) = req_tasks.join_next().await {
-                req_response_vec.push(inner.unwrap().unwrap().into_inner());
-            }
-            assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
-
-            // get all responses
-            let mut resp_tasks = JoinSet::new();
-            for ce in core_endpoints.iter_mut() {
-                let mut cur_client = ce.clone();
-                let req_id_clone = dec_req.request_id.as_ref().unwrap().clone();
-
-                resp_tasks.spawn(async move {
-                    // Sleep to give the server some time to complete decryption
-                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-                    let mut response = cur_client
-                        .get_decrypt_result(tonic::Request::new(req_id_clone.clone()))
-                        .await;
-                    let mut ctr = 0_usize;
-                    while response.is_err()
-                        && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-                    {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                        // do at most max_iter retries (stop after max. 50 secs)
-                        if ctr >= max_iter {
-                            panic!("timeout while waiting for decryption after {max_iter} retries");
-                        }
-                        ctr += 1;
-                        response = cur_client
-                            .get_decrypt_result(tonic::Request::new(req_id_clone.clone()))
-                            .await;
+                    for ce in core_endpoints.iter_mut() {
+                        let req_cloned = dec_req.clone();
+                        let mut cur_client = ce.clone();
+                        req_tasks.spawn(async move {
+                            cur_client.decrypt(tonic::Request::new(req_cloned)).await
+                        });
                     }
-                    (req_id_clone, response.unwrap().into_inner())
+
+                    let mut req_response_vec = Vec::new();
+                    while let Some(inner) = req_tasks.join_next().await {
+                        req_response_vec.push(inner.unwrap().unwrap().into_inner());
+                    }
+                    assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
+
+                    let resp_response_vec = get_decrypt_responses(
+                        &mut core_endpoints,
+                        Some(dec_req),
+                        Some(ptxt),
+                        req_id.clone(),
+                        max_iter,
+                        num_expected_responses,
+                        &*internal_client.read().await,
+                        &kms_addrs,
+                    )
+                    .await?;
+
+                    let res = format!("{:x?}", resp_response_vec);
+                    Ok((Some(req_id), res))
                 });
             }
 
-            let mut resp_response_vec = Vec::new();
-            while let Some(resp) = resp_tasks.join_next().await {
-                resp_response_vec.push(resp.unwrap().1);
-                // break this loop and continue with the rest of the processing if we have enough responses
-                if resp_response_vec.len() >= num_expected_responses {
-                    break;
-                }
+            let mut result_vec = Vec::new();
+            while let Some(result) = join_set.join_next().await {
+                result_vec.push(result??);
             }
-
-            // check the internal signatures
-            internal_client.process_decryption_resp(
-                Some(dec_req.clone()),
-                &resp_response_vec,
-                num_expected_responses as u32,
-            )?;
-
-            // check the external signatures
-            check_external_decryption_signature(&resp_response_vec, ptxt, &dec_req, &kms_addrs)
-                .unwrap();
-
-            let res = format!("{:x?}", resp_response_vec);
-            (Some(req_id), res)
+            result_vec
         }
         CCCommand::ReEncrypt(cipher_args) => {
-            let mut internal_client = internal_client.unwrap();
+            let internal_client = Arc::new(RwLock::new(
+                internal_client.expect("ReEncrypt requires a KMS client"),
+            ));
             let num_expected_responses = if expect_all_responses {
                 num_parties
             } else {
@@ -1503,108 +1400,134 @@ pub async fn execute_cmd(
                 TypedCiphertext {
                     ciphertext,
                     fhe_type: ptxt.fhe_type,
-                    external_handle: vec![23_u8; 32],
+                    external_handle: dummy_handle(),
                     ciphertext_format: ct_format.into(),
                 };
                 cipher_args.get_batch_size()
             ];
 
-            // REENCRYPTION REQUEST
-            let reenc_req_tuple = internal_client.reencryption_request(
-                &dummy_domain(),
-                ct_batch,
-                &req_id,
-                &RequestId {
-                    request_id: key_id.clone(),
-                },
-            )?;
+            let mut join_set: JoinSet<Result<_, anyhow::Error>> = JoinSet::new();
+            for _ in 0..cipher_args.get_load() {
+                let req_id = RequestId::new_random(&mut rng);
+                let internal_client = internal_client.clone();
+                let ct_batch = ct_batch.clone();
+                let key_id = key_id.clone();
+                let mut core_endpoints = core_endpoints.clone();
+                let ptxt = ptxt.clone();
+                // REENCRYPTION REQUEST
+                join_set.spawn(async move {
+                    let reenc_req_tuple = internal_client.write().await.reencryption_request(
+                        &dummy_domain(),
+                        ct_batch,
+                        &req_id,
+                        &RequestId {
+                            request_id: key_id.clone(),
+                        },
+                    )?;
 
-            let (reenc_req, enc_pk, enc_sk) = reenc_req_tuple;
+                    let (reenc_req, enc_pk, enc_sk) = reenc_req_tuple;
 
-            // make parallel requests by calling reencrypt in a thread
-            let mut req_tasks = JoinSet::new();
+                    // make parallel requests by calling reencrypt in a thread
+                    let mut req_tasks = JoinSet::new();
 
-            for ce in core_endpoints.iter_mut() {
-                let req_cloned = reenc_req.clone();
-                let mut cur_client = ce.clone();
-                req_tasks.spawn(async move {
-                    cur_client.reencrypt(tonic::Request::new(req_cloned)).await
-                });
-            }
-
-            let mut req_response_vec = Vec::new();
-            while let Some(inner) = req_tasks.join_next().await {
-                req_response_vec.push(inner.unwrap().unwrap().into_inner());
-            }
-            assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
-
-            // get all responses
-            let mut resp_tasks = JoinSet::new();
-            for ce in core_endpoints.iter_mut() {
-                let mut cur_client = ce.clone();
-                let req_id_clone = reenc_req.request_id.as_ref().unwrap().clone();
-
-                resp_tasks.spawn(async move {
-                    // Sleep to give the server some time to complete decryption
-                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-                    let mut response = cur_client
-                        .get_reencrypt_result(tonic::Request::new(req_id_clone.clone()))
-                        .await;
-                    let mut ctr = 0_usize;
-                    while response.is_err()
-                        && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-                    {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                        // do at most max_iter retries (stop after max. 50 secs)
-                        if ctr >= max_iter {
-                            panic!("timeout while waiting for decryption after {max_iter} retries");
-                        }
-                        ctr += 1;
-                        response = cur_client
-                            .get_reencrypt_result(tonic::Request::new(req_id_clone.clone()))
-                            .await;
+                    for ce in core_endpoints.iter_mut() {
+                        let req_cloned = reenc_req.clone();
+                        let mut cur_client = ce.clone();
+                        req_tasks.spawn(async move {
+                            cur_client.reencrypt(tonic::Request::new(req_cloned)).await
+                        });
                     }
-                    (req_id_clone, response.unwrap().into_inner())
+
+                    let mut req_response_vec = Vec::new();
+                    while let Some(inner) = req_tasks.join_next().await {
+                        req_response_vec.push(inner.unwrap().unwrap().into_inner());
+                    }
+                    assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
+
+                    // get all responses
+                    let mut resp_tasks = JoinSet::new();
+                    for ce in core_endpoints.iter_mut() {
+                        let mut cur_client = ce.clone();
+                        let req_id_clone = reenc_req.request_id.as_ref().unwrap().clone();
+
+                        resp_tasks.spawn(async move {
+                            // Sleep to give the server some time to complete decryption
+                            tokio::time::sleep(tokio::time::Duration::from_millis(
+                                SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                            ))
+                            .await;
+
+                            let mut response = cur_client
+                                .get_reencrypt_result(tonic::Request::new(req_id_clone.clone()))
+                                .await;
+                            let mut ctr = 0_usize;
+                            while response.is_err()
+                                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+                            {
+                                tokio::time::sleep(tokio::time::Duration::from_millis(
+                                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                                ))
+                                .await;
+                                // do at most max_iter retries (stop after max. 50 secs)
+                                if ctr >= max_iter {
+                                    panic!(
+                                    "timeout while waiting for decryption after {max_iter} retries"
+                                );
+                                }
+                                ctr += 1;
+                                response = cur_client
+                                    .get_reencrypt_result(tonic::Request::new(req_id_clone.clone()))
+                                    .await;
+                            }
+                            (req_id_clone, response.unwrap().into_inner())
+                        });
+                    }
+
+                    let mut resp_response_vec = Vec::new();
+                    while let Some(resp) = resp_tasks.join_next().await {
+                        resp_response_vec.push(resp.unwrap().1);
+                        // break this loop and continue with the rest of the processing if we have enough responses
+                        if resp_response_vec.len() >= num_expected_responses {
+                            break;
+                        }
+                    }
+
+                    let client_request = ParsedReencryptionRequest::try_from(&reenc_req).unwrap();
+                    let eip712_domain =
+                        protobuf_to_alloy_domain(reenc_req.domain.as_ref().unwrap()).unwrap();
+                    match internal_client.read().await.process_reencryption_resp(
+                        &client_request,
+                        &eip712_domain,
+                        &resp_response_vec,
+                        &enc_pk,
+                        &enc_sk,
+                    ) {
+                        Ok(plaintexts) => {
+                            let plaintext = plaintexts[0].clone();
+                            assert_eq!(
+                                TestingPlaintext::from(plaintext.clone()),
+                                TestingPlaintext::from(ptxt.clone())
+                            );
+                            tracing::info!(
+                                "Reencryption response is ok: {:?} / {:?}",
+                                ptxt,
+                                TestingPlaintext::from(plaintext),
+                            );
+                        }
+                        Err(e) => {
+                            tracing::error!("Reencryption response is NOT valid! Reason: {}", e)
+                        }
+                    };
+
+                    let res = format!("Reencrypted Plaintext {:?}", TestingPlaintext::from(ptxt));
+                    Ok((Some(req_id), res))
                 });
             }
-
-            let mut resp_response_vec = Vec::new();
-            while let Some(resp) = resp_tasks.join_next().await {
-                resp_response_vec.push(resp.unwrap().1);
-                // break this loop and continue with the rest of the processing if we have enough responses
-                if resp_response_vec.len() >= num_expected_responses {
-                    break;
-                }
+            let mut result_vec = Vec::new();
+            while let Some(result) = join_set.join_next().await {
+                result_vec.push(result??);
             }
-
-            let client_request = ParsedReencryptionRequest::try_from(&reenc_req).unwrap();
-            let eip712_domain =
-                protobuf_to_alloy_domain(reenc_req.domain.as_ref().unwrap()).unwrap();
-            match internal_client.process_reencryption_resp(
-                &client_request,
-                &eip712_domain,
-                &resp_response_vec,
-                &enc_pk,
-                &enc_sk,
-            ) {
-                Ok(plaintexts) => {
-                    let plaintext = plaintexts[0].clone();
-                    assert_eq!(
-                        TestingPlaintext::from(plaintext.clone()),
-                        TestingPlaintext::from(ptxt.clone())
-                    );
-                    tracing::info!(
-                        "Reencryption response is ok: {:?} / {:?}",
-                        ptxt,
-                        TestingPlaintext::from(plaintext),
-                    );
-                }
-                Err(e) => tracing::error!("Reencryption response is NOT valid! Reason: {}", e),
-            };
-
-            let res = format!("Reencrypted Plaintext {:?}", TestingPlaintext::from(ptxt));
-            (Some(req_id), res)
+            result_vec
         }
         CCCommand::KeyGen(KeyGenParameters { preproc_id }) => {
             let mut internal_client = internal_client.unwrap();
@@ -1626,7 +1549,7 @@ pub async fn execute_cmd(
             )
             .await?;
 
-            (Some(req_id), "keygen done".to_string())
+            vec![(Some(req_id), "keygen done".to_string())]
         }
         CCCommand::InsecureKeyGen(NoParameters {}) => {
             let mut internal_client = internal_client.unwrap();
@@ -1649,7 +1572,7 @@ pub async fn execute_cmd(
             )
             .await?;
 
-            (Some(req_id), "insecure keygen done".to_string())
+            vec![(Some(req_id), "insecure keygen done".to_string())]
         }
         CCCommand::CrsGen(CrsParameters { max_num_bits }) => {
             let mut internal_client = internal_client.unwrap();
@@ -1669,7 +1592,7 @@ pub async fn execute_cmd(
                 destination_prefix,
             )
             .await?;
-            (Some(req_id), "crsgen done".to_string())
+            vec![(Some(req_id), "crsgen done".to_string())]
         }
         CCCommand::InsecureCrsGen(CrsParameters { max_num_bits }) => {
             let mut internal_client = internal_client.unwrap();
@@ -1692,7 +1615,7 @@ pub async fn execute_cmd(
                 destination_prefix,
             )
             .await?;
-            (Some(req_id), "insecure crsgen done".to_string())
+            vec![(Some(req_id), "insecure crsgen done".to_string())]
         }
         CCCommand::PreprocKeyGen(NoParameters {}) => {
             let mut internal_client = internal_client.unwrap();
@@ -1707,15 +1630,174 @@ pub async fn execute_cmd(
                 param,
             )
             .await?;
-            (Some(req_id), "preproc done".to_string())
+            vec![(Some(req_id), "preproc done".to_string())]
         }
         CCCommand::DoNothing(NoParameters {}) => {
             tracing::info!("Nothing to do.");
-            (None, "".to_string())
+            vec![(None, "".to_string())]
         }
         CCCommand::Encrypt(cipher_parameters) => {
             encrypt(destination_prefix, cipher_parameters.clone()).await?;
-            (None, "Encryption generated".to_string())
+            vec![(None, "Encryption generated".to_string())]
+        }
+        CCCommand::PreprocKeyGenResult(result_parameters) => {
+            let req_id = RequestId {
+                request_id: result_parameters.request_id.clone(),
+            };
+            let _ =
+                get_preproc_keygen_responses(&mut core_endpoints, req_id.clone(), max_iter).await?;
+            vec![(Some(req_id), "preproc done".to_string())]
+        }
+        CCCommand::KeyGenResult(result_parameters) => {
+            let num_expected_responses = if expect_all_responses {
+                num_parties
+            } else {
+                cc_conf.num_majority
+            };
+            let req_id = RequestId {
+                request_id: result_parameters.request_id.clone(),
+            };
+            let resp_response_vec = get_keygen_responses(
+                &mut core_endpoints,
+                req_id.clone(),
+                max_iter,
+                false,
+                num_expected_responses,
+            )
+            .await?;
+
+            //NOTE: We assume the request comes from the core client too
+            //which (for now) uses the dummy_domain
+            fetch_and_check_keygen(
+                num_expected_responses,
+                &cc_conf,
+                &kms_addrs,
+                destination_prefix,
+                req_id.clone(),
+                dummy_domain(),
+                resp_response_vec,
+            )
+            .await?;
+            vec![(Some(req_id), "keygen done".to_string())]
+        }
+        CCCommand::InsecureKeyGenResult(result_parameters) => {
+            let num_expected_responses = if expect_all_responses {
+                num_parties
+            } else {
+                cc_conf.num_majority
+            };
+            let req_id = RequestId {
+                request_id: result_parameters.request_id.clone(),
+            };
+            let resp_response_vec = get_keygen_responses(
+                &mut core_endpoints,
+                req_id.clone(),
+                max_iter,
+                true,
+                num_expected_responses,
+            )
+            .await?;
+
+            //NOTE: We assume the request comes from the core client too
+            //which (for now) uses the dummy_domain
+            fetch_and_check_keygen(
+                num_expected_responses,
+                &cc_conf,
+                &kms_addrs,
+                destination_prefix,
+                req_id.clone(),
+                dummy_domain(),
+                resp_response_vec,
+            )
+            .await?;
+            vec![(Some(req_id), "insecure keygen done".to_string())]
+        }
+        CCCommand::DecryptResult(result_parameters) => {
+            let num_expected_responses = if expect_all_responses {
+                num_parties
+            } else {
+                cc_conf.num_majority
+            };
+            let req_id = RequestId {
+                request_id: result_parameters.request_id.clone(),
+            };
+            let resp_response_vec = get_decrypt_responses(
+                &mut core_endpoints,
+                None,
+                None,
+                req_id.clone(),
+                max_iter,
+                num_expected_responses,
+                internal_client.as_ref().unwrap(),
+                &kms_addrs,
+            )
+            .await?;
+            let res = format!("{:x?}", resp_response_vec);
+            vec![(Some(req_id), res)]
+        }
+        CCCommand::CrsGenResult(result_parameters) => {
+            let num_expected_responses = if expect_all_responses {
+                num_parties
+            } else {
+                cc_conf.num_majority
+            };
+            let req_id = RequestId {
+                request_id: result_parameters.request_id.clone(),
+            };
+            let resp_response_vec = get_crsgen_responses(
+                &mut core_endpoints,
+                req_id.clone(),
+                max_iter,
+                false,
+                num_expected_responses,
+            )
+            .await?;
+
+            //NOTE: We assume the request comes from the core client too
+            //which (for now) uses the dummy_domain
+            fetch_and_check_crsgen(
+                num_expected_responses,
+                &cc_conf,
+                &kms_addrs,
+                destination_prefix,
+                req_id.clone(),
+                dummy_domain(),
+                resp_response_vec,
+            )
+            .await?;
+            vec![(Some(req_id), "crs gen done".to_string())]
+        }
+        CCCommand::InsecureCrsGenResult(result_parameters) => {
+            let num_expected_responses = if expect_all_responses {
+                num_parties
+            } else {
+                cc_conf.num_majority
+            };
+            let req_id = RequestId {
+                request_id: result_parameters.request_id.clone(),
+            };
+            let resp_response_vec = get_crsgen_responses(
+                &mut core_endpoints,
+                req_id.clone(),
+                max_iter,
+                true,
+                num_expected_responses,
+            )
+            .await?;
+
+            //NOTE: We assume the request comes from the core client too
+            //which (for now) uses the dummy_domain
+            fetch_and_check_crsgen(
+                num_expected_responses,
+                &cc_conf,
+                &kms_addrs,
+                destination_prefix,
+                req_id.clone(),
+                dummy_domain(),
+                resp_response_vec,
+            )
+            .await?;
+            vec![(Some(req_id), "insecure crs gen done".to_string())]
         }
     };
 
@@ -1726,12 +1808,345 @@ pub async fn execute_cmd(
     Ok(res)
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn get_decrypt_responses(
+    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    dec_req: Option<DecryptionRequest>,
+    expected_answer: Option<TypedPlaintext>,
+    request_id: RequestId,
+    max_iter: usize,
+    num_expected_responses: usize,
+    internal_client: &Client,
+    kms_addrs: &[alloy_primitives::Address],
+) -> anyhow::Result<Vec<DecryptionResponse>> {
+    // get all responses
+    let mut resp_tasks = JoinSet::new();
+    //We use enumerate to be able to sort the responses so they are determinstic for a given config
+    for (core_id, ce) in core_endpoints.iter_mut().enumerate() {
+        let mut cur_client = ce.clone();
+        let request_id = request_id.clone();
+
+        resp_tasks.spawn(async move {
+            // Sleep to give the server some time to complete decryption
+            tokio::time::sleep(tokio::time::Duration::from_millis(
+                SLEEP_TIME_BETWEEN_REQUESTS_MS,
+            ))
+            .await;
+
+            let mut response = cur_client
+                .get_decrypt_result(tonic::Request::new(request_id.clone()))
+                .await;
+            let mut ctr = 0_usize;
+            while response.is_err()
+                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+            {
+                tokio::time::sleep(tokio::time::Duration::from_millis(
+                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                ))
+                .await;
+                // do at most max_iter retries (stop after max. 50 secs)
+                if ctr >= max_iter {
+                    panic!("timeout while waiting for decryption after {max_iter} retries");
+                }
+                ctr += 1;
+                response = cur_client
+                    .get_decrypt_result(tonic::Request::new(request_id.clone()))
+                    .await;
+            }
+            (core_id, request_id, response.unwrap().into_inner())
+        });
+    }
+    let mut resp_response_vec = Vec::new();
+    while let Some(resp) = resp_tasks.join_next().await {
+        let (core_id, _req_id, resp) = resp?;
+        resp_response_vec.push((core_id, resp));
+        // break this loop and continue with the rest of the processing if we have enough responses
+        if resp_response_vec.len() >= num_expected_responses {
+            break;
+        }
+    }
+
+    resp_response_vec.sort_by_key(|(id, _)| *id);
+    let resp_response_vec: Vec<_> = resp_response_vec
+        .into_iter()
+        .map(|(_, resp)| resp)
+        .collect();
+
+    //If an expected answer is provided consider it,
+    //otherwise consider the first answer
+    let ptxt = expected_answer.unwrap_or_else(|| {
+        resp_response_vec
+            .first()
+            .unwrap()
+            .payload
+            .as_ref()
+            .unwrap()
+            .plaintexts
+            .first()
+            .unwrap()
+            .clone()
+    });
+
+    let (domain, external_handles) = if let Some(decryption_request) = dec_req.as_ref() {
+        let domain_msg = decryption_request.domain.as_ref().unwrap();
+        let domain = protobuf_to_alloy_domain(domain_msg)?;
+        // retrieve external handles from request
+        let external_handles: Vec<_> = decryption_request
+            .ciphertexts
+            .iter()
+            .map(|ct| ct.external_handle.clone())
+            .collect();
+        (domain, external_handles)
+    } else {
+        //If the decryption request isn't provided we assume it was dummy domains and handles
+        let num_handles = resp_response_vec
+            .first()
+            .unwrap()
+            .payload
+            .as_ref()
+            .unwrap()
+            .plaintexts
+            .len();
+        (dummy_domain(), vec![dummy_handle(); num_handles])
+    };
+
+    // check the internal signatures
+    internal_client.process_decryption_resp(
+        dec_req,
+        &resp_response_vec,
+        num_expected_responses as u32,
+    )?;
+
+    // check the external signatures
+    check_external_decryption_signature(
+        &resp_response_vec,
+        ptxt,
+        external_handles,
+        domain,
+        kms_addrs,
+    )
+    .unwrap();
+
+    Ok(resp_response_vec)
+}
+
+async fn get_preproc_keygen_responses(
+    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    request_id: RequestId,
+    max_iter: usize,
+) -> anyhow::Result<Vec<KeyGenPreprocResult>> {
+    let mut resp_tasks = JoinSet::new();
+    //We use enumerate to be able to sort the responses so they are determinstic for a given config
+    for (core_id, client) in core_endpoints.iter_mut().enumerate() {
+        let mut client = client.clone();
+        let request_id = request_id.clone();
+        resp_tasks.spawn(async move {
+            // Sleep to give the server some time to complete preprocessing
+            tokio::time::sleep(tokio::time::Duration::from_millis(
+                SLEEP_TIME_BETWEEN_REQUESTS_MS,
+            ))
+            .await;
+
+            let mut response = client
+                .get_key_gen_preproc_result(tonic::Request::new(request_id.clone()))
+                .await;
+            let mut ctr = 0_usize;
+            while response.is_err()
+                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+            {
+                tokio::time::sleep(tokio::time::Duration::from_millis(
+                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                ))
+                .await;
+                // do at most max_iter retries (stop after max. 50 secs)
+                if ctr >= max_iter {
+                    panic!("timeout while waiting for preprocessing after {max_iter} retries");
+                }
+                ctr += 1;
+                response = client
+                    .get_key_gen_preproc_result(tonic::Request::new(request_id.clone()))
+                    .await;
+            }
+
+            (core_id, request_id, response.unwrap().into_inner())
+        });
+    }
+    let mut resp_response_vec = Vec::new();
+    while let Some(resp) = resp_tasks.join_next().await {
+        let (core_id, resp_request_id, resp_res) = resp?;
+        assert_eq!(request_id, resp_request_id);
+        // any failures that happen will panic here
+        resp_response_vec.push((core_id, resp_res));
+    }
+    resp_response_vec.sort_by_key(|(id, _)| *id);
+    let resp_response_vec: Vec<_> = resp_response_vec
+        .into_iter()
+        .map(|(_, resp)| resp)
+        .collect();
+    assert_eq!(resp_response_vec.len(), core_endpoints.len());
+    Ok(resp_response_vec)
+}
+
+async fn get_keygen_responses(
+    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    request_id: RequestId,
+    max_iter: usize,
+    insecure: bool,
+    num_expected_responses: usize,
+) -> anyhow::Result<Vec<KeyGenResult>> {
+    // get all responses
+    let mut resp_tasks = JoinSet::new();
+    //We use enumerate to be able to sort the responses so they are determinstic for a given config
+    for (core_id, ce) in core_endpoints.iter_mut().enumerate() {
+        let mut cur_client = ce.clone();
+        let request_id = request_id.clone();
+
+        resp_tasks.spawn(async move {
+            // Sleep to give the server some time to complete decryption
+            tokio::time::sleep(tokio::time::Duration::from_millis(
+                SLEEP_TIME_BETWEEN_REQUESTS_MS,
+            ))
+            .await;
+
+            let mut response = if insecure {
+                cur_client
+                    .get_insecure_key_gen_result(tonic::Request::new(request_id.clone()))
+                    .await
+            } else {
+                cur_client
+                    .get_key_gen_result(tonic::Request::new(request_id.clone()))
+                    .await
+            };
+
+            let mut ctr = 0_usize;
+            while response.is_err()
+                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+            {
+                tokio::time::sleep(tokio::time::Duration::from_millis(
+                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                ))
+                .await;
+                if ctr >= max_iter {
+                    panic!(
+                        "timeout while waiting for keygen after {} retries (insecure: {insecure})",
+                        max_iter
+                    );
+                }
+                ctr += 1;
+                response = if insecure {
+                    cur_client
+                        .get_insecure_key_gen_result(tonic::Request::new(request_id.clone()))
+                        .await
+                } else {
+                    cur_client
+                        .get_key_gen_result(tonic::Request::new(request_id.clone()))
+                        .await
+                };
+
+                tracing::info!(
+                    "Got response for insecure keygen: {:?} (insecure: {insecure})",
+                    response
+                );
+            }
+            (core_id, request_id, response.unwrap().into_inner())
+        });
+    }
+
+    let mut resp_response_vec = Vec::new();
+    while let Some(resp) = resp_tasks.join_next().await {
+        let (core_id, _request_id, resp) = resp?;
+        resp_response_vec.push((core_id, resp));
+        // break this loop and continue with the rest of the processing if we have enough responses
+        if resp_response_vec.len() >= num_expected_responses {
+            break;
+        }
+    }
+    resp_response_vec.sort_by_key(|(id, _)| *id);
+    let resp_response_vec: Vec<_> = resp_response_vec
+        .into_iter()
+        .map(|(_, resp)| resp)
+        .collect();
+    Ok(resp_response_vec)
+}
+
+async fn get_crsgen_responses(
+    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    request_id: RequestId,
+    max_iter: usize,
+    insecure: bool,
+    num_expected_responses: usize,
+) -> anyhow::Result<Vec<CrsGenResult>> {
+    // get all responses
+    let mut resp_tasks = JoinSet::new();
+    //We use enumerate to be able to sort the responses so they are determinstic for a given config
+    for (core_id, ce) in core_endpoints.iter_mut().enumerate() {
+        let mut cur_client = ce.clone();
+        let request_id = request_id.clone();
+
+        resp_tasks.spawn(async move {
+            // Sleep to give the server some time to complete decryption
+            tokio::time::sleep(tokio::time::Duration::from_millis(SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
+
+            let mut response = if insecure {
+                cur_client
+                    .get_insecure_crs_gen_result(tonic::Request::new(request_id.clone()))
+                    .await
+            } else {
+                cur_client
+                    .get_crs_gen_result(tonic::Request::new(request_id.clone()))
+                    .await
+            };
+
+            let mut ctr = 0_usize;
+            while response.is_err()
+                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+            {
+                tokio::time::sleep(tokio::time::Duration::from_millis(SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
+                // do at most max_iter retries
+                if ctr >= max_iter {
+                    panic!("timeout while waiting for crsgen after {max_iter} retries (insecure: {insecure})");
+                }
+                ctr += 1;
+                response = if insecure {
+                    cur_client
+                        .get_insecure_crs_gen_result(tonic::Request::new(request_id.clone()))
+                        .await
+                } else {
+                    cur_client
+                        .get_crs_gen_result(tonic::Request::new(request_id.clone()))
+                        .await
+                };
+
+                tracing::info!("Got response for crsgen: {:?} (insecure: {insecure})", response);
+            }
+            (core_id,request_id, response.unwrap().into_inner())
+        });
+    }
+
+    let mut resp_response_vec = Vec::new();
+    while let Some(resp) = resp_tasks.join_next().await {
+        let (core_id, _request_id, resp) = resp?;
+        resp_response_vec.push((core_id, resp));
+        // break this loop and continue with the rest of the processing if we have enough responses
+        if resp_response_vec.len() >= num_expected_responses {
+            break;
+        }
+    }
+    resp_response_vec.sort_by_key(|(id, _)| *id);
+    let resp_response_vec: Vec<_> = resp_response_vec
+        .into_iter()
+        .map(|(_, resp)| resp)
+        .collect();
+    Ok(resp_response_vec)
+}
+
 async fn fetch_and_check_keygen(
     num_expected_responses: usize,
     cc_conf: &CoreClientConfig,
     kms_addrs: &[alloy_primitives::Address],
     destination_prefix: &Path,
-    keygen_request: KeyGenRequest,
+    request_id: RequestId,
+    domain: Eip712Domain,
     responses: Vec<KeyGenResult>,
 ) -> anyhow::Result<()> {
     assert!(
@@ -1741,7 +2156,7 @@ async fn fetch_and_check_keygen(
         responses.len()
     );
 
-    let req_id = keygen_request.request_id.unwrap().to_string();
+    let req_id = request_id.to_string();
 
     // Download the generated keys. We do this just once, to save time, assuming that all generated keys are indentical.
     // If we want to test for malicious behavior in the threshold case, we need to download all keys and compare them.
@@ -1758,12 +2173,6 @@ async fn fetch_and_check_keygen(
             &req_id, resp_req_id,
             "Request ID of response does not match the transaction"
         );
-
-        let domain = if let Some(domain) = &keygen_request.domain {
-            protobuf_to_alloy_domain(domain)?
-        } else {
-            return Err(anyhow!("No domain provided in keygen request"));
-        };
 
         let extpksig = if let Some(spdh) = response
             .key_results
@@ -1803,7 +2212,8 @@ async fn fetch_and_check_crsgen(
     cc_conf: &CoreClientConfig,
     kms_addrs: &[alloy_primitives::Address],
     destination_prefix: &Path,
-    crsgen_request: CrsGenRequest,
+    request_id: RequestId,
+    domain: Eip712Domain,
     responses: Vec<CrsGenResult>,
 ) -> anyhow::Result<()> {
     assert!(
@@ -1813,7 +2223,7 @@ async fn fetch_and_check_crsgen(
         responses.len()
     );
 
-    let req_id = crsgen_request.request_id.unwrap().to_string();
+    let req_id = request_id.to_string();
 
     // Download the generated keys. We do this just once, to save time, assuming that all generated keys are indentical.
     // If we want to test for malicious behavior in the threshold case, we need to download all keys and compare them.
@@ -1828,12 +2238,6 @@ async fn fetch_and_check_crsgen(
             &req_id, resp_req_id,
             "Request ID of response does not match the transaction"
         );
-
-        let domain = if let Some(domain) = &crsgen_request.domain {
-            protobuf_to_alloy_domain(domain)?
-        } else {
-            return Err(anyhow!("No domain provided in crsgen request"));
-        };
 
         let extpksig = if let Some(spdh) = response.crs_results {
             spdh.external_signature

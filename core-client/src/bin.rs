@@ -28,9 +28,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     let res = execute_cmd(&config, keys_folder).await;
 
     match res {
-        Ok((success, msg)) => {
-            if let Some(value) = success {
-                println!("{msg} - {}", serde_json::to_string_pretty(&value)?);
+        Ok(vec_res) => {
+            for (success, msg) in vec_res.into_iter() {
+                if let Some(value) = success {
+                    println!("{msg} - {}", serde_json::to_string_pretty(&value)?);
+                }
             }
             return Ok(());
         }

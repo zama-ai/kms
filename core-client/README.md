@@ -83,6 +83,13 @@ This means that a single KMS core will generate a set of FHE keys in plain. In a
 
 Note that this operation does *NOT* run a secure distributed keygen protocol, and therefore must *NOT* be used in production, as the security of the private key material can not be guaranteed. This function is intended only for testing and debugging, to quickly generate a set of FHE keys, as the full distributed keygen protocol is very expensive and time-consuming.
 
+It is also possible to fetch the result of an insecure key generation through its `REQUEST_ID` using the following command:
+```{bash}
+$ cargo run -- -f <path-to-toml-config-file> insecure-key-gen-result --request-id <REQUEST_ID>
+```
+
+Upon success, both the command to request to generate a key _and_ the command to fetch the result, will save the key material produced by the core in the `object_folder` given in the configuration file.
+
 #### Preprocessing for Secure Key-Generation
 Secure key-generation (see [below](#secure-key-generation)) requires a pre-processing step, that can be triggered via the following command:
 
@@ -90,7 +97,13 @@ Secure key-generation (see [below](#secure-key-generation)) requires a pre-proce
 $ cargo run -- -f <path-to-toml-config-file> preproc-key-gen
 ```
 Note that this will generate large amounts of preprocessing data, which is expensive and very time-consuming (read: many hours(!) of computation on a powerful machine with many cores).
-This command will return a `preproc-id`.
+
+It is also possible to fetch the status of a preprocessing for key generation through its `REQUEST_ID` using the following command:
+```{bash}
+$ cargo run -- -f <path-to-toml-config-file> preproc-key-gen-result --request-id <REQUEST_ID>
+```
+
+Upon success, both the command to request to generate preprocessing material _and_ the command to fetch the result, will print the following: `preproc done - <REQUEST_ID>`.
 
 #### Secure Key-Generation
 Analogously to above, _secure_ key-generation can be done using the following command:
@@ -101,6 +114,12 @@ $ cargo run -- -f <path-to-toml-config-file> key-gen --preproc-id <PREPROC_ID>
 Note that this will run the full distributed keygen protocol, which is expensive and time-consuming (read: several minutes of computation on a powerful machine with many cores).
 This command requires a set of pre-processing information, specified via `--preproc-id <PREPROC_ID>`.
 
+It is also possible to fetch the result of a key generation through its `REQUEST_ID` using the following command:
+```{bash}
+$ cargo run -- -f <path-to-toml-config-file> key-gen-result --request-id <REQUEST_ID>
+```
+
+Upon success, both the command to request to generate a key _and_ the command to fetch the result, will save the key material produced by the core in the `object_folder` given in the configuration file.
 
 ### CRS-generation
 
@@ -116,6 +135,13 @@ $ cargo run -- -f <path-to-toml-config-file> insecure-crs-gen --max-num-bits <ma
 
 Note that this operation does *NOT* run a secure distributed CRS generation protocol, and therefore must *NOT* be used in production, as the security of the CRS can not be guaranteed. This function is intended only for testing and debugging, to quickly generate a CRS, as the full distributed version more expensive and time-consuming.
 
+It is also possible to fetch the result of an insecure CRS generation through its `REQUEST_ID` using the following command:
+```{bash}
+$ cargo run -- -f <path-to-toml-config-file> insecure-crs-gen-result --request-id <REQUEST_ID>
+```
+
+Upon success, both the command to request to generate a CRS _and_ the command to fetch the result, will save the CRS produced by the core in the `object_folder` given in the configuration file.
+
 #### Secure CRS-generation
 
 A CRS can _securely_ be created using the following command, where `<max-num-bits>` is the number of bits that one can proof with the CRS:
@@ -125,6 +151,13 @@ $ cargo run -- -f <path-to-toml-config-file> crs-gen --max-num-bits <max-num-bit
 ```
 
 Note that this operation runs the secure distributed CRS generation protocol, which is more expensive and time-consuming than the insecure version above. Typically in the order of minutes.
+
+It is also possible to fetch the result of a CRS generation through its `REQUEST_ID` using the following command:
+```{bash}
+$ cargo run -- -f <path-to-toml-config-file> crs-gen-result --request-id <REQUEST_ID>
+```
+
+Upon success, both the command to request to generate a CRS _and_ the command to fetch the result, will save the CRS produced by the core in the `object_folder` given in the configuration file.
 
 #### Arguments
 `<max-num-bits>` refers to the maximum bit length of the FHE types to be used in the KMS and is set to `2048` by default since 2048 is the largest number that is needed with the current types.
@@ -160,8 +193,32 @@ Or from a file generated via the _Encryption_ command described above:
 $ cargo run -- -f <path-to-toml-config-file> decrypt from-file --input-path <input-file-path>
 ```
 
-
 Note that the key must have been previously generated using the (secure or insecure) [keygen](#key-generation) above.
+
+
+It is also possible to fetch the result of a decryption through its `REQUEST_ID` using the following command:
+```{bash}
+$ cargo run -- -f <path-to-toml-config-file> decrypt-result --request-id <REQUEST_ID>
+```
+
+Upon success, both the commands to decrypt _and_ the command to fetch the result, will result in a print of `Vec<DecryptionResponse> - <REQUEST_ID>` where the `Vec` size depends on the number of received responses (specified via `num_majority` in the configuration file) for each request (specified via `--num-requests`).
+
+Recall that `DecryptionResponse` follows this format:
+```proto
+message DecryptionResponse {
+  bytes signature = 1;
+  DecryptionResponsePayload payload = 2;
+}
+
+message DecryptionResponsePayload {
+  uint32 version = 1;
+  bytes verification_key = 2;
+  bytes digest = 3;
+  repeated bytes plaintexts = 4;
+  optional bytes external_signature = 5;
+}
+
+```
 
 #### Reencryption / User Decryption
 
@@ -177,6 +234,8 @@ Or from a file generated via the _Encryption_ command described above:
 $ cargo run -- -f <path-to-toml-config-file> re-encrypt from-file --input-path <input-file-path>
 ```
 
+Upon success, the above commands print `Reencrypted Plaintext <PLAINTEXT> - <REQUEST_ID>` for each request (specified via `--num-requests`).
+
 #### Arguments
 Arguments required for the decryption/reencryption command are:
  - `--to-encrypt <TO_ENCRYPT>` - The hex value to encrypt and request a decryption/re-encryption. The value will be converted from a little endian hex string to a `Vec<u8>`. Can optionally have a "0x" prefix.
@@ -185,12 +244,13 @@ Arguments required for the decryption/reencryption command are:
 
 Optional command line options for the public/user decryption command are:
  - `-b`/`--batch-size <BATCH_SIZE>`: the batch size of values to decrypt (default: `1`). This will run the operation on `BATCH_SIZE` copies of the same message.
+ - `-n`/`--num-requests <NUM_REQUESTS>`: the number of requests that are sent in parallel. This will run `NUM_REQUESTS` copies of the same request (except with a different `REQUEST_ID`)
  - `-c`/`--compression`: whether the sent values are compressed ciphertexts (default: false)
  - `--precompute-sns`: whether SNS (switch and squash) should be done prior to sending the request to the KMS,
     this can currently not to be used in combination with `---compression`, i.e.  at most one of the  `--compression` and `--precompute-sns` options can be used.
  - `--ciphertext-output-path <FILENAME>`: optionally write the ciphertext (the encryption of `to-encrypt`) to file
 
- __NOTE__: If the ciphertext is provided by file, then only the optional argument `-b`/`--batch-size <BATCH_SIZE>` is supported.
+ __NOTE__: If the ciphertext is provided by file, then only the optional arguments `-b`/`--batch-size <BATCH_SIZE>` and `-n`/`--num-requests <NUM_REQUESTS>` are supported.
 
 
 ## Example Commands

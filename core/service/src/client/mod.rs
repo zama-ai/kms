@@ -1006,6 +1006,9 @@ impl Client {
     /// original `DecryptionRequest` `request`, and returns the decrypted
     /// plaintext if valid and at least [min_agree_count] agree on the result.
     /// Returns `None` if validation fails.
+    ///
+    /// __NOTE__: If the original request is not provided, we can __not__ check
+    /// that the response correctly contains the digest of the request.
     #[cfg(feature = "non-wasm")]
     pub fn process_decryption_resp(
         &self,
@@ -1141,9 +1144,11 @@ impl Client {
 
     /// Validates the aggregated decryption response by checking:
     /// - The responses agree on metadata like shares needed
-    /// - The response matches the original request
     /// - Signatures on responses are valid
     /// - That at least [min_agree_count] agree on the same payload
+    ///
+    /// In addition, if the original request is provided:
+    /// - The response matches the original request
     ///
     /// Returns true if the response is valid, false otherwise
     #[cfg(feature = "non-wasm")]
@@ -1153,17 +1158,17 @@ impl Client {
         agg_resp: &[DecryptionResponse],
         min_agree_count: u32,
     ) -> anyhow::Result<()> {
+        let resp_parsed_payloads = some_or_err(
+            self.validate_dec_resp(agg_resp)?,
+            "Could not validate the aggregated responses".to_string(),
+        )?;
+        if resp_parsed_payloads.len() < min_agree_count as usize {
+            return Err(anyhow_error_and_log(
+                "Not enough correct responses to decrypt the data!",
+            ));
+        }
         match request {
             Some(req) => {
-                let resp_parsed_payloads = some_or_err(
-                    self.validate_dec_resp(agg_resp)?,
-                    "Could not validate the aggregated responses".to_string(),
-                )?;
-                if resp_parsed_payloads.len() < min_agree_count as usize {
-                    return Err(anyhow_error_and_log(
-                        "Not enough correct responses to decrypt the data!",
-                    ));
-                }
                 let pivot_payload = resp_parsed_payloads[0].clone();
                 // if req.fhe_type() != pivot_payload.fhe_type()? {
                 //     tracing::warn!("Fhe type in the decryption response is incorrect");
@@ -1183,9 +1188,10 @@ impl Client {
                 }
                 Ok(())
             }
-            None => Err(anyhow_error_and_log(
-                "No payload in the decryption request!",
-            )),
+            None => {
+                tracing::warn!("No payload in the decryption request!",);
+                Ok(())
+            }
         }
     }
 

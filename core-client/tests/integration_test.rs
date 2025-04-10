@@ -114,7 +114,8 @@ async fn insecure_key_gen<T: DockerComposeContext>(ctx: &T) -> String {
     let key_gen_results = execute_cmd(&config, keys_folder).await.unwrap();
     println!("Insecure key-gen done");
 
-    let key_id = match key_gen_results {
+    assert_eq!(key_gen_results.len(), 1);
+    let key_id = match key_gen_results.first().unwrap() {
         (Some(value), _) => value,
         _ => panic!("Error doing insecure keygen"),
     };
@@ -151,7 +152,8 @@ async fn crs_gen<T: DockerComposeContext>(ctx: &T, insecure_crs_gen: bool) -> St
     println!("Doing CRS-gen");
     let crs_gen_results = execute_cmd(&config, keys_folder).await.unwrap();
     println!("CRS-gen done");
-    let crs_id = match crs_gen_results {
+    assert_eq!(crs_gen_results.len(), 1);
+    let crs_id = match crs_gen_results.first().unwrap() {
         (Some(value), _) => value,
         _ => panic!("Error doing keygen"),
     };
@@ -170,7 +172,9 @@ async fn real_preproc_and_keygen(config_path: &str) -> String {
         expect_all_responses: true,
     };
     println!("Doing preprocessing");
-    let (preproc_id, _) = execute_cmd(&config, keys_folder).await.unwrap();
+    let mut preproc_result = execute_cmd(&config, keys_folder).await.unwrap();
+    assert_eq!(preproc_result.len(), 1);
+    let (preproc_id, _) = preproc_result.pop().unwrap();
     println!("Preprocessing done with ID {:?}", preproc_id);
 
     let config = CmdConfig {
@@ -185,8 +189,9 @@ async fn real_preproc_and_keygen(config_path: &str) -> String {
     println!("Doing key-gen");
     let key_gen_results = execute_cmd(&config, keys_folder).await.unwrap();
     println!("Key-gen done");
+    assert_eq!(key_gen_results.len(), 1);
 
-    let key_id = match key_gen_results {
+    let key_id = match key_gen_results.first().unwrap() {
         (Some(value), _) => value,
         _ => panic!("Error doing keygen"),
     };
@@ -202,13 +207,76 @@ async fn test_template<T: DockerComposeContext>(ctx: &mut T, commands: Vec<CCCom
     for command in commands {
         let config = CmdConfig {
             file_conf: Some(String::from(path_to_config.to_str().unwrap())),
-            command,
+            command: command.clone(),
             logs: true,
             max_iter: 500,
             expect_all_responses: true,
         };
 
-        execute_cmd(&config, keys_folder).await.unwrap();
+        let results = execute_cmd(&config, keys_folder).await.unwrap();
+
+        //Make sure load is as expected
+        match &command {
+            CCCommand::Decrypt(cipher_arguments) | CCCommand::ReEncrypt(cipher_arguments) => {
+                let num_expected_results = cipher_arguments.get_load();
+                assert_eq!(results.len(), num_expected_results);
+            }
+            _ => {}
+        }
+
+        //Also test the get result commands
+        let req_id = results[0].0.clone();
+
+        let get_res_command = match command {
+            CCCommand::PreprocKeyGen(_no_parameters) => {
+                CCCommand::PreprocKeyGenResult(ResultParameters {
+                    request_id: req_id.unwrap().to_string(),
+                })
+            }
+            CCCommand::KeyGen(_key_gen_parameters) => CCCommand::KeyGenResult(ResultParameters {
+                request_id: req_id.unwrap().to_string(),
+            }),
+            CCCommand::InsecureKeyGen(_no_parameters) => {
+                CCCommand::InsecureKeyGenResult(ResultParameters {
+                    request_id: req_id.unwrap().to_string(),
+                })
+            }
+            CCCommand::Decrypt(_cipher_arguments) => CCCommand::DecryptResult(ResultParameters {
+                request_id: req_id.unwrap().to_string(),
+            }),
+            CCCommand::CrsGen(_crs_parameters) => CCCommand::CrsGenResult(ResultParameters {
+                request_id: req_id.unwrap().to_string(),
+            }),
+            CCCommand::InsecureCrsGen(_crs_parameters) => {
+                CCCommand::InsecureCrsGenResult(ResultParameters {
+                    request_id: req_id.unwrap().to_string(),
+                })
+            }
+            _ => CCCommand::DoNothing(NoParameters {}),
+        };
+
+        let expect_result = !matches!(&get_res_command, CCCommand::DoNothing(_));
+
+        if expect_result {
+            let config = CmdConfig {
+                file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+                command: get_res_command,
+                logs: true,
+                max_iter: 500,
+                expect_all_responses: true,
+            };
+
+            //We query result on a single request id, so should get a single result
+            let mut results_bis = execute_cmd(&config, keys_folder).await.unwrap();
+            assert_eq!(results_bis.len(), 1);
+            let (sid_bis, result_bis) = results_bis.remove(0);
+
+            for (sid, result) in results {
+                if sid_bis == sid {
+                    assert_eq!(result_bis, result);
+                }
+            }
+        }
 
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
     }
@@ -264,6 +332,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             precompute_sns: false,
             key_id: key_id.clone(),
             batch_size: 1,
+            num_requests: 1,
             ciphertext_output_path: None,
         })),
         CCCommand::ReEncrypt(CipherArguments::FromArgs(
@@ -274,6 +343,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             precompute_sns: false,
             key_id: key_id.clone(),
             batch_size: 1,
+            num_requests: 1,
             ciphertext_output_path: None,
         })),
         CCCommand::Decrypt(CipherArguments::FromArgs(
@@ -284,6 +354,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             precompute_sns: false,
             key_id: key_id.clone(),
             batch_size: 3,
+            num_requests: 1,
             ciphertext_output_path: None,
         })),
         CCCommand::Decrypt(CipherArguments::FromArgs(
@@ -294,6 +365,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             precompute_sns: false,
             key_id: key_id.clone(),
             batch_size: 3,
+            num_requests: 1,
             ciphertext_output_path: None,
         })),
         CCCommand::Decrypt(CipherArguments::FromArgs(
@@ -304,6 +376,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             precompute_sns: false,
             key_id: key_id.clone(),
             batch_size: 1,
+            num_requests: 1,
             ciphertext_output_path: None,
         })),
         CCCommand::Decrypt(CipherArguments::FromArgs(
@@ -314,6 +387,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             precompute_sns: false,
             key_id: key_id.clone(),
             batch_size: 1,
+            num_requests: 1,
             ciphertext_output_path: None,
         })),
         CCCommand::ReEncrypt(CipherArguments::FromArgs(
@@ -324,6 +398,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             precompute_sns: false,
             key_id: key_id.clone(),
             batch_size: 1,
+            num_requests: 1,
             ciphertext_output_path: None,
         })),
         CCCommand::Encrypt(
@@ -334,18 +409,21 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
                 precompute_sns: false,
                 key_id: key_id.clone(),
                 batch_size: 1,
+                num_requests: 1,
                 ciphertext_output_path: Some(ctxt_path.to_path_buf()),
             }
         ),
         CCCommand::Decrypt(CipherArguments::FromFile(
             CipherFile {
                 input_path: ctxt_path.to_path_buf(),
-                batch_size: 1
+                batch_size: 1,
+                num_requests: 3,
         })),
         CCCommand::ReEncrypt(CipherArguments::FromFile(
             CipherFile {
                 input_path: ctxt_path.to_path_buf(),
-                batch_size: 1
+                batch_size: 1,
+                num_requests: 3,
         })),
     ];
 
@@ -358,6 +436,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             precompute_sns: true,
             key_id: key_id.clone(),
             batch_size: 2,
+            num_requests: 1,
             ciphertext_output_path: None,
         })),
         CCCommand::ReEncrypt(CipherArguments::FromArgs(
@@ -368,6 +447,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             precompute_sns: true,
             key_id: key_id.clone(),
             batch_size: 2,
+            num_requests: 1,
             ciphertext_output_path: None,
         })),
         CCCommand::ReEncrypt(CipherArguments::FromArgs(
@@ -378,6 +458,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             precompute_sns: true,
             key_id: key_id.clone(),
             batch_size: 1,
+            num_requests: 1,
             ciphertext_output_path: None,
         })),
         CCCommand::Decrypt(CipherArguments::FromArgs(
@@ -388,6 +469,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             precompute_sns: true,
             key_id: key_id.clone(),
             batch_size: 1,
+            num_requests: 1,
             ciphertext_output_path: None,
         })),
         CCCommand::Decrypt(CipherArguments::FromArgs(
@@ -398,6 +480,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             precompute_sns: true,
             key_id: key_id.clone(),
             batch_size: 1,
+            num_requests: 1,
             ciphertext_output_path: None,
         })),
         CCCommand::ReEncrypt(CipherArguments::FromArgs(
@@ -408,6 +491,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             precompute_sns: true,
             key_id: key_id.clone(),
             batch_size: 1,
+            num_requests: 1,
             ciphertext_output_path: None,
         })),
         CCCommand::Encrypt(
@@ -418,18 +502,21 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
                 precompute_sns: true,
                 key_id: key_id.clone(),
                 batch_size: 1,
+            num_requests: 1,
                 ciphertext_output_path: Some(ctxt_with_sns_path.to_path_buf()),
             }
         ),
         CCCommand::Decrypt(CipherArguments::FromFile(
             CipherFile {
                 input_path: ctxt_with_sns_path.to_path_buf(),
-                batch_size: 1
+                batch_size: 1,
+                num_requests: 3,
         })),
         CCCommand::ReEncrypt(CipherArguments::FromFile(
             CipherFile {
                 input_path: ctxt_with_sns_path.to_path_buf(),
-                batch_size: 1
+                batch_size: 1,
+                num_requests: 3,
         })),
     ];
 
