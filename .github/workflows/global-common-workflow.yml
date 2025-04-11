@@ -239,7 +239,7 @@ jobs:
     with:
       branch-name: 'kms-staging'
       argocd-namespace: 'kms-threshold-staging'
-      argocd-app-name: 'kms-core-client'
+      argocd-app-name: 'kms-core'
       application-image: 'kmsCoreClient'
       image-tag: ${{ needs.docker-core-client.outputs.image_tag }}
     secrets:
