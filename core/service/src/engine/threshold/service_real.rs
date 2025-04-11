@@ -984,7 +984,7 @@ impl<
         for (ctr, typed_ciphertext) in typed_ciphertexts.iter().enumerate() {
             // Create and start a the timer, it'll be dropped and thus
             // exported at the end of the iteration
-            let inner_timer = metrics::METRICS
+            let mut inner_timer = metrics::METRICS
                 .time_operation(OP_REENCRYPT_INNER)
                 .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
                 .and_then(|b| {
@@ -996,7 +996,9 @@ impl<
                 .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
                 .ok();
             let fhe_type = typed_ciphertext.fhe_type();
-            inner_timer.map(|mut b| b.tag(TAG_TFHE_TYPE, fhe_type.as_str_name()));
+            inner_timer
+                .as_mut()
+                .map(|b| b.tag(TAG_TFHE_TYPE, fhe_type.as_str_name()));
             let ct_format = typed_ciphertext.ciphertext_format();
             let ct = &typed_ciphertext.ciphertext;
             let external_handle = typed_ciphertext.external_handle.clone();
@@ -1126,6 +1128,8 @@ impl<
                 signcrypted_ciphertext: partial_signcryption,
                 external_handle,
             });
+            //Explicitly drop the timer to record it
+            drop(inner_timer);
         }
 
         let payload = ReencryptionResponsePayload {

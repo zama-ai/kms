@@ -99,30 +99,40 @@ impl CoreMetrics {
             .with_description("Total number of operations processed")
             .with_unit("operations")
             .build();
+        //Increment by 0 just to make sure the counter is exported
+        request_counter.add(0, &[]);
 
         let error_counter = meter
             .u64_counter(operation_errors)
             .with_description("Total number of operation errors")
             .with_unit("errors")
             .build();
+        //Increment by 0 just to make sure the counter is exported
+        error_counter.add(0, &[]);
 
         let duration_histogram = meter
             .f64_histogram(duration_metric)
             .with_description("Duration of KMS operations")
             .with_unit("milliseconds")
             .build();
+        //Record 0 just to make sure the histogram is exported
+        duration_histogram.record(0.0, &[]);
 
         let size_histogram = meter
             .f64_histogram(size_metric)
             .with_description("Size of KMS operation payloads")
             .with_unit("bytes")
             .build();
+        //Record 0 just to make sure the histogram is exported
+        size_histogram.record(0.0, &[]);
 
         let gauge = meter
             .i64_gauge(gauge)
             .with_description("An instrument that records independent values")
             .with_unit("value")
             .build();
+        //Record 0 just to make sure the gauge is exported
+        gauge.record(0, &[]);
 
         Ok(Self {
             request_counter: TaggedMetric::new(request_counter, "operations")?,
