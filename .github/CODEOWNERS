@@ -1,0 +1,27 @@
+# Zama codeowners rules
+
+# All pull requests should be reviewed by at least one of the members of mpc-devs
+*    @zama-ai/mpc-devs
+
+# All CI pull requests should be reviewed by at least one of the members of mpc-devops
+.github/workflows/ci_lint.yml                       @zama-ai/mpc-devops
+.github/workflows/common-docker-big-instance.yml    @zama-ai/mpc-devops
+.github/workflows/common-docker.yml                 @zama-ai/mpc-devops
+.github/workflows/common-nitro-enclave.yml         @zama-ai/mpc-devops
+.github/workflows/common-release-workspace-cargo.yml @zama-ai/mpc-devops
+.github/workflows/common-testing-big-instance.yml   @zama-ai/mpc-devops
+.github/workflows/common-testing.yml                @zama-ai/mpc-devops
+.github/workflows/common-update-argocd.yml         @zama-ai/mpc-devops
+.github/workflows/dependencies_analysis.yml         @zama-ai/mpc-devops
+.github/workflows/global-common-workflow.yml        @zama-ai/mpc-devops
+.github/workflows/helm-lint.yml                     @zama-ai/mpc-devops
+.github/workflows/helm-release.yml                  @zama-ai/mpc-devops
+.github/workflows/helm-test.yml                     @zama-ai/mpc-devops
+.github/workflows/npm-release.yml                   @zama-ai/mpc-devops
+.github/workflows/on-release-images.yml             @zama-ai/mpc-devops
+.github/workflows/release.yml                       @zama-ai/mpc-devops
+.github/workflows/workflow-pr-dockerfile.yml        @zama-ai/mpc-devops
+.github/workflows/workflow-pr-test-enclave.yml      @zama-ai/mpc-devops
+
+# Helm charts should be reviewed by mpc-devops
+charts/    @zama-ai/mpc-devops
