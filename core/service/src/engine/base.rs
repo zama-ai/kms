@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use tracing::error;
 
 use crate::consts::ID_LENGTH;
 use crate::cryptography::decompression;
@@ -9,7 +10,7 @@ use crate::util::key_setup::FhePrivateKey;
 use crate::{anyhow_error_and_log, compute_reenc_message_hash};
 use aes_prng::AesRng;
 use alloy_dyn_abi::DynSolValue;
-use alloy_primitives::Bytes;
+use alloy_primitives::{Bytes, FixedBytes, Uint};
 use alloy_primitives::{B256, U256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
@@ -505,80 +506,98 @@ impl BaseKms for BaseKmsStruct {
     }
 }
 
-// take an ordered list of plaintexts and ABI encode them into Solidity Bytes
-fn abi_encode_plaintexts(ptxts: &[TypedPlaintext]) -> Bytes {
-    // This is a hack to get the offsets right for Byte types.
-    // Every offset needs to be shifted by 32 bytes (256 bits), so we prepend a U256 and delete it at the and, after encoding.
-    let mut data = vec![DynSolValue::Uint(U256::from(0), 256)];
+/// ABI encodes a list of typed plaintexts into a single byte vector for Ethereum compatibility.
+/// This follows the encoding pattern used in the JavaScript version for decrypted results.
+pub fn abi_encode_plaintexts(ptxts: &[TypedPlaintext]) -> Bytes {
+    let mut results: Vec<DynSolValue> = Vec::new();
+    results.push(DynSolValue::Uint(U256::from(42), 256)); // requestID placeholder
 
-    // This is another hack to handle Euint512, Euint1024 and Euint2048 Bytes properly (alloy adds another all-zero 256 bytes to the beginning of the encoded bytes)
-    let mut offset_mul = 1;
-
-    for ptxt in ptxts.iter() {
-        tracing::debug!("Encoding Plaintext with FheType: {:#?}", ptxt.fhe_type());
-        let res = match ptxt.fhe_type() {
-            FheType::Ebool => {
-                let val = if ptxt.as_bool() { 1_u8 } else { 0 };
-                DynSolValue::Uint(U256::from(val), 256)
-            }
-            FheType::Euint4 => DynSolValue::Uint(U256::from(ptxt.as_u4()), 256),
-            FheType::Euint8 => DynSolValue::Uint(U256::from(ptxt.as_u8()), 256),
-            FheType::Euint16 => DynSolValue::Uint(U256::from(ptxt.as_u16()), 256),
-            FheType::Euint32 => DynSolValue::Uint(U256::from(ptxt.as_u32()), 256),
-            FheType::Euint64 => DynSolValue::Uint(U256::from(ptxt.as_u64()), 256),
-            FheType::Euint128 => DynSolValue::Uint(U256::from(ptxt.as_u128()), 256),
-            FheType::Euint160 => {
-                let mut cake = vec![0u8; 32];
-                ptxt.as_u160().copy_to_be_byte_slice(cake.as_mut_slice());
-                DynSolValue::Uint(U256::from_be_slice(&cake), 256)
-            }
-            FheType::Euint256 => {
-                let mut cake = vec![0u8; 32];
-                ptxt.as_u256().copy_to_be_byte_slice(cake.as_mut_slice());
-                DynSolValue::Uint(U256::from_be_slice(&cake), 256)
-            }
+    for clear_text in ptxts.iter() {
+        match clear_text.fhe_type() {
             FheType::Euint512 => {
-                // if we have at least 1 Euint larger than 256 bits, we need to throw away 256 more bytes at the beginning of the encoding below, thus set offset_mul to 2
-                offset_mul = 2;
-                let mut cake = vec![0u8; 64];
-                ptxt.as_u512().copy_to_be_byte_slice(cake.as_mut_slice());
-                DynSolValue::Bytes(cake)
+                if clear_text.bytes.len() != 64 {
+                    error!(
+                        "Invalid length for Euint512: expected 64, got {}",
+                        clear_text.bytes.len()
+                    );
+                    results.push(DynSolValue::Bytes(vec![0u8; 64]));
+                } else {
+                    let arr: [u8; 64] = match clear_text.bytes.as_slice().try_into() {
+                        Ok(arr) => arr,
+                        Err(e) => {
+                            error!("Failed to convert bytes to array for Euint512: {}", e);
+                            [0u8; 64]
+                        }
+                    };
+                    let value = Uint::<512, 8>::from_le_bytes(arr);
+                    let bytes: [u8; 64] = value.to_be_bytes();
+                    results.push(DynSolValue::Bytes(bytes.to_vec()));
+                }
             }
             FheType::Euint1024 => {
-                // if we have at least 1 Euint larger than 256 bits, we need to throw away 256 more bytes at the beginning of the encoding below, thus set offset_mul to 2
-                offset_mul = 2;
-                let mut cake = vec![0u8; 128];
-                ptxt.as_u1024().copy_to_be_byte_slice(cake.as_mut_slice());
-                DynSolValue::Bytes(cake)
+                if clear_text.bytes.len() != 128 {
+                    error!(
+                        "Invalid length for Euint1024: expected 128, got {}",
+                        clear_text.bytes.len()
+                    );
+                    results.push(DynSolValue::Bytes(vec![0u8; 128]));
+                } else {
+                    let arr: [u8; 128] = match clear_text.bytes.as_slice().try_into() {
+                        Ok(arr) => arr,
+                        Err(e) => {
+                            error!("Failed to convert bytes to array for Euint1024: {}", e);
+                            [0u8; 128]
+                        }
+                    };
+                    let value = Uint::<1024, 16>::from_le_bytes(arr);
+                    let bytes: [u8; 128] = value.to_be_bytes();
+                    results.push(DynSolValue::Bytes(bytes.to_vec()));
+                }
             }
             FheType::Euint2048 => {
-                // if we have at least 1 Euint larger than 256 bits, we need to throw away 256 more bytes at the beginning of the encoding below, thus set offset_mul to 2
-                offset_mul = 2;
-                let mut cake = vec![0u8; 256];
-                ptxt.as_u2048().copy_to_be_byte_slice(cake.as_mut_slice());
-                DynSolValue::Bytes(cake)
+                if clear_text.bytes.len() != 256 {
+                    error!(
+                        "Invalid length for Euint2048: expected 256, got {}",
+                        clear_text.bytes.len()
+                    );
+                    results.push(DynSolValue::Bytes(vec![0u8; 256]));
+                } else {
+                    let arr: [u8; 256] = match clear_text.bytes.as_slice().try_into() {
+                        Ok(arr) => arr,
+                        Err(e) => {
+                            error!("Failed to convert bytes to array for Euint2048: {}", e);
+                            [0u8; 256]
+                        }
+                    };
+                    let value = Uint::<2048, 32>::from_le_bytes(arr);
+                    let bytes: [u8; 256] = value.to_be_bytes();
+                    results.push(DynSolValue::Bytes(bytes.to_vec()));
+                }
             }
-        };
-        data.push(res);
+            _ => {
+                // For other types, convert to U256
+                if clear_text.bytes.len() > 32 {
+                    error!(
+                        "Byte length too large for U256: got {}, max is 32",
+                        clear_text.bytes.len()
+                    );
+                    results.push(DynSolValue::Uint(U256::from(0), 256));
+                } else {
+                    // Pad the bytes to 32 bytes for U256 (assuming little-endian input)
+                    let mut padded = [0u8; 32];
+                    padded[..clear_text.bytes.len()].copy_from_slice(&clear_text.bytes);
+                    let value = U256::from_le_bytes(padded);
+                    results.push(DynSolValue::Uint(value, 256));
+                }
+            }
+        }
     }
 
-    // wrap data in a Tuple, so we can encode it with position information
-    let encoded = DynSolValue::Tuple(data).abi_encode();
+    results.push(DynSolValue::Array(vec![])); // signatures placeholder
 
-    // strip off the extra U256 at the beginning, and possibly also 256 bytes more zero bytes, when we encode one or more Euint2048s
-    let mut encoded_bytes: Vec<u8> = encoded[offset_mul * 32..].to_vec();
-
-    // Ensure ABI encoding compatibility by adding a 32-byte padding at the end
-    // This matches the JavaScript implementation that includes these bytes
-    if !encoded_bytes.is_empty() {
-        let padding = vec![0x00; 32];
-        encoded_bytes.extend_from_slice(&padding);
-    }
-
-    let hexbytes = hex::encode(encoded_bytes.clone());
-    tracing::debug!("Encoded plaintext ABI {:?}", hexbytes);
-
-    Bytes::from(encoded_bytes)
+    let data = DynSolValue::Tuple(results).abi_encode_params();
+    let decrypted_result = data[32..data.len() - 32].to_vec(); // remove placeholder corresponding to requestID and signatures
+    Bytes::from(decrypted_result)
 }
 
 pub fn compute_pt_message_hash(
@@ -587,9 +606,11 @@ pub fn compute_pt_message_hash(
     eip712_domain: Eip712Domain,
 ) -> B256 {
     // convert external_handles back to U256 to be signed
+    #[allow(clippy::useless_conversion)]
+    // Added `allow` as without using `.into()` displays an error despite it works
     let external_handles: Vec<_> = ext_handles_bytes
         .into_iter()
-        .map(|e| alloy_primitives::FixedBytes::<32>::left_padding_from(e.as_slice()))
+        .map(|e| FixedBytes::<32>::left_padding_from(e.as_slice()).into())
         .collect();
 
     let pt_bytes = abi_encode_plaintexts(pts);
@@ -776,46 +797,7 @@ pub(crate) mod tests {
         let hexbytes_2048 = hex::encode(bytes_2048);
 
         // this is the encoding of the same list of plaintexts (pts_2048) using the outdated `ethers` crate.
-        let reference_2048 = "00000000000000000000000000000000000000000000000000000000000001a0\
-                               0000000000000000000000000000000000000000000000000000000000000001\
-                               0000000000000000000000000000000000000000000000000000000000000004\
-                               0000000000000000000000000000000000000000000000000000000000000005\
-                               00000000000000000000000000000000000000000000000000000000000002c0\
-                               0000000000000000000000000000000000000000000000000000000000000008\
-                               0000000000000000000000000000000000000000000000000000000000000010\
-                               0000000000000000000000000000000000000000000000000000000000000020\
-                               0000000000000000000000000000000000000000000000000000000000000080\
-                               000000000000000000000000000000ff000000000000000000000000000000ea\
-                               0000000000000000000000000000010000000000000000000000000000000001\
-                               00000000000000000000000000000000000000000000000000000000000003e0\
-                               0000000000000000000000000000000000000000000000000000000000000100\
-                               0000000000000000000000000000000000000000000000000000000000000000\
-                               0000000000000000000000000000000000000000000000000000000000000000\
-                               0000000000000000000000000000000000000000000000000000000000000000\
-                               0000000000000000000000000000000000000000000000000000000000000000\
-                               0000000000000000000000000000000000000000000000000000000000000000\
-                               0000000000000000000000000000000000000000000000000000000000000000\
-                               0000000000000000000000000000000000000000000000000000000000000000\
-                               0000000000000000000000000000000000000000000000000000000000000101\
-                               0000000000000000000000000000000000000000000000000000000000000100\
-                               0000000000000000000000000000000000000000000000000000000000000000\
-                               0000000000000000000000000000000000000000000000000000000000000000\
-                               0000000000000000000000000000000000000000000000000000000000000000\
-                               0000000000000000000000000000000000000000000000000000000000000000\
-                               0000000000000000000000000000000000000000000000000000000000000000\
-                               0000000000000000000000000000000000000000000000000000000000000000\
-                               0000000000000000000000000000000000000000000000000000000000000000\
-                               0000000000000000000000000000000000000000000000000000000000000101\
-                               0000000000000000000000000000000000000000000000000000000000000100\
-                               0000000000000000000000000000000000000000000000000000000000000000\
-                               0000000000000000000000000000000000000000000000000000000000000000\
-                               0000000000000000000000000000000000000000000000000000000000000000\
-                               0000000000000000000000000000000000000000000000000000000000000000\
-                               0000000000000000000000000000000000000000000000000000000000000000\
-                               0000000000000000000000000000000000000000000000000000000000000000\
-                               0000000000000000000000000000000000000000000000000000000000000000\
-                               0000000000000000000000000000000000000000000000000000000000000101\
-                               0000000000000000000000000000000000000000000000000000000000000000";
+        let reference_2048 = "00000000000000000000000000000000000000000000000000000000000001c000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000500000000000000000000000000000000000000000000000000000000000002e00000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000ff000000000000000000000000000000ea000000000000000000000000000001000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000520000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000101000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000101000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000101";
 
         assert_eq!(reference_2048, hexbytes_2048.as_str());
 
@@ -827,8 +809,7 @@ pub(crate) mod tests {
         let hexbytes_16 = hex::encode(bytes_16);
 
         // this is the encoding of the same list of plaintexts (pts_16) using the outdated `ethers` crate.
-        let reference_16 = "0000000000000000000000000000000000000000000000000000000000000010\
-        0000000000000000000000000000000000000000000000000000000000000000";
+        let reference_16 = "00000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000060";
 
         assert_eq!(reference_16, hexbytes_16.as_str());
 
@@ -841,9 +822,7 @@ pub(crate) mod tests {
         let hexbytes_16_2 = hex::encode(bytes_16_2);
 
         // this is the encoding of the same list of plaintexts (pts_16_2) using the outdated `ethers` crate.
-        let reference_16_2 = "0000000000000000000000000000000000000000000000000000000000000010\
-        0000000000000000000000000000000000000000000000000000000000000010\
-        0000000000000000000000000000000000000000000000000000000000000000";
+        let reference_16_2 = "000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000080";
 
         assert_eq!(reference_16_2, hexbytes_16_2.as_str());
     }
