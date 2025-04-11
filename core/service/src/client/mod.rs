@@ -2574,13 +2574,12 @@ pub(crate) mod tests {
     use crate::client::{ParsedReencryptionRequest, ServerIdentities};
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     use crate::consts::MAX_TRIES;
-    use crate::consts::TEST_PARAM;
     use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
     use crate::consts::{DEFAULT_AMOUNT_PARTIES, TEST_CENTRAL_KEY_ID};
     #[cfg(feature = "slow_tests")]
     use crate::consts::{DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_KEY_ID_4P};
     use crate::consts::{DEFAULT_THRESHOLD, TEST_THRESHOLD_KEY_ID_10P};
-    use crate::consts::{PRSS_EPOCH_ID, TEST_THRESHOLD_KEY_ID};
+    use crate::consts::{PRSS_INIT_REQ_ID, TEST_PARAM, TEST_THRESHOLD_KEY_ID};
     use crate::cryptography::internal_crypto_types::Signature;
     use crate::cryptography::internal_crypto_types::WrappedDKGParams;
     use crate::engine::base::{compute_handle, BaseKmsStruct};
@@ -2738,10 +2737,10 @@ pub(crate) mod tests {
     #[tokio::test]
     #[serial]
     async fn test_threshold_health_endpoint_availability() {
-        // make sure the store does not contain any PRSS info (currently stored under ID PRSS_EPOCH_ID)
+        // make sure the store does not contain any PRSS info (currently stored under ID PRSS_INIT_REQ_ID)
         let req_id = &RequestId::derive(&format!(
             "PRSSSetup_Z128_ID_{}_{}_{}",
-            PRSS_EPOCH_ID, DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD
+            PRSS_INIT_REQ_ID, DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD
         ))
         .unwrap();
         purge(None, None, &req_id.to_string(), DEFAULT_AMOUNT_PARTIES).await;
@@ -2806,8 +2805,11 @@ pub(crate) mod tests {
         for i in 1..=DEFAULT_AMOUNT_PARTIES as u32 {
             let mut cur_client = kms_clients.get(&i).unwrap().clone();
             req_tasks.spawn(async move {
+                let req_id = RequestId::try_from(PRSS_INIT_REQ_ID.to_string()).unwrap();
                 cur_client
-                    .init(tonic::Request::new(InitRequest { config: None }))
+                    .init(tonic::Request::new(InitRequest {
+                        request_id: Some(req_id),
+                    }))
                     .await
             });
         }

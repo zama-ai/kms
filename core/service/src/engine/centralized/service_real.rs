@@ -259,7 +259,7 @@ impl<
 
         tonic_handle_potential_err(
             crypto_storage.refresh_centralized_fhe_keys(&key_id).await,
-            "Cannot find centralized keys".to_string(),
+            format!("Cannot find centralized keys with key ID {key_id}"),
         )?;
 
         let mut handles = self.thread_handles.write().await;
@@ -438,7 +438,7 @@ impl<
 
         tonic_handle_potential_err(
             crypto_storage.refresh_centralized_fhe_keys(&key_id).await,
-            "Cannot find centralized keys".to_string(),
+            format!("Cannot find centralized keys with key ID {key_id}"),
         )?;
 
         let metric_tags = vec![

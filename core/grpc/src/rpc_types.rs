@@ -905,9 +905,9 @@ impl RequestId {
         }
         // Truncate and convert to hex
         digest.truncate(ID_LENGTH);
-        let res_hash = hex::encode(digest);
+        let res_hex = hex::encode(digest);
         Ok(RequestId {
-            request_id: res_hash,
+            request_id: res_hex,
         })
     }
 

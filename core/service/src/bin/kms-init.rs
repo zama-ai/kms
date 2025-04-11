@@ -1,8 +1,9 @@
 use clap::Parser;
 use conf_trace::conf::TelemetryConfig;
 use conf_trace::telemetry::init_tracing;
-use kms_grpc::kms::v1::{Config, InitRequest};
+use kms_grpc::kms::v1::{InitRequest, RequestId};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
+use kms_lib::consts::PRSS_INIT_REQ_ID;
 
 /// This CLI initializes the threshold KMS core nodes.
 /// After the KMS servers are up and running (using the kms-server)
@@ -33,12 +34,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     let mut handles = Vec::new();
+
     for addr in args.addresses {
         handles.push(tokio::spawn(async {
             let mut kms_client = CoreServiceEndpointClient::connect(addr).await.unwrap();
-            let request = InitRequest {
-                config: Some(Config {}),
-            };
+
+            // TODO: the init epoch ID is currently fixed to PRSS_INIT_REQ_ID
+            // change this once we want to trigger another init for a different context/epoch
+            let req_id = Some(RequestId::try_from(PRSS_INIT_REQ_ID.to_string()).unwrap());
+
+            let request = InitRequest { request_id: req_id };
             let _ = kms_client.init(request).await.unwrap();
         }));
     }

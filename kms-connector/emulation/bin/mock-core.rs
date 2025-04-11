@@ -20,12 +20,8 @@ pub struct MockKmsService {}
 
 #[tonic::async_trait]
 impl CoreServiceEndpoint for MockKmsService {
-    async fn init(&self, request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
-        info!(
-            operation = "init",
-            request_id = ?request.get_ref().config,
-            "Processing initialization request"
-        );
+    async fn init(&self, _request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
+        info!(operation = "init", "Processing initialization request");
         Ok(Response::new(Empty {}))
     }
 

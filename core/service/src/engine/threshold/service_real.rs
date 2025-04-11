@@ -1,5 +1,5 @@
 use crate::conf::threshold::{PeerConf, ThresholdPartyConf};
-use crate::consts::{MINIMUM_SESSIONS_PREPROC, PRSS_EPOCH_ID};
+use crate::consts::{MINIMUM_SESSIONS_PREPROC, PRSS_INIT_REQ_ID};
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey};
 use crate::cryptography::signcryption::signcrypt;
 use crate::engine::base::{
@@ -551,18 +551,20 @@ where
         session_preparer: session_preparer.new_instance().await,
         health_reporter: thread_core_health_reporter.clone(),
     };
+    let req_id_prss = RequestId::try_from(PRSS_INIT_REQ_ID.to_string())?; // the init epoch ID is currently fixed to PRSS_INIT_REQ_ID
     if run_prss {
         tracing::info!(
             "Initializing threshold KMS server and generating a new PRSS Setup for {}",
             my_id
         );
-        initiator.init_prss().await?;
+
+        initiator.init_prss(&req_id_prss).await?;
     } else {
         tracing::info!(
             "Trying to initializing threshold KMS server and reading PRSS from storage for {}",
             my_id
         );
-        if let Err(e) = initiator.init_prss_from_disk().await {
+        if let Err(e) = initiator.init_prss_from_disk(&req_id_prss).await {
             tracing::warn!(
                 "Could not read PRSS Setup from storage for {}: {}. You will need to call the init end-point later before you can use the KMS server",
                 my_id,
@@ -769,19 +771,18 @@ pub struct RealInitiator<PrivS: Storage + Send + Sync + 'static> {
 }
 
 impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
-    async fn init_prss_from_disk(&self) -> anyhow::Result<()> {
-        // TODO pass epoch ID fom config? (once we have epochs)
-        let epoch_id = PRSS_EPOCH_ID;
+    async fn init_prss_from_disk(&self, req_id: &RequestId) -> anyhow::Result<()> {
         let prss_setup_z128_from_file = {
             let guarded_private_storage = self.private_storage.lock().await;
             let base_session = self
                 .session_preparer
-                .make_base_session(SessionId(epoch_id), NetworkMode::Sync)
+                .make_base_session(SessionId(req_id.clone().try_into()?), NetworkMode::Sync)
                 .await?;
             read_versioned_at_request_id(
                 &(*guarded_private_storage),
                 &RequestId::derive(&format!(
-                    "PRSSSetup_Z128_ID_{epoch_id}_{}_{}",
+                    "PRSSSetup_Z128_ID_{}_{}_{}",
+                    req_id,
                     base_session.parameters.num_parties(),
                     base_session.parameters.threshold()
                 ))?,
@@ -807,12 +808,13 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
             let guarded_private_storage = self.private_storage.lock().await;
             let base_session = self
                 .session_preparer
-                .make_base_session(SessionId(epoch_id), NetworkMode::Sync)
+                .make_base_session(SessionId(req_id.clone().try_into()?), NetworkMode::Sync)
                 .await?;
             read_versioned_at_request_id(
                 &(*guarded_private_storage),
                 &RequestId::derive(&format!(
-                    "PRSSSetup_Z64_ID_{epoch_id}_{}_{}",
+                    "PRSSSetup_Z64_ID_{}_{}_{}",
+                    req_id,
                     base_session.parameters.num_parties(),
                     base_session.parameters.threshold()
                 ))?,
@@ -845,16 +847,14 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
         Ok(())
     }
 
-    async fn init_prss(&self) -> anyhow::Result<()> {
+    async fn init_prss(&self, req_id: &RequestId) -> anyhow::Result<()> {
         if self.prss_setup_z128.read().await.is_some() || self.prss_setup_z64.read().await.is_some()
         {
             return Err(anyhow_error_and_log("PRSS state already exists"));
         }
 
         let own_identity = self.session_preparer.own_identity()?;
-        // Assume we only have one epoch and start with session 1
-        let epoch_id = PRSS_EPOCH_ID;
-        let session_id = SessionId(epoch_id);
+        let session_id = SessionId(req_id.clone().try_into()?);
         //PRSS robust init requires broadcast, which is implemented with Sync network assumption
         let mut base_session = self
             .session_preparer
@@ -880,7 +880,8 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
         store_versioned_at_request_id(
             &mut (*priv_storage),
             &RequestId::derive(&format!(
-                "PRSSSetup_Z128_ID_{epoch_id}_{}_{}",
+                "PRSSSetup_Z128_ID_{}_{}_{}",
+                req_id,
                 base_session.parameters.num_parties(),
                 base_session.parameters.threshold(),
             ))?,
@@ -892,7 +893,8 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
         store_versioned_at_request_id(
             &mut (*priv_storage),
             &RequestId::derive(&format!(
-                "PRSSSetup_Z64_ID_{epoch_id}_{}_{}",
+                "PRSSSetup_Z64_ID_{}_{}_{}",
+                req_id,
                 base_session.parameters.num_parties(),
                 base_session.parameters.threshold(),
             ))?,
@@ -915,9 +917,15 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
 
 #[tonic::async_trait]
 impl<PrivS: Storage + Send + Sync + 'static> Initiator for RealInitiator<PrivS> {
-    async fn init(&self, _request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
-        // NOTE: request is not needed because our config is empty at the moment
-        self.init_prss().await.map_err(|e| {
+    async fn init(&self, request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
+        let inner = request.into_inner();
+
+        let request_id = tonic_some_or_err(
+            inner.request_id.clone(),
+            "Request ID is not set (inner key gen)".to_string(),
+        )?;
+
+        self.init_prss(&request_id).await.map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Internal,
                 format!("PRSS initialization failed with error {}", e),
@@ -1206,7 +1214,7 @@ impl<
 
         tonic_handle_potential_err(
             crypto_storage.refresh_threshold_fhe_keys(&key_id).await,
-            "Cannot find threshold keys".to_string(),
+            format!("Cannot find threshold keys with key ID {key_id}"),
         )?;
 
         let prep = Arc::clone(&self.session_preparer);
@@ -1517,7 +1525,7 @@ impl<
             self.crypto_storage
                 .refresh_threshold_fhe_keys(&key_id)
                 .await,
-            "Cannot find threshold keys".to_string(),
+            format!("Cannot find threshold keys with key ID {key_id}"),
         )?;
 
         let ext_handles_bytes = ciphertexts
@@ -3194,7 +3202,7 @@ impl<
 mod tests {
     use crate::{
         client::test_tools::{self},
-        consts::{DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD, PRSS_EPOCH_ID},
+        consts::{DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD, PRSS_INIT_REQ_ID},
         util::key_setup::test_tools::purge,
         vault::storage::{file::FileStorage, StorageType},
     };
@@ -3213,15 +3221,15 @@ mod tests {
 
             // make sure the store does not contain any PRSS info (currently stored under ID 1)
             let req_id = &RequestId::derive(&format!(
-                "PRSSSetup_Z128_ID_{PRSS_EPOCH_ID}_{}_{}",
-                DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD
+                "PRSSSetup_Z128_ID_{}_{}_{}",
+                PRSS_INIT_REQ_ID, DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD
             ))
             .unwrap();
             purge(None, None, &req_id.to_string(), DEFAULT_AMOUNT_PARTIES).await;
 
             let req_id = &RequestId::derive(&format!(
-                "PRSSSetup_Z64_ID_{PRSS_EPOCH_ID}_{}_{}",
-                DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD
+                "PRSSSetup_Z64_ID_{}_{}_{}",
+                PRSS_INIT_REQ_ID, DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD
             ))
             .unwrap();
             purge(None, None, &req_id.to_string(), DEFAULT_AMOUNT_PARTIES).await;

@@ -3,20 +3,15 @@ package kms.v1;
 
 // Initialization request for bootstrapping the threshold KMS.
 message InitRequest {
-  // Eventually the config will contain role assignment,
-  // this is needed for the threshold protocol.
-  Config config = 1;
-}
-
-message Config {
-  // TODO placeholder
+    // The 32 Byte / 256 Bit request ID of this request, without `0x` prefix.
+    RequestId request_id = 1;
 }
 
 // Placeholder response, when no content is needed
 message Empty {}
 
-// Simple response to return a 32 Byte / 256 Bit ID, to be used to retrieve the computed result
-// later on. This string does NOT contain a `0x` prefix.
+// Simple response to return a 32 Byte / 256 Bit ID, to be used to retrieve the
+// computed result later on. This string does NOT contain a `0x` prefix.
 message RequestId { string request_id = 1; }
 
 // The plaintext types that can be encrypted in a HTTPZ ciphertext.
@@ -103,8 +98,9 @@ enum KeySetCompressionConfig {
 
 // This message is returned if keygen has completed.
 // It is intentionally left empty,
-// we may extend it later with a signature on the preproc request ID potentially.
-message KeyGenPreprocResult { }
+// we may extend it later with a signature on the preproc request ID
+// potentially.
+message KeyGenPreprocResult {}
 
 // Request for generating new keys under a certain handle and return a URI where
 // they can be accessed.
@@ -116,14 +112,16 @@ message KeyGenRequest {
   // what was used in the preprocessing step.
   FheParameter params = 2;
 
-  // The 32 Byte / 256 Bit request ID that generated the preprocessing materials.
+  // The 32 Byte / 256 Bit request ID that generated the preprocessing
+  // materials.
   RequestId preproc_id = 3;
 
   // The EIP712 domain used for signing the response.
   Eip712DomainMsg domain = 4;
 
   // The keyset configuration that controls what kind of key to generate.
-  // It must match the keyset_config field in the preprocessing call with ID preproc_id.
+  // It must match the keyset_config field in the preprocessing call with ID
+  // preproc_id.
   KeySetConfig keyset_config = 5;
 
   // For certain keyset_config, additional information is needed,
@@ -132,17 +130,20 @@ message KeyGenRequest {
 }
 
 message KeyGenResult {
-  // The 32 Byte / 256 Bit ID of the key generation request, without `0x` prefix.
+  // The 32 Byte / 256 Bit ID of the key generation request, without `0x`
+  // prefix.
   RequestId request_id = 1;
-  // The results of the key generation, a map from key type (e.g. Public, Server, Sns key) to the signed key data.
+  // The results of the key generation, a map from key type (e.g. Public,
+  // Server, Sns key) to the signed key data.
   map<string, SignedPubDataHandle> key_results = 2;
 }
 
 // The result of generation of a public key
 message SignedPubDataHandle {
   // The key handle;
-  // This is a `SHA3-256` hash of the `tfhe::safe_serialization` of the underlying struct.
-  // This handle serves as the `URI` to locate the actual object in the `storage`.
+  // This is a `SHA3-256` hash of the `tfhe::safe_serialization` of the
+  // underlying struct. This handle serves as the `URI` to locate the actual
+  // object in the `storage`.
   string key_handle = 1;
   // Plain ECDSA Signature on the key handle.
   bytes signature = 2;
@@ -155,14 +156,16 @@ message SignedPubDataHandle {
 // it needs to match what the config reads out of the toml config files,
 // e.g., in default_centralized.toml.
 enum FheParameter {
-  // The default must be represented by 0. This is the default large and secure parameter set.
+  // The default must be represented by 0. This is the default large and secure
+  // parameter set.
   default = 0;
   // This is a smaller but insecure parameter set, used for testing.
   test = 1;
 }
 
 message CrsGenRequest {
-  // The 32 Byte / 256 Bit ID of the crs generation request, without `0x` prefix.
+  // The 32 Byte / 256 Bit ID of the crs generation request, without `0x`
+  // prefix.
   RequestId request_id = 1;
   FheParameter params = 2;
   // This is the maximum number of bits that can be proven,
@@ -173,7 +176,8 @@ message CrsGenRequest {
 }
 
 message CrsGenResult {
-  // The 32 Byte / 256 Bit ID of the crs generation request, without `0x` prefix.
+  // The 32 Byte / 256 Bit ID of the crs generation request, without `0x`
+  // prefix.
   RequestId request_id = 1;
   // The struct holding the signature and the handle of the CRS
   SignedPubDataHandle crs_results = 2;
@@ -210,12 +214,13 @@ message TypedCiphertext {
 }
 
 message DecryptionRequest {
-  // The 32 Byte / 256 Bit ID of the public decryption request, without `0x` prefix.
+  // The 32 Byte / 256 Bit ID of the public decryption request, without `0x`
+  // prefix.
   RequestId request_id = 1;
   // The one or many ciphertexts and corresponding types to decrypt
   repeated TypedCiphertext ciphertexts = 2;
-  // The 32 Byte / 256 Bit key id to use for decryption. This is the request_id used for key
-  // generation
+  // The 32 Byte / 256 Bit key id to use for decryption. This is the request_id
+  // used for key generation
   RequestId key_id = 3;
   Eip712DomainMsg domain = 4;
 }
@@ -268,15 +273,15 @@ message Eip712DomainMsg {
 }
 
 message ReencryptionRequest {
-  // The 32 Byte / 256 Bit ID of the user decryption request, without `0x` prefix.
-  // Future queries for the result must use this request ID.
+  // The 32 Byte / 256 Bit ID of the user decryption request, without `0x`
+  // prefix. Future queries for the result must use this request ID.
   RequestId request_id = 1;
 
   // The list of ciphertexts to reencrypt.
   repeated TypedCiphertext typed_ciphertexts = 2;
 
-  // The 32 Byte / 256 Bit key id to use for decryption. This is the request_id used for key
-  // generation
+  // The 32 Byte / 256 Bit key id to use for decryption. This is the request_id
+  // used for key generation
   RequestId key_id = 3;
 
   // The client's (blockchain wallet) address,
