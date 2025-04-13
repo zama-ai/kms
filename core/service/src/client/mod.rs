@@ -209,7 +209,17 @@ impl ParsedReencryptionRequest {
 }
 
 pub(crate) fn hex_decode_js_err(msg: &str) -> Result<Vec<u8>, JsError> {
-    hex::decode(msg).map_err(|e| JsError::new(&e.to_string()))
+    if msg.len() >= 2 {
+        if msg[0..2] == *"0x" {
+            hex::decode(&msg[2..]).map_err(|e| JsError::new(&e.to_string()))
+        } else {
+            hex::decode(msg).map_err(|e| JsError::new(&e.to_string()))
+        }
+    } else {
+        Err(JsError::new(
+            "cannot decode hex string with fewer than 2 characters",
+        ))
+    }
 }
 
 // we need this type because the json fields are hex-encoded
