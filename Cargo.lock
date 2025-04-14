@@ -2152,7 +2152,7 @@ dependencies = [
 
 [[package]]
 name = "cc-tests-utils"
-version = "0.11.0-rc6"
+version = "0.11.0-rc7"
 
 [[package]]
 name = "cexpr"
@@ -2351,7 +2351,7 @@ dependencies = [
 
 [[package]]
 name = "conf-trace"
-version = "0.11.0-rc6"
+version = "0.11.0-rc7"
 dependencies = [
  "anyhow",
  "axum",
@@ -4161,7 +4161,7 @@ dependencies = [
 
 [[package]]
 name = "kms"
-version = "0.11.0-rc6"
+version = "0.11.0-rc7"
 dependencies = [
  "aes",
  "aes-gcm-siv",
@@ -4239,7 +4239,7 @@ dependencies = [
 
 [[package]]
 name = "kms-backup"
-version = "0.11.0-rc6"
+version = "0.11.0-rc7"
 dependencies = [
  "aes-prng",
  "aws-lc-rs",
@@ -4252,7 +4252,7 @@ dependencies = [
 
 [[package]]
 name = "kms-connector"
-version = "0.11.0-rc6"
+version = "0.11.0-rc7"
 dependencies = [
  "alloy",
  "alloy-contract",
@@ -4306,7 +4306,7 @@ dependencies = [
 
 [[package]]
 name = "kms-core-client"
-version = "0.11.0-rc6"
+version = "0.11.0-rc7"
 dependencies = [
  "aes-prng",
  "alloy-primitives",
@@ -4344,7 +4344,7 @@ dependencies = [
 
 [[package]]
 name = "kms-grpc"
-version = "0.11.0-rc6"
+version = "0.11.0-rc7"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -7078,7 +7078,7 @@ dependencies = [
 
 [[package]]
 name = "test-utils"
-version = "0.11.0-rc6"
+version = "0.11.0-rc7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7249,7 +7249,7 @@ dependencies = [
 
 [[package]]
 name = "threshold-fhe"
-version = "0.11.0-rc6"
+version = "0.11.0-rc7"
 dependencies = [
  "aes",
  "aes-prng",
