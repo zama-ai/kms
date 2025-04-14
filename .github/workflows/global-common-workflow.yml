@@ -289,7 +289,7 @@ jobs:
   # - For other events: Runs multiple test suites in parallel with specific features
   prepare-matrix:
     needs: check-changes
-    if: needs.check-changes.outputs.changes-core-service == 'true' || github.ref == 'refs/heads/main'
+    if: needs.check-changes.outputs.changes-core-service == 'true' || github.ref == 'refs/heads/main' || needs.check-changes.outputs.changes-ci == 'true'
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
@@ -316,7 +316,7 @@ jobs:
     needs:
       - check-changes
       - prepare-matrix
-    if: needs.check-changes.outputs.changes-core-service == 'true' || github.ref == 'refs/heads/main'
+    if: needs.check-changes.outputs.changes-core-service == 'true' || github.ref == 'refs/heads/main' || needs.check-changes.outputs.changes-ci == 'true'
     strategy:
       matrix: ${{fromJson(needs.prepare-matrix.outputs.matrix)}}
     uses: ./.github/workflows/common-testing-big-instance.yml

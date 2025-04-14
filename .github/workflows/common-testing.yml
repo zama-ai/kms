@@ -94,9 +94,12 @@ jobs:
       # LFS files are needed for backward compatibility tests
       # Install git LFS before checkout does not seem possible on our self-hosted runners, so we
       # need to do it right after and then manually pull LFS files
+      - name: Apt-get update
+        run: |
+          sudo apt-get update
       - name: Install git-lfs
         run: |
-          sudo apt-get update && sudo apt-get -y install git-lfs
+          sudo apt-get -y install git-lfs
           git lfs pull
 
       - name: Setup Home
