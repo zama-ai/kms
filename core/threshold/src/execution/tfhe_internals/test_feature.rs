@@ -76,7 +76,7 @@ pub struct KeySet {
 }
 impl KeySet {
     pub fn get_raw_lwe_client_key(&self) -> LweSecretKey<Vec<u64>> {
-        let (inner_client_key, _, _, _) = self.client_key.clone().into_raw_parts();
+        let (inner_client_key, _, _, _, _) = self.client_key.clone().into_raw_parts();
         let short_client_key = inner_client_key.into_raw_parts();
         let (_glwe_secret_key, lwe_secret_key, _shortint_param) = short_client_key.into_raw_parts();
         lwe_secret_key
@@ -88,7 +88,7 @@ impl KeySet {
         // In the normal DKG the shares that correspond to the lwe private key
         // is copied to the encryption private key if the compact PKE parameters
         // don't exist.
-        let (_, compact_private_key, _, _) = self.client_key.clone().into_raw_parts();
+        let (_, compact_private_key, _, _, _) = self.client_key.clone().into_raw_parts();
         if let Some(inner) = compact_private_key {
             let raw_parts = inner.0.into_raw_parts();
             raw_parts.into_raw_parts().0
@@ -98,7 +98,7 @@ impl KeySet {
     }
 
     pub fn get_raw_compression_client_key(&self) -> Option<GlweSecretKey<Vec<u64>>> {
-        let (_, _, compression_sk, _) = self.client_key.clone().into_raw_parts();
+        let (_, _, compression_sk, _, _) = self.client_key.clone().into_raw_parts();
         if let Some(inner) = compression_sk {
             let raw_parts = inner.into_raw_parts();
             Some(raw_parts.post_packing_ks_key)
@@ -108,7 +108,7 @@ impl KeySet {
     }
 
     pub fn get_raw_glwe_client_key(&self) -> GlweSecretKey<Vec<u64>> {
-        let (inner_client_key, _, _, _) = self.client_key.clone().into_raw_parts();
+        let (inner_client_key, _, _, _, _) = self.client_key.clone().into_raw_parts();
         let short_client_key = inner_client_key.into_raw_parts();
         let (glwe_secret_key, _lwe_secret_key, _shortint_param) = short_client_key.into_raw_parts();
         glwe_secret_key
@@ -246,6 +246,7 @@ pub fn to_hl_client_key(
         sck.into(),
         dedicated_compact_private_key,
         compression_key,
+        None,
         tfhe::Tag::default(),
     )
 }
@@ -725,7 +726,7 @@ pub fn generate_large_keys<R: Rng + CryptoRng>(
     let client_output_key = SnsClientKey::new(input_param, output_lwe_secret_key_out);
 
     // Generate conversion key
-    let (short_sk, _compact_privkey, _compression_privkey, _tag) =
+    let (short_sk, _compact_privkey, _compression_privkey, _noise_squashing, _tag) =
         input_sk.clone().into_raw_parts();
     let (_raw_input_glwe_secret_key, raw_input_lwe_secret_key, _short_param) =
         short_sk.into_raw_parts().into_raw_parts();
@@ -934,7 +935,7 @@ pub fn run_decompression_test(
         Some(inner) => inner,
         None => &keyset1_client_key.generate_server_key(),
     };
-    let (_, _, _, decompression_key1, _) = server_key1.clone().into_raw_parts();
+    let (_, _, _, decompression_key1, _, _) = server_key1.clone().into_raw_parts();
     let decompression_key1 = decompression_key1.unwrap().into_raw_parts();
     assert_eq!(
         decompression_key1.blind_rotate_key.glwe_size(),
@@ -1005,7 +1006,7 @@ mod tests {
     fn hl_sk_key_conversion() {
         let config = ConfigBuilder::default().build();
         let (client_key, _server_key) = generate_keys(config);
-        let (raw_sk, _compact_privkey, _compression_privkey, _tag) =
+        let (raw_sk, _compact_privkey, _compression_privkey, _noise_squashing_key, _tag) =
             client_key.clone().into_raw_parts();
         let (glwe_key, lwe_key, params) = raw_sk.into_raw_parts().into_raw_parts();
 

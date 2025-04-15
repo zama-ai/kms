@@ -14,16 +14,18 @@ use alloy_sol_types::SolStruct;
 use bincode::{deserialize, serialize};
 use itertools::Itertools;
 use kms_grpc::kms::v1::{
-    FheType, ReencryptionRequest, ReencryptionResponse, ReencryptionResponsePayload, RequestId,
+    ReencryptionRequest, ReencryptionResponse, ReencryptionResponsePayload, RequestId,
     TypedCiphertext, TypedPlaintext,
 };
 use kms_grpc::rpc_types::{
-    alloy_to_protobuf_domain, FheTypeResponse, MetaResponse, UserDecryptionLinker,
+    alloy_to_protobuf_domain, fhe_types_to_num_blocks, FheTypeResponse, MetaResponse,
+    UserDecryptionLinker,
 };
 use rand::SeedableRng;
 use std::collections::HashSet;
 use std::num::Wrapping;
 use tfhe::shortint::ClassicPBSParameters;
+use tfhe::FheTypes;
 use threshold_fhe::algebra::base_ring::{Z128, Z64};
 use threshold_fhe::algebra::error_correction::MemoizedExceptionals;
 use threshold_fhe::algebra::galois_rings::degree_4::ResiduePolyF4;
@@ -73,40 +75,41 @@ pub mod js_api;
 /// Helper method for combining reconstructed messages after decryption.
 fn decrypted_blocks_to_plaintext(
     params: &ClassicPBSParameters,
-    fhe_type: FheType,
+    fhe_type: FheTypes,
     recon_blocks: Vec<Z128>,
 ) -> anyhow::Result<TypedPlaintext> {
     let bits_in_block = params.message_modulus_log();
     let res_pt = match fhe_type {
-        FheType::Euint2048 => {
+        FheTypes::Uint2048 => {
             combine_decryptions::<tfhe::integer::bigint::U2048>(bits_in_block, recon_blocks)
                 .map(TypedPlaintext::from_u2048)
         }
-        FheType::Euint1024 => {
+        FheTypes::Uint1024 => {
             combine_decryptions::<tfhe::integer::bigint::U1024>(bits_in_block, recon_blocks)
                 .map(TypedPlaintext::from_u1024)
         }
-        FheType::Euint512 => {
+        FheTypes::Uint512 => {
             combine_decryptions::<tfhe::integer::bigint::U512>(bits_in_block, recon_blocks)
                 .map(TypedPlaintext::from_u512)
         }
-        FheType::Euint256 => {
+        FheTypes::Uint256 => {
             combine_decryptions::<tfhe::integer::U256>(bits_in_block, recon_blocks)
                 .map(TypedPlaintext::from_u256)
         }
-        FheType::Euint160 => {
+        FheTypes::Uint160 => {
             combine_decryptions::<tfhe::integer::U256>(bits_in_block, recon_blocks)
                 .map(TypedPlaintext::from_u160)
         }
-        FheType::Euint128 => combine_decryptions::<u128>(bits_in_block, recon_blocks)
+        FheTypes::Uint128 => combine_decryptions::<u128>(bits_in_block, recon_blocks)
             .map(|x| TypedPlaintext::new(x, fhe_type)),
-        FheType::Ebool
-        | FheType::Euint4
-        | FheType::Euint8
-        | FheType::Euint16
-        | FheType::Euint32
-        | FheType::Euint64 => combine_decryptions::<u64>(bits_in_block, recon_blocks)
+        FheTypes::Bool
+        | FheTypes::Uint4
+        | FheTypes::Uint8
+        | FheTypes::Uint16
+        | FheTypes::Uint32
+        | FheTypes::Uint64 => combine_decryptions::<u64>(bits_in_block, recon_blocks)
             .map(|x| TypedPlaintext::new(x as u128, fhe_type)),
+        unsupported_fhe_type => anyhow::bail!("Unsupported fhe_type {unsupported_fhe_type:?}"),
     };
     res_pt.map_err(|error| anyhow_error_and_log(format!("Panicked in combining {error}")))
 }
@@ -156,7 +159,7 @@ pub struct TestingReencryptionTranscript {
     degree: u32,
     params: DKGParams,
     // example pt and ct
-    fhe_types: Vec<FheType>,
+    fhe_types: Vec<i32>,
     pts: Vec<Vec<u8>>,
     cts: Vec<Vec<u8>>,
     // request
@@ -1631,12 +1634,13 @@ impl Client {
                         reconstruct_packed_message(
                             Some(decrypted_blocks),
                             &pbs_params,
-                            fhe_type.to_num_blocks(
+                            fhe_types_to_num_blocks(
+                                fhe_type,
                                 &self
                                     .params
                                     .get_params_basics_handle()
                                     .to_classic_pbs_parameters(),
-                            ),
+                            )?,
                         )?,
                     ));
                 }
@@ -1677,7 +1681,7 @@ impl Client {
     fn insecure_threshold_reencryption_resp_to_blocks<Z: BaseRing>(
         agg_resp: &[ReencryptionResponse],
         client_keys: &SigncryptionPair,
-    ) -> anyhow::Result<Vec<(FheType, Vec<ResiduePolyF4<Z>>)>>
+    ) -> anyhow::Result<Vec<(FheTypes, Vec<ResiduePolyF4<Z>>)>>
     where
         ResiduePolyF4<Z>: ErrorCorrect + MemoizedExceptionals,
     {
@@ -1709,7 +1713,7 @@ impl Client {
                 .as_ref()
                 .ok_or(anyhow::anyhow!("payload is empty"))?
                 .signcrypted_ciphertexts[batch_i]
-                .fhe_type();
+                .fhe_type()?;
 
             // Trust all responses have all expected blocks
             for cur_resp in agg_resp {
@@ -1783,12 +1787,13 @@ impl Client {
             let recon_blocks = reconstruct_packed_message(
                 Some(decrypted_blocks),
                 &pbs_params,
-                fhe_type.to_num_blocks(
+                fhe_types_to_num_blocks(
+                    fhe_type,
                     &self
                         .params
                         .get_params_basics_handle()
                         .to_classic_pbs_parameters(),
-                ),
+                )?,
             )?;
 
             out.push(decrypted_blocks_to_plaintext(
@@ -1846,7 +1851,7 @@ impl Client {
         &self,
         agg_resp: &[ReencryptionResponsePayload],
         client_keys: &SigncryptionPair,
-    ) -> anyhow::Result<Vec<(FheType, Vec<ShamirSharings<ResiduePolyF4<Z>>>)>> {
+    ) -> anyhow::Result<Vec<(FheTypes, Vec<ShamirSharings<ResiduePolyF4<Z>>>)>> {
         let batch_count = agg_resp
             .first()
             .ok_or(anyhow::anyhow!("response payloads is empty"))?
@@ -1856,13 +1861,14 @@ impl Client {
         let mut out = vec![];
         for batch_i in 0..batch_count {
             // taking agg_resp[0] is safe since batch_count before exists
-            let fhe_type = agg_resp[0].signcrypted_ciphertexts[batch_i].fhe_type();
-            let num_blocks = fhe_type.to_num_blocks(
+            let fhe_type = agg_resp[0].signcrypted_ciphertexts[batch_i].fhe_type()?;
+            let num_blocks = fhe_types_to_num_blocks(
+                fhe_type,
                 &self
                     .params
                     .get_params_basics_handle()
                     .to_classic_pbs_parameters(),
-            );
+            )?;
             let mut sharings = Vec::new();
             for _i in 0..num_blocks {
                 sharings.push(ShamirSharings::new());
@@ -2615,12 +2621,12 @@ pub(crate) mod tests {
     #[cfg(feature = "wasm_tests")]
     use kms_grpc::kms::v1::TypedPlaintext;
     use kms_grpc::kms::v1::{
-        Empty, FheParameter, FheType, InitRequest, KeySetAddedInfo, KeySetConfig, KeySetType,
+        Empty, FheParameter, InitRequest, KeySetAddedInfo, KeySetConfig, KeySetType,
         ReencryptionResponse, RequestId, TypedCiphertext,
     };
     use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
     use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
-    use kms_grpc::rpc_types::PrivDataType;
+    use kms_grpc::rpc_types::{fhe_types_to_num_blocks, PrivDataType};
     use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
     use serial_test::serial;
     use std::collections::{hash_map::Entry, HashMap};
@@ -2631,8 +2637,8 @@ pub(crate) mod tests {
     use tfhe::integer::compression_keys::DecompressionKey;
     use tfhe::prelude::ParameterSetConformant;
     use tfhe::zk::CompactPkeCrs;
-    use tfhe::ProvenCompactCiphertextList;
     use tfhe::Tag;
+    use tfhe::{FheTypes, ProvenCompactCiphertextList};
     use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     use threshold_fhe::execution::runtime::party::Role;
@@ -3079,7 +3085,7 @@ pub(crate) mod tests {
             .await;
             let ctt = TypedCiphertext {
                 ciphertext: ct,
-                fhe_type: fhe_type.into(),
+                fhe_type: fhe_type as i32,
                 ciphertext_format: ct_format.into(),
                 external_handle: i.to_be_bytes().to_vec(),
             };
@@ -4118,7 +4124,7 @@ pub(crate) mod tests {
                 compute_cipher_from_stored_key(None, msg, key_id, encryption_config).await;
             let ctt = TypedCiphertext {
                 ciphertext: ct,
-                fhe_type: fhe_type.into(),
+                fhe_type: fhe_type as i32,
                 ciphertext_format: ct_format.into(),
                 external_handle: i.to_be_bytes().to_vec(),
             };
@@ -4226,7 +4232,7 @@ pub(crate) mod tests {
 
             // check that the plaintexts are correct
             for (i, plaintext) in received_plaintexts.iter().enumerate() {
-                assert_eq!(FheType::from(msgs[i]), plaintext.fhe_type());
+                assert_eq!(msgs[i].fhe_type(), plaintext.fhe_type().unwrap());
 
                 match msgs[i] {
                     TestingPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
@@ -4434,7 +4440,7 @@ pub(crate) mod tests {
             .map(|j| {
                 let typed_ciphertexts = vec![TypedCiphertext {
                     ciphertext: ct.clone(),
-                    fhe_type: fhe_type.into(),
+                    fhe_type: fhe_type as i32,
                     ciphertext_format: ct_format.into(),
                     external_handle: j.to_be_bytes().to_vec(),
                 }];
@@ -4528,7 +4534,7 @@ pub(crate) mod tests {
                     client_sk: internal_client.client_sk.clone(),
                     degree: 0,
                     params: internal_client.params,
-                    fhe_types: vec![FheType::from(msg)],
+                    fhe_types: vec![msg.fhe_type() as i32],
                     pts: vec![TypedPlaintext::from(msg).bytes.clone()],
                     cts: reqs[0]
                         .0
@@ -4597,7 +4603,7 @@ pub(crate) mod tests {
             };
 
             for plaintext in plaintexts {
-                assert_eq!(FheType::from(msg), plaintext.fhe_type());
+                assert_eq!(msg.fhe_type(), plaintext.fhe_type().unwrap());
                 match msg {
                     TestingPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
                     TestingPlaintext::U4(x) => assert_eq!(x, plaintext.as_u4()),
@@ -4835,7 +4841,7 @@ pub(crate) mod tests {
                 compute_cipher_from_stored_key(None, msg, key_id, enc_config).await;
             let ctt = TypedCiphertext {
                 ciphertext: ct,
-                fhe_type: fhe_type.into(),
+                fhe_type: fhe_type as i32,
                 ciphertext_format: ct_format.into(),
                 external_handle: i.to_be_bytes().to_vec(),
             };
@@ -4954,7 +4960,7 @@ pub(crate) mod tests {
 
             // check that the plaintexts are correct
             for (i, plaintext) in received_plaintexts.iter().enumerate() {
-                assert_eq!(FheType::from(msgs[i]), FheType::from(plaintext.clone()));
+                assert_eq!(msgs[i].fhe_type(), plaintext.fhe_type().unwrap());
 
                 match msgs[i] {
                     TestingPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
@@ -5223,7 +5229,7 @@ pub(crate) mod tests {
                 let request_id = RequestId::derive(&format!("TEST_REENC_ID_{j}")).unwrap();
                 let typed_ciphertexts = vec![TypedCiphertext {
                     ciphertext: ct.clone(),
-                    fhe_type: fhe_type.into(),
+                    fhe_type: fhe_type as i32,
                     ciphertext_format: ct_format.into(),
                     external_handle: j.to_be_bytes().to_vec(),
                 }];
@@ -5349,7 +5355,7 @@ pub(crate) mod tests {
                     client_sk: internal_client.client_sk.clone(),
                     degree: threshold as u32,
                     params: internal_client.params,
-                    fhe_types: vec![FheType::from(msg)],
+                    fhe_types: vec![msg.fhe_type() as i32],
                     pts: vec![TypedPlaintext::from(msg).bytes.clone()],
                     cts: reqs[0]
                         .0
@@ -5410,7 +5416,7 @@ pub(crate) mod tests {
                     .unwrap()
             };
             for plaintext in plaintexts {
-                assert_eq!(FheType::from(msg), FheType::from(plaintext.clone()));
+                assert_eq!(msg.fhe_type(), plaintext.fhe_type().unwrap());
                 match msg {
                     TestingPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
                     TestingPlaintext::U4(x) => assert_eq!(x, plaintext.as_u4()),
@@ -5459,7 +5465,7 @@ pub(crate) mod tests {
         )
         .await;
         let ct = Vec::from([1_u8; 100000]);
-        let fhe_type = FheType::Euint32;
+        let fhe_type = FheTypes::Uint32;
         let ct_format = kms_grpc::kms::v1::CiphertextFormat::default();
         let client_address = alloy_primitives::Address::from_public_key(keys.client_pk.pk());
         let mut internal_client = Client::new(
@@ -5472,7 +5478,7 @@ pub(crate) mod tests {
         let request_id = RequestId::derive("TEST_REENC_ID_123").unwrap();
         let typed_ciphertexts = vec![TypedCiphertext {
             ciphertext: ct,
-            fhe_type: fhe_type.into(),
+            fhe_type: fhe_type as i32,
             ciphertext_format: ct_format.into(),
             external_handle: vec![123],
         }];
@@ -5519,21 +5525,36 @@ pub(crate) mod tests {
             .get_params_basics_handle()
             .to_classic_pbs_parameters();
         // 2 bits per block, using Ebool as internal representation
-        assert_eq!(FheType::Ebool.to_num_blocks(params), 1);
+        assert_eq!(fhe_types_to_num_blocks(FheTypes::Bool, params).unwrap(), 1);
         // 2 bits per block, using Euint4 as internal representation
-        assert_eq!(FheType::Euint4.to_num_blocks(params), 2);
+        assert_eq!(fhe_types_to_num_blocks(FheTypes::Uint4, params).unwrap(), 2);
         // 2 bits per block
-        assert_eq!(FheType::Euint8.to_num_blocks(params), 4);
+        assert_eq!(fhe_types_to_num_blocks(FheTypes::Uint8, params).unwrap(), 4);
         // 2 bits per block
-        assert_eq!(FheType::Euint16.to_num_blocks(params), 8);
+        assert_eq!(
+            fhe_types_to_num_blocks(FheTypes::Uint16, params).unwrap(),
+            8
+        );
         // 2 bits per block
-        assert_eq!(FheType::Euint32.to_num_blocks(params), 16);
+        assert_eq!(
+            fhe_types_to_num_blocks(FheTypes::Uint32, params).unwrap(),
+            16
+        );
         // 2 bits per block
-        assert_eq!(FheType::Euint64.to_num_blocks(params), 32);
+        assert_eq!(
+            fhe_types_to_num_blocks(FheTypes::Uint64, params).unwrap(),
+            32
+        );
         // 2 bits per block
-        assert_eq!(FheType::Euint128.to_num_blocks(params), 64);
+        assert_eq!(
+            fhe_types_to_num_blocks(FheTypes::Uint128, params).unwrap(),
+            64
+        );
         // 2 bits per block
-        assert_eq!(FheType::Euint160.to_num_blocks(params), 80);
+        assert_eq!(
+            fhe_types_to_num_blocks(FheTypes::Uint160, params).unwrap(),
+            80
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -5644,7 +5665,7 @@ pub(crate) mod tests {
 
     fn check_conformance(server_key: tfhe::ServerKey, client_key: tfhe::ClientKey) {
         let pbs_params = client_key.computation_parameters();
-        let (server_key, _, _, _, _) = server_key.into_raw_parts();
+        let (server_key, _, _, _, _, _) = server_key.into_raw_parts();
         let server_key = server_key.into_raw_parts();
         let max_degree = server_key.max_degree; // we don't really check the max degree
         assert!(server_key.is_conformant(&(pbs_params, max_degree)));
@@ -5660,7 +5681,7 @@ pub(crate) mod tests {
                 let zeros_ct = modulus_switch_noise_reduction_key
                     .unwrap()
                     .modulus_switch_zeros;
-                let (client_key, _compact_client_key, _compression_key, _tag) =
+                let (client_key, _compact_client_key, _compression_key, _noise_squashing_key, _tag) =
                     client_key.into_raw_parts();
 
                 // We need to make a reference ciphertext to convert

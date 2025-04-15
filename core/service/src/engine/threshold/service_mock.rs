@@ -19,6 +19,7 @@ use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint
 use kms_grpc::rpc_types::PubDataType;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tfhe::FheTypes;
 use tokio::sync::RwLock;
 use tokio_util::task::TaskTracker;
 use tonic::server::NamedService;
@@ -138,7 +139,7 @@ impl Reencryptor for DummyReencryptor {
     ) -> Result<Response<ReencryptionResponse>, Status> {
         let signcrypted_ciphertexts = vec![TypedSigncryptedCiphertext {
             signcrypted_ciphertext: "signcrypted_ciphertexts".as_bytes().to_vec(),
-            fhe_type: kms_grpc::kms::v1::FheType::Euint8.into(),
+            fhe_type: FheTypes::Uint8 as i32,
             external_handle: vec![1, 2, 3],
         }];
         let payload = ReencryptionResponsePayload {
@@ -176,7 +177,7 @@ impl Decryptor for DummyDecryptor {
             payload: Some(DecryptionResponsePayload {
                 verification_key: vec![],
                 digest: "dummy digest".as_bytes().to_vec(),
-                plaintexts: vec![TypedPlaintext::new(42, kms_grpc::kms::v1::FheType::Euint8)],
+                plaintexts: vec![TypedPlaintext::new(42, FheTypes::Uint8)],
                 external_signature: Some(vec![23_u8; 65]),
             }),
         }))

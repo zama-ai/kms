@@ -18,7 +18,7 @@ use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
 use k256::ecdsa::SigningKey;
 use kms_grpc::kms::v1::{
-    CiphertextFormat, FheParameter, FheType, ReencryptionResponsePayload, SignedPubDataHandle,
+    CiphertextFormat, FheParameter, ReencryptionResponsePayload, SignedPubDataHandle,
     TypedPlaintext,
 };
 use kms_grpc::rpc_types::{
@@ -32,11 +32,11 @@ use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::integer::IntegerCiphertext;
 use tfhe::named::Named;
 use tfhe::safe_serialization::safe_deserialize;
-use tfhe::Versionize;
 use tfhe::{
     FheBool, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32,
     FheUint4, FheUint512, FheUint64, FheUint8,
 };
+use tfhe::{FheTypes, Versionize};
 use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::execution::endpoints::keygen::FhePubKeySet;
 #[cfg(feature = "non-wasm")]
@@ -76,6 +76,12 @@ impl Named for KmsFheKeyHandles {
 impl KmsFheKeyHandles {
     /// Compute key handles for the public key materials.
     /// Note that the handles include a signature on the versionized keys.
+    ///
+    /// This function should only be used with keys that are freshly generate.
+    /// It should not be used for keys that were generated in the past
+    /// because a version upgrade in any key material will cause the output
+    /// of `compute_info` to be a different value, and this will lead to
+    /// signature verification errors.
     pub fn new(
         sig_key: &PrivateSigKey,
         client_key: FhePrivateKey,
@@ -192,13 +198,13 @@ macro_rules! deserialize_to_low_level_helper {
 }
 
 pub fn deserialize_to_low_level(
-    fhe_type: &FheType,
+    fhe_type: FheTypes,
     ct_format: CiphertextFormat,
     serialized_high_level: &[u8],
     decompression_key: &Option<DecompressionKey>,
 ) -> anyhow::Result<LowLevelCiphertext> {
     let radix_ct = match fhe_type {
-        FheType::Ebool => match ct_format {
+        FheTypes::Bool => match ct_format {
             CiphertextFormat::SmallCompressed => {
                 let hl_ct: FheBool = decompression::tfhe_safe_deserialize_and_uncompress::<FheBool>(
                     decompression_key
@@ -227,7 +233,7 @@ pub fn deserialize_to_low_level(
                 LowLevelCiphertext::Big(r)
             }
         },
-        FheType::Euint4 => {
+        FheTypes::Uint4 => {
             deserialize_to_low_level_helper!(
                 FheUint4,
                 ct_format,
@@ -235,7 +241,7 @@ pub fn deserialize_to_low_level(
                 decompression_key
             )
         }
-        FheType::Euint8 => {
+        FheTypes::Uint8 => {
             deserialize_to_low_level_helper!(
                 FheUint8,
                 ct_format,
@@ -243,7 +249,7 @@ pub fn deserialize_to_low_level(
                 decompression_key
             )
         }
-        FheType::Euint16 => {
+        FheTypes::Uint16 => {
             deserialize_to_low_level_helper!(
                 FheUint16,
                 ct_format,
@@ -251,7 +257,7 @@ pub fn deserialize_to_low_level(
                 decompression_key
             )
         }
-        FheType::Euint32 => {
+        FheTypes::Uint32 => {
             deserialize_to_low_level_helper!(
                 FheUint32,
                 ct_format,
@@ -259,7 +265,7 @@ pub fn deserialize_to_low_level(
                 decompression_key
             )
         }
-        FheType::Euint64 => {
+        FheTypes::Uint64 => {
             deserialize_to_low_level_helper!(
                 FheUint64,
                 ct_format,
@@ -267,7 +273,7 @@ pub fn deserialize_to_low_level(
                 decompression_key
             )
         }
-        FheType::Euint128 => {
+        FheTypes::Uint128 => {
             deserialize_to_low_level_helper!(
                 FheUint128,
                 ct_format,
@@ -275,7 +281,7 @@ pub fn deserialize_to_low_level(
                 decompression_key
             )
         }
-        FheType::Euint160 => {
+        FheTypes::Uint160 => {
             deserialize_to_low_level_helper!(
                 FheUint160,
                 ct_format,
@@ -283,7 +289,7 @@ pub fn deserialize_to_low_level(
                 decompression_key
             )
         }
-        FheType::Euint256 => {
+        FheTypes::Uint256 => {
             deserialize_to_low_level_helper!(
                 FheUint256,
                 ct_format,
@@ -291,7 +297,7 @@ pub fn deserialize_to_low_level(
                 decompression_key
             )
         }
-        FheType::Euint512 => {
+        FheTypes::Uint512 => {
             deserialize_to_low_level_helper!(
                 FheUint512,
                 ct_format,
@@ -299,7 +305,7 @@ pub fn deserialize_to_low_level(
                 decompression_key
             )
         }
-        FheType::Euint1024 => {
+        FheTypes::Uint1024 => {
             deserialize_to_low_level_helper!(
                 FheUint1024,
                 ct_format,
@@ -307,13 +313,16 @@ pub fn deserialize_to_low_level(
                 decompression_key
             )
         }
-        FheType::Euint2048 => {
+        FheTypes::Uint2048 => {
             deserialize_to_low_level_helper!(
                 FheUint2048,
                 ct_format,
                 serialized_high_level,
                 decompression_key
             )
+        }
+        unsupported_fhe_type => {
+            anyhow::bail!("Unsupported fhe_type: {:?}", unsupported_fhe_type);
         }
     };
     Ok(radix_ct)
@@ -513,81 +522,83 @@ pub fn abi_encode_plaintexts(ptxts: &[TypedPlaintext]) -> Bytes {
     results.push(DynSolValue::Uint(U256::from(42), 256)); // requestID placeholder
 
     for clear_text in ptxts.iter() {
-        match clear_text.fhe_type() {
-            FheType::Euint512 => {
-                if clear_text.bytes.len() != 64 {
-                    error!(
-                        "Invalid length for Euint512: expected 64, got {}",
-                        clear_text.bytes.len()
-                    );
-                    results.push(DynSolValue::Bytes(vec![0u8; 64]));
-                } else {
-                    let arr: [u8; 64] = match clear_text.bytes.as_slice().try_into() {
-                        Ok(arr) => arr,
-                        Err(e) => {
-                            error!("Failed to convert bytes to array for Euint512: {}", e);
-                            [0u8; 64]
-                        }
-                    };
-                    let value = Uint::<512, 8>::from_le_bytes(arr);
-                    let bytes: [u8; 64] = value.to_be_bytes();
-                    results.push(DynSolValue::Bytes(bytes.to_vec()));
+        if let Ok(fhe_type) = clear_text.fhe_type() {
+            match fhe_type {
+                FheTypes::Uint512 => {
+                    if clear_text.bytes.len() != 64 {
+                        error!(
+                            "Invalid length for Euint512: expected 64, got {}",
+                            clear_text.bytes.len()
+                        );
+                        results.push(DynSolValue::Bytes(vec![0u8; 64]));
+                    } else {
+                        let arr: [u8; 64] = match clear_text.bytes.as_slice().try_into() {
+                            Ok(arr) => arr,
+                            Err(e) => {
+                                error!("Failed to convert bytes to array for Euint512: {}", e);
+                                [0u8; 64]
+                            }
+                        };
+                        let value = Uint::<512, 8>::from_le_bytes(arr);
+                        let bytes: [u8; 64] = value.to_be_bytes();
+                        results.push(DynSolValue::Bytes(bytes.to_vec()));
+                    }
                 }
-            }
-            FheType::Euint1024 => {
-                if clear_text.bytes.len() != 128 {
-                    error!(
-                        "Invalid length for Euint1024: expected 128, got {}",
-                        clear_text.bytes.len()
-                    );
-                    results.push(DynSolValue::Bytes(vec![0u8; 128]));
-                } else {
-                    let arr: [u8; 128] = match clear_text.bytes.as_slice().try_into() {
-                        Ok(arr) => arr,
-                        Err(e) => {
-                            error!("Failed to convert bytes to array for Euint1024: {}", e);
-                            [0u8; 128]
-                        }
-                    };
-                    let value = Uint::<1024, 16>::from_le_bytes(arr);
-                    let bytes: [u8; 128] = value.to_be_bytes();
-                    results.push(DynSolValue::Bytes(bytes.to_vec()));
+                FheTypes::Uint1024 => {
+                    if clear_text.bytes.len() != 128 {
+                        error!(
+                            "Invalid length for Euint1024: expected 128, got {}",
+                            clear_text.bytes.len()
+                        );
+                        results.push(DynSolValue::Bytes(vec![0u8; 128]));
+                    } else {
+                        let arr: [u8; 128] = match clear_text.bytes.as_slice().try_into() {
+                            Ok(arr) => arr,
+                            Err(e) => {
+                                error!("Failed to convert bytes to array for Euint1024: {}", e);
+                                [0u8; 128]
+                            }
+                        };
+                        let value = Uint::<1024, 16>::from_le_bytes(arr);
+                        let bytes: [u8; 128] = value.to_be_bytes();
+                        results.push(DynSolValue::Bytes(bytes.to_vec()));
+                    }
                 }
-            }
-            FheType::Euint2048 => {
-                if clear_text.bytes.len() != 256 {
-                    error!(
-                        "Invalid length for Euint2048: expected 256, got {}",
-                        clear_text.bytes.len()
-                    );
-                    results.push(DynSolValue::Bytes(vec![0u8; 256]));
-                } else {
-                    let arr: [u8; 256] = match clear_text.bytes.as_slice().try_into() {
-                        Ok(arr) => arr,
-                        Err(e) => {
-                            error!("Failed to convert bytes to array for Euint2048: {}", e);
-                            [0u8; 256]
-                        }
-                    };
-                    let value = Uint::<2048, 32>::from_le_bytes(arr);
-                    let bytes: [u8; 256] = value.to_be_bytes();
-                    results.push(DynSolValue::Bytes(bytes.to_vec()));
+                FheTypes::Uint2048 => {
+                    if clear_text.bytes.len() != 256 {
+                        error!(
+                            "Invalid length for Euint2048: expected 256, got {}",
+                            clear_text.bytes.len()
+                        );
+                        results.push(DynSolValue::Bytes(vec![0u8; 256]));
+                    } else {
+                        let arr: [u8; 256] = match clear_text.bytes.as_slice().try_into() {
+                            Ok(arr) => arr,
+                            Err(e) => {
+                                error!("Failed to convert bytes to array for Euint2048: {}", e);
+                                [0u8; 256]
+                            }
+                        };
+                        let value = Uint::<2048, 32>::from_le_bytes(arr);
+                        let bytes: [u8; 256] = value.to_be_bytes();
+                        results.push(DynSolValue::Bytes(bytes.to_vec()));
+                    }
                 }
-            }
-            _ => {
-                // For other types, convert to U256
-                if clear_text.bytes.len() > 32 {
-                    error!(
-                        "Byte length too large for U256: got {}, max is 32",
-                        clear_text.bytes.len()
-                    );
-                    results.push(DynSolValue::Uint(U256::from(0), 256));
-                } else {
-                    // Pad the bytes to 32 bytes for U256 (assuming little-endian input)
-                    let mut padded = [0u8; 32];
-                    padded[..clear_text.bytes.len()].copy_from_slice(&clear_text.bytes);
-                    let value = U256::from_le_bytes(padded);
-                    results.push(DynSolValue::Uint(value, 256));
+                _ => {
+                    // For other types, convert to U256
+                    if clear_text.bytes.len() > 32 {
+                        error!(
+                            "Byte length too large for U256: got {}, max is 32",
+                            clear_text.bytes.len()
+                        );
+                        results.push(DynSolValue::Uint(U256::from(0), 256));
+                    } else {
+                        // Pad the bytes to 32 bytes for U256 (assuming little-endian input)
+                        let mut padded = [0u8; 32];
+                        padded[..clear_text.bytes.len()].copy_from_slice(&clear_text.bytes);
+                        let value = U256::from_le_bytes(padded);
+                        results.push(DynSolValue::Uint(value, 256));
+                    }
                 }
             }
         }
@@ -737,9 +748,16 @@ pub(crate) fn preproc_proto_to_keyset_config(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::TypedPlaintext;
+    use crate::{consts::TEST_PARAM, engine::centralized::central_kms::generate_fhe_keys};
+
+    use super::{deserialize_to_low_level, gen_sig_keys, TypedPlaintext};
     use aes_prng::AesRng;
+    use kms_grpc::kms::v1::CiphertextFormat;
     use rand::{RngCore, SeedableRng};
+    use tfhe::{safe_serialization::safe_serialize, FheTypes, FheUint32};
+    use threshold_fhe::execution::{
+        keyset_config::StandardKeySetConfig, tfhe_internals::utils::expanded_encrypt,
+    };
 
     #[test]
     fn sunshine_plaintext_as_u256() {
@@ -749,14 +767,14 @@ pub(crate) mod tests {
 
         let plaintext = TypedPlaintext {
             bytes: bytes.to_vec(),
-            fhe_type: kms_grpc::kms::v1::FheType::Euint160 as i32,
+            fhe_type: FheTypes::Uint160 as i32,
         };
         // Check the value is greater than 2^128
         assert!(plaintext.as_u160() > tfhe::integer::U256::from((0, 1)));
         assert!(plaintext.as_u256() > tfhe::integer::U256::from((0, 1)));
         // Sanity check the internal values - at least one byte must be different from zero
         assert!(bytes.iter().any(|&b| b != 0));
-        assert_eq!(plaintext.fhe_type(), kms_grpc::kms::v1::FheType::Euint160);
+        assert_eq!(plaintext.fhe_type().unwrap(), FheTypes::Uint160);
         // Check consistent representations
         assert!(bytes[0] % 2 == plaintext.as_bool() as u8);
         assert_eq!(plaintext.as_u4(), bytes[0] % 16);
@@ -901,5 +919,176 @@ pub(crate) mod tests {
 
         let hexbytes_val_mx = hex::encode(bytes_val_mx);
         assert_eq!(reference_val_mx, hexbytes_val_mx.as_str());
+    }
+
+    #[test]
+    fn test_deserialize_ciphertext_wrong_type() {
+        // we just use small ciphertexts for these tests
+        let mut rng = AesRng::seed_from_u64(100);
+        let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
+        let (pubkeyset, _sk) = generate_fhe_keys(
+            &sig_sk,
+            TEST_PARAM,
+            StandardKeySetConfig::default(),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let msg = 32u32;
+        tfhe::set_server_key(pubkeyset.server_key);
+        let ct: FheUint32 = expanded_encrypt(&pubkeyset.public_key, msg, 32).unwrap();
+
+        let mut ct_buf = Vec::new();
+        safe_serialize(&ct, &mut ct_buf, kms_grpc::rpc_types::SAFE_SER_SIZE_LIMIT).unwrap();
+
+        // use the wrong type
+        assert!(deserialize_to_low_level(
+            FheTypes::Bool,
+            CiphertextFormat::SmallExpanded,
+            &ct_buf,
+            &None,
+        )
+        .is_err());
+
+        // should pass with the correct type
+        assert!(deserialize_to_low_level(
+            FheTypes::Uint32,
+            CiphertextFormat::SmallExpanded,
+            &ct_buf,
+            &None,
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn test_deserialize_ciphertext_wrong_ct_format() {
+        // we just use small ciphertexts for these tests
+        let mut rng = AesRng::seed_from_u64(100);
+        let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
+        let (pubkeyset, _sk) = generate_fhe_keys(
+            &sig_sk,
+            TEST_PARAM,
+            StandardKeySetConfig::default(),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let msg = 32u32;
+        tfhe::set_server_key(pubkeyset.server_key);
+        let ct: FheUint32 = expanded_encrypt(&pubkeyset.public_key, msg, 32).unwrap();
+
+        // test SmallExpanded
+        {
+            let mut ct_buf = Vec::new();
+            safe_serialize(&ct, &mut ct_buf, kms_grpc::rpc_types::SAFE_SER_SIZE_LIMIT).unwrap();
+
+            // use the wrong format
+            assert!(deserialize_to_low_level(
+                FheTypes::Uint32,
+                CiphertextFormat::BigExpanded,
+                &ct_buf,
+                &None,
+            )
+            .is_err());
+
+            // should pass with the correct format
+            deserialize_to_low_level(
+                FheTypes::Uint32,
+                CiphertextFormat::SmallExpanded,
+                &ct_buf,
+                &None,
+            )
+            .unwrap();
+        }
+
+        {
+            let sns_key = pubkeyset.sns_key.unwrap();
+            let large_ct = sns_key.to_large_ciphertext(&ct.into_raw_parts().0).unwrap();
+            let mut ct_buf = Vec::new();
+            safe_serialize(
+                &large_ct,
+                &mut ct_buf,
+                kms_grpc::rpc_types::SAFE_SER_SIZE_LIMIT,
+            )
+            .unwrap();
+
+            // use the wrong format
+            assert!(deserialize_to_low_level(
+                FheTypes::Uint32,
+                CiphertextFormat::SmallExpanded,
+                &ct_buf,
+                &None,
+            )
+            .is_err());
+
+            // should pass with the correct format
+            deserialize_to_low_level(
+                FheTypes::Uint32,
+                CiphertextFormat::BigExpanded,
+                &ct_buf,
+                &None,
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn test_deserialize_ciphertext_missing_decompression_key() {
+        // we just use small ciphertexts for these tests
+        let mut rng = AesRng::seed_from_u64(100);
+        let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
+        let (pubkeyset, _sk) = generate_fhe_keys(
+            &sig_sk,
+            TEST_PARAM,
+            StandardKeySetConfig::default(),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let (
+            _raw_server_key,
+            _cpk_ksk,
+            compression_key,
+            decompression_key,
+            _noise_squashing_key,
+            _tag,
+        ) = pubkeyset.server_key.clone().into_raw_parts();
+        assert!(compression_key.is_some());
+        assert!(decompression_key.is_some());
+
+        let msg = 32u32;
+        tfhe::set_server_key(pubkeyset.server_key);
+        let ct: FheUint32 = expanded_encrypt(&pubkeyset.public_key, msg, 32).unwrap();
+
+        let ct_buf =
+            crate::cryptography::decompression::test_tools::compress_serialize_versioned(ct);
+
+        // setting decompression key to None should fail
+        {
+            assert!(deserialize_to_low_level(
+                FheTypes::Uint32,
+                CiphertextFormat::SmallCompressed,
+                &ct_buf,
+                &None,
+            )
+            .is_err());
+        }
+
+        // should pass with the correct decompression key
+        {
+            deserialize_to_low_level(
+                FheTypes::Uint32,
+                CiphertextFormat::SmallCompressed,
+                &ct_buf,
+                &decompression_key,
+            )
+            .unwrap();
+        }
     }
 }

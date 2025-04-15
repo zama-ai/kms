@@ -109,7 +109,7 @@ impl<'de> Deserialize<'de> for CoreClientConfig {
     }
 }
 
-use kms_grpc::kms::v1::FheType as RPCFheType;
+use tfhe::FheTypes as TfheFheType;
 
 #[derive(Copy, Clone, Default, EnumString, PartialEq, Display, Debug, Serialize, Deserialize)]
 pub enum FheType {
@@ -220,41 +220,42 @@ impl From<u8> for FheType {
     }
 }
 
-impl From<RPCFheType> for FheType {
-    fn from(value: RPCFheType) -> Self {
+impl From<TfheFheType> for FheType {
+    fn from(value: TfheFheType) -> Self {
         match value {
-            RPCFheType::Ebool => FheType::Ebool,
-            RPCFheType::Euint4 => FheType::Euint4,
-            RPCFheType::Euint8 => FheType::Euint8,
-            RPCFheType::Euint16 => FheType::Euint16,
-            RPCFheType::Euint32 => FheType::Euint32,
-            RPCFheType::Euint64 => FheType::Euint64,
-            RPCFheType::Euint128 => FheType::Euint128,
-            RPCFheType::Euint160 => FheType::Euint160,
-            RPCFheType::Euint256 => FheType::Euint256,
-            RPCFheType::Euint512 => FheType::Euint512,
-            RPCFheType::Euint1024 => FheType::Euint1024,
-            RPCFheType::Euint2048 => FheType::Euint2048,
+            TfheFheType::Bool => FheType::Ebool,
+            TfheFheType::Uint4 => FheType::Euint4,
+            TfheFheType::Uint8 => FheType::Euint8,
+            TfheFheType::Uint16 => FheType::Euint16,
+            TfheFheType::Uint32 => FheType::Euint32,
+            TfheFheType::Uint64 => FheType::Euint64,
+            TfheFheType::Uint128 => FheType::Euint128,
+            TfheFheType::Uint160 => FheType::Euint160,
+            TfheFheType::Uint256 => FheType::Euint256,
+            TfheFheType::Uint512 => FheType::Euint512,
+            TfheFheType::Uint1024 => FheType::Euint1024,
+            TfheFheType::Uint2048 => FheType::Euint2048,
+            _ => FheType::Unknown,
         }
     }
 }
 
-impl TryInto<RPCFheType> for FheType {
+impl TryInto<TfheFheType> for FheType {
     type Error = anyhow::Error;
-    fn try_into(self) -> Result<RPCFheType, Self::Error> {
+    fn try_into(self) -> Result<TfheFheType, Self::Error> {
         match self {
-            FheType::Ebool => Ok(RPCFheType::Ebool),
-            FheType::Euint4 => Ok(RPCFheType::Euint4),
-            FheType::Euint8 => Ok(RPCFheType::Euint8),
-            FheType::Euint16 => Ok(RPCFheType::Euint16),
-            FheType::Euint32 => Ok(RPCFheType::Euint32),
-            FheType::Euint64 => Ok(RPCFheType::Euint64),
-            FheType::Euint128 => Ok(RPCFheType::Euint128),
-            FheType::Euint160 => Ok(RPCFheType::Euint160),
-            FheType::Euint256 => Ok(RPCFheType::Euint256),
-            FheType::Euint512 => Ok(RPCFheType::Euint512),
-            FheType::Euint1024 => Ok(RPCFheType::Euint1024),
-            FheType::Euint2048 => Ok(RPCFheType::Euint2048),
+            FheType::Ebool => Ok(TfheFheType::Bool),
+            FheType::Euint4 => Ok(TfheFheType::Uint4),
+            FheType::Euint8 => Ok(TfheFheType::Uint8),
+            FheType::Euint16 => Ok(TfheFheType::Uint16),
+            FheType::Euint32 => Ok(TfheFheType::Uint32),
+            FheType::Euint64 => Ok(TfheFheType::Uint64),
+            FheType::Euint128 => Ok(TfheFheType::Uint128),
+            FheType::Euint160 => Ok(TfheFheType::Uint160),
+            FheType::Euint256 => Ok(TfheFheType::Uint256),
+            FheType::Euint512 => Ok(TfheFheType::Uint512),
+            FheType::Euint1024 => Ok(TfheFheType::Uint1024),
+            FheType::Euint2048 => Ok(TfheFheType::Uint2048),
             _ => Err(anyhow::anyhow!("Not supported")),
         }
     }
@@ -509,7 +510,7 @@ pub async fn encrypt(
         bytes: to_encrypt,
         fhe_type: cipher_params.data_type as i32,
     };
-    let typed_to_encrypt = TestingPlaintext::from(ptxt.clone());
+    let typed_to_encrypt = TestingPlaintext::try_from(ptxt.clone())?;
 
     tracing::info!(
         "Encrypting plaintext: {:?}, {:?}, {:?}",
@@ -822,9 +823,9 @@ fn check_external_decryption_signature(
         }
     }
 
-    let tp_expected = TestingPlaintext::from(expected_answer);
+    let tp_expected = TestingPlaintext::try_from(expected_answer)?;
     for result in results {
-        assert_eq!(tp_expected, TestingPlaintext::from(result));
+        assert_eq!(tp_expected, TestingPlaintext::try_from(result).unwrap());
     }
 
     tracing::info!("Decryption response successfully processed.");
@@ -1505,13 +1506,13 @@ pub async fn execute_cmd(
                         Ok(plaintexts) => {
                             let plaintext = plaintexts[0].clone();
                             assert_eq!(
-                                TestingPlaintext::from(plaintext.clone()),
-                                TestingPlaintext::from(ptxt.clone())
+                                TestingPlaintext::try_from(plaintext.clone())?,
+                                TestingPlaintext::try_from(ptxt.clone())?
                             );
                             tracing::info!(
                                 "Reencryption response is ok: {:?} / {:?}",
                                 ptxt,
-                                TestingPlaintext::from(plaintext),
+                                TestingPlaintext::try_from(plaintext)?,
                             );
                         }
                         Err(e) => {
@@ -1519,7 +1520,10 @@ pub async fn execute_cmd(
                         }
                     };
 
-                    let res = format!("Reencrypted Plaintext {:?}", TestingPlaintext::from(ptxt));
+                    let res = format!(
+                        "Reencrypted Plaintext {:?}",
+                        TestingPlaintext::try_from(ptxt)?
+                    );
                     Ok((Some(req_id), res))
                 });
             }

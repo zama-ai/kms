@@ -1,16 +1,16 @@
 use kms_grpc::{
     kms::v1::{
         CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse,
-        DecryptionResponsePayload, Empty, FheType, InitRequest, KeyGenPreprocRequest,
-        KeyGenPreprocResult, KeyGenRequest, KeyGenResult, ReencryptionRequest,
-        ReencryptionResponse, ReencryptionResponsePayload, RequestId, TypedPlaintext,
-        TypedSigncryptedCiphertext,
+        DecryptionResponsePayload, Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocResult,
+        KeyGenRequest, KeyGenResult, ReencryptionRequest, ReencryptionResponse,
+        ReencryptionResponsePayload, RequestId, TypedPlaintext, TypedSigncryptedCiphertext,
     },
     kms_service::v1::core_service_endpoint_server::{
         CoreServiceEndpoint, CoreServiceEndpointServer,
     },
 };
 use std::net::SocketAddr;
+use tfhe::FheTypes;
 use tonic::{transport::Server, Request, Response, Status};
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
@@ -198,7 +198,7 @@ impl CoreServiceEndpoint for MockKmsService {
                 digest: result_bytes.clone(),
                 plaintexts: vec![TypedPlaintext {
                     bytes: result_bytes,
-                    fhe_type: FheType::Euint8 as i32,
+                    fhe_type: FheTypes::Uint8 as i32,
                 }],
                 external_signature: Some(eip712_signature), // EIP-712 signature for blockchain
             }),
@@ -245,7 +245,7 @@ impl CoreServiceEndpoint for MockKmsService {
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
                     signcrypted_ciphertext: result_bytes.clone(),
                     external_handle: result_bytes,
-                    fhe_type: FheType::Euint8 as i32,
+                    fhe_type: FheTypes::Uint8 as i32,
                 }],
                 party_id: 1,
                 degree: 1,

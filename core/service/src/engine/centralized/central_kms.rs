@@ -28,7 +28,7 @@ use kms_grpc::kms::v1::ReencryptionResponsePayload;
 use kms_grpc::kms::v1::RequestId;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms::v1::TypedSigncryptedCiphertext;
-use kms_grpc::kms::v1::{CiphertextFormat, FheType, TypedCiphertext, TypedPlaintext};
+use kms_grpc::kms::v1::{CiphertextFormat, TypedCiphertext, TypedPlaintext};
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 #[cfg(feature = "non-wasm")]
@@ -48,11 +48,11 @@ use tfhe::shortint::ClassicPBSParameters;
 use tfhe::zk::CompactPkeCrs;
 #[cfg(feature = "non-wasm")]
 use tfhe::Seed;
-use tfhe::ServerKey;
 use tfhe::{
     ClientKey, ConfigBuilder, FheBool, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048,
     FheUint256, FheUint32, FheUint4, FheUint512, FheUint64, FheUint8,
 };
+use tfhe::{FheTypes, ServerKey};
 #[cfg(feature = "non-wasm")]
 use threshold_fhe::execution::endpoints::keygen::FhePubKeySet;
 #[cfg(feature = "non-wasm")]
@@ -133,13 +133,13 @@ where
     storage.refresh_centralized_fhe_keys(keyset2_id).await?;
 
     // we need the private glwe key from keyset 2
-    let (client_key_2, _, _, _) = storage
+    let (client_key_2, _, _, _, _) = storage
         .read_cloned_centralized_fhe_keys_from_cache(keyset2_id)
         .await?
         .client_key
         .into_raw_parts();
     // we need the private compression key from keyset 1
-    let (_, _, compression_private_key_1, _) = storage
+    let (_, _, compression_private_key_1, _, _) = storage
         .read_cloned_centralized_fhe_keys_from_cache(keyset1_id)
         .await?
         .client_key
@@ -207,9 +207,9 @@ pub fn generate_fhe_keys(
                         // we generate the client key as usual,
                         // but we replace the compression private key using an existing compression private key
                         let client_key = generate_client_fhe_key(params, seed);
-                        let (client_key, dedicated_compact_private_key, _, tag) = client_key.into_raw_parts();
-                        let (_, _, existing_compression_private_key, _) = key_handle.client_key.into_raw_parts();
-                        ClientKey::from_raw_parts(client_key, dedicated_compact_private_key, existing_compression_private_key, tag)
+                        let (client_key, dedicated_compact_private_key, _, _, tag) = client_key.into_raw_parts();
+                        let (_, _, existing_compression_private_key, _, _) = key_handle.client_key.into_raw_parts();
+                        ClientKey::from_raw_parts(client_key, dedicated_compact_private_key, existing_compression_private_key, None, tag)
                     },
                     None => anyhow::bail!("existing key handle is required when using existing compression key for keygen")
                 }
@@ -225,6 +225,7 @@ pub fn generate_fhe_keys(
             server_key.2,
             server_key.3,
             server_key.4,
+            server_key.5,
         );
         let public_key = FhePublicKey::new(&client_key);
         let (sns_client_key, fbsk_out) = generate_large_keys_from_seed(params, &client_key, seed)?;
@@ -384,8 +385,9 @@ pub fn central_decrypt<
                 .map(|b| b.start())
                 .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
                 .ok();
-            let fhe_type = ct.fhe_type();
-            inner_timer.map(|mut b| b.tag(TAG_TFHE_TYPE, fhe_type.as_str_name()));
+            let fhe_type = ct.fhe_type()?;
+            let fhe_type_string = ct.fhe_type_string();
+            inner_timer.map(|mut b| b.tag(TAG_TFHE_TYPE, fhe_type_string));
             RealCentralizedKms::<PubS, PrivS, BackS>::decrypt(
                 keys,
                 &ct.ciphertext,
@@ -436,8 +438,9 @@ pub async fn async_reencrypt<
             .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
             .ok();
         let high_level_ct = &typed_ciphertext.ciphertext;
-        let fhe_type = typed_ciphertext.fhe_type();
-        inner_timer.map(|mut b| b.tag(TAG_TFHE_TYPE, fhe_type.as_str_name()));
+        let fhe_type = typed_ciphertext.fhe_type()?;
+        let fhe_type_string = typed_ciphertext.fhe_type_string();
+        inner_timer.map(|mut b| b.tag(TAG_TFHE_TYPE, fhe_type_string));
         let ct_format = typed_ciphertext.ciphertext_format();
         let external_handle = typed_ciphertext.external_handle.clone();
         let signcrypted_ciphertext = RealCentralizedKms::<PubS, PrivS, BackS>::reencrypt(
@@ -452,7 +455,7 @@ pub async fn async_reencrypt<
             client_address,
         )?;
         all_signcrypted_cts.push(TypedSigncryptedCiphertext {
-            fhe_type: fhe_type.into(),
+            fhe_type: fhe_type as i32,
             signcrypted_ciphertext,
             external_handle,
         });
@@ -556,11 +559,11 @@ macro_rules! deserialize_to_low_level_and_decrypt_helper {
 fn unsafe_decrypt(
     keys: &KmsFheKeyHandles,
     serialized_high_level: &[u8],
-    fhe_type: FheType,
+    fhe_type: FheTypes,
     ct_format: CiphertextFormat,
 ) -> anyhow::Result<TypedPlaintext> {
     let res = match fhe_type {
-        FheType::Ebool => match ct_format {
+        FheTypes::Bool => match ct_format {
             CiphertextFormat::SmallCompressed => {
                 let hl_ct: FheBool = decompression::tfhe_safe_deserialize_and_uncompress::<FheBool>(
                     keys.decompression_key
@@ -594,7 +597,7 @@ fn unsafe_decrypt(
                 })
             }
         },
-        FheType::Euint4 => {
+        FheTypes::Uint4 => {
             deserialize_to_low_level_and_decrypt_helper!(
                 FheUint4,
                 TypedPlaintext::from_u4,
@@ -603,7 +606,7 @@ fn unsafe_decrypt(
                 keys
             )
         }
-        FheType::Euint8 => {
+        FheTypes::Uint8 => {
             deserialize_to_low_level_and_decrypt_helper!(
                 FheUint8,
                 TypedPlaintext::from_u8,
@@ -612,7 +615,7 @@ fn unsafe_decrypt(
                 keys
             )
         }
-        FheType::Euint16 => {
+        FheTypes::Uint16 => {
             deserialize_to_low_level_and_decrypt_helper!(
                 FheUint16,
                 TypedPlaintext::from_u16,
@@ -621,7 +624,7 @@ fn unsafe_decrypt(
                 keys
             )
         }
-        FheType::Euint32 => {
+        FheTypes::Uint32 => {
             deserialize_to_low_level_and_decrypt_helper!(
                 FheUint32,
                 TypedPlaintext::from_u32,
@@ -630,7 +633,7 @@ fn unsafe_decrypt(
                 keys
             )
         }
-        FheType::Euint64 => {
+        FheTypes::Uint64 => {
             deserialize_to_low_level_and_decrypt_helper!(
                 FheUint64,
                 TypedPlaintext::from_u64,
@@ -639,7 +642,7 @@ fn unsafe_decrypt(
                 keys
             )
         }
-        FheType::Euint128 => {
+        FheTypes::Uint128 => {
             deserialize_to_low_level_and_decrypt_helper!(
                 FheUint128,
                 TypedPlaintext::from_u128,
@@ -648,7 +651,7 @@ fn unsafe_decrypt(
                 keys
             )
         }
-        FheType::Euint160 => {
+        FheTypes::Uint160 => {
             deserialize_to_low_level_and_decrypt_helper!(
                 FheUint160,
                 TypedPlaintext::from_u160,
@@ -657,7 +660,7 @@ fn unsafe_decrypt(
                 keys
             )
         }
-        FheType::Euint256 => {
+        FheTypes::Uint256 => {
             deserialize_to_low_level_and_decrypt_helper!(
                 FheUint256,
                 TypedPlaintext::from_u256,
@@ -666,7 +669,7 @@ fn unsafe_decrypt(
                 keys
             )
         }
-        FheType::Euint512 => {
+        FheTypes::Uint512 => {
             deserialize_to_low_level_and_decrypt_helper!(
                 FheUint512,
                 TypedPlaintext::from_u512,
@@ -675,7 +678,7 @@ fn unsafe_decrypt(
                 keys
             )
         }
-        FheType::Euint1024 => {
+        FheTypes::Uint1024 => {
             deserialize_to_low_level_and_decrypt_helper!(
                 FheUint1024,
                 TypedPlaintext::from_u1024,
@@ -684,7 +687,7 @@ fn unsafe_decrypt(
                 keys
             )
         }
-        FheType::Euint2048 => {
+        FheTypes::Uint2048 => {
             deserialize_to_low_level_and_decrypt_helper!(
                 FheUint2048,
                 TypedPlaintext::from_u2048,
@@ -692,6 +695,9 @@ fn unsafe_decrypt(
                 serialized_high_level,
                 keys
             )
+        }
+        unsupported_fhe_type => {
+            anyhow::bail!("Unsupported fhe type in unsafe_decrypt {unsupported_fhe_type:?}");
         }
     };
     Ok(res)
@@ -707,7 +713,7 @@ impl<
     fn decrypt(
         keys: &KmsFheKeyHandles,
         high_level_ct: &[u8],
-        fhe_type: FheType,
+        fhe_type: FheTypes,
         ct_format: CiphertextFormat,
     ) -> anyhow::Result<TypedPlaintext> {
         match panic::catch_unwind(|| unsafe_decrypt(keys, high_level_ct, fhe_type, ct_format)) {
@@ -721,7 +727,7 @@ impl<
         sig_key: &PrivateSigKey,
         rng: &mut (impl CryptoRng + RngCore),
         ct: &[u8],
-        fhe_type: FheType,
+        fhe_type: FheTypes,
         ct_format: CiphertextFormat,
         link: &[u8],
         client_enc_key: &PublicEncKey,
@@ -894,7 +900,7 @@ pub(crate) mod tests {
         store_pk_at_request_id, store_versioned_at_request_id, StorageReader, StorageType,
     };
     use aes_prng::AesRng;
-    use kms_grpc::kms::v1::{FheType, RequestId};
+    use kms_grpc::kms::v1::RequestId;
     use kms_grpc::rpc_types::{PrivDataType, WrappedPublicKey};
     use rand::{RngCore, SeedableRng};
     use serde::{Deserialize, Serialize};
@@ -902,8 +908,8 @@ pub(crate) mod tests {
     use std::collections::HashMap;
     use std::{path::Path, sync::Arc};
     use tfhe::named::Named;
-    use tfhe::set_server_key;
     use tfhe::Versionize;
+    use tfhe::{set_server_key, FheTypes};
     use tfhe::{shortint::ClassicPBSParameters, ConfigBuilder, Seed};
     use tfhe_versionable::VersionsDispatch;
     use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
@@ -1212,7 +1218,7 @@ pub(crate) mod tests {
             assert_eq!(plaintext.as_u64(), msg);
         }
 
-        assert_eq!(plaintext.fhe_type(), FheType::Euint64);
+        assert_eq!(plaintext.fhe_type().unwrap(), FheTypes::Uint64);
     }
 
     #[tokio::test]
@@ -1412,7 +1418,7 @@ pub(crate) mod tests {
         } else {
             assert_eq!(plaintext.as_u64(), msg);
         }
-        assert_eq!(plaintext.fhe_type(), FheType::Euint64);
+        assert_eq!(plaintext.fhe_type().unwrap(), FheTypes::Uint64);
     }
 
     #[derive(Serialize, Deserialize, Eq, PartialEq, Debug, VersionsDispatch)]

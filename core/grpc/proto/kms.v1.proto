@@ -14,22 +14,6 @@ message Empty {}
 // computed result later on. This string does NOT contain a `0x` prefix.
 message RequestId { string request_id = 1; }
 
-// The plaintext types that can be encrypted in a HTTPZ ciphertext.
-enum FheType {
-  Ebool = 0;
-  Euint4 = 1;
-  Euint8 = 2;
-  Euint16 = 3;
-  Euint32 = 4;
-  Euint64 = 5;
-  Euint128 = 6;
-  Euint160 = 7;
-  Euint256 = 8;
-  Euint512 = 9;
-  Euint1024 = 10;
-  Euint2048 = 11;
-}
-
 // The type of keyset to generate during in a key generation call.
 enum KeySetType {
   // The standard keyset usually consists of the computation key,
@@ -204,8 +188,9 @@ enum CiphertextFormat {
 message TypedCiphertext {
   // The actual ciphertext to decrypt, taken directly from HTTPZ.
   bytes ciphertext = 1;
-  // The type of plaintext encrypted.
-  FheType fhe_type = 2;
+  // The type of plaintext encrypted. The type should match FheType from tfhe-rs:
+  // https://github.com/zama-ai/tfhe-rs/blob/main/tfhe/src/high_level_api/mod.rs
+  int32 fhe_type = 2;
   // The external handle of the ciphertext (the handle used in the copro).
   bytes external_handle = 3;
   // The ciphertext format, see CiphertextFormat documentation for details.
@@ -229,8 +214,9 @@ message DecryptionRequest {
 message TypedPlaintext {
   // The actual plaintext in bytes.
   bytes bytes = 1;
-  // The type of plaintext encrypted.
-  FheType fhe_type = 2;
+  // The type of plaintext encrypted. The type should match FheType from tfhe-rs:
+  // https://github.com/zama-ai/tfhe-rs/blob/main/tfhe/src/high_level_api/mod.rs
+  int32 fhe_type = 2;
 }
 
 // KMS-internal Decryption Response Payload, containing meta data, plaintexts
@@ -331,8 +317,9 @@ message ReencryptionResponsePayload {
 }
 
 message TypedSigncryptedCiphertext {
-  // The type of plaintext encrypted.
-  FheType fhe_type = 1;
+  // The type of plaintext encrypted. The type should match FheType from tfhe-rs:
+  // https://github.com/zama-ai/tfhe-rs/blob/main/tfhe/src/high_level_api/mod.rs
+  int32 fhe_type = 1;
   // The signcrypted payload, using a hybrid encryption approach in
   // sign-then-encrypt.
   bytes signcrypted_ciphertext = 2;

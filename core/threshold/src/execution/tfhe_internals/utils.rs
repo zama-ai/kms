@@ -186,6 +186,7 @@ pub fn compact_encrypt_helper<M: HlCompactable + Numeric>(
     Ok(compact_list_builder.build())
 }
 
+// This function needs the server key to encrypt, should we provide it explicitly?
 pub fn expanded_encrypt<M: HlCompactable + Numeric, T: HlExpandable + Tagged>(
     pk: &CompactPublicKey,
     msg: M,

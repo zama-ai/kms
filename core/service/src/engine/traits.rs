@@ -1,9 +1,9 @@
 use kms_grpc::kms::v1::CiphertextFormat;
-use kms_grpc::kms::v1::FheType;
 use kms_grpc::kms::v1::TypedPlaintext;
 use rand::CryptoRng;
 use rand::RngCore;
 use serde::Serialize;
+use tfhe::FheTypes;
 
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::cryptography::internal_crypto_types::PublicEncKey;
@@ -27,7 +27,7 @@ pub trait Kms: BaseKms {
     fn decrypt(
         keys: &KmsFheKeyHandles,
         ct: &[u8],
-        fhe_type: FheType,
+        fhe_type: FheTypes,
         ct_format: CiphertextFormat,
     ) -> anyhow::Result<TypedPlaintext>;
     #[allow(clippy::too_many_arguments)]
@@ -36,7 +36,7 @@ pub trait Kms: BaseKms {
         sig_key: &PrivateSigKey,
         rng: &mut (impl CryptoRng + RngCore),
         ct: &[u8],
-        ct_type: FheType,
+        ct_type: FheTypes,
         ct_format: CiphertextFormat,
         digest_link: &[u8],
         enc_key: &PublicEncKey,

@@ -207,6 +207,7 @@ impl RawPubKeySet {
                 Some(integer_pksk),
                 compression_key,
                 decompression_key,
+                None,
                 tfhe::Tag::default(),
             )
         } else {
@@ -215,6 +216,7 @@ impl RawPubKeySet {
                 None,
                 compression_key,
                 decompression_key,
+                None,
                 tfhe::Tag::default(),
             )
         }
@@ -2388,6 +2390,7 @@ pub mod tests {
                 shortint_sk.into(),
                 None,
                 None,
+                None,
                 tfhe::Tag::default(),
             );
             let pub_key_set = pk.to_pubkeyset(params);
@@ -2430,8 +2433,13 @@ pub mod tests {
 
         // Note that there is no `compression_key` because this key is never used to
         // encrypt/decrypt. We only compress and decompress which doesn't require this key.
-        let tfhe_sk =
-            tfhe::ClientKey::from_raw_parts(shortint_sk.into(), None, None, tfhe::Tag::default());
+        let tfhe_sk = tfhe::ClientKey::from_raw_parts(
+            shortint_sk.into(),
+            None,
+            None,
+            None,
+            tfhe::Tag::default(),
+        );
 
         try_tfhe_fheuint_computation(&tfhe_sk);
         if do_compression_test {

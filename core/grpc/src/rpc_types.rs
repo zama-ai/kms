@@ -1,5 +1,6 @@
 use crate::kms::v1::{
-    DecryptionResponsePayload, Eip712DomainMsg, FheType, RequestId, TypedPlaintext,
+    DecryptionResponsePayload, Eip712DomainMsg, RequestId, TypedCiphertext, TypedPlaintext,
+    TypedSigncryptedCiphertext,
 };
 use crate::kms::v1::{ReencryptionResponsePayload, SignedPubDataHandle};
 use alloy_primitives::{Address, B256, U256};
@@ -14,7 +15,7 @@ use strum_macros::EnumIter;
 use tfhe::integer::bigint::StaticUnsignedBigInt;
 use tfhe::named::Named;
 use tfhe::shortint::ClassicPBSParameters;
-use tfhe::Versionize;
+use tfhe::{FheTypes, Versionize};
 use tfhe_versionable::VersionsDispatch;
 
 lazy_static::lazy_static! {
@@ -45,6 +46,8 @@ pub static KEY_GEN_REQUEST_NAME: &str = "key_gen_request";
 pub static CRS_GEN_REQUEST_NAME: &str = "crs_gen_request";
 pub static DEC_REQUEST_NAME: &str = "dec_request";
 pub static REENC_REQUEST_NAME: &str = "reenc_request";
+
+static UNSUPPORTED_FHE_TYPE_STR: &str = "UnsupportedFheType";
 
 alloy_sol_types::sol! {
     struct UserDecryptResponseVerification {
@@ -346,77 +349,88 @@ impl fmt::Display for PrivDataType {
     }
 }
 
-#[cfg(feature = "non-wasm")]
-impl TryFrom<u8> for FheType {
-    type Error = anyhow::Error;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(FheType::Ebool),
-            1 => Ok(FheType::Euint4),
-            2 => Ok(FheType::Euint8),
-            3 => Ok(FheType::Euint16),
-            4 => Ok(FheType::Euint32),
-            5 => Ok(FheType::Euint64),
-            6 => Ok(FheType::Euint128),
-            7 => Ok(FheType::Euint160),
-            8 => Ok(FheType::Euint256),
-            9 => Ok(FheType::Euint512),
-            10 => Ok(FheType::Euint1024),
-            11 => Ok(FheType::Euint2048),
-            _ => Err(anyhow::anyhow!(
-                "Trying to import FheType from unsupported value"
-            )),
-        }
+fn unchecked_fhe_types_to_string(value: FheTypes) -> String {
+    match value {
+        FheTypes::Bool => "Ebool".to_string(),
+        FheTypes::Uint4 => "Euint4".to_string(),
+        FheTypes::Uint8 => "Euint8".to_string(),
+        FheTypes::Uint16 => "Euint16".to_string(),
+        FheTypes::Uint32 => "Euint32".to_string(),
+        FheTypes::Uint64 => "Euint64".to_string(),
+        FheTypes::Uint128 => "Euint128".to_string(),
+        FheTypes::Uint160 => "Euint160".to_string(),
+        FheTypes::Uint256 => "Euint256".to_string(),
+        FheTypes::Uint512 => "Euint512".to_string(),
+        FheTypes::Uint1024 => "Euint1024".to_string(),
+        FheTypes::Uint2048 => "Euint2048".to_string(),
+        _ => UNSUPPORTED_FHE_TYPE_STR.to_string(),
     }
 }
 
-#[cfg(feature = "non-wasm")]
-impl TryFrom<String> for FheType {
-    type Error = anyhow::Error;
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        match value.as_str() {
-            "Ebool" => Ok(FheType::Ebool),
-            "Euint4" => Ok(FheType::Euint4),
-            "Euint8" => Ok(FheType::Euint8),
-            "Euint16" => Ok(FheType::Euint16),
-            "Euint32" => Ok(FheType::Euint32),
-            "Euint64" => Ok(FheType::Euint64),
-            "Euint128" => Ok(FheType::Euint128),
-            "Euint160" => Ok(FheType::Euint160),
-            "Euint256" => Ok(FheType::Euint256),
-            "Euint512" => Ok(FheType::Euint512),
-            "Euint1024" => Ok(FheType::Euint1024),
-            "Euint2048" => Ok(FheType::Euint2048),
-            _ => Err(anyhow::anyhow!(
-                "Trying to import FheType from unsupported value"
-            )),
-        }
+fn string_to_fhe_types(value: &str) -> anyhow::Result<FheTypes> {
+    match value {
+        "Ebool" => Ok(FheTypes::Bool),
+        "Euint4" => Ok(FheTypes::Uint4),
+        "Euint8" => Ok(FheTypes::Uint8),
+        "Euint16" => Ok(FheTypes::Uint16),
+        "Euint32" => Ok(FheTypes::Uint32),
+        "Euint64" => Ok(FheTypes::Uint64),
+        "Euint128" => Ok(FheTypes::Uint128),
+        "Euint160" => Ok(FheTypes::Uint160),
+        "Euint256" => Ok(FheTypes::Uint256),
+        "Euint512" => Ok(FheTypes::Uint512),
+        "Euint1024" => Ok(FheTypes::Uint1024),
+        "Euint2048" => Ok(FheTypes::Uint2048),
+        _ => Err(anyhow::anyhow!(
+            "Trying to import FheType from unsupported value"
+        )),
     }
 }
 
-impl FheType {
-    /// Calculates the number of blocks needed to encode a message of the given FHE
-    /// type, based on the usable message modulus log from the
-    /// parameters. Rounds up to ensure enough blocks.
-    ///
-    /// The values might need to be adjusted if we use more than what's available
-    /// in the message modulus.
-    pub fn to_num_blocks(&self, params: &ClassicPBSParameters) -> usize {
-        match self {
-            FheType::Ebool => 1_usize.div_ceil(params.message_modulus.0.ilog2() as usize),
-            FheType::Euint4 => 4_usize.div_ceil(params.message_modulus.0.ilog2() as usize),
-            FheType::Euint8 => 8_usize.div_ceil(params.message_modulus.0.ilog2() as usize),
-            FheType::Euint16 => 16_usize.div_ceil(params.message_modulus.0.ilog2() as usize),
-            FheType::Euint32 => 32_usize.div_ceil(params.message_modulus.0.ilog2() as usize),
-            FheType::Euint64 => 64_usize.div_ceil(params.message_modulus.0.ilog2() as usize),
-            FheType::Euint128 => 128_usize.div_ceil(params.message_modulus.0.ilog2() as usize),
-            FheType::Euint160 => 160_usize.div_ceil(params.message_modulus.0.ilog2() as usize),
-            FheType::Euint256 => 256_usize.div_ceil(params.message_modulus.0.ilog2() as usize),
-            FheType::Euint512 => 512_usize.div_ceil(params.message_modulus.0.ilog2() as usize),
-            FheType::Euint1024 => 1024_usize.div_ceil(params.message_modulus.0.ilog2() as usize),
-            FheType::Euint2048 => 2048_usize.div_ceil(params.message_modulus.0.ilog2() as usize),
-        }
+// TODO replace this method with the TryFrom<i32> from tfhe-rs when available
+fn i32_to_fhe_types(value: i32) -> anyhow::Result<FheTypes> {
+    match value {
+        0 => Ok(FheTypes::Bool),
+        1 => Ok(FheTypes::Uint4),
+        2 => Ok(FheTypes::Uint8),
+        3 => Ok(FheTypes::Uint16),
+        4 => Ok(FheTypes::Uint32),
+        5 => Ok(FheTypes::Uint64),
+        6 => Ok(FheTypes::Uint128),
+        7 => Ok(FheTypes::Uint160),
+        8 => Ok(FheTypes::Uint256),
+        9 => Ok(FheTypes::Uint512),
+        10 => Ok(FheTypes::Uint1024),
+        11 => Ok(FheTypes::Uint2048),
+        _ => anyhow::bail!("Unsupported i32 representation of fhe_type: {}", value),
+    }
+}
+
+/// Calculates the number of blocks needed to encode a message of the given FHE
+/// type, based on the usable message modulus log from the
+/// parameters. Rounds up to ensure enough blocks.
+///
+/// The values might need to be adjusted if we use more than what's available
+/// in the message modulus.
+pub fn fhe_types_to_num_blocks(
+    fhe_type: FheTypes,
+    params: &ClassicPBSParameters,
+) -> anyhow::Result<usize> {
+    let msg_modulus = params.message_modulus.0.ilog2() as usize;
+    match fhe_type {
+        FheTypes::Bool => Ok(1_usize.div_ceil(msg_modulus)),
+        FheTypes::Uint4 => Ok(4_usize.div_ceil(msg_modulus)),
+        FheTypes::Uint8 => Ok(8_usize.div_ceil(msg_modulus)),
+        FheTypes::Uint16 => Ok(16_usize.div_ceil(msg_modulus)),
+        FheTypes::Uint32 => Ok(32_usize.div_ceil(msg_modulus)),
+        FheTypes::Uint64 => Ok(64_usize.div_ceil(msg_modulus)),
+        FheTypes::Uint128 => Ok(128_usize.div_ceil(msg_modulus)),
+        FheTypes::Uint160 => Ok(160_usize.div_ceil(msg_modulus)),
+        FheTypes::Uint256 => Ok(256_usize.div_ceil(msg_modulus)),
+        FheTypes::Uint512 => Ok(512_usize.div_ceil(msg_modulus)),
+        FheTypes::Uint1024 => Ok(1024_usize.div_ceil(msg_modulus)),
+        FheTypes::Uint2048 => Ok(2048_usize.div_ceil(msg_modulus)),
+        _ => anyhow::bail!("Unsupported fhe_type: {:?}", fhe_type),
     }
 }
 
@@ -495,29 +509,32 @@ fn sub_slice<const N: usize>(vec: &[u8]) -> [u8; N] {
 
 /// Little endian encoding for easy serialization by allowing most significant bytes to be 0
 impl TypedPlaintext {
-    /// Make a new plaintext from a 128 bit integer
-    pub fn new(value: u128, fhe_type: FheType) -> Self {
-        if fhe_type == FheType::Euint160
-            || fhe_type == FheType::Euint256
-            || fhe_type == FheType::Euint512
-            || fhe_type == FheType::Euint1024
-            || fhe_type == FheType::Euint2048
-        {
-            tracing::warn!(
-                "Trying to create larger plaintext from only 128 bits. Upper bits will be set to 0."
-            );
-        }
+    /// Make a new plaintext from a 128 bit integer.
+    /// Note that the upper bits will be set to 0 if the FHE type holds more than 128 bits.
+    pub fn new(value: u128, fhe_type: FheTypes) -> Self {
         Self {
             bytes: value.to_le_bytes().to_vec(),
-            fhe_type: fhe_type.into(),
+            fhe_type: fhe_type as i32,
         }
     }
 
-    pub fn from_bytes(bytes: Vec<u8>, fhe_type: impl Into<FheType>) -> Self {
+    pub fn fhe_type(&self) -> anyhow::Result<FheTypes> {
+        i32_to_fhe_types(self.fhe_type)
+    }
+
+    pub fn fhe_type_string(&self) -> String {
+        if let Ok(fhe_type) = i32_to_fhe_types(self.fhe_type) {
+            unchecked_fhe_types_to_string(fhe_type)
+        } else {
+            UNSUPPORTED_FHE_TYPE_STR.to_string()
+        }
+    }
+
+    pub fn from_bytes(bytes: Vec<u8>, fhe_type: impl Into<FheTypes>) -> Self {
         // TODO need to make sure we have enough bytes for the type
         Self {
             bytes,
-            fhe_type: (fhe_type.into() as FheType) as i32,
+            fhe_type: (fhe_type.into() as FheTypes) as i32,
         }
     }
 
@@ -528,49 +545,49 @@ impl TypedPlaintext {
         };
         Self {
             bytes: vec![plaintext],
-            fhe_type: FheType::Ebool as i32,
+            fhe_type: FheTypes::Bool as i32,
         }
     }
 
     pub fn from_u4(value: u8) -> Self {
         Self {
             bytes: vec![value % 16],
-            fhe_type: FheType::Euint4 as i32,
+            fhe_type: FheTypes::Uint4 as i32,
         }
     }
 
     pub fn from_u8(value: u8) -> Self {
         Self {
             bytes: vec![value],
-            fhe_type: FheType::Euint8 as i32,
+            fhe_type: FheTypes::Uint8 as i32,
         }
     }
 
     pub fn from_u16(value: u16) -> Self {
         Self {
             bytes: value.to_le_bytes().to_vec(),
-            fhe_type: FheType::Euint16 as i32,
+            fhe_type: FheTypes::Uint16 as i32,
         }
     }
 
     pub fn from_u32(value: u32) -> Self {
         Self {
             bytes: value.to_le_bytes().to_vec(),
-            fhe_type: FheType::Euint32 as i32,
+            fhe_type: FheTypes::Uint32 as i32,
         }
     }
 
     pub fn from_u64(value: u64) -> Self {
         Self {
             bytes: value.to_le_bytes().to_vec(),
-            fhe_type: FheType::Euint64 as i32,
+            fhe_type: FheTypes::Uint64 as i32,
         }
     }
 
     pub fn from_u128(value: u128) -> Self {
         Self {
             bytes: value.to_le_bytes().to_vec(),
-            fhe_type: FheType::Euint128 as i32,
+            fhe_type: FheTypes::Uint128 as i32,
         }
     }
 
@@ -580,7 +597,7 @@ impl TypedPlaintext {
         bytes.extend(high_128.to_le_bytes()[0..4].to_vec());
         Self {
             bytes,
-            fhe_type: FheType::Euint160 as i32,
+            fhe_type: FheTypes::Uint160 as i32,
         }
     }
 
@@ -589,7 +606,7 @@ impl TypedPlaintext {
         bytes.extend(value.1.to_le_bytes().to_vec());
         Self {
             bytes,
-            fhe_type: FheType::Euint160 as i32,
+            fhe_type: FheTypes::Uint160 as i32,
         }
     }
 
@@ -599,7 +616,7 @@ impl TypedPlaintext {
         bytes.extend(high_128.to_le_bytes().to_vec());
         Self {
             bytes,
-            fhe_type: FheType::Euint256 as i32,
+            fhe_type: FheTypes::Uint256 as i32,
         }
     }
 
@@ -608,7 +625,7 @@ impl TypedPlaintext {
         value.copy_to_le_byte_slice(&mut bytes);
         TypedPlaintext {
             bytes,
-            fhe_type: FheType::Euint512 as i32,
+            fhe_type: FheTypes::Uint512 as i32,
         }
     }
 
@@ -617,7 +634,7 @@ impl TypedPlaintext {
         value.copy_to_le_byte_slice(&mut bytes);
         TypedPlaintext {
             bytes,
-            fhe_type: FheType::Euint1024 as i32,
+            fhe_type: FheTypes::Uint1024 as i32,
         }
     }
 
@@ -626,12 +643,12 @@ impl TypedPlaintext {
         value.copy_to_le_byte_slice(&mut bytes);
         Self {
             bytes: bytes.to_vec(),
-            fhe_type: FheType::Euint2048 as i32,
+            fhe_type: FheTypes::Uint2048 as i32,
         }
     }
 
     pub fn as_bool(&self) -> bool {
-        if self.fhe_type() != FheType::Ebool {
+        if self.fhe_type != FheTypes::Bool as i32 {
             tracing::warn!(
                 "Plaintext is not of type Bool or has more than 1 Byte. Returning the least significant bit as Bool"
             );
@@ -643,7 +660,7 @@ impl TypedPlaintext {
     }
 
     pub fn as_u4(&self) -> u8 {
-        if self.fhe_type() != FheType::Euint4 {
+        if self.fhe_type != FheTypes::Uint4 as i32 {
             tracing::warn!("Plaintext is not of type u4. Returning the value modulo 16");
         }
         if self.bytes[0] > 15 {
@@ -656,7 +673,7 @@ impl TypedPlaintext {
     }
 
     pub fn as_u8(&self) -> u8 {
-        if self.fhe_type() != FheType::Euint8 {
+        if self.fhe_type != FheTypes::Uint8 as i32 {
             tracing::warn!("Plaintext is not of type u8. Returning the value modulo 256");
         }
         if self.bytes.len() != 1 {
@@ -666,7 +683,7 @@ impl TypedPlaintext {
     }
 
     pub fn as_u16(&self) -> u16 {
-        if self.fhe_type() != FheType::Euint16 {
+        if self.fhe_type != FheTypes::Uint16 as i32 {
             tracing::warn!("Plaintext is not of type u16. Returning the value modulo 65536 or padding with leading zeros");
         }
         if self.bytes.len() != 2 {
@@ -676,7 +693,7 @@ impl TypedPlaintext {
     }
 
     pub fn as_u32(&self) -> u32 {
-        if self.fhe_type() != FheType::Euint32 {
+        if self.fhe_type != FheTypes::Uint32 as i32 {
             tracing::warn!("Plaintext is not of type u32. Returning the value modulo 2^32 or padding with leading zeros");
         }
         if self.bytes.len() != 4 {
@@ -685,7 +702,7 @@ impl TypedPlaintext {
         u32::from_le_bytes(sub_slice::<4>(&self.bytes))
     }
     pub fn as_u64(&self) -> u64 {
-        if self.fhe_type() != FheType::Euint64 {
+        if self.fhe_type != FheTypes::Uint64 as i32 {
             tracing::warn!("Plaintext is not of type u64. Returning the value modulo 2^64 or padding with leading zeros");
         }
         if self.bytes.len() != 8 {
@@ -695,7 +712,7 @@ impl TypedPlaintext {
     }
 
     pub fn as_u128(&self) -> u128 {
-        if self.fhe_type() != FheType::Euint128 {
+        if self.fhe_type != FheTypes::Uint128 as i32 {
             tracing::warn!("Plaintext is not of type u128. Returning the value modulo 2^128 or padding with leading zeros");
         }
         if self.bytes.len() != 16 {
@@ -705,7 +722,7 @@ impl TypedPlaintext {
     }
 
     pub fn as_u160(&self) -> tfhe::integer::U256 {
-        if self.fhe_type() != FheType::Euint160 {
+        if self.fhe_type != FheTypes::Uint160 as i32 {
             tracing::warn!("Plaintext is not of type u160. Returning the value modulo 2^160 or padding with leading zeros");
         }
         if self.bytes.len() != 20 {
@@ -726,7 +743,7 @@ impl TypedPlaintext {
     }
 
     pub fn as_u256(&self) -> tfhe::integer::U256 {
-        if self.fhe_type() != FheType::Euint256 {
+        if self.fhe_type != FheTypes::Uint256 as i32 {
             tracing::warn!("Plaintext is not of type u256. Returning the value modulo 2^256 or padding with leading zeros");
         }
         if self.bytes.len() != 32 {
@@ -747,7 +764,7 @@ impl TypedPlaintext {
     }
 
     pub fn as_u512(&self) -> tfhe::integer::U512 {
-        if self.fhe_type() != FheType::Euint512 {
+        if self.fhe_type != FheTypes::Uint512 as i32 {
             tracing::warn!("Plaintext is not of type u512. Returning the value modulo 2^512 or padding with leading zeros");
         }
         if self.bytes.len() != 64 {
@@ -760,7 +777,7 @@ impl TypedPlaintext {
     }
 
     pub fn as_u1024(&self) -> tfhe::integer::bigint::U1024 {
-        if self.fhe_type() != FheType::Euint1024 {
+        if self.fhe_type != FheTypes::Uint1024 as i32 {
             tracing::warn!("Plaintext is not of type u1024. Returning the value modulo 2^1024 or padding with leading zeros");
         }
         if self.bytes.len() != 128 {
@@ -773,7 +790,7 @@ impl TypedPlaintext {
     }
 
     pub fn as_u2048(&self) -> tfhe::integer::bigint::U2048 {
-        if self.fhe_type() != FheType::Euint2048 {
+        if self.fhe_type != FheTypes::Uint2048 as i32 {
             tracing::warn!("Plaintext is not of type u2048. Returning the value modulo 2^2048 or padding with leading zeros");
         }
         if self.bytes.len() != 256 {
@@ -786,27 +803,30 @@ impl TypedPlaintext {
     }
 }
 
-impl From<TypedPlaintext> for FheType {
-    fn from(value: TypedPlaintext) -> Self {
+impl TryFrom<TypedPlaintext> for FheTypes {
+    type Error = anyhow::Error;
+    fn try_from(value: TypedPlaintext) -> anyhow::Result<Self> {
         value.fhe_type()
     }
 }
 
-impl From<TypedPlaintext> for Vec<u8> {
-    fn from(value: TypedPlaintext) -> Self {
-        match value.fhe_type() {
-            FheType::Ebool => vec![value.bytes[0] % 2],
-            FheType::Euint4 => vec![value.bytes[0] % 16],
-            FheType::Euint8 => vec![value.bytes[0]],
-            FheType::Euint16 => value.bytes[0..2].to_vec(),
-            FheType::Euint32 => value.bytes[0..4].to_vec(),
-            FheType::Euint64 => value.bytes[0..8].to_vec(),
-            FheType::Euint128 => value.bytes[0..16].to_vec(),
-            FheType::Euint160 => value.bytes[0..20].to_vec(),
-            FheType::Euint256 => value.bytes[0..32].to_vec(),
-            FheType::Euint512 => value.bytes[0..64].to_vec(),
-            FheType::Euint1024 => value.bytes[0..128].to_vec(),
-            FheType::Euint2048 => value.bytes[0..256].to_vec(),
+impl TryFrom<TypedPlaintext> for Vec<u8> {
+    type Error = anyhow::Error;
+    fn try_from(value: TypedPlaintext) -> anyhow::Result<Self> {
+        match value.fhe_type()? {
+            FheTypes::Bool => Ok(vec![value.bytes[0] % 2]),
+            FheTypes::Uint4 => Ok(vec![value.bytes[0] % 16]),
+            FheTypes::Uint8 => Ok(vec![value.bytes[0]]),
+            FheTypes::Uint16 => Ok(value.bytes[0..2].to_vec()),
+            FheTypes::Uint32 => Ok(value.bytes[0..4].to_vec()),
+            FheTypes::Uint64 => Ok(value.bytes[0..8].to_vec()),
+            FheTypes::Uint128 => Ok(value.bytes[0..16].to_vec()),
+            FheTypes::Uint160 => Ok(value.bytes[0..20].to_vec()),
+            FheTypes::Uint256 => Ok(value.bytes[0..32].to_vec()),
+            FheTypes::Uint512 => Ok(value.bytes[0..64].to_vec()),
+            FheTypes::Uint1024 => Ok(value.bytes[0..128].to_vec()),
+            FheTypes::Uint2048 => Ok(value.bytes[0..256].to_vec()),
+            _ => anyhow::bail!("Unsupported fhe_type in TypedPlaintext: {}", value.fhe_type),
         }
     }
 }
@@ -853,7 +873,7 @@ pub trait MetaResponse {
 }
 
 pub trait FheTypeResponse {
-    fn fhe_types(&self) -> anyhow::Result<Vec<FheType>>;
+    fn fhe_types(&self) -> anyhow::Result<Vec<FheTypes>>;
 }
 
 impl MetaResponse for ReencryptionResponsePayload {
@@ -866,13 +886,40 @@ impl MetaResponse for ReencryptionResponsePayload {
     }
 }
 
+impl TypedSigncryptedCiphertext {
+    pub fn fhe_type(&self) -> anyhow::Result<FheTypes> {
+        i32_to_fhe_types(self.fhe_type)
+    }
+
+    pub fn fhe_type_string(&self) -> String {
+        if let Ok(fhe_type) = i32_to_fhe_types(self.fhe_type) {
+            unchecked_fhe_types_to_string(fhe_type)
+        } else {
+            UNSUPPORTED_FHE_TYPE_STR.to_string()
+        }
+    }
+}
+
+impl TypedCiphertext {
+    pub fn fhe_type(&self) -> anyhow::Result<FheTypes> {
+        i32_to_fhe_types(self.fhe_type)
+    }
+
+    pub fn fhe_type_string(&self) -> String {
+        if let Ok(fhe_type) = i32_to_fhe_types(self.fhe_type) {
+            unchecked_fhe_types_to_string(fhe_type)
+        } else {
+            UNSUPPORTED_FHE_TYPE_STR.to_string()
+        }
+    }
+}
+
 impl FheTypeResponse for ReencryptionResponsePayload {
-    fn fhe_types(&self) -> anyhow::Result<Vec<FheType>> {
-        Ok(self
-            .signcrypted_ciphertexts
+    fn fhe_types(&self) -> anyhow::Result<Vec<FheTypes>> {
+        self.signcrypted_ciphertexts
             .iter()
             .map(|x| x.fhe_type())
-            .collect())
+            .collect::<Result<Vec<_>, _>>()
     }
 }
 
@@ -1021,16 +1068,14 @@ impl TryFrom<(String, String)> for TypedPlaintext {
     fn try_from(value: (String, String)) -> Result<Self, Self::Error> {
         let ptx = TypedPlaintext {
             bytes: value.0.into(),
-            fhe_type: FheType::from_str_name(&value.1)
-                .ok_or(anyhow::anyhow!("Conversion failed for {}", &value.1))?
-                as i32,
+            fhe_type: string_to_fhe_types(&value.1)? as i32,
         };
         Ok(ptx)
     }
 }
 
-impl From<(String, FheType)> for TypedPlaintext {
-    fn from(value: (String, FheType)) -> Self {
+impl From<(String, FheTypes)> for TypedPlaintext {
+    fn from(value: (String, FheTypes)) -> Self {
         TypedPlaintext {
             bytes: value.0.into(),
             fhe_type: value.1 as i32,
@@ -1040,6 +1085,10 @@ impl From<(String, FheType)> for TypedPlaintext {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use strum::IntoEnumIterator;
+    use strum_macros::EnumIter;
+    use tfhe::FheTypes;
+
     use super::{alloy_to_protobuf_domain, TypedPlaintext};
     use crate::{
         kms::v1::{
@@ -1076,8 +1125,7 @@ pub(crate) mod tests {
             TypedPlaintext::from_u128(u128::MAX - 1).as_u128(),
             u128::MAX - 1
         );
-        let alt_u128_plaintext =
-            TypedPlaintext::new(u128::MAX - 1, crate::kms::v1::FheType::Euint128);
+        let alt_u128_plaintext = TypedPlaintext::new(u128::MAX - 1, FheTypes::Uint128);
         assert_eq!(TypedPlaintext::from_u128(u128::MAX - 1), alt_u128_plaintext);
 
         let u160_val = tfhe::integer::U256::from((23, 999));
@@ -1205,6 +1253,47 @@ pub(crate) mod tests {
                 domain: Some(domain.clone()),
             };
             assert!(req.compute_link_checked().is_ok());
+        }
+    }
+
+    #[test]
+    fn test_old_fhe_type_enum_compatibility() {
+        // In this test we want to make sure the enum definition in tfhe-rs matches
+        // the old enums we had in kms, define in protobuf.
+
+        // This is copied from the old protobuf.
+        #[repr(i32)]
+        #[derive(EnumIter, Debug)]
+        enum OldFheType {
+            Ebool = 0,
+            Euint4 = 1,
+            Euint8 = 2,
+            Euint16 = 3,
+            Euint32 = 4,
+            Euint64 = 5,
+            Euint128 = 6,
+            Euint160 = 7,
+            Euint256 = 8,
+            Euint512 = 9,
+            Euint1024 = 10,
+            Euint2048 = 11,
+        }
+
+        for old_type in OldFheType::iter() {
+            match old_type {
+                OldFheType::Ebool => assert_eq!(FheTypes::Bool as i32, old_type as i32),
+                OldFheType::Euint4 => assert_eq!(FheTypes::Uint4 as i32, old_type as i32),
+                OldFheType::Euint8 => assert_eq!(FheTypes::Uint8 as i32, old_type as i32),
+                OldFheType::Euint16 => assert_eq!(FheTypes::Uint16 as i32, old_type as i32),
+                OldFheType::Euint32 => assert_eq!(FheTypes::Uint32 as i32, old_type as i32),
+                OldFheType::Euint64 => assert_eq!(FheTypes::Uint64 as i32, old_type as i32),
+                OldFheType::Euint128 => assert_eq!(FheTypes::Uint128 as i32, old_type as i32),
+                OldFheType::Euint160 => assert_eq!(FheTypes::Uint160 as i32, old_type as i32),
+                OldFheType::Euint256 => assert_eq!(FheTypes::Uint256 as i32, old_type as i32),
+                OldFheType::Euint512 => assert_eq!(FheTypes::Uint512 as i32, old_type as i32),
+                OldFheType::Euint1024 => assert_eq!(FheTypes::Uint1024 as i32, old_type as i32),
+                OldFheType::Euint2048 => assert_eq!(FheTypes::Uint2048 as i32, old_type as i32),
+            }
         }
     }
 }

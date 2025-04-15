@@ -36,9 +36,9 @@ use itertools::Itertools;
 use k256::ecdsa::SigningKey;
 use kms_grpc::kms::v1::{
     CiphertextFormat, CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse,
-    DecryptionResponsePayload, Empty, FheType, InitRequest, KeyGenPreprocRequest,
-    KeyGenPreprocResult, KeyGenRequest, KeyGenResult, KeySetAddedInfo, ReencryptionRequest,
-    ReencryptionResponse, ReencryptionResponsePayload, RequestId, TypedCiphertext, TypedPlaintext,
+    DecryptionResponsePayload, Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocResult,
+    KeyGenRequest, KeyGenResult, KeySetAddedInfo, ReencryptionRequest, ReencryptionResponse,
+    ReencryptionResponsePayload, RequestId, TypedCiphertext, TypedPlaintext,
     TypedSigncryptedCiphertext,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
@@ -54,7 +54,7 @@ use std::sync::Arc;
 use tfhe::core_crypto::prelude::LweKeyswitchKey;
 use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::named::Named;
-use tfhe::Versionize;
+use tfhe::{FheTypes, Versionize};
 use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::algebra::base_ring::Z128;
 use threshold_fhe::algebra::galois_rings::common::pack_residue_poly;
@@ -995,10 +995,11 @@ impl<
                 .map(|b| b.start())
                 .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
                 .ok();
-            let fhe_type = typed_ciphertext.fhe_type();
+            let fhe_type = typed_ciphertext.fhe_type()?;
+            let fhe_type_str = typed_ciphertext.fhe_type_string();
             inner_timer
                 .as_mut()
-                .map(|b| b.tag(TAG_TFHE_TYPE, fhe_type.as_str_name()));
+                .map(|b| b.tag(TAG_TFHE_TYPE, fhe_type_str));
             let ct_format = typed_ciphertext.ciphertext_format();
             let ct = &typed_ciphertext.ciphertext;
             let external_handle = typed_ciphertext.external_handle.clone();
@@ -1006,7 +1007,7 @@ impl<
                 derive_session_id_from_ctr(ctr as u64, DSEP_SESSION_REENCRYPTION, req_id)?;
 
             let low_level_ct =
-                deserialize_to_low_level(&fhe_type, ct_format, ct, &keys.decompression_key)?;
+                deserialize_to_low_level(fhe_type, ct_format, ct, &keys.decompression_key)?;
 
             let pdec: Result<(Vec<u8>, std::time::Duration), anyhow::Error> = match dec_mode {
                 DecryptionMode::NoiseFloodSmall => {
@@ -1115,8 +1116,8 @@ impl<
                     let res = bincode::serialize(&enc_res)?;
 
                     tracing::info!(
-                        "Reencryption completed for type {}. Inner thread took {:?} ms",
-                        fhe_type.as_str_name(),
+                        "Reencryption completed for type {:?}. Inner thread took {:?} ms",
+                        fhe_type,
                         time.as_millis()
                     );
                     res
@@ -1124,7 +1125,7 @@ impl<
                 Err(e) => return Err(anyhow!("Failed reencryption: {e}")),
             };
             all_signcrypted_cts.push(TypedSigncryptedCiphertext {
-                fhe_type: fhe_type.into(),
+                fhe_type: fhe_type as i32,
                 signcrypted_ciphertext: partial_signcryption,
                 external_handle,
             });
@@ -1351,7 +1352,7 @@ impl<
         session_id: SessionId,
         session_prep: Arc<SessionPreparer>,
         ct: &[u8],
-        fhe_type: FheType,
+        fhe_type: FheTypes,
         ct_format: CiphertextFormat,
         fhe_keys: OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>,
         dec_mode: DecryptionMode,
@@ -1368,7 +1369,7 @@ impl<
 
         let keys = fhe_keys;
         let low_level_ct =
-            deserialize_to_low_level(&fhe_type, ct_format, ct, &keys.decompression_key)?;
+            deserialize_to_low_level(fhe_type, ct_format, ct, &keys.decompression_key)?;
 
         let dec = match dec_mode {
             DecryptionMode::NoiseFloodSmall => {
@@ -1569,7 +1570,8 @@ impl<
             // we do not need to hold the handle,
             // the result of the computation is tracked by the dec_meta_store
             let decrypt_future = || async move {
-                let fhe_type = if let Ok(f) = FheType::try_from(typed_ciphertext.fhe_type) {
+                let fhe_type_string = typed_ciphertext.fhe_type_string();
+                let fhe_type = if let Ok(f) = typed_ciphertext.fhe_type() {
                     f
                 } else {
                     return Err(anyhow_error_and_log(format!(
@@ -1582,7 +1584,7 @@ impl<
                 let mut inner_timer = inner_timer;
                 inner_timer
                     .as_mut()
-                    .map(|b| b.tag(TAG_TFHE_TYPE, fhe_type.as_str_name()));
+                    .map(|b| b.tag(TAG_TFHE_TYPE, fhe_type_string));
 
                 let ciphertext = &typed_ciphertext.ciphertext;
                 let ct_format = typed_ciphertext.ciphertext_format();
@@ -1591,7 +1593,7 @@ impl<
                     .await?;
 
                 let res_plaintext = match fhe_type {
-                    FheType::Euint2048 => Self::inner_decrypt::<tfhe::integer::bigint::U2048>(
+                    FheTypes::Uint2048 => Self::inner_decrypt::<tfhe::integer::bigint::U2048>(
                         internal_sid,
                         prep,
                         ciphertext,
@@ -1602,7 +1604,7 @@ impl<
                     )
                     .await
                     .map(TypedPlaintext::from_u2048),
-                    FheType::Euint1024 => Self::inner_decrypt::<tfhe::integer::bigint::U1024>(
+                    FheTypes::Uint1024 => Self::inner_decrypt::<tfhe::integer::bigint::U1024>(
                         internal_sid,
                         prep,
                         ciphertext,
@@ -1613,7 +1615,7 @@ impl<
                     )
                     .await
                     .map(TypedPlaintext::from_u1024),
-                    FheType::Euint512 => Self::inner_decrypt::<tfhe::integer::bigint::U512>(
+                    FheTypes::Uint512 => Self::inner_decrypt::<tfhe::integer::bigint::U512>(
                         internal_sid,
                         prep,
                         ciphertext,
@@ -1624,7 +1626,7 @@ impl<
                     )
                     .await
                     .map(TypedPlaintext::from_u512),
-                    FheType::Euint256 => Self::inner_decrypt::<tfhe::integer::U256>(
+                    FheTypes::Uint256 => Self::inner_decrypt::<tfhe::integer::U256>(
                         internal_sid,
                         prep,
                         ciphertext,
@@ -1635,7 +1637,7 @@ impl<
                     )
                     .await
                     .map(TypedPlaintext::from_u256),
-                    FheType::Euint160 => Self::inner_decrypt::<tfhe::integer::U256>(
+                    FheTypes::Uint160 => Self::inner_decrypt::<tfhe::integer::U256>(
                         internal_sid,
                         prep,
                         ciphertext,
@@ -1646,7 +1648,7 @@ impl<
                     )
                     .await
                     .map(TypedPlaintext::from_u160),
-                    FheType::Euint128 => Self::inner_decrypt::<u128>(
+                    FheTypes::Uint128 => Self::inner_decrypt::<u128>(
                         internal_sid,
                         prep,
                         ciphertext,
@@ -1657,12 +1659,12 @@ impl<
                     )
                     .await
                     .map(|x| TypedPlaintext::new(x, fhe_type)),
-                    FheType::Ebool
-                    | FheType::Euint4
-                    | FheType::Euint8
-                    | FheType::Euint16
-                    | FheType::Euint32
-                    | FheType::Euint64 => Self::inner_decrypt::<u64>(
+                    FheTypes::Bool
+                    | FheTypes::Uint4
+                    | FheTypes::Uint8
+                    | FheTypes::Uint16
+                    | FheTypes::Uint32
+                    | FheTypes::Uint64 => Self::inner_decrypt::<u64>(
                         internal_sid,
                         prep,
                         ciphertext,
@@ -1673,6 +1675,9 @@ impl<
                     )
                     .await
                     .map(|x| TypedPlaintext::new(x as u128, fhe_type)),
+                    unsupported_fhe_type => {
+                        anyhow::bail!("Unsupported fhe type {:?}", unsupported_fhe_type);
+                    }
                 };
                 match res_plaintext {
                     Ok(plaintext) => Ok((ctr, plaintext)),
@@ -2294,7 +2299,7 @@ impl<
                     DKGParams::WithSnS(p) => p.regular_params,
                     DKGParams::WithoutSnS(p) => p,
                 };
-                let (client_key, _, _, _) = to_hl_client_key(
+                let (client_key, _, _, _, _) = to_hl_client_key(
                     &regular_params,
                     dummy_lwe_secret_key,
                     bit_glwe_secret_key,
@@ -2574,8 +2579,14 @@ impl<
         };
 
         //Retrieve decompression key if there's one
-        let (raw_server_key, raw_ksk_material, raw_compression_key, raw_decompression_key, raw_tag) =
-            pub_key_set.server_key.into_raw_parts();
+        let (
+            raw_server_key,
+            raw_ksk_material,
+            raw_compression_key,
+            raw_decompression_key,
+            raw_noise_squashing_key,
+            raw_tag,
+        ) = pub_key_set.server_key.into_raw_parts();
         let decompression_key = raw_decompression_key.clone();
 
         pub_key_set.server_key = tfhe::ServerKey::from_raw_parts(
@@ -2583,6 +2594,7 @@ impl<
             raw_ksk_material,
             raw_compression_key,
             raw_decompression_key,
+            raw_noise_squashing_key,
             raw_tag,
         );
 

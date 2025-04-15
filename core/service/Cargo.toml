@@ -87,6 +87,7 @@ tfhe = { workspace = true, features = [
     "integer",
     "zk-pok",
     "experimental-force_fft_algo_dif4",
+    "extended-types",
 ] }
 tfhe-zk-pok = { workspace = true, optional = true }
 tokio = { workspace = true, features = [
