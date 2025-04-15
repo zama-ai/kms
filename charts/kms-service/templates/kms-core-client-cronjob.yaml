@@ -9,7 +9,7 @@ metadata:
     app.kubernetes.io/name: {{ include "kmsCoreClientTestingName" . }}
   name: {{ include "kmsCoreClientTestingName" . }}
 spec:
-  schedule: {{ .Values.kmsCoreClientTesting.schedule }}
+  schedule: {{ .Values.kmsCoreClientTesting.schedule | quote }}
   jobTemplate:
     spec:
       template:
