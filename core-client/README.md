@@ -5,7 +5,7 @@ The core client library is also used for running tests.
 
 ## Prerequisites
 
-- [Rust](https://www.rust-lang.org/tools/install). Ensure you have a recent version of Rust installed on your system. We require `v1.85` or newer.
+- [Rust](https://www.rust-lang.org/tools/install). Ensure you have a recent version of Rust installed on your system. We require `v1.86` or newer.
 - [The protobuf compiler, `protoc`](https://protobuf.dev/installation/) must be installed.
 - [Docker](https://docs.docker.com/engine/install/) must be installed and running.
 - Ensure you have access to the required Docker images on Github:

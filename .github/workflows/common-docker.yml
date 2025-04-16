@@ -38,7 +38,7 @@ on:
         default: 'large_ubuntu_16_arm'
       docker-file:
         type: string
-        default: 'ci.dockerfile'
+        default: 'Dockerfile'
         required: false
       cache-from:
         type: string
@@ -60,7 +60,7 @@ on:
         value: "${{ jobs.determine-tag.outputs.docker_tag }}"
 
 env:
-  RUST_IMAGE_VERSION: '1.85.0'
+  RUST_IMAGE_VERSION: '1.86.0'
 
 jobs:
   determine-tag:
@@ -90,9 +90,19 @@ jobs:
           - platform: linux/amd64
             runs-on: ${{ inputs.runs-on-amd }}
             platform-tag: amd64
+            docker-target: prod
           - platform: linux/arm64
             runs-on: ${{ inputs.runs-on-arm }}
             platform-tag: arm64
+            docker-target: prod
+          - platform: linux/amd64
+            runs-on: ${{ inputs.runs-on-amd }}
+            platform-tag: amd64
+            docker-target: dev
+          - platform: linux/arm64
+            runs-on: ${{ inputs.runs-on-arm }}
+            platform-tag: arm64
+            docker-target: dev
     runs-on: ${{ matrix.runs-on }}
     steps:
       - name: Checkout Project
@@ -127,8 +137,8 @@ jobs:
           RUNS_ON_AWS_REGION: eu-west-3
         with:
           path: |
-            var-cache-apt
-            var-lib-apt
+            var-cache-apk
+            var-lib-apk
             usr-local-cargo-registry
             usr-local-cargo-git
             usr-local-cargo-bin
@@ -150,8 +160,8 @@ jobs:
         with:
           cache-map: |
             {
-              "var-cache-apt": "/var/cache/apt",
-              "var-lib-apt": "/var/lib/apt",
+              "var-cache-apk": "/var/cache/apk",
+              "var-lib-apk": "/var/lib/apk",
               "usr-local-cargo-registry": "/usr/local/cargo/registry",
               "usr-local-cargo-git": "/usr/local/cargo/git",
               "usr-local-cargo-bin": "/usr/local/cargo/bin",
@@ -178,22 +188,26 @@ jobs:
         with:
           build-args: |
             RUST_IMAGE_VERSION=${{ env.RUST_IMAGE_VERSION }}
+            TARGETARCH=${{ matrix.platform-tag }}
           context: ${{ inputs.docker-context }}
-          platforms: ${{ matrix.platform }}
           secrets: BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           file: ./docker/${{ inputs.working-directory }}/${{ inputs.docker-file }}
           push: ${{ inputs.push_image }}
           pull: false
           provenance: false
           sbom: false
+          target: ${{ matrix.docker-target }}
           tags: |
-            ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }}-${{ matrix.platform-tag }}
+            ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }}-${{ matrix.platform-tag }}-${{ matrix.docker-target }}
           cache-from: type=s3,blobs_prefix=cache/${{ github.repository }}/,manifests_prefix=cache/${{ github.repository }}/,region=${{ env.RUNS_ON_AWS_REGION }},bucket=${{ env.RUNS_ON_S3_BUCKET_CACHE }}
           cache-to: type=s3,blobs_prefix=cache/${{ github.repository }}/,manifests_prefix=cache/${{ github.repository }}/,region=${{ env.RUNS_ON_AWS_REGION }},bucket=${{ env.RUNS_ON_S3_BUCKET_CACHE }},mode=max
 
   create-manifest:
     needs: [determine-tag, build-and-push-docker]
     if: inputs.push_image
+    strategy:
+      matrix:
+        docker-target: ['prod', 'dev']
     runs-on: ${{ inputs.runs-on-amd }}
     outputs:
       image_name: ${{ steps.export-image.outputs.image }}
@@ -207,19 +221,46 @@ jobs:
 
       - name: Create and Push Multiarch Manifest
         run: |
-          docker manifest create \
-            ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }} \
-            --amend ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }}-amd64 \
-            --amend ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }}-arm64
+          if [ "${{ matrix.docker-target }}" = "prod" ]; then
+            docker manifest create \
+              ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }} \
+              --amend ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }}-amd64-${{ matrix.docker-target }} \
+              --amend ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }}-arm64-${{ matrix.docker-target }}
 
-          docker manifest create \
-            ghcr.io/zama-ai/${{ inputs.image-name }}:latest \
-            --amend ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }}-amd64 \
-            --amend ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }}-arm64
+            docker manifest create \
+              ghcr.io/zama-ai/${{ inputs.image-name }}:latest \
+              --amend ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }}-amd64-${{ matrix.docker-target }} \
+              --amend ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }}-arm64-${{ matrix.docker-target }}
 
-          docker manifest push ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }}
-          docker manifest push ghcr.io/zama-ai/${{ inputs.image-name }}:latest
+            docker manifest push ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }}
+            docker manifest push ghcr.io/zama-ai/${{ inputs.image-name }}:latest
+
+          else
+            docker manifest create \
+              ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }}-${{ matrix.docker-target }} \
+              --amend ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }}-amd64-${{ matrix.docker-target }} \
+              --amend ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }}-arm64-${{ matrix.docker-target }}
+
+            docker manifest create \
+              ghcr.io/zama-ai/${{ inputs.image-name }}:latest-${{ matrix.docker-target }} \
+              --amend ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }}-amd64-${{ matrix.docker-target }} \
+              --amend ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }}-arm64-${{ matrix.docker-target }}
+
+            docker manifest push ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }}-${{ matrix.docker-target }}
+            docker manifest push ghcr.io/zama-ai/${{ inputs.image-name }}:latest-${{ matrix.docker-target }}
+          fi
 
       - name: Export image name
         id: export-image
-        run: echo "image=ghcr.io/zama-ai/${{inputs.image-name}}:${{ needs.determine-tag.outputs.docker_tag }}" >> "${GITHUB_OUTPUT}"
+        run: |
+          if [ "${{ matrix.docker-target }}" = "prod" ]; then
+            {
+              echo "image=ghcr.io/zama-ai/${{inputs.image-name}}:${{ needs.determine-tag.outputs.docker_tag }}"
+              echo "image=ghcr.io/zama-ai/${{inputs.image-name}}:latest"
+            } >> "${GITHUB_OUTPUT}"
+          else
+            {
+              echo "image=ghcr.io/zama-ai/${{inputs.image-name}}:${{ needs.determine-tag.outputs.docker_tag }}-${{ matrix.docker-target }}"
+              echo "image=ghcr.io/zama-ai/${{inputs.image-name}}:latest-${{ matrix.docker-target }}"
+            } >> "${GITHUB_OUTPUT}"
+          fi

@@ -18,7 +18,6 @@ jobs:
       working-directory: "./core/service"
       push_image: true
       image-name: 'kms-service'
-      docker-file: 'ci.dockerfile'
       app-cache-dir: 'kms'
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}

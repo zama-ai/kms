@@ -6,7 +6,7 @@ In this tutorial we'll walk you through the required steps to locally deploy a t
 This tutorial shows you a subset of the options of the `core-client`. For more details please refer to its [README](../../core-client/README.md).
 
 ### Requirements
-- Rust. Ensure you have a recent version of Rust (`v1.85` or newer) installed on your system. More information on the [official website](https://www.rust-lang.org/).
+- Rust. Ensure you have a recent version of Rust (`v1.86` or newer) installed on your system. More information on the [official website](https://www.rust-lang.org/).
 - [The protobuf compiler, `protoc`](https://protobuf.dev/installation/) must be installed and [Docker](https://docs.docker.com/engine/install/) must be installed and running.
 - Ensure you have access to the required Docker images on Github.
   - While some repositories are still private, you need to setup access. For this, either use [this link](https://github.com/settings/tokens) or go to your GitHub, click you profile picture, select "Settings". Then navigate to "Developer Settings" > "Personal Access Tokens" > "Tokens (classic)" > "Generate new token (classic)". The token must have at least the "read:packages" permission.

@@ -22,7 +22,7 @@ on:
         required: true
       docker-file:
         type: string
-        default: 'ci.dockerfile'
+        default: 'Dockerfile'
         required: false
       app-cache-dir:
         type: string

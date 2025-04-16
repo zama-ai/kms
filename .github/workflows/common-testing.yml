@@ -153,8 +153,8 @@ jobs:
           RUNS_ON_AWS_REGION: eu-west-3
         with:
           path: |
-            var-cache-apt
-            var-lib-apt
+            var-cache-apk
+            var-lib-apk
             usr-local-cargo-registry
             usr-local-cargo-git
             usr-local-cargo-bin
@@ -175,8 +175,8 @@ jobs:
         with:
           cache-map: |
             {
-              "var-cache-apt": "/var/cache/apt",
-              "var-lib-apt": "/var/lib/apt",
+              "var-cache-apk": "/var/cache/apk",
+              "var-lib-apk": "/var/lib/apk",
               "usr-local-cargo-registry": "/usr/local/cargo/registry",
               "usr-local-cargo-git": "/usr/local/cargo/git",
               "usr-local-cargo-bin": "/usr/local/cargo/bin",

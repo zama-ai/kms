@@ -6,14 +6,15 @@ services:
   # TODO: move the upload of the pub-key from the validator to the core -> or maybe the connector?
   # anyway where the keys really are
   dev-kms-core:
-    image: ghcr.io/zama-ai/kms-service:latest
+    image: ghcr.io/zama-ai/kms-service:latest-dev
     environment:
       - DOCKER_BUILDKIT=1
     build:
       context: .
-      dockerfile: ./docker/core/service/ci.dockerfile
+      target: dev
+      dockerfile: ./docker/core/service/Dockerfile
       cache_from:
-        - ghcr.io/zama-ai/kms-service:latest
+        - ghcr.io/zama-ai/kms-service:latest-dev
       args:
         LTO_RELEASE: ${LTO_RELEASE}
         RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
@@ -22,7 +23,7 @@ services:
     ports:
       - "50051:50051"
     healthcheck:
-      test: "grpc-health-probe --addr=localhost:50051"
+      test: "grpc_health_probe --addr=localhost:50051"
       interval: 1s
       timeout: 1s
       retries: 5

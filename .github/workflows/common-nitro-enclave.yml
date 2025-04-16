@@ -41,7 +41,7 @@ on:
 
 
 env:
-  RUST_IMAGE_VERSION: '1.85.0'
+  RUST_IMAGE_VERSION: '1.86.0'
 
 jobs:
   build-and-push-enclave:

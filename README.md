@@ -90,7 +90,7 @@ Ensure that you have access to the required Docker images:
   - Either use [this link](https://github.com/settings/tokens) or go to your GitHub, click you profile picture, select "Settings". Then navigate to "Developer Settings" > "Personal Access Tokens" > "Tokens (classic)" > "Generate new token (classic)". The token should have the "read:packages" permission. Afterwards, do `docker login ghcr.io` and use your github ID and the token to login. Note that this token is saved by docker locally in the clear, so it's best to only give it the permissions you need and set the expiration time to a short period of time.
 
 ## Getting started
-The project requires [Docker](https://docs.docker.com/engine/install/) to be installed and running, along with [Rust](https://www.rust-lang.org/tools/install) with version >= 1.85, and the [protobuf compiler, `protoc`](https://protobuf.dev/installation/).
+The project requires [Docker](https://docs.docker.com/engine/install/) to be installed and running, along with [Rust](https://www.rust-lang.org/tools/install) with version >= 1.86, and the [protobuf compiler, `protoc`](https://protobuf.dev/installation/).
 Ensure that these are installed on your system.
 
 The project can be build with:

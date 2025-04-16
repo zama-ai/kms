@@ -3,7 +3,7 @@ ARG RUST_IMAGE_VERSION=latest
 
 # Multistage build to reduce image size
 # First stage builds the binary
-FROM rust:${RUST_IMAGE_VERSION}-slim-bookworm AS base
+FROM cgr.dev/chainguard/rust:latest-dev AS base
 
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt apt update && \
     apt install -y make protobuf-compiler iproute2 iputils-ping iperf net-tools dnsutils ssh git gcc libssl-dev libprotobuf-dev pkg-config libssl-dev

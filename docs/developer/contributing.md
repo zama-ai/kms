@@ -12,7 +12,7 @@ There are two ways to contribute:
 Start by [forking](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/working-with-forks/fork-a-repo) the **TKMS** repository.
 
 {% hint style="info" %}
-- **Rust version**:  Ensure that you use a Rust version >= 1.85 to compile.
+- **Rust version**:  Ensure that you use a Rust version >= 1.86 to compile.
 - **Performance**: For optimal performance, it is highly recommended to run **TKMS** code in release mode with cargo's `--release` flag.
 {% endhint %}
 

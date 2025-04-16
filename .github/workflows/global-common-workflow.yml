@@ -154,7 +154,9 @@ jobs:
   ############################################################################
   test-connector:
     needs: check-changes
-    if: needs.check-changes.outputs.changes-connector == 'true' || github.ref == 'refs/heads/main'
+    if: >-
+      needs.check-changes.outputs.changes-connector == 'true' ||
+      github.ref == 'refs/heads/main'
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
       working-directory: './kms-connector'
@@ -170,9 +172,15 @@ jobs:
 
   # Builds Docker image for connector
   # Only runs on main/release branches after successful tests
+  # Also runs on pull requests targeting main/release branches with the docker label
   docker-connector:
-    needs: test-connector
-    if: startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
+    needs:
+      - test-connector
+      - docker-golden-image
+    if: >-
+      (startsWith(github.ref, 'refs/heads/release/') ||
+      github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
     uses: ./.github/workflows/common-docker-big-instance.yml
     with:
       working-directory: "./kms-connector"
@@ -194,14 +202,44 @@ jobs:
   # - Changes to conf-trace/**
   # - Changes to workflow file
   ############################################################################
-  test-core-client:
+  prepare-core-client-matrix:
     needs: check-changes
-    if: needs.check-changes.outputs.changes-core-client == 'true' || needs.check-changes.outputs.changes-core-service == 'true' || needs.check-changes.outputs.changes-core-threshold == 'true' || needs.check-changes.outputs.changes-core-grpc == 'true' || github.ref == 'refs/heads/main'
+    if: >-
+      needs.check-changes.outputs.changes-core-client == 'true' ||
+      needs.check-changes.outputs.changes-core-service == 'true' ||
+      needs.check-changes.outputs.changes-core-threshold == 'true' ||
+      needs.check-changes.outputs.changes-core-grpc == 'true' ||
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+    - id: set-matrix
+      run: |
+        MATRIX="matrix={\"include\":["
+        # Regular tests: Run different test suites in parallel with specific features
+        MATRIX="${MATRIX}{\"args-tests\":\"threshold -- --skip centralized --skip full_gen_tests --test-threads=1\"},{\"args-tests\":\"centralized -- --skip threshold --skip full_gen_tests --test-threads=1\"}"
+        MATRIX="${MATRIX%,}]}"
+        echo "$MATRIX" >> "$GITHUB_OUTPUT"
+        echo "$MATRIX"
+  test-core-client:
+    needs:
+      - prepare-core-client-matrix
+      - check-changes
+      - docker-golden-image
+    if: >-
+      needs.check-changes.outputs.changes-core-client == 'true' ||
+      needs.check-changes.outputs.changes-core-service == 'true' ||
+      needs.check-changes.outputs.changes-core-threshold == 'true' ||
+      needs.check-changes.outputs.changes-core-grpc == 'true' ||
+      github.ref == 'refs/heads/main'
+    strategy:
+      matrix: ${{fromJson(needs.prepare-core-client-matrix.outputs.matrix)}}
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
       working-directory: './core-client'
       package-name: 'kms-core-client'
-      args-tests: '-- --skip full_gen_tests'
+      args-tests: ${{ matrix.args-tests }}
       app-cache-dir: 'kms-core-client'
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -213,9 +251,14 @@ jobs:
 
   # Builds Docker image for core-client
   # Only runs on main/release branches after successful tests
+  # Also runs on pull requests targeting main/release branches with the docker label
   docker-core-client:
-    needs: test-core-client
-    if: startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
+    needs:
+      - test-core-client
+      - docker-golden-image
+    if: >-
+      (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
     uses: ./.github/workflows/common-docker.yml
     with:
       working-directory: "./core-client"
@@ -289,7 +332,10 @@ jobs:
   # - For other events: Runs multiple test suites in parallel with specific features
   prepare-matrix:
     needs: check-changes
-    if: needs.check-changes.outputs.changes-core-service == 'true' || github.ref == 'refs/heads/main' || needs.check-changes.outputs.changes-ci == 'true'
+    if: >-
+      needs.check-changes.outputs.changes-core-service == 'true' ||
+      github.ref == 'refs/heads/main' ||
+      needs.check-changes.outputs.changes-ci == 'true'
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
@@ -316,7 +362,10 @@ jobs:
     needs:
       - check-changes
       - prepare-matrix
-    if: needs.check-changes.outputs.changes-core-service == 'true' || github.ref == 'refs/heads/main' || needs.check-changes.outputs.changes-ci == 'true'
+    if: >-
+      needs.check-changes.outputs.changes-core-service == 'true' ||
+      github.ref == 'refs/heads/main' ||
+      needs.check-changes.outputs.changes-ci == 'true'
     strategy:
       matrix: ${{fromJson(needs.prepare-matrix.outputs.matrix)}}
     uses: ./.github/workflows/common-testing-big-instance.yml
@@ -338,17 +387,19 @@ jobs:
 
   # Builds the core service Docker image
   # Only runs on main/release branches after successful tests
-  # Uses a custom ci.dockerfile optimized for production
+  # Uses a custom Dockerfile optimized for production
   docker-core-service:
     needs:
       - test-core-service
-    if: startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
+      - docker-golden-image
+    if: >-
+      (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
     uses: ./.github/workflows/common-docker-big-instance.yml
     with:
       working-directory: "./core/service"
       push_image: true
       image-name: 'kms-service'
-      docker-file: 'ci.dockerfile'
       app-cache-dir: 'kms'
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -364,7 +415,9 @@ jobs:
   docker-nitro-enclave:
     needs:
       - docker-core-service
-    if: startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
+    if: >-
+      (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
     uses: ./.github/workflows/common-nitro-enclave.yml
     permissions:
       contents: 'read'
@@ -463,6 +516,27 @@ jobs:
       args-tests: '--lib'
       package-name: 'threshold-fhe'
       app-cache-dir: 'threshold-fhe'
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+
+
+  ############################################################################
+  # Build rust golden image
+  # Only runs on main/release branches after successful tests
+  # Provides dependencies for building rust kms-core images
+  ############################################################################
+  docker-golden-image:
+    if: >-
+      ((startsWith(github.ref, 'refs/heads/release/') || (github.ref == 'refs/heads/main')) && (github.event_name == 'schedule')) ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
+    uses: ./.github/workflows/common-docker.yml
+    with:
+      working-directory: "./base"
+      push_image: true
+      image-name: 'kms-golden-image'
+      app-cache-dir: 'kms-base'
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}

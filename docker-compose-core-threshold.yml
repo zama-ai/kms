@@ -6,12 +6,13 @@ services:
   # 1. Generate TLS certificates
   # NOTE: for now we do the key-generation here because kms-server requires one to start
   dev-kms-core-certs:
-    image: ghcr.io/zama-ai/kms-service:latest
+    image: ghcr.io/zama-ai/kms-service:latest-dev
     build:
       context: .
-      dockerfile: ./docker/core/service/ci.dockerfile
+      target: dev
+      dockerfile: ./docker/core/service/Dockerfile
       cache_from:
-        - ghcr.io/zama-ai/kms-service:latest
+        - ghcr.io/zama-ai/kms-service:latest-dev
       args:
         LTO_RELEASE: ${LTO_RELEASE}
         RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
@@ -29,12 +30,13 @@ services:
 
   # 2. We start all cores
   dev-kms-core-1:
-    image: ghcr.io/zama-ai/kms-service:latest
+    image: ghcr.io/zama-ai/kms-service:latest-dev
     build:
       context: .
-      dockerfile: ./docker/core/service/ci.dockerfile
+      target: dev
+      dockerfile: ./docker/core/service/Dockerfile
       cache_from:
-        - ghcr.io/zama-ai/kms-service:latest
+        - ghcr.io/zama-ai/kms-service:latest-dev
       args:
         LTO_RELEASE: ${LTO_RELEASE}
         RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
@@ -43,7 +45,7 @@ services:
       - "50100:50100"
       - "9646:9646"
     healthcheck:
-      test: "grpc-health-probe --addr=localhost:50100"
+      test: "grpc_health_probe --addr=localhost:50100"
       interval: 1s
       timeout: 1s
       retries: 5
@@ -84,12 +86,13 @@ services:
       "
 
   dev-kms-core-2:
-    image: ghcr.io/zama-ai/kms-service:latest
+    image: ghcr.io/zama-ai/kms-service:latest-dev
     build:
       context: .
-      dockerfile: ./docker/core/service/ci.dockerfile
+      target: dev
+      dockerfile: ./docker/core/service/Dockerfile
       cache_from:
-        - ghcr.io/zama-ai/kms-service:latest
+        - ghcr.io/zama-ai/kms-service:latest-dev
       args:
         LTO_RELEASE: ${LTO_RELEASE}
         RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
@@ -97,7 +100,7 @@ services:
       - "50052:50052"
       - "50200:50200"
     healthcheck:
-      test: "grpc-health-probe --addr=localhost:50200"
+      test: "grpc_health_probe --addr=localhost:50200"
       interval: 1s
       timeout: 1s
       retries: 5
@@ -126,12 +129,13 @@ services:
         condition: service_completed_successfully
 
   dev-kms-core-3:
-    image: ghcr.io/zama-ai/kms-service:latest
+    image: ghcr.io/zama-ai/kms-service:latest-dev
     build:
       context: .
-      dockerfile: ./docker/core/service/ci.dockerfile
+      target: dev
+      dockerfile: ./docker/core/service/Dockerfile
       cache_from:
-        - ghcr.io/zama-ai/kms-service:latest
+        - ghcr.io/zama-ai/kms-service:latest-dev
       args:
         LTO_RELEASE: ${LTO_RELEASE}
         RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
@@ -139,7 +143,7 @@ services:
       - "50053:50053"
       - "50300:50300"
     healthcheck:
-      test: "grpc-health-probe --addr=localhost:50300"
+      test: "grpc_health_probe --addr=localhost:50300"
       interval: 1s
       timeout: 1s
       retries: 5
@@ -168,12 +172,13 @@ services:
         condition: service_completed_successfully
 
   dev-kms-core-4:
-    image: ghcr.io/zama-ai/kms-service:latest
+    image: ghcr.io/zama-ai/kms-service:latest-dev
     build:
       context: .
-      dockerfile: ./docker/core/service/ci.dockerfile
+      target: dev
+      dockerfile: ./docker/core/service/Dockerfile
       cache_from:
-        - ghcr.io/zama-ai/kms-service:latest
+        - ghcr.io/zama-ai/kms-service:latest-dev
       args:
         LTO_RELEASE: ${LTO_RELEASE}
         RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
@@ -181,7 +186,7 @@ services:
       - "50054:50054"
       - "50400:50400"
     healthcheck:
-      test: "grpc-health-probe --addr=localhost:50400"
+      test: "grpc_health_probe --addr=localhost:50400"
       interval: 1s
       timeout: 1s
       retries: 5
@@ -211,12 +216,13 @@ services:
 
   # 3. Initialize the different cores
   dev-kms-core-init:
-    image: ghcr.io/zama-ai/kms-service:latest
+    image: ghcr.io/zama-ai/kms-service:latest-dev
     build:
       context: .
-      dockerfile: ./docker/core/service/ci.dockerfile
+      target: dev
+      dockerfile: ./docker/core/service/Dockerfile
       cache_from:
-        - ghcr.io/zama-ai/kms-service:latest
+        - ghcr.io/zama-ai/kms-service:latest-dev
       args:
         LTO_RELEASE: ${LTO_RELEASE}
         RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}

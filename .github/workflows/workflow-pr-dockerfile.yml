@@ -29,6 +29,7 @@ jobs:
             with:
                 files: |
                     **.dockerfile
+                    **/Dockerfile
 
           - name: List all changed product files
             id: list_dockerfile
@@ -57,5 +58,5 @@ jobs:
                 done
 
     docker-scanning:
-        uses: zama-ai/security-hub/.github/workflows/03-sca-trivy-docker-kms-callable-wf.yml@892c742d2eeb0d6d6211917cf3f98ad2034dce93
+        uses: zama-ai/security-hub/.github/workflows/03-sca-trivy-docker-kms-callable-wf.yml@a3df5139ef24c0c917472cdf558a2086caa2a874
         secrets: inherit
