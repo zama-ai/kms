@@ -155,7 +155,6 @@ non-wasm = [
     "dep:tower-http",
 ]
 slow_tests = ["testing"]
-sequential_sns = ["threshold-fhe/sequential_sns"]
 wasm_tests = ["testing"]
 s3_tests = ["testing"]
 insecure = ["kms-grpc/insecure"]

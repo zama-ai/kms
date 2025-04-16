@@ -1,5 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use threshold_fhe::execution::endpoints::decryption::{
+    LowLevelCiphertext, SnsRadixOrBoolCiphertext,
+};
 use tracing::error;
 
 use crate::consts::ID_LENGTH;
@@ -23,7 +26,7 @@ use kms_grpc::kms::v1::{
 };
 use kms_grpc::rpc_types::{
     hash_element, safe_serialize_hash_element_versioned, FhePubKey, FheServerKey, PubDataType,
-    PublicDecryptVerification, SignedPubDataHandleInternal, SnsKey, CRS,
+    PublicDecryptVerification, SignedPubDataHandleInternal, CRS,
 };
 use rand::{CryptoRng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -41,10 +44,7 @@ use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::execution::endpoints::keygen::FhePubKeySet;
 #[cfg(feature = "non-wasm")]
 use threshold_fhe::execution::keyset_config as ddec_keyset_config;
-use threshold_fhe::execution::tfhe_internals::parameters::{
-    Ciphertext128, DKGParams, LowLevelCiphertext,
-};
-use threshold_fhe::execution::tfhe_internals::test_feature::SnsClientKey;
+use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use tokio::sync::Mutex;
 
 use super::traits::BaseKms;
@@ -62,7 +62,6 @@ pub enum KmsFheKeyHandlesVersioned {
 #[versionize(KmsFheKeyHandlesVersioned)]
 pub struct KmsFheKeyHandles {
     pub client_key: FhePrivateKey,
-    pub sns_client_key: SnsClientKey,
     pub decompression_key: Option<DecompressionKey>,
     /// Mapping key type to information
     pub public_key_info: HashMap<PubDataType, SignedPubDataHandleInternal>,
@@ -85,7 +84,6 @@ impl KmsFheKeyHandles {
     pub fn new(
         sig_key: &PrivateSigKey,
         client_key: FhePrivateKey,
-        sns_client_key: SnsClientKey,
         public_keys: &FhePubKeySet,
         decompression_key: Option<DecompressionKey>,
         eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
@@ -99,15 +97,8 @@ impl KmsFheKeyHandles {
             PubDataType::ServerKey,
             compute_info(sig_key, &public_keys.server_key, eip712_domain)?,
         );
-        if let Some(sns) = &public_keys.sns_key {
-            public_key_info.insert(
-                PubDataType::SnsKey,
-                compute_info(sig_key, sns, eip712_domain)?,
-            );
-        }
         Ok(KmsFheKeyHandles {
             client_key,
-            sns_client_key,
             decompression_key,
             public_key_info,
         })
@@ -186,12 +177,13 @@ macro_rules! deserialize_to_low_level_helper {
                 anyhow::bail!("big compressed ciphertexts are not supported yet");
             }
             CiphertextFormat::BigExpanded => {
-                let r = safe_deserialize::<Ciphertext128>(
+                let r = safe_deserialize::<tfhe::SquashedNoiseFheUint>(
                     std::io::Cursor::new($serialized_high_level),
                     kms_grpc::rpc_types::SAFE_SER_SIZE_LIMIT,
                 )
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-                LowLevelCiphertext::Big(r)
+                let radix_ct = r.underlying_squashed_noise_ciphertext().clone();
+                LowLevelCiphertext::Big(SnsRadixOrBoolCiphertext::Radix(radix_ct))
             }
         }
     }};
@@ -225,12 +217,13 @@ pub fn deserialize_to_low_level(
                 anyhow::bail!("big compressed ciphertexts are not supported yet");
             }
             CiphertextFormat::BigExpanded => {
-                let r = safe_deserialize::<Ciphertext128>(
+                let r = safe_deserialize::<tfhe::SquashedNoiseFheBool>(
                     std::io::Cursor::new(serialized_high_level),
                     kms_grpc::rpc_types::SAFE_SER_SIZE_LIMIT,
                 )
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-                LowLevelCiphertext::Big(r)
+                let radix_ct = r.underlying_squashed_noise_ciphertext().clone();
+                LowLevelCiphertext::Big(SnsRadixOrBoolCiphertext::Bool(radix_ct))
             }
         },
         FheTypes::Uint4 => {
@@ -398,13 +391,6 @@ pub fn compute_external_pubdata_message_hash<D: Serialize + Versionize + Named>(
         "high_level_api::ServerKey" => {
             let message = FheServerKey {
                 server_key: bytes.into(),
-            };
-            message.eip712_signing_hash(eip712_domain)
-        }
-        "SwitchAndSquashKey" => {
-            // TODO name might change after we have the struct from tfhe-rs
-            let message = SnsKey {
-                sns_key: bytes.into(),
             };
             message.eip712_signing_hash(eip712_domain)
         }
@@ -754,7 +740,7 @@ pub(crate) mod tests {
     use aes_prng::AesRng;
     use kms_grpc::kms::v1::CiphertextFormat;
     use rand::{RngCore, SeedableRng};
-    use tfhe::{safe_serialization::safe_serialize, FheTypes, FheUint32};
+    use tfhe::{prelude::SquashNoise, safe_serialization::safe_serialize, FheTypes, FheUint32};
     use threshold_fhe::execution::{
         keyset_config::StandardKeySetConfig, tfhe_internals::utils::expanded_encrypt,
     };
@@ -1006,8 +992,7 @@ pub(crate) mod tests {
         }
 
         {
-            let sns_key = pubkeyset.sns_key.unwrap();
-            let large_ct = sns_key.to_large_ciphertext(&ct.into_raw_parts().0).unwrap();
+            let large_ct = ct.squash_noise().unwrap();
             let mut ct_buf = Vec::new();
             safe_serialize(
                 &large_ct,

@@ -802,7 +802,7 @@ mod tests {
                 session::{LargeSession, ParameterHandles},
                 test_runtime::{generate_fixed_identities, DistributedTestRuntime},
             },
-            tfhe_internals::parameters::BC_PARAMS_SAM_NO_SNS,
+            tfhe_internals::parameters::BC_PARAMS_NO_SNS,
         },
         networking::NetworkMode,
         session_id::SessionId,
@@ -1350,7 +1350,7 @@ mod tests {
             compute_witness_dim(&param_v0_11_zkv2, Some(max_bit_size)).unwrap()
         );
 
-        let param_v1_zkv2 = BC_PARAMS_SAM_NO_SNS
+        let param_v1_zkv2 = BC_PARAMS_NO_SNS
             .get_params_basics_handle()
             .get_compact_pk_enc_params();
         assert_eq!(

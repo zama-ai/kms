@@ -27,7 +27,7 @@ use crate::execution::communication::broadcast::broadcast_from_all;
 use crate::execution::endpoints::decryption::{
     combine_plaintext_blocks, init_prep_bitdec_large, init_prep_bitdec_small,
     run_decryption_noiseflood_64, task_decryption_bitdec_par, BlocksPartialDecrypt, DecryptionMode,
-    NoiseFloodPreparation,
+    NoiseFloodPreparation, SnsRadixOrBoolCiphertext,
 };
 use crate::execution::endpoints::decryption::{Large, Small};
 use crate::execution::endpoints::keygen::FhePubKeySet;
@@ -63,7 +63,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::num::Wrapping;
 use std::sync::{Arc, Mutex};
-use tfhe::integer::{IntegerCiphertext, IntegerRadixCiphertext};
+use tfhe::integer::{BooleanBlock, IntegerCiphertext, IntegerRadixCiphertext};
 use tokio::task::{JoinHandle, JoinSet};
 use tracing::{instrument, Instrument};
 
@@ -1216,7 +1216,8 @@ where
             let chunk_size = num_copies.div_ceil(num_sessions);
             let role_assignments = role_assignments.clone();
             let prss_setup = self.data.prss_setup.clone();
-            let sns_key = Arc::new(key_ref.0.sns_key.clone().unwrap());
+            let sns_key = Arc::new(key_ref.0.server_key.clone().into_raw_parts().4.unwrap());
+            let server_key = Arc::new(key_ref.0.server_key.as_ref());
             let ks = Arc::new(
                 key_ref
                     .0
@@ -1267,7 +1268,22 @@ where
                                 format!("Failed to create Base Session: {:?}", e),
                             )
                         })?;
-                    let ct_large = sns_key.to_large_ciphertext(&ctxt).unwrap();
+                    // TODO use a type safe way to check for boolean
+                    let ct_large = if ctxt.blocks().len() == 1 {
+                        // this is boolean, so we use a different method
+                        let bool_block = BooleanBlock::new_unchecked(ctxt.blocks()[0].clone());
+                        let squashed = sns_key
+                            .squash_boolean_block_noise(&server_key, &bool_block)
+                            .expect("squash noise failed for boolean ct");
+                        SnsRadixOrBoolCiphertext::Bool(squashed)
+                    } else {
+                        // NOTE: the ciphertext must be unsigned
+                        SnsRadixOrBoolCiphertext::Radix(
+                            sns_key
+                                .squash_radix_ciphertext_noise(&server_key, &ctxt)
+                                .expect("squash noise failed for radix ct"),
+                        )
+                    };
                     //Do bcast after the Sns to sync parties
                     let _ = broadcast_from_all(
                         &bcast_session,
@@ -1328,7 +1344,7 @@ where
                                                 &mut base_session,
                                                 noiseflood_preprocessing.as_mut(),
                                                 &key_ref.1,
-                                                ctxt,
+                                                &ctxt,
                                             )
                                             .await
                                             .unwrap(),
@@ -1741,7 +1757,8 @@ where
                     );
                 }
                 DecryptionMode::NoiseFloodSmall | DecryptionMode::NoiseFloodLarge => {
-                    if key_ref.0.sns_key.is_none() {
+                    // TODO take reference when tfhe.rs 1.1.3 is ready
+                    if key_ref.0.server_key.clone().into_raw_parts().4.is_none() {
                         return Err(tonic::Status::new(tonic::Code::Aborted,format!("Asked for NoiseFlood decrypt but there is no Switch and Squash key for key at session ID {key_sid}")));
                     }
                     let preprocessings = if let Some(preproc_sid) = preproc_sid {
@@ -1761,12 +1778,31 @@ where
                             .collect_vec()
                     };
                     let my_future = || async move {
+                        let server_key = key_ref.0.server_key.as_ref();
                         let mut res = Vec::new();
+                        // TODO take reference when tfhe.rs 1.1.3 is ready
+                        let sns_key = key_ref.0.server_key.clone().into_raw_parts().4;
                         for (ctxt, mut preprocessing) in
                             ctxts.into_iter().zip(preprocessings.into_iter())
                         {
-                            let ct_large = if let Some(sns_key) = &key_ref.0.sns_key {
-                                sns_key.to_large_ciphertext(&ctxt).unwrap()
+                            let ct_large = if let Some(ref sns_key) = sns_key {
+                                // TODO use a type safe way to check for boolean
+                                if ctxt.blocks().len() == 1 {
+                                    // this is boolean, so we use a different method
+                                    let bool_block =
+                                        BooleanBlock::new_unchecked(ctxt.blocks()[0].clone());
+                                    let squashed = sns_key
+                                        .squash_boolean_block_noise(server_key, &bool_block)
+                                        .expect("squash noise failed for boolean ct");
+                                    SnsRadixOrBoolCiphertext::Bool(squashed)
+                                } else {
+                                    // NOTE: the ciphertext must be unsigned
+                                    SnsRadixOrBoolCiphertext::Radix(
+                                        sns_key
+                                            .squash_radix_ciphertext_noise(server_key, &ctxt)
+                                            .expect("squash noise failed for radix ct"),
+                                    )
+                                }
                             } else {
                                 panic!("Missing key (it was there just before)")
                             };
@@ -1775,7 +1811,7 @@ where
                                     &mut base_session,
                                     preprocessing.as_mut(),
                                     &key_ref.1,
-                                    ct_large,
+                                    &ct_large,
                                 )
                                 .await
                                 .map_err(|e| {

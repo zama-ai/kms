@@ -13,7 +13,6 @@ use crate::execution::tfhe_internals::lwe_packing_keyswitch_key_generation::allo
 use crate::execution::tfhe_internals::parameters::{
     BKParams, DKGParams, DistributedCompressionParameters, KSKParams, MSNRKParams, NoiseInfo,
 };
-use crate::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
 use crate::{
     algebra::{
         galois_rings::common::ResiduePoly,
@@ -44,6 +43,7 @@ use tfhe::core_crypto::algorithms::convert_standard_lwe_bootstrap_key_to_fourier
 use tfhe::core_crypto::commons::traits::UnsignedInteger;
 use tfhe::core_crypto::entities::Fourier128LweBootstrapKey;
 use tfhe::shortint::list_compression::{CompressionKey, DecompressionKey};
+use tfhe::shortint::noise_squashing::NoiseSquashingKey;
 use tfhe::shortint::server_key::ModulusSwitchNoiseReductionKey;
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::Versionize;
@@ -66,7 +66,6 @@ use tracing::instrument;
 pub struct FhePubKeySet {
     pub public_key: tfhe::CompactPublicKey,
     pub server_key: tfhe::ServerKey,
-    pub sns_key: Option<SwitchAndSquashKey>,
 }
 
 impl FhePubKeySet {
@@ -88,6 +87,7 @@ struct RawPubKeySet {
     pub bk_sns: Option<LweBootstrapKey<Vec<u128>>>,
     pub compression_keys: Option<(CompressionKey, DecompressionKey)>,
     pub msnrk: Option<ModulusSwitchNoiseReductionKey>,
+    pub msnrk_sns: Option<ModulusSwitchNoiseReductionKey>,
 }
 
 impl Eq for RawPubKeySet {}
@@ -101,26 +101,6 @@ impl RawPubKeySet {
     #[allow(dead_code)]
     pub fn read_from_file(path: &Path) -> anyhow::Result<Self> {
         read_element(path)
-    }
-
-    pub fn compute_switch_and_squash_key(&self) -> Option<SwitchAndSquashKey> {
-        match &self.bk_sns {
-            Some(bk_sns) => {
-                let mut fourier_bk = Fourier128LweBootstrapKey::new(
-                    bk_sns.input_lwe_dimension(),
-                    bk_sns.glwe_size(),
-                    bk_sns.polynomial_size(),
-                    bk_sns.decomposition_base_log(),
-                    bk_sns.decomposition_level_count(),
-                );
-                convert_standard_lwe_bootstrap_key_to_fourier_128(bk_sns, &mut fourier_bk);
-                Some(SwitchAndSquashKey {
-                    fbsk_out: fourier_bk,
-                    ksk: self.ksk.clone(),
-                })
-            }
-            None => None,
-        }
     }
 
     pub fn compute_tfhe_shortint_server_key(&self, params: DKGParams) -> tfhe::shortint::ServerKey {
@@ -186,6 +166,29 @@ impl RawPubKeySet {
                 )
             },
         );
+        let noise_squashing_key = match (&self.bk_sns, params) {
+            (Some(bk_sns), DKGParams::WithSnS(sns_param)) => {
+                let mut fourier_bk = Fourier128LweBootstrapKey::new(
+                    bk_sns.input_lwe_dimension(),
+                    bk_sns.glwe_size(),
+                    bk_sns.polynomial_size(),
+                    bk_sns.decomposition_base_log(),
+                    bk_sns.decomposition_level_count(),
+                );
+                let sns_param = sns_param.sns_params;
+
+                convert_standard_lwe_bootstrap_key_to_fourier_128(bk_sns, &mut fourier_bk);
+                let key = NoiseSquashingKey::from_raw_parts(
+                    fourier_bk,
+                    self.msnrk_sns.clone(),
+                    sns_param.message_modulus,
+                    sns_param.carry_modulus,
+                    sns_param.ciphertext_modulus,
+                );
+                Some(tfhe::integer::noise_squashing::NoiseSquashingKey::from_raw_parts(key))
+            }
+            _ => None,
+        };
 
         if let Some(pksk) = &self.pksk {
             let shortint_pksk =
@@ -207,7 +210,7 @@ impl RawPubKeySet {
                 Some(integer_pksk),
                 compression_key,
                 decompression_key,
-                None,
+                noise_squashing_key,
                 tfhe::Tag::default(),
             )
         } else {
@@ -216,7 +219,7 @@ impl RawPubKeySet {
                 None,
                 compression_key,
                 decompression_key,
-                None,
+                noise_squashing_key,
                 tfhe::Tag::default(),
             )
         }
@@ -237,7 +240,6 @@ impl RawPubKeySet {
         FhePubKeySet {
             public_key: self.compute_tfhe_hl_api_compact_public_key(params),
             server_key: self.compute_tfhe_hl_api_server_key(params),
-            sns_key: self.compute_switch_and_squash_key(),
         }
     }
 }
@@ -1028,7 +1030,7 @@ where
     .await?;
 
     //If needed, compute the SnS BK
-    let (glwe_secret_key_share_sns, bk_sns) = match params {
+    let (glwe_secret_key_share_sns, bk_sns, msnrk_sns) = match params {
         DKGParams::WithSnS(sns_params) => {
             tracing::info!("(Party {my_role}) Generating SnS GLWE...Start");
             //compute the SnS GLWE key
@@ -1052,10 +1054,25 @@ where
             )
             .await?;
 
+            let msnrk_sns = if let Some(msnrk_params) = sns_params.get_msnrk_params_sns() {
+                Some(
+                    generate_mod_switch_noise_reduction_key(
+                        &lwe_secret_key_share,
+                        &msnrk_params,
+                        &mut mpc_encryption_rng,
+                        session,
+                        preprocessing,
+                    )
+                    .await?,
+                )
+            } else {
+                None
+            };
+
             tracing::info!("(Party {my_role}) Opening SnS BK...Done");
-            (Some(glwe_secret_key_share_sns), Some(bk_sns))
+            (Some(glwe_secret_key_share_sns), Some(bk_sns), msnrk_sns)
         }
-        DKGParams::WithoutSnS(_) => (None, None),
+        DKGParams::WithoutSnS(_) => (None, None, None),
     };
 
     //Compute the PKSK
@@ -1123,6 +1140,7 @@ where
         bk_sns,
         compression_keys,
         msnrk,
+        msnrk_sns,
     };
 
     let priv_key_set = GenericPrivateKeySet {
@@ -1270,12 +1288,11 @@ pub mod tests {
         random::{get_rng, seed_from_rng},
         tfhe_internals::{
             parameters::{
-                DKGParams, BC_PARAMS_SAM_NO_SNS, NIST_PARAMS_P32_NO_SNS_FGLWE,
+                DKGParams, BC_PARAMS_NO_SNS, NIST_PARAMS_P32_NO_SNS_FGLWE,
                 NIST_PARAMS_P32_NO_SNS_LWE, NIST_PARAMS_P32_SNS_FGLWE, NIST_PARAMS_P8_NO_SNS_FGLWE,
                 NIST_PARAMS_P8_NO_SNS_LWE, NIST_PARAMS_P8_SNS_FGLWE, OLD_PARAMS_P32_REAL_WITH_SNS,
                 PARAMS_TEST_BK_SNS,
             },
-            switch_and_squash::SwitchAndSquashKey,
             test_feature::to_hl_client_key,
             utils::tests::reconstruct_glwe_secret_key_from_file,
         },
@@ -1299,9 +1316,7 @@ pub mod tests {
     use crate::{
         execution::{
             endpoints::keygen::RawPubKeySet,
-            tfhe_internals::{
-                test_feature::SnsClientKey, utils::tests::reconstruct_lwe_secret_key_from_file,
-            },
+            tfhe_internals::utils::tests::reconstruct_lwe_secret_key_from_file,
         },
         networking::NetworkMode,
     };
@@ -1322,7 +1337,7 @@ pub mod tests {
         integer::parameters::DynamicDistribution,
         prelude::{CiphertextList, FheDecrypt, FheMin, FheTryEncrypt},
         set_server_key,
-        shortint::parameters::CoreCiphertextModulus,
+        shortint::{noise_squashing::NoiseSquashingKey, parameters::CoreCiphertextModulus},
         CompressedCiphertextListBuilder, FheUint32, FheUint64, FheUint8,
     };
     use tfhe_csprng::seeders::Seeder;
@@ -1810,13 +1825,13 @@ pub mod tests {
         keygen_params_blockchain_without_sns::<3>()
     }
 
-    ///Tests related to [`BC_PARAMS_SAM_NO_SNS`]
+    ///Tests related to [`BC_PARAMS_NO_SNS`]
     fn keygen_params_blockchain_without_sns<const EXTENSION_DEGREE: usize>()
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
     {
-        let params = BC_PARAMS_SAM_NO_SNS;
+        let params = BC_PARAMS_NO_SNS;
         let num_parties = 5;
         let threshold = 1;
         let temp_dir = tempfile::tempdir().unwrap();
@@ -2049,7 +2064,7 @@ pub mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[test]
-    fn decompresion_keygen_f4() {
+    fn decompression_keygen_f4() {
         let params = PARAMS_TEST_BK_SNS;
         let num_parties = 4;
         let threshold = 1;
@@ -2280,19 +2295,30 @@ pub mod tests {
             DKGParams::WithSnS(params),
             prefix_path,
         );
-        let sk_large = SnsClientKey::new(
-            params.to_classic_pbs_parameters(),
-            big_sk_glwe.clone().unwrap(),
+
+        let sns_raw_private_key = GlweSecretKey::from_container(
+            big_sk_glwe.clone().unwrap().into_container(),
+            params.sns_params.polynomial_size,
         );
+
         let pk = RawPubKeySet::read_from_file(&prefix_path.join("pk.der")).unwrap();
         let pub_key_set = pk.to_pubkeyset(DKGParams::WithSnS(params));
+        let (integer_server_key, _, _, _, ck, _) = pub_key_set.server_key.clone().into_raw_parts();
+        let ck = ck.unwrap();
 
         set_server_key(pub_key_set.server_key);
 
         let ddec_pk = pk.compute_tfhe_hl_api_compact_public_key(DKGParams::WithSnS(params));
-        let ddec_sk = to_hl_client_key(&params.regular_params, sk_lwe.clone(), sk_glwe, None, None);
+        let ddec_sk = to_hl_client_key(
+            &DKGParams::WithSnS(params),
+            sk_lwe.clone(),
+            sk_glwe,
+            None,
+            None,
+            Some(sns_raw_private_key),
+        )
+        .unwrap();
 
-        let ck = pk.compute_switch_and_squash_key().unwrap();
         //Try and generate the bk_sns directly from the private keys
         let sk_lwe_lifted_128 = LweSecretKey::from_container(
             sk_lwe
@@ -2342,16 +2368,29 @@ pub mod tests {
         convert_standard_lwe_bootstrap_key_to_fourier_128(&bsk_out, &mut fbsk_out);
         drop(bsk_out);
 
-        let ck_bis = SwitchAndSquashKey::new(fbsk_out, ck.ksk.clone());
+        let ck_bis = {
+            let (_, mod_switch, pt_modulus, pt_carry, ct_modulus) =
+                ck.clone().into_raw_parts().into_raw_parts();
+            tfhe::integer::noise_squashing::NoiseSquashingKey::from_raw_parts(
+                NoiseSquashingKey::from_raw_parts(
+                    fbsk_out, mod_switch, pt_modulus, pt_carry, ct_modulus,
+                ),
+            )
+        };
 
         let small_ct: FheUint64 = expanded_encrypt(&ddec_pk, message as u64, 64).unwrap();
         let (raw_ct, _id, _tag) = small_ct.clone().into_raw_parts();
-        let large_ct = ck.to_large_ciphertext(&raw_ct).unwrap();
-        let large_ct_bis = ck_bis.to_large_ciphertext(&raw_ct).unwrap();
+        let large_ct = ck
+            .squash_radix_ciphertext_noise(&integer_server_key, &raw_ct)
+            .unwrap();
+        let large_ct_bis = ck_bis
+            .squash_radix_ciphertext_noise(&integer_server_key, &raw_ct)
+            .unwrap();
 
         let res_small: u8 = small_ct.decrypt(&ddec_sk);
-        let res_large = sk_large.decrypt_128(&large_ct);
-        let res_large_bis = sk_large.decrypt_128(&large_ct_bis);
+        let sns_private_key = ddec_sk.clone().into_raw_parts().3.unwrap();
+        let res_large = sns_private_key.decrypt_radix(&large_ct).unwrap();
+        let res_large_bis = sns_private_key.decrypt_radix(&large_ct_bis).unwrap();
 
         assert_eq!(message, res_small);
         assert_eq!(message as u128, res_large_bis);

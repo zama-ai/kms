@@ -1,8 +1,8 @@
 use std::str::FromStr;
 
-use crate::execution::tfhe_internals::parameters::Ciphertext64;
 use serde::{Deserialize, Serialize};
 use sha3::{digest::ExtendableOutput, Shake128};
+use tfhe::integer::RadixCiphertext;
 
 pub const SESSION_ID_BYTES: usize = 128 / 8;
 
@@ -12,7 +12,7 @@ pub struct SessionId(pub u128);
 impl SessionId {
     /// NOTE: this function is deprecated since the session IDs
     /// are always derived from request IDs.
-    pub fn new(ciphertext: &Ciphertext64) -> anyhow::Result<SessionId> {
+    pub fn new(ciphertext: &RadixCiphertext) -> anyhow::Result<SessionId> {
         let serialized_ct = bincode::serialize(ciphertext)?;
 
         // hash the serialized ct data into a 128-bit (SESSION_ID_BYTES) digest and convert to u128
@@ -47,9 +47,10 @@ impl From<u128> for SessionId {
 
 #[cfg(test)]
 mod tests {
+    use tfhe::integer::RadixCiphertext;
+
     use crate::{
-        execution::constants::SMALL_TEST_KEY_PATH,
-        execution::tfhe_internals::parameters::Ciphertext64, session_id::SessionId,
+        execution::constants::SMALL_TEST_KEY_PATH, session_id::SessionId,
         tests::helper::tests::generate_cipher,
     };
 
@@ -64,16 +65,16 @@ mod tests {
     fn indeterminism() {
         let ct_base = generate_cipher(SMALL_TEST_KEY_PATH, 0);
         let base = SessionId::new(&ct_base);
-        let ct_other: Ciphertext64 = generate_cipher(SMALL_TEST_KEY_PATH, 0);
+        let ct_other: RadixCiphertext = generate_cipher(SMALL_TEST_KEY_PATH, 0);
         // validate that the same input gives a different result
         assert_ne!(base.unwrap(), SessionId::new(&ct_other).unwrap());
     }
 
     #[test]
     fn uniqueness() {
-        let ct_base: Ciphertext64 = generate_cipher(SMALL_TEST_KEY_PATH, 0);
+        let ct_base: RadixCiphertext = generate_cipher(SMALL_TEST_KEY_PATH, 0);
         let base = SessionId::new(&ct_base);
-        let ct_other: Ciphertext64 = generate_cipher(SMALL_TEST_KEY_PATH, 1);
+        let ct_other: RadixCiphertext = generate_cipher(SMALL_TEST_KEY_PATH, 1);
         let other = SessionId::new(&ct_other);
         // Validate that a bit change results in a difference in session id
         assert_ne!(base.unwrap(), other.unwrap());

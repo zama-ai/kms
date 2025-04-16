@@ -59,7 +59,7 @@ use threshold_fhe::execution::endpoints::keygen::FhePubKeySet;
 use threshold_fhe::execution::keyset_config::KeySetCompressionConfig;
 #[cfg(feature = "non-wasm")]
 use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
-use threshold_fhe::execution::tfhe_internals::parameters::{Ciphertext128, DKGParams};
+use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 #[cfg(feature = "non-wasm")]
 use threshold_fhe::execution::zk::ceremony::make_centralized_public_parameters;
 #[cfg(feature = "non-wasm")]
@@ -194,10 +194,6 @@ pub fn generate_fhe_keys(
     seed: Option<Seed>,
     eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
-    use threshold_fhe::execution::tfhe_internals::{
-        switch_and_squash::SwitchAndSquashKey, test_feature::generate_large_keys_from_seed,
-    };
-
     let f = || -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
         let client_key = match keyset_config.compression_config {
             KeySetCompressionConfig::Generate => generate_client_fhe_key(params, seed),
@@ -208,8 +204,8 @@ pub fn generate_fhe_keys(
                         // but we replace the compression private key using an existing compression private key
                         let client_key = generate_client_fhe_key(params, seed);
                         let (client_key, dedicated_compact_private_key, _, _, tag) = client_key.into_raw_parts();
-                        let (_, _, existing_compression_private_key, _, _) = key_handle.client_key.into_raw_parts();
-                        ClientKey::from_raw_parts(client_key, dedicated_compact_private_key, existing_compression_private_key, None, tag)
+                        let (_, _, existing_compression_private_key, noise_squashing_key, _) = key_handle.client_key.into_raw_parts();
+                        ClientKey::from_raw_parts(client_key, dedicated_compact_private_key, existing_compression_private_key, noise_squashing_key, tag)
                     },
                     None => anyhow::bail!("existing key handle is required when using existing compression key for keygen")
                 }
@@ -228,21 +224,12 @@ pub fn generate_fhe_keys(
             server_key.5,
         );
         let public_key = FhePublicKey::new(&client_key);
-        let (sns_client_key, fbsk_out) = generate_large_keys_from_seed(params, &client_key, seed)?;
-        let ksk = server_key.as_ref().as_ref().key_switching_key.clone();
         let pks = FhePubKeySet {
             public_key,
             server_key,
-            sns_key: Some(SwitchAndSquashKey { fbsk_out, ksk }),
         };
-        let handles = KmsFheKeyHandles::new(
-            sk,
-            client_key,
-            sns_client_key,
-            &pks,
-            decompression_key,
-            eip712_domain,
-        )?;
+        let handles =
+            KmsFheKeyHandles::new(sk, client_key, &pks, decompression_key, eip712_domain)?;
         Ok((pks, handles))
     };
     match panic::catch_unwind(f) {
@@ -261,6 +248,10 @@ pub fn generate_client_fhe_key(params: DKGParams, seed: Option<Seed>) -> ClientK
     let compression_params = params
         .get_params_basics_handle()
         .get_compression_decompression_params();
+    let noise_squashing_params = match params {
+        DKGParams::WithoutSnS(_) => None,
+        DKGParams::WithSnS(dkg_sns) => Some(dkg_sns.sns_params),
+    };
     let config = ConfigBuilder::with_custom_parameters(pbs_params);
     let config = if let Some(dedicated_pk_params) =
         params.get_params_basics_handle().get_dedicated_pk_params()
@@ -271,6 +262,11 @@ pub fn generate_client_fhe_key(params: DKGParams, seed: Option<Seed>) -> ClientK
     };
     let config = if let Some(params) = compression_params {
         config.enable_compression(params.raw_compression_parameters)
+    } else {
+        config
+    };
+    let config = if let Some(params) = noise_squashing_params {
+        config.enable_noise_squashing(params)
     } else {
         config
     };
@@ -458,6 +454,8 @@ pub async fn async_reencrypt<
             fhe_type: fhe_type as i32,
             signcrypted_ciphertext,
             external_handle,
+            // set to 1 because there's no recomposition in centralized
+            packing_factor: 1,
         });
     }
 
@@ -544,12 +542,12 @@ macro_rules! deserialize_to_low_level_and_decrypt_helper {
                 anyhow::bail!("big compressed ciphertexts are not supported yet");
             }
             CiphertextFormat::BigExpanded => {
-                let r = safe_deserialize::<Ciphertext128>(
+                let r = safe_deserialize::<tfhe::SquashedNoiseFheUint>(
                     std::io::Cursor::new($serialized_high_level),
                     kms_grpc::rpc_types::SAFE_SER_SIZE_LIMIT,
                 )
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-                let raw_res = $keys.sns_client_key.decrypt(&r);
+                let raw_res = r.decrypt(&$keys.client_key);
                 $fout(raw_res)
             }
         }
@@ -582,19 +580,13 @@ fn unsafe_decrypt(
                 anyhow::bail!("big compressed ciphertexts are not supported yet");
             }
             CiphertextFormat::BigExpanded => {
-                let r = safe_deserialize::<Ciphertext128>(
+                let r = safe_deserialize::<tfhe::SquashedNoiseFheBool>(
                     std::io::Cursor::new(serialized_high_level),
                     kms_grpc::rpc_types::SAFE_SER_SIZE_LIMIT,
                 )
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-                let raw_res = keys.sns_client_key.decrypt_128(&r);
-                TypedPlaintext::from_bool(if raw_res == 0 {
-                    false
-                } else if raw_res == 1 {
-                    true
-                } else {
-                    anyhow::bail!("decrypted result is not boolean")
-                })
+                let raw_res = r.decrypt(&keys.client_key);
+                TypedPlaintext::from_bool(raw_res)
             }
         },
         FheTypes::Uint4 => {
@@ -1022,7 +1014,7 @@ pub(crate) mod tests {
             None,
         )
         .unwrap();
-        assert!(pub_fhe_keys.sns_key.is_some());
+        assert!(pub_fhe_keys.server_key.clone().into_raw_parts().4.is_some());
         // check that key_info contains
         let mut key_info_map = HashMap::from([(key_id.to_string().try_into().unwrap(), key_info)]);
 
@@ -1035,7 +1027,12 @@ pub(crate) mod tests {
             None,
         )
         .unwrap();
-        assert!(other_pub_fhe_keys.sns_key.is_some());
+        assert!(other_pub_fhe_keys
+            .server_key
+            .clone()
+            .into_raw_parts()
+            .4
+            .is_some());
 
         // Insert a key with another handle to setup a KMS with multiple keys
         key_info_map.insert(other_key_id.to_string().try_into().unwrap(), other_key_info);
@@ -1163,7 +1160,6 @@ pub(crate) mod tests {
             compute_cipher(
                 msg.into(),
                 &pub_keys.public_key,
-                None,
                 None,
                 EncryptionConfig {
                     compression: false,
@@ -1327,7 +1323,6 @@ pub(crate) mod tests {
             compute_cipher(
                 msg.into(),
                 &pub_keys.public_key,
-                None,
                 None,
                 EncryptionConfig {
                     compression: false,

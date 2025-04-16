@@ -1,6 +1,6 @@
 # Benchmarks
 Below we report benchmark numbers that relate to the blockchain setting.
-That is we consider 13 kms-core parties, with the `BC_PARAMS_SAM_SNS` TFHE parameters providing
+That is we consider 13 kms-core parties, with the `BC_PARAMS_SNS` TFHE parameters providing
 128 bit computational security and 80 bits statistical security.
 These are the parameters used in the HTTPZ deployment.
 

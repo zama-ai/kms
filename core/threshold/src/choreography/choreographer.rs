@@ -10,7 +10,7 @@ use crate::conf::choreo::ChoreoConf;
 use crate::execution::endpoints::decryption::DecryptionMode;
 use crate::execution::endpoints::keygen::FhePubKeySet;
 use crate::execution::runtime::party::RoleAssignment;
-use crate::execution::tfhe_internals::parameters::{Ciphertext64, DkgParamsAvailable};
+use crate::execution::tfhe_internals::parameters::DkgParamsAvailable;
 use crate::execution::zk::ceremony::compute_witness_dim;
 use crate::{
     algebra::base_ring::Z64,
@@ -24,6 +24,7 @@ use crate::{
 };
 use conf_trace::telemetry::ContextPropagator;
 use std::collections::HashMap;
+use tfhe::integer::RadixCiphertext;
 use tokio::{task::JoinSet, time::Duration};
 use tonic::service::interceptor::InterceptedService;
 use tonic::transport::{Channel, Uri};
@@ -327,7 +328,7 @@ impl ChoreoRuntime {
         key_sid: SessionId,
         decryption_mode: DecryptionMode,
         preproc_sid: Option<SessionId>,
-        ctxts: Vec<Ciphertext64>,
+        ctxts: Vec<RadixCiphertext>,
         throughput: Option<ThroughtputParams>,
         tfhe_type: TfheType,
         threshold: u32,

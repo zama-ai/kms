@@ -22,7 +22,7 @@ use kms_lib::engine::base::{compute_external_pubdata_message_hash, compute_pt_me
 use kms_lib::util::key_setup::ensure_client_keys_exist;
 use kms_lib::util::key_setup::test_tools::{
     compute_cipher_from_stored_key, load_crs_from_storage, load_pk_from_storage,
-    load_server_key_from_storage, load_sns_key_from_storage, EncryptionConfig, TestingPlaintext,
+    load_server_key_from_storage, EncryptionConfig, TestingPlaintext,
 };
 use kms_lib::vault::storage::{file::FileStorage, StorageType};
 use kms_lib::DecryptionMode;
@@ -867,7 +867,6 @@ async fn fetch_key(
         PubDataType::PublicKey,
         PubDataType::PublicKeyMetadata,
         PubDataType::ServerKey,
-        PubDataType::SnsKey,
     ];
     tracing::info!("Fetching public key, server key and sns key with id {key_id}");
     for object_name in object_names {
@@ -2167,7 +2166,6 @@ async fn fetch_and_check_keygen(
     fetch_key(&req_id, cc_conf, destination_prefix).await?;
     let pk = load_pk_from_storage(Some(destination_prefix), &req_id).await;
     let sk = load_server_key_from_storage(Some(destination_prefix), &req_id).await;
-    let sns_key = load_sns_key_from_storage(Some(destination_prefix), &req_id).await;
 
     for response in responses {
         let resp_req_id = &response.request_id.unwrap().to_string();
@@ -2197,14 +2195,6 @@ async fn fetch_and_check_keygen(
             return Err(anyhow!("No external pubkey signature in response"));
         };
         check_ext_pubdata_signature(&sk, extsksig, &domain, kms_addrs)?;
-
-        let extsnssig =
-            if let Some(spdh) = response.key_results.get(&PubDataType::SnsKey.to_string()) {
-                &spdh.external_signature
-            } else {
-                return Err(anyhow!("No external sns key signature in response"));
-            };
-        check_ext_pubdata_signature(&sns_key, extsnssig, &domain, kms_addrs)?;
 
         tracing::info!("EIP712 verification of Public Key and Server Key successful.");
     }

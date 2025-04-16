@@ -246,6 +246,7 @@ impl CoreServiceEndpoint for MockKmsService {
                     signcrypted_ciphertext: result_bytes.clone(),
                     external_handle: result_bytes,
                     fhe_type: FheTypes::Uint8 as i32,
+                    packing_factor: 1,
                 }],
                 party_id: 1,
                 degree: 1,

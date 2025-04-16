@@ -325,4 +325,7 @@ message TypedSigncryptedCiphertext {
   bytes signcrypted_ciphertext = 2;
   // The external handles that were originally in the request.
   bytes external_handle = 3;
+  // The packing factor determines whether the decrypted plaintext
+  // has a different way of packing compared to what is specified in the plaintext modulus.
+  uint32 packing_factor = 4;
 }

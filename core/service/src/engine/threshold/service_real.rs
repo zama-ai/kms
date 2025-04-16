@@ -82,7 +82,6 @@ use threshold_fhe::execution::runtime::session::{
 };
 use threshold_fhe::execution::small_execution::prss::PRSSSetup;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
-use threshold_fhe::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
 use threshold_fhe::execution::zk::ceremony::{compute_witness_dim, Ceremony, RealCeremony};
 use threshold_fhe::networking::grpc::{CoreToCoreNetworkConfig, GrpcNetworkingManager, GrpcServer};
 use threshold_fhe::networking::NetworkingStrategy;
@@ -231,11 +230,12 @@ pub enum ThresholdFheKeysVersioned {
 
 /// These are the internal key materials (public and private)
 /// that's needed for decryption, reencryption and verifying a proven input.
-#[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
+#[derive(Clone, Serialize, Deserialize, Versionize)]
 #[versionize(ThresholdFheKeysVersioned)]
 pub struct ThresholdFheKeys {
     pub private_keys: PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-    pub sns_key: SwitchAndSquashKey,
+    pub integer_server_key: tfhe::integer::ServerKey,
+    pub sns_key: Option<tfhe::integer::noise_squashing::NoiseSquashingKey>,
     pub decompression_key: Option<DecompressionKey>,
     pub pk_meta_data: KeyGenCallValues,
     pub ksk: LweKeyswitchKey<Vec<u64>>,
@@ -243,6 +243,18 @@ pub struct ThresholdFheKeys {
 
 impl Named for ThresholdFheKeys {
     const NAME: &'static str = "ThresholdFheKeys";
+}
+
+impl std::fmt::Debug for ThresholdFheKeys {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ThresholdFheKeys")
+            .field("private_keys", &"ommitted")
+            .field("server_key", &"ommitted")
+            .field("decompression_key", &"ommitted")
+            .field("pk_meta_data", &self.pk_meta_data)
+            .field("ksk", &"ommitted")
+            .finish()
+    }
 }
 
 type BucketMetaStore = Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF4Z128>>>>;
@@ -256,11 +268,6 @@ pub fn compute_all_info(
     //Compute all the info required for storing
     let pub_key_info = compute_info(sig_key, &fhe_key_set.public_key, domain);
     let serv_key_info = compute_info(sig_key, &fhe_key_set.server_key, domain);
-    let sns_key_info = if let Some(sns_key) = &fhe_key_set.sns_key {
-        Some(compute_info(sig_key, sns_key, domain)?)
-    } else {
-        None
-    };
 
     //Make sure we did manage to compute the info
     Ok(match (pub_key_info, serv_key_info) {
@@ -268,9 +275,6 @@ pub fn compute_all_info(
             let mut info = HashMap::new();
             info.insert(PubDataType::PublicKey, pub_key_info);
             info.insert(PubDataType::ServerKey, serv_key_info);
-            if let Some(inner) = sns_key_info {
-                info.insert(PubDataType::SnsKey, inner);
-            }
             info
         }
         _ => {
@@ -979,7 +983,7 @@ impl<
 
         let mut all_signcrypted_cts = vec![];
 
-        //TODO: Each iteration of this loop should probably happen
+        // TODO: Each iteration of this loop should probably happen
         // inside its own tokio task
         for (ctr, typed_ciphertext) in typed_ciphertexts.iter().enumerate() {
             // Create and start a the timer, it'll be dropped and thus
@@ -1009,7 +1013,7 @@ impl<
             let low_level_ct =
                 deserialize_to_low_level(fhe_type, ct_format, ct, &keys.decompression_key)?;
 
-            let pdec: Result<(Vec<u8>, std::time::Duration), anyhow::Error> = match dec_mode {
+            let pdec: Result<(Vec<u8>, u32, std::time::Duration), anyhow::Error> = match dec_mode {
                 DecryptionMode::NoiseFloodSmall => {
                     let mut session = tonic_handle_potential_err(
                         session_prep
@@ -1022,7 +1026,10 @@ impl<
                     let pdec = partial_decrypt_using_noiseflooding(
                         &mut session,
                         &mut preparation,
-                        &keys.sns_key,
+                        &keys.integer_server_key,
+                        keys.sns_key
+                            .as_ref()
+                            .ok_or(anyhow::anyhow!("missing sns key"))?,
                         low_level_ct,
                         &keys.private_keys,
                         DecryptionMode::NoiseFloodSmall,
@@ -1030,7 +1037,7 @@ impl<
                     .await;
 
                     let res = match pdec {
-                        Ok((partial_dec_map, time)) => {
+                        Ok((partial_dec_map, packing_factor, time)) => {
                             let pdec_serialized = match partial_dec_map.get(&session_id.to_string())
                             {
                                 Some(partial_dec) => {
@@ -1045,7 +1052,7 @@ impl<
                                 }
                             };
 
-                            (pdec_serialized, time)
+                            (pdec_serialized, packing_factor, time)
                         }
                         Err(e) => {
                             return Err(anyhow!("Failed reencryption with noiseflooding: {e}"))
@@ -1063,7 +1070,7 @@ impl<
 
                     let pdec = partial_decrypt_using_bitdec(
                         &mut session,
-                        low_level_ct.try_get_small_ct()?,
+                        &low_level_ct.try_get_small_ct()?,
                         &keys.private_keys,
                         &keys.ksk,
                         DecryptionMode::BitDecSmall,
@@ -1086,7 +1093,9 @@ impl<
                                 }
                             };
 
-                            (pdec_serialized, time)
+                            // packing factor is always 1 with bitdec for now
+                            // we may optionally pack it later
+                            (pdec_serialized, 1, time)
                         }
                         Err(e) => return Err(anyhow!("Failed reencryption with bitdec: {e}")),
                     };
@@ -1100,8 +1109,8 @@ impl<
                 }
             };
 
-            let partial_signcryption = match pdec {
-                Ok((pdec_serialized, time)) => {
+            let (partial_signcryption, packing_factor) = match pdec {
+                Ok((pdec_serialized, packing_factor, time)) => {
                     let signcryption_msg = SigncryptionPayload {
                         plaintext: TypedPlaintext::from_bytes(pdec_serialized, fhe_type),
                         link: link.clone(),
@@ -1120,7 +1129,7 @@ impl<
                         fhe_type,
                         time.as_millis()
                     );
-                    res
+                    (res, packing_factor)
                 }
                 Err(e) => return Err(anyhow!("Failed reencryption: {e}")),
             };
@@ -1128,6 +1137,7 @@ impl<
                 fhe_type: fhe_type as i32,
                 signcrypted_ciphertext: partial_signcryption,
                 external_handle,
+                packing_factor,
             });
             //Explicitly drop the timer to record it
             drop(inner_timer);
@@ -1384,7 +1394,10 @@ impl<
                 decrypt_using_noiseflooding(
                     &mut session,
                     &mut preparation,
-                    &keys.sns_key,
+                    &keys.integer_server_key,
+                    keys.sns_key
+                        .as_ref()
+                        .ok_or(anyhow::anyhow!("missing sns key"))?,
                     low_level_ct,
                     &keys.private_keys,
                     dec_mode,
@@ -1402,7 +1415,7 @@ impl<
 
                 decrypt_using_bitdec(
                     &mut session,
-                    low_level_ct.try_get_small_ct()?,
+                    &low_level_ct.try_get_small_ct()?,
                     &keys.private_keys,
                     &keys.ksk,
                     dec_mode,
@@ -2295,17 +2308,28 @@ impl<
                 let dummy_lwe_secret_key =
                     LweSecretKeyOwned::from_container(vec![0u64; params_handle.lwe_dimension().0]);
 
-                let regular_params = match params {
-                    DKGParams::WithSnS(p) => p.regular_params,
-                    DKGParams::WithoutSnS(p) => p,
+                // We need a dummy sns secret key otherwise [to_hl_client_key]
+                // will fail because it will try to use this key when the parameter supports SnS
+                let dummy_sns_secret_key = match params {
+                    DKGParams::WithoutSnS(_) => None,
+                    DKGParams::WithSnS(sns_param) => {
+                        let glwe_dim = sns_param.glwe_dimension_sns();
+                        let poly_size = sns_param.polynomial_size_sns();
+                        Some(GlweSecretKeyOwned::from_container(
+                            vec![0u128; glwe_dim.to_equivalent_lwe_dimension(poly_size).0],
+                            sns_param.polynomial_size_sns(),
+                        ))
+                    }
                 };
+
                 let (client_key, _, _, _, _) = to_hl_client_key(
-                    &regular_params,
+                    &params,
                     dummy_lwe_secret_key,
                     bit_glwe_secret_key,
                     None,
                     None,
-                )
+                    dummy_sns_secret_key,
+                )?
                 .into_raw_parts();
 
                 let (_, decompression_key) =
@@ -2543,25 +2567,13 @@ impl<
         };
 
         //Make sure the dkg ended nicely
-        let (mut pub_key_set, private_keys) = match dkg_res {
+        let (pub_key_set, private_keys) = match dkg_res {
             Ok((pk, sk)) => (pk, sk),
             Err(e) => {
                 //If dkg errored out, update status
                 let mut guarded_meta_storage = meta_store.write().await;
                 // We cannot do much if updating the storage fails at this point...
                 let _ = guarded_meta_storage.update(req_id, Err(e.to_string()));
-                return;
-            }
-        };
-
-        //Make sure we do have a SnS key
-        let sns_key = match pub_key_set.sns_key.clone() {
-            Some(sns_key) => sns_key,
-            None => {
-                //If sns key is missing, update status
-                let mut guarded_meta_storage = meta_store.write().await;
-                // We cannot do much if updating the storage fails at this point...
-                let _ = guarded_meta_storage.update(req_id, Err("Missing SNS key".to_string()));
                 return;
             }
         };
@@ -2578,31 +2590,22 @@ impl<
             }
         };
 
-        //Retrieve decompression key if there's one
         let (
             raw_server_key,
-            raw_ksk_material,
-            raw_compression_key,
+            _raw_ksk_material,
+            _raw_compression_key,
             raw_decompression_key,
             raw_noise_squashing_key,
-            raw_tag,
-        ) = pub_key_set.server_key.into_raw_parts();
+            _raw_tag,
+        ) = pub_key_set.server_key.clone().into_raw_parts();
         let decompression_key = raw_decompression_key.clone();
 
-        pub_key_set.server_key = tfhe::ServerKey::from_raw_parts(
-            raw_server_key.clone(),
-            raw_ksk_material,
-            raw_compression_key,
-            raw_decompression_key,
-            raw_noise_squashing_key,
-            raw_tag,
-        );
-
-        let ksk = raw_server_key.into_raw_parts().key_switching_key;
+        let ksk = raw_server_key.clone().into_raw_parts().key_switching_key;
 
         let threshold_fhe_keys = ThresholdFheKeys {
             private_keys,
-            sns_key,
+            integer_server_key: raw_server_key,
+            sns_key: raw_noise_squashing_key,
             decompression_key,
             pk_meta_data: info.clone(),
             ksk,

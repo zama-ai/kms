@@ -294,14 +294,6 @@ where
         )
         .await
         .unwrap()
-        && pub_storage
-            .data_exists(
-                &pub_storage
-                    .compute_url(&key_id.to_string(), &PubDataType::SnsKey.to_string())
-                    .unwrap(),
-            )
-            .await
-            .unwrap()
         && priv_storage
             .data_exists(
                 &priv_storage
@@ -407,22 +399,6 @@ where
             &req_id,
             pub_storage.info()
         );
-
-        if let Some(sns_key) = cur_keys.sns_key {
-            store_versioned_at_request_id(
-                pub_storage,
-                &req_id,
-                &sns_key,
-                &PubDataType::SnsKey.to_string(),
-            )
-            .await
-            .unwrap();
-            tracing::info!(
-                "Successfully stored public sns key under the handle {} in storage {}",
-                &req_id,
-                pub_storage.info()
-            );
-        }
     }
     true
 }
@@ -585,7 +561,7 @@ where
     let key_shares = keygen_all_party_shares(
         key_set.get_raw_lwe_client_key(),
         key_set.get_raw_glwe_client_key(),
-        key_set.sns_secret_key.key,
+        key_set.get_raw_glwe_client_sns_key_as_lwe().unwrap(),
         dkg_params
             .get_params_basics_handle()
             .to_classic_pbs_parameters(),
@@ -595,8 +571,8 @@ where
     )
     .unwrap();
 
-    let sns_key = key_set.public_keys.sns_key.to_owned().unwrap();
-    let decompression_key = key_set.public_keys.server_key.to_owned().into_raw_parts().3;
+    let (server_key, _, _, decompression_key, sns_key, _) =
+        key_set.public_keys.server_key.clone().into_raw_parts();
     let ksk = key_set
         .public_keys
         .server_key
@@ -612,6 +588,7 @@ where
         let info = compute_all_info(sk, &key_set.public_keys, None).unwrap();
         let threshold_fhe_keys = ThresholdFheKeys {
             private_keys: key_shares[i - 1].to_owned(),
+            integer_server_key: server_key.clone(),
             sns_key: sns_key.clone(),
             decompression_key: decompression_key.clone(),
             pk_meta_data: info,
@@ -643,29 +620,6 @@ where
             key_id,
             pub_storages[i-1].info()
         );
-
-        match &key_set.public_keys.sns_key {
-            Some(sns_key) => {
-                store_versioned_at_request_id(
-                    &mut pub_storages[i - 1],
-                    key_id,
-                    sns_key,
-                    &PubDataType::SnsKey.to_string(),
-                )
-                .await
-                .unwrap();
-                tracing::info!(
-            "Successfully stored public sns server key data under the handle {} in storage {}",
-            key_id,
-            pub_storages[i-1].info()
-        );
-            }
-            None => tracing::warn!(
-                "No sns key to store for handle {} in storage {}",
-                key_id,
-                pub_storages[i - 1].info()
-            ),
-        }
 
         store_versioned_at_request_id(
             &mut priv_storages[i - 1],

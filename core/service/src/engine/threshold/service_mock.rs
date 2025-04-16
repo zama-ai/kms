@@ -141,6 +141,7 @@ impl Reencryptor for DummyReencryptor {
             signcrypted_ciphertext: "signcrypted_ciphertexts".as_bytes().to_vec(),
             fhe_type: FheTypes::Uint8 as i32,
             external_handle: vec![1, 2, 3],
+            packing_factor: 1,
         }];
         let payload = ReencryptionResponsePayload {
             verification_key: vec![],

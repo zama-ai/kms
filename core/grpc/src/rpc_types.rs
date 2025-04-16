@@ -98,13 +98,6 @@ alloy_sol_types::sol! {
     }
 }
 
-// Solidity struct for signing the SnsKey
-alloy_sol_types::sol! {
-    struct SnsKey {
-        bytes sns_key;
-    }
-}
-
 pub fn protobuf_to_alloy_domain_option(
     domain_ref: Option<&Eip712DomainMsg>,
 ) -> Option<Eip712Domain> {
@@ -299,7 +292,6 @@ pub enum PubDataType {
     PublicKey,
     PublicKeyMetadata,
     ServerKey,
-    SnsKey,
     CRS,
     VerfKey,     // Type for the servers public verification keys
     VerfAddress, // The ethereum address of the KMS core, needed for KMS signature verification
@@ -312,7 +304,6 @@ impl fmt::Display for PubDataType {
             PubDataType::PublicKey => write!(f, "PublicKey"),
             PubDataType::PublicKeyMetadata => write!(f, "PublicKeyMetadata"),
             PubDataType::ServerKey => write!(f, "ServerKey"),
-            PubDataType::SnsKey => write!(f, "SnsKey"),
             PubDataType::CRS => write!(f, "CRS"),
             PubDataType::VerfKey => write!(f, "VerfKey"),
             PubDataType::VerfAddress => write!(f, "VerfAddress"),

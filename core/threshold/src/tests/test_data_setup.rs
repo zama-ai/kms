@@ -1,7 +1,7 @@
 #[cfg(test)]
 pub mod tests {
     use crate::execution::tfhe_internals::parameters::{
-        DKGParams, BC_PARAMS_SAM_SNS, PARAMS_TEST_BK_SNS,
+        DKGParams, BC_PARAMS_SNS, PARAMS_TEST_BK_SNS,
     };
     use crate::execution::tfhe_internals::test_feature::KeySet;
     use crate::file_handling::{read_element, write_element};
@@ -14,7 +14,7 @@ pub mod tests {
 
     // TAKING BLOCKCHAIN PARAMS AS REFERENCE (Sept. 16 2024)
     // TODO MULTIPLE PEOPLE SHOULD VALIDATE THAT THESE ARE INDEED THE PARAMETERS WE SHOULD RUN WITH!!!
-    pub const REAL_PARAMETERS: DKGParams = BC_PARAMS_SAM_SNS;
+    pub const REAL_PARAMETERS: DKGParams = BC_PARAMS_SNS;
 
     pub fn ensure_keys_exist(path: &str, params: DKGParams) {
         match read_element::<KeySet, _>(&path) {

@@ -1,11 +1,11 @@
 use threshold_fhe::execution::tfhe_internals::parameters::{
-    DKGParams, BC_PARAMS_SAM_SNS, PARAMS_TEST_BK_SNS,
+    DKGParams, BC_PARAMS_SNS, PARAMS_TEST_BK_SNS,
 };
 
 // The amount of bytes in an ID (key handle, request ID etc.)
 pub const ID_LENGTH: usize = kms_grpc::rpc_types::ID_LENGTH;
 pub const KEY_PATH_PREFIX: &str = "keys";
-pub const DEFAULT_PARAM: DKGParams = BC_PARAMS_SAM_SNS;
+pub const DEFAULT_PARAM: DKGParams = BC_PARAMS_SNS;
 pub const TEST_PARAM: DKGParams = PARAMS_TEST_BK_SNS;
 
 pub const SIG_SIZE: usize = 64; // a 32 byte r value and a 32 byte s value

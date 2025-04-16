@@ -76,9 +76,10 @@ pub mod js_api;
 fn decrypted_blocks_to_plaintext(
     params: &ClassicPBSParameters,
     fhe_type: FheTypes,
+    packing_factor: u32,
     recon_blocks: Vec<Z128>,
 ) -> anyhow::Result<TypedPlaintext> {
-    let bits_in_block = params.message_modulus_log();
+    let bits_in_block = params.message_modulus_log() * packing_factor;
     let res_pt = match fhe_type {
         FheTypes::Uint2048 => {
             combine_decryptions::<tfhe::integer::bigint::U2048>(bits_in_block, recon_blocks)
@@ -1380,6 +1381,22 @@ impl Client {
                 continue;
             }
 
+            if !pivot_payload
+                .signcrypted_ciphertexts
+                .iter()
+                .map(|ct| ct.packing_factor)
+                .zip(
+                    cur_payload
+                        .signcrypted_ciphertexts
+                        .iter()
+                        .map(|ct| ct.packing_factor),
+                )
+                .all(|(left, right)| left == right)
+            {
+                tracing::warn!("Inconsistent packing factor for {}", cur_payload.party_id);
+                continue;
+            }
+
             // only add the verified keys and responses at the end
             verification_keys.insert(cur_payload.verification_key.clone());
             resp_parsed_payloads.push(cur_payload.clone());
@@ -1573,7 +1590,7 @@ impl Client {
                 let all_sharings = self.recover_sharings::<Z64>(&validated_resps, client_keys)?;
 
                 let mut out = vec![];
-                for (fhe_type, sharings) in all_sharings {
+                for (fhe_type, packing_factor, sharings) in all_sharings {
                     let mut decrypted_blocks = Vec::new();
                     for cur_block_shares in sharings {
                         // NOTE: this performs optimistic reconstruction
@@ -1599,6 +1616,7 @@ impl Client {
                     // convert to Z128
                     out.push((
                         fhe_type,
+                        packing_factor,
                         ptxts64
                             .iter()
                             .map(|ptxt| Wrapping(ptxt.0 as u128))
@@ -1611,7 +1629,7 @@ impl Client {
                 let all_sharings = self.recover_sharings::<Z128>(&validated_resps, client_keys)?;
 
                 let mut out = vec![];
-                for (fhe_type, sharings) in all_sharings {
+                for (fhe_type, packing_factor, sharings) in all_sharings {
                     let mut decrypted_blocks = Vec::new();
 
                     for cur_block_shares in sharings {
@@ -1631,6 +1649,7 @@ impl Client {
 
                     out.push((
                         fhe_type,
+                        packing_factor,
                         reconstruct_packed_message(
                             Some(decrypted_blocks),
                             &pbs_params,
@@ -1654,8 +1673,13 @@ impl Client {
         };
 
         let mut final_result = vec![];
-        for (fhe_type, res) in res {
-            final_result.push(decrypted_blocks_to_plaintext(&pbs_params, fhe_type, res)?);
+        for (fhe_type, packing_factor, res) in res {
+            final_result.push(decrypted_blocks_to_plaintext(
+                &pbs_params,
+                fhe_type,
+                packing_factor,
+                res,
+            )?);
         }
         Ok(final_result)
     }
@@ -1678,10 +1702,11 @@ impl Client {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     fn insecure_threshold_reencryption_resp_to_blocks<Z: BaseRing>(
         agg_resp: &[ReencryptionResponse],
         client_keys: &SigncryptionPair,
-    ) -> anyhow::Result<Vec<(FheTypes, Vec<ResiduePolyF4<Z>>)>>
+    ) -> anyhow::Result<Vec<(FheTypes, u32, Vec<ResiduePolyF4<Z>>)>>
     where
         ResiduePolyF4<Z>: ErrorCorrect + MemoizedExceptionals,
     {
@@ -1714,6 +1739,15 @@ impl Client {
                 .ok_or(anyhow::anyhow!("payload is empty"))?
                 .signcrypted_ciphertexts[batch_i]
                 .fhe_type()?;
+            let packing_factor = agg_resp
+                .first()
+                .as_ref()
+                .ok_or(anyhow::anyhow!("agg_resp is empty"))?
+                .payload
+                .as_ref()
+                .ok_or(anyhow::anyhow!("payload is empty"))?
+                .signcrypted_ciphertexts[batch_i]
+                .packing_factor;
 
             // Trust all responses have all expected blocks
             for cur_resp in agg_resp {
@@ -1764,7 +1798,7 @@ impl Client {
                     return Err(anyhow_error_and_log("Could not reconstruct all blocks"));
                 }
             }
-            out.push((fhe_type, decrypted_blocks))
+            out.push((fhe_type, packing_factor, decrypted_blocks))
         }
         Ok(out)
     }
@@ -1778,7 +1812,7 @@ impl Client {
             Self::insecure_threshold_reencryption_resp_to_blocks::<Z128>(agg_resp, client_keys)?;
 
         let mut out = vec![];
-        for (fhe_type, decrypted_blocks) in all_decrypted_blocks {
+        for (fhe_type, packing_factor, decrypted_blocks) in all_decrypted_blocks {
             let pbs_params = self
                 .params
                 .get_params_basics_handle()
@@ -1799,6 +1833,7 @@ impl Client {
             out.push(decrypted_blocks_to_plaintext(
                 &pbs_params,
                 fhe_type,
+                packing_factor,
                 recon_blocks,
             )?);
         }
@@ -1817,7 +1852,7 @@ impl Client {
             Self::insecure_threshold_reencryption_resp_to_blocks::<Z64>(agg_resp, client_keys)?;
 
         let mut out = vec![];
-        for (fhe_type, decrypted_blocks) in all_decrypted_blocks {
+        for (fhe_type, packing_factor, decrypted_blocks) in all_decrypted_blocks {
             let pbs_params = self
                 .params
                 .get_params_basics_handle()
@@ -1838,6 +1873,7 @@ impl Client {
             out.push(decrypted_blocks_to_plaintext(
                 &pbs_params,
                 fhe_type,
+                packing_factor,
                 ptxts128,
             )?);
         }
@@ -1851,7 +1887,7 @@ impl Client {
         &self,
         agg_resp: &[ReencryptionResponsePayload],
         client_keys: &SigncryptionPair,
-    ) -> anyhow::Result<Vec<(FheTypes, Vec<ShamirSharings<ResiduePolyF4<Z>>>)>> {
+    ) -> anyhow::Result<Vec<(FheTypes, u32, Vec<ShamirSharings<ResiduePolyF4<Z>>>)>> {
         let batch_count = agg_resp
             .first()
             .ok_or(anyhow::anyhow!("response payloads is empty"))?
@@ -1873,6 +1909,8 @@ impl Client {
             for _i in 0..num_blocks {
                 sharings.push(ShamirSharings::new());
             }
+            // It is ok to use the first packing factor because this is checked by [self.validate_reenc_req_resp]
+            let packing_factor = agg_resp[0].signcrypted_ciphertexts[batch_i].packing_factor;
             for cur_resp in agg_resp {
                 // Observe that it has already been verified in [validate_meta_data] that server
                 // verification key is in the set of permissible keys
@@ -1914,7 +1952,7 @@ impl Client {
                     }
                 };
             }
-            out.push((fhe_type, sharings));
+            out.push((fhe_type, packing_factor, sharings));
         }
         Ok(out)
     }
@@ -4717,7 +4755,7 @@ pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
+    #[case(vec![TestingPlaintext::Bool(true), TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn default_decryption_threshold(
@@ -5104,6 +5142,7 @@ pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
+    #[case(TestingPlaintext::Bool(true), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     #[case(TestingPlaintext::U8(u8::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
@@ -5629,7 +5668,7 @@ pub(crate) mod tests {
     #[cfg(feature = "insecure")]
     #[rstest::rstest]
     #[case(4)]
-    #[case(7)]
+    // #[case(7)] // uses too much memory
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn default_insecure_dkg(#[case] amount_parties: usize) {
@@ -6371,14 +6410,18 @@ pub(crate) mod tests {
             }
 
             let threshold = kms_clients.len().div_ceil(3) - 1;
-            let (lwe_sk, glwe_sk) =
+            let (lwe_sk, glwe_sk, sns_glwe_sk) =
                 try_reconstruct_shares(internal_client.params, threshold, all_threshold_fhe_keys);
-            let regular_params = match internal_client.params {
-                DKGParams::WithSnS(p) => p.regular_params,
-                DKGParams::WithoutSnS(p) => p,
-            };
             out = Some(TestKeyGenResult::Standard((
-                to_hl_client_key(&regular_params, lwe_sk, glwe_sk, None, None),
+                to_hl_client_key(
+                    &internal_client.params,
+                    lwe_sk,
+                    glwe_sk,
+                    None,
+                    None,
+                    Some(sns_glwe_sk),
+                )
+                .unwrap(),
                 final_public_key.unwrap(),
                 final_server_key.unwrap(),
             )));
@@ -6421,6 +6464,7 @@ pub(crate) mod tests {
     ) -> (
         tfhe::core_crypto::prelude::LweSecretKeyOwned<u64>,
         tfhe::core_crypto::prelude::GlweSecretKeyOwned<u64>,
+        tfhe::core_crypto::prelude::GlweSecretKeyOwned<u128>,
     ) {
         use tfhe::core_crypto::prelude::GlweSecretKeyOwned;
         use threshold_fhe::execution::{
@@ -6471,6 +6515,33 @@ pub(crate) mod tests {
             reconstruct_bit_vec(glwe_shares, param_handle.glwe_sk_num_bits(), threshold),
             param_handle.polynomial_size(),
         );
-        (lwe_secret_key, glwe_sk)
+
+        let sns_lwe_shares = all_threshold_fhe_keys
+            .iter()
+            .map(|(k, v)| (*k, v.private_keys.glwe_secret_key_share_sns_as_lwe.clone()))
+            .filter_map(|(k, v)| match v {
+                Some(vv) => Some((k, vv.data)),
+                None => None,
+            })
+            .collect::<HashMap<_, _>>();
+        let sns_param = match param {
+            DKGParams::WithoutSnS(_) => panic!("missing sns param"),
+            DKGParams::WithSnS(sns_param) => sns_param.sns_params,
+        };
+        let sns_glwe_sk = GlweSecretKeyOwned::from_container(
+            reconstruct_bit_vec(
+                sns_lwe_shares,
+                sns_param
+                    .glwe_dimension
+                    .to_equivalent_lwe_dimension(sns_param.polynomial_size)
+                    .0,
+                threshold,
+            )
+            .into_iter()
+            .map(|x| x as u128)
+            .collect(),
+            sns_param.polynomial_size,
+        );
+        (lwe_secret_key, glwe_sk, sns_glwe_sk)
     }
 }

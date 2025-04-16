@@ -930,14 +930,14 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(69);
         let msg: u8 = 3;
         let keys: KeySet = read_element(std::path::Path::new(SMALL_TEST_KEY_PATH)).unwrap();
+        let params = keys.get_cpu_params().unwrap();
 
         let identities = generate_fixed_identities(num_parties);
 
         // generate keys
         let lwe_secret_key = keys.get_raw_lwe_client_key();
         let glwe_secret_key = keys.get_raw_glwe_client_key();
-        let glwe_secret_key_sns_as_lwe = keys.sns_secret_key.key;
-        let params = keys.sns_secret_key.params;
+        let glwe_secret_key_sns_as_lwe = keys.get_raw_glwe_client_sns_key_as_lwe().unwrap();
         let key_shares = keygen_all_party_shares(
             lwe_secret_key,
             glwe_secret_key,
@@ -949,7 +949,7 @@ mod tests {
         )
         .unwrap();
 
-        set_server_key(keys.public_keys.server_key);
+        set_server_key(keys.public_keys.server_key.clone());
         let ct: FheUint8 = expanded_encrypt(&keys.public_keys.public_key, msg, 8).unwrap();
         let (raw_ct, _id, _tag) = ct.into_raw_parts();
 
@@ -957,8 +957,8 @@ mod tests {
         let mut runtime =
             DistributedTestRuntime::new(identities, threshold as u8, NetworkMode::Sync, None);
 
+        runtime.setup_server_key(Arc::new(keys.public_keys.server_key));
         runtime.setup_sks(key_shares);
-        runtime.setup_conversion_key(Arc::new(keys.public_keys.sns_key.clone().unwrap()));
 
         let mut seed = [0_u8; aes_prng::SEED_SIZE];
         // create sessions for each prss party

@@ -1,8 +1,9 @@
 use crate::execution::endpoints::decryption::DecryptionMode;
-use crate::execution::tfhe_internals::parameters::{Ciphertext64, DKGParams};
+use crate::execution::tfhe_internals::parameters::DKGParams;
 use crate::session_id::SessionId;
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
+use tfhe::integer::RadixCiphertext;
 
 use super::grpc::SupportedRing;
 
@@ -63,7 +64,7 @@ pub struct ThresholdDecryptParams {
     pub decryption_mode: DecryptionMode,
     pub key_sid: SessionId,
     pub preproc_sid: Option<SessionId>,
-    pub ctxts: Vec<Ciphertext64>,
+    pub ctxts: Vec<RadixCiphertext>,
     pub tfhe_type: TfheType,
     // If Some, copies each ctxts the given
     // number of times and spawns

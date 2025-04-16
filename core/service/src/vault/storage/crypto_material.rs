@@ -206,26 +206,14 @@ impl<
             .await
             .is_ok()
         };
-        let f4 = async {
-            let mut pub_storage = self.inner.public_storage.lock().await;
-            store_versioned_at_request_id(
-                &mut (*pub_storage),
-                req_id,
-                &threshold_fhe_keys.sns_key,
-                &PubDataType::SnsKey.to_string(),
-            )
-            .await
-            .is_ok()
-        };
 
-        let (r1, r2, r3, r4) = tokio::join!(f1, f2, f3, f4);
+        let (r1, r2, r3) = tokio::join!(f1, f2, f3);
 
         //Try to store the new data
         tracing::info!("Storing DKG objects for request {}", req_id);
         if r1
             && r2
             && r3
-            && r4
             && guarded_meta_storage
                 .update(req_id, Ok(info))
                 .inspect_err(|e| {
@@ -485,26 +473,10 @@ impl<
             .await
             .is_ok()
         };
-        let f4 = async {
-            if let Some(sns_key) = fhe_key_set.sns_key {
-                let mut pub_storage = self.inner.public_storage.lock().await;
-                store_versioned_at_request_id(
-                    &mut (*pub_storage),
-                    req_id,
-                    &sns_key,
-                    &PubDataType::SnsKey.to_string(),
-                )
-                .await
-                .is_ok()
-            } else {
-                true
-            }
-        };
-        let (r1, r2, r3, r4) = tokio::join!(f1, f2, f3, f4);
+        let (r1, r2, r3) = tokio::join!(f1, f2, f3);
         if r1
             && r2
             && r3
-            && r4
             && guarded_meta_store
                 .update(req_id, Ok(key_info.public_key_info.to_owned()))
                 .inspect_err(|e| {
@@ -587,7 +559,6 @@ impl<
         let x: &mut KmsFheKeyHandles = key_info.get_mut(key_handle).unwrap();
         let wrong_handles = KmsFheKeyHandles {
             client_key: wrong_client_key,
-            sns_client_key: x.sns_client_key.clone(),
             decompression_key: x.decompression_key.clone(),
             public_key_info: x.public_key_info.clone(),
         };
@@ -649,16 +620,6 @@ impl<
             .is_err()
         };
         let f3 = async {
-            let mut pub_storage = self.public_storage.lock().await;
-            delete_at_request_id(
-                &mut (*pub_storage),
-                req_id,
-                &PubDataType::SnsKey.to_string(),
-            )
-            .await
-            .is_err()
-        };
-        let f4 = async {
             let mut priv_storage = self.private_storage.lock().await;
             // can't map() because async closures aren't stable in Rust
             let back_storage = match self.backup_storage {
@@ -682,8 +643,8 @@ impl<
             };
             del_err_1 || del_err_2
         };
-        let (r1, r2, r3, r4) = tokio::join!(f1, f2, f3, f4);
-        if r1 || r2 || r3 || r4 {
+        let (r1, r2, r3) = tokio::join!(f1, f2, f3);
+        if r1 || r2 || r3 {
             tracing::error!("Failed to delete key material for request {}", req_id);
         } else {
             tracing::info!("Deleted all key material for request {}", req_id);
@@ -1048,8 +1009,8 @@ mod tests {
     use threshold_fhe::execution::{
         endpoints::keygen::FhePubKeySet,
         tfhe_internals::{
-            switch_and_squash::SwitchAndSquashKey,
-            test_feature::{gen_key_set, generate_large_keys_from_seed, keygen_all_party_shares},
+            parameters::DKGParams,
+            test_feature::{gen_key_set, keygen_all_party_shares},
         },
     };
     use tokio::sync::{Mutex, RwLock};
@@ -1188,23 +1149,23 @@ mod tests {
 
         let pbs_params: ClassicPBSParameters =
             param.get_params_basics_handle().to_classic_pbs_parameters();
-        let config = ConfigBuilder::with_custom_parameters(pbs_params);
+        let sns_params = match param {
+            DKGParams::WithoutSnS(_) => panic!("expect sns"),
+            DKGParams::WithSnS(dkgparams_sn_s) => dkgparams_sn_s.sns_params,
+        };
+        let config =
+            ConfigBuilder::with_custom_parameters(pbs_params).enable_noise_squashing(sns_params);
         let client_key = tfhe::ClientKey::generate(config);
         let public_key = CompactPublicKey::new(&client_key);
-        let (sns_client_key, fbsk_out) =
-            generate_large_keys_from_seed(param, &client_key, None).unwrap();
         let server_key = ServerKey::new(&client_key);
-        let ksk = server_key.as_ref().as_ref().key_switching_key.clone();
         let key_info = KmsFheKeyHandles {
             client_key,
-            sns_client_key,
             decompression_key: None,
             public_key_info: HashMap::new(),
         };
         let fhe_key_set = FhePubKeySet {
             public_key,
             server_key,
-            sns_key: Some(SwitchAndSquashKey { fbsk_out, ksk }),
         };
 
         let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
@@ -1479,7 +1440,7 @@ mod tests {
         let key_shares = keygen_all_party_shares(
             key_set.get_raw_lwe_client_key(),
             key_set.get_raw_glwe_client_key(),
-            key_set.sns_secret_key.key,
+            key_set.get_raw_glwe_client_sns_key_as_lwe().unwrap(),
             pbs_params,
             &mut rng,
             4,
@@ -1489,6 +1450,8 @@ mod tests {
 
         let fhe_key_set = key_set.public_keys.clone();
 
+        let (server_key, _, _, _, sns_key, _) =
+            key_set.public_keys.server_key.clone().into_raw_parts();
         let ksk = key_set
             .public_keys
             .server_key
@@ -1499,7 +1462,8 @@ mod tests {
 
         let threshold_fhe_keys = ThresholdFheKeys {
             private_keys: key_shares[0].to_owned(),
-            sns_key: key_set.public_keys.sns_key.to_owned().unwrap(),
+            integer_server_key: server_key,
+            sns_key,
             decompression_key: None,
             pk_meta_data: HashMap::new(),
             ksk,

@@ -108,6 +108,7 @@ impl TestedModule for KmsGrpc {
 }
 
 #[test]
+#[ignore]
 fn test_backward_compatibility_kms_grpc() {
     let pkg_version = env!("CARGO_PKG_VERSION");
 

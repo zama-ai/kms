@@ -17,7 +17,7 @@ use threshold_fhe::{
         endpoints::decryption::{threshold_decrypt64, DecryptionMode},
         runtime::test_runtime::{generate_fixed_identities, DistributedTestRuntime},
         tfhe_internals::{
-            parameters::BC_PARAMS_SAM_SNS,
+            parameters::BC_PARAMS_SNS,
             test_feature::{gen_key_set, keygen_all_party_shares, KeySet},
             utils::expanded_encrypt,
         },
@@ -31,13 +31,13 @@ fn main() {
     let mut rng = AesRng::from_entropy();
 
     // Generate the keys normally, we'll secret share them later.
-    let keyset: KeySet = gen_key_set(BC_PARAMS_SAM_SNS, &mut rng);
+    let keyset: KeySet = gen_key_set(BC_PARAMS_SNS, &mut rng);
     set_server_key(keyset.public_keys.server_key.clone());
 
     let lwe_secret_key = keyset.get_raw_lwe_client_key();
     let glwe_secret_key = keyset.get_raw_glwe_client_key();
-    let glwe_secret_key_sns_as_lwe = keyset.sns_secret_key.key.clone();
-    let params = keyset.sns_secret_key.params;
+    let glwe_secret_key_sns_as_lwe = keyset.get_raw_glwe_client_sns_key_as_lwe().unwrap();
+    let params = keyset.get_cpu_params().unwrap();
     let key_shares = keygen_all_party_shares(
         lwe_secret_key,
         glwe_secret_key,
@@ -62,8 +62,8 @@ fn main() {
         { ResiduePolyF4Z64::EXTENSION_DEGREE },
     >::new(identities.clone(), threshold as u8, NetworkMode::Sync, None);
 
-    let keyset_ck = Arc::new(keyset.public_keys.sns_key.clone().unwrap());
-    runtime.conversion_keys = Some(keyset_ck.clone());
+    let server_key = Arc::new(keyset.public_keys.server_key.clone());
+    runtime.setup_server_key(server_key);
     runtime.setup_sks(key_shares);
 
     // Perform distributed decryption.

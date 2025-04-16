@@ -260,7 +260,7 @@ pub mod tests {
                 test_runtime::{generate_fixed_identities, DistributedTestRuntime},
             },
             tfhe_internals::{
-                parameters::{Ciphertext64, DKGParams},
+                parameters::DKGParams,
                 test_feature::{gen_key_set, KeySet},
             },
         },
@@ -282,7 +282,7 @@ pub mod tests {
         collections::{HashMap, HashSet},
         sync::Arc,
     };
-    use tfhe::{prelude::FheEncrypt, FheUint8};
+    use tfhe::{integer::RadixCiphertext, prelude::FheEncrypt, FheUint8};
     use tokio::task::{JoinError, JoinSet};
 
     #[derive(Default, Clone)]
@@ -416,7 +416,7 @@ pub mod tests {
 
     /// Indeterministic cipher generation.
     /// Encrypts a small message with deterministic randomness
-    pub fn generate_cipher(_key_name: &str, message: u8) -> Ciphertext64 {
+    pub fn generate_cipher(_key_name: &str, message: u8) -> RadixCiphertext {
         let keys: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
         let (ct, _id, _tag) = FheUint8::encrypt(message, &keys.client_key).into_raw_parts();
         ct

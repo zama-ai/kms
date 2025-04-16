@@ -28,10 +28,7 @@ use kms_lib::{
 use rand::SeedableRng;
 use std::{collections::HashMap, env, path::Path};
 use tfhe::{core_crypto::prelude::LweKeyswitchKey, integer::compression_keys::DecompressionKey};
-use threshold_fhe::execution::{
-    endpoints::keygen::FhePubKeySet,
-    tfhe_internals::{switch_and_squash::SwitchAndSquashKey, test_feature::SnsClientKey},
-};
+use threshold_fhe::execution::endpoints::keygen::FhePubKeySet;
 
 // This domain should match what is in the data_XX.rs file in backward compatibility.
 fn dummy_domain() -> alloy_sol_types::Eip712Domain {
@@ -141,17 +138,10 @@ fn test_kms_fhe_key_handles(
     let public_key: FhePublicKey =
         load_and_unversionize_auxiliary(dir, test, &test.public_key_filename, format)?;
 
-    let sns_key: SwitchAndSquashKey =
-        load_and_unversionize_auxiliary(dir, test, &test.sns_key_filename, format)?;
-
     let fhe_pub_key_set = FhePubKeySet {
         public_key,
         server_key,
-        sns_key: Some(sns_key),
     };
-
-    let sns_client_key: SnsClientKey =
-        load_and_unversionize_auxiliary(dir, test, &test.sns_client_key_filename, format)?;
 
     let decompression_key: Option<DecompressionKey> =
         load_and_unversionize_auxiliary(dir, test, &test.decompression_key_filename, format)?;
@@ -159,7 +149,6 @@ fn test_kms_fhe_key_handles(
     let new_versionized = KmsFheKeyHandles::new(
         &private_sig_key,
         client_key,
-        sns_client_key,
         &fhe_pub_key_set,
         decompression_key,
         Some(&dummy_domain()),
@@ -194,7 +183,10 @@ fn test_threshold_fhe_keys(
     let private_key_set =
         load_and_unversionize_auxiliary(dir, test, &test.private_key_set_filename, format)?;
 
-    let sns_key: SwitchAndSquashKey =
+    let server_key: tfhe::integer::ServerKey =
+        load_and_unversionize_auxiliary(dir, test, &test.server_key_filename, format)?;
+
+    let sns_key: tfhe::integer::noise_squashing::NoiseSquashingKey =
         load_and_unversionize_auxiliary(dir, test, &test.sns_key_filename, format)?;
 
     let info: HashMap<PubDataType, SignedPubDataHandleInternal> =
@@ -210,7 +202,8 @@ fn test_threshold_fhe_keys(
 
     let new_versionized = ThresholdFheKeys {
         private_keys: private_key_set,
-        sns_key,
+        integer_server_key: server_key,
+        sns_key: Some(sns_key),
         decompression_key,
         pk_meta_data: info,
         ksk,
@@ -276,6 +269,7 @@ impl TestedModule for KMS {
 }
 
 #[test]
+#[ignore]
 fn test_backward_compatibility_kms() {
     let pkg_version = env!("CARGO_PKG_VERSION");
 

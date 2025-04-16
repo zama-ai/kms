@@ -579,11 +579,7 @@ async fn process_fhe_cmds<PubS: Storage, PrivS: Storage>(
 ) {
     process_cmd(
         pub_storage,
-        vec![
-            &PubDataType::PublicKey,
-            &PubDataType::ServerKey,
-            &PubDataType::SnsKey,
-        ],
+        vec![&PubDataType::PublicKey, &PubDataType::ServerKey],
         req_id,
         show_existing,
         overwrite,

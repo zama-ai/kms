@@ -9,9 +9,8 @@ use kms_grpc::rpc_types::{PubDataType, WrappedPublicKeyOwned};
 use serde::de::DeserializeOwned;
 use std::path::Path;
 use tfhe::core_crypto::prelude::Numeric;
-use tfhe::integer::ciphertext::BaseRadixCiphertext;
-use tfhe::integer::IntegerCiphertext;
 use tfhe::named::Named;
+use tfhe::prelude::SquashNoise;
 use tfhe::prelude::Tagged;
 use tfhe::safe_serialization::safe_serialize;
 use tfhe::zk::CompactPkeCrs;
@@ -20,64 +19,22 @@ use tfhe::{
     FheUint32, FheUint4, FheUint512, FheUint64, FheUint8, HlCompactable, HlCompressible,
     HlExpandable, ServerKey, Unversionize, Versionize,
 };
-use threshold_fhe::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
 use threshold_fhe::execution::tfhe_internals::utils::expanded_encrypt;
-
-trait IntoRawParts {
-    fn into_raw_parts(self) -> BaseRadixCiphertext<tfhe::shortint::Ciphertext>;
-}
-
-impl IntoRawParts for FheBool {
-    fn into_raw_parts(self) -> BaseRadixCiphertext<tfhe::shortint::Ciphertext> {
-        BaseRadixCiphertext::from_blocks(vec![self.into_raw_parts()])
-    }
-}
-
-macro_rules! impl_into_raw_parts {
-    ($t:ty) => {
-        impl IntoRawParts for $t {
-            fn into_raw_parts(self) -> BaseRadixCiphertext<tfhe::shortint::Ciphertext> {
-                let (radix_ct, _, _) = self.into_raw_parts();
-                radix_ct
-            }
-        }
-    };
-}
-
-impl_into_raw_parts!(FheUint4);
-impl_into_raw_parts!(FheUint8);
-impl_into_raw_parts!(FheUint16);
-impl_into_raw_parts!(FheUint32);
-impl_into_raw_parts!(FheUint64);
-impl_into_raw_parts!(FheUint128);
-impl_into_raw_parts!(FheUint160);
-impl_into_raw_parts!(FheUint256);
-impl_into_raw_parts!(FheUint512);
-impl_into_raw_parts!(FheUint1024);
-impl_into_raw_parts!(FheUint2048);
 
 fn enc_and_serialize_ctxt<M, T>(
     msg: M,
     num_bits: usize,
     pk: &FhePublicKey,
     server_key: Option<&ServerKey>,
-    sns_key: Option<&SwitchAndSquashKey>,
     enc_config: EncryptionConfig,
 ) -> (Vec<u8>, CiphertextFormat)
 where
     M: HlCompactable + Numeric,
-    T: HlExpandable
-        + HlCompressible
-        + Tagged
-        + IntoRawParts
-        + Versionize
-        + Named
-        + serde::Serialize,
+    T: HlExpandable + HlCompressible + Tagged + Versionize + Named + serde::Serialize + SquashNoise,
+    <T as tfhe::prelude::SquashNoise>::Output: Named + Versionize + serde::Serialize,
 {
     let ct: T = expanded_encrypt(pk, msg, num_bits).unwrap();
-    let ct_format = enc_config
-        .try_into_ciphertext_format(server_key, sns_key)
-        .unwrap();
+    let ct_format = enc_config.try_into_ciphertext_format().unwrap();
     match ct_format {
         CiphertextFormat::SmallCompressed => (
             crate::cryptography::decompression::test_tools::compress_serialize_versioned(ct),
@@ -92,13 +49,12 @@ where
             panic!("cannot compress 128-bit ciphertext")
         }
         CiphertextFormat::BigExpanded => {
-            let sns_key = sns_key.expect("expected to find sns key");
-            // .into_raw_parts is not from any trait, so we have to write this as a macro
-            let radix_ct = ct.into_raw_parts();
-            let large_ct = sns_key.to_large_ciphertext(&radix_ct).unwrap();
+            let server_key = server_key.unwrap().clone();
+            tfhe::set_server_key(server_key);
+            let squashed = ct.squash_noise().unwrap();
             let mut serialized_ct = Vec::new();
             safe_serialize(
-                &large_ct,
+                &squashed,
                 &mut serialized_ct,
                 crate::consts::SAFE_SER_SIZE_LIMIT,
             )
@@ -115,25 +71,11 @@ pub struct EncryptionConfig {
 }
 
 impl EncryptionConfig {
-    pub fn try_into_ciphertext_format(
-        self,
-        server_key: Option<&ServerKey>,
-        sns_key: Option<&SwitchAndSquashKey>,
-    ) -> anyhow::Result<CiphertextFormat> {
+    pub fn try_into_ciphertext_format(self) -> anyhow::Result<CiphertextFormat> {
         match (self.compression, self.precompute_sns) {
             (true, true) => anyhow::bail!("compression is not supported with sns precompute"),
-            (true, false) => {
-                if server_key.is_none() {
-                    anyhow::bail!("compression is enabled but server key is missing");
-                }
-                Ok(CiphertextFormat::SmallCompressed)
-            }
-            (false, true) => {
-                if sns_key.is_none() {
-                    anyhow::bail!("sns precompute is enabled but sns key is missing");
-                }
-                Ok(CiphertextFormat::BigExpanded)
-            }
+            (true, false) => Ok(CiphertextFormat::SmallCompressed),
+            (false, true) => Ok(CiphertextFormat::BigExpanded),
             (false, false) => Ok(CiphertextFormat::SmallExpanded),
         }
     }
@@ -143,7 +85,6 @@ pub fn compute_cipher(
     msg: TestingPlaintext,
     pk: &FhePublicKey,
     server_key: Option<&ServerKey>,
-    sns_key: Option<&SwitchAndSquashKey>,
     enc_config: EncryptionConfig,
 ) -> (Vec<u8>, CiphertextFormat, FheTypes) {
     if let Some(s) = server_key {
@@ -159,7 +100,6 @@ pub fn compute_cipher(
             FheBool::num_bits(),
             pk,
             server_key,
-            sns_key,
             enc_config,
         ),
         TestingPlaintext::U4(x) => enc_and_serialize_ctxt::<_, FheUint4>(
@@ -167,7 +107,6 @@ pub fn compute_cipher(
             FheUint4::num_bits(),
             pk,
             server_key,
-            sns_key,
             enc_config,
         ),
         TestingPlaintext::U8(x) => enc_and_serialize_ctxt::<_, FheUint8>(
@@ -175,7 +114,6 @@ pub fn compute_cipher(
             FheUint8::num_bits(),
             pk,
             server_key,
-            sns_key,
             enc_config,
         ),
         TestingPlaintext::U16(x) => enc_and_serialize_ctxt::<_, FheUint16>(
@@ -183,7 +121,6 @@ pub fn compute_cipher(
             FheUint16::num_bits(),
             pk,
             server_key,
-            sns_key,
             enc_config,
         ),
         TestingPlaintext::U32(x) => enc_and_serialize_ctxt::<_, FheUint32>(
@@ -191,7 +128,6 @@ pub fn compute_cipher(
             FheUint32::num_bits(),
             pk,
             server_key,
-            sns_key,
             enc_config,
         ),
         TestingPlaintext::U64(x) => enc_and_serialize_ctxt::<_, FheUint64>(
@@ -199,7 +135,6 @@ pub fn compute_cipher(
             FheUint64::num_bits(),
             pk,
             server_key,
-            sns_key,
             enc_config,
         ),
         TestingPlaintext::U128(x) => enc_and_serialize_ctxt::<_, FheUint128>(
@@ -207,7 +142,6 @@ pub fn compute_cipher(
             FheUint128::num_bits(),
             pk,
             server_key,
-            sns_key,
             enc_config,
         ),
         TestingPlaintext::U160(x) => enc_and_serialize_ctxt::<_, FheUint160>(
@@ -215,7 +149,6 @@ pub fn compute_cipher(
             FheUint160::num_bits(),
             pk,
             server_key,
-            sns_key,
             enc_config,
         ),
         TestingPlaintext::U256(x) => enc_and_serialize_ctxt::<_, FheUint256>(
@@ -223,7 +156,6 @@ pub fn compute_cipher(
             FheUint256::num_bits(),
             pk,
             server_key,
-            sns_key,
             enc_config,
         ),
         TestingPlaintext::U512(x) => enc_and_serialize_ctxt::<_, FheUint512>(
@@ -231,7 +163,6 @@ pub fn compute_cipher(
             FheUint512::num_bits(),
             pk,
             server_key,
-            sns_key,
             enc_config,
         ),
         TestingPlaintext::U1024(x) => enc_and_serialize_ctxt::<_, FheUint1024>(
@@ -239,7 +170,6 @@ pub fn compute_cipher(
             FheUint1024::num_bits(),
             pk,
             server_key,
-            sns_key,
             enc_config,
         ),
         TestingPlaintext::U2048(x) => enc_and_serialize_ctxt::<_, FheUint2048>(
@@ -247,7 +177,6 @@ pub fn compute_cipher(
             FheUint2048::num_bits(),
             pk,
             server_key,
-            sns_key,
             enc_config,
         ),
     };
@@ -456,13 +385,6 @@ pub async fn load_server_key_from_storage(
     load_material_from_storage(pub_path, key_id, PubDataType::ServerKey).await
 }
 
-pub async fn load_sns_key_from_storage(
-    pub_path: Option<&Path>,
-    key_id: &str,
-) -> SwitchAndSquashKey {
-    load_material_from_storage(pub_path, key_id, PubDataType::SnsKey).await
-}
-
 pub async fn load_pk_from_storage(pub_path: Option<&Path>, key_id: &str) -> FhePublicKey {
     let storage = get_storage(pub_path, key_id, &PubDataType::PublicKey.to_string()).await;
     let wrapped_pk = read_pk_at_request_id(
@@ -515,13 +437,6 @@ async fn load_server_key_from_any_pub_storage(pub_path: Option<&Path>, key_id: &
     load_material_from_any_pub_storage(pub_path, key_id, PubDataType::ServerKey).await
 }
 
-async fn load_sns_key_from_any_pub_storage(
-    pub_path: Option<&Path>,
-    key_id: &str,
-) -> SwitchAndSquashKey {
-    load_material_from_any_pub_storage(pub_path, key_id, PubDataType::SnsKey).await
-}
-
 /// This function should be used for testing only and it can panic.
 pub async fn compute_cipher_from_stored_key(
     pub_path: Option<&Path>,
@@ -534,32 +449,11 @@ pub async fn compute_cipher_from_stored_key(
     let server_key = load_server_key_from_any_pub_storage(pub_path, key_id).await;
 
     // compute_cipher can take a long time since it may do SnS
-    if enc_config.precompute_sns {
-        let sns_key = load_sns_key_from_any_pub_storage(pub_path, key_id).await;
-        let (send, recv) = tokio::sync::oneshot::channel();
-        rayon::spawn_fifo(move || {
-            let _ = send.send(compute_cipher(
-                msg,
-                &pk,
-                Some(&server_key),
-                Some(&sns_key),
-                enc_config,
-            ));
-        });
-        recv.await.unwrap()
-    } else {
-        let (send, recv) = tokio::sync::oneshot::channel();
-        rayon::spawn_fifo(move || {
-            let _ = send.send(compute_cipher(
-                msg,
-                &pk,
-                Some(&server_key),
-                None,
-                enc_config,
-            ));
-        });
-        recv.await.unwrap()
-    }
+    let (send, recv) = tokio::sync::oneshot::channel();
+    rayon::spawn_fifo(move || {
+        let _ = send.send(compute_cipher(msg, &pk, Some(&server_key), enc_config));
+    });
+    recv.await.unwrap()
 }
 
 /// Purge any kind of data, regardless of type, for a specific request ID.

@@ -7,7 +7,6 @@ use crate::{
     execution::{
         endpoints::keygen::PrivateKeySet,
         small_execution::{agree_random::DummyAgreeRandom, prss::PRSSSetup},
-        tfhe_internals::switch_and_squash::SwitchAndSquashKey,
     },
     networking::{
         local::{LocalNetworking, LocalNetworkingProducer},
@@ -18,7 +17,7 @@ use crate::{
 use aes_prng::AesRng;
 use rand::SeedableRng;
 use std::{collections::HashMap, sync::Arc, time::Duration};
-use tfhe::core_crypto::prelude::LweKeyswitchKey;
+use tfhe::{core_crypto::prelude::LweKeyswitchKey, ServerKey};
 
 // TODO The name and use of unwrap hints that this is a struct only to be used for testing, but it is also used in production, e.g. in grpc.rs
 // Unsafe and test code should not be mixed with production code. See issue 173
@@ -32,7 +31,7 @@ pub struct DistributedTestRuntime<Z: Ring, const EXTENSION_DEGREE: usize> {
     pub keyshares: Option<Vec<PrivateKeySet<EXTENSION_DEGREE>>>,
     pub user_nets: Vec<Arc<LocalNetworking>>,
     pub role_assignments: RoleAssignment,
-    pub conversion_keys: Option<Arc<SwitchAndSquashKey>>,
+    pub server_key: Option<Arc<ServerKey>>,
     pub ks_key: Option<Arc<LweKeyswitchKey<Vec<u64>>>>,
 }
 
@@ -83,17 +82,17 @@ impl<Z: Ring, const EXTENSION_DEGREE: usize> DistributedTestRuntime<Z, EXTENSION
             keyshares: None,
             user_nets,
             role_assignments,
-            conversion_keys: None,
+            server_key: None,
             ks_key: None,
         }
     }
 
-    pub fn get_conversion_key(&self) -> Arc<SwitchAndSquashKey> {
-        Arc::clone(&self.conversion_keys.clone().unwrap())
+    pub fn get_server_key(&self) -> Arc<ServerKey> {
+        self.server_key.clone().unwrap()
     }
 
-    pub fn setup_conversion_key(&mut self, cks: Arc<SwitchAndSquashKey>) {
-        self.conversion_keys = Some(cks);
+    pub fn setup_server_key(&mut self, server_key: Arc<ServerKey>) {
+        self.server_key = Some(server_key);
     }
 
     /// store keyshares if you want to test sth related to them

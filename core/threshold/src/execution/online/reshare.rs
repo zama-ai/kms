@@ -365,7 +365,9 @@ mod tests {
     use aes_prng::AesRng;
     use rand::SeedableRng;
     use std::{collections::HashMap, fmt::Display};
+    use tfhe::boolean::prelude::GlweDimension;
     use tfhe::core_crypto::entities::GlweSecretKey;
+    use tfhe::shortint::noise_squashing::NoiseSquashingPrivateKey;
     use tfhe::{
         core_crypto::entities::LweSecretKey,
         shortint::{ClassicPBSParameters, ShortintParameterSet},
@@ -533,6 +535,7 @@ mod tests {
         let threshold = 2;
 
         let mut keyset: KeySet = read_element(std::path::Path::new(SMALL_TEST_KEY_PATH)).unwrap();
+        let params = keyset.get_cpu_params().unwrap();
 
         // we make the shares shorter to make sure the test doesn't take too long
         truncate_client_keys(&mut keyset);
@@ -541,8 +544,7 @@ mod tests {
         let mut rng = AesRng::from_entropy();
         let lwe_secret_key = keyset.get_raw_lwe_client_key();
         let glwe_secret_key = keyset.get_raw_glwe_client_key();
-        let glwe_secret_key_sns_as_lwe = keyset.sns_secret_key.key.clone();
-        let params = keyset.sns_secret_key.params;
+        let glwe_secret_key_sns_as_lwe = keyset.get_raw_glwe_client_sns_key_as_lwe().unwrap();
         let mut key_shares = keygen_all_party_shares(
             lwe_secret_key,
             glwe_secret_key,
@@ -610,7 +612,10 @@ mod tests {
         }
         // sanity check that we can still reconstruct
         let expected_sk = (
-            keyset.sns_secret_key.key.clone().into_container(),
+            keyset
+                .get_raw_glwe_client_sns_key_as_lwe()
+                .unwrap()
+                .into_container(),
             keyset.get_raw_lwe_client_key().to_owned().into_container(),
             keyset.get_raw_glwe_client_key().to_owned().into_container(),
         );
@@ -694,8 +699,28 @@ mod tests {
     }
 
     fn truncate_client_keys(keyset: &mut KeySet) {
-        keyset.sns_secret_key.key =
-            LweSecretKey::from_container(keyset.sns_secret_key.key.as_ref()[..8].to_vec());
+        let (raw_sns_private_key, sns_params) = keyset
+            .client_key
+            .clone()
+            .into_raw_parts()
+            .3
+            .unwrap()
+            .into_raw_parts()
+            .into_raw_parts();
+        let sns_private_key_len = 8;
+        let sns_poly_size = tfhe::shortint::prelude::PolynomialSize(1);
+        let new_raw_sns_private_key = GlweSecretKey::from_container(
+            raw_sns_private_key.into_container()[..sns_private_key_len].to_vec(),
+            sns_poly_size,
+        );
+        let mut new_sns_params = sns_params;
+        new_sns_params.polynomial_size = sns_poly_size;
+        new_sns_params.glwe_dimension = GlweDimension(sns_private_key_len);
+        let new_sns_private_key =
+            tfhe::integer::noise_squashing::NoiseSquashingPrivateKey::from_raw_parts(
+                NoiseSquashingPrivateKey::from_raw_parts(new_raw_sns_private_key, new_sns_params),
+            );
+
         let (glwe_raw, lwe_raw, params) = keyset
             .client_key
             .to_owned()
@@ -733,7 +758,6 @@ mod tests {
         let new_params = ShortintParameterSet::new_pbs_param_set(
             tfhe::shortint::PBSParameters::PBS(new_pbs_params),
         );
-        keyset.sns_secret_key.params = new_pbs_params;
         let lwe_cont: Vec<u64> = lwe_raw.into_container();
         let con = lwe_cont[..test_lwe_dim].to_vec();
         let new_lwe_raw = LweSecretKey::from_container(con);
@@ -751,7 +775,7 @@ mod tests {
             )),
             None,
             None,
-            None,
+            Some(new_sns_private_key),
             tfhe::Tag::default(),
         );
         keyset.client_key = ck;

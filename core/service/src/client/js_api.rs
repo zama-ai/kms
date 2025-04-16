@@ -72,7 +72,7 @@ use crypto_box::{Nonce, SalsaBox};
 use kms_grpc::kms::v1::Eip712DomainMsg;
 use kms_grpc::kms::v1::FheParameter;
 use kms_grpc::rpc_types::protobuf_to_alloy_domain;
-use threshold_fhe::execution::tfhe_internals::parameters::BC_PARAMS_SAM_SNS;
+use threshold_fhe::execution::tfhe_internals::parameters::BC_PARAMS_SNS;
 
 use super::*;
 
@@ -121,7 +121,7 @@ pub fn new_client(
             let p: crate::cryptography::internal_crypto_types::WrappedDKGParams = choice.into();
             *p
         }
-        None => BC_PARAMS_SAM_SNS,
+        None => BC_PARAMS_SNS,
     };
 
     let client_address = alloy_primitives::Address::parse_checksummed(client_address_hex, None)
