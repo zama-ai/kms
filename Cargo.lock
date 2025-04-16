@@ -2419,6 +2419,7 @@ dependencies = [
  "tokio",
  "tonic 0.13.0",
  "tracing",
+ "tracing-appender",
  "tracing-opentelemetry",
  "tracing-subscriber",
  "tracing-test",

@@ -15,13 +15,20 @@ use opentelemetry_prometheus::exporter;
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::{metrics::SdkMeterProvider, runtime::Tokio, Resource};
 use prometheus::{Encoder, Registry as PrometheusRegistry, TextEncoder};
-use std::{env, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    env,
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 use tonic::{
     metadata::{MetadataKey, MetadataMap, MetadataValue},
     service::Interceptor,
     Status,
 };
 use tracing::{info, info_span, trace_span, Span};
+use tracing_appender::non_blocking;
+use tracing_appender::rolling::never;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::fmt::{layer, Layer};
@@ -164,6 +171,91 @@ pub fn init_metrics(settings: &TelemetryConfig) -> Result<SdkMeterProvider, anyh
 }
 
 pub fn init_tracing(settings: &TelemetryConfig) -> Result<(), anyhow::Error> {
+    // For tests annotated with `#[persistent_traces]`
+    // we set up a file-based persistent logger
+    if std::env::var("TRACE_PERSISTENCE").unwrap_or_default() == "enabled" {
+        // Determine the root directory - use the workspace root to ensure consistency
+        // between local and CI environments
+        let root_dir = std::env::current_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("."))
+            .to_string_lossy()
+            .to_string();
+
+        // Get the module path and timestamp from the environment or use defaults
+        let module_path =
+            std::env::var("TEST_MODULE_PATH").unwrap_or_else(|_| "unknown_module".to_string());
+        let test_fn_name =
+            std::env::var("TEST_FUNCTION_NAME").unwrap_or_else(|_| "unknown_function".to_string());
+        let timestamp = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // Get process ID and job name for artifact uniqueness
+        let process_id = std::env::var("TEST_PROCESS_ID").unwrap_or_else(|_| "0".to_string());
+        let job_name = std::env::var("TEST_JOB_NAME").unwrap_or_else(|_| "unknown_job".to_string());
+
+        // Create the log path with timestamp to prevent overwriting
+        // Use absolute path to ensure logs are created in a consistent location
+        let sep = std::path::MAIN_SEPARATOR.to_string();
+        let log_path = format!(
+            "{}{}{}{}{}{}{}_{}_pid{}.log",
+            root_dir, sep, job_name, sep, module_path, sep, test_fn_name, timestamp, process_id
+        );
+
+        // Create directory if it doesn't exist
+        if let Some(parent) = std::path::Path::new(&log_path).parent() {
+            if !parent.exists() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+
+        // Use a rolling file appender to prevent excessive file sizes
+        let file_appender = never("", &log_path);
+        let (non_blocking, guard) = non_blocking(file_appender);
+
+        // Store the guard to keep the file handle open
+        // Explicitly ignore errors since we can still proceed with console logging if this fails
+        METRICS.set_trace_guard(Box::new(guard));
+
+        let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            EnvFilter::new("info")
+                .add_directive("tonic=info".parse().unwrap())
+                .add_directive("h2=info".parse().unwrap())
+                .add_directive("tower=warn".parse().unwrap())
+                .add_directive("hyper=warn".parse().unwrap())
+                .add_directive("opentelemetry_sdk=warn".parse().unwrap())
+        });
+
+        // Configure file output with JSON formatting for better machine parsing
+        let file_layer = tracing_subscriber::fmt::layer()
+            .with_writer(non_blocking)
+            .with_target(true)
+            .with_thread_ids(true)
+            .with_thread_names(true)
+            .with_file(true)
+            .with_line_number(true)
+            .with_ansi(false) // Disable ANSI colors in file output
+            .json()
+            .with_current_span(true) // Include current span in output
+            .with_span_list(true); // Include span hierarchy
+
+        let console_layer = fmt_layer();
+
+        tracing_subscriber::registry()
+            .with(file_layer)
+            .with(console_layer)
+            .with(env_filter)
+            .try_init()
+            .context("Failed to initialize tracing")?;
+
+        info!(
+            "Integration test tracing initialized with file output to {}",
+            log_path
+        );
+        return Ok(());
+    }
+
     let service_name = settings
         .tracing_service_name()
         .unwrap_or("unknown-service")

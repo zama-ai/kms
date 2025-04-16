@@ -260,6 +260,20 @@ jobs:
           cat ~/.aws/config &&
           RUST_BACKTRACE=full cargo test ${{ inputs.args-tests }}
 
+      - name: Generate unique ID
+        id: unique-id
+        run: echo "id=$(date "+%s%N" | md5sum | head -c 8)" >> "$GITHUB_OUTPUT"
+        shell: bash
+
+      - name: Archive integration test trace logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: logs-${{ inputs.package-name }}-${{ github.workflow }}-${{ github.run_number }}-${{ github.job }}-${{ steps.unique-id.outputs.id }}
+          path: "**/*.log"
+          retention-days: 30
+          if-no-files-found: ignore
+
       # Coverage reporting
       - name: Run Tests with Coverage
         if: ${{ inputs.test-coverage && contains(github.event.pull_request.labels.*.name, 'coverage') }}

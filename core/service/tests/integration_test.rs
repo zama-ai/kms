@@ -7,6 +7,7 @@ use std::str::FromStr;
 use std::{fs, thread, time::Duration};
 use sysinfo::System;
 use test_utils::integration_test;
+use test_utils::persistent_traces;
 use threshold_fhe::conf::party::CertificatePaths;
 
 const KMS_SERVER: &str = "kms-server";
@@ -146,6 +147,7 @@ mod kms_gen_keys_binary_test {
     #[test]
     #[serial_test::serial]
     #[integration_test]
+    #[persistent_traces]
     fn gen_key_centralized() {
         gen_key("centralized")
     }
@@ -153,6 +155,7 @@ mod kms_gen_keys_binary_test {
     #[test]
     #[serial_test::serial]
     #[integration_test]
+    #[persistent_traces]
     fn gen_key_threshold() {
         gen_key("threshold")
     }
@@ -185,12 +188,14 @@ mod kms_gen_keys_binary_test {
 
     #[test]
     #[integration_test]
+    #[persistent_traces]
     fn gen_key_tempdir_centralized() {
         gen_key_tempdir("centralized")
     }
 
     #[test]
     #[integration_test]
+    #[persistent_traces]
     fn gen_key_tempdir_threshold() {
         gen_key_tempdir("threshold")
     }
@@ -318,6 +323,7 @@ mod kms_gen_keys_binary_test {
     #[test]
     #[serial_test::serial]
     #[integration_test]
+    #[persistent_traces]
     fn threshold_signing_key() {
         let temp_dir_priv = tempdir().unwrap();
         let temp_dir_pub = tempdir().unwrap();
@@ -426,6 +432,7 @@ mod kms_server_binary_test {
     #[test]
     #[serial_test::serial]
     #[integration_test]
+    #[persistent_traces]
     fn subcommand_dev_centralized() {
         purge_all();
         Command::cargo_bin(KMS_GEN_KEYS)
@@ -442,6 +449,7 @@ mod kms_server_binary_test {
     #[test]
     #[serial_test::serial]
     #[integration_test]
+    #[persistent_traces]
     fn subcommand_dev_threshold() {
         purge_all();
         Command::cargo_bin(KMS_GEN_KEYS)

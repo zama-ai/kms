@@ -1,6 +1,7 @@
 use opentelemetry::metrics::{Counter, Gauge, Histogram};
 use opentelemetry::{global, KeyValue};
 use std::borrow::Cow;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
@@ -75,6 +76,8 @@ pub struct CoreMetrics {
     size_histogram: TaggedMetric<Histogram<f64>>,
     // Gauges
     gauge: TaggedMetric<Gauge<i64>>,
+    // Trace guard for file-based logging
+    trace_guard: Arc<Mutex<Option<Box<dyn std::any::Any + Send + Sync>>>>,
 }
 
 impl CoreMetrics {
@@ -140,7 +143,15 @@ impl CoreMetrics {
             duration_histogram: TaggedMetric::new(duration_histogram, "duration")?,
             size_histogram: TaggedMetric::new(size_histogram, "size")?,
             gauge: TaggedMetric::new(gauge, "active_operations")?,
+            trace_guard: Arc::new(Mutex::new(None)),
         })
+    }
+
+    /// Set the trace guard to keep the file handle open
+    pub fn set_trace_guard(&self, guard: Box<dyn std::any::Any + Send + Sync>) {
+        if let Ok(mut trace_guard) = self.trace_guard.lock() {
+            *trace_guard = Some(guard);
+        }
     }
 
     fn create_operation_tag(operation: impl Into<String>) -> Result<MetricTag, MetricError> {
