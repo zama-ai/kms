@@ -56,7 +56,7 @@ tokio = { workspace = true, features = [
     "macros",
     "time",
 ], optional = true }
-tonic = { workspace = true, features = ["tls"], optional = true }
+tonic = { workspace = true, features = ["tls-ring"], optional = true }
 tonic-health = { workspace = true, optional = true }
 tower = { workspace = true, features = ["retry", "timeout"], optional = true }
 tower-http = { workspace = true, features = ["trace"], optional = true }
@@ -87,7 +87,7 @@ proptest = "=1.5.0"
 pprof = { version = "=0.13.0", features = ["flamegraph", "criterion"] }
 rstest = "=0.23.0"
 serial_test.workspace = true
-tempfile = "=3.16.0"
+tempfile.workspace = true
 test-log = { version = "=0.2.16", features = ["trace"] }
 tracing-test = "=0.2.5"
 webpki = { version = "=0.22.4", features = ["std"] }

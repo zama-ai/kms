@@ -36,7 +36,7 @@ prost = "0.13"
 prost-types = "0.13"
 sha2 = "=0.10.8"
 sha3 = "0.10.8"
-tonic = { version = "0.12.3", features = ["transport","tls","tls-roots"] }
+tonic = { version = "0.13.0", features = ["transport","tls-ring","tls-native-roots"] }
 tokio = { version = "1.43.0", features = ["full"] }
 clap = { version = "4.5.30", features = ["derive"] }
 toml = "0.8.20"
@@ -70,7 +70,7 @@ alloy-signer-aws = "0.11.0"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
-tempfile = "=3.16.0"
+tempfile = "=3.19.1"
 serial_test = "3.2.0"
 
 [[bin]]

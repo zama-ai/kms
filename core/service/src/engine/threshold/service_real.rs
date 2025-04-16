@@ -436,7 +436,7 @@ where
     };
 
     // This will setup TLS if cert_paths is set to Some(...)
-    let (mut threshold_health_reporter, threshold_health_service) =
+    let (threshold_health_reporter, threshold_health_service) =
         tonic_health::server::health_reporter();
     let networking_manager = Arc::new(RwLock::new(GrpcNetworkingManager::new(
         own_identity.to_owned(),

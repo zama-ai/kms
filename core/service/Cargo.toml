@@ -50,7 +50,7 @@ aws-smithy-runtime-api = { version = "=1.7.3", optional = true }
 aws-smithy-types = { version = "=1.2.9", optional = true }
 backoff = { workspace = true, features = ["tokio"], optional = true }
 bincode.workspace = true
-bytes = "=1.10.0"
+bytes.workspace = true
 cbc = { version = "=0.1.2", features = ["alloc"] }
 cfg-if.workspace = true
 clap = { workspace = true, features = ["derive"] }
@@ -66,14 +66,14 @@ hyper-rustls = { version = "=0.24.2", optional = true }
 itertools.workspace = true
 k256.workspace = true
 lazy_static.workspace = true
-nom = "=7.1.3"
+nom = "=8.0.0"
 rand = { workspace = true, features = ["std", "std_rng"] }
 rasn = "=0.20.2"
 rasn-cms = "=0.20.2"
 rayon.workspace = true
-rsa = { version = "=0.9.6", features = ["sha2"] }
+rsa = { version = "=0.9.8", features = ["sha2"] }
 serde = { workspace = true, features = ["derive", "rc"] }
-serde_bytes = "=0.11.15"
+serde_bytes = "=0.11.17"
 serde_json.workspace = true
 
 sha3.workspace = true
@@ -95,7 +95,7 @@ tokio = { workspace = true, features = [
     "rt-multi-thread",
 ], optional = true }
 tokio-stream = "0.1.17"
-tokio-util = { version = "=0.7.13", features = ["rt"] }
+tokio-util = { version = "=0.7.14", features = ["rt"] }
 tonic = { workspace = true, optional = true }
 tonic-health = { workspace = true, optional = true }
 tower = { workspace = true, features = ["retry", "timeout"], optional = true }
@@ -103,22 +103,22 @@ tower-http = { workspace = true, features = ["trace"], optional = true }
 tracing = { workspace = true, features = ["log"] }
 url = { version = "=2.5.4", features = ["serde"] }
 futures-util = "=0.3.31"
-ordermap = "=0.5.3"
+ordermap = "=0.5.7"
 
 # [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = { version = "=0.1.7" }
 serde-wasm-bindgen = { version = "=0.6.5" }
-wasm-bindgen = { version = "=0.2.99", features = ["serde-serialize"] }
+wasm-bindgen = { version = "=0.2.100", features = ["serde-serialize"] }
 tfhe-versionable.workspace = true
 async_cell = "0.2.2"
 
 [dev-dependencies]
 assert_cmd = "=2.0.16"
 serial_test.workspace = true
-sysinfo = "=0.32.1"
-tempfile = "=3.16.0"
+sysinfo = "=0.34.2"
+tempfile.workspace = true
 tracing-test = "=0.2.5"
-rstest = "=0.23.0"
+rstest = "=0.25.0"
 # The testing feature is only required for tests
 threshold-fhe = { workspace = true, default-features = false, features = [
     "testing",

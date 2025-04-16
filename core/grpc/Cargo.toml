@@ -39,7 +39,7 @@ tfhe = { workspace = true, features = [
 ] }
 tfhe-versionable.workspace = true
 tracing = { workspace = true, features = ["log"] }
-wasm-bindgen = { version = "=0.2.99", features = ["serde-serialize"] }
+wasm-bindgen = { version = "=0.2.100", features = ["serde-serialize"] }
 
 [build-dependencies]
 tonic-build.workspace = true

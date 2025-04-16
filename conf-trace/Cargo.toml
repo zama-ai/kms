@@ -7,7 +7,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-axum = { version = "0.7", features = ["tokio"] }
+axum = { version = "=0.8.3", features = ["tokio"] }
 anyhow.workspace = true
 config = "=0.15.8"
 http.workspace = true
@@ -15,11 +15,11 @@ lazy_static.workspace = true
 opentelemetry = { workspace = true, features = ["metrics"] }
 opentelemetry-http = "=0.27.0"
 opentelemetry-otlp = { version = "=0.27.0", features = ["tokio"] }
-opentelemetry-prometheus = "0.27.0"
+opentelemetry-prometheus = "=0.27.0"
 opentelemetry-semantic-conventions = "=0.27.0"
 opentelemetry-stdout = { version = "=0.27.0", features = ["trace"] }
 opentelemetry_sdk = { version = "=0.27.1", features = ["rt-tokio", "logs", "metrics"] }
-prometheus = { version = "0.13", features = ["process"] }
+prometheus = { version = "=0.13", features = ["process"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net"] }
 serde = { workspace = true, features = ["derive", "rc"] }
 strum.workspace = true

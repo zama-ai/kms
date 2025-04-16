@@ -105,8 +105,7 @@ where
 
     // CHOREO
     // create a future for the choreography server
-    let (mut choreo_health_reporter, choreo_health_service) =
-        tonic_health::server::health_reporter();
+    let (choreo_health_reporter, choreo_health_service) = tonic_health::server::health_reporter();
     choreo_health_reporter.set_serving::<GrpcServer>().await;
 
     let choreo_grpc_layer = tower::ServiceBuilder::new()
@@ -132,7 +131,7 @@ where
     // Unfortunately, due to lifetime constraints of GrpcNetworkingManager
     // in async code, we need to keep [networking] in the same scope,
     // so the section below is similar to the "CHOREO" section.
-    let (mut core_health_reporter, core_health_service) = tonic_health::server::health_reporter();
+    let (core_health_reporter, core_health_service) = tonic_health::server::health_reporter();
     core_health_reporter.set_serving::<GrpcServer>().await;
 
     let core_grpc_layer = tower::ServiceBuilder::new().timeout(*NETWORK_TIMEOUT_LONG);

@@ -24,7 +24,7 @@ tfhe_1_0 = { package = "tfhe", version = "1.0.0", optional = true, features = [
 ] }
 alloy-sol-types-0_8_22 = { package = "alloy-sol-types", version = "=0.8.20", optional = true }
 alloy-primitives-0_8_22 = { package = "alloy-primitives", version = "=0.8.20", optional = true }
-serde = { version = "=1.0.217", features = ["derive"] }
+serde = { version = "=1.0.219", features = ["derive"] }
 strum = { version = "=0.26.3", features = ["derive"] }
 semver = { version = "=1.0.23", optional = true }
 ron = { version = "=0.8.1", features = ["integer128"] }

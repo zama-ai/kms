@@ -86,7 +86,7 @@ type DummyThresholdKms = GenericKms<
 
 async fn new_dummy_threshold_kms() -> (DummyThresholdKms, HealthServer<impl Health>) {
     let handle = tokio::spawn(async { Ok(()) });
-    let (mut threshold_health_reporter, threshold_health_service) =
+    let (threshold_health_reporter, threshold_health_service) =
         tonic_health::server::health_reporter();
     threshold_health_reporter
         .set_serving::<CoreServiceEndpointServer<DummyThresholdKms>>()
