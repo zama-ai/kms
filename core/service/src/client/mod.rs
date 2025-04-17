@@ -1659,7 +1659,8 @@ impl Client {
                                     .params
                                     .get_params_basics_handle()
                                     .to_classic_pbs_parameters(),
-                            )?,
+                            )?
+                            .div_ceil(packing_factor as usize),
                         )?,
                     ));
                 }
@@ -1827,7 +1828,8 @@ impl Client {
                         .params
                         .get_params_basics_handle()
                         .to_classic_pbs_parameters(),
-                )?,
+                )?
+                .div_ceil(packing_factor as usize),
             )?;
 
             out.push(decrypted_blocks_to_plaintext(
@@ -5019,15 +5021,18 @@ pub(crate) mod tests {
     }
 
     #[rstest::rstest]
-    #[case(true, 10, &TEST_THRESHOLD_KEY_ID_10P.to_string(), DecryptionMode::NoiseFloodSmall)]
-    #[case(true, 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
-    #[case(false, 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
-    #[case(true, 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::BitDecSmall)]
-    #[case(false, 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::BitDecSmall)]
+    #[case(true, TestingPlaintext::U32(42), 10, &TEST_THRESHOLD_KEY_ID_10P.to_string(), DecryptionMode::NoiseFloodSmall)]
+    #[case(true, TestingPlaintext::Bool(true), 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
+    #[case(true, TestingPlaintext::U8(88), 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
+    #[case(true, TestingPlaintext::U32(u32::MAX), 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
+    #[case(false, TestingPlaintext::U32(u32::MAX), 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
+    #[case(true, TestingPlaintext::U32(u32::MAX), 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::BitDecSmall)]
+    #[case(false, TestingPlaintext::U32(u32::MAX), 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::BitDecSmall)]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn test_reencryption_threshold(
         #[case] secure: bool,
+        #[case] pt: TestingPlaintext,
         #[case] amount_parties: usize,
         #[case] key_id: &str,
         #[case] decryption_mode: DecryptionMode,
@@ -5036,7 +5041,7 @@ pub(crate) mod tests {
             TEST_PARAM,
             key_id,
             false,
-            TestingPlaintext::U8(42),
+            pt,
             EncryptionConfig {
                 compression: true,
                 precompute_sns: false,
