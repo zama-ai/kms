@@ -8,7 +8,7 @@ TODO: Also mention NIST main submission document, once it's public.
 -->
 
 Besides providing threshold security, the Zama KMS also allows for public auditability by leveraging a L2 or L3 blockchain to manage operations. Besides bringing auditability, this also allows for fraud proofs to penalize (based on a token-ante) any corrupt party.
-For the HTTPZ Gateway the Zama KMS uses Arbitrum on Conduit and refer the reader to [this repo](https://github.com/zama-ai/gateway-l2) for more details and the actual contracts deployed.
+For the fhevm Gateway the Zama KMS uses Arbitrum on Conduit and refer the reader to [this repo](https://github.com/zama-ai/gateway-l2) for more details and the actual contracts deployed.
 
 The Zama KMS furthermore allows key management of Fully-Homomorphic Encryption (FHE) keys.
 More specifically it allows the following operations with threshold security:
@@ -20,18 +20,18 @@ More specifically it allows the following operations with threshold security:
 
 
 ## Architecture
-In the grand scheme of things the Zama KMS fits into the Zama HTTPZ system, which is designed to provide a fully decentralized solution for confidential smart contracts based on fully homomorphic encryption, running on EVM blockchains.
+In the grand scheme of things the Zama KMS fits into the Zama fhevm system, which is designed to provide a fully decentralized solution for confidential smart contracts based on fully homomorphic encryption, running on EVM blockchains.
 
 This system is facilitated through the following main components:
 
-- __Host chain smart contracts__: This includes both third-party app contracts which use the HTTPZ system and HTTPZ-specific smart contracts facilitating the system on the given EVM. In particular emitting events based on each FHE operation (computation, input or decryption).
+- __Host chain smart contracts__: This includes both third-party app contracts which use the fhevm system and fhevm-specific smart contracts facilitating the system on the given EVM. In particular emitting events based on each FHE operation (computation, input or decryption).
 
 - __Coprocessors__: A Coprocessor is responsible for performing public FHE operations on a set of FHE encrypted ciphertexts.
 
 - __Zama KMS__: A set of MPC servers that hold shares of the private FHE keys. These servers are capable of executing threshold decryption of FHE ciphertexts. The TKMS is also capable of generating the FHE keys, hence making sure that the private FHE keys _never_ exist in plain on any machine.
 
-- __HTTPZ Gateway__: A set of smart contracts that facilitates the overall logic and key management of the HTTPZ system.
+- __fhevm Gateway__: A set of smart contracts that facilitates the overall logic and key management of the fhevm system.
 
-- __Middleware__: Besides the above-mentioned main components, light components are in play in order to ensure communication between the host chain and HTTPZ Gateway, along with providing classical HTTP endpoints for external apps and clients that wish to use the system.
+- __Middleware__: Besides the above-mentioned main components, light components are in play in order to ensure communication between the host chain and fhevm Gateway, along with providing classical HTTP endpoints for external apps and clients that wish to use the system.
 
 ![Overview of the architecture](./overview.png)

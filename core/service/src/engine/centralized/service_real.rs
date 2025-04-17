@@ -492,7 +492,7 @@ impl<
 
                 match decryptions {
                     Ok(Ok(pts)) => {
-                        // sign the plaintexts and handles for external verification (in HTTPZ)
+                        // sign the plaintexts and handles for external verification (in fhevm)
                         let external_sig = if let Some(domain) = eip712_domain {
                             compute_external_pt_signature(&sigkey, ext_handles_bytes, &pts, domain)
                         } else {

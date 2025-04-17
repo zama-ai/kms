@@ -73,7 +73,7 @@ Handles efficient retrieval of ciphertexts from AWS S3 storage:
 Subscribes to and processes blockchain events:
 
 - Establishes WebSocket connections to the blockchain
-- Subscribes to events from DecryptionManager and HTTPZ contracts
+- Subscribes to events from DecryptionManager and fhevm contracts
 - Handles connection failures with automatic reconnection
 - Forwards events to the event processor
 
@@ -205,7 +205,7 @@ All environment variables are prefixed with `KMS_CONNECTOR_`. Here's the complet
 | `KMS_CONNECTOR_SIGNING_KEY_PATH` | Path to a serialized signing key file | (required if mnemonic not provided) |
 | `KMS_CONNECTOR_CHAIN_ID` | Blockchain network chain ID | 31337 |
 | `KMS_CONNECTOR_DECRYPTION_MANAGER_ADDRESS` | Address of the Decryption Manager contract | 0x5fbdb2315678afecb367f032d93f642f64180aa3 |
-| `KMS_CONNECTOR_HTTPZ_ADDRESS` | Address of the HTTPZ contract | 0x0000000000000000000000000000000000000001 |
+| `KMS_CONNECTOR_HTTPZ_ADDRESS` | Address of the fhevm contract | 0x0000000000000000000000000000000000000001 |
 | `KMS_CONNECTOR_CHANNEL_SIZE` | Size of the event processing channel | 1000 |
 | `KMS_CONNECTOR_SERVICE_NAME` | Name of the KMS connector instance | kms-connector |
 | `KMS_CONNECTOR_ACCOUNT_INDEX` | Account index for the wallet | 0 |
@@ -214,10 +214,10 @@ All environment variables are prefixed with `KMS_CONNECTOR_`. Here's the complet
 | `KMS_CONNECTOR_RETRY_INTERVAL_SECS` | Interval between retry attempts | 5 |
 | `KMS_CONNECTOR_DECRYPTION_MANAGER_DOMAIN_NAME` | EIP-712 domain name for DecryptionManager contract | DecryptionManager |
 | `KMS_CONNECTOR_DECRYPTION_MANAGER_DOMAIN_VERSION` | EIP-712 domain version for DecryptionManager contract | 1 |
-| `KMS_CONNECTOR_HTTPZ_DOMAIN_NAME` | EIP-712 domain name for HTTPZ contract | HTTPZ |
-| `KMS_CONNECTOR_HTTPZ_DOMAIN_VERSION` | EIP-712 domain version for HTTPZ contract | 1 |
+| `KMS_CONNECTOR_HTTPZ_DOMAIN_NAME` | EIP-712 domain name for fhevm contract | fhevm |
+| `KMS_CONNECTOR_HTTPZ_DOMAIN_VERSION` | EIP-712 domain version for fhevm contract | 1 |
 | `KMS_CONNECTOR_PRIVATE_KEY` | Private key as a hex string | (optional) |
-| `KMS_CONNECTOR_VERIFY_COPROCESSORS` | Whether to verify coprocessors against HTTPZ contract | false |
+| `KMS_CONNECTOR_VERIFY_COPROCESSORS` | Whether to verify coprocessors against fhevm contract | false |
 | `KMS_CONNECTOR_S3_CONFIG__REGION` | AWS S3 region for ciphertext storage | (optional) |
 | `KMS_CONNECTOR_S3_CONFIG__BUCKET` | AWS S3 bucket name for ciphertext storage | (optional) |
 | `KMS_CONNECTOR_S3_CONFIG__ENDPOINT` | AWS S3 endpoint URL for ciphertext storage | (optional) |
@@ -329,7 +329,7 @@ spec:
 
 If you see warnings like "Failed to parse S3 bucket URL" in the logs:
 
-1. Check the S3 bucket URL format in the HTTPZ contract
+1. Check the S3 bucket URL format in the fhevm contract
 2. Ensure the URL follows one of the supported formats
 3. Verify that the URL is accessible from the KMS Connector's network
 

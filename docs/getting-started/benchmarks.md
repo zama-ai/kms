@@ -2,10 +2,10 @@
 Below we report benchmark numbers that relate to the blockchain setting.
 That is we consider 13 kms-core parties, with the `BC_PARAMS_SNS` TFHE parameters providing
 128 bit computational security and 80 bits statistical security.
-These are the parameters used in the HTTPZ deployment.
+These are the parameters used in the fhevm deployment.
 
-Benchmarks number for the complete distributed decryption (i.e. including the Switch and Squash) 
-and for a variety of parameters and number of parties are avaiable in the M4 NIST document[^1]. 
+Benchmarks number for the complete distributed decryption (i.e. including the Switch and Squash)
+and for a variety of parameters and number of parties are avaiable in the M4 NIST document[^1].
 
 [^1]: https://github.com/zama-ai/NIST-Threshold
 
@@ -15,12 +15,12 @@ To benchmark distributed decryption, we send `num_requests` requests at once and
 measure how long it takes to compute the result (`LATENCY`) averaged over all the parties.
 We perform this test with a variety of TFHE-rs `euint` types and also report the throughput
 for each with both the `type/s` metric (i.e. the number of requests divided by the latency).
-We also the report the `LWE/s` metric that represents the throughput in number of *raw* LWE ciphertexts that are decrypted to be able to compare the different types. 
+We also the report the `LWE/s` metric that represents the throughput in number of *raw* LWE ciphertexts that are decrypted to be able to compare the different types.
 
 ### LAN
 By LAN setting we mean all the parties are run from within the same EC2 region.
 
-#### C5AX8LARGE (32vCPUs, 64GiB RAM) 
+#### C5AX8LARGE (32vCPUs, 64GiB RAM)
 | num_requests | Bool LATENCY (ms) | Bool THROUGHPUT (Bool/s) | Bool THROUGHPUT (LWE/s) | U16 LATENCY (ms) | U16 THROUGHPUT (U16/s) | U16 THROUGHPUT (LWE/s) | U64 LATENCY (ms) | U64 THROUGHPUT (U64/s) | U64 THROUGHPUT (LWE/s) | U128 LATENCY (ms) | U128 THROUGHPUT (U128/s) | U128 THROUGHPUT (LWE/s) |
 | --------- | ------------------ | ------------------------- | ------------------------ | ----------------- | ----------------------- | ----------------------- | ----------------- | ----------------------- | ----------------------- | ------------------ | ------------------------- | ------------------------ |
 | 1         | 2                  | 565                       | 565                      | 89                | 11                      | 90                      | 96                | 10                      | 333                     | 82                 | 12                        | 785                      |

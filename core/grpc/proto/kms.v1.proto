@@ -132,7 +132,7 @@ message SignedPubDataHandle {
   // Plain ECDSA Signature on the key handle.
   bytes signature = 2;
   // The signature on the key for the external recipient
-  // (e.g. using EIP712 for HTTPZ)
+  // (e.g. using EIP712 for fhevm)
   bytes external_signature = 3;
 }
 
@@ -186,7 +186,7 @@ enum CiphertextFormat {
 }
 
 message TypedCiphertext {
-  // The actual ciphertext to decrypt, taken directly from HTTPZ.
+  // The actual ciphertext to decrypt, taken directly from fhevm.
   bytes ciphertext = 1;
   // The type of plaintext encrypted. The type should match FheType from tfhe-rs:
   // https://github.com/zama-ai/tfhe-rs/blob/main/tfhe/src/high_level_api/mod.rs
@@ -235,7 +235,7 @@ message DecryptionResponsePayload {
   // ciphertext.
   repeated TypedPlaintext plaintexts = 3;
   // the signature on external_decryption_result for the external recipient
-  // (e.g. using EIP712 for HTTPZ)
+  // (e.g. using EIP712 for fhevm)
   optional bytes external_signature = 4;
 }
 

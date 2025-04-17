@@ -234,7 +234,7 @@ pub struct SignedPubDataHandleInternal {
     // The signature on the handle
     pub signature: Vec<u8>,
     // The signature on the key for the external recipient
-    // (e.g. using EIP712 for HTTPZ)
+    // (e.g. using EIP712 for fhevm)
     pub external_signature: Vec<u8>,
 }
 

@@ -1,7 +1,7 @@
 ---
 description: >-
   KMS-core is an open-source framework for Key Management System, to be used with
-  HTTPZ for a privacy-oriented blockchain using Fully Homomorphic Encryption (FHE).
+  fhevm for a privacy-oriented blockchain using Fully Homomorphic Encryption (FHE).
 layout:
   title:
     visible: true
@@ -44,7 +44,7 @@ Access to additional resources and join the Zama community.
 Refer to the API, review product architecture, and access additional resources for in-depth explanations while working with the Zama TKMS.
 
 - [API](references/api/): Specification of the gRPC end-points of the TKMS.
-- [HTTPZ Whitepaper](https://github.com/zama-ai/httpz-whitepaper): The whitepaper of the HTTPZ system and how the TKMS integrates into this.
+- [fhevm Whitepaper](https://github.com/zama-ai/fhevm-whitepaper): The whitepaper of the fhevm system and how the TKMS integrates into this.
 - [NIST specification](https://github.com/zama-ai/NIST-Threshold): The detailed technical specification of all the cryptography implemented in the TKMS.
 - [Noah's Ark paper](https://eprint.iacr.org/2023/815): The academic paper describing the protocols implemented in the TKMS.
 

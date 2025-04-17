@@ -16,32 +16,32 @@ In the [access](#different-ways-to-access-the-zama-kms) section we go through th
 ## Different ways to access the Zama KMS
 
 There are multiple ways to use the Zama KMS, each requiring different amounts of external infrastructure running:
-- Interacting with an EVM L1 host chain (with contracts that emit events that gets ported to the HTTPZ Gateway).
-- By using the Connector with the Arbitrum Gateway L2 blockchain. Consult the [HTTPZ Gateway](https://github.com/zama-ai/gateway-l2) repository for details.
+- Interacting with an EVM L1 host chain (with contracts that emit events that gets ported to the fhevm Gateway).
+- By using the Connector with the Arbitrum Gateway L2 blockchain. Consult the [fhevm Gateway](https://github.com/zama-ai/gateway-l2) repository for details.
 - Through the CLI Core Client. See the [CLI Core Client README](../../core-client/README.md) for further details.
 - Directly through the gRPC endpoints on each server instance. See the [API section](../../core/grpc/README.md) for detail.
 
 We now go through each of these in more detail.
 
 ### L1 host chain interaction
-To use the Zama KMS through an L1 host chain, it requires both the L1 contracts, the HTTPZ Gateway, an Oracle, Relayer and Coprocessor running. Furthermore, interaction using the host chain only allows _implicit_ usage of the Zama KMS, as actual queries for setup and key generation has to be done through the HTTPZ Gateway. Hence, the host chain only facilitates computation (using the coprocessor) and decryption using the Zama KMS.
-In practice we don't expect people to launch this setup directly, but instead use the setup facilitating host chain interaction provided by ZWS. Even so, using the Zama KMS through the ZWS setup requires the launching of application contracts on Ethereum, along with setup calls done to the HTTPZ Gateway. Thus this solution is only possible for registered partners of Zama that has been approved through by the HTTPZ Gateway governance. End-users of FHE may instead use solutions provided by Zama's partners directly. Some relevant resources for further information on this include [Inco](https://www.inco.org/), [Fhenix](https://www.fhenix.io/) or [Shiba Inu's treat token](https://shib.io/tokens/treat).
+To use the Zama KMS through an L1 host chain, it requires both the L1 contracts, the fhevm Gateway, an Oracle, Relayer and Coprocessor running. Furthermore, interaction using the host chain only allows _implicit_ usage of the Zama KMS, as actual queries for setup and key generation has to be done through the fhevm Gateway. Hence, the host chain only facilitates computation (using the coprocessor) and decryption using the Zama KMS.
+In practice we don't expect people to launch this setup directly, but instead use the setup facilitating host chain interaction provided by ZWS. Even so, using the Zama KMS through the ZWS setup requires the launching of application contracts on Ethereum, along with setup calls done to the fhevm Gateway. Thus this solution is only possible for registered partners of Zama that has been approved through by the fhevm Gateway governance. End-users of FHE may instead use solutions provided by Zama's partners directly. Some relevant resources for further information on this include [Inco](https://www.inco.org/), [Fhenix](https://www.fhenix.io/) or [Shiba Inu's treat token](https://shib.io/tokens/treat).
 For further technical details, see [this repo](https://github.com/zama-ai/fhevm).
 
-### HTTPZ Gateway blockchain
-To use the Zama KMS through the HTTPZ Gateway requires both the Zama KMS system, the HTTPZ Gateway running and Coprocessor running. While interaction using the HTTPZ Gateway allows close to direct usage of the Zama KMS, it should be observed that the ZWS hosted solution for this is meant to integrate with Ethereum and a Coprocessor, hence its usefulness may become rather limited unless contracts are customized.
-In practice we don't expect developers to launch this setup directly, or if they do, make a fork of the HTTPZ Gateway contracts and host their own customized setup. Instead, we expect the main usage to come through an application on the host chain as mentioned above, or through a forked and self-hosted setup of the HTTPZ Gateway contracts.
-End-users could interact directly with the HTTPZ Gateway for certain operations (e.g. user decryption), the same is true for administrators of apps who could directly interact with the HTTPZ Gateway to do CRS and key management, including key generation.
+### fhevm Gateway blockchain
+To use the Zama KMS through the fhevm Gateway requires both the Zama KMS system, the fhevm Gateway running and Coprocessor running. While interaction using the fhevm Gateway allows close to direct usage of the Zama KMS, it should be observed that the ZWS hosted solution for this is meant to integrate with Ethereum and a Coprocessor, hence its usefulness may become rather limited unless contracts are customized.
+In practice we don't expect developers to launch this setup directly, or if they do, make a fork of the fhevm Gateway contracts and host their own customized setup. Instead, we expect the main usage to come through an application on the host chain as mentioned above, or through a forked and self-hosted setup of the fhevm Gateway contracts.
+End-users could interact directly with the fhevm Gateway for certain operations (e.g. user decryption), the same is true for administrators of apps who could directly interact with the fhevm Gateway to do CRS and key management, including key generation.
 
 ### gRPC interaction
 The main entry point into the Zama KMS is through the gRPC endpoints on the KMS Core. These endpoints allow indiscriminate usage of the Zama KMS. That is, there is no validations in checks to validate that the caller are allowed to issue these calls. That is, anyone who is able to make calls to the decryption endpoint on all the cores can get a decryption executed. That is, any kind of access restriction and key management logic have to have already been carried out _before_  the possibility to call the gRPC endpoint.
-In the ZWS deployment, this logic is carried out in the HTTPZ Gateway, which emits events if requests are validated. These are picked up by a Connector on _each_ KMS Core, which then forwards the request to gRPC endpoint on a local KMS Core. That is, each Connector and Core run on the same physical machine and hence the gRPC endpoints on the Core are only _locally_ accessible. Thus calls _have_ to be validated by the HTTPZ Gateway before they can be executed (unless one controls more thant t of the Core servers).
+In the ZWS deployment, this logic is carried out in the fhevm Gateway, which emits events if requests are validated. These are picked up by a Connector on _each_ KMS Core, which then forwards the request to gRPC endpoint on a local KMS Core. That is, each Connector and Core run on the same physical machine and hence the gRPC endpoints on the Core are only _locally_ accessible. Thus calls _have_ to be validated by the fhevm Gateway before they can be executed (unless one controls more thant t of the Core servers).
 
 As a developer this is probably the entry point you would want to use into the Zama KMS. Both because it only requires deployment of the $$n$$ KMS Cores but also because it is very easy to issue commands to, yet, from an operations perspective, it is easy to limit the access. Using the gRPC endpoints on the Zama KMS also makes testing and debugging easy since it only requires the KMS Core running and allow to make custom calls in a simple manner.
 
 Still, if deploying the KMS Core purely as a gRPC service it is _essential_ to ensure that gRPC calls can _only_ be made _after_ any access control and request validation has been carried out, e.g. as discussed above.
 
-While ZWS offers a setup of the Zama KMS, it is also possible to host this yourself. In fact, it is possible to use the host chain and HTTPZ Gateway setup _with_ your own hosted instance of the Zama KMS. In fact the contracts on the HTTPZ Gateway are constructed to make this extremely easy, and hence ensure that the key manage never leaves your control.
+While ZWS offers a setup of the Zama KMS, it is also possible to host this yourself. In fact, it is possible to use the host chain and fhevm Gateway setup _with_ your own hosted instance of the Zama KMS. In fact the contracts on the fhevm Gateway are constructed to make this extremely easy, and hence ensure that the key manage never leaves your control.
 Still, observe that even hosting your own setup of the Zama KMS requires not only running $$n$$ instances of the KMS Core, but also the $$n$$ instances of the KMS Connector, Redis database, along with $$n$$ S3 buckets (although a local filesystem can be used instead of S3).
 
 ## Zama KMS abstract commands
@@ -53,7 +53,7 @@ Calls to preprocessing requires key parameters, the specification of a unique `R
 
 Observe the preprocessed material is stored in Redis database in a deployed situation (although running a test setup the data can be stored in RAM).
 
-Observe that preprocessing is at a low abstraction level, hence it can only be found at the gRPC interface. I.e. if using the HTTPZ Gateway, there will be no such endpoint. Instead the key generation on the HTTPZ Gateway will ensure sufficient calls to the KMS Cores are made to preprocess the needed material.
+Observe that preprocessing is at a low abstraction level, hence it can only be found at the gRPC interface. I.e. if using the fhevm Gateway, there will be no such endpoint. Instead the key generation on the fhevm Gateway will ensure sufficient calls to the KMS Cores are made to preprocess the needed material.
 
 For non-test parameters this process is very slow. Even on strong machines it will take several hours, maybe even up to a day.
 

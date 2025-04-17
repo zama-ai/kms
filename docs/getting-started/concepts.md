@@ -7,7 +7,7 @@ While there exists multiple flavours of threshold cryptography and MPC in genera
 
 Still, to achieve such strong security the Zama KMS requires $$t<n/3$$, hence the smallest amount of servers requires to achieve $$t>0$$ is 4, that is the protocols requires a _strong honest majority_.
 
-High-level information about MPC is given in our [HTTPZ Whitepaper](https://github.com/zama-ai/httpz-whitepaper/), whereas the theoretical and academic details on our protocols can be found in the paper [Noah's Ark: Efficient Threshold-FHE Using Noise Flooding](https://eprint.iacr.org/2023/815) published at WAHC 2023.
+High-level information about MPC is given in our [fhevm Whitepaper](https://github.com/zama-ai/fhevm-whitepaper/), whereas the theoretical and academic details on our protocols can be found in the paper [Noah's Ark: Efficient Threshold-FHE Using Noise Flooding](https://eprint.iacr.org/2023/815) published at WAHC 2023.
 <!--
 TODO: Also mention NIST main submission document, once it's public.
 -->

@@ -9,7 +9,7 @@
 
 
 <p align="center">
-  <a href="https://github.com/zama-ai/httpz-whitepaper"> 📒 HTTPZ White paper</a> | <a href="https://eprint.iacr.org/2023/815"> 📚 Noah's Ark (peer-reviewed academic paper)</a>
+  <a href="https://github.com/zama-ai/fhevm-whitepaper"> 📒 fhevm White paper</a> | <a href="https://eprint.iacr.org/2023/815"> 📚 Noah's Ark (peer-reviewed academic paper)</a>
 </p>
 
 <p align="center">
@@ -31,13 +31,13 @@ The Zama KMS is a fully decentralized key management solution for TFHE, more spe
 
 The system facilitates this through the use of a blockchain which provides a means of fulfilling payments to the MPC parties, along with providing an immutable audit log.
 
-Interaction with the same KMS will happen either through an external Ethereum blockchain, providing an API via a smart contract, or through the [HTTPZ gateway service](https://github.com/zama-ai/gateway-l2).
+Interaction with the same KMS will happen either through an external Ethereum blockchain, providing an API via a smart contract, or through the [fhevm gateway service](https://github.com/zama-ai/gateway-l2).
 
 ### Main features
-The following describes how the KMS is used in conjunction with HTTPZ Gateway, including the external components needed.
+The following describes how the KMS is used in conjunction with fhevm Gateway, including the external components needed.
 While the KMS can be used with multiple L1 EVM host chains, for simplicity, we will in the following document assume there is only a single L1 host chain.
 
-At the highest level, the system consists of multiple subsystems: a *host chain*, an *HTTPZ Gateway* and a *KMS*. The KMS is in turn composed of the following components, which we illustrate in the pictures below.
+At the highest level, the system consists of multiple subsystems: a *host chain*, an *fhevm Gateway* and a *KMS*. The KMS is in turn composed of the following components, which we illustrate in the pictures below.
 
 ![KMS system](./docs/getting-started/overview.png)
 
@@ -133,11 +133,11 @@ Read this [section](./docs/ci/release.md) for more information.
 ### Technical specification
 - [Tech spec](https://github.com/zama-ai/tech-spec/tree/main/architecture)
 
-### HTTPZ Application Whitepaper
-- [HTTPZ Whitepaper](https://github.com/zama-ai/httpz-whitepaper)
+### fhevm Application Whitepaper
+- [fhevm Whitepaper](https://github.com/zama-ai/fhevm-whitepaper)
 
 ### Docker images and high level usage
-- [HTTPZ Integration](https://github.com/zama-ai/httpz-test-suite)
+- [fhevm Integration](https://github.com/zama-ai/fhevm-test-suite)
 
 ## Working with the KMS
 
