@@ -284,7 +284,7 @@ impl TestType for PrfKeyTest {
 pub struct ThresholdFheKeysTest {
     pub test_filename: Cow<'static, str>,
     pub private_key_set_filename: Cow<'static, str>,
-    pub server_key_filename: Cow<'static, str>,
+    pub integer_server_key_filename: Cow<'static, str>,
     pub sns_key_filename: Cow<'static, str>,
     pub info_filename: Cow<'static, str>,
     pub decompression_key_filename: Cow<'static, str>,

@@ -9,9 +9,9 @@ license = "BSD-3-Clause-Clear"
 [dependencies]
 # This is a list of kms-core versions we will generate data for. This list will grow over time.
 # They are only activated when generating data, with the binary target and the "generate" feature.
-kms_0_11 = { git = "ssh://git@github.com/zama-ai/kms-core.git", package = "kms", rev = "af3387d9c290a2770c5e137b83f1fe041c43a388", optional = true }
-kms_grpc_0_11 = { git = "ssh://git@github.com/zama-ai/kms-core.git", package = "kms-grpc", rev = "af3387d9c290a2770c5e137b83f1fe041c43a388", optional = true }
-threshold_fhe_0_11 = { git = "ssh://git@github.com/zama-ai/kms-core.git", package = "threshold-fhe", rev = "af3387d9c290a2770c5e137b83f1fe041c43a388", optional = true, features = [
+kms_0_11 = { git = "ssh://git@github.com/zama-ai/kms-core.git", package = "kms", rev = "bf725eacfe47a492227547704bc3156f9a0d2b63", optional = true }
+kms_grpc_0_11 = { git = "ssh://git@github.com/zama-ai/kms-core.git", package = "kms-grpc", rev = "bf725eacfe47a492227547704bc3156f9a0d2b63", optional = true }
+threshold_fhe_0_11 = { git = "ssh://git@github.com/zama-ai/kms-core.git", package = "threshold-fhe", rev = "bf725eacfe47a492227547704bc3156f9a0d2b63", optional = true, features = [
     "testing",
 ] }
 
@@ -19,7 +19,7 @@ threshold_fhe_0_11 = { git = "ssh://git@github.com/zama-ai/kms-core.git", packag
 # Note: these dependencies should match the versions used by the KMS and distributed decryption
 # modules as much as possible to avoid serialization differences
 tfhe_versionable_0_5 = { package = "tfhe-versionable", version = "0.5.0", optional = true }
-tfhe_1_0 = { package = "tfhe", version = "1.0.0", optional = true, features = [
+tfhe_1_1 = { package = "tfhe", version = "1.1.2", optional = true, features = [
     "shortint",
 ] }
 alloy-sol-types-0_8_22 = { package = "alloy-sol-types", version = "=0.8.20", optional = true }
@@ -44,7 +44,7 @@ generate = [
     "dep:kms_grpc_0_11",
     "dep:threshold_fhe_0_11",
     "dep:tfhe_versionable_0_5",
-    "dep:tfhe_1_0",
+    "dep:tfhe_1_1",
     "dep:alloy-sol-types-0_8_22",
     "dep:alloy-primitives-0_8_22",
 ]

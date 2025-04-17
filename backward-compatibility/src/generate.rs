@@ -51,6 +51,8 @@ pub const TEST_DKG_PARAMS_SNS: DKGParamsSnSTest = DKGParamsSnSTest {
         polynomial_size: 256,
         pbs_base_log: 32,
         pbs_level: 2,
+        message_modulus: 4,
+        carry_modulus: 4,
     },
 };
 

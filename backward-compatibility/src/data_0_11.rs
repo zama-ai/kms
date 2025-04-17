@@ -9,16 +9,15 @@ use kms_0_11::engine::base::{gen_sig_keys, KmsFheKeyHandles};
 use kms_0_11::engine::centralized::central_kms::generate_client_fhe_key;
 use kms_0_11::engine::threshold::service_real::{compute_all_info, ThresholdFheKeys};
 use kms_0_11::util::key_setup::FhePublicKey;
+use tfhe_1_1::shortint::parameters::NoiseSquashingParameters;
 use threshold_fhe_0_11::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
 use threshold_fhe_0_11::execution::endpoints::keygen::FhePubKeySet;
 use threshold_fhe_0_11::execution::small_execution::prf::PrfKey;
-use threshold_fhe_0_11::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
-use threshold_fhe_0_11::execution::tfhe_internals::test_feature::generate_large_keys_from_seed;
 use threshold_fhe_0_11::{
     execution::{
         runtime::party::Role,
         tfhe_internals::{
-            parameters::{DKGParams, DKGParamsRegular, DKGParamsSnS, SwitchAndSquashParameters},
+            parameters::{DKGParams, DKGParamsRegular, DKGParamsSnS},
             test_feature::initialize_key_material,
         },
     },
@@ -28,7 +27,7 @@ use threshold_fhe_0_11::{
 use kms_0_11::vault::keychain::AppKeyBlob;
 use kms_grpc_0_11::rpc_types::{PubDataType, PublicKeyType, SignedPubDataHandleInternal};
 use rand::{RngCore, SeedableRng};
-use tfhe_1_0::{
+use tfhe_1_1::{
     core_crypto::commons::{
         ciphertext_modulus::CiphertextModulus,
         generators::DeterministicSeeder,
@@ -133,15 +132,20 @@ impl From<ClassicPBSParametersTest> for ClassicPBSParameters {
     }
 }
 
-impl From<SwitchAndSquashParametersTest> for SwitchAndSquashParameters {
+impl From<SwitchAndSquashParametersTest> for NoiseSquashingParameters {
     fn from(value: SwitchAndSquashParametersTest) -> Self {
-        SwitchAndSquashParameters {
+        NoiseSquashingParameters {
             glwe_dimension: GlweDimension(value.glwe_dimension),
-            glwe_noise_distribution: TUniform::new(value.glwe_noise_distribution),
+            glwe_noise_distribution: DynamicDistribution::new_t_uniform(
+                value.glwe_noise_distribution,
+            ),
             polynomial_size: PolynomialSize(value.polynomial_size),
-            pbs_base_log: DecompositionBaseLog(value.pbs_base_log),
-            pbs_level: DecompositionLevelCount(value.pbs_level),
+            decomp_base_log: DecompositionBaseLog(value.pbs_base_log),
+            decomp_level_count: DecompositionLevelCount(value.pbs_level),
             ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
+            modulus_switch_noise_reduction_params: None,
+            message_modulus: MessageModulus(value.message_modulus),
+            carry_modulus: CarryModulus(value.carry_modulus),
         }
     }
 }
@@ -208,8 +212,6 @@ const KMS_FHE_KEY_HANDLES_TEST: KmsFheKeyHandlesTest = KmsFheKeyHandlesTest {
     server_key_filename: Cow::Borrowed("server_key_handle"),
     sig_key_filename: Cow::Borrowed("sig_key_handle"),
     decompression_key_filename: Cow::Borrowed("decompression_key"),
-    sns_client_key_filename: Cow::Borrowed("sns_client_key"),
-    sns_key_filename: Cow::Borrowed("sns_key"),
     state: 100,
     seed: 100,
     element: Cow::Borrowed("element"),
@@ -220,6 +222,7 @@ const KMS_FHE_KEY_HANDLES_TEST: KmsFheKeyHandlesTest = KmsFheKeyHandlesTest {
 const THRESHOLD_FHE_KEYS_TEST: ThresholdFheKeysTest = ThresholdFheKeysTest {
     test_filename: Cow::Borrowed("threshold_fhe_keys"),
     private_key_set_filename: Cow::Borrowed("private_key_set"),
+    integer_server_key_filename: Cow::Borrowed("integer_server_key"),
     sns_key_filename: Cow::Borrowed("sns_key"),
     info_filename: Cow::Borrowed("info"),
     decompression_key_filename: Cow::Borrowed("decompression_key"),
@@ -329,6 +332,7 @@ impl KmsV0_11 {
             server_key.2,
             server_key.3,
             server_key.4,
+            server_key.5,
         );
 
         store_versioned_auxiliary!(
@@ -346,28 +350,9 @@ impl KmsV0_11 {
             &KMS_FHE_KEY_HANDLES_TEST.public_key_filename,
         );
 
-        let (sns_client_key, fbsk_out) =
-            generate_large_keys_from_seed(dkg_params, &client_key, seed).unwrap();
-        store_versioned_auxiliary!(
-            &sns_client_key,
-            dir,
-            &KMS_FHE_KEY_HANDLES_TEST.test_filename,
-            &KMS_FHE_KEY_HANDLES_TEST.sns_client_key_filename,
-        );
-
-        let ksk = server_key.as_ref().as_ref().key_switching_key.clone();
-        let sns_key = SwitchAndSquashKey { fbsk_out, ksk };
-        store_versioned_auxiliary!(
-            &sns_key,
-            dir,
-            &KMS_FHE_KEY_HANDLES_TEST.test_filename,
-            &KMS_FHE_KEY_HANDLES_TEST.sns_key_filename,
-        );
-
         let public_key_set = FhePubKeySet {
             public_key,
             server_key,
-            sns_key: Some(sns_key),
         };
 
         // NOTE: kms_fhe_key_handles.public_key_info is a HashMap
@@ -375,7 +360,6 @@ impl KmsV0_11 {
         let kms_fhe_key_handles = KmsFheKeyHandles::new(
             &private_sig_key,
             client_key,
-            sns_client_key,
             &public_key_set,
             decompression_key,
             Some(&dummy_domain()),
@@ -414,12 +398,19 @@ impl KmsV0_11 {
             &THRESHOLD_FHE_KEYS_TEST.private_key_set_filename,
         );
 
-        let sns_key = fhe_pub_key_set.sns_key.clone().unwrap();
+        let (integer_server_key, _, _, _, sns_key, _) =
+            fhe_pub_key_set.server_key.clone().into_raw_parts();
         store_versioned_auxiliary!(
             &sns_key,
             dir,
             &THRESHOLD_FHE_KEYS_TEST.test_filename,
             &THRESHOLD_FHE_KEYS_TEST.sns_key_filename,
+        );
+        store_versioned_auxiliary!(
+            &integer_server_key,
+            dir,
+            &THRESHOLD_FHE_KEYS_TEST.test_filename,
+            &THRESHOLD_FHE_KEYS_TEST.integer_server_key_filename,
         );
 
         let mut rng = AesRng::seed_from_u64(THRESHOLD_FHE_KEYS_TEST.state);
@@ -459,6 +450,7 @@ impl KmsV0_11 {
 
         let threshold_fhe_keys = ThresholdFheKeys {
             private_keys: private_key_set,
+            integer_server_key,
             sns_key,
             pk_meta_data: info,
             decompression_key,

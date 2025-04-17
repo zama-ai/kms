@@ -180,16 +180,16 @@ fn test_threshold_fhe_keys(
     test: &ThresholdFheKeysTest,
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
-    let private_key_set =
+    let private_keys =
         load_and_unversionize_auxiliary(dir, test, &test.private_key_set_filename, format)?;
 
-    let server_key: tfhe::integer::ServerKey =
-        load_and_unversionize_auxiliary(dir, test, &test.server_key_filename, format)?;
+    let integer_server_key: tfhe::integer::ServerKey =
+        load_and_unversionize_auxiliary(dir, test, &test.integer_server_key_filename, format)?;
 
-    let sns_key: tfhe::integer::noise_squashing::NoiseSquashingKey =
+    let sns_key: Option<tfhe::integer::noise_squashing::NoiseSquashingKey> =
         load_and_unversionize_auxiliary(dir, test, &test.sns_key_filename, format)?;
 
-    let info: HashMap<PubDataType, SignedPubDataHandleInternal> =
+    let pk_meta_data: HashMap<PubDataType, SignedPubDataHandleInternal> =
         load_and_unversionize_auxiliary(dir, test, &test.info_filename, format)?;
 
     let decompression_key: Option<DecompressionKey> =
@@ -201,11 +201,11 @@ fn test_threshold_fhe_keys(
     let original_versionized: ThresholdFheKeys = load_and_unversionize(dir, test, format)?;
 
     let new_versionized = ThresholdFheKeys {
-        private_keys: private_key_set,
-        integer_server_key: server_key,
-        sns_key: Some(sns_key),
+        private_keys,
+        integer_server_key,
+        sns_key,
         decompression_key,
-        pk_meta_data: info,
+        pk_meta_data,
         ksk,
     };
 
@@ -269,7 +269,6 @@ impl TestedModule for KMS {
 }
 
 #[test]
-#[ignore]
 fn test_backward_compatibility_kms() {
     let pkg_version = env!("CARGO_PKG_VERSION");
 

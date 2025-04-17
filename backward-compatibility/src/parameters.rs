@@ -48,4 +48,6 @@ pub struct SwitchAndSquashParametersTest {
     pub polynomial_size: usize,
     pub pbs_base_log: usize,
     pub pbs_level: usize,
+    pub message_modulus: u64,
+    pub carry_modulus: u64,
 }
