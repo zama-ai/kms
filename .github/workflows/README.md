@@ -71,23 +71,6 @@ This document describes the CI/CD workflow structure for the KMS Core project. O
 > Tests backup functionality with all features enabled
 </details>
 
-### 🔌 Connector Component
-<details>
-<summary><b>View Component Details</b></summary>
-
-#### 🧪 Test Job [`test-connector`](global-common-workflow.yml)
-| Trigger | Status | Condition |
-|---------|--------|-----------|
-| 🔍 PR | ✅ | On connector changes |
-| 🎯 Main | ✅ | Always |
-
-#### 🐳 Docker Job [`docker-connector`](global-common-workflow.yml)
-| Trigger | Status | Condition |
-|---------|--------|-----------|
-| 🔍 PR | ✅ | With "docker" label |
-| 🎯 Main | ✅ | After successful tests |
-</details>
-
 ### 💻 Core Client Component
 <details>
 <summary><b>View Component Details</b></summary>

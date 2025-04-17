@@ -39,7 +39,6 @@ jobs:
       # Each output indicates if files in a specific component were modified
       changes-backup: ${{ steps.filter.outputs.backup }}
       changes-ci: ${{ steps.filter.outputs.ci }}
-      changes-connector: ${{ steps.filter.outputs.connector }}
       changes-core-client: ${{ steps.filter.outputs.core-client }}
       changes-core-grpc: ${{ steps.filter.outputs.core-grpc }}
       changes-core-service: ${{ steps.filter.outputs.core-service }}
@@ -58,10 +57,6 @@ jobs:
             - 'core/backup/**'
           ci:
             - '.github/workflows/global-common-workflow.yml'
-          connector:
-            - 'kms-connector/**'
-            - 'conf-trace/**'
-            - 'core/grpc/**'
           core-client:
             - 'core-client/**'
             - 'conf-trace/**'
@@ -136,57 +131,6 @@ jobs:
       args-tests: '--all-features'
       package-name: 'kms-backup'
       app-cache-dir: 'kms-backup'
-    secrets:
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
-      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-
-  ############################################################################
-  # KMS Connector Pipeline
-  # Testing triggered by:
-  # - Changes to kms-connector/**
-  # - Changes to conf-trace/**
-  # - Changes to core/grpc/**
-  # - Changes to workflow file
-  ############################################################################
-  test-connector:
-    needs: check-changes
-    if: >-
-      needs.check-changes.outputs.changes-connector == 'true' ||
-      github.ref == 'refs/heads/main'
-    uses: ./.github/workflows/common-testing-big-instance.yml
-    with:
-      working-directory: './kms-connector'
-      package-name: 'kms-connector'
-      app-cache-dir: 'kms-connector'
-    secrets:
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
-      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-
-  # Builds Docker image for connector
-  # Only runs on main/release branches after successful tests
-  # Also runs on pull requests targeting main/release branches with the docker label
-  docker-connector:
-    needs:
-      - test-connector
-      - docker-golden-image
-    if: >-
-      (startsWith(github.ref, 'refs/heads/release/') ||
-      github.ref == 'refs/heads/main') ||
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
-    uses: ./.github/workflows/common-docker-big-instance.yml
-    with:
-      working-directory: "./kms-connector"
-      push_image: true
-      image-name: 'kms-connector'
-      app-cache-dir: 'kms-connector'
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}

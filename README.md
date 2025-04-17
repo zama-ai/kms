@@ -76,8 +76,6 @@ The rest of the communication is defined by existing standards and uses JSON-RPC
         - Docker files used to containerize the different binaries in the KMS Core, e.g. the Core Service, Threshold Server and KMS Connector.
     - [`docs`](./docs/README.md)
         - High level documentation of the KMS Core system.
-    - [`kms-connector`](./kms-connector/README.md)
-        - The code for the KMS Connector used to interface between the KMS Core and the HTTPZ Gateway.
     - `observability`
         - Folder containing code, configurations and scripts for observability, such as through prometheus, grafana and loki.
     - `test-util`

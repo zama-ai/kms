@@ -29,22 +29,6 @@ services:
     networks:
       - zama-devnet
 
-  connector:
-    image: ghcr.io/zama-ai/kms-blockchain-connector-dev:092937e
-    command:
-      - "kms-blockchain-connector"
-    environment:
-      - ASC_CONN__BLOCKCHAIN__ADDRESSES=http://blockchain-validator:9090
-      - ASC_CONN__CORE__ADDRESSES=http://core:50051
-      - ASC_CONN__STORE__URL=http://kv-store:8088
-    depends_on:
-      blockchain-validator:
-        condition: service_healthy
-      core:
-        condition: service_healthy
-    networks:
-      - zama-devnet
-
   core:
     image: ghcr.io/zama-ai/kms-service-dev:aa9971e
     ports:

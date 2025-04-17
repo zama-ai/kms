@@ -9,7 +9,6 @@ members = [
     "core/threshold",
     "core-client",
     "test-utils",
-    "kms-connector",
 ]
 
 # The backward-compatibility module is excluded from the workspace in order to avoid dependency
