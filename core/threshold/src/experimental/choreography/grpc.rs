@@ -10,6 +10,7 @@ use crate::choreography::grpc::gen::{
     ThresholdDecryptResultResponse, ThresholdKeyGenRequest, ThresholdKeyGenResponse,
     ThresholdKeyGenResultRequest, ThresholdKeyGenResultResponse,
 };
+use crate::choreography::grpc::r#gen::{ReshareRequest, ReshareResponse};
 use crate::choreography::grpc::{
     create_small_sessions, fill_network_memory_info_multiple_sessions,
     fill_network_memory_info_single_session, gen_random_sid,
@@ -876,6 +877,18 @@ impl Choreography for ExperimentalGrpcChoreography {
         _request: tonic::Request<CrsGenResultRequest>,
     ) -> Result<tonic::Response<CrsGenResultResponse>, tonic::Status> {
         unimplemented!("BGV Does not have a CRS generation")
+    }
+
+    #[instrument(
+        name = "Reshare (BGV)",
+        skip_all,
+        fields(network_round, network_sent, network_received, peak_mem)
+    )]
+    async fn reshare(
+        &self,
+        _request: tonic::Request<ReshareRequest>,
+    ) -> Result<tonic::Response<ReshareResponse>, tonic::Status> {
+        todo!("BGV reshare not implemented yet, need syndrome decode first")
     }
 }
 

@@ -77,6 +77,13 @@ pub struct CrsGenParams {
     pub witness_dim: u128,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ReshareParams {
+    pub session_type: SessionType,
+    pub old_key_sid: SessionId,
+    pub new_key_sid: SessionId,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
     Ongoing,

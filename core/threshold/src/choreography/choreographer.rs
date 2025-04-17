@@ -2,8 +2,8 @@
 //! the kms-core (with the moby binary) parties to do benchmarks.
 //! It is a trusted entity and should not be used with production kms-core.
 use crate::choreography::grpc::gen::{
-    CrsGenRequest, CrsGenResultRequest, PreprocDecryptRequest, ThresholdDecryptRequest,
-    ThresholdKeyGenResultRequest,
+    CrsGenRequest, CrsGenResultRequest, PreprocDecryptRequest, ReshareRequest,
+    ThresholdDecryptRequest, ThresholdKeyGenResultRequest,
 };
 use crate::choreography::requests::CrsGenParams;
 use crate::conf::choreo::ChoreoConf;
@@ -36,8 +36,9 @@ use super::grpc::gen::{
 };
 use super::grpc::SupportedRing;
 use super::requests::{
-    PreprocDecryptParams, PreprocKeyGenParams, PrssInitParams, SessionType, Status, TfheType,
-    ThresholdDecryptParams, ThresholdKeyGenParams, ThresholdKeyGenResultParams, ThroughtputParams,
+    PreprocDecryptParams, PreprocKeyGenParams, PrssInitParams, ReshareParams, SessionType, Status,
+    TfheType, ThresholdDecryptParams, ThresholdKeyGenParams, ThresholdKeyGenResultParams,
+    ThroughtputParams,
 };
 
 pub struct ChoreoRuntime {
@@ -486,6 +487,51 @@ impl ChoreoRuntime {
             assert_eq!(ref_response, response)
         }
         Ok(ref_response.clone())
+    }
+
+    #[instrument(name = "Reshare Request", skip(self,old_key_sid,new_key_sid),fields(old_sid=?old_key_sid, sid=?new_key_sid))]
+    pub async fn initiate_reshare(
+        &self,
+        threshold: u32,
+        old_key_sid: SessionId,
+        new_key_sid: SessionId,
+        session_type: SessionType,
+        seed: Option<u64>,
+    ) -> anyhow::Result<SessionId> {
+        let role_assignment = bincode::serialize(&self.role_assignments)?;
+        let reshare_params_serialized = bincode::serialize(&ReshareParams {
+            session_type,
+            old_key_sid,
+            new_key_sid,
+        })?;
+
+        let mut join_set = JoinSet::new();
+
+        self.channels.values().for_each(|channel| {
+            let mut client = self.new_client(channel.clone());
+            let request = ReshareRequest {
+                role_assignment: role_assignment.clone(),
+                threshold,
+                params: reshare_params_serialized.clone(),
+                seed,
+            };
+
+            join_set.spawn(
+                async move { client.reshare(request).await }.instrument(tracing::Span::current()),
+            );
+        });
+
+        let mut responses: Vec<SessionId> = Vec::new();
+        while let Some(response) = join_set.join_next().await {
+            responses.push(bincode::deserialize(&(response??.into_inner()).request_id).unwrap());
+        }
+
+        let ref_response = responses.first().unwrap();
+        for response in responses.iter() {
+            assert_eq!(ref_response, response)
+        }
+
+        Ok(*ref_response)
     }
 
     pub async fn initiate_status_check(

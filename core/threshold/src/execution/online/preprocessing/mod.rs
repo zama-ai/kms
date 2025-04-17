@@ -359,6 +359,36 @@ pub(crate) mod memory;
 pub mod orchestration;
 pub mod redis;
 
+impl<Z: Clone + Send + Sync> RandomPreprocessing<Z> for Box<dyn BasePreprocessing<Z>> {
+    fn next_random_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>> {
+        self.as_mut().next_random_vec(amount)
+    }
+
+    fn append_randoms(&mut self, randoms: Vec<Share<Z>>) {
+        self.as_mut().append_randoms(randoms)
+    }
+
+    fn randoms_len(&self) -> usize {
+        self.as_ref().randoms_len()
+    }
+}
+
+impl<Z: Clone + Send + Sync> TriplePreprocessing<Z> for Box<dyn BasePreprocessing<Z>> {
+    fn next_triple_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Triple<Z>>> {
+        self.as_mut().next_triple_vec(amount)
+    }
+
+    fn append_triples(&mut self, triples: Vec<Triple<Z>>) {
+        self.as_mut().append_triples(triples)
+    }
+
+    fn triples_len(&self) -> usize {
+        self.as_ref().triples_len()
+    }
+}
+
+impl<Z: Clone + Send + Sync> BasePreprocessing<Z> for Box<dyn BasePreprocessing<Z>> {}
+
 impl<Z: Clone + Send + Sync> TriplePreprocessing<Z> for Box<dyn DKGPreprocessing<Z>> {
     fn next_triple_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Triple<Z>>> {
         self.as_mut().next_triple_vec(amount)

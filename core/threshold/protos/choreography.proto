@@ -13,6 +13,7 @@ service Choreography {
     rpc StatusCheck(StatusCheckRequest) returns (StatusCheckResponse);
     rpc CrsGen(CrsGenRequest) returns(CrsGenResponse);
     rpc CrsGenResult(CrsGenResultRequest) returns(CrsGenResultResponse);
+    rpc Reshare(ReshareRequest) returns (ReshareResponse);
 }
 
 
@@ -111,6 +112,18 @@ message CrsGenResultRequest {
 
 message CrsGenResultResponse {
     bytes crs = 1;
+}
+
+//Reshare
+message ReshareRequest {
+    bytes role_assignment = 1;
+    uint32 threshold = 2;
+    bytes params = 3;
+    optional uint64 seed = 4;
+}
+
+message ReshareResponse {
+    bytes request_id = 1;
 }
 
 //Status check

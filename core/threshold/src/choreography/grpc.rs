@@ -8,20 +8,24 @@ pub mod gen {
 use self::gen::choreography_server::{Choreography, ChoreographyServer};
 use self::gen::{
     CrsGenResultRequest, CrsGenResultResponse, PreprocDecryptRequest, PreprocDecryptResponse,
-    PreprocKeyGenRequest, PreprocKeyGenResponse, PrssInitRequest, PrssInitResponse,
-    StatusCheckRequest, StatusCheckResponse, ThresholdDecryptRequest, ThresholdDecryptResponse,
-    ThresholdDecryptResultRequest, ThresholdDecryptResultResponse, ThresholdKeyGenRequest,
-    ThresholdKeyGenResponse, ThresholdKeyGenResultRequest, ThresholdKeyGenResultResponse,
+    PreprocKeyGenRequest, PreprocKeyGenResponse, PrssInitRequest, PrssInitResponse, ReshareRequest,
+    ReshareResponse, StatusCheckRequest, StatusCheckResponse, ThresholdDecryptRequest,
+    ThresholdDecryptResponse, ThresholdDecryptResultRequest, ThresholdDecryptResultResponse,
+    ThresholdKeyGenRequest, ThresholdKeyGenResponse, ThresholdKeyGenResultRequest,
+    ThresholdKeyGenResultResponse,
 };
 
 use crate::algebra::base_ring::{Z128, Z64};
 use crate::algebra::galois_rings::common::ResiduePoly;
-use crate::algebra::structure_traits::{Derive, ErrorCorrect, FromU128, Invert, RingEmbed, Solve};
+use crate::algebra::structure_traits::{
+    Derive, ErrorCorrect, FromU128, Invert, RingEmbed, Solve, Syndrome,
+};
 #[cfg(feature = "measure_memory")]
 use crate::allocator::MEM_ALLOCATOR;
 use crate::choreography::requests::{
-    CrsGenParams, PreprocDecryptParams, PreprocKeyGenParams, PrssInitParams, SessionType, Status,
-    ThresholdDecryptParams, ThresholdKeyGenParams, ThresholdKeyGenResultParams,
+    CrsGenParams, PreprocDecryptParams, PreprocKeyGenParams, PrssInitParams, ReshareParams,
+    SessionType, Status, ThresholdDecryptParams, ThresholdKeyGenParams,
+    ThresholdKeyGenResultParams,
 };
 use crate::execution::communication::broadcast::broadcast_from_all;
 use crate::execution::endpoints::decryption::{
@@ -35,17 +39,24 @@ use crate::execution::endpoints::keygen::{
     distributed_keygen_z128, distributed_keygen_z64, PrivateKeySet,
 };
 use crate::execution::keyset_config::KeySetConfig;
+use crate::execution::large_execution::offline::{
+    LargePreprocessing, TrueDoubleSharing, TrueSingleSharing,
+};
 use crate::execution::large_execution::vss::RealVss;
 use crate::execution::online::preprocessing::dummy::DummyPreprocessing;
 use crate::execution::online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator;
 use crate::execution::online::preprocessing::{
-    BitDecPreprocessing, DKGPreprocessing, NoiseFloodPreprocessing, PreprocessorFactory,
+    BasePreprocessing, BitDecPreprocessing, DKGPreprocessing, NoiseFloodPreprocessing,
+    PreprocessorFactory,
 };
+use crate::execution::online::reshare::{reshare_sk_same_sets, ResharePreprocRequired};
 use crate::execution::runtime::party::{Identity, Role};
 use crate::execution::runtime::session::SmallSession;
 use crate::execution::runtime::session::{BaseSession, BaseSessionHandles};
 use crate::execution::runtime::session::{BaseSessionStruct, ParameterHandles};
 use crate::execution::runtime::session::{LargeSession, SessionParameters};
+use crate::execution::small_execution::agree_random::RealAgreeRandom;
+use crate::execution::small_execution::offline::SmallPreprocessing;
 use crate::execution::tfhe_internals::parameters::{AugmentedCiphertextParameters, DKGParams};
 use crate::execution::zk::ceremony::{Ceremony, InternalPublicParameter, RealCeremony};
 use crate::networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
@@ -148,8 +159,8 @@ pub struct GrpcChoreography<const EXTENSION_DEGREE: usize> {
 
 impl<const EXTENSION_DEGREE: usize> GrpcChoreography<EXTENSION_DEGREE>
 where
-    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
-    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
 {
     pub fn new(
         own_identity: Identity,
@@ -258,8 +269,8 @@ where
 #[async_trait]
 impl<const EXTENSION_DEGREE: usize> Choreography for GrpcChoreography<EXTENSION_DEGREE>
 where
-    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
-    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
 {
     #[instrument(
         name = "PRSS-INIT",
@@ -1179,7 +1190,7 @@ where
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to parse Preproc Decrypt params: {:?}", e),
+                    format!("Failed to parse Threshold Decrypt params: {:?}", e),
                 )
             })?;
 
@@ -1199,7 +1210,7 @@ where
             .ok_or_else(|| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Can not find key that correspond to session ID {key_sid}"),
+                    format!("Can not find key that corresponds to session ID {key_sid}"),
                 )
             })?
             .clone();
@@ -1914,7 +1925,7 @@ where
         let crs_params: CrsGenParams = bincode::deserialize(&request.params).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
-                format!("Failed to parse Preproc Decrypt params: {:?}", e),
+                format!("Failed to parse Crs Gen params: {:?}", e),
             )
         })?;
 
@@ -2037,6 +2048,219 @@ where
 
         Ok(tonic::Response::new(StatusCheckResponse {
             status: status_serialized,
+        }))
+    }
+
+    #[instrument(
+        name = "Reshare",
+        skip_all,
+        fields(network_round, network_sent, network_received, peak_mem)
+    )]
+    async fn reshare(
+        &self,
+        request: tonic::Request<ReshareRequest>,
+    ) -> Result<tonic::Response<ReshareResponse>, tonic::Status> {
+        #[cfg(feature = "measure_memory")]
+        MEM_ALLOCATOR.get().unwrap().reset_peak_usage();
+
+        let request = request.into_inner();
+
+        let threshold: u8 = request.threshold.try_into().map_err(|_e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                "Threshold must be at most 255".to_string(),
+            )
+        })?;
+
+        let role_assignments: HashMap<Role, Identity> =
+            bincode::deserialize(&request.role_assignment).map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("Failed to parse role assignment: {:?}", e),
+                )
+            })?;
+
+        let reshare_params: ReshareParams = bincode::deserialize(&request.params).map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                format!("Failed to parse Reshare params: {:?}", e),
+            )
+        })?;
+
+        let session_type = reshare_params.session_type;
+        //We use the new_key_sid as the session_id for the protocol
+        let session_id = reshare_params.new_key_sid;
+        let num_parties = role_assignments.len();
+
+        //Create 3 sessions, 2 for preproc (z64 and z128), 1 for actual reshare
+        let mut base_sessions = self
+            .create_base_sessions(
+                session_id,
+                3,
+                threshold,
+                role_assignments,
+                NetworkMode::Sync,
+                request.seed,
+            )
+            .await
+            .map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("Failed to create Base Session: {:?}", e),
+                )
+            })?;
+
+        let prss_setup = self.data.prss_setup.clone();
+
+        let key_store = self.data.key_store.clone();
+
+        let my_future = || async move {
+            let old_key_sid = reshare_params.old_key_sid;
+            let key_ref = key_store
+                .get(&old_key_sid)
+                .ok_or_else(|| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("Can not find key that corresponds to session ID {old_key_sid}"),
+                    )
+                })
+                .unwrap()
+                .clone();
+            let preproc_z128_base_session = base_sessions
+                .pop()
+                .expect("Can not retrieve a session for preproc_z128");
+            let preproc_z64_base_session = base_sessions
+                .pop()
+                .expect("Can not retrieve a session for preproc_z64");
+            let mut reshare_base_session = base_sessions
+                .pop()
+                .expect("Can not retrieve a session for reshare");
+
+            //NOTE: we need a mutable access to the keyset because reshare will zeroize it
+            //however since this is a clone it doesn't do much...
+            //Wondering whether it really should be reshare's role to zeroize stuff ?
+            let public_key_set = key_ref.0.clone();
+            let mut old_private_key_set = key_ref.1.clone();
+
+            //Perform preprocessing
+            let num_needed_preproc =
+                ResharePreprocRequired::new_same_set(num_parties, &old_private_key_set);
+
+            let (mut preprocessing_64, mut preprocessing_128) = match session_type {
+                SessionType::Small => {
+                    let prss_setup_z128 = prss_setup
+                        .get(&SupportedRing::ResiduePolyZ128)
+                        .ok_or_else(|| {
+                            tonic::Status::new(
+                                tonic::Code::Aborted,
+                                "Failed to retrieve prss_setup_z128, try init it first".to_string(),
+                            )
+                        })
+                        .unwrap()
+                        .get_poly128()
+                        .unwrap();
+
+                    let prss_setup_z64 = prss_setup
+                        .get(&SupportedRing::ResiduePolyZ64)
+                        .ok_or_else(|| {
+                            tonic::Status::new(
+                                tonic::Code::Aborted,
+                                "Failed to retrieve prss_setup_z64, try init it first".to_string(),
+                            )
+                        })
+                        .unwrap()
+                        .get_poly64()
+                        .unwrap();
+
+                    let mut small_session_z64 =
+                        create_small_session(preproc_z64_base_session, &prss_setup_z64);
+                    let mut small_session_z128 =
+                        create_small_session(preproc_z128_base_session, &prss_setup_z128);
+
+                    let preproc_z64 = SmallPreprocessing::<_, RealAgreeRandom>::init(
+                        &mut small_session_z64,
+                        num_needed_preproc.batch_params_64,
+                    )
+                    .await
+                    .unwrap();
+
+                    let preproc_z128 = SmallPreprocessing::<_, RealAgreeRandom>::init(
+                        &mut small_session_z128,
+                        num_needed_preproc.batch_params_128,
+                    )
+                    .await
+                    .unwrap();
+
+                    (
+                        Box::new(preproc_z64)
+                            as Box<dyn BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>>,
+                        Box::new(preproc_z128)
+                            as Box<dyn BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>>,
+                    )
+                }
+                SessionType::Large => {
+                    let mut large_session_z64 = create_large_session(preproc_z64_base_session);
+                    let mut large_session_z128 = create_large_session(preproc_z128_base_session);
+
+                    let preproc_z64 =
+                        LargePreprocessing::<ResiduePoly<Z64, EXTENSION_DEGREE>, _, _>::init(
+                            &mut large_session_z64,
+                            num_needed_preproc.batch_params_64,
+                            TrueSingleSharing::default(),
+                            TrueDoubleSharing::default(),
+                        )
+                        .await
+                        .unwrap();
+                    let preproc_z128 =
+                        LargePreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>, _, _>::init(
+                            &mut large_session_z128,
+                            num_needed_preproc.batch_params_128,
+                            TrueSingleSharing::default(),
+                            TrueDoubleSharing::default(),
+                        )
+                        .await
+                        .unwrap();
+
+                    (
+                        Box::new(preproc_z64)
+                            as Box<dyn BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>>,
+                        Box::new(preproc_z128)
+                            as Box<dyn BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>>,
+                    )
+                }
+            };
+
+            //Perform online
+            let new_private_key_set = reshare_sk_same_sets(
+                &mut preprocessing_128,
+                &mut preprocessing_64,
+                &mut reshare_base_session,
+                &mut old_private_key_set,
+            )
+            .await
+            .unwrap();
+
+            //Store the new_private_key
+            //NOTE: we do not delete the old one as moby is only for testing purposes
+            key_store.insert(
+                reshare_params.new_key_sid,
+                Arc::new((public_key_set, new_private_key_set)),
+            );
+        };
+
+        self.data.status_store.insert(
+            reshare_params.new_key_sid,
+            tokio::spawn(my_future().instrument(tracing::Span::current())),
+        );
+
+        let sid_serialized = bincode::serialize(&reshare_params.new_key_sid).map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                format!("Error serializing session ID {e}"),
+            )
+        })?;
+        Ok(tonic::Response::new(ReshareResponse {
+            request_id: sid_serialized,
         }))
     }
 }

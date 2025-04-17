@@ -232,6 +232,27 @@ struct CrsGenResultArgs {
 }
 
 #[derive(Args, Debug)]
+struct ReshareArgs {
+    /// Session ID of the key to reshare
+    #[clap(long = "old-key-sid")]
+    old_key_sid: u128,
+
+    /// Session type either Large or Small (affects preprocessing)
+    #[clap(long, value_enum)]
+    session_type: SessionType,
+
+    /// Session ID under which the reshared key will be stored
+    #[clap(long = "new-key-sid")]
+    new_key_sid: Option<u128>,
+
+    /// Optional argument to set the master seed used by the parties.
+    /// Parties will then add their party index to the seed.
+    /// Sampled at random if nothing is given
+    #[clap(long = "seed")]
+    seed: Option<u64>,
+}
+
+#[derive(Args, Debug)]
 struct StatusCheckArgs {
     /// Session ID of the task to check the status of
     #[clap(long = "sid")]
@@ -280,6 +301,8 @@ enum Commands {
     CrsGen(CrsGenArgs),
     /// Retrieve CRS result from cluster
     CrsGenResult(CrsGenResultArgs),
+    /// Reshare the secret key amongst the parties
+    Reshare(ReshareArgs),
     /// Checks the status of a task based on its session ID
     StatusCheck(StatusCheckArgs),
 }
@@ -642,6 +665,30 @@ async fn threshold_decrypt_result_command(
     Ok(())
 }
 
+async fn reshare_command(
+    runtime: ChoreoRuntime,
+    choreo_conf: ChoreoConf,
+    params: ReshareArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let new_key_id = SessionId(params.new_key_sid.unwrap_or(random()));
+    let new_sid = runtime
+        .initiate_reshare(
+            choreo_conf.threshold_topology.threshold,
+            SessionId(params.old_key_sid),
+            new_key_id,
+            params.session_type,
+            params.seed,
+        )
+        .await?;
+
+    println!(
+        "After resharing, new key will be available under {:?}",
+        new_sid
+    );
+
+    Ok(())
+}
+
 async fn status_check_command(
     runtime: ChoreoRuntime,
     params: StatusCheckArgs,
@@ -713,6 +760,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::StatusCheck(params) => {
             status_check_command(runtime, params).await?;
+        }
+        Commands::Reshare(params) => {
+            reshare_command(runtime, conf, params).await?;
         }
     };
 

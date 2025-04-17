@@ -9,6 +9,7 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
         communication::broadcast::broadcast_from_all,
+        config::BatchParams,
         endpoints::keygen::{
             CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum, PrivateKeySet,
         },
@@ -31,6 +32,73 @@ use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
 use tracing::instrument;
 use zeroize::Zeroize;
+
+pub struct ResharePreprocRequired {
+    pub batch_params_128: BatchParams,
+    pub batch_params_64: BatchParams,
+}
+
+impl ResharePreprocRequired {
+    pub fn new_same_set<const EXTENSION_DEGREE: usize>(
+        num_parties: usize,
+        private_key_set: &PrivateKeySet<EXTENSION_DEGREE>,
+    ) -> Self {
+        let mut num_randoms_128 = 0;
+        let mut num_randoms_64 = 0;
+
+        num_randoms_64 += private_key_set.lwe_encryption_secret_key_share.data.len();
+
+        num_randoms_64 += private_key_set.lwe_compute_secret_key_share.data.len();
+
+        match &private_key_set.glwe_secret_key_share {
+            GlweSecretKeyShareEnum::Z64(glwe_secret_key_share) => {
+                num_randoms_64 += glwe_secret_key_share.data.len()
+            }
+            GlweSecretKeyShareEnum::Z128(glwe_secret_key_share) => {
+                num_randoms_128 += glwe_secret_key_share.data.len()
+            }
+        }
+
+        if let Some(glwe_secret_key_share_sns_as_lwe) =
+            &private_key_set.glwe_secret_key_share_sns_as_lwe
+        {
+            num_randoms_128 += glwe_secret_key_share_sns_as_lwe.data.len();
+        }
+
+        if let Some(glwe_secret_key_share_compression) =
+            &private_key_set.glwe_secret_key_share_compression
+        {
+            match glwe_secret_key_share_compression {
+                CompressionPrivateKeySharesEnum::Z64(compression_private_key_shares) => {
+                    num_randoms_64 += compression_private_key_shares
+                        .post_packing_ks_key
+                        .data
+                        .len()
+                }
+                CompressionPrivateKeySharesEnum::Z128(compression_private_key_shares) => {
+                    num_randoms_128 += compression_private_key_shares
+                        .post_packing_ks_key
+                        .data
+                        .len()
+                }
+            }
+        }
+
+        num_randoms_128 *= num_parties;
+        num_randoms_64 *= num_parties;
+
+        ResharePreprocRequired {
+            batch_params_128: BatchParams {
+                triples: 0,
+                randoms: num_randoms_128,
+            },
+            batch_params_64: BatchParams {
+                triples: 0,
+                randoms: num_randoms_64,
+            },
+        }
+    }
+}
 
 // this is the L_i in the spec
 fn make_lagrange_numerators<Z: BaseRing, const EXTENSION_DEGREE: usize>(
@@ -343,6 +411,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
+    use crate::execution::online::preprocessing::RandomPreprocessing;
     use crate::execution::sharing::shamir::RevealOp;
     use crate::execution::tfhe_internals::test_feature::KeySet;
     use crate::networking::NetworkMode;
@@ -639,6 +709,7 @@ mod tests {
                     anyhow_error_and_log("key share not set during decryption".to_string())
                 })?;
             let mut session = runtime.large_session_for_party(session_id, index_id);
+
             set.spawn(async move {
                 let mut preproc128 = DummyPreprocessing::<
                     ResiduePoly<Z128, EXTENSION_DEGREE>,
@@ -650,14 +721,37 @@ mod tests {
                     AesRng,
                     LargeSession,
                 >::new(42, session.clone());
+
+                //Testing ResharePreprocRequired
+                let preproc_required =
+                    ResharePreprocRequired::new_same_set(session.num_parties(), &party_keyshare);
+
+                let mut new_preproc_64 = InMemoryBasePreprocessing {
+                    available_triples: Vec::new(),
+                    available_randoms: preproc64
+                        .next_random_vec(preproc_required.batch_params_64.randoms)
+                        .unwrap(),
+                };
+
+                let mut new_preproc_128 = InMemoryBasePreprocessing {
+                    available_triples: Vec::new(),
+                    available_randoms: preproc128
+                        .next_random_vec(preproc_required.batch_params_128.randoms)
+                        .unwrap(),
+                };
+
                 let out = reshare_sk_same_sets(
-                    &mut preproc128,
-                    &mut preproc64,
+                    &mut new_preproc_128,
+                    &mut new_preproc_64,
                     &mut session,
                     &mut party_keyshare,
                 )
                 .await
                 .unwrap();
+
+                //Making sure ResharPreprocRequired doesn't ask for too much preprocessing
+                assert_eq!(new_preproc_64.available_randoms.len(), 0);
+                assert_eq!(new_preproc_128.available_randoms.len(), 0);
                 (session.my_role().unwrap(), out, party_keyshare)
             });
         }
