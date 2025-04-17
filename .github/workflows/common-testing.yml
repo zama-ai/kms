@@ -96,9 +96,11 @@ jobs:
       # need to do it right after and then manually pull LFS files
       - name: Apt-get update
         run: |
+          while sudo fuser /var/lib/dpkg/lock >/dev/null 2>&1; do sleep 5; done;
           sudo apt-get update
       - name: Install git-lfs
         run: |
+          while sudo fuser /var/lib/dpkg/lock >/dev/null 2>&1; do sleep 5; done;
           sudo apt-get -y install git-lfs
           git lfs pull
 
