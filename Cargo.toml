@@ -87,7 +87,6 @@ tracing = { version = "=0.1.41", features = ["log"] }
 tracing-appender = "=0.2.3"
 tracing-opentelemetry = "=0.28.0"
 tracing-subscriber = { version = "=0.3.19", features = ["fmt", "std"] }
-typed-builder = "=0.21.0"
 
 alloy-dyn-abi = "=0.8.20"
 alloy-primitives = "=0.8.20"

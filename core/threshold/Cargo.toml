@@ -6,13 +6,11 @@ publish.workspace = true
 authors.workspace = true
 license.workspace = true
 
-
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 aes.workspace = true
 aes-prng.workspace = true
-aligned-vec = "=0.6.1" # need to match what's in tfhe-rs
 anyhow.workspace = true
 async-trait.workspace = true
 backoff = { workspace = true, features = ["tokio"], optional = true }
@@ -21,30 +19,30 @@ cfg-if.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 conf-trace = { workspace = true, optional = true }
 const_format = "=0.2.34"
-crypto-bigint = { version = "=0.6.0-rc.6", features = [
+crypto-bigint = { version = "=0.6.1", features = [
     "serde",
     "rand_core",
     "extra-sizes",
 ], optional = true }
 dashmap = "=6.1.0"
-derive_more = { version = "=1.0.0", features = ["display"] }
+derive_more = { version = "=2.0.1", features = ["display"] }
 futures.workspace = true
-g2p = "=1.2.0"
+g2p = "=1.2.2"
 itertools.workspace = true
 lazy_static.workspace = true
-minijinja = { version = "=2.4.0", features = ["loader"], optional = true }
+minijinja = { version = "=2.9.0", features = ["loader"], optional = true }
 mockall.workspace = true
 ndarray = { version = "=0.16.1", features = ["serde"] }
 num-integer = "=0.1.46"
 num-traits = "=0.2.19"
 opentelemetry = { workspace = true, optional = true }
 paste = "=1.0.15"
-peak_alloc = {version = "=0.2.1", optional = true}
+peak_alloc = { version = "=0.2.1", optional = true }
 prost.workspace = true
 rand.workspace = true
 rayon.workspace = true
-redis = { version = "=0.27.5", optional = true }
-rcgen = { version = "=0.13.1", optional = true }
+redis = { version = "=0.29.5", optional = true }
+rcgen = { version = "=0.13.2", optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
 sha3.workspace = true
@@ -68,7 +66,7 @@ tfhe = { workspace = true, features = [
 ] }
 tfhe-csprng.workspace = true
 tracing = { workspace = true, features = ["log"] }
-x509-parser = "=0.16.0"
+x509-parser = "=0.17.0"
 zeroize = { version = "=1.8.1", features = ["zeroize_derive"] }
 tfhe-zk-pok = { workspace = true, optional = true }
 tfhe-versionable.workspace = true
@@ -82,16 +80,15 @@ tonic-build.workspace = true
 
 [dev-dependencies]
 criterion = "=0.5.1"
-ctor = "=0.2.9"
-proptest = "=1.5.0"
-pprof = { version = "=0.13.0", features = ["flamegraph", "criterion"] }
-rstest = "=0.23.0"
+ctor = "=0.4.1"
+proptest = "=1.6.0"
+pprof = { version = "=0.14.0", features = ["flamegraph", "criterion"] }
+rstest = "=0.25.0"
 serial_test.workspace = true
 tempfile.workspace = true
-test-log = { version = "=0.2.16", features = ["trace"] }
 tracing-test = "=0.2.5"
 webpki = { version = "=0.22.4", features = ["std"] }
-rustls = { version = "=0.23.18", default-features = false, features = ["std"] }
+rustls = { version = "=0.23.26", default-features = false, features = ["std"] }
 # "self-import" needed for integration test
 threshold-fhe = { workspace = true, features = ["testing"] }
 

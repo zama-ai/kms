@@ -21,13 +21,9 @@ aes-prng.workspace = true
 alloy-primitives = { workspace = true, features = ["k256"] }
 alloy-sol-types = { workspace = true, features = ["eip712-serde"] }
 alloy-signer.workspace = true
-alloy-signer-local.workspace = true
 bytes.workspace = true
 reqwest = { workspace = true, features = ["json", "rustls-tls"] }
-thiserror.workspace = true
-typed-builder.workspace = true
 anyhow.workspace = true
-bincode.workspace = true
 clap = { workspace = true, features = ["derive"] }
 conf-trace.workspace = true
 hex.workspace = true
@@ -43,7 +39,6 @@ serde_json.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
 tfhe.workspace = true
-tfhe-versionable.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 tonic = { workspace = true }
 tracing = { workspace = true, features = ["log"] }

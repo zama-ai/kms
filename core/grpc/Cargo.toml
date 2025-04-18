@@ -25,10 +25,6 @@ serde = { workspace = true, features = ["derive", "rc"] }
 sha3.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
-tokio = { workspace = true, features = [
-    "macros",
-    "rt-multi-thread",
-], optional = true }
 tonic = { workspace = true, optional = true }
 tfhe = { workspace = true, features = [
     "boolean",
@@ -46,5 +42,5 @@ tonic-build.workspace = true
 
 [features]
 default = ["non-wasm"]
-non-wasm = ["dep:tokio", "dep:tonic"]
+non-wasm = ["dep:tonic"]
 insecure = []

@@ -48,7 +48,6 @@ aws-smithy-runtime = { version = "=1.7.3", features = [
 ], optional = true }
 aws-smithy-runtime-api = { version = "=1.7.3", optional = true }
 aws-smithy-types = { version = "=1.2.9", optional = true }
-backoff = { workspace = true, features = ["tokio"], optional = true }
 bincode.workspace = true
 bytes.workspace = true
 cbc = { version = "=0.1.2", features = ["alloc"] }
@@ -73,13 +72,11 @@ rasn-cms = "=0.20.2"
 rayon.workspace = true
 rsa = { version = "=0.9.8", features = ["sha2"] }
 serde = { workspace = true, features = ["derive", "rc"] }
-serde_bytes = "=0.11.17"
 serde_json.workspace = true
 
 sha3.workspace = true
 signature = "=2.2.0"
 strum.workspace = true
-strum_macros.workspace = true
 # experimental-force_fft_algo_dif4 feature ensure PBS is deterministic
 tfhe = { workspace = true, features = [
     "boolean",
@@ -89,7 +86,6 @@ tfhe = { workspace = true, features = [
     "experimental-force_fft_algo_dif4",
     "extended-types",
 ] }
-tfhe-zk-pok = { workspace = true, optional = true }
 tokio = { workspace = true, features = [
     "macros",
     "rt-multi-thread",
@@ -113,7 +109,7 @@ tfhe-versionable.workspace = true
 async_cell = "0.2.2"
 
 [dev-dependencies]
-assert_cmd = "=2.0.16"
+assert_cmd = "=2.0.17"
 serial_test.workspace = true
 sysinfo = "=0.34.2"
 tempfile.workspace = true
@@ -145,12 +141,10 @@ non-wasm = [
     "dep:aws-smithy-runtime-api",
     "dep:aws-smithy-types",
     "dep:hyper-rustls",
-    "dep:backoff",
     "dep:conf-trace",
     "dep:tokio",
     "dep:tonic",
     "dep:tonic-health",
-    "dep:tfhe-zk-pok",
     "dep:tower",
     "dep:tower-http",
 ]

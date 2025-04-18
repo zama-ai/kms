@@ -200,9 +200,6 @@ RUST_LOG=trace cargo test
 
 # Run with JSON logging
 RUST_LOG=info cargo test -- --nocapture
-
-# Test specific features
-cargo test --features "test-log"
 ```
 
 ## Metrics Overview

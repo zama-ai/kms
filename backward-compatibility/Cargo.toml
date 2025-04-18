@@ -1,6 +1,6 @@
 [package]
 name = "backward-compatibility"
-version = "0.11.0-rc3"
+version = "0.11.0-rc7"
 publish = false
 authors = ["Zama"]
 edition = "2021"
@@ -25,9 +25,9 @@ tfhe_1_1 = { package = "tfhe", version = "1.1.2", optional = true, features = [
 alloy-sol-types-0_8_22 = { package = "alloy-sol-types", version = "=0.8.20", optional = true }
 alloy-primitives-0_8_22 = { package = "alloy-primitives", version = "=0.8.20", optional = true }
 serde = { version = "=1.0.219", features = ["derive"] }
-strum = { version = "=0.26.3", features = ["derive"] }
-semver = { version = "=1.0.23", optional = true }
-ron = { version = "=0.8.1", features = ["integer128"] }
+strum = { version = "=0.27.1", features = ["derive"] }
+semver = { version = "=1.0.26", optional = true }
+ron = { version = "=0.10.1", features = ["integer128"] }
 bincode = "=1.3.3"
 aes-prng = "=0.2.1"
 rand = "=0.8.5"
