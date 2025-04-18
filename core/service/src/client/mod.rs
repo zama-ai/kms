@@ -5673,7 +5673,7 @@ pub(crate) mod tests {
     #[cfg(feature = "insecure")]
     #[rstest::rstest]
     #[case(4)]
-    // #[case(7)] // uses too much memory
+    #[case(7)]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn default_insecure_dkg(#[case] amount_parties: usize) {
@@ -5709,12 +5709,12 @@ pub(crate) mod tests {
 
     fn check_conformance(server_key: tfhe::ServerKey, client_key: tfhe::ClientKey) {
         let pbs_params = client_key.computation_parameters();
-        let (server_key, _, _, _, _, _) = server_key.into_raw_parts();
-        let server_key = server_key.into_raw_parts();
-        let max_degree = server_key.max_degree; // we don't really check the max degree
-        assert!(server_key.is_conformant(&(pbs_params, max_degree)));
+        let int_server_key: &tfhe::integer::ServerKey = server_key.as_ref();
+        let shortint_server_key: &tfhe::shortint::ServerKey = int_server_key.as_ref();
+        let max_degree = shortint_server_key.max_degree; // we don't really check the max degree
+        assert!(shortint_server_key.is_conformant(&(pbs_params, max_degree)));
 
-        match server_key.bootstrapping_key {
+        match &shortint_server_key.bootstrapping_key {
             tfhe::shortint::server_key::ShortintBootstrappingKey::Classic {
                 bsk: _bsk,
                 modulus_switch_noise_reduction_key,
@@ -5723,8 +5723,9 @@ pub(crate) mod tests {
 
                 // Check that we can decrypt this key to 0
                 let zeros_ct = modulus_switch_noise_reduction_key
-                    .unwrap()
-                    .modulus_switch_zeros;
+                    .as_ref()
+                    .map(|x| x.modulus_switch_zeros.clone())
+                    .unwrap();
                 let (client_key, _compact_client_key, _compression_key, _noise_squashing_key, _tag) =
                     client_key.into_raw_parts();
 
@@ -6401,8 +6402,10 @@ pub(crate) mod tests {
                     .await
                     .unwrap();
                 let sk_url = sk_urls.get(&kg_res.request_id.unwrap().request_id).unwrap();
-                let threshold_fhe_keys: ThresholdFheKeys =
+                let mut threshold_fhe_keys: ThresholdFheKeys =
                     priv_storage.read_data(sk_url).await.unwrap();
+                // we do not need the sns key to reconstruct, remove it to save memory
+                threshold_fhe_keys.sns_key = None;
                 all_threshold_fhe_keys.insert(role, threshold_fhe_keys);
                 if final_public_key.is_none() {
                     final_public_key = match pk.unwrap() {

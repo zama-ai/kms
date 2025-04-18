@@ -770,7 +770,6 @@ pub fn run_decompression_test(
         decompression_key.blind_rotate_key.polynomial_size(),
     );
 
-    println!("Starting decompression test");
     let decompression_key =
         tfhe::integer::compression_keys::DecompressionKey::from_raw_parts(decompression_key);
     // create a ciphertext using keyset 1

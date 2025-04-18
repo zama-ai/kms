@@ -571,16 +571,8 @@ where
     )
     .unwrap();
 
-    let (server_key, _, _, decompression_key, sns_key, _) =
+    let (integer_server_key, _, _, decompression_key, sns_key, _) =
         key_set.public_keys.server_key.clone().into_raw_parts();
-    let ksk = key_set
-        .public_keys
-        .server_key
-        .clone()
-        .into_raw_parts()
-        .0
-        .into_raw_parts()
-        .key_switching_key;
 
     for i in 1..=amount_parties {
         // Get first signing key
@@ -588,11 +580,10 @@ where
         let info = compute_all_info(sk, &key_set.public_keys, None).unwrap();
         let threshold_fhe_keys = ThresholdFheKeys {
             private_keys: key_shares[i - 1].to_owned(),
-            integer_server_key: server_key.clone(),
+            integer_server_key: integer_server_key.clone(),
             sns_key: sns_key.clone(),
             decompression_key: decompression_key.clone(),
             pk_meta_data: info,
-            ksk: ksk.clone(),
         };
         store_pk_at_request_id(
             &mut pub_storages[i - 1],

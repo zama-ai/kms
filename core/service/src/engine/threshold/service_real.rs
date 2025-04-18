@@ -51,7 +51,6 @@ use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tfhe::core_crypto::prelude::LweKeyswitchKey;
 use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::named::Named;
 use tfhe::{FheTypes, Versionize};
@@ -238,7 +237,6 @@ pub struct ThresholdFheKeys {
     pub sns_key: Option<tfhe::integer::noise_squashing::NoiseSquashingKey>,
     pub decompression_key: Option<DecompressionKey>,
     pub pk_meta_data: KeyGenCallValues,
-    pub ksk: LweKeyswitchKey<Vec<u64>>,
 }
 
 impl Named for ThresholdFheKeys {
@@ -1072,7 +1070,7 @@ impl<
                         &mut session,
                         &low_level_ct.try_get_small_ct()?,
                         &keys.private_keys,
-                        &keys.ksk,
+                        &keys.integer_server_key.as_ref().key_switching_key,
                         DecryptionMode::BitDecSmall,
                     )
                     .await;
@@ -1417,7 +1415,7 @@ impl<
                     &mut session,
                     &low_level_ct.try_get_small_ct()?,
                     &keys.private_keys,
-                    &keys.ksk,
+                    &keys.integer_server_key.as_ref().key_switching_key,
                     dec_mode,
                     session_prep.own_identity()?,
                 )
@@ -2590,25 +2588,28 @@ impl<
             }
         };
 
-        let (
-            raw_server_key,
-            _raw_ksk_material,
-            _raw_compression_key,
-            raw_decompression_key,
-            raw_noise_squashing_key,
-            _raw_tag,
-        ) = pub_key_set.server_key.clone().into_raw_parts();
-        let decompression_key = raw_decompression_key.clone();
-
-        let ksk = raw_server_key.clone().into_raw_parts().key_switching_key;
+        let (integer_server_key, decompression_key, sns_key) = {
+            let (
+                raw_server_key,
+                _raw_ksk_material,
+                _raw_compression_key,
+                raw_decompression_key,
+                raw_noise_squashing_key,
+                _raw_tag,
+            ) = pub_key_set.server_key.clone().into_raw_parts();
+            (
+                raw_server_key,
+                raw_decompression_key,
+                raw_noise_squashing_key,
+            )
+        };
 
         let threshold_fhe_keys = ThresholdFheKeys {
             private_keys,
-            integer_server_key: raw_server_key,
-            sns_key: raw_noise_squashing_key,
+            integer_server_key,
+            sns_key,
             decompression_key,
             pk_meta_data: info.clone(),
-            ksk,
         };
         crypto_storage
             .write_threshold_keys_with_meta_store(

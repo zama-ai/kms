@@ -27,7 +27,7 @@ use kms_lib::{
 };
 use rand::SeedableRng;
 use std::{collections::HashMap, env, path::Path};
-use tfhe::{core_crypto::prelude::LweKeyswitchKey, integer::compression_keys::DecompressionKey};
+use tfhe::integer::compression_keys::DecompressionKey;
 use threshold_fhe::execution::endpoints::keygen::FhePubKeySet;
 
 // This domain should match what is in the data_XX.rs file in backward compatibility.
@@ -195,9 +195,6 @@ fn test_threshold_fhe_keys(
     let decompression_key: Option<DecompressionKey> =
         load_and_unversionize_auxiliary(dir, test, &test.decompression_key_filename, format)?;
 
-    let ksk: LweKeyswitchKey<Vec<u64>> =
-        load_and_unversionize_auxiliary(dir, test, &test.keyswitch_key_filename, format)?;
-
     let original_versionized: ThresholdFheKeys = load_and_unversionize(dir, test, format)?;
 
     let new_versionized = ThresholdFheKeys {
@@ -206,7 +203,6 @@ fn test_threshold_fhe_keys(
         sns_key,
         decompression_key,
         pk_meta_data,
-        ksk,
     };
 
     // Retrieve the key parameters from the new KMS handle

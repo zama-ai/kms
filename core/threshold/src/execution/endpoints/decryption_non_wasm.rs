@@ -670,17 +670,16 @@ where
         DecryptionMode::NoiseFloodSmall | DecryptionMode::NoiseFloodLarge => {
             tracing::info!("Switch&Squash started...");
             let server_key = runtime.get_server_key();
-            let (int_server_key, _, _, _, sns_key, _) =
-                <tfhe::ServerKey as Clone>::clone(&server_key).into_raw_parts();
-            let sns_key = sns_key.unwrap();
+            let int_server_key: &tfhe::integer::ServerKey = server_key.as_ref().as_ref();
+            let sns_key = server_key.noise_squashing_key().unwrap();
             let large_ct = if ct.blocks().len() == 1 {
                 let bool_block = BooleanBlock::new_unchecked(ct.blocks()[0].clone());
                 SnsRadixOrBoolCiphertext::Bool(
-                    sns_key.squash_boolean_block_noise(&int_server_key, &bool_block)?,
+                    sns_key.squash_boolean_block_noise(int_server_key, &bool_block)?,
                 )
             } else {
                 SnsRadixOrBoolCiphertext::Radix(
-                    sns_key.squash_radix_ciphertext_noise(&int_server_key, ct)?,
+                    sns_key.squash_radix_ciphertext_noise(int_server_key, ct)?,
                 )
             };
             tracing::info!("Switch&Squash done.");

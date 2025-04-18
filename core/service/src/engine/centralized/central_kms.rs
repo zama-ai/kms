@@ -1014,7 +1014,7 @@ pub(crate) mod tests {
             None,
         )
         .unwrap();
-        assert!(pub_fhe_keys.server_key.clone().into_raw_parts().4.is_some());
+        assert!(pub_fhe_keys.server_key.noise_squashing_key().is_some());
         // check that key_info contains
         let mut key_info_map = HashMap::from([(key_id.to_string().try_into().unwrap(), key_info)]);
 
@@ -1029,9 +1029,7 @@ pub(crate) mod tests {
         .unwrap();
         assert!(other_pub_fhe_keys
             .server_key
-            .clone()
-            .into_raw_parts()
-            .4
+            .noise_squashing_key()
             .is_some());
 
         // Insert a key with another handle to setup a KMS with multiple keys

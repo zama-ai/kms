@@ -1227,7 +1227,7 @@ where
             let chunk_size = num_copies.div_ceil(num_sessions);
             let role_assignments = role_assignments.clone();
             let prss_setup = self.data.prss_setup.clone();
-            let sns_key = Arc::new(key_ref.0.server_key.clone().into_raw_parts().4.unwrap());
+            let sns_key = Arc::new(key_ref.0.server_key.noise_squashing_key().unwrap());
             let server_key = Arc::new(key_ref.0.server_key.as_ref());
             let ks = Arc::new(
                 key_ref
@@ -1768,8 +1768,7 @@ where
                     );
                 }
                 DecryptionMode::NoiseFloodSmall | DecryptionMode::NoiseFloodLarge => {
-                    // TODO take reference when tfhe.rs 1.1.3 is ready
-                    if key_ref.0.server_key.clone().into_raw_parts().4.is_none() {
+                    if key_ref.0.server_key.noise_squashing_key().is_none() {
                         return Err(tonic::Status::new(tonic::Code::Aborted,format!("Asked for NoiseFlood decrypt but there is no Switch and Squash key for key at session ID {key_sid}")));
                     }
                     let preprocessings = if let Some(preproc_sid) = preproc_sid {
@@ -1791,12 +1790,11 @@ where
                     let my_future = || async move {
                         let server_key = key_ref.0.server_key.as_ref();
                         let mut res = Vec::new();
-                        // TODO take reference when tfhe.rs 1.1.3 is ready
-                        let sns_key = key_ref.0.server_key.clone().into_raw_parts().4;
+                        let sns_key = key_ref.0.server_key.noise_squashing_key();
                         for (ctxt, mut preprocessing) in
                             ctxts.into_iter().zip(preprocessings.into_iter())
                         {
-                            let ct_large = if let Some(ref sns_key) = sns_key {
+                            let ct_large = if let Some(sns_key) = sns_key {
                                 // TODO use a type safe way to check for boolean
                                 if ctxt.blocks().len() == 1 {
                                     // this is boolean, so we use a different method

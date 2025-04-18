@@ -27,16 +27,8 @@ fn bench_switch_and_squash(c: &mut Criterion) {
     let ct16: FheUint16 = expanded_encrypt(&keyset.public_keys.public_key, msg16, 16).unwrap();
     let public_key = bincode::serialize(&(keyset.public_keys.public_key)).unwrap();
     let server_key = bincode::serialize(&(keyset.public_keys.server_key)).unwrap();
-    let conversion_key = bincode::serialize(
-        &(keyset
-            .public_keys
-            .server_key
-            .clone()
-            .into_raw_parts()
-            .4
-            .unwrap()),
-    )
-    .unwrap();
+    let conversion_key =
+        bincode::serialize(keyset.public_keys.server_key.noise_squashing_key().unwrap()).unwrap();
     let client_key = bincode::serialize(&(keyset.client_key)).unwrap();
 
     println!(
@@ -52,13 +44,7 @@ fn bench_switch_and_squash(c: &mut Criterion) {
         b.iter(|| {
             let (raw_ct, _id, _tag) = ct8.clone().into_raw_parts();
             let server_key = keyset.public_keys.server_key.as_ref();
-            let sns_key = keyset
-                .public_keys
-                .server_key
-                .clone()
-                .into_raw_parts()
-                .4
-                .unwrap();
+            let sns_key = keyset.public_keys.server_key.noise_squashing_key().unwrap();
             let _ = black_box(sns_key.squash_radix_ciphertext_noise(server_key, &raw_ct));
         });
     });
@@ -68,13 +54,7 @@ fn bench_switch_and_squash(c: &mut Criterion) {
         b.iter(|| {
             let (raw_ct, _id, _tag) = ct8.clone().into_raw_parts();
             let server_key = keyset.public_keys.server_key.as_ref();
-            let sns_key = keyset
-                .public_keys
-                .server_key
-                .clone()
-                .into_raw_parts()
-                .4
-                .unwrap();
+            let sns_key = keyset.public_keys.server_key.noise_squashing_key().unwrap();
             let _ = black_box(sns_key.squash_radix_ciphertext_noise(server_key, &raw_ct));
         });
     });
@@ -84,13 +64,7 @@ fn bench_switch_and_squash(c: &mut Criterion) {
         b.iter(|| {
             let (raw_ct, _id, _tag) = ct16.clone().into_raw_parts();
             let server_key = keyset.public_keys.server_key.as_ref();
-            let sns_key = keyset
-                .public_keys
-                .server_key
-                .clone()
-                .into_raw_parts()
-                .4
-                .unwrap();
+            let sns_key = keyset.public_keys.server_key.noise_squashing_key().unwrap();
             let _ = black_box(sns_key.squash_radix_ciphertext_noise(server_key, &raw_ct));
         });
     });

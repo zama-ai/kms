@@ -1450,23 +1450,15 @@ mod tests {
 
         let fhe_key_set = key_set.public_keys.clone();
 
-        let (server_key, _, _, _, sns_key, _) =
+        let (integer_server_key, _, _, _, sns_key, _) =
             key_set.public_keys.server_key.clone().into_raw_parts();
-        let ksk = key_set
-            .public_keys
-            .server_key
-            .into_raw_parts()
-            .0
-            .into_raw_parts()
-            .key_switching_key;
 
         let threshold_fhe_keys = ThresholdFheKeys {
             private_keys: key_shares[0].to_owned(),
-            integer_server_key: server_key,
+            integer_server_key,
             sns_key,
             decompression_key: None,
             pk_meta_data: HashMap::new(),
-            ksk,
         };
         (crypto_storage, threshold_fhe_keys, fhe_key_set)
     }
