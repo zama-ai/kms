@@ -30,9 +30,8 @@ use kms_grpc::rpc_types::{
 };
 use rand::{CryptoRng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
-use tfhe::integer::ciphertext::BaseRadixCiphertext;
 use tfhe::integer::compression_keys::DecompressionKey;
-use tfhe::integer::IntegerCiphertext;
+use tfhe::integer::BooleanBlock;
 use tfhe::named::Named;
 use tfhe::safe_serialization::safe_deserialize;
 use tfhe::{
@@ -41,6 +40,7 @@ use tfhe::{
 };
 use tfhe::{FheTypes, Versionize};
 use tfhe_versionable::VersionsDispatch;
+use threshold_fhe::execution::endpoints::decryption::RadixOrBoolCiphertext;
 use threshold_fhe::execution::endpoints::keygen::FhePubKeySet;
 #[cfg(feature = "non-wasm")]
 use threshold_fhe::execution::keyset_config as ddec_keyset_config;
@@ -165,13 +165,13 @@ macro_rules! deserialize_to_low_level_helper {
                         $serialized_high_level,
                     )?;
                 let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
-                LowLevelCiphertext::Small(radix_ct)
+                LowLevelCiphertext::Small(RadixOrBoolCiphertext::Radix(radix_ct))
             }
             CiphertextFormat::SmallExpanded => {
                 let hl_ct: $rust_type =
                     decompression::tfhe_safe_deserialize::<$rust_type>($serialized_high_level)?;
                 let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
-                LowLevelCiphertext::Small(radix_ct)
+                LowLevelCiphertext::Small(RadixOrBoolCiphertext::Radix(radix_ct))
             }
             CiphertextFormat::BigCompressed => {
                 anyhow::bail!("big compressed ciphertexts are not supported yet");
@@ -205,13 +205,17 @@ pub fn deserialize_to_low_level(
                     serialized_high_level,
                 )?;
                 let radix_ct = hl_ct.into_raw_parts();
-                LowLevelCiphertext::Small(BaseRadixCiphertext::from_blocks(vec![radix_ct]))
+                LowLevelCiphertext::Small(RadixOrBoolCiphertext::Bool(BooleanBlock::new_unchecked(
+                    radix_ct,
+                )))
             }
             CiphertextFormat::SmallExpanded => {
                 let hl_ct: FheBool =
                     decompression::tfhe_safe_deserialize::<FheBool>(serialized_high_level)?;
                 let radix_ct = hl_ct.into_raw_parts();
-                LowLevelCiphertext::Small(BaseRadixCiphertext::from_blocks(vec![radix_ct]))
+                LowLevelCiphertext::Small(RadixOrBoolCiphertext::Bool(BooleanBlock::new_unchecked(
+                    radix_ct,
+                )))
             }
             CiphertextFormat::BigCompressed => {
                 anyhow::bail!("big compressed ciphertexts are not supported yet");

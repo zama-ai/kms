@@ -7,7 +7,7 @@ use crate::choreography::grpc::gen::{
 };
 use crate::choreography::requests::CrsGenParams;
 use crate::conf::choreo::ChoreoConf;
-use crate::execution::endpoints::decryption::DecryptionMode;
+use crate::execution::endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext};
 use crate::execution::endpoints::keygen::FhePubKeySet;
 use crate::execution::runtime::party::RoleAssignment;
 use crate::execution::tfhe_internals::parameters::DkgParamsAvailable;
@@ -24,7 +24,6 @@ use crate::{
 };
 use conf_trace::telemetry::ContextPropagator;
 use std::collections::HashMap;
-use tfhe::integer::RadixCiphertext;
 use tokio::{task::JoinSet, time::Duration};
 use tonic::service::interceptor::InterceptedService;
 use tonic::transport::{Channel, Uri};
@@ -329,7 +328,7 @@ impl ChoreoRuntime {
         key_sid: SessionId,
         decryption_mode: DecryptionMode,
         preproc_sid: Option<SessionId>,
-        ctxts: Vec<RadixCiphertext>,
+        ctxts: Vec<RadixOrBoolCiphertext>,
         throughput: Option<ThroughtputParams>,
         tfhe_type: TfheType,
         threshold: u32,

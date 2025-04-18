@@ -264,7 +264,6 @@ pub mod tests {
                 test_feature::{gen_key_set, KeySet},
             },
         },
-        file_handling::read_element,
         networking::{local::LocalNetworkingProducer, NetworkMode, Networking},
         session_id::SessionId,
         tests::test_data_setup::tests::DEFAULT_SEED,
@@ -282,7 +281,6 @@ pub mod tests {
         collections::{HashMap, HashSet},
         sync::Arc,
     };
-    use tfhe::{integer::RadixCiphertext, prelude::FheEncrypt, FheUint8};
     use tokio::task::{JoinError, JoinSet};
 
     #[derive(Default, Clone)]
@@ -412,14 +410,6 @@ pub mod tests {
     pub fn generate_keys(params: DKGParams) -> KeySet {
         let mut seeded_rng = AesRng::seed_from_u64(DEFAULT_SEED);
         gen_key_set(params, &mut seeded_rng)
-    }
-
-    /// Indeterministic cipher generation.
-    /// Encrypts a small message with deterministic randomness
-    pub fn generate_cipher(_key_name: &str, message: u8) -> RadixCiphertext {
-        let keys: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
-        let (ct, _id, _tag) = FheUint8::encrypt(message, &keys.client_key).into_raw_parts();
-        ct
     }
 
     /// Generates dummy parameters for unit tests with role 1. Parameters contain a single party, session ID = 1 and threshold = 0

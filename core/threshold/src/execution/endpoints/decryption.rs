@@ -1,7 +1,7 @@
 use tfhe::{
     integer::{
         ciphertext::{SquashedNoiseBooleanBlock, SquashedNoiseRadixCiphertext},
-        RadixCiphertext,
+        BooleanBlock, IntegerCiphertext, IntegerRadixCiphertext, RadixCiphertext,
     },
     shortint::ciphertext::SquashedNoiseCiphertext,
 };
@@ -83,9 +83,43 @@ impl SnsRadixOrBoolCiphertext {
     }
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize, Debug)]
+pub enum RadixOrBoolCiphertext {
+    Radix(RadixCiphertext),
+    Bool(BooleanBlock),
+    // eventually we'll need to add SignedRadix
+}
+
+impl RadixOrBoolCiphertext {
+    pub fn len(&self) -> usize {
+        match self {
+            RadixOrBoolCiphertext::Radix(inner) => inner.blocks().len(),
+            RadixOrBoolCiphertext::Bool(_) => 1,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn blocks<'a>(&'a self) -> Box<dyn Iterator<Item = &'a tfhe::shortint::Ciphertext> + 'a> {
+        match self {
+            RadixOrBoolCiphertext::Radix(inner) => Box::new(inner.blocks().iter()),
+            RadixOrBoolCiphertext::Bool(inner) => Box::new(std::iter::once(inner.as_ref())),
+        }
+    }
+
+    pub fn owned_blocks(self) -> Vec<tfhe::shortint::Ciphertext> {
+        match self {
+            RadixOrBoolCiphertext::Radix(inner) => inner.into_blocks(),
+            RadixOrBoolCiphertext::Bool(inner) => vec![inner.into_raw_parts()],
+        }
+    }
+}
+
 pub enum LowLevelCiphertext {
     Big(SnsRadixOrBoolCiphertext),
-    Small(RadixCiphertext),
+    Small(RadixOrBoolCiphertext),
 }
 
 impl LowLevelCiphertext {
@@ -97,7 +131,7 @@ impl LowLevelCiphertext {
             }
         }
     }
-    pub fn try_get_small_ct(self) -> anyhow::Result<RadixCiphertext> {
+    pub fn try_get_small_ct(self) -> anyhow::Result<RadixOrBoolCiphertext> {
         match self {
             LowLevelCiphertext::Big(_) => {
                 anyhow::bail!("expected small ciphertext but got a big one")

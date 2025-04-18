@@ -722,6 +722,7 @@ fn transpose_vdm<Z: Ring + RingEmbed>(rows: usize, columns: usize) -> anyhow::Re
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::execution::endpoints::decryption::RadixOrBoolCiphertext;
     use crate::execution::sharing::shamir::RevealOp;
     use crate::execution::small_execution::agree_random::DSEP_AR;
     use crate::execution::tfhe_internals::test_feature::KeySet;
@@ -952,6 +953,7 @@ mod tests {
         set_server_key(keys.public_keys.server_key.clone());
         let ct: FheUint8 = expanded_encrypt(&keys.public_keys.public_key, msg, 8).unwrap();
         let (raw_ct, _id, _tag) = ct.into_raw_parts();
+        let raw_ct = RadixOrBoolCiphertext::Radix(raw_ct);
 
         //Could probably be run Async, but NIST doc says all offline is Sync
         let mut runtime =

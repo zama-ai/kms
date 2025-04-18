@@ -9,9 +9,8 @@ use conf_trace::{
 use itertools::Itertools;
 use rand::{distributions::Uniform, random, Rng};
 use tfhe::{
-    integer::{ciphertext::BaseRadixCiphertext, IntegerCiphertext},
-    set_server_key, FheBool, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32,
-    FheUint4, FheUint64, FheUint8,
+    integer::BooleanBlock, set_server_key, FheBool, FheUint128, FheUint16, FheUint160, FheUint2048,
+    FheUint256, FheUint32, FheUint4, FheUint64, FheUint8,
 };
 use threshold_fhe::{
     choreography::{
@@ -21,8 +20,10 @@ use threshold_fhe::{
     },
     conf::choreo::ChoreoConf,
     execution::{
-        endpoints::decryption::DecryptionMode,
-        endpoints::keygen::FhePubKeySet,
+        endpoints::{
+            decryption::{DecryptionMode, RadixOrBoolCiphertext},
+            keygen::FhePubKeySet,
+        },
         tfhe_internals::{parameters::DkgParamsAvailable, utils::expanded_encrypt},
     },
     session_id::SessionId,
@@ -478,7 +479,7 @@ async fn threshold_decrypt_command(
                 .iter()
                 .map(|msg| {
                     let ct: FheBool = expanded_encrypt(&compact_key, *msg, 1).unwrap();
-                    BaseRadixCiphertext::from_blocks(vec![ct.into_raw_parts()])
+                    RadixOrBoolCiphertext::Bool(BooleanBlock::new_unchecked(ct.into_raw_parts()))
                 })
                 .collect_vec()
         }
@@ -492,7 +493,7 @@ async fn threshold_decrypt_command(
                 .iter()
                 .map(|msg| {
                     let ct: FheUint4 = expanded_encrypt(&compact_key, *msg, 4).unwrap();
-                    ct.into_raw_parts().0
+                    RadixOrBoolCiphertext::Radix(ct.into_raw_parts().0)
                 })
                 .collect_vec()
         }
@@ -506,7 +507,7 @@ async fn threshold_decrypt_command(
                 .iter()
                 .map(|msg| {
                     let ct: FheUint8 = expanded_encrypt(&compact_key, *msg, 8).unwrap();
-                    ct.into_raw_parts().0
+                    RadixOrBoolCiphertext::Radix(ct.into_raw_parts().0)
                 })
                 .collect_vec()
         }
@@ -520,7 +521,7 @@ async fn threshold_decrypt_command(
                 .iter()
                 .map(|msg| {
                     let ct: FheUint16 = expanded_encrypt(&compact_key, *msg, 16).unwrap();
-                    ct.into_raw_parts().0
+                    RadixOrBoolCiphertext::Radix(ct.into_raw_parts().0)
                 })
                 .collect_vec()
         }
@@ -534,7 +535,7 @@ async fn threshold_decrypt_command(
                 .iter()
                 .map(|msg| {
                     let ct: FheUint32 = expanded_encrypt(&compact_key, *msg, 32).unwrap();
-                    ct.into_raw_parts().0
+                    RadixOrBoolCiphertext::Radix(ct.into_raw_parts().0)
                 })
                 .collect_vec()
         }
@@ -548,7 +549,7 @@ async fn threshold_decrypt_command(
                 .iter()
                 .map(|msg| {
                     let ct: FheUint64 = expanded_encrypt(&compact_key, *msg, 64).unwrap();
-                    ct.into_raw_parts().0
+                    RadixOrBoolCiphertext::Radix(ct.into_raw_parts().0)
                 })
                 .collect_vec()
         }
@@ -563,7 +564,7 @@ async fn threshold_decrypt_command(
                 .iter()
                 .map(|msg| {
                     let ct: FheUint128 = expanded_encrypt(&compact_key, *msg, 128).unwrap();
-                    ct.into_raw_parts().0
+                    RadixOrBoolCiphertext::Radix(ct.into_raw_parts().0)
                 })
                 .collect_vec()
         }
@@ -578,7 +579,7 @@ async fn threshold_decrypt_command(
                 .iter()
                 .map(|msg| {
                     let ct: FheUint160 = expanded_encrypt(&compact_key, *msg, 160).unwrap();
-                    ct.into_raw_parts().0
+                    RadixOrBoolCiphertext::Radix(ct.into_raw_parts().0)
                 })
                 .collect_vec()
         }
@@ -593,7 +594,7 @@ async fn threshold_decrypt_command(
                 .iter()
                 .map(|msg| {
                     let ct: FheUint256 = expanded_encrypt(&compact_key, *msg, 256).unwrap();
-                    ct.into_raw_parts().0
+                    RadixOrBoolCiphertext::Radix(ct.into_raw_parts().0)
                 })
                 .collect_vec()
         }
@@ -608,7 +609,7 @@ async fn threshold_decrypt_command(
                 .iter()
                 .map(|msg| {
                     let ct: FheUint2048 = expanded_encrypt(&compact_key, *msg, 2048).unwrap();
-                    ct.into_raw_parts().0
+                    RadixOrBoolCiphertext::Radix(ct.into_raw_parts().0)
                 })
                 .collect_vec()
         }

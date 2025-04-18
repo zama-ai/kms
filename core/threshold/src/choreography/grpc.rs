@@ -31,7 +31,7 @@ use crate::execution::communication::broadcast::broadcast_from_all;
 use crate::execution::endpoints::decryption::{
     combine_plaintext_blocks, init_prep_bitdec_large, init_prep_bitdec_small,
     run_decryption_noiseflood_64, task_decryption_bitdec_par, BlocksPartialDecrypt, DecryptionMode,
-    NoiseFloodPreparation, SnsRadixOrBoolCiphertext,
+    NoiseFloodPreparation, RadixOrBoolCiphertext, SnsRadixOrBoolCiphertext,
 };
 use crate::execution::endpoints::decryption::{Large, Small};
 use crate::execution::endpoints::keygen::FhePubKeySet;
@@ -74,7 +74,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::num::Wrapping;
 use std::sync::{Arc, Mutex};
-use tfhe::integer::{BooleanBlock, IntegerCiphertext, IntegerRadixCiphertext};
 use tokio::task::{JoinHandle, JoinSet};
 use tracing::{instrument, Instrument};
 
@@ -1240,7 +1239,7 @@ where
             );
             //Throughput number of ctxts is dictated by num_sessions*num_copies
             //we thus only take the 1st ctxt here
-            let num_blocks = ctxts[0].clone().into_blocks().len();
+            let num_blocks = ctxts[0].len();
             let ctxt = ctxts[0].clone();
 
             //Create one session for bcast
@@ -1279,21 +1278,18 @@ where
                                 format!("Failed to create Base Session: {:?}", e),
                             )
                         })?;
-                    // TODO use a type safe way to check for boolean
-                    let ct_large = if ctxt.blocks().len() == 1 {
-                        // this is boolean, so we use a different method
-                        let bool_block = BooleanBlock::new_unchecked(ctxt.blocks()[0].clone());
-                        let squashed = sns_key
-                            .squash_boolean_block_noise(&server_key, &bool_block)
-                            .expect("squash noise failed for boolean ct");
-                        SnsRadixOrBoolCiphertext::Bool(squashed)
-                    } else {
-                        // NOTE: the ciphertext must be unsigned
-                        SnsRadixOrBoolCiphertext::Radix(
+                    let ct_large = match ctxt {
+                        RadixOrBoolCiphertext::Bool(ct) => {
+                            let squashed = sns_key
+                                .squash_boolean_block_noise(&server_key, &ct)
+                                .expect("squash noise failed for boolean ct");
+                            SnsRadixOrBoolCiphertext::Bool(squashed)
+                        }
+                        RadixOrBoolCiphertext::Radix(ct) => SnsRadixOrBoolCiphertext::Radix(
                             sns_key
-                                .squash_radix_ciphertext_noise(&server_key, &ctxt)
+                                .squash_radix_ciphertext_noise(&server_key, &ct)
                                 .expect("squash noise failed for radix ct"),
-                        )
+                        ),
                     };
                     //Do bcast after the Sns to sync parties
                     let _ = broadcast_from_all(
@@ -1453,7 +1449,7 @@ where
                                     //First, rework the ctxt layout to match sessions'
                                     let mut ctxts_w_session_layout = vec![Vec::new(); num_blocks];
                                     ctxts.into_iter().for_each(|ctxt| {
-                                        ctxt.into_blocks()
+                                        ctxt.owned_blocks()
                                             .into_iter()
                                             .zip(ctxts_w_session_layout.iter_mut())
                                             .for_each(|(block, ctxts)| ctxts.push(block));
@@ -1619,7 +1615,7 @@ where
                 // For BitDec we do parallelization by spawning one session per "raw" ctxt
                 DecryptionMode::BitDecLarge | DecryptionMode::BitDecSmall => {
                     //We assume all ctxt are same TFHEType
-                    let num_sessions = ctxts.first().unwrap().blocks().len();
+                    let num_sessions = ctxts.first().unwrap().len();
                     //let base_sessions = self.create_base_sessions(session_id,)
                     let preprocessings = if let Some(preproc_sid) = preproc_sid {
                         self.data.ddec_preproc_store_bd.remove(&preproc_sid).ok_or_else(|| {
@@ -1675,7 +1671,7 @@ where
                     //First, rework the ctxt layout to match sessions'
                     let mut ctxts_w_session_layout = vec![Vec::new(); num_sessions];
                     ctxts.into_iter().for_each(|ctxt| {
-                        ctxt.into_blocks()
+                        ctxt.owned_blocks()
                             .into_iter()
                             .zip(ctxts_w_session_layout.iter_mut())
                             .for_each(|(block, ctxts)| ctxts.push(block));
@@ -1795,22 +1791,20 @@ where
                             ctxts.into_iter().zip(preprocessings.into_iter())
                         {
                             let ct_large = if let Some(sns_key) = sns_key {
-                                // TODO use a type safe way to check for boolean
-                                if ctxt.blocks().len() == 1 {
-                                    // this is boolean, so we use a different method
-                                    let bool_block =
-                                        BooleanBlock::new_unchecked(ctxt.blocks()[0].clone());
-                                    let squashed = sns_key
-                                        .squash_boolean_block_noise(server_key, &bool_block)
-                                        .expect("squash noise failed for boolean ct");
-                                    SnsRadixOrBoolCiphertext::Bool(squashed)
-                                } else {
-                                    // NOTE: the ciphertext must be unsigned
-                                    SnsRadixOrBoolCiphertext::Radix(
-                                        sns_key
-                                            .squash_radix_ciphertext_noise(server_key, &ctxt)
-                                            .expect("squash noise failed for radix ct"),
-                                    )
+                                match ctxt {
+                                    RadixOrBoolCiphertext::Radix(ct) => {
+                                        SnsRadixOrBoolCiphertext::Radix(
+                                            sns_key
+                                                .squash_radix_ciphertext_noise(server_key, &ct)
+                                                .expect("squash noise failed for radix ct"),
+                                        )
+                                    }
+                                    RadixOrBoolCiphertext::Bool(ct) => {
+                                        let squashed = sns_key
+                                            .squash_boolean_block_noise(server_key, &ct)
+                                            .expect("squash noise failed for boolean ct");
+                                        SnsRadixOrBoolCiphertext::Bool(squashed)
+                                    }
                                 }
                             } else {
                                 panic!("Missing key (it was there just before)")

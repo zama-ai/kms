@@ -2,7 +2,8 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 use sha3::{digest::ExtendableOutput, Shake128};
-use tfhe::integer::RadixCiphertext;
+
+use crate::execution::endpoints::decryption::RadixOrBoolCiphertext;
 
 pub const SESSION_ID_BYTES: usize = 128 / 8;
 
@@ -12,7 +13,7 @@ pub struct SessionId(pub u128);
 impl SessionId {
     /// NOTE: this function is deprecated since the session IDs
     /// are always derived from request IDs.
-    pub fn new(ciphertext: &RadixCiphertext) -> anyhow::Result<SessionId> {
+    pub fn new(ciphertext: &RadixOrBoolCiphertext) -> anyhow::Result<SessionId> {
         let serialized_ct = bincode::serialize(ciphertext)?;
 
         // hash the serialized ct data into a 128-bit (SESSION_ID_BYTES) digest and convert to u128
@@ -47,12 +48,24 @@ impl From<u128> for SessionId {
 
 #[cfg(test)]
 mod tests {
-    use tfhe::integer::RadixCiphertext;
+    use tfhe::{prelude::FheEncrypt, FheUint8};
 
     use crate::{
-        execution::constants::SMALL_TEST_KEY_PATH, session_id::SessionId,
-        tests::helper::tests::generate_cipher,
+        execution::{
+            constants::SMALL_TEST_KEY_PATH, endpoints::decryption::RadixOrBoolCiphertext,
+            tfhe_internals::test_feature::KeySet,
+        },
+        file_handling::read_element,
+        session_id::SessionId,
     };
+
+    /// Indeterministic cipher generation.
+    /// Encrypts a small message with deterministic randomness
+    fn generate_cipher(_key_name: &str, message: u8) -> RadixOrBoolCiphertext {
+        let keys: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
+        let (ct, _id, _tag) = FheUint8::encrypt(message, &keys.client_key).into_raw_parts();
+        RadixOrBoolCiphertext::Radix(ct)
+    }
 
     #[test]
     fn sunshine() {
@@ -65,16 +78,16 @@ mod tests {
     fn indeterminism() {
         let ct_base = generate_cipher(SMALL_TEST_KEY_PATH, 0);
         let base = SessionId::new(&ct_base);
-        let ct_other: RadixCiphertext = generate_cipher(SMALL_TEST_KEY_PATH, 0);
+        let ct_other = generate_cipher(SMALL_TEST_KEY_PATH, 0);
         // validate that the same input gives a different result
         assert_ne!(base.unwrap(), SessionId::new(&ct_other).unwrap());
     }
 
     #[test]
     fn uniqueness() {
-        let ct_base: RadixCiphertext = generate_cipher(SMALL_TEST_KEY_PATH, 0);
+        let ct_base = generate_cipher(SMALL_TEST_KEY_PATH, 0);
         let base = SessionId::new(&ct_base);
-        let ct_other: RadixCiphertext = generate_cipher(SMALL_TEST_KEY_PATH, 1);
+        let ct_other = generate_cipher(SMALL_TEST_KEY_PATH, 1);
         let other = SessionId::new(&ct_other);
         // Validate that a bit change results in a difference in session id
         assert_ne!(base.unwrap(), other.unwrap());

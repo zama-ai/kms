@@ -4,6 +4,7 @@ use crate::algebra::structure_traits::Ring;
 use crate::algebra::structure_traits::RingEmbed;
 use crate::algebra::structure_traits::{ErrorCorrect, Invert, Solve};
 use crate::execution::config::BatchParams;
+use crate::execution::endpoints::decryption::RadixOrBoolCiphertext;
 use crate::execution::endpoints::decryption::SnsRadixOrBoolCiphertext;
 use crate::execution::large_execution::offline::LargePreprocessing;
 use crate::execution::online::preprocessing::create_memory_factory;
@@ -57,9 +58,6 @@ use std::num::Wrapping;
 use std::sync::Arc;
 use tfhe::core_crypto::prelude::{keyswitch_lwe_ciphertext, LweCiphertext, LweKeyswitchKey};
 use tfhe::integer::noise_squashing::NoiseSquashingKey;
-use tfhe::integer::BooleanBlock;
-use tfhe::integer::IntegerCiphertext;
-use tfhe::integer::RadixCiphertext;
 use tfhe::integer::ServerKey;
 use tfhe::shortint::ciphertext::SquashedNoiseCiphertext;
 use tfhe::shortint::Ciphertext;
@@ -222,18 +220,14 @@ where
     let execution_start_timer = Instant::now();
     let ct_large = match ct {
         LowLevelCiphertext::Big(ct128) => ct128,
-        LowLevelCiphertext::Small(ct64) => {
-            if ct64.blocks().len() == 1 {
-                // this is boolean, so we use a different method
-                let bool_block = BooleanBlock::new_unchecked(ct64.blocks()[0].clone());
-                let squashed = ck.squash_boolean_block_noise(server_key, &bool_block)?;
-                SnsRadixOrBoolCiphertext::Bool(squashed)
-            } else {
-                SnsRadixOrBoolCiphertext::Radix(
-                    ck.squash_radix_ciphertext_noise(server_key, &ct64)?,
-                )
-            }
-        }
+        LowLevelCiphertext::Small(ct64) => match ct64 {
+            RadixOrBoolCiphertext::Radix(base_radix_ciphertext) => SnsRadixOrBoolCiphertext::Radix(
+                ck.squash_radix_ciphertext_noise(server_key, &base_radix_ciphertext)?,
+            ),
+            RadixOrBoolCiphertext::Bool(boolean_block) => SnsRadixOrBoolCiphertext::Bool(
+                ck.squash_boolean_block_noise(server_key, &boolean_block)?,
+            ),
+        },
     };
 
     let mut results = HashMap::with_capacity(1);
@@ -311,19 +305,14 @@ where
     let execution_start_timer = Instant::now();
     let ct_large = match ct {
         LowLevelCiphertext::Big(ct128) => ct128,
-        LowLevelCiphertext::Small(ct64) => {
-            if ct64.blocks().len() == 1 {
-                // this is boolean, so we use a different method
-                let bool_block = BooleanBlock::new_unchecked(ct64.blocks()[0].clone());
-                let squashed = ck.squash_boolean_block_noise(server_key, &bool_block)?;
-                SnsRadixOrBoolCiphertext::Bool(squashed)
-            } else {
-                // NOTE: the ciphertext must be unsigned
-                SnsRadixOrBoolCiphertext::Radix(
-                    ck.squash_radix_ciphertext_noise(server_key, &ct64)?,
-                )
-            }
-        }
+        LowLevelCiphertext::Small(ct64) => match ct64 {
+            RadixOrBoolCiphertext::Radix(base_radix_ciphertext) => SnsRadixOrBoolCiphertext::Radix(
+                ck.squash_radix_ciphertext_noise(server_key, &base_radix_ciphertext)?,
+            ),
+            RadixOrBoolCiphertext::Bool(boolean_block) => SnsRadixOrBoolCiphertext::Bool(
+                ck.squash_boolean_block_noise(server_key, &boolean_block)?,
+            ),
+        },
     };
     let packing_factor = ct_large.packing_factor();
     #[cfg(test)]
@@ -391,7 +380,7 @@ where
 #[instrument(skip(session, ct, secret_key_share, ksk), fields(session_id = ?session.base_session.parameters.session_id, own_identity = %_own_identity, mode = %_mode))]
 pub async fn decrypt_using_bitdec<const EXTENSION_DEGREE: usize, T>(
     session: &mut SmallSession<ResiduePoly<Z64, EXTENSION_DEGREE>>,
-    ct: &RadixCiphertext,
+    ct: &RadixOrBoolCiphertext,
     secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
     ksk: &LweKeyswitchKey<Vec<u64>>,
     _mode: DecryptionMode,
@@ -408,7 +397,7 @@ where
 
     let sid = session.base_session.parameters.session_id;
 
-    let mut preparation = init_prep_bitdec_small(session, ct.blocks().len()).await?;
+    let mut preparation = init_prep_bitdec_small(session, ct.len()).await?;
 
     let preparation = preparation.as_mut();
     let outputs = run_decryption_bitdec::<EXTENSION_DEGREE, _, _, _, T>(
@@ -458,7 +447,7 @@ where
 #[instrument(skip(session, ct, secret_key_share, ksk), fields(session_id = ?session.base_session.parameters.session_id, own_identity = ?session.base_session.parameters.own_identity, mode = %_mode))]
 pub async fn partial_decrypt_using_bitdec<const EXTENSION_DEGREE: usize>(
     session: &mut SmallSession<ResiduePoly<Z64, EXTENSION_DEGREE>>,
-    ct: &RadixCiphertext,
+    ct: &RadixOrBoolCiphertext,
     secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
     ksk: &LweKeyswitchKey<Vec<u64>>,
     _mode: DecryptionMode,
@@ -473,12 +462,12 @@ where
     let execution_start_timer = Instant::now();
     let sid = session.base_session.parameters.session_id;
     let own_role = session.my_role()?;
-    let mut prep = init_prep_bitdec_small(session, ct.blocks().len()).await?;
+    let mut prep = init_prep_bitdec_small(session, ct.len()).await?;
     let prep = prep.as_mut();
 
     let mut results = HashMap::with_capacity(1);
 
-    let mut pdec_blocks = Vec::with_capacity(ct.blocks().len());
+    let mut pdec_blocks = Vec::with_capacity(ct.len());
     for current_ct_block in ct.blocks() {
         let partial_dec = partial_decrypt64(secret_key_share, ksk, current_ct_block)?;
         pdec_blocks.push(Share::new(own_role, partial_dec));
@@ -651,7 +640,7 @@ where
 #[cfg(any(test, feature = "testing"))]
 pub fn threshold_decrypt64<Z: Ring, const EXTENSION_DEGREE: usize>(
     runtime: &DistributedTestRuntime<Z, EXTENSION_DEGREE>,
-    ct: &RadixCiphertext,
+    ct: &RadixOrBoolCiphertext,
     mode: DecryptionMode,
 ) -> anyhow::Result<HashMap<Identity, Z64>>
 where
@@ -672,15 +661,13 @@ where
             let server_key = runtime.get_server_key();
             let int_server_key: &tfhe::integer::ServerKey = server_key.as_ref().as_ref();
             let sns_key = server_key.noise_squashing_key().unwrap();
-            let large_ct = if ct.blocks().len() == 1 {
-                let bool_block = BooleanBlock::new_unchecked(ct.blocks()[0].clone());
-                SnsRadixOrBoolCiphertext::Bool(
-                    sns_key.squash_boolean_block_noise(int_server_key, &bool_block)?,
-                )
-            } else {
-                SnsRadixOrBoolCiphertext::Radix(
+            let large_ct = match ct {
+                RadixOrBoolCiphertext::Radix(ct) => SnsRadixOrBoolCiphertext::Radix(
                     sns_key.squash_radix_ciphertext_noise(int_server_key, ct)?,
-                )
+                ),
+                RadixOrBoolCiphertext::Bool(boolean_block) => SnsRadixOrBoolCiphertext::Bool(
+                    sns_key.squash_boolean_block_noise(int_server_key, boolean_block)?,
+                ),
             };
             tracing::info!("Switch&Squash done.");
             Some(large_ct)
@@ -725,7 +712,7 @@ where
                             .await;
 
                     let mut noiseflood_preprocessing = Small::new(session.clone())
-                        .init_prep_noiseflooding(ct.blocks().len())
+                        .init_prep_noiseflooding(ct.len())
                         .await
                         .unwrap();
                     let out = run_decryption_noiseflood_64(
@@ -745,7 +732,7 @@ where
                 set.spawn(async move {
                     let mut session = LargeSession::new(base_session);
                     let mut noiseflood_preprocessing = Large::new(session.clone())
-                        .init_prep_noiseflooding(ct.blocks().len())
+                        .init_prep_noiseflooding(ct.len())
                         .await
                         .unwrap();
                     let out = run_decryption_noiseflood_64(
@@ -764,7 +751,7 @@ where
                 let ks_key = runtime.get_ks_key();
                 set.spawn(async move {
                     let mut session = LargeSession::new(base_session);
-                    let mut prep = init_prep_bitdec_large(&mut session, ct.blocks().len())
+                    let mut prep = init_prep_bitdec_large(&mut session, ct.len())
                         .await
                         .unwrap();
                     let out = run_decryption_bitdec_64(
@@ -786,7 +773,7 @@ where
                     let mut session =
                         setup_small_session::<ResiduePoly<Z64, EXTENSION_DEGREE>>(base_session)
                             .await;
-                    let mut prep = init_prep_bitdec_small(&mut session, ct.blocks().len())
+                    let mut prep = init_prep_bitdec_small(&mut session, ct.len())
                         .await
                         .unwrap();
                     let out = run_decryption_bitdec_64(
@@ -934,7 +921,7 @@ pub async fn run_decryption_bitdec_64<
     prep: &mut P,
     keyshares: &PrivateKeySet<EXTENSION_DEGREE>,
     ksk: &LweKeyswitchKey<Vec<u64>>,
-    ciphertext: &RadixCiphertext,
+    ciphertext: &RadixOrBoolCiphertext,
 ) -> anyhow::Result<Z64>
 where
     ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Solve,
@@ -946,7 +933,7 @@ where
 #[instrument(
     name = "TFHE.Threshold-Dec-2",
     skip(session, prep, keyshares, ksk, ciphertext),
-    fields(sid=?session.session_id(),batch_size=?ciphertext.blocks().len())
+    fields(sid=?session.session_id(),batch_size=?ciphertext.len())
 )]
 pub async fn run_decryption_bitdec<
     const EXTENSION_DEGREE: usize,
@@ -959,7 +946,7 @@ pub async fn run_decryption_bitdec<
     prep: &mut P,
     keyshares: &PrivateKeySet<EXTENSION_DEGREE>,
     ksk: &LweKeyswitchKey<Vec<u64>>,
-    ciphertext: &RadixCiphertext,
+    ciphertext: &RadixOrBoolCiphertext,
 ) -> anyhow::Result<T>
 where
     T: tfhe::integer::block_decomposition::Recomposable
@@ -968,7 +955,7 @@ where
 {
     let own_role = session.my_role()?;
 
-    let mut shared_ptxts = Vec::with_capacity(ciphertext.blocks().len());
+    let mut shared_ptxts = Vec::with_capacity(ciphertext.len());
     for current_ct_block in ciphertext.blocks() {
         let partial_dec = partial_decrypt64(keyshares, ksk, current_ct_block)?;
         shared_ptxts.push(Share::new(own_role, partial_dec));
@@ -1164,7 +1151,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::algebra::structure_traits::{Derive, ErrorCorrect, Invert, Solve};
-    use crate::execution::endpoints::decryption::DecryptionMode;
+    use crate::execution::endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext};
     use crate::execution::sharing::shamir::RevealOp;
     use crate::execution::tfhe_internals::test_feature::KeySet;
     use crate::networking::NetworkMode;
@@ -1305,6 +1292,7 @@ mod tests {
         runtime.setup_server_key(Arc::new(keyset.public_keys.server_key.clone()));
         runtime.setup_sks(key_shares);
 
+        let ct = RadixOrBoolCiphertext::Radix(ct);
         let results_dec =
             threshold_decrypt64(&runtime, &ct, DecryptionMode::NoiseFloodLarge).unwrap();
         let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
@@ -1387,6 +1375,7 @@ mod tests {
         runtime.setup_sks(key_shares);
         runtime.setup_server_key(Arc::new(keyset.public_keys.server_key.clone()));
 
+        let ct = RadixOrBoolCiphertext::Radix(ct);
         let results_dec =
             threshold_decrypt64(&runtime, &ct, DecryptionMode::NoiseFloodSmall).unwrap();
         let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
@@ -1477,6 +1466,7 @@ mod tests {
                 .key_switching_key,
         ));
 
+        let ct = RadixOrBoolCiphertext::Radix(ct);
         let results_dec = threshold_decrypt64(&runtime, &ct, DecryptionMode::BitDecSmall).unwrap();
         let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
 
@@ -1566,6 +1556,7 @@ mod tests {
                 .key_switching_key,
         ));
 
+        let ct = RadixOrBoolCiphertext::Radix(ct);
         let results_dec = threshold_decrypt64(&runtime, &ct, DecryptionMode::BitDecLarge).unwrap();
         let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
 

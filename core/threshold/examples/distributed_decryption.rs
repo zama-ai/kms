@@ -14,7 +14,7 @@ use tfhe::{set_server_key, FheUint8};
 use threshold_fhe::{
     algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring},
     execution::{
-        endpoints::decryption::{threshold_decrypt64, DecryptionMode},
+        endpoints::decryption::{threshold_decrypt64, DecryptionMode, RadixOrBoolCiphertext},
         runtime::test_runtime::{generate_fixed_identities, DistributedTestRuntime},
         tfhe_internals::{
             parameters::BC_PARAMS_SNS,
@@ -53,6 +53,7 @@ fn main() {
     let message = rng.gen::<u8>();
     let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8).unwrap();
     let (raw_ct, _id, _tag) = ct.into_raw_parts();
+    let raw_ct = RadixOrBoolCiphertext::Radix(raw_ct);
 
     // Setup the test runtime.
     // Using Sync because threshold_decrypt64 encompasses both online and offline
