@@ -71,7 +71,6 @@
             sns_key_filename: "sns_key",
             info_filename: "info",
             decompression_key_filename: "decompression_key",
-            keyswitch_key_filename: "keyswitching_key",
             state: 100,
             amount: 2,
             threshold: 1,

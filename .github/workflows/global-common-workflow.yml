@@ -38,6 +38,7 @@ jobs:
     outputs:
       # Each output indicates if files in a specific component were modified
       changes-backup: ${{ steps.filter.outputs.backup }}
+      changes-backward-compatibility: ${{ steps.filter.outputs.backward-compatibility }}
       changes-ci: ${{ steps.filter.outputs.ci }}
       changes-core-client: ${{ steps.filter.outputs.core-client }}
       changes-core-grpc: ${{ steps.filter.outputs.core-grpc }}
@@ -55,6 +56,8 @@ jobs:
         filters: |
           backup:
             - 'core/backup/**'
+          backward-compatibility:
+            - 'backward-compatibility/**'
           ci:
             - '.github/workflows/global-common-workflow.yml'
           core-client:
@@ -115,6 +118,36 @@ jobs:
     - run: python3 -m pip install linkcheckmd
     - name: Check dead-link
       run: python3 ci/script/local_docs_link_check.py
+
+  ############################################################################
+  # KMS Backward Compatibility Testing
+  # Triggered by:
+  # - Changes to backward-compatibility/**
+  # - Changes to workflow file itself
+  ############################################################################
+  test-backward-compatibility:
+    needs: check-changes
+    if: >-
+      needs.check-changes.outputs.changes-backward-compatibility == 'true' ||
+      needs.check-changes.outputs.changes-core-service == 'true' ||
+      needs.check-changes.outputs.changes-core-threshold == 'true' ||
+      needs.check-changes.outputs.changes-core-grpc == 'true' ||
+      needs.check-changes.outputs.changes-ci == 'true' ||
+      github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/common-testing-big-instance.yml
+    with:
+      working-directory: './core/service'
+      args-tests: 'backward_compatibility'
+      package-name: 'kms'
+      slab-backend: 'big-instance-service'
+      app-cache-dir: 'kms'
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+      JOB_SECRET: ${{ secrets.JOB_SECRET }}
+      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
 
   ############################################################################
   # KMS Backup Testing

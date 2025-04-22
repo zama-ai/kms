@@ -226,7 +226,6 @@ const THRESHOLD_FHE_KEYS_TEST: ThresholdFheKeysTest = ThresholdFheKeysTest {
     sns_key_filename: Cow::Borrowed("sns_key"),
     info_filename: Cow::Borrowed("info"),
     decompression_key_filename: Cow::Borrowed("decompression_key"),
-    keyswitch_key_filename: Cow::Borrowed("keyswitching_key"),
     state: 100,
     amount: 2,
     threshold: 1,
@@ -434,27 +433,12 @@ impl KmsV0_11 {
             &THRESHOLD_FHE_KEYS_TEST.decompression_key_filename,
         );
 
-        let ksk = fhe_pub_key_set
-            .server_key
-            .clone()
-            .into_raw_parts()
-            .0
-            .into_raw_parts()
-            .key_switching_key;
-        store_versioned_auxiliary!(
-            &ksk,
-            dir,
-            &THRESHOLD_FHE_KEYS_TEST.test_filename,
-            &THRESHOLD_FHE_KEYS_TEST.keyswitch_key_filename,
-        );
-
         let threshold_fhe_keys = ThresholdFheKeys {
             private_keys: private_key_set,
             integer_server_key,
             sns_key,
             pk_meta_data: info,
             decompression_key,
-            ksk,
         };
 
         store_versioned_test!(
