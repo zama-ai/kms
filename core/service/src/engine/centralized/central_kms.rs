@@ -1,7 +1,7 @@
 use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
 use crate::cryptography::decompression;
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey, PublicSigKey};
-use crate::cryptography::signcryption::signcrypt;
+use crate::cryptography::signcryption::signcrypt_with_link;
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
 use crate::engine::base::{DecCallValues, KeyGenCallValues, ReencCallValues};
 use crate::engine::traits::{BaseKms, Kms};
@@ -733,9 +733,9 @@ impl<
             link: link.to_vec(),
         };
 
-        let enc_res = signcrypt(
+        let enc_res = signcrypt_with_link(
             rng,
-            &serialize(&signcryption_msg)?,
+            &signcryption_msg,
             client_enc_key,
             client_address,
             sig_key,
@@ -880,7 +880,7 @@ pub(crate) mod tests {
     use crate::consts::{TEST_CENTRAL_KEYS_PATH, TEST_PARAM};
     use crate::cryptography::internal_crypto_types::PrivateSigKey;
     use crate::cryptography::signcryption::{
-        decrypt_signcryption, ephemeral_signcryption_key_generation,
+        decrypt_signcryption_with_link, ephemeral_signcryption_key_generation,
     };
     use crate::engine::base::{compute_handle, compute_info, gen_sig_keys};
     use crate::engine::traits::Kms;
@@ -1387,7 +1387,7 @@ pub(crate) mod tests {
         } else {
             raw_cipher.unwrap()
         };
-        let decrypted = decrypt_signcryption(
+        let decrypted = decrypt_signcryption_with_link(
             &raw_cipher,
             &link,
             &client_keys,

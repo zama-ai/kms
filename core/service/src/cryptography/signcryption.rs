@@ -88,6 +88,26 @@ where
         .map_err(anyhow::Error::new)
 }
 
+/// Compute the signcryption of a [SigncryptionPayload] encrypted under the public keys received from a client and
+/// signed by the server's signing key. The type [SigncryptionPayload] contains a link, which can be seen as a
+/// unique session ID that must be also added to the signcrypted message.
+///
+/// Returns the signcrypted message.
+///
+/// WARNING: It is assumed that the client's public key HAS been validated to come from a valid
+/// `ClientRequest` and validated to be consistent with the blockchain identity of the client BEFORE
+/// calling this method. IF THIS HAS NOT BEEN DONE THEN ANYONE CAN IMPERSONATE ANY CLIENT!!!
+pub fn signcrypt_with_link(
+    rng: &mut (impl CryptoRng + RngCore),
+    msg: &SigncryptionPayload,
+    client_pub_key: &PublicEncKey,
+    client_address: &alloy_primitives::Address,
+    server_sig_key: &PrivateSigKey,
+) -> anyhow::Result<Cipher> {
+    let msg = bincode::serialize(msg)?;
+    signcrypt(rng, &msg, client_pub_key, client_address, server_sig_key)
+}
+
 /// Compute the signcryption of a message encrypted under the public keys received from a client and
 /// signed by the server's signing key.
 ///
@@ -108,6 +128,7 @@ where
 {
     // Adds the hash digest of the receivers public encryption key to the message to sign
     // Sign msg || H(client_verf_key) || H(client_enc_key)
+    // Note that H(client_verf_key) = client_address
     let to_sign = [
         msg.as_ref(),
         client_address.as_bytes(),
@@ -272,7 +293,7 @@ pub(crate) fn check_normalized(sig: &Signature) -> anyhow::Result<()> {
 ///
 /// This fn also checks that the provided link parameter corresponds to the link in the signcryption
 /// payload.
-pub(crate) fn decrypt_signcryption(
+pub fn decrypt_signcryption_with_link(
     cipher: &[u8],
     link: &[u8],
     client_keys: &SigncryptionPair,
@@ -350,12 +371,14 @@ mod tests {
     };
     use crate::cryptography::internal_crypto_types::Signature;
     use crate::cryptography::signcryption::{
-        check_signature_and_log, ephemeral_encryption_key_generation, internal_verify_sig,
-        parse_msg, sign, signcrypt, validate_and_decrypt, DIGEST_BYTES, SIG_SIZE,
+        check_signature_and_log, decrypt_signcryption_with_link,
+        ephemeral_encryption_key_generation, internal_verify_sig, parse_msg, sign, signcrypt,
+        signcrypt_with_link, validate_and_decrypt, DIGEST_BYTES, SIG_SIZE,
     };
     use aes_prng::AesRng;
     use k256::ecdsa::SigningKey;
-    use kms_grpc::rpc_types::serialize_hash_element;
+    use kms_grpc::kms::v1::TypedPlaintext;
+    use kms_grpc::rpc_types::{serialize_hash_element, SigncryptionPayload};
     use rand::{CryptoRng, RngCore, SeedableRng};
     use signature::Signer;
     use tracing_test::traced_test;
@@ -572,7 +595,6 @@ mod tests {
         let msg = "Some message".as_bytes();
         let sig = Signature {
             sig: server_sig_key.sk().sign(msg),
-            // pk: client_signcryption_keys.pk.clone().verification_key,
         };
         // Fails as the correct key digests are not included in the message whose signature gets
         // checked
@@ -628,5 +650,73 @@ mod tests {
         assert!(logs_contain("was not normalized as expected"));
         // unwrapping fails
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn sunshine_signcryption_with_link() {
+        let (mut rng, client_signcryption_keys) = test_setup();
+        let (server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
+        let link = [0, 1, 2, 3u8];
+        let msg = TypedPlaintext {
+            bytes: b"A relatively long message that we wish to be able to later validate".to_vec(),
+            fhe_type: 1,
+        };
+        let payload = SigncryptionPayload {
+            plaintext: msg.clone(),
+            link: link.into(),
+        };
+        let cipher = signcrypt_with_link(
+            &mut rng,
+            &payload,
+            &client_signcryption_keys.pk.enc_key,
+            &client_signcryption_keys.pk.client_address,
+            &server_sig_key,
+        )
+        .unwrap();
+
+        let cipher = bincode::serialize(&cipher).unwrap();
+
+        let decrypted_msg = decrypt_signcryption_with_link(
+            &cipher,
+            &link,
+            &client_signcryption_keys,
+            &server_verf_key,
+        )
+        .unwrap();
+        assert_eq!(msg, decrypted_msg);
+    }
+
+    #[test]
+    fn signcryption_with_bad_link() {
+        let (mut rng, client_signcryption_keys) = test_setup();
+        let (server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
+        let link = [0, 1, 2, 3u8];
+        let msg = TypedPlaintext {
+            bytes: b"A relatively long message that we wish to be able to later validate".to_vec(),
+            fhe_type: 1,
+        };
+        let payload = SigncryptionPayload {
+            plaintext: msg.clone(),
+            link: link.into(),
+        };
+        let cipher = signcrypt_with_link(
+            &mut rng,
+            &payload,
+            &client_signcryption_keys.pk.enc_key,
+            &client_signcryption_keys.pk.client_address,
+            &server_sig_key,
+        )
+        .unwrap();
+
+        let cipher = bincode::serialize(&cipher).unwrap();
+
+        let bad_link = [1, 2, 3, 4u8];
+        let _ = decrypt_signcryption_with_link(
+            &cipher,
+            &bad_link,
+            &client_signcryption_keys,
+            &server_verf_key,
+        )
+        .unwrap_err();
     }
 }

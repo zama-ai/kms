@@ -4,8 +4,8 @@ use crate::cryptography::internal_crypto_types::{
     SigncryptionPrivKey, SigncryptionPubKey,
 };
 use crate::cryptography::signcryption::{
-    decrypt_signcryption, ephemeral_encryption_key_generation, insecure_decrypt_ignoring_signature,
-    internal_verify_sig,
+    decrypt_signcryption_with_link, ephemeral_encryption_key_generation,
+    insecure_decrypt_ignoring_signature, internal_verify_sig,
 };
 use crate::{anyhow_error_and_log, compute_reenc_message_hash, some_or_err};
 use aes_prng::AesRng;
@@ -1520,7 +1520,7 @@ impl Client {
             .signcrypted_ciphertexts
             .into_iter()
             .map(|ct| {
-                decrypt_signcryption(
+                decrypt_signcryption_with_link(
                     &ct.signcrypted_ciphertext,
                     &link,
                     client_keys,
@@ -1920,7 +1920,7 @@ impl Client {
                 // Also it's ok to use [cur_resp.digest] as the link since we already checked
                 // that it matches with the original request
                 let cur_verf_key: PublicSigKey = deserialize(&cur_resp.verification_key)?;
-                match decrypt_signcryption(
+                match decrypt_signcryption_with_link(
                     &cur_resp.signcrypted_ciphertexts[batch_i].signcrypted_ciphertext,
                     &cur_resp.digest,
                     client_keys,

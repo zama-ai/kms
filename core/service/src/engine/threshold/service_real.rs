@@ -1,7 +1,7 @@
 use crate::conf::threshold::{PeerConf, ThresholdPartyConf};
 use crate::consts::{MINIMUM_SESSIONS_PREPROC, PRSS_INIT_REQ_ID};
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey};
-use crate::cryptography::signcryption::signcrypt;
+use crate::cryptography::signcryption::signcrypt_with_link;
 use crate::engine::base::{
     compute_external_pt_signature, deserialize_to_low_level, retrieve_parameters,
 };
@@ -1113,9 +1113,9 @@ impl<
                         plaintext: TypedPlaintext::from_bytes(pdec_serialized, fhe_type),
                         link: link.clone(),
                     };
-                    let enc_res = signcrypt(
+                    let enc_res = signcrypt_with_link(
                         rng,
-                        &bincode::serialize(&signcryption_msg)?,
+                        &signcryption_msg,
                         client_enc_key,
                         client_address,
                         &sig_key,
