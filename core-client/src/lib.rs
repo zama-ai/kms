@@ -3,7 +3,7 @@
 /// This library implements most functionalities to interact with deployed KMS cores.
 /// This library also includes an associated CLI.
 use aes_prng::AesRng;
-use alloy_primitives::PrimitiveSignature;
+use alloy_primitives::Signature;
 use alloy_sol_types::Eip712Domain;
 use anyhow::anyhow;
 use bytes::Bytes;
@@ -737,7 +737,7 @@ fn check_ext_pubdata_signature<D: Serialize + Versionize + Named>(
         ));
     }
     // Deserialize the Signature. It reverses the call to `signature.as_bytes()` that we use for serialization.
-    let sig = PrimitiveSignature::from_bytes_and_parity(external_sig, external_sig[64] & 0x01 == 0);
+    let sig = Signature::from_bytes_and_parity(external_sig, external_sig[64] & 0x01 == 0);
 
     tracing::debug!("ext. signature bytes: {:x?}", external_sig);
     tracing::debug!("ext. signature: {:?}", sig);
@@ -774,7 +774,7 @@ fn check_ext_pt_signature(
         ));
     }
     // this reverses the call to `signature.as_bytes()` that we use for serialization
-    let sig = PrimitiveSignature::from_bytes_and_parity(external_sig, external_sig[64] & 0x01 == 0);
+    let sig = Signature::from_bytes_and_parity(external_sig, external_sig[64] & 0x01 == 0);
 
     tracing::debug!("ext. signature bytes: {:x?}", external_sig);
     tracing::debug!("ext. signature: {:?}", sig);

@@ -186,7 +186,7 @@ impl CiphertextHandle {
 pub struct ParsedReencryptionRequest {
     // We allow dead_code because these are required to parse from JSON
     #[allow(dead_code)]
-    signature: Option<alloy_primitives::PrimitiveSignature>,
+    signature: Option<alloy_primitives::Signature>,
     #[allow(dead_code)]
     client_address: alloy_primitives::Address,
     enc_key: Vec<u8>,
@@ -196,7 +196,7 @@ pub struct ParsedReencryptionRequest {
 
 impl ParsedReencryptionRequest {
     pub fn new(
-        signature: Option<alloy_primitives::PrimitiveSignature>,
+        signature: Option<alloy_primitives::Signature>,
         client_address: alloy_primitives::Address,
         enc_key: Vec<u8>,
         ciphertext_handles: Vec<CiphertextHandle>,
@@ -247,7 +247,7 @@ impl TryFrom<&ParsedReencryptionRequestHex> for ParsedReencryptionRequest {
             .map(|sig| hex_decode_js_err(sig))
             .transpose()?;
         let signature = signature_buf
-            .map(|buf| alloy_primitives::PrimitiveSignature::try_from(buf.as_slice()))
+            .map(|buf| alloy_primitives::Signature::try_from(buf.as_slice()))
             .transpose()
             .map_err(|e| JsError::new(&e.to_string()))?;
         let client_address =
