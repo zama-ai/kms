@@ -54,7 +54,8 @@ struct KmsArgs {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = KmsArgs::parse();
-    let core_config: CoreConfig = init_conf_kms_core_telemetry(&args.config_file)?;
+    let (core_config, tracer_provider, meter_provider) =
+        init_conf_kms_core_telemetry::<CoreConfig>(&args.config_file)?;
     let party_id = core_config.threshold.as_ref().map(|t| t.my_id);
 
     // common AWS configuration
@@ -293,5 +294,18 @@ async fn main() -> anyhow::Result<()> {
             .await?
         }
     }
+
+    // Sleep to let some time for the process to export all the spans before exit
+    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+    // Explicitly shut down telemetry to ensure all data is properly exported
+    if let Err(e) = tracer_provider.shutdown() {
+        eprintln!("Error shutting down tracer provider: {}", e);
+    }
+
+    if let Err(e) = meter_provider.shutdown() {
+        eprintln!("Error shutting down meter provider: {}", e);
+    }
+
     Ok(())
 }

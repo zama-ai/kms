@@ -8,12 +8,14 @@ use axum::{
     routing::get,
     Router,
 };
-use opentelemetry::{global, propagation::Injector, trace::TracerProvider as _, KeyValue};
+use opentelemetry::{global, propagation::Injector, trace::TracerProvider, KeyValue};
 use opentelemetry_http::HeaderExtractor;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_prometheus::exporter;
+pub use opentelemetry_sdk::metrics::SdkMeterProvider;
 use opentelemetry_sdk::propagation::TraceContextPropagator;
-use opentelemetry_sdk::{metrics::SdkMeterProvider, runtime::Tokio, Resource};
+pub use opentelemetry_sdk::trace::SdkTracerProvider;
+use opentelemetry_sdk::{resource::Resource, trace::Sampler};
 use prometheus::{Encoder, Registry as PrometheusRegistry, TextEncoder};
 use std::{
     env,
@@ -110,23 +112,27 @@ pub fn init_metrics(settings: &TelemetryConfig) -> Result<SdkMeterProvider, anyh
 
     let provider = SdkMeterProvider::builder()
         .with_reader(exporter)
-        .with_resource(Resource::new(vec![
-            KeyValue::new(
-                opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
-                settings
-                    .tracing_service_name()
-                    .unwrap_or("unknown-service")
-                    .to_string(),
-            ),
-            KeyValue::new(
-                "service.version".to_string(),
-                env!("CARGO_PKG_VERSION").to_string(),
-            ),
-            KeyValue::new(
-                "deployment.environment".to_string(),
-                ENVIRONMENT.to_string(),
-            ),
-        ]))
+        .with_resource(
+            Resource::builder()
+                .with_attributes(vec![
+                    KeyValue::new(
+                        opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
+                        settings
+                            .tracing_service_name()
+                            .unwrap_or("unknown-service")
+                            .to_string(),
+                    ),
+                    KeyValue::new(
+                        "service.version".to_string(),
+                        env!("CARGO_PKG_VERSION").to_string(),
+                    ),
+                    KeyValue::new(
+                        "deployment.environment".to_string(),
+                        ENVIRONMENT.to_string(),
+                    ),
+                ])
+                .build(),
+        )
         .build();
 
     opentelemetry::global::set_meter_provider(provider.clone());
@@ -170,7 +176,7 @@ pub fn init_metrics(settings: &TelemetryConfig) -> Result<SdkMeterProvider, anyh
     Ok(provider)
 }
 
-pub fn init_tracing(settings: &TelemetryConfig) -> Result<(), anyhow::Error> {
+pub fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvider, anyhow::Error> {
     // For tests annotated with `#[persistent_traces]`
     // we set up a file-based persistent logger
     if std::env::var("TRACE_PERSISTENCE").unwrap_or_default() == "enabled" {
@@ -253,7 +259,8 @@ pub fn init_tracing(settings: &TelemetryConfig) -> Result<(), anyhow::Error> {
             "Integration test tracing initialized with file output to {}",
             log_path
         );
-        return Ok(());
+        // Return a default provider for test mode
+        return Ok(SdkTracerProvider::builder().build());
     }
 
     let service_name = settings
@@ -269,48 +276,50 @@ pub fn init_tracing(settings: &TelemetryConfig) -> Result<(), anyhow::Error> {
             settings.tracing_otlp_timeout().as_millis()
         );
 
+        // Create an exporter for OTLP
         let exporter = opentelemetry_otlp::SpanExporter::builder()
             .with_tonic()
             .with_endpoint(endpoint)
             .with_timeout(settings.tracing_otlp_timeout())
             .build()?;
 
+        // Configure batch processing
         let batch_config = if let Some(batch_conf) = settings.batch() {
             println!(
-                "Configuring batch processing with: max_queue_size={}, scheduled_delay={}ms, max_export_batch_size={}, max_concurrent_exports={}, export_timeout={}ms",
+                "Configuring batch processing with: max_queue_size={}, scheduled_delay={}ms, max_export_batch_size={}",
                 batch_conf.max_queue_size(),
                 batch_conf.scheduled_delay().as_millis(),
                 batch_conf.max_export_batch_size(),
-                batch_conf.max_concurrent_exports(),
-                batch_conf.export_timeout().as_millis(),
             );
 
             opentelemetry_sdk::trace::BatchConfigBuilder::default()
                 .with_max_queue_size(batch_conf.max_queue_size())
                 .with_scheduled_delay(batch_conf.scheduled_delay())
                 .with_max_export_batch_size(batch_conf.max_export_batch_size())
-                .with_max_concurrent_exports(batch_conf.max_concurrent_exports())
-                .with_max_export_timeout(batch_conf.export_timeout())
                 .build()
         } else {
             println!("Using default batch processing configuration");
             opentelemetry_sdk::trace::BatchConfigBuilder::default().build()
         };
 
-        let batch = opentelemetry_sdk::trace::BatchSpanProcessor::builder(exporter, Tokio)
+        let batch_processor = opentelemetry_sdk::trace::BatchSpanProcessor::builder(exporter)
             .with_batch_config(batch_config)
             .build();
 
-        opentelemetry_sdk::trace::TracerProvider::builder()
-            .with_span_processor(batch)
-            .with_resource(Resource::new(vec![KeyValue::new(
-                opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
-                service_name,
-            )]))
+        SdkTracerProvider::builder()
+            .with_span_processor(batch_processor)
+            .with_resource(
+                Resource::builder()
+                    .with_attributes(vec![KeyValue::new(
+                        opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
+                        service_name,
+                    )])
+                    .build(),
+            )
             .build()
     } else {
         println!("No tracing_endpoint is provided");
-        opentelemetry_sdk::trace::TracerProvider::builder()
+        SdkTracerProvider::builder()
             .with_sampler(
                 // When RUST_LOG=trace, sample everything
                 // Otherwise, sample nothing for OpenTelemetry
@@ -318,21 +327,25 @@ pub fn init_tracing(settings: &TelemetryConfig) -> Result<(), anyhow::Error> {
                     .map(|v| v == "trace")
                     .unwrap_or(false)
                 {
-                    opentelemetry_sdk::trace::Sampler::AlwaysOn
+                    Sampler::AlwaysOn
                 } else {
-                    opentelemetry_sdk::trace::Sampler::AlwaysOff
+                    Sampler::AlwaysOff
                 },
             )
             .with_simple_exporter(opentelemetry_stdout::SpanExporter::default())
-            .with_resource(Resource::new(vec![KeyValue::new(
-                opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
-                service_name,
-            )]))
+            .with_resource(
+                Resource::builder()
+                    .with_attributes(vec![KeyValue::new(
+                        opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
+                        service_name,
+                    )])
+                    .build(),
+            )
             .build()
     };
 
-    // Set up the tracer
-    let tracer = provider.tracer("kms-core");
+    // Clone the provider to set it globally while keeping the original for explicit shutdown
+    let tracer = provider.clone().tracer("kms-core");
 
     let env_filter = match *ENVIRONMENT {
         // For integration and local development, optionally use a more verbose filter
@@ -361,25 +374,28 @@ pub fn init_tracing(settings: &TelemetryConfig) -> Result<(), anyhow::Error> {
 
     global::set_text_map_propagator(TraceContextPropagator::new());
 
-    Ok(())
+    // Return the provider for explicit shutdown
+    Ok(provider)
 }
 
-pub fn init_telemetry(settings: &TelemetryConfig) -> anyhow::Result<SdkMeterProvider> {
+pub fn init_telemetry(
+    settings: &TelemetryConfig,
+) -> anyhow::Result<(SdkTracerProvider, SdkMeterProvider)> {
     println!("Starting telemetry initialization...");
 
     // First initialize tracing as it's more critical
     println!("Initializing tracing subsystem...");
-    init_tracing(settings)?;
+    let tracer_provider = init_tracing(settings)?;
 
     // Now that tracing is initialized, we can use info! tracing macros
     info!("Tracing initialization completed successfully");
 
     println!("Initializing metrics subsystem...");
-    let provider = init_metrics(settings)?;
+    let meter_provider = init_metrics(settings)?;
     info!("Metrics initialization completed successfully");
 
     info!("Telemetry stack initialization completed");
-    Ok(provider)
+    Ok((tracer_provider, meter_provider))
 }
 
 fn fmt_layer<S>() -> Layer<S> {

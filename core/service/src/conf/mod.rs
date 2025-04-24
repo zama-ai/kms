@@ -1,8 +1,10 @@
 use crate::util::rate_limiter::RateLimiterConfig;
 
 use self::threshold::ThresholdPartyConf;
-use conf_trace::conf::{Settings, TelemetryConfig};
-use conf_trace::telemetry::init_telemetry;
+use conf_trace::{
+    conf::{Settings, TelemetryConfig},
+    telemetry::{init_telemetry, SdkMeterProvider, SdkTracerProvider},
+};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -79,24 +81,24 @@ pub fn init_conf<'a, T: Deserialize<'a> + std::fmt::Debug>(config_file: &str) ->
 /// Initialize the configuration from the given file and initialize tracing.
 pub fn init_conf_kms_core_telemetry<'a, T: Deserialize<'a> + std::fmt::Debug + ConfigTracing>(
     config_file: &str,
-) -> anyhow::Result<T> {
+) -> anyhow::Result<(T, SdkTracerProvider, SdkMeterProvider)> {
     let full_config: T = init_conf(config_file)?;
     let telemetry = full_config.telemetry().unwrap_or_else(|| {
         TelemetryConfig::builder()
             .tracing_service_name("kms_core".to_string())
             .build()
     });
-    init_telemetry(&telemetry)?;
-    Ok(full_config)
+    let (tracer_provider, meter_provider) = init_telemetry(&telemetry)?;
+    Ok((full_config, tracer_provider, meter_provider))
 }
 
 /// Initialize the tracing configuration with default values
-pub fn init_kms_core_telemetry() -> anyhow::Result<()> {
+pub fn init_kms_core_telemetry() -> anyhow::Result<(SdkTracerProvider, SdkMeterProvider)> {
     let telemetry = TelemetryConfig::builder()
         .tracing_service_name("kms_core".to_string())
         .build();
-    init_telemetry(&telemetry)?;
-    Ok(())
+    let (tracer_provider, meter_provider) = init_telemetry(&telemetry)?;
+    Ok((tracer_provider, meter_provider))
 }
 
 #[cfg(test)]

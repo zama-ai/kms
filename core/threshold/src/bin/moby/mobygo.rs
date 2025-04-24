@@ -722,13 +722,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()
         .init_conf()?;
 
-    let telemetry = conf.telemetry.clone().unwrap_or(
+    let telemetry = conf.telemetry.clone().unwrap_or_else(|| {
         TelemetryConfig::builder()
             .tracing_service_name("mobygo".to_string())
-            .build(),
-    );
+            .build()
+    });
 
-    init_tracing(&telemetry)?;
+    let tracer_provider = init_tracing(&telemetry)?;
 
     let runtime = ChoreoRuntime::new_from_conf(&conf)?;
     match args.command {
@@ -769,6 +769,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     //Sleep to let some time for the process to export all the spans before exit
     time::sleep(tokio::time::Duration::from_secs(5)).await;
-    opentelemetry::global::shutdown_tracer_provider();
+
+    // Explicitly shut down telemetry to ensure all data is properly exported
+    if let Err(e) = tracer_provider.shutdown() {
+        eprintln!("Error shutting down tracer provider: {}", e);
+    }
+
     Ok(())
 }

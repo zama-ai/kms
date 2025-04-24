@@ -10,8 +10,6 @@ use typed_builder::TypedBuilder;
 // Default configuration constants
 const TRACER_MAX_QUEUE_SIZE: usize = 8192;
 const TRACER_MAX_EXPORT_BATCH_SIZE: usize = 2048;
-const TRACER_MAX_CONCURRENT_EXPORTS: usize = 4;
-const TRACER_DEFAULT_TIMEOUT_MS: u64 = 5000;
 const TRACER_OTLP_TIMEOUT_MS: u64 = 10000;
 const TRACER_DEFAULT_RETRY_COUNT: u32 = 3;
 const TRACER_DEFAULT_SCHEDULED_DELAY_MS: u64 = 500;
@@ -109,19 +107,10 @@ pub struct Batch {
     #[builder(default, setter(strip_option))]
     max_export_batch_size: Option<usize>,
 
-    /// The maximum number of concurrent exports that are allowed to happen at the same time.
-    /// Defaults to `telemetry::TRACER_MAX_CONCURRENT_EXPORTS`
-    #[builder(default, setter(strip_option))]
-    max_concurrent_exports: Option<usize>,
-
     /// The delay between two consecutive exports in milliseconds.
     /// Defaults to `telemetry::TRACER_SCHEDULED_DELAY_MS`
     #[builder(default, setter(strip_option))]
     scheduled_delay_ms: Option<u64>,
-
-    /// Timeout for export operations in milliseconds
-    #[builder(default, setter(strip_option))]
-    export_timeout_ms: Option<u64>,
 }
 
 impl<'de> Deserialize<'de> for Batch {
@@ -134,9 +123,7 @@ impl<'de> Deserialize<'de> for Batch {
         struct BatchHelper {
             max_queue_size: Option<usize>,
             max_export_batch_size: Option<usize>,
-            max_concurrent_exports: Option<usize>,
             scheduled_delay_ms: Option<u64>,
-            export_timeout_ms: Option<u64>,
         }
 
         let helper = BatchHelper::deserialize(deserializer)?;
@@ -144,9 +131,7 @@ impl<'de> Deserialize<'de> for Batch {
         Ok(Batch {
             max_queue_size: helper.max_queue_size,
             max_export_batch_size: helper.max_export_batch_size,
-            max_concurrent_exports: helper.max_concurrent_exports,
             scheduled_delay_ms: helper.scheduled_delay_ms,
-            export_timeout_ms: helper.export_timeout_ms,
         })
     }
 }
@@ -163,23 +148,12 @@ impl Batch {
             .unwrap_or(TRACER_MAX_EXPORT_BATCH_SIZE)
     }
 
-    /// Returns the max concurrent exports.
-    pub fn max_concurrent_exports(&self) -> usize {
-        self.max_concurrent_exports
-            .unwrap_or(TRACER_MAX_CONCURRENT_EXPORTS)
-    }
-
     /// Returns the scheduled delay.
     pub fn scheduled_delay(&self) -> Duration {
         Duration::from_millis(
             self.scheduled_delay_ms
                 .unwrap_or(TRACER_DEFAULT_SCHEDULED_DELAY_MS),
         )
-    }
-
-    /// Returns the export timeout
-    pub fn export_timeout(&self) -> Duration {
-        Duration::from_millis(self.export_timeout_ms.unwrap_or(TRACER_DEFAULT_TIMEOUT_MS))
     }
 }
 

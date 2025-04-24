@@ -82,12 +82,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         settings_builder.env_prefix("DDEC").build().init_conf()?
     };
 
-    let telemetry_config = settings.telemetry.clone().unwrap_or(
+    let telemetry_config = settings.telemetry.clone().unwrap_or_else(|| {
         TelemetryConfig::builder()
             .tracing_service_name("moby".to_string())
-            .build(),
-    );
+            .build()
+    });
 
-    init_tracing(&telemetry_config)?;
-    grpc::server::run::<EXTENSION_DEGREE>(&settings).await
+    let tracer_provider = init_tracing(&telemetry_config)?;
+
+    // Run the server and get the result
+    let result = grpc::server::run::<EXTENSION_DEGREE>(&settings).await;
+
+    // After the server has completed, shut down telemetry
+    // Sleep to let some time for the process to export all the spans before shutdown
+    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+    // Explicitly shut down telemetry
+    if let Err(e) = tracer_provider.shutdown() {
+        eprintln!("Error shutting down tracer provider: {}", e);
+    }
+
+    result
 }
