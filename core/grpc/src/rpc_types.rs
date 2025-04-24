@@ -859,8 +859,8 @@ impl From<bool> for TypedPlaintext {
 }
 
 pub trait MetaResponse {
-    fn verification_key(&self) -> Vec<u8>;
-    fn digest(&self) -> Vec<u8>;
+    fn verification_key(&self) -> &[u8];
+    fn digest(&self) -> &[u8];
 }
 
 pub trait FheTypeResponse {
@@ -868,12 +868,12 @@ pub trait FheTypeResponse {
 }
 
 impl MetaResponse for ReencryptionResponsePayload {
-    fn verification_key(&self) -> Vec<u8> {
-        self.verification_key.to_owned()
+    fn verification_key(&self) -> &[u8] {
+        &self.verification_key
     }
 
-    fn digest(&self) -> Vec<u8> {
-        self.digest.to_owned()
+    fn digest(&self) -> &[u8] {
+        &self.digest
     }
 }
 
@@ -915,12 +915,12 @@ impl FheTypeResponse for ReencryptionResponsePayload {
 }
 
 impl MetaResponse for DecryptionResponsePayload {
-    fn verification_key(&self) -> Vec<u8> {
-        self.verification_key.to_owned()
+    fn verification_key(&self) -> &[u8] {
+        &self.verification_key
     }
 
-    fn digest(&self) -> Vec<u8> {
-        self.digest.to_owned()
+    fn digest(&self) -> &[u8] {
+        &self.digest
     }
 }
 
