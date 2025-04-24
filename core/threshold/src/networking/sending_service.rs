@@ -1,30 +1,40 @@
 use dashmap::DashMap;
-use std::collections::HashMap;
-use std::net::IpAddr;
-use std::str::FromStr;
-use std::sync::{Arc, OnceLock, RwLock};
-use tokio::time::Duration;
+use std::{
+    collections::HashMap,
+    net::IpAddr,
+    str::FromStr,
+    sync::{Arc, OnceLock, RwLock},
+};
 
 use backoff::exponential::ExponentialBackoff;
 use backoff::future::retry_notify;
 use backoff::SystemClock;
 use conf_trace::telemetry::ContextPropagator;
 use gen::gnetworking_client::GnetworkingClient;
+use hyper_rustls::{FixedServerNameResolver, HttpsConnectorBuilder};
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tokio::time::Instant;
+use tokio::{
+    sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+    time::{Duration, Instant},
+};
+use tokio_rustls::rustls::{
+    client::{danger::DangerousClientConfigBuilder, ClientConfig, WebPkiServerVerifier},
+    pki_types::{CertificateDer, PrivateKeyDer, ServerName},
+    RootCertStore,
+};
 use tonic::service::interceptor::InterceptedService;
-use tonic::transport::{ClientTlsConfig, Uri};
-use tonic::Status;
-use tonic::{async_trait, transport::Channel};
+use tonic::transport::Uri;
+use tonic::{async_trait, transport::Channel, Status};
 
-use crate::conf::party::CertificatePaths;
-use crate::error::error_handler::anyhow_error_and_log;
+use crate::{error::error_handler::anyhow_error_and_log, networking::tls::AttestedServerVerifier};
 use crate::{execution::runtime::party::Identity, session_id::SessionId};
 
 #[cfg(feature = "choreographer")]
 use super::grpc::NETWORK_RECEIVED_MEASUREMENT;
-use super::grpc::{CoreToCoreNetworkConfig, MessageQueueStore, OptionConfigWrapper};
+use super::{
+    grpc::{CoreToCoreNetworkConfig, MessageQueueStore, OptionConfigWrapper},
+    tls::SendingServiceTLSConfig,
+};
 use super::{NetworkMode, Networking};
 use crate::thread_handles::ThreadHandleGroup;
 
@@ -46,7 +56,10 @@ struct Tag {
 #[async_trait]
 pub trait SendingService: Send + Sync {
     /// Init and start the sending service
-    fn new(cert_bundle: Option<CertificatePaths>, conf: Option<CoreToCoreNetworkConfig>) -> Self
+    fn new(
+        tls_certs: Option<SendingServiceTLSConfig>,
+        conf: Option<CoreToCoreNetworkConfig>,
+    ) -> anyhow::Result<Self>
     where
         Self: std::marker::Sized;
 
@@ -64,8 +77,8 @@ pub trait SendingService: Send + Sync {
 pub struct GrpcSendingService {
     /// Contains all the information needed by the sync network
     pub(crate) config: OptionConfigWrapper,
-    /// Contains the certificate bundles
-    pub(crate) certificate_bundle: Option<CertificatePaths>,
+    /// A ready-made TLS identity (certificate, keypair and CA roots)
+    pub(crate) tls_certs: Option<SendingServiceTLSConfig>,
     /// Keep in memory channels we already have available
     channel_map:
         DashMap<Identity, GnetworkingClient<InterceptedService<Channel, ContextPropagator>>>,
@@ -84,7 +97,7 @@ impl GrpcSendingService {
             return Ok(channel.clone());
         }
 
-        let proto = match self.certificate_bundle {
+        let proto = match self.tls_certs {
             Some(_) => "https",
             None => "http",
         };
@@ -96,8 +109,8 @@ impl GrpcSendingService {
             ))
         })?;
 
-        let channel = match self.certificate_bundle {
-            Some(ref cert_bundle) => {
+        let channel = match &self.tls_certs {
+            Some((cert, key, ca_certs, trusted_releases)) => {
                 // If the host is an IP address then we abort
                 // domain names are needed for TLS.
                 //
@@ -106,12 +119,6 @@ impl GrpcSendingService {
                 // but we cannot map the port number to certificates.
                 let domain_name = match endpoint.host() {
                     Some(host) => {
-                        if !hostname_is_valid(host) {
-                            return Err(anyhow_error_and_log(format!(
-                                "{} is not a valid hostname",
-                                host
-                            )));
-                        }
                         if IpAddr::from_str(host).is_ok() {
                             return Err(anyhow_error_and_log(format!(
                                 "{} is an IP address, which is not supported for TLS",
@@ -119,30 +126,81 @@ impl GrpcSendingService {
                             )));
                         }
 
-                        host
+                        ServerName::try_from(host)?.to_owned()
                     }
                     None => {
-                        return Err(anyhow_error_and_log("host is missing"));
+                        return Err(anyhow_error_and_log("hostname is missing in {endpoint}"));
                     }
                 };
-
-                // We limit the ca_certificate to a single one
+                // We put only one CA certificate into the root store
                 // so there's no risk of connecting to a wrong party.
-                let tls_config = ClientTlsConfig::new()
-                    .domain_name(domain_name)
-                    .ca_certificate(cert_bundle.get_ca_by_name(domain_name)?)
-                    .identity(cert_bundle.get_identity()?);
-                tracing::debug!("Building TLS channel with {domain_name}");
-                Channel::builder(endpoint)
-                    .http2_adaptive_window(true)
-                    .tls_config(tls_config)?
+                let ca_cert =
+                    ca_certs
+                        .get(domain_name.to_str().as_ref())
+                        .ok_or(anyhow_error_and_log(
+                            "no CA certificate present for {domain_name:?}",
+                        ))?;
+                let mut roots = RootCertStore::empty();
+                roots.add(CertificateDer::from_slice(&ca_cert.contents))?;
+                let cert_chain =
+                    vec![CertificateDer::from_slice(cert.contents.as_slice()).into_owned()];
+                let key_der = PrivateKeyDer::try_from(key.contents.as_slice())
+                    .map_err(|e| anyhow_error_and_log(e.to_string()))?
+                    .clone_key();
+                let tls_config = match trusted_releases {
+                    // if AWS Nitro attestation is configured, we have to replace
+                    // the certificate verifier with a custom one that
+                    // performs PCR value checks in addition to standard
+                    // checks
+                    Some(trusted_releases) => {
+                        tracing::warn!(
+                            "Building TLS channel to {:?} with AWS Nitro attestation",
+                            endpoint.host()
+                        );
+                        let safe_server_cert_verifier =
+                            WebPkiServerVerifier::builder(Arc::new(roots)).build()?;
+                        DangerousClientConfigBuilder {
+                            cfg: ClientConfig::builder(),
+                        }
+                        .with_custom_certificate_verifier(Arc::new(
+                            AttestedServerVerifier::new(
+                                safe_server_cert_verifier,
+                                trusted_releases.clone(),
+                            ),
+                        ))
+                    }
+                    // if AWS Nitro attestation is not configured, we don't
+                    // tinker with the certificate verifier to avoid the risks
+                    // of using a custom one, although it could have worked
+                    None => {
+                        tracing::warn!(
+                            "Building TLS channel to {:?} without AWS Nitro attestation",
+                            endpoint.host()
+                        );
+                        ClientConfig::builder().with_root_certificates(roots)
+                    }
+                }
+                .with_client_auth_cert(cert_chain, key_der)?;
+                let endpoint = Channel::builder(endpoint).http2_adaptive_window(true);
+                // we have to pass a custom TLS connector to
+                // tonic::transport::Channel to be able to use a custom rustls
+                // ClientConfig that overrides the certificate verifier for AWS
+                // Nitro attestation
+                let https_connector = HttpsConnectorBuilder::new()
+                    .with_tls_config(tls_config)
+                    .https_only()
+                    .with_server_name_resolver(FixedServerNameResolver::new(domain_name))
+                    .enable_http2()
+                    .build();
+                Channel::new(https_connector, endpoint)
             }
             None => {
                 tracing::warn!("Building channel to {:?} without TLS", endpoint.host());
-                Channel::builder(endpoint).http2_adaptive_window(true)
+                Channel::builder(endpoint)
+                    .http2_adaptive_window(true)
+                    .connect_lazy()
             }
         };
-        let channel = channel.connect_lazy();
         let client = GnetworkingClient::with_interceptor(channel, ContextPropagator)
             .max_decoding_message_size(self.config.get_max_en_decode_message_size())
             .max_encoding_message_size(self.config.get_max_en_decode_message_size());
@@ -229,15 +287,15 @@ impl SendingService for GrpcSendingService {
     /// Communicates with the service thread to spin up a new connection with `other`
     /// __NOTE__: This requires the service to be running already
     fn new(
-        certificate_bundle: Option<CertificatePaths>,
+        tls_certs: Option<SendingServiceTLSConfig>,
         config: Option<CoreToCoreNetworkConfig>,
-    ) -> Self {
-        Self {
+    ) -> anyhow::Result<Self> {
+        Ok(Self {
             config: OptionConfigWrapper { conf: config },
-            certificate_bundle,
+            tls_certs,
             thread_handles: Arc::new(RwLock::new(ThreadHandleGroup::new())),
             channel_map: DashMap::new(),
-        }
+        })
     }
 
     /// Adds one connection and outputs the mpsc Sender channel other processes will use to communicate to other
@@ -511,34 +569,12 @@ impl Networking for NetworkSession {
     }
 }
 
-/// A hostname is valid if the following condition are true:
-///
-/// - It does not start or end with `-` or `.`.
-/// - It does not contain any characters outside of the alphanumeric range, except for `-` and `.`.
-/// - It is not empty.
-/// - It is 253 or fewer characters.
-/// - Its labels (characters separated by `.`) are not empty.
-/// - Its labels are 63 or fewer characters.
-/// - Its labels do not start or end with '-' or '.'.
-fn hostname_is_valid(hostname: &str) -> bool {
-    fn is_valid_char(byte: u8) -> bool {
-        byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'.'
-    }
-
-    !(hostname.bytes().any(|byte| !is_valid_char(byte))
-        || hostname.split('.').any(|label| {
-            label.is_empty() || label.len() > 63 || label.starts_with('-') || label.ends_with('-')
-        })
-        || hostname.is_empty()
-        || hostname.len() > 253)
-}
-
 #[cfg(test)]
 mod tests {
     use crate::thread_handles::OsThreadGroup;
     use crate::{
         execution::runtime::party::{Identity, Role, RoleAssignment},
-        networking::{grpc::GrpcNetworkingManager, sending_service::hostname_is_valid, Networking},
+        networking::{grpc::GrpcNetworkingManager, Networking},
         session_id::SessionId,
     };
     use std::time::Duration;
@@ -568,7 +604,7 @@ mod tests {
             handles.add(std::thread::spawn(move || {
                 let runtime = tokio::runtime::Runtime::new().unwrap();
                 let _guard = runtime.enter();
-                let networking = GrpcNetworkingManager::new(id.clone(), None, None);
+                let networking = GrpcNetworkingManager::new(id.clone(), None, None).unwrap();
                 let networking_server = networking.new_server();
 
                 let core_grpc_layer = tower::ServiceBuilder::new().timeout(Duration::from_secs(3));
@@ -621,7 +657,7 @@ mod tests {
             std::thread::sleep(Duration::from_secs(5));
             let runtime = tokio::runtime::Runtime::new().unwrap();
             let _guard = runtime.enter();
-            let networking = GrpcNetworkingManager::new(id.clone(), None, None);
+            let networking = GrpcNetworkingManager::new(id.clone(), None, None).unwrap();
             let networking_server = networking.new_server();
 
             let core_grpc_layer = tower::ServiceBuilder::new().timeout(Duration::from_secs(3));
@@ -662,44 +698,6 @@ mod tests {
         let ref_res = results.first().unwrap();
         for res in results.iter() {
             assert_eq!(res, ref_res);
-        }
-    }
-
-    #[test]
-    fn valid_hostnames() {
-        for hostname in &[
-            "VaLiD-HoStNaMe",
-            "50-name",
-            "235235",
-            "example.com",
-            "VaLid.HoStNaMe",
-            "123.456",
-            "10.0.0.1",
-        ] {
-            assert!(hostname_is_valid(hostname), "{} is not valid", hostname);
-        }
-    }
-
-    #[test]
-    fn invalid_hostnames() {
-        for hostname in &[
-            "-invalid-name",
-            "also-invalid-",
-            "asdf@fasd",
-            "@asdfl",
-            "asd f@",
-            ".invalid",
-            "invalid.name.",
-            "foo.label-is-way-to-longgggggggggggggggggggggggggggggggggggggggggggg.org",
-            "invalid.-starting.char",
-            "invalid.ending-.char",
-            "empty..label",
-        ] {
-            assert!(
-                !hostname_is_valid(hostname),
-                "{} should not be valid",
-                hostname
-            );
         }
     }
 }

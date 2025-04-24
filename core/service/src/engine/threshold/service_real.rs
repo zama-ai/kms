@@ -1,4 +1,4 @@
-use crate::conf::threshold::{PeerConf, ThresholdPartyConf};
+use crate::conf::threshold::{PeerConf, ThresholdPartyConf, TlsCert};
 use crate::consts::{MINIMUM_SESSIONS_PREPROC, PRSS_INIT_REQ_ID};
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey};
 use crate::cryptography::signcryption::signcrypt_with_link;
@@ -59,7 +59,6 @@ use threshold_fhe::algebra::base_ring::Z128;
 use threshold_fhe::algebra::galois_rings::common::pack_residue_poly;
 use threshold_fhe::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
 use threshold_fhe::algebra::structure_traits::Ring;
-use threshold_fhe::conf::party::CertificatePaths;
 use threshold_fhe::execution::endpoints::decryption::{
     decrypt_using_bitdec, decrypt_using_noiseflooding, partial_decrypt_using_bitdec,
     partial_decrypt_using_noiseflooding, DecryptionMode, Small,
@@ -83,20 +82,28 @@ use threshold_fhe::execution::small_execution::prss::PRSSSetup;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::execution::zk::ceremony::{compute_witness_dim, Ceremony, RealCeremony};
 use threshold_fhe::networking::grpc::{CoreToCoreNetworkConfig, GrpcNetworkingManager, GrpcServer};
-use threshold_fhe::networking::NetworkingStrategy;
-use threshold_fhe::networking::{NetworkMode, Networking};
+use threshold_fhe::networking::{
+    tls::{extract_subject_from_cert, AttestedClientVerifier, BasicTLSConfig, TlsAcceptorStream},
+    NetworkMode, Networking, NetworkingStrategy,
+};
 use threshold_fhe::session_id::{SessionId, SESSION_ID_BYTES};
 use threshold_fhe::{algebra::base_ring::Z64, execution::endpoints::keygen::FhePubKeySet};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, OwnedSemaphorePermit, RwLock};
 use tokio::time::Instant;
+use tokio_rustls::rustls::{
+    pki_types::{CertificateDer, PrivateKeyDer},
+    server::{ServerConfig, WebPkiClientVerifier},
+    RootCertStore,
+};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
-use tonic::transport::{Server, ServerTlsConfig};
+use tonic::transport::Server;
 use tonic::{Request, Response, Status};
 use tonic_health::pb::health_server::{Health, HealthServer};
 use tonic_health::server::HealthReporter;
 use tracing::Instrument;
+use x509_parser::pem::parse_x509_pem;
 
 const DSEP_SESSION_DECRYPTION: &[u8; 18] = b"SESSION_DECRYPTION";
 const DSEP_SESSION_REENCRYPTION: &[u8; 20] = b"SESSION_REENCRYPTION";
@@ -167,6 +174,7 @@ pub async fn threshold_server_init<
     public_storage: PubS,
     private_storage: PrivS,
     backup_storage: Option<BackS>,
+    tls_identity: Option<BasicTLSConfig>,
     run_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     shutdown_signal: F,
@@ -174,8 +182,6 @@ pub async fn threshold_server_init<
     RealThresholdKms<PubS, PrivS, BackS>,
     HealthServer<impl Health>,
 )> {
-    let cert_paths = config.get_tls_cert_paths();
-
     //If no RedisConf is provided, we just use in-memory storage for the preprocessing buckets.
     //NOTE: This should probably only be allowed for testing
     let factory = match config.preproc_redis {
@@ -205,7 +211,7 @@ pub async fn threshold_server_init<
         public_storage,
         private_storage,
         backup_storage,
-        cert_paths,
+        tls_identity,
         config.core_to_core_net,
         config.decryption_mode,
         run_prss,
@@ -305,19 +311,6 @@ pub type RealThresholdKms<PubS, PrivS, BackS> = GenericKms<
     RealInsecureCrsGenerator<PubS, PrivS, BackS>,
 >;
 
-#[derive(Debug)]
-struct FileNotFoundError {
-    message: String,
-}
-
-impl std::error::Error for FileNotFoundError {}
-
-impl std::fmt::Display for FileNotFoundError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.message)
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 async fn new_real_threshold_kms<PubS, PrivS, BackS, F>(
     threshold: u8,
@@ -331,7 +324,7 @@ async fn new_real_threshold_kms<PubS, PrivS, BackS, F>(
     public_storage: PubS,
     private_storage: PrivS,
     backup_storage: Option<BackS>,
-    cert_paths: Option<CertificatePaths>,
+    tls_identity: Option<BasicTLSConfig>,
     core_to_core_net_conf: Option<CoreToCoreNetworkConfig>,
     decryption_mode: DecryptionMode,
     run_prss: bool,
@@ -380,6 +373,7 @@ where
         read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
 
     let role_assignments: RoleAssignment = peer_configs
+        .clone()
         .into_iter()
         .map(|peer_config| peer_config.into_role_identity())
         .collect();
@@ -389,65 +383,115 @@ where
         "Could not find my own identity".to_string(),
     )?;
 
-    let server = match &cert_paths {
-        Some(cert_bundle) => {
-            tracing::info!(
-                "Creating server with TLS enabled with certificate: {:?}.",
-                cert_bundle.cert
+    let tls_certs = tls_identity
+        .map(|(cert, key, trusted_releases)| {
+            peer_configs
+                .iter()
+                .flat_map(|peer| {
+                    peer.tls_cert.as_ref().map(|tls_cert| match tls_cert {
+                        TlsCert::Path(path) => std::fs::read_to_string(path),
+                        TlsCert::Pem(bytes) => Ok(bytes.to_string()),
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| anyhow::anyhow!("{e}"))
+                .and_then(|ca_certs| {
+                    ca_certs
+                        .iter()
+                        .map(|c| {
+                            parse_x509_pem(c.as_ref())
+                                .map(|(_, pem)| pem)
+                                .map_err(|e| anyhow::anyhow!("{e}"))
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .map(|ca_certs| (cert, key, ca_certs, trusted_releases))
+        })
+        .transpose()?;
+
+    // We have to construct a rustls config ourselves instead of using the
+    // wrapper from tonic::transport because we need to provide our own
+    // certificate verifier that can also validate bundled attestation
+    // documents.
+    let tls_config = match tls_certs.clone() {
+        Some((cert, key, ca_certs, trusted_releases)) => {
+            let mut roots = RootCertStore::empty();
+            roots.add_parsable_certificates(
+                ca_certs
+                    .iter()
+                    .map(|pem| CertificateDer::from_slice(pem.contents.as_slice())),
             );
+            let cert_chain =
+                vec![CertificateDer::from_slice(cert.contents.as_slice()).into_owned()];
+            let key_der = PrivateKeyDer::try_from(key.contents.as_slice())
+                .map_err(|e| anyhow_error_and_log(e.to_string()))?
+                .clone_key();
 
-            let certificate = cert_bundle
-                .get_certificate()
-                .map_err(|e| FileNotFoundError {
-                    message: format!("Failed to open file '{}': {}", cert_bundle.cert, e),
-                })?;
-            tracing::info!("Certificate key loaded");
-            let san_strings =
-                threshold_fhe::networking::grpc::extract_san_from_certs(&[certificate], true)
-                    .map_err(|e| anyhow!(e))?;
-            tracing::info!("San strings loaded");
-            let host = own_identity
-                .0
-                .split(':')
-                .next()
-                .ok_or_else(|| anyhow!("hostname not found in own_identity"))?
-                .to_string();
-            if !san_strings.contains(&host) {
-                return Err(anyhow_error_and_log(format!(
-                    "cannot find hostname {} in SAN {:?}",
-                    host, san_strings
-                )));
-            }
-
-            // now setup the TLS server
-            let identity = cert_bundle.get_identity()?;
-            tracing::info!("Identity loaded");
-            tracing::info!("ca list: {:?}", cert_bundle.calist);
-            let ca_cert = cert_bundle.get_flattened_ca_list()?;
-            tracing::info!("CA list loaded");
-            let tls_config = ServerTlsConfig::new()
-                .identity(identity)
-                .client_ca_root(ca_cert);
-            tracing::info!("TLS config setup");
-            Server::builder().tls_config(tls_config)?
+            let safe_client_cert_verifier =
+                WebPkiClientVerifier::builder(Arc::new(roots)).build()?;
+            let client_verifier = match trusted_releases {
+                Some(trusted_releases) => {
+                    tracing::info!("Creating server with TLS and AWS Nitro attestation");
+                    Arc::new(AttestedClientVerifier::new(
+                        safe_client_cert_verifier,
+                        trusted_releases.clone(),
+                    ))
+                }
+                None => {
+                    tracing::info!("Creating server with TLS and without AWS Nitro attestation");
+                    safe_client_cert_verifier
+                }
+            };
+            Some(
+                ServerConfig::builder()
+                    .with_client_cert_verifier(client_verifier)
+                    .with_single_cert(cert_chain, key_der)?,
+            )
         }
-        _ => {
-            tracing::warn!("Creating server without TLS support.");
-            Server::builder()
+        None => {
+            tracing::warn!("Creating server without TLS");
+            None
         }
     };
 
-    // This will setup TLS if cert_paths is set to Some(...)
+    // we'll use this hashmap in SendingService to configure client TLS with
+    // only one CA certificate in the root store per server
+    let tls_certs = tls_certs
+        .map(|(cert, key, ca_certs, trusted_releases)| {
+            ca_certs
+                .iter()
+                .map(|cert_pem| {
+                    cert_pem
+                        .clone()
+                        .parse_x509()
+                        .map_err(|e| anyhow::anyhow!("{e}"))
+                        .and_then(|ref cert| {
+                            extract_subject_from_cert(cert).map(|s| (s, cert_pem.clone()))
+                        })
+                })
+                .collect::<anyhow::Result<HashMap<_, _>>>()
+                .map(|ca_certs| {
+                    tracing::info!("Using TLS trust anchors: {:?}", ca_certs.keys());
+                    (cert, key, ca_certs, trusted_releases)
+                })
+        })
+        .transpose()?;
+
     let (threshold_health_reporter, threshold_health_service) =
         tonic_health::server::health_reporter();
+    // This will setup client TLS if tls_certs is set to Some(...)
     let networking_manager = Arc::new(RwLock::new(GrpcNetworkingManager::new(
         own_identity.to_owned(),
-        cert_paths,
+        tls_certs,
         core_to_core_net_conf,
-    )));
+    )?));
     let manager_clone = Arc::clone(&networking_manager);
     let networking_server = networking_manager.write().await.new_server();
-    let router = server
+    // we won't be setting TLS configuration through tonic::transport knobs here
+    // since it doesn't permit setting rustls configuration directly, and we
+    // need to supply a custom certificate verifier to enable AWS Nitro
+    // attestation in TLS
+    let router = Server::builder()
         .http2_adaptive_window(Some(true))
         .add_service(networking_server)
         .add_service(threshold_health_service);
@@ -468,46 +512,60 @@ where
             })
         },
     )));
+
     let abort_handle = tokio::spawn(async move {
         let (tx, rx) = tokio::sync::oneshot::channel();
         tokio::spawn(prepare_shutdown_signals(shutdown_signal, tx));
-        match router
-            .serve_with_incoming_shutdown(
-                tokio_stream::wrappers::TcpListenerStream::new(tcp_listener),
-                async {
-                    // Set the server to be serving when we boot
-                    threshold_health_reporter.set_serving::<GrpcServer>().await;
-                    // await is the same as recv on a oneshot channel
-                    _ = rx.await;
-                    manager_clone.write().await.sending_service.shutdown();
-                    // Observe that the following is the shut down of the core (which communicates with the other cores)
-                    // That is, not the threshold KMS server itself which picks up requests from the blockchain.
-                    tracing::info!(
-                        "Starting graceful shutdown of core/threshold {}",
-                        local_addr
-                    );
-                    threshold_health_reporter
-                        .set_not_serving::<GrpcServer>()
-                        .await;
-                },
-            )
-            .await
-        {
-            Ok(handle) => {
-                tracing::info!(
-                    "core/threshold on {} shutdown completed successfully",
-                    local_addr
-                );
-                Ok(handle)
+        let graceful_shutdown_signal = async {
+            // Set the server to be serving when we boot
+            threshold_health_reporter.set_serving::<GrpcServer>().await;
+            // await is the same as recv on a oneshot channel
+            _ = rx.await;
+            manager_clone.write().await.sending_service.shutdown();
+            // Observe that the following is the shut down of the core (which communicates with the other cores)
+            // That is, not the threshold KMS server itself which picks up requests from the blockchain.
+            tracing::info!(
+                "Starting graceful shutdown of core/threshold {}",
+                local_addr
+            );
+            threshold_health_reporter
+                .set_not_serving::<GrpcServer>()
+                .await;
+        };
+
+        // this looks somewhat hairy but there doesn't seem to be an easier way
+        // to use arbitrary rustls configs until tonic::transport becomes a
+        // separate crate from tonic (whose maintainers don't want to make its
+        // API dependent on rustls)
+        match tls_config {
+            Some(tls_config) => {
+                router
+                    .serve_with_incoming_shutdown(
+                        TlsAcceptorStream::new(tcp_listener, tls_config),
+                        graceful_shutdown_signal,
+                    )
+                    .await
             }
-            Err(e) => {
-                let msg = format!(
-                    "Failed to launch ddec server on {} with error: {:?}",
-                    local_addr, e
-                );
-                Err(anyhow_error_and_log(msg))
+            None => {
+                router
+                    .serve_with_incoming_shutdown(
+                        tokio_stream::wrappers::TcpListenerStream::new(tcp_listener),
+                        graceful_shutdown_signal,
+                    )
+                    .await
             }
         }
+        .map_err(|e| {
+            anyhow_error_and_log(format!(
+                "Failed to launch ddec server on {} with error: {:?}",
+                local_addr, e
+            ))
+        })?;
+        tracing::info!(
+            "core/threshold on {} shutdown completed successfully",
+            local_addr
+        );
+        Ok(())
     });
     let base_kms = BaseKmsStruct::new(sk)?;
 

@@ -103,8 +103,10 @@ pub fn init_kms_core_telemetry() -> anyhow::Result<(SdkTracerProvider, SdkMeterP
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
-    use crate::util::rate_limiter::RateLimiterConfig;
+    use crate::{conf::threshold::TlsCert, util::rate_limiter::RateLimiterConfig};
 
     #[test]
     fn test_threshold_config() {
@@ -121,16 +123,38 @@ mod tests {
         assert_eq!(threshold_config.peers[0].address, "p1");
         assert_eq!(threshold_config.peers[0].port, 50001);
         assert_eq!(threshold_config.peers[0].party_id, 1);
+        assert_eq!(
+            threshold_config.peers[0].tls_cert,
+            Some(TlsCert::Path(PathBuf::from(r"certs/cert_p1.pem")))
+        );
         assert_eq!(threshold_config.peers[1].address, "p2");
         assert_eq!(threshold_config.peers[1].port, 50002);
         assert_eq!(threshold_config.peers[1].party_id, 2);
+        assert_eq!(
+            threshold_config.peers[1].tls_cert,
+            Some(TlsCert::Path(PathBuf::from(r"certs/cert_p2.pem")))
+        );
         assert_eq!(threshold_config.peers[2].address, "p3");
         assert_eq!(threshold_config.peers[2].port, 50003);
         assert_eq!(threshold_config.peers[2].party_id, 3);
+        assert_eq!(
+            threshold_config.peers[2].tls_cert,
+            Some(TlsCert::Path(PathBuf::from(r"certs/cert_p3.pem")))
+        );
         assert_eq!(threshold_config.peers[3].address, "p4");
         assert_eq!(threshold_config.peers[3].port, 50004);
         assert_eq!(threshold_config.peers[3].party_id, 4);
+        assert_eq!(
+            threshold_config.peers[3].tls_cert,
+            Some(TlsCert::Path(PathBuf::from(r"certs/cert_p4.pem")))
+        );
+
         assert!(threshold_config.preproc_redis.is_none());
+        let tls_config = threshold_config.tls.unwrap();
+        assert_eq!(
+            tls_config.cert,
+            TlsCert::Path(PathBuf::from(r"certs/cert_p1.pem"))
+        );
 
         assert_eq!(
             core_config.private_vault.unwrap().storage,

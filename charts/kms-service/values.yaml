@@ -95,9 +95,38 @@ kmsCore:
     #  - id: 1
     #    host: kms-service-core-1
     #    port: 50001
+    #    ca_certificate:
+    #      pem: |
+    #        -----BEGIN CERTIFICATE-----
+    #        -----END CERTIFICATE-----
     #  - id: 2
     #    host: kms-service-core-2
     #    port: 50001
+    #    ca_certificate:
+    #      pem: |
+    #        -----BEGIN CERTIFICATE-----
+    #        -----END CERTIFICATE-----
+
+    # If enabled, the core will communicate with other cores over TLS
+    tls:
+      enabled: false
+      # Core TLS certificates and keys can be loaded from file paths or from PEM
+      # blocks NB: only PEM blocks are can be used to provide certificates to
+      # Nitro enclaves!
+      certificate:
+        pem: |
+          -----BEGIN CERTIFICATE-----
+          -----END CERTIFICATE-----
+      # Nitro enclaves will ignore this value since they generate their own
+      # attested ephemeral keypairs
+      private_key:
+        path: /my/very/secret/key.pem
+      # If set, the enclave-enabled core will only establish TLS connections
+      # with peers that have attested PCR0,1,2 values from this list
+      trusted_releases:
+        - pcr0: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+          pcr1: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+          pcr2: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
     dec_capacity: 10000
     min_dec_cache: 6000
     num_sessions_preproc: 2
@@ -113,6 +142,7 @@ kmsCore:
     memoryGiB: 20
     cid: 20
     eifPath: /app/kms/core/service/enclave.eif
+    eifSignKey: 00000000-0000-0000-0000-000000000000
     userId: 10003
     groupId: 10002
     ports:

@@ -87,13 +87,15 @@ min_dec_cache = 6000
 # will take care of bit preprocessing.
 num_sessions_preproc = 2
 
-# Path to optional TLS certificate and private key in the PEM encoding. This is
-# to used to establish mutual authentication with other cores.
-tls_cert_path = "certs/cert_p1.pem"
-tls_key_path = "certs/key_p1.pem"
-
 # The type of decryption protocol to run. Available types: NoiseFloodSmall or BitDecSmall
 decryption_mode = "NoiseFloodSmall"
+
+# Paths to optional TLS certificate and private key in the PEM
+# encoding. Alternatively, multiline blocks with PEM-formatted content. This is
+# used to establish mutual authentication with other cores.
+[threshold.tls]
+cert.path = "certs/cert_p1.pem"
+key.path = "certs/key_p1.pem"
 
 # Every core/service needs to be aware of all other core/services. In the
 # future there should be an option to load this configuration from a blockchain
@@ -107,25 +109,25 @@ decryption_mode = "NoiseFloodSmall"
 party_id = 1
 address = "p1"
 port = 50001
-tls_cert_path = "certs/cert_p1.pem"
+tls_cert.path = "certs/cert_p1.pem"
 
 [[threshold.peers]]
 party_id = 2
 address = "p2"
 port = 50002
-tls_cert_path = "certs/cert_p2.pem"
+tls_cert.path = "certs/cert_p2.pem"
 
 [[threshold.peers]]
 party_id = 3
 address = "p3"
 port = 50003
-tls_cert_path = "certs/cert_p3.pem"
+tls_cert.path = "certs/cert_p3.pem"
 
 [[threshold.peers]]
 party_id = 4
 address = "p4"
 port = 50004
-tls_cert_path = "certs/cert_p4.pem"
+tls_cert.path = "certs/cert_p4.pem"
 
 # Specify the network configuration of the core-to-core communication
 # Values below are the same as the one in the constant file for the core network

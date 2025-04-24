@@ -30,7 +30,11 @@ use rasn_cms::{
     algorithms::AES256_CBC, ContentInfo, EnvelopedData, RecipientInfo, CONTENT_DATA,
     CONTENT_ENVELOPED_DATA,
 };
-use rsa::{pkcs8::DecodePublicKey, sha2::Sha256, Oaep, RsaPrivateKey, RsaPublicKey};
+use rsa::{
+    pkcs8::{DecodePublicKey, EncodePublicKey},
+    sha2::Sha256,
+    Oaep, RsaPrivateKey, RsaPublicKey,
+};
 use serde::{de::DeserializeOwned, Serialize};
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tfhe::{named::Named, Unversionize};
@@ -145,7 +149,7 @@ impl<S: SecurityModule, K: RootKey> AWSKMSKeychain<S, K> {
         // attestation is fresh and not older than 5 minutes
         let attestation = self
             .security_module
-            .attest_rsa_pk(&self.recipient_pk)
+            .attest_pk_bytes(self.recipient_pk.to_public_key_der()?.to_vec())
             .await?;
 
         // decrypt the data key under which the app key was encrypted
@@ -196,7 +200,7 @@ impl<S: SecurityModule + Sync> Keychain for AWSKMSKeychain<S, Symm> {
         // attestation is fresh and not older than 5 minutes
         let attestation = self
             .security_module
-            .attest_rsa_pk(&self.recipient_pk)
+            .attest_pk_bytes(self.recipient_pk.to_public_key_der()?.to_vec())
             .await?;
 
         // request the data key from AWS KMS to encrypt the app key

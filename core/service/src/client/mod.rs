@@ -2234,7 +2234,7 @@ pub mod test_tools {
                 party_id: i + 1,
                 address: ip_addr.to_string(),
                 port,
-                tls_cert_path: None,
+                tls_cert: None,
             })
             .collect_vec();
 
@@ -2272,8 +2272,7 @@ pub mod test_tools {
                     my_id: i,
                     preproc_redis: None,
                     num_sessions_preproc: None,
-                    tls_cert_path: None,
-                    tls_key_path: None,
+                    tls: None,
                     peers: mpc_conf,
                     core_to_core_net: None,
                     decryption_mode,
@@ -2286,6 +2285,7 @@ pub mod test_tools {
                     cur_pub_storage,
                     cur_priv_storage,
                     None as Option<PrivS>,
+                    None,
                     run_prss,
                     rl_conf,
                     mpc_core_rx.map(drop),

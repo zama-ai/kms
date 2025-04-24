@@ -479,69 +479,69 @@ mod kms_server_binary_test {
             .success();
         run_subcommand_no_args("config/default_1.toml");
     }
-}
 
-#[test]
-#[serial_test::serial]
-fn test_cert_paths() {
-    // make a temporary directory for the certificates
-    let all_rwx = std::fs::Permissions::from_mode(0o777);
-    let temp_dir = tempfile::Builder::new()
-        .prefix(
-            &std::env::current_dir()
-                .unwrap()
-                .as_path()
-                .join("cert-paths-test"),
-        )
-        .permissions(all_rwx)
-        .tempdir()
-        .unwrap();
-    let actual_permissions = temp_dir.path().metadata().unwrap().permissions();
-    println!(
-        "temp_dir path: {:?}, permission: {:o}",
-        temp_dir.path(),
-        actual_permissions.mode()
-    );
+    #[test]
+    #[serial_test::serial]
+    fn test_cert_paths() {
+        // make a temporary directory for the certificates
+        let all_rwx = std::fs::Permissions::from_mode(0o777);
+        let temp_dir = tempfile::Builder::new()
+            .prefix(
+                &std::env::current_dir()
+                    .unwrap()
+                    .as_path()
+                    .join("cert-paths-test"),
+            )
+            .permissions(all_rwx)
+            .tempdir()
+            .unwrap();
+        let actual_permissions = temp_dir.path().metadata().unwrap().permissions();
+        println!(
+            "temp_dir path: {:?}, permission: {:o}",
+            temp_dir.path(),
+            actual_permissions.mode()
+        );
 
-    // Note that we're testing the type `CertificatePaths`
-    // which is from core/threshold but using the binary in core/service.
-    Command::cargo_bin(KMS_GEN_TLS_CERTS)
-        .unwrap()
-        .args([
-            "--ca-prefix=p",
-            "--ca-count=4",
-            "-o",
-            temp_dir.path().to_str().unwrap(),
-        ])
-        .output()
-        .expect("failed to execute process");
+        // Note that we're testing the type `CertificatePaths`
+        // which is from core/threshold but using the binary in core/service.
+        Command::cargo_bin(KMS_GEN_TLS_CERTS)
+            .unwrap()
+            .args([
+                "--ca-prefix=p",
+                "--ca-count=4",
+                "-o",
+                temp_dir.path().to_str().unwrap(),
+            ])
+            .output()
+            .expect("failed to execute process");
 
-    let cert_path = temp_dir.path().join("cert_p1.pem");
-    let key_path = temp_dir.path().join("key_p1.pem");
+        let cert_path = temp_dir.path().join("cert_p1.pem");
+        let key_path = temp_dir.path().join("key_p1.pem");
 
-    let cert_paths = CertificatePaths {
-        cert: cert_path.to_str().unwrap().to_string(),
-        key: key_path.to_str().unwrap().to_string(),
-        calist: [
-            "cert_p1.pem,",
-            "cert_p2.pem,",
-            "cert_p3.pem,",
-            "cert_p4.pem",
-        ]
-        .map(|suffix| temp_dir.path().join(suffix).to_str().unwrap().to_string())
-        .concat(),
-    };
+        let cert_paths = CertificatePaths {
+            cert: cert_path.to_str().unwrap().to_string(),
+            key: key_path.to_str().unwrap().to_string(),
+            calist: [
+                "cert_p1.pem,",
+                "cert_p2.pem,",
+                "cert_p3.pem,",
+                "cert_p4.pem",
+            ]
+            .map(|suffix| temp_dir.path().join(suffix).to_str().unwrap().to_string())
+            .concat(),
+        };
 
-    assert!(cert_paths.get_certificate().is_ok());
-    assert!(cert_paths.get_identity().is_ok());
-    assert!(cert_paths.get_flattened_ca_list().is_ok());
-    for i in 0..4 {
-        // note that party IDs start at 1
-        let pid = i + 1;
-        assert!(cert_paths.get_ca_by_name(&format!("p{pid}")).is_ok());
+        assert!(cert_paths.get_certificate().is_ok());
+        assert!(cert_paths.get_identity().is_ok());
+        assert!(cert_paths.get_flattened_ca_list().is_ok());
+        for i in 0..4 {
+            // note that party IDs start at 1
+            let pid = i + 1;
+            assert!(cert_paths.get_ca_by_name(&format!("p{pid}")).is_ok());
+        }
+        assert!(cert_paths.get_ca_by_name("p5").is_err());
+
+        // using localhost should fail too because it's not a part of the issuer
+        assert!(cert_paths.get_ca_by_name("localhost").is_err());
     }
-    assert!(cert_paths.get_ca_by_name("p5").is_err());
-
-    // using localhost should fail too because it's not a part of the issuer
-    assert!(cert_paths.get_ca_by_name("localhost").is_err());
 }

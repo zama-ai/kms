@@ -1,10 +1,15 @@
 use clap::Parser;
 use kms_lib::{
-    conf::{init_conf_kms_core_telemetry, CoreConfig},
-    cryptography::attestation::make_security_module,
-    engine::centralized::central_kms::RealCentralizedKms,
-    engine::run_server,
-    engine::threshold::service_real::threshold_server_init,
+    conf::{
+        init_conf_kms_core_telemetry,
+        threshold::{EnclaveConf, TlsCert, TlsKey},
+        CoreConfig,
+    },
+    cryptography::attestation::{make_security_module, SecurityModule},
+    engine::{
+        centralized::central_kms::RealCentralizedKms, run_server,
+        threshold::service_real::threshold_server_init,
+    },
     vault::{
         aws::build_aws_sdk_config,
         keychain::{awskms::build_aws_kms_client, make_keychain},
@@ -183,7 +188,7 @@ async fn main() -> anyhow::Result<()> {
         .as_ref()
         .and_then(|v| v.keychain.clone());
     let backup_keychain = match backup_keychain_url {
-        Some(k) => Some(make_keychain(k, awskms_client, security_module).await?),
+        Some(k) => Some(make_keychain(k, awskms_client, security_module.clone()).await?),
         None => None,
     };
     let backup_vault = core_config
@@ -256,12 +261,92 @@ async fn main() -> anyhow::Result<()> {
             let mpc_listener = TcpListener::bind(mpc_socket_addr)
                 .await
                 .unwrap_or_else(|e| panic!("Could not bind to {} \n {:?}", mpc_socket_addr, e));
+
+            // Communication between MPC parties can be optionally protected
+            // with mTLS which requires a TLS certificate valid both for server
+            // and client authentication.
+            let tls_identity = match threshold_config.tls {
+                Some(ref tls) => {
+                    let cert_bytes = match tls.cert {
+                        TlsCert::Path(ref cert_path) => std::fs::read_to_string(cert_path)
+                            .map_err(|e| {
+                                anyhow::anyhow!(
+                                    "Failed to open file {}: {}",
+                                    cert_path.display(),
+                                    e
+                                )
+                            })?,
+                        TlsCert::Pem(ref cert_bytes) => cert_bytes.to_string(),
+                    };
+                    let cert_pem = x509_parser::pem::parse_x509_pem(cert_bytes.as_ref())?.1;
+                    let cert = cert_pem.parse_x509()?;
+                    // sanity check: peerlist needs to have an entry for the
+                    // current party
+                    let my_hostname = &threshold_config
+                        .peers
+                        .iter()
+                        .find(|peer| peer.party_id == threshold_config.my_id)
+                        .expect("Peer list does not have an entry for my id")
+                        .address;
+                    let subject = threshold_fhe::networking::tls::extract_subject_from_cert(&cert)
+                        .map_err(|e| anyhow::anyhow!(e))?;
+                    if subject != *my_hostname {
+                        panic!(
+                            "Certificate subject {subject} does not match hostname {my_hostname}"
+                        );
+                    }
+                    // Our variety of mTLS can optionally use remote attestation
+                    // of the software build run by MPC parties. If remote
+                    // attestation is used, the private key should not be
+                    // supplied, since it needs to be generated inside an AWS
+                    // Nitro enclave.
+                    Some(match tls.key {
+                        TlsKey::Path(ref key_path) => {
+                            let key_bytes = std::fs::read_to_string(key_path).map_err(|e| {
+                                anyhow::anyhow!("Failed to open file {}: {}", key_path.display(), e)
+                            })?;
+                            (
+                                cert_pem,
+                                x509_parser::pem::parse_x509_pem(key_bytes.as_ref())?.1,
+                                None,
+                            )
+                        }
+                        TlsKey::Pem(ref key_bytes) => (
+                            cert_pem,
+                            x509_parser::pem::parse_x509_pem(key_bytes.as_ref())?.1,
+                            None,
+                        ),
+                        // When remote attestation is used, the enclave
+                        // generates a self-signed TLS certificate for a private
+                        // key that never leaves its memory. This certificate
+                        // includes the AWS Nitro attestation document and the
+                        // certificate used used by the MPC party to sign the
+                        // enclave image it is running.
+                        TlsKey::Enclave(EnclaveConf {
+                            ref trusted_releases,
+                        }) => {
+                            match security_module {
+                                Some(sm) => {
+                                    tracing::info!("Using wrapped TLS certificate with Nitro remote attestation");
+                                    let (cert, key) = sm.wrap_x509_cert(cert_pem).await?;
+                                    (cert, key, Some(Arc::new(trusted_releases.clone())))
+                                }
+                                None => panic!(
+                                "TLS certificate present but not private key or security module"
+                            ),
+                            }
+                        }
+                    })
+                }
+                None => None,
+            };
             let (kms, health_service) = threshold_server_init(
                 threshold_config,
                 mpc_listener,
                 public_vault,
                 private_vault,
                 backup_vault,
+                tls_identity,
                 false,
                 core_config.rate_limiter_conf,
                 std::future::pending(),

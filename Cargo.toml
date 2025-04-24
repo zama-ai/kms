@@ -58,6 +58,7 @@ prost-build = "=0.13.5"
 prost-types = "=0.13.5"
 rand = "=0.8.5"
 rayon = "=1.10.0"
+rcgen = { version = "=0.13.2" }
 reqwest = { version = "=0.12.15", default-features = false, features = [
     "json",
     "rustls-tls",
@@ -81,12 +82,15 @@ tfhe-csprng = "=0.5.0"
 tfhe-versionable = "=0.5.0"
 tfhe-zk-pok = "=0.5.0"
 tokio = { version = "=1.44.2", features = ["full"] }
+tokio-rustls = { version = "=0.26.2", default-features = false, features = ["ring"] }
+tokio-stream = "0.1.17"
 tonic = "=0.13.0"
 tonic-build = "=0.13.0"
 tracing = { version = "=0.1.41", features = ["log"] }
 tracing-appender = "=0.2.3"
 tracing-opentelemetry = "=0.30.0"
 tracing-subscriber = { version = "=0.3.19", features = ["fmt", "std"] }
+x509-parser = { version = "=0.17.0", features = ["verify"] }
 
 alloy-dyn-abi = "=1.0.0"
 alloy-primitives = "=1.0.0"

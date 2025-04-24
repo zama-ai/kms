@@ -57,6 +57,31 @@ data:
     num_sessions_preproc = {{ int .Values.kmsCore.thresholdMode.num_sessions_preproc }}
     decryption_mode = {{ .Values.kmsCore.thresholdMode.decryption_mode | quote }}
 
+    {{ if $.Values.kmsCore.thresholdMode.tls.enabled }}
+    [threshold.tls]
+    {{- if .Values.kmsCore.thresholdMode.tls.certificate.path }}
+    cert.path = {{ .Values.kmsCore.thresholdMode.tls.certificate.path | quote }}
+    {{- else }}
+    cert.pem = {{ .Values.kmsCore.thresholdMode.tls.certificate.pem | toToml }}
+    {{- end }}
+    {{- if $.Values.kmsCore.nitroEnclave.enabled }}
+    {{- if .Values.kmsCore.thresholdMode.tls.trusted_releases }}
+    {{ range .Values.kmsCore.thresholdMode.tls.trusted_releases }}
+    [[threshold.tls.key.enclave.trusted_releases]]
+    pcr0 = {{ .pcr0 | quote }}
+    pcr1 = {{ .pcr1 | quote }}
+    pcr2 = {{ .pcr2 | quote }}
+    {{- end }}
+    {{- end }}
+    {{- else }}
+    {{- if .Values.kmsCore.thresholdMode.tls.private_key.path }}
+    key.path = {{ .Values.kmsCore.thresholdMode.tls.private_key.path | quote }}
+    {{- else }}
+    key.pem = {{ .Values.kmsCore.thresholdMode.tls.private_key.pem | toToml }}
+    {{- end }}
+    {{- end }}
+    {{- end }}
+    
     {{- if .Values.kmsCore.thresholdMode.peersList }}
     {{ range .Values.kmsCore.thresholdMode.peersList }}
     [[threshold.peers]]
@@ -67,6 +92,13 @@ data:
     {{- else }}
     address = {{ .host | quote }}
     port = {{ int .port }}
+    {{- end }}
+    {{- if $.Values.kmsCore.thresholdMode.tls.enabled }}
+    {{- if .ca_certificate.path }}
+    tls_cert.path = {{ .ca_certificate.path | quote }}
+    {{- else }}
+    tls_cert.pem = {{ .ca_certificate.pem | toToml }}
+    {{- end }}
     {{- end }}
     {{- end }}
     {{- end }}
@@ -136,5 +168,8 @@ data:
       "enclave_cid": {{ int .Values.kmsCore.nitroEnclave.cid }},
       "eif_path": {{ .Values.kmsCore.nitroEnclave.eifPath | quote }}
     }
-  {{- end }}
+    {{- if .Values.kmsCore.thresholdMode.tls.enabled }}
+  party_cert.pem: {{ .Values.kmsCore.thresholdMode.tls.certificate.pem | toYaml | indent 2 }}
+    {{- end }}
+    {{- end }}
 {{- end -}}

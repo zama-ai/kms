@@ -1,3 +1,4 @@
+
 ARG IMAGE_NAME=kms-service
 ARG IMAGE_TAG=latest
 ARG RUST_IMAGE_VERSION=latest
@@ -9,7 +10,7 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/apt apt update && \
     apt install -y make git libssl-dev pkg-config
 
 WORKDIR /build
-RUN git clone https://github.com/aws/aws-nitro-enclaves-cli --branch v1.3.3 --single-branch
+RUN git clone https://github.com/aws/aws-nitro-enclaves-cli --branch v1.4.2 --single-branch
 
 WORKDIR aws-nitro-enclaves-cli
 RUN make nitro-cli-native

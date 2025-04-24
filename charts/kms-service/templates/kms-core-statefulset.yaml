@@ -279,6 +279,9 @@ spec:
               nitro-cli describe-eif --eif-path {{ .Values.kmsCore.nitroEnclave.eifPath }}
               echo "### END - describe-eif ###"
               {{- end }}
+              {{- if .Values.kmsCore.thresholdMode.tls.enabled }}
+              nitro-cli sign-eif --eif-path {{ .Values.kmsCore.nitroEnclave.eifPath }} --signing-certificate /var/lib/kms-core/config/party_cert.pem --private-key {{ .Values.kmsCore.nitroEnclave.eifSignKey }}
+              {{- end }}
               nitro-cli run-enclave --config /var/lib/kms-core/config/enclave.json
               while true; do
                 nitro-cli describe-enclaves > /var/log/nitro_enclaves/status

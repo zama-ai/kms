@@ -1,17 +1,19 @@
 use serde::{Deserialize, Serialize};
-use threshold_fhe::conf::party::CertificatePaths;
+use std::path::PathBuf;
 use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
 use threshold_fhe::execution::online::preprocessing::redis::RedisConf;
 use threshold_fhe::execution::runtime::party::{Identity, Role};
-use threshold_fhe::networking::grpc::CoreToCoreNetworkConfig;
+use threshold_fhe::networking::{grpc::CoreToCoreNetworkConfig, tls::ReleasePCRValues};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct ThresholdPartyConf {
-    // endpoint for incoming peer requests
+    // network interface for MPC communication
     pub listen_address: String,
-    // endpoint for the communication between the MPC servers
+    // port for MPC communication
     pub listen_port: u16,
+    // TLS identity if MPC communication should use TLS
+    pub tls: Option<TlsConf>,
 
     pub threshold: u8,
     pub my_id: usize,
@@ -19,31 +21,43 @@ pub struct ThresholdPartyConf {
     pub min_dec_cache: usize,
     pub preproc_redis: Option<RedisConf>,
     pub num_sessions_preproc: Option<u16>,
-    pub tls_cert_path: Option<String>,
-    pub tls_key_path: Option<String>,
     pub peers: Vec<PeerConf>,
     pub core_to_core_net: Option<CoreToCoreNetworkConfig>,
     pub decryption_mode: DecryptionMode,
 }
 
-impl ThresholdPartyConf {
-    pub fn get_tls_cert_paths(&self) -> Option<CertificatePaths> {
-        let cert_paths: Option<Vec<String>> =
-            self.peers.iter().map(|c| c.tls_cert_path.clone()).collect();
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct TlsConf {
+    pub cert: TlsCert,
+    pub key: TlsKey,
+}
 
-        match (
-            cert_paths,
-            self.tls_cert_path.clone(),
-            self.tls_key_path.clone(),
-        ) {
-            (Some(paths), Some(cert), Some(key)) => Some(CertificatePaths {
-                cert,
-                key,
-                calist: paths.join(","),
-            }),
-            _ => None,
-        }
-    }
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "lowercase")]
+pub enum TlsCert {
+    Path(PathBuf),
+    Pem(String),
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "lowercase")]
+pub enum TlsKey {
+    Path(PathBuf),
+    Pem(String),
+    // If set, the party will generate a keypair inside of the enclave and
+    // issues a self-signed TLS certificate for it that bundles the certificate
+    // used to sign the party enclave image and the attestation document
+    Enclave(EnclaveConf),
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct EnclaveConf {
+    // If `trusted_releases` is set, the party will drop incoming messages from
+    // parties that cannot provide AWS Nitro attestation documents with these
+    // PCR values
+    pub trusted_releases: Vec<ReleasePCRValues>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -52,7 +66,7 @@ pub struct PeerConf {
     pub party_id: usize,
     pub address: String,
     pub port: u16,
-    pub tls_cert_path: Option<String>,
+    pub tls_cert: Option<TlsCert>,
 }
 
 impl PeerConf {

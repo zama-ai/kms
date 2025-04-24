@@ -13,6 +13,7 @@ aes.workspace = true
 aes-prng.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
+attestation-doc-validation = { version = "=0.10.0", optional = true }
 backoff = { workspace = true, features = ["tokio"], optional = true }
 bincode.workspace = true
 cfg-if.workspace = true
@@ -28,6 +29,8 @@ dashmap = "=6.1.0"
 derive_more = { version = "=2.0.1", features = ["display"] }
 futures.workspace = true
 g2p = "=1.2.2"
+hex = { version = "=0.4.3", features = ["serde"] }
+hyper-rustls = { version = "=0.27.5", default-features = false, features = ["http2", "ring"] , optional = true }
 itertools.workspace = true
 lazy_static.workspace = true
 minijinja = { version = "=2.9.0", features = ["loader"], optional = true }
@@ -35,6 +38,7 @@ mockall.workspace = true
 ndarray = { version = "=0.16.1", features = ["serde"] }
 num-integer = "=0.1.46"
 num-traits = "=0.2.19"
+oid-registry = "=0.8.1"
 opentelemetry = { workspace = true, optional = true }
 paste = "=1.0.15"
 peak_alloc = { version = "=0.2.1", optional = true }
@@ -42,9 +46,10 @@ prost.workspace = true
 rand.workspace = true
 rayon.workspace = true
 redis = { version = "=0.29.5", optional = true }
-rcgen = { version = "=0.13.2", optional = true }
+rcgen = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
+sha2.workspace = true
 sha3.workspace = true
 strum = { workspace = true, features = ["derive"] }
 strum_macros.workspace = true
@@ -54,10 +59,13 @@ tokio = { workspace = true, features = [
     "macros",
     "time",
 ], optional = true }
+tokio-rustls = { workspace = true, optional = true }
+tokio-stream.workspace = true
 tonic = { workspace = true, features = ["tls-ring"], optional = true }
 tonic-health = { workspace = true, optional = true }
 tower = { workspace = true, features = ["retry", "timeout"], optional = true }
 tower-http = { workspace = true, features = ["trace"], optional = true }
+tower-service = "=0.3.3"
 tfhe = { workspace = true, features = [
     "boolean",
     "shortint",
@@ -66,7 +74,7 @@ tfhe = { workspace = true, features = [
 ] }
 tfhe-csprng.workspace = true
 tracing = { workspace = true, features = ["log"] }
-x509-parser = "=0.17.0"
+x509-parser = { workspace = true, optional = true }
 zeroize = { version = "=1.8.1", features = ["zeroize_derive"] }
 tfhe-zk-pok = { workspace = true, optional = true }
 tfhe-versionable.workspace = true
@@ -88,7 +96,6 @@ serial_test.workspace = true
 tempfile.workspace = true
 tracing-test = "=0.2.5"
 webpki = { version = "=0.22.4", features = ["std"] }
-rustls = { version = "=0.23.26", default-features = false, features = ["std"] }
 # "self-import" needed for integration test
 threshold-fhe = { workspace = true, features = ["testing"] }
 
@@ -177,8 +184,11 @@ measure_memory = ["dep:peak_alloc", "choreographer"]
 # namely libraries that doesn't work on 32-bit architectures
 # or uses tokio
 non-wasm = [
+    "dep:attestation-doc-validation",
     "dep:conf-trace",
+    "dep:hyper-rustls",
     "dep:tokio",
+    "dep:tokio-rustls",
     "dep:tonic",
     "dep:tonic-health",
     "dep:backoff",
@@ -188,6 +198,7 @@ non-wasm = [
     "dep:redis",
     "dep:rcgen",
     "dep:tfhe-zk-pok",
+    "dep:x509-parser",
 ]
 all_extension_degrees = [
     "extension_degree_3",

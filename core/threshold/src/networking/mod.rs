@@ -15,6 +15,7 @@ pub mod constants;
 pub mod grpc;
 pub mod local;
 pub mod sending_service;
+pub mod tls;
 pub mod value;
 
 pub type NetworkingStrategy = Box<

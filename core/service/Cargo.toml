@@ -70,10 +70,10 @@ rand = { workspace = true, features = ["std", "std_rng"] }
 rasn = "=0.20.2"
 rasn-cms = "=0.20.2"
 rayon.workspace = true
+rcgen = { workspace = true, optional = true }
 rsa = { version = "=0.9.8", features = ["sha2"] }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
-
 sha3.workspace = true
 signature = "=2.2.0"
 strum.workspace = true
@@ -90,7 +90,8 @@ tokio = { workspace = true, features = [
     "macros",
     "rt-multi-thread",
 ], optional = true }
-tokio-stream = "0.1.17"
+tokio-rustls = { workspace = true, optional = true }
+tokio-stream.workspace = true
 tokio-util = { version = "=0.7.14", features = ["rt"] }
 tonic = { workspace = true, optional = true }
 tonic-health = { workspace = true, optional = true }
@@ -100,6 +101,7 @@ tracing = { workspace = true, features = ["log"] }
 url = { version = "=2.5.4", features = ["serde"] }
 futures-util = "=0.3.31"
 ordermap = "=0.5.7"
+x509-parser = { workspace = true, optional = true }
 
 # [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = { version = "=0.1.7" }
@@ -142,11 +144,14 @@ non-wasm = [
     "dep:aws-smithy-types",
     "dep:hyper-rustls",
     "dep:conf-trace",
+    "dep:rcgen",
     "dep:tokio",
+    "dep:tokio-rustls",
     "dep:tonic",
     "dep:tonic-health",
     "dep:tower",
     "dep:tower-http",
+    "dep:x509-parser",
 ]
 slow_tests = ["testing"]
 wasm_tests = ["testing"]

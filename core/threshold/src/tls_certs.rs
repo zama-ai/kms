@@ -327,7 +327,7 @@ mod tests {
         let core_certs = create_core_certs(ca_name, 2, &ca_keypair, &ca_cert).unwrap();
 
         // check that we can import the CA cert into the trust store
-        let mut root_store = rustls::RootCertStore::empty();
+        let mut root_store = tokio_rustls::rustls::RootCertStore::empty();
         let cc = (*ca_cert.der()).clone();
         root_store.add(cc).unwrap();
 
@@ -357,7 +357,7 @@ mod tests {
         let (_ca_keypair, ca_cert) = create_ca_cert(ca_name, &is_ca).unwrap();
 
         // check that we can import the CA cert into the trust store
-        let mut root_store = rustls::RootCertStore::empty();
+        let mut root_store = tokio_rustls::rustls::RootCertStore::empty();
         let cc = (*ca_cert.der()).clone();
         root_store.add(cc).unwrap();
 

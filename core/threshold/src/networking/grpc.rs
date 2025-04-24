@@ -12,8 +12,8 @@ use super::constants::{
     NETWORK_TIMEOUT_ASYNC, NETWORK_TIMEOUT_BK, NETWORK_TIMEOUT_BK_SNS, NETWORK_TIMEOUT_LONG,
 };
 use super::sending_service::{GrpcSendingService, NetworkSession, SendingService};
+use super::tls::{extract_subject_from_cert, SendingServiceTLSConfig};
 use super::NetworkMode;
-use crate::conf::party::CertificatePaths;
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::runtime::party::{Identity, RoleAssignment};
 use crate::networking::Networking;
@@ -22,14 +22,14 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use std::sync::RwLock;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::Mutex;
 use tokio::time::Duration;
-use tonic::transport::Certificate;
+use x509_parser::parse_x509_certificate;
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct CoreToCoreNetworkConfig {
     pub message_limit: u64,
     pub multiplier: f64,
@@ -139,15 +139,15 @@ impl GrpcNetworkingManager {
     /// Owner should be the external address
     pub fn new(
         owner: Identity,
-        cert_bundle: Option<CertificatePaths>,
+        tls_conf: Option<SendingServiceTLSConfig>,
         conf: Option<CoreToCoreNetworkConfig>,
-    ) -> Self {
-        GrpcNetworkingManager {
+    ) -> anyhow::Result<Self> {
+        Ok(GrpcNetworkingManager {
             message_queues: Default::default(),
             owner,
             conf: OptionConfigWrapper { conf },
-            sending_service: GrpcSendingService::new(cert_bundle, conf),
-        }
+            sending_service: GrpcSendingService::new(tls_conf, conf)?,
+        })
     }
 
     /// Create a new session from the network manager.
@@ -252,9 +252,26 @@ impl Gnetworking for NetworkingImpl {
         // in this case it's party1.com.
         // We also require party1.com to be the subject and the issuer CN too,
         // since we're using self-signed certificates at the moment.
-        let valid_tls_senders = extract_valid_sender_sans(&request)
-            .map_err(|e| tonic::Status::new(tonic::Code::Aborted, e))?;
-        tracing::debug!("extract_valid_sender_sans returned {:?}", valid_tls_senders);
+        let valid_tls_sender = request
+            .peer_certs()
+            .map(|certs| {
+                if certs.len() != 1 {
+                    // it shouldn't happen because we expect TLS certificates to
+                    // be signed by party CA certificates directly, without any
+                    // intermediate CAs
+                    tracing::warn!(
+                        "Received more than one certificate from peer, checking the first one only"
+                    );
+                }
+
+                parse_x509_certificate(certs[0].as_ref())
+                    .map_err(|e| tonic::Status::new(tonic::Code::Aborted, e.to_string()))
+                    .and_then(|(_rem, cert)| {
+                        extract_subject_from_cert(&cert)
+                            .map_err(|e| tonic::Status::new(tonic::Code::Aborted, e.to_string()))
+                    })
+            })
+            .transpose()?;
 
         let request = request.into_inner();
         let tag = bincode::deserialize::<Tag>(&request.tag).map_err(|_e| {
@@ -274,7 +291,7 @@ impl Gnetworking for NetworkingImpl {
             };
         }
 
-        if let Some(sender) = valid_tls_senders {
+        if let Some(sender) = valid_tls_sender {
             // tag.sender has the form hostname:port
             // we remove the port component since the tls_sender does not have it
             let host_and_port: Vec<_> = tag.sender.0.split(':').collect();
@@ -337,92 +354,6 @@ impl Gnetworking for NetworkingImpl {
         tracing::error!(msg);
         Err(tonic::Status::new(tonic::Code::NotFound, msg))
     }
-}
-
-/// returns the list of accepted sender SANs that is contained in the request's client peer certificates
-fn extract_valid_sender_sans<T>(request: &tonic::Request<T>) -> Result<Option<String>, String> {
-    match request.peer_certs() {
-        None => Ok(None),
-        Some(certs) => {
-            // Convert CertificateDer to tonic Certificate - since Certificate is just a wrapper
-            // around Vec<u8>, we can create it directly from the DER bytes
-            let cert_slice: Vec<Certificate> = certs
-                .iter()
-                .map(|c| Certificate::from_pem(c.as_ref()))
-                .collect();
-
-            // Extract SAN from the converted certificates
-            let san_strings = extract_san_from_certs(&cert_slice, false)?;
-            Ok(Some(san_strings))
-        }
-    }
-}
-
-/// Extract the party name from the certificate.
-///
-/// Each party should have its own self-signed certificate.
-/// Each self-signed certificate is loaded into the trust store of all the parties.
-pub fn extract_san_from_certs(certs: &[Certificate], use_pem: bool) -> Result<String, String> {
-    if certs.len() != 1 {
-        return Err(format!(
-            "cannot extract identity from certificate chain of length {:?}",
-            certs.len()
-        ));
-    }
-
-    let (pem_cert, der_cert) = if use_pem {
-        let (_rem, c) = x509_parser::pem::parse_x509_pem(certs[0].as_ref())
-            .map_err(|err| format!("failed to parse X509 certificate: {:?}", err.to_string()))?;
-        (Some(c), None)
-    } else {
-        let (_rem, c) = x509_parser::parse_x509_certificate(certs[0].as_ref())
-            .map_err(|err| format!("failed to parse X509 certificate: {:?}", err.to_string()))?;
-        (None, Some(c))
-    };
-
-    let cert = match (&pem_cert, &der_cert) {
-        (Some(pem_cert), None) => pem_cert.parse_x509().map_err(|e| e.to_string())?,
-        (None, Some(der_cert)) => der_cert.clone(),
-        _ => return Err("internal logic error when parsing certificates".to_string()),
-    };
-
-    let Some(sans) = cert.subject_alternative_name().map_err(|e| e.to_string())? else {
-        return Err("SAN not specified".to_string());
-    };
-    let san_strings: Vec<_> = sans
-        .value
-        .general_names
-        .iter()
-        .filter_map(|san| match san {
-            x509_parser::extensions::GeneralName::DNSName(s) => Some(*s),
-            _ => None,
-        })
-        .collect();
-
-    if san_strings.is_empty() {
-        return Err("No valid SAN found".to_string());
-    }
-
-    // find the subject and issuer CN, check there's a matching name in SAN list
-    let Some(subject) = cert.subject().iter_common_name().next() else {
-        return Err("Bad certificate: missing subject".to_owned());
-    };
-    let subject_str = subject.as_str().map_err(|e| e.to_string())?;
-
-    let Some(issuer) = cert.issuer().iter_common_name().next() else {
-        return Err("Bad certificate: missing issuer".to_owned());
-    };
-    let issuer_str = issuer.as_str().map_err(|e| e.to_string())?;
-
-    if subject_str != issuer_str {
-        return Err("Subject CN does not match issuer CN".to_owned());
-    }
-
-    if !san_strings.contains(&subject_str) {
-        return Err("Subject CN not found in SAN".to_owned());
-    }
-
-    Ok(subject_str.to_string())
 }
 
 #[derive(Serialize, Deserialize, Debug)]
