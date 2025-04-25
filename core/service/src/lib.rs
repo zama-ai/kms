@@ -29,7 +29,6 @@ pub mod cryptography {
 }
 #[cfg(feature = "non-wasm")]
 pub mod conf;
-#[cfg(feature = "non-wasm")]
 pub mod engine;
 #[cfg(feature = "non-wasm")]
 pub mod vault;

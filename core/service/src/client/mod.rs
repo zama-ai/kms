@@ -7,7 +7,10 @@ use crate::cryptography::signcryption::{
     decrypt_signcryption_with_link, ephemeral_encryption_key_generation,
     insecure_decrypt_ignoring_signature, internal_verify_sig,
 };
-use crate::{anyhow_error_and_log, compute_reenc_message_hash, some_or_err};
+use crate::engine::validation::{
+    check_ext_reencryption_signature, validate_reenc_responses_against_request,
+};
+use crate::{anyhow_error_and_log, some_or_err};
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
@@ -18,11 +21,9 @@ use kms_grpc::kms::v1::{
     TypedCiphertext, TypedPlaintext,
 };
 use kms_grpc::rpc_types::{
-    alloy_to_protobuf_domain, fhe_types_to_num_blocks, FheTypeResponse, MetaResponse,
-    UserDecryptionLinker,
+    alloy_to_protobuf_domain, fhe_types_to_num_blocks, UserDecryptionLinker,
 };
 use rand::SeedableRng;
-use std::collections::HashSet;
 use std::num::Wrapping;
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::FheTypes;
@@ -210,6 +211,10 @@ impl ParsedReencryptionRequest {
             ciphertext_handles,
             eip712_verifying_contract,
         }
+    }
+
+    pub fn enc_key(&self) -> &[u8] {
+        &self.enc_key
     }
 }
 
@@ -1162,187 +1167,6 @@ impl Client {
         }
     }
 
-    /// Validates the aggregated reencryption responses received from the servers
-    /// against the given reencryption request. Returns the validated responses
-    /// mapped to the server ID on success.
-    fn validate_reenc_req_resp(
-        &self,
-        client_request: &ParsedReencryptionRequest,
-        eip712_domain: &Eip712Domain,
-        agg_resp: &[ReencryptionResponse],
-    ) -> anyhow::Result<Option<Vec<ReencryptionResponsePayload>>> {
-        let resp_parsed = some_or_err(
-            self.validate_reenc_resp(client_request, eip712_domain, agg_resp)?,
-            "Could not validate the aggregated responses".to_string(),
-        )?;
-        let expected_link = compute_link(client_request, eip712_domain)?;
-        let pivot_resp = resp_parsed[0].clone();
-        if expected_link != pivot_resp.digest {
-            tracing::warn!("The reencryption response is not linked to the correct request");
-            return Ok(None);
-        }
-
-        Ok(Some(resp_parsed))
-    }
-
-    fn validate_reenc_resp(
-        &self,
-        client_request: &ParsedReencryptionRequest,
-        eip712_domain: &Eip712Domain,
-        agg_resp: &[ReencryptionResponse],
-    ) -> anyhow::Result<Option<Vec<ReencryptionResponsePayload>>> {
-        if agg_resp.is_empty() {
-            tracing::warn!("There are no responses");
-            return Ok(None);
-        }
-        // TODO pivot should actually be picked as the most common response instead of just an
-        // arbitrary one. The same in decryption
-        // Pick a pivot response
-        let mut option_pivot_payloads: Option<ReencryptionResponsePayload> = None;
-        let mut resp_parsed_payloads = Vec::with_capacity(agg_resp.len());
-        let mut party_ids = HashSet::new();
-        let mut verification_keys = HashSet::new();
-
-        for cur_resp in agg_resp {
-            let cur_payload = match &cur_resp.payload {
-                Some(cur_payload) => cur_payload,
-                None => {
-                    tracing::warn!("No payload in current response from server!");
-                    continue;
-                }
-            };
-
-            // Set the first existing element as pivot
-            let pivot_payload = match &option_pivot_payloads {
-                Some(pivot_resp) => pivot_resp,
-                None => {
-                    // need to clone here because `option_pivot_payload` is larger scope
-                    option_pivot_payloads = Some(cur_payload.clone());
-                    cur_payload
-                }
-            };
-
-            // Validate that all the responses agree with the pivot on the static parts of the
-            // response
-            if !self.validate_reenc_meta_data_and_signature(
-                client_request,
-                pivot_payload,
-                cur_payload,
-                &cur_resp.signature,
-                &cur_resp.external_signature,
-                eip712_domain,
-            )? {
-                tracing::warn!(
-                    "Server who gave ID {} did not provide the proper response!",
-                    cur_payload.party_id
-                );
-                continue;
-            }
-            if pivot_payload.degree != cur_payload.degree {
-                tracing::warn!(
-                    "Server who gave ID {} gave degree {} which is inconsistent with the pivot response",
-                    cur_payload.party_id, cur_payload.degree
-                );
-                continue;
-            }
-            // Sanity check the ID of the server.
-            // However, this will not catch all cheating since a server could claim the ID of another server
-            // and we can't know who lies without consulting the verification key to ID mapping on the blockchain.
-            // Furthermore, observe that we assume the optimal threshold is set.
-            if cur_payload.party_id > cur_payload.degree * 3 + 1 {
-                tracing::warn!(
-                    "Server who gave ID {} is too large. The largest allowed id {}",
-                    cur_payload.party_id,
-                    cur_payload.degree * 3 + 1
-                );
-                continue;
-            }
-            if cur_payload.party_id == 0 {
-                tracing::warn!("A server ID is set to 0");
-                continue;
-            }
-            if party_ids.contains(&cur_payload.party_id) {
-                tracing::warn!(
-                    "At least two servers gave the same ID {}",
-                    cur_payload.party_id,
-                );
-                continue;
-            }
-
-            // Check that verification keys are unique
-            party_ids.insert(cur_payload.party_id);
-            if verification_keys.contains(&cur_payload.verification_key) {
-                tracing::warn!(
-                    "At least two servers gave the same verification key {}",
-                    hex::encode(&cur_payload.verification_key),
-                );
-                continue;
-            }
-
-            if !pivot_payload
-                .signcrypted_ciphertexts
-                .iter()
-                .map(|ct| ct.packing_factor)
-                .zip(
-                    cur_payload
-                        .signcrypted_ciphertexts
-                        .iter()
-                        .map(|ct| ct.packing_factor),
-                )
-                .all(|(left, right)| left == right)
-            {
-                tracing::warn!("Inconsistent packing factor for {}", cur_payload.party_id);
-                continue;
-            }
-
-            // only add the verified keys and responses at the end
-            verification_keys.insert(cur_payload.verification_key.clone());
-            resp_parsed_payloads.push(cur_payload.clone());
-        }
-        if option_pivot_payloads.is_some_and(|x| resp_parsed_payloads.len() < x.degree as usize) {
-            tracing::warn!("Not enough correct responses to reencrypt the data!");
-            return Ok(None);
-        }
-        Ok(Some(resp_parsed_payloads))
-    }
-
-    /// check that the external signature on the decryption result(s) is valid, i.e. was made by one of the supplied addresses
-    fn check_ext_reencryption_signature(
-        external_sig: &[u8],
-        payload: &ReencryptionResponsePayload,
-        request: &ParsedReencryptionRequest,
-        eip712_domain: &Eip712Domain,
-        kms_addrs: &[alloy_primitives::Address],
-    ) -> anyhow::Result<()> {
-        // convert received data into proper format for EIP-712 verification
-        if external_sig.len() != 65 {
-            return Err(anyhow::anyhow!(
-                "Expected external signature of length 65 Bytes, but got {:?}",
-                external_sig.len()
-            ));
-        }
-        // this reverses the call to `signature.as_bytes()` that we use for serialization
-        let sig = alloy_signer::Signature::from_bytes_and_parity(
-            external_sig,
-            external_sig[64] & 0x01 == 0,
-        );
-
-        let user_pk: PublicEncKey = bincode::deserialize(&request.enc_key)?;
-        let hash = compute_reenc_message_hash(payload, eip712_domain, &user_pk)?;
-
-        let addr = sig.recover_address_from_prehash(&hash)?;
-        tracing::info!("recovered address: {}", addr);
-
-        // check that the address is in the list of known KMS addresses
-        if kms_addrs.contains(&addr) {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!(
-                "External PT signature verification failed!"
-            ))
-        }
-    }
-
     /// Decrypt the reencryption response from the centralized KMS and verify that the signatures are valid
     fn centralized_reencryption_resp(
         &self,
@@ -1395,7 +1219,7 @@ impl Client {
                 return Err(anyhow_error_and_log("empty signature"));
             }
 
-            Self::check_ext_reencryption_signature(
+            check_ext_reencryption_signature(
                 eip712_signature,
                 &payload,
                 request,
@@ -1460,7 +1284,12 @@ impl Client {
         client_keys: &SigncryptionPair,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let validated_resps = some_or_err(
-            self.validate_reenc_req_resp(client_request, eip712_domain, agg_resp)?,
+            validate_reenc_responses_against_request(
+                self.get_server_addrs()?,
+                client_request,
+                eip712_domain,
+                agg_resp,
+            )?,
             "Could not validate request".to_owned(),
         )?;
         let degree = some_or_err(
@@ -1875,86 +1704,6 @@ impl Client {
 
     pub fn get_client_address(&self) -> alloy_primitives::Address {
         self.client_address
-    }
-
-    fn validate_reenc_meta_data_and_signature(
-        &self,
-        client_request: &ParsedReencryptionRequest,
-        pivot_resp: &ReencryptionResponsePayload,
-        other_resp: &ReencryptionResponsePayload,
-        signature: &[u8],
-        external_signature: &[u8],
-        eip712_domain: &Eip712Domain,
-    ) -> anyhow::Result<bool> {
-        let types_1 = pivot_resp.fhe_types()?;
-        let types_2 = other_resp.fhe_types()?;
-        if types_1.len() != types_2.len() || types_1.is_empty() || types_2.is_empty() {
-            tracing::warn!("incorrect lengths: {}, {}", types_1.len(), types_2.len());
-            return Ok(false);
-        }
-        for i in 0..types_1.len() {
-            if types_1[i] != types_2[i] {
-                tracing::warn!(
-                    "Response from server with verification key {:?} gave fhe type {:?}, whereas the pivot server's fhe type is {:?} and its verification key is {:?}",
-                    pivot_resp.verification_key(),
-                    types_1[i],
-                    types_2[i],
-                    other_resp.verification_key()
-                );
-                return Ok(false);
-            }
-        }
-        if pivot_resp.digest() != other_resp.digest() {
-            tracing::warn!(
-                    "Response from server with verification key {:?} gave digest {:?}, whereas the pivot server gave digest {:?}, and its verification key is {:?}",
-                    pivot_resp.verification_key(),
-                    pivot_resp.digest(),
-                    other_resp.digest(),
-                    other_resp.verification_key()
-                );
-            return Ok(false);
-        }
-
-        let resp_verf_key: PublicSigKey = deserialize(other_resp.verification_key())?;
-        let resp_addr = alloy_signer::utils::public_key_to_address(resp_verf_key.pk());
-
-        let stored_server_addrs = self.get_server_addrs()?;
-        if !stored_server_addrs.contains(&resp_addr) {
-            tracing::warn!("Server address is incorrect in reencryption request");
-            return Ok(false);
-        }
-
-        // Prefer ECDSA signature over the eip712 one
-        if signature.is_empty() {
-            // check signature
-            if external_signature.is_empty() {
-                return Err(anyhow_error_and_log("empty signature"));
-            }
-
-            Self::check_ext_reencryption_signature(
-                external_signature,
-                other_resp,
-                client_request,
-                eip712_domain,
-                stored_server_addrs,
-            )
-            .inspect_err(|e| {
-                tracing::warn!("signature on received response is not valid ({})", e)
-            })?;
-        } else {
-            let sig = Signature {
-                sig: k256::ecdsa::Signature::from_slice(signature)?,
-            };
-            // NOTE that we cannot use `BaseKmsStruct::verify_sig`
-            // because `BaseKmsStruct` cannot be compiled for wasm (it has an async mutex).
-            if internal_verify_sig(&bincode::serialize(&other_resp)?, &sig, &resp_verf_key).is_err()
-            {
-                tracing::warn!("Signature on received response is not valid!");
-                return Ok(false);
-            }
-        }
-
-        Ok(true)
     }
 }
 

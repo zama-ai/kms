@@ -1,6 +1,5 @@
 use crate::kms::v1::{
-    DecryptionResponsePayload, Eip712DomainMsg, RequestId, TypedCiphertext, TypedPlaintext,
-    TypedSigncryptedCiphertext,
+    Eip712DomainMsg, RequestId, TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
 };
 use crate::kms::v1::{ReencryptionResponsePayload, SignedPubDataHandle};
 use alloy_primitives::{Address, B256, U256};
@@ -858,23 +857,8 @@ impl From<bool> for TypedPlaintext {
     }
 }
 
-pub trait MetaResponse {
-    fn verification_key(&self) -> &[u8];
-    fn digest(&self) -> &[u8];
-}
-
 pub trait FheTypeResponse {
     fn fhe_types(&self) -> anyhow::Result<Vec<FheTypes>>;
-}
-
-impl MetaResponse for ReencryptionResponsePayload {
-    fn verification_key(&self) -> &[u8] {
-        &self.verification_key
-    }
-
-    fn digest(&self) -> &[u8] {
-        &self.digest
-    }
 }
 
 impl TypedSigncryptedCiphertext {
@@ -911,16 +895,6 @@ impl FheTypeResponse for ReencryptionResponsePayload {
             .iter()
             .map(|x| x.fhe_type())
             .collect::<Result<Vec<_>, _>>()
-    }
-}
-
-impl MetaResponse for DecryptionResponsePayload {
-    fn verification_key(&self) -> &[u8] {
-        &self.verification_key
-    }
-
-    fn digest(&self) -> &[u8] {
-        &self.digest
     }
 }
 

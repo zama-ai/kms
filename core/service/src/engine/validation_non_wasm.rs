@@ -6,7 +6,7 @@ use kms_grpc::{
         DecryptionRequest, DecryptionResponse, DecryptionResponsePayload, ReencryptionRequest,
         RequestId, TypedCiphertext,
     },
-    rpc_types::{protobuf_to_alloy_domain_option, MetaResponse},
+    rpc_types::protobuf_to_alloy_domain_option,
 };
 use tonic::Status;
 
@@ -205,25 +205,31 @@ pub(crate) fn verify_reencryption_eip712(
 /// This function checks that the digest in [other_resp] matches [pivot_resp],
 /// [other_resp] contains one of the valid [server_pks] and the signature
 /// is correct with respect to this key.
-pub(crate) fn validate_dec_meta_data<T: MetaResponse + serde::Serialize>(
+fn validate_dec_meta_data(
     server_pks: &[PublicSigKey],
-    pivot_resp: &T,
-    other_resp: &T,
+    pivot_resp: &DecryptionResponsePayload,
+    other_resp: &DecryptionResponsePayload,
     signature: &[u8],
 ) -> anyhow::Result<bool> {
-    if pivot_resp.digest() != other_resp.digest() {
+    if pivot_resp.digest != other_resp.digest {
         tracing::warn!(
                     "Response from server with verification key {:?} gave digest {:?}, whereas the pivot server gave digest {:?}, and its verification key is {:?}",
-                    pivot_resp.verification_key(),
-                    pivot_resp.digest(),
-                    other_resp.digest(),
-                    other_resp.verification_key()
+                    pivot_resp.verification_key,
+                    pivot_resp.digest,
+                    other_resp.digest,
+                    other_resp.verification_key
                 );
         return Ok(false);
     }
-    let resp_verf_key: PublicSigKey = bincode::deserialize(other_resp.verification_key())?;
+    let resp_verf_key: PublicSigKey = bincode::deserialize(&other_resp.verification_key)?;
     if !server_pks.contains(&resp_verf_key) {
         tracing::warn!("Server key is unknown or incorrect.");
+        return Ok(false);
+    }
+
+    // the plaintexts should match
+    if pivot_resp.plaintexts != other_resp.plaintexts {
+        tracing::warn!("Plaintext does not match the pivot.");
         return Ok(false);
     }
 
@@ -244,7 +250,7 @@ pub(crate) fn validate_dec_meta_data<T: MetaResponse + serde::Serialize>(
 /// on every response. Additionally, ensure that verification keys are unique.
 ///
 /// TODO: we should pick a pivot where t + 1 parties agree on.
-pub(crate) fn validate_dec_responses(
+fn validate_dec_responses(
     server_pks: &[PublicSigKey],
     agg_resp: &[DecryptionResponse],
 ) -> anyhow::Result<Option<Vec<DecryptionResponsePayload>>> {
@@ -358,29 +364,24 @@ mod tests {
             DecryptionRequest, DecryptionResponse, DecryptionResponsePayload, ReencryptionRequest,
             RequestId, TypedCiphertext, TypedPlaintext,
         },
-        rpc_types::{alloy_to_protobuf_domain, serialize_hash_element, MetaResponse, ID_LENGTH},
+        rpc_types::{alloy_to_protobuf_domain, serialize_hash_element, ID_LENGTH},
     };
     use rand::SeedableRng;
 
     use crate::{
-        cryptography::signcryption::ephemeral_encryption_key_generation,
-        engine::{
-            base::gen_sig_keys,
-            validation::{
-                validate_reencrypt_req, ERR_VALIDATE_DECRYPTION_BAD_CT_COUNT,
-                ERR_VALIDATE_DECRYPTION_BAD_LINK, ERR_VALIDATE_DECRYPTION_BAD_REQ_ID,
-                ERR_VALIDATE_DECRYPTION_EMPTY_CTS, ERR_VALIDATE_DECRYPTION_INVALID_AGG_RESP,
-                ERR_VALIDATE_DECRYPTION_NOT_ENOUGH_RESP, ERR_VALIDATE_DECRYPTION_NO_KEY_ID,
-                ERR_VALIDATE_DECRYPTION_NO_REQ_ID, ERR_VALIDATE_REENCRYPTION_BAD_REQ_ID,
-                ERR_VALIDATE_REENCRYPTION_EMPTY_CTS, ERR_VALIDATE_REENCRYPTION_NO_KEY_ID,
-                ERR_VALIDATE_REENCRYPTION_NO_REQ_ID,
-            },
-        },
+        cryptography::signcryption::ephemeral_encryption_key_generation, engine::base::gen_sig_keys,
     };
 
     use super::{
         validate_dec_meta_data, validate_dec_responses, validate_dec_responses_against_request,
-        validate_decrypt_req, validate_request_id, verify_reencryption_eip712,
+        validate_decrypt_req, validate_reencrypt_req, validate_request_id,
+        verify_reencryption_eip712, ERR_VALIDATE_DECRYPTION_BAD_CT_COUNT,
+        ERR_VALIDATE_DECRYPTION_BAD_LINK, ERR_VALIDATE_DECRYPTION_BAD_REQ_ID,
+        ERR_VALIDATE_DECRYPTION_EMPTY_CTS, ERR_VALIDATE_DECRYPTION_INVALID_AGG_RESP,
+        ERR_VALIDATE_DECRYPTION_NOT_ENOUGH_RESP, ERR_VALIDATE_DECRYPTION_NO_KEY_ID,
+        ERR_VALIDATE_DECRYPTION_NO_REQ_ID, ERR_VALIDATE_REENCRYPTION_BAD_REQ_ID,
+        ERR_VALIDATE_REENCRYPTION_EMPTY_CTS, ERR_VALIDATE_REENCRYPTION_NO_KEY_ID,
+        ERR_VALIDATE_REENCRYPTION_NO_REQ_ID,
     };
 
     #[test]
@@ -699,22 +700,6 @@ mod tests {
         }
     }
 
-    #[derive(serde::Serialize)]
-    struct DummyDecValue {
-        verification_key: Vec<u8>,
-        digest: Vec<u8>,
-    }
-
-    impl MetaResponse for DummyDecValue {
-        fn verification_key(&self) -> &[u8] {
-            &self.verification_key
-        }
-
-        fn digest(&self) -> &[u8] {
-            &self.digest
-        }
-    }
-
     #[test]
     fn test_validate_dec_meta_response() {
         let mut rng = AesRng::seed_from_u64(0);
@@ -724,9 +709,14 @@ mod tests {
 
         let pks = [vk0, vk1, vk2];
 
-        let pivot = DummyDecValue {
-            verification_key: bincode::serialize(&pks[0]).unwrap(),
+        let pivot = DecryptionResponsePayload {
             digest: vec![1, 2, 3, 4],
+            verification_key: bincode::serialize(&pks[0]).unwrap(),
+            plaintexts: vec![TypedPlaintext {
+                bytes: vec![1],
+                fhe_type: 1,
+            }],
+            external_signature: None,
         };
 
         let pivot_buf = bincode::serialize(&pivot).unwrap();
@@ -750,9 +740,14 @@ mod tests {
 
         // use a bad signature (signing the wrong value)
         {
-            let bad_value = DummyDecValue {
+            let bad_value = DecryptionResponsePayload {
                 verification_key: bincode::serialize(&pks[0]).unwrap(),
                 digest: vec![1, 2, 3, 4, 5], // Original digest does not contain the 5
+                plaintexts: vec![TypedPlaintext {
+                    bytes: vec![1],
+                    fhe_type: 1,
+                }],
+                external_signature: None,
             };
             let bad_value_buf = bincode::serialize(&bad_value).unwrap();
 
@@ -765,9 +760,14 @@ mod tests {
 
         // use a bad response (digest mismatch)
         {
-            let bad_value = DummyDecValue {
+            let bad_value = DecryptionResponsePayload {
                 verification_key: bincode::serialize(&pks[0]).unwrap(),
                 digest: vec![1, 2, 3, 4, 5], // Original digest does not contain the 5
+                plaintexts: vec![TypedPlaintext {
+                    bytes: vec![1],
+                    fhe_type: 1,
+                }],
+                external_signature: None,
             };
             let bad_value_buf = bincode::serialize(&bad_value).unwrap();
 
@@ -780,9 +780,34 @@ mod tests {
         // use a bad response (bad validation key)
         {
             let (vk, _sk0) = gen_sig_keys(&mut rng);
-            let bad_value = DummyDecValue {
+            let bad_value = DecryptionResponsePayload {
                 verification_key: bincode::serialize(&vk).unwrap(),
                 digest: vec![1, 2, 3, 4],
+                plaintexts: vec![TypedPlaintext {
+                    bytes: vec![1],
+                    fhe_type: 1,
+                }],
+                external_signature: None,
+            };
+            let bad_value_buf = bincode::serialize(&bad_value).unwrap();
+
+            let signature = &crate::cryptography::signcryption::sign(&bad_value_buf, &sk0).unwrap();
+            let signature_buf = signature.sig.to_vec();
+
+            assert!(!validate_dec_meta_data(&pks, &pivot, &bad_value, &signature_buf).unwrap());
+        }
+
+        // use a bad response (mismatch plaintext)
+        {
+            let (vk, _sk0) = gen_sig_keys(&mut rng);
+            let bad_value = DecryptionResponsePayload {
+                verification_key: bincode::serialize(&vk).unwrap(),
+                digest: vec![1, 2, 3, 4],
+                plaintexts: vec![TypedPlaintext {
+                    bytes: vec![0], // normally this is vec![1]
+                    fhe_type: 1,
+                }],
+                external_signature: None,
             };
             let bad_value_buf = bincode::serialize(&bad_value).unwrap();
 
