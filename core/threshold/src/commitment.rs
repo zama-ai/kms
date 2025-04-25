@@ -1,6 +1,6 @@
+use crate::hashing::{hash_element, DomainSep};
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
-use sha3::{Digest, Sha3_256};
 
 /// Byte size of a typical key or opening value (currently 16 byte = 128 bit)
 pub(crate) const KEY_BYTE_LEN: usize = 16;
@@ -14,31 +14,32 @@ pub struct Commitment(pub [u8; COMMITMENT_BYTE_LEN]);
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Hash, Eq)]
 pub struct Opening(pub [u8; KEY_BYTE_LEN]);
 
-/// Domain separator for commitments.
-pub(crate) const DSEP_COMM: &[u8; 4] = b"COMM";
+const DSEP_COMM: DomainSep = *b"COMMTMNT";
 
 /// hash the given message and opening to compute the 256-bit commitment in the ROM
-fn commitment_inner_hash(
+pub(crate) fn commitment_inner_hash(
     msg: &[u8],
     party_id: u64,
     session_id: u128,
     round_id: u64,
     o: &Opening,
 ) -> Commitment {
-    let mut hasher = Sha3_256::new();
-    hasher.update(DSEP_COMM);
-    hasher.update(party_id.to_le_bytes());
-    hasher.update(session_id.to_le_bytes());
-    hasher.update(round_id.to_le_bytes());
-    hasher.update(msg);
-    hasher.update(o.0);
-    let digest = hasher.finalize();
+    // Observe that we have at most one element of variable length, and hence it is safe to just concatenate everything
+    let to_hash = [
+        party_id.to_le_bytes().as_slice(),
+        session_id.to_le_bytes().as_slice(),
+        round_id.to_le_bytes().as_slice(),
+        msg,
+        o.0.as_ref(),
+    ]
+    .concat();
+    let digest = hash_element(&DSEP_COMM, &to_hash);
 
     // the try_into should never fail because our tests will guarantee the lengths are correct
     let com: [u8; COMMITMENT_BYTE_LEN] = digest
         .as_slice()
         .try_into()
-        .expect("wrong length in commmitment hash");
+        .expect("wrong length in commitment hash");
     Commitment(com)
 }
 

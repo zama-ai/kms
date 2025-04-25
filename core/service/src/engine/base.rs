@@ -1,11 +1,6 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use threshold_fhe::execution::endpoints::decryption::{
-    LowLevelCiphertext, SnsRadixOrBoolCiphertext,
-};
-use tracing::error;
-
+use super::traits::BaseKms;
 use crate::consts::ID_LENGTH;
+use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::decompression;
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey, PublicSigKey};
 use crate::cryptography::signcryption::internal_verify_sig;
@@ -20,16 +15,19 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
 use k256::ecdsa::SigningKey;
+use kms_grpc::kms::v1::RequestId;
 use kms_grpc::kms::v1::{
     CiphertextFormat, FheParameter, ReencryptionResponsePayload, SignedPubDataHandle,
     TypedPlaintext,
 };
 use kms_grpc::rpc_types::{
-    hash_element, safe_serialize_hash_element_versioned, FhePubKey, FheServerKey, PubDataType,
-    PublicDecryptVerification, SignedPubDataHandleInternal, CRS,
+    FhePubKey, FheServerKey, PubDataType, PublicDecryptVerification, SignedPubDataHandleInternal,
+    CRS,
 };
 use rand::{CryptoRng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
 use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::integer::BooleanBlock;
 use tfhe::named::Named;
@@ -41,13 +39,22 @@ use tfhe::{
 use tfhe::{FheTypes, Versionize};
 use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::execution::endpoints::decryption::RadixOrBoolCiphertext;
+use threshold_fhe::execution::endpoints::decryption::{
+    LowLevelCiphertext, SnsRadixOrBoolCiphertext,
+};
 use threshold_fhe::execution::endpoints::keygen::FhePubKeySet;
 #[cfg(feature = "non-wasm")]
 use threshold_fhe::execution::keyset_config as ddec_keyset_config;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+use threshold_fhe::hashing::hash_element;
+use threshold_fhe::hashing::serialize_hash_element;
+use threshold_fhe::hashing::DomainSep;
 use tokio::sync::Mutex;
+use tracing::error;
 
-use super::traits::BaseKms;
+pub(crate) const DSEP_REQUEST_ID: DomainSep = *b"REQST_ID";
+pub(crate) const DSEP_HANDLE: DomainSep = *b"_HANDLE_";
+pub(crate) const DSEP_PUBDATA: DomainSep = *b"PUB_DATA";
 
 #[cfg(feature = "non-wasm")]
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
@@ -105,6 +112,25 @@ impl KmsFheKeyHandles {
     }
 }
 
+/// Method for deterministically deriving a request ID from an arbitrary string.
+/// Is currently only used for testing purposes and internal usage (i.e. for PRSS IDs)
+/// since deriving is the responsibility of the smart contract.
+pub fn derive_request_id(name: &str) -> anyhow::Result<RequestId> {
+    let mut digest = serialize_hash_element(&DSEP_REQUEST_ID, &name.to_string())?;
+    if digest.len() < ID_LENGTH {
+        anyhow::bail!(
+            "derived request ID should have at least length {ID_LENGTH}, but only got {}",
+            digest.len()
+        )
+    }
+    // Truncate and convert to hex
+    digest.truncate(ID_LENGTH);
+    let res_hex = hex::encode(digest);
+    Ok(RequestId {
+        request_id: res_hex,
+    })
+}
+
 /// Computes the public into on a serializable `element`.
 /// More specifically, computes the unique handle of the `element` and signs this handle using the
 /// `kms`.
@@ -138,7 +164,7 @@ pub fn compute_handle<S>(element: &S) -> anyhow::Result<String>
 where
     S: Serialize + Versionize + Named,
 {
-    let mut digest = safe_serialize_hash_element_versioned(element)?;
+    let mut digest = safe_serialize_hash_element_versioned(&DSEP_HANDLE, element)?;
     // Truncate and convert to hex
     digest.truncate(ID_LENGTH);
     Ok(hex::encode(digest))
@@ -179,7 +205,7 @@ macro_rules! deserialize_to_low_level_helper {
             CiphertextFormat::BigExpanded => {
                 let r = safe_deserialize::<tfhe::SquashedNoiseFheUint>(
                     std::io::Cursor::new($serialized_high_level),
-                    kms_grpc::rpc_types::SAFE_SER_SIZE_LIMIT,
+                    SAFE_SER_SIZE_LIMIT,
                 )
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
                 let radix_ct = r.underlying_squashed_noise_ciphertext().clone();
@@ -223,7 +249,7 @@ pub fn deserialize_to_low_level(
             CiphertextFormat::BigExpanded => {
                 let r = safe_deserialize::<tfhe::SquashedNoiseFheBool>(
                     std::io::Cursor::new(serialized_high_level),
-                    kms_grpc::rpc_types::SAFE_SER_SIZE_LIMIT,
+                    SAFE_SER_SIZE_LIMIT,
                 )
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
                 let radix_ct = r.underlying_squashed_noise_ciphertext().clone();
@@ -325,6 +351,22 @@ pub fn deserialize_to_low_level(
     Ok(radix_ct)
 }
 
+/// Serialize and hash a versioned element using tfhe-rs' `safe_serialize` function.
+#[cfg(feature = "non-wasm")]
+pub fn safe_serialize_hash_element_versioned<T>(
+    domain_separator: &DomainSep,
+    msg: &T,
+) -> anyhow::Result<Vec<u8>>
+where
+    T: Serialize + tfhe::Versionize + tfhe::named::Named,
+{
+    let mut buf = Vec::new();
+    match tfhe::safe_serialization::safe_serialize(msg, &mut buf, SAFE_SER_SIZE_LIMIT) {
+        Ok(()) => Ok(hash_element(domain_separator, &buf)),
+        Err(e) => anyhow::bail!("Could not encode message due to error: {:?}", e),
+    }
+}
+
 pub(crate) fn compute_external_reenc_signature(
     server_sk: &PrivateSigKey,
     payload: &ReencryptionResponsePayload,
@@ -378,7 +420,7 @@ pub fn compute_external_pubdata_message_hash<D: Serialize + Versionize + Named>(
     data: &D,
     eip712_domain: &Eip712Domain,
 ) -> anyhow::Result<B256> {
-    let bytes = kms_grpc::rpc_types::safe_serialize_hash_element_versioned(data)?;
+    let bytes = safe_serialize_hash_element_versioned(&DSEP_PUBDATA, data)?;
 
     // distinguish between the different types of public data we can sign according to their type name and sign it with EIP-712
     let message_hash = match D::NAME {
@@ -497,11 +539,11 @@ impl BaseKms for BaseKmsStruct {
         self.serialized_verf_key.as_ref().clone()
     }
 
-    fn digest<T>(msg: &T) -> anyhow::Result<Vec<u8>>
+    fn digest<T>(domain_separator: &DomainSep, msg: &T) -> anyhow::Result<Vec<u8>>
     where
         T: ?Sized + AsRef<[u8]>,
     {
-        Ok(hash_element(msg))
+        Ok(hash_element(domain_separator, msg))
     }
 }
 
@@ -738,7 +780,10 @@ pub(crate) fn preproc_proto_to_keyset_config(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::{consts::TEST_PARAM, engine::centralized::central_kms::generate_fhe_keys};
+    use crate::{
+        consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM},
+        engine::centralized::central_kms::generate_fhe_keys,
+    };
 
     use super::{deserialize_to_low_level, gen_sig_keys, TypedPlaintext};
     use aes_prng::AesRng;
@@ -931,7 +976,7 @@ pub(crate) mod tests {
         let ct: FheUint32 = expanded_encrypt(&pubkeyset.public_key, msg, 32).unwrap();
 
         let mut ct_buf = Vec::new();
-        safe_serialize(&ct, &mut ct_buf, kms_grpc::rpc_types::SAFE_SER_SIZE_LIMIT).unwrap();
+        safe_serialize(&ct, &mut ct_buf, SAFE_SER_SIZE_LIMIT).unwrap();
 
         // use the wrong type
         assert!(deserialize_to_low_level(
@@ -974,7 +1019,7 @@ pub(crate) mod tests {
         // test SmallExpanded
         {
             let mut ct_buf = Vec::new();
-            safe_serialize(&ct, &mut ct_buf, kms_grpc::rpc_types::SAFE_SER_SIZE_LIMIT).unwrap();
+            safe_serialize(&ct, &mut ct_buf, SAFE_SER_SIZE_LIMIT).unwrap();
 
             // use the wrong format
             assert!(deserialize_to_low_level(
@@ -998,12 +1043,7 @@ pub(crate) mod tests {
         {
             let large_ct = ct.squash_noise().unwrap();
             let mut ct_buf = Vec::new();
-            safe_serialize(
-                &large_ct,
-                &mut ct_buf,
-                kms_grpc::rpc_types::SAFE_SER_SIZE_LIMIT,
-            )
-            .unwrap();
+            safe_serialize(&large_ct, &mut ct_buf, SAFE_SER_SIZE_LIMIT).unwrap();
 
             // use the wrong format
             assert!(deserialize_to_low_level(

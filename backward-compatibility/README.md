@@ -13,7 +13,7 @@ For any additional documentation, feel free to take a look at the [tfhe-backward
 At the repo's root, run the following command
 
 ```shell
-make test_backward_compatibility
+make test-backward-compatibility
 ```
 
 This will load the objects versioned with the versions set in this module and check if they can be loaded correctly with the current state of kms-core.
@@ -110,7 +110,7 @@ To add a test for a type that has not yet been tested, you should:
   - create a new struct that implements the `TestType` trait. Only the `test_filename` field is required, the others are metadata used to instantiate and check the new type. However, they should not use any kms-core internal type
   - add it to the `TestMetadataZzz` enum, where `Zzz` is the name of the module to test
 - add a new testcase using the procedure in the previous paragraph. If the type comes from a new module, you should also:
-  - go to `lib.rs` and create a new `TestMetadataZzz` module  
+  - go to `lib.rs` and create a new `TestMetadataZzz` module
   - go to `data_x_y.rs` and create a new `gen_vvv_data` method
   - go to `main.rs`:
     - modify `gen_all_data` to include and return the new tests

@@ -218,13 +218,14 @@ pub(crate) async fn handle_res_mapping<T: Clone>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::base::derive_request_id;
     use kms_grpc::kms::v1::RequestId;
     use tokio::sync::RwLock;
 
     #[test]
     fn sunshine() {
         let mut meta_store: MetaStore<String> = MetaStore::new(2, 1);
-        let request_id: RequestId = RequestId::derive("meta_store").unwrap();
+        let request_id: RequestId = derive_request_id("meta_store").unwrap();
         // Data does not exist
         assert!(!meta_store.exists(&request_id));
         assert!(meta_store
@@ -245,9 +246,9 @@ mod tests {
     #[test]
     fn test_kickout_of_errors() {
         let mut meta_store: MetaStore<String> = MetaStore::new(2, 1);
-        let request_id_1: RequestId = RequestId::derive("1").unwrap();
-        let request_id_2: RequestId = RequestId::derive("2").unwrap();
-        let request_id_3: RequestId = RequestId::derive("3").unwrap();
+        let request_id_1: RequestId = derive_request_id("1").unwrap();
+        let request_id_2: RequestId = derive_request_id("2").unwrap();
+        let request_id_3: RequestId = derive_request_id("3").unwrap();
         meta_store.insert(&request_id_1).unwrap();
         assert!(meta_store
             .update(&request_id_1, Err("Err1".to_string()))
@@ -272,7 +273,7 @@ mod tests {
     #[test]
     fn double_insert() {
         let mut meta_store: MetaStore<String> = MetaStore::new(2, 1);
-        let request_id: RequestId = RequestId::derive("meta_store").unwrap();
+        let request_id: RequestId = derive_request_id("meta_store").unwrap();
         meta_store.insert(&request_id).unwrap();
         // We cannot insert the same request_id twice
         assert!(meta_store.insert(&request_id).is_err());
@@ -281,9 +282,9 @@ mod tests {
     #[test]
     fn too_many_elements() {
         let mut meta_store: MetaStore<String> = MetaStore::new(2, 1);
-        let req_1: RequestId = RequestId::derive("1").unwrap();
-        let req_2: RequestId = RequestId::derive("2").unwrap();
-        let req_3: RequestId = RequestId::derive("3").unwrap();
+        let req_1: RequestId = derive_request_id("1").unwrap();
+        let req_2: RequestId = derive_request_id("2").unwrap();
+        let req_3: RequestId = derive_request_id("3").unwrap();
         meta_store.insert(&req_1).unwrap();
         meta_store.insert(&req_2).unwrap();
         // Only room for 2 elements
@@ -293,9 +294,9 @@ mod tests {
     #[test]
     fn auto_remove() {
         let mut meta_store: MetaStore<String> = MetaStore::new(2, 1);
-        let req_1: RequestId = RequestId::derive("1").unwrap();
-        let req_2: RequestId = RequestId::derive("2").unwrap();
-        let req_3: RequestId = RequestId::derive("3").unwrap();
+        let req_1: RequestId = derive_request_id("1").unwrap();
+        let req_2: RequestId = derive_request_id("2").unwrap();
+        let req_3: RequestId = derive_request_id("3").unwrap();
         meta_store.insert(&req_1).unwrap();
         assert!(meta_store.update(&req_1, Ok("OK".to_string())).is_ok());
         assert!(meta_store.retrieve(&req_1).is_some());
@@ -315,7 +316,7 @@ mod tests {
     #[tokio::test]
     async fn test_subscription() {
         let mut meta_store: MetaStore<String> = MetaStore::new(2, 1);
-        let req_1: RequestId = RequestId::derive("1").unwrap();
+        let req_1: RequestId = derive_request_id("1").unwrap();
         meta_store.insert(&req_1).unwrap();
         let meta_store = Arc::new(RwLock::new(meta_store));
 
@@ -340,10 +341,10 @@ mod tests {
     #[test]
     fn delete() {
         let mut meta_store: MetaStore<String> = MetaStore::new(10, 2);
-        let req_1: RequestId = RequestId::derive("1").unwrap();
-        let req_2: RequestId = RequestId::derive("2").unwrap();
-        let req_3: RequestId = RequestId::derive("3").unwrap();
-        let req_4: RequestId = RequestId::derive("4").unwrap();
+        let req_1: RequestId = derive_request_id("1").unwrap();
+        let req_2: RequestId = derive_request_id("2").unwrap();
+        let req_3: RequestId = derive_request_id("3").unwrap();
+        let req_4: RequestId = derive_request_id("4").unwrap();
 
         meta_store.insert(&req_1).unwrap();
         meta_store.insert(&req_2).unwrap();

@@ -28,7 +28,7 @@ pub const PRSS_INIT_REQ_ID: &str =
 pub const DEFAULT_AMOUNT_PARTIES: usize = 13;
 pub const DEFAULT_THRESHOLD: usize = 4;
 
-pub const SAFE_SER_SIZE_LIMIT: u64 = kms_grpc::rpc_types::SAFE_SER_SIZE_LIMIT;
+pub const SAFE_SER_SIZE_LIMIT: u64 = threshold_fhe::hashing::SAFE_SER_SIZE_LIMIT;
 
 //TODO: Do we want to load this from configuration ?
 pub const DURATION_WAITING_ON_RESULT_SECONDS: u64 = 60;
@@ -39,42 +39,44 @@ pub const MAX_TRIES: usize = 50;
 pub const DEFAULT_URL: &str = "127.0.0.1";
 pub const DEFAULT_PROTOCOL: &str = "http";
 
+#[cfg(feature = "non-wasm")]
 cfg_if::cfg_if! {
     if #[cfg(any(test, feature = "testing"))] {
         use kms_grpc::kms::v1::RequestId;
+        use crate::engine::base::derive_request_id;
 
         pub const TMP_PATH_PREFIX: &str = "temp";
         pub const DEFAULT_CENTRAL_KEYS_PATH: &str = "temp/default-central-keys.bin";
 
         lazy_static::lazy_static! {
             pub static ref TEST_CENTRAL_KEY_ID: RequestId =
-                RequestId::derive("TEST_CENTRAL_KEY_ID").unwrap();
+                derive_request_id("TEST_CENTRAL_KEY_ID").unwrap();
             pub static ref TEST_THRESHOLD_KEY_ID_4P: RequestId =
-                RequestId::derive("TEST_THRESHOLD_KEY_ID_4P").unwrap();
+                derive_request_id("TEST_THRESHOLD_KEY_ID_4P").unwrap();
             pub static ref TEST_THRESHOLD_KEY_ID_10P: RequestId =
-                RequestId::derive("TEST_THRESHOLD_KEY_ID_10P").unwrap();
+                derive_request_id("TEST_THRESHOLD_KEY_ID_10P").unwrap();
             pub static ref TEST_THRESHOLD_KEY_ID_13P: RequestId =
-                RequestId::derive("TEST_THRESHOLD_KEY_ID_13P").unwrap();
-            pub static ref TEST_CENTRAL_CRS_ID: RequestId = RequestId::derive("TEST_CENTRAL_CRS_ID").unwrap();
-            pub static ref TEST_THRESHOLD_CRS_ID_4P: RequestId = RequestId::derive("TEST_THRESHOLD_CRS_ID_4P").unwrap();
-            pub static ref TEST_THRESHOLD_CRS_ID_10P: RequestId = RequestId::derive("TEST_THRESHOLD_CRS_ID_10P").unwrap();
-            pub static ref TEST_THRESHOLD_CRS_ID_13P: RequestId = RequestId::derive("TEST_THRESHOLD_CRS_ID_13P").unwrap();
-            pub static ref OTHER_CENTRAL_TEST_ID: RequestId = RequestId::derive("OTHER_TEST_ID").unwrap();
+                derive_request_id("TEST_THRESHOLD_KEY_ID_13P").unwrap();
+            pub static ref TEST_CENTRAL_CRS_ID: RequestId = derive_request_id("TEST_CENTRAL_CRS_ID").unwrap();
+            pub static ref TEST_THRESHOLD_CRS_ID_4P: RequestId = derive_request_id("TEST_THRESHOLD_CRS_ID_4P").unwrap();
+            pub static ref TEST_THRESHOLD_CRS_ID_10P: RequestId = derive_request_id("TEST_THRESHOLD_CRS_ID_10P").unwrap();
+            pub static ref TEST_THRESHOLD_CRS_ID_13P: RequestId = derive_request_id("TEST_THRESHOLD_CRS_ID_13P").unwrap();
+            pub static ref OTHER_CENTRAL_TEST_ID: RequestId = derive_request_id("OTHER_TEST_ID").unwrap();
             pub static ref DEFAULT_CENTRAL_KEY_ID: RequestId =
-                RequestId::derive("DEFAULT_CENTRAL_KEY_ID").unwrap();
+                derive_request_id("DEFAULT_CENTRAL_KEY_ID").unwrap();
             pub static ref DEFAULT_THRESHOLD_KEY_ID_4P: RequestId =
-                RequestId::derive("DEFAULT_THRESHOLD_KEY_ID_4P").unwrap();
+                derive_request_id("DEFAULT_THRESHOLD_KEY_ID_4P").unwrap();
             pub static ref DEFAULT_THRESHOLD_KEY_ID_10P: RequestId =
-                RequestId::derive("DEFAULT_THRESHOLD_KEY_ID_10P").unwrap();
+                derive_request_id("DEFAULT_THRESHOLD_KEY_ID_10P").unwrap();
             pub static ref DEFAULT_THRESHOLD_KEY_ID_13P: RequestId =
-                RequestId::derive("DEFAULT_THRESHOLD_KEY_ID_13P").unwrap();
-            pub static ref DEFAULT_CENTRAL_CRS_ID: RequestId = RequestId::derive("DEFAULT_CENTRAL_CRS_ID").unwrap();
-            pub static ref DEFAULT_THRESHOLD_CRS_ID_4P: RequestId = RequestId::derive("DEFAULT_THRESHOLD_CRS_ID_4P").unwrap();
-            pub static ref DEFAULT_THRESHOLD_CRS_ID_10P: RequestId = RequestId::derive("DEFAULT_THRESHOLD_CRS_ID_10P").unwrap();
-            pub static ref DEFAULT_THRESHOLD_CRS_ID_13P: RequestId = RequestId::derive("DEFAULT_THRESHOLD_CRS_ID_13P").unwrap();
-            pub static ref DEFAULT_DEC_ID: RequestId = RequestId::derive("DEFAULT_DEC_ID").unwrap();
+                derive_request_id("DEFAULT_THRESHOLD_KEY_ID_13P").unwrap();
+            pub static ref DEFAULT_CENTRAL_CRS_ID: RequestId = derive_request_id("DEFAULT_CENTRAL_CRS_ID").unwrap();
+            pub static ref DEFAULT_THRESHOLD_CRS_ID_4P: RequestId = derive_request_id("DEFAULT_THRESHOLD_CRS_ID_4P").unwrap();
+            pub static ref DEFAULT_THRESHOLD_CRS_ID_10P: RequestId = derive_request_id("DEFAULT_THRESHOLD_CRS_ID_10P").unwrap();
+            pub static ref DEFAULT_THRESHOLD_CRS_ID_13P: RequestId = derive_request_id("DEFAULT_THRESHOLD_CRS_ID_13P").unwrap();
+            pub static ref DEFAULT_DEC_ID: RequestId = derive_request_id("DEFAULT_DEC_ID").unwrap();
             pub static ref OTHER_CENTRAL_DEFAULT_ID: RequestId =
-                RequestId::derive("OTHER_DEFAULT_ID").unwrap();
+                derive_request_id("OTHER_DEFAULT_ID").unwrap();
 
             // What we will use in a default deployment
             pub static ref TEST_THRESHOLD_KEY_ID: RequestId = TEST_THRESHOLD_KEY_ID_13P.clone();

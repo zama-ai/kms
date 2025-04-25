@@ -52,7 +52,7 @@
 //! source ~/.nvm/nvm.sh
 //! ```
 //!
-//! 2. Build with wasm_tests feature
+//! 2. Build with wasm_tests feature from the core/service directory
 //! ```
 //! wasm-pack build --target nodejs . --no-default-features -F wasm_tests
 //! ```

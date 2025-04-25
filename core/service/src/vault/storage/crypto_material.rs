@@ -999,8 +999,8 @@ impl<
 
 #[cfg(test)]
 mod tests {
+    use crate::engine::base::derive_request_id;
     use aes_prng::AesRng;
-    use kms_grpc::kms::v1::RequestId;
     use kms_grpc::rpc_types::WrappedPublicKey;
     use rand::SeedableRng;
     use std::collections::HashMap;
@@ -1017,9 +1017,11 @@ mod tests {
 
     use crate::{
         consts::TEST_PARAM,
-        engine::base::{gen_sig_keys, KmsFheKeyHandles},
-        engine::centralized::central_kms::async_generate_crs,
-        engine::threshold::service_real::ThresholdFheKeys,
+        engine::{
+            base::{gen_sig_keys, KmsFheKeyHandles},
+            centralized::central_kms::async_generate_crs,
+            threshold::service_real::ThresholdFheKeys,
+        },
         util::meta_store::MetaStore,
         vault::storage::{
             crypto_material::{
@@ -1049,7 +1051,7 @@ mod tests {
         let (pp, crs_info) = async_generate_crs(&sig_sk, rng, TEST_PARAM, Some(1), None)
             .await
             .unwrap();
-        let req_id = RequestId::derive("write_crs").unwrap();
+        let req_id = derive_request_id("write_crs").unwrap();
 
         let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
 
@@ -1078,7 +1080,7 @@ mod tests {
             let mut storage_guard = pub_storage.lock().await;
             storage_guard.set_available_writes(0);
         }
-        let new_req_id = RequestId::derive("write_crs_2").unwrap();
+        let new_req_id = derive_request_id("write_crs_2").unwrap();
         crypto_storage
             .write_crs_with_meta_store(&new_req_id, pp, crs_info, meta_store.clone())
             .await;
@@ -1115,7 +1117,7 @@ mod tests {
         let client_key = tfhe::ClientKey::generate(config);
         let public_key = CompactPublicKey::new(&client_key);
 
-        let req_id = RequestId::derive("read_keys").unwrap();
+        let req_id = derive_request_id("read_keys").unwrap();
         {
             let pub_storage = pub_storage.clone();
             let mut s = pub_storage.lock().await;
@@ -1145,7 +1147,7 @@ mod tests {
         );
         let pub_storage = crypto_storage.inner.public_storage.clone();
 
-        let req_id = RequestId::derive("write_central_keys").unwrap();
+        let req_id = derive_request_id("write_central_keys").unwrap();
 
         let pbs_params: ClassicPBSParameters =
             param.get_params_basics_handle().to_classic_pbs_parameters();
@@ -1215,7 +1217,7 @@ mod tests {
             let mut storage_guard = pub_storage.lock().await;
             storage_guard.set_available_writes(0);
         }
-        let new_req_id = RequestId::derive("write_central_keys_2").unwrap();
+        let new_req_id = derive_request_id("write_central_keys_2").unwrap();
         crypto_storage
             .write_centralized_keys_with_meta_store(
                 &new_req_id,
@@ -1240,7 +1242,7 @@ mod tests {
     async fn write_threshold_empty_update() {
         let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store();
         let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
-        let req_id = RequestId::derive("write_threshold_empty_update").unwrap();
+        let req_id = derive_request_id("write_threshold_empty_update").unwrap();
 
         // Check no errors happened
         assert!(!logs_contain(&format!(
@@ -1296,7 +1298,7 @@ mod tests {
     async fn write_threshold_keys_meta_update() {
         let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store();
         let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
-        let req_id = RequestId::derive("write_threshold_keys_meta_update").unwrap();
+        let req_id = derive_request_id("write_threshold_keys_meta_update").unwrap();
 
         // update the meta store and the write should be ok
         {
@@ -1353,7 +1355,7 @@ mod tests {
         let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store();
         let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
         let pub_storage = crypto_storage.inner.public_storage.clone();
-        let req_id = RequestId::derive("write_threshold_keys_failed_storage").unwrap();
+        let req_id = derive_request_id("write_threshold_keys_failed_storage").unwrap();
 
         // update the meta store and the write should be ok
         {
@@ -1395,7 +1397,7 @@ mod tests {
             let mut storage_guard = pub_storage.lock().await;
             storage_guard.set_available_writes(0);
         }
-        let new_req_id = RequestId::derive("write_threshold_keys_failed_storage_2").unwrap();
+        let new_req_id = derive_request_id("write_threshold_keys_failed_storage_2").unwrap();
         crypto_storage
             .write_threshold_keys_with_meta_store(
                 &new_req_id,

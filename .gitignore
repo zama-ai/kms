@@ -17,6 +17,7 @@
 .wallet
 .cargo/advisory-db
 .cargo/advisory-db..lock
+.pre-commit-config.yaml
 kms-core.sublime-project
 kms-core.sublime-workspace
 /artifacts

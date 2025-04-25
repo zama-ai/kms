@@ -7,10 +7,10 @@ use crate::client::tests::{
 };
 use crate::consts::{DEFAULT_AMOUNT_PARTIES, DEFAULT_PARAM};
 use crate::consts::{DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_KEY_ID};
+use crate::engine::base::derive_request_id;
 use crate::util::key_setup::test_tools::EncryptionConfig;
 use crate::util::key_setup::test_tools::{purge, TestingPlaintext};
 use kms_grpc::kms::v1::FheParameter;
-use kms_grpc::kms::v1::RequestId;
 use serial_test::serial;
 
 #[rstest::rstest]
@@ -318,7 +318,7 @@ async fn default_reencryption_threshold_with_crash(
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn default_insecure_crs_gen_centralized() {
-    let crs_req_id = RequestId::derive("default_insecure_crs_gen_centralized").unwrap();
+    let crs_req_id = derive_request_id("default_insecure_crs_gen_centralized").unwrap();
     // Delete potentially old data
     purge(None, None, &crs_req_id.to_string(), 1).await;
 
@@ -328,7 +328,7 @@ async fn default_insecure_crs_gen_centralized() {
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn default_crs_gen_centralized() {
-    let crs_req_id = RequestId::derive("default_crs_gen_centralized").unwrap();
+    let crs_req_id = derive_request_id("default_crs_gen_centralized").unwrap();
     // Delete potentially old data
     purge(None, None, &crs_req_id.to_string(), 1).await;
     // We test for both insecure and secure since these are distinct endpoints, although inner computation is the same

@@ -483,8 +483,10 @@ where
         l: usize,
         roles: &[Role],
     ) -> HashMap<Role, Vec<Self>> {
+        // Observe that since the application of SHAKE256 is highly specific and needs to be optimized here,
+        // we don't use on the wrapper in `hashing.rs`
         let mut hasher = Shake256::default();
-        hasher.update(Self::DSEP_LDS);
+        hasher.update(&Self::DSEP_LDS);
         //Update hasher with x
         for x_coef in x.coefs {
             //This line is the reason why it's not straightforward to implement Derive
@@ -531,8 +533,10 @@ where
         l: usize,
         roles: &[Role],
     ) -> HashMap<Role, Vec<Self>> {
+        // Observe that since the application of SHAKE256 is highly specific and needs to be optimized here,
+        // we don't use on the wrapper in `hashing.rs`
         let mut hasher = Shake256::default();
-        hasher.update(Self::DSEP_LDS);
+        hasher.update(&Self::DSEP_LDS);
         //Update hasher with x
         for x_coef in x.coefs {
             //This line is the reason why it's not straightforward to implement Derive

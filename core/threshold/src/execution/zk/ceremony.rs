@@ -25,9 +25,9 @@ use tracing::instrument;
 use zeroize::Zeroize;
 
 use super::constants::{
-    ZK_DEFAULT_MAX_NUM_BITS, ZK_DSEP_HASH_AGG_PADDED, ZK_DSEP_HASH_CHI_PADDED,
-    ZK_DSEP_HASH_LMAP_PADDED, ZK_DSEP_HASH_PADDED, ZK_DSEP_HASH_PHI_PADDED, ZK_DSEP_HASH_R_PADDED,
-    ZK_DSEP_HASH_T_PADDED, ZK_DSEP_HASH_W_PADDED, ZK_DSEP_HASH_XI_PADDED, ZK_DSEP_HASH_Z_PADDED,
+    ZK_DEFAULT_MAX_NUM_BITS, ZK_DSEP_AGG_PADDED, ZK_DSEP_CHI_PADDED, ZK_DSEP_HASH_PADDED,
+    ZK_DSEP_LMAP_PADDED, ZK_DSEP_PHI_PADDED, ZK_DSEP_R_PADDED, ZK_DSEP_T_PADDED, ZK_DSEP_W_PADDED,
+    ZK_DSEP_XI_PADDED, ZK_DSEP_Z_PADDED,
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
@@ -305,11 +305,11 @@ impl InternalPublicParameter {
                     inner_v1.t,
                     inner_v1.msbs_zero_padding_bit_count,
                     *ZK_DSEP_HASH_PADDED,
-                    *ZK_DSEP_HASH_T_PADDED,
-                    *ZK_DSEP_HASH_AGG_PADDED,
-                    *ZK_DSEP_HASH_LMAP_PADDED,
-                    *ZK_DSEP_HASH_Z_PADDED,
-                    *ZK_DSEP_HASH_W_PADDED,
+                    *ZK_DSEP_T_PADDED,
+                    *ZK_DSEP_AGG_PADDED,
+                    *ZK_DSEP_LMAP_PADDED,
+                    *ZK_DSEP_Z_PADDED,
+                    *ZK_DSEP_W_PADDED,
                 ))
             }
             MetaParameter::V2(inner_v2) => {
@@ -332,15 +332,15 @@ impl InternalPublicParameter {
                     inner_v2.msbs_zero_padding_bit_count,
                     inner_v2.bound_type,
                     *ZK_DSEP_HASH_PADDED,
-                    *ZK_DSEP_HASH_R_PADDED,
-                    *ZK_DSEP_HASH_T_PADDED,
-                    *ZK_DSEP_HASH_W_PADDED,
-                    *ZK_DSEP_HASH_AGG_PADDED,
-                    *ZK_DSEP_HASH_LMAP_PADDED,
-                    *ZK_DSEP_HASH_PHI_PADDED,
-                    *ZK_DSEP_HASH_XI_PADDED,
-                    *ZK_DSEP_HASH_Z_PADDED,
-                    *ZK_DSEP_HASH_CHI_PADDED,
+                    *ZK_DSEP_R_PADDED,
+                    *ZK_DSEP_T_PADDED,
+                    *ZK_DSEP_W_PADDED,
+                    *ZK_DSEP_AGG_PADDED,
+                    *ZK_DSEP_LMAP_PADDED,
+                    *ZK_DSEP_PHI_PADDED,
+                    *ZK_DSEP_XI_PADDED,
+                    *ZK_DSEP_Z_PADDED,
+                    *ZK_DSEP_CHI_PADDED,
                 ))
             }
         };
@@ -923,9 +923,9 @@ mod tests {
             g_list,
             g_hat_list,
             *ZK_DSEP_HASH_PADDED,
-            *ZK_DSEP_HASH_Z_PADDED, //Using DSEP HASH_Z instead of HASH_S as we don't have defined the latter
-            *ZK_DSEP_HASH_T_PADDED,
-            *ZK_DSEP_HASH_AGG_PADDED,
+            *ZK_DSEP_Z_PADDED, //Using DSEP HASH_Z instead of HASH_S as we don't have defined the latter
+            *ZK_DSEP_T_PADDED,
+            *ZK_DSEP_AGG_PADDED,
         );
         let l = 6;
         let x = rng.gen::<u64>() % (1 << l);

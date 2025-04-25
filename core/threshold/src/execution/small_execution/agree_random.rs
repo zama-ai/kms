@@ -11,17 +11,13 @@ use crate::{
         runtime::{party::Role, session::BaseSessionHandles},
         sharing::open::multi_robust_opens_to,
     },
+    hashing::{hash_element, hash_element_w_size, DomainSep},
     networking::value::{AgreeRandomValue, NetworkValue},
 };
 use anyhow::Context;
 use async_trait::async_trait;
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
-use sha3::{
-    digest::ExtendableOutput,
-    digest::{Update, XofReader},
-    Shake256,
-};
 use std::collections::HashMap;
 use tracing::instrument;
 
@@ -46,7 +42,7 @@ pub struct DummyAgreeRandom {}
 
 //Would be nice to somehow relate this to the AgreeRandom trait, see comment above.
 /// Domain separator for `agree_random_robust`.
-pub(crate) const DSEP_AR: &[u8; 2] = b"AR";
+pub(crate) const DSEP_AR: DomainSep = *b"AGREERND";
 
 ///Perform Agree Random Robust among all sets of size n - t with hardcoded output length of [`KEY_BYTE_LEN`] bytes.
 ///
@@ -88,12 +84,9 @@ pub async fn agree_random_robust<
     let s_vec = r_vec
         .iter()
         .map(|cur_r| {
-            let mut digest = [0u8; KEY_BYTE_LEN];
-            let mut hasher = Shake256::default();
-            hasher.update(DSEP_AR);
-            hasher.update(&cur_r.to_byte_vec());
-            let mut or = hasher.finalize_xof();
-            or.read(&mut digest);
+            let hash = hash_element(&DSEP_AR, &cur_r.to_byte_vec());
+            let mut digest = [0_u8; KEY_BYTE_LEN];
+            digest.copy_from_slice(&hash[..KEY_BYTE_LEN]);
             PrfKey(digest)
         })
         .collect_vec();
@@ -240,13 +233,14 @@ impl AgreeRandom for DummyAgreeRandom {
             .iter()
             .map(|set| {
                 // hash party IDs contained in this set as dummy value for r_a
-                let mut hasher = Shake256::default();
-                hasher.update(DSEP_AR);
-                for &p in set {
-                    hasher.update(&p.to_le_bytes());
-                }
-                let mut or = hasher.finalize_xof();
-                or.read(&mut r_a);
+                // Observe that since each element is of constant and equal size, it is safe to just concatenate before hashing
+                // Also observe that we map each element to 64 bits to ensure consistency across 32, 64 and 128 bit systems, which have variable size of `usize`
+                let flat_vec = set
+                    .iter()
+                    .flat_map(|p| (*p as u64).to_le_bytes())
+                    .collect::<Vec<_>>();
+                let hash = hash_element_w_size(&DSEP_AR, &flat_vec, KEY_BYTE_LEN);
+                r_a.copy_from_slice(&hash[..KEY_BYTE_LEN]);
                 PrfKey(r_a)
             })
             .collect();
@@ -524,7 +518,9 @@ mod tests {
     };
     use crate::{
         algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
-        commitment::{Commitment, Opening, COMMITMENT_BYTE_LEN, DSEP_COMM, KEY_BYTE_LEN},
+        commitment::{
+            commitment_inner_hash, Commitment, Opening, COMMITMENT_BYTE_LEN, KEY_BYTE_LEN,
+        },
         execution::{
             runtime::{
                 party::Role,
@@ -552,7 +548,6 @@ mod tests {
     };
     use aes_prng::AesRng;
     use rand::SeedableRng;
-    use sha3::{Digest, Sha3_256};
     use std::collections::{HashMap, VecDeque};
     use tokio::task::JoinSet;
 
@@ -969,18 +964,13 @@ mod tests {
         let ko1 = (key1.clone(), opening1);
         let rcv_keys_opens = vec![vec![ko1.clone()], Vec::<(PrfKey, Opening)>::new()];
 
-        // compute commitment for received key
-        let mut hasher = Sha3_256::new();
-        hasher.update(DSEP_COMM);
-        hasher.update((party_sets[0][0] as u64).to_le_bytes());
-        hasher.update(session_id.to_le_bytes());
-        hasher.update(round_id.to_le_bytes());
-        hasher.update(key1.0);
-        hasher.update(opening1.0);
-        let or = hasher.finalize();
-
-        let com_buf: [u8; COMMITMENT_BYTE_LEN] = or.as_slice().try_into().expect("wrong length");
-        let commitment1 = Commitment(com_buf);
+        let commitment1 = commitment_inner_hash(
+            &key1.0,
+            party_sets[0][0] as u64,
+            session_id,
+            round_id,
+            &opening1,
+        );
         let mut rcv_coms = vec![vec![commitment1], Vec::<Commitment>::new()];
 
         // my own key and opening

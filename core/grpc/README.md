@@ -109,9 +109,9 @@ message SignedPubDataHandle {
 
 This is the common structure for all public cryptographic material (i.e public TFHE keys and the CRS).
 
-- `key_handle`: a `SHA3-256` hash of the `tfhe::safe_serialization` of the underlying struct. This handle serves as the `URI` to locate the actual object in the `storage`.
+- `key_handle`: a 256 bits `SHAKE-256` hash of the `tfhe::safe_serialization` of the underlying struct. This handle serves as the `URI` to locate the actual object in the `storage`.
 - `signature`: a `bincode::serialize` of `Secp256k1` signature on the `key_handle`. With the `s` value normalized.
-- `external_signature`: a `EIP-712` signature on the _solidity-compatible_  `SHA3-256` hash of the `tfhe::safe_serialization` of the underlying struct. Observe the same signing key is used as for the above `signature`.
+- `external_signature`: a `EIP-712` signature on the _solidity-compatible_  256 bits `SHAKE-256` hash of the `tfhe::safe_serialization` of the underlying struct. Observe the same signing key is used as for the above `signature`.
 
 __NOTE__: `signature` and `external_signature` look quite redundant.
 </details>
@@ -659,7 +659,7 @@ The `signature` is a `secp256k1` signature on the `bincode::serialize` of the `p
 #### The `payload` is composed of
 
 - `verification_key`: the `bincode::serialize` `ECDSA/secp256k1` verification key of the core.
-- `digest`: The `SHA3-256` digest of the corresponding `bincode::serialize` `Decrypt` request.
+- `digest`: The 256 bits `SHAKE-256` digest of the corresponding `bincode::serialize` `Decrypt` request.
 - `plaintexts`: An array of plaintexts and their meta information that are the requested decryptions.
 - `external_signature`: The `EIP-712` signature on the encoding of the uint256 handles of the ciphertexts, concatenated with big endian encoding of the `TypedPlaintext`s using the KMS core's private key.
 
@@ -755,6 +755,6 @@ The signature is a `secp256k1` signature on the `bincode::serialize` of the `pay
 - `digest`: The concatenation of two digests `(eip712_signing_hash(pk, domain) || ciphertext digest)`
 - `party_id`: The MPC ID of the KMS core party doing the reencryption. Necessary for doing the share reconstruction.
 - `degree`: The degree of the sharing scheme used. Necessary for doing the share reconstruction.
-- `external_signature`: a `EIP-712` signature on the _solidity-compatible_  `SHA3-256` hash of the `tfhe::safe_serialization` of the underlying struct.
+- `external_signature`: a `EIP-712` signature on the _solidity-compatible_  256 bits `SHAKE-256` hash of the `tfhe::safe_serialization` of the underlying struct.
 
 </details>

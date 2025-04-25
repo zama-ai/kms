@@ -727,6 +727,7 @@ mod tests {
     use crate::execution::small_execution::agree_random::DSEP_AR;
     use crate::execution::tfhe_internals::test_feature::KeySet;
     use crate::execution::tfhe_internals::utils::expanded_encrypt;
+    use crate::hashing::hash_element_w_size;
     use crate::networking::NetworkMode;
     use crate::{
         algebra::{
@@ -759,8 +760,6 @@ mod tests {
     use aes_prng::AesRng;
     use rand::SeedableRng;
     use rstest::rstest;
-    use sha3::digest::{ExtendableOutput, Update, XofReader};
-    use sha3::Shake256;
     use std::num::Wrapping;
     use std::sync::Arc;
     use tfhe::{set_server_key, FheUint8};
@@ -1185,15 +1184,14 @@ mod tests {
         let keys: Vec<_> = all_sets
             .iter()
             .map(|set| {
-                let mut r_a = [0u8; KEY_BYTE_LEN];
-
-                let mut hasher = Shake256::default();
-                hasher.update(DSEP_AR);
-                for &p in set {
-                    hasher.update(&p.to_le_bytes());
-                }
-                let mut or = hasher.finalize_xof();
-                or.read(&mut r_a);
+                let flat_vec = set
+                    .iter()
+                    // Observe that we map each element to 64 bits to ensure consistency across 32, 64 and 128 bit systems, which have variable size of `usize`
+                    .flat_map(|p| (*p as u64).to_le_bytes())
+                    .collect::<Vec<_>>();
+                let hash = hash_element_w_size(&DSEP_AR, &flat_vec, KEY_BYTE_LEN);
+                let mut r_a = [0_u8; KEY_BYTE_LEN];
+                r_a.copy_from_slice(&hash[..KEY_BYTE_LEN]);
                 PrfKey(r_a)
             })
             .collect();

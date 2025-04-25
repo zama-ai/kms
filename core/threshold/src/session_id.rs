@@ -1,9 +1,9 @@
+use crate::execution::endpoints::decryption::RadixOrBoolCiphertext;
+use crate::hashing::{serialize_hash_element, DomainSep};
+use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
-use serde::{Deserialize, Serialize};
-use sha3::{digest::ExtendableOutput, Shake128};
-
-use crate::execution::endpoints::decryption::RadixOrBoolCiphertext;
+pub const DSEP_SESSION_ID: DomainSep = *b"SESSN_ID";
 
 pub const SESSION_ID_BYTES: usize = 128 / 8;
 
@@ -14,12 +14,11 @@ impl SessionId {
     /// NOTE: this function is deprecated since the session IDs
     /// are always derived from request IDs.
     pub fn new(ciphertext: &RadixOrBoolCiphertext) -> anyhow::Result<SessionId> {
-        let serialized_ct = bincode::serialize(ciphertext)?;
-
         // hash the serialized ct data into a 128-bit (SESSION_ID_BYTES) digest and convert to u128
-        let mut hash = [0_u8; SESSION_ID_BYTES];
-        Shake128::digest_xof(serialized_ct, &mut hash);
-        Ok(SessionId(u128::from_le_bytes(hash)))
+        let hash = serialize_hash_element(&DSEP_SESSION_ID, ciphertext)?;
+        let mut hash_arr = [0_u8; SESSION_ID_BYTES];
+        hash_arr.copy_from_slice(&hash[..SESSION_ID_BYTES]);
+        Ok(SessionId(u128::from_le_bytes(hash_arr)))
     }
 }
 
@@ -27,9 +26,10 @@ impl FromStr for SessionId {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut hash = [0_u8; SESSION_ID_BYTES];
-        Shake128::digest_xof(s, &mut hash);
-        Ok(SessionId(u128::from_le_bytes(hash)))
+        let hash = serialize_hash_element(&DSEP_SESSION_ID, &s.to_string())?;
+        let mut hash_arr = [0_u8; SESSION_ID_BYTES];
+        hash_arr.copy_from_slice(&hash[..SESSION_ID_BYTES]);
+        Ok(SessionId(u128::from_le_bytes(hash_arr)))
     }
 }
 

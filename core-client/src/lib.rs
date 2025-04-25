@@ -15,14 +15,14 @@ use kms_grpc::kms::v1::{
     KeyGenPreprocResult, KeyGenResult, RequestId, TypedCiphertext, TypedPlaintext,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType, SIGNING_KEY_ID};
+use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
 use kms_lib::client::{Client, ParsedReencryptionRequest};
 use kms_lib::consts::{DEFAULT_PARAM, TEST_PARAM};
 use kms_lib::engine::base::{compute_external_pubdata_message_hash, compute_pt_message_hash};
 use kms_lib::util::key_setup::ensure_client_keys_exist;
 use kms_lib::util::key_setup::test_tools::{
     compute_cipher_from_stored_key, load_crs_from_storage, load_pk_from_storage,
-    load_server_key_from_storage, EncryptionConfig, TestingPlaintext,
+    load_server_key_from_storage, EncryptionConfig, TestingPlaintext, SIGNING_KEY_ID,
 };
 use kms_lib::vault::storage::{file::FileStorage, StorageType};
 use kms_lib::DecryptionMode;

@@ -252,12 +252,12 @@ mod kms_gen_keys_binary_test {
         assert!(output.status.success());
         assert!(log.contains("Successfully stored ethereum address 0x"));
         assert!(
-            log.contains("under the handle e164d9de0bec6656928726433cc56bef6ee8417ad5a4f8c82fbcc2d3e5f220fd in storage")
+            log.contains("under the handle 60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee in storage")
         );
 
         let mut adress_path = temp_dir_pub.path().to_path_buf();
         adress_path.push(
-            "PUB/VerfAddress/e164d9de0bec6656928726433cc56bef6ee8417ad5a4f8c82fbcc2d3e5f220fd",
+            "PUB/VerfAddress/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee",
         );
 
         // read address from file
@@ -376,8 +376,8 @@ mod kms_gen_keys_binary_test {
         println!("Command output: {}", log);
         println!("Command error output: {}", err_log);
         assert!(output.status.success());
-        assert!(log.contains("Successfully stored public server signing key under the handle e164d9de0bec6656928726433cc56bef6ee8417ad5a4f8c82fbcc2d3e5f220fd in storage \"S3 storage with"));
-        assert!(log.contains("Successfully stored private central server signing key under the handle e164d9de0bec6656928726433cc56bef6ee8417ad5a4f8c82fbcc2d3e5f220fd in storage \"file storage with"));
+        assert!(log.contains("Successfully stored public server signing key under the handle 60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee in storage \"S3 storage with"));
+        assert!(log.contains("Successfully stored private central server signing key under the handle 60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee in storage \"file storage with"));
     }
 }
 

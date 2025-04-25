@@ -16,17 +16,18 @@ use super::internal_crypto_types::{
 use crate::consts::SIG_SIZE;
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log};
 use ::signature::{Signer, Verifier};
-use bincode::{deserialize, serialize};
+use bincode::deserialize;
 use crypto_box::aead::{Aead, AeadCore};
 use crypto_box::{Nonce, SalsaBox, SecretKey};
 use k256::ecdsa::SigningKey;
 use kms_grpc::kms::v1::TypedPlaintext;
-use kms_grpc::rpc_types::{hash_element, serialize_hash_element, SigncryptionPayload};
+use kms_grpc::rpc_types::SigncryptionPayload;
 use nom::AsBytes;
 use rand::{CryptoRng, RngCore};
 use serde::Serialize;
+use threshold_fhe::hashing::{serialize_hash_element, DomainSep, DIGEST_BYTES};
 
-const DIGEST_BYTES: usize = 256 / 8; // SHA3-256 digest
+const DSEP_SIGNCRYPTION: DomainSep = *b"SIGNCRYP";
 
 /// Generate ephemeral keys used for encryption.
 ///
@@ -132,7 +133,7 @@ where
     let to_sign = [
         msg.as_ref(),
         client_address.as_bytes(),
-        &serialize_hash_element(client_pub_key)?,
+        &serialize_hash_element(&DSEP_SIGNCRYPTION, client_pub_key)?,
     ]
     .concat();
     let sig: k256::ecdsa::Signature = server_sig_key.sk().sign(to_sign.as_ref());
@@ -150,10 +151,11 @@ where
     let to_encrypt = [
         msg.as_ref(),
         &sig.to_bytes(),
-        &serialize_hash_element(&PublicSigKey::new(
-            SigningKey::verifying_key(server_sig_key.sk()).to_owned(),
-        ))?,
-        &serialize_hash_element(&server_enc_pub_key)?,
+        &serialize_hash_element(
+            &DSEP_SIGNCRYPTION,
+            &PublicSigKey::new(SigningKey::verifying_key(server_sig_key.sk()).to_owned()),
+        )?,
+        &serialize_hash_element(&DSEP_SIGNCRYPTION, &server_enc_pub_key)?,
     ]
     .concat();
 
@@ -216,14 +218,14 @@ fn parse_msg(
     let server_enc_key_digest = &decrypted_plaintext
         [(msg_len + SIG_SIZE + DIGEST_BYTES)..(msg_len + 2 * DIGEST_BYTES + SIG_SIZE)];
     // Verify verification key digest
-    if serialize_hash_element(server_verf_key)? != server_ver_key_digest {
+    if serialize_hash_element(&DSEP_SIGNCRYPTION, server_verf_key)? != server_ver_key_digest {
         return Err(anyhow_error_and_warn_log(format!(
             "Unexpected verification key digest {:X?} was part of the decryption",
             server_ver_key_digest
         )));
     }
     // Verify encryption key digest
-    if serialize_hash_element(server_enc_key)? != server_enc_key_digest {
+    if serialize_hash_element(&DSEP_SIGNCRYPTION, server_enc_key)? != server_enc_key_digest {
         return Err(anyhow_error_and_warn_log(format!(
             "Unexpected encryption key digest {:X?} was part of the decryption",
             server_enc_key
@@ -241,33 +243,22 @@ fn check_signature_and_log(
     server_verf_key: &PublicSigKey,
     client_pk: &SigncryptionPubKey,
 ) -> anyhow::Result<()> {
-    let enc_key_digest = match serialize(&client_pk.enc_key) {
-        Ok(enc_key_digest) => enc_key_digest,
-        Err(e) => {
-            return Err(anyhow_error_and_log(format!(
-                "Could not serialize encryption key {:?} with error {}",
-                client_pk.enc_key, e
-            )));
-        }
-    };
     // What should be signed is msg || H(client_verification_key) || H(client_enc_key)
     let msg_signed = [
         msg,
         client_pk.client_address.to_vec(),
-        hash_element(&enc_key_digest),
+        serialize_hash_element(&DSEP_SIGNCRYPTION, &client_pk.enc_key)?,
     ]
     .concat();
 
     // Check that the signature is normalized
     check_normalized(sig)?;
-
     // Verify signature
     server_verf_key
         .pk()
         .verify(&msg_signed[..], &sig.sig)
         .map_err(|e| {
-            tracing::warn!("signature verification failed with error {e}");
-            anyhow::Error::new(e)
+            anyhow_error_and_warn_log(format!("signature verification failed with error: {e}"))
         })
 }
 
@@ -373,14 +364,15 @@ mod tests {
     use crate::cryptography::signcryption::{
         check_signature_and_log, decrypt_signcryption_with_link,
         ephemeral_encryption_key_generation, internal_verify_sig, parse_msg, sign, signcrypt,
-        signcrypt_with_link, validate_and_decrypt, DIGEST_BYTES, SIG_SIZE,
+        signcrypt_with_link, validate_and_decrypt, DIGEST_BYTES, DSEP_SIGNCRYPTION, SIG_SIZE,
     };
     use aes_prng::AesRng;
     use k256::ecdsa::SigningKey;
     use kms_grpc::kms::v1::TypedPlaintext;
-    use kms_grpc::rpc_types::{serialize_hash_element, SigncryptionPayload};
+    use kms_grpc::rpc_types::SigncryptionPayload;
     use rand::{CryptoRng, RngCore, SeedableRng};
     use signature::Signer;
+    use threshold_fhe::hashing::serialize_hash_element;
     use tracing_test::traced_test;
 
     /// Helper method for generating keys for digital signatures
@@ -575,7 +567,7 @@ mod tests {
         let (server_verf_key, _server_sig_key) = signing_key_generation(&mut rng);
         let (server_enc_key, _server_dec_key) = ephemeral_encryption_key_generation(&mut rng);
         let mut to_encrypt = [0_u8; 1 + 2 * DIGEST_BYTES + SIG_SIZE].to_vec();
-        let key_digest = serialize_hash_element(&server_verf_key).unwrap();
+        let key_digest = serialize_hash_element(&DSEP_SIGNCRYPTION, &server_verf_key).unwrap();
         // Set the correct verification key so that part of `parse_msg` won't fail
         to_encrypt.splice(
             1 + SIG_SIZE..1 + SIG_SIZE + DIGEST_BYTES,
@@ -621,7 +613,8 @@ mod tests {
         let to_sign = [
             msg,
             client_signcryption_keys.pk.client_address.as_slice(),
-            &serialize_hash_element(&client_signcryption_keys.pk.enc_key).unwrap(),
+            &serialize_hash_element(&DSEP_SIGNCRYPTION, &client_signcryption_keys.pk.enc_key)
+                .unwrap(),
         ]
         .concat();
         let sig = Signature {

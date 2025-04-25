@@ -467,7 +467,7 @@ async fn round_4<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<
     vss: &Round1VSSOutput<Z>,
     unhappy_vec: Vec<HashSet<Role>>,
 ) -> anyhow::Result<Vec<Vec<Z>>> {
-    let mut msg = BTreeMap::<(usize, Role), ValueOrPoly<Z>>::new();
+    let mut msg = BTreeMap::<(u64, Role), ValueOrPoly<Z>>::new();
     let own_role = session.my_role()?;
 
     //For all dealers
@@ -540,7 +540,7 @@ async fn round_4<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<
                     BroadcastValue::Round4VSS(v) => Some(v),
                     _ => None,
                 })
-                .and_then(|v| v.get(&(dealer_idx, own_role)))
+                .and_then(|v| v.get(&(dealer_idx as u64, own_role)))
                 .and_then(|entry| {
                     if let ValueOrPoly::Poly(p) = entry {
                         Some(p)
@@ -704,12 +704,12 @@ fn answer_to_potential_conflicts<Z>(
     potentially_unhappy: &HashSet<(usize, Role, Role)>,
     own_role: &Role,
     vss: &Round1VSSOutput<Z>,
-) -> anyhow::Result<BTreeMap<(usize, Role, Role), Vec<Z>>>
+) -> anyhow::Result<BTreeMap<(u64, Role, Role), Vec<Z>>>
 where
     Z: Ring,
     Z: RingEmbed,
 {
-    let mut msg = BTreeMap::<(usize, Role, Role), Vec<Z>>::new();
+    let mut msg = BTreeMap::<(u64, Role, Role), Vec<Z>>::new();
     let my_dealer_idx = own_role.zero_based();
     //Can now match over the tuples of keys in potentially unhappy
     for key_tuple in potentially_unhappy.iter() {
@@ -719,7 +719,7 @@ where
                 let point_x = Z::embed_exceptional_set(pj_role.one_based())?;
                 let point_y = Z::embed_exceptional_set(pi_role.one_based())?;
                 msg.insert(
-                    (*dealer_idx, *pi_role, *pj_role),
+                    (*dealer_idx as u64, *pi_role, *pj_role),
                     vss.my_poly
                         .iter()
                         .map(|poly| poly.full_evaluation(point_x, point_y))
@@ -730,7 +730,7 @@ where
             (dealer_idx, pi_role, pj_role) if pi_role == own_role => {
                 let point = Z::embed_exceptional_set(pj_role.one_based())?;
                 msg.insert(
-                    (*dealer_idx, *pi_role, *pj_role),
+                    (*dealer_idx as u64, *pi_role, *pj_role),
                     vss.received_vss[*dealer_idx]
                         .double_poly
                         .iter()
@@ -742,7 +742,7 @@ where
             (dealer_idx, pi_role, pj_role) if pj_role == own_role => {
                 let point = Z::embed_exceptional_set(pi_role.one_based())?;
                 msg.insert(
-                    (*dealer_idx, *pi_role, *pj_role),
+                    (*dealer_idx as u64, *pi_role, *pj_role),
                     vss.received_vss[*dealer_idx]
                         .double_poly
                         .iter()
@@ -768,7 +768,7 @@ fn find_real_conflicts<Z: Ring>(
     let mut unhappy_vec = vec![HashSet::<Role>::new(); num_parties];
     let zeros = vec![Z::ZERO; num_secrets];
     for (dealer_idx, role_pi, role_pj) in potentially_unhappy {
-        let common_key = (*dealer_idx, *role_pi, *role_pj);
+        let common_key = (*dealer_idx as u64, *role_pi, *role_pj);
         let sender_resolve = bcast_settlements
             .get(&Role::indexed_by_zero(*dealer_idx))
             .and_then(|bcd| match bcd {
@@ -808,7 +808,7 @@ fn find_real_conflicts<Z: Ring>(
 }
 
 fn round_4_conflict_resolution<Z: Ring + RingEmbed>(
-    msg: &mut BTreeMap<(usize, Role), ValueOrPoly<Z>>,
+    msg: &mut BTreeMap<(u64, Role), ValueOrPoly<Z>>,
     is_dealer: bool,
     dealer_idx: usize,
     unhappy_set: &HashSet<Role>,
@@ -833,7 +833,7 @@ fn round_4_conflict_resolution<Z: Ring + RingEmbed>(
                     .collect_vec(),
             ),
         };
-        msg.insert((dealer_idx, *role_pi), msg_entry);
+        msg.insert((dealer_idx as u64, *role_pi), msg_entry);
     }
     Ok(())
 }
@@ -863,7 +863,7 @@ fn round_4_fix_conflicts<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSession
                             BroadcastValue::Round4VSS(v) => Some(v),
                             _ => None,
                         })
-                        .and_then(|v| v.get(&(dealer_idx, *role_pi)))
+                        .and_then(|v| v.get(&(dealer_idx as u64, *role_pi)))
                         .and_then(|v| match v {
                             ValueOrPoly::Value(vv) => Some((*role_pj, vv.clone())),
                             _ => None,
@@ -882,7 +882,7 @@ fn round_4_fix_conflicts<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSession
                     BroadcastValue::Round4VSS(v) => Some(v),
                     _ => None,
                 })
-                .and_then(|v| v.get(&(dealer_idx, *role_pi)))
+                .and_then(|v| v.get(&(dealer_idx as u64, *role_pi)))
                 .and_then(|p| match p {
                     ValueOrPoly::Poly(p) => Some(p),
                     _ => None,

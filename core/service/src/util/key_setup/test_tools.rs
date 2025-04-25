@@ -1,3 +1,4 @@
+use crate::engine::base::derive_request_id;
 use crate::util::key_setup::FhePublicKey;
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{
@@ -20,6 +21,13 @@ use tfhe::{
     HlExpandable, ServerKey, Unversionize, Versionize,
 };
 use threshold_fhe::execution::tfhe_internals::utils::expanded_encrypt;
+
+lazy_static::lazy_static! {
+    // The static ID we will use for the signing key for each of the MPC parties.
+    // We do so, since there is ever only one conceptual signing key per party (at least for now).
+    // This is a bit hackish, but it works for now.
+    pub static ref SIGNING_KEY_ID: RequestId = derive_request_id("SIGNING_KEY_ID").unwrap();
+}
 
 fn enc_and_serialize_ctxt<M, T>(
     msg: M,
@@ -481,6 +489,7 @@ pub async fn purge(
 
 #[cfg(any(test, feature = "testing"))]
 pub(crate) mod setup {
+    use super::SIGNING_KEY_ID;
     use crate::consts::{
         TEST_THRESHOLD_CRS_ID_10P, TEST_THRESHOLD_CRS_ID_13P, TEST_THRESHOLD_KEY_ID_10P,
         TEST_THRESHOLD_KEY_ID_13P,
@@ -504,7 +513,6 @@ pub(crate) mod setup {
         vault::storage::{file::FileStorage, StorageType},
     };
     use kms_grpc::kms::v1::RequestId;
-    use kms_grpc::rpc_types::SIGNING_KEY_ID;
     use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 
     pub async fn ensure_dir_exist() {
@@ -700,7 +708,7 @@ async fn test_purge() {
         crate::util::key_setup::ensure_central_server_signing_keys_exist(
             &mut central_pub_storage,
             &mut central_priv_storage,
-            &kms_grpc::rpc_types::SIGNING_KEY_ID,
+            &SIGNING_KEY_ID,
             true,
         )
         .await

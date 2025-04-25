@@ -11,19 +11,20 @@ use crate::execution::zk::ceremony;
 use crate::execution::{runtime::party::Role, small_execution::prss::PartySet};
 #[cfg(feature = "experimental")]
 use crate::experimental::bgv::basics::PublicBgvKeySet;
+use crate::hashing::{serialize_hash_element, DomainSep};
 use crate::{
     commitment::{Commitment, Opening},
     execution::small_execution::prf::PrfKey,
 };
 use serde::{Deserialize, Serialize};
-use sha3::{Digest, Sha3_256};
 use std::collections::{BTreeMap, HashMap};
 #[cfg(any(test, feature = "testing"))]
 use tfhe::zk::CompactPkeCrs;
 
 pub(crate) const BCAST_HASH_BYTE_LEN: usize = 32;
-pub(crate) const DSEP_BRACH: &[u8; 5] = b"BRACH";
 pub(crate) type BcastHash = [u8; BCAST_HASH_BYTE_LEN];
+
+const DSEP_BRACH: DomainSep = *b"BRACHABC";
 
 /// Captures network values which can (and sometimes should) be broadcast.
 ///
@@ -31,15 +32,17 @@ pub(crate) type BcastHash = [u8; BCAST_HASH_BYTE_LEN];
 /// ensure the (de)serialization for the types here are not expensive
 /// since the same message might be deserialized multiple times
 /// from different parties.
+/// It is also important to ensure that types are of constant size across systems,
+/// since the raw data will be hashed. In particular this means that `usize` CANNOT be used any types.
 #[derive(Serialize, Deserialize, PartialEq, Clone, Hash, Eq, Debug)]
-pub enum BroadcastValue<Z: Eq + Zero> {
+pub enum BroadcastValue<Z: Eq + Zero + Sized> {
     Bot,
     RingVector(Vec<Z>),
     RingValue(Z),
     PRSSVotes(Vec<(PartySet, Vec<Z>)>),
     Round2VSS(Vec<VerificationValues<Z>>),
-    Round3VSS(BTreeMap<(usize, Role, Role), Vec<Z>>),
-    Round4VSS(BTreeMap<(usize, Role), ValueOrPoly<Z>>),
+    Round3VSS(BTreeMap<(u64, Role, Role), Vec<Z>>),
+    Round4VSS(BTreeMap<(u64, Role), ValueOrPoly<Z>>),
     LocalSingleShare(MapsSharesChallenges<Z>),
     LocalDoubleShare(MapsDoubleSharesChallenges<Z>),
     PartialProof(ceremony::PartialProof),
@@ -47,13 +50,9 @@ pub enum BroadcastValue<Z: Eq + Zero> {
 
 impl<Z: Eq + Zero + Serialize> BroadcastValue<Z> {
     pub fn to_bcast_hash(&self) -> BcastHash {
-        //We hash the serialized broadcast value
-        let serialized = bincode::serialize(self).unwrap();
-        let mut hasher = Sha3_256::new();
-        hasher.update(DSEP_BRACH);
-        hasher.update(serialized);
-        let digest = hasher.finalize();
-
+        // Note that we are implicitly assuming that the serialization of a broadcast value ensure uniqueness
+        let digest = serialize_hash_element(&DSEP_BRACH, &self)
+            .expect("Could not serialize and hash message");
         digest
             .as_slice()
             .try_into()

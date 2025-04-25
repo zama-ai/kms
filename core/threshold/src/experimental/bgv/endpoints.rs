@@ -1,6 +1,8 @@
 use tokio::task::JoinSet;
 
 use crate::execution::runtime::session::{BaseSessionStruct, SessionParameters};
+use crate::hashing::serialize_hash_element;
+use crate::session_id::DSEP_SESSION_ID;
 
 use super::basics::PrivateBgvKeySet;
 use crate::execution::runtime::party::Identity;
@@ -21,8 +23,6 @@ use crate::session_id::{SessionId, SESSION_ID_BYTES};
 use aes_prng::AesRng;
 use itertools::Itertools;
 use rand::SeedableRng;
-use sha3::digest::ExtendableOutput;
-use sha3::Shake128;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -30,12 +30,13 @@ impl SessionId {
     pub fn from_bgv_ct(
         ciphertext: &LevelledCiphertext<LevelEll, N65536>,
     ) -> anyhow::Result<SessionId> {
-        let serialized_ct = bincode::serialize(ciphertext)?;
-
-        // hash the serialized ct data into a 128-bit (SESSION_ID_BYTES) digest and convert to u128
-        let mut hash = [0_u8; SESSION_ID_BYTES];
-        Shake128::digest_xof(serialized_ct, &mut hash);
-        Ok(SessionId(u128::from_le_bytes(hash)))
+        let hash = serialize_hash_element(&DSEP_SESSION_ID, ciphertext)?;
+        if hash.len() < SESSION_ID_BYTES {
+            return Err(anyhow::anyhow!("Hash is too short"));
+        }
+        let mut hash_arr = [0_u8; SESSION_ID_BYTES];
+        hash_arr.copy_from_slice(&hash[..SESSION_ID_BYTES]);
+        Ok(SessionId(u128::from_le_bytes(hash_arr)))
     }
 }
 

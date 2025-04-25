@@ -1,5 +1,6 @@
 use super::poly::Poly;
 use crate::execution::{runtime::party::Role, sharing::shamir::ShamirSharings};
+use crate::hashing::DomainSep;
 use rand::CryptoRng;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -140,9 +141,9 @@ pub trait ErrorCorrect: Ring + RingEmbed {
 pub trait Derive: Sized {
     /// Domain separator for the function `derive_challenges_from_coinflip`.
     ///
-    /// "LDS" stands for local double sharing
+    /// "LDS"/"LDSHARNG" stands for local double sharing
     /// but this is also used for local single sharing in the NIST spec.
-    const DSEP_LDS: &[u8] = b"LDS";
+    const DSEP_LDS: DomainSep = *b"LDSHARNG";
     const LOG_SIZE_EXCEPTIONAL_SET: usize;
     /// This is known as H_{LDS} from the NIST spec.
     fn derive_challenges_from_coinflip(

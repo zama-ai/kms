@@ -4,6 +4,7 @@ use rand::CryptoRng;
 use rand::RngCore;
 use serde::Serialize;
 use tfhe::FheTypes;
+use threshold_fhe::hashing::DomainSep;
 
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::cryptography::internal_crypto_types::PublicEncKey;
@@ -20,7 +21,10 @@ pub trait BaseKms {
     ) -> anyhow::Result<()>;
     fn sign<T: Serialize + AsRef<[u8]>>(&self, msg: &T) -> anyhow::Result<Signature>;
     fn get_serialized_verf_key(&self) -> Vec<u8>;
-    fn digest<T: ?Sized + AsRef<[u8]>>(msg: &T) -> anyhow::Result<Vec<u8>>;
+    fn digest<T: ?Sized + AsRef<[u8]>>(
+        domain_separator: &DomainSep,
+        msg: &T,
+    ) -> anyhow::Result<Vec<u8>>;
 }
 /// The [Kms] trait represents either a dummy KMS, an HSM, or an MPC network.
 pub trait Kms: BaseKms {

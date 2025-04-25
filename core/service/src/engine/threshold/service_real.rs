@@ -3,7 +3,7 @@ use crate::consts::{MINIMUM_SESSIONS_PREPROC, PRSS_INIT_REQ_ID};
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey};
 use crate::cryptography::signcryption::signcrypt_with_link;
 use crate::engine::base::{
-    compute_external_pt_signature, deserialize_to_low_level, retrieve_parameters,
+    compute_external_pt_signature, derive_request_id, deserialize_to_low_level, retrieve_parameters,
 };
 use crate::engine::base::{compute_external_reenc_signature, BaseKmsStruct};
 use crate::engine::base::{compute_info, preproc_proto_to_keyset_config};
@@ -48,7 +48,6 @@ use kms_grpc::rpc_types::{
 };
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
-use sha3::{Digest, Sha3_256};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tfhe::integer::compression_keys::DecompressionKey;
@@ -81,12 +80,13 @@ use threshold_fhe::execution::runtime::session::{
 use threshold_fhe::execution::small_execution::prss::PRSSSetup;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::execution::zk::ceremony::{compute_witness_dim, Ceremony, RealCeremony};
+use threshold_fhe::hashing::unsafe_hash_list_w_size;
 use threshold_fhe::networking::grpc::{CoreToCoreNetworkConfig, GrpcNetworkingManager, GrpcServer};
 use threshold_fhe::networking::{
     tls::{extract_subject_from_cert, AttestedClientVerifier, BasicTLSConfig, TlsAcceptorStream},
     NetworkMode, Networking, NetworkingStrategy,
 };
-use threshold_fhe::session_id::{SessionId, SESSION_ID_BYTES};
+use threshold_fhe::session_id::{SessionId, DSEP_SESSION_ID, SESSION_ID_BYTES};
 use threshold_fhe::{algebra::base_ring::Z64, execution::endpoints::keygen::FhePubKeySet};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, OwnedSemaphorePermit, RwLock};
@@ -105,31 +105,22 @@ use tonic_health::server::HealthReporter;
 use tracing::Instrument;
 use x509_parser::pem::parse_x509_pem;
 
-const DSEP_SESSION_DECRYPTION: &[u8; 18] = b"SESSION_DECRYPTION";
-const DSEP_SESSION_REENCRYPTION: &[u8; 20] = b"SESSION_REENCRYPTION";
-const DSEP_SESSION_PREPROCESSING: &[u8; 21] = b"SESSION_PREPROCESSING";
-
-fn derive_session_id_from_ctr(
-    ctr: u64,
-    domain_separator: &[u8],
-    req_id: &RequestId,
-) -> anyhow::Result<SessionId> {
+fn derive_session_id_from_ctr(ctr: u64, req_id: &RequestId) -> anyhow::Result<SessionId> {
     if !req_id.is_valid() {
         anyhow::bail!("invalid request ID: {}", req_id.request_id);
     }
     let req_id_buf = hex::decode(&req_id.request_id)?;
 
-    // H(domain_separator || req_id (256 bits) || counter (64 bits))
-    let mut hasher = Sha3_256::new();
-    hasher.update(domain_separator);
-    hasher.update(req_id_buf);
-    hasher.update(ctr.to_le_bytes());
-    let digest = hasher.finalize();
-
-    let mut sid_buf = [0u8; SESSION_ID_BYTES];
-    sid_buf.copy_from_slice(&digest[0..SESSION_ID_BYTES]);
-
-    Ok(SessionId(u128::from_le_bytes(sid_buf)))
+    // Hash req_id (256 bits) || counter (64 bits)
+    // Observe that these will always be of constant size and hence it is safe to flatten
+    let digest = unsafe_hash_list_w_size(
+        &DSEP_SESSION_ID,
+        &[req_id_buf.as_slice(), ctr.to_le_bytes().as_slice()],
+        SESSION_ID_BYTES,
+    );
+    Ok(SessionId(u128::from_le_bytes(digest.try_into().map_err(
+        |_| anyhow::anyhow!("Failed to convert digest to SessionId"),
+    )?)))
 }
 
 cfg_if::cfg_if! {
@@ -840,7 +831,7 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
                 .await?;
             read_versioned_at_request_id(
                 &(*guarded_private_storage),
-                &RequestId::derive(&format!(
+                &derive_request_id(&format!(
                     "PRSSSetup_Z128_ID_{}_{}_{}",
                     req_id,
                     base_session.parameters.num_parties(),
@@ -872,7 +863,7 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
                 .await?;
             read_versioned_at_request_id(
                 &(*guarded_private_storage),
-                &RequestId::derive(&format!(
+                &derive_request_id(&format!(
                     "PRSSSetup_Z64_ID_{}_{}_{}",
                     req_id,
                     base_session.parameters.num_parties(),
@@ -939,7 +930,7 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
         let mut priv_storage = private_storage.lock().await;
         store_versioned_at_request_id(
             &mut (*priv_storage),
-            &RequestId::derive(&format!(
+            &derive_request_id(&format!(
                 "PRSSSetup_Z128_ID_{}_{}_{}",
                 req_id,
                 base_session.parameters.num_parties(),
@@ -952,7 +943,7 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
 
         store_versioned_at_request_id(
             &mut (*priv_storage),
-            &RequestId::derive(&format!(
+            &derive_request_id(&format!(
                 "PRSSSetup_Z64_ID_{}_{}_{}",
                 req_id,
                 base_session.parameters.num_parties(),
@@ -1063,8 +1054,7 @@ impl<
             let ct_format = typed_ciphertext.ciphertext_format();
             let ct = &typed_ciphertext.ciphertext;
             let external_handle = typed_ciphertext.external_handle.clone();
-            let session_id =
-                derive_session_id_from_ctr(ctr as u64, DSEP_SESSION_REENCRYPTION, req_id)?;
+            let session_id = derive_session_id_from_ctr(ctr as u64, req_id)?;
 
             let low_level_ct =
                 deserialize_to_low_level(fhe_type, ct_format, ct, &keys.decompression_key)?;
@@ -1629,7 +1619,7 @@ impl<
                 .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
                 .ok();
             let internal_sid = tonic_handle_potential_err(
-                derive_session_id_from_ctr(ctr as u64, DSEP_SESSION_DECRYPTION, &req_id),
+                derive_session_id_from_ctr(ctr as u64, &req_id),
                 "failed to derive session ID from counter".to_string(),
             )?;
             let key_id = key_id.clone();
@@ -2747,9 +2737,7 @@ impl RealPreprocessor {
         let own_identity = self.session_preparer.own_identity()?;
 
         let sids = (0..self.num_sessions_preproc)
-            .map(|ctr| {
-                derive_session_id_from_ctr(ctr as u64, DSEP_SESSION_PREPROCESSING, &request_id)
-            })
+            .map(|ctr| derive_session_id_from_ctr(ctr as u64, &request_id))
             .collect::<anyhow::Result<Vec<_>>>()?;
         let base_sessions = {
             let mut res = Vec::with_capacity(sids.len());
@@ -3281,10 +3269,10 @@ mod tests {
     use crate::{
         client::test_tools::{self},
         consts::{DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD, PRSS_INIT_REQ_ID},
+        engine::base::derive_request_id,
         util::key_setup::test_tools::purge,
         vault::storage::{file::FileStorage, StorageType},
     };
-    use kms_grpc::kms::v1::RequestId;
 
     #[tokio::test]
     #[serial_test::serial]
@@ -3298,14 +3286,14 @@ mod tests {
             let cur_priv = FileStorage::new(None, StorageType::PRIV, Some(i)).unwrap();
 
             // make sure the store does not contain any PRSS info (currently stored under ID 1)
-            let req_id = &RequestId::derive(&format!(
+            let req_id = &derive_request_id(&format!(
                 "PRSSSetup_Z128_ID_{}_{}_{}",
                 PRSS_INIT_REQ_ID, DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD
             ))
             .unwrap();
             purge(None, None, &req_id.to_string(), DEFAULT_AMOUNT_PARTIES).await;
 
-            let req_id = &RequestId::derive(&format!(
+            let req_id = &derive_request_id(&format!(
                 "PRSSSetup_Z64_ID_{}_{}_{}",
                 PRSS_INIT_REQ_ID, DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD
             ))

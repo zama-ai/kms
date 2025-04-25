@@ -453,6 +453,8 @@ impl StorageCache {
 
 #[cfg(test)]
 pub mod tests {
+    use crate::engine::base::derive_request_id;
+
     use super::*;
     use kms_grpc::rpc_types::PubDataType;
     use serde::{Deserialize, Serialize};
@@ -476,7 +478,7 @@ pub mod tests {
     pub async fn test_storage_read_store_methods<S: Storage>(storage: &mut S) {
         let data = TestType { i: 42 };
         let data_type = "TestType";
-        let req_id = RequestId::derive("123").unwrap();
+        let req_id = derive_request_id("123").unwrap();
 
         // Ensure no old data is present
         let _ = delete_at_request_id(storage, &req_id, data_type).await;
@@ -497,10 +499,10 @@ pub mod tests {
 
     pub async fn test_batch_helper_methods<S: Storage>(storage: &mut S) {
         // Setup data
-        let req_id_1 = RequestId::derive("1").unwrap();
+        let req_id_1 = derive_request_id("1").unwrap();
         let data_1_pk = TestType { i: 1 };
         let data_1_vk = TestType { i: 2 };
-        let req_id_2 = RequestId::derive("2").unwrap();
+        let req_id_2 = derive_request_id("2").unwrap();
         let data_2_pk = TestType { i: 3 };
         let url_1_pk = storage
             .compute_url(&req_id_1.to_string(), &PubDataType::PublicKey.to_string())

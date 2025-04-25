@@ -8,6 +8,7 @@ use kms_grpc::{
     },
     rpc_types::protobuf_to_alloy_domain_option,
 };
+use threshold_fhe::hashing::DomainSep;
 use tonic::Status;
 
 use crate::{
@@ -39,6 +40,8 @@ const ERR_VALIDATE_REENCRYPTION_NO_REQ_ID: &str = "Request ID is not set in reen
 const ERR_VALIDATE_REENCRYPTION_NO_KEY_ID: &str = "Key ID is not set in reencryption request";
 const ERR_VALIDATE_REENCRYPTION_BAD_REQ_ID: &str = "Request ID is invalid in reencryption request";
 const ERR_VALIDATE_REENCRYPTION_EMPTY_CTS: &str = "No ciphertexts in reencryption request";
+
+pub(crate) const DSEP_REQ_RESP: DomainSep = *b"REQ_RESP";
 
 /// Validates a request ID and returns an appropriate tonic error if it is invalid.
 pub(crate) fn validate_request_id(request_id: &RequestId) -> Result<(), Status> {
@@ -179,7 +182,7 @@ pub(crate) fn validate_decrypt_req(
         format!("Could not serialize payload {:?}", req),
     )?;
     let req_digest = tonic_handle_potential_err(
-        BaseKmsStruct::digest(&serialized_req),
+        BaseKmsStruct::digest(&DSEP_REQ_RESP, &serialized_req),
         format!("Could not hash payload {:?}", req),
     )?;
 
@@ -344,7 +347,9 @@ pub(crate) fn validate_dec_responses_against_request(
                 return Err(anyhow_error_and_log(ERR_VALIDATE_DECRYPTION_BAD_CT_COUNT));
             }
 
-            if BaseKmsStruct::digest(&bincode::serialize(&req)?)? != pivot_payload.digest {
+            if BaseKmsStruct::digest(&DSEP_REQ_RESP, &bincode::serialize(&req)?)?
+                != pivot_payload.digest
+            {
                 return Err(anyhow_error_and_log(ERR_VALIDATE_DECRYPTION_BAD_LINK));
             }
             Ok(())
@@ -364,18 +369,20 @@ mod tests {
             DecryptionRequest, DecryptionResponse, DecryptionResponsePayload, ReencryptionRequest,
             RequestId, TypedCiphertext, TypedPlaintext,
         },
-        rpc_types::{alloy_to_protobuf_domain, serialize_hash_element, ID_LENGTH},
+        rpc_types::{alloy_to_protobuf_domain, ID_LENGTH},
     };
     use rand::SeedableRng;
+    use threshold_fhe::hashing::serialize_hash_element;
 
     use crate::{
-        cryptography::signcryption::ephemeral_encryption_key_generation, engine::base::gen_sig_keys,
+        cryptography::signcryption::ephemeral_encryption_key_generation,
+        engine::base::{derive_request_id, gen_sig_keys},
     };
 
     use super::{
         validate_dec_meta_data, validate_dec_responses, validate_dec_responses_against_request,
         validate_decrypt_req, validate_reencrypt_req, validate_request_id,
-        verify_reencryption_eip712, ERR_VALIDATE_DECRYPTION_BAD_CT_COUNT,
+        verify_reencryption_eip712, DSEP_REQ_RESP, ERR_VALIDATE_DECRYPTION_BAD_CT_COUNT,
         ERR_VALIDATE_DECRYPTION_BAD_LINK, ERR_VALIDATE_DECRYPTION_BAD_REQ_ID,
         ERR_VALIDATE_DECRYPTION_EMPTY_CTS, ERR_VALIDATE_DECRYPTION_INVALID_AGG_RESP,
         ERR_VALIDATE_DECRYPTION_NOT_ENOUGH_RESP, ERR_VALIDATE_DECRYPTION_NO_KEY_ID,
@@ -394,8 +401,8 @@ mod tests {
             verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
         );
         let domain = alloy_to_protobuf_domain(&alloy_domain).unwrap();
-        let request_id = RequestId::derive("request_id").unwrap();
-        let key_id = RequestId::derive("key_id").unwrap();
+        let request_id = derive_request_id("request_id").unwrap();
+        let key_id = derive_request_id("key_id").unwrap();
 
         // ciphertexts are not directly verified except the length
         let ciphertexts = vec![TypedCiphertext {
@@ -487,8 +494,8 @@ mod tests {
             verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
         );
         let domain = alloy_to_protobuf_domain(&alloy_domain).unwrap();
-        let request_id = RequestId::derive("request_id").unwrap();
-        let key_id = RequestId::derive("key_id").unwrap();
+        let request_id = derive_request_id("request_id").unwrap();
+        let key_id = derive_request_id("key_id").unwrap();
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let mut rng = AesRng::from_random_seed();
         let (enc_pk, _enc_sk) = ephemeral_encryption_key_generation(&mut rng);
@@ -644,7 +651,7 @@ mod tests {
         let client_address = alloy_primitives::Address::from_public_key(client_pk.pk());
         let ciphertext = vec![1, 2, 3];
         let (enc_pk, _) = ephemeral_encryption_key_generation(&mut rng);
-        let key_id = RequestId::derive("key_id").unwrap();
+        let key_id = derive_request_id("key_id").unwrap();
 
         let typed_ciphertext = TypedCiphertext {
             ciphertext,
@@ -974,18 +981,18 @@ mod tests {
         let pks = [vk0, vk1, vk2];
 
         let request = DecryptionRequest {
-            request_id: Some(RequestId::derive("DecryptionRequest").unwrap()),
+            request_id: Some(derive_request_id("DecryptionRequest").unwrap()),
             ciphertexts: vec![TypedCiphertext {
                 ciphertext: vec![1, 2, 3, 4],
                 fhe_type: 1,
                 external_handle: vec![1, 2, 3, 4],
                 ciphertext_format: 1,
             }],
-            key_id: Some(RequestId::derive("DecryptionRequest key_id").unwrap()),
+            key_id: Some(derive_request_id("DecryptionRequest key_id").unwrap()),
             domain: None,
         };
 
-        let digest = serialize_hash_element(&request).unwrap();
+        let digest = serialize_hash_element(&DSEP_REQ_RESP, &request).unwrap();
 
         let resp0 = {
             let payload = DecryptionResponsePayload {
@@ -1058,7 +1065,7 @@ mod tests {
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
             let bad_request = DecryptionRequest {
-                request_id: Some(RequestId::derive("DecryptionRequest").unwrap()),
+                request_id: Some(derive_request_id("DecryptionRequest").unwrap()),
                 // here we use two ciphertexts
                 ciphertexts: vec![
                     TypedCiphertext {
@@ -1074,7 +1081,7 @@ mod tests {
                         ciphertext_format: 1,
                     },
                 ],
-                key_id: Some(RequestId::derive("DecryptionRequest key_id").unwrap()),
+                key_id: Some(derive_request_id("DecryptionRequest key_id").unwrap()),
                 domain: None,
             };
             assert!(
@@ -1089,14 +1096,14 @@ mod tests {
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
             let bad_request = DecryptionRequest {
-                request_id: Some(RequestId::derive("DecryptionRequest").unwrap()),
+                request_id: Some(derive_request_id("DecryptionRequest").unwrap()),
                 ciphertexts: vec![TypedCiphertext {
                     ciphertext: vec![1, 2, 3, 4],
                     fhe_type: 2, // we change the fhe_type so it's the wrong request
                     external_handle: vec![1, 2, 3, 4],
                     ciphertext_format: 1,
                 }],
-                key_id: Some(RequestId::derive("DecryptionRequest key_id").unwrap()),
+                key_id: Some(derive_request_id("DecryptionRequest key_id").unwrap()),
                 domain: None,
             };
             assert!(

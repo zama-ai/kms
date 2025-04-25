@@ -5,10 +5,8 @@ use crate::kms::v1::{ReencryptionResponsePayload, SignedPubDataHandle};
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::Eip712Domain;
 use anyhow::anyhow;
-use bincode::serialize;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
-use sha3::{Digest, Sha3_256};
 use std::fmt;
 use strum_macros::EnumIter;
 use tfhe::integer::bigint::StaticUnsignedBigInt;
@@ -16,13 +14,6 @@ use tfhe::named::Named;
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::{FheTypes, Versionize};
 use tfhe_versionable::VersionsDispatch;
-
-lazy_static::lazy_static! {
-    // The static ID we will use for the signing key for each of the MPC parties.
-    // We do so, since there is ever only one conceptual signing key per party (at least for now).
-    // This is a bit hackish, but it works for now.
-    pub static ref SIGNING_KEY_ID: RequestId = RequestId::derive("SIGNING_KEY_ID").unwrap();
-}
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
@@ -39,7 +30,6 @@ cfg_if::cfg_if! {
 const ERR_PARSE_CHECKSUMMED: &str = "error parsing checksummed address";
 
 pub const ID_LENGTH: usize = 32;
-pub const SAFE_SER_SIZE_LIMIT: u64 = 1024 * 1024 * 1024 * 2;
 
 pub static KEY_GEN_REQUEST_NAME: &str = "key_gen_request";
 pub static CRS_GEN_REQUEST_NAME: &str = "crs_gen_request";
@@ -174,44 +164,6 @@ pub fn alloy_to_protobuf_domain(domain: &Eip712Domain) -> anyhow::Result<Eip712D
         salt: domain.salt.map(|x| x.to_vec()),
     };
     Ok(domain_msg)
-}
-
-/// Compute the SHA3-256 has of an element. Returns the hash as a vector of bytes.
-pub fn hash_element<T>(element: &T) -> Vec<u8>
-where
-    T: ?Sized + AsRef<[u8]>,
-{
-    // Use of SHA3 to stay as much as possible with current NIST standards
-    let mut hasher = Sha3_256::new();
-    hasher.update(element.as_ref());
-    let digest = hasher.finalize();
-    digest.to_vec()
-}
-
-/// Serialize an element and hash it using SHA3-256. Returns the hash as a vector of bytes.
-pub fn serialize_hash_element<T>(msg: &T) -> anyhow::Result<Vec<u8>>
-where
-    T: Serialize,
-{
-    let to_hash = match serialize(msg) {
-        Ok(to_hash) => to_hash,
-        Err(e) => {
-            anyhow::bail!("Could not encode message due to error: {:?}", e);
-        }
-    };
-    Ok(hash_element(&to_hash))
-}
-
-#[cfg(feature = "non-wasm")]
-pub fn safe_serialize_hash_element_versioned<T>(msg: &T) -> anyhow::Result<Vec<u8>>
-where
-    T: Serialize + tfhe::Versionize + tfhe::named::Named,
-{
-    let mut buf = Vec::new();
-    match tfhe::safe_serialization::safe_serialize(msg, &mut buf, SAFE_SER_SIZE_LIMIT) {
-        Ok(()) => Ok(hash_element(&buf)),
-        Err(e) => anyhow::bail!("Could not encode message due to error: {:?}", e),
-    }
 }
 
 /// The format of what will be stored, and returned in gRPC, as a result of CRS generation in the KMS
@@ -905,24 +857,6 @@ impl fmt::Display for RequestId {
 }
 
 impl RequestId {
-    /// Method for deterministically deriving a request ID from an arbitrary string.
-    /// Is currently only used for testing purposes, since deriving is the responsibility of the smart contract.
-    pub fn derive(name: &str) -> anyhow::Result<Self> {
-        let mut digest = serialize_hash_element(&name.to_string())?;
-        if digest.len() < ID_LENGTH {
-            anyhow::bail!(
-                "derived request ID should have at least length {ID_LENGTH}, but only got {}",
-                digest.len()
-            )
-        }
-        // Truncate and convert to hex
-        digest.truncate(ID_LENGTH);
-        let res_hex = hex::encode(digest);
-        Ok(RequestId {
-            request_id: res_hex,
-        })
-    }
-
     /// Validates if a user-specified input is a request ID.
     /// By valid we mean if it is a hex string of a static length. This is done to ensure it can be
     /// part of a valid path, without risk of path-traversal attacks in case the key request
@@ -1141,8 +1075,14 @@ pub(crate) mod tests {
             verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
         );
         let domain = alloy_to_protobuf_domain(&alloy_domain).unwrap();
-        let request_id = RequestId::derive("request_id").unwrap();
-        let key_id = RequestId::derive("key_id").unwrap();
+        let request_id = RequestId::try_from(
+            "0102030405060708091011121314151617181920212223242526272829303130".to_string(),
+        )
+        .unwrap();
+        let key_id = RequestId::try_from(
+            "0102030405060708091011121314151617181920212223242526272829303131".to_string(),
+        )
+        .unwrap();
 
         let ciphertexts = vec![TypedCiphertext {
             ciphertext: vec![],

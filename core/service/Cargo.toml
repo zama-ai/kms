@@ -74,7 +74,6 @@ rcgen = { workspace = true, optional = true }
 rsa = { version = "=0.9.8", features = ["sha2"] }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
-sha3.workspace = true
 signature = "=2.2.0"
 strum.workspace = true
 # experimental-force_fft_algo_dif4 feature ensure PBS is deterministic

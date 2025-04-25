@@ -1,3 +1,4 @@
+use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
 use crate::cryptography::decompression;
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey, PublicSigKey};
@@ -62,6 +63,7 @@ use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 #[cfg(feature = "non-wasm")]
 use threshold_fhe::execution::zk::ceremony::make_centralized_public_parameters;
+use threshold_fhe::hashing::DomainSep;
 #[cfg(feature = "non-wasm")]
 use threshold_fhe::thread_handles::ThreadHandleGroup;
 use tokio::sync::RwLock;
@@ -514,8 +516,11 @@ impl<
         self.base_kms.get_serialized_verf_key()
     }
 
-    fn digest<T: ?Sized + AsRef<[u8]>>(msg: &T) -> anyhow::Result<Vec<u8>> {
-        BaseKmsStruct::digest(&msg)
+    fn digest<T: ?Sized + AsRef<[u8]>>(
+        domain_separator: &DomainSep,
+        msg: &T,
+    ) -> anyhow::Result<Vec<u8>> {
+        BaseKmsStruct::digest(domain_separator, &msg)
     }
 }
 
@@ -544,7 +549,7 @@ macro_rules! deserialize_to_low_level_and_decrypt_helper {
             CiphertextFormat::BigExpanded => {
                 let r = safe_deserialize::<tfhe::SquashedNoiseFheUint>(
                     std::io::Cursor::new($serialized_high_level),
-                    kms_grpc::rpc_types::SAFE_SER_SIZE_LIMIT,
+                    SAFE_SER_SIZE_LIMIT,
                 )
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
                 let raw_res = r.decrypt(&$keys.client_key);
@@ -582,7 +587,7 @@ fn unsafe_decrypt(
             CiphertextFormat::BigExpanded => {
                 let r = safe_deserialize::<tfhe::SquashedNoiseFheBool>(
                     std::io::Cursor::new(serialized_high_level),
-                    kms_grpc::rpc_types::SAFE_SER_SIZE_LIMIT,
+                    SAFE_SER_SIZE_LIMIT,
                 )
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
                 let raw_res = r.decrypt(&keys.client_key);
@@ -882,7 +887,7 @@ pub(crate) mod tests {
     use crate::cryptography::signcryption::{
         decrypt_signcryption_with_link, ephemeral_signcryption_key_generation,
     };
-    use crate::engine::base::{compute_handle, compute_info, gen_sig_keys};
+    use crate::engine::base::{compute_handle, compute_info, derive_request_id, gen_sig_keys};
     use crate::engine::traits::Kms;
     use crate::util::file_handling::read_element;
     use crate::util::file_handling::write_element;
@@ -1097,7 +1102,7 @@ pub(crate) mod tests {
         assert!(some_key.is_some());
 
         // try to get keys with a non-existent handle
-        let wrong_key_handle = RequestId::derive("wrongKeyHandle").unwrap();
+        let wrong_key_handle = derive_request_id("wrongKeyHandle").unwrap();
         let no_key = central_keys
             .centralized_kms_keys
             .key_info

@@ -125,7 +125,7 @@ message KeyGenResult {
 // The result of generation of a public key
 message SignedPubDataHandle {
   // The key handle;
-  // This is a `SHA3-256` hash of the `tfhe::safe_serialization` of the
+  // This is a 256 bits `SHAKE-256` hash of the `tfhe::safe_serialization` of the
   // underlying struct. This handle serves as the `URI` to locate the actual
   // object in the `storage`.
   string key_handle = 1;

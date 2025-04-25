@@ -1667,10 +1667,11 @@ impl Client {
                             Role::indexed_by_one(cur_resp.party_id as usize),
                         )?;
                     }
-                    _ => {
+                    Err(e) => {
                         tracing::warn!(
-                            "Could not decrypt or validate signcrypted response from party {}.",
-                            cur_resp.party_id
+                            "Could not decrypt or validate signcrypted response from party {}: {}",
+                            cur_resp.party_id,
+                            e
                         );
                         fill_indexed_shares(
                             &mut sharings,
@@ -2249,7 +2250,7 @@ pub(crate) mod tests {
     use crate::consts::{PRSS_INIT_REQ_ID, TEST_PARAM, TEST_THRESHOLD_KEY_ID};
     use crate::cryptography::internal_crypto_types::Signature;
     use crate::cryptography::internal_crypto_types::WrappedDKGParams;
-    use crate::engine::base::{compute_handle, BaseKmsStruct};
+    use crate::engine::base::{compute_handle, derive_request_id, BaseKmsStruct};
     #[cfg(feature = "slow_tests")]
     use crate::engine::centralized::central_kms::tests::get_default_keys;
     use crate::engine::centralized::central_kms::RealCentralizedKms;
@@ -2405,7 +2406,7 @@ pub(crate) mod tests {
     #[serial]
     async fn test_threshold_health_endpoint_availability() {
         // make sure the store does not contain any PRSS info (currently stored under ID PRSS_INIT_REQ_ID)
-        let req_id = &RequestId::derive(&format!(
+        let req_id = &derive_request_id(&format!(
             "PRSSSetup_Z128_ID_{}_{}_{}",
             PRSS_INIT_REQ_ID, DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD
         ))
@@ -2744,7 +2745,7 @@ pub(crate) mod tests {
         }
 
         // make parallel requests by calling [decrypt] in a thread
-        let request_id = RequestId::derive("TEST_DEC_ID").unwrap();
+        let request_id = derive_request_id("TEST_DEC_ID").unwrap();
         let req = internal_client
             .decryption_request(cts.clone(), &dummy_domain(), &request_id, &key_id_req)
             .unwrap();
@@ -2779,7 +2780,7 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn test_key_gen_centralized() {
-        let request_id = RequestId::derive("test_key_gen_centralized").unwrap();
+        let request_id = derive_request_id("test_key_gen_centralized").unwrap();
         // Delete potentially old data
         purge(None, None, &request_id.to_string(), 1).await;
         key_gen_centralized(&request_id, FheParameter::Test, None, None).await;
@@ -2788,9 +2789,9 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn test_decompression_key_gen_centralized() {
-        let request_id_1 = RequestId::derive("test_key_gen_centralized-1").unwrap();
-        let request_id_2 = RequestId::derive("test_key_gen_centralized-2").unwrap();
-        let request_id_3 = RequestId::derive("test_decompression_key_gen_centralized").unwrap();
+        let request_id_1 = derive_request_id("test_key_gen_centralized-1").unwrap();
+        let request_id_2 = derive_request_id("test_key_gen_centralized-2").unwrap();
+        let request_id_3 = derive_request_id("test_decompression_key_gen_centralized").unwrap();
         // Delete potentially old data
         purge(None, None, &request_id_1.to_string(), 1).await;
         purge(None, None, &request_id_2.to_string(), 1).await;
@@ -2819,7 +2820,7 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn default_key_gen_centralized() {
-        let request_id = RequestId::derive("default_key_gen_centralized").unwrap();
+        let request_id = derive_request_id("default_key_gen_centralized").unwrap();
         // Delete potentially old data
         purge(None, None, &request_id.to_string(), 1).await;
         key_gen_centralized(&request_id, FheParameter::Default, None, None).await;
@@ -2829,9 +2830,9 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn default_decompression_key_gen_centralized() {
-        let request_id_1 = RequestId::derive("default_key_gen_centralized-1").unwrap();
-        let request_id_2 = RequestId::derive("default_key_gen_centralized-2").unwrap();
-        let request_id_3 = RequestId::derive("default_decompression_key_gen_centralized").unwrap();
+        let request_id_1 = derive_request_id("default_key_gen_centralized-1").unwrap();
+        let request_id_2 = derive_request_id("default_key_gen_centralized-2").unwrap();
+        let request_id_3 = derive_request_id("default_decompression_key_gen_centralized").unwrap();
         // Delete potentially old data
         purge(None, None, &request_id_1.to_string(), 1).await;
         purge(None, None, &request_id_2.to_string(), 1).await;
@@ -2990,7 +2991,7 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn test_crs_gen_manual() {
-        let crs_req_id = RequestId::derive("test_crs_gen_manual").unwrap();
+        let crs_req_id = derive_request_id("test_crs_gen_manual").unwrap();
         // Delete potentially old data
         purge(None, None, &crs_req_id.to_string(), 1).await;
         // TEST_PARAM uses V1 CRS
@@ -3077,7 +3078,7 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn test_crs_gen_centralized() {
-        let crs_req_id = RequestId::derive("test_crs_gen_centralized").unwrap();
+        let crs_req_id = derive_request_id("test_crs_gen_centralized").unwrap();
         // Delete potentially old data
         purge(None, None, &crs_req_id.to_string(), 1).await;
         // TEST_PARAM uses V1 CRS
@@ -3088,7 +3089,7 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn test_insecure_crs_gen_centralized() {
-        let crs_req_id = RequestId::derive("test_insecure_crs_gen_centralized").unwrap();
+        let crs_req_id = derive_request_id("test_insecure_crs_gen_centralized").unwrap();
         // Delete potentially old data
         purge(None, None, &crs_req_id.to_string(), 1).await;
         // TEST_PARAM uses V1 CRS
@@ -3310,7 +3311,7 @@ pub(crate) mod tests {
         concurrent: bool,
     ) {
         for i in 0..iterations {
-            let req_crs: RequestId = RequestId::derive(&format!(
+            let req_crs: RequestId = derive_request_id(&format!(
                 "full_crs_{amount_parties}_{:?}_{:?}_{i}_{insecure}",
                 max_bits, parameter
             ))
@@ -3330,7 +3331,7 @@ pub(crate) mod tests {
             let arc_internalclient = Arc::new(internal_client);
             let mut crs_set = JoinSet::new();
             for i in 0..iterations {
-                let cur_id: RequestId = RequestId::derive(&format!(
+                let cur_id: RequestId = derive_request_id(&format!(
                     "full_crs_{amount_parties}_{:?}_{:?}_{i}_{insecure}",
                     max_bits, parameter
                 ))
@@ -3355,7 +3356,7 @@ pub(crate) mod tests {
             assert_eq!(res.len(), iterations);
         } else {
             for i in 0..iterations {
-                let cur_id: RequestId = RequestId::derive(&format!(
+                let cur_id: RequestId = derive_request_id(&format!(
                     "full_crs_{amount_parties}_{:?}_{:?}_{i}_{insecure}",
                     max_bits, parameter
                 ))
@@ -3513,7 +3514,7 @@ pub(crate) mod tests {
                 .is_err());
 
             // if the request_id is wrong, we get nothing
-            let bad_request_id = RequestId::derive("bad_request_id").unwrap();
+            let bad_request_id = derive_request_id("bad_request_id").unwrap();
             assert!(internal_client
                 .process_distributed_crs_result(
                     &bad_request_id,
@@ -3785,7 +3786,7 @@ pub(crate) mod tests {
         // build parallel requests
         let reqs: Vec<_> = (0..parallelism)
             .map(|j: usize| {
-                let request_id = RequestId::derive(&format!("TEST_DEC_ID_{j}")).unwrap();
+                let request_id = derive_request_id(&format!("TEST_DEC_ID_{j}")).unwrap();
 
                 internal_client
                     .decryption_request(cts.clone(), &dummy_domain(), &request_id, &req_key_id)
@@ -4095,7 +4096,7 @@ pub(crate) mod tests {
                     ciphertext_format: ct_format.into(),
                     external_handle: j.to_be_bytes().to_vec(),
                 }];
-                let request_id = RequestId::derive(&format!("TEST_REENC_ID_{j}")).unwrap();
+                let request_id = derive_request_id(&format!("TEST_REENC_ID_{j}")).unwrap();
                 internal_client
                     .reencryption_request(
                         &dummy_domain(),
@@ -4504,7 +4505,7 @@ pub(crate) mod tests {
         let mut req_tasks = JoinSet::new();
         let reqs: Vec<_> = (0..parallelism)
             .map(|j| {
-                let request_id = RequestId::derive(&format!("TEST_DEC_ID_{j}")).unwrap();
+                let request_id = derive_request_id(&format!("TEST_DEC_ID_{j}")).unwrap();
 
                 internal_client
                     .decryption_request(cts.clone(), &dummy_domain(), &request_id, &key_id_req)
@@ -4869,7 +4870,6 @@ pub(crate) mod tests {
     ) {
         assert!(parallelism > 0);
         _ = write_transcript;
-
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (mut kms_servers, mut kms_clients, mut internal_client) =
             threshold_handles(dkg_params, amount_parties, true, None, decryption_mode).await;
@@ -4877,11 +4877,10 @@ pub(crate) mod tests {
             compute_cipher_from_stored_key(None, msg, key_id, enc_config).await;
 
         internal_client.convert_to_addresses();
-
         // make requests
         let reqs: Vec<_> = (0..parallelism)
             .map(|j| {
-                let request_id = RequestId::derive(&format!("TEST_REENC_ID_{j}")).unwrap();
+                let request_id = derive_request_id(&format!("TEST_REENC_ID_{j}")).unwrap();
                 let typed_ciphertexts = vec![TypedCiphertext {
                     ciphertext: ct.clone(),
                     fhe_type: fhe_type as i32,
@@ -4899,7 +4898,6 @@ pub(crate) mod tests {
                 (req, enc_pk, enc_sk)
             })
             .collect();
-
         // Either send the request, or crash the party if it's in
         // party_ids_to_crash
         let mut req_tasks = JoinSet::new();
@@ -4923,7 +4921,6 @@ pub(crate) mod tests {
                 }
             }
         }
-
         let mut req_response_vec = Vec::new();
         while let Some(resp) = req_tasks.join_next().await {
             req_response_vec.push(resp.unwrap().unwrap().into_inner());
@@ -5130,7 +5127,7 @@ pub(crate) mod tests {
             keys.params,
             None,
         );
-        let request_id = RequestId::derive("TEST_REENC_ID_123").unwrap();
+        let request_id = derive_request_id("TEST_REENC_ID_123").unwrap();
         let typed_ciphertexts = vec![TypedCiphertext {
             ciphertext: ct,
             fhe_type: fhe_type as i32,
@@ -5214,10 +5211,9 @@ pub(crate) mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     #[cfg(feature = "slow_tests")]
-    #[tracing_test::traced_test]
     #[serial]
     async fn test_ratelimiter() {
-        let req_id: RequestId = RequestId::derive("test_ratelimiter").unwrap();
+        let req_id: RequestId = derive_request_id("test_ratelimiter").unwrap();
         purge(None, None, &req_id.to_string(), 4).await;
         let rate_limiter_conf = RateLimiterConfig {
             bucket_size: 100,
@@ -5230,7 +5226,7 @@ pub(crate) mod tests {
         let (_kms_servers, kms_clients, internal_client) =
             threshold_handles(TEST_PARAM, 4, true, Some(rate_limiter_conf), None).await;
 
-        let req_id = RequestId::derive("test rate limiter 1").unwrap();
+        let req_id = derive_request_id("test rate limiter 1").unwrap();
         let req = internal_client
             .crs_gen_request(&req_id, Some(16), Some(FheParameter::Test), None)
             .unwrap();
@@ -5242,7 +5238,7 @@ pub(crate) mod tests {
         // the request should be rejected due to rate limiter.
         // This should be done after the requests above start being
         // processed in the kms.
-        let req_id_2 = RequestId::derive("test rate limiter2").unwrap();
+        let req_id_2 = derive_request_id("test rate limiter2").unwrap();
         let req_2 = internal_client
             .crs_gen_request(&req_id_2, Some(1), Some(FheParameter::Test), None)
             .unwrap();
@@ -5257,7 +5253,7 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn test_insecure_dkg(#[case] amount_parties: usize) {
-        let key_id: RequestId = RequestId::derive(&format!(
+        let key_id: RequestId = derive_request_id(&format!(
             "test_inscure_dkg_key_{amount_parties}_{:?}",
             TEST_PARAM
         ))
@@ -5288,10 +5284,12 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn default_insecure_dkg(#[case] amount_parties: usize) {
+        use crate::engine::base::derive_request_id;
+
         let param = FheParameter::Default;
         let dkg_param: WrappedDKGParams = param.into();
 
-        let key_id: RequestId = RequestId::derive(&format!(
+        let key_id: RequestId = derive_request_id(&format!(
             "default_insecure_dkg_key_{amount_parties}_{:?}",
             param,
         ))
@@ -5365,7 +5363,6 @@ pub(crate) mod tests {
 
     #[cfg(all(feature = "slow_tests", feature = "insecure"))]
     #[tokio::test(flavor = "multi_thread")]
-    #[tracing_test::traced_test]
     #[serial]
     async fn test_insecure_threshold_decompression_keygen() {
         // Note that the first 2 key gens are insecure, but the last is secure as needed to generate decompression keys
@@ -5382,7 +5379,7 @@ pub(crate) mod tests {
             None
         } else {
             Some(
-                RequestId::derive(&format!(
+                derive_request_id(&format!(
                     "decom_dkg_preproc_{amount_parties}_{:?}_1",
                     parameter
                 ))
@@ -5390,7 +5387,7 @@ pub(crate) mod tests {
             )
         };
         let key_id_1: RequestId =
-            RequestId::derive(&format!("decom_dkg_key_{amount_parties}_{:?}_1", parameter))
+            derive_request_id(&format!("decom_dkg_key_{amount_parties}_{:?}_1", parameter))
                 .unwrap();
         purge(None, None, &key_id_1.to_string(), amount_parties).await;
 
@@ -5398,7 +5395,7 @@ pub(crate) mod tests {
             None
         } else {
             Some(
-                RequestId::derive(&format!(
+                derive_request_id(&format!(
                     "decom_dkg_preproc_{amount_parties}_{:?}_2",
                     parameter
                 ))
@@ -5406,19 +5403,19 @@ pub(crate) mod tests {
             )
         };
         let key_id_2: RequestId =
-            RequestId::derive(&format!("decom_dkg_key_{amount_parties}_{:?}_2", parameter))
+            derive_request_id(&format!("decom_dkg_key_{amount_parties}_{:?}_2", parameter))
                 .unwrap();
         purge(None, None, &key_id_2.to_string(), amount_parties).await;
 
         let preproc_id_3 = Some(
-            RequestId::derive(&format!(
+            derive_request_id(&format!(
                 "decom_dkg_preproc_{amount_parties}_{:?}_3",
                 parameter
             ))
             .unwrap(),
         );
         let key_id_3: RequestId =
-            RequestId::derive(&format!("decom_dkg_key_{amount_parties}_{:?}_3", parameter))
+            derive_request_id(&format!("decom_dkg_key_{amount_parties}_{:?}_3", parameter))
                 .unwrap();
         purge(None, None, &key_id_3.to_string(), amount_parties).await;
 
@@ -5554,13 +5551,13 @@ pub(crate) mod tests {
         concurrent: bool,
     ) {
         for i in 0..iterations {
-            let req_preproc: RequestId = RequestId::derive(&format!(
+            let req_preproc: RequestId = derive_request_id(&format!(
                 "full_dkg_preproc_{amount_parties}_{:?}_{i}",
                 parameter
             ))
             .unwrap();
             purge(None, None, &req_preproc.to_string(), amount_parties).await;
-            let req_key: RequestId = RequestId::derive(&format!(
+            let req_key: RequestId = derive_request_id(&format!(
                 "full_dkg_key_{amount_parties}_{:?}_{i}",
                 parameter
             ))
@@ -5598,7 +5595,7 @@ pub(crate) mod tests {
             let mut preprocset = JoinSet::new();
             let mut preproc_ids = HashMap::new();
             for i in 0..iterations {
-                let cur_id: RequestId = RequestId::derive(&format!(
+                let cur_id: RequestId = derive_request_id(&format!(
                     "full_dkg_preproc_{amount_parties}_{:?}_{i}",
                     parameter
                 ))
@@ -5624,7 +5621,7 @@ pub(crate) mod tests {
             preprocset.join_all().await;
             let mut keyset = JoinSet::new();
             for i in 0..iterations {
-                let key_id: RequestId = RequestId::derive(&format!(
+                let key_id: RequestId = derive_request_id(&format!(
                     "full_dkg_key_{amount_parties}_{:?}_{i}",
                     parameter
                 ))
@@ -5658,7 +5655,7 @@ pub(crate) mod tests {
         } else {
             let mut preproc_ids = HashMap::new();
             for i in 0..iterations {
-                let cur_id: RequestId = RequestId::derive(&format!(
+                let cur_id: RequestId = derive_request_id(&format!(
                     "full_dkg_preproc_{amount_parties}_{:?}_{i}",
                     parameter
                 ))
@@ -5675,7 +5672,7 @@ pub(crate) mod tests {
                 preproc_ids.insert(i, cur_id);
             }
             for i in 0..iterations {
-                let key_id: RequestId = RequestId::derive(&format!(
+                let key_id: RequestId = derive_request_id(&format!(
                     "full_dkg_key_{amount_parties}_{:?}_{i}",
                     parameter
                 ))
@@ -6053,7 +6050,7 @@ pub(crate) mod tests {
             // We only test for the secure variant of the dkg because the insecure
             // variant does not use preprocessing material.
             tracing::debug!("starting another dkg with a used preproc ID");
-            let other_key_gen_id = RequestId::derive("test_dkg other key id").unwrap();
+            let other_key_gen_id = derive_request_id("test_dkg other key id").unwrap();
             let keygen_req_data = internal_client
                 .key_gen_request(
                     &other_key_gen_id,
