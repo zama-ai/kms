@@ -507,7 +507,8 @@ jobs:
   docker-golden-image:
     if: >-
       ((startsWith(github.ref, 'refs/heads/release/') || (github.ref == 'refs/heads/main')) && (github.event_name == 'schedule')) ||
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')) ||
+      (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main')
     uses: ./.github/workflows/common-docker.yml
     with:
       working-directory: "./base"
