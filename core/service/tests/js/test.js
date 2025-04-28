@@ -8,8 +8,8 @@ const {
     cryptobox_decrypt,
     cryptobox_pk_to_u8vec,
     cryptobox_sk_to_u8vec,
-    process_reencryption_resp,
-    process_reencryption_resp_from_js,
+    process_user_decryption_resp,
+    process_user_decryption_resp_from_js,
     u8vec_to_cryptobox_pk,
     u8vec_to_cryptobox_sk,
     new_client,
@@ -61,7 +61,7 @@ test('crypto_box ser', (_t) => {
     assert.deepEqual(x, pt);
 });
 
-test('centralized reencryption response', (_t) => {
+test('centralized user decryption response', (_t) => {
     // TEST_CENTRAL_WASM_TRANSCRIPT_PATH
     const transcript_buf = fs.readFileSync('temp/test-central-wasm-transcript.bin.8')
     const transcript = buf_to_transcript(transcript_buf);
@@ -72,18 +72,18 @@ test('centralized reencryption response', (_t) => {
     const enc_pk = transcript_to_enc_pk(transcript);
     const enc_sk = transcript_to_enc_sk(transcript);
 
-    // test reenc using wasm objects
-    const pt = process_reencryption_resp(client, request, eip712_domain, response, enc_pk, enc_sk, true);
+    // test user decrypt using wasm objects
+    const pt = process_user_decryption_resp(client, request, eip712_domain, response, enc_pk, enc_sk, true);
     assert.deepEqual(1, pt.length);
     assert.deepEqual(48, pt[0].bytes[0]);
 
     const response2 = transcript_to_response(transcript);
-    const pt2 = process_reencryption_resp(client, null, null, response2, enc_pk, enc_sk, false);
+    const pt2 = process_user_decryption_resp(client, null, null, response2, enc_pk, enc_sk, false);
     assert.deepEqual(1, pt2.length);
     assert.deepEqual(48, pt2[0].bytes[0]);
 });
 
-test('centralized reencryption response with js', (_t) => {
+test('centralized user decryption response with js', (_t) => {
     // TEST_CENTRAL_WASM_TRANSCRIPT_PATH
     const transcript_buf = fs.readFileSync('temp/test-central-wasm-transcript.bin.8')
     const transcript = buf_to_transcript(transcript_buf);
@@ -94,20 +94,20 @@ test('centralized reencryption response with js', (_t) => {
     const enc_pk = transcript_to_enc_pk(transcript);
     const enc_sk = transcript_to_enc_sk(transcript);
 
-    // test reenc using js objects
+    // test user decryption using js objects
     // these logs display the format of the request and response.
-    console.log("centralized reencryption response")
+    console.log("centralized user decryption response")
     console.log(request_js);
     console.log(eip712_domain_js);
     console.log(response_js);
-    const pt = process_reencryption_resp_from_js(client, request_js, eip712_domain_js, response_js, enc_pk, enc_sk, true)[0].bytes;
+    const pt = process_user_decryption_resp_from_js(client, request_js, eip712_domain_js, response_js, enc_pk, enc_sk, true)[0].bytes;
     assert.deepEqual(48, pt.at(-1));
 
-    const pt2 = process_reencryption_resp_from_js(client, null, null, response_js, enc_pk, enc_sk, false)[0].bytes;
+    const pt2 = process_user_decryption_resp_from_js(client, null, null, response_js, enc_pk, enc_sk, false)[0].bytes;
     assert.deepEqual(48, pt2.at(-1));
 });
 
-test('threshold reencryption response', (_t) => {
+test('threshold user decryption response', (_t) => {
     // TEST_THRESHOLD_WASM_TRANSCRIPT_PATH
     const transcript_buf = fs.readFileSync('temp/test-threshold-wasm-transcript.bin.8')
     const transcript = buf_to_transcript(transcript_buf);
@@ -118,29 +118,29 @@ test('threshold reencryption response', (_t) => {
     const enc_pk = transcript_to_enc_pk(transcript);
     const enc_sk = transcript_to_enc_sk(transcript);
 
-    // test reenc using wasm objects
-    console.log("threshold reencryption response")
+    // test user decryption using wasm objects
+    console.log("threshold user decryption response")
     console.log(request_js);
     console.log(eip712_domain_js);
     console.log(response_js);
-    const pt = process_reencryption_resp_from_js(client, request_js, eip712_domain_js, response_js, enc_pk, enc_sk, true)[0].bytes;
+    const pt = process_user_decryption_resp_from_js(client, request_js, eip712_domain_js, response_js, enc_pk, enc_sk, true)[0].bytes;
     assert.deepEqual(42, pt.at(-1));
 
     const response2_js = transcript_to_response_js(transcript);
-    const pt2 = process_reencryption_resp_from_js(client, null, null, response2_js, enc_pk, enc_sk, false)[0].bytes;
+    const pt2 = process_user_decryption_resp_from_js(client, null, null, response2_js, enc_pk, enc_sk, false)[0].bytes;
     assert.deepEqual(42, pt2.at(-1));
 
     // test again using fewer shares
     response_js.pop();
-    const pt3 = process_reencryption_resp_from_js(client, request_js, eip712_domain_js, response_js, enc_pk, enc_sk, true)[0].bytes;
+    const pt3 = process_user_decryption_resp_from_js(client, request_js, eip712_domain_js, response_js, enc_pk, enc_sk, true)[0].bytes;
     assert.deepEqual(42, pt3.at(-1));
 
     response2_js.pop();
-    const pt4 = process_reencryption_resp_from_js(client, null, null, response2_js, enc_pk, enc_sk, false)[0].bytes;
+    const pt4 = process_user_decryption_resp_from_js(client, null, null, response2_js, enc_pk, enc_sk, false)[0].bytes;
     assert.deepEqual(42, pt4.at(-1));
 });
 
-test('threshold reencryption response with js', (_t) => {
+test('threshold user decryption response with js', (_t) => {
     // TEST_THRESHOLD_WASM_TRANSCRIPT_PATH
     const transcript_buf = fs.readFileSync('temp/test-threshold-wasm-transcript.bin.8')
     const transcript = buf_to_transcript(transcript_buf);
@@ -151,11 +151,11 @@ test('threshold reencryption response with js', (_t) => {
     const enc_pk = transcript_to_enc_pk(transcript);
     const enc_sk = transcript_to_enc_sk(transcript);
 
-    // test reenc using js objects
-    const pt = process_reencryption_resp_from_js(client, request_js, eip712_domain_js, response_js, enc_pk, enc_sk, true)[0].bytes;
+    // test user decrypt using js objects
+    const pt = process_user_decryption_resp_from_js(client, request_js, eip712_domain_js, response_js, enc_pk, enc_sk, true)[0].bytes;
     assert.deepEqual(42, pt.at(-1));
 
-    const pt2 = process_reencryption_resp_from_js(client, null, null, response_js, enc_pk, enc_sk, false)[0].bytes;
+    const pt2 = process_user_decryption_resp_from_js(client, null, null, response_js, enc_pk, enc_sk, false)[0].bytes;
     assert.deepEqual(42, pt2.at(-1));
 });
 

@@ -118,12 +118,12 @@ This document describes the CI/CD workflow structure for the KMS Core project. O
   - Features: `slow_tests`, `s3_tests`, `insecure`, `nightly_tests`
 
 - 🔍 **PR/Main Tests** (Run in Parallel):
-  1. Default Reencryption Tests
+  1. Default user decryption Tests
      - Features: `slow_tests`, `s3_tests`, `insecure`
-     - Focus: `default_reencryption_threshold`
+     - Focus: `default_user_decryption_threshold`
   2. Threshold Tests
      - Features: `slow_tests`, `s3_tests`, `insecure`
-     - Excludes: Default reencryption and verify proven CT
+     - Excludes: Default user decryption and verify proven CT
   3. Base Tests
      - Features: `slow_tests`, `s3_tests`, `insecure`
      - Excludes: Threshold tests

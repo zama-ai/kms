@@ -5,15 +5,17 @@ use crate::cryptography::signcryption::signcrypt_with_link;
 use crate::engine::base::{
     compute_external_pt_signature, derive_request_id, deserialize_to_low_level, retrieve_parameters,
 };
-use crate::engine::base::{compute_external_reenc_signature, BaseKmsStruct};
+use crate::engine::base::{compute_external_user_decrypt_signature, BaseKmsStruct};
 use crate::engine::base::{compute_info, preproc_proto_to_keyset_config};
-use crate::engine::base::{convert_key_response, DecCallValues, KeyGenCallValues, ReencCallValues};
+use crate::engine::base::{
+    convert_key_response, KeyGenCallValues, PubDecCallValues, UserDecryptCallValues,
+};
 use crate::engine::threshold::generic::GenericKms;
 use crate::engine::threshold::traits::{
-    CrsGenerator, Decryptor, Initiator, KeyGenPreprocessor, KeyGenerator, Reencryptor,
+    CrsGenerator, Initiator, KeyGenPreprocessor, KeyGenerator, PublicDecryptor, UserDecryptor,
 };
 use crate::engine::validation::{
-    validate_decrypt_req, validate_reencrypt_req, validate_request_id,
+    validate_public_decrypt_req, validate_request_id, validate_user_decrypt_req,
 };
 use crate::engine::{prepare_shutdown_signals, traits::BaseKms};
 use crate::util::meta_store::{handle_res_mapping, MetaStore};
@@ -27,19 +29,19 @@ use aes_prng::AesRng;
 use anyhow::anyhow;
 use conf_trace::metrics;
 use conf_trace::metrics_names::{
-    ERR_DECRYPTION_FAILED, ERR_RATE_LIMIT_EXCEEDED, OP_CRS_GEN, OP_DECOMPRESSION_KEYGEN,
-    OP_DECRYPT_INNER, OP_DECRYPT_REQUEST, OP_INSECURE_CRS_GEN, OP_INSECURE_DECOMPRESSION_KEYGEN,
-    OP_INSECURE_KEYGEN, OP_KEYGEN, OP_KEYGEN_PREPROC, OP_REENCRYPT_INNER, OP_REENCRYPT_REQUEST,
-    TAG_DECRYPTION_KIND, TAG_KEY_ID, TAG_PARTY_ID, TAG_TFHE_TYPE,
+    ERR_PUBLIC_DECRYPTION_FAILED, ERR_RATE_LIMIT_EXCEEDED, OP_CRS_GEN, OP_DECOMPRESSION_KEYGEN,
+    OP_INSECURE_CRS_GEN, OP_INSECURE_DECOMPRESSION_KEYGEN, OP_INSECURE_KEYGEN, OP_KEYGEN,
+    OP_KEYGEN_PREPROC, OP_USER_DECRYPT_INNER, OP_USER_DECRYPT_REQUEST, TAG_KEY_ID, TAG_PARTY_ID,
+    TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
 };
 use itertools::Itertools;
 use k256::ecdsa::SigningKey;
 use kms_grpc::kms::v1::{
-    CiphertextFormat, CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse,
-    DecryptionResponsePayload, Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocResult,
-    KeyGenRequest, KeyGenResult, KeySetAddedInfo, ReencryptionRequest, ReencryptionResponse,
-    ReencryptionResponsePayload, RequestId, TypedCiphertext, TypedPlaintext,
-    TypedSigncryptedCiphertext,
+    CiphertextFormat, CrsGenRequest, CrsGenResult, Empty, InitRequest, KeyGenPreprocRequest,
+    KeyGenPreprocResult, KeyGenRequest, KeyGenResult, KeySetAddedInfo, PublicDecryptionRequest,
+    PublicDecryptionResponse, PublicDecryptionResponsePayload, RequestId, TypedCiphertext,
+    TypedPlaintext, TypedSigncryptedCiphertext, UserDecryptionRequest, UserDecryptionResponse,
+    UserDecryptionResponsePayload,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use kms_grpc::rpc_types::{
@@ -225,7 +227,7 @@ pub enum ThresholdFheKeysVersioned {
 }
 
 /// These are the internal key materials (public and private)
-/// that's needed for decryption, reencryption and verifying a proven input.
+/// that's needed for decryption, user decryption and verifying a proven input.
 #[derive(Clone, Serialize, Deserialize, Versionize)]
 #[versionize(ThresholdFheKeysVersioned)]
 pub struct ThresholdFheKeys {
@@ -283,8 +285,8 @@ pub fn compute_all_info(
 #[cfg(not(feature = "insecure"))]
 pub type RealThresholdKms<PubS, PrivS, BackS> = GenericKms<
     RealInitiator<PrivS>,
-    RealReencryptor<PubS, PrivS, BackS>,
-    RealDecryptor<PubS, PrivS, BackS>,
+    RealUserDecryptor<PubS, PrivS, BackS>,
+    RealPublicDecryptor<PubS, PrivS, BackS>,
     RealKeyGenerator<PubS, PrivS, BackS>,
     RealPreprocessor,
     RealCrsGenerator<PubS, PrivS, BackS>,
@@ -293,8 +295,8 @@ pub type RealThresholdKms<PubS, PrivS, BackS> = GenericKms<
 #[cfg(feature = "insecure")]
 pub type RealThresholdKms<PubS, PrivS, BackS> = GenericKms<
     RealInitiator<PrivS>,
-    RealReencryptor<PubS, PrivS, BackS>,
-    RealDecryptor<PubS, PrivS, BackS>,
+    RealUserDecryptor<PubS, PrivS, BackS>,
+    RealPublicDecryptor<PubS, PrivS, BackS>,
     RealKeyGenerator<PubS, PrivS, BackS>,
     RealInsecureKeyGenerator<PubS, PrivS, BackS>,
     RealPreprocessor,
@@ -566,8 +568,9 @@ where
     let preproc_factory = Arc::new(Mutex::new(preproc_factory));
     let crs_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(crs_info)));
     let dkg_pubinfo_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(public_key_info)));
-    let dec_meta_store = Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache)));
-    let reenc_meta_store = Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache)));
+    let pub_dec_meta_store = Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache)));
+    let user_decrypt_meta_store =
+        Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache)));
     let crypto_storage = ThresholdCryptoMaterialStorage::new(
         public_storage,
         private_storage,
@@ -628,20 +631,20 @@ where
     let slow_events = Arc::new(Mutex::new(HashMap::new()));
     let rate_limiter = RateLimiter::new(rate_limiter_conf.unwrap_or_default());
 
-    let reencryptor = RealReencryptor {
+    let user_decryptor = RealUserDecryptor {
         base_kms: base_kms.new_instance().await,
         crypto_storage: crypto_storage.clone(),
-        reenc_meta_store,
+        user_decrypt_meta_store,
         session_preparer: Arc::new(session_preparer.new_instance().await),
         tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
         decryption_mode,
     };
 
-    let decryptor = RealDecryptor {
+    let public_decryptor = RealPublicDecryptor {
         base_kms: base_kms.new_instance().await,
         crypto_storage: crypto_storage.clone(),
-        dec_meta_store,
+        pub_dec_meta_store,
         session_preparer: Arc::new(session_preparer.new_instance().await),
         tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
@@ -688,8 +691,8 @@ where
 
     let kms = GenericKms::new(
         initiator,
-        reencryptor,
-        decryptor,
+        user_decryptor,
+        public_decryptor,
         keygenerator,
         #[cfg(feature = "insecure")]
         insecure_keygenerator,
@@ -985,14 +988,14 @@ impl<PrivS: Storage + Send + Sync + 'static> Initiator for RealInitiator<PrivS> 
         Ok(Response::new(Empty {}))
     }
 }
-pub struct RealReencryptor<
+pub struct RealUserDecryptor<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
     BackS: Storage + Send + Sync + 'static,
 > {
     base_kms: BaseKmsStruct,
     crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
-    reenc_meta_store: Arc<RwLock<MetaStore<ReencCallValues>>>,
+    user_decrypt_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
     session_preparer: Arc<SessionPreparer>,
     tracker: Arc<TaskTracker>,
     rate_limiter: RateLimiter,
@@ -1003,15 +1006,15 @@ impl<
         PubS: Storage + Send + Sync + 'static,
         PrivS: Storage + Send + Sync + 'static,
         BackS: Storage + Send + Sync + 'static,
-    > RealReencryptor<PubS, PrivS, BackS>
+    > RealUserDecryptor<PubS, PrivS, BackS>
 {
-    /// Helper method for reencryptin which carries out the actual threshold decryption using noise
+    /// Helper method for user decryption which carries out the actual threshold decryption using noise
     /// flooding or bit-decomposition.
     ///
-    /// This function does not perform reencryption in a background thread.
-    /// The return type should be [ReencCallValues] except the final item in the tuple
+    /// This function does not perform user decryption in a background thread.
+    /// The return type should be [UserDecryptCallValues] except the final item in the tuple
     #[allow(clippy::too_many_arguments)]
-    async fn inner_reencrypt(
+    async fn inner_user_decrypt(
         req_id: &RequestId,
         session_prep: Arc<SessionPreparer>,
         rng: &mut (impl CryptoRng + RngCore),
@@ -1025,7 +1028,7 @@ impl<
         dec_mode: DecryptionMode,
         domain: &alloy_sol_types::Eip712Domain,
         metric_tags: Vec<(&'static str, String)>,
-    ) -> anyhow::Result<(ReencryptionResponsePayload, Vec<u8>)> {
+    ) -> anyhow::Result<(UserDecryptionResponsePayload, Vec<u8>)> {
         let keys = fhe_keys;
 
         let mut all_signcrypted_cts = vec![];
@@ -1036,7 +1039,7 @@ impl<
             // Create and start a the timer, it'll be dropped and thus
             // exported at the end of the iteration
             let mut inner_timer = metrics::METRICS
-                .time_operation(OP_REENCRYPT_INNER)
+                .time_operation(OP_USER_DECRYPT_INNER)
                 .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
                 .and_then(|b| {
                     b.tags(metric_tags.clone()).map_err(|e| {
@@ -1092,7 +1095,7 @@ impl<
                                 }
                                 None => {
                                     return Err(anyhow!(
-                                        "Reencryption with session ID {} could not be retrived",
+                                        "User decryption with session ID {} could not be retrived",
                                         session_id.to_string()
                                     ))
                                 }
@@ -1101,7 +1104,7 @@ impl<
                             (pdec_serialized, packing_factor, time)
                         }
                         Err(e) => {
-                            return Err(anyhow!("Failed reencryption with noiseflooding: {e}"))
+                            return Err(anyhow!("Failed user decryption with noiseflooding: {e}"))
                         }
                     };
                     Ok(res)
@@ -1133,7 +1136,7 @@ impl<
                                 }
                                 None => {
                                     return Err(anyhow!(
-                                        "Reencryption with session ID {} could not be retrived",
+                                        "User decryption with session ID {} could not be retrived",
                                         session_id.to_string()
                                     ))
                                 }
@@ -1143,13 +1146,13 @@ impl<
                             // we may optionally pack it later
                             (pdec_serialized, 1, time)
                         }
-                        Err(e) => return Err(anyhow!("Failed reencryption with bitdec: {e}")),
+                        Err(e) => return Err(anyhow!("Failed user decryption with bitdec: {e}")),
                     };
                     Ok(res)
                 }
                 mode => {
                     return Err(anyhow_error_and_log(format!(
-                        "Unsupported Decryption Mode for reencrypt: {}",
+                        "Unsupported Decryption Mode for user_decrypt: {}",
                         mode
                     )));
                 }
@@ -1171,13 +1174,13 @@ impl<
                     let res = bincode::serialize(&enc_res)?;
 
                     tracing::info!(
-                        "Reencryption completed for type {:?}. Inner thread took {:?} ms",
+                        "User decryption completed for type {:?}. Inner thread took {:?} ms",
                         fhe_type,
                         time.as_millis()
                     );
                     (res, packing_factor)
                 }
-                Err(e) => return Err(anyhow!("Failed reencryption: {e}")),
+                Err(e) => return Err(anyhow!("Failed user decryption: {e}")),
             };
             all_signcrypted_cts.push(TypedSigncryptedCiphertext {
                 fhe_type: fhe_type as i32,
@@ -1189,7 +1192,7 @@ impl<
             drop(inner_timer);
         }
 
-        let payload = ReencryptionResponsePayload {
+        let payload = UserDecryptionResponsePayload {
             signcrypted_ciphertexts: all_signcrypted_cts,
             digest: link,
             verification_key: server_verf_key,
@@ -1198,7 +1201,7 @@ impl<
         };
 
         let external_signature =
-            compute_external_reenc_signature(&sig_key, &payload, domain, client_enc_key)?;
+            compute_external_user_decrypt_signature(&sig_key, &payload, domain, client_enc_key)?;
         Ok((payload, external_signature))
     }
 }
@@ -1208,15 +1211,15 @@ impl<
         PubS: Storage + Send + Sync + 'static,
         PrivS: Storage + Send + Sync + 'static,
         BackS: Storage + Send + Sync + 'static,
-    > Reencryptor for RealReencryptor<PubS, PrivS, BackS>
+    > UserDecryptor for RealUserDecryptor<PubS, PrivS, BackS>
 {
-    async fn reencrypt(
+    async fn user_decrypt(
         &self,
-        request: Request<ReencryptionRequest>,
+        request: Request<UserDecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
         // Start timing and counting before any operations
         let mut timer = metrics::METRICS
-            .time_operation(OP_REENCRYPT_REQUEST)
+            .time_operation(OP_USER_DECRYPT_REQUEST)
             .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
             .and_then(|b| {
                 b.tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
@@ -1227,25 +1230,25 @@ impl<
             .ok();
 
         let _request_counter = metrics::METRICS
-            .increment_request_counter(OP_REENCRYPT_REQUEST)
+            .increment_request_counter(OP_USER_DECRYPT_REQUEST)
             .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
 
-        let permit = self.rate_limiter.start_reenc().await.map_err(|e| {
+        let permit = self.rate_limiter.start_user_decrypt().await.map_err(|e| {
             let _ = metrics::METRICS
-                .increment_error_counter(OP_REENCRYPT_REQUEST, ERR_RATE_LIMIT_EXCEEDED);
+                .increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_RATE_LIMIT_EXCEEDED);
             Status::resource_exhausted(e.to_string())
         })?;
 
         let inner = request.into_inner();
         tracing::info!(
-            "Party {:?} received a new reencryption request with request_id {:?}",
+            "Party {:?} received a new user decryption request with request_id {:?}",
             self.session_preparer.own_identity(),
             inner.request_id
         );
         let (typed_ciphertexts, link, client_enc_key, client_address, key_id, req_id, domain) =
             tonic_handle_potential_err(
-                validate_reencrypt_req(&inner),
-                format!("Failed to validate reencryption request: {:?}", inner),
+                validate_user_decrypt_req(&inner),
+                format!("Failed to validate user decryption request: {:?}", inner),
             )?;
 
         if let Some(b) = timer.as_mut() {
@@ -1255,7 +1258,7 @@ impl<
                 .map_err(|e| tracing::warn!("Failed to add tag key_id or request_id: {}", e));
         }
 
-        let meta_store = Arc::clone(&self.reenc_meta_store);
+        let meta_store = Arc::clone(&self.user_decrypt_meta_store);
         let crypto_storage = self.crypto_storage.clone();
         let mut rng = self.base_kms.new_rng().await;
         let sig_key = Arc::clone(&self.base_kms.sig_key);
@@ -1266,10 +1269,10 @@ impl<
         // or put all the code that may error before the first write to the meta-store,
         // otherwise it'll be in the "Started" state forever.
         {
-            let mut guarded_meta_store = self.reenc_meta_store.write().await;
+            let mut guarded_meta_store = self.user_decrypt_meta_store.write().await;
             tonic_handle_potential_err(
                 guarded_meta_store.insert(&req_id),
-                "Could not insert reencryption request".to_string(),
+                "Could not insert user decryption request".to_string(),
             )?;
         }
 
@@ -1284,7 +1287,10 @@ impl<
         let metric_tags = vec![
             (TAG_PARTY_ID, prep.my_id.to_string()),
             (TAG_KEY_ID, key_id.request_id.clone()),
-            (TAG_DECRYPTION_KIND, dec_mode.as_str_name().to_string()),
+            (
+                TAG_PUBLIC_DECRYPTION_KIND,
+                dec_mode.as_str_name().to_string(),
+            ),
         ];
 
         let server_verf_key = self.base_kms.get_serialized_verf_key();
@@ -1304,7 +1310,7 @@ impl<
                     .await;
                 let tmp = match fhe_keys_rlock {
                     Ok(k) => {
-                        Self::inner_reencrypt(
+                        Self::inner_user_decrypt(
                             &req_id,
                             prep,
                             &mut rng,
@@ -1344,7 +1350,7 @@ impl<
     async fn get_result(
         &self,
         request: Request<RequestId>,
-    ) -> Result<Response<ReencryptionResponse>, Status> {
+    ) -> Result<Response<UserDecryptionResponse>, Status> {
         let request_id = request.into_inner();
         if !request_id.is_valid() {
             tracing::warn!(
@@ -1357,13 +1363,13 @@ impl<
             ));
         }
 
-        // Retrieve the ReencMetaStore object
+        // Retrieve the UserDecryptMetaStore object
         let status = {
-            let guarded_meta_store = self.reenc_meta_store.read().await;
+            let guarded_meta_store = self.user_decrypt_meta_store.read().await;
             guarded_meta_store.retrieve(&request_id)
         };
         let (payload, external_signature) =
-            handle_res_mapping(status, &request_id, "Reencryption").await?;
+            handle_res_mapping(status, &request_id, "UserDecryption").await?;
 
         let sig_payload_vec = tonic_handle_potential_err(
             bincode::serialize(&payload),
@@ -1374,7 +1380,7 @@ impl<
             self.base_kms.sign(&sig_payload_vec),
             format!("Could not sign payload {:?}", payload),
         )?;
-        Ok(Response::new(ReencryptionResponse {
+        Ok(Response::new(UserDecryptionResponse {
             signature: sig.sig.to_vec(),
             external_signature,
             payload: Some(payload),
@@ -1382,14 +1388,14 @@ impl<
     }
 }
 
-pub struct RealDecryptor<
+pub struct RealPublicDecryptor<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
     BackS: Storage + Send + Sync + 'static,
 > {
     base_kms: BaseKmsStruct,
     crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
-    dec_meta_store: Arc<RwLock<MetaStore<DecCallValues>>>,
+    pub_dec_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
     session_preparer: Arc<SessionPreparer>,
     tracker: Arc<TaskTracker>,
     rate_limiter: RateLimiter,
@@ -1400,7 +1406,7 @@ impl<
         PubS: Storage + Send + Sync + 'static,
         PrivS: Storage + Send + Sync + 'static,
         BackS: Storage + Send + Sync + 'static,
-    > RealDecryptor<PubS, PrivS, BackS>
+    > RealPublicDecryptor<PubS, PrivS, BackS>
 {
     /// Helper method for decryption which carries out the actual threshold decryption using noise
     /// flooding or bit-decomposition
@@ -1506,19 +1512,19 @@ impl<
         PubS: Storage + Send + Sync + 'static,
         PrivS: Storage + Send + Sync + 'static,
         BackS: Storage + Send + Sync + 'static,
-    > Decryptor for RealDecryptor<PubS, PrivS, BackS>
+    > PublicDecryptor for RealPublicDecryptor<PubS, PrivS, BackS>
 {
     #[tracing::instrument(skip(self, request), fields(
         party_id = ?self.session_preparer.my_id,
         operation = "decrypt"
     ))]
-    async fn decrypt(
+    async fn public_decrypt(
         &self,
-        request: Request<DecryptionRequest>,
+        request: Request<PublicDecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
         // Start timing and counting before any operations
         let mut timer = metrics::METRICS
-            .time_operation(OP_DECRYPT_REQUEST)
+            .time_operation(OP_USER_DECRYPT_REQUEST)
             .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
             .and_then(|b| {
                 b.tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
@@ -1529,12 +1535,12 @@ impl<
             .ok();
 
         let _request_counter = metrics::METRICS
-            .increment_request_counter(OP_DECRYPT_REQUEST)
+            .increment_request_counter(OP_USER_DECRYPT_REQUEST)
             .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
 
         let permit = self
             .rate_limiter
-            .start_dec()
+            .start_pub_decrypt()
             .await
             .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
 
@@ -1545,7 +1551,7 @@ impl<
         );
 
         let (ciphertexts, req_digest, key_id, req_id, eip712_domain) = tonic_handle_potential_err(
-            validate_decrypt_req(&inner),
+            validate_public_decrypt_req(&inner),
             format!("Failed to validate decrypt request {:?}", inner),
         )
         .map_err(|e| {
@@ -1554,8 +1560,8 @@ impl<
                 request_id = ?inner.request_id,
                 "Failed to validate decrypt request"
             );
-            let _ =
-                metrics::METRICS.increment_error_counter(OP_DECRYPT_REQUEST, ERR_DECRYPTION_FAILED);
+            let _ = metrics::METRICS
+                .increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_PUBLIC_DECRYPTION_FAILED);
             e
         })?;
 
@@ -1578,7 +1584,7 @@ impl<
         // or put all the code that may error before the first write to the meta-store,
         // otherwise it'll be in the "Started" state forever.
         {
-            let mut guarded_meta_store = self.dec_meta_store.write().await;
+            let mut guarded_meta_store = self.pub_dec_meta_store.write().await;
             tonic_handle_potential_err(
                 guarded_meta_store.insert(&req_id),
                 "Could not insert decryption into meta store".to_string(),
@@ -1603,13 +1609,16 @@ impl<
         // iterate over ciphertexts in this batch and decrypt each in their own session (so that it happens in parallel)
         for (ctr, typed_ciphertext) in ciphertexts.into_iter().enumerate() {
             let inner_timer = metrics::METRICS
-                .time_operation(OP_DECRYPT_INNER)
+                .time_operation(OP_USER_DECRYPT_INNER)
                 .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
                 .and_then(|b| {
                     b.tags([
                         (TAG_PARTY_ID, self.session_preparer.my_id.to_string()),
                         (TAG_KEY_ID, key_id.request_id.clone()),
-                        (TAG_DECRYPTION_KIND, dec_mode.as_str_name().to_string()),
+                        (
+                            TAG_PUBLIC_DECRYPTION_KIND,
+                            dec_mode.as_str_name().to_string(),
+                        ),
                     ])
                     .map_err(|e| {
                         tracing::warn!("Failed to a tag in party_id, key_id or request_id : {}", e)
@@ -1627,7 +1636,7 @@ impl<
             let prep = Arc::clone(&self.session_preparer);
 
             // we do not need to hold the handle,
-            // the result of the computation is tracked by the dec_meta_store
+            // the result of the computation is tracked by the pub_dec_meta_store
             let decrypt_future = || async move {
                 let fhe_type_string = typed_ciphertext.fhe_type_string();
                 let fhe_type = if let Ok(f) = typed_ciphertext.fhe_type() {
@@ -1753,7 +1762,7 @@ impl<
         }
 
         // collect decryption results in async mgmt task so we can return from this call without waiting for the decryption(s) to finish
-        let meta_store = Arc::clone(&self.dec_meta_store);
+        let meta_store = Arc::clone(&self.pub_dec_meta_store);
         let sigkey = Arc::clone(&self.base_kms.sig_key);
         let dec_sig_future = |_permit| async move {
             // Move the timer to the management task's context, so as to drop
@@ -1811,18 +1820,18 @@ impl<
     async fn get_result(
         &self,
         request: Request<RequestId>,
-    ) -> Result<Response<DecryptionResponse>, Status> {
+    ) -> Result<Response<PublicDecryptionResponse>, Status> {
         let request_id = request.into_inner();
         validate_request_id(&request_id)?;
         let status = {
-            let guarded_meta_store = self.dec_meta_store.read().await;
+            let guarded_meta_store = self.pub_dec_meta_store.read().await;
             guarded_meta_store.retrieve(&request_id)
         };
         let (req_digest, plaintexts, external_signature) =
             handle_res_mapping(status, &request_id, "Decryption").await?;
 
         let server_verf_key = self.base_kms.get_serialized_verf_key();
-        let sig_payload = DecryptionResponsePayload {
+        let sig_payload = PublicDecryptionResponsePayload {
             plaintexts,
             verification_key: server_verf_key,
             digest: req_digest,
@@ -1838,7 +1847,7 @@ impl<
             self.base_kms.sign(&sig_payload_vec),
             format!("Could not sign payload {:?}", sig_payload),
         )?;
-        Ok(Response::new(DecryptionResponse {
+        Ok(Response::new(PublicDecryptionResponse {
             signature: sig.sig.to_vec(),
             payload: Some(sig_payload),
         }))

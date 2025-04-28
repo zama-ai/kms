@@ -3,17 +3,18 @@ use crate::client::test_tools::ServerHandle;
 use crate::consts::DEFAULT_URL;
 use crate::engine::threshold::generic::GenericKms;
 use crate::engine::threshold::traits::{
-    CrsGenerator, Decryptor, Initiator, KeyGenPreprocessor, KeyGenerator, Reencryptor,
+    CrsGenerator, Initiator, KeyGenPreprocessor, KeyGenerator, PublicDecryptor, UserDecryptor,
 };
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
 use crate::util::random_free_port::get_listeners_random_free_ports;
 use futures_util::FutureExt;
 use kms_grpc::kms::v1::{
-    CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
-    Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocResult, KeyGenRequest, KeyGenResult,
-    ReencryptionRequest, ReencryptionResponse, ReencryptionResponsePayload, RequestId,
-    SignedPubDataHandle, TypedPlaintext, TypedSigncryptedCiphertext,
+    CrsGenRequest, CrsGenResult, Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocResult,
+    KeyGenRequest, KeyGenResult, PublicDecryptionRequest, PublicDecryptionResponse,
+    PublicDecryptionResponsePayload, RequestId, SignedPubDataHandle, TypedPlaintext,
+    TypedSigncryptedCiphertext, UserDecryptionRequest, UserDecryptionResponse,
+    UserDecryptionResponsePayload,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use kms_grpc::rpc_types::PubDataType;
@@ -65,8 +66,8 @@ pub async fn setup_mock_kms(n: usize) -> HashMap<u32, ServerHandle> {
 #[cfg(not(feature = "insecure"))]
 type DummyThresholdKms = GenericKms<
     DummyInitiator,
-    DummyReencryptor,
-    DummyDecryptor,
+    DummyUserDecryptor,
+    DummyPublicDecryptor,
     DummyKeyGenerator,
     DummyPreprocessor,
     DummyCrsGenerator,
@@ -75,8 +76,8 @@ type DummyThresholdKms = GenericKms<
 #[cfg(feature = "insecure")]
 type DummyThresholdKms = GenericKms<
     DummyInitiator,
-    DummyReencryptor,
-    DummyDecryptor,
+    DummyUserDecryptor,
+    DummyPublicDecryptor,
     DummyKeyGenerator,
     DummyKeyGenerator, // the insecure one is the same as the dummy one
     DummyPreprocessor,
@@ -94,8 +95,8 @@ async fn new_dummy_threshold_kms() -> (DummyThresholdKms, HealthServer<impl Heal
     (
         DummyThresholdKms::new(
             DummyInitiator {},
-            DummyReencryptor { degree: 1 },
-            DummyDecryptor {},
+            DummyUserDecryptor { degree: 1 },
+            DummyPublicDecryptor {},
             DummyKeyGenerator {},
             #[cfg(feature = "insecure")]
             DummyKeyGenerator {},
@@ -120,15 +121,15 @@ impl Initiator for DummyInitiator {
     }
 }
 
-struct DummyReencryptor {
+struct DummyUserDecryptor {
     pub degree: u32,
 }
 
 #[tonic::async_trait]
-impl Reencryptor for DummyReencryptor {
-    async fn reencrypt(
+impl UserDecryptor for DummyUserDecryptor {
+    async fn user_decrypt(
         &self,
-        _request: Request<ReencryptionRequest>,
+        _request: Request<UserDecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
         Ok(Response::new(Empty {}))
     }
@@ -136,21 +137,21 @@ impl Reencryptor for DummyReencryptor {
     async fn get_result(
         &self,
         _request: Request<RequestId>,
-    ) -> Result<Response<ReencryptionResponse>, Status> {
+    ) -> Result<Response<UserDecryptionResponse>, Status> {
         let signcrypted_ciphertexts = vec![TypedSigncryptedCiphertext {
             signcrypted_ciphertext: "signcrypted_ciphertexts".as_bytes().to_vec(),
             fhe_type: FheTypes::Uint8 as i32,
             external_handle: vec![1, 2, 3],
             packing_factor: 1,
         }];
-        let payload = ReencryptionResponsePayload {
+        let payload = UserDecryptionResponsePayload {
             verification_key: vec![],
             digest: "dummy digest".as_bytes().to_vec(),
             signcrypted_ciphertexts,
             party_id: self.degree + 1,
             degree: self.degree,
         };
-        Ok(Response::new(ReencryptionResponse {
+        Ok(Response::new(UserDecryptionResponse {
             signature: vec![1, 2],
             external_signature: vec![1, 2, 3],
             payload: Some(payload),
@@ -158,13 +159,13 @@ impl Reencryptor for DummyReencryptor {
     }
 }
 
-struct DummyDecryptor;
+struct DummyPublicDecryptor;
 
 #[tonic::async_trait]
-impl Decryptor for DummyDecryptor {
-    async fn decrypt(
+impl PublicDecryptor for DummyPublicDecryptor {
+    async fn public_decrypt(
         &self,
-        _request: Request<DecryptionRequest>,
+        _request: Request<PublicDecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
         Ok(Response::new(Empty {}))
     }
@@ -172,10 +173,10 @@ impl Decryptor for DummyDecryptor {
     async fn get_result(
         &self,
         _request: Request<RequestId>,
-    ) -> Result<Response<DecryptionResponse>, Status> {
-        Ok(Response::new(DecryptionResponse {
+    ) -> Result<Response<PublicDecryptionResponse>, Status> {
+        Ok(Response::new(PublicDecryptionResponse {
             signature: vec![1, 2],
-            payload: Some(DecryptionResponsePayload {
+            payload: Some(PublicDecryptionResponsePayload {
                 verification_key: vec![],
                 digest: "dummy digest".as_bytes().to_vec(),
                 plaintexts: vec![TypedPlaintext::new(42, FheTypes::Uint8)],

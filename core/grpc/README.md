@@ -571,15 +571,15 @@ If the call is successful, the `CrsGenResult` will contain the `request_id` used
 
 </details>
 
-## Decryption
+## Public Decryption
 
 <details>
-    <summary> Decrypt </summary>
+    <summary> PublicDecryption </summary>
 
 ### Input
 
 ```proto
-message DecryptionRequest {
+message PublicDecryptionRequest {
   repeated TypedCiphertext ciphertexts = 1;
   RequestId key_id = 2;
   Eip712DomainMsg domain = 3;
@@ -604,7 +604,7 @@ message Empty {}
 
 ### Description
 
-This RPC initiates the __asynchronous__ decryption of the provided `ciphertexts`.
+This RPC initiates the __asynchronous__ public decryption of the provided `ciphertexts`.
 The status or result can be retrieved with a call to the `GetDecryptResult` endpoint.
 
 It expects:
@@ -625,7 +625,7 @@ The response will be EIP712-signed using the KMS core's private key and the prov
 </details>
 
 <details>
-    <summary> GetDecryptResult </summary>
+    <summary> PublicDecryptionResponse </summary>
 
 ### Input
 
@@ -636,12 +636,12 @@ message RequestId { string request_id = 1; }
 ### Output
 
 ```proto
-message DecryptionResponse {
+message PublicDecryptionResponse {
   bytes signature = 1;
-  DecryptionResponsePayload payload = 2;
+  PublicDecryptionResponsePayload payload = 2;
 }
 
-message DecryptionResponsePayload {
+message PublicDecryptionResponsePayload {
   bytes verification_key = 1;
   bytes digest = 2;
   repeated TypedPlaintext plaintexts = 3;
@@ -652,35 +652,35 @@ message DecryptionResponsePayload {
 
 ### Description
 
-This RPC allows to retrieve the plaintexts if the `request_id` is that of a finished `Decrypt`.
+This RPC allows to retrieve the plaintexts if the `request_id` is that of a finished `PublicDecryption`.
 
 The `signature` is a `secp256k1` signature on the `bincode::serialize` of the `payload` using the core's private key.
 
 #### The `payload` is composed of
 
 - `verification_key`: the `bincode::serialize` `ECDSA/secp256k1` verification key of the core.
-- `digest`: The 256 bits `SHAKE-256` digest of the corresponding `bincode::serialize` `Decrypt` request.
+- `digest`: The 256 bits `SHAKE-256` digest of the corresponding `bincode::serialize` `PublicDecrypt` request.
 - `plaintexts`: An array of plaintexts and their meta information that are the requested decryptions.
 - `external_signature`: The `EIP-712` signature on the encoding of the uint256 handles of the ciphertexts, concatenated with big endian encoding of the `TypedPlaintext`s using the KMS core's private key.
 
 </details>
 
-## Reencryption
+## User Decryption
 
 <details>
-    <summary> Reencrypt </summary>
+    <summary> UserDecryption </summary>
 
 ### Input
 
 ```proto
-message ReencryptionRequest {
-  ReencryptionRequestPayload payload = 1;
+message UserDecryptionRequest {
+  UserDecryptionRequestPayload payload = 1;
   Eip712DomainMsg domain = 2;
   RequestId request_id = 3;
 }
 
 
-message ReencryptionRequestPayload {
+message UserDecryptionRequestPayload {
   string client_address = 1;
   bytes enc_key = 2;
   RequestId key_id = 3;
@@ -696,19 +696,19 @@ message Empty {}
 
 ### Description
 
-This RPC initiates the __asynchronous__ reencryption of the provided `ciphertext`.
+This RPC initiates the __asynchronous__ user decryption of the provided `ciphertext`.
 Meaning that a specified ciphertext will get _privately_ decrypted and encrypted under a specified non-homomorphic public key.
 The process ensures that no-one (even the MPC parties) learn the decrypted value unless they know the private decryption key for the non-homomorphic public key.
 
 It expects:
 
-- `payload`: the `ReencryptionRequestPayload` described below.
+- `payload`: the `UserDecryptionRequestPayload` described below.
 - `domain`: EIP712 domain information which will be used when signing the decrypted plaintext.
 - `request_id`: A unique uint256 RequestId for the decryption request.
 
-The `ReencryptionRequestPayload` contains all the information necessary to perform the reencryption:
+The `UserDecryptionRequestPayload` contains all the information necessary to perform the user decryption:
 
-- `client_address`: An EIP-55 encoded address (including the `0x` prefix) of the end-user who is supposed to learn the reencrypted response.
+- `client_address`: An EIP-55 encoded address (including the `0x` prefix) of the end-user who is supposed to learn the user decryption response.
 - `enc_key`: The `bincode::serialize` of `PublicEncKey`, which is a wrapper around a `crypto_box::PublicKey` to be used for encrypting the result.
 - `key_id`: The `RequestId` of the TFHE key the ciphertext is encrypted under.
 - `typed_ciphertext`: The ciphertexts to decrypt and their meta information.
@@ -717,7 +717,7 @@ The response will be EIP712-signed using the KMS core's private key and the prov
 </details>
 
 <details>
-    <summary> GetReencryptResult </summary>
+    <summary> UserDecryptionResponse </summary>
 
 ### Input
 
@@ -728,12 +728,12 @@ message RequestId { string request_id = 1; }
 ### Output
 
 ```proto
-message ReencryptionResponse {
+message UserDecryptionResponse {
   bytes signature = 1;
-  ReencryptionResponsePayload payload = 2;
+  UserDecryptionResponsePayload payload = 2;
 }
 
-message ReencryptionResponsePayload {
+message UserDecryptionResponsePayload {
   bytes verification_key = 1;
   bytes digest = 2;
   repeated TypedSigncryptedCiphertext signcrypted_ciphertexts = 3;
@@ -745,7 +745,7 @@ message ReencryptionResponsePayload {
 
 ### Description
 
-This RPC allows to retrieve the reencrypted plaintext if the `request_id` is that of a finished `Reencrypt`.
+This RPC allows to retrieve the user decrypted plaintext if the `request_id` is that of a finished `UserDecrypt`.
 
 The signature is a `secp256k1` signature on the `bincode::serialize` of the `payload` using the core's private key.
 
@@ -753,7 +753,7 @@ The signature is a `secp256k1` signature on the `bincode::serialize` of the `pay
 
 - `verification_key`: the `bincode::serialize` `ECDSA/secp256k1` verification key of the core.
 - `digest`: The concatenation of two digests `(eip712_signing_hash(pk, domain) || ciphertext digest)`
-- `party_id`: The MPC ID of the KMS core party doing the reencryption. Necessary for doing the share reconstruction.
+- `party_id`: The MPC ID of the KMS core party doing the user decryption. Necessary for doing the share reconstruction.
 - `degree`: The degree of the sharing scheme used. Necessary for doing the share reconstruction.
 - `external_signature`: a `EIP-712` signature on the _solidity-compatible_  256 bits `SHAKE-256` hash of the `tfhe::safe_serialization` of the underlying struct.
 

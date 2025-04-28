@@ -8,7 +8,7 @@ use crate::cryptography::signcryption::{
     insecure_decrypt_ignoring_signature, internal_verify_sig,
 };
 use crate::engine::validation::{
-    check_ext_reencryption_signature, validate_reenc_responses_against_request,
+    check_ext_user_decryption_signature, validate_user_decrypt_responses_against_request,
 };
 use crate::{anyhow_error_and_log, some_or_err};
 use aes_prng::AesRng;
@@ -17,8 +17,8 @@ use alloy_sol_types::SolStruct;
 use bincode::{deserialize, serialize};
 use itertools::Itertools;
 use kms_grpc::kms::v1::{
-    ReencryptionRequest, ReencryptionResponse, ReencryptionResponsePayload, RequestId,
-    TypedCiphertext, TypedPlaintext,
+    RequestId, TypedCiphertext, TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse,
+    UserDecryptionResponsePayload,
 };
 use kms_grpc::rpc_types::{
     alloy_to_protobuf_domain, fhe_types_to_num_blocks, UserDecryptionLinker,
@@ -52,8 +52,8 @@ cfg_if::cfg_if! {
         use crate::engine::base::BaseKmsStruct;
         use crate::vault::storage::{read_all_data_versioned, Storage, StorageReader};
         use kms_grpc::kms::v1::{
-            KeySetAddedInfo, CrsGenRequest, CrsGenResult, DecryptionRequest,
-            DecryptionResponse, FheParameter, KeyGenPreprocRequest,
+            KeySetAddedInfo, CrsGenRequest, CrsGenResult, PublicDecryptionRequest,
+            PublicDecryptionResponse, FheParameter, KeyGenPreprocRequest,
             KeyGenRequest, KeyGenResult, KeySetConfig,
         };
         use kms_grpc::rpc_types::{PubDataType, PublicKeyType, WrappedPublicKeyOwned};
@@ -67,7 +67,7 @@ cfg_if::cfg_if! {
         use tonic_health::ServingStatus;
         use tonic_health::pb::HealthCheckRequest;
         use crate::consts::{DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES};
-        use crate::engine::validation::validate_dec_responses_against_request;
+        use crate::engine::validation::validate_public_decrypt_responses_against_request;
     }
 }
 
@@ -117,7 +117,7 @@ fn decrypted_blocks_to_plaintext(
     res_pt.map_err(|error| anyhow_error_and_log(format!("Panicked in combining {error}")))
 }
 
-/// For reencryption, we only use the Addr variant,
+/// For user decryption, we only use the Addr variant,
 /// for everything else, we use the Pk variant.
 #[derive(Clone)]
 pub enum ServerIdentities {
@@ -154,7 +154,7 @@ pub struct Client {
 #[cfg(feature = "wasm_tests")]
 #[wasm_bindgen]
 #[derive(serde::Serialize, serde::Deserialize)]
-pub struct TestingReencryptionTranscript {
+pub struct TestingUserDecryptionTranscript {
     // client
     server_addrs: Vec<alloy_primitives::Address>,
     client_address: alloy_primitives::Address,
@@ -166,11 +166,11 @@ pub struct TestingReencryptionTranscript {
     pts: Vec<Vec<u8>>,
     cts: Vec<Vec<u8>>,
     // request
-    request: Option<ReencryptionRequest>,
+    request: Option<UserDecryptionRequest>,
     eph_sk: PrivateEncKey,
     eph_pk: PublicEncKey,
     // response
-    agg_resp: Vec<ReencryptionResponse>,
+    agg_resp: Vec<UserDecryptionResponse>,
 }
 
 #[wasm_bindgen]
@@ -185,7 +185,7 @@ impl CiphertextHandle {
 
 /// Validity of this struct is not checked.
 #[wasm_bindgen]
-pub struct ParsedReencryptionRequest {
+pub struct ParsedUserDecryptionRequest {
     // We allow dead_code because these are required to parse from JSON
     #[allow(dead_code)]
     signature: Option<alloy_primitives::Signature>,
@@ -196,7 +196,7 @@ pub struct ParsedReencryptionRequest {
     eip712_verifying_contract: alloy_primitives::Address,
 }
 
-impl ParsedReencryptionRequest {
+impl ParsedUserDecryptionRequest {
     pub fn new(
         signature: Option<alloy_primitives::Signature>,
         client_address: alloy_primitives::Address,
@@ -235,7 +235,7 @@ pub(crate) fn hex_decode_js_err(msg: &str) -> Result<Vec<u8>, JsError> {
 // we need this type because the json fields are hex-encoded
 // which cannot be converted to Vec<u8> automatically.
 #[derive(serde::Serialize, serde::Deserialize)]
-struct ParsedReencryptionRequestHex {
+struct ParsedUserDecryptionRequestHex {
     signature: Option<String>,
     client_address: String,
     enc_key: String,
@@ -243,10 +243,10 @@ struct ParsedReencryptionRequestHex {
     eip712_verifying_contract: String,
 }
 
-impl TryFrom<&ParsedReencryptionRequestHex> for ParsedReencryptionRequest {
+impl TryFrom<&ParsedUserDecryptionRequestHex> for ParsedUserDecryptionRequest {
     type Error = JsError;
 
-    fn try_from(req_hex: &ParsedReencryptionRequestHex) -> Result<Self, Self::Error> {
+    fn try_from(req_hex: &ParsedUserDecryptionRequestHex) -> Result<Self, Self::Error> {
         let signature_buf = req_hex
             .signature
             .as_ref()
@@ -277,21 +277,21 @@ impl TryFrom<&ParsedReencryptionRequestHex> for ParsedReencryptionRequest {
     }
 }
 
-impl TryFrom<JsValue> for ParsedReencryptionRequest {
+impl TryFrom<JsValue> for ParsedUserDecryptionRequest {
     type Error = JsError;
 
     fn try_from(value: JsValue) -> Result<Self, Self::Error> {
-        // JsValue -> JsClientReencryptionRequestHex
-        let req_hex: ParsedReencryptionRequestHex =
+        // JsValue -> JsClientUserDecryptionRequestHex
+        let req_hex: ParsedUserDecryptionRequestHex =
             serde_wasm_bindgen::from_value(value).map_err(|e| JsError::new(&e.to_string()))?;
 
-        // JsClientReencryptionRequestHex -> JsClientReencryptionRequest
-        ParsedReencryptionRequest::try_from(&req_hex)
+        // JsClientUserDecryptionRequestHex -> JsClientUserDecryptionRequest
+        ParsedUserDecryptionRequest::try_from(&req_hex)
     }
 }
 
-impl From<&ParsedReencryptionRequest> for ParsedReencryptionRequestHex {
-    fn from(value: &ParsedReencryptionRequest) -> Self {
+impl From<&ParsedUserDecryptionRequest> for ParsedUserDecryptionRequestHex {
+    fn from(value: &ParsedUserDecryptionRequest) -> Self {
         Self {
             signature: value
                 .signature
@@ -309,10 +309,10 @@ impl From<&ParsedReencryptionRequest> for ParsedReencryptionRequestHex {
     }
 }
 
-impl TryFrom<&ReencryptionRequest> for ParsedReencryptionRequest {
+impl TryFrom<&UserDecryptionRequest> for ParsedUserDecryptionRequest {
     type Error = anyhow::Error;
 
-    fn try_from(value: &ReencryptionRequest) -> Result<Self, Self::Error> {
+    fn try_from(value: &UserDecryptionRequest) -> Result<Self, Self::Error> {
         let domain = value
             .domain
             .as_ref()
@@ -344,7 +344,7 @@ impl TryFrom<&ReencryptionRequest> for ParsedReencryptionRequest {
 /// Compute the link as (eip712_signing_hash(pk, domain) || hash(ciphertext handles)).
 /// TODO
 pub fn compute_link(
-    req: &ParsedReencryptionRequest,
+    req: &ParsedUserDecryptionRequest,
     domain: &Eip712Domain,
 ) -> anyhow::Result<Vec<u8>> {
     // check consistency
@@ -474,7 +474,7 @@ impl Client {
     }
 
     /// This is used for tests to convert public keys into addresses
-    /// because when processing reencryption response, only addresses are allowed.
+    /// because when processing user decryption response, only addresses are allowed.
     pub fn convert_to_addresses(&mut self) {
         let pks = self.get_server_pks().unwrap();
         let addrs = pks
@@ -741,15 +741,15 @@ impl Client {
     /// Creates a decryption request to send to the KMS servers.
     ///
     /// The key_id should be the request ID of the key generation
-    /// request that generated the key which should be used for decryption
+    /// request that generated the key which should be used for public decryption
     #[cfg(feature = "non-wasm")]
-    pub fn decryption_request(
+    pub fn public_decryption_request(
         &mut self,
         ciphertexts: Vec<TypedCiphertext>,
         domain: &Eip712Domain,
         request_id: &RequestId,
         key_id: &RequestId,
-    ) -> anyhow::Result<DecryptionRequest> {
+    ) -> anyhow::Result<PublicDecryptionRequest> {
         if !request_id.is_valid() {
             return Err(anyhow_error_and_log(format!(
                 "The request id format is not valid {request_id}"
@@ -758,7 +758,7 @@ impl Client {
 
         let domain_msg = alloy_to_protobuf_domain(domain)?;
 
-        let req = DecryptionRequest {
+        let req = PublicDecryptionRequest {
             ciphertexts,
             key_id: Some(key_id.clone()),
             domain: Some(domain_msg),
@@ -767,19 +767,19 @@ impl Client {
         Ok(req)
     }
 
-    /// Creates a reencryption request to send to the KMS servers. This generates
-    /// an ephemeral reencryption key pair, signature payload containing the ciphertext,
+    /// Creates a user decryption request to send to the KMS servers. This generates
+    /// an ephemeral user decryption key pair, signature payload containing the ciphertext,
     /// required number of shares, and other metadata. It signs this payload with
-    /// the users's wallet private key. Returns the full [ReencryptionRequest] containing
+    /// the users's wallet private key. Returns the full [UserDecryptionRequest] containing
     /// the signed payload to send to the servers, along with the generated
-    /// reencryption key pair.
-    pub fn reencryption_request(
+    /// user decryption key pair.
+    pub fn user_decryption_request(
         &mut self,
         domain: &Eip712Domain,
         typed_ciphertexts: Vec<TypedCiphertext>,
         request_id: &RequestId,
         key_id: &RequestId,
-    ) -> anyhow::Result<(ReencryptionRequest, PublicEncKey, PrivateEncKey)> {
+    ) -> anyhow::Result<(UserDecryptionRequest, PublicEncKey, PrivateEncKey)> {
         if !request_id.is_valid() {
             return Err(anyhow_error_and_log(format!(
                 "The request id format is not valid {request_id}"
@@ -794,7 +794,7 @@ impl Client {
 
         let domain_msg = alloy_to_protobuf_domain(domain)?;
         Ok((
-            ReencryptionRequest {
+            UserDecryptionRequest {
                 request_id: Some(request_id.clone()),
                 enc_key: serialize(&enc_pk)?,
                 client_address: self.client_address.to_checksum(None),
@@ -1032,11 +1032,11 @@ impl Client {
     #[cfg(feature = "non-wasm")]
     pub fn process_decryption_resp(
         &self,
-        request: Option<DecryptionRequest>,
-        agg_resp: &[DecryptionResponse],
+        request: Option<PublicDecryptionRequest>,
+        agg_resp: &[PublicDecryptionResponse],
         min_agree_count: u32,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
-        validate_dec_responses_against_request(
+        validate_public_decrypt_responses_against_request(
             self.get_server_pks()?,
             request,
             agg_resp,
@@ -1044,10 +1044,10 @@ impl Client {
         )?;
 
         // TODO pivot should actually be picked as the most common response instead of just an
-        // arbitrary one. The same in reencryption
+        // arbitrary one. The same in user decryption
         let pivot = some_or_err(
             agg_resp.last(),
-            "No elements in decryption response".to_string(),
+            "No elements in user decryption response".to_string(),
         )?;
         let pivot_payload = some_or_err(
             pivot.payload.to_owned(),
@@ -1088,18 +1088,18 @@ impl Client {
         Ok(pts)
     }
 
-    /// Processes the aggregated reencryption response to attempt to decrypt
+    /// Processes the aggregated user decryption response to attempt to decrypt
     /// the encryption of the secret shared plaintext and returns this. Validates the
     /// response matches the request, checks signatures, and handles both
     /// centralized and distributed cases.
     ///
     /// If there is more than one response or more than one server identity,
     /// then the threshold mode is used.
-    pub fn process_reencryption_resp(
+    pub fn process_user_decryption_resp(
         &self,
-        client_request: &ParsedReencryptionRequest,
+        client_request: &ParsedUserDecryptionRequest,
         eip712_domain: &Eip712Domain,
-        agg_resp: &[ReencryptionResponse],
+        agg_resp: &[UserDecryptionResponse],
         enc_pk: &PublicEncKey,
         enc_sk: &PrivateEncKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
@@ -1127,24 +1127,29 @@ impl Client {
             // distributed case. For the centralized case we directly encode the [Plaintext]
             // object whereas for the distributed we encode the plain text as a
             // Vec<ResiduePolyF4Z128>.
-            self.centralized_reencryption_resp(
+            self.centralized_user_decryption_resp(
                 client_request,
                 eip712_domain,
                 agg_resp,
                 &client_keys,
             )
         } else {
-            self.threshold_reencryption_resp(client_request, eip712_domain, agg_resp, &client_keys)
+            self.threshold_user_decryption_resp(
+                client_request,
+                eip712_domain,
+                agg_resp,
+                &client_keys,
+            )
         }
     }
 
-    /// Processes the aggregated reencryption response to attempt to decrypt
+    /// Processes the aggregated user decryption response to attempt to decrypt
     /// the encryption of the secret shared plaintext and returns this.
     /// This function does *not* do any verification and is thus insecure and should be used only for testing.
     /// TODO hide behind flag for insecure function?
-    pub fn insecure_process_reencryption_resp(
+    pub fn insecure_process_user_decryption_resp(
         &self,
-        agg_resp: &[ReencryptionResponse],
+        agg_resp: &[UserDecryptionResponse],
         enc_pk: &PublicEncKey,
         enc_sk: &PrivateEncKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
@@ -1159,20 +1164,20 @@ impl Client {
             },
         };
 
-        // The same logic is used in `process_reencryption_resp`.
+        // The same logic is used in `process_user_decryption_resp`.
         if agg_resp.len() <= 1 && self.server_identities.len() == 1 {
-            self.insecure_centralized_reencryption_resp(agg_resp, &client_keys)
+            self.insecure_centralized_user_decryption_resp(agg_resp, &client_keys)
         } else {
-            self.insecure_threshold_reencryption_resp(agg_resp, &client_keys)
+            self.insecure_threshold_user_decryption_resp(agg_resp, &client_keys)
         }
     }
 
-    /// Decrypt the reencryption response from the centralized KMS and verify that the signatures are valid
-    fn centralized_reencryption_resp(
+    /// Decrypt the user decryption response from the centralized KMS and verify that the signatures are valid
+    fn centralized_user_decryption_resp(
         &self,
-        request: &ParsedReencryptionRequest,
+        request: &ParsedUserDecryptionRequest,
         eip712_domain: &Eip712Domain,
-        agg_resp: &[ReencryptionResponse],
+        agg_resp: &[UserDecryptionResponse],
         client_keys: &SigncryptionPair,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let resp = some_or_err(agg_resp.last(), "Response does not exist".to_owned())?;
@@ -1219,7 +1224,7 @@ impl Client {
                 return Err(anyhow_error_and_log("empty signature"));
             }
 
-            check_ext_reencryption_signature(
+            check_ext_user_decryption_signature(
                 eip712_signature,
                 &payload,
                 request,
@@ -1252,12 +1257,12 @@ impl Client {
             .collect()
     }
 
-    /// Decrypt the reencryption response from the centralized KMS.
+    /// Decrypt the user decryption response from the centralized KMS.
     /// This function does *not* do any verification and is thus insecure and should be used only for testing.
     /// TODO hide behind flag for insecure function?
-    fn insecure_centralized_reencryption_resp(
+    fn insecure_centralized_user_decryption_resp(
         &self,
-        agg_resp: &[ReencryptionResponse],
+        agg_resp: &[UserDecryptionResponse],
         client_keys: &SigncryptionPair,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let resp = some_or_err(agg_resp.last(), "Response does not exist".to_owned())?;
@@ -1275,16 +1280,16 @@ impl Client {
         Ok(out)
     }
 
-    /// Decrypt the reencryption responses from the threshold KMS and verify that the signatures are valid
-    fn threshold_reencryption_resp(
+    /// Decrypt the user decryption responses from the threshold KMS and verify that the signatures are valid
+    fn threshold_user_decryption_resp(
         &self,
-        client_request: &ParsedReencryptionRequest,
+        client_request: &ParsedUserDecryptionRequest,
         eip712_domain: &Eip712Domain,
-        agg_resp: &[ReencryptionResponse],
+        agg_resp: &[UserDecryptionResponse],
         client_keys: &SigncryptionPair,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let validated_resps = some_or_err(
-            validate_reenc_responses_against_request(
+            validate_user_decrypt_responses_against_request(
                 self.get_server_addrs()?,
                 client_request,
                 eip712_domain,
@@ -1308,7 +1313,7 @@ impl Client {
             .to_classic_pbs_parameters();
 
         tracing::info!(
-            "Reencryption response reconstruction with mode: {:?}",
+            "User decryption response reconstruction with mode: {:?}",
             self.decryption_mode
         );
 
@@ -1412,17 +1417,17 @@ impl Client {
         Ok(final_result)
     }
 
-    fn insecure_threshold_reencryption_resp(
+    fn insecure_threshold_user_decryption_resp(
         &self,
-        agg_resp: &[ReencryptionResponse],
+        agg_resp: &[UserDecryptionResponse],
         client_keys: &SigncryptionPair,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         match self.decryption_mode {
             DecryptionMode::BitDecSmall => {
-                self.insecure_threshold_reencryption_resp_z64(agg_resp, client_keys)
+                self.insecure_threshold_user_decryption_resp_z64(agg_resp, client_keys)
             }
             DecryptionMode::NoiseFloodSmall => {
-                self.insecure_threshold_reencryption_resp_z128(agg_resp, client_keys)
+                self.insecure_threshold_user_decryption_resp_z128(agg_resp, client_keys)
             }
             e => Err(anyhow_error_and_log(format!(
                 "Unsupported decryption mode: {e}"
@@ -1431,8 +1436,8 @@ impl Client {
     }
 
     #[allow(clippy::type_complexity)]
-    fn insecure_threshold_reencryption_resp_to_blocks<Z: BaseRing>(
-        agg_resp: &[ReencryptionResponse],
+    fn insecure_threshold_user_decryption_resp_to_blocks<Z: BaseRing>(
+        agg_resp: &[UserDecryptionResponse],
         client_keys: &SigncryptionPair,
     ) -> anyhow::Result<Vec<(FheTypes, u32, Vec<ResiduePolyF4<Z>>)>>
     where
@@ -1443,7 +1448,7 @@ impl Client {
             .ok_or_else(|| anyhow::anyhow!("agg_resp is empty"))?
             .payload
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("payload is empty in reencryption response"))?
+            .ok_or_else(|| anyhow::anyhow!("payload is empty in user deryption response"))?
             .signcrypted_ciphertexts
             .len();
 
@@ -1531,13 +1536,13 @@ impl Client {
         Ok(out)
     }
 
-    fn insecure_threshold_reencryption_resp_z128(
+    fn insecure_threshold_user_decryption_resp_z128(
         &self,
-        agg_resp: &[ReencryptionResponse],
+        agg_resp: &[UserDecryptionResponse],
         client_keys: &SigncryptionPair,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let all_decrypted_blocks =
-            Self::insecure_threshold_reencryption_resp_to_blocks::<Z128>(agg_resp, client_keys)?;
+            Self::insecure_threshold_user_decryption_resp_to_blocks::<Z128>(agg_resp, client_keys)?;
 
         let mut out = vec![];
         for (fhe_type, packing_factor, decrypted_blocks) in all_decrypted_blocks {
@@ -1569,16 +1574,16 @@ impl Client {
         Ok(out)
     }
 
-    /// Decrypt the reencryption response from the threshold KMS.
+    /// Decrypt the user decryption response from the threshold KMS.
     /// This function does *not* do any verification and is thus insecure and should be used only for testing.
     /// TODO hide behind flag for insecure function?
-    fn insecure_threshold_reencryption_resp_z64(
+    fn insecure_threshold_user_decryption_resp_z64(
         &self,
-        agg_resp: &[ReencryptionResponse],
+        agg_resp: &[UserDecryptionResponse],
         client_keys: &SigncryptionPair,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let all_decrypted_blocks =
-            Self::insecure_threshold_reencryption_resp_to_blocks::<Z64>(agg_resp, client_keys)?;
+            Self::insecure_threshold_user_decryption_resp_to_blocks::<Z64>(agg_resp, client_keys)?;
 
         let mut out = vec![];
         for (fhe_type, packing_factor, decrypted_blocks) in all_decrypted_blocks {
@@ -1609,12 +1614,12 @@ impl Client {
         Ok(out)
     }
 
-    /// Decrypts the reencryption responses and decodes the responses onto the Shamir shares
+    /// Decrypts the user decryption responses and decodes the responses onto the Shamir shares
     /// that the servers should have encrypted.
     #[allow(clippy::type_complexity)]
     fn recover_sharings<Z: BaseRing>(
         &self,
-        agg_resp: &[ReencryptionResponsePayload],
+        agg_resp: &[UserDecryptionResponsePayload],
         client_keys: &SigncryptionPair,
     ) -> anyhow::Result<Vec<(FheTypes, u32, Vec<ShamirSharings<ResiduePolyF4<Z>>>)>> {
         let batch_count = agg_resp
@@ -1638,7 +1643,7 @@ impl Client {
             for _i in 0..num_blocks {
                 sharings.push(ShamirSharings::new());
             }
-            // It is ok to use the first packing factor because this is checked by [self.validate_reenc_req_resp]
+            // It is ok to use the first packing factor because this is checked by [self.validate_user_decrypt_responses_against_request]
             let packing_factor = agg_resp[0].signcrypted_ciphertexts[batch_i].packing_factor;
             for cur_resp in agg_resp {
                 // Observe that it has already been verified in [validate_meta_data] that server
@@ -2237,9 +2242,9 @@ pub(crate) mod tests {
     use super::Client;
     use crate::client::test_tools::check_port_is_closed;
     #[cfg(feature = "wasm_tests")]
-    use crate::client::TestingReencryptionTranscript;
+    use crate::client::TestingUserDecryptionTranscript;
     use crate::client::{await_server_ready, get_health_client, get_status};
-    use crate::client::{ParsedReencryptionRequest, ServerIdentities};
+    use crate::client::{ParsedUserDecryptionRequest, ServerIdentities};
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     use crate::consts::MAX_TRIES;
     use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
@@ -2273,8 +2278,8 @@ pub(crate) mod tests {
     #[cfg(feature = "wasm_tests")]
     use kms_grpc::kms::v1::TypedPlaintext;
     use kms_grpc::kms::v1::{
-        Empty, FheParameter, InitRequest, KeySetAddedInfo, KeySetConfig, KeySetType,
-        ReencryptionResponse, RequestId, TypedCiphertext,
+        Empty, FheParameter, InitRequest, KeySetAddedInfo, KeySetConfig, KeySetType, RequestId,
+        TypedCiphertext, UserDecryptionResponse,
     };
     use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
     use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
@@ -2430,7 +2435,7 @@ pub(crate) mod tests {
         // Even though servers are not initialized they will accept the requests
         assert!(dec_res.iter().all(|res| res.is_ok()));
         // But the response will result in an error
-        let dec_resp_tasks = get_dec_resp(&req_id, &kms_clients).await;
+        let dec_resp_tasks = get_pub_dec_resp(&req_id, &kms_clients).await;
         let dec_resp_res = dec_resp_tasks.join_all().await;
         assert!(dec_resp_res.iter().all(|res| res.is_err()));
 
@@ -2567,8 +2572,8 @@ pub(crate) mod tests {
         // Wait for dec tasks to be done
         let dec_res = tasks.join_all().await;
         assert!(dec_res.iter().all(|res| res.is_ok()));
-        // And wait for decryption to also be done
-        let dec_resp_tasks = get_dec_resp(&req_id, &client_map).await;
+        // And wait for public decryption to also be done
+        let dec_resp_tasks = get_pub_dec_resp(&req_id, &client_map).await;
         let dec_resp_res = dec_resp_tasks.join_all().await;
         // TODO the response for the server that were not dropped should actually be ok since we only drop one <=t server
         assert!(dec_resp_res.iter().all(|res| res.is_err()));
@@ -2744,33 +2749,37 @@ pub(crate) mod tests {
             cts.push(ctt);
         }
 
-        // make parallel requests by calling [decrypt] in a thread
+        // make parallel requests by calling [public_decrypt] in a thread
         let request_id = derive_request_id("TEST_DEC_ID").unwrap();
         let req = internal_client
-            .decryption_request(cts.clone(), &dummy_domain(), &request_id, &key_id_req)
+            .public_decryption_request(cts.clone(), &dummy_domain(), &request_id, &key_id_req)
             .unwrap();
         let mut join_set = JoinSet::new();
         for i in 1..=kms_clients.len() as u32 {
             let req_clone = req.clone();
             let mut cur_client = kms_clients.get(&i).unwrap().clone();
-            join_set.spawn(async move { cur_client.decrypt(tonic::Request::new(req_clone)).await });
+            join_set.spawn(async move {
+                cur_client
+                    .public_decrypt(tonic::Request::new(req_clone))
+                    .await
+            });
         }
         (join_set, request_id)
     }
 
-    async fn get_dec_resp(
+    async fn get_pub_dec_resp(
         request_id: &RequestId,
         kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    ) -> JoinSet<Result<tonic::Response<kms_grpc::kms::v1::DecryptionResponse>, tonic::Status>>
+    ) -> JoinSet<Result<tonic::Response<kms_grpc::kms::v1::PublicDecryptionResponse>, tonic::Status>>
     {
-        // make parallel requests by calling [get_decrypt_result] in a thread
+        // make parallel requests by calling [get_public_decryption_result] in a thread
         let mut join_set = JoinSet::new();
         for i in 1..=kms_clients.len() as u32 {
             let mut cur_client = kms_clients.get(&i).unwrap().clone();
             let req_id_clone = request_id.clone();
             join_set.spawn(async move {
                 cur_client
-                    .get_decrypt_result(tonic::Request::new(req_id_clone))
+                    .get_public_decryption_result(tonic::Request::new(req_id_clone))
                     .await
             });
         }
@@ -2867,8 +2876,8 @@ pub(crate) mod tests {
 
         let rate_limiter_conf = RateLimiterConfig {
             bucket_size: 100 * 3, // Multiply by 3 to account for the decompression key generation case
-            dec: 1,
-            reenc: 1,
+            pub_decrypt: 1,
+            user_decrypt: 1,
             crsgen: 1,
             preproc: 1,
             keygen: 100,
@@ -3101,8 +3110,8 @@ pub(crate) mod tests {
         let dkg_param: WrappedDKGParams = params.into();
         let rate_limiter_conf = RateLimiterConfig {
             bucket_size: 100,
-            dec: 1,
-            reenc: 1,
+            pub_decrypt: 1,
+            user_decrypt: 1,
             crsgen: 100,
             preproc: 1,
             keygen: 1,
@@ -3789,7 +3798,12 @@ pub(crate) mod tests {
                 let request_id = derive_request_id(&format!("TEST_DEC_ID_{j}")).unwrap();
 
                 internal_client
-                    .decryption_request(cts.clone(), &dummy_domain(), &request_id, &req_key_id)
+                    .public_decryption_request(
+                        cts.clone(),
+                        &dummy_domain(),
+                        &request_id,
+                        &req_key_id,
+                    )
                     .unwrap()
             })
             .collect();
@@ -3799,8 +3813,11 @@ pub(crate) mod tests {
         for j in 0..parallelism {
             let req_cloned = reqs.get(j).unwrap().clone();
             let mut cur_client = kms_client.clone();
-            req_tasks
-                .spawn(async move { cur_client.decrypt(tonic::Request::new(req_cloned)).await });
+            req_tasks.spawn(async move {
+                cur_client
+                    .public_decrypt(tonic::Request::new(req_cloned))
+                    .await
+            });
         }
 
         // collect request task responses
@@ -3826,7 +3843,7 @@ pub(crate) mod tests {
 
                 // send query
                 let mut response = cur_client
-                    .get_decrypt_result(tonic::Request::new(req_id_clone.clone()))
+                    .get_public_decryption_result(tonic::Request::new(req_id_clone.clone()))
                     .await;
 
                 // retry counter
@@ -3843,7 +3860,7 @@ pub(crate) mod tests {
                     }
                     ctr += 1;
                     response = cur_client
-                        .get_decrypt_result(tonic::Request::new(req_id_clone.clone()))
+                        .get_public_decryption_result(tonic::Request::new(req_id_clone.clone()))
                         .await;
                 }
 
@@ -3909,8 +3926,8 @@ pub(crate) mod tests {
     #[rstest::rstest]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    async fn test_reencryption_centralized(#[values(true, false)] secure: bool) {
-        reencryption_centralized(
+    async fn test_user_decryption_centralized(#[values(true, false)] secure: bool) {
+        user_decryption_centralized(
             &TEST_PARAM,
             &crate::consts::TEST_CENTRAL_KEY_ID.to_string(),
             false,
@@ -3928,8 +3945,8 @@ pub(crate) mod tests {
     #[rstest::rstest]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    async fn test_reencryption_centralized_precompute_sns(#[values(true, false)] secure: bool) {
-        reencryption_centralized(
+    async fn test_user_decryption_centralized_precompute_sns(#[values(true, false)] secure: bool) {
+        user_decryption_centralized(
             &TEST_PARAM,
             &crate::consts::TEST_CENTRAL_KEY_ID.to_string(),
             false,
@@ -3948,8 +3965,8 @@ pub(crate) mod tests {
     #[cfg(feature = "wasm_tests")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    async fn test_reencryption_centralized_and_write_transcript() {
-        reencryption_centralized(
+    async fn test_user_decryption_centralized_and_write_transcript() {
+        user_decryption_centralized(
             &TEST_PARAM,
             &TEST_CENTRAL_KEY_ID.to_string(),
             true,
@@ -3968,11 +3985,11 @@ pub(crate) mod tests {
     #[cfg(all(feature = "wasm_tests", feature = "slow_tests"))]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    async fn default_reencryption_centralized_and_write_transcript() {
+    async fn default_user_decryption_centralized_and_write_transcript() {
         use crate::consts::DEFAULT_PARAM;
 
         let msg = TestingPlaintext::U8(u8::MAX);
-        reencryption_centralized(
+        user_decryption_centralized(
             &DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID.to_string(),
             true,
@@ -3991,12 +4008,12 @@ pub(crate) mod tests {
     #[rstest::rstest]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    async fn default_reencryption_centralized(#[values(true, false)] secure: bool) {
+    async fn default_user_decryption_centralized(#[values(true, false)] secure: bool) {
         use crate::consts::DEFAULT_PARAM;
 
         let msg = TestingPlaintext::U8(u8::MAX);
         let parallelism = 1;
-        reencryption_centralized(
+        user_decryption_centralized(
             &DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID.to_string(),
             false,
@@ -4015,12 +4032,14 @@ pub(crate) mod tests {
     #[rstest::rstest]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    async fn default_reencryption_centralized_no_compression(#[values(true, false)] secure: bool) {
+    async fn default_user_decryption_centralized_no_compression(
+        #[values(true, false)] secure: bool,
+    ) {
         use crate::consts::DEFAULT_PARAM;
 
         let msg = TestingPlaintext::U8(u8::MAX);
         let parallelism = 1;
-        reencryption_centralized(
+        user_decryption_centralized(
             &DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID.to_string(),
             false,
@@ -4039,12 +4058,14 @@ pub(crate) mod tests {
     #[rstest::rstest]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    async fn default_reencryption_centralized_precompute_sns(#[values(true, false)] secure: bool) {
+    async fn default_user_decryption_centralized_precompute_sns(
+        #[values(true, false)] secure: bool,
+    ) {
         use crate::consts::DEFAULT_PARAM;
 
         let msg = TestingPlaintext::U8(u8::MAX);
         let parallelism = 1;
-        reencryption_centralized(
+        user_decryption_centralized(
             &DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID.to_string(),
             false,
@@ -4059,7 +4080,7 @@ pub(crate) mod tests {
         .await;
     }
 
-    pub(crate) async fn reencryption_centralized(
+    pub(crate) async fn user_decryption_centralized(
         dkg_params: &DKGParams,
         key_id: &str,
         _write_transcript: bool,
@@ -4096,9 +4117,9 @@ pub(crate) mod tests {
                     ciphertext_format: ct_format.into(),
                     external_handle: j.to_be_bytes().to_vec(),
                 }];
-                let request_id = derive_request_id(&format!("TEST_REENC_ID_{j}")).unwrap();
+                let request_id = derive_request_id(&format!("TEST_USER_DECRYPT_ID_{j}")).unwrap();
                 internal_client
-                    .reencryption_request(
+                    .user_decryption_request(
                         &dummy_domain(),
                         typed_ciphertexts,
                         &request_id,
@@ -4108,13 +4129,16 @@ pub(crate) mod tests {
             })
             .collect();
 
-        // send all reencryption requests simultaneously
+        // send all user decryption requests simultaneously
         let mut req_tasks = JoinSet::new();
         for j in 0..parallelism {
             let req_cloned = reqs.get(j).unwrap().0.clone();
             let mut cur_client = kms_client.clone();
-            req_tasks
-                .spawn(async move { cur_client.reencrypt(tonic::Request::new(req_cloned)).await });
+            req_tasks.spawn(async move {
+                cur_client
+                    .user_decrypt(tonic::Request::new(req_cloned))
+                    .await
+            });
         }
 
         // collect request task responses
@@ -4129,35 +4153,35 @@ pub(crate) mod tests {
             assert_eq!(rr, Empty {});
         }
 
-        // query for reencryption responses
+        // query for user decryption responses
         let mut resp_tasks = JoinSet::new();
         for req in &reqs {
             let req_id_clone = req.0.request_id.as_ref().unwrap().clone();
             let mut cur_client = kms_client.clone();
             resp_tasks.spawn(async move {
-                // Sleep initially to give the server some time to complete the reencryption
+                // Sleep initially to give the server some time to complete the user decryption
                 tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
                 // send query
                 let mut response = cur_client
-                    .get_reencrypt_result(tonic::Request::new(req_id_clone.clone()))
+                    .get_user_decryption_result(tonic::Request::new(req_id_clone.clone()))
                     .await;
 
                 // retry counter
                 let mut ctr = 0_u64;
 
-                // retry while reencryption is not finished, wait between retries and only up to a maximum number of retries
+                // retry while user decryption is not finished, wait between retries and only up to a maximum number of retries
                 while response.is_err()
                     && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
                 {
                     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
                     // we may wait up to 50s for tests (include slow profiles), for big ciphertexts
                     if ctr >= 1000 {
-                        panic!("timeout while waiting for reencryption result");
+                        panic!("timeout while waiting for user deccryption result");
                     }
                     ctr += 1;
                     response = cur_client
-                        .get_reencrypt_result(tonic::Request::new(req_id_clone.clone()))
+                        .get_user_decryption_result(tonic::Request::new(req_id_clone.clone()))
                         .await;
                 }
 
@@ -4166,7 +4190,7 @@ pub(crate) mod tests {
             });
         }
 
-        // collect reencryption outputs
+        // collect user deccryption outputs
         let mut resp_response_vec = Vec::new();
         while let Some(resp) = resp_tasks.join_next().await {
             resp_response_vec.push(resp.unwrap());
@@ -4180,7 +4204,7 @@ pub(crate) mod tests {
                 // for tfhe encryption on the wasm side since it cannot
                 // be instantiated easily without a seeder and we don't
                 // want to introduce extra npm dependency.
-                let transcript = TestingReencryptionTranscript {
+                let transcript = TestingUserDecryptionTranscript {
                     server_addrs: internal_client.get_server_addrs().unwrap().clone(),
                     client_address: internal_client.client_address,
                     client_sk: internal_client.client_sk.clone(),
@@ -4231,10 +4255,10 @@ pub(crate) mod tests {
             let responses = vec![inner_response.clone()];
 
             let eip712_domain = protobuf_to_alloy_domain(req.domain.as_ref().unwrap()).unwrap();
-            let client_request = ParsedReencryptionRequest::try_from(req).unwrap();
+            let client_request = ParsedUserDecryptionRequest::try_from(req).unwrap();
             let plaintexts = if secure {
                 internal_client
-                    .process_reencryption_resp(
+                    .process_user_decryption_resp(
                         &client_request,
                         &eip712_domain,
                         &responses,
@@ -4244,13 +4268,13 @@ pub(crate) mod tests {
                     .unwrap()
             } else {
                 internal_client.server_identities =
-                    // one dummy address is needed to force insecure_process_reencryption_resp
+                    // one dummy address is needed to force insecure_process_user_decryption_resp
                     // in the centralized mode
                     ServerIdentities::Addrs(vec![alloy_primitives::address!(
                         "d8da6bf26964af9d7eed9e03e53415d37aa96045"
                     )]);
                 internal_client
-                    .insecure_process_reencryption_resp(&responses, enc_pk, enc_sk)
+                    .insecure_process_user_decryption_resp(&responses, enc_pk, enc_sk)
                     .unwrap()
             };
 
@@ -4470,8 +4494,8 @@ pub(crate) mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let rate_limiter_conf = RateLimiterConfig {
             bucket_size: 100 * parallelism,
-            dec: 100,
-            reenc: 1,
+            pub_decrypt: 100,
+            user_decrypt: 1,
             crsgen: 1,
             preproc: 1,
             keygen: 1,
@@ -4508,7 +4532,12 @@ pub(crate) mod tests {
                 let request_id = derive_request_id(&format!("TEST_DEC_ID_{j}")).unwrap();
 
                 internal_client
-                    .decryption_request(cts.clone(), &dummy_domain(), &request_id, &key_id_req)
+                    .public_decryption_request(
+                        cts.clone(),
+                        &dummy_domain(),
+                        &request_id,
+                        &key_id_req,
+                    )
                     .unwrap()
             })
             .collect();
@@ -4526,7 +4555,9 @@ pub(crate) mod tests {
                     let req_cloned = reqs.get(j).unwrap().clone();
                     let mut cur_client = kms_clients.get(&i).unwrap().clone();
                     req_tasks.spawn(async move {
-                        cur_client.decrypt(tonic::Request::new(req_cloned)).await
+                        cur_client
+                            .public_decrypt(tonic::Request::new(req_cloned))
+                            .await
                     });
                 }
             }
@@ -4558,7 +4589,7 @@ pub(crate) mod tests {
                     .await;
 
                     let mut response = cur_client
-                        .get_decrypt_result(tonic::Request::new(req_id_clone.clone()))
+                        .get_public_decryption_result(tonic::Request::new(req_id_clone.clone()))
                         .await;
                     let mut ctr = 0u64;
                     while response.is_err()
@@ -4575,7 +4606,7 @@ pub(crate) mod tests {
                         }
                         ctr += 1;
                         response = cur_client
-                            .get_decrypt_result(tonic::Request::new(req_id_clone.clone()))
+                            .get_public_decryption_result(tonic::Request::new(req_id_clone.clone()))
                             .await;
                     }
                     (req_id_clone, response.unwrap().into_inner())
@@ -4642,14 +4673,14 @@ pub(crate) mod tests {
     #[case(false, TestingPlaintext::U32(u32::MAX), 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::BitDecSmall)]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    async fn test_reencryption_threshold(
+    async fn test_user_decryption_threshold(
         #[case] secure: bool,
         #[case] pt: TestingPlaintext,
         #[case] amount_parties: usize,
         #[case] key_id: &str,
         #[case] decryption_mode: DecryptionMode,
     ) {
-        reencryption_threshold(
+        user_decryption_threshold(
             TEST_PARAM,
             key_id,
             false,
@@ -4672,13 +4703,13 @@ pub(crate) mod tests {
     #[case(false, 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    async fn test_reencryption_threshold_precompute_sns(
+    async fn test_user_decryption_threshold_precompute_sns(
         #[case] secure: bool,
         #[case] amount_parties: usize,
         #[case] key_id: &str,
         #[case] decryption_mode: DecryptionMode,
     ) {
-        reencryption_threshold(
+        user_decryption_threshold(
             TEST_PARAM,
             key_id,
             false,
@@ -4702,12 +4733,12 @@ pub(crate) mod tests {
     #[case(false, 4, &TEST_THRESHOLD_KEY_ID_4P.to_string())]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    async fn test_reencryption_threshold_and_write_transcript(
+    async fn test_user_decryption_threshold_and_write_transcript(
         #[case] secure: bool,
         #[case] amount_parties: usize,
         #[case] key_id: &str,
     ) {
-        reencryption_threshold(
+        user_decryption_threshold(
             TEST_PARAM,
             key_id,
             true,
@@ -4731,7 +4762,7 @@ pub(crate) mod tests {
     #[case(TestingPlaintext::U8(u8::MAX), 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    async fn default_reencryption_threshold_and_write_transcript(
+    async fn default_user_decryption_threshold_and_write_transcript(
         #[case] msg: TestingPlaintext,
         #[case] amount_parties: usize,
         #[case] key_id: &str,
@@ -4739,7 +4770,7 @@ pub(crate) mod tests {
     ) {
         use crate::consts::DEFAULT_PARAM;
 
-        reencryption_threshold(
+        user_decryption_threshold(
             DEFAULT_PARAM,
             key_id,
             true,
@@ -4763,7 +4794,7 @@ pub(crate) mod tests {
     #[case(TestingPlaintext::U8(u8::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    async fn default_reencryption_threshold(
+    async fn default_user_decryption_threshold(
         #[case] msg: TestingPlaintext,
         #[case] parallelism: usize,
         #[case] amount_parties: usize,
@@ -4772,7 +4803,7 @@ pub(crate) mod tests {
     ) {
         use crate::consts::DEFAULT_PARAM;
 
-        reencryption_threshold(
+        user_decryption_threshold(
             DEFAULT_PARAM,
             key_id,
             false,
@@ -4795,7 +4826,7 @@ pub(crate) mod tests {
     #[case(TestingPlaintext::U8(u8::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    async fn default_reencryption_threshold_precompute_sns(
+    async fn default_user_decryption_threshold_precompute_sns(
         #[case] msg: TestingPlaintext,
         #[case] parallelism: usize,
         #[case] amount_parties: usize,
@@ -4804,7 +4835,7 @@ pub(crate) mod tests {
     ) {
         use crate::consts::DEFAULT_PARAM;
 
-        reencryption_threshold(
+        user_decryption_threshold(
             DEFAULT_PARAM,
             key_id,
             false,
@@ -4827,7 +4858,7 @@ pub(crate) mod tests {
     #[case(TestingPlaintext::U8(u8::MAX), 1, 4,Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P.to_string())]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    async fn default_reencryption_threshold_with_crash(
+    async fn default_user_decryption_threshold_with_crash(
         #[case] msg: TestingPlaintext,
         #[case] parallelism: usize,
         #[case] amount_parties: usize,
@@ -4837,7 +4868,7 @@ pub(crate) mod tests {
     ) {
         use crate::consts::DEFAULT_PARAM;
 
-        reencryption_threshold(
+        user_decryption_threshold(
             DEFAULT_PARAM,
             key_id,
             false,
@@ -4856,7 +4887,7 @@ pub(crate) mod tests {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn reencryption_threshold(
+    pub(crate) async fn user_decryption_threshold(
         dkg_params: DKGParams,
         key_id: &str,
         write_transcript: bool,
@@ -4880,7 +4911,7 @@ pub(crate) mod tests {
         // make requests
         let reqs: Vec<_> = (0..parallelism)
             .map(|j| {
-                let request_id = derive_request_id(&format!("TEST_REENC_ID_{j}")).unwrap();
+                let request_id = derive_request_id(&format!("TEST_USER_DECRYPT_ID_{j}")).unwrap();
                 let typed_ciphertexts = vec![TypedCiphertext {
                     ciphertext: ct.clone(),
                     fhe_type: fhe_type as i32,
@@ -4888,7 +4919,7 @@ pub(crate) mod tests {
                     external_handle: j.to_be_bytes().to_vec(),
                 }];
                 let (req, enc_pk, enc_sk) = internal_client
-                    .reencryption_request(
+                    .user_decryption_request(
                         &dummy_domain(),
                         typed_ciphertexts,
                         &request_id,
@@ -4916,7 +4947,9 @@ pub(crate) mod tests {
                     let mut cur_client = kms_clients.get(&i).unwrap().clone();
                     let req_clone = reqs.get(j).as_ref().unwrap().0.clone();
                     req_tasks.spawn(async move {
-                        cur_client.reencrypt(tonic::Request::new(req_clone)).await
+                        cur_client
+                            .user_decrypt(tonic::Request::new(req_clone))
+                            .await
                     });
                 }
             }
@@ -4940,13 +4973,13 @@ pub(crate) mod tests {
                 let req_id_clone = reqs.get(j).as_ref().unwrap().0.clone().request_id.unwrap();
                 let bits = msg.bits() as u64;
                 resp_tasks.spawn(async move {
-                    // Sleep to give the server some time to complete reencryption
+                    // Sleep to give the server some time to complete user decryption
                     tokio::time::sleep(tokio::time::Duration::from_millis(
                         100 * bits * parallelism as u64,
                     ))
                     .await;
                     let mut response = cur_client
-                        .get_reencrypt_result(tonic::Request::new(req_id_clone.clone()))
+                        .get_user_decryption_result(tonic::Request::new(req_id_clone.clone()))
                         .await;
 
                     let mut ctr = 0u64;
@@ -4960,11 +4993,11 @@ pub(crate) mod tests {
                         .await;
                         // do at most 600 retries (stop after max. 10 minutes for large types)
                         if ctr >= 600 {
-                            panic!("timeout while waiting for reencryption");
+                            panic!("timeout while waiting for user decryption");
                         }
                         ctr += 1;
                         response = cur_client
-                            .get_reencrypt_result(tonic::Request::new(req_id_clone.clone()))
+                            .get_user_decryption_result(tonic::Request::new(req_id_clone.clone()))
                             .await;
                     }
 
@@ -4972,7 +5005,7 @@ pub(crate) mod tests {
                 });
             }
         }
-        let mut response_map: HashMap<RequestId, Vec<ReencryptionResponse>> = HashMap::new();
+        let mut response_map: HashMap<RequestId, Vec<UserDecryptionResponse>> = HashMap::new();
         while let Some(res) = resp_tasks.join_next().await {
             let res = res.unwrap();
             tracing::info!("Client got a response from {}", res.0);
@@ -5001,7 +5034,7 @@ pub(crate) mod tests {
                 // Observe there should only be one element in `response_map`
                 let agg_resp = response_map.values().last().unwrap().clone();
 
-                let transcript = TestingReencryptionTranscript {
+                let transcript = TestingUserDecryptionTranscript {
                     server_addrs: internal_client.get_server_addrs().unwrap().clone(),
                     client_address: internal_client.client_address,
                     client_sk: internal_client.client_sk.clone(),
@@ -5034,14 +5067,14 @@ pub(crate) mod tests {
             let (req, enc_pk, enc_sk) = req;
             let responses = response_map.get(req.request_id.as_ref().unwrap()).unwrap();
             let domain = protobuf_to_alloy_domain(req.domain.as_ref().unwrap()).unwrap();
-            let client_req = ParsedReencryptionRequest::try_from(req).unwrap();
+            let client_req = ParsedUserDecryptionRequest::try_from(req).unwrap();
             let threshold = responses.first().unwrap().payload.as_ref().unwrap().degree as usize;
             // NOTE: throw away one response and it should still work.
             let plaintexts = if secure {
                 // test with one fewer response if we haven't crashed too many parties already
                 if threshold > party_ids_to_crash.len() {
                     internal_client
-                        .process_reencryption_resp(
+                        .process_user_decryption_resp(
                             &client_req,
                             &domain,
                             &responses[1..],
@@ -5052,19 +5085,19 @@ pub(crate) mod tests {
                 }
                 // test with all responses
                 internal_client
-                    .process_reencryption_resp(&client_req, &domain, responses, enc_pk, enc_sk)
+                    .process_user_decryption_resp(&client_req, &domain, responses, enc_pk, enc_sk)
                     .unwrap()
             } else {
                 internal_client.server_identities = ServerIdentities::Addrs(Vec::new());
                 // test with one fewer response if we haven't crashed too many parties already
                 if threshold > party_ids_to_crash.len() {
                     internal_client
-                        .insecure_process_reencryption_resp(&responses[1..], enc_pk, enc_sk)
+                        .insecure_process_user_decryption_resp(&responses[1..], enc_pk, enc_sk)
                         .unwrap();
                 }
                 // test with all responses
                 internal_client
-                    .insecure_process_reencryption_resp(responses, enc_pk, enc_sk)
+                    .insecure_process_user_decryption_resp(responses, enc_pk, enc_sk)
                     .unwrap()
             };
             for plaintext in plaintexts {
@@ -5099,8 +5132,8 @@ pub(crate) mod tests {
         let keys = get_default_keys().await;
         let rate_limiter_conf = RateLimiterConfig {
             bucket_size: 100,
-            dec: 1,
-            reenc: 100,
+            pub_decrypt: 1,
+            user_decrypt: 100,
             crsgen: 1,
             preproc: 1,
             keygen: 1,
@@ -5127,7 +5160,7 @@ pub(crate) mod tests {
             keys.params,
             None,
         );
-        let request_id = derive_request_id("TEST_REENC_ID_123").unwrap();
+        let request_id = derive_request_id("TEST_USER_DECRYPT_ID_123").unwrap();
         let typed_ciphertexts = vec![TypedCiphertext {
             ciphertext: ct,
             fhe_type: fhe_type as i32,
@@ -5135,7 +5168,7 @@ pub(crate) mod tests {
             external_handle: vec![123],
         }];
         let (req, _enc_pk, _enc_sk) = internal_client
-            .reencryption_request(
+            .user_decryption_request(
                 &dummy_domain(),
                 typed_ciphertexts,
                 &request_id,
@@ -5143,20 +5176,20 @@ pub(crate) mod tests {
             )
             .unwrap();
         let response = kms_client
-            .reencrypt(tonic::Request::new(req.clone()))
+            .user_decrypt(tonic::Request::new(req.clone()))
             .await
             .unwrap();
         assert_eq!(response.into_inner(), Empty {});
 
         let mut response = kms_client
-            .get_reencrypt_result(req.request_id.clone().unwrap())
+            .get_user_decryption_result(req.request_id.clone().unwrap())
             .await;
         while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
         {
-            // Sleep to give the server some time to complete reencryption
+            // Sleep to give the server some time to complete user decryption
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
             response = kms_client
-                .get_reencrypt_result(req.request_id.clone().unwrap())
+                .get_user_decryption_result(req.request_id.clone().unwrap())
                 .await;
         }
         // Check that we get a server error instead of a server crash
@@ -5217,8 +5250,8 @@ pub(crate) mod tests {
         purge(None, None, &req_id.to_string(), 4).await;
         let rate_limiter_conf = RateLimiterConfig {
             bucket_size: 100,
-            dec: 1,
-            reenc: 1,
+            pub_decrypt: 1,
+            user_decrypt: 1,
             crsgen: 100,
             preproc: 1,
             keygen: 1,
@@ -5572,8 +5605,8 @@ pub(crate) mod tests {
         // then the keygen step should fail since there are not enough tokens.
         let rate_limiter_conf = RateLimiterConfig {
             bucket_size: 100 * 2 * iterations, // Ensure the bucket is big enough to carry out the concurrent requests
-            dec: 1,
-            reenc: 1,
+            pub_decrypt: 1,
+            user_decrypt: 1,
             crsgen: 1,
             preproc: 100,
             keygen: 100,

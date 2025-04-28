@@ -15,7 +15,7 @@ num_majority = 2
 # The minumum number of responses required to reconstruct a value (e.g. in user decryption)
 num_reconstruct = 3
 
-# Decryption mode used in reencryption reconstruction.
+# Decryption mode used in user decryption reconstruction.
 # Options are NoiseFloodSmall and BitDecSmall.
 # Must match the deployed core/service setting!
 # Only relevant for threshold.

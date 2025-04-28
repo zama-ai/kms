@@ -4,7 +4,7 @@ use crate::cryptography::decompression;
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey, PublicSigKey};
 use crate::cryptography::signcryption::signcrypt_with_link;
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
-use crate::engine::base::{DecCallValues, KeyGenCallValues, ReencCallValues};
+use crate::engine::base::{KeyGenCallValues, PubDecCallValues, UserDecryptCallValues};
 use crate::engine::traits::{BaseKms, Kms};
 use crate::engine::Shutdown;
 #[cfg(feature = "non-wasm")]
@@ -24,11 +24,11 @@ use k256::ecdsa::SigningKey;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms::v1::KeySetAddedInfo;
 #[cfg(feature = "non-wasm")]
-use kms_grpc::kms::v1::ReencryptionResponsePayload;
-#[cfg(feature = "non-wasm")]
 use kms_grpc::kms::v1::RequestId;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms::v1::TypedSigncryptedCiphertext;
+#[cfg(feature = "non-wasm")]
+use kms_grpc::kms::v1::UserDecryptionResponsePayload;
 use kms_grpc::kms::v1::{CiphertextFormat, TypedCiphertext, TypedPlaintext};
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
@@ -336,10 +336,10 @@ pub struct RealCentralizedKms<
     pub(crate) crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS, BackS>,
     // Map storing ongoing key generation requests.
     pub(crate) key_meta_map: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
-    // Map storing ongoing decryption requests.
-    pub(crate) dec_meta_store: Arc<RwLock<MetaStore<DecCallValues>>>,
-    // Map storing ongoing reencryption requests.
-    pub(crate) reenc_meta_map: Arc<RwLock<MetaStore<ReencCallValues>>>,
+    // Map storing ongoing public decryption requests.
+    pub(crate) pub_dec_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
+    // Map storing ongoing user decryption requests.
+    pub(crate) user_decrypt_meta_map: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
     // Map storing ongoing CRS generation requests.
     pub(crate) crs_meta_map: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
     // Rate limiting
@@ -364,7 +364,7 @@ pub fn central_decrypt<
 ) -> anyhow::Result<Vec<TypedPlaintext>> {
     use conf_trace::{
         metrics,
-        metrics_names::{OP_DECRYPT_INNER, TAG_TFHE_TYPE},
+        metrics_names::{OP_USER_DECRYPT_INNER, TAG_TFHE_TYPE},
     };
     use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
@@ -373,7 +373,7 @@ pub fn central_decrypt<
     cts.par_iter()
         .map(|ct| {
             let inner_timer = metrics::METRICS
-                .time_operation(OP_DECRYPT_INNER)
+                .time_operation(OP_USER_DECRYPT_INNER)
                 .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
                 .and_then(|b| {
                     b.tags(metric_tags.clone()).map_err(|e| {
@@ -386,7 +386,7 @@ pub fn central_decrypt<
             let fhe_type = ct.fhe_type()?;
             let fhe_type_string = ct.fhe_type_string();
             inner_timer.map(|mut b| b.tag(TAG_TFHE_TYPE, fhe_type_string));
-            RealCentralizedKms::<PubS, PrivS, BackS>::decrypt(
+            RealCentralizedKms::<PubS, PrivS, BackS>::public_decrypt(
                 keys,
                 &ct.ciphertext,
                 fhe_type,
@@ -396,10 +396,10 @@ pub fn central_decrypt<
         .collect::<Result<Vec<_>, _>>()
 }
 
-/// Perform asynchronous reencryption and serialize the result
+/// Perform asynchronous user decryption and serialize the result
 #[cfg(feature = "non-wasm")]
 #[allow(clippy::too_many_arguments)]
-pub async fn async_reencrypt<
+pub async fn async_user_decrypt<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
     BackS: Storage + Sync + Send + 'static,
@@ -414,18 +414,18 @@ pub async fn async_reencrypt<
     server_verf_key: Vec<u8>,
     domain: &alloy_sol_types::Eip712Domain,
     metric_tags: Vec<(&'static str, String)>,
-) -> anyhow::Result<(ReencryptionResponsePayload, Vec<u8>)> {
+) -> anyhow::Result<(UserDecryptionResponsePayload, Vec<u8>)> {
     use conf_trace::{
         metrics,
-        metrics_names::{OP_REENCRYPT_INNER, TAG_TFHE_TYPE},
+        metrics_names::{OP_USER_DECRYPT_INNER, TAG_TFHE_TYPE},
     };
 
-    use crate::engine::base::compute_external_reenc_signature;
+    use crate::engine::base::compute_external_user_decrypt_signature;
 
     let mut all_signcrypted_cts = vec![];
     for typed_ciphertext in typed_ciphertexts {
         let inner_timer = metrics::METRICS
-            .time_operation(OP_REENCRYPT_INNER)
+            .time_operation(OP_USER_DECRYPT_INNER)
             .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
             .and_then(|b| {
                 b.tags(metric_tags.clone()).map_err(|e| {
@@ -441,7 +441,7 @@ pub async fn async_reencrypt<
         inner_timer.map(|mut b| b.tag(TAG_TFHE_TYPE, fhe_type_string));
         let ct_format = typed_ciphertext.ciphertext_format();
         let external_handle = typed_ciphertext.external_handle.clone();
-        let signcrypted_ciphertext = RealCentralizedKms::<PubS, PrivS, BackS>::reencrypt(
+        let signcrypted_ciphertext = RealCentralizedKms::<PubS, PrivS, BackS>::user_decrypt(
             keys,
             sig_key,
             rng,
@@ -461,7 +461,7 @@ pub async fn async_reencrypt<
         });
     }
 
-    let payload = ReencryptionResponsePayload {
+    let payload = UserDecryptionResponsePayload {
         signcrypted_ciphertexts: all_signcrypted_cts,
         digest: req_digest.to_vec(),
         verification_key: server_verf_key,
@@ -470,7 +470,7 @@ pub async fn async_reencrypt<
     };
 
     let external_signature =
-        compute_external_reenc_signature(sig_key, &payload, domain, client_enc_key)?;
+        compute_external_user_decrypt_signature(sig_key, &payload, domain, client_enc_key)?;
 
     Ok((payload, external_signature))
 }
@@ -707,7 +707,7 @@ impl<
         BackS: Storage + Sync + Send + 'static,
     > Kms for RealCentralizedKms<PubS, PrivS, BackS>
 {
-    fn decrypt(
+    fn public_decrypt(
         keys: &KmsFheKeyHandles,
         high_level_ct: &[u8],
         fhe_type: FheTypes,
@@ -719,7 +719,7 @@ impl<
         }
     }
 
-    fn reencrypt(
+    fn user_decrypt(
         keys: &KmsFheKeyHandles,
         sig_key: &PrivateSigKey,
         rng: &mut (impl CryptoRng + RngCore),
@@ -730,7 +730,7 @@ impl<
         client_enc_key: &PublicEncKey,
         client_address: &alloy_primitives::Address,
     ) -> anyhow::Result<Vec<u8>> {
-        let plaintext = Self::decrypt(keys, ct, fhe_type, ct_format)?;
+        let plaintext = Self::public_decrypt(keys, ct, fhe_type, ct_format)?;
         // Observe that we encrypt the plaintext itself, this is different from the threshold case
         // where it is first mapped to a Vec<ResiduePolyF4Z128> element
         let signcryption_msg = SigncryptionPayload {
@@ -746,7 +746,7 @@ impl<
             sig_key,
         )?;
         let res = serialize(&enc_res)?;
-        tracing::info!("Completed reencryption of ciphertext");
+        tracing::info!("Completed user decryption of ciphertext");
 
         Ok(res)
     }
@@ -819,8 +819,14 @@ impl<
                 base_kms: BaseKmsStruct::new(sk)?,
                 crypto_storage,
                 key_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(public_key_info))),
-                dec_meta_store: Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE))),
-                reenc_meta_map: Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE))),
+                pub_dec_meta_store: Arc::new(RwLock::new(MetaStore::new(
+                    DEC_CAPACITY,
+                    MIN_DEC_CACHE,
+                ))),
+                user_decrypt_meta_map: Arc::new(RwLock::new(MetaStore::new(
+                    DEC_CAPACITY,
+                    MIN_DEC_CACHE,
+                ))),
                 crs_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(crs_info))),
                 rate_limiter: RateLimiter::new(rate_limiter_conf.unwrap_or_default()),
                 health_reporter: Arc::new(RwLock::new(health_reporter)),
@@ -971,7 +977,7 @@ pub(crate) mod tests {
     enum SimulationType {
         NoError,
         BadFheKey,
-        // below are only used for reencryption
+        // below are only used for user encryption
         BadSigKey,
         BadEphemeralKey,
     }
@@ -1193,12 +1199,13 @@ pub(crate) mod tests {
             .read_cloned_centralized_fhe_keys_from_cache(key_id)
             .await
             .unwrap();
-        let raw_plaintext = RealCentralizedKms::<FileStorage, FileStorage, FileStorage>::decrypt(
-            &key_handle,
-            &ct,
-            fhe_type,
-            ct_format,
-        );
+        let raw_plaintext =
+            RealCentralizedKms::<FileStorage, FileStorage, FileStorage>::public_decrypt(
+                &key_handle,
+                &ct,
+                fhe_type,
+                ct_format,
+            );
         // if bad FHE key is used, then it *might* panic
         let plaintext = if sim_type == SimulationType::BadFheKey {
             match raw_plaintext {
@@ -1221,13 +1228,13 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn sunshine_test_reencrypt() {
-        sunshine_reencrypt(get_test_keys().await, &TEST_CENTRAL_KEY_ID).await;
+    async fn sunshine_test_user_decrypt() {
+        sunshine_user_decrypt(get_test_keys().await, &TEST_CENTRAL_KEY_ID).await;
     }
 
     #[tokio::test]
-    async fn reencrypt_with_bad_ephemeral_key() {
-        simulate_reencrypt(
+    async fn user_decrypt_with_bad_ephemeral_key() {
+        simulate_user_decrypt(
             SimulationType::BadEphemeralKey,
             get_test_keys().await,
             &TEST_CENTRAL_KEY_ID,
@@ -1236,8 +1243,8 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn reencrypt_with_bad_sig_key() {
-        simulate_reencrypt(
+    async fn user_decrypt_with_bad_sig_key() {
+        simulate_user_decrypt(
             SimulationType::BadSigKey,
             get_test_keys().await,
             &TEST_CENTRAL_KEY_ID,
@@ -1246,8 +1253,8 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn reencrypt_with_bad_client_key() {
-        simulate_reencrypt(
+    async fn user_decrypt_with_bad_client_key() {
+        simulate_user_decrypt(
             SimulationType::BadFheKey,
             get_test_keys().await,
             &TEST_CENTRAL_KEY_ID,
@@ -1257,24 +1264,24 @@ pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
-    async fn sunshine_default_reencrypt() {
-        sunshine_reencrypt(get_default_keys().await, &DEFAULT_CENTRAL_KEY_ID).await;
+    async fn sunshine_default_user_decrypt() {
+        sunshine_user_decrypt(get_default_keys().await, &DEFAULT_CENTRAL_KEY_ID).await;
     }
 
     #[tokio::test]
     #[serial]
-    async fn multiple_test_keys_reencrypt() {
-        sunshine_reencrypt(get_test_keys().await, &OTHER_CENTRAL_TEST_ID).await;
+    async fn multiple_test_keys_user_decrypt() {
+        sunshine_user_decrypt(get_test_keys().await, &OTHER_CENTRAL_TEST_ID).await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
-    async fn multiple_default_keys_reencrypt() {
-        sunshine_reencrypt(get_default_keys().await, &OTHER_CENTRAL_DEFAULT_ID).await;
+    async fn multiple_default_keys_user_decrypt() {
+        sunshine_user_decrypt(get_default_keys().await, &OTHER_CENTRAL_DEFAULT_ID).await;
     }
 
-    async fn sunshine_reencrypt(keys: &CentralizedTestingKeys, key_handle: &RequestId) {
-        simulate_reencrypt(SimulationType::NoError, keys, key_handle).await
+    async fn sunshine_user_decrypt(keys: &CentralizedTestingKeys, key_handle: &RequestId) {
+        simulate_user_decrypt(SimulationType::NoError, keys, key_handle).await
     }
 
     async fn set_wrong_client_key<
@@ -1313,7 +1320,7 @@ pub(crate) mod tests {
         inner.base_kms.sig_key = Arc::new(PrivateSigKey::new(wrong_ecdsa_key));
     }
 
-    async fn simulate_reencrypt(
+    async fn simulate_user_decrypt(
         sim_type: SimulationType,
         keys: &CentralizedTestingKeys,
         key_handle: &RequestId,
@@ -1366,7 +1373,7 @@ pub(crate) mod tests {
             keys
         };
         let mut rng = kms.base_kms.new_rng().await;
-        let raw_cipher = RealCentralizedKms::<FileStorage, FileStorage, FileStorage>::reencrypt(
+        let raw_cipher = RealCentralizedKms::<FileStorage, FileStorage, FileStorage>::user_decrypt(
             &kms.crypto_storage
                 .read_cloned_centralized_fhe_keys_from_cache(key_handle)
                 .await

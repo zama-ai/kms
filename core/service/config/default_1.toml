@@ -67,12 +67,12 @@ my_id = 1
 # it must be an integer less than parties/3.
 threshold = 1
 
-# The amount of decryption, respectively reencryption, queries to be able to
+# The amount of decryption, respectively public/user decryption, queries to be able to
 # cache. That is, the total sum of requests to hold in RAM, including completed
 # and on-going requests.
 dec_capacity = 10000
 
-# The minimum amount of completed decryption, respectively reencryption,
+# The minimum amount of completed decryption, respectively public/user decryption,
 # queries to cache. That is, once the system is fully saturated with queries,
 # i.e. going above dec_capacity then old and completed queries will be removed
 # from memory, starting with the oldest. The min_dec_cache is the minimum
@@ -169,8 +169,8 @@ scheduled_delay_ms = 500
 # sufficient amount of tokens are released.
 [rate_limiter_conf]
 bucket_size = 50000
-dec = 1
-reenc = 1
+pub_decrypt = 1
+user_decrypt = 1
 crsgen = 100
 preproc = 25000
 keygen = 1000

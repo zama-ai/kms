@@ -1,5 +1,6 @@
 use super::{
-    decryption_centralized, decryption_threshold, reencryption_centralized, reencryption_threshold,
+    decryption_centralized, decryption_threshold, user_decryption_centralized,
+    user_decryption_threshold,
 };
 use crate::client::tests::crs_gen;
 use crate::client::tests::{
@@ -139,12 +140,12 @@ async fn default_decryption_centralized_precompute_sns(
 #[case(TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1)]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
-async fn default_reencryption_centralized(
+async fn default_user_decryption_centralized(
     #[case] msg: TestingPlaintext,
     #[case] parallelism: usize,
     #[values(true, false)] secure: bool,
 ) {
-    reencryption_centralized(
+    user_decryption_centralized(
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID.to_string(),
         false,
@@ -176,12 +177,12 @@ async fn default_reencryption_centralized(
 #[case(TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1)]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
-async fn default_reencryption_centralized_precompute_sns(
+async fn default_user_decryption_centralized_precompute_sns(
     #[case] msg: TestingPlaintext,
     #[case] parallelism: usize,
     #[values(true, false)] secure: bool,
 ) {
-    reencryption_centralized(
+    user_decryption_centralized(
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID.to_string(),
         false,
@@ -246,14 +247,14 @@ async fn default_decryption_threshold_with_crash(
 #[case(TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID.to_string())]
 #[serial]
 #[tracing_test::traced_test]
-async fn default_reencryption_threshold(
+async fn default_user_decryption_threshold(
     #[case] msg: TestingPlaintext,
     #[case] parallelism: usize,
     #[case] amount_parties: usize,
     #[case] key_id: &str,
     #[values(true)] secure: bool,
 ) {
-    reencryption_threshold(
+    user_decryption_threshold(
         DEFAULT_PARAM,
         key_id,
         false,
@@ -285,7 +286,7 @@ async fn default_reencryption_threshold(
 #[case(TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1, DEFAULT_AMOUNT_PARTIES, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID.to_string())]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[serial]
-async fn default_reencryption_threshold_with_crash(
+async fn default_user_decryption_threshold_with_crash(
     #[case] msg: TestingPlaintext,
     #[case] parallelism: usize,
     #[case] amount_parties: usize,
@@ -295,7 +296,7 @@ async fn default_reencryption_threshold_with_crash(
 ) {
     use crate::consts::DEFAULT_PARAM;
 
-    reencryption_threshold(
+    user_decryption_threshold(
         DEFAULT_PARAM,
         key_id,
         false,

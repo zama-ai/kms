@@ -2,7 +2,9 @@ use alloy_dyn_abi::Eip712Domain;
 use alloy_primitives::B256;
 use anyhow::anyhow;
 use cryptography::internal_crypto_types::PublicEncKey;
-use kms_grpc::{kms::v1::ReencryptionResponsePayload, rpc_types::UserDecryptResponseVerification};
+use kms_grpc::{
+    kms::v1::UserDecryptionResponsePayload, rpc_types::UserDecryptResponseVerification,
+};
 #[cfg(feature = "non-wasm")]
 use std::collections::HashMap;
 use std::{fmt, panic::Location};
@@ -124,8 +126,8 @@ pub fn tonic_handle_potential_err<T, E: ToString>(
     })
 }
 
-pub fn compute_reenc_message_hash(
-    payload: &ReencryptionResponsePayload,
+pub fn compute_user_decrypt_message_hash(
+    payload: &UserDecryptionResponsePayload,
     eip712_domain: &Eip712Domain,
     user_pk: &PublicEncKey,
 ) -> anyhow::Result<B256> {
@@ -139,7 +141,7 @@ pub fn compute_reenc_message_hash(
         })
         .collect();
 
-    let reencrypted_share_buf = bincode::serialize(payload)?;
+    let user_decrypted_share_buf = bincode::serialize(payload)?;
 
     // the solidity structure to sign with EIP-712
     // note that the JS client must also use the same encoding to verify the result
@@ -147,7 +149,7 @@ pub fn compute_reenc_message_hash(
     let message = UserDecryptResponseVerification {
         publicKey: user_pk.into(),
         ctHandles: external_handles,
-        reencryptedShare: reencrypted_share_buf.into(),
+        userDecryptedShare: user_decrypted_share_buf.into(),
     };
 
     let message_hash = message.eip712_signing_hash(eip712_domain);

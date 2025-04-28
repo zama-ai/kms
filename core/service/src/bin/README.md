@@ -41,7 +41,7 @@ cargo run --bin kms-server -- threshold --config-file config/default_4.toml
 
 ## kms-init
 
-The threshold nodes need to be initialized _once_ when they start for the first time, before they can run decryptions or reencryptions.
+The threshold nodes need to be initialized _once_ when they start for the first time, before they can run public or user decryptions.
 This can be achieved by running the following stand-alone command, with the correct threshold node addresses as parameters:
 ```bash
 cargo run --bin kms-init -- -a http://127.0.0.1:50100 http://127.0.0.1:50200 http://127.0.0.1:50300 http://127.0.0.1:50400

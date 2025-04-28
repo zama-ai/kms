@@ -3,13 +3,13 @@ use std::collections::HashSet;
 use alloy_dyn_abi::Eip712Domain;
 use alloy_primitives::Address;
 use kms_grpc::{
-    kms::v1::{ReencryptionResponse, ReencryptionResponsePayload},
+    kms::v1::{UserDecryptionResponse, UserDecryptionResponsePayload},
     rpc_types::FheTypeResponse,
 };
 
 use crate::{
     anyhow_error_and_log,
-    client::{compute_link, ParsedReencryptionRequest},
+    client::{compute_link, ParsedUserDecryptionRequest},
     cryptography::{
         internal_crypto_types::{PublicEncKey, PublicSigKey, Signature},
         signcryption::internal_verify_sig,
@@ -17,22 +17,25 @@ use crate::{
     some_or_err,
 };
 
-const ERR_EXT_REENC_SIG_BAD_LENGH: &str = "Expected external signature of length 65 Bytes";
-const ERR_EXT_REENC_SIG_VERIFICATION_FAILURE: &str = "External PT signature verification failed";
+const ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGH: &str =
+    "Expected external signature of length 65 Bytes";
+const ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE: &str =
+    "External PT signature verification failed";
 
-const ERR_VALIDATE_REENCRYPTION_BAD_FHETYPE_LENGTH: &str =
-    "Incorrect FHE type lengths in reencryption response";
-const ERR_VALIDATE_REENCRYPTION_FHETYPE_MISMATCH: &str =
-    "FHE type in reencryption response mismatch";
-const ERR_VALIDATE_REENCRYPTION_DIGEST_MISMATCH: &str = "Digest in reencryption response mismatch";
-const ERR_VALIDATE_REENCRYPTION_MISSING_SIGNATURE: &str =
-    "Missing signature in reencryption response";
+const ERR_VALIDATE_USER_DECRYPTION_BAD_FHETYPE_LENGTH: &str =
+    "Incorrect FHE type lengths in user decryption response";
+const ERR_VALIDATE_USER_DECRYPTION_FHETYPE_MISMATCH: &str =
+    "FHE type in user decryption response mismatch";
+const ERR_VALIDATE_USER_DECRYPTION_DIGEST_MISMATCH: &str =
+    "Digest in user decryption response mismatch";
+const ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE: &str =
+    "Missing signature in user decryption response";
 
 /// check that the external signature on the decryption result(s) is valid, i.e. was made by one of the supplied addresses
-pub(crate) fn check_ext_reencryption_signature(
+pub(crate) fn check_ext_user_decryption_signature(
     external_sig: &[u8],
-    payload: &ReencryptionResponsePayload,
-    request: &ParsedReencryptionRequest,
+    payload: &UserDecryptionResponsePayload,
+    request: &ParsedUserDecryptionRequest,
     eip712_domain: &Eip712Domain,
     kms_addrs: &[alloy_primitives::Address],
 ) -> anyhow::Result<()> {
@@ -40,7 +43,7 @@ pub(crate) fn check_ext_reencryption_signature(
     if external_sig.len() != 65 {
         return Err(anyhow::anyhow!(
             "{}, but got {:?}",
-            ERR_EXT_REENC_SIG_BAD_LENGH,
+            ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGH,
             external_sig.len()
         ));
     }
@@ -50,7 +53,7 @@ pub(crate) fn check_ext_reencryption_signature(
         alloy_signer::Signature::from_bytes_and_parity(external_sig, external_sig[64] & 0x01 == 0);
 
     let user_pk: PublicEncKey = bincode::deserialize(request.enc_key())?;
-    let hash = crate::compute_reenc_message_hash(payload, eip712_domain, &user_pk)?;
+    let hash = crate::compute_user_decrypt_message_hash(payload, eip712_domain, &user_pk)?;
 
     let addr = sig.recover_address_from_prehash(&hash)?;
     tracing::info!("recovered address: {}", addr);
@@ -59,15 +62,17 @@ pub(crate) fn check_ext_reencryption_signature(
     if kms_addrs.contains(&addr) {
         Ok(())
     } else {
-        Err(anyhow::anyhow!(ERR_EXT_REENC_SIG_VERIFICATION_FAILURE))
+        Err(anyhow::anyhow!(
+            ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE
+        ))
     }
 }
 
-fn validate_reenc_meta_data_and_signature(
+fn validate_user_decrypt_meta_data_and_signature(
     server_addreses: &[Address],
-    client_request: &ParsedReencryptionRequest,
-    pivot_resp: &ReencryptionResponsePayload,
-    other_resp: &ReencryptionResponsePayload,
+    client_request: &ParsedUserDecryptionRequest,
+    pivot_resp: &UserDecryptionResponsePayload,
+    other_resp: &UserDecryptionResponsePayload,
     signature: &[u8],
     external_signature: &[u8],
     eip712_domain: &Eip712Domain,
@@ -77,7 +82,7 @@ fn validate_reenc_meta_data_and_signature(
     if types_1.len() != types_2.len() || types_1.is_empty() || types_2.is_empty() {
         anyhow::bail!(
             "{}: {}, {}",
-            ERR_VALIDATE_REENCRYPTION_BAD_FHETYPE_LENGTH,
+            ERR_VALIDATE_USER_DECRYPTION_BAD_FHETYPE_LENGTH,
             types_1.len(),
             types_2.len()
         );
@@ -87,7 +92,7 @@ fn validate_reenc_meta_data_and_signature(
         if types_1[i] != types_2[i] {
             anyhow::bail!(
                 "{}: pivot is has verification key {:?} with type {:?}, other has verification key {:?} with type {:?}",
-                ERR_VALIDATE_REENCRYPTION_FHETYPE_MISMATCH,
+                ERR_VALIDATE_USER_DECRYPTION_FHETYPE_MISMATCH,
                 &pivot_resp.verification_key,
                 types_1[i],
                 &other_resp.verification_key,
@@ -99,7 +104,7 @@ fn validate_reenc_meta_data_and_signature(
     if pivot_resp.digest != other_resp.digest {
         anyhow::bail!(
                     "{}: pivot has verification key {:?} gave digest {:?}, other has verification key {:?} with digest {:?}",
-                ERR_VALIDATE_REENCRYPTION_DIGEST_MISMATCH,
+                ERR_VALIDATE_USER_DECRYPTION_DIGEST_MISMATCH,
                     pivot_resp.verification_key,
                     pivot_resp.digest,
                     other_resp.verification_key,
@@ -111,7 +116,7 @@ fn validate_reenc_meta_data_and_signature(
     let resp_addr = alloy_signer::utils::public_key_to_address(resp_verf_key.pk());
 
     if !server_addreses.contains(&resp_addr) {
-        anyhow::bail!("Server address is incorrect in reencryption request");
+        anyhow::bail!("Server address is incorrect in user decryption request");
     }
 
     // Prefer ECDSA signature over the eip712 one
@@ -119,11 +124,11 @@ fn validate_reenc_meta_data_and_signature(
         // check signature
         if external_signature.is_empty() {
             return Err(anyhow_error_and_log(
-                ERR_VALIDATE_REENCRYPTION_MISSING_SIGNATURE,
+                ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
             ));
         }
 
-        check_ext_reencryption_signature(
+        check_ext_user_decryption_signature(
             external_signature,
             other_resp,
             client_request,
@@ -145,12 +150,12 @@ fn validate_reenc_meta_data_and_signature(
     Ok(())
 }
 
-fn validate_reenc_responses(
+fn validate_user_decrypt_responses(
     server_addresses: &[Address],
-    client_request: &ParsedReencryptionRequest,
+    client_request: &ParsedUserDecryptionRequest,
     eip712_domain: &Eip712Domain,
-    agg_resp: &[ReencryptionResponse],
-) -> anyhow::Result<Option<Vec<ReencryptionResponsePayload>>> {
+    agg_resp: &[UserDecryptionResponse],
+) -> anyhow::Result<Option<Vec<UserDecryptionResponsePayload>>> {
     if agg_resp.is_empty() {
         tracing::warn!("There are no responses");
         return Ok(None);
@@ -158,7 +163,7 @@ fn validate_reenc_responses(
     // TODO pivot should actually be picked as the most common response instead of just an
     // arbitrary one. The same in decryption.
     // Pick a pivot response
-    let mut option_pivot_payloads: Option<ReencryptionResponsePayload> = None;
+    let mut option_pivot_payloads: Option<UserDecryptionResponsePayload> = None;
     let mut resp_parsed_payloads = Vec::with_capacity(agg_resp.len());
     let mut party_ids = HashSet::new();
     let mut verification_keys = HashSet::new();
@@ -184,7 +189,7 @@ fn validate_reenc_responses(
 
         // Validate that all the responses agree with the pivot on the static parts of the
         // response
-        if let Err(e) = validate_reenc_meta_data_and_signature(
+        if let Err(e) = validate_user_decrypt_meta_data_and_signature(
             server_addresses,
             client_request,
             pivot_payload,
@@ -194,7 +199,7 @@ fn validate_reenc_responses(
             eip712_domain,
         ) {
             tracing::warn!(
-                "Reencryption validation failed for party {} with error: {e:?}",
+                "User decryption validation failed for party {} with error: {e:?}",
                 cur_payload.party_id
             );
             continue;
@@ -264,7 +269,7 @@ fn validate_reenc_responses(
     match option_pivot_payloads {
         Some(inner) => {
             if resp_parsed_payloads.len() <= inner.degree as usize {
-                tracing::warn!("Not enough correct responses to reencrypt the data!");
+                tracing::warn!("Not enough correct responses to decrypt the user data!");
                 Ok(None)
             } else {
                 Ok(Some(resp_parsed_payloads))
@@ -274,23 +279,23 @@ fn validate_reenc_responses(
     }
 }
 
-/// Validates the aggregated reencryption responses received from the servers
-/// against the given reencryption request. Returns the validated responses
+/// Validates the aggregated user decryption responses received from the servers
+/// against the given user decryption request. Returns the validated responses
 /// mapped to the server ID on success.
-pub(crate) fn validate_reenc_responses_against_request(
+pub(crate) fn validate_user_decrypt_responses_against_request(
     server_addresses: &[Address],
-    client_request: &ParsedReencryptionRequest,
+    client_request: &ParsedUserDecryptionRequest,
     eip712_domain: &Eip712Domain,
-    agg_resp: &[ReencryptionResponse],
-) -> anyhow::Result<Option<Vec<ReencryptionResponsePayload>>> {
+    agg_resp: &[UserDecryptionResponse],
+) -> anyhow::Result<Option<Vec<UserDecryptionResponsePayload>>> {
     let resp_parsed = some_or_err(
-        validate_reenc_responses(server_addresses, client_request, eip712_domain, agg_resp)?,
+        validate_user_decrypt_responses(server_addresses, client_request, eip712_domain, agg_resp)?,
         "Could not validate the aggregated responses".to_string(),
     )?;
     let expected_link = compute_link(client_request, eip712_domain)?;
     let pivot_resp = resp_parsed[0].clone();
     if expected_link != pivot_resp.digest {
-        tracing::warn!("The reencryption response is not linked to the correct request");
+        tracing::warn!("The user decryption response is not linked to the correct request");
         return Ok(None);
     }
 
@@ -302,24 +307,26 @@ mod tests {
     use aes_prng::AesRng;
     use itertools::Itertools;
     use kms_grpc::kms::v1::{
-        ReencryptionResponse, ReencryptionResponsePayload, TypedSigncryptedCiphertext,
+        TypedSigncryptedCiphertext, UserDecryptionResponse, UserDecryptionResponsePayload,
     };
     use rand::SeedableRng;
 
     use crate::{
-        client::{compute_link, CiphertextHandle, ParsedReencryptionRequest},
+        client::{compute_link, CiphertextHandle, ParsedUserDecryptionRequest},
         cryptography::signcryption::ephemeral_encryption_key_generation,
         engine::{
-            base::{compute_external_reenc_signature, gen_sig_keys},
+            base::{compute_external_user_decrypt_signature, gen_sig_keys},
             validation::{
-                check_ext_reencryption_signature, validate_reenc_responses_against_request,
+                check_ext_user_decryption_signature,
+                validate_user_decrypt_responses_against_request,
             },
             validation_wasm::{
-                validate_reenc_meta_data_and_signature, validate_reenc_responses,
-                ERR_EXT_REENC_SIG_BAD_LENGH, ERR_VALIDATE_REENCRYPTION_BAD_FHETYPE_LENGTH,
-                ERR_VALIDATE_REENCRYPTION_DIGEST_MISMATCH,
-                ERR_VALIDATE_REENCRYPTION_FHETYPE_MISMATCH,
-                ERR_VALIDATE_REENCRYPTION_MISSING_SIGNATURE,
+                validate_user_decrypt_meta_data_and_signature, validate_user_decrypt_responses,
+                ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGH,
+                ERR_VALIDATE_USER_DECRYPTION_BAD_FHETYPE_LENGTH,
+                ERR_VALIDATE_USER_DECRYPTION_DIGEST_MISMATCH,
+                ERR_VALIDATE_USER_DECRYPTION_FHETYPE_MISMATCH,
+                ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
             },
         },
     };
@@ -333,7 +340,7 @@ mod tests {
     }
 
     #[test]
-    fn test_check_ext_reencryption_signature() {
+    fn test_check_ext_user_decryption_signature() {
         let mut rng = AesRng::seed_from_u64(0);
         let (vk0, sk0) = gen_sig_keys(&mut rng);
         let (vk1, _sk1) = gen_sig_keys(&mut rng);
@@ -350,7 +357,7 @@ mod tests {
         let dummy_domain = dummy_domain();
         let ciphertext_handle = vec![5, 6, 7, 8];
 
-        let request = ParsedReencryptionRequest::new(
+        let request = ParsedUserDecryptionRequest::new(
             None, // No signature is needed
             alloy_primitives::Address::from_public_key(client_vk.pk()),
             bincode::serialize(&eph_client_pk).unwrap(),
@@ -358,7 +365,7 @@ mod tests {
             dummy_domain.verifying_contract.unwrap(),
         );
 
-        let payload = ReencryptionResponsePayload {
+        let payload = UserDecryptionResponsePayload {
             verification_key: bincode::serialize(&pks[0]).unwrap(),
             digest: vec![1, 2, 3, 4],
             signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
@@ -371,12 +378,12 @@ mod tests {
             degree: 1,
         };
         let external_sig =
-            compute_external_reenc_signature(&sk0, &payload, &dummy_domain, &eph_client_pk)
+            compute_external_user_decrypt_signature(&sk0, &payload, &dummy_domain, &eph_client_pk)
                 .unwrap();
 
         // incorrect external signature length
         {
-            assert!(check_ext_reencryption_signature(
+            assert!(check_ext_user_decryption_signature(
                 &external_sig[0..64],
                 &payload,
                 &request,
@@ -385,16 +392,20 @@ mod tests {
             )
             .unwrap_err()
             .to_string()
-            .contains(ERR_EXT_REENC_SIG_BAD_LENGH));
+            .contains(ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGH));
         }
 
         // bad signature due to bad signing key
         {
             let (_vk_bad, sk_bad) = gen_sig_keys(&mut rng);
-            let bad_external_sig =
-                compute_external_reenc_signature(&sk_bad, &payload, &dummy_domain, &eph_client_pk)
-                    .unwrap();
-            assert!(check_ext_reencryption_signature(
+            let bad_external_sig = compute_external_user_decrypt_signature(
+                &sk_bad,
+                &payload,
+                &dummy_domain,
+                &eph_client_pk,
+            )
+            .unwrap();
+            assert!(check_ext_user_decryption_signature(
                 &bad_external_sig,
                 &payload,
                 &request,
@@ -412,7 +423,7 @@ mod tests {
                 chain_id: 1234, // incorrect chain ID
                 verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
             );
-            assert!(check_ext_reencryption_signature(
+            assert!(check_ext_user_decryption_signature(
                 &external_sig,
                 &payload,
                 &request,
@@ -424,7 +435,7 @@ mod tests {
 
         // happy path
         {
-            check_ext_reencryption_signature(
+            check_ext_user_decryption_signature(
                 &external_sig,
                 &payload,
                 &request,
@@ -436,7 +447,7 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_reenc_meta_data_and_signature() {
+    fn test_validate_user_decrypt_meta_data_and_signature() {
         let mut rng = AesRng::seed_from_u64(0);
         let (vk0, sk0) = gen_sig_keys(&mut rng);
         let (vk1, _sk1) = gen_sig_keys(&mut rng);
@@ -453,7 +464,7 @@ mod tests {
         let dummy_domain = dummy_domain();
         let ciphertext_handle = vec![5, 6, 7, 8];
 
-        let client_request = ParsedReencryptionRequest::new(
+        let client_request = ParsedUserDecryptionRequest::new(
             None, // No signature is needed here because we're testing response validation
             alloy_primitives::Address::from_public_key(client_vk.pk()),
             bincode::serialize(&eph_client_pk).unwrap(),
@@ -461,7 +472,7 @@ mod tests {
             dummy_domain.verifying_contract.unwrap(),
         );
 
-        let pivot_resp = ReencryptionResponsePayload {
+        let pivot_resp = UserDecryptionResponsePayload {
             verification_key: bincode::serialize(&pks[0]).unwrap(),
             digest: vec![1, 2, 3, 4],
             signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
@@ -473,20 +484,24 @@ mod tests {
             party_id: 1,
             degree: 1,
         };
-        let external_signature =
-            compute_external_reenc_signature(&sk0, &pivot_resp, &dummy_domain, &eph_client_pk)
-                .unwrap();
+        let external_signature = compute_external_user_decrypt_signature(
+            &sk0,
+            &pivot_resp,
+            &dummy_domain,
+            &eph_client_pk,
+        )
+        .unwrap();
 
         // incorrect length
         {
-            let other_resp = ReencryptionResponsePayload {
+            let other_resp = UserDecryptionResponsePayload {
                 verification_key: bincode::serialize(&pks[0]).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 signcrypted_ciphertexts: vec![], // the ciphertext is just an empty vector
                 party_id: 1,
                 degree: 1,
             };
-            assert!(validate_reenc_meta_data_and_signature(
+            assert!(validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
                 &client_request,
                 &pivot_resp,
@@ -497,12 +512,12 @@ mod tests {
             )
             .unwrap_err()
             .to_string()
-            .contains(ERR_VALIDATE_REENCRYPTION_BAD_FHETYPE_LENGTH));
+            .contains(ERR_VALIDATE_USER_DECRYPTION_BAD_FHETYPE_LENGTH));
         }
 
         // mismatch type
         {
-            let other_resp = ReencryptionResponsePayload {
+            let other_resp = UserDecryptionResponsePayload {
                 verification_key: bincode::serialize(&pks[0]).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
@@ -514,7 +529,7 @@ mod tests {
                 party_id: 1,
                 degree: 1,
             };
-            assert!(validate_reenc_meta_data_and_signature(
+            assert!(validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
                 &client_request,
                 &pivot_resp,
@@ -525,12 +540,12 @@ mod tests {
             )
             .unwrap_err()
             .to_string()
-            .contains(ERR_VALIDATE_REENCRYPTION_FHETYPE_MISMATCH));
+            .contains(ERR_VALIDATE_USER_DECRYPTION_FHETYPE_MISMATCH));
         }
 
         // digest mismatch
         {
-            let other_resp = ReencryptionResponsePayload {
+            let other_resp = UserDecryptionResponsePayload {
                 verification_key: bincode::serialize(&pks[0]).unwrap(),
                 digest: vec![1, 2, 3, 4, 5], // the digest should be [1, 2, 3, 4]
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
@@ -542,7 +557,7 @@ mod tests {
                 party_id: 1,
                 degree: 1,
             };
-            assert!(validate_reenc_meta_data_and_signature(
+            assert!(validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
                 &client_request,
                 &pivot_resp,
@@ -553,12 +568,12 @@ mod tests {
             )
             .unwrap_err()
             .to_string()
-            .contains(ERR_VALIDATE_REENCRYPTION_DIGEST_MISMATCH));
+            .contains(ERR_VALIDATE_USER_DECRYPTION_DIGEST_MISMATCH));
         }
 
         // no signatures are provided
         {
-            assert!(validate_reenc_meta_data_and_signature(
+            assert!(validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
                 &client_request,
                 &pivot_resp,
@@ -569,14 +584,14 @@ mod tests {
             )
             .unwrap_err()
             .to_string()
-            .contains(ERR_VALIDATE_REENCRYPTION_MISSING_SIGNATURE));
+            .contains(ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE));
         }
 
-        // no need to explicitly test the signature issues again since they were tested in [test_check_ext_reencryption_signature]
+        // no need to explicitly test the signature issues again since they were tested in [test_check_ext_user_decryption_signature]
 
         // happy path for empty ECDSA
         {
-            validate_reenc_meta_data_and_signature(
+            validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
                 &client_request,
                 &pivot_resp,
@@ -593,7 +608,7 @@ mod tests {
             let pivot_buf = bincode::serialize(&pivot_resp).unwrap();
             let signature = &crate::cryptography::signcryption::sign(&pivot_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
-            validate_reenc_meta_data_and_signature(
+            validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
                 &client_request,
                 &pivot_resp,
@@ -607,7 +622,7 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_reenc_responses() {
+    fn test_validate_user_decrypt_responses() {
         let mut rng = AesRng::seed_from_u64(0);
         let (vk0, sk0) = gen_sig_keys(&mut rng);
         let (vk1, sk1) = gen_sig_keys(&mut rng);
@@ -624,7 +639,7 @@ mod tests {
         let dummy_domain = dummy_domain();
         let ciphertext_handle = vec![5, 6, 7, 8];
 
-        let client_request = ParsedReencryptionRequest::new(
+        let client_request = ParsedUserDecryptionRequest::new(
             None, // No signature is needed here because we're testing response validation
             alloy_primitives::Address::from_public_key(client_vk.pk()),
             bincode::serialize(&eph_client_pk).unwrap(),
@@ -633,7 +648,7 @@ mod tests {
         );
 
         let resp0 = {
-            let payload0 = ReencryptionResponsePayload {
+            let payload0 = UserDecryptionResponsePayload {
                 verification_key: bincode::serialize(&pks[0]).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
@@ -645,10 +660,14 @@ mod tests {
                 party_id: 1,
                 degree: 1,
             };
-            let external_signature =
-                compute_external_reenc_signature(&sk0, &payload0, &dummy_domain, &eph_client_pk)
-                    .unwrap();
-            ReencryptionResponse {
+            let external_signature = compute_external_user_decrypt_signature(
+                &sk0,
+                &payload0,
+                &dummy_domain,
+                &eph_client_pk,
+            )
+            .unwrap();
+            UserDecryptionResponse {
                 signature: vec![],
                 external_signature,
                 payload: Some(payload0),
@@ -656,7 +675,7 @@ mod tests {
         };
 
         let resp1 = {
-            let payload = ReencryptionResponsePayload {
+            let payload = UserDecryptionResponsePayload {
                 verification_key: bincode::serialize(&pks[1]).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
@@ -668,10 +687,14 @@ mod tests {
                 party_id: 2,
                 degree: 1,
             };
-            let external_signature =
-                compute_external_reenc_signature(&sk1, &payload, &dummy_domain, &eph_client_pk)
-                    .unwrap();
-            ReencryptionResponse {
+            let external_signature = compute_external_user_decrypt_signature(
+                &sk1,
+                &payload,
+                &dummy_domain,
+                &eph_client_pk,
+            )
+            .unwrap();
+            UserDecryptionResponse {
                 signature: vec![],
                 external_signature,
                 payload: Some(payload),
@@ -679,7 +702,7 @@ mod tests {
         };
 
         let resp2 = {
-            let payload = ReencryptionResponsePayload {
+            let payload = UserDecryptionResponsePayload {
                 verification_key: bincode::serialize(&pks[2]).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
@@ -691,10 +714,14 @@ mod tests {
                 party_id: 3,
                 degree: 1,
             };
-            let external_signature =
-                compute_external_reenc_signature(&sk2, &payload, &dummy_domain, &eph_client_pk)
-                    .unwrap();
-            ReencryptionResponse {
+            let external_signature = compute_external_user_decrypt_signature(
+                &sk2,
+                &payload,
+                &dummy_domain,
+                &eph_client_pk,
+            )
+            .unwrap();
+            UserDecryptionResponse {
                 signature: vec![],
                 external_signature,
                 payload: Some(payload),
@@ -703,7 +730,7 @@ mod tests {
 
         // empty responses
         {
-            assert!(validate_reenc_responses(
+            assert!(validate_user_decrypt_responses(
                 &server_addresses,
                 &client_request,
                 &dummy_domain,
@@ -724,7 +751,7 @@ mod tests {
             // We will have 2 accepted responses because
             // the third one does not have a payload
             assert_eq!(
-                validate_reenc_responses(
+                validate_user_decrypt_responses(
                     &server_addresses,
                     &client_request,
                     &dummy_domain,
@@ -743,7 +770,7 @@ mod tests {
             bad_resp1.payload = None;
             let agg_resp = vec![resp0.clone(), bad_resp1];
 
-            assert!(validate_reenc_responses(
+            assert!(validate_user_decrypt_responses(
                 &server_addresses,
                 &client_request,
                 &dummy_domain,
@@ -756,7 +783,7 @@ mod tests {
         let run_with_customized_resp2 = |party_id, digest, pk, packing_factor| {
             // the correct parameters should be party_id = 3, digest = vec![1,2,3,4], pk = &pks[2], packing_factor = 1
             let bad_resp2 = {
-                let payload = ReencryptionResponsePayload {
+                let payload = UserDecryptionResponsePayload {
                     verification_key: bincode::serialize(pk).unwrap(),
                     digest,
                     signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
@@ -768,10 +795,14 @@ mod tests {
                     party_id, // invalid party ID
                     degree: 1,
                 };
-                let external_signature =
-                    compute_external_reenc_signature(&sk2, &payload, &dummy_domain, &eph_client_pk)
-                        .unwrap();
-                ReencryptionResponse {
+                let external_signature = compute_external_user_decrypt_signature(
+                    &sk2,
+                    &payload,
+                    &dummy_domain,
+                    &eph_client_pk,
+                )
+                .unwrap();
+                UserDecryptionResponse {
                     signature: vec![],
                     external_signature,
                     payload: Some(payload),
@@ -780,7 +811,7 @@ mod tests {
             let agg_resp = vec![resp0.clone(), resp1.clone(), bad_resp2];
 
             assert_eq!(
-                validate_reenc_responses(
+                validate_user_decrypt_responses(
                     &server_addresses,
                     &client_request,
                     &dummy_domain,
@@ -836,7 +867,7 @@ mod tests {
         {
             let agg_resp = vec![resp0.clone(), resp1.clone(), resp2.clone()];
             assert_eq!(
-                validate_reenc_responses(
+                validate_user_decrypt_responses(
                     &server_addresses,
                     &client_request,
                     &dummy_domain,
@@ -851,7 +882,7 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_reenc_responses_against_request() {
+    fn test_validate_user_decrypt_responses_against_request() {
         let mut rng = AesRng::seed_from_u64(0);
         let (vk0, sk0) = gen_sig_keys(&mut rng);
         let (vk1, sk1) = gen_sig_keys(&mut rng);
@@ -868,7 +899,7 @@ mod tests {
         let dummy_domain = dummy_domain();
         let ciphertext_handle = vec![5, 6, 7, 8];
 
-        let client_request = ParsedReencryptionRequest::new(
+        let client_request = ParsedUserDecryptionRequest::new(
             None, // No signature is needed here because we're testing response validation
             alloy_primitives::Address::from_public_key(client_vk.pk()),
             bincode::serialize(&eph_client_pk).unwrap(),
@@ -879,7 +910,7 @@ mod tests {
         let digest = compute_link(&client_request, &dummy_domain).unwrap();
 
         let resp0 = {
-            let payload0 = ReencryptionResponsePayload {
+            let payload0 = UserDecryptionResponsePayload {
                 verification_key: bincode::serialize(&pks[0]).unwrap(),
                 digest: digest.clone(),
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
@@ -891,10 +922,14 @@ mod tests {
                 party_id: 1,
                 degree: 1,
             };
-            let external_signature =
-                compute_external_reenc_signature(&sk0, &payload0, &dummy_domain, &eph_client_pk)
-                    .unwrap();
-            ReencryptionResponse {
+            let external_signature = compute_external_user_decrypt_signature(
+                &sk0,
+                &payload0,
+                &dummy_domain,
+                &eph_client_pk,
+            )
+            .unwrap();
+            UserDecryptionResponse {
                 signature: vec![],
                 external_signature,
                 payload: Some(payload0),
@@ -902,7 +937,7 @@ mod tests {
         };
 
         let resp1 = {
-            let payload = ReencryptionResponsePayload {
+            let payload = UserDecryptionResponsePayload {
                 verification_key: bincode::serialize(&pks[1]).unwrap(),
                 digest: digest.clone(),
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
@@ -914,10 +949,14 @@ mod tests {
                 party_id: 2,
                 degree: 1,
             };
-            let external_signature =
-                compute_external_reenc_signature(&sk1, &payload, &dummy_domain, &eph_client_pk)
-                    .unwrap();
-            ReencryptionResponse {
+            let external_signature = compute_external_user_decrypt_signature(
+                &sk1,
+                &payload,
+                &dummy_domain,
+                &eph_client_pk,
+            )
+            .unwrap();
+            UserDecryptionResponse {
                 signature: vec![],
                 external_signature,
                 payload: Some(payload),
@@ -926,20 +965,20 @@ mod tests {
 
         // wrong link
         // Note that we cannot change the domain or other parts of the response to cause the failure
-        // because that would lead to other failures in [validate_reenc_responses], which are already tested.
+        // because that would lead to other failures in [validate_user_decrypt_responses], which are already tested.
         // So we change the client request to cause the failure.
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
 
             let (bad_client_vk, _bad_client_sk) = gen_sig_keys(&mut rng);
-            let bad_client_request = ParsedReencryptionRequest::new(
+            let bad_client_request = ParsedUserDecryptionRequest::new(
                 None, // No signature is needed here because we're testing response validation
                 alloy_primitives::Address::from_public_key(bad_client_vk.pk()),
                 bincode::serialize(&eph_client_pk).unwrap(),
                 vec![CiphertextHandle::new(ciphertext_handle.clone())],
                 dummy_domain.verifying_contract.unwrap(),
             );
-            assert!(validate_reenc_responses_against_request(
+            assert!(validate_user_decrypt_responses_against_request(
                 &server_addresses,
                 &bad_client_request,
                 &dummy_domain,
@@ -953,7 +992,7 @@ mod tests {
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
             assert_eq!(
-                validate_reenc_responses_against_request(
+                validate_user_decrypt_responses_against_request(
                     &server_addresses,
                     &client_request,
                     &dummy_domain,

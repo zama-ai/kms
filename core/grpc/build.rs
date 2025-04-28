@@ -6,12 +6,12 @@ const EXTENDED_DERIVES: &str =
 
 fn default_builder() -> Builder {
     tonic_build::configure()
-        .type_attribute("DecryptionRequest", DERIVES)
-        .type_attribute("DecryptionResponsePayload", DERIVES)
+        .type_attribute("PublicDecryptionRequest", DERIVES)
+        .type_attribute("PublicDecryptionResponsePayload", DERIVES)
         .type_attribute("ExternalDecryptionResult", DERIVES)
-        .type_attribute("ReencryptionRequest", DERIVES)
-        .type_attribute("ReencryptionResponse", DERIVES)
-        .type_attribute("ReencryptionResponsePayload", DERIVES)
+        .type_attribute("UserDecryptionRequest", DERIVES)
+        .type_attribute("UserDecryptionResponse", DERIVES)
+        .type_attribute("UserDecryptionResponsePayload", DERIVES)
         .type_attribute("Eip712DomainMsg", DERIVES)
         .type_attribute("KeyGenRequest", DERIVES)
         .type_attribute("TypedCiphertext", DERIVES)
@@ -48,15 +48,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "#[wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)]",
         )
         .type_attribute(
-            "ReencryptionRequest",
+            "UserDecryptionRequest",
             "#[wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)]",
         )
         .type_attribute(
-            "ReencryptionResponse",
+            "UserDecryptionResponse",
             "#[wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)]",
         )
         .type_attribute(
-            "ReencryptionResponsePayload",
+            "UserDecryptionResponsePayload",
             "#[wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)]",
         )
         .type_attribute(

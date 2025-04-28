@@ -11,8 +11,8 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 pub struct RateLimiterConfig {
     pub bucket_size: usize,
     // Everything else is u32 because semaphore works with u32
-    pub dec: u32,
-    pub reenc: u32,
+    pub pub_decrypt: u32,
+    pub user_decrypt: u32,
     pub crsgen: u32,
     pub preproc: u32,
     pub keygen: u32,
@@ -22,8 +22,8 @@ impl Default for RateLimiterConfig {
     fn default() -> Self {
         Self {
             bucket_size: 50000,
-            dec: 1,
-            reenc: 1,
+            pub_decrypt: 1,
+            user_decrypt: 1,
             crsgen: 100,
             preproc: 25000,
             keygen: 1000,
@@ -100,8 +100,8 @@ impl RateLimiter {
     // without using nightly or introducing extra dependencies,
     // so we we need to repeat XXX in (start_XXX, XXX).
     // We also cannot interpret an identifier as a &str expression.
-    impl_rate_limiter_for!(start_dec, dec, "dec");
-    impl_rate_limiter_for!(start_reenc, reenc, "reenc");
+    impl_rate_limiter_for!(start_pub_decrypt, pub_decrypt, "pub_decrypt");
+    impl_rate_limiter_for!(start_user_decrypt, user_decrypt, "user_decrypt");
     impl_rate_limiter_for!(start_crsgen, crsgen, "crsgen");
     impl_rate_limiter_for!(start_preproc, preproc, "preproc");
     impl_rate_limiter_for!(start_keygen, keygen, "keygen");
@@ -114,11 +114,11 @@ mod tests {
     #[tokio::test]
     async fn test_rate_limiting_1() {
         let rl = RateLimiter::default();
-        let permit = rl.start_dec().await.unwrap();
+        let permit = rl.start_pub_decrypt().await.unwrap();
         {
             assert_eq!(
                 rl.bucket.available_permits(),
-                rl.config.bucket_size - rl.config.dec as usize
+                rl.config.bucket_size - rl.config.pub_decrypt as usize
             );
         }
         drop(permit);
@@ -130,11 +130,11 @@ mod tests {
     #[tokio::test]
     async fn test_rate_limiting_more() {
         let rl = RateLimiter::default();
-        let permit = rl.start_dec().await.unwrap();
+        let permit = rl.start_pub_decrypt().await.unwrap();
         {
             assert_eq!(
                 rl.bucket.available_permits(),
-                rl.config.bucket_size - rl.config.dec as usize
+                rl.config.bucket_size - rl.config.pub_decrypt as usize
             );
         }
         let rl2 = &rl.clone();
@@ -142,7 +142,7 @@ mod tests {
         {
             assert_eq!(
                 rl2.bucket.available_permits(),
-                rl2.config.bucket_size - (rl2.config.dec + rl2.config.crsgen) as usize
+                rl2.config.bucket_size - (rl2.config.pub_decrypt + rl2.config.crsgen) as usize
             );
         }
         drop(permit);
@@ -156,29 +156,29 @@ mod tests {
     async fn test_rate_limiting_refusal() {
         let rl = RateLimiter::new(RateLimiterConfig {
             bucket_size: 10,
-            dec: 10,
-            reenc: 1,
+            pub_decrypt: 10,
+            user_decrypt: 1,
             crsgen: 1,
             preproc: 1,
             keygen: 1,
         });
 
-        // first decryption is ok, but uses all tokens
-        let _permit = rl.start_dec().await.unwrap();
+        // first pub_decryptryption is ok, but uses all tokens
+        let _permit = rl.start_pub_decrypt().await.unwrap();
         {
             assert_eq!(
                 rl.bucket.available_permits(),
-                rl.config.bucket_size - rl.config.dec as usize
+                rl.config.bucket_size - rl.config.pub_decrypt as usize
             );
         }
 
         // second operation should be refused
-        rl.start_reenc().await.unwrap_err();
+        rl.start_user_decrypt().await.unwrap_err();
 
         // drop the first permit
         drop(_permit);
 
         // second operation should work fine
-        let _permit_2 = rl.start_reenc().await.unwrap();
+        let _permit_2 = rl.start_user_decrypt().await.unwrap();
     }
 }

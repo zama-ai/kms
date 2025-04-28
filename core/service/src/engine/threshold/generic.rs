@@ -1,5 +1,5 @@
 use crate::engine::threshold::traits::{
-    CrsGenerator, Decryptor, Initiator, KeyGenPreprocessor, KeyGenerator, Reencryptor,
+    CrsGenerator, Initiator, KeyGenPreprocessor, KeyGenerator, PublicDecryptor, UserDecryptor,
 };
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
@@ -17,8 +17,8 @@ use tonic_health::server::HealthReporter;
 
 pub struct GenericKms<
     IN: Sync,
-    RE: Sync,
-    DE: Sync,
+    UD: Sync,
+    PD: Sync,
     KG: Sync,
     #[cfg(feature = "insecure")] IKG: Sync,
     PP: Sync,
@@ -26,8 +26,8 @@ pub struct GenericKms<
     #[cfg(feature = "insecure")] ICG: Sync,
 > {
     initiator: IN,
-    reencryptor: RE,
-    decryptor: DE,
+    user_decryptor: UD,
+    decryptor: PD,
     key_generator: KG,
     #[cfg(feature = "insecure")]
     insecure_key_generator: IKG,
@@ -42,14 +42,14 @@ pub struct GenericKms<
 }
 
 #[cfg(feature = "insecure")]
-impl<IN: Sync, RE: Sync, DE: Sync, KG: Sync, IKG: Sync, PP: Sync, CG: Sync, ICG: Sync>
-    GenericKms<IN, RE, DE, KG, IKG, PP, CG, ICG>
+impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, IKG: Sync, PP: Sync, CG: Sync, ICG: Sync>
+    GenericKms<IN, UD, PD, KG, IKG, PP, CG, ICG>
 {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         initiator: IN,
-        reencryptor: RE,
-        decryptor: DE,
+        user_decryptor: UD,
+        decryptor: PD,
         key_generator: KG,
         insecure_key_generator: IKG,
         keygen_preprocessor: PP,
@@ -61,7 +61,7 @@ impl<IN: Sync, RE: Sync, DE: Sync, KG: Sync, IKG: Sync, PP: Sync, CG: Sync, ICG:
     ) -> Self {
         Self {
             initiator,
-            reencryptor,
+            user_decryptor,
             decryptor,
             key_generator,
             insecure_key_generator,
@@ -77,8 +77,8 @@ impl<IN: Sync, RE: Sync, DE: Sync, KG: Sync, IKG: Sync, PP: Sync, CG: Sync, ICG:
 
 #[cfg(feature = "insecure")]
 #[tonic::async_trait]
-impl<IN: Sync, RE: Sync, DE: Sync, KG: Sync, IKG: Sync, PP: Sync, CG: Sync, ICG: Sync> Shutdown
-    for GenericKms<IN, RE, DE, KG, IKG, PP, CG, ICG>
+impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, IKG: Sync, PP: Sync, CG: Sync, ICG: Sync> Shutdown
+    for GenericKms<IN, UD, PD, KG, IKG, PP, CG, ICG>
 {
     async fn shutdown(&self) -> anyhow::Result<()> {
         self.health_reporter
@@ -112,8 +112,8 @@ impl<IN: Sync, RE: Sync, DE: Sync, KG: Sync, IKG: Sync, PP: Sync, CG: Sync, ICG:
 
 #[cfg(feature = "insecure")]
 #[allow(clippy::let_underscore_future)]
-impl<IN: Sync, RE: Sync, DE: Sync, KG: Sync, IKG: Sync, PP: Sync, CG: Sync, ICG: Sync> Drop
-    for GenericKms<IN, RE, DE, KG, IKG, PP, CG, ICG>
+impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, IKG: Sync, PP: Sync, CG: Sync, ICG: Sync> Drop
+    for GenericKms<IN, UD, PD, KG, IKG, PP, CG, ICG>
 {
     fn drop(&mut self) {
         // Let the shutdown run in the background
@@ -122,14 +122,14 @@ impl<IN: Sync, RE: Sync, DE: Sync, KG: Sync, IKG: Sync, PP: Sync, CG: Sync, ICG:
 }
 
 #[cfg(not(feature = "insecure"))]
-impl<IN: Sync, RE: Sync, DE: Sync, KG: Sync, PP: Sync, CG: Sync>
-    GenericKms<IN, RE, DE, KG, PP, CG>
+impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync>
+    GenericKms<IN, UD, PD, KG, PP, CG>
 {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         initiator: IN,
-        reencryptor: RE,
-        decryptor: DE,
+        user_decryptor: UD,
+        decryptor: PD,
         key_generator: KG,
         keygen_preprocessor: PP,
         crs_generator: CG,
@@ -139,7 +139,7 @@ impl<IN: Sync, RE: Sync, DE: Sync, KG: Sync, PP: Sync, CG: Sync>
     ) -> Self {
         Self {
             initiator,
-            reencryptor,
+            user_decryptor,
             decryptor,
             key_generator,
             keygen_preprocessor,
@@ -153,8 +153,8 @@ impl<IN: Sync, RE: Sync, DE: Sync, KG: Sync, PP: Sync, CG: Sync>
 
 #[tonic::async_trait]
 #[cfg(not(feature = "insecure"))]
-impl<IN: Sync, RE: Sync, DE: Sync, KG: Sync, PP: Sync, CG: Sync> Shutdown
-    for GenericKms<IN, RE, DE, KG, PP, CG>
+impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync> Shutdown
+    for GenericKms<IN, UD, PD, KG, PP, CG>
 {
     async fn shutdown(&self) -> anyhow::Result<()> {
         self.health_reporter
@@ -188,8 +188,8 @@ impl<IN: Sync, RE: Sync, DE: Sync, KG: Sync, PP: Sync, CG: Sync> Shutdown
 
 #[cfg(not(feature = "insecure"))]
 #[allow(clippy::let_underscore_future)]
-impl<IN: Sync, RE: Sync, DE: Sync, KG: Sync, PP: Sync, CG: Sync> Drop
-    for GenericKms<IN, RE, DE, KG, PP, CG>
+impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync> Drop
+    for GenericKms<IN, UD, PD, KG, PP, CG>
 {
     fn drop(&mut self) {
         // Let the shutdown run in the background
@@ -203,25 +203,25 @@ macro_rules! impl_endpoint {
         #[tonic::async_trait]
         impl<
                 IN: Initiator + Sync + Send + 'static,
-                RE: Reencryptor + Sync + Send + 'static,
-                DE: Decryptor + Sync + Send + 'static,
+                UD: UserDecryptor + Sync + Send + 'static,
+                PD: PublicDecryptor + Sync + Send + 'static,
                 KG: KeyGenerator + Sync + Send + 'static,
                 PP: KeyGenPreprocessor + Sync + Send + 'static,
                 CG: CrsGenerator + Sync + Send + 'static,
-            > CoreServiceEndpoint for GenericKms<IN, RE, DE, KG, PP, CG> $implementations
+            > CoreServiceEndpoint for GenericKms<IN, UD, PD, KG, PP, CG> $implementations
 
         #[cfg(feature="insecure")]
         #[tonic::async_trait]
         impl<
                 IN: Initiator + Sync + Send + 'static,
-                RE: Reencryptor + Sync + Send + 'static,
-                DE: Decryptor + Sync + Send + 'static,
+                UD: UserDecryptor + Sync + Send + 'static,
+                PD: PublicDecryptor + Sync + Send + 'static,
                 KG: KeyGenerator + Sync + Send + 'static,
                 IKG: InsecureKeyGenerator + Sync + Send + 'static,
                 PP: KeyGenPreprocessor + Sync + Send + 'static,
                 CG: CrsGenerator + Sync + Send + 'static,
                 ICG: InsecureCrsGenerator + Sync + Send + 'static,
-            > CoreServiceEndpoint for GenericKms<IN, RE, DE, KG, IKG, PP, CG, ICG> $implementations
+            > CoreServiceEndpoint for GenericKms<IN, UD, PD, KG, IKG, PP, CG, ICG> $implementations
     }
 }
 
@@ -261,34 +261,34 @@ impl_endpoint! {
         }
 
         #[tracing::instrument(skip(self, request))]
-        async fn reencrypt(
+        async fn user_decrypt(
             &self,
-            request: Request<ReencryptionRequest>,
+            request: Request<UserDecryptionRequest>,
         ) -> Result<Response<Empty>, Status> {
-            self.reencryptor.reencrypt(request).await
+            self.user_decryptor.user_decrypt(request).await
         }
 
         #[tracing::instrument(skip(self, request))]
-        async fn get_reencrypt_result(
+        async fn get_user_decryption_result(
             &self,
             request: Request<RequestId>,
-        ) -> Result<Response<ReencryptionResponse>, Status> {
-            self.reencryptor.get_result(request).await
+        ) -> Result<Response<UserDecryptionResponse>, Status> {
+            self.user_decryptor.get_result(request).await
         }
 
         #[tracing::instrument(skip(self, request))]
-        async fn decrypt(
+        async fn public_decrypt(
             &self,
-            request: Request<DecryptionRequest>,
+            request: Request<PublicDecryptionRequest>,
         ) -> Result<Response<Empty>, Status> {
-            self.decryptor.decrypt(request).await
+            self.decryptor.public_decrypt(request).await
         }
 
         #[tracing::instrument(skip(self, request))]
-        async fn get_decrypt_result(
+        async fn get_public_decryption_result(
             &self,
             request: Request<RequestId>,
-        ) -> Result<Response<DecryptionResponse>, Status> {
+        ) -> Result<Response<PublicDecryptionResponse>, Status> {
             self.decryptor.get_result(request).await
         }
 

@@ -1,7 +1,7 @@
 use crate::kms::v1::{
     Eip712DomainMsg, RequestId, TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
 };
-use crate::kms::v1::{ReencryptionResponsePayload, SignedPubDataHandle};
+use crate::kms::v1::{SignedPubDataHandle, UserDecryptionResponsePayload};
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::Eip712Domain;
 use anyhow::anyhow;
@@ -33,8 +33,8 @@ pub const ID_LENGTH: usize = 32;
 
 pub static KEY_GEN_REQUEST_NAME: &str = "key_gen_request";
 pub static CRS_GEN_REQUEST_NAME: &str = "crs_gen_request";
-pub static DEC_REQUEST_NAME: &str = "dec_request";
-pub static REENC_REQUEST_NAME: &str = "reenc_request";
+pub static PUB_DEC_REQUEST_NAME: &str = "pub_dec_request";
+pub static USER_DECRYPT_REQUEST_NAME: &str = "user_decrypt_request";
 
 static UNSUPPORTED_FHE_TYPE_STR: &str = "UnsupportedFheType";
 
@@ -42,7 +42,7 @@ alloy_sol_types::sol! {
     struct UserDecryptResponseVerification {
         bytes publicKey;
         bytes32[] ctHandles;
-        bytes reencryptedShare;
+        bytes userDecryptedShare;
     }
 }
 
@@ -386,7 +386,7 @@ pub struct SigncryptionPayload {
 }
 
 #[cfg(feature = "non-wasm")]
-impl crate::kms::v1::ReencryptionRequest {
+impl crate::kms::v1::UserDecryptionRequest {
     /// The only information we can use is userAddress, the handles and public key
     /// because these are the only information available
     /// to the user *and* to the KMS.
@@ -841,7 +841,7 @@ impl TypedCiphertext {
     }
 }
 
-impl FheTypeResponse for ReencryptionResponsePayload {
+impl FheTypeResponse for UserDecryptionResponsePayload {
     fn fhe_types(&self) -> anyhow::Result<Vec<FheTypes>> {
         self.signcrypted_ciphertexts
             .iter()
@@ -1094,7 +1094,7 @@ pub(crate) mod tests {
 
         // empty domain
         {
-            let req = crate::kms::v1::ReencryptionRequest {
+            let req = crate::kms::v1::UserDecryptionRequest {
                 request_id: Some(request_id.clone()),
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.clone()),
@@ -1111,7 +1111,7 @@ pub(crate) mod tests {
 
         // empty ciphertexts
         {
-            let req = crate::kms::v1::ReencryptionRequest {
+            let req = crate::kms::v1::UserDecryptionRequest {
                 request_id: Some(request_id.clone()),
                 typed_ciphertexts: vec![],
                 key_id: Some(key_id.clone()),
@@ -1131,7 +1131,7 @@ pub(crate) mod tests {
             let mut bad_domain = domain.clone();
             bad_domain.verifying_contract = client_address.to_checksum(None);
 
-            let req = crate::kms::v1::ReencryptionRequest {
+            let req = crate::kms::v1::UserDecryptionRequest {
                 request_id: Some(request_id.clone()),
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.clone()),
@@ -1149,7 +1149,7 @@ pub(crate) mod tests {
 
         // everything is ok
         {
-            let req = crate::kms::v1::ReencryptionRequest {
+            let req = crate::kms::v1::UserDecryptionRequest {
                 request_id: Some(request_id.clone()),
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.clone()),

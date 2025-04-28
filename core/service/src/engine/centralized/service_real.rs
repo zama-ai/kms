@@ -4,12 +4,12 @@ use crate::engine::base::{
     retrieve_parameters, KeyGenCallValues,
 };
 use crate::engine::centralized::central_kms::{
-    async_generate_crs, async_generate_fhe_keys, async_reencrypt, central_decrypt,
+    async_generate_crs, async_generate_fhe_keys, async_user_decrypt, central_decrypt,
     RealCentralizedKms,
 };
 use crate::engine::traits::BaseKms;
 use crate::engine::validation::{
-    validate_decrypt_req, validate_reencrypt_req, validate_request_id,
+    validate_public_decrypt_req, validate_request_id, validate_user_decrypt_req,
 };
 use crate::util::meta_store::{handle_res_mapping, MetaStore};
 use crate::vault::storage::crypto_material::CentralizedCryptoMaterialStorage;
@@ -20,14 +20,16 @@ use alloy_sol_types::Eip712Domain;
 use anyhow::Result;
 use conf_trace::metrics::METRICS;
 use conf_trace::metrics_names::{
-    ERR_CRS_GEN_FAILED, ERR_DECRYPTION_FAILED, ERR_KEY_EXISTS, ERR_KEY_NOT_FOUND,
-    ERR_RATE_LIMIT_EXCEEDED, ERR_REENCRYPTION_FAILED, OP_CRS_GEN, OP_DECRYPT_REQUEST, OP_KEYGEN,
-    OP_REENCRYPT_REQUEST, TAG_DECRYPTION_KIND, TAG_KEY_ID, TAG_PARTY_ID,
+    ERR_CRS_GEN_FAILED, ERR_KEY_EXISTS, ERR_KEY_NOT_FOUND, ERR_PUBLIC_DECRYPTION_FAILED,
+    ERR_RATE_LIMIT_EXCEEDED, ERR_USER_DECRYPTION_FAILED, OP_CRS_GEN, OP_KEYGEN,
+    OP_PUBLIC_DECRYPT_REQUEST, OP_USER_DECRYPT_REQUEST, TAG_KEY_ID, TAG_PARTY_ID,
+    TAG_PUBLIC_DECRYPTION_KIND,
 };
 use kms_grpc::kms::v1::{
-    CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
-    Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocResult, KeyGenRequest, KeyGenResult,
-    KeySetAddedInfo, ReencryptionRequest, ReencryptionResponse, RequestId,
+    CrsGenRequest, CrsGenResult, Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocResult,
+    KeyGenRequest, KeyGenResult, KeySetAddedInfo, PublicDecryptionRequest,
+    PublicDecryptionResponse, PublicDecryptionResponsePayload, RequestId, UserDecryptionRequest,
+    UserDecryptionResponse,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain_option, SignedPubDataHandleInternal};
@@ -199,13 +201,13 @@ impl<
         }))
     }
 
-    async fn reencrypt(
+    async fn user_decrypt(
         &self,
-        request: Request<ReencryptionRequest>,
+        request: Request<UserDecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
         // Start timing and counting before any operations
         let mut timer = METRICS
-            .time_operation(OP_REENCRYPT_REQUEST)
+            .time_operation(OP_USER_DECRYPT_REQUEST)
             .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
             .and_then(|b| {
                 // Use a constant party ID since this is the central KMS
@@ -217,12 +219,12 @@ impl<
             .ok();
 
         let _request_counter = METRICS
-            .increment_request_counter(OP_REENCRYPT_REQUEST)
+            .increment_request_counter(OP_USER_DECRYPT_REQUEST)
             .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
 
-        let permit = self.rate_limiter.start_reenc().await.map_err(|e| {
+        let permit = self.rate_limiter.start_user_decrypt().await.map_err(|e| {
             if let Err(e) =
-                METRICS.increment_error_counter(OP_REENCRYPT_REQUEST, ERR_RATE_LIMIT_EXCEEDED)
+                METRICS.increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_RATE_LIMIT_EXCEEDED)
             {
                 tracing::warn!("Failed to increment error counter: {:?}", e);
             }
@@ -233,8 +235,8 @@ impl<
 
         let (typed_ciphertexts, link, client_enc_key, client_address, key_id, request_id, domain) =
             tonic_handle_potential_err(
-                validate_reencrypt_req(&inner),
-                format!("Failed to validate reencryption request: {:?}", inner),
+                validate_user_decrypt_req(&inner),
+                format!("Failed to validate user decryption request: {:?}", inner),
             )?;
 
         if let Some(b) = timer.as_mut() {
@@ -245,14 +247,14 @@ impl<
         }
 
         {
-            let mut guarded_meta_store = self.reenc_meta_map.write().await;
+            let mut guarded_meta_store = self.user_decrypt_meta_map.write().await;
             tonic_handle_potential_err(
                 guarded_meta_store.insert(&request_id),
-                "Could not insert reencryption into meta store".to_string(),
+                "Could not insert user decryption into meta store".to_string(),
             )?;
         }
 
-        let meta_store = Arc::clone(&self.reenc_meta_map);
+        let meta_store = Arc::clone(&self.user_decrypt_meta_map);
         let sig_key = Arc::clone(&self.base_kms.sig_key);
         let crypto_storage = self.crypto_storage.clone();
         let mut rng = self.base_kms.new_rng().await;
@@ -266,7 +268,7 @@ impl<
 
         let metric_tags = vec![
             (TAG_KEY_ID, key_id.request_id.clone()),
-            (TAG_DECRYPTION_KIND, "centralized".to_string()),
+            (TAG_PUBLIC_DECRYPTION_KIND, "centralized".to_string()),
         ];
 
         let server_verf_key = self.base_kms.get_serialized_verf_key();
@@ -282,8 +284,8 @@ impl<
                     Ok(k) => k,
                     Err(e) => {
                         let mut guarded_meta_store = meta_store.write().await;
-                        if let Err(e) =
-                            METRICS.increment_error_counter(OP_REENCRYPT_REQUEST, ERR_KEY_NOT_FOUND)
+                        if let Err(e) = METRICS
+                            .increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND)
                         {
                             tracing::warn!("Failed to increment error counter: {:?}", e);
                         }
@@ -296,11 +298,11 @@ impl<
                 };
 
                 tracing::info!(
-                    "Starting reencryption using key_id {} for request ID {}",
+                    "Starting user decryption using key_id {} for request ID {}",
                     &key_id,
                     &request_id
                 );
-                match async_reencrypt::<PubS, PrivS, BackS>(
+                match async_user_decrypt::<PubS, PrivS, BackS>(
                     &keys,
                     &sig_key,
                     &mut rng,
@@ -322,9 +324,12 @@ impl<
                     Result::Err(e) => {
                         let mut guarded_meta_store = meta_store.write().await;
                         let _ = guarded_meta_store
-                            .update(&request_id, Err(format!("Failed reencryption: {e}")));
+                            .update(&request_id, Err(format!("Failed user decryption: {e}")));
                         METRICS
-                            .increment_error_counter(OP_REENCRYPT_REQUEST, ERR_REENCRYPTION_FAILED)
+                            .increment_error_counter(
+                                OP_USER_DECRYPT_REQUEST,
+                                ERR_USER_DECRYPTION_FAILED,
+                            )
                             .ok();
                     }
                 }
@@ -337,20 +342,20 @@ impl<
     }
 
     #[tracing::instrument(skip(self, request))]
-    async fn get_reencrypt_result(
+    async fn get_user_decryption_result(
         &self,
         request: Request<RequestId>,
-    ) -> Result<Response<ReencryptionResponse>, Status> {
+    ) -> Result<Response<UserDecryptionResponse>, Status> {
         let request_id = request.into_inner();
         validate_request_id(&request_id)?;
 
         let status = {
-            let guarded_meta_store = self.reenc_meta_map.read().await;
+            let guarded_meta_store = self.user_decrypt_meta_map.read().await;
             guarded_meta_store.retrieve(&request_id)
         };
 
         let (payload, external_signature) =
-            handle_res_mapping(status, &request_id, "Reencryption").await?;
+            handle_res_mapping(status, &request_id, "UserDecryption").await?;
 
         // sign the response
         let sig_payload_vec = tonic_handle_potential_err(
@@ -363,7 +368,7 @@ impl<
             format!("Could not sign payload {:?}", payload),
         )?;
 
-        Ok(Response::new(ReencryptionResponse {
+        Ok(Response::new(UserDecryptionResponse {
             signature: sig.sig.to_vec(),
             external_signature,
             payload: Some(payload),
@@ -371,13 +376,13 @@ impl<
     }
 
     #[tracing::instrument(skip(self, request))]
-    async fn decrypt(
+    async fn public_decrypt(
         &self,
-        request: Request<DecryptionRequest>,
+        request: Request<PublicDecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
         // Start timing and counting before any operations
         let mut timer = METRICS
-            .time_operation(OP_DECRYPT_REQUEST)
+            .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
             .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
             .and_then(|b| {
                 // Use a constant party ID since this is the central KMS
@@ -389,12 +394,12 @@ impl<
             .ok();
 
         METRICS
-            .increment_request_counter(OP_DECRYPT_REQUEST)
+            .increment_request_counter(OP_PUBLIC_DECRYPT_REQUEST)
             .map_err(|e| Status::internal(e.to_string()))?;
 
-        let permit = self.rate_limiter.start_dec().await.map_err(|e| {
+        let permit = self.rate_limiter.start_pub_decrypt().await.map_err(|e| {
             if let Err(e) =
-                METRICS.increment_error_counter(OP_DECRYPT_REQUEST, ERR_RATE_LIMIT_EXCEEDED)
+                METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_RATE_LIMIT_EXCEEDED)
             {
                 tracing::warn!("Failed to increment error counter: {:?}", e);
             }
@@ -406,7 +411,7 @@ impl<
 
         let (ciphertexts, req_digest, key_id, request_id, eip712_domain) =
             tonic_handle_potential_err(
-                validate_decrypt_req(&inner),
+                validate_public_decrypt_req(&inner),
                 format!("Failed to validate decrypt request {:?}", inner),
             )?;
 
@@ -425,14 +430,14 @@ impl<
         );
 
         {
-            let mut guarded_meta_store = self.dec_meta_store.write().await;
+            let mut guarded_meta_store = self.pub_dec_meta_store.write().await;
             tonic_handle_potential_err(
                 guarded_meta_store.insert(&request_id),
                 "Could not insert decryption into meta store".to_string(),
             )?;
         }
 
-        let meta_store = Arc::clone(&self.dec_meta_store);
+        let meta_store = Arc::clone(&self.pub_dec_meta_store);
         let sigkey = Arc::clone(&self.base_kms.sig_key);
         let crypto_storage = self.crypto_storage.clone();
 
@@ -443,10 +448,10 @@ impl<
 
         let metric_tags = vec![
             (TAG_KEY_ID, key_id.request_id.clone()),
-            (TAG_DECRYPTION_KIND, "centralized".to_string()),
+            (TAG_PUBLIC_DECRYPTION_KIND, "centralized".to_string()),
         ];
         // we do not need to hold the handle,
-        // the result of the computation is tracked by the dec_meta_store
+        // the result of the computation is tracked by the pub_dec_meta_store
         let _handle = tokio::spawn(
             async move {
                 let _timer = timer;
@@ -458,8 +463,8 @@ impl<
                     Ok(k) => k,
                     Err(e) => {
                         let mut guarded_meta_store = meta_store.write().await;
-                        if let Err(e) =
-                            METRICS.increment_error_counter(OP_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND)
+                        if let Err(e) = METRICS
+                            .increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND)
                         {
                             tracing::warn!("Failed to increment error counter: {:?}", e);
                         }
@@ -519,9 +524,10 @@ impl<
                     }
                     Ok(Err(e)) => {
                         let mut guarded_meta_store = meta_store.write().await;
-                        if let Err(e) = METRICS
-                            .increment_error_counter(OP_DECRYPT_REQUEST, ERR_DECRYPTION_FAILED)
-                        {
+                        if let Err(e) = METRICS.increment_error_counter(
+                            OP_PUBLIC_DECRYPT_REQUEST,
+                            ERR_PUBLIC_DECRYPTION_FAILED,
+                        ) {
                             tracing::warn!("Failed to increment error counter: {:?}", e);
                         }
                         let _ = guarded_meta_store.update(
@@ -538,16 +544,16 @@ impl<
     }
 
     #[tracing::instrument(skip(self, request))]
-    async fn get_decrypt_result(
+    async fn get_public_decryption_result(
         &self,
         request: Request<RequestId>,
-    ) -> Result<Response<DecryptionResponse>, Status> {
+    ) -> Result<Response<PublicDecryptionResponse>, Status> {
         let request_id = request.into_inner();
         tracing::debug!("Received get key gen result request with id {}", request_id);
         validate_request_id(&request_id)?;
 
         let status = {
-            let guarded_meta_store = self.dec_meta_store.read().await;
+            let guarded_meta_store = self.pub_dec_meta_store.read().await;
             guarded_meta_store.retrieve(&request_id)
         };
         let (req_digest, plaintexts, external_signature) =
@@ -563,7 +569,7 @@ impl<
         let server_verf_key = self.get_serialized_verf_key();
 
         // the payload to be signed for verification inside the KMS
-        let kms_sig_payload = DecryptionResponsePayload {
+        let kms_sig_payload = PublicDecryptionResponsePayload {
             plaintexts,
             verification_key: server_verf_key,
             digest: req_digest,
@@ -580,7 +586,7 @@ impl<
             self.sign(&kms_sig_payload_vec),
             format!("Could not sign payload {:?}", kms_sig_payload),
         )?;
-        Ok(Response::new(DecryptionResponse {
+        Ok(Response::new(PublicDecryptionResponse {
             signature: sig.sig.to_vec(),
             payload: Some(kms_sig_payload),
         }))

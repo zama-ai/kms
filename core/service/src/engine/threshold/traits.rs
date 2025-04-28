@@ -7,25 +7,27 @@ pub trait Initiator {
 }
 
 #[tonic::async_trait]
-pub trait Reencryptor {
-    async fn reencrypt(
+pub trait UserDecryptor {
+    async fn user_decrypt(
         &self,
-        request: Request<ReencryptionRequest>,
+        request: Request<UserDecryptionRequest>,
     ) -> Result<Response<Empty>, Status>;
     async fn get_result(
         &self,
         request: Request<RequestId>,
-    ) -> Result<Response<ReencryptionResponse>, Status>;
+    ) -> Result<Response<UserDecryptionResponse>, Status>;
 }
 
 #[tonic::async_trait]
-pub trait Decryptor {
-    async fn decrypt(&self, request: Request<DecryptionRequest>)
-        -> Result<Response<Empty>, Status>;
+pub trait PublicDecryptor {
+    async fn public_decrypt(
+        &self,
+        request: Request<PublicDecryptionRequest>,
+    ) -> Result<Response<Empty>, Status>;
     async fn get_result(
         &self,
         request: Request<RequestId>,
-    ) -> Result<Response<DecryptionResponse>, Status>;
+    ) -> Result<Response<PublicDecryptionResponse>, Status>;
 }
 
 #[tonic::async_trait]

@@ -1,10 +1,10 @@
-//! This module is dedicated to making an re-encryption request
-//! and reconstruction of the re-encryption results on a web client
+//! This module is dedicated to making an user_decryption request
+//! and reconstruction of the user_decryption results on a web client
 //! in JavaScript.
 //!
-//! We do not provide a specific method to create the re-encryption
+//! We do not provide a specific method to create the user_decryption
 //! request, it needs to be created manually by filling the fields
-//! in [[ReencryptionRequest]].
+//! in [[UserDecryptionRequest]].
 //! This is because this request needs to be signed by the client's
 //! signing key which is not available in the web client.
 //! But it is typically stored in a wallet
@@ -31,7 +31,7 @@
 //! u128, anyhow::Result, and so on cannot be used.
 //!
 //! Testing:
-//! Due to the way re-encryption is designed,
+//! Due to the way user_decryption is designed,
 //! we cannot test everything directly in JS.
 //! The strategy we use is to run Rust tests to
 //! generate a transcript, and then load it into
@@ -59,8 +59,8 @@
 //!
 //! 3. Generate the transcript
 //! ```
-//! cargo test test_reencryption_threshold_and_write_transcript -F wasm_tests --release
-//! cargo test test_reencryption_centralized_and_write_transcript -F wasm_tests --release
+//! cargo test test_user_decryption_threshold_and_write_transcript -F wasm_tests --release
+//! cargo test test_user_decryption_centralized_and_write_transcript -F wasm_tests --release
 //! ```
 //!
 //! 4. Run the JS test
@@ -170,7 +170,7 @@ pub fn get_client_address(client: &Client) -> String {
 
 #[wasm_bindgen]
 #[cfg(feature = "wasm_tests")]
-pub fn buf_to_transcript(buf: &[u8]) -> TestingReencryptionTranscript {
+pub fn buf_to_transcript(buf: &[u8]) -> TestingUserDecryptionTranscript {
     console_error_panic_hook::set_once();
     bincode::deserialize(buf).unwrap()
 }
@@ -178,28 +178,28 @@ pub fn buf_to_transcript(buf: &[u8]) -> TestingReencryptionTranscript {
 #[wasm_bindgen]
 #[cfg(feature = "wasm_tests")]
 pub fn transcript_to_parsed_req(
-    transcript: &TestingReencryptionTranscript,
-) -> ParsedReencryptionRequest {
-    ParsedReencryptionRequest::try_from(transcript.request.as_ref().unwrap()).unwrap()
+    transcript: &TestingUserDecryptionTranscript,
+) -> ParsedUserDecryptionRequest {
+    ParsedUserDecryptionRequest::try_from(transcript.request.as_ref().unwrap()).unwrap()
 }
 
 #[wasm_bindgen]
 #[cfg(feature = "wasm_tests")]
-pub fn transcript_to_parsed_req_js(transcript: &TestingReencryptionTranscript) -> JsValue {
+pub fn transcript_to_parsed_req_js(transcript: &TestingUserDecryptionTranscript) -> JsValue {
     let parsed = transcript_to_parsed_req(&transcript);
-    let parsed_hex = ParsedReencryptionRequestHex::from(&parsed);
+    let parsed_hex = ParsedUserDecryptionRequestHex::from(&parsed);
     serde_wasm_bindgen::to_value(&parsed_hex).unwrap()
 }
 
 #[wasm_bindgen]
 #[cfg(feature = "wasm_tests")]
-pub fn transcript_to_eip712domain(transcript: &TestingReencryptionTranscript) -> Eip712DomainMsg {
+pub fn transcript_to_eip712domain(transcript: &TestingUserDecryptionTranscript) -> Eip712DomainMsg {
     transcript.request.as_ref().unwrap().domain.clone().unwrap()
 }
 
 #[wasm_bindgen]
 #[cfg(feature = "wasm_tests")]
-pub fn transcript_to_eip712domain_js(transcript: &TestingReencryptionTranscript) -> JsValue {
+pub fn transcript_to_eip712domain_js(transcript: &TestingUserDecryptionTranscript) -> JsValue {
     let domain = transcript_to_eip712domain(transcript);
     serde_wasm_bindgen::to_value(&domain).unwrap()
 }
@@ -207,33 +207,33 @@ pub fn transcript_to_eip712domain_js(transcript: &TestingReencryptionTranscript)
 #[wasm_bindgen]
 #[cfg(feature = "wasm_tests")]
 pub fn transcript_to_response(
-    transcript: &TestingReencryptionTranscript,
-) -> Vec<ReencryptionResponse> {
+    transcript: &TestingUserDecryptionTranscript,
+) -> Vec<UserDecryptionResponse> {
     transcript.agg_resp.clone()
 }
 
 #[wasm_bindgen]
 #[cfg(feature = "wasm_tests")]
-pub fn transcript_to_response_js(transcript: &TestingReencryptionTranscript) -> JsValue {
+pub fn transcript_to_response_js(transcript: &TestingUserDecryptionTranscript) -> JsValue {
     let agg_resp = transcript_to_response(transcript);
     resp_to_js(agg_resp)
 }
 
 #[wasm_bindgen]
 #[cfg(feature = "wasm_tests")]
-pub fn transcript_to_enc_sk(transcript: &TestingReencryptionTranscript) -> PrivateEncKey {
+pub fn transcript_to_enc_sk(transcript: &TestingUserDecryptionTranscript) -> PrivateEncKey {
     transcript.eph_sk.clone()
 }
 
 #[wasm_bindgen]
 #[cfg(feature = "wasm_tests")]
-pub fn transcript_to_enc_pk(transcript: &TestingReencryptionTranscript) -> PublicEncKey {
+pub fn transcript_to_enc_pk(transcript: &TestingUserDecryptionTranscript) -> PublicEncKey {
     transcript.eph_pk.clone()
 }
 
 #[wasm_bindgen]
 #[cfg(feature = "wasm_tests")]
-pub fn transcript_to_client(transcript: &TestingReencryptionTranscript) -> Client {
+pub fn transcript_to_client(transcript: &TestingUserDecryptionTranscript) -> Client {
     Client {
         rng: Box::new(AesRng::from_entropy()),
         server_identities: ServerIdentities::Addrs(transcript.server_addrs.clone()),
@@ -310,17 +310,17 @@ pub fn cryptobox_decrypt(
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
-struct ReencryptionResponseHex {
+struct UserDecryptionResponseHex {
     // NOTE: this is the external signature
     signature: String,
     payload: Option<String>,
 }
 
 #[cfg(feature = "wasm_tests")]
-fn resp_to_js(agg_resp: Vec<ReencryptionResponse>) -> JsValue {
+fn resp_to_js(agg_resp: Vec<UserDecryptionResponse>) -> JsValue {
     let mut out = vec![];
     for resp in agg_resp {
-        let r = ReencryptionResponseHex {
+        let r = UserDecryptionResponseHex {
             signature: hex::encode(&resp.external_signature),
             payload: match resp.payload {
                 Some(inner) => Some(hex::encode(serialize(&inner).unwrap())),
@@ -337,15 +337,15 @@ fn resp_to_js(agg_resp: Vec<ReencryptionResponse>) -> JsValue {
 // but JsError is very limited, it cannot be printed,
 // so it's difficult to append information to the error.
 // This is why we're using anyhow::Error.
-fn js_to_resp(json: JsValue) -> anyhow::Result<Vec<ReencryptionResponse>> {
+fn js_to_resp(json: JsValue) -> anyhow::Result<Vec<UserDecryptionResponse>> {
     // first read the hex type
-    let hex_resps: Vec<ReencryptionResponseHex> = serde_wasm_bindgen::from_value(json)
+    let hex_resps: Vec<UserDecryptionResponseHex> = serde_wasm_bindgen::from_value(json)
         .map_err(|e| anyhow::anyhow!("from_value error {e:?}"))?;
 
     // then convert the hex type into the type we need
     let mut out = vec![];
     for hex_resp in hex_resps {
-        out.push(ReencryptionResponse {
+        out.push(UserDecryptionResponse {
             signature: vec![], // there is no ECDSA signature in the wasm use case
             external_signature: hex::decode(&hex_resp.signature)?,
             payload: match hex_resp.payload {
@@ -360,13 +360,13 @@ fn js_to_resp(json: JsValue) -> anyhow::Result<Vec<ReencryptionResponse>> {
     Ok(out)
 }
 
-/// Process the reencryption response from JavaScript objects.
+/// Process the user_decryption response from JavaScript objects.
 /// The returned result is a byte array representing a plaintext of any length,
 /// postprocessing is returned to turn it into an integer.
 ///
-/// * `client` - client that wants to perform reencryption.
+/// * `client` - client that wants to perform user_decryption.
 ///
-/// * `request` - the initial reencryption request JS object.
+/// * `request` - the initial user_decryption request JS object.
 /// It can be set to null if `verify` is false.
 /// Otherwise the caller needs to give the following JS object.
 /// Note that `client_address` and `eip712_verifying_contract` follow EIP-55.
@@ -419,7 +419,7 @@ fn js_to_resp(json: JsValue) -> anyhow::Result<Vec<ReencryptionResponse>> {
 /// * `verify` - Whether to perform signature verification for the response.
 /// It is insecure if `verify = false`!
 #[wasm_bindgen]
-pub fn process_reencryption_resp_from_js(
+pub fn process_user_decryption_resp_from_js(
     client: &mut Client,
     request: JsValue,
     eip712_domain: JsValue,
@@ -440,9 +440,9 @@ pub fn process_reencryption_resp_from_js(
     let request = if request.is_null() || request.is_undefined() {
         None
     } else {
-        Some(ParsedReencryptionRequest::try_from(request)?)
+        Some(ParsedUserDecryptionRequest::try_from(request)?)
     };
-    let le_res = process_reencryption_resp(
+    let le_res = process_user_decryption_resp(
         client,
         request,
         eip712_domain,
@@ -464,20 +464,20 @@ pub fn process_reencryption_resp_from_js(
     }
 }
 
-/// Process the reencryption response from Rust objects.
-/// Consider using [process_reencryption_resp_from_js]
+/// Process the user_decryption response from Rust objects.
+/// Consider using [process_user_decryption_resp_from_js]
 /// when using the JS API.
 /// The result is a byte array representing a plaintext of any length.
 ///
-/// * `client` - client that wants to perform reencryption.
+/// * `client` - client that wants to perform user_decryption.
 ///
-/// * `request` - the initial reencryption request.
+/// * `request` - the initial user_decryption request.
 /// Must be given if `verify` is true.
 ///
 /// * `eip712_domain` - the EIP-712 domain.
 /// Must be given if `verify` is true.
 ///
-/// * `agg_resp` - the vector of reencryption responses.
+/// * `agg_resp` - the vector of user_decryption responses.
 ///
 /// * `enc_pk` - The ephemeral public key.
 ///
@@ -486,26 +486,26 @@ pub fn process_reencryption_resp_from_js(
 /// * `verify` - Whether to perform signature verification for the response.
 /// It is insecure if `verify = false`!
 #[wasm_bindgen]
-pub fn process_reencryption_resp(
+pub fn process_user_decryption_resp(
     client: &mut Client,
-    request: Option<ParsedReencryptionRequest>,
+    request: Option<ParsedUserDecryptionRequest>,
     eip712_domain: Option<Eip712DomainMsg>,
-    agg_resp: Vec<ReencryptionResponse>,
+    agg_resp: Vec<UserDecryptionResponse>,
     enc_pk: &PublicEncKey,
     enc_sk: &PrivateEncKey,
     verify: bool,
 ) -> Result<Vec<TypedPlaintext>, JsError> {
     // if verify is true, then request and eip712 domain must exist
-    let reenc_resp = if verify {
+    let user_decrypt_resp = if verify {
         let request = request.ok_or_else(|| JsError::new("missing request"))?;
         let pb_domain = eip712_domain.ok_or_else(|| JsError::new("missing eip712 domain"))?;
         let eip712_domain =
             protobuf_to_alloy_domain(&pb_domain).map_err(|e| JsError::new(&e.to_string()))?;
-        client.process_reencryption_resp(&request, &eip712_domain, &agg_resp, enc_pk, enc_sk)
+        client.process_user_decryption_resp(&request, &eip712_domain, &agg_resp, enc_pk, enc_sk)
     } else {
-        client.insecure_process_reencryption_resp(&agg_resp, enc_pk, enc_sk)
+        client.insecure_process_user_decryption_resp(&agg_resp, enc_pk, enc_sk)
     };
-    match reenc_resp {
+    match user_decrypt_resp {
         Ok(resp) => Ok(resp),
         Err(e) => Err(JsError::new(&e.to_string())),
     }

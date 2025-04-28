@@ -335,7 +335,7 @@ pub fn decrypt_ciphertext_for_recipient(
     let cms = ContentInfo::decode(&mut cms_decoder)?;
     ensure!(
         cms.content_type == CONTENT_ENVELOPED_DATA,
-        "Re-encrypted ciphertext content must be PKCS#7 Enveloped Data, actual content type: {}",
+        "User decrypted ciphertext content must be PKCS#7 Enveloped Data, actual content type: {}",
         cms.content_type
     );
     let mut envelope_decoder = Decoder::new(cms.content.as_ref(), DecoderOptions::ber());
@@ -344,37 +344,37 @@ pub fn decrypt_ciphertext_for_recipient(
     // validate the PKCS7 envelope
     ensure!(
         envelope.version == Integer::Primitive(AWS_KMS_ENVELOPED_DATA_VERSION),
-        "Re-encrypted ciphertext envelope must have version {}, actual version: {}",
+        "User decrypted ciphertext envelope must have version {}, actual version: {}",
         AWS_KMS_ENVELOPED_DATA_VERSION,
         envelope.version
     );
     ensure!(
         envelope.recipient_infos.len() == 1,
-        "Re-encrypted ciphertext envelope must have exactly one recipient"
+        "User decrypted ciphertext envelope must have exactly one recipient"
     );
     let RecipientInfo::KeyTransRecipientInfo(ktri) =
         envelope.recipient_infos.to_vec().pop().unwrap()
     else {
-        bail!("Re-encrypted ciphertext envelope does not contain a recipient");
+        bail!("User decrypted ciphertext envelope does not contain a recipient");
     };
     ensure!(
         ktri.version == Integer::Primitive(AWS_KMS_ENVELOPED_DATA_RECIPIENT_VERSION),
-        "Re-encrypted ciphertext envelope recipient info must have version {}, actual version: {}",
+        "User decrypted ciphertext envelope recipient info must have version {}, actual version: {}",
         AWS_KMS_ENVELOPED_DATA_RECIPIENT_VERSION,
         ktri.version
     );
     ensure!(ktri.key_encryption_algorithm.algorithm == Oid:: ISO_MEMBER_BODY_US_RSADSI_PKCS1_RSAES_OAEP,
-	    "Re-encrypted ciphertext envelope must use RSA-OAEP for envelope encryption, actual algorithm: {}",
+	    "User decrypted ciphertext envelope must use RSA-OAEP for envelope encryption, actual algorithm: {}",
 	    ktri.key_encryption_algorithm.algorithm
     );
     ensure!(
         envelope.encrypted_content_info.content_type == CONTENT_DATA,
-        "Re-encrypted ciphertext envelope content must be PKCS#7 Data, actual content type: {}",
+        "User decrypted ciphertext envelope content must be PKCS#7 Data, actual content type: {}",
         envelope.encrypted_content_info.content_type
     );
     ensure!(
 	envelope.encrypted_content_info.content_encryption_algorithm.algorithm == AES256_CBC,
-	"Re-encrypted ciphertext envelope must use AES-256-CBC for content encryption, actual algorithm: {}",
+	"User decrypted ciphertext envelope must use AES-256-CBC for content encryption, actual algorithm: {}",
 	envelope.encrypted_content_info.content_encryption_algorithm.algorithm
     );
     let enc_session_key = ktri.encrypted_key.as_ref();
@@ -383,10 +383,10 @@ pub fn decrypt_ciphertext_for_recipient(
         .content_encryption_algorithm
         .parameters
     else {
-        bail!("Re-encrypted ciphertext envelope does not contain an AES-256-CBC initialization vector")
+        bail!("User decrypted ciphertext envelope does not contain an AES-256-CBC initialization vector")
     };
     let Some(enc_payload) = envelope.encrypted_content_info.encrypted_content else {
-        bail!("Re-encrypted ciphertext envelope does not contain a payload")
+        bail!("User decrypted ciphertext envelope does not contain a payload")
     };
 
     // decrypt the PKCS7 envelope session key
@@ -398,7 +398,7 @@ pub fn decrypt_ciphertext_for_recipient(
         })?;
     ensure!(
         session_key.len() == Aes256::key_size(),
-        "Reencrypted ciphertext envelope session key is not {} bits long, actual length: {} bits",
+        "User decrypted ciphertext envelope session key is not {} bits long, actual length: {} bits",
         Aes256::key_size() * 8,
         session_key.len() * 8
     );
@@ -407,7 +407,7 @@ pub fn decrypt_ciphertext_for_recipient(
     let mut iv_decoder = Decoder::new(iv_string.as_ref(), DecoderOptions::ber());
     let iv = OctetString::decode(&mut iv_decoder)?;
     ensure!(iv.len() == cbc::Decryptor::<Aes256>::iv_size(),
-	    "Reencrypted ciphertext envelope initialization vector is not {} bits long, actual length: {} bits",
+	    "User decrypted ciphertext envelope initialization vector is not {} bits long, actual length: {} bits",
 	    cbc::Decryptor::<Aes256>::iv_size() * 8,
 	    iv.len() * 8
     );

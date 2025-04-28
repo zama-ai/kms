@@ -23,20 +23,20 @@ service CoreServiceEndpoint {
   // NOTE: Unprivileged and insecure call
   rpc GetKeyGenResult(kms.v1.RequestId) returns (kms.v1.KeyGenResult);
 
-  // Decrypt a ciphertext and return the signed plaintext.
-  rpc Decrypt(kms.v1.DecryptionRequest) returns (kms.v1.Empty);
+  // Perform public decryption of a ciphertext and return the signed plaintext.
+  rpc PublicDecrypt(kms.v1.PublicDecryptionRequest) returns (kms.v1.Empty);
 
-  // Get the decryption result.
+  // Get the public decryption result.
   // This query fails if the result is not available yet.
-  rpc GetDecryptResult(kms.v1.RequestId) returns (kms.v1.DecryptionResponse);
+  rpc GetPublicDecryptionResult(kms.v1.RequestId) returns (kms.v1.PublicDecryptionResponse);
 
-  // Reencrypt a ciphertext under a user-specified key and return a signcrypted
-  // share of the dercrypted plaintext.
-  rpc Reencrypt(kms.v1.ReencryptionRequest) returns (kms.v1.Empty);
+  // Perform user decryption of a ciphertext under a user-specified key and return a signcrypted
+  // share of the decrypted plaintext.
+  rpc UserDecrypt(kms.v1.UserDecryptionRequest) returns (kms.v1.Empty);
 
-  // Get the reencryption result.
+  // Get the user decryption result.
   // This query fails if the result is not available yet.
-  rpc GetReencryptResult(kms.v1.RequestId) returns (kms.v1.ReencryptionResponse);
+  rpc GetUserDecryptionResult(kms.v1.RequestId) returns (kms.v1.UserDecryptionResponse);
 
   // Start the CRS generation protocol asynchronously.
   rpc CrsGen(kms.v1.CrsGenRequest) returns (kms.v1.Empty);

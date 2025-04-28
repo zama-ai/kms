@@ -43,16 +43,16 @@ in the config file used in the next step.
 
 4. To run a user decryption (reencryption) of the little-endian hex value `0x2342` of type `euint16` run the following command, where `key-id` is the value you reiceived in the output of step 2 (e.g. `948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06` above):
     ```{bash}
-    $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -a -l re-encrypt from-args --to-encrypt 0x2342 --data-type euint16 --key-id <key-id>
+    $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -a -l user-decrypt from-args --to-encrypt 0x2342 --data-type euint16 --key-id <key-id>
     ```
     If everything goes well, you will see a message telling you that the user decryption was successful, along with several status logs. The `core-client` will also validate, that the result of the cores can be reconstructed correctly.
 
     The output of a succesful run will end similar to the following logs:
     ```
-    {"timestamp":"2025-03-26T10:59:23.195672Z","level":"INFO","fields":{"message":"Reencryption response is ok: TypedPlaintext { bytes: [35, 66], fhe_type: Euint16 } / U16(16931)"},"target":"kms_core_client"}
+    {"timestamp":"2025-03-26T10:59:23.195672Z","level":"INFO","fields":{"message":"User decryption response is ok: TypedPlaintext { bytes: [35, 66], fhe_type: Euint16 } / U16(16931)"},"target":"kms_core_client"}
     {"timestamp":"2025-03-26T10:59:23.196581Z","level":"INFO","fields":{"message":"Core Client terminated successfully."},"target":"kms_core_client"}
-    {"timestamp":"2025-03-26T10:59:23.196592Z","level":"INFO","fields":{"message":"Core Client command ReEncrypt(CipherParameters { to_encrypt: \"0x2342\", data_type: Euint16, compression: false, precompute_sns: false, key_id: \"948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06\", batch_size: 1, ciphertext_output_path: None }) took 19.267022292s."},"target":"kms_core_client"}
-    Reencrypted Plaintext U16(16931) - {
+    {"timestamp":"2025-03-26T10:59:23.196592Z","level":"INFO","fields":{"message":"Core Client command UserDecrypt(CipherParameters { to_encrypt: \"0x2342\", data_type: Euint16, compression: false, precompute_sns: false, key_id: \"948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06\", batch_size: 1, ciphertext_output_path: None }) took 19.267022292s."},"target":"kms_core_client"}
+    User decrypted Plaintext U16(16931) - {
       "request_id": "b400ffef1eff5de5b36d5556ff064c01f56b9c908fac29c87d4ed9d520ee7b92"
     }
     ```

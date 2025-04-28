@@ -198,30 +198,25 @@ message TypedCiphertext {
   CiphertextFormat ciphertext_format = 4;
 }
 
-message DecryptionRequest {
+message PublicDecryptionRequest {
   // The 32 Byte / 256 Bit ID of the public decryption request, without `0x`
-  // prefix.
+  // prefix. Future queries for the result must use this request ID.
   RequestId request_id = 1;
+
   // The one or many ciphertexts and corresponding types to decrypt
   repeated TypedCiphertext ciphertexts = 2;
+
   // The 32 Byte / 256 Bit key id to use for decryption. This is the request_id
   // used for key generation
   RequestId key_id = 3;
+
+  // The EIP712 domain used for signing the response.
   Eip712DomainMsg domain = 4;
 }
 
-// The typed plaintext type, which is the result of decryption.
-message TypedPlaintext {
-  // The actual plaintext in bytes.
-  bytes bytes = 1;
-  // The type of plaintext encrypted. The type should match FheType from tfhe-rs:
-  // https://github.com/zama-ai/tfhe-rs/blob/main/tfhe/src/high_level_api/mod.rs
-  int32 fhe_type = 2;
-}
-
-// KMS-internal Decryption Response Payload, containing meta data, plaintexts
+// KMS-internal Public Decryption Response Payload, containing meta data, plaintexts
 // and external results
-message DecryptionResponsePayload {
+message PublicDecryptionResponsePayload {
   // The server's signature verification key.
   // Encoded using SEC1.
   // Needed to validate the response, but MUST also be linked to a list of
@@ -239,12 +234,12 @@ message DecryptionResponsePayload {
   optional bytes external_signature = 4;
 }
 
-// KMS-internal Decryption Response
-message DecryptionResponse {
-  // Signature of the serialization of [DecryptionResponsePayload].
+// KMS-internal Public Decryption Response
+message PublicDecryptionResponse {
+  // Signature of the serialization of [PublicDecryptionResponsePayload].
   bytes signature = 1;
   // The payload that is signed
-  DecryptionResponsePayload payload = 2;
+  PublicDecryptionResponsePayload payload = 2;
 }
 
 // https://eips.ethereum.org/EIPS/eip-712#definition-of-domainseparator
@@ -258,12 +253,12 @@ message Eip712DomainMsg {
   optional bytes salt = 5;
 }
 
-message ReencryptionRequest {
+message UserDecryptionRequest {
   // The 32 Byte / 256 Bit ID of the user decryption request, without `0x`
   // prefix. Future queries for the result must use this request ID.
   RequestId request_id = 1;
 
-  // The list of ciphertexts to reencrypt.
+  // The list of ciphertexts to decrypt for the user.
   repeated TypedCiphertext typed_ciphertexts = 2;
 
   // The 32 Byte / 256 Bit key id to use for decryption. This is the request_id
@@ -282,21 +277,21 @@ message ReencryptionRequest {
   Eip712DomainMsg domain = 6;
 }
 
-message ReencryptionResponse {
+message UserDecryptionResponse {
   bytes signature = 1;
   // This is the external signature created from the Eip712 domain
-  // on the structure, where reencryptedShare is bincode::serialize(&payload)
+  // on the structure, where userDecryptedShare is bincode::serialize(&payload)
   // struct UserDecryptResponseVerification {
   //     bytes publicKey;
   //     uint256[] ctHandles;
-  //     bytes reencryptedShare;
+  //     bytes userDecryptedShare;
   // }
   bytes external_signature = 2;
-  // The actual [ReencryptionResponsePayload].
-  ReencryptionResponsePayload payload = 3;
+  // The actual [UserDecryptionResponsePayload].
+  UserDecryptionResponsePayload payload = 3;
 }
 
-message ReencryptionResponsePayload {
+message UserDecryptionResponsePayload {
   // The server's signature verification key, Encoded using SEC1.
   // Needed to validate the response, but MUST also be linked to a list of
   // trusted keys.
@@ -309,11 +304,19 @@ message ReencryptionResponsePayload {
   // must be decrypted and then reconstructed with the other shares
   // to produce the final plaintext.
   repeated TypedSigncryptedCiphertext signcrypted_ciphertexts = 3;
-  // The ID of the MPC party doing the reencryption. Used for polynomial
+  // The ID of the MPC party doing the user decryption. Used for polynomial
   // reconstruction.
   uint32 party_id = 4;
   // The degree of the sharing scheme used.
   uint32 degree = 5;
+}
+
+message TypedPlaintext {
+  // The actual plaintext in bytes.
+  bytes bytes = 1;
+  // The type of plaintext encrypted. The type should match FheType from tfhe-rs:
+  // https://github.com/zama-ai/tfhe-rs/blob/main/tfhe/src/high_level_api/mod.rs
+  int32 fhe_type = 2;
 }
 
 message TypedSigncryptedCiphertext {

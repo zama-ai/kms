@@ -185,12 +185,12 @@ To decrypt a given value of the provided FHE type, using the specified public ke
 
 Either directly from arguments provided to the cli:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> decrypt from-args --to-encrypt <hex-value-encrypt> --data-type <euint-value> --key-id <public-key-id>
+$ cargo run -- -f <path-to-toml-config-file> public-decrypt from-args --to-encrypt <hex-value-encrypt> --data-type <euint-value> --key-id <public-key-id>
 ```
 
 Or from a file generated via the _Encryption_ command described above:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> decrypt from-file --input-path <input-file-path>
+$ cargo run -- -f <path-to-toml-config-file> public-decrypt from-file --input-path <input-file-path>
 ```
 
 Note that the key must have been previously generated using the (secure or insecure) [keygen](#key-generation) above.
@@ -201,16 +201,16 @@ It is also possible to fetch the result of a decryption through its `REQUEST_ID`
 $ cargo run -- -f <path-to-toml-config-file> decrypt-result --request-id <REQUEST_ID>
 ```
 
-Upon success, both the commands to decrypt _and_ the command to fetch the result, will result in a print of `Vec<DecryptionResponse> - <REQUEST_ID>` where the `Vec` size depends on the number of received responses (specified via `num_majority` in the configuration file) for each request (specified via `--num-requests`).
+Upon success, both the commands to decrypt _and_ the command to fetch the result, will result in a print of `Vec<PublicDecryptionResponse> - <REQUEST_ID>` where the `Vec` size depends on the number of received responses (specified via `num_majority` in the configuration file) for each request (specified via `--num-requests`).
 
-Recall that `DecryptionResponse` follows this format:
+Recall that `PublicDecryptionResponse` follows this format:
 ```proto
-message DecryptionResponse {
+message PublicDecryptionResponse {
   bytes signature = 1;
-  DecryptionResponsePayload payload = 2;
+  PublicDecryptionResponsePayload payload = 2;
 }
 
-message DecryptionResponsePayload {
+message PublicDecryptionResponsePayload {
   uint32 version = 1;
   bytes verification_key = 2;
   bytes digest = 3;
@@ -220,27 +220,27 @@ message DecryptionResponsePayload {
 
 ```
 
-#### Reencryption / User Decryption
+#### User Decryption
 
-Similar to decryption, reencryption can be done as follows. To re-encrypt a given value of the provided FHE type, using the specified public key and then request a user decryption from the KMS cores run the following command:
+Similar to public decryption, user decryption can be done as follows. To decrypt a given value of the provided FHE type, using the specified public key and then request a user decryption from the KMS cores run the following command:
 
 Either directly from arguments provided to the cli:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> re-encrypt from-args --to-encrypt <hex-value-encrypt> --data-type <euint-value> --key-id <public-key-id>
+$ cargo run -- -f <path-to-toml-config-file> user-decrypt from-args --to-encrypt <hex-value-encrypt> --data-type <euint-value> --key-id <public-key-id>
 ```
 
 Or from a file generated via the _Encryption_ command described above:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> re-encrypt from-file --input-path <input-file-path>
+$ cargo run -- -f <path-to-toml-config-file> user-decrypt from-file --input-path <input-file-path>
 ```
 
-Upon success, the above commands print `Reencrypted Plaintext <PLAINTEXT> - <REQUEST_ID>` for each request (specified via `--num-requests`).
+Upon success, the above commands print `User decrypted Plaintext <PLAINTEXT> - <REQUEST_ID>` for each request (specified via `--num-requests`).
 
 #### Arguments
-Arguments required for the decryption/reencryption command are:
- - `--to-encrypt <TO_ENCRYPT>` - The hex value to encrypt and request a decryption/re-encryption. The value will be converted from a little endian hex string to a `Vec<u8>`. Can optionally have a "0x" prefix.
+Arguments required for the public/user decryption command are:
+ - `--to-encrypt <TO_ENCRYPT>` - The hex value to encrypt and request a public/user decryption. The value will be converted from a little endian hex string to a `Vec<u8>`. Can optionally have a "0x" prefix.
  - `--data-type <DATA_TYPE>` - The data type of `to_encrypt`. Expected one of `ebool`, `euint4`, ..., `euint2048`.
- - `--key-id <KEY_ID>`- The key identifier to use for decryption/re-encryption
+ - `--key-id <KEY_ID>`- The key identifier to use for public/user decryption
 
 Optional command line options for the public/user decryption command are:
  - `-b`/`--batch-size <BATCH_SIZE>`: the batch size of values to decrypt (default: `1`). This will run the operation on `BATCH_SIZE` copies of the same message.
@@ -260,9 +260,9 @@ Optional command line options for the public/user decryption command are:
     ```
 - Generate an encryption of `0x2342` of type `euint16` and ask for a user decryption of the threshold KMS using the default threshold config. This command assumes that previously an FHE key with key id `948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06` was created. This command will continue once it has enough responses (the `-a` flag is not provided) and will write logs (`-l`).
     ```{bash}
-    $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -l re-encrypt --to-encrypt 0x2342 --data-type euint16 --key-id 948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06
+    $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -l user-decrypt --to-encrypt 0x2342 --data-type euint16 --key-id 948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06
     ```
 - Generate an encryption of `0xC0FFEE` of type `euint32` and ask for a public decryption of a batch of 3 of these ciphertexts of the threshold KMS using the default threshold config. This command assumes that previously an FHE key with key id `948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06` was created. This command will expect all responses (`-a`) and will write logs (`-l`).
     ```{bash}
-    $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -a -l decrypt --to-encrypt 0xC0FFEE --data-type euint32 -b 3 --key-id 948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06
+    $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -a -l public-decrypt --to-encrypt 0xC0FFEE --data-type euint32 -b 3 --key-id 948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06
     ```

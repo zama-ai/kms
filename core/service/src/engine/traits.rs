@@ -28,14 +28,14 @@ pub trait BaseKms {
 }
 /// The [Kms] trait represents either a dummy KMS, an HSM, or an MPC network.
 pub trait Kms: BaseKms {
-    fn decrypt(
+    fn public_decrypt(
         keys: &KmsFheKeyHandles,
         ct: &[u8],
         fhe_type: FheTypes,
         ct_format: CiphertextFormat,
     ) -> anyhow::Result<TypedPlaintext>;
     #[allow(clippy::too_many_arguments)]
-    fn reencrypt(
+    fn user_decrypt(
         keys: &KmsFheKeyHandles,
         sig_key: &PrivateSigKey,
         rng: &mut (impl CryptoRng + RngCore),

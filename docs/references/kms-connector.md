@@ -90,7 +90,7 @@ Handles sending decryption responses to the blockchain:
 Interfaces with the KMS Core service via gRPC:
 
 - Establishes and maintains connections to KMS Core
-- Sends decryption and reencryption requests
+- Sends public/user decryption requests
 - Polls for operation results with configurable timeouts
 - Handles reconnection on service disruptions
 
@@ -209,8 +209,8 @@ All environment variables are prefixed with `KMS_CONNECTOR_`. Here's the complet
 | `KMS_CONNECTOR_CHANNEL_SIZE` | Size of the event processing channel | 1000 |
 | `KMS_CONNECTOR_SERVICE_NAME` | Name of the KMS connector instance | kms-connector |
 | `KMS_CONNECTOR_ACCOUNT_INDEX` | Account index for the wallet | 0 |
-| `KMS_CONNECTOR_DECRYPTION_TIMEOUT_SECS` | Timeout for decryption operations | 300 |
-| `KMS_CONNECTOR_REENCRYPTION_TIMEOUT_SECS` | Timeout for re-encryption operations | 300 |
+| `KMS_CONNECTOR_PUBLIC_DECRYPTION_TIMEOUT_SECS` | Timeout for decryption operations | 300 |
+| `KMS_CONNECTOR_USER_DECRYPTION_TIMEOUT_SECS` | Timeout for user decryption operations | 300 |
 | `KMS_CONNECTOR_RETRY_INTERVAL_SECS` | Interval between retry attempts | 5 |
 | `KMS_CONNECTOR_DECRYPTION_MANAGER_DOMAIN_NAME` | EIP-712 domain name for DecryptionManager contract | DecryptionManager |
 | `KMS_CONNECTOR_DECRYPTION_MANAGER_DOMAIN_VERSION` | EIP-712 domain version for DecryptionManager contract | 1 |
@@ -393,7 +393,7 @@ If the connector fails to sign transactions:
 For high-frequency operation, consider the following performance optimizations:
 
 1. **Increase Channel Size**: Set `KMS_CONNECTOR_CHANNEL_SIZE` to a higher value (e.g., 5000) for handling more concurrent events
-2. **Optimize Timeouts**: Adjust `KMS_CONNECTOR_DECRYPTION_TIMEOUT_SECS` and `KMS_CONNECTOR_REENCRYPTION_TIMEOUT_SECS` based on your network latency
+2. **Optimize Timeouts**: Adjust `KMS_CONNECTOR_PUBLIC_DECRYPTION_TIMEOUT_SECS` and `KMS_CONNECTOR_USER_DECRYPTION_TIMEOUT_SECS` based on your network latency
 3. **Use Direct S3 Endpoints**: Configure `KMS_CONNECTOR_S3_CONFIG__ENDPOINT` to point to the closest S3 endpoint
 4. **Deploy Close to Services**: Minimize network latency by deploying the connector close to both the KMS Core service and the Gateway L2 node
 
@@ -403,10 +403,10 @@ For high-frequency operation, consider the following performance optimizations:
 
 The connector communicates with the KMS Core service using the following gRPC methods:
 
-- `decrypt`: Sends a decryption request
-- `get_decrypt_result`: Retrieves the result of a decryption operation
-- `reencrypt`: Sends a reencryption request
-- `get_reencrypt_result`: Retrieves the result of a reencryption operation
+- `public_decrypt`: Sends a public decryption request
+- `get_public_decryption_result`: Retrieves the public result of a decryption operation
+- `user_decrypt`: Sends a user decryption request
+- `get_user_decryption_result`: Retrieves the result of a user decryption operation
 
 ### Gateway L2 Contract Events
 

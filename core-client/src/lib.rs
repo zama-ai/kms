@@ -11,12 +11,12 @@ use clap::{Args, Parser, Subcommand};
 use conf_trace::conf::Settings;
 use core::str;
 use kms_grpc::kms::v1::{
-    CiphertextFormat, CrsGenResult, DecryptionRequest, DecryptionResponse, FheParameter,
-    KeyGenPreprocResult, KeyGenResult, RequestId, TypedCiphertext, TypedPlaintext,
+    CiphertextFormat, CrsGenResult, FheParameter, KeyGenPreprocResult, KeyGenResult,
+    PublicDecryptionRequest, PublicDecryptionResponse, RequestId, TypedCiphertext, TypedPlaintext,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
-use kms_lib::client::{Client, ParsedReencryptionRequest};
+use kms_lib::client::{Client, ParsedUserDecryptionRequest};
 use kms_lib::consts::{DEFAULT_PARAM, TEST_PARAM};
 use kms_lib::engine::base::{compute_external_pubdata_message_hash, compute_pt_message_hash};
 use kms_lib::util::key_setup::ensure_client_keys_exist;
@@ -390,10 +390,10 @@ pub enum CCCommand {
     InsecureKeyGenResult(ResultParameters),
     Encrypt(CipherParameters),
     #[clap(subcommand)]
-    Decrypt(CipherArguments),
-    DecryptResult(ResultParameters),
+    PublicDecrypt(CipherArguments),
+    PublicDecryptResult(ResultParameters),
     #[clap(subcommand)]
-    ReEncrypt(CipherArguments),
+    UserDecrypt(CipherArguments),
     CrsGen(CrsParameters),
     CrsGenResult(ResultParameters),
     InsecureCrsGen(CrsParameters),
@@ -796,7 +796,7 @@ fn check_ext_pt_signature(
 }
 
 fn check_external_decryption_signature(
-    responses: &[DecryptionResponse], // one response per party
+    responses: &[PublicDecryptionResponse], // one response per party
     expected_answer: TypedPlaintext,
     external_handles: Vec<Vec<u8>>,
     domain: Eip712Domain,
@@ -1141,9 +1141,9 @@ pub async fn execute_cmd(
 
     tracing::info!("Core Client Config: {:?}", cc_conf);
 
-    // if it's a de- or reencryption, fetch the key and crs
+    // if it's a public/user decryption, fetch the key and crs
     match command {
-        CCCommand::Decrypt(cipher_args) | CCCommand::ReEncrypt(cipher_args) => {
+        CCCommand::PublicDecrypt(cipher_args) | CCCommand::UserDecrypt(cipher_args) => {
             tracing::info!("Fetching verification keys. ({command:?})");
             fetch_verf_keys(&cc_conf, destination_prefix).await?;
 
@@ -1280,7 +1280,7 @@ pub async fn execute_cmd(
 
     // Execute the command
     let res = match command {
-        CCCommand::Decrypt(cipher_args) => {
+        CCCommand::PublicDecrypt(cipher_args) => {
             let internal_client = Arc::new(RwLock::new(internal_client.unwrap()));
             let num_expected_responses = if expect_all_responses {
                 num_parties
@@ -1323,7 +1323,7 @@ pub async fn execute_cmd(
                 let kms_addrs = kms_addrs.clone();
                 join_set.spawn(async move {
                     // DECRYPTION REQUEST
-                    let dec_req = internal_client.write().await.decryption_request(
+                    let dec_req = internal_client.write().await.public_decryption_request(
                         ct_batch,
                         &dummy_domain(),
                         &req_id,
@@ -1339,7 +1339,9 @@ pub async fn execute_cmd(
                         let req_cloned = dec_req.clone();
                         let mut cur_client = ce.clone();
                         req_tasks.spawn(async move {
-                            cur_client.decrypt(tonic::Request::new(req_cloned)).await
+                            cur_client
+                                .public_decrypt(tonic::Request::new(req_cloned))
+                                .await
                         });
                     }
 
@@ -1372,9 +1374,9 @@ pub async fn execute_cmd(
             }
             result_vec
         }
-        CCCommand::ReEncrypt(cipher_args) => {
+        CCCommand::UserDecrypt(cipher_args) => {
             let internal_client = Arc::new(RwLock::new(
-                internal_client.expect("ReEncrypt requires a KMS client"),
+                internal_client.expect("UserDecrypt requires a KMS client"),
             ));
             let num_expected_responses = if expect_all_responses {
                 num_parties
@@ -1414,27 +1416,30 @@ pub async fn execute_cmd(
                 let key_id = key_id.clone();
                 let mut core_endpoints = core_endpoints.clone();
                 let ptxt = ptxt.clone();
-                // REENCRYPTION REQUEST
+                // USER_DECRYPTION REQUEST
                 join_set.spawn(async move {
-                    let reenc_req_tuple = internal_client.write().await.reencryption_request(
-                        &dummy_domain(),
-                        ct_batch,
-                        &req_id,
-                        &RequestId {
-                            request_id: key_id.clone(),
-                        },
-                    )?;
+                    let user_decrypt_req_tuple =
+                        internal_client.write().await.user_decryption_request(
+                            &dummy_domain(),
+                            ct_batch,
+                            &req_id,
+                            &RequestId {
+                                request_id: key_id.clone(),
+                            },
+                        )?;
 
-                    let (reenc_req, enc_pk, enc_sk) = reenc_req_tuple;
+                    let (user_decrypt_req, enc_pk, enc_sk) = user_decrypt_req_tuple;
 
-                    // make parallel requests by calling reencrypt in a thread
+                    // make parallel requests by calling user decryption in a thread
                     let mut req_tasks = JoinSet::new();
 
                     for ce in core_endpoints.iter_mut() {
-                        let req_cloned = reenc_req.clone();
+                        let req_cloned = user_decrypt_req.clone();
                         let mut cur_client = ce.clone();
                         req_tasks.spawn(async move {
-                            cur_client.reencrypt(tonic::Request::new(req_cloned)).await
+                            cur_client
+                                .user_decrypt(tonic::Request::new(req_cloned))
+                                .await
                         });
                     }
 
@@ -1448,7 +1453,7 @@ pub async fn execute_cmd(
                     let mut resp_tasks = JoinSet::new();
                     for ce in core_endpoints.iter_mut() {
                         let mut cur_client = ce.clone();
-                        let req_id_clone = reenc_req.request_id.as_ref().unwrap().clone();
+                        let req_id_clone = user_decrypt_req.request_id.as_ref().unwrap().clone();
 
                         resp_tasks.spawn(async move {
                             // Sleep to give the server some time to complete decryption
@@ -1458,7 +1463,9 @@ pub async fn execute_cmd(
                             .await;
 
                             let mut response = cur_client
-                                .get_reencrypt_result(tonic::Request::new(req_id_clone.clone()))
+                                .get_user_decryption_result(tonic::Request::new(
+                                    req_id_clone.clone(),
+                                ))
                                 .await;
                             let mut ctr = 0_usize;
                             while response.is_err()
@@ -1476,7 +1483,9 @@ pub async fn execute_cmd(
                                 }
                                 ctr += 1;
                                 response = cur_client
-                                    .get_reencrypt_result(tonic::Request::new(req_id_clone.clone()))
+                                    .get_user_decryption_result(tonic::Request::new(
+                                        req_id_clone.clone(),
+                                    ))
                                     .await;
                             }
                             (req_id_clone, response.unwrap().into_inner())
@@ -1492,10 +1501,12 @@ pub async fn execute_cmd(
                         }
                     }
 
-                    let client_request = ParsedReencryptionRequest::try_from(&reenc_req).unwrap();
+                    let client_request =
+                        ParsedUserDecryptionRequest::try_from(&user_decrypt_req).unwrap();
                     let eip712_domain =
-                        protobuf_to_alloy_domain(reenc_req.domain.as_ref().unwrap()).unwrap();
-                    match internal_client.read().await.process_reencryption_resp(
+                        protobuf_to_alloy_domain(user_decrypt_req.domain.as_ref().unwrap())
+                            .unwrap();
+                    match internal_client.read().await.process_user_decryption_resp(
                         &client_request,
                         &eip712_domain,
                         &resp_response_vec,
@@ -1509,18 +1520,18 @@ pub async fn execute_cmd(
                                 TestingPlaintext::try_from(ptxt.clone())?
                             );
                             tracing::info!(
-                                "Reencryption response is ok: {:?} / {:?}",
+                                "User decryption response is ok: {:?} / {:?}",
                                 ptxt,
                                 TestingPlaintext::try_from(plaintext)?,
                             );
                         }
                         Err(e) => {
-                            tracing::error!("Reencryption response is NOT valid! Reason: {}", e)
+                            tracing::error!("User decryption response is NOT valid! Reason: {}", e)
                         }
                     };
 
                     let res = format!(
-                        "Reencrypted Plaintext {:?}",
+                        "User decrypted Plaintext {:?}",
                         TestingPlaintext::try_from(ptxt)?
                     );
                     Ok((Some(req_id), res))
@@ -1715,7 +1726,7 @@ pub async fn execute_cmd(
             .await?;
             vec![(Some(req_id), "insecure keygen done".to_string())]
         }
-        CCCommand::DecryptResult(result_parameters) => {
+        CCCommand::PublicDecryptResult(result_parameters) => {
             let num_expected_responses = if expect_all_responses {
                 num_parties
             } else {
@@ -1814,14 +1825,14 @@ pub async fn execute_cmd(
 #[allow(clippy::too_many_arguments)]
 async fn get_decrypt_responses(
     core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
-    dec_req: Option<DecryptionRequest>,
+    dec_req: Option<PublicDecryptionRequest>,
     expected_answer: Option<TypedPlaintext>,
     request_id: RequestId,
     max_iter: usize,
     num_expected_responses: usize,
     internal_client: &Client,
     kms_addrs: &[alloy_primitives::Address],
-) -> anyhow::Result<Vec<DecryptionResponse>> {
+) -> anyhow::Result<Vec<PublicDecryptionResponse>> {
     // get all responses
     let mut resp_tasks = JoinSet::new();
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
@@ -1837,7 +1848,7 @@ async fn get_decrypt_responses(
             .await;
 
             let mut response = cur_client
-                .get_decrypt_result(tonic::Request::new(request_id.clone()))
+                .get_public_decryption_result(tonic::Request::new(request_id.clone()))
                 .await;
             let mut ctr = 0_usize;
             while response.is_err()
@@ -1853,7 +1864,7 @@ async fn get_decrypt_responses(
                 }
                 ctr += 1;
                 response = cur_client
-                    .get_decrypt_result(tonic::Request::new(request_id.clone()))
+                    .get_public_decryption_result(tonic::Request::new(request_id.clone()))
                     .await;
             }
             (core_id, request_id, response.unwrap().into_inner())

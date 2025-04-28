@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use alloy_dyn_abi::Eip712Domain;
 use kms_grpc::{
     kms::v1::{
-        DecryptionRequest, DecryptionResponse, DecryptionResponsePayload, ReencryptionRequest,
-        RequestId, TypedCiphertext,
+        PublicDecryptionRequest, PublicDecryptionResponse, PublicDecryptionResponsePayload,
+        RequestId, TypedCiphertext, UserDecryptionRequest,
     },
     rpc_types::protobuf_to_alloy_domain_option,
 };
@@ -21,25 +21,31 @@ use crate::{
     tonic_handle_potential_err, tonic_some_or_err,
 };
 
-const ERR_VALIDATE_DECRYPTION_NO_REQ_ID: &str = "Request ID is not set in decryption request";
-const ERR_VALIDATE_DECRYPTION_NO_KEY_ID: &str = "Key ID is not set in decryption request";
-const ERR_VALIDATE_DECRYPTION_BAD_REQ_ID: &str = "Request ID is invalid in decryption request";
-const ERR_VALIDATE_DECRYPTION_EMPTY_CTS: &str = "No ciphertexts in decryption request";
-const ERR_VALIDATE_DECRYPTION_INVALID_AGG_RESP: &str =
-    "Could not validate the aggregated responses";
-const ERR_VALIDATE_DECRYPTION_NOT_ENOUGH_RESP: &str =
-    "Not enough correct responses to decrypt the data!";
-const ERR_VALIDATE_DECRYPTION_BAD_CT_COUNT: &str =
-    "The number of ciphertexts in the decryption response is wrong";
-const ERR_VALIDATE_DECRYPTION_BAD_LINK: &str =
-    "The decryption response is not linked to the correct request";
-const ERR_VALIDATE_DECRYPTION_EMPTY_REQUEST: &str =
-    "Request is None while validating decryption responses";
+const ERR_VALIDATE_PUBLIC_DECRYPTION_NO_REQ_ID: &str =
+    "Request ID is not set in public decryption request";
+const ERR_VALIDATE_PUBLIC_DECRYPTION_NO_KEY_ID: &str =
+    "Key ID is not set in public decryption request";
+const ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_REQ_ID: &str =
+    "Request ID is invalid in public decryption request";
+const ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS: &str =
+    "No ciphertexts in public decryption request";
+const ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP: &str =
+    "Could not validate the aggregated public decryption responses";
+const ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP: &str =
+    "Not enough correct public decryption responses to decrypt the data!";
+const ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT: &str =
+    "The number of ciphertexts in the public decryption response is wrong";
+const ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK: &str =
+    "The public decryption response is not linked to the correct public decryption request";
+const ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_REQUEST: &str =
+    "Public decryption request is None while validating public decryption responses";
 
-const ERR_VALIDATE_REENCRYPTION_NO_REQ_ID: &str = "Request ID is not set in reencryption request";
-const ERR_VALIDATE_REENCRYPTION_NO_KEY_ID: &str = "Key ID is not set in reencryption request";
-const ERR_VALIDATE_REENCRYPTION_BAD_REQ_ID: &str = "Request ID is invalid in reencryption request";
-const ERR_VALIDATE_REENCRYPTION_EMPTY_CTS: &str = "No ciphertexts in reencryption request";
+const ERR_VALIDATE_USER_DECRYPTION_NO_REQ_ID: &str =
+    "Request ID is not set in user decryption request";
+const ERR_VALIDATE_USER_DECRYPTION_NO_KEY_ID: &str = "Key ID is not set in user decryption request";
+const ERR_VALIDATE_USER_DECRYPTION_BAD_REQ_ID: &str =
+    "Request ID is invalid in user decryption request";
+const ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS: &str = "No ciphertexts in user decryption request";
 
 pub(crate) const DSEP_REQ_RESP: DomainSep = *b"REQ_RESP";
 
@@ -58,15 +64,15 @@ pub(crate) fn validate_request_id(request_id: &RequestId) -> Result<(), Status> 
     Ok(())
 }
 
-/// Validates a reencryption request and returns ciphertext, FheType, request digest, client
+/// Validates a user decryption request and returns ciphertext, FheType, request digest, client
 /// encryption key, client verification key, key_id and request_id if valid.
 ///
 /// Observe that the key handle is NOT checked for existence here.
 /// This is instead currently handled in `decrypt`` where the retrival of the secret decryption key
 /// is needed.
 #[allow(clippy::type_complexity)]
-pub fn validate_reencrypt_req(
-    req: &ReencryptionRequest,
+pub fn validate_user_decrypt_req(
+    req: &UserDecryptionRequest,
 ) -> anyhow::Result<(
     Vec<TypedCiphertext>,
     Vec<u8>,
@@ -80,25 +86,25 @@ pub fn validate_reencrypt_req(
         req.key_id.clone(),
         format!(
             "{} (Request ID: {:?})",
-            ERR_VALIDATE_REENCRYPTION_NO_KEY_ID, req
+            ERR_VALIDATE_USER_DECRYPTION_NO_KEY_ID, req
         ),
     )?;
 
     let request_id = tonic_some_or_err(
         req.request_id.clone(),
-        ERR_VALIDATE_REENCRYPTION_NO_REQ_ID.to_string(),
+        ERR_VALIDATE_USER_DECRYPTION_NO_REQ_ID.to_string(),
     )?;
     if !request_id.is_valid() {
         return Err(anyhow_error_and_warn_log(format!(
             "{} (Request ID: {})",
-            ERR_VALIDATE_REENCRYPTION_BAD_REQ_ID, request_id
+            ERR_VALIDATE_USER_DECRYPTION_BAD_REQ_ID, request_id
         )));
     }
 
     if req.typed_ciphertexts.is_empty() {
         return Err(anyhow_error_and_warn_log(format!(
             "{} (Request ID: {})",
-            ERR_VALIDATE_REENCRYPTION_EMPTY_CTS, request_id
+            ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS, request_id
         )));
     }
 
@@ -110,7 +116,7 @@ pub fn validate_reencrypt_req(
         )
     })?;
 
-    let domain = match verify_reencryption_eip712(req) {
+    let domain = match verify_user_decrypt_eip712(req) {
         Ok(domain) => {
             tracing::debug!("🔒 Signature verified successfully");
             domain
@@ -135,15 +141,15 @@ pub fn validate_reencrypt_req(
     ))
 }
 
-/// Validates a decryption request and unpacks and returns
+/// Validates a public decryption request and unpacks and returns
 /// the ciphertext, FheType, digest, key_id and request_id if it is valid.
 ///
 /// Observe that the key handle is NOT checked for existence here.
 /// This is instead currently handled in `decrypt`` where the retrival of the secret decryption key
 /// is needed.
 #[allow(clippy::type_complexity)]
-pub(crate) fn validate_decrypt_req(
-    req: &DecryptionRequest,
+pub fn validate_public_decrypt_req(
+    req: &PublicDecryptionRequest,
 ) -> anyhow::Result<(
     Vec<TypedCiphertext>,
     Vec<u8>,
@@ -155,25 +161,25 @@ pub(crate) fn validate_decrypt_req(
         req.key_id.clone(),
         format!(
             "{} (Request ID: {:?})",
-            ERR_VALIDATE_DECRYPTION_NO_KEY_ID, req
+            ERR_VALIDATE_PUBLIC_DECRYPTION_NO_KEY_ID, req
         ),
     )?;
 
     let request_id = tonic_some_or_err(
         req.request_id.clone(),
-        ERR_VALIDATE_DECRYPTION_NO_REQ_ID.to_string(),
+        ERR_VALIDATE_PUBLIC_DECRYPTION_NO_REQ_ID.to_string(),
     )?;
     if !request_id.is_valid() {
         return Err(anyhow_error_and_warn_log(format!(
             "{} (Request ID: {})",
-            ERR_VALIDATE_DECRYPTION_BAD_REQ_ID, request_id
+            ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_REQ_ID, request_id
         )));
     }
 
     if req.ciphertexts.is_empty() {
         return Err(anyhow_error_and_warn_log(format!(
             "{} (Request ID: {})",
-            ERR_VALIDATE_DECRYPTION_EMPTY_CTS, request_id
+            ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS, request_id
         )));
     }
 
@@ -198,8 +204,8 @@ pub(crate) fn validate_decrypt_req(
 }
 
 /// Verify the EIP-712 encoded payload in the request.
-pub(crate) fn verify_reencryption_eip712(
-    request: &ReencryptionRequest,
+pub(crate) fn verify_user_decrypt_eip712(
+    request: &UserDecryptionRequest,
 ) -> anyhow::Result<alloy_sol_types::Eip712Domain> {
     let (_, domain) = request.compute_link_checked()?;
     Ok(domain)
@@ -208,10 +214,10 @@ pub(crate) fn verify_reencryption_eip712(
 /// This function checks that the digest in [other_resp] matches [pivot_resp],
 /// [other_resp] contains one of the valid [server_pks] and the signature
 /// is correct with respect to this key.
-fn validate_dec_meta_data(
+fn validate_public_decrypt_meta_data(
     server_pks: &[PublicSigKey],
-    pivot_resp: &DecryptionResponsePayload,
-    other_resp: &DecryptionResponsePayload,
+    pivot_resp: &PublicDecryptionResponsePayload,
+    other_resp: &PublicDecryptionResponsePayload,
     signature: &[u8],
 ) -> anyhow::Result<bool> {
     if pivot_resp.digest != other_resp.digest {
@@ -243,33 +249,33 @@ fn validate_dec_meta_data(
     // NOTE that we cannot use `BaseKmsStruct::verify_sig`
     // because `BaseKmsStruct` cannot be compiled for wasm (it has an async mutex).
     if internal_verify_sig(&bincode::serialize(&other_resp)?, &sig, &resp_verf_key).is_err() {
-        tracing::warn!("Signature on received response is not valid!");
+        tracing::warn!("Signature on received public decryption response is not valid!");
         return Ok(false);
     }
     Ok(true)
 }
 
-/// Pick the pivot as the first response and call [validate_dec_meta_data]
+/// Pick the pivot as the first response and call [validate_public_decrypt_meta_data]
 /// on every response. Additionally, ensure that verification keys are unique.
 ///
 /// TODO: we should pick a pivot where t + 1 parties agree on.
-fn validate_dec_responses(
+fn validate_public_decrypt_responses(
     server_pks: &[PublicSigKey],
-    agg_resp: &[DecryptionResponse],
-) -> anyhow::Result<Option<Vec<DecryptionResponsePayload>>> {
+    agg_resp: &[PublicDecryptionResponse],
+) -> anyhow::Result<Option<Vec<PublicDecryptionResponsePayload>>> {
     if agg_resp.is_empty() {
-        tracing::warn!("There are no decryption responses!");
+        tracing::warn!("There are no public decryption responses!");
         return Ok(None);
     }
     // Pick a pivot response
-    let mut option_pivot_payload: Option<DecryptionResponsePayload> = None;
+    let mut option_pivot_payload: Option<PublicDecryptionResponsePayload> = None;
     let mut resp_parsed_payloads = Vec::with_capacity(agg_resp.len());
     let mut verification_keys = HashSet::new();
     for cur_resp in agg_resp {
         let cur_payload = match &cur_resp.payload {
             Some(cur_payload) => cur_payload,
             None => {
-                tracing::warn!("No payload in current response from server!");
+                tracing::warn!("No payload in current public decryption response from server!");
                 continue;
             }
         };
@@ -296,8 +302,13 @@ fn validate_dec_responses(
 
         // Validate that all the responses agree with the pivot on the static parts of the
         // response
-        if !validate_dec_meta_data(server_pks, pivot_payload, cur_payload, &cur_resp.signature)? {
-            tracing::warn!("Some server did not provide the proper response!");
+        if !validate_public_decrypt_meta_data(
+            server_pks,
+            pivot_payload,
+            cur_payload,
+            &cur_resp.signature,
+        )? {
+            tracing::warn!("Some server did not provide the proper public decryption response!");
             continue;
         }
 
@@ -320,19 +331,19 @@ fn validate_dec_responses(
 ///
 /// In addition, if the original request is provided:
 /// - The response matches the original request
-pub(crate) fn validate_dec_responses_against_request(
+pub(crate) fn validate_public_decrypt_responses_against_request(
     server_pks: &[PublicSigKey],
-    request: Option<DecryptionRequest>,
-    agg_resp: &[DecryptionResponse],
+    request: Option<PublicDecryptionRequest>,
+    agg_resp: &[PublicDecryptionResponse],
     min_agree_count: u32,
 ) -> anyhow::Result<()> {
     let resp_parsed_payloads = crate::some_or_err(
-        validate_dec_responses(server_pks, agg_resp)?,
-        ERR_VALIDATE_DECRYPTION_INVALID_AGG_RESP.to_string(),
+        validate_public_decrypt_responses(server_pks, agg_resp)?,
+        ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP.to_string(),
     )?;
     if resp_parsed_payloads.len() < min_agree_count as usize {
         return Err(anyhow_error_and_log(
-            ERR_VALIDATE_DECRYPTION_NOT_ENOUGH_RESP,
+            ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP,
         ));
     }
     match request {
@@ -344,18 +355,22 @@ pub(crate) fn validate_dec_responses_against_request(
             // } //TODO check fhe type?
 
             if req.ciphertexts.len() != pivot_payload.plaintexts.len() {
-                return Err(anyhow_error_and_log(ERR_VALIDATE_DECRYPTION_BAD_CT_COUNT));
+                return Err(anyhow_error_and_log(
+                    ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT,
+                ));
             }
 
             if BaseKmsStruct::digest(&DSEP_REQ_RESP, &bincode::serialize(&req)?)?
                 != pivot_payload.digest
             {
-                return Err(anyhow_error_and_log(ERR_VALIDATE_DECRYPTION_BAD_LINK));
+                return Err(anyhow_error_and_log(
+                    ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK,
+                ));
             }
             Ok(())
         }
         None => {
-            tracing::warn!(ERR_VALIDATE_DECRYPTION_EMPTY_REQUEST);
+            tracing::warn!(ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_REQUEST);
             Ok(())
         }
     }
@@ -366,8 +381,8 @@ mod tests {
     use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::{
-            DecryptionRequest, DecryptionResponse, DecryptionResponsePayload, ReencryptionRequest,
-            RequestId, TypedCiphertext, TypedPlaintext,
+            PublicDecryptionRequest, PublicDecryptionResponse, PublicDecryptionResponsePayload,
+            RequestId, TypedCiphertext, TypedPlaintext, UserDecryptionRequest,
         },
         rpc_types::{alloy_to_protobuf_domain, ID_LENGTH},
     };
@@ -380,19 +395,20 @@ mod tests {
     };
 
     use super::{
-        validate_dec_meta_data, validate_dec_responses, validate_dec_responses_against_request,
-        validate_decrypt_req, validate_reencrypt_req, validate_request_id,
-        verify_reencryption_eip712, DSEP_REQ_RESP, ERR_VALIDATE_DECRYPTION_BAD_CT_COUNT,
-        ERR_VALIDATE_DECRYPTION_BAD_LINK, ERR_VALIDATE_DECRYPTION_BAD_REQ_ID,
-        ERR_VALIDATE_DECRYPTION_EMPTY_CTS, ERR_VALIDATE_DECRYPTION_INVALID_AGG_RESP,
-        ERR_VALIDATE_DECRYPTION_NOT_ENOUGH_RESP, ERR_VALIDATE_DECRYPTION_NO_KEY_ID,
-        ERR_VALIDATE_DECRYPTION_NO_REQ_ID, ERR_VALIDATE_REENCRYPTION_BAD_REQ_ID,
-        ERR_VALIDATE_REENCRYPTION_EMPTY_CTS, ERR_VALIDATE_REENCRYPTION_NO_KEY_ID,
-        ERR_VALIDATE_REENCRYPTION_NO_REQ_ID,
+        validate_public_decrypt_meta_data, validate_public_decrypt_req,
+        validate_public_decrypt_responses, validate_public_decrypt_responses_against_request,
+        validate_request_id, validate_user_decrypt_req, verify_user_decrypt_eip712, DSEP_REQ_RESP,
+        ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK,
+        ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_REQ_ID, ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS,
+        ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP,
+        ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP, ERR_VALIDATE_PUBLIC_DECRYPTION_NO_KEY_ID,
+        ERR_VALIDATE_PUBLIC_DECRYPTION_NO_REQ_ID, ERR_VALIDATE_USER_DECRYPTION_BAD_REQ_ID,
+        ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS, ERR_VALIDATE_USER_DECRYPTION_NO_KEY_ID,
+        ERR_VALIDATE_USER_DECRYPTION_NO_REQ_ID,
     };
 
     #[test]
-    fn test_validate_decryption_req() {
+    fn test_validate_public_decrypt_req() {
         // setup data we're going to use in this test
         let alloy_domain = alloy_sol_types::eip712_domain!(
             name: "Authorization token",
@@ -414,30 +430,30 @@ mod tests {
 
         // empty key ID
         {
-            let req = DecryptionRequest {
+            let req = PublicDecryptionRequest {
                 request_id: Some(request_id.clone()),
                 ciphertexts: ciphertexts.clone(),
                 key_id: None,
                 domain: Some(domain.clone()),
             };
-            assert!(validate_decrypt_req(&req)
+            assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
-                .contains(ERR_VALIDATE_DECRYPTION_NO_KEY_ID));
+                .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_NO_KEY_ID));
         }
 
         // empty request ID
         {
-            let req = DecryptionRequest {
+            let req = PublicDecryptionRequest {
                 request_id: None,
                 ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.clone()),
                 domain: Some(domain.clone()),
             };
-            assert!(validate_decrypt_req(&req)
+            assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
-                .contains(ERR_VALIDATE_DECRYPTION_NO_REQ_ID));
+                .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_NO_REQ_ID));
         }
 
         // invalid request ID
@@ -445,47 +461,47 @@ mod tests {
             let bad_req_id = RequestId {
                 request_id: ['x'; ID_LENGTH].iter().collect(),
             };
-            let req = DecryptionRequest {
+            let req = PublicDecryptionRequest {
                 request_id: Some(bad_req_id),
                 ciphertexts: vec![],
                 key_id: Some(key_id.clone()),
                 domain: Some(domain.clone()),
             };
-            assert!(validate_decrypt_req(&req)
+            assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
-                .contains(ERR_VALIDATE_DECRYPTION_BAD_REQ_ID));
+                .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_REQ_ID));
         }
 
         // empty ciphertext
         {
-            let req = DecryptionRequest {
+            let req = PublicDecryptionRequest {
                 request_id: Some(request_id.clone()),
                 ciphertexts: vec![],
                 key_id: Some(key_id.clone()),
                 domain: Some(domain.clone()),
             };
-            assert!(validate_decrypt_req(&req)
+            assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
-                .contains(ERR_VALIDATE_DECRYPTION_EMPTY_CTS));
+                .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS));
         }
 
         // finally everything is ok
         {
-            let req = DecryptionRequest {
+            let req = PublicDecryptionRequest {
                 request_id: Some(request_id.clone()),
                 ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.clone()),
                 domain: Some(domain.clone()),
             };
-            let (_, _, _, _, domain) = validate_decrypt_req(&req).unwrap();
+            let (_, _, _, _, domain) = validate_public_decrypt_req(&req).unwrap();
             assert!(domain.is_some());
         }
     }
 
     #[test]
-    fn test_validate_reencryption_req() {
+    fn test_validate_user_decrypt_req() {
         // setup data we're going to use in this test
         let alloy_domain = alloy_sol_types::eip712_domain!(
             name: "Authorization token",
@@ -511,7 +527,7 @@ mod tests {
 
         // empty key ID
         {
-            let req = ReencryptionRequest {
+            let req = UserDecryptionRequest {
                 request_id: Some(request_id.clone()),
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: None,
@@ -519,15 +535,15 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
             };
-            assert!(validate_reencrypt_req(&req)
+            assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
-                .contains(ERR_VALIDATE_REENCRYPTION_NO_KEY_ID));
+                .contains(ERR_VALIDATE_USER_DECRYPTION_NO_KEY_ID));
         }
 
         // empty request ID
         {
-            let req = ReencryptionRequest {
+            let req = UserDecryptionRequest {
                 request_id: None,
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.clone()),
@@ -535,10 +551,10 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
             };
-            assert!(validate_reencrypt_req(&req)
+            assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
-                .contains(ERR_VALIDATE_REENCRYPTION_NO_REQ_ID));
+                .contains(ERR_VALIDATE_USER_DECRYPTION_NO_REQ_ID));
         }
 
         // invalid request ID
@@ -546,7 +562,7 @@ mod tests {
             let bad_req_id = RequestId {
                 request_id: ['x'; ID_LENGTH].iter().collect(),
             };
-            let req = ReencryptionRequest {
+            let req = UserDecryptionRequest {
                 request_id: Some(bad_req_id),
                 typed_ciphertexts: vec![],
                 key_id: Some(key_id.clone()),
@@ -554,15 +570,15 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
             };
-            assert!(validate_reencrypt_req(&req)
+            assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
-                .contains(ERR_VALIDATE_REENCRYPTION_BAD_REQ_ID));
+                .contains(ERR_VALIDATE_USER_DECRYPTION_BAD_REQ_ID));
         }
 
         // empty ciphertext
         {
-            let req = ReencryptionRequest {
+            let req = UserDecryptionRequest {
                 request_id: Some(request_id.clone()),
                 typed_ciphertexts: vec![],
                 key_id: Some(key_id.clone()),
@@ -570,15 +586,15 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
             };
-            assert!(validate_reencrypt_req(&req)
+            assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
-                .contains(ERR_VALIDATE_REENCRYPTION_EMPTY_CTS));
+                .contains(ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS));
         }
 
         // bad client address
         {
-            let req = ReencryptionRequest {
+            let req = UserDecryptionRequest {
                 request_id: Some(request_id.clone()),
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.clone()),
@@ -588,7 +604,7 @@ mod tests {
             };
             assert_eq!(
                 "Error parsing checksummed client address: 0xD8Da6bf26964Af9d7EEd9e03e53415d37AA96045 - Bad address checksum",
-                validate_reencrypt_req(&req).unwrap_err().to_string()
+                validate_user_decrypt_req(&req).unwrap_err().to_string()
             );
         }
 
@@ -596,7 +612,7 @@ mod tests {
         {
             let mut bad_enc_pk_buf = enc_pk_buf.clone();
             bad_enc_pk_buf[0] ^= 1;
-            let req = ReencryptionRequest {
+            let req = UserDecryptionRequest {
                 request_id: Some(request_id.clone()),
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.clone()),
@@ -604,7 +620,7 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: bad_enc_pk_buf,
             };
-            assert!(validate_reencrypt_req(&req)
+            assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
                 .contains("io error"));
@@ -612,7 +628,7 @@ mod tests {
 
         // finally everything is ok
         {
-            let req = ReencryptionRequest {
+            let req = UserDecryptionRequest {
                 request_id: Some(request_id.clone()),
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.clone()),
@@ -620,7 +636,7 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
             };
-            assert!(validate_reencrypt_req(&req).is_ok());
+            assert!(validate_user_decrypt_req(&req).is_ok());
         }
     }
 
@@ -645,7 +661,7 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_reenc_eip712() {
+    fn test_verify_user_decrypt_eip712() {
         let mut rng = AesRng::from_random_seed();
         let (client_pk, _client_sk) = gen_sig_keys(&mut rng);
         let client_address = alloy_primitives::Address::from_public_key(client_pk.pk());
@@ -667,7 +683,7 @@ mod tests {
         );
         let domain_msg = alloy_to_protobuf_domain(&domain).unwrap();
 
-        let req = kms_grpc::kms::v1::ReencryptionRequest {
+        let req = kms_grpc::kms::v1::UserDecryptionRequest {
             request_id: Some(RequestId {
                 request_id: "dummy request ID".to_owned(),
             }),
@@ -680,13 +696,13 @@ mod tests {
 
         {
             // happy path
-            verify_reencryption_eip712(&req).unwrap();
+            verify_user_decrypt_eip712(&req).unwrap();
         }
         {
             // use a wrong client address (invalid string length)
             let mut bad_req = req.clone();
             bad_req.client_address = "66f9664f97F2b50F62D13eA064982f936dE76657".to_string();
-            match verify_reencryption_eip712(&bad_req) {
+            match verify_user_decrypt_eip712(&bad_req) {
                 Ok(_) => panic!("expected failure"),
                 Err(e) => {
                     assert_eq!(e.to_string(), "error parsing checksummed address: 66f9664f97F2b50F62D13eA064982f936dE76657 - invalid string length");
@@ -700,7 +716,7 @@ mod tests {
             bad_domain.verifying_contract = Some(client_address);
             let mut bad_req = req.clone();
             bad_req.domain = Some(alloy_to_protobuf_domain(&bad_domain).unwrap());
-            match verify_reencryption_eip712(&bad_req) {
+            match verify_user_decrypt_eip712(&bad_req) {
                 Ok(_) => panic!("expected failure"),
                 Err(_e) => {}
             }
@@ -708,7 +724,7 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_dec_meta_response() {
+    fn test_validate_public_decrypt_meta_response() {
         let mut rng = AesRng::seed_from_u64(0);
         let (vk0, sk0) = gen_sig_keys(&mut rng);
         let (vk1, sk1) = gen_sig_keys(&mut rng);
@@ -716,7 +732,7 @@ mod tests {
 
         let pks = [vk0, vk1, vk2];
 
-        let pivot = DecryptionResponsePayload {
+        let pivot = PublicDecryptionResponsePayload {
             digest: vec![1, 2, 3, 4],
             verification_key: bincode::serialize(&pks[0]).unwrap(),
             plaintexts: vec![TypedPlaintext {
@@ -733,7 +749,9 @@ mod tests {
             let signature = &crate::cryptography::signcryption::sign(&pivot_buf, &sk1).unwrap();
             let signature_buf = signature.sig.to_vec();
 
-            assert!(!validate_dec_meta_data(&pks, &pivot, &pivot, &signature_buf).unwrap());
+            assert!(
+                !validate_public_decrypt_meta_data(&pks, &pivot, &pivot, &signature_buf).unwrap()
+            );
         }
 
         // use a bad signature (malformed signature)
@@ -742,12 +760,14 @@ mod tests {
             // The signature is malformed because it's using bincode to serialize instead of `signature.sig.to_vec()`.
             let signature_buf = bincode::serialize(&signature).unwrap();
 
-            assert!(validate_dec_meta_data(&pks, &pivot, &pivot, &signature_buf).is_err());
+            assert!(
+                validate_public_decrypt_meta_data(&pks, &pivot, &pivot, &signature_buf).is_err()
+            );
         }
 
         // use a bad signature (signing the wrong value)
         {
-            let bad_value = DecryptionResponsePayload {
+            let bad_value = PublicDecryptionResponsePayload {
                 verification_key: bincode::serialize(&pks[0]).unwrap(),
                 digest: vec![1, 2, 3, 4, 5], // Original digest does not contain the 5
                 plaintexts: vec![TypedPlaintext {
@@ -762,12 +782,15 @@ mod tests {
                 &crate::cryptography::signcryption::sign(&bad_value_buf, &sk0).unwrap();
             let bad_signature_buf = bad_signature.sig.to_vec();
 
-            assert!(!validate_dec_meta_data(&pks, &pivot, &pivot, &bad_signature_buf).unwrap());
+            assert!(
+                !validate_public_decrypt_meta_data(&pks, &pivot, &pivot, &bad_signature_buf)
+                    .unwrap()
+            );
         }
 
         // use a bad response (digest mismatch)
         {
-            let bad_value = DecryptionResponsePayload {
+            let bad_value = PublicDecryptionResponsePayload {
                 verification_key: bincode::serialize(&pks[0]).unwrap(),
                 digest: vec![1, 2, 3, 4, 5], // Original digest does not contain the 5
                 plaintexts: vec![TypedPlaintext {
@@ -781,13 +804,16 @@ mod tests {
             let signature = &crate::cryptography::signcryption::sign(&bad_value_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
 
-            assert!(!validate_dec_meta_data(&pks, &pivot, &bad_value, &signature_buf).unwrap());
+            assert!(
+                !validate_public_decrypt_meta_data(&pks, &pivot, &bad_value, &signature_buf)
+                    .unwrap()
+            );
         }
 
         // use a bad response (bad validation key)
         {
             let (vk, _sk0) = gen_sig_keys(&mut rng);
-            let bad_value = DecryptionResponsePayload {
+            let bad_value = PublicDecryptionResponsePayload {
                 verification_key: bincode::serialize(&vk).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 plaintexts: vec![TypedPlaintext {
@@ -801,13 +827,16 @@ mod tests {
             let signature = &crate::cryptography::signcryption::sign(&bad_value_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
 
-            assert!(!validate_dec_meta_data(&pks, &pivot, &bad_value, &signature_buf).unwrap());
+            assert!(
+                !validate_public_decrypt_meta_data(&pks, &pivot, &bad_value, &signature_buf)
+                    .unwrap()
+            );
         }
 
         // use a bad response (mismatch plaintext)
         {
             let (vk, _sk0) = gen_sig_keys(&mut rng);
-            let bad_value = DecryptionResponsePayload {
+            let bad_value = PublicDecryptionResponsePayload {
                 verification_key: bincode::serialize(&vk).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 plaintexts: vec![TypedPlaintext {
@@ -821,7 +850,10 @@ mod tests {
             let signature = &crate::cryptography::signcryption::sign(&bad_value_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
 
-            assert!(!validate_dec_meta_data(&pks, &pivot, &bad_value, &signature_buf).unwrap());
+            assert!(
+                !validate_public_decrypt_meta_data(&pks, &pivot, &bad_value, &signature_buf)
+                    .unwrap()
+            );
         }
 
         // happy path
@@ -829,12 +861,14 @@ mod tests {
             let signature = &crate::cryptography::signcryption::sign(&pivot_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec(); // NOTE: signatures are not serialized with bincode
 
-            assert!(validate_dec_meta_data(&pks, &pivot, &pivot, &signature_buf).unwrap());
+            assert!(
+                validate_public_decrypt_meta_data(&pks, &pivot, &pivot, &signature_buf).unwrap()
+            );
         }
     }
 
     #[test]
-    fn test_validate_dec_responses() {
+    fn test_validate_public_decrypt_responses() {
         let mut rng = AesRng::seed_from_u64(0);
         let (vk0, sk0) = gen_sig_keys(&mut rng);
         let (vk1, sk1) = gen_sig_keys(&mut rng);
@@ -843,7 +877,7 @@ mod tests {
         let pks = [vk0, vk1, vk2];
 
         let resp0 = {
-            let payload = DecryptionResponsePayload {
+            let payload = PublicDecryptionResponsePayload {
                 verification_key: bincode::serialize(&pks[0]).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 plaintexts: vec![TypedPlaintext {
@@ -856,13 +890,13 @@ mod tests {
             let signature = &crate::cryptography::signcryption::sign(&payload_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
 
-            DecryptionResponse {
+            PublicDecryptionResponse {
                 signature: signature_buf,
                 payload: Some(payload),
             }
         };
         let resp1 = {
-            let payload = DecryptionResponsePayload {
+            let payload = PublicDecryptionResponsePayload {
                 verification_key: bincode::serialize(&pks[1]).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 plaintexts: vec![TypedPlaintext {
@@ -875,14 +909,14 @@ mod tests {
             let signature = &crate::cryptography::signcryption::sign(&payload_buf, &sk1).unwrap();
             let signature_buf = signature.sig.to_vec();
 
-            DecryptionResponse {
+            PublicDecryptionResponse {
                 signature: signature_buf,
                 payload: Some(payload),
             }
         };
 
         // in this test we just want to test that we can catch a duplicate validation key
-        // the other validation such as signatures are performed in `validate_dec_meta_data`
+        // the other validation such as signatures are performed in `validate_public_decrypt_meta_data`
 
         // using an empty payload, we should only get 1 valid response
         {
@@ -890,7 +924,7 @@ mod tests {
             empty_resp.payload = None;
             let mut bad_agg_resp = vec![resp0.clone(), empty_resp];
             assert_eq!(
-                validate_dec_responses(&pks, &bad_agg_resp)
+                validate_public_decrypt_responses(&pks, &bad_agg_resp)
                     .unwrap()
                     .unwrap()
                     .len(),
@@ -900,7 +934,7 @@ mod tests {
             // reverse the aggregate response so the empty one is the first
             bad_agg_resp.reverse();
             assert_eq!(
-                validate_dec_responses(&pks, &bad_agg_resp)
+                validate_public_decrypt_responses(&pks, &bad_agg_resp)
                     .unwrap()
                     .unwrap()
                     .len(),
@@ -912,7 +946,7 @@ mod tests {
         {
             let bad_agg_resp = vec![resp0.clone(), resp0.clone()];
             assert_eq!(
-                validate_dec_responses(&pks, &bad_agg_resp)
+                validate_public_decrypt_responses(&pks, &bad_agg_resp)
                     .unwrap()
                     .unwrap()
                     .len(),
@@ -923,7 +957,7 @@ mod tests {
         // if one of the responses have a wrong number of plaintext, we should only get 1 valid response
         {
             let bad_resp = {
-                let payload = DecryptionResponsePayload {
+                let payload = PublicDecryptionResponsePayload {
                     verification_key: bincode::serialize(&pks[1]).unwrap(),
                     digest: vec![1, 2, 3, 4],
                     plaintexts: vec![
@@ -943,14 +977,14 @@ mod tests {
                     &crate::cryptography::signcryption::sign(&payload_buf, &sk1).unwrap();
                 let signature_buf = signature.sig.to_vec();
 
-                DecryptionResponse {
+                PublicDecryptionResponse {
                     signature: signature_buf,
                     payload: Some(payload),
                 }
             };
             let agg_resp = vec![resp0.clone(), bad_resp];
             assert_eq!(
-                validate_dec_responses(&pks, &agg_resp)
+                validate_public_decrypt_responses(&pks, &agg_resp)
                     .unwrap()
                     .unwrap()
                     .len(),
@@ -962,7 +996,7 @@ mod tests {
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
             assert_eq!(
-                validate_dec_responses(&pks, &agg_resp)
+                validate_public_decrypt_responses(&pks, &agg_resp)
                     .unwrap()
                     .unwrap()
                     .len(),
@@ -972,7 +1006,7 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_dec_responses_against_request() {
+    fn test_validate_public_decrypt_responses_against_request() {
         let mut rng = AesRng::seed_from_u64(0);
         let (vk0, sk0) = gen_sig_keys(&mut rng);
         let (vk1, sk1) = gen_sig_keys(&mut rng);
@@ -980,22 +1014,22 @@ mod tests {
 
         let pks = [vk0, vk1, vk2];
 
-        let request = DecryptionRequest {
-            request_id: Some(derive_request_id("DecryptionRequest").unwrap()),
+        let request = PublicDecryptionRequest {
+            request_id: Some(derive_request_id("PublicDecryptionRequest").unwrap()),
             ciphertexts: vec![TypedCiphertext {
                 ciphertext: vec![1, 2, 3, 4],
                 fhe_type: 1,
                 external_handle: vec![1, 2, 3, 4],
                 ciphertext_format: 1,
             }],
-            key_id: Some(derive_request_id("DecryptionRequest key_id").unwrap()),
+            key_id: Some(derive_request_id("PublicDecryptionRequest key_id").unwrap()),
             domain: None,
         };
 
         let digest = serialize_hash_element(&DSEP_REQ_RESP, &request).unwrap();
 
         let resp0 = {
-            let payload = DecryptionResponsePayload {
+            let payload = PublicDecryptionResponsePayload {
                 verification_key: bincode::serialize(&pks[0]).unwrap(),
                 digest: digest.clone(),
                 plaintexts: vec![TypedPlaintext {
@@ -1008,13 +1042,13 @@ mod tests {
             let signature = &crate::cryptography::signcryption::sign(&payload_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
 
-            DecryptionResponse {
+            PublicDecryptionResponse {
                 signature: signature_buf,
                 payload: Some(payload),
             }
         };
         let resp1 = {
-            let payload = DecryptionResponsePayload {
+            let payload = PublicDecryptionResponsePayload {
                 verification_key: bincode::serialize(&pks[1]).unwrap(),
                 digest: digest.clone(),
                 plaintexts: vec![TypedPlaintext {
@@ -1027,7 +1061,7 @@ mod tests {
             let signature = &crate::cryptography::signcryption::sign(&payload_buf, &sk1).unwrap();
             let signature_buf = signature.sig.to_vec();
 
-            DecryptionResponse {
+            PublicDecryptionResponse {
                 signature: signature_buf,
                 payload: Some(payload),
             }
@@ -1036,7 +1070,7 @@ mod tests {
         // invalid aggregate response, e.g., when there are none
         {
             let agg_resp = vec![];
-            assert!(validate_dec_responses_against_request(
+            assert!(validate_public_decrypt_responses_against_request(
                 &pks,
                 Some(request.clone()),
                 &agg_resp,
@@ -1044,13 +1078,13 @@ mod tests {
             )
             .unwrap_err()
             .to_string()
-            .contains(ERR_VALIDATE_DECRYPTION_INVALID_AGG_RESP));
+            .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP));
         }
 
         // not enough decryption responses
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
-            assert!(validate_dec_responses_against_request(
+            assert!(validate_public_decrypt_responses_against_request(
                 &pks,
                 Some(request.clone()),
                 &agg_resp,
@@ -1058,14 +1092,14 @@ mod tests {
             )
             .unwrap_err()
             .to_string()
-            .contains(ERR_VALIDATE_DECRYPTION_NOT_ENOUGH_RESP));
+            .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP));
         }
 
         // ciphertext count is wrong
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
-            let bad_request = DecryptionRequest {
-                request_id: Some(derive_request_id("DecryptionRequest").unwrap()),
+            let bad_request = PublicDecryptionRequest {
+                request_id: Some(derive_request_id("PublicDecryptionRequest").unwrap()),
                 // here we use two ciphertexts
                 ciphertexts: vec![
                     TypedCiphertext {
@@ -1081,50 +1115,61 @@ mod tests {
                         ciphertext_format: 1,
                     },
                 ],
-                key_id: Some(derive_request_id("DecryptionRequest key_id").unwrap()),
+                key_id: Some(derive_request_id("PublicDecryptionRequest key_id").unwrap()),
                 domain: None,
             };
-            assert!(
-                validate_dec_responses_against_request(&pks, Some(bad_request), &agg_resp, 2)
-                    .unwrap_err()
-                    .to_string()
-                    .contains(ERR_VALIDATE_DECRYPTION_BAD_CT_COUNT)
-            );
+            assert!(validate_public_decrypt_responses_against_request(
+                &pks,
+                Some(bad_request),
+                &agg_resp,
+                2
+            )
+            .unwrap_err()
+            .to_string()
+            .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT));
         }
 
         // link is wrong
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
-            let bad_request = DecryptionRequest {
-                request_id: Some(derive_request_id("DecryptionRequest").unwrap()),
+            let bad_request = PublicDecryptionRequest {
+                request_id: Some(derive_request_id("PublicDecryptionRequest").unwrap()),
                 ciphertexts: vec![TypedCiphertext {
                     ciphertext: vec![1, 2, 3, 4],
                     fhe_type: 2, // we change the fhe_type so it's the wrong request
                     external_handle: vec![1, 2, 3, 4],
                     ciphertext_format: 1,
                 }],
-                key_id: Some(derive_request_id("DecryptionRequest key_id").unwrap()),
+                key_id: Some(derive_request_id("PublicDecryptionRequest key_id").unwrap()),
                 domain: None,
             };
-            assert!(
-                validate_dec_responses_against_request(&pks, Some(bad_request), &agg_resp, 2)
-                    .unwrap_err()
-                    .to_string()
-                    .contains(ERR_VALIDATE_DECRYPTION_BAD_LINK)
-            );
+            assert!(validate_public_decrypt_responses_against_request(
+                &pks,
+                Some(bad_request),
+                &agg_resp,
+                2
+            )
+            .unwrap_err()
+            .to_string()
+            .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK));
         }
 
         // request is empty, which should pass
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
-            validate_dec_responses_against_request(&pks, None, &agg_resp, 2).unwrap();
+            validate_public_decrypt_responses_against_request(&pks, None, &agg_resp, 2).unwrap();
         }
 
         // happy path
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
-            validate_dec_responses_against_request(&pks, Some(request.clone()), &agg_resp, 2)
-                .unwrap();
+            validate_public_decrypt_responses_against_request(
+                &pks,
+                Some(request.clone()),
+                &agg_resp,
+                2,
+            )
+            .unwrap();
         }
     }
 }

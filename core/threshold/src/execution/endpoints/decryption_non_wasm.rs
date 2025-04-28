@@ -258,7 +258,7 @@ where
 ///
 /// Returns this party's share of the plaintext plus some timing information.
 ///
-/// This is the entry point of the reencryption protocol.
+/// This is the entry point of the User decryption protocol.
 ///
 /// # Arguments
 /// * `session` - The session object that contains the networking and the role of the party_keyshare
@@ -422,7 +422,7 @@ where
 ///
 /// Returns this party's share of the plaintext plus some timing information.
 ///
-/// This is the entry point of the reencryption protocol.
+/// This is the entry point of the User decryption protocol.
 ///
 /// # Arguments
 /// * `session` - The session object that contains the networking and the role of the party_keyshare

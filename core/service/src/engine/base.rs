@@ -5,7 +5,7 @@ use crate::cryptography::decompression;
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey, PublicSigKey};
 use crate::cryptography::signcryption::internal_verify_sig;
 use crate::util::key_setup::FhePrivateKey;
-use crate::{anyhow_error_and_log, compute_reenc_message_hash};
+use crate::{anyhow_error_and_log, compute_user_decrypt_message_hash};
 use aes_prng::AesRng;
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{Bytes, FixedBytes, Uint};
@@ -17,8 +17,8 @@ use alloy_sol_types::SolStruct;
 use k256::ecdsa::SigningKey;
 use kms_grpc::kms::v1::RequestId;
 use kms_grpc::kms::v1::{
-    CiphertextFormat, FheParameter, ReencryptionResponsePayload, SignedPubDataHandle,
-    TypedPlaintext,
+    CiphertextFormat, FheParameter, SignedPubDataHandle, TypedPlaintext,
+    UserDecryptionResponsePayload,
 };
 use kms_grpc::rpc_types::{
     FhePubKey, FheServerKey, PubDataType, PublicDecryptVerification, SignedPubDataHandleInternal,
@@ -367,13 +367,13 @@ where
     }
 }
 
-pub(crate) fn compute_external_reenc_signature(
+pub(crate) fn compute_external_user_decrypt_signature(
     server_sk: &PrivateSigKey,
-    payload: &ReencryptionResponsePayload,
+    payload: &UserDecryptionResponsePayload,
     eip712_domain: &Eip712Domain,
     user_pk: &PublicEncKey,
 ) -> anyhow::Result<Vec<u8>> {
-    let message_hash = compute_reenc_message_hash(payload, eip712_domain, user_pk)?;
+    let message_hash = compute_user_decrypt_message_hash(payload, eip712_domain, user_pk)?;
 
     let signer = PrivateKeySigner::from_signing_key(server_sk.sk().clone());
     let signer_address = signer.address();
@@ -683,12 +683,12 @@ pub type KeyGenCallValues = HashMap<PubDataType, SignedPubDataHandleInternal>;
 // Represents the digest of the request and the result of the decryption (a batch of plaintests),
 // as well as an external signature on the batch.
 #[cfg(feature = "non-wasm")]
-pub type DecCallValues = (Vec<u8>, Vec<TypedPlaintext>, Vec<u8>);
+pub type PubDecCallValues = (Vec<u8>, Vec<TypedPlaintext>, Vec<u8>);
 
-// Values that need to be stored temporarily as part of an async reencryption call.
-// Represents ReencryptionResponsePayload, external_handles, external_signature.
+// Values that need to be stored temporarily as part of an async user decryption call.
+// Represents UserDecryptionResponsePayload, external_handles, external_signature.
 #[cfg(feature = "non-wasm")]
-pub type ReencCallValues = (ReencryptionResponsePayload, Vec<u8>);
+pub type UserDecryptCallValues = (UserDecryptionResponsePayload, Vec<u8>);
 
 /// Helper method which takes a [HashMap<PubDataType, SignedPubDataHandle>] and returns
 /// [HashMap<String, SignedPubDataHandle>] by applying the [ToString] function on [PubDataType] for each element in the map.
