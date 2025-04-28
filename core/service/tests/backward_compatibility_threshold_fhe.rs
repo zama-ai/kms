@@ -117,9 +117,7 @@ impl TestedModule for ThresholdFhe {
     }
 }
 
-// TODO temporary disable tests until we can update reference commit
 #[test]
-#[ignore]
 fn test_backward_compatibility_threshold_fhe() {
     let pkg_version = env!("CARGO_PKG_VERSION");
 
@@ -128,7 +126,6 @@ fn test_backward_compatibility_threshold_fhe() {
     let results = run_all_tests::<ThresholdFhe>(&base_data_dir, pkg_version);
 
     if results.iter().any(|r| r.is_failure()) {
-        // panic!("Backward compatibility tests for the threshold fhe module failed")
-        println!("Backward compatibility tests for the threshold fhe module failed")
+        panic!("Backward compatibility tests for the threshold fhe module failed")
     }
 }

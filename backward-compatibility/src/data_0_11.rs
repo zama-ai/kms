@@ -2,13 +2,12 @@
 //! This file provides the code that is used to generate all the data to serialize and versionize
 //! for kms-core v0.11.
 
-use std::{borrow::Cow, fs::create_dir_all, path::PathBuf};
-
 use aes_prng::AesRng;
 use kms_0_11::engine::base::{gen_sig_keys, KmsFheKeyHandles};
 use kms_0_11::engine::centralized::central_kms::generate_client_fhe_key;
 use kms_0_11::engine::threshold::service_real::{compute_all_info, ThresholdFheKeys};
 use kms_0_11::util::key_setup::FhePublicKey;
+use std::{borrow::Cow, fs::create_dir_all, path::PathBuf};
 use tfhe_1_1::shortint::parameters::NoiseSquashingParameters;
 use threshold_fhe_0_11::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
 use threshold_fhe_0_11::execution::endpoints::keygen::FhePubKeySet;
@@ -244,12 +243,12 @@ const APP_KEY_BLOB_TEST: AppKeyBlobTest = AppKeyBlobTest {
     auth_tag: Cow::Borrowed("auth_tag"),
 };
 
-fn dummy_domain() -> alloy_sol_types_0_8_22::Eip712Domain {
-    alloy_sol_types_0_8_22::eip712_domain!(
+fn dummy_domain() -> alloy_sol_types_1_0_0::Eip712Domain {
+    alloy_sol_types_1_0_0::eip712_domain!(
         name: "Authorization token",
         version: "1",
         chain_id: 8006,
-        verifying_contract: alloy_primitives_0_8_22::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+        verifying_contract: alloy_primitives_1_0_0::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
     )
 }
 
