@@ -134,12 +134,12 @@ impl GrpcSendingService {
                 };
                 // We put only one CA certificate into the root store
                 // so there's no risk of connecting to a wrong party.
-                let ca_cert =
-                    ca_certs
-                        .get(domain_name.to_str().as_ref())
-                        .ok_or(anyhow_error_and_log(
-                            "no CA certificate present for {domain_name:?}",
-                        ))?;
+                let ca_cert = ca_certs.get(domain_name.to_str().as_ref()).ok_or_else(|| {
+                    anyhow_error_and_log(format!(
+                        "No CA certificate present for {:?}",
+                        domain_name.to_str().as_ref()
+                    ))
+                })?;
                 let mut roots = RootCertStore::empty();
                 roots.add(CertificateDer::from_slice(&ca_cert.contents))?;
                 let cert_chain =

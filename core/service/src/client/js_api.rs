@@ -497,8 +497,8 @@ pub fn process_reencryption_resp(
 ) -> Result<Vec<TypedPlaintext>, JsError> {
     // if verify is true, then request and eip712 domain must exist
     let reenc_resp = if verify {
-        let request = request.ok_or(JsError::new("missing request"))?;
-        let pb_domain = eip712_domain.ok_or(JsError::new("missing eip712 domain"))?;
+        let request = request.ok_or_else(|| JsError::new("missing request"))?;
+        let pb_domain = eip712_domain.ok_or_else(|| JsError::new("missing eip712 domain"))?;
         let eip712_domain =
             protobuf_to_alloy_domain(&pb_domain).map_err(|e| JsError::new(&e.to_string()))?;
         client.process_reencryption_resp(&request, &eip712_domain, &agg_resp, enc_pk, enc_sk)

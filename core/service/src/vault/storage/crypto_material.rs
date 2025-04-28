@@ -892,10 +892,12 @@ impl<
             let guard = cache.read().await;
             guard.get(req_id).cloned()
         };
-        out.ok_or(anyhow_error_and_warn_log(format!(
-            "Key handles are not in the cache for ID {}",
-            req_id
-        )))
+        out.ok_or_else(|| {
+            anyhow_error_and_warn_log(format!(
+                "Key handles are not in the cache for ID {}",
+                req_id
+            ))
+        })
     }
 
     async fn refresh_crypto_material<T, S>(

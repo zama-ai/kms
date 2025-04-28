@@ -533,7 +533,7 @@ macro_rules! deserialize_to_low_level_and_decrypt_helper {
                         $keys
                             .decompression_key
                             .as_ref()
-                            .ok_or(anyhow::anyhow!("missing decompression key"))?,
+                            .ok_or_else(|| anyhow::anyhow!("missing decompression key"))?,
                         $serialized_high_level,
                     )?;
                 $fout(hl_ct.decrypt(&$keys.client_key))
@@ -571,7 +571,7 @@ fn unsafe_decrypt(
                 let hl_ct: FheBool = decompression::tfhe_safe_deserialize_and_uncompress::<FheBool>(
                     keys.decompression_key
                         .as_ref()
-                        .ok_or(anyhow::anyhow!("missing decompression key"))?,
+                        .ok_or_else(|| anyhow::anyhow!("missing decompression key"))?,
                     serialized_high_level,
                 )?;
                 TypedPlaintext::from_bool(hl_ct.decrypt(&keys.client_key))

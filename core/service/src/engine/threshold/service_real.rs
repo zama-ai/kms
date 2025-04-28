@@ -1075,7 +1075,7 @@ impl<
                         &keys.integer_server_key,
                         keys.sns_key
                             .as_ref()
-                            .ok_or(anyhow::anyhow!("missing sns key"))?,
+                            .ok_or_else(|| anyhow::anyhow!("missing sns key"))?,
                         low_level_ct,
                         &keys.private_keys,
                         DecryptionMode::NoiseFloodSmall,
@@ -1443,7 +1443,7 @@ impl<
                     &keys.integer_server_key,
                     keys.sns_key
                         .as_ref()
-                        .ok_or(anyhow::anyhow!("missing sns key"))?,
+                        .ok_or_else(|| anyhow::anyhow!("missing sns key"))?,
                     low_level_ct,
                     &keys.private_keys,
                     dec_mode,
@@ -2181,18 +2181,20 @@ impl<
             + Send
             + ?Sized,
     {
-        let from_key_id =
-            keyset_added_info
-                .from_keyset_id_decompression_only
-                .ok_or(anyhow::anyhow!(
+        let from_key_id = keyset_added_info
+            .from_keyset_id_decompression_only
+            .ok_or_else(|| {
+                anyhow::anyhow!(
                 "missing from key ID for the keyset that contains the compression secret key share"
-            ))?;
-        let to_key_id =
-            keyset_added_info
-                .to_keyset_id_decompression_only
-                .ok_or(anyhow::anyhow!(
+            )
+            })?;
+        let to_key_id = keyset_added_info
+            .to_keyset_id_decompression_only
+            .ok_or_else(|| {
+                anyhow::anyhow!(
                     "missing to key ID for the keyset that contains the glwe secret key share"
-                ))?;
+                )
+            })?;
 
         let private_compression_share = {
             let threshold_keys = crypto_storage
@@ -2202,7 +2204,7 @@ impl<
                 .private_keys
                 .glwe_secret_key_share_compression
                 .clone()
-                .ok_or(anyhow::anyhow!("missing compression secret key share"))?;
+                .ok_or_else(|| anyhow::anyhow!("missing compression secret key share"))?;
             match compression_sk_share {
                 CompressionPrivateKeySharesEnum::Z64(_share) => {
                     anyhow::bail!("z64 share is not supported")
@@ -2240,18 +2242,20 @@ impl<
         GlweSecretKeyShare<Z128, 4>,
         CompressionPrivateKeyShares<Z128, 4>,
     )> {
-        let compression_req_id =
-            keyset_added_info
-                .from_keyset_id_decompression_only
-                .ok_or(anyhow::anyhow!(
+        let compression_req_id = keyset_added_info
+            .from_keyset_id_decompression_only
+            .ok_or_else(|| {
+                anyhow::anyhow!(
                 "missing from key ID for the keyset that contains the compression secret key share"
-            ))?;
-        let glwe_req_id =
-            keyset_added_info
-                .to_keyset_id_decompression_only
-                .ok_or(anyhow::anyhow!(
+            )
+            })?;
+        let glwe_req_id = keyset_added_info
+            .to_keyset_id_decompression_only
+            .ok_or_else(|| {
+                anyhow::anyhow!(
                     "missing to key ID for the keyset that contains the glwe secret key share"
-                ))?;
+                )
+            })?;
 
         crypto_storage
             .refresh_threshold_fhe_keys(&glwe_req_id)
@@ -2332,7 +2336,7 @@ impl<
         let params_handle = params.get_params_basics_handle();
         let compression_params = params_handle
             .get_compression_decompression_params()
-            .ok_or(anyhow::anyhow!("missing compression parameters"))?
+            .ok_or_else(|| anyhow::anyhow!("missing compression parameters"))?
             .raw_compression_parameters;
         let opt_decompression_key = match (opt_glwe_secret_key, opt_compression_secret_key) {
             (Some(glwe_secret_key), Some(compression_secret_key)) => {
@@ -2502,11 +2506,11 @@ impl<
             + Send
             + ?Sized,
     {
-        let key_id = keyset_added_info
-            .compression_keyset_id
-            .ok_or(anyhow::anyhow!(
+        let key_id = keyset_added_info.compression_keyset_id.ok_or_else(|| {
+            anyhow::anyhow!(
                 "missing key ID for the keyset that contains the compression secret key share"
-            ))?;
+            )
+        })?;
         let existing_compression_sk = {
             let threshold_keys = crypto_storage
                 .read_guarded_threshold_fhe_keys_from_cache(&key_id)
@@ -2515,7 +2519,7 @@ impl<
                 .private_keys
                 .glwe_secret_key_share_compression
                 .clone()
-                .ok_or(anyhow::anyhow!("missing compression secret key share"))?;
+                .ok_or_else(|| anyhow::anyhow!("missing compression secret key share"))?;
             match compression_sk_share {
                 CompressionPrivateKeySharesEnum::Z64(_share) => {
                     anyhow::bail!("z64 share is not supported")

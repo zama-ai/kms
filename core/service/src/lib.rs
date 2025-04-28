@@ -55,7 +55,7 @@ where
     // cannot use `some_or_err` because the derived type
     // e.g., XXXVersionedDispatchOwned does not have Debug
     hm.remove(&req_id)
-        .ok_or(anyhow!("client pk hashmap is empty"))
+        .ok_or_else(|| anyhow!("client pk hashmap is empty"))
 }
 
 /// Truncate s to a maximum of 128 chars.

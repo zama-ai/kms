@@ -61,6 +61,9 @@ async fn main() -> anyhow::Result<()> {
     let args = KmsArgs::parse();
     let (core_config, tracer_provider, meter_provider) =
         init_conf_kms_core_telemetry::<CoreConfig>(&args.config_file)?;
+
+    tracing::info!("Starting KMS Server with core config: {:?}", &core_config);
+
     let party_id = core_config.threshold.as_ref().map(|t| t.my_id);
 
     // common AWS configuration
@@ -210,7 +213,6 @@ async fn main() -> anyhow::Result<()> {
         .transpose()?;
 
     // initialize KMS core
-
     let service_socket_addr_str = format!(
         "{}:{}",
         core_config.service.listen_address, core_config.service.listen_port
@@ -230,6 +232,8 @@ async fn main() -> anyhow::Result<()> {
                 core_config.service.listen_address
             )
         });
+
+    println!("KMS Server service socket address: {}", service_socket_addr);
 
     let service_listener = TcpListener::bind(service_socket_addr)
         .await
@@ -338,7 +342,10 @@ async fn main() -> anyhow::Result<()> {
                         }
                     })
                 }
-                None => None,
+                None => {
+                    tracing::warn!("No TLS identity - using plaintext communication");
+                    None
+                }
             };
             let (kms, health_service) = threshold_server_init(
                 threshold_config,

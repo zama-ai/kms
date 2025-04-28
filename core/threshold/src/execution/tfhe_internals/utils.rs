@@ -198,7 +198,7 @@ pub fn expanded_encrypt<M: HlCompactable + Numeric, T: HlExpandable + Tagged>(
     let expanded = compact_list.expand()?;
     expanded
         .get::<T>(0)?
-        .ok_or(anyhow::anyhow!("expanded ciphertext list is empty"))
+        .ok_or_else(|| anyhow::anyhow!("expanded ciphertext list is empty"))
 }
 
 pub fn reconstruct_bit_vec<Z: BaseRing, const EXTENSION_DEGREE: usize>(

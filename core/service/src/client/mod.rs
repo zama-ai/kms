@@ -316,7 +316,7 @@ impl TryFrom<&ReencryptionRequest> for ParsedReencryptionRequest {
         let domain = value
             .domain
             .as_ref()
-            .ok_or(anyhow::anyhow!("Missing domain"))?;
+            .ok_or_else(|| anyhow::anyhow!("Missing domain"))?;
 
         let client_address =
             alloy_primitives::Address::parse_checksummed(&value.client_address, None)?;
@@ -1440,10 +1440,10 @@ impl Client {
     {
         let batch_count = agg_resp
             .first()
-            .ok_or(anyhow::anyhow!("agg_resp is empty"))?
+            .ok_or_else(|| anyhow::anyhow!("agg_resp is empty"))?
             .payload
             .as_ref()
-            .ok_or(anyhow::anyhow!("payload is empty in reencryption response"))?
+            .ok_or_else(|| anyhow::anyhow!("payload is empty in reencryption response"))?
             .signcrypted_ciphertexts
             .len();
 
@@ -1461,19 +1461,19 @@ impl Client {
             let fhe_type = agg_resp
                 .first()
                 .as_ref()
-                .ok_or(anyhow::anyhow!("agg_resp is empty"))?
+                .ok_or_else(|| anyhow::anyhow!("agg_resp is empty"))?
                 .payload
                 .as_ref()
-                .ok_or(anyhow::anyhow!("payload is empty"))?
+                .ok_or_else(|| anyhow::anyhow!("payload is empty"))?
                 .signcrypted_ciphertexts[batch_i]
                 .fhe_type()?;
             let packing_factor = agg_resp
                 .first()
                 .as_ref()
-                .ok_or(anyhow::anyhow!("agg_resp is empty"))?
+                .ok_or_else(|| anyhow::anyhow!("agg_resp is empty"))?
                 .payload
                 .as_ref()
-                .ok_or(anyhow::anyhow!("payload is empty"))?
+                .ok_or_else(|| anyhow::anyhow!("payload is empty"))?
                 .signcrypted_ciphertexts[batch_i]
                 .packing_factor;
 
@@ -1619,7 +1619,7 @@ impl Client {
     ) -> anyhow::Result<Vec<(FheTypes, u32, Vec<ShamirSharings<ResiduePolyF4<Z>>>)>> {
         let batch_count = agg_resp
             .first()
-            .ok_or(anyhow::anyhow!("response payloads is empty"))?
+            .ok_or_else(|| anyhow::anyhow!("response payloads is empty"))?
             .signcrypted_ciphertexts
             .len();
 

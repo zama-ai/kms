@@ -1269,7 +1269,7 @@ where
 
     let params = params_basics_handle
         .get_compression_decompression_params()
-        .ok_or(anyhow::anyhow!("missing (de)compression parameters"))?;
+        .ok_or_else(|| anyhow::anyhow!("missing (de)compression parameters"))?;
 
     generate_decompression_keys(
         private_glwe_compute_key,

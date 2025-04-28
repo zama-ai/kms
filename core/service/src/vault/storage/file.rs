@@ -61,7 +61,7 @@ impl FileStorage {
                 "The path {} already exists. Keeping the data without overwriting",
                 url_path
                     .to_str()
-                    .ok_or(anyhow!("Could not convert path to string"))?
+                    .ok_or_else(|| anyhow!("Could not convert path to string"))?
             );
             return Ok(());
         }
@@ -111,7 +111,7 @@ impl StorageReader for FileStorage {
         let res: T = safe_read_element_versioned(
             url_to_pathbuf(url)
                 .to_str()
-                .ok_or(anyhow!("Could not convert path to string"))?,
+                .ok_or_else(|| anyhow!("Could not convert path to string"))?,
         )
         .await?;
         Ok(res)
@@ -176,7 +176,7 @@ impl StorageForText for FileStorage {
         write_text(
             url_path
                 .to_str()
-                .ok_or(anyhow!("Could not convert path to string"))?,
+                .ok_or_else(|| anyhow!("Could not convert path to string"))?,
             text,
         )
         .await
@@ -203,7 +203,7 @@ impl Storage for FileStorage {
         safe_write_element_versioned(
             url_path
                 .to_str()
-                .ok_or(anyhow!("Could not convert path to string"))?,
+                .ok_or_else(|| anyhow!("Could not convert path to string"))?,
             data,
         )
         .await
@@ -219,7 +219,7 @@ impl Storage for FileStorage {
         Ok(tokio::fs::remove_file(
             url_path
                 .to_str()
-                .ok_or(anyhow!("Could not convert path to string"))?,
+                .ok_or_else(|| anyhow!("Could not convert path to string"))?,
         )
         .await?)
     }

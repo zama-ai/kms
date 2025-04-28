@@ -414,7 +414,7 @@ impl crate::kms::v1::ReencryptionRequest {
             )?;
         let verifying_contract = domain
             .verifying_contract
-            .ok_or(anyhow::anyhow!(ERR_VERIFYING_CONTRACT_NOT_FOUND))?;
+            .ok_or_else(|| anyhow::anyhow!(ERR_VERIFYING_CONTRACT_NOT_FOUND))?;
 
         if client_address == verifying_contract {
             anyhow::bail!("{ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR}: {client_address}");

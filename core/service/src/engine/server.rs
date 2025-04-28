@@ -86,10 +86,7 @@ pub async fn run_server<
     let socket_addr = socket_addr_str
         .to_socket_addrs()?
         .next()
-        .ok_or(anyhow::anyhow!(
-            "failed to parse socket address {}",
-            socket_addr_str
-        ))?;
+        .ok_or_else(|| anyhow::anyhow!("failed to parse socket address {}", socket_addr_str))?;
 
     // Create shutdown channel
     let (tx, rx): (

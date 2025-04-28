@@ -187,7 +187,7 @@ macro_rules! deserialize_to_low_level_helper {
                     decompression::tfhe_safe_deserialize_and_uncompress::<$rust_type>(
                         $decompression_key
                             .as_ref()
-                            .ok_or(anyhow::anyhow!("missing decompression key"))?,
+                            .ok_or_else(|| anyhow::anyhow!("missing decompression key"))?,
                         $serialized_high_level,
                     )?;
                 let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
@@ -227,7 +227,7 @@ pub fn deserialize_to_low_level(
                 let hl_ct: FheBool = decompression::tfhe_safe_deserialize_and_uncompress::<FheBool>(
                     decompression_key
                         .as_ref()
-                        .ok_or(anyhow::anyhow!("missing decompression key"))?,
+                        .ok_or_else(|| anyhow::anyhow!("missing decompression key"))?,
                     serialized_high_level,
                 )?;
                 let radix_ct = hl_ct.into_raw_parts();
@@ -719,7 +719,7 @@ impl TryFrom<WrappedKeySetConfig> for ddec_keyset_config::KeySetConfig {
                 let inner_config = value
                     .0
                     .standard_keyset_config
-                    .ok_or(anyhow::anyhow!("missing StandardKeySetConfig"))?;
+                    .ok_or_else(|| anyhow::anyhow!("missing StandardKeySetConfig"))?;
                 let compute_key_type =
                     kms_grpc::kms::v1::ComputeKeyType::try_from(inner_config.compute_key_type)?;
                 let compression_type = kms_grpc::kms::v1::KeySetCompressionConfig::try_from(
