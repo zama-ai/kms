@@ -186,6 +186,7 @@ jobs:
       needs.check-changes.outputs.changes-core-service == 'true' ||
       needs.check-changes.outputs.changes-core-threshold == 'true' ||
       needs.check-changes.outputs.changes-core-grpc == 'true' ||
+      needs.check-changes.outputs.changes-ci == 'true' ||
       github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
@@ -203,12 +204,12 @@ jobs:
     needs:
       - prepare-core-client-matrix
       - check-changes
-      - docker-golden-image
     if: >-
       needs.check-changes.outputs.changes-core-client == 'true' ||
       needs.check-changes.outputs.changes-core-service == 'true' ||
       needs.check-changes.outputs.changes-core-threshold == 'true' ||
       needs.check-changes.outputs.changes-core-grpc == 'true' ||
+      needs.check-changes.outputs.changes-ci == 'true' ||
       github.ref == 'refs/heads/main'
     strategy:
       matrix: ${{fromJson(needs.prepare-core-client-matrix.outputs.matrix)}}
