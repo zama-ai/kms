@@ -1,32 +1,22 @@
 use anyhow::{anyhow, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, Sha384};
-use std::{
-    collections::HashMap,
-    future::Future,
-    pin::{pin, Pin},
-    sync::Arc,
-    task::{ready, Context, Poll},
-};
-use tokio::net::{TcpListener, TcpStream};
-use tokio_rustls::{
-    rustls::{
-        client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
-        pki_types::{CertificateDer, ServerName, UnixTime},
-        server::{
-            danger::{ClientCertVerified, ClientCertVerifier},
-            ServerConfig,
-        },
-        DigitallySignedStruct, DistinguishedName, Error, SignatureScheme,
+use std::{collections::HashMap, sync::Arc};
+use tokio_rustls::rustls::{
+    client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
+    crypto::{CryptoProvider, WebPkiSupportedAlgorithms},
+    pki_types::{CertificateDer, ServerName, UnixTime},
+    server::{
+        danger::{ClientCertVerified, ClientCertVerifier},
+        WebPkiClientVerifier,
     },
-    TlsAcceptor,
+    DigitallySignedStruct, DistinguishedName, Error, RootCertStore, SignatureScheme,
 };
-// we can't use the unified `tokio_rustls::TlsStream` enum type because
-// tonic::transport::server only implements its Connected trait for
-// `tokio_rustls::server::TlsStream`
-use tokio_rustls::server::TlsStream as ServerTlsStream;
-use tokio_stream::Stream;
-use x509_parser::{certificate::X509Certificate, parse_x509_certificate, pem::Pem};
+use x509_parser::{
+    certificate::X509Certificate,
+    parse_x509_certificate,
+    pem::{parse_x509_pem, Pem},
+};
 
 /// These three values, PCR0,1,2, describe a software release. We also check
 /// PCR8 which is the hash of the certificate that signed a running enclave
@@ -46,54 +36,19 @@ pub struct ReleasePCRValues {
     pub pcr2: Vec<u8>,
 }
 
+/// Public key certificate, private key, allowed software hashes
 pub type BasicTLSConfig = (Pem, Pem, Option<Arc<Vec<ReleasePCRValues>>>);
 
+/// Public key certificate, private key, allowed software hashes, and
+/// additionally a map from party subject names to party CAs. This map needs to
+/// be built by `build_ca_certs_map` to have the keys equal to subject names by
+/// construction.
 pub type SendingServiceTLSConfig = (
     Pem,
     Pem,
     HashMap<String, Pem>,
     Option<Arc<Vec<ReleasePCRValues>>>,
 );
-
-/// `tonic::transport::server::Server' can't take arbitrary rustls configs. We
-/// have to wrap a `TcpListenerStream` into TLS ourselves to be able to do that.
-pub struct TlsAcceptorStream {
-    tcp: TcpListener,
-    tls: TlsAcceptor,
-}
-
-impl TlsAcceptorStream {
-    pub fn new(tcp: TcpListener, tls_config: ServerConfig) -> Self {
-        Self {
-            tcp,
-            tls: TlsAcceptor::from(Arc::new(tls_config)),
-        }
-    }
-}
-
-/// This is, probably, the smallest TLS wrapper that `Server` can use. It's
-/// dumber than the one in `tonic::transport`: it doesn't put TLS handshakes
-/// into separate Tokio threads. But it should be enough for our MPC network
-/// that has few parties, we won't be handling thousands of connections per
-/// second with this. And we shouldn't have to maintain a more complex
-/// implementation.
-impl Stream for TlsAcceptorStream {
-    type Item = std::io::Result<ServerTlsStream<TcpStream>>;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match self.tcp.poll_accept(cx) {
-            Poll::Ready(Ok((tcp_stream, _))) => {
-                let tls_stream = ready!(pin!(self.tls.accept(tcp_stream)).poll(cx));
-                match tls_stream {
-                    Ok(tls_stream) => Poll::Ready(Some(Ok(tls_stream))),
-                    Err(tls_err) => Poll::Ready(Some(Err(tls_err))),
-                }
-            }
-            Poll::Ready(Err(tcp_err)) => Poll::Ready(Some(Err(tcp_err))),
-            Poll::Pending => Poll::Pending,
-        }
-    }
-}
 
 /// Our custom verifier for our custom mTLS certificates extended with AWS Nitro
 /// attestation documents. It doesn't reimplement normal X.509 certificate
@@ -176,25 +131,74 @@ impl ServerCertVerifier for AttestedServerVerifier {
 
 #[derive(Debug)]
 pub struct AttestedClientVerifier {
-    verifier: Arc<dyn ClientCertVerifier>,
-    release_pcrs: Arc<Vec<ReleasePCRValues>>,
+    root_hint_subjects: Vec<DistinguishedName>,
+    supported_algs: WebPkiSupportedAlgorithms,
+    verifiers: HashMap<String, Arc<dyn ClientCertVerifier>>,
+    release_pcrs: Option<Arc<Vec<ReleasePCRValues>>>,
 }
 
 impl AttestedClientVerifier {
     pub fn new(
-        verifier: Arc<dyn ClientCertVerifier>,
-        release_pcrs: Arc<Vec<ReleasePCRValues>>,
-    ) -> Self {
-        Self {
-            verifier,
+        ca_certs: HashMap<String, Pem>,
+        release_pcrs: Option<Arc<Vec<ReleasePCRValues>>>,
+    ) -> anyhow::Result<Self> {
+        let verifiers = ca_certs
+            .iter()
+            .map(|(subject, ca_cert)| {
+                let mut roots = RootCertStore::empty();
+                roots
+                    .add(CertificateDer::from_slice(&ca_cert.contents))
+                    .map_err(|e| anyhow::anyhow!("{e}"))
+                    .and_then(|_| {
+                        WebPkiClientVerifier::builder(Arc::new(roots))
+                            .build()
+                            .map_err(|e| anyhow::anyhow!("{e}"))
+                    })
+                    .map(|verifier| (subject.clone(), verifier))
+            })
+            .collect::<anyhow::Result<HashMap<String, _>, _>>()?;
+        let root_hint_subjects = verifiers
+            .values()
+            .flat_map(|v| v.root_hint_subjects())
+            .cloned()
+            .collect();
+        // All verifiers use the same per-process crypto provider, so this
+        // should never fail
+        let supported_algs = CryptoProvider::get_default()
+            .expect("Crypto provider should exist at this point")
+            .signature_verification_algorithms;
+        Ok(Self {
+            root_hint_subjects,
+            supported_algs,
+            verifiers,
             release_pcrs,
-        }
+        })
+    }
+
+    fn get_verifier_for_x509_cert(
+        &self,
+        cert: &X509Certificate<'_>,
+    ) -> Result<Arc<dyn ClientCertVerifier>, Error> {
+        let subject = extract_subject_from_cert(cert).map_err(|e| Error::General(e.to_string()))?;
+        self.verifiers
+            .get(subject.as_str())
+            .ok_or(Error::General(format!("{subject} is not a trust anchor")))
+            .cloned()
+    }
+
+    fn get_verifier_for_cert_der(
+        &self,
+        cert: &CertificateDer<'_>,
+    ) -> Result<Arc<dyn ClientCertVerifier>, Error> {
+        let (_, x509_cert) =
+            parse_x509_certificate(cert.as_ref()).map_err(|e| Error::General(e.to_string()))?;
+        self.get_verifier_for_x509_cert(&x509_cert)
     }
 }
 
 impl ClientCertVerifier for AttestedClientVerifier {
     fn root_hint_subjects(&self) -> &[DistinguishedName] {
-        self.verifier.root_hint_subjects()
+        &self.root_hint_subjects
     }
 
     fn verify_client_cert(
@@ -203,21 +207,25 @@ impl ClientCertVerifier for AttestedClientVerifier {
         intermediates: &[CertificateDer<'_>],
         now: UnixTime,
     ) -> Result<ClientCertVerified, Error> {
-        // check the enclave-generated certificate used for the TLS session as
-        // usual (however, we expect it to be self-signed)
-        self.verifier
-            .verify_client_cert(end_entity, intermediates, now)?;
-        // check the bundled attestation document and EIF signing certificate
         let (_, cert) = parse_x509_certificate(end_entity.as_ref())
             .map_err(|e| Error::General(e.to_string()))?;
-        validate_wrapped_cert(
-            &cert,
-            &self.release_pcrs,
-            CertVerifier::Client(self.verifier.clone()),
-            intermediates,
-            now,
-        )
-        .map_err(|e| Error::General(e.to_string()))?;
+        let verifier = self.get_verifier_for_x509_cert(&cert)?;
+
+        // check the enclave-generated certificate used for the TLS session as
+        // usual (however, we expect it to be self-signed)
+        verifier.verify_client_cert(end_entity, intermediates, now)?;
+
+        // check the bundled attestation document and EIF signing certificate
+        if let Some(release_pcrs) = &self.release_pcrs {
+            validate_wrapped_cert(
+                &cert,
+                release_pcrs,
+                CertVerifier::Client(verifier.clone()),
+                intermediates,
+                now,
+            )
+            .map_err(|e| Error::General(e.to_string()))?;
+        }
 
         Ok(ClientCertVerified::assertion())
     }
@@ -228,7 +236,8 @@ impl ClientCertVerifier for AttestedClientVerifier {
         cert: &CertificateDer<'_>,
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, Error> {
-        self.verifier.verify_tls12_signature(message, cert, dss)
+        self.get_verifier_for_cert_der(cert)?
+            .verify_tls12_signature(message, cert, dss)
     }
 
     fn verify_tls13_signature(
@@ -237,11 +246,12 @@ impl ClientCertVerifier for AttestedClientVerifier {
         cert: &CertificateDer<'_>,
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, Error> {
-        self.verifier.verify_tls13_signature(message, cert, dss)
+        self.get_verifier_for_cert_der(cert)?
+            .verify_tls13_signature(message, cert, dss)
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        self.verifier.supported_verify_schemes()
+        self.supported_algs.supported_schemes()
     }
 }
 
@@ -255,7 +265,7 @@ pub enum CertVerified {
     Server(ServerCertVerified),
 }
 
-pub fn validate_wrapped_cert(
+fn validate_wrapped_cert(
     cert: &X509Certificate,
     trusted_releases: &[ReleasePCRValues],
     verifier: CertVerifier,
@@ -395,4 +405,27 @@ pub fn extract_subject_from_cert(cert: &X509Certificate) -> anyhow::Result<Strin
     }
 
     Ok(subject_str.to_string())
+}
+
+pub fn build_ca_certs_map<I: Iterator<Item = anyhow::Result<String>>>(
+    cert_bytes: I,
+) -> anyhow::Result<HashMap<String, Pem>> {
+    cert_bytes
+        .map(|cert_bytes| {
+            cert_bytes.and_then(|c| {
+                parse_x509_pem(c.as_ref())
+                    .map(|(_, pem)| pem)
+                    .map_err(|e| anyhow::anyhow!("Could not parse PEM envelope: {e}"))
+            })
+        })
+        .map(|cert_pem| {
+            cert_pem.and_then(|c| {
+                c.parse_x509()
+                    .map_err(|e| anyhow::anyhow!("Could not parse X509 structure: {e}"))
+                    .and_then(|ref x509_cert| {
+                        extract_subject_from_cert(x509_cert).map(|s| (s, c.clone()))
+                    })
+            })
+        })
+        .collect::<Result<HashMap<String, Pem>, _>>()
 }

@@ -3,11 +3,16 @@
 //!
 use super::Party;
 use crate::{
-    execution::online::preprocessing::redis::RedisConf, networking::grpc::CoreToCoreNetworkConfig,
+    execution::online::preprocessing::redis::RedisConf,
+    networking::{
+        grpc::CoreToCoreNetworkConfig,
+        tls::{build_ca_certs_map, SendingServiceTLSConfig},
+    },
 };
 use conf_trace::conf::TelemetryConfig;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
+use x509_parser::pem::parse_x509_pem;
 
 /// Struct for storing protocol settings
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -68,6 +73,20 @@ impl CertificatePaths {
         let cert = std::fs::read_to_string(&self.cert)?;
         let key = std::fs::read_to_string(&self.key)?;
         Ok(tonic::transport::Identity::from_pem(cert, key))
+    }
+
+    pub fn get_client_tls_conf(&self) -> anyhow::Result<SendingServiceTLSConfig> {
+        let cert_bytes = std::fs::read_to_string(&self.cert)?;
+        let cert = parse_x509_pem(cert_bytes.as_ref())?.1;
+        let key_bytes = std::fs::read_to_string(&self.key)?;
+        let key = parse_x509_pem(key_bytes.as_ref())?.1;
+        let ca_certs = build_ca_certs_map(self.calist.split(',').filter(|s| !s.is_empty()).map(
+            |path| {
+                std::fs::read_to_string(path)
+                    .map_err(|e| anyhow::anyhow!("Could not read CA certificates: {e}"))
+            },
+        ))?;
+        Ok((cert, key, ca_certs, None))
     }
 
     pub fn get_flattened_ca_list(&self) -> anyhow::Result<tonic::transport::Certificate> {

@@ -60,9 +60,9 @@ tokio = { workspace = true, features = [
     "time",
 ], optional = true }
 tokio-rustls = { workspace = true, optional = true }
-tokio-stream.workspace = true
 tonic = { workspace = true, features = ["tls-ring"], optional = true }
 tonic-health = { workspace = true, optional = true }
+tonic-tls = { workspace = true, optional = true }
 tower = { workspace = true, features = ["retry", "timeout"], optional = true }
 tower-http = { workspace = true, features = ["trace"], optional = true }
 tower-service = "=0.3.3"
@@ -191,6 +191,7 @@ non-wasm = [
     "dep:tokio-rustls",
     "dep:tonic",
     "dep:tonic-health",
+    "dep:tonic-tls",
     "dep:backoff",
     "dep:tower",
     "dep:tower-http",

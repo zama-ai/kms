@@ -73,6 +73,7 @@ strum_macros = "=0.27.1"
 tempfile = "=3.19.1"
 thiserror = "=2.0.12"
 tonic-health = "=0.13.0"
+tonic-tls = "=0.3.0"
 tower = "=0.5.2"
 tower-http = "=0.6.2"
 tfhe = "=1.1.3"
@@ -81,7 +82,6 @@ tfhe-versionable = "=0.5.0"
 tfhe-zk-pok = "=0.5.0"
 tokio = { version = "=1.44.2", features = ["full"] }
 tokio-rustls = { version = "=0.26.2", default-features = false, features = ["ring"] }
-tokio-stream = "0.1.17"
 tonic = "=0.13.0"
 tonic-build = "=0.13.0"
 tracing = { version = "=0.1.41", features = ["log"] }

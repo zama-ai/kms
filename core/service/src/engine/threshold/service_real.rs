@@ -85,7 +85,7 @@ use threshold_fhe::execution::zk::ceremony::{compute_witness_dim, Ceremony, Real
 use threshold_fhe::hashing::unsafe_hash_list_w_size;
 use threshold_fhe::networking::grpc::{CoreToCoreNetworkConfig, GrpcNetworkingManager, GrpcServer};
 use threshold_fhe::networking::{
-    tls::{extract_subject_from_cert, AttestedClientVerifier, BasicTLSConfig, TlsAcceptorStream},
+    tls::{build_ca_certs_map, AttestedClientVerifier, BasicTLSConfig},
     NetworkMode, Networking, NetworkingStrategy,
 };
 use threshold_fhe::session_id::{SessionId, DSEP_SESSION_ID, SESSION_ID_BYTES};
@@ -95,17 +95,16 @@ use tokio::sync::{Mutex, OwnedRwLockReadGuard, OwnedSemaphorePermit, RwLock};
 use tokio::time::Instant;
 use tokio_rustls::rustls::{
     pki_types::{CertificateDer, PrivateKeyDer},
-    server::{ServerConfig, WebPkiClientVerifier},
-    RootCertStore,
+    server::ServerConfig,
 };
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
-use tonic::transport::Server;
+use tonic::transport::{server::TcpIncoming, Server};
 use tonic::{Request, Response, Status};
 use tonic_health::pb::health_server::{Health, HealthServer};
 use tonic_health::server::HealthReporter;
+use tonic_tls::rustls::TlsIncoming;
 use tracing::Instrument;
-use x509_parser::pem::parse_x509_pem;
 
 fn derive_session_id_from_ctr(ctr: u64, req_id: &RequestId) -> anyhow::Result<SessionId> {
     if !req_id.is_valid() {
@@ -376,29 +375,22 @@ where
         "Could not find my own identity".to_string(),
     )?;
 
+    // We put the party CA certificates into a hashmap keyed by party addresses
+    // to be able to limit trust anchors to only one CA certificate both on
+    // client and server.
     let tls_certs = tls_identity
         .map(|(cert, key, trusted_releases)| {
-            peer_configs
-                .iter()
-                .flat_map(|peer| {
-                    peer.tls_cert.as_ref().map(|tls_cert| match tls_cert {
-                        TlsCert::Path(path) => std::fs::read_to_string(path),
-                        TlsCert::Pem(bytes) => Ok(bytes.to_string()),
-                    })
+            build_ca_certs_map(peer_configs.iter().flat_map(|peer| {
+                peer.tls_cert.as_ref().map(|tls_cert| match tls_cert {
+                    TlsCert::Path(path) => std::fs::read_to_string(path)
+                        .map_err(|e| anyhow::anyhow!("Could not read CA certificates: {e}")),
+                    TlsCert::Pem(bytes) => Ok(bytes.to_string()),
                 })
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| anyhow::anyhow!("{e}"))
-                .and_then(|ca_certs| {
-                    ca_certs
-                        .iter()
-                        .map(|c| {
-                            parse_x509_pem(c.as_ref())
-                                .map(|(_, pem)| pem)
-                                .map_err(|e| anyhow::anyhow!("{e}"))
-                        })
-                        .collect::<Result<Vec<_>, _>>()
-                })
-                .map(|ca_certs| (cert, key, ca_certs, trusted_releases))
+            }))
+            .map(|ca_certs| {
+                tracing::info!("Using TLS trust anchors: {:?}", ca_certs.keys());
+                (cert, key, ca_certs, trusted_releases)
+            })
         })
         .transpose()?;
 
@@ -408,36 +400,22 @@ where
     // documents.
     let tls_config = match tls_certs.clone() {
         Some((cert, key, ca_certs, trusted_releases)) => {
-            let mut roots = RootCertStore::empty();
-            roots.add_parsable_certificates(
-                ca_certs
-                    .iter()
-                    .map(|pem| CertificateDer::from_slice(pem.contents.as_slice())),
-            );
             let cert_chain =
                 vec![CertificateDer::from_slice(cert.contents.as_slice()).into_owned()];
             let key_der = PrivateKeyDer::try_from(key.contents.as_slice())
                 .map_err(|e| anyhow_error_and_log(e.to_string()))?
                 .clone_key();
+            let client_verifier = AttestedClientVerifier::new(ca_certs, trusted_releases.clone())?;
 
-            let safe_client_cert_verifier =
-                WebPkiClientVerifier::builder(Arc::new(roots)).build()?;
-            let client_verifier = match trusted_releases {
-                Some(trusted_releases) => {
-                    tracing::info!("Creating server with TLS and AWS Nitro attestation");
-                    Arc::new(AttestedClientVerifier::new(
-                        safe_client_cert_verifier,
-                        trusted_releases.clone(),
-                    ))
-                }
+            match trusted_releases {
+                Some(_) => tracing::info!("Creating server with TLS and AWS Nitro attestation"),
                 None => {
-                    tracing::info!("Creating server with TLS and without AWS Nitro attestation");
-                    safe_client_cert_verifier
+                    tracing::info!("Creating server with TLS and without AWS Nitro attestation")
                 }
-            };
+            }
             Some(
                 ServerConfig::builder()
-                    .with_client_cert_verifier(client_verifier)
+                    .with_client_cert_verifier(Arc::new(client_verifier))
                     .with_single_cert(cert_chain, key_der)?,
             )
         }
@@ -446,29 +424,6 @@ where
             None
         }
     };
-
-    // we'll use this hashmap in SendingService to configure client TLS with
-    // only one CA certificate in the root store per server
-    let tls_certs = tls_certs
-        .map(|(cert, key, ca_certs, trusted_releases)| {
-            ca_certs
-                .iter()
-                .map(|cert_pem| {
-                    cert_pem
-                        .clone()
-                        .parse_x509()
-                        .map_err(|e| anyhow::anyhow!("{e}"))
-                        .and_then(|ref cert| {
-                            extract_subject_from_cert(cert).map(|s| (s, cert_pem.clone()))
-                        })
-                })
-                .collect::<anyhow::Result<HashMap<_, _>>>()
-                .map(|ca_certs| {
-                    tracing::info!("Using TLS trust anchors: {:?}", ca_certs.keys());
-                    (cert, key, ca_certs, trusted_releases)
-                })
-        })
-        .transpose()?;
 
     let (threshold_health_reporter, threshold_health_service) =
         tonic_health::server::health_reporter();
@@ -530,21 +485,19 @@ where
         // to use arbitrary rustls configs until tonic::transport becomes a
         // separate crate from tonic (whose maintainers don't want to make its
         // API dependent on rustls)
+        let tcp_incoming = TcpIncoming::from(tcp_listener);
         match tls_config {
             Some(tls_config) => {
                 router
                     .serve_with_incoming_shutdown(
-                        TlsAcceptorStream::new(tcp_listener, tls_config),
+                        TlsIncoming::new(tcp_incoming, tls_config.into()),
                         graceful_shutdown_signal,
                     )
                     .await
             }
             None => {
                 router
-                    .serve_with_incoming_shutdown(
-                        tokio_stream::wrappers::TcpListenerStream::new(tcp_listener),
-                        graceful_shutdown_signal,
-                    )
+                    .serve_with_incoming_shutdown(tcp_incoming, graceful_shutdown_signal)
                     .await
             }
         }

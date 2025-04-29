@@ -37,10 +37,16 @@ where
 
     let own_identity: Identity = settings.protocol().host().into();
 
+    let tls_conf = settings
+        .certpaths
+        .as_ref()
+        .map(|certpaths| certpaths.get_client_tls_conf())
+        .transpose()?;
+
     // the networking manager is shared between the two services
     let networking = Arc::new(GrpcNetworkingManager::new(
         own_identity.clone(),
-        None,
+        tls_conf,
         settings.net_conf,
     )?);
     let networking_server = networking.new_server();

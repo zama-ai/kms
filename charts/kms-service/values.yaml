@@ -110,6 +110,7 @@ kmsCore:
     # If enabled, the core will communicate with other cores over TLS
     tls:
       enabled: false
+      attested: false
       # Core TLS certificates and keys can be loaded from file paths or from PEM
       # blocks NB: only PEM blocks are can be used to provide certificates to
       # Nitro enclaves!

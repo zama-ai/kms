@@ -90,10 +90,10 @@ tokio = { workspace = true, features = [
     "rt-multi-thread",
 ], optional = true }
 tokio-rustls = { workspace = true, optional = true }
-tokio-stream.workspace = true
 tokio-util = { version = "=0.7.14", features = ["rt"] }
 tonic = { workspace = true, optional = true }
 tonic-health = { workspace = true, optional = true }
+tonic-tls = { workspace = true, optional = true }
 tower = { workspace = true, features = ["retry", "timeout"], optional = true }
 tower-http = { workspace = true, features = ["trace"], optional = true }
 tracing = { workspace = true, features = ["log"] }
@@ -148,6 +148,7 @@ non-wasm = [
     "dep:tokio-rustls",
     "dep:tonic",
     "dep:tonic-health",
+    "dep:tonic-tls",
     "dep:tower",
     "dep:tower-http",
     "dep:x509-parser",

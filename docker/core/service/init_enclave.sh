@@ -73,8 +73,17 @@ log "requesting kms-server config"
 socat -u VSOCK-CONNECT:$PARENT_CID:$CONFIG_PORT \
       CREATE:$KMS_SERVER_CONFIG_FILE \
     |& logger || fail "cannot receive kms-server config"
+[ -f "$KMS_SERVER_CONFIG_FILE" ] || fail "did not receive kms-server config"
+
+# log configuration hash for sanity
+[ -f "$KMS_SERVER_CONFIG_FILE" ] && \
+    {
+	KMS_SERVER_CONFIG_HASH="$(sha256sum $KMS_SERVER_CONFIG_FILE | cut -d " " -f 1)"
+	log "received kms-server config with sha256 $KMS_SERVER_CONFIG_HASH"
+    }
 
 # keep receiving fresh web identity tokens from the parent
+has_value "aws.role_arn" || log "AWS role ARN not set"
 has_value "aws.role_arn" && \
     {
 	AWS_ROLE_ARN="$(get_value "aws.role_arn")"
@@ -91,14 +100,17 @@ has_value "aws.role_arn" && \
 # the `aws-config` crate doesn't have a simple way to configure AWS API
 # endpoints for credentials providers (except IMDS), so we set the STS endpoint
 # through the environment
+has_value "aws.sts_endpoint" || log "AWS STS endpoint not set"
 has_value "aws.sts_endpoint" && {
     AWS_ENDPOINT_URL_STS="$(get_value "aws.sts_endpoint")"
     export AWS_ENDPOINT_URL_STS
 }
 
 # (optional) telemetry and AWS API proxies
+has_value "telemetry.metrics_bind_address" || log "metrics endpoint not set"
 has_value "telemetry.metrics_bind_address" && \
     start_tcp_proxy_in "metrics" "$(get_configured_port "telemetry.metrics_bind_address")"
+has_value "telemetry.tracing_endpoint" || log "tracing endpoint not set"
 has_value "telemetry.tracing_endpoint" && \
     start_tcp_proxy_out "tracing" "$(get_configured_port "telemetry.tracing_endpoint")"
 start_tcp_proxy_out "AWS IMDS" "$(get_configured_port "aws.imds_endpoint")"

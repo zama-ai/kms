@@ -26,6 +26,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::Mutex;
 use tokio::time::Duration;
+use tonic::transport::server::TcpConnectInfo;
 use x509_parser::parse_x509_certificate;
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
@@ -253,23 +254,27 @@ impl Gnetworking for NetworkingImpl {
         // We also require party1.com to be the subject and the issuer CN too,
         // since we're using self-signed certificates at the moment.
         let valid_tls_sender = request
-            .peer_certs()
-            .map(|certs| {
-                if certs.len() != 1 {
-                    // it shouldn't happen because we expect TLS certificates to
-                    // be signed by party CA certificates directly, without any
-                    // intermediate CAs
-                    tracing::warn!(
+            .extensions()
+            .get::<tonic_tls::rustls::SslConnectInfo<TcpConnectInfo>>()
+            .and_then(|i| {
+                i.peer_certs().map(|certs| {
+                    if certs.len() != 1 {
+                        // it shouldn't happen because we expect TLS certificates to
+                        // be signed by party CA certificates directly, without any
+                        // intermediate CAs
+                        tracing::warn!(
                         "Received more than one certificate from peer, checking the first one only"
                     );
-                }
+                    }
 
-                parse_x509_certificate(certs[0].as_ref())
-                    .map_err(|e| tonic::Status::new(tonic::Code::Aborted, e.to_string()))
-                    .and_then(|(_rem, cert)| {
-                        extract_subject_from_cert(&cert)
-                            .map_err(|e| tonic::Status::new(tonic::Code::Aborted, e.to_string()))
-                    })
+                    parse_x509_certificate(certs[0].as_ref())
+                        .map_err(|e| tonic::Status::new(tonic::Code::Aborted, e.to_string()))
+                        .and_then(|(_rem, cert)| {
+                            extract_subject_from_cert(&cert).map_err(|e| {
+                                tonic::Status::new(tonic::Code::Aborted, e.to_string())
+                            })
+                        })
+                })
             })
             .transpose()?;
 

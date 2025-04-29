@@ -24,7 +24,7 @@ use tfhe::FheTypes;
 use tokio::sync::RwLock;
 use tokio_util::task::TaskTracker;
 use tonic::server::NamedService;
-use tonic::{transport, Request, Response, Status};
+use tonic::{transport, transport::server::TcpIncoming, Request, Response, Status};
 use tonic_health::pb::health_server::{Health, HealthServer};
 
 pub async fn setup_mock_kms(n: usize) -> HashMap<u32, ServerHandle> {
@@ -42,10 +42,7 @@ pub async fn setup_mock_kms(n: usize) -> HashMap<u32, ServerHandle> {
             transport::Server::builder()
                 .add_service(health_service)
                 .add_service(CoreServiceEndpointServer::from_arc(arc_kms))
-                .serve_with_incoming_shutdown(
-                    tokio_stream::wrappers::TcpListenerStream::new(service_listener),
-                    rx.map(drop),
-                )
+                .serve_with_incoming_shutdown(TcpIncoming::from(service_listener), rx.map(drop))
                 .await
                 .expect("Failed to start mock server {i}");
         });

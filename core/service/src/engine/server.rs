@@ -8,7 +8,7 @@ use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
-use tonic::transport::Server;
+use tonic::transport::{server::TcpIncoming, Server};
 use tonic_health::pb::health_server::{Health, HealthServer};
 use tower_http::classify::{GrpcCode, GrpcFailureClass};
 use tower_http::trace::TraceLayer;
@@ -131,28 +131,25 @@ pub async fn run_server<
     tracing::info!("Starting KMS core on socket {socket_addr}");
 
     // Create graceful shutdown future
-    let graceful = server.serve_with_incoming_shutdown(
-        tokio_stream::wrappers::TcpListenerStream::new(listener),
-        async {
-            // await is the same as recv on a oneshot channel
-            _ = rx.await;
-            tracing::info!(
-                "Starting graceful shutdown of core/service at {}",
-                socket_addr
-            );
+    let graceful = server.serve_with_incoming_shutdown(TcpIncoming::from(listener), async {
+        // await is the same as recv on a oneshot channel
+        _ = rx.await;
+        tracing::info!(
+            "Starting graceful shutdown of core/service at {}",
+            socket_addr
+        );
 
-            let res = kms_service.shutdown().await;
-            if res.is_err() {
-                tracing::error!(
-                    "Failed to shutdown core/service at {}: {}",
-                    socket_addr,
-                    res.err().unwrap()
-                );
-            } else {
-                tracing::info!("Successfully shutdown core/service at {}", socket_addr);
-            }
-        },
-    );
+        let res = kms_service.shutdown().await;
+        if res.is_err() {
+            tracing::error!(
+                "Failed to shutdown core/service at {}: {}",
+                socket_addr,
+                res.err().unwrap()
+            );
+        } else {
+            tracing::info!("Successfully shutdown core/service at {}", socket_addr);
+        }
+    });
 
     // Run the server with graceful shutdown
     match graceful.await {
