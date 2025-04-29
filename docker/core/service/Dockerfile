@@ -39,6 +39,12 @@ RUN apk update && apk add --no-cache \
     libgcc \
     libstdc++
 
+ARG YQ_VERSION=v4.45.1
+# Overridable arg to allow building for different architectures
+ARG TARGETARCH=amd64
+RUN wget -qO/usr/bin/yq https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${TARGETARCH} && \
+    chmod +x /usr/bin/yq
+
 WORKDIR /app/kms/core/service
 COPY ./core/service/config/ /app/kms/core/service/config
 
