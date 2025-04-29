@@ -1,9 +1,10 @@
 use std::collections::HashSet;
 
 use alloy_dyn_abi::Eip712Domain;
-use alloy_primitives::Address;
+use alloy_primitives::{map::HashMap, Address};
+use itertools::Itertools;
 use kms_grpc::{
-    kms::v1::{UserDecryptionResponse, UserDecryptionResponsePayload},
+    kms::v1::{TypedSigncryptedCiphertext, UserDecryptionResponse, UserDecryptionResponsePayload},
     rpc_types::FheTypeResponse,
 };
 
@@ -150,6 +151,98 @@ fn validate_user_decrypt_meta_data_and_signature(
     Ok(())
 }
 
+#[derive(Hash, PartialEq, Eq)]
+struct TypedSigncryptedCiphertextInvariants {
+    packing_factor: u32,
+    fhe_type: i32,
+    external_handle: Vec<u8>,
+}
+
+impl From<TypedSigncryptedCiphertext> for TypedSigncryptedCiphertextInvariants {
+    fn from(value: TypedSigncryptedCiphertext) -> Self {
+        Self {
+            packing_factor: value.packing_factor,
+            fhe_type: value.fhe_type,
+            external_handle: value.external_handle,
+        }
+    }
+}
+
+/// Fields in [UserDecryptionResponsePayload] that should remain the same
+/// for the same request.
+#[derive(Hash, PartialEq, Eq)]
+struct UserDecryptionResponseInvariants {
+    degree: u32,
+    digest: Vec<u8>,
+    signcrypted_ciphertext_metadata: Vec<TypedSigncryptedCiphertextInvariants>,
+}
+
+impl From<UserDecryptionResponsePayload> for UserDecryptionResponseInvariants {
+    fn from(value: UserDecryptionResponsePayload) -> Self {
+        Self {
+            degree: value.degree,
+            digest: value.digest,
+            signcrypted_ciphertext_metadata: value
+                .signcrypted_ciphertexts
+                .into_iter()
+                .map(|x| x.into())
+                .collect(),
+        }
+    }
+}
+
+pub(crate) fn select_most_common<'a, P, T>(
+    min_occurence: usize,
+    agg_resp: impl Iterator<Item = Option<&'a P>>,
+) -> Option<usize>
+where
+    P: Clone + 'a,
+    T: From<P> + std::cmp::Eq + std::hash::Hash,
+{
+    // this hashmap is keyed on [T]
+    // and its values contain a tuple (x, y), where x is the occurence and y is the original index
+    let mut occurence_map: HashMap<T, (usize, usize), _> = HashMap::new();
+    for (i, resp) in agg_resp.enumerate() {
+        match resp {
+            Some(inner) => {
+                occurence_map
+                    .entry(inner.clone().into())
+                    .or_insert_with(|| (0, i))
+                    .0 += 1;
+            }
+            None => {
+                continue;
+            }
+        }
+    }
+
+    // turn the values in the hashmap to a vector and sort by occurence
+    let first = occurence_map
+        .values()
+        .sorted_by(|a, b| a.0.cmp(&b.0))
+        .next_back();
+
+    match first {
+        Some(inner) => {
+            if inner.0 >= min_occurence {
+                Some(inner.1)
+            } else {
+                None
+            }
+        }
+        None => None,
+    }
+}
+
+fn select_most_common_user_dec(
+    min_occurence: usize,
+    agg_resp: &[UserDecryptionResponse],
+) -> Option<UserDecryptionResponsePayload> {
+    let iter = agg_resp.iter().map(|resp| resp.payload.as_ref());
+    let idx = select_most_common::<_, UserDecryptionResponseInvariants>(min_occurence, iter);
+    idx.and_then(|i| agg_resp[i].payload.clone())
+}
+
 fn validate_user_decrypt_responses(
     server_addresses: &[Address],
     client_request: &ParsedUserDecryptionRequest,
@@ -160,10 +253,13 @@ fn validate_user_decrypt_responses(
         tracing::warn!("There are no responses");
         return Ok(None);
     }
-    // TODO pivot should actually be picked as the most common response instead of just an
-    // arbitrary one. The same in decryption.
+
     // Pick a pivot response
-    let mut option_pivot_payloads: Option<UserDecryptionResponsePayload> = None;
+    let min_occurence = (server_addresses.len() - 1) / 3 + 1; // note that this is floored division
+    let pivot_payload = match select_most_common_user_dec(min_occurence, agg_resp) {
+        Some(inner) => inner,
+        None => anyhow::bail!("Cannot find user decryption pivot"),
+    };
     let mut resp_parsed_payloads = Vec::with_capacity(agg_resp.len());
     let mut party_ids = HashSet::new();
     let mut verification_keys = HashSet::new();
@@ -177,22 +273,12 @@ fn validate_user_decrypt_responses(
             }
         };
 
-        // Set the first existing element as pivot
-        let pivot_payload = match &option_pivot_payloads {
-            Some(pivot_resp) => pivot_resp,
-            None => {
-                // need to clone here because `option_pivot_payload` is larger scope
-                option_pivot_payloads = Some(cur_payload.clone());
-                cur_payload
-            }
-        };
-
         // Validate that all the responses agree with the pivot on the static parts of the
         // response
         if let Err(e) = validate_user_decrypt_meta_data_and_signature(
             server_addresses,
             client_request,
-            pivot_payload,
+            &pivot_payload,
             cur_payload,
             &cur_resp.signature,
             &cur_resp.external_signature,
@@ -266,16 +352,11 @@ fn validate_user_decrypt_responses(
         resp_parsed_payloads.push(cur_payload.clone());
     }
 
-    match option_pivot_payloads {
-        Some(inner) => {
-            if resp_parsed_payloads.len() <= inner.degree as usize {
-                tracing::warn!("Not enough correct responses to decrypt the user data!");
-                Ok(None)
-            } else {
-                Ok(Some(resp_parsed_payloads))
-            }
-        }
-        None => Ok(None),
+    if resp_parsed_payloads.len() <= pivot_payload.degree as usize {
+        tracing::warn!("Not enough correct responses to user-decrypt the data!");
+        Ok(None)
+    } else {
+        Ok(Some(resp_parsed_payloads))
     }
 }
 
@@ -314,22 +395,19 @@ mod tests {
     use crate::{
         client::{compute_link, CiphertextHandle, ParsedUserDecryptionRequest},
         cryptography::signcryption::ephemeral_encryption_key_generation,
-        engine::{
-            base::{compute_external_user_decrypt_signature, gen_sig_keys},
-            validation::{
-                check_ext_user_decryption_signature,
-                validate_user_decrypt_responses_against_request,
-            },
-            validation_wasm::{
-                validate_user_decrypt_meta_data_and_signature, validate_user_decrypt_responses,
-                ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGH,
-                ERR_VALIDATE_USER_DECRYPTION_BAD_FHETYPE_LENGTH,
-                ERR_VALIDATE_USER_DECRYPTION_DIGEST_MISMATCH,
-                ERR_VALIDATE_USER_DECRYPTION_FHETYPE_MISMATCH,
-                ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
-            },
-        },
+        engine::base::{compute_external_user_decrypt_signature, gen_sig_keys},
     };
+
+    use super::{
+        check_ext_user_decryption_signature, select_most_common_user_dec,
+        validate_user_decrypt_meta_data_and_signature, validate_user_decrypt_responses,
+        validate_user_decrypt_responses_against_request, ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGH,
+        ERR_VALIDATE_USER_DECRYPTION_BAD_FHETYPE_LENGTH,
+        ERR_VALIDATE_USER_DECRYPTION_DIGEST_MISMATCH,
+        ERR_VALIDATE_USER_DECRYPTION_FHETYPE_MISMATCH,
+        ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
+    };
+
     fn dummy_domain() -> alloy_sol_types::Eip712Domain {
         alloy_sol_types::eip712_domain!(
             name: "Authorization token",
@@ -1002,6 +1080,133 @@ mod tests {
                 .unwrap()
                 .len(),
                 2
+            );
+        }
+    }
+
+    #[test]
+    fn test_select_most_common_user_dec() {
+        let digest = vec![1, 2, 3, 4];
+        let ciphertext_handle = vec![5, 6, 7, 8];
+        let resp0 = {
+            let payload = UserDecryptionResponsePayload {
+                verification_key: vec![],
+                digest: digest.clone(),
+                signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
+                    fhe_type: 1,
+                    signcrypted_ciphertext: vec![],
+                    external_handle: ciphertext_handle.clone(),
+                    packing_factor: 1,
+                }],
+                party_id: 1,
+                degree: 1,
+            };
+            UserDecryptionResponse {
+                signature: vec![],
+                external_signature: vec![],
+                payload: Some(payload),
+            }
+        };
+
+        // two responses, second response has modified packing_factor
+        {
+            let mut resp1 = resp0.clone();
+            resp1
+                .payload
+                .iter_mut()
+                .for_each(|x| x.signcrypted_ciphertexts[0].packing_factor = 2);
+            let agg_resp = vec![resp0.clone(), resp1.clone()];
+            assert_eq!(select_most_common_user_dec(2, &agg_resp), None);
+        }
+
+        // two responses, second response has modified fhe_type
+        {
+            let mut resp1 = resp0.clone();
+            resp1
+                .payload
+                .iter_mut()
+                .for_each(|x| x.signcrypted_ciphertexts[0].fhe_type = 2);
+            let agg_resp = vec![resp0.clone(), resp1.clone()];
+            assert_eq!(select_most_common_user_dec(2, &agg_resp), None);
+        }
+
+        // two responses, second response has modified handle
+        {
+            let mut resp1 = resp0.clone();
+            resp1
+                .payload
+                .iter_mut()
+                .for_each(|x| x.signcrypted_ciphertexts[0].external_handle = vec![42]);
+            let agg_resp = vec![resp0.clone(), resp1.clone()];
+            assert_eq!(select_most_common_user_dec(2, &agg_resp), None);
+        }
+
+        // two responses, second response has modified degree
+        {
+            let mut resp1 = resp0.clone();
+            resp1.payload.iter_mut().for_each(|x| x.degree = 2);
+            let agg_resp = vec![resp0.clone(), resp1.clone()];
+            assert_eq!(select_most_common_user_dec(2, &agg_resp), None);
+        }
+
+        // two responses, second response has modified digest
+        {
+            let mut resp1 = resp0.clone();
+            resp1
+                .payload
+                .iter_mut()
+                .for_each(|x| x.digest = vec![9, 9, 9, 9]);
+            let agg_resp = vec![resp0.clone(), resp1.clone()];
+            assert_eq!(select_most_common_user_dec(2, &agg_resp), None);
+        }
+
+        // two responses, no modification
+        {
+            let resp1 = resp0.clone();
+            let agg_resp = vec![resp0.clone(), resp1.clone()];
+            assert_eq!(
+                select_most_common_user_dec(2, &agg_resp),
+                resp0.payload.clone()
+            );
+        }
+
+        let resp1 = resp0.clone();
+
+        // resp2 is different from resp0 and resp1
+        let resp2 = {
+            let payload = UserDecryptionResponsePayload {
+                verification_key: vec![],
+                digest: digest.clone(),
+                signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
+                    fhe_type: 1,
+                    signcrypted_ciphertext: vec![],
+                    external_handle: ciphertext_handle.clone(),
+                    packing_factor: 1,
+                }],
+                party_id: 1,
+                degree: 2, // degree is different
+            };
+            UserDecryptionResponse {
+                signature: vec![],
+                external_signature: vec![],
+                payload: Some(payload),
+            }
+        };
+
+        // three responses, but does not exceed threshold, we should have None
+        {
+            let agg_resp = vec![resp0.clone(), resp1.clone(), resp2.clone()];
+            assert_eq!(select_most_common_user_dec(3, &agg_resp), None);
+        }
+
+        // three responses where the second response is modified field that's unrelated to the hashmap key
+        {
+            let mut resp1 = resp1.clone();
+            resp1.external_signature = vec![1, 2, 3, 4];
+            let agg_resp = vec![resp0.clone(), resp1, resp2.clone()];
+            assert_eq!(
+                select_most_common_user_dec(2, &agg_resp),
+                resp0.payload.clone()
             );
         }
     }

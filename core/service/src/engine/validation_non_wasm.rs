@@ -4,7 +4,7 @@ use alloy_dyn_abi::Eip712Domain;
 use kms_grpc::{
     kms::v1::{
         PublicDecryptionRequest, PublicDecryptionResponse, PublicDecryptionResponsePayload,
-        RequestId, TypedCiphertext, UserDecryptionRequest,
+        RequestId, TypedCiphertext, TypedPlaintext, UserDecryptionRequest,
     },
     rpc_types::protobuf_to_alloy_domain_option,
 };
@@ -255,10 +255,37 @@ fn validate_public_decrypt_meta_data(
     Ok(true)
 }
 
-/// Pick the pivot as the first response and call [validate_public_decrypt_meta_data]
+/// Fields in [PublicDecryptionResponsePayload] that should remain the same
+/// for the same request.
+#[derive(Hash, PartialEq, Eq)]
+struct PublicDecryptionResponseInvariants {
+    digest: Vec<u8>,
+    plaintexts: Vec<TypedPlaintext>,
+}
+
+impl From<PublicDecryptionResponsePayload> for PublicDecryptionResponseInvariants {
+    fn from(value: PublicDecryptionResponsePayload) -> Self {
+        Self {
+            digest: value.digest,
+            plaintexts: value.plaintexts.clone(),
+        }
+    }
+}
+
+fn select_most_common_public_dec(
+    min_occurence: usize,
+    agg_resp: &[PublicDecryptionResponse],
+) -> Option<PublicDecryptionResponsePayload> {
+    let iter = agg_resp.iter().map(|resp| resp.payload.as_ref());
+    let idx = crate::engine::validation::select_most_common::<_, PublicDecryptionResponseInvariants>(
+        min_occurence,
+        iter,
+    );
+    idx.and_then(|i| agg_resp[i].payload.clone())
+}
+
+/// Pick the pivot as the first response and call [validate_dec_meta_data]
 /// on every response. Additionally, ensure that verification keys are unique.
-///
-/// TODO: we should pick a pivot where t + 1 parties agree on.
 fn validate_public_decrypt_responses(
     server_pks: &[PublicSigKey],
     agg_resp: &[PublicDecryptionResponse],
@@ -268,7 +295,11 @@ fn validate_public_decrypt_responses(
         return Ok(None);
     }
     // Pick a pivot response
-    let mut option_pivot_payload: Option<PublicDecryptionResponsePayload> = None;
+    let min_occurence = (server_pks.len() - 1) / 3 + 1; // note that this is floored division
+    let pivot_payload = match select_most_common_public_dec(min_occurence, agg_resp) {
+        Some(inner) => inner,
+        None => anyhow::bail!("Cannot find public decryption pivot"),
+    };
     let mut resp_parsed_payloads = Vec::with_capacity(agg_resp.len());
     let mut verification_keys = HashSet::new();
     for cur_resp in agg_resp {
@@ -277,17 +308,6 @@ fn validate_public_decrypt_responses(
             None => {
                 tracing::warn!("No payload in current public decryption response from server!");
                 continue;
-            }
-        };
-
-        // Set the first existing element as pivot
-        // NOTE: this is the optimistic case where the pivot cannot be wrong
-        let pivot_payload = match &option_pivot_payload {
-            Some(pivot_payload) => pivot_payload,
-            None => {
-                // need to clone here because `option_pivot_payload` is larger scope
-                option_pivot_payload = Some(cur_payload.clone());
-                cur_payload
             }
         };
 
@@ -304,11 +324,11 @@ fn validate_public_decrypt_responses(
         // response
         if !validate_public_decrypt_meta_data(
             server_pks,
-            pivot_payload,
+            &pivot_payload,
             cur_payload,
             &cur_resp.signature,
         )? {
-            tracing::warn!("Some server did not provide the proper public decryption response!");
+            tracing::warn!("Some server did not provide the proper response!");
             continue;
         }
 
@@ -391,13 +411,18 @@ mod tests {
 
     use crate::{
         cryptography::signcryption::ephemeral_encryption_key_generation,
-        engine::base::{derive_request_id, gen_sig_keys},
+        engine::{
+            base::{derive_request_id, gen_sig_keys},
+            validation_non_wasm::{
+                select_most_common_public_dec, validate_public_decrypt_responses,
+            },
+        },
     };
 
     use super::{
         validate_public_decrypt_meta_data, validate_public_decrypt_req,
-        validate_public_decrypt_responses, validate_public_decrypt_responses_against_request,
-        validate_request_id, validate_user_decrypt_req, verify_user_decrypt_eip712, DSEP_REQ_RESP,
+        validate_public_decrypt_responses_against_request, validate_request_id,
+        validate_user_decrypt_req, verify_user_decrypt_eip712, DSEP_REQ_RESP,
         ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK,
         ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_REQ_ID, ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS,
         ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP,
@@ -1170,6 +1195,92 @@ mod tests {
                 2,
             )
             .unwrap();
+        }
+    }
+
+    #[test]
+    fn test_select_most_common_dec() {
+        let digest = vec![1, 2, 3, 4];
+        let plaintexts = vec![TypedPlaintext {
+            bytes: vec![1],
+            fhe_type: 1,
+        }];
+        let resp0 = {
+            let payload = PublicDecryptionResponsePayload {
+                verification_key: vec![],
+                digest: digest.clone(),
+                plaintexts: plaintexts.clone(),
+                external_signature: Some(vec![]),
+            };
+            PublicDecryptionResponse {
+                signature: vec![],
+                payload: Some(payload),
+            }
+        };
+
+        // two responses, second response has modified digest
+        {
+            let mut resp1 = resp0.clone();
+            resp1
+                .payload
+                .iter_mut()
+                .for_each(|x| x.digest = vec![5, 6, 7, 8]);
+            let agg_resp = vec![resp0.clone(), resp1];
+            assert_eq!(select_most_common_public_dec(2, &agg_resp), None);
+        }
+
+        // two responses, second response has modified plaintext
+        {
+            let mut resp1 = resp0.clone();
+            resp1.payload.iter_mut().for_each(|x| {
+                x.plaintexts = vec![TypedPlaintext {
+                    bytes: vec![0],
+                    fhe_type: 1,
+                }]
+            });
+            let agg_resp = vec![resp0.clone(), resp1];
+            assert_eq!(select_most_common_public_dec(2, &agg_resp), None);
+        }
+
+        // happy path
+        {
+            let resp1 = resp0.clone();
+            let agg_resp = vec![resp0.clone(), resp1];
+            assert_eq!(
+                select_most_common_public_dec(2, &agg_resp),
+                resp0.payload.clone()
+            );
+        }
+
+        let resp1 = resp0.clone();
+        let resp2 = {
+            let payload = PublicDecryptionResponsePayload {
+                verification_key: vec![],
+                digest: vec![5, 6, 7, 8], // different from resp1 and resp0
+                plaintexts: plaintexts.clone(),
+                external_signature: Some(vec![]),
+            };
+            PublicDecryptionResponse {
+                signature: vec![],
+                payload: Some(payload),
+            }
+        };
+
+        // threshold is too high
+        {
+            let agg_resp = vec![resp0.clone(), resp1.clone(), resp2.clone()];
+            assert_eq!(select_most_common_public_dec(3, &agg_resp), None);
+        }
+
+        // second response has a modified field unrelated to the hashmap key
+        {
+            let mut resp1 = resp1.clone();
+            resp1.signature = vec![2, 2, 2, 2];
+            let agg_resp = vec![resp0.clone(), resp1.clone(), resp2.clone()];
+            assert_eq!(
+                select_most_common_public_dec(2, &agg_resp),
+                resp1.payload.clone()
+            );
         }
     }
 }
