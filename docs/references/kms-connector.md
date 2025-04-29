@@ -1,16 +1,16 @@
 # KMS Connector
 
-The KMS Connector is a Rust-based service that bridges the KMS Core with the Gateway L2 (Arbitrum) blockchain. It handles decryption requests, key management operations, and secure communication between the KMS Core service and the blockchain smart contracts.
+The KMS Connector is a Rust-based service that bridges the KMS Core with the fhevm Gateway. It handles decryption requests, key management operations, and secure communication between the KMS Core service and the Gateway's smart contracts.
 
 ## Overview
 
-The KMS Connector follows an event-driven architecture with a Multiple Producer, Single Consumer (MPSC) pattern for orchestrating operations. It subscribes to events from the Gateway L2 blockchain, processes them, and communicates with the KMS Core service to fulfill decryption and key management requests.
+The KMS Connector follows an event-driven architecture with a Multiple Producer, Single Consumer (MPSC) pattern for orchestrating operations. It subscribes to events from the fhevm Gateway, processes them, and communicates with the KMS Core service to fulfill decryption and key management requests.
 
 ## Key Features
 
 - **Event-Driven Architecture**: Subscribes to and processes blockchain events in real-time
 - **High-Frequency Processing**: Optimized for processing decryption requests at 500ms intervals
-- **Secure Wallet Management**: Supports both mnemonic-based and signing key file-based wallet configurations
+- **Secure Wallet Management**: Supports both private key and AWS KMS based wallet configurations
 - **Efficient S3 Integration**: Retrieves ciphertexts from S3 storage with optimized performance
 - **Automatic Reconnection**: Gracefully handles network disruptions with intelligent retry mechanisms
 - **Comprehensive Error Handling**: Implements robust error handling throughout the system
@@ -21,7 +21,7 @@ The KMS Connector follows an event-driven architecture with a Multiple Producer,
 
 #### KmsCoreConnector
 
-The central component that orchestrates all interactions with the L2 blockchain. It initializes other components, manages event processing, and handles the lifecycle of the connector.
+The central component that orchestrates all interactions with the fhevm Gateway. It initializes other components, manages event processing, and handles the lifecycle of the connector.
 
 ```rust
 pub struct KmsCoreConnector<P: Provider + Clone> {
@@ -29,7 +29,6 @@ pub struct KmsCoreConnector<P: Provider + Clone> {
     event_processor: EventProcessor<P>,
     kms_client: Arc<KmsServiceImpl>,
     shutdown: Option<broadcast::Receiver<()>>,
-    config: Config,
 }
 ```
 
@@ -53,8 +52,8 @@ Handles configuration from environment variables and TOML files. Manages all con
 
 Manages wallet operations for signing decryption responses. Supports:
 
-- Creation from mnemonic phrases
-- Creation from signing key files
+- Creation from private key
+- Creation from AWS KMS configuration
 - Message and hash signing
 
 #### S3CiphertextClient
@@ -70,16 +69,16 @@ Handles efficient retrieval of ciphertexts from AWS S3 storage:
 
 #### EventsAdapter
 
-Subscribes to and processes blockchain events:
+Subscribes to and processes fhevm Gateway's events:
 
-- Establishes WebSocket connections to the blockchain
+- Establishes WebSocket connections to the Gateway
 - Subscribes to events from DecryptionManager and fhevm contracts
 - Handles connection failures with automatic reconnection
 - Forwards events to the event processor
 
 #### DecryptionAdapter
 
-Handles sending decryption responses to the blockchain:
+Handles sending decryption responses to the fhevm Gateway:
 
 - Sends public decryption responses
 - Sends user-specific decryption responses
@@ -98,7 +97,7 @@ Interfaces with the KMS Core service via gRPC:
 
 #### EventProcessor
 
-Processes events from the L2 blockchain:
+Processes events from the fhevm Gateway:
 
 - Handles public decryption requests
 - Handles user-specific decryption requests
@@ -156,12 +155,12 @@ The KMS Connector supports flexible configuration through both TOML files and en
 
    ```bash
    # Set required configuration
-   export KMS_CONNECTOR_GWL2_URL="ws://localhost:8547"
+   export KMS_CONNECTOR_GATEWAY_URL="ws://localhost:8547"
    export KMS_CONNECTOR_KMS_CORE_ENDPOINT="http://localhost:50052"
-   export KMS_CONNECTOR_MNEMONIC="your mnemonic here"
+   export KMS_CONNECTOR_PRIVATE_KEY="your private key here"
    export KMS_CONNECTOR_CHAIN_ID="31337"
-   export KMS_CONNECTOR_DECRYPTION_MANAGER_ADDRESS="0x..."
-   export KMS_CONNECTOR_HTTPZ_ADDRESS="0x..."
+   export KMS_CONNECTOR_DECRYPTION_ADDRESS="0x..."
+   export KMS_CONNECTOR_GATEWAY_CONFIG_ADDRESS="0x..."
 
    # Start the connector without a config file
    kms-connector start
@@ -178,7 +177,7 @@ The KMS Connector supports flexible configuration through both TOML files and en
 
    ```bash
    # Set specific overrides
-   export KMS_CONNECTOR_GWL2_URL="ws://localhost:8547"
+   export KMS_CONNECTOR_GATEWAY_URL="ws://localhost:8547"
    export KMS_CONNECTOR_CHAIN_ID="31337"
 
    # Use config file for other values
@@ -199,25 +198,26 @@ All environment variables are prefixed with `KMS_CONNECTOR_`. Here's the complet
 
 | Environment Variable | Description | Default |
 |---------------------|-------------|---------|
-| `KMS_CONNECTOR_GWL2_URL` | Gateway L2 WebSocket URL | ws://localhost:8545 |
+| `KMS_CONNECTOR_GATEWAY_URL` | Gateway WebSocket URL | ws://localhost:8545 |
 | `KMS_CONNECTOR_KMS_CORE_ENDPOINT` | KMS Core service endpoint | http://[::1]:50052 |
-| `KMS_CONNECTOR_MNEMONIC` | Wallet mnemonic phrase | (required if signing_key_path not provided) |
-| `KMS_CONNECTOR_SIGNING_KEY_PATH` | Path to a serialized signing key file | (required if mnemonic not provided) |
+| `KMS_CONNECTOR_PRIVATE_KEY` | Private key as a hex string | (optional if `KMS_CONNECTOR_AWS_KMS_CONFIG__KEY_ID` is configured) |
+| `KMS_CONNECTOR_AWS_KMS_CONFIG__KEY_ID` | AWS KMS key ID | (optional if `KMS_CONNECTOR_PRIVATE_KEY` is configured) |
+| `KMS_CONNECTOR_AWS_KMS_CONFIG__REGION` | AWS region for KMS | (optional if `KMS_CONNECTOR_PRIVATE_KEY` is configured) |
+| `KMS_CONNECTOR_AWS_KMS_CONFIG__ENDPOINT` | AWS endpoint URL for KMS | (optional if `KMS_CONNECTOR_PRIVATE_KEY` is configured) |
 | `KMS_CONNECTOR_CHAIN_ID` | Blockchain network chain ID | 31337 |
-| `KMS_CONNECTOR_DECRYPTION_MANAGER_ADDRESS` | Address of the Decryption Manager contract | 0x5fbdb2315678afecb367f032d93f642f64180aa3 |
-| `KMS_CONNECTOR_HTTPZ_ADDRESS` | Address of the fhevm contract | 0x0000000000000000000000000000000000000001 |
+| `KMS_CONNECTOR_DECRYPTION_ADDRESS` | Address of the Decryption contract | 0x5fbdb2315678afecb367f032d93f642f64180aa3 |
+| `KMS_CONNECTOR_GATEWAY_CONFIG_ADDRESS` | Address of the GatewayConfig contract | 0x0000000000000000000000000000000000000001 |
 | `KMS_CONNECTOR_CHANNEL_SIZE` | Size of the event processing channel | 1000 |
 | `KMS_CONNECTOR_SERVICE_NAME` | Name of the KMS connector instance | kms-connector |
-| `KMS_CONNECTOR_ACCOUNT_INDEX` | Account index for the wallet | 0 |
-| `KMS_CONNECTOR_PUBLIC_DECRYPTION_TIMEOUT_SECS` | Timeout for decryption operations | 300 |
+| `KMS_CONNECTOR_PUBLIC_DECRYPTION_TIMEOUT_SECS` | Timeout for public decryption operations | 300 |
 | `KMS_CONNECTOR_USER_DECRYPTION_TIMEOUT_SECS` | Timeout for user decryption operations | 300 |
 | `KMS_CONNECTOR_RETRY_INTERVAL_SECS` | Interval between retry attempts | 5 |
-| `KMS_CONNECTOR_DECRYPTION_MANAGER_DOMAIN_NAME` | EIP-712 domain name for DecryptionManager contract | DecryptionManager |
-| `KMS_CONNECTOR_DECRYPTION_MANAGER_DOMAIN_VERSION` | EIP-712 domain version for DecryptionManager contract | 1 |
-| `KMS_CONNECTOR_HTTPZ_DOMAIN_NAME` | EIP-712 domain name for fhevm contract | fhevm |
-| `KMS_CONNECTOR_HTTPZ_DOMAIN_VERSION` | EIP-712 domain version for fhevm contract | 1 |
+| `KMS_CONNECTOR_DECRYPTION_DOMAIN_NAME` | EIP-712 domain name for Decryption contract | Decryption |
+| `KMS_CONNECTOR_DECRYPTION_DOMAIN_VERSION` | EIP-712 domain version for Decryption contract | 1 |
+| `KMS_CONNECTOR_GATEWAY_CONFIG_DOMAIN_NAME` | EIP-712 domain name for GatewayConfig contract | GatewayConfig |
+| `KMS_CONNECTOR_GATEWAY_CONFIG_DOMAIN_VERSION` | EIP-712 domain version for GatewayConfig contract | 1 |
 | `KMS_CONNECTOR_PRIVATE_KEY` | Private key as a hex string | (optional) |
-| `KMS_CONNECTOR_VERIFY_COPROCESSORS` | Whether to verify coprocessors against fhevm contract | false |
+| `KMS_CONNECTOR_VERIFY_COPROCESSORS` | Whether to verify coprocessors against GatewayConfig contract | false |
 | `KMS_CONNECTOR_S3_CONFIG__REGION` | AWS S3 region for ciphertext storage | (optional) |
 | `KMS_CONNECTOR_S3_CONFIG__BUCKET` | AWS S3 bucket name for ciphertext storage | (optional) |
 | `KMS_CONNECTOR_S3_CONFIG__ENDPOINT` | AWS S3 endpoint URL for ciphertext storage | (optional) |
@@ -234,8 +234,8 @@ For local development and testing, you can run the KMS Connector directly from t
 
 ```bash
 # Clone the repository
-git clone https://github.com/zama-ai/kms-core.git
-cd kms-core/kms-connector
+git clone https://github.com/zama-ai/kms-connector.git
+cd kms-connector
 
 # Build the connector
 cargo build --release
@@ -255,12 +255,12 @@ docker build -t kms-connector .
 # Run the container with environment variables
 docker run -d \
   --name kms-connector \
-  -e KMS_CONNECTOR_GWL2_URL="ws://gateway-l2:8547" \
+  -e KMS_CONNECTOR_GATEWAY_URL="ws://fhevm-gateway:8547" \
   -e KMS_CONNECTOR_KMS_CORE_ENDPOINT="http://kms-core:50052" \
-  -e KMS_CONNECTOR_MNEMONIC="your mnemonic here" \
+  -e KMS_CONNECTOR_PRIVATE_KEY="your private key here" \
   -e KMS_CONNECTOR_CHAIN_ID="31337" \
-  -e KMS_CONNECTOR_DECRYPTION_MANAGER_ADDRESS="0x..." \
-  -e KMS_CONNECTOR_HTTPZ_ADDRESS="0x..." \
+  -e KMS_CONNECTOR_DECRYPTION_ADDRESS="0x..." \
+  -e KMS_CONNECTOR_GATEWAY_CONFIG_ADDRESS="0x..." \
   kms-connector
 ```
 
@@ -275,11 +275,11 @@ kind: ConfigMap
 metadata:
   name: kms-connector-config
 data:
-  KMS_CONNECTOR_GWL2_URL: "ws://gateway-l2-service:8547"
+  KMS_CONNECTOR_GATEWAY_URL: "ws://fhevm-gateway-service:8547"
   KMS_CONNECTOR_KMS_CORE_ENDPOINT: "http://kms-core-service:50052"
   KMS_CONNECTOR_CHAIN_ID: "31337"
-  KMS_CONNECTOR_DECRYPTION_MANAGER_ADDRESS: "0x..."
-  KMS_CONNECTOR_HTTPZ_ADDRESS: "0x..."
+  KMS_CONNECTOR_DECRYPTION_ADDRESS: "0x..."
+  KMS_CONNECTOR_GATEWAY_CONFIG_ADDRESS: "0x..."
   KMS_CONNECTOR_S3_CONFIG__REGION: "us-east-1"
   KMS_CONNECTOR_S3_CONFIG__BUCKET: "my-ciphertext-bucket"
 ```
@@ -292,7 +292,7 @@ metadata:
   name: kms-connector-secret
 type: Opaque
 data:
-  KMS_CONNECTOR_MNEMONIC: "base64-encoded-mnemonic"
+  KMS_CONNECTOR_PRIVATE_KEY: "base64-encoded-private-key"
 ```
 
 ```yaml
@@ -355,13 +355,13 @@ If the connector fails to retrieve ciphertexts:
 
 ### Connection Issues
 
-#### Gateway L2 Connection Failures
+#### Gateway Connection Failures
 
-If the connector fails to connect to the Gateway L2 blockchain:
+If the connector fails to connect to the fhevm Gateway:
 
 1. Verify that the WebSocket URL is correct and accessible
-2. Check network connectivity between the connector and the Gateway L2 node
-3. Ensure the Gateway L2 node is running and accepting WebSocket connections
+2. Check network connectivity between the connector and the Gateway node
+3. Ensure the Gateway node is running and accepting WebSocket connections
 
 #### KMS Core Connection Failures
 
@@ -395,7 +395,7 @@ For high-frequency operation, consider the following performance optimizations:
 1. **Increase Channel Size**: Set `KMS_CONNECTOR_CHANNEL_SIZE` to a higher value (e.g., 5000) for handling more concurrent events
 2. **Optimize Timeouts**: Adjust `KMS_CONNECTOR_PUBLIC_DECRYPTION_TIMEOUT_SECS` and `KMS_CONNECTOR_USER_DECRYPTION_TIMEOUT_SECS` based on your network latency
 3. **Use Direct S3 Endpoints**: Configure `KMS_CONNECTOR_S3_CONFIG__ENDPOINT` to point to the closest S3 endpoint
-4. **Deploy Close to Services**: Minimize network latency by deploying the connector close to both the KMS Core service and the Gateway L2 node
+4. **Deploy Close to Services**: Minimize network latency by deploying the connector close to both the KMS Core service and the Gateway node
 
 ## API Reference
 
@@ -408,7 +408,7 @@ The connector communicates with the KMS Core service using the following gRPC me
 - `user_decrypt`: Sends a user decryption request
 - `get_user_decryption_result`: Retrieves the result of a user decryption operation
 
-### Gateway L2 Contract Events
+### Gateway Contract Events
 
 The connector subscribes to the following events:
 
