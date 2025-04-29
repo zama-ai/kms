@@ -1,98 +1,67 @@
-# syntax=docker/dockerfile:1.4
+# syntax=docker/dockerfile:1
 
-# RUST_IMAGE_VERSION arg can be used to override the default version
-ARG RUST_IMAGE_VERSION=latest
-
-# Build Stage - Rust binary
-FROM cgr.dev/chainguard/rust:latest-dev AS builder
-
-# Install minimal build dependencies, alphabetically sorted
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
-        ca-certificates \
-        gcc \
-        git \
-        libprotobuf-dev \
-        libssl-dev \
-        make \
-        pkg-config \
-        protobuf-compiler \
-        ssh \
-    && rm -rf /var/lib/apt/lists/*
+################################################################
+## Second stage builds the kms-core binaries
+FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms-golden-image:latest AS kms-threshold
 
 WORKDIR /app/ddec
-
-# Setup SSH keys for git
-RUN mkdir -p -m 0600 /root/.ssh && \
-    ssh-keyscan -H github.com >> ~/.ssh/known_hosts
 
 # Copy project files
 COPY . .
 
 # Build with cargo install and caching
 ARG FEATURES
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/ddec/target,sharing=locked \
+RUN --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
     mkdir -p /app/ddec/bin && \
     # cargo install --path . --root . --bins --no-default-features --features=${FEATURES}
     # NOTE: if we're in a workspace then we need to set a different path
     cargo install --path core/threshold --root . --bins --no-default-features --features=${FEATURES}
 
+
 # Go tooling stage - only for grpc-health-probe
-FROM debian:stable-slim AS go-builder
+FROM golang:1.24.1-alpine AS go-builder
 
-# Install minimal Go build dependencies
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
-        ca-certificates \
-        curl \
-    && rm -rf /var/lib/apt/lists/*
+ARG GRPC_HEALTH_PROBE_VERSION=v0.4.37
 
-# Install Go and grpc-health-probe
-ARG TARGETOS
-ARG TARGETARCH
-ARG GO_VERSION=1.21.6
-RUN curl -o go.tgz -L "https://go.dev/dl/go${GO_VERSION}.${TARGETOS}-${TARGETARCH}.tar.gz" && \
-    tar -C /usr/local -xzf go.tgz && \
-    rm go.tgz
+RUN apk update && apk add --no-cache git && \
+    git clone https://github.com/grpc-ecosystem/grpc-health-probe && \
+    cd grpc-health-probe && \
+    git checkout ${GRPC_HEALTH_PROBE_VERSION} && \
+    # Fix CVE-2025-27144
+    go get github.com/go-jose/go-jose/v4@v4.0.5 && \
+    # Fix  CVE-2025-22870
+    go get golang.org/x/net@v0.36.0 && \
+    go mod tidy && \
+    go build -ldflags="-s -w -extldflags '-static'" -o /out/grpc_health_probe .
 
-ENV PATH="/usr/local/go/bin:/root/go/bin:$PATH"
 
-# Install grpc-health-probe with caching
-ARG GRPC_HEALTH_PROBE_VERSION=v0.4.35
-RUN --mount=type=cache,target=/root/go/pkg \
-    go install github.com/grpc-ecosystem/grpc-health-probe@${GRPC_HEALTH_PROBE_VERSION}
 
-# Final runtime stage
-FROM debian:stable-slim
+FROM --platform=$BUILDPLATFORM cgr.dev/chainguard/glibc-dynamic:latest-dev AS prod
 
-# Install minimal runtime dependencies
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
-        ca-certificates \
-        libprotobuf-dev \
-        libssl3 \
-        iproute2 \
-        iputils-ping \
-    && rm -rf /var/lib/apt/lists/*
+USER root
+# Install required runtime dependencies
+RUN apk update && apk add --no-cache \
+    ca-certificates \
+    protoc \
+    protobuf \
+    libssl3 \
+    iproute2 \
+    iputils
 
 WORKDIR /app/ddec
 
 # Copy binaries from previous stages
-COPY --from=builder /app/ddec/bin/ /app/ddec/bin/
-COPY --from=go-builder /root/go/bin/grpc-health-probe /app/ddec/bin/
+COPY --from=kms-threshold /app/ddec/bin/ /app/ddec/bin/
+COPY --from=go-builder /out/grpc_health_probe /app/ddec/bin/
 
 ENV PATH="/app/ddec/bin:$PATH"
 
 EXPOSE 50000
 
 # Change user to limit root access
-RUN groupadd -g 10002 kms && \
-    useradd -m -u 10004 -g kms kms
+# Change user to limit root access
+RUN addgroup -S kms --gid 10002 && \
+    adduser -D -s /bin/sh --uid 10003 -G kms kms
 RUN chown -R kms:kms /app/ddec
 USER kms
 
@@ -102,4 +71,4 @@ USER kms
 
 # Add health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD ["grpc-health-probe", "-addr=:50000"]
+    CMD ["grpc_health_probe", "-addr=:50000"]
