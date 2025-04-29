@@ -24,6 +24,11 @@ RUN --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
        /app/kms/target/${LTO_RELEASE}/kms-gen-keys \
     ./core/service/bin
 
+ARG YQ_VERSION=v4.45.1
+# Overridable arg to allow building for different architectures
+ARG TARGETARCH=amd64
+RUN wget -qO/usr/bin/yq https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${TARGETARCH}
+
 ################################################################
 ## Third stage: Copy the binaries from preceding stages
 # This stage will be the final image
@@ -46,6 +51,10 @@ RUN wget -qO/usr/bin/yq https://github.com/mikefarah/yq/releases/download/${YQ_V
     chmod +x /usr/bin/yq
 
 WORKDIR /app/kms/core/service
+
+COPY --from=kms-core /usr/bin/yq /usr/bin/yq
+RUN chmod +x /usr/bin/yq
+
 COPY ./core/service/config/ /app/kms/core/service/config
 
 # Set the path to include the binaries and not just the default /usr/local/bin
