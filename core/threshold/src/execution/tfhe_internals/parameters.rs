@@ -1451,17 +1451,8 @@ pub const NIST_PARAMS_P8_NO_SNS_LWE: DKGParams = DKGParams::WithoutSnS(NIST_PARA
 
 pub const NIST_PARAMS_P8_SNS_LWE: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
     regular_params: NIST_PARAMS_P8_INTERNAL_LWE,
-    sns_params: NoiseSquashingParameters {
-        glwe_dimension: GlweDimension(4),
-        glwe_noise_distribution: DynamicDistribution::new_t_uniform(27),
-        polynomial_size: PolynomialSize(1024),
-        decomp_base_log: DecompositionBaseLog(24),
-        decomp_level_count: DecompositionLevelCount(3),
-        ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
-        modulus_switch_noise_reduction_params: None,
-        message_modulus: MessageModulus(2),
-        carry_modulus: CarryModulus(2),
-    },
+    sns_params:
+        super::raw_parameters::NIST_PARAMS_NOISE_SQUASHING_MESSAGE_1_CARRY_1_PBS_KS_TUNIFORM_2M128,
 });
 
 pub const NIST_PARAMS_P32_INTERNAL_LWE: DKGParamsRegular = DKGParamsRegular {
@@ -1481,17 +1472,8 @@ pub const NIST_PARAMS_P32_NO_SNS_LWE: DKGParams =
 
 pub const NIST_PARAMS_P32_SNS_LWE: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
     regular_params: NIST_PARAMS_P32_INTERNAL_LWE,
-    sns_params: NoiseSquashingParameters {
-        glwe_dimension: GlweDimension(1),
-        glwe_noise_distribution: DynamicDistribution::new_t_uniform(27),
-        polynomial_size: PolynomialSize(4096),
-        decomp_base_log: DecompositionBaseLog(24),
-        decomp_level_count: DecompositionLevelCount(3),
-        ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
-        modulus_switch_noise_reduction_params: None,
-        message_modulus: MessageModulus(4),
-        carry_modulus: CarryModulus(4),
-    },
+    sns_params:
+        super::raw_parameters::NIST_PARAMS_NOISE_SQUASHING_MESSAGE_2_CARRY_2_PBS_KS_TUNIFORM_2M128,
 });
 
 pub const NIST_PARAMS_P8_INTERNAL_FGLWE: DKGParamsRegular = DKGParamsRegular {
@@ -1512,17 +1494,8 @@ pub const NIST_PARAMS_P8_NO_SNS_FGLWE: DKGParams =
 // Parameters for SwitchSquash
 pub const NIST_PARAMS_P8_SNS_FGLWE: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
     regular_params: NIST_PARAMS_P8_INTERNAL_FGLWE,
-    sns_params: NoiseSquashingParameters {
-        glwe_dimension: GlweDimension(4),
-        glwe_noise_distribution: DynamicDistribution::new_t_uniform(27),
-        polynomial_size: PolynomialSize(1024),
-        decomp_base_log: DecompositionBaseLog(24),
-        decomp_level_count: DecompositionLevelCount(3),
-        ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
-        modulus_switch_noise_reduction_params: None,
-        message_modulus: MessageModulus(2),
-        carry_modulus: CarryModulus(2),
-    },
+    sns_params:
+        super::raw_parameters::NIST_PARAMS_NOISE_SQUASHING_MESSAGE_1_CARRY_1_KS_PBS_TUNIFORM_2M128,
 });
 
 pub const NIST_PARAMS_P32_INTERNAL_FGLWE: DKGParamsRegular = DKGParamsRegular {
@@ -1543,17 +1516,8 @@ pub const NIST_PARAMS_P32_NO_SNS_FGLWE: DKGParams =
 // Parameters for SwitchSquash
 pub const NIST_PARAMS_P32_SNS_FGLWE: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
     regular_params: NIST_PARAMS_P32_INTERNAL_FGLWE,
-    sns_params: NoiseSquashingParameters {
-        glwe_dimension: GlweDimension(1),
-        glwe_noise_distribution: DynamicDistribution::new_t_uniform(27),
-        polynomial_size: PolynomialSize(4096),
-        decomp_base_log: DecompositionBaseLog(24),
-        decomp_level_count: DecompositionLevelCount(3),
-        ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
-        modulus_switch_noise_reduction_params: None,
-        message_modulus: MessageModulus(4),
-        carry_modulus: CarryModulus(4),
-    },
+    sns_params:
+        super::raw_parameters::NIST_PARAMS_NOISE_SQUASHING_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
 });
 
 #[cfg(test)]

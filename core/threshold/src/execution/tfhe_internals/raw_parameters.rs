@@ -1,23 +1,26 @@
-// NOTE: In the near future we want to import those directly from tfhe-rs !!
-// All these come from Nigel's script in NIST Paper for pfail 2^-128
+//! All these come from Nigel's script in NIST M1 document for pfail 2^-128.
+//! The script is available here https://github.com/zama-ai/NIST-Threshold/blob/main/CPP-Progs/TFHE-Params/main.cpp
+//! and outputs a TFHE-rs-params.txt file which is copied here.
 
-// Main Document Parameters
-// Parameters When Main Ciphertexts are LWE
 use tfhe::{
     boolean::prelude::*,
+    core_crypto::commons::ciphertext_modulus::CiphertextModulus,
     shortint::{
         parameters::{
             CompactCiphertextListExpansionKind, CompactPublicKeyEncryptionParameters,
-            ShortintKeySwitchingParameters, SupportedCompactPkeZkScheme,
+            NoiseSquashingParameters, ShortintKeySwitchingParameters, SupportedCompactPkeZkScheme,
         },
         prelude::*,
     },
 };
 
+// Main Document Parameters
+// Parameters When Main Ciphertexts are LWE
+
 // p-fail = 2^-128.788
 pub const NIST_PARAM_1_CARRY_1_COMPACT_PK_PBS_KS_TUNIFORM_2M128: ClassicPBSParameters =
     ClassicPBSParameters {
-        lwe_dimension: LweDimension(928),
+        lwe_dimension: LweDimension(926),
         glwe_dimension: GlweDimension(2),
         polynomial_size: PolynomialSize(1024),
         lwe_noise_distribution: DynamicDistribution::new_t_uniform(44),
@@ -44,11 +47,11 @@ pub const NIST_PARAM_PKE_MESSAGE_1_CARRY_1_PBS_KS_TUNIFORM_2M128:
     carry_modulus: CarryModulus(2),
     ciphertext_modulus: CiphertextModulus::new_native(),
     expansion_kind: CompactCiphertextListExpansionKind::RequiresCasting,
-    zk_scheme: SupportedCompactPkeZkScheme::V1,
+    zk_scheme: SupportedCompactPkeZkScheme::V2,
 };
 
 // Parameters to keyswitch from input PKE 1_1 TUniform parameters to 1_1 PBS_KS compute parameters
-// arriving under the big key
+// arriving under the destination key
 pub const NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_1_CARRY_1_PBS_KS_TUNIFORM_2M128:
     ShortintKeySwitchingParameters = ShortintKeySwitchingParameters {
     ks_level: DecompositionLevelCount(2),
@@ -56,12 +59,26 @@ pub const NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_1_CARRY_1_PBS_KS_TUNIFORM_2M12
     destination_key: EncryptionKeyChoice::Small,
 };
 
+// Parameters for SwitchSquash
+pub const NIST_PARAMS_NOISE_SQUASHING_MESSAGE_1_CARRY_1_PBS_KS_TUNIFORM_2M128:
+    NoiseSquashingParameters = NoiseSquashingParameters {
+    glwe_dimension: GlweDimension(4),
+    glwe_noise_distribution: DynamicDistribution::new_t_uniform(27),
+    polynomial_size: PolynomialSize(1024),
+    decomp_base_log: DecompositionBaseLog(24),
+    decomp_level_count: DecompositionLevelCount(3),
+    ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
+    modulus_switch_noise_reduction_params: None,
+    message_modulus: MessageModulus(2),
+    carry_modulus: CarryModulus(2),
+};
+
 // **********************************
 
 // p-fail = 2^-128.788
 pub const NIST_PARAM_2_CARRY_2_COMPACT_PK_PBS_KS_TUNIFORM_2M128: ClassicPBSParameters =
     ClassicPBSParameters {
-        lwe_dimension: LweDimension(1006),
+        lwe_dimension: LweDimension(1004),
         glwe_dimension: GlweDimension(1),
         polynomial_size: PolynomialSize(4096),
         lwe_noise_distribution: DynamicDistribution::new_t_uniform(42),
@@ -82,23 +99,39 @@ pub const NIST_PARAM_2_CARRY_2_COMPACT_PK_PBS_KS_TUNIFORM_2M128: ClassicPBSParam
 // Parameters for the PKE operation
 pub const NIST_PARAM_PKE_MESSAGE_2_CARRY_2_PBS_KS_TUNIFORM_2M128:
     CompactPublicKeyEncryptionParameters = CompactPublicKeyEncryptionParameters {
-    encryption_lwe_dimension: LweDimension(1024),
-    encryption_noise_distribution: DynamicDistribution::new_t_uniform(42),
+    encryption_lwe_dimension: LweDimension(2048),
+    encryption_noise_distribution: DynamicDistribution::new_t_uniform(16),
     message_modulus: MessageModulus(4),
     carry_modulus: CarryModulus(4),
     ciphertext_modulus: CiphertextModulus::new_native(),
     expansion_kind: CompactCiphertextListExpansionKind::RequiresCasting,
-    zk_scheme: SupportedCompactPkeZkScheme::V1,
+    zk_scheme: SupportedCompactPkeZkScheme::V2,
 };
 
 // Parameters to keyswitch from input PKE 2_2 TUniform parameters to 2_2 PBS_KS compute parameters
-// arriving under the big key
+// arriving under the destination key
 pub const NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_2_CARRY_2_PBS_KS_TUNIFORM_2M128:
     ShortintKeySwitchingParameters = ShortintKeySwitchingParameters {
-    ks_level: DecompositionLevelCount(3),
-    ks_base_log: DecompositionBaseLog(6),
+    ks_level: DecompositionLevelCount(4),
+    ks_base_log: DecompositionBaseLog(4),
     destination_key: EncryptionKeyChoice::Small,
 };
+
+// Parameters for SwitchSquash
+pub const NIST_PARAMS_NOISE_SQUASHING_MESSAGE_2_CARRY_2_PBS_KS_TUNIFORM_2M128:
+    NoiseSquashingParameters = NoiseSquashingParameters {
+    glwe_dimension: GlweDimension(1),
+    glwe_noise_distribution: DynamicDistribution::new_t_uniform(27),
+    polynomial_size: PolynomialSize(4096),
+    decomp_base_log: DecompositionBaseLog(24),
+    decomp_level_count: DecompositionLevelCount(3),
+    ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
+    modulus_switch_noise_reduction_params: None,
+    message_modulus: MessageModulus(4),
+    carry_modulus: CarryModulus(4),
+};
+
+// **********************************
 
 // Parameters When Main Ciphertexts are FGLWE
 
@@ -132,16 +165,30 @@ pub const NIST_PARAM_PKE_MESSAGE_1_CARRY_1_KS_PBS_TUNIFORM_2M128:
     carry_modulus: CarryModulus(2),
     ciphertext_modulus: CiphertextModulus::new_native(),
     expansion_kind: CompactCiphertextListExpansionKind::RequiresCasting,
-    zk_scheme: SupportedCompactPkeZkScheme::V1,
+    zk_scheme: SupportedCompactPkeZkScheme::V2,
 };
 
 // Parameters to keyswitch from input PKE 1_1 TUniform parameters to 1_1 KS_PBS compute parameters
-// arriving under the big key
+// arriving under the destination key
 pub const NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_1_CARRY_1_KS_PBS_TUNIFORM_2M128:
     ShortintKeySwitchingParameters = ShortintKeySwitchingParameters {
     ks_level: DecompositionLevelCount(1),
-    ks_base_log: DecompositionBaseLog(14),
+    ks_base_log: DecompositionBaseLog(15),
     destination_key: EncryptionKeyChoice::Big,
+};
+
+// Parameters for SwitchSquash
+pub const NIST_PARAMS_NOISE_SQUASHING_MESSAGE_1_CARRY_1_KS_PBS_TUNIFORM_2M128:
+    NoiseSquashingParameters = NoiseSquashingParameters {
+    glwe_dimension: GlweDimension(4),
+    glwe_noise_distribution: DynamicDistribution::new_t_uniform(27),
+    polynomial_size: PolynomialSize(1024),
+    decomp_base_log: DecompositionBaseLog(24),
+    decomp_level_count: DecompositionLevelCount(3),
+    ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
+    modulus_switch_noise_reduction_params: None,
+    message_modulus: MessageModulus(2),
+    carry_modulus: CarryModulus(2),
 };
 
 // **********************************
@@ -149,7 +196,7 @@ pub const NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_1_CARRY_1_KS_PBS_TUNIFORM_2M12
 // p-fail = 2^-128.788
 pub const NIST_PARAM_2_CARRY_2_COMPACT_PK_KS_PBS_TUNIFORM_2M128: ClassicPBSParameters =
     ClassicPBSParameters {
-        lwe_dimension: LweDimension(928),
+        lwe_dimension: LweDimension(926),
         glwe_dimension: GlweDimension(1),
         polynomial_size: PolynomialSize(4096),
         lwe_noise_distribution: DynamicDistribution::new_t_uniform(44),
@@ -170,17 +217,17 @@ pub const NIST_PARAM_2_CARRY_2_COMPACT_PK_KS_PBS_TUNIFORM_2M128: ClassicPBSParam
 // Parameters for the PKE operation
 pub const NIST_PARAM_PKE_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128:
     CompactPublicKeyEncryptionParameters = CompactPublicKeyEncryptionParameters {
-    encryption_lwe_dimension: LweDimension(1024),
-    encryption_noise_distribution: DynamicDistribution::new_t_uniform(42),
+    encryption_lwe_dimension: LweDimension(2048),
+    encryption_noise_distribution: DynamicDistribution::new_t_uniform(16),
     message_modulus: MessageModulus(4),
     carry_modulus: CarryModulus(4),
     ciphertext_modulus: CiphertextModulus::new_native(),
     expansion_kind: CompactCiphertextListExpansionKind::RequiresCasting,
-    zk_scheme: SupportedCompactPkeZkScheme::V1,
+    zk_scheme: SupportedCompactPkeZkScheme::V2,
 };
 
 // Parameters to keyswitch from input PKE 2_2 TUniform parameters to 2_2 KS_PBS compute parameters
-// arriving under the big key
+// arriving under the destination key
 pub const NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128:
     ShortintKeySwitchingParameters = ShortintKeySwitchingParameters {
     ks_level: DecompositionLevelCount(1),
@@ -188,4 +235,16 @@ pub const NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M12
     destination_key: EncryptionKeyChoice::Big,
 };
 
-// **********************************
+// Parameters for SwitchSquash
+pub const NIST_PARAMS_NOISE_SQUASHING_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128:
+    NoiseSquashingParameters = NoiseSquashingParameters {
+    glwe_dimension: GlweDimension(1),
+    glwe_noise_distribution: DynamicDistribution::new_t_uniform(27),
+    polynomial_size: PolynomialSize(4096),
+    decomp_base_log: DecompositionBaseLog(24),
+    decomp_level_count: DecompositionLevelCount(3),
+    ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
+    modulus_switch_noise_reduction_params: None,
+    message_modulus: MessageModulus(4),
+    carry_modulus: CarryModulus(4),
+};
