@@ -138,6 +138,7 @@ has_value "threshold" || \
 has_value "threshold" && \
     {
 	log "generating signing keys for threshold KMS"
+	NUM_PARTIES=$(yq -p toml -op ".threshold.peers | length" $KMS_SERVER_CONFIG_FILE)
 	kms-gen-keys \
 	    --pub-url "$(get_value "public_vault.storage")" \
 	    --priv-url "$(get_value "private_vault.storage")" \
@@ -150,6 +151,7 @@ has_value "threshold" && \
 	    --cmd signing-keys \
 	    threshold \
 			--signing-key-party-id "$(get_value "threshold.my_id")" \
+			--num-parties "$NUM_PARTIES" \
 	    |& logger || fail "cannot generate keys"
     }
 
