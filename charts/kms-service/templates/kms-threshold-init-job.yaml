@@ -39,7 +39,7 @@ spec:
                     kmsInitCount=$((kmsInitCount + 1))
                     break
                   fi
-                  if [ ${healthStatus} -eq 4 ]; then
+                  if [ ${healthStatus} -eq {{ .Values.kmsPeers.count }} ]; then
                     echo "kms-core #${peerAddress} is reachable but not yet initialized"
                     break
                   fi;
@@ -60,7 +60,7 @@ spec:
                     kmsInitCount=$((kmsInitCount + 1))
                     break
                   fi
-                  if [ ${healthStatus} -eq 4 ]; then
+                  if [ ${healthStatus} -eq {{ .Values.kmsPeers.count }} ]; then
                     echo "kms-core #${peerID} is reachable but not yet initialized"
                     break
                   fi;
