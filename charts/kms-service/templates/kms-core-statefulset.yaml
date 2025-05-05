@@ -222,7 +222,7 @@ spec:
               {{- end }}
               {{ include "kmsCoreMode" . }} \
               {{- if .Values.kmsCore.thresholdMode.enabled }}
-              --signing-key-party-id ${KMS_CORE__THRESHOLD__MY_ID}
+              --signing-key-party-id ${KMS_CORE__THRESHOLD__MY_ID} \
               --num-parties {{ .Values.kmsPeers.count }}
               {{- else }}
               --write-privkey
