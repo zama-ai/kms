@@ -140,6 +140,12 @@ pub enum DKGParams {
     WithSnS(DKGParamsSnS),
 }
 
+impl From<DKGParams> for PBSParameters {
+    fn from(val: DKGParams) -> Self {
+        PBSParameters::PBS(val.get_params_basics_handle().to_classic_pbs_parameters())
+    }
+}
+
 impl DKGParams {
     pub fn get_params_basics_handle(&self) -> &dyn DKGParamsBasics {
         match self {
@@ -177,6 +183,12 @@ pub struct DKGParamsRegular {
     pub compression_decompression_parameters: Option<CompressionParameters>,
     ///States whether we want compressed ciphertexts
     pub flag: bool,
+}
+
+impl From<DKGParamsRegular> for PBSParameters {
+    fn from(val: DKGParamsRegular) -> Self {
+        PBSParameters::PBS(val.ciphertext_parameters)
+    }
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq)]
@@ -1225,7 +1237,7 @@ impl DkgParamsAvailable {
 }
 
 /// Blokchain Parameters (with pfail `2^-128`), using parameters in tfhe-rs codebase
-const BC_PARAMS: DKGParamsRegular = DKGParamsRegular {
+pub const BC_PARAMS: DKGParamsRegular = DKGParamsRegular {
     sec: 128,
     ciphertext_parameters:
         tfhe::shortint::parameters::v1_0::V1_0_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,

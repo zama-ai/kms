@@ -171,6 +171,28 @@ name = "ceremony"
 harness = false
 required-features = ["testing", "extension_degree_8"]
 
+[[bench]]
+name = "non-threshold_erc20"
+path = "benches/non-threshold/erc20.rs"
+harness = false
+
+[[bench]]
+name = "non-threshold_erc20_memory"
+path = "benches/non-threshold/erc20.rs"
+harness = false
+required-features = ["non-wasm", "measure_memory"]
+
+[[bench]]
+name = "non-threshold_basic-ops"
+path = "benches/non-threshold/basic_ops.rs"
+harness = false
+
+[[bench]]
+name = "non-threshold_basic-ops_memory"
+path = "benches/non-threshold/basic_ops.rs"
+harness = false
+required-features = ["non-wasm", "measure_memory"]
+
 [features]
 default = ["non-wasm", "extension_degree_4"]
 # Some utilities used in the `testing` feature require the `non-wasm` feature to be enabled
