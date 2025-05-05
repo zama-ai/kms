@@ -59,7 +59,7 @@ jobs:
           backward-compatibility:
             - 'backward-compatibility/**'
           ci:
-            - '.github/workflows/global-common-workflow.yml'
+            - '.github/workflows/**'
           core-client:
             - 'core-client/**'
             - 'conf-trace/**'
