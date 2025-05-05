@@ -51,10 +51,10 @@ use crate::execution::online::preprocessing::{
 };
 use crate::execution::online::reshare::{reshare_sk_same_sets, ResharePreprocRequired};
 use crate::execution::runtime::party::{Identity, Role};
-use crate::execution::runtime::session::SmallSession;
 use crate::execution::runtime::session::{BaseSession, BaseSessionHandles};
 use crate::execution::runtime::session::{BaseSessionStruct, ParameterHandles};
 use crate::execution::runtime::session::{LargeSession, SessionParameters};
+use crate::execution::runtime::session::{SmallSession, ToBaseSession};
 use crate::execution::small_execution::agree_random::RealAgreeRandom;
 use crate::execution::small_execution::offline::SmallPreprocessing;
 use crate::execution::tfhe_internals::parameters::{AugmentedCiphertextParameters, DKGParams};
@@ -2044,7 +2044,7 @@ where
     }
 
     #[instrument(
-        name = "Reshare",
+        name = "RESHARE",
         skip_all,
         fields(network_round, network_sent, network_received, peak_mem)
     )]
@@ -2138,7 +2138,7 @@ where
             let num_needed_preproc =
                 ResharePreprocRequired::new_same_set(num_parties, &old_private_key_set);
 
-            let (mut preprocessing_64, mut preprocessing_128) = match session_type {
+            let (mut preprocessing_64, mut preprocessing_128, sessions) = match session_type {
                 SessionType::Small => {
                     let prss_setup_z128 = prss_setup
                         .get(&SupportedRing::ResiduePolyZ128)
@@ -2188,6 +2188,10 @@ where
                             as Box<dyn BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>>,
                         Box::new(preproc_z128)
                             as Box<dyn BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>>,
+                        [
+                            small_session_z64.to_base_session().unwrap(),
+                            small_session_z128.to_base_session().unwrap(),
+                        ],
                     )
                 }
                 SessionType::Large => {
@@ -2218,6 +2222,10 @@ where
                             as Box<dyn BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>>,
                         Box::new(preproc_z128)
                             as Box<dyn BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>>,
+                        [
+                            large_session_z64.to_base_session().unwrap(),
+                            large_session_z128.to_base_session().unwrap(),
+                        ],
                     )
                 }
             };
@@ -2238,6 +2246,9 @@ where
                 reshare_params.new_key_sid,
                 Arc::new((public_key_set, new_private_key_set)),
             );
+            let mut sessions = sessions.to_vec();
+            sessions.push(reshare_base_session);
+            fill_network_memory_info_multiple_sessions(sessions);
         };
 
         self.data.status_store.insert(

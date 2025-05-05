@@ -35,7 +35,7 @@ services:
       - {{ 50000 + i+1 }}:50000
       - {{ 60000 + i+1 }}:60000
     healthcheck:
-      test: "grpc-health-probe -tls -tls-ca-cert /app/ddec/certs/cert_p{{ i+1 }}.pem -tls-client-cert /app/ddec/certs/cert_p{{ i+1 }}.pem -tls-client-key /app/ddec/certs/key_p{{ i+1 }}.pem --addr=localhost:50000"
+      test: "grpc_health_probe -tls -tls-ca-cert /app/ddec/certs/cert_p{{ i+1 }}.pem -tls-client-cert /app/ddec/certs/cert_p{{ i+1 }}.pem -tls-client-key /app/ddec/certs/key_p{{ i+1 }}.pem --addr=localhost:50000"
       interval: 5s
       timeout: 5s
       retries: 20
