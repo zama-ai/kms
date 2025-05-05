@@ -238,7 +238,7 @@ jobs:
     if: >-
       (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
-    uses: ./.github/workflows/common-docker.yml
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@4597dee06cf8e3e977f66aa8b1824ef4e1d84a22
     with:
       working-directory: "./core-client"
       push_image: true
@@ -511,7 +511,7 @@ jobs:
       ((startsWith(github.ref, 'refs/heads/release/') || (github.ref == 'refs/heads/main')) && (github.event_name == 'schedule')) ||
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')) ||
       (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main')
-    uses: ./.github/workflows/common-docker.yml
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@4597dee06cf8e3e977f66aa8b1824ef4e1d84a22
     with:
       working-directory: "./base"
       push_image: true
