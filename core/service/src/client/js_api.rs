@@ -151,7 +151,6 @@ pub fn new_client(
 pub fn get_server_addrs(client: &Client) -> Vec<String> {
     client
         .get_server_addrs()
-        .unwrap()
         .iter()
         .map(|addr| addr.to_string())
         .collect()

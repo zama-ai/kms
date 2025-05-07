@@ -26,7 +26,7 @@ use kms_lib::util::key_setup::test_tools::{
 };
 use kms_lib::vault::storage::{file::FileStorage, StorageType};
 use kms_lib::DecryptionMode;
-use rand::SeedableRng;
+use rand::{CryptoRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
@@ -1408,140 +1408,19 @@ pub async fn execute_cmd(
                 cipher_args.get_batch_size()
             ];
 
-            let mut join_set: JoinSet<Result<_, anyhow::Error>> = JoinSet::new();
-            for _ in 0..cipher_args.get_load() {
-                let req_id = RequestId::new_random(&mut rng);
-                let internal_client = internal_client.clone();
-                let ct_batch = ct_batch.clone();
-                let key_id = key_id.clone();
-                let mut core_endpoints = core_endpoints.clone();
-                let ptxt = ptxt.clone();
-                // USER_DECRYPTION REQUEST
-                join_set.spawn(async move {
-                    let user_decrypt_req_tuple =
-                        internal_client.write().await.user_decryption_request(
-                            &dummy_domain(),
-                            ct_batch,
-                            &req_id,
-                            &RequestId {
-                                request_id: key_id.clone(),
-                            },
-                        )?;
-
-                    let (user_decrypt_req, enc_pk, enc_sk) = user_decrypt_req_tuple;
-
-                    // make parallel requests by calling user decryption in a thread
-                    let mut req_tasks = JoinSet::new();
-
-                    for ce in core_endpoints.iter_mut() {
-                        let req_cloned = user_decrypt_req.clone();
-                        let mut cur_client = ce.clone();
-                        req_tasks.spawn(async move {
-                            cur_client
-                                .user_decrypt(tonic::Request::new(req_cloned))
-                                .await
-                        });
-                    }
-
-                    let mut req_response_vec = Vec::new();
-                    while let Some(inner) = req_tasks.join_next().await {
-                        req_response_vec.push(inner.unwrap().unwrap().into_inner());
-                    }
-                    assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
-
-                    // get all responses
-                    let mut resp_tasks = JoinSet::new();
-                    for ce in core_endpoints.iter_mut() {
-                        let mut cur_client = ce.clone();
-                        let req_id_clone = user_decrypt_req.request_id.as_ref().unwrap().clone();
-
-                        resp_tasks.spawn(async move {
-                            // Sleep to give the server some time to complete decryption
-                            tokio::time::sleep(tokio::time::Duration::from_millis(
-                                SLEEP_TIME_BETWEEN_REQUESTS_MS,
-                            ))
-                            .await;
-
-                            let mut response = cur_client
-                                .get_user_decryption_result(tonic::Request::new(
-                                    req_id_clone.clone(),
-                                ))
-                                .await;
-                            let mut ctr = 0_usize;
-                            while response.is_err()
-                                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-                            {
-                                tokio::time::sleep(tokio::time::Duration::from_millis(
-                                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
-                                ))
-                                .await;
-                                // do at most max_iter retries (stop after max. 50 secs)
-                                if ctr >= max_iter {
-                                    panic!(
-                                    "timeout while waiting for decryption after {max_iter} retries"
-                                );
-                                }
-                                ctr += 1;
-                                response = cur_client
-                                    .get_user_decryption_result(tonic::Request::new(
-                                        req_id_clone.clone(),
-                                    ))
-                                    .await;
-                            }
-                            (req_id_clone, response.unwrap().into_inner())
-                        });
-                    }
-
-                    let mut resp_response_vec = Vec::new();
-                    while let Some(resp) = resp_tasks.join_next().await {
-                        resp_response_vec.push(resp.unwrap().1);
-                        // break this loop and continue with the rest of the processing if we have enough responses
-                        if resp_response_vec.len() >= num_expected_responses {
-                            break;
-                        }
-                    }
-
-                    let client_request =
-                        ParsedUserDecryptionRequest::try_from(&user_decrypt_req).unwrap();
-                    let eip712_domain =
-                        protobuf_to_alloy_domain(user_decrypt_req.domain.as_ref().unwrap())
-                            .unwrap();
-                    match internal_client.read().await.process_user_decryption_resp(
-                        &client_request,
-                        &eip712_domain,
-                        &resp_response_vec,
-                        &enc_pk,
-                        &enc_sk,
-                    ) {
-                        Ok(plaintexts) => {
-                            let plaintext = plaintexts[0].clone();
-                            assert_eq!(
-                                TestingPlaintext::try_from(plaintext.clone())?,
-                                TestingPlaintext::try_from(ptxt.clone())?
-                            );
-                            tracing::info!(
-                                "User decryption response is ok: {:?} / {:?}",
-                                ptxt,
-                                TestingPlaintext::try_from(plaintext)?,
-                            );
-                        }
-                        Err(e) => {
-                            tracing::error!("User decryption response is NOT valid! Reason: {}", e)
-                        }
-                    };
-
-                    let res = format!(
-                        "User decrypted Plaintext {:?}",
-                        TestingPlaintext::try_from(ptxt)?
-                    );
-                    Ok((Some(req_id), res))
-                });
-            }
-            let mut result_vec = Vec::new();
-            while let Some(result) = join_set.join_next().await {
-                result_vec.push(result??);
-            }
-            result_vec
+            do_user_decrypt(
+                &mut rng,
+                cipher_args.get_load(),
+                internal_client,
+                ct_batch,
+                &key_id,
+                core_endpoints.clone(),
+                ptxt,
+                num_parties,
+                max_iter,
+                num_expected_responses,
+            )
+            .await?
         }
         CCCommand::KeyGen(KeyGenParameters { preproc_id }) => {
             let mut internal_client = internal_client.unwrap();
@@ -1820,6 +1699,148 @@ pub async fn execute_cmd(
     tracing::info!("Core Client command {command:?} took {duration:?}.");
 
     Ok(res)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn do_user_decrypt<R: Rng + CryptoRng>(
+    rng: &mut R,
+    load: usize,
+    internal_client: Arc<RwLock<Client>>,
+    ct_batch: Vec<TypedCiphertext>,
+    key_id: &str,
+    core_endpoints: Vec<CoreServiceEndpointClient<Channel>>,
+    ptxt: TypedPlaintext,
+    num_parties: usize,
+    max_iter: usize,
+    num_expected_responses: usize,
+) -> anyhow::Result<Vec<(Option<RequestId>, String)>> {
+    let mut join_set: JoinSet<Result<_, anyhow::Error>> = JoinSet::new();
+    for _ in 0..load {
+        let req_id = RequestId::new_random(rng);
+        let internal_client = internal_client.clone();
+        let ct_batch = ct_batch.clone();
+        let key_id = key_id.to_string();
+        let mut core_endpoints = core_endpoints.clone();
+        let original_plaintext = ptxt.clone();
+
+        // USER_DECRYPTION REQUEST
+        join_set.spawn(async move {
+            let user_decrypt_req_tuple = internal_client.write().await.user_decryption_request(
+                &dummy_domain(),
+                ct_batch,
+                &req_id,
+                &RequestId {
+                    request_id: key_id.clone(),
+                },
+            )?;
+
+            let (user_decrypt_req, enc_pk, enc_sk) = user_decrypt_req_tuple;
+
+            // make parallel requests by calling user decryption in a thread
+            let mut req_tasks = JoinSet::new();
+
+            for ce in core_endpoints.iter_mut() {
+                let req_cloned = user_decrypt_req.clone();
+                let mut cur_client = ce.clone();
+                req_tasks.spawn(async move {
+                    cur_client
+                        .user_decrypt(tonic::Request::new(req_cloned))
+                        .await
+                });
+            }
+
+            let mut req_response_vec = Vec::new();
+            while let Some(inner) = req_tasks.join_next().await {
+                req_response_vec.push(inner.unwrap().unwrap().into_inner());
+            }
+            assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
+
+            // get all responses
+            let mut resp_tasks = JoinSet::new();
+            for ce in core_endpoints.iter_mut() {
+                let mut cur_client = ce.clone();
+                let req_id_clone = user_decrypt_req.request_id.as_ref().unwrap().clone();
+
+                resp_tasks.spawn(async move {
+                    // Sleep to give the server some time to complete decryption
+                    tokio::time::sleep(tokio::time::Duration::from_millis(
+                        SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                    ))
+                    .await;
+
+                    let mut response = cur_client
+                        .get_user_decryption_result(tonic::Request::new(req_id_clone.clone()))
+                        .await;
+                    let mut ctr = 0_usize;
+                    while response.is_err()
+                        && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+                    {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(
+                            SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                        ))
+                        .await;
+                        // do at most max_iter retries (stop after max. 50 secs)
+                        if ctr >= max_iter {
+                            panic!("timeout while waiting for decryption after {max_iter} retries");
+                        }
+                        ctr += 1;
+                        response = cur_client
+                            .get_user_decryption_result(tonic::Request::new(req_id_clone.clone()))
+                            .await;
+                    }
+                    (req_id_clone, response.unwrap().into_inner())
+                });
+            }
+
+            let mut resp_response_vec = Vec::new();
+            while let Some(resp) = resp_tasks.join_next().await {
+                resp_response_vec.push(resp.unwrap().1);
+                // break this loop and continue with the rest of the processing if we have enough responses
+                if resp_response_vec.len() >= num_expected_responses {
+                    break;
+                }
+            }
+
+            let client_request = ParsedUserDecryptionRequest::try_from(&user_decrypt_req).unwrap();
+            let eip712_domain =
+                protobuf_to_alloy_domain(user_decrypt_req.domain.as_ref().unwrap()).unwrap();
+            let plaintexts = internal_client
+                .read()
+                .await
+                .process_user_decryption_resp(
+                    &client_request,
+                    &eip712_domain,
+                    &resp_response_vec,
+                    &enc_pk,
+                    &enc_sk,
+                )
+                .inspect_err(|e| {
+                    tracing::error!("User decryption response is NOT valid! Reason: {}", e)
+                })?;
+            let decrypted_plaintext = plaintexts[0].clone();
+
+            assert_eq!(
+                TestingPlaintext::try_from(decrypted_plaintext.clone())?,
+                TestingPlaintext::try_from(original_plaintext.clone())?
+            );
+            tracing::info!(
+                "User decryption response is ok: {:?} / {:?}",
+                original_plaintext,
+                TestingPlaintext::try_from(decrypted_plaintext.clone())?,
+            );
+
+            let res = format!(
+                "User decrypted Plaintext {:?}",
+                TestingPlaintext::try_from(decrypted_plaintext)?
+            );
+            Ok((Some(req_id), res))
+        });
+    }
+    let mut result_vec = Vec::new();
+    while let Some(result) = join_set.join_next().await {
+        result_vec.push(result??);
+    }
+    Ok(result_vec)
 }
 
 #[allow(clippy::too_many_arguments)]

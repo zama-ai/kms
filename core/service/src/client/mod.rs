@@ -473,17 +473,6 @@ impl Client {
         ))
     }
 
-    /// This is used for tests to convert public keys into addresses
-    /// because when processing user decryption response, only addresses are allowed.
-    pub fn convert_to_addresses(&mut self) {
-        let pks = self.get_server_pks().unwrap();
-        let addrs = pks
-            .iter()
-            .map(|pk| alloy_signer::utils::public_key_to_address(pk.pk()))
-            .collect::<Vec<_>>();
-        self.server_identities = ServerIdentities::Addrs(addrs);
-    }
-
     /// Verify the signature received from the server on keys or other data objects.
     /// This verification will pass if one of the public keys can verify the signature.
     #[cfg(feature = "non-wasm")]
@@ -1193,20 +1182,10 @@ impl Client {
             )));
         }
 
-        let stored_server_addrs = match &self.server_identities {
-            ServerIdentities::Pks(_) => {
-                return Err(anyhow_error_and_log(
-                    "expected addresses but got public keys",
-                ));
-            }
-            ServerIdentities::Addrs(vec) => {
-                if vec.len() != 1 {
-                    return Err(anyhow_error_and_log("incorrect length for addresses"));
-                } else {
-                    vec
-                }
-            }
-        };
+        let stored_server_addrs = &self.get_server_addrs();
+        if stored_server_addrs.len() != 1 {
+            return Err(anyhow_error_and_log("incorrect length for addresses"));
+        }
 
         let cur_verf_key: PublicSigKey = deserialize(&payload.verification_key)?;
 
@@ -1290,7 +1269,7 @@ impl Client {
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let validated_resps = some_or_err(
             validate_user_decrypt_responses_against_request(
-                self.get_server_addrs()?,
+                &self.get_server_addrs(),
                 client_request,
                 eip712_domain,
                 agg_resp,
@@ -1701,10 +1680,13 @@ impl Client {
         }
     }
 
-    pub fn get_server_addrs(&self) -> anyhow::Result<&Vec<alloy_primitives::Address>> {
+    pub fn get_server_addrs(&self) -> Vec<alloy_primitives::Address> {
         match &self.server_identities {
-            ServerIdentities::Pks(_) => Err(anyhow::anyhow!("expected addresses, got public keys")),
-            ServerIdentities::Addrs(vec) => Ok(vec),
+            ServerIdentities::Pks(pks) => pks
+                .iter()
+                .map(|pk| alloy_signer::utils::public_key_to_address(pk.pk()))
+                .collect_vec(),
+            ServerIdentities::Addrs(vec) => vec.clone(),
         }
     }
 
@@ -4097,8 +4079,6 @@ pub(crate) mod tests {
             compute_cipher_from_stored_key(None, msg, key_id, enc_config).await;
         let req_key_id = key_id.to_owned().try_into().unwrap();
 
-        internal_client.convert_to_addresses();
-
         // The following lines are used to generate integration test-code with javascript for test `new client` in test.js
         // println!(
         //     "Client PK {:?}",
@@ -4205,7 +4185,7 @@ pub(crate) mod tests {
                 // be instantiated easily without a seeder and we don't
                 // want to introduce extra npm dependency.
                 let transcript = TestingUserDecryptionTranscript {
-                    server_addrs: internal_client.get_server_addrs().unwrap().clone(),
+                    server_addrs: internal_client.get_server_addrs(),
                     client_address: internal_client.client_address,
                     client_sk: internal_client.client_sk.clone(),
                     degree: 0,
@@ -4907,7 +4887,6 @@ pub(crate) mod tests {
         let (ct, ct_format, fhe_type) =
             compute_cipher_from_stored_key(None, msg, key_id, enc_config).await;
 
-        internal_client.convert_to_addresses();
         // make requests
         let reqs: Vec<_> = (0..parallelism)
             .map(|j| {
@@ -5035,7 +5014,7 @@ pub(crate) mod tests {
                 let agg_resp = response_map.values().last().unwrap().clone();
 
                 let transcript = TestingUserDecryptionTranscript {
-                    server_addrs: internal_client.get_server_addrs().unwrap().clone(),
+                    server_addrs: internal_client.get_server_addrs(),
                     client_address: internal_client.client_address,
                     client_sk: internal_client.client_sk.clone(),
                     degree: threshold as u32,
