@@ -24,8 +24,6 @@ use k256::ecdsa::SigningKey;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms::v1::KeySetAddedInfo;
 #[cfg(feature = "non-wasm")]
-use kms_grpc::kms::v1::RequestId;
-#[cfg(feature = "non-wasm")]
 use kms_grpc::kms::v1::TypedSigncryptedCiphertext;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms::v1::UserDecryptionResponsePayload;
@@ -35,6 +33,8 @@ use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint
 #[cfg(feature = "non-wasm")]
 use kms_grpc::rpc_types::SignedPubDataHandleInternal;
 use kms_grpc::rpc_types::{PrivDataType, SigncryptionPayload};
+#[cfg(feature = "non-wasm")]
+use kms_grpc::RequestId;
 use rand::{CryptoRng, Rng, RngCore};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -94,6 +94,7 @@ where
     let existing_key_handle = match keyset_added_info {
         Some(added_info) => match added_info.compression_keyset_id {
             Some(key_id) => {
+                let key_id = key_id.into();
                 storage.refresh_centralized_fhe_keys(&key_id).await?;
                 Some(
                     storage
@@ -785,14 +786,11 @@ impl<
         let mut pk_map = HashMap::new();
         for id in key_info.keys() {
             let public_key = read_pk_at_request_id(&public_storage, id).await?;
-            pk_map.insert(id.clone(), public_key);
+            pk_map.insert(*id, public_key);
         }
         tracing::info!(
             "loaded key_info with key_ids: {:?}",
-            key_info
-                .keys()
-                .map(|rid| &rid.request_id)
-                .collect::<Vec<_>>()
+            key_info.keys().collect::<Vec<_>>()
         );
         let public_key_info = key_info
             .iter()
@@ -903,8 +901,8 @@ pub(crate) mod tests {
         store_pk_at_request_id, store_versioned_at_request_id, StorageReader, StorageType,
     };
     use aes_prng::AesRng;
-    use kms_grpc::kms::v1::RequestId;
     use kms_grpc::rpc_types::{PrivDataType, WrappedPublicKey};
+    use kms_grpc::RequestId;
     use rand::{RngCore, SeedableRng};
     use serde::{Deserialize, Serialize};
     use serial_test::serial;
@@ -960,10 +958,7 @@ pub(crate) mod tests {
     }
 
     pub(crate) async fn new_pub_ram_storage_from_existing_keys(
-        keys: &HashMap<
-            kms_grpc::kms::v1::RequestId,
-            threshold_fhe::execution::endpoints::keygen::FhePubKeySet,
-        >,
+        keys: &HashMap<RequestId, threshold_fhe::execution::endpoints::keygen::FhePubKeySet>,
     ) -> anyhow::Result<RamStorage> {
         let mut ram_storage = RamStorage::new(StorageType::PUB);
         for (cur_req_id, cur_keys) in keys {

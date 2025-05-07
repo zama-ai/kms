@@ -37,10 +37,10 @@ use conf_trace::metrics_names::{
 use itertools::Itertools;
 use k256::ecdsa::SigningKey;
 use kms_grpc::kms::v1::{
-    CiphertextFormat, CrsGenRequest, CrsGenResult, Empty, InitRequest, KeyGenPreprocRequest,
+    self, CiphertextFormat, CrsGenRequest, CrsGenResult, Empty, KeyGenPreprocRequest,
     KeyGenPreprocResult, KeyGenRequest, KeyGenResult, KeySetAddedInfo, PublicDecryptionRequest,
-    PublicDecryptionResponse, PublicDecryptionResponsePayload, RequestId, TypedCiphertext,
-    TypedPlaintext, TypedSigncryptedCiphertext, UserDecryptionRequest, UserDecryptionResponse,
+    PublicDecryptionResponse, PublicDecryptionResponsePayload, TypedCiphertext, TypedPlaintext,
+    TypedSigncryptedCiphertext, UserDecryptionRequest, UserDecryptionResponse,
     UserDecryptionResponsePayload,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
@@ -48,6 +48,7 @@ use kms_grpc::rpc_types::{
     protobuf_to_alloy_domain_option, PrivDataType, PubDataType, SigncryptionPayload,
     SignedPubDataHandleInternal,
 };
+use kms_grpc::RequestId;
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -108,17 +109,21 @@ use tracing::Instrument;
 
 fn derive_session_id_from_ctr(ctr: u64, req_id: &RequestId) -> anyhow::Result<SessionId> {
     if !req_id.is_valid() {
-        anyhow::bail!("invalid request ID: {}", req_id.request_id);
+        anyhow::bail!("invalid request ID: {}", req_id);
     }
-    let req_id_buf = hex::decode(&req_id.request_id)?;
 
-    // Hash req_id (256 bits) || counter (64 bits)
-    // Observe that these will always be of constant size and hence it is safe to flatten
-    let digest = unsafe_hash_list_w_size(
-        &DSEP_SESSION_ID,
-        &[req_id_buf.as_slice(), ctr.to_le_bytes().as_slice()],
-        SESSION_ID_BYTES,
-    );
+    // Get the raw bytes from RequestId
+    let req_id_bytes = req_id.as_bytes();
+    let ctr_bytes = ctr.to_le_bytes();
+
+    // Create a buffer to hold both the request ID and counter
+    let mut combined = Vec::with_capacity(req_id_bytes.len() + ctr_bytes.len());
+    combined.extend_from_slice(req_id_bytes);
+    combined.extend_from_slice(&ctr_bytes);
+
+    // Hash the combined data using unsafe_hash_list_w_size with a slice containing a reference to combined
+    let digest = unsafe_hash_list_w_size(&DSEP_SESSION_ID, &[&combined[..]], SESSION_ID_BYTES);
+
     Ok(SessionId(u128::from_le_bytes(digest.try_into().map_err(
         |_| anyhow::anyhow!("Failed to convert digest to SessionId"),
     )?)))
@@ -354,7 +359,7 @@ where
     let mut public_key_info = HashMap::new();
     let mut pk_map = HashMap::new();
     for (id, info) in key_info_versioned.clone().into_iter() {
-        public_key_info.insert(id.clone(), info.pk_meta_data.clone());
+        public_key_info.insert(id, info.pk_meta_data.clone());
 
         let pk = read_pk_at_request_id(&public_storage, &id).await?;
         pk_map.insert(id, pk);
@@ -783,7 +788,7 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
             let guarded_private_storage = self.private_storage.lock().await;
             let base_session = self
                 .session_preparer
-                .make_base_session(SessionId(req_id.clone().try_into()?), NetworkMode::Sync)
+                .make_base_session(SessionId((*req_id).try_into()?), NetworkMode::Sync)
                 .await?;
             read_versioned_at_request_id(
                 &(*guarded_private_storage),
@@ -815,7 +820,7 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
             let guarded_private_storage = self.private_storage.lock().await;
             let base_session = self
                 .session_preparer
-                .make_base_session(SessionId(req_id.clone().try_into()?), NetworkMode::Sync)
+                .make_base_session(SessionId((*req_id).try_into()?), NetworkMode::Sync)
                 .await?;
             read_versioned_at_request_id(
                 &(*guarded_private_storage),
@@ -861,7 +866,7 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
         }
 
         let own_identity = self.session_preparer.own_identity()?;
-        let session_id = SessionId(req_id.clone().try_into()?);
+        let session_id = SessionId((*req_id).try_into()?);
         //PRSS robust init requires broadcast, which is implemented with Sync network assumption
         let mut base_session = self
             .session_preparer
@@ -924,13 +929,14 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
 
 #[tonic::async_trait]
 impl<PrivS: Storage + Send + Sync + 'static> Initiator for RealInitiator<PrivS> {
-    async fn init(&self, request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
+    async fn init(&self, request: Request<v1::InitRequest>) -> Result<Response<Empty>, Status> {
         let inner = request.into_inner();
 
         let request_id = tonic_some_or_err(
             inner.request_id.clone(),
             "Request ID is not set (inner key gen)".to_string(),
-        )?;
+        )?
+        .into();
 
         self.init_prss(&request_id).await.map_err(|e| {
             tonic::Status::new(
@@ -1207,7 +1213,7 @@ impl<
         if let Some(b) = timer.as_mut() {
             //We log but we don't want to return early because timer failed
             let _ = b
-                .tags([(TAG_KEY_ID, key_id.request_id.clone())])
+                .tags([(TAG_KEY_ID, key_id.as_str())])
                 .map_err(|e| tracing::warn!("Failed to add tag key_id or request_id: {}", e));
         }
 
@@ -1239,7 +1245,7 @@ impl<
 
         let metric_tags = vec![
             (TAG_PARTY_ID, prep.my_id.to_string()),
-            (TAG_KEY_ID, key_id.request_id.clone()),
+            (TAG_KEY_ID, key_id.as_str()),
             (
                 TAG_PUBLIC_DECRYPTION_KIND,
                 dec_mode.as_str_name().to_string(),
@@ -1302,9 +1308,9 @@ impl<
 
     async fn get_result(
         &self,
-        request: Request<RequestId>,
+        request: Request<v1::RequestId>,
     ) -> Result<Response<UserDecryptionResponse>, Status> {
-        let request_id = request.into_inner();
+        let request_id: RequestId = request.into_inner().into();
         if !request_id.is_valid() {
             tracing::warn!(
                 "The value {} is not a valid request ID!",
@@ -1521,7 +1527,7 @@ impl<
         if let Some(b) = timer.as_mut() {
             //We log but we don't want to return early because timer failed
             let _ = b
-                .tags([(TAG_KEY_ID, key_id.request_id.clone())])
+                .tags([(TAG_KEY_ID, key_id.as_str())])
                 .map_err(|e| tracing::warn!("Failed to add tag key_id or request_id: {}", e));
         }
         tracing::debug!(
@@ -1567,7 +1573,7 @@ impl<
                 .and_then(|b| {
                     b.tags([
                         (TAG_PARTY_ID, self.session_preparer.my_id.to_string()),
-                        (TAG_KEY_ID, key_id.request_id.clone()),
+                        (TAG_KEY_ID, key_id.as_str()),
                         (
                             TAG_PUBLIC_DECRYPTION_KIND,
                             dec_mode.as_str_name().to_string(),
@@ -1584,7 +1590,6 @@ impl<
                 derive_session_id_from_ctr(ctr as u64, &req_id),
                 "failed to derive session ID from counter".to_string(),
             )?;
-            let key_id = key_id.clone();
             let crypto_storage = self.crypto_storage.clone();
             let prep = Arc::clone(&self.session_preparer);
 
@@ -1772,9 +1777,9 @@ impl<
 
     async fn get_result(
         &self,
-        request: Request<RequestId>,
+        request: Request<v1::RequestId>,
     ) -> Result<Response<PublicDecryptionResponse>, Status> {
-        let request_id = request.into_inner();
+        let request_id = request.into_inner().into();
         validate_request_id(&request_id)?;
         let status = {
             let guarded_meta_store = self.pub_dec_meta_store.read().await;
@@ -1875,7 +1880,7 @@ impl<
 
     async fn get_result(
         &self,
-        request: Request<RequestId>,
+        request: Request<v1::RequestId>,
     ) -> Result<Response<KeyGenResult>, Status> {
         self.real_key_generator.inner_get_result(request).await
     }
@@ -1948,7 +1953,7 @@ impl<
 
         // Create the base session necessary to run the DKG
         let base_session = {
-            let session_id = SessionId(req_id.clone().try_into()?);
+            let session_id = SessionId(req_id.try_into()?);
             self.session_preparer
                 .make_base_session(session_id, NetworkMode::Async)
                 .await?
@@ -1964,15 +1969,12 @@ impl<
 
         let token = CancellationToken::new();
         {
-            self.ongoing
-                .lock()
-                .await
-                .insert(req_id.clone(), token.clone());
+            self.ongoing.lock().await.insert(req_id, token.clone());
         }
         let ongoing = Arc::clone(&self.ongoing);
 
         // we need to clone the req ID because async closures are not stable
-        let req_id_clone = req_id.clone();
+        let req_id_clone = req_id;
         let keygen_background = async move {
             match keyset_config {
                 ddec_keyset_config::KeySetConfig::Standard(inner_config) => {
@@ -2047,10 +2049,11 @@ impl<
             inner.request_id,
             insecure
         );
-        let request_id = tonic_some_or_err(
+        let request_id: RequestId = tonic_some_or_err(
             inner.request_id.clone(),
             "Request ID is not set (inner key gen)".to_string(),
-        )?;
+        )?
+        .into();
 
         // ensure the request ID is valid
         if !request_id.is_valid() {
@@ -2073,7 +2076,8 @@ impl<
             let preproc_id = tonic_some_or_err(
                 inner.preproc_id.clone(),
                 "Pre-Processing ID is not set".to_string(),
-            )?;
+            )?
+            .into();
             let preproc = {
                 let mut map = self.preproc_buckets.write().await;
                 map.delete(&preproc_id)
@@ -2102,7 +2106,7 @@ impl<
                 keyset_config,
                 keyset_added_info,
                 preproc_handle,
-                request_id.clone(),
+                request_id,
                 eip712_domain.as_ref(),
                 permit,
             )
@@ -2116,9 +2120,9 @@ impl<
 
     async fn inner_get_result(
         &self,
-        request: Request<RequestId>,
+        request: Request<v1::RequestId>,
     ) -> Result<Response<KeyGenResult>, Status> {
-        let request_id = request.into_inner();
+        let request_id: RequestId = request.into_inner().into();
         validate_request_id(&request_id)?;
         let status = {
             let guarded_meta_store = self.dkg_pubinfo_meta_store.read().await;
@@ -2126,7 +2130,7 @@ impl<
         };
         let res = handle_res_mapping(status, &request_id, "DKG").await?;
         Ok(Response::new(KeyGenResult {
-            request_id: Some(request_id),
+            request_id: Some(request_id.into()),
             key_results: convert_key_response(res),
         }))
     }
@@ -2149,14 +2153,16 @@ impl<
                 anyhow::anyhow!(
                 "missing from key ID for the keyset that contains the compression secret key share"
             )
-            })?;
+            })?
+            .into();
         let to_key_id = keyset_added_info
             .to_keyset_id_decompression_only
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "missing to key ID for the keyset that contains the glwe secret key share"
                 )
-            })?;
+            })?
+            .into();
 
         let private_compression_share = {
             let threshold_keys = crypto_storage
@@ -2210,14 +2216,16 @@ impl<
                 anyhow::anyhow!(
                 "missing from key ID for the keyset that contains the compression secret key share"
             )
-            })?;
+            })?
+            .into();
         let glwe_req_id = keyset_added_info
             .to_keyset_id_decompression_only
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "missing to key ID for the keyset that contains the glwe secret key share"
                 )
-            })?;
+            })?
+            .into();
 
         crypto_storage
             .refresh_threshold_fhe_keys(&glwe_req_id)
@@ -2468,11 +2476,14 @@ impl<
             + Send
             + ?Sized,
     {
-        let key_id = keyset_added_info.compression_keyset_id.ok_or_else(|| {
-            anyhow::anyhow!(
-                "missing key ID for the keyset that contains the compression secret key share"
-            )
-        })?;
+        let key_id = keyset_added_info
+            .compression_keyset_id
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "missing key ID for the keyset that contains the compression secret key share"
+                )
+            })?
+            .into();
         let existing_compression_sk = {
             let threshold_keys = crypto_storage
                 .read_guarded_threshold_fhe_keys_from_cache(&key_id)
@@ -2655,7 +2666,7 @@ impl<
 
     async fn get_result(
         &self,
-        request: Request<RequestId>,
+        request: tonic::Request<v1::RequestId>,
     ) -> Result<Response<KeyGenResult>, Status> {
         self.inner_get_result(request).await
     }
@@ -2727,10 +2738,7 @@ impl RealPreprocessor {
         )?;
         let token = CancellationToken::new();
         {
-            self.ongoing
-                .lock()
-                .await
-                .insert(request_id.clone(), token.clone());
+            self.ongoing.lock().await.insert(request_id, token.clone());
         }
         let ongoing = Arc::clone(&self.ongoing);
         self.tracker.spawn(
@@ -2818,10 +2826,11 @@ impl KeyGenPreprocessor for RealPreprocessor {
             .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
 
         let inner = request.into_inner();
-        let request_id = tonic_some_or_err(
+        let request_id: RequestId = tonic_some_or_err(
             inner.request_id.clone(),
             "Request ID is not set (key_gen_preproc)".to_string(),
-        )?;
+        )?
+        .into();
 
         // ensure the request ID is valid
         if !request_id.is_valid() {
@@ -2852,7 +2861,7 @@ impl KeyGenPreprocessor for RealPreprocessor {
         //If the entry did not exist before, start the preproc
         if !entry_exists {
             tracing::info!("Starting preproc generation for Request ID {}", request_id);
-            tonic_handle_potential_err(self.launch_dkg_preproc(dkg_params, keyset_config, request_id.clone(), permit).await, format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {:?}",dkg_params))?;
+            tonic_handle_potential_err(self.launch_dkg_preproc(dkg_params, keyset_config, request_id, permit).await, format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {:?}",dkg_params))?;
         } else {
             tracing::warn!(
                 "Tried to generate preproc multiple times for the same Request ID {} -- skipped it!",
@@ -2864,9 +2873,9 @@ impl KeyGenPreprocessor for RealPreprocessor {
 
     async fn get_result(
         &self,
-        request: Request<RequestId>,
+        request: Request<v1::RequestId>,
     ) -> Result<Response<KeyGenPreprocResult>, Status> {
-        let request_id = request.into_inner();
+        let request_id = request.into_inner().into();
         validate_request_id(&request_id)?;
 
         let status = {
@@ -2944,7 +2953,7 @@ impl<
         let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref());
 
         self.inner_crs_gen(
-            req_id,
+            req_id.into(),
             witness_dim,
             inner.max_num_bits,
             dkg_params,
@@ -2997,7 +3006,7 @@ impl<
             })?;
         }
 
-        let session_id = SessionId(req_id.clone().try_into()?);
+        let session_id = SessionId(req_id.try_into()?);
         let session = self
             .session_preparer
             .prepare_ddec_data_from_sessionid_z128(session_id)
@@ -3020,10 +3029,7 @@ impl<
 
         let token = CancellationToken::new();
         {
-            self.ongoing
-                .lock()
-                .await
-                .insert(req_id.clone(), token.clone());
+            self.ongoing.lock().await.insert(req_id, token.clone());
         }
         let ongoing = Arc::clone(&self.ongoing);
         self.tracker
@@ -3050,16 +3056,16 @@ impl<
 
     async fn inner_get_result(
         &self,
-        request: Request<RequestId>,
+        request: Request<v1::RequestId>,
     ) -> Result<Response<CrsGenResult>, Status> {
-        let request_id = request.into_inner();
+        let request_id = request.into_inner().into();
         let status = {
             let guarded_meta_store = self.crs_meta_store.read().await;
             guarded_meta_store.retrieve(&request_id)
         };
         let crs_data = handle_res_mapping(status, &request_id, "CRS generation").await?;
         Ok(Response::new(CrsGenResult {
-            request_id: Some(request_id),
+            request_id: Some(request_id.into()),
             crs_results: Some(crs_data.into()),
         }))
     }
@@ -3167,7 +3173,7 @@ impl<
 
     async fn get_result(
         &self,
-        request: Request<RequestId>,
+        request: Request<v1::RequestId>,
     ) -> Result<Response<CrsGenResult>, Status> {
         self.inner_get_result(request).await
     }
@@ -3224,7 +3230,7 @@ impl<
 
     async fn get_result(
         &self,
-        request: Request<RequestId>,
+        request: Request<v1::RequestId>,
     ) -> Result<Response<CrsGenResult>, Status> {
         self.real_crs_generator.inner_get_result(request).await
     }

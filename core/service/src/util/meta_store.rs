@@ -1,6 +1,6 @@
 use crate::{anyhow_error_and_log, consts::DURATION_WAITING_ON_RESULT_SECONDS, some_or_err};
 use async_cell::sync::AsyncCell;
-use kms_grpc::kms::v1::RequestId;
+use kms_grpc::RequestId;
 use std::{
     collections::{HashMap, VecDeque},
     sync::Arc,
@@ -51,7 +51,7 @@ impl<T: Clone> MetaStore<T> {
         let storage = map
             .into_iter()
             .map(|(key, value)| {
-                completed_queue.push_back(key.clone());
+                completed_queue.push_back(key);
                 (key, Arc::new(AsyncCell::new_with(Ok(value))))
             })
             .collect();
@@ -126,7 +126,7 @@ impl<T: Clone> MetaStore<T> {
         }
 
         cell.set(update);
-        self.complete_queue.push_back(request_id.clone());
+        self.complete_queue.push_back(*request_id);
 
         Ok(())
     }
@@ -219,7 +219,7 @@ pub(crate) async fn handle_res_mapping<T: Clone>(
 mod tests {
     use super::*;
     use crate::engine::base::derive_request_id;
-    use kms_grpc::kms::v1::RequestId;
+    use kms_grpc::RequestId;
     use tokio::sync::RwLock;
 
     #[test]
@@ -321,11 +321,10 @@ mod tests {
         let meta_store = Arc::new(RwLock::new(meta_store));
 
         let cloned_meta_store = Arc::clone(&meta_store);
-        let cloned_req_1 = req_1.clone();
         let handle = tokio::spawn(async move {
             let meta_store = Arc::clone(&cloned_meta_store);
-            let handle = meta_store.read().await.retrieve(&cloned_req_1);
-            handle_res_mapping(handle, &cloned_req_1, "test").await
+            let handle = meta_store.read().await.retrieve(&req_1);
+            handle_res_mapping(handle, &req_1, "test").await
         });
         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
         meta_store

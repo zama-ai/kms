@@ -26,13 +26,14 @@ use conf_trace::metrics_names::{
     TAG_PUBLIC_DECRYPTION_KIND,
 };
 use kms_grpc::kms::v1::{
-    CrsGenRequest, CrsGenResult, Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocResult,
-    KeyGenRequest, KeyGenResult, KeySetAddedInfo, PublicDecryptionRequest,
-    PublicDecryptionResponse, PublicDecryptionResponsePayload, RequestId, UserDecryptionRequest,
+    self, CrsGenRequest, CrsGenResult, Empty, InitRequest, KeyGenPreprocRequest,
+    KeyGenPreprocResult, KeyGenRequest, KeyGenResult, KeySetAddedInfo, PublicDecryptionRequest,
+    PublicDecryptionResponse, PublicDecryptionResponsePayload, UserDecryptionRequest,
     UserDecryptionResponse,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain_option, SignedPubDataHandleInternal};
+use kms_grpc::RequestId;
 use std::collections::HashMap;
 use std::sync::Arc;
 use threshold_fhe::execution::keyset_config::KeySetConfig;
@@ -71,7 +72,7 @@ impl<
     #[tracing::instrument(skip(self, _request))]
     async fn get_key_gen_preproc_result(
         &self,
-        _request: Request<RequestId>,
+        _request: Request<v1::RequestId>,
     ) -> Result<Response<KeyGenPreprocResult>, Status> {
         tonic_some_or_err(
             None,
@@ -92,7 +93,7 @@ impl<
     #[tracing::instrument(skip(self, request))]
     async fn get_insecure_key_gen_result(
         &self,
-        request: Request<RequestId>,
+        request: Request<v1::RequestId>,
     ) -> Result<Response<KeyGenResult>, Status> {
         self.get_key_gen_result(request).await
     }
@@ -119,10 +120,11 @@ impl<
             "centralized key-gen with request id: {:?}",
             inner.request_id
         );
-        let req_id = tonic_some_or_err(
+        let req_id: RequestId = tonic_some_or_err(
             inner.request_id,
             "No request ID present in request".to_string(),
-        )?;
+        )?
+        .into();
         validate_request_id(&req_id)?;
         let params = tonic_handle_potential_err(
             retrieve_parameters(inner.params),
@@ -183,9 +185,9 @@ impl<
     #[tracing::instrument(skip(self, request))]
     async fn get_key_gen_result(
         &self,
-        request: Request<RequestId>,
+        request: Request<v1::RequestId>,
     ) -> Result<Response<KeyGenResult>, Status> {
-        let request_id = request.into_inner();
+        let request_id = request.into_inner().into();
         tracing::debug!("Received get key gen result request with id {}", request_id);
         validate_request_id(&request_id)?;
 
@@ -196,7 +198,7 @@ impl<
         let pub_key_handles = handle_res_mapping(status, &request_id, "Key generation").await?;
 
         Ok(Response::new(KeyGenResult {
-            request_id: Some(request_id),
+            request_id: Some(request_id.into()),
             key_results: convert_key_response(pub_key_handles),
         }))
     }
@@ -242,7 +244,7 @@ impl<
         if let Some(b) = timer.as_mut() {
             //We log but we don't want to return early because timer failed
             let _ = b
-                .tags([(TAG_KEY_ID, key_id.request_id.clone())])
+                .tags([(TAG_KEY_ID, key_id.as_str())])
                 .map_err(|e| tracing::warn!("Failed to add tag key_id or request_id: {}", e));
         }
 
@@ -267,7 +269,7 @@ impl<
         let mut handles = self.thread_handles.write().await;
 
         let metric_tags = vec![
-            (TAG_KEY_ID, key_id.request_id.clone()),
+            (TAG_KEY_ID, key_id.as_str()),
             (TAG_PUBLIC_DECRYPTION_KIND, "centralized".to_string()),
         ];
 
@@ -344,9 +346,9 @@ impl<
     #[tracing::instrument(skip(self, request))]
     async fn get_user_decryption_result(
         &self,
-        request: Request<RequestId>,
+        request: Request<v1::RequestId>,
     ) -> Result<Response<UserDecryptionResponse>, Status> {
-        let request_id = request.into_inner();
+        let request_id = request.into_inner().into();
         validate_request_id(&request_id)?;
 
         let status = {
@@ -418,15 +420,15 @@ impl<
         if let Some(b) = timer.as_mut() {
             //We log but we don't want to return early because timer failed
             let _ = b
-                .tags([(TAG_KEY_ID, key_id.request_id.clone())])
+                .tags([(TAG_KEY_ID, key_id.as_str())])
                 .map_err(|e| tracing::warn!("Failed to add tag key_id or request_id: {}", e));
         }
 
         tracing::info!(
-            "Decrypting {:?} ciphertexts using key {:?} with request id {:?}",
+            "Decrypting {} ciphertexts using key {} with request id {}",
             ciphertexts.len(),
-            key_id.request_id,
-            inner.request_id
+            key_id.as_str(),
+            request_id.as_str()
         );
 
         {
@@ -447,7 +449,7 @@ impl<
         )?;
 
         let metric_tags = vec![
-            (TAG_KEY_ID, key_id.request_id.clone()),
+            (TAG_KEY_ID, key_id.as_str()),
             (TAG_PUBLIC_DECRYPTION_KIND, "centralized".to_string()),
         ];
         // we do not need to hold the handle,
@@ -546,9 +548,9 @@ impl<
     #[tracing::instrument(skip(self, request))]
     async fn get_public_decryption_result(
         &self,
-        request: Request<RequestId>,
+        request: Request<v1::RequestId>,
     ) -> Result<Response<PublicDecryptionResponse>, Status> {
-        let request_id = request.into_inner();
+        let request_id = request.into_inner().into();
         tracing::debug!("Received get key gen result request with id {}", request_id);
         validate_request_id(&request_id)?;
 
@@ -614,7 +616,8 @@ impl<
         let req_id = tonic_some_or_err(
             inner.request_id,
             "Request ID is not set (crs gen)".to_string(),
-        )?;
+        )?
+        .into();
         validate_request_id(&req_id)?;
         let params = tonic_handle_potential_err(
             retrieve_parameters(inner.params),
@@ -668,9 +671,9 @@ impl<
     #[tracing::instrument(skip(self, request))]
     async fn get_crs_gen_result(
         &self,
-        request: Request<RequestId>,
+        request: Request<v1::RequestId>,
     ) -> Result<Response<CrsGenResult>, Status> {
-        let request_id = request.into_inner();
+        let request_id = request.into_inner().into();
         tracing::debug!("Received CRS gen result request with id {}", request_id);
         validate_request_id(&request_id)?;
 
@@ -681,7 +684,7 @@ impl<
         let crs_info = handle_res_mapping(status, &request_id, "CRS").await?;
 
         Ok(Response::new(CrsGenResult {
-            request_id: Some(request_id),
+            request_id: Some(request_id.into()),
             crs_results: Some(crs_info.into()),
         }))
     }
@@ -699,7 +702,7 @@ impl<
     #[tracing::instrument(skip(self, request))]
     async fn get_insecure_crs_gen_result(
         &self,
-        request: Request<RequestId>,
+        request: Request<v1::RequestId>,
     ) -> Result<Response<CrsGenResult>, Status> {
         self.get_crs_gen_result(request).await
     }
@@ -786,9 +789,12 @@ async fn key_gen_background<
                     added_info.to_keyset_id_decompression_only,
                 ) {
                     (Some(from), Some(to)) => {
-                        let decompression_key =
-                            async_generate_decompression_keys(crypto_storage.clone(), &from, &to)
-                                .await?;
+                        let decompression_key = async_generate_decompression_keys(
+                            crypto_storage.clone(),
+                            &from.into(),
+                            &to.into(),
+                        )
+                        .await?;
                         let info = match crate::engine::base::compute_info(
                             &sk,
                             &decompression_key,

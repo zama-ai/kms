@@ -2,8 +2,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 use conf_trace::conf::TelemetryConfig;
 use conf_trace::telemetry::init_tracing;
 use core::fmt;
-use kms_grpc::kms::v1::RequestId;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
+use kms_grpc::RequestId;
 use kms_lib::util::key_setup::test_tools::SIGNING_KEY_ID;
 use kms_lib::{
     consts::{

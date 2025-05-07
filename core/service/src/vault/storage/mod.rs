@@ -1,10 +1,10 @@
 use crate::anyhow_error_and_log;
 use anyhow::anyhow;
 use aws_sdk_s3::Client as S3Client;
-use kms_grpc::kms::v1::RequestId;
 use kms_grpc::rpc_types::{
     PrivDataType, PubDataType, PublicKeyType, WrappedPublicKey, WrappedPublicKeyOwned,
 };
+use kms_grpc::RequestId;
 use ordermap::OrderMap;
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::HashMap;
@@ -249,7 +249,7 @@ pub async fn read_all_data_versioned<
             .read_data(url)
             .await
             .map_err(|e| anyhow!("reading failed on url {url}: {e}"))?;
-        let req_id: RequestId = data_ptr.to_owned().try_into()?;
+        let req_id: RequestId = data_ptr.try_into()?;
         if !req_id.is_valid() {
             return Err(anyhow_error_and_log(format!(
                 "Request ID {} is not valid",

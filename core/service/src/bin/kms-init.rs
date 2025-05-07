@@ -41,9 +41,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // TODO: the init epoch ID is currently fixed to PRSS_INIT_REQ_ID
             // change this once we want to trigger another init for a different context/epoch
-            let req_id = Some(RequestId::try_from(PRSS_INIT_REQ_ID.to_string()).unwrap());
+            let req_id = RequestId {
+                request_id: PRSS_INIT_REQ_ID.to_string(),
+            };
 
-            let request = InitRequest { request_id: req_id };
+            let request = InitRequest {
+                request_id: Some(req_id),
+            };
             let _ = kms_client.init(request).await.unwrap();
         }));
     }

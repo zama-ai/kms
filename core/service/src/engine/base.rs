@@ -15,7 +15,6 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
 use k256::ecdsa::SigningKey;
-use kms_grpc::kms::v1::RequestId;
 use kms_grpc::kms::v1::{
     CiphertextFormat, FheParameter, SignedPubDataHandle, TypedPlaintext,
     UserDecryptionResponsePayload,
@@ -24,9 +23,11 @@ use kms_grpc::rpc_types::{
     FhePubKey, FheServerKey, PubDataType, PublicDecryptVerification, SignedPubDataHandleInternal,
     CRS,
 };
+use kms_grpc::RequestId;
 use rand::{CryptoRng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::integer::BooleanBlock;
@@ -126,9 +127,7 @@ pub fn derive_request_id(name: &str) -> anyhow::Result<RequestId> {
     // Truncate and convert to hex
     digest.truncate(ID_LENGTH);
     let res_hex = hex::encode(digest);
-    Ok(RequestId {
-        request_id: res_hex,
-    })
+    Ok(RequestId::from_str(&res_hex)?)
 }
 
 /// Computes the public into on a serializable `element`.

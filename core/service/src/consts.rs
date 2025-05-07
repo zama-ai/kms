@@ -42,7 +42,7 @@ pub const DEFAULT_PROTOCOL: &str = "http";
 #[cfg(feature = "non-wasm")]
 cfg_if::cfg_if! {
     if #[cfg(any(test, feature = "testing"))] {
-        use kms_grpc::kms::v1::RequestId;
+        use kms_grpc::RequestId;
         use crate::engine::base::derive_request_id;
 
         pub const TMP_PATH_PREFIX: &str = "temp";
@@ -79,10 +79,10 @@ cfg_if::cfg_if! {
                 derive_request_id("OTHER_DEFAULT_ID").unwrap();
 
             // What we will use in a default deployment
-            pub static ref TEST_THRESHOLD_KEY_ID: RequestId = TEST_THRESHOLD_KEY_ID_13P.clone();
-            pub static ref TEST_THRESHOLD_CRS_ID: RequestId = TEST_THRESHOLD_CRS_ID_13P.clone();
-            pub static ref DEFAULT_THRESHOLD_KEY_ID: RequestId = DEFAULT_THRESHOLD_KEY_ID_13P.clone();
-            pub static ref DEFAULT_THRESHOLD_CRS_ID: RequestId = DEFAULT_THRESHOLD_CRS_ID_13P.clone();
+            pub static ref TEST_THRESHOLD_KEY_ID: RequestId = *TEST_THRESHOLD_KEY_ID_13P;
+            pub static ref TEST_THRESHOLD_CRS_ID: RequestId = *TEST_THRESHOLD_CRS_ID_13P;
+            pub static ref DEFAULT_THRESHOLD_KEY_ID: RequestId = *DEFAULT_THRESHOLD_KEY_ID_13P;
+            pub static ref DEFAULT_THRESHOLD_CRS_ID: RequestId = *DEFAULT_THRESHOLD_CRS_ID_13P;
         }
     }
 }

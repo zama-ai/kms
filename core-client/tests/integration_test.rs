@@ -1,8 +1,10 @@
 use cc_tests_utils::{DockerCompose, KMSMode};
 use kms_core_client::*;
+use kms_grpc::KeyId;
 use serial_test::serial;
 use std::path::Path;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::string::String;
 use test_context::futures::future::join_all;
 use test_context::{test_context, AsyncTestContext};
@@ -180,7 +182,7 @@ async fn real_preproc_and_keygen(config_path: &str) -> String {
     let config = CmdConfig {
         file_conf: Some(config_path.to_string()),
         command: CCCommand::KeyGen(KeyGenParameters {
-            preproc_id: preproc_id.unwrap().to_string(),
+            preproc_id: preproc_id.unwrap(),
         }),
         logs: true,
         max_iter: 200,
@@ -226,33 +228,33 @@ async fn test_template<T: DockerComposeContext>(ctx: &mut T, commands: Vec<CCCom
         }
 
         //Also test the get result commands
-        let req_id = results[0].0.clone();
+        let req_id = results[0].0;
 
         let get_res_command = match command {
             CCCommand::PreprocKeyGen(_no_parameters) => {
                 CCCommand::PreprocKeyGenResult(ResultParameters {
-                    request_id: req_id.unwrap().to_string(),
+                    request_id: req_id.unwrap(),
                 })
             }
             CCCommand::KeyGen(_key_gen_parameters) => CCCommand::KeyGenResult(ResultParameters {
-                request_id: req_id.unwrap().to_string(),
+                request_id: req_id.unwrap(),
             }),
             CCCommand::InsecureKeyGen(_no_parameters) => {
                 CCCommand::InsecureKeyGenResult(ResultParameters {
-                    request_id: req_id.unwrap().to_string(),
+                    request_id: req_id.unwrap(),
                 })
             }
             CCCommand::PublicDecrypt(_cipher_arguments) => {
                 CCCommand::PublicDecryptResult(ResultParameters {
-                    request_id: req_id.unwrap().to_string(),
+                    request_id: req_id.unwrap(),
                 })
             }
             CCCommand::CrsGen(_crs_parameters) => CCCommand::CrsGenResult(ResultParameters {
-                request_id: req_id.unwrap().to_string(),
+                request_id: req_id.unwrap(),
             }),
             CCCommand::InsecureCrsGen(_crs_parameters) => {
                 CCCommand::InsecureCrsGenResult(ResultParameters {
-                    request_id: req_id.unwrap().to_string(),
+                    request_id: req_id.unwrap(),
                 })
             }
             _ => CCCommand::DoNothing(NoParameters {}),
@@ -326,6 +328,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
     let ctxt_path: &Path = Path::new("tests/data/test_encrypt_cipher.txt");
     let ctxt_with_sns_path: &Path = Path::new("tests/data/test_encrypt_cipher_with_sns.txt");
     // some commands are tested twice to see the cache in action
+    let key_id = KeyId::from_str(&key_id).expect("CCCommand failed for KeyId");
     let commands = vec![
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(
             CipherParameters {
@@ -333,7 +336,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             data_type: FheType::Ebool,
             compression: true,
             precompute_sns: false,
-            key_id: key_id.clone(),
+            key_id,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -344,7 +347,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             data_type: FheType::Ebool,
             compression: true,
             precompute_sns: false,
-            key_id: key_id.clone(),
+            key_id,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -355,7 +358,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             data_type: FheType::Euint8,
             compression: false,
             precompute_sns: false,
-            key_id: key_id.clone(),
+            key_id,
             batch_size: 3,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -366,7 +369,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             data_type: FheType::Euint8,
             compression: true,
             precompute_sns: false,
-            key_id: key_id.clone(),
+            key_id,
             batch_size: 3,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -377,7 +380,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             data_type: FheType::Euint16,
             compression: true,
             precompute_sns: false,
-            key_id: key_id.clone(),
+            key_id,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -388,7 +391,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             data_type: FheType::Euint1024,
             compression: true,
             precompute_sns: false,
-            key_id: key_id.clone(),
+            key_id,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -399,7 +402,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             data_type: FheType::Euint1024,
             compression: true,
             precompute_sns: false,
-            key_id: key_id.clone(),
+            key_id,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -410,7 +413,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
                 data_type: FheType::Euint1024,
                 compression: true,
                 precompute_sns: false,
-                key_id: key_id.clone(),
+                key_id,
                 batch_size: 1,
                 num_requests: 1,
                 ciphertext_output_path: Some(ctxt_path.to_path_buf()),
@@ -437,7 +440,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             data_type: FheType::Ebool,
             compression: false,
             precompute_sns: true,
-            key_id: key_id.clone(),
+            key_id,
             batch_size: 2,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -448,7 +451,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             data_type: FheType::Euint8,
             compression: false,
             precompute_sns: true,
-            key_id: key_id.clone(),
+            key_id,
             batch_size: 2,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -459,7 +462,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             data_type: FheType::Ebool,
             compression: false,
             precompute_sns: true,
-            key_id: key_id.clone(),
+            key_id,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -470,7 +473,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             data_type: FheType::Euint8,
             compression: false,
             precompute_sns: true,
-            key_id: key_id.clone(),
+            key_id,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -481,7 +484,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             data_type: FheType::Euint1024,
             compression: false,
             precompute_sns: true,
-            key_id: key_id.clone(),
+            key_id,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -492,7 +495,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             data_type: FheType::Euint1024,
             compression: false,
             precompute_sns: true,
-            key_id: key_id.clone(),
+            key_id,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -503,7 +506,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
                 data_type: FheType::Euint1024,
                 compression: false,
                 precompute_sns: true,
-                key_id: key_id.clone(),
+                key_id,
                 batch_size: 1,
             num_requests: 1,
                 ciphertext_output_path: Some(ctxt_with_sns_path.to_path_buf()),

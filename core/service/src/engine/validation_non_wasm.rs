@@ -1,10 +1,11 @@
 use std::collections::HashSet;
 
 use alloy_dyn_abi::Eip712Domain;
+use kms_grpc::RequestId;
 use kms_grpc::{
     kms::v1::{
         PublicDecryptionRequest, PublicDecryptionResponse, PublicDecryptionResponsePayload,
-        RequestId, TypedCiphertext, TypedPlaintext, UserDecryptionRequest,
+        TypedCiphertext, TypedPlaintext, UserDecryptionRequest,
     },
     rpc_types::protobuf_to_alloy_domain_option,
 };
@@ -82,18 +83,20 @@ pub fn validate_user_decrypt_req(
     RequestId,
     alloy_sol_types::Eip712Domain,
 )> {
-    let key_id = tonic_some_or_err(
+    let key_id: RequestId = tonic_some_or_err(
         req.key_id.clone(),
         format!(
             "{} (Request ID: {:?})",
             ERR_VALIDATE_USER_DECRYPTION_NO_KEY_ID, req
         ),
-    )?;
+    )?
+    .into();
 
-    let request_id = tonic_some_or_err(
+    let request_id: RequestId = tonic_some_or_err(
         req.request_id.clone(),
         ERR_VALIDATE_USER_DECRYPTION_NO_REQ_ID.to_string(),
-    )?;
+    )?
+    .into();
     if !request_id.is_valid() {
         return Err(anyhow_error_and_warn_log(format!(
             "{} (Request ID: {})",
@@ -157,18 +160,20 @@ pub fn validate_public_decrypt_req(
     RequestId,
     Option<Eip712Domain>,
 )> {
-    let key_id = tonic_some_or_err(
+    let key_id: RequestId = tonic_some_or_err(
         req.key_id.clone(),
         format!(
             "{} (Request ID: {:?})",
             ERR_VALIDATE_PUBLIC_DECRYPTION_NO_KEY_ID, req
         ),
-    )?;
+    )?
+    .into();
 
-    let request_id = tonic_some_or_err(
+    let request_id: RequestId = tonic_some_or_err(
         req.request_id.clone(),
         ERR_VALIDATE_PUBLIC_DECRYPTION_NO_REQ_ID.to_string(),
-    )?;
+    )?
+    .into();
     if !request_id.is_valid() {
         return Err(anyhow_error_and_warn_log(format!(
             "{} (Request ID: {})",
@@ -401,11 +406,13 @@ mod tests {
     use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::{
-            PublicDecryptionRequest, PublicDecryptionResponse, PublicDecryptionResponsePayload,
-            RequestId, TypedCiphertext, TypedPlaintext, UserDecryptionRequest,
+            self, PublicDecryptionRequest, PublicDecryptionResponse,
+            PublicDecryptionResponsePayload, TypedCiphertext, TypedPlaintext,
+            UserDecryptionRequest,
         },
         rpc_types::{alloy_to_protobuf_domain, ID_LENGTH},
     };
+
     use rand::SeedableRng;
     use threshold_fhe::hashing::serialize_hash_element;
 
@@ -456,7 +463,7 @@ mod tests {
         // empty key ID
         {
             let req = PublicDecryptionRequest {
-                request_id: Some(request_id.clone()),
+                request_id: Some(request_id.into()),
                 ciphertexts: ciphertexts.clone(),
                 key_id: None,
                 domain: Some(domain.clone()),
@@ -472,7 +479,7 @@ mod tests {
             let req = PublicDecryptionRequest {
                 request_id: None,
                 ciphertexts: ciphertexts.clone(),
-                key_id: Some(key_id.clone()),
+                key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
             };
             assert!(validate_public_decrypt_req(&req)
@@ -483,13 +490,13 @@ mod tests {
 
         // invalid request ID
         {
-            let bad_req_id = RequestId {
+            let bad_req_id = v1::RequestId {
                 request_id: ['x'; ID_LENGTH].iter().collect(),
             };
             let req = PublicDecryptionRequest {
                 request_id: Some(bad_req_id),
                 ciphertexts: vec![],
-                key_id: Some(key_id.clone()),
+                key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
             };
             assert!(validate_public_decrypt_req(&req)
@@ -501,9 +508,9 @@ mod tests {
         // empty ciphertext
         {
             let req = PublicDecryptionRequest {
-                request_id: Some(request_id.clone()),
+                request_id: Some(request_id.into()),
                 ciphertexts: vec![],
-                key_id: Some(key_id.clone()),
+                key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
             };
             assert!(validate_public_decrypt_req(&req)
@@ -515,9 +522,9 @@ mod tests {
         // finally everything is ok
         {
             let req = PublicDecryptionRequest {
-                request_id: Some(request_id.clone()),
+                request_id: Some(request_id.into()),
                 ciphertexts: ciphertexts.clone(),
-                key_id: Some(key_id.clone()),
+                key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
             };
             let (_, _, _, _, domain) = validate_public_decrypt_req(&req).unwrap();
@@ -553,7 +560,7 @@ mod tests {
         // empty key ID
         {
             let req = UserDecryptionRequest {
-                request_id: Some(request_id.clone()),
+                request_id: Some(request_id.into()),
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: None,
                 domain: Some(domain.clone()),
@@ -571,7 +578,7 @@ mod tests {
             let req = UserDecryptionRequest {
                 request_id: None,
                 typed_ciphertexts: ciphertexts.clone(),
-                key_id: Some(key_id.clone()),
+                key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
@@ -584,13 +591,13 @@ mod tests {
 
         // invalid request ID
         {
-            let bad_req_id = RequestId {
+            let bad_req_id = v1::RequestId {
                 request_id: ['x'; ID_LENGTH].iter().collect(),
             };
             let req = UserDecryptionRequest {
                 request_id: Some(bad_req_id),
                 typed_ciphertexts: vec![],
-                key_id: Some(key_id.clone()),
+                key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
@@ -604,9 +611,9 @@ mod tests {
         // empty ciphertext
         {
             let req = UserDecryptionRequest {
-                request_id: Some(request_id.clone()),
+                request_id: Some(request_id.into()),
                 typed_ciphertexts: vec![],
-                key_id: Some(key_id.clone()),
+                key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
@@ -620,9 +627,9 @@ mod tests {
         // bad client address
         {
             let req = UserDecryptionRequest {
-                request_id: Some(request_id.clone()),
+                request_id: Some(request_id.into()),
                 typed_ciphertexts: ciphertexts.clone(),
-                key_id: Some(key_id.clone()),
+                key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
                 client_address: client_address.to_checksum(Some(1)),
                 enc_key: enc_pk_buf.clone(),
@@ -638,9 +645,9 @@ mod tests {
             let mut bad_enc_pk_buf = enc_pk_buf.clone();
             bad_enc_pk_buf[0] ^= 1;
             let req = UserDecryptionRequest {
-                request_id: Some(request_id.clone()),
+                request_id: Some(request_id.into()),
                 typed_ciphertexts: ciphertexts.clone(),
-                key_id: Some(key_id.clone()),
+                key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
                 client_address: client_address.to_checksum(None),
                 enc_key: bad_enc_pk_buf,
@@ -654,9 +661,9 @@ mod tests {
         // finally everything is ok
         {
             let req = UserDecryptionRequest {
-                request_id: Some(request_id.clone()),
+                request_id: Some(request_id.into()),
                 typed_ciphertexts: ciphertexts.clone(),
-                key_id: Some(key_id.clone()),
+                key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
@@ -668,21 +675,21 @@ mod tests {
     #[test]
     fn test_validate_request_id() {
         // not hex
-        let bad_req_id1 = RequestId {
+        let bad_req_id1 = v1::RequestId {
             request_id: ['x'; ID_LENGTH].iter().collect(),
         };
-        assert!(validate_request_id(&bad_req_id1).is_err());
+        assert!(validate_request_id(&bad_req_id1.into()).is_err());
 
         // wrong length
-        let bad_req_id2 = RequestId {
+        let bad_req_id2 = v1::RequestId {
             request_id: ['a'; ID_LENGTH - 1].iter().collect(),
         };
-        assert!(validate_request_id(&bad_req_id2).is_err());
+        assert!(validate_request_id(&bad_req_id2.into()).is_err());
 
-        let good_req_id = RequestId {
+        let good_req_id = v1::RequestId {
             request_id: ['a'; ID_LENGTH].iter().collect(),
         };
-        assert!(validate_request_id(&good_req_id).is_err());
+        assert!(validate_request_id(&good_req_id.into()).is_err());
     }
 
     #[test]
@@ -709,12 +716,12 @@ mod tests {
         let domain_msg = alloy_to_protobuf_domain(&domain).unwrap();
 
         let req = kms_grpc::kms::v1::UserDecryptionRequest {
-            request_id: Some(RequestId {
+            request_id: Some(v1::RequestId {
                 request_id: "dummy request ID".to_owned(),
             }),
             enc_key: bincode::serialize(&enc_pk).unwrap(),
             client_address: client_address.to_checksum(None),
-            key_id: Some(key_id),
+            key_id: Some(key_id.into()),
             typed_ciphertexts: vec![typed_ciphertext],
             domain: Some(domain_msg),
         };
@@ -1040,14 +1047,18 @@ mod tests {
         let pks = [vk0, vk1, vk2];
 
         let request = PublicDecryptionRequest {
-            request_id: Some(derive_request_id("PublicDecryptionRequest").unwrap()),
+            request_id: Some(derive_request_id("PublicDecryptionRequest").unwrap().into()),
             ciphertexts: vec![TypedCiphertext {
                 ciphertext: vec![1, 2, 3, 4],
                 fhe_type: 1,
                 external_handle: vec![1, 2, 3, 4],
                 ciphertext_format: 1,
             }],
-            key_id: Some(derive_request_id("PublicDecryptionRequest key_id").unwrap()),
+            key_id: Some(
+                derive_request_id("PublicDecryptionRequest key_id")
+                    .unwrap()
+                    .into(),
+            ),
             domain: None,
         };
 
@@ -1124,7 +1135,7 @@ mod tests {
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
             let bad_request = PublicDecryptionRequest {
-                request_id: Some(derive_request_id("PublicDecryptionRequest").unwrap()),
+                request_id: Some(derive_request_id("PublicDecryptionRequest").unwrap().into()),
                 // here we use two ciphertexts
                 ciphertexts: vec![
                     TypedCiphertext {
@@ -1140,7 +1151,11 @@ mod tests {
                         ciphertext_format: 1,
                     },
                 ],
-                key_id: Some(derive_request_id("PublicDecryptionRequest key_id").unwrap()),
+                key_id: Some(
+                    derive_request_id("PublicDecryptionRequest key_id")
+                        .unwrap()
+                        .into(),
+                ),
                 domain: None,
             };
             assert!(validate_public_decrypt_responses_against_request(
@@ -1158,14 +1173,18 @@ mod tests {
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
             let bad_request = PublicDecryptionRequest {
-                request_id: Some(derive_request_id("PublicDecryptionRequest").unwrap()),
+                request_id: Some(derive_request_id("PublicDecryptionRequest").unwrap().into()),
                 ciphertexts: vec![TypedCiphertext {
                     ciphertext: vec![1, 2, 3, 4],
                     fhe_type: 2, // we change the fhe_type so it's the wrong request
                     external_handle: vec![1, 2, 3, 4],
                     ciphertext_format: 1,
                 }],
-                key_id: Some(derive_request_id("PublicDecryptionRequest key_id").unwrap()),
+                key_id: Some(
+                    derive_request_id("PublicDecryptionRequest key_id")
+                        .unwrap()
+                        .into(),
+                ),
                 domain: None,
             };
             assert!(validate_public_decrypt_responses_against_request(

@@ -11,8 +11,8 @@ use crate::vault::storage::{
 };
 use aes_prng::AesRng;
 use itertools::Itertools;
-use kms_grpc::kms::v1::RequestId;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType, WrappedPublicKey};
+use kms_grpc::RequestId;
 use rand::SeedableRng;
 use std::collections::HashMap;
 use std::path::Path;
@@ -47,7 +47,7 @@ async fn get_signing_key<S: Storage>(priv_storage: &S) -> PrivateSigKey {
             sk_map.values().len(), priv_storage.info()
         );
     }
-    let req_id = sk_map.keys().last().unwrap().clone();
+    let req_id = *sk_map.keys().last().unwrap();
     sk_map.remove(&req_id).unwrap()
 }
 
@@ -334,14 +334,8 @@ where
         None,
     )
     .unwrap();
-    let priv_fhe_map = HashMap::from([
-        (key_id.clone(), key_info_1),
-        (other_key_id.clone(), key_info_2),
-    ]);
-    let pub_fhe_map = HashMap::from([
-        (key_id.clone(), fhe_pub_keys_1),
-        (other_key_id.clone(), fhe_pub_keys_2),
-    ]);
+    let priv_fhe_map = HashMap::from([(*key_id, key_info_1), (*other_key_id, key_info_2)]);
+    let pub_fhe_map = HashMap::from([(*key_id, fhe_pub_keys_1), (*other_key_id, fhe_pub_keys_2)]);
     for (req_id, key_info) in &priv_fhe_map {
         store_versioned_at_request_id(
             priv_storage,

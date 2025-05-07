@@ -5,10 +5,12 @@ use crate::vault::storage::{
     delete_all_at_request_id, read_versioned_at_request_id, StorageReader,
 };
 use crate::vault::storage::{read_pk_at_request_id, StorageType};
-use kms_grpc::kms::v1::{CiphertextFormat, RequestId, TypedPlaintext};
+use kms_grpc::kms::v1::{CiphertextFormat, TypedPlaintext};
 use kms_grpc::rpc_types::{PubDataType, WrappedPublicKeyOwned};
+use kms_grpc::RequestId;
 use serde::de::DeserializeOwned;
 use std::path::Path;
+use std::str::FromStr;
 use tfhe::core_crypto::prelude::Numeric;
 use tfhe::named::Named;
 use tfhe::prelude::SquashNoise;
@@ -376,9 +378,7 @@ where
     let storage = get_storage(pub_path, key_id, &data_type.to_string()).await;
     let material: T = read_versioned_at_request_id(
         &storage,
-        &RequestId {
-            request_id: key_id.to_string(),
-        },
+        &RequestId::from_str(key_id).unwrap(),
         &data_type.to_string(),
     )
     .await
@@ -397,12 +397,10 @@ pub async fn load_pk_from_storage(pub_path: Option<&Path>, key_id: &str) -> FheP
     let storage = get_storage(pub_path, key_id, &PubDataType::PublicKey.to_string()).await;
     let wrapped_pk = read_pk_at_request_id(
         &storage,
-        &RequestId {
-            request_id: key_id.to_string(),
-        },
+        &RequestId::from_str(key_id).expect("key_id not converted"),
     )
     .await
-    .unwrap();
+    .expect("load_pk_from_storage failed");
     let WrappedPublicKeyOwned::Compact(pk) = wrapped_pk;
     pk
 }
@@ -473,7 +471,7 @@ pub async fn purge(
     id: &str,
     amount_parties: usize,
 ) {
-    let req_id: RequestId = id.to_string().try_into().unwrap();
+    let req_id: RequestId = RequestId::from_str(id).unwrap();
     let mut pub_storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
     delete_all_at_request_id(&mut pub_storage, &req_id).await;
     let mut priv_storage = FileStorage::new(priv_path, StorageType::PRIV, None).unwrap();
@@ -512,7 +510,7 @@ pub(crate) mod setup {
         },
         vault::storage::{file::FileStorage, StorageType},
     };
-    use kms_grpc::kms::v1::RequestId;
+    use kms_grpc::RequestId;
     use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 
     pub async fn ensure_dir_exist() {

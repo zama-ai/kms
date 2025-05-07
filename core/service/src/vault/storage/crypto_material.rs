@@ -18,10 +18,10 @@ use crate::{
     util::meta_store::MetaStore,
     vault::storage::{delete_at_request_id, delete_pk_at_request_id},
 };
-use kms_grpc::kms::v1::RequestId;
 use kms_grpc::rpc_types::{
     PrivDataType, PubDataType, SignedPubDataHandleInternal, WrappedPublicKey, WrappedPublicKeyOwned,
 };
+use kms_grpc::RequestId;
 use std::{collections::HashMap, sync::Arc};
 use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
 use threshold_fhe::execution::endpoints::keygen::FhePubKeySet;
@@ -230,7 +230,7 @@ impl<
                 let mut guarded_pk_cache = self.inner.pk_cache.write().await;
                 if guarded_pk_cache
                     .insert(
-                        req_id.clone(),
+                        *req_id,
                         WrappedPublicKeyOwned::Compact(fhe_key_set.public_key.clone()),
                     )
                     .is_some()
@@ -240,7 +240,7 @@ impl<
             }
             {
                 let mut guarded_fhe_keys = self.fhe_keys.write().await;
-                guarded_fhe_keys.insert(req_id.clone(), threshold_fhe_keys);
+                guarded_fhe_keys.insert(*req_id, threshold_fhe_keys);
             }
             tracing::info!("Finished DKG for Request Id {req_id}.");
         } else {
@@ -490,7 +490,7 @@ impl<
                 let mut guarded_pk_cache = self.inner.pk_cache.write().await;
                 if guarded_pk_cache
                     .insert(
-                        req_id.clone(),
+                        *req_id,
                         WrappedPublicKeyOwned::Compact(fhe_key_set.public_key.clone()),
                     )
                     .is_some()
@@ -500,7 +500,7 @@ impl<
             }
             {
                 let mut guarded_fhe_keys = self.fhe_keys.write().await;
-                guarded_fhe_keys.insert(req_id.clone(), key_info);
+                guarded_fhe_keys.insert(*req_id, key_info);
                 tracing::info!(
                     "Successfully stored centralized keygen material for request {}",
                     req_id
@@ -866,7 +866,7 @@ impl<
                     })?;
 
                 let mut write_cache_guard = cache.write().await;
-                write_cache_guard.insert(req_id.clone(), pk.clone());
+                write_cache_guard.insert(*req_id, pk.clone());
                 Ok(pk)
             }
         }
@@ -921,7 +921,7 @@ impl<
             let storage = storage.lock().await;
             let new_fhe_keys = T::read_from_storage(&(*storage), req_id).await?;
             let mut guarded_fhe_keys = cache.write().await;
-            guarded_fhe_keys.insert(req_id.clone(), new_fhe_keys);
+            guarded_fhe_keys.insert(*req_id, new_fhe_keys);
         }
 
         Ok(())

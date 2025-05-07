@@ -17,12 +17,14 @@ use alloy_sol_types::SolStruct;
 use bincode::{deserialize, serialize};
 use itertools::Itertools;
 use kms_grpc::kms::v1::{
-    RequestId, TypedCiphertext, TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse,
+    TypedCiphertext, TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse,
     UserDecryptionResponsePayload,
 };
 use kms_grpc::rpc_types::{
     alloy_to_protobuf_domain, fhe_types_to_num_blocks, UserDecryptionLinker,
 };
+use kms_grpc::KeyId;
+use kms_grpc::RequestId;
 use rand::SeedableRng;
 use std::num::Wrapping;
 use tfhe::shortint::ClassicPBSParameters;
@@ -551,10 +553,12 @@ impl Client {
             None => None,
         };
 
+        let prep_id = preproc_id.map(|res| res.into());
+
         Ok(KeyGenRequest {
             params: parsed_param,
-            preproc_id,
-            request_id: Some(request_id.clone()),
+            preproc_id: prep_id,
+            request_id: Some((*request_id).into()),
             domain,
             keyset_config,
             keyset_added_info,
@@ -587,7 +591,7 @@ impl Client {
         Ok(CrsGenRequest {
             params: parsed_param,
             max_num_bits,
-            request_id: Some(request_id.clone()),
+            request_id: Some((*request_id).into()),
             domain,
         })
     }
@@ -608,7 +612,7 @@ impl Client {
         Ok(KeyGenPreprocRequest {
             params: param.unwrap_or_default().into(),
             keyset_config,
-            request_id: Some(request_id.clone()),
+            request_id: Some((*request_id).into()),
         })
     }
 
@@ -655,7 +659,7 @@ impl Client {
             };
 
             // check the result matches our request ID
-            if request_id.request_id
+            if request_id.as_str()
                 != result
                     .request_id
                     .ok_or_else(|| anyhow_error_and_log("request ID missing"))?
@@ -737,7 +741,7 @@ impl Client {
         ciphertexts: Vec<TypedCiphertext>,
         domain: &Eip712Domain,
         request_id: &RequestId,
-        key_id: &RequestId,
+        key_id: &KeyId,
     ) -> anyhow::Result<PublicDecryptionRequest> {
         if !request_id.is_valid() {
             return Err(anyhow_error_and_log(format!(
@@ -749,9 +753,9 @@ impl Client {
 
         let req = PublicDecryptionRequest {
             ciphertexts,
-            key_id: Some(key_id.clone()),
+            key_id: Some((*key_id).into()),
             domain: Some(domain_msg),
-            request_id: Some(request_id.clone()),
+            request_id: Some((*request_id).into()),
         };
         Ok(req)
     }
@@ -767,7 +771,7 @@ impl Client {
         domain: &Eip712Domain,
         typed_ciphertexts: Vec<TypedCiphertext>,
         request_id: &RequestId,
-        key_id: &RequestId,
+        key_id: &KeyId,
     ) -> anyhow::Result<(UserDecryptionRequest, PublicEncKey, PrivateEncKey)> {
         if !request_id.is_valid() {
             return Err(anyhow_error_and_log(format!(
@@ -784,11 +788,11 @@ impl Client {
         let domain_msg = alloy_to_protobuf_domain(domain)?;
         Ok((
             UserDecryptionRequest {
-                request_id: Some(request_id.clone()),
+                request_id: Some((*request_id).into()),
                 enc_key: serialize(&enc_pk)?,
                 client_address: self.client_address.to_checksum(None),
                 typed_ciphertexts,
-                key_id: Some(key_id.clone()),
+                key_id: Some((*key_id).into()),
                 domain: Some(domain_msg),
             },
             enc_pk,
@@ -852,7 +856,8 @@ impl Client {
         let request_id = some_or_err(
             key_gen_result.request_id.clone(),
             "No request id".to_string(),
-        )?;
+        )?
+        .into();
         tracing::debug!(
             "getting public key metadata using storage {} with request id {}",
             storage.info(),
@@ -917,7 +922,7 @@ impl Client {
             key_gen_result.request_id.clone(),
             "No request id".to_string(),
         )?;
-        let key: S = self.get_key(&request_id, key_type, storage).await?;
+        let key: S = self.get_key(&request_id.into(), key_type, storage).await?;
         let key_handle = compute_handle(&key)?;
         if key_handle != pki.key_handle {
             tracing::warn!(
@@ -976,7 +981,7 @@ impl Client {
             crs_gen_result.request_id.clone(),
             "No request id".to_string(),
         )?;
-        let pp = self.get_crs(&request_id, storage).await?;
+        let pp = self.get_crs(&request_id.into(), storage).await?;
         let crs_handle = compute_handle(&pp)?;
         if crs_handle != crs_info.key_handle {
             tracing::warn!(
@@ -2260,15 +2265,17 @@ pub(crate) mod tests {
     #[cfg(feature = "wasm_tests")]
     use kms_grpc::kms::v1::TypedPlaintext;
     use kms_grpc::kms::v1::{
-        Empty, FheParameter, InitRequest, KeySetAddedInfo, KeySetConfig, KeySetType, RequestId,
+        Empty, FheParameter, InitRequest, KeySetAddedInfo, KeySetConfig, KeySetType,
         TypedCiphertext, UserDecryptionResponse,
     };
     use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
     use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
     use kms_grpc::rpc_types::{fhe_types_to_num_blocks, PrivDataType};
     use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
+    use kms_grpc::{KeyId, RequestId};
     use serial_test::serial;
     use std::collections::{hash_map::Entry, HashMap};
+    use std::str::FromStr;
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     use std::sync::Arc;
     use tfhe::core_crypto::prelude::{ContiguousEntityContainer, LweCiphertextOwned};
@@ -2408,7 +2415,7 @@ pub(crate) mod tests {
         // Validate that the core server is not ready
         let (dec_tasks, req_id) = send_dec_reqs(
             1,
-            &TEST_THRESHOLD_KEY_ID,
+            &(*TEST_THRESHOLD_KEY_ID).into(),
             &kms_clients,
             &mut internal_client,
         )
@@ -2460,10 +2467,10 @@ pub(crate) mod tests {
         for i in 1..=DEFAULT_AMOUNT_PARTIES as u32 {
             let mut cur_client = kms_clients.get(&i).unwrap().clone();
             req_tasks.spawn(async move {
-                let req_id = RequestId::try_from(PRSS_INIT_REQ_ID.to_string()).unwrap();
+                let req_id = RequestId::from_str(PRSS_INIT_REQ_ID).unwrap();
                 cur_client
                     .init(tonic::Request::new(InitRequest {
-                        request_id: Some(req_id),
+                        request_id: Some(req_id.into()),
                     }))
                     .await
             });
@@ -2537,8 +2544,13 @@ pub(crate) mod tests {
         );
         let client_map = HashMap::from([(1, kms_client)]);
         // Keep the server occupied so it won't shut down immidiately after dropping the handle
-        let (tasks, req_id) =
-            send_dec_reqs(3, &TEST_CENTRAL_KEY_ID, &client_map, &mut internal_client).await;
+        let (tasks, req_id) = send_dec_reqs(
+            3,
+            &(*TEST_CENTRAL_KEY_ID).into(),
+            &client_map,
+            &mut internal_client,
+        )
+        .await;
         // Drop server
         drop(kms_server);
         // Get status and validate that it is not serving
@@ -2668,7 +2680,7 @@ pub(crate) mod tests {
         // Keep the server occupied so it won't shut down immidiately after dropping the handle
         let (tasks, _req_id) = send_dec_reqs(
             3,
-            &TEST_THRESHOLD_KEY_ID,
+            &(*TEST_THRESHOLD_KEY_ID).into(),
             &kms_clients,
             &mut internal_client,
         )
@@ -2700,15 +2712,13 @@ pub(crate) mod tests {
 
     async fn send_dec_reqs(
         amount_cts: usize,
-        key_id: &RequestId,
+        key_id: &KeyId,
         kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
         internal_client: &mut Client,
     ) -> (
         JoinSet<Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status>>,
         RequestId,
     ) {
-        let key_id_req = key_id.to_string().try_into().unwrap();
-
         let mut cts = Vec::new();
         for i in 0..amount_cts {
             let msg = TestingPlaintext::U32(i as u32);
@@ -2734,7 +2744,7 @@ pub(crate) mod tests {
         // make parallel requests by calling [public_decrypt] in a thread
         let request_id = derive_request_id("TEST_DEC_ID").unwrap();
         let req = internal_client
-            .public_decryption_request(cts.clone(), &dummy_domain(), &request_id, &key_id_req)
+            .public_decryption_request(cts.clone(), &dummy_domain(), &request_id, key_id)
             .unwrap();
         let mut join_set = JoinSet::new();
         for i in 1..=kms_clients.len() as u32 {
@@ -2758,10 +2768,10 @@ pub(crate) mod tests {
         let mut join_set = JoinSet::new();
         for i in 1..=kms_clients.len() as u32 {
             let mut cur_client = kms_clients.get(&i).unwrap().clone();
-            let req_id_clone = request_id.clone();
+            let req_id_clone = *request_id;
             join_set.spawn(async move {
                 cur_client
-                    .get_public_decryption_result(tonic::Request::new(req_id_clone))
+                    .get_public_decryption_result(tonic::Request::new(req_id_clone.into()))
                     .await
             });
         }
@@ -2800,8 +2810,8 @@ pub(crate) mod tests {
             }),
             Some(KeySetAddedInfo {
                 compression_keyset_id: None,
-                from_keyset_id_decompression_only: Some(request_id_1),
-                to_keyset_id_decompression_only: Some(request_id_2),
+                from_keyset_id_decompression_only: Some(request_id_1.into()),
+                to_keyset_id_decompression_only: Some(request_id_2.into()),
             }),
         )
         .await;
@@ -2841,8 +2851,8 @@ pub(crate) mod tests {
             }),
             Some(KeySetAddedInfo {
                 compression_keyset_id: None,
-                from_keyset_id_decompression_only: Some(request_id_1),
-                to_keyset_id_decompression_only: Some(request_id_2),
+                from_keyset_id_decompression_only: Some(request_id_1.into()),
+                to_keyset_id_decompression_only: Some(request_id_2.into()),
             }),
         )
         .await;
@@ -2956,7 +2966,7 @@ pub(crate) mod tests {
 
                 // get the server key 1
                 let server_key_1: tfhe::ServerKey = internal_client
-                    .get_key(&keyid_1, PubDataType::ServerKey, &pub_storage)
+                    .get_key(&keyid_1.into(), PubDataType::ServerKey, &pub_storage)
                     .await
                     .unwrap();
 
@@ -3026,7 +3036,7 @@ pub(crate) mod tests {
             // Sleep to give the server some time to complete CRS generation
             tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
             get_response = kms_client
-                .get_crs_gen_result(tonic::Request::new(request_id.clone()))
+                .get_crs_gen_result(tonic::Request::new((*request_id).into()))
                 .await;
         }
 
@@ -3141,7 +3151,7 @@ pub(crate) mod tests {
         let mut ctr = 0;
         while response.is_err() && ctr < 5 {
             response = kms_client
-                .get_crs_gen_result(tonic::Request::new(crs_req_id.clone()))
+                .get_crs_gen_result(tonic::Request::new((*crs_req_id).into()))
                 .await;
             ctr += 1;
         }
@@ -3232,66 +3242,69 @@ pub(crate) mod tests {
     // The requests from the `reqs` argument need to implement `RequestIdGetter`.
     #[macro_export]
     macro_rules! par_poll_responses {
-        ($kms_clients:expr,$reqs:expr,$f_to_poll:ident,$amount_parties:expr) => {{
-            use $crate::consts::MAX_TRIES;
-            let mut joined_responses = vec![];
-            for count in 0..MAX_TRIES {
-                // Reset the list every time since we get all old results as well
-                joined_responses = vec![];
-                tokio::time::sleep(tokio::time::Duration::from_secs(30 * $reqs.len() as u64)).await;
+    ($kms_clients:expr,$reqs:expr,$f_to_poll:ident,$amount_parties:expr) => {{
+        use $crate::consts::MAX_TRIES;
+        let mut joined_responses = vec![];
+        for count in 0..MAX_TRIES {
+            // Reset the list every time since we get all old results as well
+            joined_responses = vec![];
+            tokio::time::sleep(tokio::time::Duration::from_secs(30 * $reqs.len() as u64)).await;
 
-                let mut tasks_get = JoinSet::new();
-                for req in $reqs {
-                    for i in 1..=$amount_parties as u32 {
-                        // Make sure we only consider clients for which
-                        // we haven't killed the corresponding server
-                        if let Some(cur_client) = $kms_clients.get(&i) {
-                            let mut cur_client = cur_client.clone();
-                            let req_id_cloned = req.request_id.clone().unwrap();
-                            tasks_get.spawn(async move {
-                                (
-                                    i,
-                                    req_id_cloned.clone(),
-                                    cur_client
-                                        .$f_to_poll(tonic::Request::new(req_id_cloned))
-                                        .await,
-                                )
-                            });
-                        }
+            let mut tasks_get = JoinSet::new();
+            for req in $reqs {
+                for i in 1..=$amount_parties as u32 {
+                    // Make sure we only consider clients for which
+                    // we haven't killed the corresponding server
+                    if let Some(cur_client) = $kms_clients.get(&i) {
+                        let mut cur_client = cur_client.clone();
+                        let req_id_proto = req.request_id.clone().unwrap();
+                        tasks_get.spawn(async move {
+                            (
+                                i,
+                                req_id_proto.clone(),
+                                cur_client
+                                    .$f_to_poll(tonic::Request::new(req_id_proto))
+                                    .await,
+                            )
+                        });
                     }
-                }
-
-                while let Some(res) = tasks_get.join_next().await {
-                    match res {
-                        Ok(inner) => {
-                            // Validate if the result returned is ok, if not we ignore, since it likely means that the process is still running on the server
-                            if let (j, req_id, Ok(resp)) = inner {
-                                joined_responses.push((j, req_id, resp.into_inner()));
-                            } else {
-                                let (j, req_id, inner_resp) = inner;
-                                tracing::info!("Response in iteration {count} for server {j} and req_id {req_id} is: {:?}", inner_resp);
-                            }
-                        }
-                        _ => {
-                            panic!("Something went wrong while polling for responses");
-                        }
-                    }
-                }
-
-                if joined_responses.len() >= $kms_clients.len() * $reqs.len() {
-                    break;
-                }
-
-                // fail if we can't find a response
-                if count >= MAX_TRIES - 1 {
-                    panic!("could not get response after {} tries", count);
                 }
             }
 
-            joined_responses
-        }};
-    }
+            while let Some(res) = tasks_get.join_next().await {
+                match res {
+                    Ok(inner) => {
+                        // Validate if the result returned is ok, if not we ignore, since it likely means that the process is still running on the server
+                        if let (j, req_id, Ok(resp)) = inner {
+                            joined_responses.push((j, req_id, resp.into_inner()));
+                        } else {
+                            let (j, req_id, inner_resp) = inner;
+                            // Explicitly convert to string to avoid any type conversion issues
+                            let req_id_str = match kms_grpc::RequestId::from(req_id.clone()) {
+                                id => id.to_string(),
+                            };
+                            tracing::info!("Response in iteration {count} for server {j} and req_id {req_id_str} is: {:?}", inner_resp);
+                        }
+                    }
+                    _ => {
+                        panic!("Something went wrong while polling for responses");
+                    }
+                }
+            }
 
+            if joined_responses.len() >= $kms_clients.len() * $reqs.len() {
+                break;
+            }
+
+            // fail if we can't find a response
+            if count >= MAX_TRIES - 1 {
+                panic!("could not get response after {} tries", count);
+            }
+        }
+
+        joined_responses
+    }};
+}
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     async fn crs_gen(
         amount_parties: usize,
@@ -3441,19 +3454,17 @@ pub(crate) mod tests {
         // first check the happy path
         // the public parameter is checked in ddec tests, so we don't specifically check _pp
         for req in reqs {
-            let req_id = req.clone().request_id.unwrap();
+            let req_id: RequestId = req.clone().request_id.unwrap().into();
             let joined_responses: Vec<_> = joined_responses
                 .iter()
                 .cloned()
-                .filter_map(
-                    |(i, rid, resp)| {
-                        if rid == req_id {
-                            Some((i, resp))
-                        } else {
-                            None
-                        }
-                    },
-                )
+                .filter_map(|(i, rid, resp)| {
+                    if rid == req_id.into() {
+                        Some((i, resp))
+                    } else {
+                        None
+                    }
+                })
                 .collect();
 
             // we need to setup the storage devices in the right order
@@ -4987,13 +4998,13 @@ pub(crate) mod tests {
         let mut response_map: HashMap<RequestId, Vec<UserDecryptionResponse>> = HashMap::new();
         while let Some(res) = resp_tasks.join_next().await {
             let res = res.unwrap();
-            tracing::info!("Client got a response from {}", res.0);
+            tracing::info!("Client got a response from {}", res.0.request_id);
             let (req_id, resp) = res;
-            if let Entry::Vacant(e) = response_map.entry(req_id.clone()) {
+            if let Entry::Vacant(e) = response_map.entry(req_id.clone().into()) {
                 e.insert(vec![resp.unwrap().into_inner()]);
             } else {
                 response_map
-                    .get_mut(&req_id)
+                    .get_mut(&req_id.into())
                     .unwrap()
                     .push(resp.unwrap().into_inner());
             }
@@ -5044,9 +5055,17 @@ pub(crate) mod tests {
 
         for req in &reqs {
             let (req, enc_pk, enc_sk) = req;
-            let responses = response_map.get(req.request_id.as_ref().unwrap()).unwrap();
-            let domain = protobuf_to_alloy_domain(req.domain.as_ref().unwrap()).unwrap();
-            let client_req = ParsedUserDecryptionRequest::try_from(req).unwrap();
+            let request_id = req
+                .request_id
+                .clone()
+                .expect("Retrieving request_id failed");
+            let responses = response_map
+                .get(&request_id.into())
+                .expect("Retrieving responses failed");
+            let domain = protobuf_to_alloy_domain(req.domain.as_ref().unwrap())
+                .expect("Retrieving domain failed");
+            let client_req = ParsedUserDecryptionRequest::try_from(req)
+                .expect("Parsing UserDecryptionRequest failed");
             let threshold = responses.first().unwrap().payload.as_ref().unwrap().degree as usize;
             // NOTE: throw away one response and it should still work.
             let plaintexts = if secure {
@@ -5104,8 +5123,11 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn test_largecipher() {
-        use crate::engine::centralized::central_kms::tests::{
-            new_priv_ram_storage_from_existing_keys, new_pub_ram_storage_from_existing_keys,
+        use crate::{
+            consts::DEFAULT_CENTRAL_KEY_ID,
+            engine::centralized::central_kms::tests::{
+                new_priv_ram_storage_from_existing_keys, new_pub_ram_storage_from_existing_keys,
+            },
         };
 
         let keys = get_default_keys().await;
@@ -5151,7 +5173,7 @@ pub(crate) mod tests {
                 &dummy_domain(),
                 typed_ciphertexts,
                 &request_id,
-                &DEFAULT_CENTRAL_KEY_ID,
+                &(*DEFAULT_CENTRAL_KEY_ID).into(),
             )
             .unwrap();
         let response = kms_client
@@ -5419,13 +5441,11 @@ pub(crate) mod tests {
                 .unwrap();
         purge(None, None, &key_id_2.to_string(), amount_parties).await;
 
-        let preproc_id_3 = Some(
-            derive_request_id(&format!(
-                "decom_dkg_preproc_{amount_parties}_{:?}_3",
-                parameter
-            ))
-            .unwrap(),
-        );
+        let preproc_id_3 = derive_request_id(&format!(
+            "decom_dkg_preproc_{amount_parties}_{:?}_3",
+            parameter
+        ))
+        .unwrap();
         let key_id_3: RequestId =
             derive_request_id(&format!("decom_dkg_key_{amount_parties}_{:?}_3", parameter))
                 .unwrap();
@@ -5442,7 +5462,7 @@ pub(crate) mod tests {
                 parameter,
                 &kms_clients,
                 &internal_client,
-                &preproc_id_1.clone().unwrap(),
+                &preproc_id_1.unwrap(),
                 None,
             )
             .await;
@@ -5466,7 +5486,7 @@ pub(crate) mod tests {
                 parameter,
                 &kms_clients,
                 &internal_client,
-                &preproc_id_2.clone().unwrap(),
+                &preproc_id_2.unwrap(),
                 None,
             )
             .await;
@@ -5490,7 +5510,7 @@ pub(crate) mod tests {
             parameter,
             &kms_clients,
             &internal_client,
-            &preproc_id_3.clone().unwrap(),
+            &preproc_id_3,
             None,
         )
         .await;
@@ -5500,7 +5520,7 @@ pub(crate) mod tests {
             parameter,
             &kms_clients,
             &internal_client,
-            preproc_id_3,
+            Some(preproc_id_3),
             &key_id_3,
             Some((key_id_1, key_id_2)),
             insecure,
@@ -5612,7 +5632,7 @@ pub(crate) mod tests {
                     parameter
                 ))
                 .unwrap();
-                preproc_ids.insert(i, cur_id.clone());
+                preproc_ids.insert(i, cur_id);
                 preprocset.spawn({
                     let clients_clone = Arc::clone(&arc_clients);
                     let internalclient_clone = Arc::clone(&arc_internalclient);
@@ -5811,18 +5831,16 @@ pub(crate) mod tests {
             keyset_type: KeySetType::DecompressionOnly.into(),
             standard_keyset_config: None,
         });
-        let keyset_added_info = decompression_keygen
-            .clone()
-            .map(|(from, to)| KeySetAddedInfo {
-                compression_keyset_id: None,
-                from_keyset_id_decompression_only: Some(from),
-                to_keyset_id_decompression_only: Some(to),
-            });
+        let keyset_added_info = decompression_keygen.map(|(from, to)| KeySetAddedInfo {
+            compression_keyset_id: None,
+            from_keyset_id_decompression_only: Some(from.into()),
+            to_keyset_id_decompression_only: Some(to.into()),
+        });
 
         let req_keygen = internal_client
             .key_gen_request(
                 keygen_req_id,
-                preproc_req_id.clone(),
+                preproc_req_id,
                 Some(parameter),
                 keyset_config,
                 keyset_added_info,
@@ -5836,7 +5854,7 @@ pub(crate) mod tests {
         }
 
         wait_for_keygen_result(
-            req_keygen.request_id.clone().unwrap(),
+            req_keygen.request_id.clone().try_into().unwrap(),
             preproc_req_id,
             kms_clients,
             internal_client,
@@ -5908,7 +5926,7 @@ pub(crate) mod tests {
 
             let mut tasks = JoinSet::new();
             for i in 1..=kms_clients.len() as u32 {
-                let req_clone = req_get_keygen.clone();
+                let req_clone = req_get_keygen.into();
                 let mut cur_client = kms_clients.get(&i).unwrap().clone();
                 tasks.spawn(async move {
                     (

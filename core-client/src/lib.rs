@@ -12,10 +12,11 @@ use conf_trace::conf::Settings;
 use core::str;
 use kms_grpc::kms::v1::{
     CiphertextFormat, CrsGenResult, FheParameter, KeyGenPreprocResult, KeyGenResult,
-    PublicDecryptionRequest, PublicDecryptionResponse, RequestId, TypedCiphertext, TypedPlaintext,
+    PublicDecryptionRequest, PublicDecryptionResponse, TypedCiphertext, TypedPlaintext,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
+use kms_grpc::{KeyId, RequestId};
 use kms_lib::client::{Client, ParsedUserDecryptionRequest};
 use kms_lib::consts::{DEFAULT_PARAM, TEST_PARAM};
 use kms_lib::engine::base::{compute_external_pubdata_message_hash, compute_pt_message_hash};
@@ -324,7 +325,7 @@ pub struct CipherParameters {
     pub precompute_sns: bool,
     /// Key identifier to use for public/user decryption.
     #[clap(long, short = 'k')]
-    pub key_id: String,
+    pub key_id: KeyId,
     /// Number of copies of the ciphertext to process in a request.
     /// This is ignored for the encryption command.
     #[serde(skip_serializing, skip_deserializing)]
@@ -365,7 +366,7 @@ pub struct CipherWithParams {
 #[derive(Debug, Parser, Clone)]
 pub struct KeyGenParameters {
     #[clap(long, short = 'i')]
-    pub preproc_id: String,
+    pub preproc_id: RequestId,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -377,7 +378,7 @@ pub struct CrsParameters {
 #[derive(Debug, Parser, Clone)]
 pub struct ResultParameters {
     #[clap(long, short = 'i')]
-    pub request_id: String,
+    pub request_id: RequestId,
 }
 
 #[derive(Debug, Subcommand, Clone)]
@@ -448,7 +449,7 @@ pub struct EncryptionResult {
     pub cipher: Vec<u8>,
     pub ct_format: CiphertextFormat,
     pub plaintext: TypedPlaintext,
-    pub key_id: String,
+    pub key_id: KeyId,
 }
 
 impl EncryptionResult {
@@ -456,7 +457,7 @@ impl EncryptionResult {
         cipher: Vec<u8>,
         ct_format: CiphertextFormat,
         plaintext: TypedPlaintext,
-        key_id: String,
+        key_id: KeyId,
     ) -> Self {
         Self {
             cipher,
@@ -527,7 +528,7 @@ pub async fn encrypt(
     let (cipher, ct_format, _) = compute_cipher_from_stored_key(
         Some(keys_folder),
         typed_to_encrypt,
-        &cipher_params.key_id,
+        &cipher_params.key_id.as_str(),
         EncryptionConfig {
             compression: cipher_params.compression,
             precompute_sns: cipher_params.precompute_sns,
@@ -976,7 +977,7 @@ async fn do_keygen(
     // get all responses
     let resp_response_vec = get_keygen_responses(
         core_endpoints,
-        req_id.clone(),
+        req_id,
         max_iter,
         insecure,
         num_expected_responses,
@@ -988,7 +989,7 @@ async fn do_keygen(
         cc_conf,
         kms_addrs,
         destination_prefix,
-        req_id.clone(),
+        req_id,
         domain,
         resp_response_vec,
     )
@@ -1061,7 +1062,7 @@ async fn do_crsgen(
     // get all responses
     let resp_response_vec = get_crsgen_responses(
         core_endpoints,
-        req_id.clone(),
+        req_id,
         max_iter,
         insecure,
         num_expected_responses,
@@ -1073,7 +1074,7 @@ async fn do_crsgen(
         cc_conf,
         kms_addrs,
         destination_prefix,
-        req_id.clone(),
+        req_id,
         domain,
         resp_response_vec,
     )
@@ -1115,7 +1116,7 @@ async fn do_preproc(
     }
     assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
 
-    let _ = get_preproc_keygen_responses(core_endpoints, req_id.clone(), max_iter).await?;
+    let _ = get_preproc_keygen_responses(core_endpoints, req_id, max_iter).await?;
 
     Ok(req_id)
 }
@@ -1150,7 +1151,7 @@ pub async fn execute_cmd(
             //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
             if let CipherArguments::FromArgs(cipher_params) = cipher_args {
                 tracing::info!("Fetching tfhe keys. ({command:?})");
-                fetch_key(cipher_params.key_id.as_str(), &cc_conf, destination_prefix).await?;
+                fetch_key(&cipher_params.key_id.as_str(), &cc_conf, destination_prefix).await?;
                 //TODO remove this check once we can compress big ciphertexts with tfhe-rs v1.2
                 if cipher_params.compression && cipher_params.precompute_sns {
                     panic!("Compression on big ciphertexts is not supported yet!");
@@ -1159,7 +1160,7 @@ pub async fn execute_cmd(
         }
         CCCommand::Encrypt(cipher_params) => {
             tracing::info!("Fetching tfhe keys. ({command:?})");
-            fetch_key(cipher_params.key_id.as_str(), &cc_conf, destination_prefix).await?;
+            fetch_key(&cipher_params.key_id.as_str(), &cc_conf, destination_prefix).await?;
 
             //TODO remove this check once we can compress big ciphertexts with tfhe-rs v1.2
             if cipher_params.compression && cipher_params.precompute_sns {
@@ -1317,7 +1318,6 @@ pub async fn execute_cmd(
                 let req_id = RequestId::new_random(&mut rng);
                 let internal_client = internal_client.clone();
                 let ct_batch = ct_batch.clone();
-                let key_id = key_id.clone();
                 let mut core_endpoints = core_endpoints.clone();
                 let ptxt = ptxt.clone();
                 let kms_addrs = kms_addrs.clone();
@@ -1327,9 +1327,7 @@ pub async fn execute_cmd(
                         ct_batch,
                         &dummy_domain(),
                         &req_id,
-                        &RequestId {
-                            request_id: key_id.clone(),
-                        },
+                        &key_id,
                     )?;
 
                     // make parallel requests by calling [decrypt] in a thread
@@ -1355,7 +1353,7 @@ pub async fn execute_cmd(
                         &mut core_endpoints,
                         Some(dec_req),
                         Some(ptxt),
-                        req_id.clone(),
+                        req_id,
                         max_iter,
                         num_expected_responses,
                         &*internal_client.read().await,
@@ -1413,7 +1411,7 @@ pub async fn execute_cmd(
                 cipher_args.get_load(),
                 internal_client,
                 ct_batch,
-                &key_id,
+                key_id,
                 core_endpoints.clone(),
                 ptxt,
                 num_parties,
@@ -1434,9 +1432,7 @@ pub async fn execute_cmd(
                 num_parties,
                 &kms_addrs,
                 param,
-                Some(RequestId {
-                    request_id: preproc_id.clone(),
-                }),
+                Some(*preproc_id),
                 false,
                 destination_prefix,
             )
@@ -1534,11 +1530,8 @@ pub async fn execute_cmd(
             vec![(None, "Encryption generated".to_string())]
         }
         CCCommand::PreprocKeyGenResult(result_parameters) => {
-            let req_id = RequestId {
-                request_id: result_parameters.request_id.clone(),
-            };
-            let _ =
-                get_preproc_keygen_responses(&mut core_endpoints, req_id.clone(), max_iter).await?;
+            let req_id: RequestId = result_parameters.request_id;
+            let _ = get_preproc_keygen_responses(&mut core_endpoints, req_id, max_iter).await?;
             vec![(Some(req_id), "preproc done".to_string())]
         }
         CCCommand::KeyGenResult(result_parameters) => {
@@ -1547,12 +1540,10 @@ pub async fn execute_cmd(
             } else {
                 cc_conf.num_majority
             };
-            let req_id = RequestId {
-                request_id: result_parameters.request_id.clone(),
-            };
+            let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_keygen_responses(
                 &mut core_endpoints,
-                req_id.clone(),
+                req_id,
                 max_iter,
                 false,
                 num_expected_responses,
@@ -1566,7 +1557,7 @@ pub async fn execute_cmd(
                 &cc_conf,
                 &kms_addrs,
                 destination_prefix,
-                req_id.clone(),
+                req_id,
                 dummy_domain(),
                 resp_response_vec,
             )
@@ -1579,12 +1570,10 @@ pub async fn execute_cmd(
             } else {
                 cc_conf.num_majority
             };
-            let req_id = RequestId {
-                request_id: result_parameters.request_id.clone(),
-            };
+            let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_keygen_responses(
                 &mut core_endpoints,
-                req_id.clone(),
+                req_id,
                 max_iter,
                 true,
                 num_expected_responses,
@@ -1598,7 +1587,7 @@ pub async fn execute_cmd(
                 &cc_conf,
                 &kms_addrs,
                 destination_prefix,
-                req_id.clone(),
+                req_id,
                 dummy_domain(),
                 resp_response_vec,
             )
@@ -1611,14 +1600,12 @@ pub async fn execute_cmd(
             } else {
                 cc_conf.num_majority
             };
-            let req_id = RequestId {
-                request_id: result_parameters.request_id.clone(),
-            };
+            let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_decrypt_responses(
                 &mut core_endpoints,
                 None,
                 None,
-                req_id.clone(),
+                req_id,
                 max_iter,
                 num_expected_responses,
                 internal_client.as_ref().unwrap(),
@@ -1634,12 +1621,10 @@ pub async fn execute_cmd(
             } else {
                 cc_conf.num_majority
             };
-            let req_id = RequestId {
-                request_id: result_parameters.request_id.clone(),
-            };
+            let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_crsgen_responses(
                 &mut core_endpoints,
-                req_id.clone(),
+                req_id,
                 max_iter,
                 false,
                 num_expected_responses,
@@ -1653,7 +1638,7 @@ pub async fn execute_cmd(
                 &cc_conf,
                 &kms_addrs,
                 destination_prefix,
-                req_id.clone(),
+                req_id,
                 dummy_domain(),
                 resp_response_vec,
             )
@@ -1666,12 +1651,10 @@ pub async fn execute_cmd(
             } else {
                 cc_conf.num_majority
             };
-            let req_id = RequestId {
-                request_id: result_parameters.request_id.clone(),
-            };
+            let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_crsgen_responses(
                 &mut core_endpoints,
-                req_id.clone(),
+                req_id,
                 max_iter,
                 true,
                 num_expected_responses,
@@ -1685,7 +1668,7 @@ pub async fn execute_cmd(
                 &cc_conf,
                 &kms_addrs,
                 destination_prefix,
-                req_id.clone(),
+                req_id,
                 dummy_domain(),
                 resp_response_vec,
             )
@@ -1707,7 +1690,7 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
     load: usize,
     internal_client: Arc<RwLock<Client>>,
     ct_batch: Vec<TypedCiphertext>,
-    key_id: &str,
+    key_id: KeyId,
     core_endpoints: Vec<CoreServiceEndpointClient<Channel>>,
     ptxt: TypedPlaintext,
     num_parties: usize,
@@ -1719,7 +1702,6 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
         let req_id = RequestId::new_random(rng);
         let internal_client = internal_client.clone();
         let ct_batch = ct_batch.clone();
-        let key_id = key_id.to_string();
         let mut core_endpoints = core_endpoints.clone();
         let original_plaintext = ptxt.clone();
 
@@ -1729,9 +1711,7 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
                 &dummy_domain(),
                 ct_batch,
                 &req_id,
-                &RequestId {
-                    request_id: key_id.clone(),
-                },
+                &key_id,
             )?;
 
             let (user_decrypt_req, enc_pk, enc_sk) = user_decrypt_req_tuple;
@@ -1859,7 +1839,6 @@ async fn get_decrypt_responses(
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
     for (core_id, ce) in core_endpoints.iter_mut().enumerate() {
         let mut cur_client = ce.clone();
-        let request_id = request_id.clone();
 
         resp_tasks.spawn(async move {
             // Sleep to give the server some time to complete decryption
@@ -1869,7 +1848,7 @@ async fn get_decrypt_responses(
             .await;
 
             let mut response = cur_client
-                .get_public_decryption_result(tonic::Request::new(request_id.clone()))
+                .get_public_decryption_result(tonic::Request::new(request_id.into()))
                 .await;
             let mut ctr = 0_usize;
             while response.is_err()
@@ -1885,7 +1864,7 @@ async fn get_decrypt_responses(
                 }
                 ctr += 1;
                 response = cur_client
-                    .get_public_decryption_result(tonic::Request::new(request_id.clone()))
+                    .get_public_decryption_result(tonic::Request::new(request_id.into()))
                     .await;
             }
             (core_id, request_id, response.unwrap().into_inner())
@@ -1974,7 +1953,6 @@ async fn get_preproc_keygen_responses(
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
     for (core_id, client) in core_endpoints.iter_mut().enumerate() {
         let mut client = client.clone();
-        let request_id = request_id.clone();
         resp_tasks.spawn(async move {
             // Sleep to give the server some time to complete preprocessing
             tokio::time::sleep(tokio::time::Duration::from_millis(
@@ -1983,7 +1961,7 @@ async fn get_preproc_keygen_responses(
             .await;
 
             let mut response = client
-                .get_key_gen_preproc_result(tonic::Request::new(request_id.clone()))
+                .get_key_gen_preproc_result(tonic::Request::new(request_id.into()))
                 .await;
             let mut ctr = 0_usize;
             while response.is_err()
@@ -1999,7 +1977,7 @@ async fn get_preproc_keygen_responses(
                 }
                 ctr += 1;
                 response = client
-                    .get_key_gen_preproc_result(tonic::Request::new(request_id.clone()))
+                    .get_key_gen_preproc_result(tonic::Request::new(request_id.into()))
                     .await;
             }
 
@@ -2034,7 +2012,6 @@ async fn get_keygen_responses(
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
     for (core_id, ce) in core_endpoints.iter_mut().enumerate() {
         let mut cur_client = ce.clone();
-        let request_id = request_id.clone();
 
         resp_tasks.spawn(async move {
             // Sleep to give the server some time to complete decryption
@@ -2045,11 +2022,11 @@ async fn get_keygen_responses(
 
             let mut response = if insecure {
                 cur_client
-                    .get_insecure_key_gen_result(tonic::Request::new(request_id.clone()))
+                    .get_insecure_key_gen_result(tonic::Request::new(request_id.into()))
                     .await
             } else {
                 cur_client
-                    .get_key_gen_result(tonic::Request::new(request_id.clone()))
+                    .get_key_gen_result(tonic::Request::new(request_id.into()))
                     .await
             };
 
@@ -2070,11 +2047,11 @@ async fn get_keygen_responses(
                 ctr += 1;
                 response = if insecure {
                     cur_client
-                        .get_insecure_key_gen_result(tonic::Request::new(request_id.clone()))
+                        .get_insecure_key_gen_result(tonic::Request::new(request_id.into()))
                         .await
                 } else {
                     cur_client
-                        .get_key_gen_result(tonic::Request::new(request_id.clone()))
+                        .get_key_gen_result(tonic::Request::new(request_id.into()))
                         .await
                 };
 
@@ -2116,7 +2093,6 @@ async fn get_crsgen_responses(
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
     for (core_id, ce) in core_endpoints.iter_mut().enumerate() {
         let mut cur_client = ce.clone();
-        let request_id = request_id.clone();
 
         resp_tasks.spawn(async move {
             // Sleep to give the server some time to complete decryption
@@ -2124,11 +2100,11 @@ async fn get_crsgen_responses(
 
             let mut response = if insecure {
                 cur_client
-                    .get_insecure_crs_gen_result(tonic::Request::new(request_id.clone()))
+                    .get_insecure_crs_gen_result(tonic::Request::new(request_id.into()))
                     .await
             } else {
                 cur_client
-                    .get_crs_gen_result(tonic::Request::new(request_id.clone()))
+                    .get_crs_gen_result(tonic::Request::new(request_id.into()))
                     .await
             };
 
@@ -2144,11 +2120,11 @@ async fn get_crsgen_responses(
                 ctr += 1;
                 response = if insecure {
                     cur_client
-                        .get_insecure_crs_gen_result(tonic::Request::new(request_id.clone()))
+                        .get_insecure_crs_gen_result(tonic::Request::new(request_id.into()))
                         .await
                 } else {
                     cur_client
-                        .get_crs_gen_result(tonic::Request::new(request_id.clone()))
+                        .get_crs_gen_result(tonic::Request::new(request_id.into()))
                         .await
                 };
 
@@ -2200,11 +2176,12 @@ async fn fetch_and_check_keygen(
     let sk = load_server_key_from_storage(Some(destination_prefix), &req_id).await;
 
     for response in responses {
-        let resp_req_id = &response.request_id.unwrap().to_string();
+        let resp_req_id: RequestId = response.request_id.try_into()?;
         tracing::info!("Received KeyGenResult with request ID {}", resp_req_id); //TODO print key digests and signatures?
 
         assert_eq!(
-            &req_id, resp_req_id,
+            req_id,
+            resp_req_id.as_str(),
             "Request ID of response does not match the transaction"
         );
 
@@ -2257,11 +2234,12 @@ async fn fetch_and_check_crsgen(
     let crs = load_crs_from_storage(Some(destination_prefix), &req_id).await;
 
     for response in responses {
-        let resp_req_id = &response.request_id.unwrap().to_string();
+        let resp_req_id: RequestId = response.request_id.try_into()?;
         tracing::info!("Received CrsGenResult with request ID {}", resp_req_id); //TODO print key digests and signatures?
 
         assert_eq!(
-            &req_id, resp_req_id,
+            req_id,
+            resp_req_id.as_str(),
             "Request ID of response does not match the transaction"
         );
 
@@ -2289,7 +2267,7 @@ mod tests {
         util::key_setup::{ensure_central_crs_exists, ensure_central_server_signing_keys_exist},
         vault::storage::{ram::RamStorage, read_versioned_at_request_id},
     };
-    use std::env;
+    use std::{env, str::FromStr};
     use tfhe::zk::CompactPkeCrs;
 
     #[test]
@@ -2367,9 +2345,7 @@ mod tests {
         .await;
         let crs: CompactPkeCrs = read_versioned_at_request_id(
             &pub_storage,
-            &RequestId {
-                request_id: TEST_CENTRAL_CRS_ID.to_string(),
-            },
+            &RequestId::from_str(&TEST_CENTRAL_CRS_ID.to_string()).unwrap(),
             &PubDataType::CRS.to_string(),
         )
         .await
@@ -2378,9 +2354,7 @@ mod tests {
         // read generated private signature key, derive public verifcation key and address from it
         let sk: PrivateSigKey = read_versioned_at_request_id(
             &priv_storage,
-            &RequestId {
-                request_id: SIGNING_KEY_ID.to_string(),
-            },
+            &RequestId::from_str(&SIGNING_KEY_ID.to_string()).unwrap(),
             &PrivDataType::SigningKey.to_string(),
         )
         .await

@@ -1,11 +1,9 @@
 use crate::kms::v1::{
-    Eip712DomainMsg, RequestId, TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
+    Eip712DomainMsg, TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
 };
 use crate::kms::v1::{SignedPubDataHandle, UserDecryptionResponsePayload};
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::Eip712Domain;
-use anyhow::anyhow;
-use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use strum_macros::EnumIter;
@@ -14,6 +12,8 @@ use tfhe::named::Named;
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::{FheTypes, Versionize};
 use tfhe_versionable::VersionsDispatch;
+
+pub use crate::identifiers::{KeyId, RequestId, ID_LENGTH};
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
@@ -28,8 +28,6 @@ cfg_if::cfg_if! {
 }
 
 const ERR_PARSE_CHECKSUMMED: &str = "error parsing checksummed address";
-
-pub const ID_LENGTH: usize = 32;
 
 pub static KEY_GEN_REQUEST_NAME: &str = "key_gen_request";
 pub static CRS_GEN_REQUEST_NAME: &str = "crs_gen_request";
@@ -395,7 +393,7 @@ impl crate::kms::v1::UserDecryptionRequest {
         let domain = protobuf_to_alloy_domain(
             self.domain
                 .as_ref()
-                .ok_or_else(|| anyhow!(ERR_DOMAIN_NOT_FOUND))?,
+                .ok_or_else(|| anyhow::anyhow!(ERR_DOMAIN_NOT_FOUND))?,
         )?;
 
         let handles = self
@@ -850,86 +848,6 @@ impl FheTypeResponse for UserDecryptionResponsePayload {
     }
 }
 
-impl fmt::Display for RequestId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.request_id)
-    }
-}
-
-impl RequestId {
-    /// Validates if a user-specified input is a request ID.
-    /// By valid we mean if it is a hex string of a static length. This is done to ensure it can be
-    /// part of a valid path, without risk of path-traversal attacks in case the key request
-    /// call is publicly accessible.
-    pub fn is_valid(&self) -> bool {
-        let decoded = match hex::decode(self.to_string()) {
-            Ok(hex) => hex,
-            Err(_e) => {
-                tracing::warn!("Input {} is not a hex string", &self.to_string());
-                return false;
-            }
-        };
-        if decoded.len() != ID_LENGTH {
-            tracing::warn!(
-                "Decoded value length is {}, but {} is expected",
-                decoded.len(),
-                ID_LENGTH
-            );
-            return false;
-        }
-        true
-    }
-
-    /// create a new random RequestId
-    pub fn new_random<R: Rng + CryptoRng>(rng: &mut R) -> Self {
-        let mut bytes = [0u8; ID_LENGTH];
-        rng.fill_bytes(&mut bytes);
-        RequestId {
-            request_id: hex::encode(bytes),
-        }
-    }
-}
-
-impl From<RequestId> for String {
-    fn from(request_id: RequestId) -> Self {
-        request_id.request_id
-    }
-}
-
-impl TryFrom<RequestId> for u128 {
-    type Error = anyhow::Error;
-
-    // Convert a RequestId to a u128 through truncation of the first 16 bytes.
-    fn try_from(value: RequestId) -> Result<Self, Self::Error> {
-        TryFrom::<&RequestId>::try_from(&value)
-    }
-}
-
-impl TryFrom<&RequestId> for u128 {
-    type Error = anyhow::Error;
-
-    // Convert a RequestId to a u128 through truncation of the first 16 bytes.
-    fn try_from(value: &RequestId) -> Result<Self, Self::Error> {
-        let hex = hex::decode(value.to_string())?;
-        let hex_truncated: [u8; 16] = hex[16..32].try_into()?;
-        Ok(u128::from_be_bytes(hex_truncated))
-    }
-}
-
-impl TryFrom<String> for RequestId {
-    type Error = anyhow::Error;
-
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        let request_id = RequestId { request_id: value };
-        if !request_id.is_valid() {
-            return Err(anyhow!(
-                "The string {request_id} is not valid as request ID"
-            ));
-        }
-        Ok(request_id)
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, VersionsDispatch)]
 pub enum PublicKeyTypeVersioned {
     V0(PublicKeyType),
@@ -983,20 +901,11 @@ impl From<(String, FheTypes)> for TypedPlaintext {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
+    use super::*;
+    use crate::kms::v1;
+    use std::str::FromStr;
     use strum::IntoEnumIterator;
-    use strum_macros::EnumIter;
-    use tfhe::FheTypes;
-
-    use super::{alloy_to_protobuf_domain, TypedPlaintext};
-    use crate::{
-        kms::v1::{
-            ComputeKeyType, FheParameter, KeySetCompressionConfig, RequestId, TypedCiphertext,
-        },
-        rpc_types::{
-            ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR, ERR_DOMAIN_NOT_FOUND, ERR_THERE_ARE_NO_HANDLES,
-        },
-    };
 
     #[test]
     fn idempotent_plaintext() {
@@ -1048,117 +957,30 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn test_request_id() {
+        let hex_str = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+        let id = RequestId::from_str(hex_str).unwrap();
+        assert_eq!(id.to_string(), hex_str);
+    }
+
+    #[test]
     fn test_request_id_raw_string() {
-        let request_id = RequestId {
-            request_id: "0000000000000000000000000000000000000000000000000000000000000001"
-                .to_owned(),
-        };
-        assert!(request_id.is_valid());
+        // Test using our new RequestId type
+        let hex_str = "0000000000000000000000000000000000000000000000000000000000000001";
+        let id = RequestId::from_str(hex_str).unwrap();
+        let proto_id: v1::RequestId = id.into();
+
+        assert_eq!(proto_id.request_id, hex_str);
     }
 
     #[test]
     fn test_enum_default() {
-        assert_eq!(FheParameter::default(), FheParameter::Default);
-        assert_eq!(ComputeKeyType::default(), ComputeKeyType::Cpu);
+        assert_eq!(v1::FheParameter::default(), v1::FheParameter::Default);
+        assert_eq!(v1::ComputeKeyType::default(), v1::ComputeKeyType::Cpu);
         assert_eq!(
-            KeySetCompressionConfig::default(),
-            KeySetCompressionConfig::Generate
+            v1::KeySetCompressionConfig::default(),
+            v1::KeySetCompressionConfig::Generate
         );
-    }
-
-    #[test]
-    fn test_eip712_verification() {
-        let alloy_domain = alloy_sol_types::eip712_domain!(
-            name: "Authorization token",
-            version: "1",
-            chain_id: 8006,
-            verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
-        );
-        let domain = alloy_to_protobuf_domain(&alloy_domain).unwrap();
-        let request_id = RequestId::try_from(
-            "0102030405060708091011121314151617181920212223242526272829303130".to_string(),
-        )
-        .unwrap();
-        let key_id = RequestId::try_from(
-            "0102030405060708091011121314151617181920212223242526272829303131".to_string(),
-        )
-        .unwrap();
-
-        let ciphertexts = vec![TypedCiphertext {
-            ciphertext: vec![],
-            fhe_type: 0,
-            external_handle: vec![],
-            ciphertext_format: 0,
-        }];
-        let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
-
-        // empty domain
-        {
-            let req = crate::kms::v1::UserDecryptionRequest {
-                request_id: Some(request_id.clone()),
-                typed_ciphertexts: ciphertexts.clone(),
-                key_id: Some(key_id.clone()),
-                client_address: client_address.to_checksum(None),
-                enc_key: vec![],
-                domain: None,
-            };
-            assert!(req
-                .compute_link_checked()
-                .unwrap_err()
-                .to_string()
-                .contains(ERR_DOMAIN_NOT_FOUND));
-        }
-
-        // empty ciphertexts
-        {
-            let req = crate::kms::v1::UserDecryptionRequest {
-                request_id: Some(request_id.clone()),
-                typed_ciphertexts: vec![],
-                key_id: Some(key_id.clone()),
-                client_address: client_address.to_checksum(None),
-                enc_key: vec![],
-                domain: Some(domain.clone()),
-            };
-            assert!(req
-                .compute_link_checked()
-                .unwrap_err()
-                .to_string()
-                .contains(ERR_THERE_ARE_NO_HANDLES));
-        }
-
-        // use the same address for verifying contract and client address should fail
-        {
-            let mut bad_domain = domain.clone();
-            bad_domain.verifying_contract = client_address.to_checksum(None);
-
-            let req = crate::kms::v1::UserDecryptionRequest {
-                request_id: Some(request_id.clone()),
-                typed_ciphertexts: ciphertexts.clone(),
-                key_id: Some(key_id.clone()),
-                client_address: client_address.to_checksum(None),
-                enc_key: vec![],
-                domain: Some(bad_domain),
-            };
-
-            assert!(req
-                .compute_link_checked()
-                .unwrap_err()
-                .to_string()
-                .contains(ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR));
-        }
-
-        // everything is ok
-        {
-            let req = crate::kms::v1::UserDecryptionRequest {
-                request_id: Some(request_id.clone()),
-                typed_ciphertexts: ciphertexts.clone(),
-                key_id: Some(key_id.clone()),
-                client_address: client_address.to_checksum(None),
-                enc_key: vec![],
-                domain: Some(domain.clone()),
-            };
-            assert!(req.compute_link_checked().is_ok());
-        }
     }
 
     #[test]
@@ -1199,6 +1021,104 @@ pub(crate) mod tests {
                 OldFheType::Euint1024 => assert_eq!(FheTypes::Uint1024 as i32, old_type as i32),
                 OldFheType::Euint2048 => assert_eq!(FheTypes::Uint2048 as i32, old_type as i32),
             }
+        }
+    }
+
+    #[test]
+    fn test_eip712_verification() {
+        let request_id =
+            RequestId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20")
+                .unwrap();
+
+        let key_id =
+            RequestId::from_str("2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40")
+                .unwrap();
+
+        let alloy_domain = alloy_sol_types::eip712_domain!(
+            name: "Authorization token",
+            version: "1",
+            chain_id: 8006,
+            verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+        );
+        let domain = alloy_to_protobuf_domain(&alloy_domain).unwrap();
+        let client_address = alloy_primitives::Address::parse_checksummed(
+            "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+            None,
+        )
+        .unwrap();
+        let ciphertexts = vec![TypedCiphertext {
+            ciphertext: vec![],
+            fhe_type: 0,
+            external_handle: vec![],
+            ciphertext_format: 0,
+        }];
+
+        // empty domain
+        {
+            let req = v1::UserDecryptionRequest {
+                request_id: Some(request_id.into()),
+                typed_ciphertexts: ciphertexts.clone(),
+                key_id: Some(key_id.into()),
+                client_address: client_address.to_checksum(None),
+                enc_key: vec![],
+                domain: None,
+            };
+            assert!(req
+                .compute_link_checked()
+                .unwrap_err()
+                .to_string()
+                .contains(ERR_DOMAIN_NOT_FOUND));
+        }
+
+        // empty ciphertexts
+        {
+            let req = v1::UserDecryptionRequest {
+                request_id: Some(request_id.into()),
+                typed_ciphertexts: vec![],
+                key_id: Some(key_id.into()),
+                client_address: client_address.to_checksum(None),
+                enc_key: vec![],
+                domain: Some(domain.clone()),
+            };
+            assert!(req
+                .compute_link_checked()
+                .unwrap_err()
+                .to_string()
+                .contains(ERR_THERE_ARE_NO_HANDLES));
+        }
+
+        // use the same address for verifying contract and client address should fail
+        {
+            let mut bad_domain = domain.clone();
+            bad_domain.verifying_contract = client_address.to_checksum(None);
+
+            let req = v1::UserDecryptionRequest {
+                request_id: Some(request_id.into()),
+                typed_ciphertexts: ciphertexts.clone(),
+                key_id: Some(key_id.into()),
+                client_address: client_address.to_checksum(None),
+                enc_key: vec![],
+                domain: Some(bad_domain),
+            };
+
+            assert!(req
+                .compute_link_checked()
+                .unwrap_err()
+                .to_string()
+                .contains(ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR));
+        }
+
+        // everything is ok
+        {
+            let req = v1::UserDecryptionRequest {
+                request_id: Some(request_id.into()),
+                typed_ciphertexts: ciphertexts.clone(),
+                key_id: Some(key_id.into()),
+                client_address: client_address.to_checksum(None),
+                enc_key: vec![],
+                domain: Some(domain.clone()),
+            };
+            assert!(req.compute_link_checked().is_ok());
         }
     }
 }

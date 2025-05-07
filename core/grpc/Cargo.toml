@@ -24,6 +24,7 @@ rand = { workspace = true, features = ["std", "std_rng"] }
 serde = { workspace = true, features = ["derive", "rc"] }
 strum.workspace = true
 strum_macros.workspace = true
+thiserror.workspace = true
 tonic = { workspace = true, optional = true }
 tfhe = { workspace = true, features = [
     "boolean",
