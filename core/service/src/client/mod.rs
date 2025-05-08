@@ -7,8 +7,13 @@ use crate::cryptography::signcryption::{
     decrypt_signcryption_with_link, ephemeral_encryption_key_generation,
     insecure_decrypt_ignoring_signature, internal_verify_sig,
 };
+#[cfg(feature = "non-wasm")]
+use crate::engine::base::DSEP_PUBDATA_KEY;
+#[cfg(feature = "non-wasm")]
+use crate::engine::validation::DSEP_PUBLIC_DECRYPTION;
 use crate::engine::validation::{
     check_ext_user_decryption_signature, validate_user_decrypt_responses_against_request,
+    DSEP_USER_DECRYPTION,
 };
 use crate::{anyhow_error_and_log, some_or_err};
 use aes_prng::AesRng;
@@ -50,6 +55,8 @@ cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
         use crate::engine::base::{compute_handle};
         use crate::get_exactly_one;
+        use crate::engine::base::DSEP_PUBDATA_CRS;
+        use threshold_fhe::hashing::DomainSep;
         use crate::engine::traits::BaseKms;
         use crate::engine::base::BaseKmsStruct;
         use crate::vault::storage::{read_all_data_versioned, Storage, StorageReader};
@@ -480,10 +487,14 @@ impl Client {
     #[cfg(feature = "non-wasm")]
     fn verify_server_signature<T: serde::Serialize + AsRef<[u8]>>(
         &self,
+        dsep: &DomainSep,
         data: &T,
         signature: &[u8],
     ) -> anyhow::Result<()> {
-        if self.find_verifying_public_key(data, signature).is_some() {
+        if self
+            .find_verifying_public_key(dsep, data, signature)
+            .is_some()
+        {
             Ok(())
         } else {
             Err(anyhow::anyhow!("server signature verification failed"))
@@ -491,10 +502,11 @@ impl Client {
     }
 
     /// Verify the signature received from the server on keys or other data objects
-    /// and returns the public key that verified the signature.
+    /// and return the public key that verified the signature.
     #[cfg(feature = "non-wasm")]
     fn find_verifying_public_key<T: serde::Serialize + AsRef<[u8]>>(
         &self,
+        dsep: &DomainSep,
         data: &T,
         signature: &[u8],
     ) -> Option<PublicSigKey> {
@@ -515,7 +527,7 @@ impl Client {
         };
 
         for verf_key in server_pks {
-            let ok = BaseKmsStruct::verify_sig(&data, &signature_struct, verf_key).is_ok();
+            let ok = BaseKmsStruct::verify_sig(dsep, &data, &signature_struct, verf_key).is_ok();
             if ok {
                 return Some(verf_key.clone());
             }
@@ -677,7 +689,7 @@ impl Client {
             }
 
             // check the signature
-            match self.find_verifying_public_key(&hex_digest, &info.signature) {
+            match self.find_verifying_public_key(&DSEP_PUBDATA_CRS, &hex_digest, &info.signature) {
                 Some(pk) => {
                     verifying_pks.insert(pk);
                 }
@@ -933,7 +945,7 @@ impl Client {
             return Ok(None);
         }
         if self
-            .verify_server_signature(&key_handle, &pki.signature)
+            .verify_server_signature(&DSEP_PUBDATA_KEY, &key_handle, &pki.signature)
             .is_err()
         {
             tracing::warn!(
@@ -992,7 +1004,7 @@ impl Client {
             return Ok(None);
         }
         if self
-            .verify_server_signature(&crs_handle, &crs_info.signature)
+            .verify_server_signature(&DSEP_PUBDATA_CRS, &crs_handle, &crs_info.signature)
             .is_err()
         {
             tracing::warn!(
@@ -1068,10 +1080,15 @@ impl Client {
             // Observe that it has already been verified in [self.validate_meta_data] that server
             // verification key is in the set of permissible keys
             let cur_verf_key: PublicSigKey = deserialize(&cur_payload.verification_key)?;
-            BaseKmsStruct::verify_sig(&bincode::serialize(&cur_payload)?, &sig, &cur_verf_key)
-                .inspect_err(|e| {
-                    tracing::warn!("Signature on received response is not valid! {}", e);
-                })?;
+            BaseKmsStruct::verify_sig(
+                &DSEP_PUBLIC_DECRYPTION,
+                &bincode::serialize(&cur_payload)?,
+                &sig,
+                &cur_verf_key,
+            )
+            .inspect_err(|e| {
+                tracing::warn!("Signature on received response is not valid! {}", e);
+            })?;
         }
         let pts = some_or_err(
             pivot.payload.to_owned(),
@@ -1222,9 +1239,15 @@ impl Client {
             let sig = Signature {
                 sig: k256::ecdsa::Signature::from_slice(&resp.signature)?,
             };
-            internal_verify_sig(&bincode::serialize(&payload)?, &sig, &cur_verf_key).inspect_err(
-                |e| tracing::warn!("signature on received response is not valid ({})", e),
-            )?;
+            internal_verify_sig(
+                &DSEP_USER_DECRYPTION,
+                &bincode::serialize(&payload)?,
+                &sig,
+                &cur_verf_key,
+            )
+            .inspect_err(|e| {
+                tracing::warn!("signature on received response is not valid ({})", e)
+            })?;
         }
 
         payload
@@ -1232,6 +1255,7 @@ impl Client {
             .into_iter()
             .map(|ct| {
                 decrypt_signcryption_with_link(
+                    &DSEP_USER_DECRYPTION,
                     &ct.signcrypted_ciphertext,
                     &link,
                     client_keys,
@@ -1637,6 +1661,7 @@ impl Client {
                 // that it matches with the original request
                 let cur_verf_key: PublicSigKey = deserialize(&cur_resp.verification_key)?;
                 match decrypt_signcryption_with_link(
+                    &DSEP_USER_DECRYPTION,
                     &cur_resp.signcrypted_ciphertexts[batch_i].signcrypted_ciphertext,
                     &cur_resp.digest,
                     client_keys,
@@ -2242,7 +2267,7 @@ pub(crate) mod tests {
     use crate::consts::{PRSS_INIT_REQ_ID, TEST_PARAM, TEST_THRESHOLD_KEY_ID};
     use crate::cryptography::internal_crypto_types::Signature;
     use crate::cryptography::internal_crypto_types::WrappedDKGParams;
-    use crate::engine::base::{compute_handle, derive_request_id, BaseKmsStruct};
+    use crate::engine::base::{compute_handle, derive_request_id, BaseKmsStruct, DSEP_PUBDATA_CRS};
     #[cfg(feature = "slow_tests")]
     use crate::engine::centralized::central_kms::tests::get_default_keys;
     use crate::engine::centralized::central_kms::RealCentralizedKms;
@@ -3066,7 +3091,8 @@ pub(crate) mod tests {
         let mut verified = false;
         let server_pks = internal_client.get_server_pks().unwrap();
         for vk in server_pks {
-            let v = BaseKmsStruct::verify_sig(&client_handle, &crs_sig, vk).is_ok();
+            let v =
+                BaseKmsStruct::verify_sig(&DSEP_PUBDATA_CRS, &client_handle, &crs_sig, vk).is_ok();
             verified = verified || v;
         }
 
@@ -3531,8 +3557,12 @@ pub(crate) mod tests {
             let mut final_responses_with_bad_sig = final_responses.clone();
             let client_sk = internal_client.client_sk.clone().unwrap();
             let bad_sig = bincode::serialize(
-                &crate::cryptography::signcryption::sign(&"wrong msg".to_string(), &client_sk)
-                    .unwrap(),
+                &crate::cryptography::signcryption::sign(
+                    &DSEP_PUBDATA_CRS,
+                    &"wrong msg".to_string(),
+                    &client_sk,
+                )
+                .unwrap(),
             )
             .unwrap();
             set_signatures(&mut final_responses_with_bad_sig, threshold, &bad_sig);

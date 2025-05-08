@@ -7,6 +7,7 @@ use kms_grpc::{
     kms::v1::{TypedSigncryptedCiphertext, UserDecryptionResponse, UserDecryptionResponsePayload},
     rpc_types::FheTypeResponse,
 };
+use threshold_fhe::hashing::DomainSep;
 
 use crate::{
     anyhow_error_and_log,
@@ -17,6 +18,8 @@ use crate::{
     },
     some_or_err,
 };
+
+pub(crate) const DSEP_USER_DECRYPTION: DomainSep = *b"USER_DEC";
 
 const ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGH: &str =
     "Expected external signature of length 65 Bytes";
@@ -143,7 +146,14 @@ fn validate_user_decrypt_meta_data_and_signature(
         };
         // NOTE that we cannot use `BaseKmsStruct::verify_sig`
         // because `BaseKmsStruct` cannot be compiled for wasm (it has an async mutex).
-        if internal_verify_sig(&bincode::serialize(&other_resp)?, &sig, &resp_verf_key).is_err() {
+        if internal_verify_sig(
+            &DSEP_USER_DECRYPTION,
+            &bincode::serialize(&other_resp)?,
+            &sig,
+            &resp_verf_key,
+        )
+        .is_err()
+        {
             anyhow::bail!("Signature on received response is not valid!");
         }
     }
@@ -401,8 +411,8 @@ mod tests {
     use super::{
         check_ext_user_decryption_signature, select_most_common_user_dec,
         validate_user_decrypt_meta_data_and_signature, validate_user_decrypt_responses,
-        validate_user_decrypt_responses_against_request, ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGH,
-        ERR_VALIDATE_USER_DECRYPTION_BAD_FHETYPE_LENGTH,
+        validate_user_decrypt_responses_against_request, DSEP_USER_DECRYPTION,
+        ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGH, ERR_VALIDATE_USER_DECRYPTION_BAD_FHETYPE_LENGTH,
         ERR_VALIDATE_USER_DECRYPTION_DIGEST_MISMATCH,
         ERR_VALIDATE_USER_DECRYPTION_FHETYPE_MISMATCH,
         ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
@@ -684,7 +694,9 @@ mod tests {
         // happy path for empty external_signature
         {
             let pivot_buf = bincode::serialize(&pivot_resp).unwrap();
-            let signature = &crate::cryptography::signcryption::sign(&pivot_buf, &sk0).unwrap();
+            let signature =
+                &crate::cryptography::signcryption::sign(&DSEP_USER_DECRYPTION, &pivot_buf, &sk0)
+                    .unwrap();
             let signature_buf = signature.sig.to_vec();
             validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,

@@ -55,7 +55,9 @@ use tracing::error;
 
 pub(crate) const DSEP_REQUEST_ID: DomainSep = *b"REQST_ID";
 pub(crate) const DSEP_HANDLE: DomainSep = *b"_HANDLE_";
-pub(crate) const DSEP_PUBDATA: DomainSep = *b"PUB_DATA";
+pub(crate) const DSEP_PUBDATA_EXTERNAL: DomainSep = *b"PDAT_EXT";
+pub(crate) const DSEP_PUBDATA_KEY: DomainSep = *b"PDAT_KEY";
+pub(crate) const DSEP_PUBDATA_CRS: DomainSep = *b"PDAT_CRS";
 
 #[cfg(feature = "non-wasm")]
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
@@ -99,11 +101,21 @@ impl KmsFheKeyHandles {
         let mut public_key_info = HashMap::new();
         public_key_info.insert(
             PubDataType::PublicKey,
-            compute_info(sig_key, &public_keys.public_key, eip712_domain)?,
+            compute_info(
+                sig_key,
+                &crate::engine::base::DSEP_PUBDATA_KEY,
+                &public_keys.public_key,
+                eip712_domain,
+            )?,
         );
         public_key_info.insert(
             PubDataType::ServerKey,
-            compute_info(sig_key, &public_keys.server_key, eip712_domain)?,
+            compute_info(
+                sig_key,
+                &DSEP_PUBDATA_KEY,
+                &public_keys.server_key,
+                eip712_domain,
+            )?,
         );
         Ok(KmsFheKeyHandles {
             client_key,
@@ -135,11 +147,12 @@ pub fn derive_request_id(name: &str) -> anyhow::Result<RequestId> {
 /// `kms`.
 pub(crate) fn compute_info<S: Serialize + Versionize + Named>(
     sk: &PrivateSigKey,
+    dsep: &DomainSep,
     element: &S,
     domain: Option<&alloy_sol_types::Eip712Domain>,
 ) -> anyhow::Result<SignedPubDataHandleInternal> {
     let handle = compute_handle(element)?;
-    let signature = crate::cryptography::signcryption::sign(&handle, sk)?;
+    let signature = crate::cryptography::signcryption::sign(dsep, &handle, sk)?;
 
     // if we get an EIP-712 domain, compute the external signature
     let external_signature = match domain {
@@ -419,7 +432,7 @@ pub fn compute_external_pubdata_message_hash<D: Serialize + Versionize + Named>(
     data: &D,
     eip712_domain: &Eip712Domain,
 ) -> anyhow::Result<B256> {
-    let bytes = safe_serialize_hash_element_versioned(&DSEP_PUBDATA, data)?;
+    let bytes = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_EXTERNAL, data)?;
 
     // distinguish between the different types of public data we can sign according to their type name and sign it with EIP-712
     let message_hash = match D::NAME {
@@ -513,6 +526,7 @@ impl BaseKmsStruct {
 
 impl BaseKms for BaseKmsStruct {
     fn verify_sig<T>(
+        dsep: &DomainSep,
         payload: &T,
         signature: &crate::cryptography::internal_crypto_types::Signature,
         key: &PublicSigKey,
@@ -520,18 +534,19 @@ impl BaseKms for BaseKmsStruct {
     where
         T: Serialize + AsRef<[u8]>,
     {
-        internal_verify_sig(&payload, signature, key)
+        internal_verify_sig(dsep, &payload, signature, key)
     }
 
     /// sign `msg` using the KMS' private signing key
     fn sign<T>(
         &self,
+        dsep: &DomainSep,
         msg: &T,
     ) -> anyhow::Result<crate::cryptography::internal_crypto_types::Signature>
     where
         T: Serialize + AsRef<[u8]>,
     {
-        crate::cryptography::signcryption::sign(msg, &self.sig_key)
+        crate::cryptography::signcryption::sign(dsep, msg, &self.sig_key)
     }
 
     fn get_serialized_verf_key(&self) -> Vec<u8> {
@@ -779,12 +794,11 @@ pub(crate) fn preproc_proto_to_keyset_config(
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use super::{deserialize_to_low_level, gen_sig_keys, TypedPlaintext};
     use crate::{
         consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM},
         engine::centralized::central_kms::generate_fhe_keys,
     };
-
-    use super::{deserialize_to_low_level, gen_sig_keys, TypedPlaintext};
     use aes_prng::AesRng;
     use kms_grpc::kms::v1::CiphertextFormat;
     use rand::{RngCore, SeedableRng};

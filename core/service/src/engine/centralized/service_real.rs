@@ -1,7 +1,7 @@
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::engine::base::{
     compute_external_pt_signature, convert_key_response, preproc_proto_to_keyset_config,
-    retrieve_parameters, KeyGenCallValues,
+    retrieve_parameters, KeyGenCallValues, DSEP_PUBDATA_KEY,
 };
 use crate::engine::centralized::central_kms::{
     async_generate_crs, async_generate_fhe_keys, async_user_decrypt, central_public_decrypt,
@@ -10,6 +10,7 @@ use crate::engine::centralized::central_kms::{
 use crate::engine::traits::BaseKms;
 use crate::engine::validation::{
     validate_public_decrypt_req, validate_request_id, validate_user_decrypt_req,
+    DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION,
 };
 use crate::util::meta_store::{handle_res_mapping, MetaStore};
 use crate::vault::storage::crypto_material::CentralizedCryptoMaterialStorage;
@@ -366,7 +367,7 @@ impl<
         )?;
 
         let sig = tonic_handle_potential_err(
-            self.sign(&sig_payload_vec),
+            self.sign(&DSEP_USER_DECRYPTION, &sig_payload_vec),
             format!("Could not sign payload {:?}", payload),
         )?;
 
@@ -588,7 +589,7 @@ impl<
 
         // sign the decryption result with the central KMS key
         let sig = tonic_handle_potential_err(
-            self.sign(&kms_sig_payload_vec),
+            self.sign(&DSEP_PUBLIC_DECRYPTION, &kms_sig_payload_vec),
             format!("Could not sign payload {:?}", kms_sig_payload),
         )?;
         Ok(Response::new(PublicDecryptionResponse {
@@ -800,6 +801,7 @@ async fn key_gen_background<
                         .await?;
                         let info = match crate::engine::base::compute_info(
                             &sk,
+                            &DSEP_PUBDATA_KEY,
                             &decompression_key,
                             eip712_domain.as_ref(),
                         ) {

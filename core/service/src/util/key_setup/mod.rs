@@ -2,7 +2,7 @@
 pub mod test_tools;
 use crate::client::ClientDataType;
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
-use crate::engine::base::{compute_handle, compute_info, gen_sig_keys};
+use crate::engine::base::{compute_handle, compute_info, gen_sig_keys, DSEP_PUBDATA_CRS};
 use crate::engine::centralized::central_kms::{gen_centralized_crs, generate_fhe_keys};
 use crate::engine::threshold::service_real::{compute_all_info, ThresholdFheKeys};
 use crate::vault::storage::{
@@ -719,7 +719,7 @@ where
         .iter_mut()
         .zip(priv_storages.iter_mut().zip(signing_keys.iter()))
     {
-        let crs_info = compute_info(cur_sk, &pp, None).unwrap();
+        let crs_info = compute_info(cur_sk, &DSEP_PUBDATA_CRS, &pp, None).unwrap();
 
         store_versioned_at_request_id(
             cur_priv,

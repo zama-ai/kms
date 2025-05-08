@@ -22,6 +22,8 @@ use crate::{
     tonic_handle_potential_err, tonic_some_or_err,
 };
 
+pub(crate) const DSEP_PUBLIC_DECRYPTION: DomainSep = *b"PUBL_DEC";
+
 const ERR_VALIDATE_PUBLIC_DECRYPTION_NO_REQ_ID: &str =
     "Request ID is not set in public decryption request";
 const ERR_VALIDATE_PUBLIC_DECRYPTION_NO_KEY_ID: &str =
@@ -253,7 +255,14 @@ fn validate_public_decrypt_meta_data(
 
     // NOTE that we cannot use `BaseKmsStruct::verify_sig`
     // because `BaseKmsStruct` cannot be compiled for wasm (it has an async mutex).
-    if internal_verify_sig(&bincode::serialize(&other_resp)?, &sig, &resp_verf_key).is_err() {
+    if internal_verify_sig(
+        &DSEP_PUBLIC_DECRYPTION,
+        &bincode::serialize(&other_resp)?,
+        &sig,
+        &resp_verf_key,
+    )
+    .is_err()
+    {
         tracing::warn!("Signature on received public decryption response is not valid!");
         return Ok(false);
     }
@@ -429,10 +438,10 @@ mod tests {
     use super::{
         validate_public_decrypt_meta_data, validate_public_decrypt_req,
         validate_public_decrypt_responses_against_request, validate_request_id,
-        validate_user_decrypt_req, verify_user_decrypt_eip712, DSEP_REQ_RESP,
-        ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK,
-        ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_REQ_ID, ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS,
-        ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP,
+        validate_user_decrypt_req, verify_user_decrypt_eip712, DSEP_PUBLIC_DECRYPTION,
+        DSEP_REQ_RESP, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT,
+        ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_REQ_ID,
+        ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS, ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP,
         ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP, ERR_VALIDATE_PUBLIC_DECRYPTION_NO_KEY_ID,
         ERR_VALIDATE_PUBLIC_DECRYPTION_NO_REQ_ID, ERR_VALIDATE_USER_DECRYPTION_BAD_REQ_ID,
         ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS, ERR_VALIDATE_USER_DECRYPTION_NO_KEY_ID,
@@ -778,7 +787,9 @@ mod tests {
 
         // use a bad signature (signed with wrong private key)
         {
-            let signature = &crate::cryptography::signcryption::sign(&pivot_buf, &sk1).unwrap();
+            let signature =
+                &crate::cryptography::signcryption::sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk1)
+                    .unwrap();
             let signature_buf = signature.sig.to_vec();
 
             assert!(
@@ -788,7 +799,9 @@ mod tests {
 
         // use a bad signature (malformed signature)
         {
-            let signature = &crate::cryptography::signcryption::sign(&pivot_buf, &sk0).unwrap();
+            let signature =
+                &crate::cryptography::signcryption::sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk0)
+                    .unwrap();
             // The signature is malformed because it's using bincode to serialize instead of `signature.sig.to_vec()`.
             let signature_buf = bincode::serialize(&signature).unwrap();
 
@@ -810,8 +823,12 @@ mod tests {
             };
             let bad_value_buf = bincode::serialize(&bad_value).unwrap();
 
-            let bad_signature =
-                &crate::cryptography::signcryption::sign(&bad_value_buf, &sk0).unwrap();
+            let bad_signature = &crate::cryptography::signcryption::sign(
+                &DSEP_PUBLIC_DECRYPTION,
+                &bad_value_buf,
+                &sk0,
+            )
+            .unwrap();
             let bad_signature_buf = bad_signature.sig.to_vec();
 
             assert!(
@@ -833,7 +850,12 @@ mod tests {
             };
             let bad_value_buf = bincode::serialize(&bad_value).unwrap();
 
-            let signature = &crate::cryptography::signcryption::sign(&bad_value_buf, &sk0).unwrap();
+            let signature = &crate::cryptography::signcryption::sign(
+                &DSEP_PUBLIC_DECRYPTION,
+                &bad_value_buf,
+                &sk0,
+            )
+            .unwrap();
             let signature_buf = signature.sig.to_vec();
 
             assert!(
@@ -856,7 +878,12 @@ mod tests {
             };
             let bad_value_buf = bincode::serialize(&bad_value).unwrap();
 
-            let signature = &crate::cryptography::signcryption::sign(&bad_value_buf, &sk0).unwrap();
+            let signature = &crate::cryptography::signcryption::sign(
+                &DSEP_PUBLIC_DECRYPTION,
+                &bad_value_buf,
+                &sk0,
+            )
+            .unwrap();
             let signature_buf = signature.sig.to_vec();
 
             assert!(
@@ -879,7 +906,12 @@ mod tests {
             };
             let bad_value_buf = bincode::serialize(&bad_value).unwrap();
 
-            let signature = &crate::cryptography::signcryption::sign(&bad_value_buf, &sk0).unwrap();
+            let signature = &crate::cryptography::signcryption::sign(
+                &DSEP_PUBLIC_DECRYPTION,
+                &bad_value_buf,
+                &sk0,
+            )
+            .unwrap();
             let signature_buf = signature.sig.to_vec();
 
             assert!(
@@ -890,7 +922,9 @@ mod tests {
 
         // happy path
         {
-            let signature = &crate::cryptography::signcryption::sign(&pivot_buf, &sk0).unwrap();
+            let signature =
+                &crate::cryptography::signcryption::sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk0)
+                    .unwrap();
             let signature_buf = signature.sig.to_vec(); // NOTE: signatures are not serialized with bincode
 
             assert!(
@@ -919,7 +953,12 @@ mod tests {
                 external_signature: Some(vec![]),
             };
             let payload_buf = bincode::serialize(&payload).unwrap();
-            let signature = &crate::cryptography::signcryption::sign(&payload_buf, &sk0).unwrap();
+            let signature = &crate::cryptography::signcryption::sign(
+                &DSEP_PUBLIC_DECRYPTION,
+                &payload_buf,
+                &sk0,
+            )
+            .unwrap();
             let signature_buf = signature.sig.to_vec();
 
             PublicDecryptionResponse {
@@ -938,7 +977,12 @@ mod tests {
                 external_signature: Some(vec![]),
             };
             let payload_buf = bincode::serialize(&payload).unwrap();
-            let signature = &crate::cryptography::signcryption::sign(&payload_buf, &sk1).unwrap();
+            let signature = &crate::cryptography::signcryption::sign(
+                &DSEP_PUBLIC_DECRYPTION,
+                &payload_buf,
+                &sk1,
+            )
+            .unwrap();
             let signature_buf = signature.sig.to_vec();
 
             PublicDecryptionResponse {
@@ -1005,8 +1049,12 @@ mod tests {
                     external_signature: Some(vec![]),
                 };
                 let payload_buf = bincode::serialize(&payload).unwrap();
-                let signature =
-                    &crate::cryptography::signcryption::sign(&payload_buf, &sk1).unwrap();
+                let signature = &crate::cryptography::signcryption::sign(
+                    &DSEP_PUBLIC_DECRYPTION,
+                    &payload_buf,
+                    &sk1,
+                )
+                .unwrap();
                 let signature_buf = signature.sig.to_vec();
 
                 PublicDecryptionResponse {
@@ -1075,7 +1123,12 @@ mod tests {
                 external_signature: Some(vec![]),
             };
             let payload_buf = bincode::serialize(&payload).unwrap();
-            let signature = &crate::cryptography::signcryption::sign(&payload_buf, &sk0).unwrap();
+            let signature = &crate::cryptography::signcryption::sign(
+                &DSEP_PUBLIC_DECRYPTION,
+                &payload_buf,
+                &sk0,
+            )
+            .unwrap();
             let signature_buf = signature.sig.to_vec();
 
             PublicDecryptionResponse {
@@ -1094,7 +1147,12 @@ mod tests {
                 external_signature: Some(vec![]),
             };
             let payload_buf = bincode::serialize(&payload).unwrap();
-            let signature = &crate::cryptography::signcryption::sign(&payload_buf, &sk1).unwrap();
+            let signature = &crate::cryptography::signcryption::sign(
+                &DSEP_PUBLIC_DECRYPTION,
+                &payload_buf,
+                &sk1,
+            )
+            .unwrap();
             let signature_buf = signature.sig.to_vec();
 
             PublicDecryptionResponse {

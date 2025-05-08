@@ -374,15 +374,6 @@ pub fn fhe_types_to_num_blocks(
     }
 }
 
-/// Representation of the data stored in a signcryption,
-/// needed to facilitate FHE decryption and request linking.
-/// The result is linked to some byte array.
-#[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq, Debug)]
-pub struct SigncryptionPayload {
-    pub plaintext: TypedPlaintext,
-    pub link: Vec<u8>,
-}
-
 #[cfg(feature = "non-wasm")]
 impl crate::kms::v1::UserDecryptionRequest {
     /// The only information we can use is userAddress, the handles and public key

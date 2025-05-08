@@ -1,9 +1,10 @@
 use crate::conf::threshold::{PeerConf, ThresholdPartyConf, TlsCert};
 use crate::consts::{MINIMUM_SESSIONS_PREPROC, PRSS_INIT_REQ_ID};
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey};
-use crate::cryptography::signcryption::signcrypt_with_link;
+use crate::cryptography::signcryption::{signcrypt, SigncryptionPayload};
 use crate::engine::base::{
-    compute_external_pt_signature, derive_request_id, deserialize_to_low_level, retrieve_parameters,
+    compute_external_pt_signature, derive_request_id, deserialize_to_low_level,
+    retrieve_parameters, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY,
 };
 use crate::engine::base::{compute_external_user_decrypt_signature, BaseKmsStruct};
 use crate::engine::base::{compute_info, preproc_proto_to_keyset_config};
@@ -16,6 +17,7 @@ use crate::engine::threshold::traits::{
 };
 use crate::engine::validation::{
     validate_public_decrypt_req, validate_request_id, validate_user_decrypt_req,
+    DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION,
 };
 use crate::engine::{prepare_shutdown_signals, traits::BaseKms};
 use crate::util::meta_store::{handle_res_mapping, MetaStore};
@@ -45,8 +47,7 @@ use kms_grpc::kms::v1::{
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use kms_grpc::rpc_types::{
-    protobuf_to_alloy_domain_option, PrivDataType, PubDataType, SigncryptionPayload,
-    SignedPubDataHandleInternal,
+    protobuf_to_alloy_domain_option, PrivDataType, PubDataType, SignedPubDataHandleInternal,
 };
 use kms_grpc::RequestId;
 use rand::{CryptoRng, RngCore};
@@ -244,8 +245,8 @@ pub fn compute_all_info(
     domain: Option<&alloy_sol_types::Eip712Domain>,
 ) -> anyhow::Result<KeyGenCallValues> {
     //Compute all the info required for storing
-    let pub_key_info = compute_info(sig_key, &fhe_key_set.public_key, domain);
-    let serv_key_info = compute_info(sig_key, &fhe_key_set.server_key, domain);
+    let pub_key_info = compute_info(sig_key, &DSEP_PUBDATA_KEY, &fhe_key_set.public_key, domain);
+    let serv_key_info = compute_info(sig_key, &DSEP_PUBDATA_KEY, &fhe_key_set.server_key, domain);
 
     //Make sure we did manage to compute the info
     Ok(match (pub_key_info, serv_key_info) {
@@ -1100,9 +1101,10 @@ impl<
                         plaintext: TypedPlaintext::from_bytes(pdec_serialized, fhe_type),
                         link: link.clone(),
                     };
-                    let enc_res = signcrypt_with_link(
+                    let enc_res = signcrypt(
                         rng,
-                        &signcryption_msg,
+                        &DSEP_USER_DECRYPTION,
+                        &bincode::serialize(&signcryption_msg)?,
                         client_enc_key,
                         client_address,
                         &sig_key,
@@ -1313,7 +1315,7 @@ impl<
         )?;
 
         let sig = tonic_handle_potential_err(
-            self.base_kms.sign(&sig_payload_vec),
+            self.base_kms.sign(&DSEP_USER_DECRYPTION, &sig_payload_vec),
             format!("Could not sign payload {:?}", payload),
         )?;
         Ok(Response::new(UserDecryptionResponse {
@@ -1779,7 +1781,8 @@ impl<
         )?;
 
         let sig = tonic_handle_potential_err(
-            self.base_kms.sign(&sig_payload_vec),
+            self.base_kms
+                .sign(&DSEP_PUBLIC_DECRYPTION, &sig_payload_vec),
             format!("Could not sign payload {:?}", sig_payload),
         )?;
         Ok(Response::new(PublicDecryptionResponse {
@@ -2420,7 +2423,12 @@ impl<
         };
 
         // Compute all the info required for storing
-        let info = match compute_info(&sk, &decompression_key, eip712_domain.as_ref()) {
+        let info = match compute_info(
+            &sk,
+            &DSEP_PUBDATA_KEY,
+            &decompression_key,
+            eip712_domain.as_ref(),
+        ) {
             Ok(info) => HashMap::from_iter(vec![(PubDataType::DecompressionKey, info)]),
             Err(_) => {
                 let mut guarded_meta_storage = meta_store.write().await;
@@ -3110,8 +3118,9 @@ impl<
                 .await;
             internal_pp.and_then(|internal| internal.try_into_tfhe_zk_pok_pp(&pke_params))
         };
-        let res_info_pp =
-            pp.and_then(|pp| compute_info(&sk, &pp, eip712_domain.as_ref()).map(|info| (pp, info)));
+        let res_info_pp = pp.and_then(|pp| {
+            compute_info(&sk, &DSEP_PUBDATA_CRS, &pp, eip712_domain.as_ref()).map(|info| (pp, info))
+        });
 
         let (pp_id, meta_data) = match res_info_pp {
             Ok((meta, pp_id)) => (meta, pp_id),

@@ -2,10 +2,11 @@ use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
 use crate::cryptography::decompression;
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey, PublicSigKey};
-use crate::cryptography::signcryption::signcrypt_with_link;
+use crate::cryptography::signcryption::{signcrypt, SigncryptionPayload};
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
 use crate::engine::base::{KeyGenCallValues, PubDecCallValues, UserDecryptCallValues};
 use crate::engine::traits::{BaseKms, Kms};
+use crate::engine::validation::DSEP_USER_DECRYPTION;
 use crate::engine::Shutdown;
 #[cfg(feature = "non-wasm")]
 use crate::util::key_setup::FhePublicKey;
@@ -30,9 +31,9 @@ use kms_grpc::kms::v1::UserDecryptionResponsePayload;
 use kms_grpc::kms::v1::{CiphertextFormat, TypedCiphertext, TypedPlaintext};
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
+use kms_grpc::rpc_types::PrivDataType;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::rpc_types::SignedPubDataHandleInternal;
-use kms_grpc::rpc_types::{PrivDataType, SigncryptionPayload};
 #[cfg(feature = "non-wasm")]
 use kms_grpc::RequestId;
 use rand::{CryptoRng, Rng, RngCore};
@@ -299,7 +300,12 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
         .get_params_basics_handle()
         .get_compact_pk_enc_params();
     let pp = internal_pp.try_into_tfhe_zk_pok_pp(&pke_params)?;
-    let crs_info = crate::engine::base::compute_info(sk, &pp, eip712_domain)?;
+    let crs_info = crate::engine::base::compute_info(
+        sk,
+        &crate::engine::base::DSEP_PUBDATA_CRS,
+        &pp,
+        eip712_domain,
+    )?;
     Ok((pp, crs_info))
 }
 
@@ -499,18 +505,20 @@ impl<
     > BaseKms for RealCentralizedKms<PubS, PrivS, BackS>
 {
     fn verify_sig<T: Serialize + AsRef<[u8]>>(
+        dsep: &DomainSep,
         payload: &T,
         signature: &crate::cryptography::internal_crypto_types::Signature,
         verification_key: &PublicSigKey,
     ) -> anyhow::Result<()> {
-        BaseKmsStruct::verify_sig(payload, signature, verification_key)
+        BaseKmsStruct::verify_sig(dsep, payload, signature, verification_key)
     }
 
     fn sign<T: Serialize + AsRef<[u8]>>(
         &self,
+        dsep: &DomainSep,
         msg: &T,
     ) -> anyhow::Result<crate::cryptography::internal_crypto_types::Signature> {
-        self.base_kms.sign(msg)
+        self.base_kms.sign(dsep, msg)
     }
 
     fn get_serialized_verf_key(&self) -> Vec<u8> {
@@ -739,9 +747,10 @@ impl<
             link: link.to_vec(),
         };
 
-        let enc_res = signcrypt_with_link(
+        let enc_res = signcrypt(
             rng,
-            &signcryption_msg,
+            &DSEP_USER_DECRYPTION,
+            &bincode::serialize(&signcryption_msg)?,
             client_enc_key,
             client_address,
             sig_key,
@@ -893,6 +902,7 @@ pub(crate) mod tests {
     };
     use crate::engine::base::{compute_handle, compute_info, derive_request_id, gen_sig_keys};
     use crate::engine::traits::Kms;
+    use crate::engine::validation::DSEP_USER_DECRYPTION;
     use crate::util::file_handling::read_element;
     use crate::util::file_handling::write_element;
     use crate::util::key_setup::test_tools::{compute_cipher, EncryptionConfig};
@@ -1395,6 +1405,7 @@ pub(crate) mod tests {
             raw_cipher.unwrap()
         };
         let decrypted = decrypt_signcryption_with_link(
+            &DSEP_USER_DECRYPTION,
             &raw_cipher,
             &link,
             &client_keys,
@@ -1458,8 +1469,36 @@ pub(crate) mod tests {
         };
 
         let value = TestType { i: 32 };
-        let expected = compute_info(&kms.base_kms.sig_key, &value, None).unwrap();
-        let actual = compute_info(&kms.base_kms.sig_key, &value, None).unwrap();
+        let expected = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &value, None).unwrap();
+        let actual = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &value, None).unwrap();
         assert_eq!(expected, actual);
+    }
+
+    #[tokio::test]
+    async fn compute_info_negative() {
+        let keys = get_test_keys().await;
+        let (kms, _health_service) = {
+            RealCentralizedKms::new(
+                new_pub_ram_storage_from_existing_keys(&keys.pub_fhe_keys)
+                    .await
+                    .unwrap(),
+                new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys)
+                    .await
+                    .unwrap(),
+                None as Option<RamStorage>,
+                None,
+            )
+            .await
+            .unwrap()
+        };
+
+        let value = TestType { i: 32 };
+        let base = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &value, None).unwrap();
+        // Observe one char off in dsep
+        let wrong_dsep = compute_info(&kms.base_kms.sig_key, b"TESTTESU", &value, None).unwrap();
+        assert_ne!(base, wrong_dsep);
+        let new_val = TestType { i: 33 };
+        let wrong_val = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &new_val, None).unwrap();
+        assert_ne!(base, wrong_val);
     }
 }

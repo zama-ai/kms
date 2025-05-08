@@ -15,11 +15,16 @@ use super::base::KmsFheKeyHandles;
 
 pub trait BaseKms {
     fn verify_sig<T: Serialize + AsRef<[u8]>>(
+        dsep: &DomainSep,
         payload: &T,
         signature: &Signature,
         verification_key: &PublicSigKey,
     ) -> anyhow::Result<()>;
-    fn sign<T: Serialize + AsRef<[u8]>>(&self, msg: &T) -> anyhow::Result<Signature>;
+    fn sign<T: Serialize + AsRef<[u8]>>(
+        &self,
+        dsep: &DomainSep,
+        msg: &T,
+    ) -> anyhow::Result<Signature>;
     fn get_serialized_verf_key(&self) -> Vec<u8>;
     fn digest<T: ?Sized + AsRef<[u8]>>(
         domain_separator: &DomainSep,
