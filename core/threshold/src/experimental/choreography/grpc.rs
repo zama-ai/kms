@@ -175,9 +175,10 @@ impl ExperimentalGrpcChoreography {
         network_mode: NetworkMode,
         seed: Option<u64>,
     ) -> anyhow::Result<Vec<BaseSessionStruct<AesRng, SessionParameters>>> {
-        let mut session_id_generator = AesRng::from_seed(request_sid.0.to_be_bytes());
+        let sid_u128 = request_sid.into();
+        let mut session_id_generator = AesRng::from_seed(request_sid.to_le_bytes());
         let sids = (0..num_sessions)
-            .map(|_| gen_random_sid(&mut session_id_generator, request_sid.0))
+            .map(|_| gen_random_sid(&mut session_id_generator, sid_u128))
             .collect_vec();
 
         //Fetch my Role for the role_assignment
@@ -507,10 +508,9 @@ impl Choreography for ExperimentalGrpcChoreography {
 
             let mut small_session =
                 SmallSession::new_from_prss_state(base_session, prss_state).unwrap();
-            let mut preproc = DummyPreprocessing::<LevelKsw, _, _>::new(
-                session_id.0 as u64,
-                small_session.clone(),
-            );
+            let sid_u128: u128 = session_id.into();
+            let mut preproc =
+                DummyPreprocessing::<LevelKsw, _, _>::new(sid_u128 as u64, small_session.clone());
             let my_future = || async move {
                 let keys = bgv_distributed_keygen::<N65536, _, _, _>(
                     &mut small_session,
@@ -728,7 +728,7 @@ impl Choreography for ExperimentalGrpcChoreography {
         let mut small_sessions = create_small_sessions(base_sessions, &prss_setup);
 
         //Sort here, because we sort the result by sid to make sure all parties output same thing
-        small_sessions.sort_by_key(|s| s.session_id().0);
+        small_sessions.sort_by_key(|s| s.session_id());
         tracing::info!(
             "Run decryption on {} sessions in parallel",
             small_sessions.len()
@@ -772,7 +772,7 @@ impl Choreography for ExperimentalGrpcChoreography {
                 }
             }
 
-            res.sort_by_key(|(sid, _)| sid.0);
+            res.sort_by_key(|(sid, _)| *sid);
             let res = res.into_iter().map(|(_, r)| r).collect();
 
             res_store.insert(session_id, res);

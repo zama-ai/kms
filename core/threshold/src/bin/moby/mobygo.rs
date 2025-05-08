@@ -317,7 +317,7 @@ async fn crs_gen_command(
 
     let session_id = runtime
         .initiate_crs_gen(
-            SessionId(session_id),
+            SessionId::from(session_id),
             params.params,
             choreo_conf.threshold_topology.threshold,
             params.seed,
@@ -335,7 +335,7 @@ async fn crs_gen_result_command(
     params: CrsGenResultArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let crs = runtime
-        .initiate_crs_gen_result(SessionId(params.session_id_crs))
+        .initiate_crs_gen_result(SessionId::from(params.session_id_crs))
         .await?;
 
     let serialized_crs = bincode::serialize(&crs)?;
@@ -353,7 +353,7 @@ async fn prss_init_command(
 
     runtime
         .inititate_prss_init(
-            SessionId(session_id),
+            SessionId::from(session_id),
             params.ring,
             choreo_conf.threshold_topology.threshold,
             params.seed,
@@ -374,7 +374,7 @@ async fn preproc_keygen_command(
 
     let session_id = runtime
         .initiate_preproc_keygen(
-            SessionId(session_id),
+            SessionId::from(session_id),
             params.session_type,
             params.dkg_params,
             params.num_sessions_preproc,
@@ -398,11 +398,11 @@ async fn threshold_keygen_command(
 
     let session_id = runtime
         .initiate_threshold_keygen(
-            SessionId(session_id),
+            SessionId::from(session_id),
             params.dkg_params,
             params
                 .session_id_preproc
-                .map_or_else(|| None, |id| Some(SessionId(id))),
+                .map_or_else(|| None, |id| Some(SessionId::from(id))),
             choreo_conf.threshold_topology.threshold,
             params.seed,
         )
@@ -418,7 +418,11 @@ async fn threshold_keygen_result_command(
     params: ThresholdKeyGenResultArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let keys = runtime
-        .initiate_threshold_keygen_result(SessionId(params.session_id), params.params, params.seed)
+        .initiate_threshold_keygen_result(
+            SessionId::from(params.session_id),
+            params.params,
+            params.seed,
+        )
         .await?;
 
     let serialized_pk = bincode::serialize(&(params.session_id, keys))?;
@@ -439,7 +443,7 @@ async fn preproc_decrypt_command(
     let ctxt_type = params.tfhe_type;
     let session_id = runtime
         .initiate_preproc_decrypt(
-            SessionId(session_id),
+            SessionId::from(session_id),
             key_sid,
             params.decryption_mode,
             num_ctxts as u128,
@@ -629,12 +633,12 @@ async fn threshold_decrypt_command(
     };
     let session_id = runtime
         .initiate_threshold_decrypt(
-            SessionId(session_id),
+            SessionId::from(session_id),
             key_sid,
             params.decryption_mode,
             params
                 .session_id_preproc
-                .map_or_else(|| None, |id| Some(SessionId(id))),
+                .map_or_else(|| None, |id| Some(SessionId::from(id))),
             ctxts,
             throughput,
             tfhe_type,
@@ -656,7 +660,7 @@ async fn threshold_decrypt_result_command(
     params: ThresholdDecryptResultArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ptxts = runtime
-        .initiate_threshold_decrypt_result(SessionId(params.session_id_decrypt))
+        .initiate_threshold_decrypt_result(SessionId::from(params.session_id_decrypt))
         .await?;
 
     println!(
@@ -671,11 +675,11 @@ async fn reshare_command(
     choreo_conf: ChoreoConf,
     params: ReshareArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let new_key_id = SessionId(params.new_key_sid.unwrap_or(random()));
+    let new_key_id = SessionId::from(params.new_key_sid.unwrap_or(random()));
     let new_sid = runtime
         .initiate_reshare(
             choreo_conf.threshold_topology.threshold,
-            SessionId(params.old_key_sid),
+            SessionId::from(params.old_key_sid),
             new_key_id,
             params.session_type,
             params.seed,
@@ -694,7 +698,7 @@ async fn status_check_command(
     runtime: ChoreoRuntime,
     params: StatusCheckArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let session_id = SessionId(params.session_id);
+    let session_id = SessionId::from(params.session_id);
     let retry = params.retry.map_or_else(|| false, |val| val);
     let interval = params.interval.map_or_else(
         || tokio::time::Duration::from_secs(10),

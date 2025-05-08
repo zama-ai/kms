@@ -707,7 +707,7 @@ mod tests {
     ) -> (Vec<Identity>, Vec<BroadcastValue<Z>>, Vec<RoleValueMap<Z>>) {
         let num_parties = 4;
         let identities = generate_fixed_identities(num_parties);
-        let session_id = SessionId(1);
+        let session_id = SessionId::from(1);
 
         let input_values = vec![
             BroadcastValue::from(Z::ONE),
@@ -860,7 +860,7 @@ mod tests {
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >::new(identities, threshold, NetworkMode::Sync, None);
-        let session_id = SessionId(1);
+        let session_id = SessionId::from(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
@@ -917,7 +917,7 @@ mod tests {
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >::new(identities.clone(), threshold, NetworkMode::Sync, None);
-        let session_id = SessionId(1);
+        let session_id = SessionId::from(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
@@ -1124,7 +1124,7 @@ mod tests {
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >::new(identities.clone(), threshold, NetworkMode::Sync, None);
-        let session_id = SessionId(1);
+        let session_id = SessionId::from(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
@@ -1301,7 +1301,7 @@ mod tests {
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >::new(identities.clone(), threshold, NetworkMode::Sync, None);
-        let session_id = SessionId(1);
+        let session_id = SessionId::from(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();

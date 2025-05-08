@@ -220,9 +220,9 @@ where
         network_mode: NetworkMode,
         seed: Option<u64>,
     ) -> anyhow::Result<Vec<BaseSessionStruct<AesRng, SessionParameters>>> {
-        let mut session_id_generator = AesRng::from_seed(request_sid.0.to_be_bytes());
+        let mut session_id_generator = AesRng::from_seed(request_sid.to_le_bytes());
         let sids = (0..num_sessions)
-            .map(|_| gen_random_sid(&mut session_id_generator, request_sid.0))
+            .map(|_| gen_random_sid(&mut session_id_generator, request_sid.into()))
             .collect_vec();
 
         //Fetch my Role for the role_assignment
@@ -677,8 +677,8 @@ where
                 );
             }
             (DKGParams::WithoutSnS(_), None) => {
-                let mut preproc =
-                    DummyPreprocessing::new(session_id.0 as u64, base_session.clone());
+                let sid_u128: u128 = session_id.into();
+                let mut preproc = DummyPreprocessing::new(sid_u128 as u64, base_session.clone());
                 let my_future = || async move {
                     let keys = distributed_keygen_z64(&mut base_session, &mut preproc, dkg_params)
                         .await
@@ -720,8 +720,8 @@ where
                 );
             }
             (DKGParams::WithSnS(_), None) => {
-                let mut preproc =
-                    DummyPreprocessing::new(session_id.0 as u64, base_session.clone());
+                let sid_u128: u128 = session_id.into();
+                let mut preproc = DummyPreprocessing::new(sid_u128 as u64, base_session.clone());
                 let my_future = || async move {
                     let keys = distributed_keygen_z128(&mut base_session, &mut preproc, dkg_params)
                         .await
@@ -1625,13 +1625,14 @@ where
                         )
                     })?.1
                     } else {
+                        let sid_u128: u128 = session_id.into();
                         (0..num_sessions)
                             .map(|_| {
                                 (0..num_ctxts)
                                     .map(|_| {
                                         let my_box: Box<dyn BitDecPreprocessing<EXTENSION_DEGREE>> =
                                             Box::new(DummyPreprocessing::new(
-                                                session_id.0 as u64,
+                                                sid_u128 as u64,
                                                 base_session.clone(),
                                             ));
                                         my_box
@@ -1772,11 +1773,12 @@ where
                         tonic::Status::new(tonic::Code::Aborted,format!("Can not find NoiseFlood preproc that corresponds to session ID {preproc_sid}"))
                     })?.1
                     } else {
+                        let sid_u128: u128 = session_id.into();
                         (0..num_ctxts)
                             .map(|_| {
                                 let my_box: Box<dyn NoiseFloodPreprocessing<EXTENSION_DEGREE>> =
                                     Box::new(DummyPreprocessing::new(
-                                        session_id.0 as u64,
+                                        sid_u128 as u64,
                                         base_session.clone(),
                                     ));
                                 my_box
@@ -2352,7 +2354,7 @@ async fn local_initialize_key_material<const EXTENSION_DEGREE: usize>(
 /// Fills up the 96 MSBs with randomness and fills the 32 LSBs with the given sid
 /// (so it's easier to find "real" sid by looking at bin rep)
 pub fn gen_random_sid(rng: &mut AesRng, current_sid: u128) -> SessionId {
-    SessionId(
+    SessionId::from(
         ((rng.next_u64() as u128) << 64)
             | ((rng.next_u32() as u128) << 32)
             | (current_sid & 0xFFFF_FFFF),

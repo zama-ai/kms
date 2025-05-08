@@ -967,7 +967,7 @@ mod tests {
             .map(|p| {
                 seed[0] = p as u8;
                 runtime.small_session_for_party(
-                    SessionId(u128::MAX),
+                    SessionId::from(u128::MAX),
                     p,
                     Some(AesRng::from_seed(seed)),
                 )
@@ -1220,7 +1220,7 @@ mod tests {
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >::new(identities, threshold, NetworkMode::Sync, None);
-        let session_id = SessionId(23);
+        let session_id = SessionId::from(23);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
@@ -1293,7 +1293,7 @@ mod tests {
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >::new(identities, threshold, NetworkMode::Sync, None);
-        let session_id = SessionId(17);
+        let session_id = SessionId::from(17);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();

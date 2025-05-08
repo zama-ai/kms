@@ -8,7 +8,7 @@ pub const DSEP_SESSION_ID: DomainSep = *b"SESSN_ID";
 pub const SESSION_ID_BYTES: usize = 128 / 8;
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct SessionId(pub u128);
+pub struct SessionId(u128);
 
 impl SessionId {
     /// NOTE: this function is deprecated since the session IDs
@@ -19,6 +19,10 @@ impl SessionId {
         let mut hash_arr = [0_u8; SESSION_ID_BYTES];
         hash_arr.copy_from_slice(&hash[..SESSION_ID_BYTES]);
         Ok(SessionId(u128::from_le_bytes(hash_arr)))
+    }
+
+    pub fn to_le_bytes(&self) -> [u8; SESSION_ID_BYTES] {
+        self.0.to_le_bytes()
     }
 }
 
@@ -43,6 +47,12 @@ impl std::fmt::Display for SessionId {
 impl From<u128> for SessionId {
     fn from(id: u128) -> Self {
         SessionId(id)
+    }
+}
+
+impl From<SessionId> for u128 {
+    fn from(value: SessionId) -> Self {
+        value.0
     }
 }
 

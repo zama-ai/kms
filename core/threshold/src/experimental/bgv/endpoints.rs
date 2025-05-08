@@ -36,7 +36,7 @@ impl SessionId {
         }
         let mut hash_arr = [0_u8; SESSION_ID_BYTES];
         hash_arr.copy_from_slice(&hash[..SESSION_ID_BYTES]);
-        Ok(SessionId(u128::from_le_bytes(hash_arr)))
+        Ok(SessionId::from(u128::from_le_bytes(hash_arr)))
     }
 }
 

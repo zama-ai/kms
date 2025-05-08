@@ -48,7 +48,7 @@ impl PhiAes {
         phi_key[0] ^= PHI_XOR_CONSTANT;
 
         // XOR sid into key
-        xor_u8_arr_in_place(&mut phi_key, &sid.0.to_le_bytes());
+        xor_u8_arr_in_place(&mut phi_key, &sid.to_le_bytes());
 
         PhiAes {
             aes: Aes128::new(&phi_key.into()),
@@ -69,7 +69,7 @@ impl ChiAes {
         chi_key[0] ^= CHI_XOR_CONSTANT;
 
         // XOR sid into key
-        xor_u8_arr_in_place(&mut chi_key, &sid.0.to_le_bytes());
+        xor_u8_arr_in_place(&mut chi_key, &sid.to_le_bytes());
 
         ChiAes {
             aes: Aes128::new(&chi_key.into()),
@@ -90,7 +90,7 @@ impl PsiAes {
         // deliberately no tweak/constant XOR here as we use the key in psi as-is.
 
         // XOR sid into key
-        xor_u8_arr_in_place(&mut psi_key, &sid.0.to_le_bytes());
+        xor_u8_arr_in_place(&mut psi_key, &sid.to_le_bytes());
 
         PsiAes {
             aes: Aes128::new(&psi_key.into()),
@@ -222,7 +222,7 @@ mod tests {
     #[test]
     fn test_phi() {
         let key = PrfKey([123_u8; 16]);
-        let aes = PhiAes::new(&key, SessionId(0));
+        let aes = PhiAes::new(&key, SessionId::from(0));
         let mut prev = 0_i128;
 
         // test for B_SWITCH_SQUASH * 2^STATSEC  (currently even, so we can count bits using ilog2)
@@ -252,7 +252,7 @@ mod tests {
             phi(&aes, 0, B_SWITCH_SQUASH).unwrap()
         );
 
-        let aes_2 = PhiAes::new(&key, SessionId(2));
+        let aes_2 = PhiAes::new(&key, SessionId::from(2));
         assert_ne!(
             phi(&aes, 0, B_SWITCH_SQUASH).unwrap(),
             phi(&aes_2, 0, B_SWITCH_SQUASH).unwrap()
@@ -271,11 +271,11 @@ mod tests {
 
     fn test_psi<Z: Ring + PRSSConversions>() {
         let key = PrfKey([23_u8; 16]);
-        let aes = PsiAes::new(&key, SessionId(0));
+        let aes = PsiAes::new(&key, SessionId::from(0));
         assert_ne!(psi::<Z>(&aes, 0).unwrap(), psi(&aes, 1).unwrap());
         assert_eq!(psi::<Z>(&aes, 0).unwrap(), psi(&aes, 0).unwrap());
 
-        let aes_2 = PsiAes::new(&key, SessionId(2));
+        let aes_2 = PsiAes::new(&key, SessionId::from(2));
         assert_ne!(psi::<Z>(&aes, 0).unwrap(), psi(&aes_2, 0).unwrap());
 
         let err_ctr = psi::<Z>(&aes, 1 << 123).unwrap_err().to_string();
@@ -296,12 +296,12 @@ mod tests {
 
     fn test_chi<Z: Ring + PRSSConversions>() {
         let key = PrfKey([23_u8; 16]);
-        let aes = ChiAes::new(&key, SessionId(0));
+        let aes = ChiAes::new(&key, SessionId::from(0));
         assert_ne!(chi::<Z>(&aes, 0, 0).unwrap(), chi(&aes, 1, 0).unwrap());
         assert_ne!(chi::<Z>(&aes, 0, 0).unwrap(), chi(&aes, 0, 1).unwrap());
         assert_eq!(chi::<Z>(&aes, 0, 0).unwrap(), chi(&aes, 0, 0).unwrap());
 
-        let aes_2 = ChiAes::new(&key, SessionId(2));
+        let aes_2 = ChiAes::new(&key, SessionId::from(2));
         assert_ne!(chi::<Z>(&aes, 0, 0).unwrap(), chi(&aes_2, 0, 0).unwrap());
 
         let err_ctr = chi::<Z>(&aes, 1 << 123, 0).unwrap_err().to_string();
@@ -324,9 +324,9 @@ mod tests {
     fn test_all_prfs_differ<Z: Ring + PRSSConversions>() {
         // init PRFs with identical key
         let key = PrfKey([123_u8; 16]);
-        let chiaes = ChiAes::new(&key, SessionId(0));
-        let psiaes = PsiAes::new(&key, SessionId(0));
-        let phiaes = PhiAes::new(&key, SessionId(0));
+        let chiaes = ChiAes::new(&key, SessionId::from(0));
+        let psiaes = PsiAes::new(&key, SessionId::from(0));
+        let phiaes = PhiAes::new(&key, SessionId::from(0));
 
         // test direct PRF calls
         assert_ne!(chi::<Z>(&chiaes, 0, 0).unwrap(), psi(&psiaes, 0).unwrap());

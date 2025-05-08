@@ -4047,6 +4047,7 @@ dependencies = [
  "tfhe",
  "tfhe-versionable",
  "thiserror 2.0.12",
+ "threshold-fhe",
  "tonic 0.13.0",
  "tonic-build",
  "tracing",

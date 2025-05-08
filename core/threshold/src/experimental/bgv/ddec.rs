@@ -242,7 +242,7 @@ mod tests {
         let runtime: DistributedTestRuntime<LevelOne, { LevelOne::EXTENSION_DEGREE }> =
             DistributedTestRuntime::new(identities, threshold, NetworkMode::Async, Some(delay_map));
 
-        let session_id = SessionId(1);
+        let session_id = SessionId::from(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();

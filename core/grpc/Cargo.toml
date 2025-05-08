@@ -34,6 +34,7 @@ tfhe = { workspace = true, features = [
     "experimental-force_fft_algo_dif4",
 ] }
 tfhe-versionable.workspace = true
+threshold-fhe = { workspace = true, default-features = false, features = ["extension_degree_4"] }
 tracing = { workspace = true, features = ["log"] }
 wasm-bindgen = { version = "=0.2.100", features = ["serde-serialize"] }
 

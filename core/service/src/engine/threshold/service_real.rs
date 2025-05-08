@@ -83,13 +83,12 @@ use threshold_fhe::execution::runtime::session::{
 use threshold_fhe::execution::small_execution::prss::PRSSSetup;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::execution::zk::ceremony::{compute_witness_dim, Ceremony, RealCeremony};
-use threshold_fhe::hashing::unsafe_hash_list_w_size;
 use threshold_fhe::networking::grpc::{CoreToCoreNetworkConfig, GrpcNetworkingManager, GrpcServer};
 use threshold_fhe::networking::{
     tls::{build_ca_certs_map, AttestedClientVerifier, BasicTLSConfig},
     NetworkMode, Networking, NetworkingStrategy,
 };
-use threshold_fhe::session_id::{SessionId, DSEP_SESSION_ID, SESSION_ID_BYTES};
+use threshold_fhe::session_id::SessionId;
 use threshold_fhe::{algebra::base_ring::Z64, execution::endpoints::keygen::FhePubKeySet};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, OwnedSemaphorePermit, RwLock};
@@ -106,28 +105,6 @@ use tonic_health::pb::health_server::{Health, HealthServer};
 use tonic_health::server::HealthReporter;
 use tonic_tls::rustls::TlsIncoming;
 use tracing::Instrument;
-
-fn derive_session_id_from_ctr(ctr: u64, req_id: &RequestId) -> anyhow::Result<SessionId> {
-    if !req_id.is_valid() {
-        anyhow::bail!("invalid request ID: {}", req_id);
-    }
-
-    // Get the raw bytes from RequestId
-    let req_id_bytes = req_id.as_bytes();
-    let ctr_bytes = ctr.to_le_bytes();
-
-    // Create a buffer to hold both the request ID and counter
-    let mut combined = Vec::with_capacity(req_id_bytes.len() + ctr_bytes.len());
-    combined.extend_from_slice(req_id_bytes);
-    combined.extend_from_slice(&ctr_bytes);
-
-    // Hash the combined data using unsafe_hash_list_w_size with a slice containing a reference to combined
-    let digest = unsafe_hash_list_w_size(&DSEP_SESSION_ID, &[&combined[..]], SESSION_ID_BYTES);
-
-    Ok(SessionId(u128::from_le_bytes(digest.try_into().map_err(
-        |_| anyhow::anyhow!("Failed to convert digest to SessionId"),
-    )?)))
-}
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "insecure")] {
@@ -788,7 +765,7 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
             let guarded_private_storage = self.private_storage.lock().await;
             let base_session = self
                 .session_preparer
-                .make_base_session(SessionId((*req_id).try_into()?), NetworkMode::Sync)
+                .make_base_session(req_id.derive_session_id()?, NetworkMode::Sync)
                 .await?;
             read_versioned_at_request_id(
                 &(*guarded_private_storage),
@@ -820,7 +797,7 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
             let guarded_private_storage = self.private_storage.lock().await;
             let base_session = self
                 .session_preparer
-                .make_base_session(SessionId((*req_id).try_into()?), NetworkMode::Sync)
+                .make_base_session(req_id.derive_session_id()?, NetworkMode::Sync)
                 .await?;
             read_versioned_at_request_id(
                 &(*guarded_private_storage),
@@ -866,7 +843,7 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
         }
 
         let own_identity = self.session_preparer.own_identity()?;
-        let session_id = SessionId((*req_id).try_into()?);
+        let session_id = req_id.derive_session_id()?;
         //PRSS robust init requires broadcast, which is implemented with Sync network assumption
         let mut base_session = self
             .session_preparer
@@ -1016,7 +993,7 @@ impl<
             let ct_format = typed_ciphertext.ciphertext_format();
             let ct = &typed_ciphertext.ciphertext;
             let external_handle = typed_ciphertext.external_handle.clone();
-            let session_id = derive_session_id_from_ctr(ctr as u64, req_id)?;
+            let session_id = req_id.derive_session_id_with_counter(ctr as u64)?;
 
             let low_level_ct =
                 deserialize_to_low_level(fhe_type, ct_format, ct, &keys.decompression_key)?;
@@ -1587,7 +1564,7 @@ impl<
                 .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
                 .ok();
             let internal_sid = tonic_handle_potential_err(
-                derive_session_id_from_ctr(ctr as u64, &req_id),
+                req_id.derive_session_id_with_counter(ctr as u64),
                 "failed to derive session ID from counter".to_string(),
             )?;
             let crypto_storage = self.crypto_storage.clone();
@@ -1953,7 +1930,7 @@ impl<
 
         // Create the base session necessary to run the DKG
         let base_session = {
-            let session_id = SessionId(req_id.try_into()?);
+            let session_id = req_id.derive_session_id()?;
             self.session_preparer
                 .make_base_session(session_id, NetworkMode::Async)
                 .await?
@@ -2714,7 +2691,7 @@ impl RealPreprocessor {
         let own_identity = self.session_preparer.own_identity()?;
 
         let sids = (0..self.num_sessions_preproc)
-            .map(|ctr| derive_session_id_from_ctr(ctr as u64, &request_id))
+            .map(|ctr| request_id.derive_session_id_with_counter(ctr as u64))
             .collect::<anyhow::Result<Vec<_>>>()?;
         let base_sessions = {
             let mut res = Vec::with_capacity(sids.len());
@@ -3006,7 +2983,7 @@ impl<
             })?;
         }
 
-        let session_id = SessionId(req_id.try_into()?);
+        let session_id = req_id.derive_session_id()?;
         let session = self
             .session_preparer
             .prepare_ddec_data_from_sessionid_z128(session_id)

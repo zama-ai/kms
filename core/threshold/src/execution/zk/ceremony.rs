@@ -865,7 +865,7 @@ mod tests {
             { ResiduePolyF4Z64::EXTENSION_DEGREE },
         > = DistributedTestRuntime::new(identities, threshold as u8, NetworkMode::Sync, None);
 
-        let session_id = SessionId(2);
+        let session_id = SessionId::from(2);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();

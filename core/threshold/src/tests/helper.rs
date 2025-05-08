@@ -61,7 +61,7 @@ pub mod tests_and_benches {
         });
         let test_runtime: DistributedTestRuntime<Z, EXTENSION_DEGREE> =
             DistributedTestRuntime::new(identities.clone(), threshold, network_mode, delay_map);
-        let session_id = SessionId(1);
+        let session_id = SessionId::from(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
@@ -140,7 +140,7 @@ pub mod tests_and_benches {
             network_mode,
             delay_map,
         );
-        let session_id = SessionId(1);
+        let session_id = SessionId::from(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
@@ -209,7 +209,7 @@ pub mod testing {
         }
         SessionParameters {
             threshold,
-            session_id: SessionId(1),
+            session_id: SessionId::from(1),
             own_identity: role_assignment.get(&role).unwrap().clone(),
             role_assignments: role_assignment,
         }
@@ -419,7 +419,7 @@ pub mod tests {
         role_assignment.insert(Role::indexed_by_one(1), id.clone());
         SessionParameters {
             threshold: 0,
-            session_id: SessionId(1),
+            session_id: SessionId::from(1),
             own_identity: id,
             role_assignments: role_assignment,
         }
@@ -510,7 +510,7 @@ pub mod tests {
             network_mode,
             delay_map,
         );
-        let session_id = SessionId(1);
+        let session_id = SessionId::from(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();

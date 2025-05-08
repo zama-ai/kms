@@ -984,7 +984,7 @@ pub(crate) mod tests {
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >::new(identities.clone(), threshold, NetworkMode::Sync, None);
-        let session_id = SessionId(1);
+        let session_id = SessionId::from(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
@@ -1060,7 +1060,7 @@ pub(crate) mod tests {
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >::new(identities.clone(), threshold, NetworkMode::Sync, None);
-        let session_id = SessionId(1);
+        let session_id = SessionId::from(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();

@@ -223,7 +223,7 @@ fn test_dkg_orchestrator_large(
                 .iter()
                 .zip(0..num_sessions)
                 .map(|(runtime, session_id)| {
-                    runtime.large_session_for_party(SessionId(session_id), party_id)
+                    runtime.large_session_for_party(SessionId::from(session_id), party_id)
                 })
                 .collect_vec();
 

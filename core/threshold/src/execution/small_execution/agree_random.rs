@@ -105,7 +105,7 @@ impl AgreeRandom for RealAgreeRandom {
     ) -> anyhow::Result<Vec<PrfKey>> {
         let num_parties = session.num_parties();
         let party_id = session.my_role()?.one_based();
-        let session_id = session.session_id().0;
+        let session_id = session.session_id().into();
         let round_id = session.network().get_current_round()?;
 
         //Compute all the subsets of size n-t I am part of
@@ -713,7 +713,7 @@ mod tests {
             .map(|p| {
                 let num = p as u8;
                 runtime.small_session_for_party(
-                    SessionId(u128::MAX),
+                    SessionId::from(u128::MAX),
                     p,
                     Some(AesRng::seed_from_u64(num.into())),
                 )

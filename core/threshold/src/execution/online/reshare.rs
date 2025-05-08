@@ -694,7 +694,7 @@ mod tests {
 
         runtime.setup_sks(key_shares);
 
-        let session_id = SessionId(2);
+        let session_id = SessionId::from(2);
 
         let rt = tokio::runtime::Runtime::new()?;
         let _guard = rt.enter();

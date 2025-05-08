@@ -231,7 +231,7 @@ pub(crate) mod tests {
                     .iter()
                     .zip(0..num_sessions)
                     .map(|(runtime, session_id)| {
-                        runtime.large_session_for_party(SessionId(session_id), party_id)
+                        runtime.large_session_for_party(SessionId::from(session_id), party_id)
                     })
                     .collect_vec();
 
@@ -341,7 +341,7 @@ pub(crate) mod tests {
                     .iter()
                     .zip(0..num_sessions)
                     .map(|(runtime, session_id)| {
-                        runtime.small_session_for_party(SessionId(session_id), party_id, None)
+                        runtime.small_session_for_party(SessionId::from(session_id), party_id, None)
                     })
                     .collect_vec();
 

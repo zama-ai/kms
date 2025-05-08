@@ -5,6 +5,10 @@ use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
+use threshold_fhe::{
+    hashing::unsafe_hash_list_w_size,
+    session_id::{SessionId, DSEP_SESSION_ID, SESSION_ID_BYTES},
+};
 use tracing;
 
 /// Standard length for identifiers in bytes
@@ -109,6 +113,44 @@ macro_rules! impl_identifiers {
                     /// Returns a zeroed identifier
                     pub fn zeros() -> Self {
                         Self([0u8; ID_LENGTH])
+                    }
+
+                    /// Derive MPC SessionId by hashins [`self`] and the given counter
+                    pub fn derive_session_id_with_counter(
+                        &self,
+                        ctr: u64,
+                    ) -> anyhow::Result<SessionId> {
+                        if !self.is_valid() {
+                            anyhow::bail!("invalid request ID: {}", self);
+                        }
+
+                        // Get the raw bytes from RequestId
+                        let req_id_bytes = self.as_bytes();
+                        let ctr_bytes = ctr.to_le_bytes();
+
+                        // Create a buffer to hold both the request ID and counter
+                        let mut combined = Vec::with_capacity(req_id_bytes.len() + ctr_bytes.len());
+                        combined.extend_from_slice(req_id_bytes);
+                        combined.extend_from_slice(&ctr_bytes);
+
+                        // Hash the combined data using unsafe_hash_list_w_size with a slice containing a reference to combined
+                        let digest = unsafe_hash_list_w_size(
+                            &DSEP_SESSION_ID,
+                            &[&combined[..]],
+                            SESSION_ID_BYTES,
+                        );
+
+                        Ok(SessionId::from(u128::from_le_bytes(
+                            digest.try_into().map_err(|_| {
+                                anyhow::anyhow!("Failed to convert digest to SessionId")
+                            })?,
+                        )))
+                    }
+
+                    /// Wrapper around [`derive_session_id_with_counter`] with counter
+                    /// set to 0
+                    pub fn derive_session_id(&self) -> anyhow::Result<SessionId> {
+                        self.derive_session_id_with_counter(0)
                     }
                 }
 

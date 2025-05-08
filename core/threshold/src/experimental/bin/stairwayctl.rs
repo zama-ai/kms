@@ -188,7 +188,7 @@ async fn prss_init_command(
 
     runtime
         .bgv_inititate_prss_init(
-            SessionId(session_id),
+            SessionId::from(session_id),
             params.ring,
             choreo_conf.threshold_topology.threshold,
             params.seed,
@@ -208,7 +208,7 @@ async fn preproc_keygen_command(
 
     let session_id = runtime
         .bgv_initiate_preproc_keygen(
-            SessionId(session_id),
+            SessionId::from(session_id),
             params.num_sessions_preproc,
             choreo_conf.threshold_topology.threshold,
             params.seed,
@@ -228,10 +228,10 @@ async fn threshold_keygen_command(
 
     let session_id = runtime
         .bgv_initiate_threshold_keygen(
-            SessionId(session_id),
+            SessionId::from(session_id),
             params
                 .session_id_preproc
-                .map_or_else(|| None, |id| Some(SessionId(id))),
+                .map_or_else(|| None, |id| Some(SessionId::from(id))),
             choreo_conf.threshold_topology.threshold,
             params.seed,
         )
@@ -247,7 +247,7 @@ async fn threshold_keygen_result_command(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let keys = runtime
         .bgv_initiate_threshold_keygen_result(
-            SessionId(params.session_id),
+            SessionId::from(params.session_id),
             params.params,
             params.seed,
         )
@@ -293,7 +293,7 @@ async fn threshold_decrypt_command(
     let session_id = params.session_id.unwrap_or(random());
     let session_id = runtime
         .bgv_initiate_threshold_decrypt(
-            SessionId(session_id),
+            SessionId::from(session_id),
             key_sid,
             ciphertexts,
             num_ctxt_per_session as usize,
@@ -314,7 +314,7 @@ async fn threshold_decrypt_result_command(
     params: ThresholdDecryptResultArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ptxts = runtime
-        .bgv_initiate_threshold_decrypt_result(SessionId(params.session_id_decrypt))
+        .bgv_initiate_threshold_decrypt_result(SessionId::from(params.session_id_decrypt))
         .await?;
 
     println!(
@@ -328,7 +328,7 @@ async fn status_check_command(
     runtime: ChoreoRuntime,
     params: StatusCheckArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let session_id = SessionId(params.session_id);
+    let session_id = SessionId::from(params.session_id);
     let retry = params.retry.map_or_else(|| false, |val| val);
     let interval = params
         .interval

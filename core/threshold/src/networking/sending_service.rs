@@ -581,7 +581,7 @@ mod tests {
 
     #[test]
     fn test_network_stack() {
-        let sid = SessionId(0);
+        let sid = SessionId::from(0);
         let mut role_assignment = RoleAssignment::new();
         let role_1 = Role::indexed_by_one(1);
         let id_1 = Identity("localhost:6000".to_owned());

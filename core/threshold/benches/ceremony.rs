@@ -43,7 +43,7 @@ fn bench_ceremony(c: &mut Criterion) {
                     None,
                 );
 
-                let session_id = SessionId(2);
+                let session_id = SessionId::from(2);
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 let _guard = rt.enter();
 

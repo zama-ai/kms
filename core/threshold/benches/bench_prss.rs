@@ -89,7 +89,7 @@ pub fn get_dummy_parameters_for_parties(
     }
     SessionParameters {
         threshold,
-        session_id: SessionId(1),
+        session_id: SessionId::from(1),
         own_identity: role_assignment.get(&role).unwrap().clone(),
         role_assignments: role_assignment,
     }
