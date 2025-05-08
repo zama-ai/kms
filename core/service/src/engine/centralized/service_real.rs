@@ -4,7 +4,7 @@ use crate::engine::base::{
     retrieve_parameters, KeyGenCallValues,
 };
 use crate::engine::centralized::central_kms::{
-    async_generate_crs, async_generate_fhe_keys, async_user_decrypt, central_decrypt,
+    async_generate_crs, async_generate_fhe_keys, async_user_decrypt, central_public_decrypt,
     RealCentralizedKms,
 };
 use crate::engine::traits::BaseKms;
@@ -491,8 +491,11 @@ impl<
                 // run the computation in a separate rayon thread to avoid blocking the tokio runtime
                 let (send, recv) = tokio::sync::oneshot::channel();
                 rayon::spawn_fifo(move || {
-                    let decryptions =
-                        central_decrypt::<PubS, PrivS, BackS>(&keys, &ciphertexts, metric_tags);
+                    let decryptions = central_public_decrypt::<PubS, PrivS, BackS>(
+                        &keys,
+                        &ciphertexts,
+                        metric_tags,
+                    );
                     let _ = send.send(decryptions);
                 });
                 let decryptions = recv.await;

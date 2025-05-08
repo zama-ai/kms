@@ -354,7 +354,7 @@ pub struct RealCentralizedKms<
 
 /// Perform asynchronous decryption and serialize the result
 #[cfg(feature = "non-wasm")]
-pub fn central_decrypt<
+pub fn central_public_decrypt<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
     BackS: Storage + Sync + Send + 'static,
@@ -365,7 +365,7 @@ pub fn central_decrypt<
 ) -> anyhow::Result<Vec<TypedPlaintext>> {
     use conf_trace::{
         metrics,
-        metrics_names::{OP_USER_DECRYPT_INNER, TAG_TFHE_TYPE},
+        metrics_names::{OP_PUBLIC_DECRYPT_INNER, TAG_TFHE_TYPE},
     };
     use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
@@ -374,7 +374,7 @@ pub fn central_decrypt<
     cts.par_iter()
         .map(|ct| {
             let inner_timer = metrics::METRICS
-                .time_operation(OP_USER_DECRYPT_INNER)
+                .time_operation(OP_PUBLIC_DECRYPT_INNER)
                 .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
                 .and_then(|b| {
                     b.tags(metric_tags.clone()).map_err(|e| {

@@ -31,8 +31,8 @@ use conf_trace::metrics;
 use conf_trace::metrics_names::{
     ERR_PUBLIC_DECRYPTION_FAILED, ERR_RATE_LIMIT_EXCEEDED, OP_CRS_GEN, OP_DECOMPRESSION_KEYGEN,
     OP_INSECURE_CRS_GEN, OP_INSECURE_DECOMPRESSION_KEYGEN, OP_INSECURE_KEYGEN, OP_KEYGEN,
-    OP_KEYGEN_PREPROC, OP_USER_DECRYPT_INNER, OP_USER_DECRYPT_REQUEST, TAG_KEY_ID, TAG_PARTY_ID,
-    TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
+    OP_KEYGEN_PREPROC, OP_PUBLIC_DECRYPT_INNER, OP_PUBLIC_DECRYPT_REQUEST, OP_USER_DECRYPT_INNER,
+    OP_USER_DECRYPT_REQUEST, TAG_KEY_ID, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
 };
 use itertools::Itertools;
 use k256::ecdsa::SigningKey;
@@ -1483,7 +1483,7 @@ impl<
     ) -> Result<Response<Empty>, Status> {
         // Start timing and counting before any operations
         let mut timer = metrics::METRICS
-            .time_operation(OP_USER_DECRYPT_REQUEST)
+            .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
             .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
             .and_then(|b| {
                 b.tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
@@ -1494,7 +1494,7 @@ impl<
             .ok();
 
         let _request_counter = metrics::METRICS
-            .increment_request_counter(OP_USER_DECRYPT_REQUEST)
+            .increment_request_counter(OP_PUBLIC_DECRYPT_REQUEST)
             .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
 
         let permit = self
@@ -1520,7 +1520,7 @@ impl<
                 "Failed to validate decrypt request"
             );
             let _ = metrics::METRICS
-                .increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_PUBLIC_DECRYPTION_FAILED);
+                .increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_PUBLIC_DECRYPTION_FAILED);
             e
         })?;
 
@@ -1568,7 +1568,7 @@ impl<
         // iterate over ciphertexts in this batch and decrypt each in their own session (so that it happens in parallel)
         for (ctr, typed_ciphertext) in ciphertexts.into_iter().enumerate() {
             let inner_timer = metrics::METRICS
-                .time_operation(OP_USER_DECRYPT_INNER)
+                .time_operation(OP_PUBLIC_DECRYPT_INNER)
                 .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
                 .and_then(|b| {
                     b.tags([
