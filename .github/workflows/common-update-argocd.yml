@@ -56,10 +56,10 @@ jobs:
         uses: mikefarah/yq@8bf425b4d1344db7cd469a8d10a390876e0c77fd  # v4.45.1
         with:
           cmd: |
-            yq -i '.kmsParties.awsKms.recipientAttestationImageSHA384 = "${{ inputs.enclave-pcr0 }}"' ./values/${{ inputs.argocd-namespace }}/tkms-infra/values.yaml
-            yq -i '.kmsCore.thresholdMode.tls.trusted_releases[0].pcr0 = "${{ inputs.enclave-pcr0 }}"' ./values/${{ inputs.argocd-namespace }}/${{ inputs.argocd-app-name }}/values-${{ inputs.argocd-namespace }}.yaml
-            yq -i '.kmsCore.thresholdMode.tls.trusted_releases[0].pcr1 = "${{ inputs.enclave-pcr1 }}"' ./values/${{ inputs.argocd-namespace }}/${{ inputs.argocd-app-name }}/values-${{ inputs.argocd-namespace }}.yaml
-            yq -i '.kmsCore.thresholdMode.tls.trusted_releases[0].pcr2 = "${{ inputs.enclave-pcr2 }}"' ./values/${{ inputs.argocd-namespace }}/${{ inputs.argocd-app-name }}/values-${{ inputs.argocd-namespace }}.yaml
+            yq -i '.kmsParties.awsKms.recipientAttestationImageSHA384 = ${{ inputs.enclave-pcr0 }}' ./values/${{ inputs.argocd-namespace }}/tkms-infra/values.yaml
+            yq -i '.kmsCore.thresholdMode.tls.trusted_releases[0].pcr0 = ${{ inputs.enclave-pcr0 }}' ./values/${{ inputs.argocd-namespace }}/${{ inputs.argocd-app-name }}/values-${{ inputs.argocd-namespace }}.yaml
+            yq -i '.kmsCore.thresholdMode.tls.trusted_releases[0].pcr1 = ${{ inputs.enclave-pcr1 }}' ./values/${{ inputs.argocd-namespace }}/${{ inputs.argocd-app-name }}/values-${{ inputs.argocd-namespace }}.yaml
+            yq -i '.kmsCore.thresholdMode.tls.trusted_releases[0].pcr2 = ${{ inputs.enclave-pcr2 }}' ./values/${{ inputs.argocd-namespace }}/${{ inputs.argocd-app-name }}/values-${{ inputs.argocd-namespace }}.yaml
 
       - name: Commit and push to gitops repository
         run: |
@@ -68,6 +68,7 @@ jobs:
           if [ -z "$(git status -s)" ]; then
             echo "No changes to commit"
           else
+            git pull
             git add .
             git commit -m "chore: bump ${{ inputs.application-image }} image tag to ${{ inputs.image-tag }}"
             git push
