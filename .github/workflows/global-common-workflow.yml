@@ -393,7 +393,7 @@ jobs:
     with:
       working-directory: "./core/service"
       push_image: true
-      image-name: 'kms-core'
+      image-name: 'kms-service'
       app-cache-dir: 'kms'
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -420,8 +420,8 @@ jobs:
     with:
       working-directory: "./core/service"
       push_image: true
-      image-name: 'kms-core'
-      image-enclave-name: 'kms-core-enclave'
+      image-name: 'kms-service'
+      image-enclave-name: 'kms-service-enclave'
       docker-file-enclave: 'enclave.dockerfile'
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
