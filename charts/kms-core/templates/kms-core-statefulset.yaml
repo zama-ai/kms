@@ -43,7 +43,7 @@ spec:
       initContainers:
         - image: {{ .Values.kubeUtils.image.name }}:{{ .Values.kubeUtils.image.tag }}
           imagePullPolicy: {{ .Values.kubeUtils.image.pullPolicy }}
-          name: kms-service-init-load-env
+          name: kms-core-init-load-env
           command:
             - /bin/sh
           args:
@@ -101,14 +101,14 @@ spec:
               name: workdir
         {{- /* Init Enclave Logger Socket, hardcoded to 3000 in https://github.com/zama-ai/kms-core/blob/main/docker/core/service/init_enclave.sh */}}
         - {{ include "proxyFromEnclave"
-               (dict "name" "kms-service-enclave-logger"
+               (dict "name" "kms-core-enclave-logger"
                      "image" .Values.kubeUtils.image
                      "vsockPort" 3000
                      "to" "STDOUT"
                ) | indent 10 | trim }}
         {{- /* Init Enclave Tracing Socket */}}
         - {{ include "proxyFromEnclave"
-               (dict "name" "kms-service-enclave-tracing"
+               (dict "name" "kms-core-enclave-tracing"
                      "image" .Values.kubeUtils.image
                      "vsockPort" .Values.kmsCore.nitroEnclave.ports.tracing
                      "to" (printf "TCP:%s" (urlParse .Values.tracing.endpoint).host)
@@ -204,7 +204,7 @@ spec:
         {{- else }}
         {{- /* Generate init keys for non-enclave kms-core service */}}
         - image: {{ .Values.kmsCore.image.name }}:{{ .Values.kmsCore.image.tag }}
-          name: kms-service-init-gen-keys
+          name: kms-core-init-gen-keys
           command:
             - /bin/sh
           args:
@@ -266,7 +266,7 @@ spec:
         - image: {{ .Values.kmsCore.image.name }}:{{ .Values.kmsCore.image.tag }}
           imagePullPolicy: {{ .Values.kmsCore.image.pullPolicy }}
           {{- if .Values.kmsCore.nitroEnclave.enabled }}
-          name: kms-service-enclave
+          name: kms-core-enclave
           command:
             - /bin/sh
           args:
@@ -289,7 +289,7 @@ spec:
                 sleep 60
               done
           {{- else }}
-          name: kms-service
+          name: kms-core
           command:
             - /bin/sh
           args:

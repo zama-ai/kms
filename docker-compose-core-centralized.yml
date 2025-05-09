@@ -6,7 +6,7 @@ services:
   # TODO: move the upload of the pub-key from the validator to the core -> or maybe the connector?
   # anyway where the keys really are
   dev-kms-core:
-    image: ghcr.io/zama-ai/kms-service:latest-dev
+    image: ghcr.io/zama-ai/kms-core:latest-dev
     environment:
       - DOCKER_BUILDKIT=1
     build:
@@ -14,7 +14,7 @@ services:
       target: dev
       dockerfile: ./docker/core/service/Dockerfile
       cache_from:
-        - ghcr.io/zama-ai/kms-service:latest-dev
+        - ghcr.io/zama-ai/kms-core:latest-dev
       args:
         LTO_RELEASE: ${LTO_RELEASE}
         RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}

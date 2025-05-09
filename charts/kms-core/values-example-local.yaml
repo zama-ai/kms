@@ -2,9 +2,6 @@ kmsPeers:
   # Number of replicas managed by each statefulset
   count: 4
 
-kmsConnector:
-  enabled: false
-
 kmsCoreClient:
   enabled: true
   nameOverride: kms-core-client-threshold-staging
@@ -19,7 +16,7 @@ kmsCore:
   nameOverride: kms-threshold-staging
   addressOverride:
   image:
-    name: ghcr.io/zama-ai/kms-service
+    name: ghcr.io/zama-ai/kms-core
     tag: v0.11.0-rc2
   thresholdMode:
     enabled: true

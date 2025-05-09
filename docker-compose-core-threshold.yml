@@ -6,13 +6,13 @@ services:
   # 1. Generate TLS certificates
   # NOTE: for now we do the key-generation here because kms-server requires one to start
   dev-kms-core-certs:
-    image: ghcr.io/zama-ai/kms-service:latest-dev
+    image: ghcr.io/zama-ai/kms-core:latest-dev
     build:
       context: .
       target: dev
       dockerfile: ./docker/core/service/Dockerfile
       cache_from:
-        - ghcr.io/zama-ai/kms-service:latest-dev
+        - ghcr.io/zama-ai/kms-core:latest-dev
       args:
         LTO_RELEASE: ${LTO_RELEASE}
         RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
@@ -30,13 +30,13 @@ services:
 
   # 2. We start all cores
   dev-kms-core-1:
-    image: ghcr.io/zama-ai/kms-service:latest-dev
+    image: ghcr.io/zama-ai/kms-core:latest-dev
     build:
       context: .
       target: dev
       dockerfile: ./docker/core/service/Dockerfile
       cache_from:
-        - ghcr.io/zama-ai/kms-service:latest-dev
+        - ghcr.io/zama-ai/kms-core:latest-dev
       args:
         LTO_RELEASE: ${LTO_RELEASE}
         RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
@@ -86,13 +86,13 @@ services:
       "
 
   dev-kms-core-2:
-    image: ghcr.io/zama-ai/kms-service:latest-dev
+    image: ghcr.io/zama-ai/kms-core:latest-dev
     build:
       context: .
       target: dev
       dockerfile: ./docker/core/service/Dockerfile
       cache_from:
-        - ghcr.io/zama-ai/kms-service:latest-dev
+        - ghcr.io/zama-ai/kms-core:latest-dev
       args:
         LTO_RELEASE: ${LTO_RELEASE}
         RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
@@ -129,13 +129,13 @@ services:
         condition: service_completed_successfully
 
   dev-kms-core-3:
-    image: ghcr.io/zama-ai/kms-service:latest-dev
+    image: ghcr.io/zama-ai/kms-core:latest-dev
     build:
       context: .
       target: dev
       dockerfile: ./docker/core/service/Dockerfile
       cache_from:
-        - ghcr.io/zama-ai/kms-service:latest-dev
+        - ghcr.io/zama-ai/kms-core:latest-dev
       args:
         LTO_RELEASE: ${LTO_RELEASE}
         RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
@@ -172,13 +172,13 @@ services:
         condition: service_completed_successfully
 
   dev-kms-core-4:
-    image: ghcr.io/zama-ai/kms-service:latest-dev
+    image: ghcr.io/zama-ai/kms-core:latest-dev
     build:
       context: .
       target: dev
       dockerfile: ./docker/core/service/Dockerfile
       cache_from:
-        - ghcr.io/zama-ai/kms-service:latest-dev
+        - ghcr.io/zama-ai/kms-core:latest-dev
       args:
         LTO_RELEASE: ${LTO_RELEASE}
         RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
@@ -216,13 +216,13 @@ services:
 
   # 3. Initialize the different cores
   dev-kms-core-init:
-    image: ghcr.io/zama-ai/kms-service:latest-dev
+    image: ghcr.io/zama-ai/kms-core:latest-dev
     build:
       context: .
       target: dev
       dockerfile: ./docker/core/service/Dockerfile
       cache_from:
-        - ghcr.io/zama-ai/kms-service:latest-dev
+        - ghcr.io/zama-ai/kms-core:latest-dev
       args:
         LTO_RELEASE: ${LTO_RELEASE}
         RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}

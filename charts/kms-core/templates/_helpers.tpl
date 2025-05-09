@@ -1,20 +1,15 @@
-{{- define "kmsConnectorName" -}}
-{{- $kmsConnectorNameDefault := printf "%s-%s" .Release.Name "connector" }}
-{{- default $kmsConnectorNameDefault .Values.kmsConnector.nameOverride | trunc 52 | trimSuffix "-" -}}
-{{- end -}}
-
 {{- define "kmsCoreName" -}}
-{{- $kmsCoreNameDefault := printf "%s-%s" .Release.Name "core" }}
+{{- $kmsCoreNameDefault := printf "%s-%s" .Release.Name }}
 {{- default $kmsCoreNameDefault .Values.kmsCore.nameOverride | trunc 52 | trimSuffix "-" -}}
 {{- end -}}
 
 {{- define "kmsCoreClientName" -}}
-{{- $kmsCoreClientNameDefault := printf "%s-%s" .Release.Name "kms-core-client" }}
+{{- $kmsCoreClientNameDefault := printf "%s-%s" .Release.Name "client" }}
 {{- default $kmsCoreClientNameDefault .Values.kmsCoreClient.nameOverride | trunc 52 | trimSuffix "-" -}}
 {{- end -}}
 
 {{- define "kmsCoreClientTestingName" -}}
-{{- $kmsCoreClientNameDefault := printf "%s-%s" .Release.Name "kms-core-client-testing" }}
+{{- $kmsCoreClientNameDefault := printf "%s-%s" .Release.Name "client-testing" }}
 {{- default $kmsCoreClientNameDefault .Values.kmsCoreClientTesting.nameOverride | trunc 52 | trimSuffix "-" -}}
 {{- end -}}
 
