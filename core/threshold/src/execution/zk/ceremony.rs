@@ -447,7 +447,14 @@ fn make_partial_proof_deterministic(
                 .g1s
                 .par_iter()
                 .zip(&tau_powers)
-                .map(|(g, t)| g.mul_scalar(*t))
+                .enumerate()
+                .map(|(i, (g, t))| {
+                    if i == b1 {
+                        curve::G1::ZERO
+                    } else {
+                        g.mul_scalar(*t)
+                    }
+                })
                 .collect(),
             current_pp
                 .inner
@@ -539,6 +546,12 @@ fn verify_proof(
     if new_pp.witness_dim() != witness_dim {
         return Err(anyhow_error_and_log(
             "crs length check failed (g_hat)".to_string(),
+        ));
+    }
+
+    if new_pp.inner.g1s[witness_dim] != curve::G1::ZERO {
+        return Err(anyhow_error_and_log(
+            "the list of G1s is not correctly punctured".to_string(),
         ));
     }
 
@@ -1309,6 +1322,14 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("well-formedness check failed (2)"));
+        }
+        {
+            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
+            proof.new_pp.inner.g1s[n] = curve::G1::GENERATOR;
+            assert!(verify_proof(&pp1, &proof)
+                .unwrap_err()
+                .to_string()
+                .contains("the list of G1s is not correctly punctured"));
         }
     }
 
