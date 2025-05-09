@@ -1,3 +1,3 @@
 pub mod central_kms;
-pub(crate) mod service_real;
+pub mod service;
 // TODO eventually we'd also want a mocked service
