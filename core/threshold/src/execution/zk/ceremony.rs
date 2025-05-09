@@ -25,9 +25,9 @@ use tracing::instrument;
 use zeroize::Zeroize;
 
 use super::constants::{
-    ZK_DEFAULT_MAX_NUM_BITS, ZK_DSEP_AGG_PADDED, ZK_DSEP_CHI_PADDED, ZK_DSEP_HASH_PADDED,
-    ZK_DSEP_LMAP_PADDED, ZK_DSEP_PHI_PADDED, ZK_DSEP_R_PADDED, ZK_DSEP_T_PADDED, ZK_DSEP_W_PADDED,
-    ZK_DSEP_XI_PADDED, ZK_DSEP_Z_PADDED,
+    ZK_DEFAULT_MAX_NUM_BITS, ZK_DSEP_AGG_PADDED, ZK_DSEP_CHI_PADDED, ZK_DSEP_HASH, ZK_DSEP_HASH_P,
+    ZK_DSEP_HASH_PADDED, ZK_DSEP_LMAP_PADDED, ZK_DSEP_PHI_PADDED, ZK_DSEP_R_PADDED,
+    ZK_DSEP_T_PADDED, ZK_DSEP_W_PADDED, ZK_DSEP_XI_PADDED, ZK_DSEP_Z_PADDED,
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
@@ -409,7 +409,8 @@ impl InternalPublicParameter {
         }
         debug_assert_eq!(buf.len(), capacity);
         let mut out = vec![curve::Zp::ZERO; n];
-        curve::Zp::hash(&mut out, &[&buf]);
+        // Add explicit domain separator
+        curve::Zp::hash(&mut out, &[&ZK_DSEP_HASH_P, &buf]);
         out
     }
 }
@@ -473,6 +474,7 @@ fn make_partial_proof_deterministic(
     curve::Zp::hash(
         &mut h_pok,
         &[
+            &ZK_DSEP_HASH, // Manually add domain separator
             &g1_j.to_le_bytes(),
             &g1_jm1.to_le_bytes(),
             &r_pok.to_le_bytes(),
@@ -577,6 +579,7 @@ fn verify_dlog_proof(
         curve::Zp::hash(
             &mut out,
             &[
+                &ZK_DSEP_HASH, // Manually add domain separator
                 &g1_j.to_le_bytes(),
                 &g1_jm1.to_le_bytes(),
                 &tmp.to_le_bytes(),

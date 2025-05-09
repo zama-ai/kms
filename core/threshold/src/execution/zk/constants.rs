@@ -6,8 +6,10 @@ use crate::hashing::DomainSep;
 // type that we support, which is `Euint2048`.
 pub const ZK_DEFAULT_MAX_NUM_BITS: usize = 2048;
 
-//Need to be careful that one DSEP isn't the prefix of another
+// Ceremony proof domain separators
 pub const ZK_DSEP_HASH: DomainSep = *b"ZKHASH__";
+pub const ZK_DSEP_HASH_P: DomainSep = *b"ZKHASH_p";
+// Ciphertext proof domain separators
 pub const ZK_DSEP_T: DomainSep = *b"ZKHASH_T";
 pub const ZK_DSEP_AGG: DomainSep = *b"ZK_AGGRE";
 pub const ZK_DSEP_LMAP: DomainSep = *b"ZKLINMAP";
