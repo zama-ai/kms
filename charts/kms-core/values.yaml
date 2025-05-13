@@ -128,7 +128,8 @@ kmsCore:
       # memory: 30Gi
       ephemeralStorage: 1Gi
       grpcTimeout: 360
-      grpcMaxMessageSize: 2097520
+      # 100MB
+      grpcMaxMessageSize: 104857600
   nodeSelector:
   affinity:
   tolerations:
@@ -202,6 +203,10 @@ minio:
       - "mc anonymous set public provisioning/kms-public"
 
 rustLog: info
+
+# Add pod annotations to the kms-core
+# podAnnotations:
+#   configmap.reloader.stakater.com/auto: "true"
 
 podSecurityContext:
   # To set when the image will support non root user

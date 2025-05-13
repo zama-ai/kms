@@ -30,6 +30,9 @@ spec:
         app.kubernetes.io/name: {{ include "kmsCoreName" . }}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/kms-core-configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
     {{- if .Values.kmsCore.nitroEnclave.enabled }}
       securityContext:
