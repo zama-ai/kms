@@ -130,7 +130,7 @@ pub fn compute_key(key_prefix: String, correlated_randomness: CorrelatedRandomne
 fn store_correlated_randomness<S: Serialize>(
     client: Arc<Client>,
     data: &[S],
-    correlated_randomness: CorrelatedRandomnessType,
+    correlated_randomness_type: CorrelatedRandomnessType,
     key_prefix: String,
 ) -> RedisResult<()> {
     let mut con = client.get_connection()?;
@@ -143,18 +143,21 @@ fn store_correlated_randomness<S: Serialize>(
                 redis::RedisError::from((redis::ErrorKind::TypeError, "Could not serialize "))
             })?;
 
-    con.lpush(compute_key(key_prefix, correlated_randomness), serialized)
+    con.lpush(
+        compute_key(key_prefix, correlated_randomness_type),
+        serialized,
+    )
 }
 
 fn fetch_correlated_randomness<T: for<'de> Deserialize<'de>>(
     client: Arc<Client>,
     amount: usize,
-    correlated_randomness: CorrelatedRandomnessType,
+    correlated_randomness_type: CorrelatedRandomnessType,
     key_prefix: String,
 ) -> RedisResult<Vec<T>> {
     let mut con = client.get_connection()?;
     let serialized_correlated_randomness: Vec<Vec<u8>> = con.rpop(
-        compute_key(key_prefix, correlated_randomness),
+        compute_key(key_prefix, correlated_randomness_type),
         NonZeroUsize::new(amount),
     )?;
 
@@ -168,7 +171,22 @@ fn fetch_correlated_randomness<T: for<'de> Deserialize<'de>>(
         })
         .collect::<Result<Vec<T>, _>>()?;
 
-    Ok(correlated_randomness)
+    if correlated_randomness.len() != amount {
+        // Note: What was popped will be discarded.
+        // But something went quite wrong already anyway.
+        Err(redis::RedisError::from((
+            redis::ErrorKind::ResponseError,
+            "Pop length error.",
+            format!(
+                "Expected a vector of {:?} of length {}, but received one of length {}",
+                correlated_randomness_type,
+                amount,
+                correlated_randomness.len()
+            ),
+        )))
+    } else {
+        Ok(correlated_randomness)
+    }
 }
 
 fn correlated_randomness_len(

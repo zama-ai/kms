@@ -163,6 +163,33 @@ fn test_store_fetch_100_bits() {
     assert_eq!(bits, fetched_bits);
 }
 
+#[test]
+fn test_fetch_more_than_stored() {
+    let store_count = 100;
+    let fetch_count = 101;
+
+    let test_key_prefix = "test_fetch_more_than_stored".to_string();
+    let redis_conf = RedisConf::default();
+    let mut redis_factory = create_redis_factory(test_key_prefix.clone(), &redis_conf);
+    let mut bit_redis_preprocessing = redis_factory.create_bit_preprocessing_residue_64();
+    let mut bits = Vec::new();
+    for i in 0..store_count {
+        let bit = Share::new(
+            Role::indexed_by_one(1),
+            ResiduePolyF4::<Z64>::from_scalar(Wrapping(i)),
+        );
+        bits.push(bit);
+    }
+
+    bit_redis_preprocessing.append_bits(bits.clone());
+    let fetched_bits = bit_redis_preprocessing.next_bit_vec(fetch_count);
+
+    assert!(fetched_bits
+        .unwrap_err()
+        .to_string()
+        .contains("Pop length error."));
+}
+
 test_triples![create_base_preprocessing_residue_64 Z64];
 test_triples![create_base_preprocessing_residue_128 Z128];
 
