@@ -1,4 +1,5 @@
 {{- if .Values.kmsCoreClient.enabled -}}
+{{- $peersIDList := untilStep (include "kmsPeersStartID" . | int) (.Values.kmsPeers.count | add1 | int) 1  }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -17,7 +18,7 @@ data:
     fi
 
     cat <<EOF >>config.toml
-    s3_endpoint="${CORE_CLIENT__S3_ENDPOINT:=S3_ENDPOINT}"
+    s3_endpoint="${S3_ENDPOINT}"
     object_folder=${OBJECT_FOLDER}
     core_addresses=${CORE_ADDRESSES}
     num_majority=${NUM_MAJORITY}
@@ -41,7 +42,7 @@ data:
     fi
 
     cat <<EOF >>config.toml
-    s3_endpoint="${CORE_CLIENT__S3_ENDPOINT:=S3_ENDPOINT}"
+    s3_endpoint="${S3_ENDPOINT}"
     object_folder=${OBJECT_FOLDER}
     core_addresses=${CORE_ADDRESSES}
     num_majority=${NUM_MAJORITY}

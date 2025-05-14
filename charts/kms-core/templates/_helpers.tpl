@@ -118,8 +118,12 @@ args:
 	        "port" .port) }}
 {{- end -}}
 
-
-{{- define "kmsThresholdInitJobName" -}}
+{{- define "kmsInitJobName" -}}
 {{- $kmsCoreNameDefault := printf "%s-%s" .Release.Name "threshold-init" }}
-{{- default $kmsCoreNameDefault .Values.kmsCore.nameOverride | trunc 52 | trimSuffix "-" -}}
+{{- default $kmsCoreNameDefault .Values.kmsInit.nameOverride | trunc 52 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "kmsGenKeyJobName" -}}
+{{- $kmsCoreNameDefault := printf "%s-%s" .Release.Name "gen-key" }}
+{{- default $kmsCoreNameDefault .Values.kmsGenKey.nameOverride | trunc 52 | trimSuffix "-" -}}
 {{- end -}}

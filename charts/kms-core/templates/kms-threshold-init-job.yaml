@@ -1,21 +1,24 @@
-{{- if and .Values.kmsCore.thresholdMode.enabled .Values.kmsInit.enabled -}}
+{{- if and .Values.kmsInit.enabled .Values.kmsCore.thresholdMode.enabled -}}
 {{- $kmsCoreName := include "kmsCoreName" . }}
+{{- $kmsInitName := include "kmsInitJobName" . }}
 {{- $peersIDList := untilStep (include "kmsPeersStartID" . | int) (.Values.kmsPeers.count | add1 | int) 1  }}
 apiVersion: batch/v1
 kind: Job
 metadata:
   labels:
     app: kms-threshold-init-job
-    app.kubernetes.io/name: {{ include "kmsThresholdInitJobName" . }}
+    app.kubernetes.io/name: {{ $kmsInitName }}
   annotations:
+    "helm.sh/hook-weight": "0"
     "helm.sh/hook": post-install,post-upgrade
-  name: {{ include "kmsThresholdInitJobName" . }}
+    "helm.sh/hook-weight": "0"
+  name: {{ $kmsInitName }}
 spec:
   template:
     metadata:
       labels:
         app: kms-threshold-init-job
-        app.kubernetes.io/name: {{ include "kmsThresholdInitJobName" . }}
+        app.kubernetes.io/name: {{ $kmsInitName }}
     spec:
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}

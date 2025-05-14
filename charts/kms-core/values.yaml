@@ -149,6 +149,9 @@ kmsCoreClient:
   num_reconstruct: 3
   decryption_mode: "NoiseFloodSmall"
   fhe_parameter: Test
+  storage:
+    # storageClassName: gp3
+    capacity: 1Gi
   resources:
     requests: {}
       # memory: 1Gi
@@ -160,11 +163,24 @@ kmsCoreClient:
   affinity:
   tolerations:
 
+# Threshold Init job
 kmsInit:
   enabled: false
+  nameOverride:
   nodeSelector:
   affinity:
   tolerations:
+
+# Automatic Key Generation job
+kmsGenKey:
+  enabled: false
+  nameOverride:
+  # command line arguments passed to kms-core-client
+  keyGenArgs: "insecure-key-gen"
+  crsGenArgs: "insecure-crs-gen --max-num-bits 1024"
+  configmap:
+    name: kms-keys
+    annotations:
 
 kubeUtils:
   image:

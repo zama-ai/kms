@@ -5,9 +5,13 @@ kmsPeers:
 kmsCoreClient:
   enabled: true
   nameOverride: kms-core-client-threshold-staging
+  num_majority: 2
+  num_reconstruct: 3
+  decryption_mode: "NoiseFloodSmall"
+  fhe_parameter: "Test"
   image:
     name: ghcr.io/zama-ai/kms-core-client
-    tag: v0.11.0-rc2
+    tag: nightly-67f2fb7
   envFrom:
     configmap:
       name: kms-core-client-threshold-staging-config
@@ -16,25 +20,30 @@ kmsCore:
   nameOverride: kms-threshold-staging
   addressOverride:
   image:
-    name: ghcr.io/zama-ai/kms-core
-    tag: v0.11.0-rc2
+    name: ghcr.io/zama-ai/kms-service
+    tag: nightly-67f2fb7
+  publicVault:
+    s3:
+      enabled: true
+      bucket: kms-public
+      path: ""
   thresholdMode:
     enabled: true
     initializationScript:
       enabled: true
-#    peersList:
-#      - id: 1
-#        host: kms-threshold-staging-1
-#        port: 50001
-#      - id: 2
-#        host: kms-threshold-staging-2
-#        port: 50001
-#      - id: 3
-#        host: kms-threshold-staging-3
-#        port: 50001
-#      - id: 4
-#        host: kms-threshold-staging-4
-#        port: 50001
+    peersList:
+      - id: 1
+        host: kms-threshold-staging-1
+        port: 50001
+      - id: 2
+        host: kms-threshold-staging-2
+        port: 50001
+      - id: 3
+        host: kms-threshold-staging-3
+        port: 50001
+      - id: 4
+        host: kms-threshold-staging-4
+        port: 50001
   aws:
     region: eu-west-1
   storage:
@@ -60,6 +69,27 @@ rustLog: info
 
 minio:
   enabled: true
+  commonAnnotations:
+    "helm.sh/hook-weight": "-1"
+  fullnameOverride: minio
+  auth:
+    rootUser: minio-admin
+    rootPassword: minio-admin
+  provisioning:
+    enabled: true
+    buckets:
+      - name: kms-public
+        region: eu-west-1
+    users:
+      - username: kms-access-key-id
+        password: kms-secret-access-key
+        policies:
+          - readwrite
+    extraCommands:
+      - "mc anonymous set public provisioning/kms-public"
 
 kyverno:
   enabled: false
+
+kmsGenKey:
+  enabled: true
