@@ -804,7 +804,7 @@ mod tests {
 
     use crate::{
         execution::{constants::REAL_KEY_PATH, tfhe_internals::test_feature::KeySet},
-        file_handling::read_element,
+        file_handling::tests::read_element,
     };
 
     // TODO does not work with test key. Enable if test keys get updated

@@ -208,19 +208,12 @@ fn test_dkg_orchestrator_large(
             online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator,
             runtime::session::ParameterHandles,
         },
+        file_handling::tests::write_element,
         networking::NetworkMode,
         thread_handles::OsThreadGroup,
     };
 
     let params_basics_handles = params.get_params_basics_handle();
-    params_basics_handles
-        .write_to_file(
-            &params_basics_handles
-                .get_prefix_path()
-                .join("ORCHESTRATOR")
-                .join("params.json"),
-        )
-        .unwrap();
 
     let identities = generate_fixed_identities(num_parties);
     //Executing offline, so require Sync network
@@ -290,23 +283,24 @@ fn test_dkg_orchestrator_large(
             None => pk_ref = Some(pk),
             Some(ref ref_key) => assert_eq!(ref_key, &pk),
         };
-        sk.write_to_file(
-            &params_basics_handles
+        write_element(
+            params_basics_handles
                 .get_prefix_path()
                 .join("ORCHESTRATOR")
                 .join(format!("sk_p{}.der", party_id)),
+            &sk,
         )
         .unwrap();
     }
     let pk_ref = pk_ref.unwrap();
-    pk_ref
-        .write_to_file(
-            &params_basics_handles
-                .get_prefix_path()
-                .join("ORCHESTRATOR")
-                .join("pk.der"),
-        )
-        .unwrap();
+    write_element(
+        params_basics_handles
+            .get_prefix_path()
+            .join("ORCHESTRATOR")
+            .join("pk.der"),
+        &pk_ref,
+    )
+    .unwrap();
 }
 
 #[cfg(feature = "testing")]

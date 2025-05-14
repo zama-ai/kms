@@ -121,7 +121,7 @@ mod tests {
             constants::SMALL_TEST_KEY_PATH, runtime::party::Identity,
             tfhe_internals::test_feature::KeySet,
         },
-        file_handling::read_element,
+        file_handling::tests::read_element,
         networking::{local::LocalNetworkingProducer, NetworkMode, Networking},
     };
 

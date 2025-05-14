@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use crate::algebra::base_ring::{Z128, Z64};
 use crate::algebra::structure_traits::Zero;
 use crate::execution::online::preprocessing::{DKGPreprocessing, RandomPreprocessing};
@@ -33,7 +31,6 @@ use crate::{
             randomness::MPCEncryptionRandomGenerator,
         },
     },
-    file_handling::{read_element, write_element},
 };
 use itertools::Itertools;
 use num_integer::div_ceil;
@@ -68,16 +65,6 @@ pub struct FhePubKeySet {
     pub server_key: tfhe::ServerKey,
 }
 
-impl FhePubKeySet {
-    pub fn write_to_file(&self, path: &Path) -> anyhow::Result<()> {
-        write_element(path, self)
-    }
-
-    pub fn read_from_file(path: &Path) -> anyhow::Result<Self> {
-        read_element(path)
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct RawPubKeySet {
     pub lwe_public_key: LweCompactPublicKey<Vec<u64>>,
@@ -93,16 +80,6 @@ struct RawPubKeySet {
 impl Eq for RawPubKeySet {}
 
 impl RawPubKeySet {
-    #[allow(dead_code)]
-    pub fn write_to_file(&self, path: &Path) -> anyhow::Result<()> {
-        write_element(path, self)
-    }
-
-    #[allow(dead_code)]
-    pub fn read_from_file(path: &Path) -> anyhow::Result<Self> {
-        read_element(path)
-    }
-
     pub fn compute_tfhe_shortint_server_key(&self, params: DKGParams) -> tfhe::shortint::ServerKey {
         let regular_params = params.get_params_basics_handle();
         let max_value =
@@ -325,16 +302,6 @@ impl<const EXTENSION_DEGREE: usize> GlweSecretKeyShareEnum<EXTENSION_DEGREE> {
             GlweSecretKeyShareEnum::Z64(inner) => inner.polynomial_size,
             GlweSecretKeyShareEnum::Z128(inner) => inner.polynomial_size,
         }
-    }
-}
-
-impl<const EXTENSION_DEGREE: usize> PrivateKeySet<EXTENSION_DEGREE> {
-    pub fn write_to_file(&self, path: &Path) -> anyhow::Result<()> {
-        write_element(path, self)
-    }
-
-    pub fn read_from_file(path: &Path) -> anyhow::Result<Self> {
-        read_element(path)
     }
 }
 
@@ -1284,19 +1251,6 @@ where
 
 #[cfg(test)]
 pub mod tests {
-    use crate::execution::{
-        random::{get_rng, seed_from_rng},
-        tfhe_internals::{
-            parameters::{
-                DKGParams, BC_PARAMS_NO_SNS, NIST_PARAMS_P32_NO_SNS_FGLWE,
-                NIST_PARAMS_P32_NO_SNS_LWE, NIST_PARAMS_P32_SNS_FGLWE, NIST_PARAMS_P8_NO_SNS_FGLWE,
-                NIST_PARAMS_P8_NO_SNS_LWE, NIST_PARAMS_P8_SNS_FGLWE, OLD_PARAMS_P32_REAL_WITH_SNS,
-                PARAMS_TEST_BK_SNS,
-            },
-            test_feature::to_hl_client_key,
-            utils::tests::reconstruct_glwe_secret_key_from_file,
-        },
-    };
     use crate::{
         algebra::{
             base_ring::{Z128, Z64},
@@ -1311,6 +1265,7 @@ pub mod tests {
                 utils::expanded_encrypt,
             },
         },
+        file_handling::tests::read_element,
         tests::helper::tests_and_benches::execute_protocol_large,
     };
     use crate::{
@@ -1319,6 +1274,22 @@ pub mod tests {
             tfhe_internals::utils::tests::reconstruct_lwe_secret_key_from_file,
         },
         networking::NetworkMode,
+    };
+    use crate::{
+        execution::{
+            random::{get_rng, seed_from_rng},
+            tfhe_internals::{
+                parameters::{
+                    DKGParams, BC_PARAMS_NO_SNS, NIST_PARAMS_P32_NO_SNS_FGLWE,
+                    NIST_PARAMS_P32_NO_SNS_LWE, NIST_PARAMS_P32_SNS_FGLWE,
+                    NIST_PARAMS_P8_NO_SNS_FGLWE, NIST_PARAMS_P8_NO_SNS_LWE,
+                    NIST_PARAMS_P8_SNS_FGLWE, OLD_PARAMS_P32_REAL_WITH_SNS, PARAMS_TEST_BK_SNS,
+                },
+                test_feature::to_hl_client_key,
+                utils::tests::reconstruct_glwe_secret_key_from_file,
+            },
+        },
+        file_handling::tests::write_element,
     };
     use itertools::Itertools;
     use std::path::Path;
@@ -1410,16 +1381,23 @@ pub mod tests {
 
         run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
 
-        run_switch_and_squash(temp_dir.path(), num_parties, threshold);
+        run_switch_and_squash(
+            temp_dir.path(),
+            params.try_into().unwrap(),
+            num_parties,
+            threshold,
+        );
 
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsSnS>(
             temp_dir.path(),
+            params,
             num_parties,
             threshold,
             false,
         );
-        run_tfhe_computation_fheuint::<EXTENSION_DEGREE, DKGParamsSnS>(
+        run_tfhe_computation_fheuint::<EXTENSION_DEGREE>(
             temp_dir.path(),
+            params,
             num_parties,
             threshold,
             false,
@@ -1461,12 +1439,14 @@ pub mod tests {
 
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
             temp_dir.path(),
+            params,
             num_parties,
             threshold,
             true,
         );
-        run_tfhe_computation_fheuint::<EXTENSION_DEGREE, DKGParamsRegular>(
+        run_tfhe_computation_fheuint::<EXTENSION_DEGREE>(
             temp_dir.path(),
+            params,
             num_parties,
             threshold,
             false,
@@ -1509,6 +1489,7 @@ pub mod tests {
         //This parameter set isnt big enough to run the fheuint tests
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
             temp_dir.path(),
+            params,
             num_parties,
             threshold,
             true,
@@ -1550,12 +1531,14 @@ pub mod tests {
 
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
             temp_dir.path(),
+            params,
             num_parties,
             threshold,
             true,
         );
-        run_tfhe_computation_fheuint::<EXTENSION_DEGREE, DKGParamsRegular>(
+        run_tfhe_computation_fheuint::<EXTENSION_DEGREE>(
             temp_dir.path(),
+            params,
             num_parties,
             threshold,
             false,
@@ -1598,6 +1581,7 @@ pub mod tests {
         //This parameter set isnt big enough to run the fheuint tests
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
             temp_dir.path(),
+            params,
             num_parties,
             threshold,
             true,
@@ -1636,16 +1620,23 @@ pub mod tests {
 
         run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
 
-        run_switch_and_squash(temp_dir.path(), num_parties, threshold);
+        run_switch_and_squash(
+            temp_dir.path(),
+            params.try_into().unwrap(),
+            num_parties,
+            threshold,
+        );
 
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsSnS>(
             temp_dir.path(),
+            params,
             num_parties,
             threshold,
             true,
         );
-        run_tfhe_computation_fheuint::<EXTENSION_DEGREE, DKGParamsSnS>(
+        run_tfhe_computation_fheuint::<EXTENSION_DEGREE>(
             temp_dir.path(),
+            params,
             num_parties,
             threshold,
             true,
@@ -1696,16 +1687,23 @@ pub mod tests {
             keyset_config,
         );
 
-        run_switch_and_squash(temp_dir.path(), num_parties, threshold);
+        run_switch_and_squash(
+            temp_dir.path(),
+            params.try_into().unwrap(),
+            num_parties,
+            threshold,
+        );
 
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsSnS>(
             temp_dir.path(),
+            params,
             num_parties,
             threshold,
             true,
         );
-        run_tfhe_computation_fheuint::<EXTENSION_DEGREE, DKGParamsSnS>(
+        run_tfhe_computation_fheuint::<EXTENSION_DEGREE>(
             temp_dir.path(),
+            params,
             num_parties,
             threshold,
             true,
@@ -1745,16 +1743,23 @@ pub mod tests {
 
         run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
 
-        run_switch_and_squash(temp_dir.path(), num_parties, threshold);
+        run_switch_and_squash(
+            temp_dir.path(),
+            params.try_into().unwrap(),
+            num_parties,
+            threshold,
+        );
 
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsSnS>(
             temp_dir.path(),
+            params,
             num_parties,
             threshold,
             true,
         );
-        run_tfhe_computation_fheuint::<EXTENSION_DEGREE, DKGParamsSnS>(
+        run_tfhe_computation_fheuint::<EXTENSION_DEGREE>(
             temp_dir.path(),
+            params,
             num_parties,
             threshold,
             false,
@@ -1794,11 +1799,17 @@ pub mod tests {
 
         run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
 
-        run_switch_and_squash(temp_dir.path(), num_parties, threshold);
+        run_switch_and_squash(
+            temp_dir.path(),
+            params.try_into().unwrap(),
+            num_parties,
+            threshold,
+        );
 
         //This parameter set isnt big enough to run the fheuint tests
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsSnS>(
             temp_dir.path(),
+            params,
             num_parties,
             threshold,
             true,
@@ -1840,12 +1851,14 @@ pub mod tests {
 
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
             temp_dir.path(),
+            params,
             num_parties,
             threshold,
             true,
         );
-        run_tfhe_computation_fheuint::<EXTENSION_DEGREE, DKGParamsRegular>(
+        run_tfhe_computation_fheuint::<EXTENSION_DEGREE>(
             temp_dir.path(),
+            params,
             num_parties,
             threshold,
             true,
@@ -1912,7 +1925,7 @@ pub mod tests {
                     glwe_key::GlweSecretKeyShare, test_feature::gen_key_set,
                 },
             },
-            file_handling::{read_element, write_element},
+            file_handling::tests::{read_element, write_element},
         };
 
         let keyset_config = KeySetConfig::DecompressionOnly;
@@ -2083,11 +2096,6 @@ pub mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
     {
-        let params_basics_handles = params.get_params_basics_handle();
-        params_basics_handles
-            .write_to_file(&prefix_path.join("params.json"))
-            .unwrap();
-
         let mut task = |mut session: SmallSession<ResiduePoly<Z128, EXTENSION_DEGREE>>,
                         _bot: Option<String>| async move {
             use crate::execution::tfhe_internals::compression_decompression_key::CompressionPrivateKeyShares;
@@ -2202,11 +2210,14 @@ pub mod tests {
 
         for (role, pk, sk) in results {
             assert_eq!(pk, pk_ref);
-            sk.write_to_file(&prefix_path.join(format!("sk_p{}.der", role.zero_based())))
-                .unwrap();
+            write_element(
+                prefix_path.join(format!("sk_p{}.der", role.zero_based())),
+                &sk,
+            )
+            .unwrap();
         }
 
-        pk_ref.write_to_file(&prefix_path.join("pk.der")).unwrap();
+        write_element(prefix_path.join("pk.der"), &pk_ref).unwrap();
     }
 
     ///Runs the DKG protocol with [`DummyPreprocessing`]
@@ -2220,11 +2231,6 @@ pub mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
         ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
     {
-        let params_basics_handles = params.get_params_basics_handle();
-        params_basics_handles
-            .write_to_file(&prefix_path.join("params.json"))
-            .unwrap();
-
         let mut task = |mut session: LargeSession| async move {
             let my_role = session.my_role().unwrap();
             let mut large_preproc = DummyPreprocessing::new(0_u64, session.clone());
@@ -2265,22 +2271,25 @@ pub mod tests {
 
         for (role, pk, sk) in results {
             assert_eq!(pk, pk_ref);
-            sk.write_to_file(&prefix_path.join(format!("sk_p{}.der", role.zero_based())))
-                .unwrap();
+            write_element(
+                prefix_path.join(format!("sk_p{}.der", role.zero_based())),
+                &sk,
+            )
+            .unwrap();
         }
 
-        pk_ref.write_to_file(&prefix_path.join("pk.der")).unwrap();
+        write_element(prefix_path.join("pk.der"), &pk_ref).unwrap();
     }
 
     fn run_switch_and_squash<const EXTENSION_DEGREE: usize>(
         prefix_path: &Path,
+        params: DKGParamsSnS,
         num_parties: usize,
         threshold: usize,
     ) where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
     {
-        let params = DKGParamsSnS::read_from_file(&prefix_path.join("params.json")).unwrap();
         let message = (params.get_message_modulus().0 - 1) as u8;
 
         let sk_lwe = reconstruct_lwe_secret_key_from_file::<EXTENSION_DEGREE, _>(
@@ -2301,7 +2310,7 @@ pub mod tests {
             params.sns_params.polynomial_size,
         );
 
-        let pk = RawPubKeySet::read_from_file(&prefix_path.join("pk.der")).unwrap();
+        let pk: RawPubKeySet = read_element(prefix_path.join("pk.der")).unwrap();
         let pub_key_set = pk.to_pubkeyset(DKGParams::WithSnS(params));
         let (integer_server_key, _, _, _, ck, _) = pub_key_set.server_key.clone().into_raw_parts();
         let ck = ck.unwrap();
@@ -2400,6 +2409,7 @@ pub mod tests {
     ///Runs only the shortint computation
     pub fn run_tfhe_computation_shortint<const EXTENSION_DEGREE: usize, Params: DKGParamsBasics>(
         prefix_path: &Path,
+        params: DKGParams,
         num_parties: usize,
         threshold: usize,
         with_compact: bool,
@@ -2407,9 +2417,6 @@ pub mod tests {
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
     {
-        let params = Params::read_from_file(&prefix_path.join("params.json"))
-            .unwrap()
-            .to_dkg_params();
         let (shortint_sk, pk) = retrieve_keys_from_files::<EXTENSION_DEGREE>(
             params,
             num_parties,
@@ -2442,8 +2449,9 @@ pub mod tests {
     }
 
     ///Runs both shortint and fheuint computation
-    fn run_tfhe_computation_fheuint<const EXTENSION_DEGREE: usize, Params: DKGParamsBasics>(
+    fn run_tfhe_computation_fheuint<const EXTENSION_DEGREE: usize>(
         prefix_path: &Path,
+        params: DKGParams,
         num_parties: usize,
         threshold: usize,
         do_compression_test: bool,
@@ -2451,9 +2459,6 @@ pub mod tests {
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
     {
-        let params = Params::read_from_file(&prefix_path.join("params.json"))
-            .unwrap()
-            .to_dkg_params();
         let (shortint_sk, pk) = retrieve_keys_from_files::<EXTENSION_DEGREE>(
             params,
             num_parties,
@@ -2514,7 +2519,7 @@ pub mod tests {
             params,
             prefix_path,
         );
-        let pk = RawPubKeySet::read_from_file(&prefix_path.join("pk.der")).unwrap();
+        let pk: RawPubKeySet = read_element(prefix_path.join("pk.der")).unwrap();
 
         let shortint_client_key = tfhe::shortint::ClientKey::from_raw_parts(
             glwe_secret_key,

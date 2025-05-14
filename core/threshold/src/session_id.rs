@@ -65,7 +65,7 @@ mod tests {
             constants::SMALL_TEST_KEY_PATH, endpoints::decryption::RadixOrBoolCiphertext,
             tfhe_internals::test_feature::KeySet,
         },
-        file_handling::read_element,
+        file_handling::tests::read_element,
         session_id::SessionId,
     };
 

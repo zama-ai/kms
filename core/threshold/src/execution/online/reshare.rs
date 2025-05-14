@@ -429,7 +429,7 @@ mod tests {
             },
             sharing::shamir::InputOp,
         },
-        file_handling::read_element,
+        file_handling::tests::read_element,
         session_id::SessionId,
     };
     use aes_prng::AesRng;

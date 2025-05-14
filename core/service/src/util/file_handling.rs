@@ -7,125 +7,98 @@ use tfhe::{Unversionize, Versionize};
 
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 
-// // TODO remove this file and use ddec instead or vice versa
-
-/// Same method as [write_as_json] but async and hence can be used for multi-threaded writes.
-pub async fn write_as_json<T: Serialize>(file_path: &str, to_store: &T) -> anyhow::Result<()> {
-    let json_data = serde_json::to_string(&to_store)?;
-    let path = Path::new(&file_path);
+/// Write some text data to a file without serialization.
+pub async fn write_text<P: AsRef<Path>>(file_path: P, text: &str) -> anyhow::Result<()> {
     // Create the parent directories of the file path if they don't exist
-    if let Some(p) = path.parent() {
+    if let Some(p) = file_path.as_ref().parent() {
         tokio::fs::create_dir_all(p).await?
     };
-    tokio::fs::write(path, json_data.as_bytes()).await?;
+    tokio::fs::write(file_path, text).await?;
     Ok(())
 }
 
-/// Read a json file and deserialize it into an object.
-pub async fn read_as_json<T: DeserializeOwned>(file_path: &str) -> anyhow::Result<T> {
-    let read_json = tokio::fs::read(file_path).await?;
-    let res = serde_json::from_slice::<T>(&read_json)?;
-    Ok(res)
-}
-
-/// Serialize and write an element to a file.
-pub async fn write_element<T: Serialize>(file_path: &str, element: &T) -> anyhow::Result<()> {
-    let mut serialized_data = Vec::new();
-    let _ = bincode::serialize_into(&mut serialized_data, &element);
-    let path = Path::new(&file_path);
-    // Create the parent directories of the file path if they don't exist
-    if let Some(p) = path.parent() {
-        tokio::fs::create_dir_all(p).await?
-    };
-    tokio::fs::write(path, serialized_data.as_slice()).await?;
-    Ok(())
-}
-
-/// This is a wrapper around safe_serialize_versioned for the async use case.
-pub async fn safe_write_element_versioned<T: Serialize + Versionize + Named + Send>(
-    file_path: &str,
+/// This is a wrapper around safe_serialize versioned for the async use case.
+pub async fn safe_write_element_versioned<
+    T: Serialize + Versionize + Named + Send,
+    P: AsRef<Path>,
+>(
+    file_path: P,
     element: &T,
 ) -> anyhow::Result<()> {
+    // Create the parent directories of the file path if they don't exist
+    if let Some(p) = file_path.as_ref().parent() {
+        tokio::fs::create_dir_all(p).await?
+    };
     let mut serialized_data = Vec::new();
     safe_serialize(element, &mut serialized_data, SAFE_SER_SIZE_LIMIT)?;
-
-    let path = Path::new(&file_path);
-    // Create the parent directories of the file path if they don't exist
-    if let Some(p) = path.parent() {
-        tokio::fs::create_dir_all(p).await?
-    };
-    tokio::fs::write(path, serialized_data.as_slice()).await?;
+    tokio::fs::write(file_path, serialized_data.as_slice()).await?;
     Ok(())
 }
 
-pub async fn write_text(file_path: &str, text: &str) -> anyhow::Result<()> {
-    let path = Path::new(&file_path);
-    // Create the parent directories of the file path if they don't exist
-    if let Some(p) = path.parent() {
-        tokio::fs::create_dir_all(p).await?
-    };
-    tokio::fs::write(path, text).await?;
-    Ok(())
-}
-/// Write bytes to a filepath.
-/// The function will create the necessary directories in the path in order to write the [bytes].
-/// If the file already exists then it will be COMPLETELY OVERWRITTEN without warning.
-pub async fn write_bytes<S: AsRef<std::ffi::OsStr> + ?Sized, B: AsRef<[u8]>>(
-    file_path: &S,
-    bytes: B,
-) -> anyhow::Result<()> {
-    let path = Path::new(file_path);
-    // Create the parent directories of the file path if they don't exist
-    if let Some(p) = path.parent() {
-        tokio::fs::create_dir_all(p).await?
-    };
-    tokio::fs::write(path, bytes).await?;
-    Ok(())
-}
-/// Read an element from `file_path` and deserialize it to the return type.
-pub async fn read_element<T: DeserializeOwned>(file_path: &str) -> anyhow::Result<T> {
-    let read_element = tokio::fs::read(file_path).await?;
-    Ok(bincode::deserialize_from(read_element.as_slice())?)
-}
-
-pub async fn safe_read_element_versioned<T: DeserializeOwned + Unversionize + Named + Send>(
-    file_path: &str,
+pub async fn safe_read_element_versioned<
+    T: DeserializeOwned + Unversionize + Named + Send,
+    P: AsRef<Path>,
+>(
+    file_path: P,
 ) -> anyhow::Result<T> {
     let mut buf = std::io::Cursor::new(tokio::fs::read(file_path).await?);
     safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| anyhow::anyhow!(e))
 }
 
+/// Writing a generic element to a file by serializing it. This is hidden behind the testing flag to ensure only the safe and versioned writing method
+/// is used in production code.
+#[cfg(any(test, feature = "testing"))]
+pub async fn write_element<T: serde::Serialize, P: AsRef<Path>>(
+    file_path: P,
+    element: &T,
+) -> anyhow::Result<()> {
+    // Create the parent directories of the file path if they don't exist
+    if let Some(p) = file_path.as_ref().parent() {
+        tokio::fs::create_dir_all(p).await?
+    };
+    let mut serialized_data = Vec::new();
+    bincode::serialize_into(&mut serialized_data, &element)?;
+    tokio::fs::write(file_path, serialized_data.as_slice()).await?;
+    Ok(())
+}
+
+/// Reading a generic element to a file. This is hidden behind the testing flag to ensure only the safe and versioned reading method
+/// is used in production code.
+#[cfg(any(test, feature = "testing"))]
+pub async fn read_element<T: DeserializeOwned + Serialize, P: AsRef<Path>>(
+    file_path: P,
+) -> anyhow::Result<T> {
+    let read_element = tokio::fs::read(file_path).await?;
+    Ok(bincode::deserialize_from(read_element.as_slice())?)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::read_as_json;
-    use crate::util::file_handling::{read_element, write_as_json, write_element};
-    use serde::{Deserialize, Serialize};
-    use serial_test::serial;
+    use crate::util::file_handling::{read_element, write_element, write_text};
     use tokio::fs::remove_file;
 
     #[tokio::test]
-    #[serial]
-    async fn read_write_element_async() {
-        let msg = "I am a teacup!".to_owned();
-        let file_name = "temp/test_element_async.bin".to_string();
-        write_element(&file_name, &msg.clone()).await.unwrap();
-        let read_element: String = read_element(&file_name).await.unwrap();
+    async fn read_write_text() {
+        let msg = "Jeg ælsker ☕!".to_owned();
+        let file_name = tempfile::tempdir()
+            .unwrap()
+            .path()
+            .join("read-write-test.txt");
+        write_text(&file_name, &msg.clone()).await.unwrap();
+        let read_element: String =
+            String::from_utf8(tokio::fs::read(&file_name).await.unwrap()).unwrap();
         assert_eq!(read_element, msg);
-        remove_file(file_name).await.unwrap();
     }
 
     #[tokio::test]
-    #[serial]
-    async fn read_write_json_async() {
-        #[derive(Serialize, Deserialize, PartialEq, Debug)]
-        struct Test {
-            key: u32,
-        }
-        let test_struct = Test { key: 42 };
-        let file_name = "temp/test_json_async.json".to_string();
-        write_as_json(&file_name, &test_struct).await.unwrap();
-        let read_json = read_as_json(&file_name).await.unwrap();
-        assert_eq!(test_struct, read_json);
+    async fn read_write_element() {
+        let msg = "I am a teacup!".to_owned();
+        let file_name = "temp/test_element.bin".to_string();
+        write_element(file_name.clone(), &msg.clone())
+            .await
+            .unwrap();
+        let read_element: String = read_element(file_name.clone()).await.unwrap();
+        assert_eq!(read_element, msg);
         remove_file(file_name).await.unwrap();
     }
 }

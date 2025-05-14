@@ -54,7 +54,7 @@ mod tests {
                 test_feature::KeySet,
             },
         },
-        file_handling::read_element,
+        file_handling::tests::read_element,
     };
 
     /// Map a real message, of a few bits, to the encryption domain, by applying the appropriate shift, delta.

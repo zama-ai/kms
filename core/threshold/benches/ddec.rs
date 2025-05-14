@@ -18,7 +18,7 @@ use threshold_fhe::{
             utils::expanded_encrypt,
         },
     },
-    file_handling::read_element,
+    file_handling::tests::read_element,
     networking::NetworkMode,
 };
 

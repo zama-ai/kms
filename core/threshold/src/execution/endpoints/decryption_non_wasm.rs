@@ -1168,7 +1168,7 @@ mod tests {
             },
             sharing::{shamir::ShamirSharings, share::Share},
         },
-        file_handling::read_element,
+        file_handling::tests::read_element,
     };
     use aes_prng::AesRng;
     use rand::SeedableRng;

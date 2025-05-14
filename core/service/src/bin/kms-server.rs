@@ -272,14 +272,15 @@ async fn main() -> anyhow::Result<()> {
             let tls_identity = match threshold_config.tls {
                 Some(ref tls) => {
                     let cert_bytes = match tls.cert {
-                        TlsCert::Path(ref cert_path) => std::fs::read_to_string(cert_path)
-                            .map_err(|e| {
+                        TlsCert::Path(ref cert_path) => {
+                            tokio::fs::read_to_string(cert_path).await.map_err(|e| {
                                 anyhow::anyhow!(
                                     "Failed to open file {}: {}",
                                     cert_path.display(),
                                     e
                                 )
-                            })?,
+                            })?
+                        }
                         TlsCert::Pem(ref cert_bytes) => cert_bytes.to_string(),
                     };
                     let cert_pem = x509_parser::pem::parse_x509_pem(cert_bytes.as_ref())?.1;
@@ -306,9 +307,14 @@ async fn main() -> anyhow::Result<()> {
                     // Nitro enclave.
                     Some(match tls.key {
                         TlsKey::Path(ref key_path) => {
-                            let key_bytes = std::fs::read_to_string(key_path).map_err(|e| {
-                                anyhow::anyhow!("Failed to open file {}: {}", key_path.display(), e)
-                            })?;
+                            let key_bytes =
+                                tokio::fs::read_to_string(key_path).await.map_err(|e| {
+                                    anyhow::anyhow!(
+                                        "Failed to open file {}: {}",
+                                        key_path.display(),
+                                        e
+                                    )
+                                })?;
                             (
                                 cert_pem,
                                 x509_parser::pem::parse_x509_pem(key_bytes.as_ref())?.1,

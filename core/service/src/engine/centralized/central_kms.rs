@@ -903,8 +903,7 @@ pub(crate) mod tests {
     use crate::engine::base::{compute_handle, compute_info, derive_request_id, gen_sig_keys};
     use crate::engine::traits::Kms;
     use crate::engine::validation::DSEP_USER_DECRYPTION;
-    use crate::util::file_handling::read_element;
-    use crate::util::file_handling::write_element;
+    use crate::util::file_handling::{read_element, write_element};
     use crate::util::key_setup::test_tools::{compute_cipher, EncryptionConfig};
     use crate::vault::storage::{file::FileStorage, ram::RamStorage};
     use crate::vault::storage::{

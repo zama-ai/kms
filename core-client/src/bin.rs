@@ -22,25 +22,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
 
     let res = execute_cmd(&config, keys_folder).await;
 
-    // We need to make sure the request_id is
-    // formatted using serde_json in the old way,
-    // so we create a temporary struct to do this.
-    #[derive(serde::Serialize)]
-    struct FormattedRequestId {
-        request_id: String,
-    }
-
     match res {
         Ok(vec_res) => {
             for (success, msg) in vec_res.into_iter() {
                 if let Some(value) = success {
-                    let formatted_request_id = FormattedRequestId {
-                        request_id: format!("{}", value),
-                    };
-                    println!(
-                        "{msg} - {}",
-                        serde_json::to_string_pretty(&formatted_request_id)?
-                    );
+                    // WARNING: This format MUST not be changed since the current deployment configuration runs a grep on "request_id"
+                    println!("{msg} - \"request_id\": \"{}\"", value);
                 }
             }
             return Ok(());

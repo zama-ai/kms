@@ -751,7 +751,7 @@ mod tests {
             sharing::{shamir::ShamirSharings, share::Share},
             small_execution::agree_random::{DummyAgreeRandom, RealAgreeRandomWithAbort},
         },
-        file_handling::read_element,
+        file_handling::tests::read_element,
         tests::{
             helper::testing::get_networkless_base_session_for_parties,
             helper::tests_and_benches::execute_protocol_small,

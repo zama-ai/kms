@@ -1,6 +1,6 @@
 use std::{
     hash::{Hash, Hasher},
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
 use clap::ValueEnum;
@@ -22,10 +22,7 @@ use tfhe::{
     },
 };
 
-use crate::{
-    execution::keyset_config::KeySetConfig,
-    file_handling::{read_as_json, write_as_json},
-};
+use crate::execution::keyset_config::KeySetConfig;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EncryptionType {
@@ -146,6 +143,28 @@ impl From<DKGParams> for PBSParameters {
     }
 }
 
+impl TryFrom<DKGParams> for DKGParamsSnS {
+    type Error = anyhow::Error;
+
+    fn try_from(value: DKGParams) -> Result<Self, Self::Error> {
+        match value {
+            DKGParams::WithSnS(params) => Ok(params),
+            DKGParams::WithoutSnS(_) => Err(anyhow::anyhow!("Cannot convert to SnS params")),
+        }
+    }
+}
+
+impl TryFrom<DKGParams> for DKGParamsRegular {
+    type Error = anyhow::Error;
+
+    fn try_from(value: DKGParams) -> Result<Self, Self::Error> {
+        match value {
+            DKGParams::WithSnS(_) => Err(anyhow::anyhow!("Cannot convert to SnS params")),
+            DKGParams::WithoutSnS(params) => Ok(params),
+        }
+    }
+}
+
 impl DKGParams {
     pub fn get_params_basics_handle(&self) -> &dyn DKGParamsBasics {
         match self {
@@ -214,11 +233,6 @@ impl NoiseInfo {
 }
 
 pub trait DKGParamsBasics: Sync {
-    fn write_to_file(&self, path: &Path) -> anyhow::Result<()>;
-    fn read_from_file(path: &Path) -> anyhow::Result<Self>
-    where
-        Self: std::marker::Sized;
-
     fn to_classic_pbs_parameters(&self) -> ClassicPBSParameters;
 
     ///This function returns a path based on
@@ -327,14 +341,6 @@ fn combine_noise_info(target_bound: NoiseBounds, list: &[NoiseInfo]) -> NoiseInf
 }
 
 impl DKGParamsBasics for DKGParamsRegular {
-    fn write_to_file(&self, path: &Path) -> anyhow::Result<()> {
-        write_as_json(&path, self)
-    }
-
-    fn read_from_file(path: &Path) -> anyhow::Result<Self> {
-        read_as_json(&path)
-    }
-
     fn to_classic_pbs_parameters(&self) -> ClassicPBSParameters {
         self.ciphertext_parameters
     }
@@ -863,14 +869,6 @@ impl DKGParamsBasics for DKGParamsRegular {
 }
 
 impl DKGParamsBasics for DKGParamsSnS {
-    fn write_to_file(&self, path: &Path) -> anyhow::Result<()> {
-        write_as_json(&path, self)
-    }
-
-    fn read_from_file(path: &Path) -> anyhow::Result<Self> {
-        read_as_json(&path)
-    }
-
     fn to_classic_pbs_parameters(&self) -> ClassicPBSParameters {
         self.regular_params.to_classic_pbs_parameters()
     }

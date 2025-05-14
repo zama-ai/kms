@@ -4,7 +4,7 @@ pub mod tests {
         DKGParams, BC_PARAMS_SNS, PARAMS_TEST_BK_SNS,
     };
     use crate::execution::tfhe_internals::test_feature::KeySet;
-    use crate::file_handling::{read_element, write_element};
+    use crate::file_handling::tests::{read_element, write_element};
     use crate::tests::helper::tests::generate_keys;
 
     pub const DEFAULT_SEED: u64 = 1;

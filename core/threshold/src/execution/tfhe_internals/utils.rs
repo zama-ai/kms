@@ -268,21 +268,20 @@ where
 
 #[cfg(test)]
 pub mod tests {
-    use std::collections::HashMap;
-    use std::path::Path;
-
-    use itertools::Itertools;
-    use tfhe::core_crypto::entities::{GlweSecretKeyOwned, LweSecretKeyOwned};
-
     use crate::algebra::base_ring::{Z128, Z64};
     use crate::algebra::galois_rings::common::ResiduePoly;
     use crate::execution::tfhe_internals::parameters::{DKGParams, DKGParamsBasics};
+    use crate::file_handling::tests::read_element;
     use crate::{
         algebra::structure_traits::ErrorCorrect,
         execution::{
             endpoints::keygen::PrivateKeySet, runtime::party::Role, sharing::share::Share,
         },
     };
+    use itertools::Itertools;
+    use std::collections::HashMap;
+    use std::path::Path;
+    use tfhe::core_crypto::entities::{GlweSecretKeyOwned, LweSecretKeyOwned};
 
     use super::reconstruct_bit_vec;
 
@@ -338,7 +337,7 @@ pub mod tests {
         for party in 0..parties {
             sk_shares.insert(
                 Role::indexed_by_zero(party),
-                PrivateKeySet::<EXTENSION_DEGREE>::read_from_file(
+                read_element::<PrivateKeySet<EXTENSION_DEGREE>, _>(
                     prefix_path.join(format!("sk_p{}.der", party)).as_path(),
                 )
                 .unwrap(),
@@ -375,7 +374,7 @@ pub mod tests {
         for party in 0..parties {
             sk_shares.insert(
                 Role::indexed_by_zero(party),
-                PrivateKeySet::read_from_file(
+                read_element::<PrivateKeySet<EXTENSION_DEGREE>, _>(
                     prefix_path.join(format!("sk_p{}.der", party)).as_path(),
                 )
                 .unwrap(),

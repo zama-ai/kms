@@ -20,6 +20,7 @@ use kms_grpc::{KeyId, RequestId};
 use kms_lib::client::{Client, ParsedUserDecryptionRequest};
 use kms_lib::consts::{DEFAULT_PARAM, TEST_PARAM};
 use kms_lib::engine::base::{compute_external_pubdata_message_hash, compute_pt_message_hash};
+use kms_lib::util::file_handling::{read_element, write_element};
 use kms_lib::util::key_setup::ensure_client_keys_exist;
 use kms_lib::util::key_setup::test_tools::{
     compute_cipher_from_stored_key, load_crs_from_storage, load_pk_from_storage,
@@ -29,8 +30,6 @@ use kms_lib::vault::storage::{file::FileStorage, StorageType};
 use kms_lib::DecryptionMode;
 use rand::{CryptoRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
-use std::fs::File;
-use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Once};
 use strum_macros::{Display, EnumString};
@@ -356,7 +355,7 @@ pub struct CipherFile {
     pub num_requests: usize,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CipherWithParams {
     params: CipherParameters,
     ct_format: String,
@@ -468,12 +467,10 @@ impl EncryptionResult {
     }
 }
 
-pub fn fetch_ctxt_from_file(
+pub async fn fetch_ctxt_from_file(
     input_path: PathBuf,
 ) -> Result<EncryptionResult, Box<dyn std::error::Error + 'static>> {
-    let reader = BufReader::new(File::open(input_path)?);
-    let cipher_with_params: CipherWithParams = serde_json::from_reader(reader)?;
-
+    let cipher_with_params: CipherWithParams = read_element(input_path).await?;
     let ptxt = TypedPlaintext {
         bytes: parse_hex(cipher_with_params.params.to_encrypt.as_str())?,
         fhe_type: cipher_with_params.params.data_type as i32,
@@ -537,14 +534,12 @@ pub async fn encrypt(
     .await;
 
     if let Some(path) = cipher_params.ciphertext_output_path.clone() {
-        let mut writer = BufWriter::new(File::create(path)?);
-        let to_write = CipherWithParams {
+        let cipher_w_params = CipherWithParams {
             cipher: cipher.clone(),
             params: cipher_params.clone(),
             ct_format: ct_format.as_str_name().to_string(),
         };
-        serde_json::to_writer_pretty(&mut writer, &to_write)?;
-        writer.flush()?;
+        write_element(path, &cipher_w_params).await?;
     }
 
     Ok(EncryptionResult::new(
@@ -593,22 +588,32 @@ pub async fn fetch_object(endpoint: &str, folder: &str, object_id: &str) -> anyh
         }
     } else {
         let key_path = Path::new(endpoint).join(folder).join(object_id);
-        match tokio::fs::read(&key_path).await {
-            Ok(content) => Ok(Bytes::from(content)),
-            Err(error) => Err(anyhow::anyhow!(format!(
-                "Couldn't fetch object from file {:?} from error: {:?}",
-                key_path, error
-            ),)),
-        }
+        let byte_res = tokio::fs::read(&key_path).await.map_err(|e| {
+            anyhow!(
+                "Failed to read byte file at {:?} with error: {e}",
+                &key_path
+            )
+        })?;
+        Ok(Bytes::from(byte_res))
     }
 }
 
-pub fn write_bytes_to_file(folder_path: &Path, filename: &str, data: &[u8]) -> anyhow::Result<()> {
-    std::fs::create_dir_all(folder_path)?;
-    let path = std::path::absolute(folder_path.join(filename))?;
-    let mut file = File::create(path)?;
-    file.write_all(data)?;
-    file.flush()?;
+async fn write_bytes_to_file(
+    folder_path: &Path,
+    filename: &str,
+    data: &[u8],
+) -> anyhow::Result<()> {
+    let path = folder_path.join(filename);
+    // Create the parent directories of the file path if they don't exist
+    if let Some(p) = path.parent() {
+        tokio::fs::create_dir_all(p).await?
+    };
+    tokio::fs::write(&path, data).await.map_err(|e| {
+        anyhow!(
+            "Failed to write bytes to file at {:?} with error: {e}",
+            &path
+        )
+    })?;
     Ok(())
 }
 
@@ -646,8 +651,7 @@ async fn fetch_global_pub_object_and_write_to_file(
         object_id,
     )
     .await?;
-    write_bytes_to_file(&folder, object_id, content.as_ref())?;
-    Ok(())
+    write_bytes_to_file(&folder, object_id, content.as_ref()).await
 }
 
 /// This fetches material which is local
@@ -680,7 +684,7 @@ async fn fetch_local_key_and_write_to_file(
                 object_id,
             )
             .await?;
-            let _ = write_bytes_to_file(&folder, object_id, content.as_ref());
+            write_bytes_to_file(&folder, object_id, content.as_ref()).await?
         }
         Ok(())
     }
@@ -1296,7 +1300,7 @@ pub async fn execute_cmd(
                 key_id,
             } = match cipher_args {
                 CipherArguments::FromFile(cipher_file) => {
-                    fetch_ctxt_from_file(cipher_file.input_path.clone())?
+                    fetch_ctxt_from_file(cipher_file.input_path.clone()).await?
                 }
                 CipherArguments::FromArgs(cipher_parameters) => {
                     encrypt(destination_prefix, cipher_parameters.clone()).await?
@@ -1389,7 +1393,7 @@ pub async fn execute_cmd(
                 key_id,
             } = match cipher_args {
                 CipherArguments::FromFile(cipher_file) => {
-                    fetch_ctxt_from_file(cipher_file.input_path.clone())?
+                    fetch_ctxt_from_file(cipher_file.input_path.clone()).await?
                 }
                 CipherArguments::FromArgs(cipher_parameters) => {
                     encrypt(destination_prefix, cipher_parameters.clone()).await?
