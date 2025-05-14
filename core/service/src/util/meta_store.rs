@@ -9,7 +9,7 @@ use tonic::Status;
 
 /// Data structure that stores elements that are being processed and their status (Started, Done, Error).
 /// It holds elements up to a given capacity, and once it is full, it will remove old elements that have status [Done]/[Error], if there are sufficiently many.
-pub(crate) struct MetaStore<T> {
+pub struct MetaStore<T> {
     // The maximum amount of entries in total (finished and unfinished)
     capacity: usize,
     // The minimum amount of entries that should be kept in the cache after completion and before old ones are evicted
@@ -26,7 +26,7 @@ impl<T: Clone> MetaStore<T> {
     /// of which we can be sure that at least [min_cache] elements are kept in the cache after completion
     /// (assuming that at least [min_cache] have been completed).
     /// The cache may be larger than [min_cache], but the total capacity will be limited to [capacity]
-    pub(crate) fn new(capacity: usize, min_cache: usize) -> Self {
+    pub fn new(capacity: usize, min_cache: usize) -> Self {
         Self {
             capacity,
             min_cache,
@@ -36,7 +36,7 @@ impl<T: Clone> MetaStore<T> {
     }
 
     /// Creates a new MetaStore with unlimited capacity and cache size.
-    pub(crate) fn new_unlimited() -> Self {
+    pub fn new_unlimited() -> Self {
         Self {
             capacity: usize::MAX,
             min_cache: usize::MAX,
@@ -46,7 +46,7 @@ impl<T: Clone> MetaStore<T> {
     }
 
     // Creates a MetaStore with unlimited storage capacity and minimum cache size and populates it with the given map
-    pub(crate) fn new_from_map(map: HashMap<RequestId, T>) -> Self {
+    pub fn new_from_map(map: HashMap<RequestId, T>) -> Self {
         let mut completed_queue = VecDeque::new();
         let storage = map
             .into_iter()
@@ -64,7 +64,7 @@ impl<T: Clone> MetaStore<T> {
         }
     }
 
-    pub(crate) fn exists(&self, request_id: &RequestId) -> bool {
+    pub fn exists(&self, request_id: &RequestId) -> bool {
         self.storage.contains_key(request_id)
     }
 
@@ -77,7 +77,7 @@ impl<T: Clone> MetaStore<T> {
     /// 2. there is enough time to retrieve an element before it is removed. This timespan is the time it takes to process [min_cache] elements.
     ///
     /// If the store is at max capacity and not enough elements have been completed, we will not accept new elements to be inserted.
-    pub(crate) fn insert(&mut self, request_id: &RequestId) -> anyhow::Result<()> {
+    pub fn insert(&mut self, request_id: &RequestId) -> anyhow::Result<()> {
         if self.exists(request_id) {
             return Err(anyhow::anyhow!(
                 "The element with ID {request_id} already stored exists. Can not insert it more than once.",
@@ -105,7 +105,7 @@ impl<T: Clone> MetaStore<T> {
 
     /// Sets the value of an already existing element. Returns an error if something goes wrong, like
     /// the element does not exist or the value was already set.
-    pub(crate) fn update(
+    pub fn update(
         &mut self,
         request_id: &RequestId,
         update: Result<T, String>,
@@ -132,10 +132,7 @@ impl<T: Clone> MetaStore<T> {
     }
 
     /// Retrieve the cell of an element and return None if it does not exist
-    pub(crate) fn retrieve(
-        &self,
-        request_id: &RequestId,
-    ) -> Option<Arc<AsyncCell<Result<T, String>>>> {
+    pub fn retrieve(&self, request_id: &RequestId) -> Option<Arc<AsyncCell<Result<T, String>>>> {
         self.storage.get(request_id).cloned()
     }
 
@@ -143,10 +140,7 @@ impl<T: Clone> MetaStore<T> {
     /// Warning: This is a slow operation if the request_id has been completed
     /// and should be avoided if possible, since values are automatically removed when running out of space
     #[allow(dead_code)]
-    pub(crate) fn delete(
-        &mut self,
-        request_id: &RequestId,
-    ) -> Option<Arc<AsyncCell<Result<T, String>>>> {
+    pub fn delete(&mut self, request_id: &RequestId) -> Option<Arc<AsyncCell<Result<T, String>>>> {
         match self.storage.remove(request_id) {
             Some(handle) => {
                 // If the cell is set, it means the task has been processed

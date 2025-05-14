@@ -1789,7 +1789,7 @@ pub mod test_tools {
     use super::*;
     use crate::consts::{DEC_CAPACITY, DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES, MIN_DEC_CACHE};
     use crate::engine::centralized::central_kms::RealCentralizedKms;
-    use crate::engine::threshold::service_real::threshold_server_init;
+    use crate::engine::threshold::service::threshold_server_init;
     use crate::engine::{run_server, Shutdown};
     use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
     use crate::util::rate_limiter::RateLimiterConfig;
@@ -2271,9 +2271,9 @@ pub(crate) mod tests {
     #[cfg(feature = "slow_tests")]
     use crate::engine::centralized::central_kms::tests::get_default_keys;
     use crate::engine::centralized::central_kms::RealCentralizedKms;
-    use crate::engine::threshold::service_real::RealThresholdKms;
+    use crate::engine::threshold::service::RealThresholdKms;
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
-    use crate::engine::threshold::service_real::ThresholdFheKeys;
+    use crate::engine::threshold::service::ThresholdFheKeys;
     use crate::engine::traits::BaseKms;
     use crate::util::file_handling::safe_read_element_versioned;
     #[cfg(feature = "wasm_tests")]
@@ -6133,10 +6133,7 @@ pub(crate) mod tests {
     fn try_reconstruct_shares(
         param: DKGParams,
         threshold: usize,
-        all_threshold_fhe_keys: HashMap<
-            Role,
-            crate::engine::threshold::service_real::ThresholdFheKeys,
-        >,
+        all_threshold_fhe_keys: HashMap<Role, crate::engine::threshold::service::ThresholdFheKeys>,
     ) -> (
         tfhe::core_crypto::prelude::LweSecretKeyOwned<u64>,
         tfhe::core_crypto::prelude::GlweSecretKeyOwned<u64>,

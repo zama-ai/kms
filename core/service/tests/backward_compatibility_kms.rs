@@ -20,7 +20,7 @@ use kms_lib::{
     cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey},
     engine::{
         base::{gen_sig_keys, KmsFheKeyHandles},
-        threshold::service_real::ThresholdFheKeys,
+        threshold::service::ThresholdFheKeys,
     },
     util::key_setup::FhePublicKey,
     vault::keychain::AppKeyBlob,

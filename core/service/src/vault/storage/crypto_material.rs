@@ -14,7 +14,7 @@ use super::{
 };
 use crate::{
     anyhow_error_and_warn_log,
-    engine::{base::KmsFheKeyHandles, threshold::service_real::ThresholdFheKeys},
+    engine::{base::KmsFheKeyHandles, threshold::service::ThresholdFheKeys},
     util::meta_store::MetaStore,
     vault::storage::{delete_at_request_id, delete_pk_at_request_id},
 };
@@ -79,7 +79,7 @@ impl CryptoMaterialReader for CompactPkeCrs {
 
 /// A cached generic storage entity for the threshold KMS.
 /// Cloning this object is cheap since it uses Arc internally.
-pub(crate) struct ThresholdCryptoMaterialStorage<
+pub struct ThresholdCryptoMaterialStorage<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
     BackS: Storage + Send + Sync + 'static,
@@ -95,7 +95,7 @@ impl<
     > ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>
 {
     /// Create a new cached storage device for threshold KMS.
-    pub(crate) fn new(
+    pub fn new(
         public_storage: PubS,
         private_storage: PrivS,
         backup_storage: Option<BackS>,
@@ -114,7 +114,7 @@ impl<
     }
 
     /// Get an Arc of the private storage device.
-    pub(crate) fn get_private_storage(&self) -> Arc<Mutex<PrivS>> {
+    pub fn get_private_storage(&self) -> Arc<Mutex<PrivS>> {
         Arc::clone(&self.inner.private_storage)
     }
 
@@ -350,7 +350,7 @@ impl<
     > CentralizedCryptoMaterialStorage<PubS, PrivS, BackS>
 {
     /// Create a new cached storage device for threshold KMS.
-    pub(crate) fn new(
+    pub fn new(
         public_storage: PubS,
         private_storage: PrivS,
         backup_storage: Option<BackS>,
@@ -1022,7 +1022,7 @@ mod tests {
         engine::{
             base::{gen_sig_keys, KmsFheKeyHandles},
             centralized::central_kms::async_generate_crs,
-            threshold::service_real::ThresholdFheKeys,
+            threshold::service::ThresholdFheKeys,
         },
         util::meta_store::MetaStore,
         vault::storage::{

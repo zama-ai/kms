@@ -8,7 +8,7 @@ use kms_lib::{
     cryptography::attestation::{make_security_module, SecurityModule},
     engine::{
         centralized::central_kms::RealCentralizedKms, run_server,
-        threshold::service_real::threshold_server_init,
+        threshold::service::threshold_server_init,
     },
     vault::{
         aws::build_aws_sdk_config,
