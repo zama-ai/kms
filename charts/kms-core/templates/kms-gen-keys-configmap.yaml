@@ -18,7 +18,11 @@ data:
     fi
 
     cat <<EOF >>config.toml
+    {{ if .Values.minio.enabled }}
     s3_endpoint="${S3_ENDPOINT}"
+    {{ else }}
+    s3_endpoint="${CORE_CLIENT__S3_ENDPOINT:=S3_ENDPOINT}"
+    {{ end }}
     object_folder=${OBJECT_FOLDER}
     core_addresses=${CORE_ADDRESSES}
     num_majority=${NUM_MAJORITY}
