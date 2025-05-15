@@ -8,14 +8,17 @@ use super::vss::{SecureVss, Vss};
 use crate::algebra::structure_traits::{ErrorCorrect, Ring, RingEmbed};
 use crate::{
     error::error_handler::anyhow_error_and_log,
-    execution::{runtime::session::LargeSessionHandles, sharing::open::robust_open_to_all},
+    execution::{
+        runtime::session::LargeSessionHandles,
+        sharing::open::{RobustOpen, SecureRobustOpen},
+    },
 };
 
 /// Secure implementation of Coinflip as defined in NIST document
 ///
 /// In particular, relies on the secure version of
 /// the VSS protocol defined in [`SecureVss`]
-pub type SecureCoinflip = RealCoinflip<SecureVss>;
+pub type SecureCoinflip = RealCoinflip<SecureVss, SecureRobustOpen>;
 
 #[async_trait]
 pub trait Coinflip: Send + Sync + Clone + Default {
@@ -45,18 +48,19 @@ impl Coinflip for DummyCoinflip {
 }
 
 #[derive(Default, Clone)]
-pub struct RealCoinflip<V: Vss> {
+pub struct RealCoinflip<V: Vss, RO: RobustOpen> {
     vss: V,
+    robust_open: RO,
 }
 
-impl<V: Vss> RealCoinflip<V> {
-    pub fn init(vss: V) -> Self {
-        Self { vss }
+impl<V: Vss, RO: RobustOpen> RealCoinflip<V, RO> {
+    pub fn init(vss: V, robust_open: RO) -> Self {
+        Self { vss, robust_open }
     }
 }
 
 #[async_trait]
-impl<V: Vss> Coinflip for RealCoinflip<V> {
+impl<V: Vss, RO: RobustOpen> Coinflip for RealCoinflip<V, RO> {
     #[instrument(name="CoinFlip",skip(self,session),fields(sid = ?session.session_id(), own_identity=?session.own_identity()))]
     async fn execute<Z, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &self,
@@ -76,8 +80,10 @@ impl<V: Vss> Coinflip for RealCoinflip<V> {
         //output of VSS from corrupted parties is the trivial 0 sharing
         let share_of_coin = shares_of_contributions.into_iter().sum::<Z>();
 
-        let opening =
-            robust_open_to_all(session, share_of_coin, session.threshold() as usize).await?;
+        let opening = self
+            .robust_open
+            .robust_open_to_all(session, share_of_coin, session.threshold() as usize)
+            .await?;
 
         match opening {
             Some(v) => Ok(v),
@@ -96,6 +102,9 @@ pub(crate) mod tests {
     use crate::execution::large_execution::vss::tests::{
         DroppingVssAfterR1, DroppingVssAfterR2, DroppingVssFromStart, MaliciousVssR1,
     };
+    use crate::execution::sharing::open::RobustOpen;
+    #[cfg(feature = "slow_tests")]
+    use crate::execution::sharing::open::SecureRobustOpen;
     use crate::{
         algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
         execution::{
@@ -108,7 +117,6 @@ pub(crate) mod tests {
                 },
                 test_runtime::DistributedTestRuntime,
             },
-            sharing::open::robust_open_to_all,
         },
         tests::helper::tests::{
             execute_protocol_large_w_disputes_and_malicious,
@@ -194,13 +202,17 @@ pub(crate) mod tests {
 
     ///Performs the coinflip, but does not send the correct shares for reconstruction
     #[derive(Default, Clone)]
-    pub(crate) struct MaliciousCoinflipRecons<V: Vss> {
+    pub(crate) struct MaliciousCoinflipRecons<V: Vss, RO: RobustOpen> {
         vss: V,
+        robust_open: RO,
     }
 
-    impl<V: Vss> MaliciousCoinflipRecons<V> {
-        pub fn init(vss_strategy: V) -> Self {
-            Self { vss: vss_strategy }
+    impl<V: Vss, RO: RobustOpen> MaliciousCoinflipRecons<V, RO> {
+        pub fn init(vss_strategy: V, robust_open_strategy: RO) -> Self {
+            Self {
+                vss: vss_strategy,
+                robust_open: robust_open_strategy,
+            }
         }
     }
 
@@ -223,7 +235,7 @@ pub(crate) mod tests {
     }
 
     #[async_trait]
-    impl<V: Vss> Coinflip for MaliciousCoinflipRecons<V> {
+    impl<V: Vss, RO: RobustOpen> Coinflip for MaliciousCoinflipRecons<V, RO> {
         async fn execute<
             Z: Ring + RingEmbed + ErrorCorrect,
             R: Rng + CryptoRng,
@@ -240,8 +252,10 @@ pub(crate) mod tests {
             let mut share_of_coins = shares_of_contributions.into_iter().sum();
             share_of_coins += Z::sample(session.rng());
 
-            let opening =
-                robust_open_to_all(session, share_of_coins, session.threshold() as usize).await?;
+            let opening = self
+                .robust_open
+                .robust_open_to_all(session, share_of_coins, session.threshold() as usize)
+                .await?;
 
             match opening {
                 Some(v) => Ok(v),
@@ -385,49 +399,53 @@ pub(crate) mod tests {
     //No matter the strategy, we expect all honest parties to end up with the same output
     //We also specify whether we expect the cheating strategy to be detected, if so we check we do detect the cheaters
     #[rstest]
-    #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None), DroppingVssFromStart::default())]
-    #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None), DroppingVssAfterR1::default())]
-    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), DroppingVssAfterR2::init(&SyncReliableBroadcast::default()))]
-    #[case(TestingParameters::init(4, 1, &[1], &[2], &[], false, None), MaliciousVssR1::init(&SyncReliableBroadcast::default(),&params.roles_to_lie_to))]
-    #[case(TestingParameters::init(4, 1, &[1], &[0,2], &[], true, None), MaliciousVssR1::init(&SyncReliableBroadcast::default(),&params.roles_to_lie_to))]
-    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2], &[], false, None), MaliciousVssR1::init(&SyncReliableBroadcast::default(),&params.roles_to_lie_to))]
-    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2,4,6], &[], true, None), MaliciousVssR1::init(&SyncReliableBroadcast::default(),&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None), DroppingVssFromStart::default(),SecureRobustOpen::default())]
+    #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None), DroppingVssAfterR1::default(),SecureRobustOpen::default())]
+    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), DroppingVssAfterR2::init(&SyncReliableBroadcast::default()),SecureRobustOpen::default())]
+    #[case(TestingParameters::init(4, 1, &[1], &[2], &[], false, None), MaliciousVssR1::init(&SyncReliableBroadcast::default(),&params.roles_to_lie_to),SecureRobustOpen::default())]
+    #[case(TestingParameters::init(4, 1, &[1], &[0,2], &[], true, None), MaliciousVssR1::init(&SyncReliableBroadcast::default(),&params.roles_to_lie_to),SecureRobustOpen::default())]
+    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2], &[], false, None), MaliciousVssR1::init(&SyncReliableBroadcast::default(),&params.roles_to_lie_to),SecureRobustOpen::default())]
+    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2,4,6], &[], true, None), MaliciousVssR1::init(&SyncReliableBroadcast::default(),&params.roles_to_lie_to),SecureRobustOpen::default())]
     #[cfg(feature = "slow_tests")]
-    fn test_coinflip_malicious_vss<V: Vss + 'static>(
+    fn test_coinflip_malicious_vss<V: Vss + 'static, RO: RobustOpen + 'static>(
         #[case] params: TestingParameters,
         #[case] malicious_vss: V,
+        #[case] malicious_robust_open: RO,
     ) {
-        let real_coinflip_with_malicious_vss = RealCoinflip {
+        let real_coinflip_with_malicious_sub_protocols = RealCoinflip {
             vss: malicious_vss.clone(),
+            robust_open: malicious_robust_open.clone(),
         };
 
         test_coinflip_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
-            real_coinflip_with_malicious_vss.clone(),
+            real_coinflip_with_malicious_sub_protocols.clone(),
         );
         test_coinflip_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
-            real_coinflip_with_malicious_vss.clone(),
+            real_coinflip_with_malicious_sub_protocols.clone(),
         );
     }
 
     //Test malicious coinflip with all kinds of strategies for VSS (honest and malicious)
     //Again, we always expect the honest parties to agree on the output
     #[rstest]
-    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), SecureVss::default())]
-    #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None), DroppingVssAfterR1::default())]
-    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), DroppingVssAfterR2::init(&SyncReliableBroadcast::default()))]
-    #[case(TestingParameters::init(4, 1, &[1], &[2], &[], false, None), MaliciousVssR1::init(&SyncReliableBroadcast::default(),&params.roles_to_lie_to))]
-    #[case(TestingParameters::init(4, 1, &[1], &[0,2], &[], true, None), MaliciousVssR1::init(&SyncReliableBroadcast::default(),&params.roles_to_lie_to))]
-    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2], &[], false, None), MaliciousVssR1::init(&SyncReliableBroadcast::default(),&params.roles_to_lie_to))]
-    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2,4,6], &[], true, None), MaliciousVssR1::init(&SyncReliableBroadcast::default(),&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), SecureVss::default(),SecureRobustOpen::default())]
+    #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None), DroppingVssAfterR1::default(),SecureRobustOpen::default())]
+    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), DroppingVssAfterR2::init(&SyncReliableBroadcast::default()),SecureRobustOpen::default())]
+    #[case(TestingParameters::init(4, 1, &[1], &[2], &[], false, None), MaliciousVssR1::init(&SyncReliableBroadcast::default(),&params.roles_to_lie_to),SecureRobustOpen::default())]
+    #[case(TestingParameters::init(4, 1, &[1], &[0,2], &[], true, None), MaliciousVssR1::init(&SyncReliableBroadcast::default(),&params.roles_to_lie_to),SecureRobustOpen::default())]
+    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2], &[], false, None), MaliciousVssR1::init(&SyncReliableBroadcast::default(),&params.roles_to_lie_to),SecureRobustOpen::default())]
+    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2,4,6], &[], true, None), MaliciousVssR1::init(&SyncReliableBroadcast::default(),&params.roles_to_lie_to),SecureRobustOpen::default())]
     #[cfg(feature = "slow_tests")]
-    fn test_malicious_coinflip_malicious_vss<V: Vss + 'static>(
+    fn test_malicious_coinflip_malicious_vss<V: Vss + 'static, RO: RobustOpen + 'static>(
         #[case] params: TestingParameters,
         #[case] malicious_vss: V,
+        #[case] malicious_robust_open: RO,
     ) {
         let malicious_coinflip_recons = MaliciousCoinflipRecons {
             vss: malicious_vss.clone(),
+            robust_open: malicious_robust_open.clone(),
         };
 
         test_coinflip_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(

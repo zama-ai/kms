@@ -9,7 +9,7 @@ use crate::{
     execution::{
         communication::p2p::{receive_from_parties, send_to_parties},
         runtime::{party::Role, session::BaseSessionHandles},
-        sharing::open::multi_robust_opens_to,
+        sharing::open::{RobustOpen, SecureRobustOpen},
     },
     hashing::{hash_element, hash_element_w_size, DomainSep},
     networking::value::{AgreeRandomValue, NetworkValue},
@@ -77,7 +77,8 @@ pub async fn agree_random_robust<
 
     //I participate in opening to others on all values, even if I am not part of the subset
     //I only expect to receive values for subsets I am part of
-    let r_vec = multi_robust_opens_to(session, &msg_to_send, session.threshold() as usize)
+    let r_vec = SecureRobustOpen::default()
+        .multi_robust_open_list_to(session, msg_to_send, session.threshold() as usize)
         .await?
         .with_context(|| log_error_wrapper("No valid result from open"))?;
 

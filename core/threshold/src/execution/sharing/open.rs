@@ -1,8 +1,9 @@
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 use tokio::{task::JoinSet, time::error::Elapsed};
+use tonic::async_trait;
 use tracing::instrument;
 
 use crate::{
@@ -22,6 +23,245 @@ use super::{
     },
     share::Share,
 };
+
+/// Enum to state whether we want to open
+/// only to some designated parties or
+/// to all parties at once.
+pub enum OpeningKind<Z> {
+    ToSome(HashMap<Role, Vec<Z>>),
+    ToAll(Vec<Z>),
+}
+
+#[async_trait]
+pub trait RobustOpen: Send + Sync + Default + Clone {
+    /// Inputs:
+    /// - session
+    /// - shares (wrapped inside [`OpeningKind`] to know who to open to) of the secrets to open
+    /// - degree of the sharing
+    ///
+    /// Output:
+    /// - The reconstructed secrets if reconstruction for all was possible
+    async fn execute<Z: Ring + ErrorCorrect, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+        &self,
+        session: &B,
+        shares: OpeningKind<Z>,
+        degree: usize,
+    ) -> anyhow::Result<Option<Vec<Z>>>;
+
+    /// Blanket implementation that relies on [`Self::execute`]
+    ///
+    /// Opens a batch of secrets to designated parties
+    #[instrument(name="RobustOpenTo",skip(self,session,shares),fields(sid= ?session.session_id(), own_identity = ?session.own_identity(),num_receivers = ?shares.len()))]
+    async fn multi_robust_open_list_to<
+        Z: Ring + ErrorCorrect,
+        R: Rng + CryptoRng,
+        B: BaseSessionHandles<R>,
+    >(
+        &self,
+        session: &B,
+        shares: HashMap<Role, Vec<Z>>,
+        degree: usize,
+    ) -> anyhow::Result<Option<Vec<Z>>> {
+        self.execute(session, OpeningKind::ToSome(shares), degree)
+            .await
+    }
+
+    /// Blanket implementation that relies on [`Self::execute`]
+    ///
+    /// Opens a batch of secrets to a designated party
+    async fn robust_open_list_to<
+        Z: Ring + ErrorCorrect,
+        R: Rng + CryptoRng,
+        B: BaseSessionHandles<R>,
+    >(
+        &self,
+        session: &B,
+        shares: Vec<Z>,
+        degree: usize,
+        output_party: &Role,
+    ) -> anyhow::Result<Option<Vec<Z>>> {
+        let shares = HashMap::from([(*output_party, shares)]);
+        self.multi_robust_open_list_to(session, shares, degree)
+            .await
+    }
+
+    /// Blanket implementation that relies on [`Self::execute`]
+    ///
+    /// Opens a single secret to a designated party
+    async fn robust_open_to<
+        Z: Ring + ErrorCorrect,
+        R: Rng + CryptoRng,
+        B: BaseSessionHandles<R>,
+    >(
+        &self,
+        session: &B,
+        share: Z,
+        degree: usize,
+        output_party: &Role,
+    ) -> anyhow::Result<Option<Z>> {
+        let res = self
+            .robust_open_list_to(session, vec![share], degree, output_party)
+            .await?;
+        match res {
+            Some(mut r) => Ok(r.pop()),
+            _ => Ok(None),
+        }
+    }
+
+    /// Blanket implementation that relies on [`Self::execute`]
+    ///
+    /// Try to reconstruct to all the secret which corresponds to the provided share.
+    /// Considering I as a player already hold my own share of the secret
+    ///
+    /// Inputs:
+    /// - session
+    /// - shares of the secrets to open
+    /// - degree of the sharing
+    ///
+    /// Output:
+    /// - The reconstructed secrets if reconstruction for all was possible
+    #[instrument(name="RobustOpen",skip(self,session,shares),fields(sid= ?session.session_id(), own_identity = ?session.own_identity(),batch_size = ?shares.len()))]
+    async fn robust_open_list_to_all<
+        Z: Ring + ErrorCorrect,
+        R: Rng + CryptoRng,
+        B: BaseSessionHandles<R>,
+    >(
+        &self,
+        session: &B,
+        shares: Vec<Z>,
+        degree: usize,
+    ) -> anyhow::Result<Option<Vec<Z>>> {
+        //Might need to chunk the opening into multiple ones due to network limits
+        let chunk_size: usize = super::constants::MAX_MESSAGE_BYTE_SIZE / (Z::BIT_LENGTH >> 3);
+        let chunks: Vec<Vec<_>> = shares
+            .into_iter()
+            .chunks(chunk_size)
+            .into_iter()
+            .map(|chunk| chunk.collect())
+            .collect_vec();
+        let mut result = Vec::new();
+        for chunked_shares in chunks {
+            match self
+                .execute(session, OpeningKind::ToAll(chunked_shares), degree)
+                .await?
+            {
+                Some(res) => result.extend(res),
+                None => return Ok(None),
+            }
+        }
+        Ok(Some(result))
+    }
+
+    /// Blanket implementation that relies on [`Self::execute`]
+    ///
+    /// Opens a single secret to all the parties
+    async fn robust_open_to_all<
+        Z: Ring + ErrorCorrect,
+        R: Rng + CryptoRng,
+        B: BaseSessionHandles<R>,
+    >(
+        &self,
+        session: &B,
+        share: Z,
+        degree: usize,
+    ) -> anyhow::Result<Option<Z>> {
+        let res = self
+            .robust_open_list_to_all(session, vec![share], degree)
+            .await?;
+        match res {
+            Some(mut r) => Ok(r.pop()),
+            _ => Ok(None),
+        }
+    }
+}
+
+#[derive(Default, Clone)]
+pub struct SecureRobustOpen {}
+
+#[async_trait]
+impl RobustOpen for SecureRobustOpen {
+    async fn execute<Z: Ring + ErrorCorrect, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+        &self,
+        session: &B,
+        shares: OpeningKind<Z>,
+        degree: usize,
+    ) -> anyhow::Result<Option<Vec<Z>>> {
+        //Might need to chunk the opening into multiple ones due to network limits
+        let own_role = session.my_role()?;
+
+        let shares_for_reconstruction = match shares {
+            OpeningKind::ToSome(shares_map) => {
+                // We need to explicitly increase the round counter here
+                // because network().send() does not do it
+                session.network().increase_round_counter()?;
+                let mut shares_for_reconstruction = None;
+                for (receiver_role, values) in shares_map.into_iter() {
+                    if receiver_role == own_role {
+                        shares_for_reconstruction = Some(values);
+                    } else {
+                        let receiver = session.identity_from(&receiver_role)?;
+
+                        session
+                            .network()
+                            .send(NetworkValue::VecRingValue(values).to_network(), &receiver)
+                            .await?;
+                    }
+                }
+                shares_for_reconstruction
+            }
+            OpeningKind::ToAll(shares) => {
+                // We do not need to explicitly increase the round counter here
+                // because send_to_all does it
+                let shares = NetworkValue::VecRingValue(shares);
+                send_to_all(session, &own_role, &shares).await?;
+
+                // Small hack to avoid cloning ,
+                // we just wrap and unwrap the shares into a NetworkValue
+                // for sending over the network
+                match shares {
+                    NetworkValue::VecRingValue(shares) => Some(shares),
+                    _ => None,
+                }
+            }
+        };
+
+        let result = if let Some(shares) = shares_for_reconstruction {
+            let mut jobs = JoinSet::<Result<(Role, anyhow::Result<Vec<Z>>), Elapsed>>::new();
+            //Note: we give the set of corrupt parties as the non_answering_parties argument
+            //Thus generic_receive_from_all will not receive from corrupt parties.
+            generic_receive_from_all(
+                &mut jobs,
+                session,
+                &own_role,
+                Some(session.corrupt_roles()),
+                |msg, _id| match msg {
+                    NetworkValue::VecRingValue(v) => Ok(v),
+                    _ => Err(anyhow_error_and_log(
+                        "Received something else than a Ring value in robust open to all"
+                            .to_string(),
+                    )),
+                },
+            )?;
+
+            //Start filling sharings with my own shares
+            let mut sharings = shares
+                .into_iter()
+                .map(|share| ShamirSharings::create(vec![Share::new(own_role, share)]))
+                .collect_vec();
+
+            let reconstruct_fn = match session.network().get_network_mode() {
+                crate::networking::NetworkMode::Sync => reconstruct_w_errors_sync,
+                crate::networking::NetworkMode::Async => reconstruct_w_errors_async,
+            };
+
+            try_reconstruct_from_shares(session, &mut sharings, degree, jobs, reconstruct_fn)
+                .await?
+        } else {
+            None
+        };
+        Ok(result)
+    }
+}
 
 type JobResultType<Z> = (Role, anyhow::Result<Vec<Z>>);
 type ReconsFunc<Z> = fn(
@@ -110,190 +350,6 @@ async fn try_reconstruct_from_shares<
     ))
 }
 
-pub async fn robust_open_to_all<
-    Z: Ring + ErrorCorrect,
-    R: Rng + CryptoRng,
-    B: BaseSessionHandles<R>,
->(
-    session: &B,
-    share: Z,
-    degree: usize,
-) -> anyhow::Result<Option<Z>> {
-    let res = robust_opens_to_all(session, &[share], degree).await?;
-    match res {
-        Some(mut r) => Ok(r.pop()),
-        _ => Ok(None),
-    }
-}
-
-/// Try to reconstruct to all the secret which corresponds to the provided share.
-/// Considering I as a player already hold my own share of the secret
-///
-/// Inputs:
-/// - session
-/// - shares of the secrets to open
-/// - degree of the sharing
-///
-/// Output:
-/// - The reconstructed secrets if reconstruction for all was possible
-#[instrument(name="RobustOpen",skip(session,shares),fields(sid= ?session.session_id(), own_identity = ?session.own_identity(),batch_size = ?shares.len()))]
-pub async fn robust_opens_to_all<
-    Z: Ring + ErrorCorrect,
-    R: Rng + CryptoRng,
-    B: BaseSessionHandles<R>,
->(
-    session: &B,
-    shares: &[Z],
-    degree: usize,
-) -> anyhow::Result<Option<Vec<Z>>> {
-    //Might need to chunk the opening into multiple ones due to network limits
-    let chunk_size = super::constants::MAX_MESSAGE_BYTE_SIZE / (Z::BIT_LENGTH >> 3);
-
-    let mut result = Vec::new();
-    for shares in shares.chunks(chunk_size) {
-        let own_role = session.my_role()?;
-
-        send_to_all(
-            session,
-            &own_role,
-            NetworkValue::VecRingValue(shares.to_vec()),
-        )
-        .await?;
-
-        let mut jobs = JoinSet::<Result<(Role, anyhow::Result<Vec<Z>>), Elapsed>>::new();
-        //Note: we give the set of corrupt parties as the non_answering_parties argument
-        //Thus generic_receive_from_all will not receive from corrupt parties.
-        generic_receive_from_all(
-            &mut jobs,
-            session,
-            &own_role,
-            Some(session.corrupt_roles()),
-            |msg, _id| match msg {
-                NetworkValue::VecRingValue(v) => Ok(v),
-                _ => Err(anyhow_error_and_log(
-                    "Received something else than a Ring value in robust open to all".to_string(),
-                )),
-            },
-        )?;
-
-        //Start filling sharings with my own shares
-        let mut sharings = shares
-            .iter()
-            .map(|share| ShamirSharings::create(vec![Share::new(own_role, *share)]))
-            .collect_vec();
-
-        let reconstruct_fn = match session.network().get_network_mode() {
-            crate::networking::NetworkMode::Sync => reconstruct_w_errors_sync,
-            crate::networking::NetworkMode::Async => reconstruct_w_errors_async,
-        };
-
-        match try_reconstruct_from_shares(session, &mut sharings, degree, jobs, reconstruct_fn)
-            .await?
-        {
-            Some(res) => result.extend(res),
-            None => return Ok(None),
-        }
-    }
-    Ok(Some(result))
-}
-
-/// Try to reconstruct a secret to a specific party.
-pub async fn robust_open_to<
-    Z: Ring + ErrorCorrect,
-    R: Rng + CryptoRng,
-    B: BaseSessionHandles<R>,
->(
-    session: &B,
-    share: Z,
-    degree: usize,
-    output_party: &Role,
-) -> anyhow::Result<Option<Z>> {
-    let res = robust_opens_to(session, &[share], degree, output_party).await?;
-    match res {
-        Some(mut r) => Ok(r.pop()),
-        _ => Ok(None),
-    }
-}
-
-/// Try to reconstruct secrets to a specific party.
-pub async fn robust_opens_to<
-    Z: Ring + ErrorCorrect,
-    R: Rng + CryptoRng,
-    B: BaseSessionHandles<R>,
->(
-    session: &B,
-    shares: &[Z],
-    degree: usize,
-    output_party: &Role,
-) -> anyhow::Result<Option<Vec<Z>>> {
-    let shares = HashMap::from([(*output_party, shares.to_vec())]);
-    multi_robust_opens_to(session, &shares, degree).await
-}
-
-/// Try to reconstruct different secrets to different specific parties.
-#[instrument(name="RobustOpenTo",skip(session,shares),fields(sid= ?session.session_id(), own_identity = ?session.own_identity(),num_receivers = ?shares.len()))]
-pub async fn multi_robust_opens_to<
-    Z: Ring + ErrorCorrect,
-    R: Rng + CryptoRng,
-    B: BaseSessionHandles<R>,
->(
-    session: &B,
-    shares: &HashMap<Role, Vec<Z>>,
-    degree: usize,
-) -> anyhow::Result<Option<Vec<Z>>> {
-    let my_role = session.my_role()?;
-    session.network().increase_round_counter()?;
-    //First send all we have to send
-    for (receiver_role, values) in shares {
-        if receiver_role == &my_role {
-            continue;
-        } else {
-            let receiver = session.identity_from(receiver_role)?;
-
-            let networking = Arc::clone(session.network());
-
-            networking
-                .send(
-                    NetworkValue::VecRingValue(values.to_vec()).to_network(),
-                    &receiver,
-                )
-                .await?;
-        }
-    }
-    //Then listen if need be
-    let result = if let Some(values) = shares.get(&my_role) {
-        let mut set = JoinSet::new();
-
-        //Note: we give the set of corrupt parties as the non_answering_parties argument
-        //Thus generic_receive_from_all will not receive from corrupt parties.
-        generic_receive_from_all(
-            &mut set,
-            session,
-            &my_role,
-            Some(session.corrupt_roles()),
-            |msg, _id| match msg {
-                NetworkValue::VecRingValue(v) => Ok(v),
-                _ => Err(anyhow_error_and_log(
-                    "Received something else than a Ring value in robust open to all".to_string(),
-                )),
-            },
-        )?;
-        let mut sharings = values
-            .iter()
-            .map(|share| ShamirSharings::create(vec![Share::new(my_role, *share)]))
-            .collect_vec();
-
-        let reconstruct_fn = match session.network().get_network_mode() {
-            crate::networking::NetworkMode::Sync => reconstruct_w_errors_sync,
-            crate::networking::NetworkMode::Async => reconstruct_w_errors_async,
-        };
-        try_reconstruct_from_shares(session, &mut sharings, degree, set, reconstruct_fn).await?
-    } else {
-        None
-    };
-    Ok(result)
-}
-
 #[cfg(test)]
 mod test {
     use std::num::Wrapping;
@@ -309,10 +365,12 @@ mod test {
         algebra::galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128},
         execution::{
             runtime::session::{LargeSession, ParameterHandles},
-            sharing::{open::robust_opens_to_all, shamir::ShamirSharings},
+            sharing::shamir::ShamirSharings,
         },
         tests::helper::tests_and_benches::execute_protocol_large,
     };
+
+    use super::{RobustOpen, SecureRobustOpen};
 
     async fn open_task(session: LargeSession) -> Vec<ResiduePolyF4Z128> {
         let parties = 4;
@@ -334,7 +392,8 @@ mod test {
                 .value()
             })
             .collect_vec();
-        let res = robust_opens_to_all(&session, &shares, threshold)
+        let res = SecureRobustOpen::default()
+            .robust_open_list_to_all(&session, shares, threshold)
             .await
             .unwrap()
             .unwrap();

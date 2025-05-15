@@ -7,6 +7,7 @@ use crate::execution::config::BatchParams;
 use crate::execution::endpoints::decryption::RadixOrBoolCiphertext;
 use crate::execution::endpoints::decryption::SnsRadixOrBoolCiphertext;
 use crate::execution::large_execution::offline::SecureLargePreprocessing;
+use crate::execution::online::bit_manipulation::{bit_dec_batch, BatchedBits};
 use crate::execution::online::preprocessing::create_memory_factory;
 use crate::execution::online::preprocessing::BitDecPreprocessing;
 use crate::execution::online::preprocessing::NoiseFloodPreprocessing;
@@ -16,14 +17,11 @@ use crate::execution::runtime::session::BaseSessionStruct;
 use crate::execution::runtime::session::ParameterHandles;
 use crate::execution::runtime::session::SmallSession64;
 use crate::execution::runtime::session::ToBaseSession;
+use crate::execution::sharing::open::{RobustOpen, SecureRobustOpen};
 use crate::execution::sharing::share::Share;
 use crate::execution::small_execution::agree_random::RealAgreeRandom;
 use crate::execution::small_execution::offline::SmallPreprocessing;
 use crate::execution::tfhe_internals::parameters::AugmentedCiphertextParameters;
-use crate::execution::{
-    online::bit_manipulation::{bit_dec_batch, BatchedBits},
-    sharing::open::robust_opens_to_all,
-};
 #[cfg(any(test, feature = "testing"))]
 use crate::execution::{
     runtime::{session::SessionParameters, test_runtime::DistributedTestRuntime},
@@ -799,7 +797,9 @@ async fn open_masked_ptxts<
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    let openeds = robust_opens_to_all(session, &res, session.threshold() as usize).await?;
+    let openeds = SecureRobustOpen::default()
+        .robust_open_list_to_all(session, res, session.threshold() as usize)
+        .await?;
     reconstruct_message(openeds, &keyshares.parameters)
 }
 
@@ -814,9 +814,11 @@ async fn open_bit_composed_ptxts<
 where
     ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    let openeds = robust_opens_to_all(session, &res, session.threshold() as usize).await?;
-
     let mut out = Vec::with_capacity(res.len());
+    let openeds = SecureRobustOpen::default()
+        .robust_open_list_to_all(session, res, session.threshold() as usize)
+        .await?;
+
     match openeds {
         Some(openeds) => {
             for opened in openeds {

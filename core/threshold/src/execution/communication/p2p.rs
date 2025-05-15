@@ -224,12 +224,15 @@ fn internal_receive_from_parties<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHand
 }
 
 /// Send to all parties and automatically increase round counter
-pub async fn send_to_all<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+pub async fn send_to_all<T, Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
     session: &B,
     sender: &Role,
-    msg: NetworkValue<Z>,
-) -> anyhow::Result<()> {
-    let serialized_message = msg.to_network();
+    msg: T,
+) -> anyhow::Result<()>
+where
+    T: AsRef<NetworkValue<Z>>,
+{
+    let serialized_message = msg.as_ref().to_network();
 
     session.network().increase_round_counter()?;
     for (other_role, other_identity) in session.role_assignments().iter() {

@@ -376,6 +376,8 @@ pub(crate) mod tests {
             Vss,
         },
     };
+    #[cfg(feature = "slow_tests")]
+    use crate::execution::sharing::open::{RobustOpen, SecureRobustOpen};
 
     use crate::algebra::structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingEmbed};
     use crate::execution::sharing::shamir::RevealOp;
@@ -788,12 +790,14 @@ pub(crate) mod tests {
         C: Coinflip + 'static,
         S: ShareDispute + 'static,
         BCast: Broadcast + 'static,
+        RO: RobustOpen + 'static,
     >(
         #[values(
             TestingParameters::init(4,1,&[2],&[0,3],&[],true,None),
             TestingParameters::init(7,2,&[1,4],&[0,2,5,6],&[(1,5),(4,0)],true,None)
         )]
         params: TestingParameters,
+        #[values(SecureRobustOpen::default())] _robust_open_strategy: RO,
         #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
         #[values(
             DroppingVssFromStart::default(),
@@ -802,7 +806,7 @@ pub(crate) mod tests {
         )]
         _vss_strategy: V,
         #[values(
-            RealCoinflip::init(_vss_strategy.clone()),
+            RealCoinflip::init(_vss_strategy.clone(),_robust_open_strategy.clone()),
             DroppingCoinflipAfterVss::init(_vss_strategy.clone())
         )]
         coinflip_strategy: C,
@@ -836,12 +840,14 @@ pub(crate) mod tests {
         C: Coinflip + 'static,
         S: ShareDispute + 'static,
         BCast: Broadcast + 'static,
+        RO: RobustOpen + 'static,
     >(
         #[values(
             TestingParameters::init(4,1,&[2],&[0],&[],false,None),
             TestingParameters::init(7,2,&[1,4],&[0,2],&[],false,None)
         )]
         params: TestingParameters,
+        #[values(SecureRobustOpen::default())] _robust_open_strategy: RO,
         #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
         #[values(
             RealVss::init(&broadcast_strategy),
@@ -850,8 +856,8 @@ pub(crate) mod tests {
         )]
         _vss_strategy: V,
         #[values(
-            RealCoinflip::init(_vss_strategy.clone()),
-            MaliciousCoinflipRecons::init(_vss_strategy.clone()),
+            RealCoinflip::init(_vss_strategy.clone(),_robust_open_strategy.clone()),
+            MaliciousCoinflipRecons::init(_vss_strategy.clone(),_robust_open_strategy.clone()),
         )]
         coinflip_strategy: C,
         #[values(RealShareDispute::default())] share_dispute_strategy: S,
@@ -873,7 +879,7 @@ pub(crate) mod tests {
 
     #[rstest]
     #[case(TestingParameters::init(4,1,&[2],&[0],&[],true,None), SecureCoinflip::default(), MaliciousShareDisputeRecons::init(&params.roles_to_lie_to),SyncReliableBroadcast::default())]
-    #[case(TestingParameters::init(4,1,&[2],&[],&[(3,0)],false,None), MaliciousCoinflipRecons::<SecureVss>::default(), RealShareDispute::default(),SyncReliableBroadcast::default())]
+    #[case(TestingParameters::init(4,1,&[2],&[],&[(3,0)],false,None), MaliciousCoinflipRecons::<SecureVss, SecureRobustOpen>::default(), RealShareDispute::default(),SyncReliableBroadcast::default())]
     #[cfg(feature = "slow_tests")]
     fn test_ldl_malicious_subprotocols_fine_grain<
         C: Coinflip + 'static,
@@ -910,6 +916,7 @@ pub(crate) mod tests {
         C: Coinflip + 'static,
         S: ShareDispute + 'static,
         BCast: Broadcast + 'static,
+        RO: RobustOpen + 'static,
     >(
         #[values(
             TestingParameters::init(4,1,&[2],&[0],&[],false,None),
@@ -918,6 +925,7 @@ pub(crate) mod tests {
             TestingParameters::init(7,2,&[1,4],&[0,2,6],&[(1,2),(4,6)],true,None)
         )]
         params: TestingParameters,
+        #[values(SecureRobustOpen::default())] _robust_open_strategy: RO,
         #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
         #[values(
             RealVss::init(&broadcast_strategy),
@@ -926,8 +934,8 @@ pub(crate) mod tests {
         )]
         _vss_strategy: V,
         #[values(
-            RealCoinflip::init(_vss_strategy.clone()),
-            MaliciousCoinflipRecons::init(_vss_strategy.clone()),
+            RealCoinflip::init(_vss_strategy.clone(),_robust_open_strategy.clone()),
+            MaliciousCoinflipRecons::init(_vss_strategy.clone(),_robust_open_strategy.clone()),
         )]
         coinflip_strategy: C,
         #[values(RealShareDispute::default())] share_dispute_strategy: S,
@@ -957,6 +965,7 @@ pub(crate) mod tests {
         C: Coinflip + 'static,
         S: ShareDispute + 'static,
         BCast: Broadcast + 'static,
+        RO: RobustOpen + 'static,
     >(
         #[values(
             TestingParameters::init(4,1,&[2],&[0],&[],true,None),
@@ -965,6 +974,7 @@ pub(crate) mod tests {
             TestingParameters::init(7,2,&[1,4],&[0,2,3,6],&[(1,0),(4,0)],true,None)
         )]
         params: TestingParameters,
+        #[values(SecureRobustOpen::default())] _robust_open_strategy: RO,
         #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
         #[values(
             RealVss::init(&broadcast_strategy),
@@ -973,8 +983,8 @@ pub(crate) mod tests {
         )]
         _vss_strategy: V,
         #[values(
-            RealCoinflip::init(_vss_strategy.clone()),
-            MaliciousCoinflipRecons::init(_vss_strategy.clone()),
+            RealCoinflip::init(_vss_strategy.clone(),_robust_open_strategy.clone()),
+            MaliciousCoinflipRecons::init(_vss_strategy.clone(),_robust_open_strategy.clone()),
         )]
         coinflip_strategy: C,
         #[values(RealShareDispute::default())] share_dispute_strategy: S,

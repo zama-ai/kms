@@ -102,6 +102,12 @@ pub enum NetworkValue<Z: Eq + Zero> {
     Round1VSS(ExchangedDataRound1<Z>),
 }
 
+impl<Z: Eq + Zero> AsRef<NetworkValue<Z>> for NetworkValue<Z> {
+    fn as_ref(&self) -> &NetworkValue<Z> {
+        self
+    }
+}
+
 impl<Z: Ring> NetworkValue<Z> {
     pub fn to_network(&self) -> Vec<u8> {
         bincode::serialize(self).unwrap()

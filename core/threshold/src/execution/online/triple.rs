@@ -3,7 +3,10 @@ use crate::{
     error::error_handler::{anyhow_error_and_log, log_error_wrapper},
     execution::{
         runtime::session::BaseSessionHandles,
-        sharing::{open::robust_opens_to_all, share::Share},
+        sharing::{
+            open::{RobustOpen, SecureRobustOpen},
+            share::Share,
+        },
     },
 };
 use anyhow::Context;
@@ -157,11 +160,13 @@ pub async fn open_list<
         .iter()
         .map(|cur_open| cur_open.value())
         .collect_vec();
-    let opened_vals: Vec<Z> =
-        match robust_opens_to_all(session, &parsed_to_open, session.threshold() as usize).await? {
-            Some(opened_vals) => opened_vals,
-            None => return Err(anyhow_error_and_log("Could not open shares".to_string())),
-        };
+    let opened_vals: Vec<Z> = match SecureRobustOpen::default()
+        .robust_open_list_to_all(session, parsed_to_open, session.threshold() as usize)
+        .await?
+    {
+        Some(opened_vals) => opened_vals,
+        None => return Err(anyhow_error_and_log("Could not open shares".to_string())),
+    };
     Ok(opened_vals)
 }
 

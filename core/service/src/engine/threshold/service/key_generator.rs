@@ -532,7 +532,7 @@ impl<
             algebra::galois_rings::common::ResiduePoly,
             execution::{
                 runtime::party::Role,
-                sharing::open::robust_opens_to,
+                sharing::open::{RobustOpen, SecureRobustOpen},
                 tfhe_internals::test_feature::{
                     to_hl_client_key, transfer_decompression_key, INPUT_PARTY_ID,
                 },
@@ -543,25 +543,27 @@ impl<
 
         // we need Vec<ResiduePoly> but we're given Vec<Share<ResiduePoly>>
         // so we need to call collect_vec()
-        let opt_glwe_secret_key = robust_opens_to(
-            base_session,
-            &glwe_shares.data.iter().map(|x| x.value()).collect_vec(),
-            base_session.parameters.threshold as usize,
-            &output_party,
-        )
-        .await?;
-        let opt_compression_secret_key = robust_opens_to(
-            base_session,
-            &compression_shares
-                .post_packing_ks_key
-                .data
-                .iter()
-                .map(|x| x.value())
-                .collect_vec(),
-            base_session.parameters.threshold as usize,
-            &output_party,
-        )
-        .await?;
+        let opt_glwe_secret_key = SecureRobustOpen::default()
+            .robust_open_list_to(
+                base_session,
+                glwe_shares.data.iter().map(|x| x.value()).collect_vec(),
+                base_session.parameters.threshold as usize,
+                &output_party,
+            )
+            .await?;
+        let opt_compression_secret_key = SecureRobustOpen::default()
+            .robust_open_list_to(
+                base_session,
+                compression_shares
+                    .post_packing_ks_key
+                    .data
+                    .iter()
+                    .map(|x| x.value())
+                    .collect_vec(),
+                base_session.parameters.threshold as usize,
+                &output_party,
+            )
+            .await?;
 
         let convert_to_bit = |input: Vec<ResiduePoly<Z128, 4>>| -> anyhow::Result<Vec<u64>> {
             let mut out = Vec::with_capacity(input.len());

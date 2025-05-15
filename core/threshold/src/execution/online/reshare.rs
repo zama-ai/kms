@@ -16,7 +16,7 @@ use crate::{
         online::preprocessing::BasePreprocessing,
         runtime::{party::Role, session::BaseSessionHandles},
         sharing::{
-            open::{multi_robust_opens_to, robust_opens_to_all},
+            open::{RobustOpen, SecureRobustOpen},
             shamir::ShamirSharings,
             share::Share,
         },
@@ -301,8 +301,9 @@ where
     //    )));
     //}
 
-    let mut opened = if let Some(result) =
-        multi_robust_opens_to(session, &rs_shares, session.threshold() as usize).await?
+    let mut opened = if let Some(result) = SecureRobustOpen::default()
+        .multi_robust_open_list_to(session, rs_shares.clone(), session.threshold() as usize)
+        .await?
     {
         result
     } else {
@@ -374,12 +375,13 @@ where
         all_syndrome_poly_shares.append(&mut syndrome_share.coefs);
     }
 
-    let all_syndrome_polys = match robust_opens_to_all(
-        session,
-        &all_syndrome_poly_shares,
-        session.threshold() as usize,
-    )
-    .await?
+    let all_syndrome_polys = match SecureRobustOpen::default()
+        .robust_open_list_to_all(
+            session,
+            all_syndrome_poly_shares,
+            session.threshold() as usize,
+        )
+        .await?
     {
         Some(xs) => xs,
         None => {

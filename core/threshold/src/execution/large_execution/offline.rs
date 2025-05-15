@@ -10,7 +10,10 @@ use crate::{
     execution::{
         online::triple::Triple,
         runtime::session::LargeSessionHandles,
-        sharing::{open::robust_opens_to_all, share::Share},
+        sharing::{
+            open::{RobustOpen, SecureRobustOpen},
+            share::Share,
+        },
     },
 };
 use itertools::Itertools;
@@ -21,7 +24,7 @@ use super::double_sharing::{DoubleSharing, SecureDoubleSharing};
 use super::single_sharing::{SecureSingleSharing, SingleSharing};
 
 pub type SecureLargePreprocessing<Z> =
-    LargePreprocessing<Z, SecureSingleSharing<Z>, SecureDoubleSharing<Z>>;
+    RealLargePreprocessing<Z, SecureSingleSharing<Z>, SecureDoubleSharing<Z>, SecureRobustOpen>;
 
 impl<Z: Ring + RingEmbed + Invert + Derive + ErrorCorrect> SecureLargePreprocessing<Z> {
     /// Initializes the preprocessing with a fresh batch of triples and randomness
@@ -35,36 +38,44 @@ impl<Z: Ring + RingEmbed + Invert + Derive + ErrorCorrect> SecureLargePreprocess
             batch_sizes,
             SecureSingleSharing::default(),
             SecureDoubleSharing::default(),
+            SecureRobustOpen::default(),
         )
         .await
     }
 }
 
-pub struct LargePreprocessing<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>> {
+pub struct RealLargePreprocessing<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>, RO: RobustOpen>
+{
     triple_batch_size: usize,
     random_batch_size: usize,
-    single_sharing_handle: S,
-    double_sharing_handle: D,
+    single_sharing: S,
+    double_sharing: D,
+    robust_open: RO,
     elements: Box<dyn BasePreprocessing<Z>>,
 }
 
-impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePreprocessing<Z, S, D> {
+impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>, RO: RobustOpen>
+    RealLargePreprocessing<Z, S, D, RO>
+{
     /// Initializes the preprocessing with a fresh batch of triples and randomness
     /// This executes the GenTriples and Nextrandom based on the provided [`BatchParams`]
     pub async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         session: &mut L,
         batch_sizes: BatchParams,
-        mut ssh: S,
-        mut dsh: D,
+        mut single_sharing: S,
+        mut double_sharing: D,
+        robust_open: RO,
     ) -> anyhow::Result<Self> {
         let init_span = info_span!("MPC_Large.Init", sid=?session.session_id(), own_identity=?session.own_identity(), batch_size=?batch_sizes);
         //Init single sharing, we need 2 calls per triple and 1 call per randomness
-        ssh.init(session, 2 * batch_sizes.triples + batch_sizes.randoms)
+        single_sharing
+            .init(session, 2 * batch_sizes.triples + batch_sizes.randoms)
             .instrument(init_span.clone())
             .await?;
 
         //Init double sharing, we need 1 call per triple
-        dsh.init(session, batch_sizes.triples)
+        double_sharing
+            .init(session, batch_sizes.triples)
             .instrument(init_span)
             .await?;
 
@@ -74,8 +85,9 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
         let mut large_preproc = Self {
             triple_batch_size: batch_sizes.triples,
             random_batch_size: batch_sizes.randoms,
-            single_sharing_handle: ssh,
-            double_sharing_handle: dsh,
+            single_sharing,
+            double_sharing,
+            robust_open,
             elements: base_preprocessing,
         };
 
@@ -125,19 +137,19 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
 
         for _ in 0..self.triple_batch_size {
             vec_share_x.push(
-                self.single_sharing_handle
+                self.single_sharing
                     .next(session)
                     .instrument(single_sharing_span.clone())
                     .await?,
             );
             vec_share_y.push(
-                self.single_sharing_handle
+                self.single_sharing
                     .next(session)
                     .instrument(single_sharing_span.clone())
                     .await?,
             );
             vec_double_share_v.push(
-                self.double_sharing_handle
+                self.double_sharing
                     .next(session)
                     .instrument(double_sharing_span.clone())
                     .await?,
@@ -155,15 +167,19 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
         //Perform RobustOpen on the degree 2t masked z component
         //TODO: For now NIST doc doesn't explicitly call this robust_open,
         //but I believe this is exactly what we're doing
-        let recons_vec_share_d = robust_opens_to_all(
-            session,
-            &network_vec_share_d,
-            2 * session.threshold() as usize,
-        )
-        .await?
-        .ok_or_else(|| {
-            anyhow_error_and_log("Reconstruction failed in offline triple generation".to_string())
-        })?;
+        let recons_vec_share_d = self
+            .robust_open
+            .robust_open_list_to_all(
+                session,
+                network_vec_share_d,
+                2 * session.threshold() as usize,
+            )
+            .await?
+            .ok_or_else(|| {
+                anyhow_error_and_log(
+                    "Reconstruction failed in offline triple generation".to_string(),
+                )
+            })?;
 
         //Remove the mask from the opened value
         let vec_shares_z: Vec<_> = recons_vec_share_d
@@ -209,7 +225,7 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
         for _ in 0..self.random_batch_size {
             res.push(Share::new(
                 my_role,
-                self.single_sharing_handle
+                self.single_sharing
                     .next(session)
                     .instrument(single_sharing_span.clone())
                     .await?,
@@ -220,10 +236,11 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
     }
 }
 
-impl<Z: Ring, S, D> TriplePreprocessing<Z> for LargePreprocessing<Z, S, D>
+impl<Z: Ring, S, D, RO> TriplePreprocessing<Z> for RealLargePreprocessing<Z, S, D, RO>
 where
     S: SingleSharing<Z>,
     D: DoubleSharing<Z>,
+    RO: RobustOpen,
 {
     fn next_triple_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Triple<Z>>> {
         self.elements.next_triple_vec(amount)
@@ -238,10 +255,11 @@ where
     }
 }
 
-impl<Z: Ring, S, D> RandomPreprocessing<Z> for LargePreprocessing<Z, S, D>
+impl<Z: Ring, S, D, RO> RandomPreprocessing<Z> for RealLargePreprocessing<Z, S, D, RO>
 where
     S: SingleSharing<Z>,
     D: DoubleSharing<Z>,
+    RO: RobustOpen,
 {
     fn next_random_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>> {
         self.elements.next_random_vec(amount)
@@ -256,14 +274,16 @@ where
     }
 }
 
-impl<Z: Ring, S, D> BasePreprocessing<Z> for LargePreprocessing<Z, S, D>
+impl<Z: Ring, S, D, RO> BasePreprocessing<Z> for RealLargePreprocessing<Z, S, D, RO>
 where
-    S: SingleSharing<Z> + Sync,
-    D: DoubleSharing<Z> + Sync,
+    S: SingleSharing<Z>,
+    D: DoubleSharing<Z>,
+    RO: RobustOpen,
 {
 }
 
 #[cfg(test)]
+#[allow(clippy::too_many_arguments)]
 mod tests {
     use crate::algebra::structure_traits::{Derive, ErrorCorrect, Invert, RingEmbed};
     use crate::execution::config::BatchParams;
@@ -294,7 +314,7 @@ mod tests {
                     tests::{MaliciousReceiverLocalSingleShare, MaliciousSenderLocalSingleShare},
                     LocalSingleShare, RealLocalSingleShare,
                 },
-                offline::LargePreprocessing,
+                offline::RealLargePreprocessing,
                 share_dispute::{
                     tests::{
                         DroppingShareDispute, MaliciousShareDisputeRecons, WrongShareDisputeRecons,
@@ -316,7 +336,11 @@ mod tests {
             runtime::session::{
                 BaseSessionHandles, LargeSession, LargeSessionHandles, ParameterHandles,
             },
-            sharing::{open::robust_opens_to_all, shamir::ShamirSharings, share::Share},
+            sharing::{
+                open::{RobustOpen, SecureRobustOpen},
+                shamir::ShamirSharings,
+                share::Share,
+            },
         },
         tests::helper::{
             tests::{execute_protocol_large_w_disputes_and_malicious, TestingParameters},
@@ -329,25 +353,31 @@ mod tests {
 
     use super::SecureLargePreprocessing;
 
-    impl<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>> Default for LargePreprocessing<Z, S, D> {
+    impl<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>, RO: RobustOpen> Default
+        for RealLargePreprocessing<Z, S, D, RO>
+    {
         fn default() -> Self {
             Self {
                 triple_batch_size: 0,
                 random_batch_size: 0,
-                single_sharing_handle: S::default(),
-                double_sharing_handle: D::default(),
+                single_sharing: S::default(),
+                double_sharing: D::default(),
+                robust_open: RO::default(),
                 elements: Box::<InMemoryBasePreprocessing<Z>>::default(),
             }
         }
     }
 
-    impl<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>> Clone for LargePreprocessing<Z, S, D> {
+    impl<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>, RO: RobustOpen> Clone
+        for RealLargePreprocessing<Z, S, D, RO>
+    {
         fn clone(&self) -> Self {
             Self {
                 triple_batch_size: self.triple_batch_size,
                 random_batch_size: self.random_batch_size,
-                single_sharing_handle: self.single_sharing_handle.clone(),
-                double_sharing_handle: self.double_sharing_handle.clone(),
+                single_sharing: self.single_sharing.clone(),
+                double_sharing: self.double_sharing.clone(),
+                robust_open: self.robust_open.clone(),
                 elements: Box::<InMemoryBasePreprocessing<Z>>::default(),
             }
         }
@@ -356,9 +386,7 @@ mod tests {
     fn test_offline_strategies<
         Z: Ring + RingEmbed + Derive + Invert + ErrorCorrect,
         const EXTENSION_DEGREE: usize,
-        S: SingleSharing<Z>,
-        D: DoubleSharing<Z>,
-        P: GenericMaliciousPreprocessing<Z, S, D> + 'static,
+        P: GenericMaliciousPreprocessing<Z> + 'static,
     >(
         params: TestingParameters,
         malicious_offline: P,
@@ -471,11 +499,8 @@ mod tests {
     }
 
     #[async_trait]
-    trait GenericMaliciousPreprocessing<
-        Z: Ring + Derive + ErrorCorrect,
-        S: SingleSharing<Z>,
-        D: DoubleSharing<Z>,
-    >: BasePreprocessing<Z> + Clone + Send
+    trait GenericMaliciousPreprocessing<Z: Ring + Derive + ErrorCorrect>:
+        BasePreprocessing<Z> + Clone + Send
     {
         async fn init(
             &mut self,
@@ -495,33 +520,38 @@ mod tests {
         Z: Ring + Derive + ErrorCorrect,
         S: SingleSharing<Z>,
         D: DoubleSharing<Z>,
+        RO: RobustOpen,
     > {
         triple_batch_size: usize,
         random_batch_size: usize,
-        single_sharing_handle: S,
-        double_sharing_handle: D,
+        single_sharing: S,
+        double_sharing: D,
+        robust_open: RO,
         available_triples: Vec<Triple<Z>>,
         available_randoms: Vec<Share<Z>>,
     }
 
     #[derive(Default, Clone)]
-    ///Acts as a wrapper around the acutal protocol, needed because of the trait design around preprocessing
+    ///Acts as a wrapper around the actual protocol, needed because of the trait design around preprocessing
     pub(crate) struct HonestLargePreprocessing<
         Z: Ring + Derive + ErrorCorrect,
         S: SingleSharing<Z>,
         D: DoubleSharing<Z>,
+        RO: RobustOpen,
     > {
-        single_sharing_handle: S,
-        double_sharing_handle: D,
-        large_preproc: LargePreprocessing<Z, S, D>,
+        single_sharing: S,
+        double_sharing: D,
+        robust_open: RO,
+        large_preproc: RealLargePreprocessing<Z, S, D, RO>,
     }
 
     #[async_trait]
     impl<
             Z: Ring + Derive + ErrorCorrect,
-            S: SingleSharing<Z> + Sync,
-            D: DoubleSharing<Z> + Sync,
-        > GenericMaliciousPreprocessing<Z, S, D> for CheatingLargePreprocessing<Z, S, D>
+            S: SingleSharing<Z>,
+            D: DoubleSharing<Z>,
+            RO: RobustOpen,
+        > GenericMaliciousPreprocessing<Z> for CheatingLargePreprocessing<Z, S, D, RO>
     {
         async fn init(
             &mut self,
@@ -529,12 +559,12 @@ mod tests {
             batch_sizes: BatchParams,
         ) -> anyhow::Result<()> {
             //Init single sharing
-            self.single_sharing_handle
+            self.single_sharing
                 .init(session, 2 * batch_sizes.triples + batch_sizes.randoms)
                 .await?;
 
             //Init double sharing
-            self.double_sharing_handle
+            self.double_sharing
                 .init(session, batch_sizes.triples)
                 .await?;
 
@@ -555,9 +585,9 @@ mod tests {
             let mut vec_share_y = Vec::with_capacity(self.triple_batch_size);
             let mut vec_double_share_v = Vec::with_capacity(self.triple_batch_size);
             for _ in 0..self.triple_batch_size {
-                vec_share_x.push(self.single_sharing_handle.next(session).await?);
-                vec_share_y.push(self.single_sharing_handle.next(session).await?);
-                vec_double_share_v.push(self.double_sharing_handle.next(session).await?);
+                vec_share_x.push(self.single_sharing.next(session).await?);
+                vec_share_y.push(self.single_sharing.next(session).await?);
+                vec_double_share_v.push(self.double_sharing.next(session).await?);
             }
 
             //Add random error to every d and remove one
@@ -572,13 +602,15 @@ mod tests {
                 .collect_vec();
             network_vec_share_d.pop();
 
-            let recons_vec_share_d = robust_opens_to_all(
-                session,
-                &network_vec_share_d,
-                2 * session.threshold() as usize,
-            )
-            .await?
-            .unwrap();
+            let recons_vec_share_d = self
+                .robust_open
+                .robust_open_list_to_all(
+                    session,
+                    network_vec_share_d,
+                    2 * session.threshold() as usize,
+                )
+                .await?
+                .unwrap();
 
             let vec_share_z: Vec<_> = recons_vec_share_d
                 .into_iter()
@@ -609,7 +641,7 @@ mod tests {
             for _ in 0..self.random_batch_size {
                 res.push(Share::new(
                     my_role,
-                    self.single_sharing_handle.next(session).await?,
+                    self.single_sharing.next(session).await?,
                 ));
             }
             self.available_randoms = res;
@@ -617,11 +649,12 @@ mod tests {
         }
     }
 
-    impl<Z, S, D> TriplePreprocessing<Z> for CheatingLargePreprocessing<Z, S, D>
+    impl<Z, S, D, RO> TriplePreprocessing<Z> for CheatingLargePreprocessing<Z, S, D, RO>
     where
         Z: Ring + Derive + ErrorCorrect,
         S: SingleSharing<Z>,
         D: DoubleSharing<Z>,
+        RO: RobustOpen,
     {
         fn next_triple_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Triple<Z>>> {
             if self.available_triples.len() >= amount {
@@ -640,11 +673,12 @@ mod tests {
         }
     }
 
-    impl<Z, S, D> RandomPreprocessing<Z> for CheatingLargePreprocessing<Z, S, D>
+    impl<Z, S, D, RO> RandomPreprocessing<Z> for CheatingLargePreprocessing<Z, S, D, RO>
     where
         Z: Ring + ErrorCorrect + Derive,
         S: SingleSharing<Z>,
         D: DoubleSharing<Z>,
+        RO: RobustOpen,
     {
         fn next_random_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>> {
             if self.available_randoms.len() >= amount {
@@ -663,11 +697,12 @@ mod tests {
         }
     }
 
-    impl<Z, S, D> BasePreprocessing<Z> for CheatingLargePreprocessing<Z, S, D>
+    impl<Z, S, D, RO> BasePreprocessing<Z> for CheatingLargePreprocessing<Z, S, D, RO>
     where
         Z: Ring + ErrorCorrect + Derive,
-        S: SingleSharing<Z> + Sync,
-        D: DoubleSharing<Z> + Sync,
+        S: SingleSharing<Z>,
+        D: DoubleSharing<Z>,
+        RO: RobustOpen,
     {
     }
 
@@ -675,20 +710,22 @@ mod tests {
     #[async_trait]
     impl<
             Z: Ring + Derive + ErrorCorrect,
-            S: SingleSharing<Z> + Sync,
-            D: DoubleSharing<Z> + Sync,
-        > GenericMaliciousPreprocessing<Z, S, D> for HonestLargePreprocessing<Z, S, D>
+            S: SingleSharing<Z>,
+            D: DoubleSharing<Z>,
+            RO: RobustOpen,
+        > GenericMaliciousPreprocessing<Z> for HonestLargePreprocessing<Z, S, D, RO>
     {
         async fn init(
             &mut self,
             session: &mut LargeSession,
             batch_sizes: BatchParams,
         ) -> anyhow::Result<()> {
-            self.large_preproc = LargePreprocessing::<Z, S, D>::init(
+            self.large_preproc = RealLargePreprocessing::init(
                 session,
                 batch_sizes,
-                self.single_sharing_handle.clone(),
-                self.double_sharing_handle.clone(),
+                self.single_sharing.clone(),
+                self.double_sharing.clone(),
+                self.robust_open.clone(),
             )
             .await
             .unwrap();
@@ -704,11 +741,12 @@ mod tests {
         }
     }
 
-    impl<Z, S, D> TriplePreprocessing<Z> for HonestLargePreprocessing<Z, S, D>
+    impl<Z, S, D, RO> TriplePreprocessing<Z> for HonestLargePreprocessing<Z, S, D, RO>
     where
         Z: Ring + Derive + ErrorCorrect,
         S: SingleSharing<Z>,
         D: DoubleSharing<Z>,
+        RO: RobustOpen,
     {
         fn next_triple(&mut self) -> anyhow::Result<Triple<Z>> {
             self.large_preproc.next_triple()
@@ -726,11 +764,12 @@ mod tests {
         }
     }
 
-    impl<Z, S, D> RandomPreprocessing<Z> for HonestLargePreprocessing<Z, S, D>
+    impl<Z, S, D, RO> RandomPreprocessing<Z> for HonestLargePreprocessing<Z, S, D, RO>
     where
         Z: Ring + ErrorCorrect + Derive,
         S: SingleSharing<Z>,
         D: DoubleSharing<Z>,
+        RO: RobustOpen,
     {
         fn next_random_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>> {
             self.large_preproc.next_random_vec(amount)
@@ -745,11 +784,12 @@ mod tests {
         }
     }
 
-    impl<Z, S, D> BasePreprocessing<Z> for HonestLargePreprocessing<Z, S, D>
+    impl<Z, S, D, RO> BasePreprocessing<Z> for HonestLargePreprocessing<Z, S, D, RO>
     where
         Z: Ring + ErrorCorrect + Derive,
-        S: SingleSharing<Z> + Sync,
-        D: DoubleSharing<Z> + Sync,
+        S: SingleSharing<Z>,
+        D: DoubleSharing<Z>,
+        RO: RobustOpen,
     {
     }
 
@@ -770,19 +810,17 @@ mod tests {
     #[case(TestingParameters::init_honest(5, 1, Some(3 * 177)))]
     #[case(TestingParameters::init_honest(9, 2, Some(3 * 219)))]
     fn test_large_offline_z128(#[case] params: TestingParameters) {
-        let malicious_offline = HonestLargePreprocessing::<
+        let honest_offline = HonestLargePreprocessing::<
             ResiduePolyF4Z128,
             SecureSingleSharing<ResiduePolyF4Z128>,
             SecureDoubleSharing<ResiduePolyF4Z128>,
+            SecureRobustOpen,
         >::default();
 
-        test_offline_strategies::<
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            _,
-            _,
-            _,
-        >(params, malicious_offline);
+        test_offline_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+            params,
+            honest_offline,
+        );
     }
 
     // Rounds: same as for z128, see above
@@ -790,15 +828,16 @@ mod tests {
     #[case(TestingParameters::init_honest(5, 1, Some(3 * 177)))]
     #[case(TestingParameters::init_honest(9, 2, Some(3 * 219)))]
     fn test_large_offline_z64(#[case] params: TestingParameters) {
-        let malicious_offline = HonestLargePreprocessing::<
+        let honest_offline = HonestLargePreprocessing::<
             ResiduePolyF4Z64,
             SecureSingleSharing<ResiduePolyF4Z64>,
             SecureDoubleSharing<ResiduePolyF4Z64>,
+            SecureRobustOpen,
         >::default();
 
-        test_offline_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _, _, _>(
+        test_offline_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params,
-            malicious_offline,
+            honest_offline,
         );
     }
 
@@ -810,11 +849,13 @@ mod tests {
         LSL: LocalSingleShare + 'static,
         LDL: LocalDoubleShare + 'static,
         BCast: Broadcast + 'static,
+        RO: RobustOpen + 'static,
     >(
         #[values(
                 TestingParameters::init(5,1,&[2],&[0,3],&[],true,None),
             )]
         params: TestingParameters,
+        #[values(SecureRobustOpen::default())] robust_open_strategy: RO,
         #[values(SyncReliableBroadcast::default())] _broadcast_strategy: BCast,
         #[values(
                 DroppingVssFromStart::default(),
@@ -823,7 +864,7 @@ mod tests {
             )]
         _vss_strategy: V,
         #[values(
-                RealCoinflip::init(_vss_strategy.clone()),
+                RealCoinflip::init(_vss_strategy.clone(),robust_open_strategy.clone()),
                 DroppingCoinflipAfterVss::init(_vss_strategy.clone())
             )]
         _coinflip_strategy: C,
@@ -852,32 +893,33 @@ mod tests {
             )]
         ldl_strategy: LDL,
     ) {
-        let ssh = create_real_single_sharing::<ResiduePolyF4Z64, _>(lsl_strategy.clone());
-        let dsh = create_real_double_sharing(ldl_strategy.clone());
+        let single_sharing =
+            create_real_single_sharing::<ResiduePolyF4Z64, _>(lsl_strategy.clone());
+        let double_sharing = create_real_double_sharing(ldl_strategy.clone());
         let malicious_offline = HonestLargePreprocessing {
-            single_sharing_handle: ssh,
-            double_sharing_handle: dsh,
-            large_preproc: LargePreprocessing::default(),
+            single_sharing,
+            double_sharing,
+            robust_open: robust_open_strategy.clone(),
+            large_preproc: RealLargePreprocessing::default(),
         };
-        test_offline_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _, _, _>(
+        test_offline_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_offline,
         );
 
-        let ssh = create_real_single_sharing::<ResiduePolyF4Z128, _>(lsl_strategy.clone());
-        let dsh = create_real_double_sharing(ldl_strategy.clone());
+        let single_sharing =
+            create_real_single_sharing::<ResiduePolyF4Z128, _>(lsl_strategy.clone());
+        let double_sharing = create_real_double_sharing(ldl_strategy.clone());
         let malicious_offline = HonestLargePreprocessing {
-            single_sharing_handle: ssh,
-            double_sharing_handle: dsh,
-            large_preproc: LargePreprocessing::default(),
+            single_sharing,
+            double_sharing,
+            robust_open: robust_open_strategy.clone(),
+            large_preproc: RealLargePreprocessing::default(),
         };
-        test_offline_strategies::<
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            _,
-            _,
-            _,
-        >(params.clone(), malicious_offline);
+        test_offline_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+            params.clone(),
+            malicious_offline,
+        );
     }
 
     #[rstest]
@@ -888,15 +930,17 @@ mod tests {
         LSL: LocalSingleShare + 'static,
         LDL: LocalDoubleShare + 'static,
         BCast: Broadcast + 'static,
+        RO: RobustOpen + 'static,
     >(
         #[values(
                 TestingParameters::init(5,1,&[2],&[0,3],&[],true,None),
             )]
         params: TestingParameters,
+        #[values(SecureRobustOpen::default())] robust_open_strategy: RO,
         #[values(SyncReliableBroadcast::default())] _broadcast_strategy: BCast,
         #[values(SecureVss::default())] _vss_strategy: V,
         #[values(
-                RealCoinflip::init(_vss_strategy.clone()),
+                RealCoinflip::init(_vss_strategy.clone(),robust_open_strategy.clone()),
                 DroppingCoinflipAfterVss::init(_vss_strategy.clone())
             )]
         _coinflip_strategy: C,
@@ -926,32 +970,33 @@ mod tests {
             )]
         ldl_strategy: LDL,
     ) {
-        let ssh = create_real_single_sharing::<ResiduePolyF4Z64, _>(lsl_strategy.clone());
-        let dsh = create_real_double_sharing(ldl_strategy.clone());
+        let single_sharing =
+            create_real_single_sharing::<ResiduePolyF4Z64, _>(lsl_strategy.clone());
+        let double_sharing = create_real_double_sharing(ldl_strategy.clone());
         let malicious_offline = HonestLargePreprocessing {
-            single_sharing_handle: ssh,
-            double_sharing_handle: dsh,
-            large_preproc: LargePreprocessing::default(),
+            single_sharing,
+            double_sharing,
+            robust_open: robust_open_strategy.clone(),
+            large_preproc: RealLargePreprocessing::default(),
         };
-        test_offline_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _, _, _>(
+        test_offline_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_offline,
         );
 
-        let ssh = create_real_single_sharing::<ResiduePolyF4Z128, _>(lsl_strategy.clone());
-        let dsh = create_real_double_sharing(ldl_strategy.clone());
+        let single_sharing =
+            create_real_single_sharing::<ResiduePolyF4Z128, _>(lsl_strategy.clone());
+        let double_sharing = create_real_double_sharing(ldl_strategy.clone());
         let malicious_offline = HonestLargePreprocessing {
-            single_sharing_handle: ssh,
-            double_sharing_handle: dsh,
-            large_preproc: LargePreprocessing::default(),
+            single_sharing,
+            double_sharing,
+            robust_open: robust_open_strategy.clone(),
+            large_preproc: RealLargePreprocessing::default(),
         };
-        test_offline_strategies::<
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            _,
-            _,
-            _,
-        >(params.clone(), malicious_offline);
+        test_offline_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+            params.clone(),
+            malicious_offline,
+        );
     }
 
     #[rstest]
@@ -962,11 +1007,13 @@ mod tests {
         LSL: LocalSingleShare + 'static,
         LDL: LocalDoubleShare + 'static,
         BCast: Broadcast + 'static,
+        RO: RobustOpen + 'static,
     >(
         #[values(
                 TestingParameters::init(5,1,&[2],&[0],&[],false,None),
             )]
         params: TestingParameters,
+        #[values(SecureRobustOpen::default())] robust_open_strategy: RO,
         #[values(SyncReliableBroadcast::default())] _broadcast_strategy: BCast,
         #[values(
                 RealVss::init(&_broadcast_strategy),
@@ -975,8 +1022,8 @@ mod tests {
             )]
         _vss_strategy: V,
         #[values(
-                RealCoinflip::init(_vss_strategy.clone()),
-                MaliciousCoinflipRecons::init(_vss_strategy.clone()),
+                RealCoinflip::init(_vss_strategy.clone(),robust_open_strategy.clone()),
+                MaliciousCoinflipRecons::init(_vss_strategy.clone(),robust_open_strategy.clone()),
             )]
         _coinflip_strategy: C,
         #[values(RealShareDispute::default())] _share_dispute_strategy: S,
@@ -1009,32 +1056,33 @@ mod tests {
             )]
         ldl_strategy: LDL,
     ) {
-        let ssh = create_real_single_sharing::<ResiduePolyF4Z64, _>(lsl_strategy.clone());
-        let dsh = create_real_double_sharing(ldl_strategy.clone());
+        let single_sharing =
+            create_real_single_sharing::<ResiduePolyF4Z64, _>(lsl_strategy.clone());
+        let double_sharing = create_real_double_sharing(ldl_strategy.clone());
         let malicious_offline = CheatingLargePreprocessing {
-            single_sharing_handle: ssh,
-            double_sharing_handle: dsh,
+            single_sharing,
+            double_sharing,
+            robust_open: robust_open_strategy.clone(),
             ..Default::default()
         };
-        test_offline_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _, _, _>(
+        test_offline_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_offline,
         );
 
-        let ssh = create_real_single_sharing::<ResiduePolyF4Z128, _>(lsl_strategy.clone());
-        let dsh = create_real_double_sharing(ldl_strategy.clone());
+        let single_sharing =
+            create_real_single_sharing::<ResiduePolyF4Z128, _>(lsl_strategy.clone());
+        let double_sharing = create_real_double_sharing(ldl_strategy.clone());
         let malicious_offline = CheatingLargePreprocessing {
-            single_sharing_handle: ssh,
-            double_sharing_handle: dsh,
+            single_sharing,
+            double_sharing,
+            robust_open: robust_open_strategy.clone(),
             ..Default::default()
         };
-        test_offline_strategies::<
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            _,
-            _,
-            _,
-        >(params.clone(), malicious_offline);
+        test_offline_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+            params.clone(),
+            malicious_offline,
+        );
     }
 
     // Test what happens when no more triples are present
@@ -1098,11 +1146,13 @@ mod tests {
         LSL: LocalSingleShare + 'static,
         LDL: LocalDoubleShare + 'static,
         BCast: Broadcast + 'static,
+        RO: RobustOpen + 'static,
     >(
         #[values(
                 TestingParameters::init(9,2,&[1,4],&[0,2,5,6],&[],true,None)
             )]
         params: TestingParameters,
+        #[values(SecureRobustOpen::default())] robust_open_strategy: RO,
         #[values(SyncReliableBroadcast::default())] _broadcast_strategy: BCast,
         #[values(
                 DroppingVssFromStart::default(),
@@ -1111,7 +1161,7 @@ mod tests {
             )]
         _vss_strategy: V,
         #[values(
-                RealCoinflip::init(_vss_strategy.clone()),
+                RealCoinflip::init(_vss_strategy.clone(),robust_open_strategy.clone()),
                 DroppingCoinflipAfterVss::init(_vss_strategy.clone())
             )]
         _coinflip_strategy: C,
@@ -1140,32 +1190,33 @@ mod tests {
             )]
         ldl_strategy: LDL,
     ) {
-        let ssh = create_real_single_sharing::<ResiduePolyF4Z64, _>(lsl_strategy.clone());
-        let dsh = create_real_double_sharing(ldl_strategy.clone());
+        let single_sharing =
+            create_real_single_sharing::<ResiduePolyF4Z64, _>(lsl_strategy.clone());
+        let double_sharing = create_real_double_sharing(ldl_strategy.clone());
         let malicious_offline = HonestLargePreprocessing {
-            single_sharing_handle: ssh,
-            double_sharing_handle: dsh,
-            large_preproc: LargePreprocessing::default(),
+            single_sharing,
+            double_sharing,
+            robust_open: robust_open_strategy.clone(),
+            large_preproc: RealLargePreprocessing::default(),
         };
-        test_offline_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _, _, _>(
+        test_offline_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_offline,
         );
 
-        let ssh = create_real_single_sharing::<ResiduePolyF4Z128, _>(lsl_strategy.clone());
-        let dsh = create_real_double_sharing(ldl_strategy.clone());
+        let single_sharing =
+            create_real_single_sharing::<ResiduePolyF4Z128, _>(lsl_strategy.clone());
+        let double_sharing = create_real_double_sharing(ldl_strategy.clone());
         let malicious_offline = HonestLargePreprocessing {
-            single_sharing_handle: ssh,
-            double_sharing_handle: dsh,
-            large_preproc: LargePreprocessing::default(),
+            single_sharing,
+            double_sharing,
+            robust_open: robust_open_strategy.clone(),
+            large_preproc: RealLargePreprocessing::default(),
         };
-        test_offline_strategies::<
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            _,
-            _,
-            _,
-        >(params.clone(), malicious_offline);
+        test_offline_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+            params.clone(),
+            malicious_offline,
+        );
     }
 
     #[cfg(feature = "slow_tests")]
@@ -1177,15 +1228,17 @@ mod tests {
         LSL: LocalSingleShare + 'static,
         LDL: LocalDoubleShare + 'static,
         BCast: Broadcast + 'static,
+        RO: RobustOpen + 'static,
     >(
         #[values(
                 TestingParameters::init(9,2,&[1,4],&[0,2,5,6],&[],true,None)
             )]
         params: TestingParameters,
+        #[values(SecureRobustOpen::default())] robust_open_strategy: RO,
         #[values(SyncReliableBroadcast::default())] _broadcast_strategy: BCast,
         #[values(RealVss::init(&_broadcast_strategy))] _vss_strategy: V,
         #[values(
-                RealCoinflip::init(_vss_strategy.clone()),
+                RealCoinflip::init(_vss_strategy.clone(),robust_open_strategy.clone()),
                 DroppingCoinflipAfterVss::init(_vss_strategy.clone())
             )]
         _coinflip_strategy: C,
@@ -1215,32 +1268,33 @@ mod tests {
             )]
         ldl_strategy: LDL,
     ) {
-        let ssh = create_real_single_sharing::<ResiduePolyF4Z64, _>(lsl_strategy.clone());
-        let dsh = create_real_double_sharing(ldl_strategy.clone());
+        let single_sharing =
+            create_real_single_sharing::<ResiduePolyF4Z64, _>(lsl_strategy.clone());
+        let double_sharing = create_real_double_sharing(ldl_strategy.clone());
         let malicious_offline = HonestLargePreprocessing {
-            single_sharing_handle: ssh,
-            double_sharing_handle: dsh,
-            large_preproc: LargePreprocessing::default(),
+            single_sharing,
+            double_sharing,
+            robust_open: robust_open_strategy.clone(),
+            large_preproc: RealLargePreprocessing::default(),
         };
-        test_offline_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _, _, _>(
+        test_offline_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_offline,
         );
 
-        let ssh = create_real_single_sharing::<ResiduePolyF4Z128, _>(lsl_strategy.clone());
-        let dsh = create_real_double_sharing(ldl_strategy.clone());
+        let single_sharing =
+            create_real_single_sharing::<ResiduePolyF4Z128, _>(lsl_strategy.clone());
+        let double_sharing = create_real_double_sharing(ldl_strategy.clone());
         let malicious_offline = HonestLargePreprocessing {
-            single_sharing_handle: ssh,
-            double_sharing_handle: dsh,
-            large_preproc: LargePreprocessing::default(),
+            single_sharing,
+            double_sharing,
+            robust_open: robust_open_strategy.clone(),
+            large_preproc: RealLargePreprocessing::default(),
         };
-        test_offline_strategies::<
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            _,
-            _,
-            _,
-        >(params.clone(), malicious_offline);
+        test_offline_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+            params.clone(),
+            malicious_offline,
+        );
     }
 
     #[cfg(feature = "slow_tests")]
@@ -1252,11 +1306,13 @@ mod tests {
         LSL: LocalSingleShare + 'static,
         LDL: LocalDoubleShare + 'static,
         BCast: Broadcast + 'static,
+        RO: RobustOpen + 'static,
     >(
         #[values(
                 TestingParameters::init(9,2,&[1,4],&[0,2],&[],false,None)
             )]
         params: TestingParameters,
+        #[values(SecureRobustOpen::default())] robust_open_strategy: RO,
         #[values(SyncReliableBroadcast::default())] _broadcast_strategy: BCast,
         #[values(
                 RealVss::init(&_broadcast_strategy),
@@ -1265,8 +1321,8 @@ mod tests {
             )]
         _vss_strategy: V,
         #[values(
-                RealCoinflip::init(_vss_strategy.clone()),
-                MaliciousCoinflipRecons::init(_vss_strategy.clone()),
+                RealCoinflip::init(_vss_strategy.clone(),robust_open_strategy.clone()),
+                MaliciousCoinflipRecons::init(_vss_strategy.clone(),robust_open_strategy.clone()),
             )]
         _coinflip_strategy: C,
         #[values(RealShareDispute::default())] _share_dispute_strategy: S,
@@ -1299,31 +1355,32 @@ mod tests {
             )]
         ldl_strategy: LDL,
     ) {
-        let ssh = create_real_single_sharing::<ResiduePolyF4Z64, _>(lsl_strategy.clone());
-        let dsh = create_real_double_sharing(ldl_strategy.clone());
+        let single_sharing =
+            create_real_single_sharing::<ResiduePolyF4Z64, _>(lsl_strategy.clone());
+        let double_sharing = create_real_double_sharing(ldl_strategy.clone());
         let malicious_offline = CheatingLargePreprocessing {
-            single_sharing_handle: ssh,
-            double_sharing_handle: dsh,
+            single_sharing,
+            double_sharing,
+            robust_open: robust_open_strategy.clone(),
             ..Default::default()
         };
-        test_offline_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _, _, _>(
+        test_offline_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_offline,
         );
 
-        let ssh = create_real_single_sharing::<ResiduePolyF4Z128, _>(lsl_strategy.clone());
-        let dsh = create_real_double_sharing(ldl_strategy.clone());
+        let single_sharing =
+            create_real_single_sharing::<ResiduePolyF4Z128, _>(lsl_strategy.clone());
+        let double_sharing = create_real_double_sharing(ldl_strategy.clone());
         let malicious_offline = CheatingLargePreprocessing {
-            single_sharing_handle: ssh,
-            double_sharing_handle: dsh,
+            single_sharing,
+            double_sharing,
+            robust_open: robust_open_strategy.clone(),
             ..Default::default()
         };
-        test_offline_strategies::<
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            _,
-            _,
-            _,
-        >(params.clone(), malicious_offline);
+        test_offline_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+            params.clone(),
+            malicious_offline,
+        );
     }
 }
