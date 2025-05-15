@@ -14,6 +14,10 @@ on:
 jobs:
   docker-golden-image:
     uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@4597dee06cf8e3e977f66aa8b1824ef4e1d84a22
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+      packages: 'write'
     with:
       working-directory: "./base"
       push_image: true
